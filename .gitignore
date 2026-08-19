@@ -1,0 +1,14 @@
+.gradle/
+build/
+out/
+run/
+*.log
+*.jar
+.idea/
+*.iml
+.vscode/
+
+# Local secrets and generated MCP client configuration
+*.local.*
+secrets/
+config/mcp-token.txt
