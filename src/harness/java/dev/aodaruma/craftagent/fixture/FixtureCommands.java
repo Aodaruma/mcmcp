@@ -131,6 +131,9 @@ final class FixtureCommands {
                 .then(Commands.literal("iron_farm_activate")
                         .executes(context -> execute(
                                 context.getSource(), FixtureIronFarmScenario::activate)))
+                .then(Commands.literal("iron_farm_complete_for_evaluation")
+                        .executes(context -> execute(
+                                context.getSource(), FixtureIronFarmScenario::completeForEvaluation)))
                 .then(Commands.literal("oracle")
                         .executes(context -> execute(context.getSource(), FixtureArena::sendOracle))));
     }

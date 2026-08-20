@@ -236,6 +236,23 @@ final class FixtureIronFarmScenario {
                 "TEST-ONLY IRON-FARM ACTIVATION: floor=verified water=released scare=enabled player=safe_house"));
     }
 
+    static void completeForEvaluation(FixtureSecurity.Context context, Consumer<Component> output) {
+        int completed = 0;
+        for (BlockPos target : constructionTargets()) {
+            BlockState state = context.level().getBlockState(target);
+            if (!state.isAir() && !state.is(Blocks.SMOOTH_STONE)) {
+                throw new IllegalStateException("iron-farm evaluation target diverged at " + target);
+            }
+            if (state.isAir()) {
+                setBlock(context.level(), target, Blocks.SMOOTH_STONE.defaultBlockState());
+                completed++;
+            }
+        }
+        output.accept(Component.literal(
+                "TEST-ONLY IRON-FARM EVALUATION COMPLETION: filled=" + completed
+                        + " total=" + constructionTargets().size()));
+    }
+
     static BlockState bedState(BedPart part) {
         return Blocks.BED.white().defaultBlockState()
                 .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST)
