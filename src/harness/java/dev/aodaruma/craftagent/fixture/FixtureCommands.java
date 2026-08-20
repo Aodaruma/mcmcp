@@ -34,6 +34,36 @@ final class FixtureCommands {
                             FixtureArena.resetInventoryAndStatus(fixture);
                             success(context.getSource(), "inventory and player status reset");
                         })))
+                .then(Commands.literal("phase2")
+                        .then(Commands.literal("regen")
+                                .executes(context -> execute(context.getSource(), (fixture, output) -> {
+                                    FixturePhase2Scenario.prepare(
+                                            fixture, FixturePhase2Scenario.Mode.REGENERATE);
+                                    success(context.getSource(),
+                                            "Phase 2 target ready: stone, 8-tick regeneration");
+                                })))
+                        .then(Commands.literal("no_regen")
+                                .executes(context -> execute(context.getSource(), (fixture, output) -> {
+                                    FixturePhase2Scenario.prepare(
+                                            fixture, FixturePhase2Scenario.Mode.NO_REGENERATION);
+                                    success(context.getSource(),
+                                            "Phase 2 target ready: stone, regeneration disabled");
+                                })))
+                        .then(Commands.literal("slow")
+                                .executes(context -> execute(context.getSource(), (fixture, output) -> {
+                                    FixturePhase2Scenario.prepare(
+                                            fixture, FixturePhase2Scenario.Mode.SLOW_TARGET);
+                                    success(context.getSource(),
+                                            "Phase 2 target ready: obsidian slow/cancel fixture");
+                                })))
+                        .then(Commands.literal("status")
+                                .executes(context -> execute(
+                                        context.getSource(), FixturePhase2Scenario::sendStatus)))
+                        .then(Commands.literal("off")
+                                .executes(context -> execute(context.getSource(), (fixture, output) -> {
+                                    FixturePhase2Scenario.stop();
+                                    success(context.getSource(), "Phase 2 fixture stopped");
+                                }))))
                 .then(Commands.literal("expose_hidden")
                         .executes(context -> execute(context.getSource(), (fixture, output) -> {
                             FixtureArena.exposeHidden(fixture);

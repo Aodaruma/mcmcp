@@ -22,3 +22,13 @@ type="required"
 versionRange="${minecraft_version_range}"
 ordering="NONE"
 side="CLIENT"
+
+[[dependencies.${mod_id}]]
+modId="voicechat_api"
+type="optional"
+versionRange="[2.6.20,)"
+ordering="AFTER"
+side="CLIENT"
+
+[[mixins]]
+config="craftagent.mixins.json"

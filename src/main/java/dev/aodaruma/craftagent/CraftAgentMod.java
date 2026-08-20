@@ -14,6 +14,8 @@ import net.neoforged.neoforge.client.event.ClientPauseChangeEvent;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientResourceLoadFinishedEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.InputEvent;
+import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.client.event.lifecycle.ClientStartedEvent;
 import net.neoforged.neoforge.client.event.lifecycle.ClientStoppedEvent;
 import net.neoforged.neoforge.client.event.lifecycle.ClientStoppingEvent;
@@ -50,6 +52,10 @@ public final class CraftAgentMod {
         eventBus.addListener(this::onPlayerClone);
         eventBus.addListener(this::onLevelUnload);
         eventBus.addListener(this::onPauseChanged);
+        eventBus.addListener(this::onKeyInput);
+        eventBus.addListener(this::onMouseButtonInput);
+        eventBus.addListener(this::onMouseScrollInput);
+        eventBus.addListener(this::onScreenOpening);
         eventBus.addListener(this::onClientStopping);
         eventBus.addListener(this::onClientStopped);
 
@@ -96,6 +102,24 @@ public final class CraftAgentMod {
 
     private void onPauseChanged(ClientPauseChangeEvent.Post event) {
         runtime.onPauseChanged(event.isPaused());
+    }
+
+    private void onKeyInput(InputEvent.Key event) {
+        runtime.onManualInput("manual_keyboard_input");
+    }
+
+    private void onMouseButtonInput(InputEvent.MouseButton.Pre event) {
+        runtime.onManualInput("manual_mouse_button_input");
+    }
+
+    private void onMouseScrollInput(InputEvent.MouseScrollingEvent event) {
+        runtime.onManualInput("manual_mouse_scroll_input");
+    }
+
+    private void onScreenOpening(ScreenEvent.Opening event) {
+        if (event.getNewScreen() != null) {
+            runtime.onManualInput("unexpected_screen_opened");
+        }
     }
 
     private void onClientStopping(ClientStoppingEvent event) {

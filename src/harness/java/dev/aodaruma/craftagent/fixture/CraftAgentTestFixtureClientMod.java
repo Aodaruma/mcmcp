@@ -13,5 +13,7 @@ public final class CraftAgentTestFixtureClientMod {
                     + CraftAgentTestFixtureMod.ENABLE_PROPERTY + "=true");
         }
         NeoForge.EVENT_BUS.addListener(FixtureCommands::register);
+        NeoForge.EVENT_BUS.addListener(FixturePhase2Scenario::onServerTick);
+        NeoForge.EVENT_BUS.addListener(FixturePhase2Scenario::onServerStopped);
     }
 }

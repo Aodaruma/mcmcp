@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.lang.reflect.Method;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -90,5 +91,23 @@ class ClientCommandInboxTest {
         var receipt = inbox.requestEmergencyStop("after_shutdown").get(1, TimeUnit.SECONDS);
 
         assertThat(receipt).isSameAs(terminal);
+    }
+
+    @Test
+    void discardedPendingStartsCountsOnlyStartCommands() throws Exception {
+        var inbox = new ClientCommandInbox(8, new InputReleaseController(), new LocalArmingState());
+        var start = inbox.submit("start_routine", 1, Long.MAX_VALUE, () -> "started");
+        var read = inbox.submit("get_snapshot", 1, Long.MAX_VALUE, () -> "read");
+        var cancel = inbox.submitControl("cancel_routine", 1, Long.MAX_VALUE, () -> "cancelled");
+        Method failPending = ClientCommandInbox.class.getDeclaredMethod("failPending", Throwable.class);
+        failPending.setAccessible(true);
+
+        int discardedStarts = (int) failPending.invoke(
+                inbox, new ClientCommandInbox.CommandInvalidatedException("test stop"));
+
+        assertThat(discardedStarts).isEqualTo(1);
+        assertThat(start).isCompletedExceptionally();
+        assertThat(read).isCompletedExceptionally();
+        assertThat(cancel).isCompletedExceptionally();
     }
 }

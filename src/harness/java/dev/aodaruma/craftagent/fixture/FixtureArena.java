@@ -6,6 +6,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Relative;
 import net.minecraft.world.food.FoodData;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -21,6 +22,7 @@ import net.minecraft.world.level.block.state.properties.Half;
 import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.level.block.state.properties.StairsShape;
 
+import java.util.Set;
 import java.util.function.Consumer;
 
 /** A deterministic, absolute-coordinate Phase 1 observation arena. */
@@ -43,6 +45,7 @@ final class FixtureArena {
     static final BlockPos GLASS_TARGET = new BlockPos(203, 201, 201);
     static final BlockPos HIDDEN_APERTURE = new BlockPos(199, 201, 203);
     static final BlockPos HIDDEN_TARGET = new BlockPos(199, 201, 204);
+    static final BlockPos PHASE2_TARGET = new BlockPos(194, 203, 194);
 
     private static final int MUTATION_FLAGS = Block.UPDATE_ALL | Block.UPDATE_SUPPRESS_DROPS;
     private static final int PAIRED_BLOCK_FLAGS =
@@ -52,6 +55,7 @@ final class FixtureArena {
     }
 
     static void load(FixtureSecurity.Context context) {
+        FixturePhase2Scenario.stop();
         ServerLevel level = context.level();
 
         // Every block write, including clearing, passes through the bounds-checked helper.
@@ -139,8 +143,35 @@ final class FixtureArena {
     }
 
     static void resetInventoryAndStatus(FixtureSecurity.Context context) {
+        FixturePhase2Scenario.stop();
         requireInitialized(context.level());
         resetPlayer(context.player());
+    }
+
+    static void preparePhase2(FixtureSecurity.Context context, boolean slowTarget) {
+        requireInitialized(context.level());
+        resetPlayer(context.player());
+        if (!context.player().teleportTo(
+                context.level(), 194.5D, 200.0D, 194.5D, Set.<Relative>of(), 0.0F, -90.0F, false)) {
+            throw new IllegalStateException("Phase 2 fixture could not synchronize player position and rotation");
+        }
+
+        for (BlockPos light : new BlockPos[] {
+                new BlockPos(193, 199, 193), new BlockPos(195, 199, 193),
+                new BlockPos(193, 199, 195), new BlockPos(195, 199, 195)}) {
+            setBlock(context.level(), light, Blocks.SEA_LANTERN.defaultBlockState());
+        }
+        setBlock(context.level(), PHASE2_TARGET,
+                slowTarget ? Blocks.OBSIDIAN.defaultBlockState() : Blocks.STONE.defaultBlockState());
+    }
+
+    static boolean restorePhase2Stone(FixtureSecurity.Context context) {
+        requireInitialized(context.level());
+        if (!context.level().getBlockState(PHASE2_TARGET).isAir()) {
+            return false;
+        }
+        setBlock(context.level(), PHASE2_TARGET, Blocks.STONE.defaultBlockState());
+        return true;
     }
 
     static void sendStatus(FixtureSecurity.Context context, Consumer<Component> output) {
@@ -163,6 +194,7 @@ final class FixtureArena {
         output.accept(Component.literal(blockLine(level, "slab_sample", SLAB_SAMPLE)));
         output.accept(Component.literal(blockLine(level, "visible_target", VISIBLE_TARGET)));
         output.accept(Component.literal(blockLine(level, "glass_window", GLASS_WINDOW)));
+        output.accept(Component.literal(blockLine(level, "phase2_target", PHASE2_TARGET)));
         output.accept(Component.literal("hidden_target=" + pos(HIDDEN_TARGET)
                 + " aperture=" + pos(HIDDEN_APERTURE)
                 + " aperture_open=" + level.getBlockState(HIDDEN_APERTURE).isAir()

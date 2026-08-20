@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 /** JSON Schema 2020-12 documents advertised by the Phase 1 tools. */
-final class McpToolSchemas {
+public final class McpToolSchemas {
     static final List<String> SNAPSHOT_SCOPES = List.of(
             "player", "inventory", "target", "visible_blocks", "visible_entities", "world", "screen");
 
@@ -68,6 +68,53 @@ final class McpToolSchemas {
         return closedObject(fields("reason", string(1, 160, null)), "reason");
     }
 
+    static Map<String, Object> listRoutinesInput() {
+        return closedObject(fields());
+    }
+
+    static Map<String, Object> getRoutineInput() {
+        return closedObject(fields(
+                "routine_id", uuid(),
+                "after_event_seq", integer(0, Long.MAX_VALUE),
+                "max_events", integer(1, 128)), "routine_id");
+    }
+
+    public static Map<String, Object> startRoutineInput() {
+        Map<String, Object> goal = closedObject(fields(
+                "item", registryId(),
+                "minimum_inventory_count", integer(1, 2_304)),
+                "item", "minimum_inventory_count");
+        Map<String, Object> parameters = closedObject(fields(
+                "target", dimensionBlockPosition(),
+                "allowed_blocks", array(registryId(), 1, 16, true),
+                "goal", goal,
+                "regeneration_timeout_seconds", integer(1, 10)),
+                "target", "allowed_blocks", "goal", "regeneration_timeout_seconds");
+        Map<String, Object> region = closedObject(fields(
+                "min", blockPosition(),
+                "max", blockPosition()), "min", "max");
+        Map<String, Object> bounds = closedObject(fields(
+                "dimension", registryId(),
+                "region", region,
+                "max_travel_blocks", constant(0),
+                "max_duration_seconds", integer(1, 60),
+                "allow_break", constant(true)),
+                "dimension", "region", "max_travel_blocks", "max_duration_seconds", "allow_break");
+        return closedObject(fields(
+                "kind", constant("stationary_break"),
+                "parameters", parameters,
+                "bounds", bounds,
+                "completion_intent", constant("finish_goal"),
+                "idempotency_key", uuid()),
+                "kind", "parameters", "bounds", "completion_intent", "idempotency_key");
+    }
+
+    static Map<String, Object> cancelRoutineInput() {
+        return closedObject(fields(
+                "routine_id", uuid(),
+                "reason", string(1, 160, null)), "routine_id", "reason");
+    }
+
     static Map<String, Object> statusOutput() {
         Map<String, Object> versions = closedObject(fields(
                 "mcp", string(1, 64, null),
@@ -85,7 +132,12 @@ final class McpToolSchemas {
                 "reason", nullableString(160)), "locked", "unlock_expires_at_client_tick", "reason");
         Map<String, Object> voiceChat = closedObject(fields(
                 "status", enumString("unavailable", "ready", "muted", "error"),
-                "adapter_version", nullableString(64)), "status", "adapter_version");
+                "adapter_version", nullableString(64),
+                "connected", nullable(schema("type", "boolean")),
+                "muted", nullable(schema("type", "boolean")),
+                "failure", nullableString(96),
+                "recovery_required", schema("type", "boolean")),
+                "status", "adapter_version", "connected", "muted", "failure", "recovery_required");
         Map<String, Object> policies = closedObject(fields(
                 "survival", string(1, 64, "^[a-z][a-z0-9_]*$"),
                 "completion", string(1, 64, "^[a-z][a-z0-9_]*$")), "survival", "completion");
@@ -307,6 +359,142 @@ final class McpToolSchemas {
         return envelope("emergency_stop", data);
     }
 
+    static Map<String, Object> listRoutinesOutput() {
+        Map<String, Object> catalogEntry = closedObject(fields(
+                "kind", constant("stationary_break"),
+                "phase", constant(2),
+                "experimental", constant(false),
+                "input_schema", schema(
+                        "type", "object",
+                        "additionalProperties", true,
+                        "maxProperties", 64),
+                "postconditions", array(string(1, 160, null), 1, 16, true)),
+                "kind", "phase", "experimental", "input_schema", "postconditions");
+        Map<String, Object> data = closedObject(fields(
+                "catalog_version", constant("phase-2"),
+                "routines", array(catalogEntry, 1, 1)), "catalog_version", "routines");
+        return envelope("list_routines", data);
+    }
+
+    static Map<String, Object> getRoutineOutput() {
+        return envelope("get_routine", routineData());
+    }
+
+    static Map<String, Object> startRoutineOutput() {
+        Map<String, Object> data = closedObject(fields(
+                "routine_id", uuid(),
+                "kind", constant("stationary_break"),
+                "state", routineState(),
+                "idempotent_replay", schema("type", "boolean")),
+                "routine_id", "kind", "state", "idempotent_replay");
+        return envelope("start_routine", data);
+    }
+
+    static Map<String, Object> cancelRoutineOutput() {
+        Map<String, Object> data = closedObject(fields(
+                "routine_id", uuid(),
+                "state", routineState(),
+                "released_inputs", schema("type", "boolean"),
+                "already_terminal", schema("type", "boolean")),
+                "routine_id", "state", "released_inputs", "already_terminal");
+        return envelope("cancel_routine", data);
+    }
+
+    private static Map<String, Object> routineData() {
+        Map<String, Object> goal = closedObject(fields(
+                "verified", schema("type", "boolean")), "verified");
+        Map<String, Object> progress = closedObject(fields(
+                "completed", integer(0, 2_304),
+                "total", integer(1, 2_304),
+                "unit", constant("items")), "completed", "total", "unit");
+        Map<String, Object> currentStep = nullable(closedObject(fields(
+                "kind", constant("break_block"),
+                "target", dimensionBlockPosition()), "kind", "target"));
+        Map<String, Object> checkpoint = closedObject(fields(
+                "seq", integer(0, Long.MAX_VALUE),
+                "observation_revision", integer(0, Long.MAX_VALUE)), "seq", "observation_revision");
+        Map<String, Object> verification = closedObject(fields(
+                "confirmed", integer(0, 2_304),
+                "expected", integer(1, 2_304),
+                "unknown", integer(0, 2_304)), "confirmed", "expected", "unknown");
+        Map<String, Object> effect = closedObject(fields(
+                "type", string(1, 96, "^[a-z][a-z0-9_]*$"),
+                "observed_before", boundedDiagnosticDetails(),
+                "observed_after", boundedDiagnosticDetails(),
+                "verification", enumString("confirmed", "inferred", "unknown")),
+                "type", "observed_before", "observed_after", "verification");
+        Map<String, Object> safety = closedObject(fields(
+                "mode", enumString("normal", "stopping", "paused"),
+                "last_check_client_tick", integer(0, Long.MAX_VALUE)),
+                "mode", "last_check_client_tick");
+        Map<String, Object> wait = nullable(closedObject(fields(
+                "reason", string(1, 96, "^[a-z][a-z0-9_]*$"),
+                "deadline_client_tick", integer(0, Long.MAX_VALUE),
+                "wake_condition", string(1, 160, null)),
+                "reason", "deadline_client_tick", "wake_condition"));
+        Map<String, Object> failure = routineFailure();
+        Map<String, Object> finalization = closedObject(fields(
+                "required", schema("type", "boolean"),
+                "status", enumString("pending", "running", "succeeded", "failed", "not_required"),
+                "phase", nullableString(128),
+                "failure", nullable(failure)),
+                "required", "status", "phase", "failure");
+        Map<String, Object> event = closedObject(fields(
+                "seq", integer(1, Long.MAX_VALUE),
+                "type", enumString(
+                        "phase_started", "step_verified", "retrying", "checkpoint", "needs_replan",
+                        "finalization_started", "goal_verified", "succeeded", "failed", "cancelled"),
+                "client_tick", integer(0, Long.MAX_VALUE),
+                "observation_revision", integer(0, Long.MAX_VALUE),
+                "details", boundedDetails()),
+                "seq", "type", "client_tick", "observation_revision", "details");
+        return closedObject(fields(
+                "routine_id", uuid(),
+                "kind", constant("stationary_break"),
+                "state", routineState(),
+                "phase", string(1, 128, "^[a-z][a-z0-9_.]*$"),
+                "goal", goal,
+                "progress", progress,
+                "current_step", currentStep,
+                "checkpoint", checkpoint,
+                "verification", verification,
+                "effects", array(effect, 0, 32),
+                "safety", safety,
+                "wait", wait,
+                "finalization", finalization,
+                "events", array(event, 0, 128),
+                "failure", nullable(failure),
+                "next_poll_after_ms", integer(50, 10_000),
+                "events_truncated", schema("type", "boolean")),
+                "routine_id", "kind", "state", "phase", "goal", "progress", "current_step",
+                "checkpoint", "verification", "effects", "safety", "wait", "finalization", "events",
+                "failure", "next_poll_after_ms", "events_truncated");
+    }
+
+    private static Map<String, Object> routineFailure() {
+        return closedObject(fields(
+                "category", enumString("transient", "precondition", "divergence", "safety", "external"),
+                "code", string(1, 64, "^[A-Z][A-Z0-9_]*$"),
+                "retryable", schema("type", "boolean"),
+                "recovery", enumString("retry", "replan", "user", "none"),
+                "scope", enumString("step", "routine", "finalization"),
+                // A 60-second Phase 2 deadline is at most 1,200 client ticks.
+                "attempts", integer(0, 1_200),
+                "expected", boundedDiagnosticDetails(),
+                "observed", boundedDiagnosticDetails(),
+                "evidence", boundedDiagnosticDetails(),
+                "suggested_snapshot_scopes", array(
+                        enumString(SNAPSHOT_SCOPES.toArray(String[]::new)), 0, SNAPSHOT_SCOPES.size(), true),
+                "requires_user", schema("type", "boolean")),
+                "category", "code", "retryable", "recovery", "scope", "attempts", "expected",
+                "observed", "evidence", "suggested_snapshot_scopes", "requires_user");
+    }
+
+    private static Map<String, Object> routineState() {
+        return enumString("QUEUED", "VALIDATING", "RUNNING", "WAITING", "FINALIZING",
+                "SUCCEEDED", "FAILED", "CANCELLED");
+    }
+
     private static Map<String, Object> envelope(String toolName, Map<String, Object> dataSchema) {
         Map<String, Object> error = closedObject(fields(
                 "code", string(1, 64, "^[a-z][a-z0-9_]*$"),
@@ -332,6 +520,20 @@ final class McpToolSchemas {
                 "type", "object",
                 "propertyNames", schema("pattern", "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"),
                 "additionalProperties", scalarOrScalarArray(),
+                "maxProperties", 32);
+    }
+
+    private static Map<String, Object> boundedDiagnosticDetails() {
+        Map<String, Object> scalarMap = schema(
+                "type", "object",
+                "propertyNames", schema("pattern", "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"),
+                "additionalProperties", scalarJson(),
+                "maxProperties", 128);
+        return schema(
+                "type", "object",
+                "propertyNames", schema("pattern", "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"),
+                "additionalProperties", schema("oneOf", List.of(
+                        scalarJson(), array(scalarJson(), 0, 128), scalarMap)),
                 "maxProperties", 32);
     }
 
@@ -501,6 +703,11 @@ final class McpToolSchemas {
 
     private static Map<String, Object> registryOrTagId() {
         return string(3, 257, "^#?[a-z0-9_.-]+:[a-z0-9_./-]+$");
+    }
+
+    private static Map<String, Object> uuid() {
+        return string(36, 36,
+                "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$");
     }
 
     private static Map<String, Object> enumString(String... values) {

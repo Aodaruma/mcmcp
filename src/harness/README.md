@@ -26,6 +26,14 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
   The observer must not learn this until a later `expose_hidden` plus observation.
 - `/craftagent_fixture oracle` — explicit manual-test-only ground truth for the hidden cell.
 - `/craftagent_fixture reset_player` — restores the deterministic survival status and inventory.
+- `/craftagent_fixture phase2 regen` — places an overhead stone target and restores it after
+  8 server ticks; use a cobblestone goal of 34 to force two confirmed breaks.
+- `/craftagent_fixture phase2 no_regen` — leaves the first confirmed break as air for the
+  `TARGET_NOT_REGENERATED` gate.
+- `/craftagent_fixture phase2 slow` — uses obsidian with the fixed iron pickaxe for timeout and
+  cancellation/input-release tests.
+- `/craftagent_fixture phase2 status|off` — prints server break/regeneration counters or stops
+  the scenario. The tick handler reauthorizes the private integrated-server boundary every tick.
 
 The gallery includes age 0/7 wheat, hydrated farmland, an east-facing upper-half stair,
 both halves of an open hinged door, a powered lit lamp plus a block-light sample, a stable source

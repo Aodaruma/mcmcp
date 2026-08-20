@@ -25,7 +25,13 @@ final class McpTestFixtures {
                 "locked", false,
                 "unlock_expires_at_client_tick", 20_000L,
                 "reason", "operator_armed");
-        Map<String, Object> voiceChat = fields("status", "unavailable", "adapter_version", "none");
+        Map<String, Object> voiceChat = fields(
+                "status", "unavailable",
+                "adapter_version", "none",
+                "connected", null,
+                "muted", null,
+                "failure", null,
+                "recovery_required", false);
         Map<String, Object> policies = fields("survival", "conservative", "completion", "safe_idle");
         Map<String, Object> routine = fields(
                 "routine_id", "routine-test", "kind", "observe", "state", "RUNNING");

@@ -99,10 +99,22 @@ neoForge {
 
 repositories {
     mavenCentral()
+    maven {
+        name = 'MaxHenkel'
+        url = 'https://maven.maxhenkel.de/repository/public'
+        content {
+            includeGroup 'de.maxhenkel.voicechat'
+        }
+    }
 }
 
 dependencies {
     harnessImplementation sourceSets.main.output
+
+    // Optional at runtime. The production pack supplies both the API and implementation;
+    // CraftAgent is still usable without an audio path in single-player test environments.
+    compileOnly 'de.maxhenkel.voicechat:voicechat-api:2.6.20'
+    testRuntimeOnly 'de.maxhenkel.voicechat:voicechat-api:2.6.20'
 
     // The MCP SDK uses Jackson 3 (tools.jackson.*), avoiding NeoForge's Jackson 2 packages.
     // Jar-in-Jar keeps the production mod self-contained; exact versions are intentional

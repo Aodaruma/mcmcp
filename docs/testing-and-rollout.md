@@ -2,13 +2,19 @@
 
 ## 現在地点
 
-Phase 0とPhase 1は完了しています。Phase 1は本体MODと別source setのfixture MODを実装し、下記の合格条件をすべて通過しました。Phase 2〜6は設計済みですが未実装で、実装と各Phaseのgateを通過するまでtool catalogへ追加しません。Phase 7はv1に含めません。
+Phase 0〜2は完了しています。本体MODと別source setのdevelopment fixture MODを使って下記のgateを通過し、Phase 2の`stationary_break`まで公開しました。Phase 3〜6は設計済みですが未実装で、実装と各Phaseのgateを通過するまでtool catalogへ追加しません。Phase 7はv1に含めません。
 
-Phase 1の公開toolは`get_status`、`get_snapshot`、`compare_block_plan`、`emergency_stop`の4つだけです。
+現在の公開toolは`get_status`、`get_snapshot`、`compare_block_plan`、`list_routines`、`get_routine`、`start_routine`、`cancel_routine`、`emergency_stop`の8つです。`start_routine`で公開するroutine kindはPhase 2の`stationary_break`だけです。
 
-Phase 1の検証では、Java 25でunit/integration test 44件（失敗0）、GameTest 2/2、development clientの38分連続稼働とdimension往復、全snapshot scope、BlockState（水・ハーフブロックを含む）、ガラス透過・石遮蔽・Entity last-knownの観測境界、MCP security・token ACL・最大viewport、正常shutdown、および正式なJar-in-Jar production JARのPrism Launcher起動を確認しました。
+Phase 2完了判定の証跡は次のとおりです。
 
-## Phase 1の開発・検証手順
+| 検証層 | 結果 |
+|---|---|
+| 自動test | Java 25でunit/integration test 143件、失敗0。GameTest 2/2 |
+| Development fixture | `stationary_break`の成功、想定失敗、cancel、`emergency_stop`（MCP stop）、F9、Escを確認。Phase 1由来の38分連続稼働、dimension往復、全snapshot scope、観測境界、MCP securityも維持 |
+| Production Prism実Modpack | fixtureなしの本体JARで、Simple Voice Chatのmute/restore、サーバー確認済みbreak、再生成なしの想定失敗、正常shutdownを確認 |
+
+## Phase 1〜2の開発・検証手順
 
 Java 25を指定し、リポジトリ直下で実行します。
 
@@ -48,7 +54,7 @@ Java 25を指定し、リポジトリ直下で実行します。
 - [x] Entity user handoffと完了後safety policy
 - [x] MCP Java SDK 2.0.0 / protocol 2025-11-25へPoC前提を修正
 
-## Phase 1: 読み取りと停止PoC
+## Phase 1: 読み取りと停止PoC（完了）
 
 - client-only NeoForge MODの最小build
 - embedded loopback MCP server、Origin、auth、rate/size limit
@@ -71,15 +77,15 @@ Java 25を指定し、リポジトリ直下で実行します。
 - 壁越し未観測blockを値・Boolean一致のどちらでも取得できない
 - 一度観測したblockが時刻付き`last_known`で残る
 - hidden block updateだけではmemoryが更新されない
-- 再観測・server-confirmed actionでmemoryが更新される
+- 再観測、またはサーバー同期を確認した自操作でmemoryが更新され、出所を`interaction_confirmation`として返す
 - dimension/session間でmemoryが混ざらない
 - stale memoryだけで能動actionを開始できない
 - Entity遮蔽後に現在座標が更新されず、hidden updateだけでlast-knownがrefreshされない
 - player識別子を返さず、opaque Entity refのTTL切れと任意UUIDを拒否する
 
-## Phase 2: `stationary_break`
+## Phase 2: `stationary_break`（完了）
 
-- 最初は最大60秒、合格後も上限300秒
+- 公開schemaでは最大60秒
 - crosshair target、reach、focus、health、visible threat、progressを毎tick監視
 - 2秒以下のinternal attack lease
 - `PRECHECK -> EXECUTE -> WAIT_SERVER_SYNC -> VERIFY`
@@ -96,7 +102,7 @@ Java 25を指定し、リポジトリ直下で実行します。
 - already-satisfied、server lag、block replacementを誤成功しない
 - timeoutしたstart commandが後から発火しない
 
-## Phase 3: 有限semantic action
+## Phase 3: 有限semantic action（未実装）
 
 - `navigate_to`
 - `break_block`
@@ -116,7 +122,7 @@ Java 25を指定し、リポジトリ直下で実行します。
 - event seq単調、ring buffer truncation時もcurrent state完全
 - `needs_replan` event後はfailureを保持して`FAILED`へ終端する
 
-## Phase 4: Block planと建築
+## Phase 4: Block planと建築（未実装）
 
 - `compare_block_plan`
 - phase分割された`apply_block_plan`
@@ -134,7 +140,7 @@ Java 25を指定し、リポジトリ直下で実行します。
 - partial update、server lag、chunk unload、material不足をfault injection
 - rollbackなしで残差planへ収束
 
-## Phase 5: Inventory、農林業、maintenance
+## Phase 5: Inventory、農林業、maintenance（未実装）
 
 - allowlist screen handler
 - `craft_items`、`transfer_items`
@@ -158,7 +164,7 @@ Java 25を指定し、リポジトリ直下で実行します。
 - 睡眠のrespawn point変更を確認済み`effects`として返す
 - maintenance前checkpoint、帰還後diffを必須にする
 
-## Phase 6: one-shotと完了後安全化
+## Phase 6: one-shotと完了後安全化（未実装）
 
 - LLM outer loopによる複数routine orchestration
 - 中間routineの`continue_goal`と最終routineの`finish_goal`

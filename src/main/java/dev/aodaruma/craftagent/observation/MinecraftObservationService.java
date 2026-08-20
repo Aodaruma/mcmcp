@@ -78,6 +78,19 @@ public final class MinecraftObservationService {
         this.visibility = Objects.requireNonNull(visibility, "visibility");
     }
 
+    /** Shared fairness boundary for safety checks that must not become a hidden-entity oracle. */
+    public boolean isEntityCurrentlyVisible(
+            Minecraft minecraft,
+            net.minecraft.world.entity.Entity entity,
+            double maxDistance) {
+        Objects.requireNonNull(minecraft, "minecraft");
+        Objects.requireNonNull(entity, "entity");
+        if (!minecraft.isSameThread()) {
+            throw new IllegalStateException("entity visibility must be sampled on the client thread");
+        }
+        return visibility.entity(minecraft, entity, maxDistance).visible();
+    }
+
     /** Captures all requested snapshot scopes in the supplied client tick. */
     public Map<String, Object> getSnapshot(
             Minecraft minecraft, long clientTick, Map<String, Object> arguments) {

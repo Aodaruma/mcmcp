@@ -17,7 +17,8 @@ import java.util.concurrent.CompletionStage;
 public interface McpRuntimePort {
     CompletionStage<RuntimeReply> submit(RuntimeCommand command, RuntimeCallContext context);
 
-    sealed interface RuntimeCommand permits GetStatus, GetSnapshot, CompareBlockPlan, EmergencyStop {
+    sealed interface RuntimeCommand permits GetStatus, GetSnapshot, CompareBlockPlan, ListRoutines,
+            GetRoutine, StartRoutine, CancelRoutine, EmergencyStop {
         String toolName();
     }
 
@@ -47,6 +48,46 @@ public interface McpRuntimePort {
         @Override
         public String toolName() {
             return "compare_block_plan";
+        }
+    }
+
+    record ListRoutines() implements RuntimeCommand {
+        @Override
+        public String toolName() {
+            return "list_routines";
+        }
+    }
+
+    record GetRoutine(Map<String, Object> arguments) implements RuntimeCommand {
+        public GetRoutine {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "get_routine";
+        }
+    }
+
+    record StartRoutine(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartRoutine {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "start_routine";
+        }
+    }
+
+    record CancelRoutine(Map<String, Object> arguments) implements RuntimeCommand {
+        public CancelRoutine {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "cancel_routine";
         }
     }
 

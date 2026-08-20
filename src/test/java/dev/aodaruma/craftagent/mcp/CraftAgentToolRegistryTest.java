@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class CraftAgentToolRegistryTest {
     @Test
-    void advertisesOnlyTheBoundedPhaseOneCatalogWithClosedSchemas() {
+    void advertisesOnlyThePhaseGatedCatalogWithClosedSchemas() {
         CraftAgentToolRegistry registry = new CraftAgentToolRegistry(
                 (command, context) -> CompletableFuture.completedFuture(
                         McpRuntimePort.RuntimeReply.success(McpTestFixtures.statusData())),
@@ -27,7 +27,9 @@ class CraftAgentToolRegistryTest {
                 .toList();
 
         assertThat(tools).extracting(McpSchema.Tool::name)
-                .containsExactly("get_status", "get_snapshot", "compare_block_plan", "emergency_stop");
+                .containsExactly(
+                        "get_status", "get_snapshot", "compare_block_plan", "list_routines", "get_routine",
+                        "start_routine", "cancel_routine", "emergency_stop");
         for (McpSchema.Tool tool : tools) {
             assertThat(tool.inputSchema()).containsEntry("additionalProperties", false);
             assertThat(tool.outputSchema()).containsEntry("additionalProperties", false);
@@ -35,11 +37,15 @@ class CraftAgentToolRegistryTest {
             assertEveryObjectSchemaControlsAdditionalProperties(tool.outputSchema());
             assertThat(tool.annotations().idempotentHint()).isTrue();
             assertThat(tool.annotations().openWorldHint()).isTrue();
-            assertThat(tool.annotations().destructiveHint()).isFalse();
         }
-        assertThat(tools.subList(0, 3)).allSatisfy(tool ->
+        assertThat(tools.subList(0, 5)).allSatisfy(tool ->
                 assertThat(tool.annotations().readOnlyHint()).isTrue());
-        assertThat(tools.get(3).annotations().readOnlyHint()).isFalse();
+        assertThat(tools.subList(5, 8)).allSatisfy(tool ->
+                assertThat(tool.annotations().readOnlyHint()).isFalse());
+        assertThat(tools.get(5).annotations().destructiveHint()).isTrue();
+        assertThat(List.of(tools.get(0), tools.get(1), tools.get(2), tools.get(3), tools.get(4),
+                tools.get(6), tools.get(7))).allSatisfy(tool ->
+                assertThat(tool.annotations().destructiveHint()).isFalse());
     }
 
     @Test

@@ -23,26 +23,39 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class ClientCommandInbox {
     public static final int DEFAULT_CAPACITY = 64;
     public static final int MAX_NORMAL_COMMANDS_PER_TICK = 1;
+    public static final int MAX_CONTROL_COMMANDS_PER_TICK = 8;
 
     private final ArrayBlockingQueue<PendingCommand<?>> normalQueue;
+    private final ArrayBlockingQueue<PendingCommand<?>> controlQueue;
     private final ConcurrentLinkedQueue<CompletableFuture<StopReceipt>> stopWaiters = new ConcurrentLinkedQueue<>();
     private final AtomicReference<String> pendingStopReason = new AtomicReference<>();
     private final AtomicLong safetyEpoch = new AtomicLong();
     private final Object admissionGate = new Object();
     private final InputReleaseController inputRelease;
     private final LocalArmingState armingState;
+    private final EmergencyStopHandler emergencyStopHandler;
     private boolean accepting = true;
     /** Guarded by {@link #admissionGate}; returned idempotently once shutdown has completed. */
     private StopReceipt terminalStopReceipt;
 
     public ClientCommandInbox(InputReleaseController inputRelease, LocalArmingState armingState) {
-        this(DEFAULT_CAPACITY, inputRelease, armingState);
+        this(DEFAULT_CAPACITY, inputRelease, armingState, (reason, session) -> true);
     }
 
     public ClientCommandInbox(int capacity, InputReleaseController inputRelease, LocalArmingState armingState) {
+        this(capacity, inputRelease, armingState, (reason, session) -> true);
+    }
+
+    public ClientCommandInbox(
+            int capacity,
+            InputReleaseController inputRelease,
+            LocalArmingState armingState,
+            EmergencyStopHandler emergencyStopHandler) {
         normalQueue = new ArrayBlockingQueue<>(capacity);
+        controlQueue = new ArrayBlockingQueue<>(Math.max(8, Math.min(capacity, 32)));
         this.inputRelease = Objects.requireNonNull(inputRelease, "inputRelease");
         this.armingState = Objects.requireNonNull(armingState, "armingState");
+        this.emergencyStopHandler = Objects.requireNonNull(emergencyStopHandler, "emergencyStopHandler");
     }
 
     public <T> CompletableFuture<T> submit(
@@ -61,6 +74,31 @@ public final class ClientCommandInbox {
                     name, expectedWorldGeneration, safetyEpoch.get(), deadlineNanos, action, result);
             if (!normalQueue.offer(command)) {
                 return CompletableFuture.failedFuture(new RejectedExecutionException("client command inbox is full"));
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Enqueues bounded cancellation/control work for the next pre-tick, ahead of reads.
+     * Starts remain on the post-tick queue so they validate against a freshly picked target.
+     */
+    public <T> CompletableFuture<T> submitControl(
+            String name,
+            long expectedWorldGeneration,
+            long deadlineNanos,
+            Callable<T> action) {
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(action, "action");
+        var result = new CompletableFuture<T>();
+        synchronized (admissionGate) {
+            if (!accepting) {
+                return CompletableFuture.failedFuture(new RejectedExecutionException("runtime is stopping"));
+            }
+            var command = new PendingCommand<>(
+                    name, expectedWorldGeneration, safetyEpoch.get(), deadlineNanos, action, result);
+            if (!controlQueue.offer(command)) {
+                return CompletableFuture.failedFuture(new RejectedExecutionException("client control inbox is full"));
             }
         }
         return result;
@@ -99,17 +137,30 @@ public final class ClientCommandInbox {
         processEmergencyStop(minecraft, session);
     }
 
+    /** Drains cancellation/control work after emergency stop and before routine input acquisition. */
+    public void drainControlsPreTick(WorldSessionTracker.Snapshot session) {
+        drainQueue(controlQueue, MAX_CONTROL_COMMANDS_PER_TICK, session.generation(), System.nanoTime());
+    }
+
     /**
      * Runs Phase 1 read commands after vanilla has refreshed crosshair targeting for this tick.
      * Mutating routines use a separate pre-tick lane in later phases.
      */
     public void drainReadsPostTick(WorldSessionTracker.Snapshot session) {
-        drainNormal(session.generation(), System.nanoTime());
+        drainQueue(normalQueue, MAX_NORMAL_COMMANDS_PER_TICK, session.generation(), System.nanoTime());
     }
 
     void drainNormal(long currentGeneration, long nowNanos) {
-        for (int i = 0; i < MAX_NORMAL_COMMANDS_PER_TICK; i++) {
-            var command = normalQueue.poll();
+        drainQueue(normalQueue, MAX_NORMAL_COMMANDS_PER_TICK, currentGeneration, nowNanos);
+    }
+
+    private void drainQueue(
+            ArrayBlockingQueue<PendingCommand<?>> queue,
+            int limit,
+            long currentGeneration,
+            long nowNanos) {
+        for (int i = 0; i < limit; i++) {
+            var command = queue.poll();
             if (command == null) {
                 return;
             }
@@ -141,7 +192,16 @@ public final class ClientCommandInbox {
     }
 
     public int queuedCommands() {
-        return normalQueue.size();
+        return normalQueue.size() + controlQueue.size();
+    }
+
+    /** Used by physical-input fencing so a queued mutating start cannot outlive user input. */
+    public boolean hasPendingCommand(String name) {
+        Objects.requireNonNull(name, "name");
+        synchronized (admissionGate) {
+            return normalQueue.stream().anyMatch(command -> command.name().equals(name))
+                    || controlQueue.stream().anyMatch(command -> command.name().equals(name));
+        }
     }
 
     private void processEmergencyStop(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
@@ -154,6 +214,12 @@ public final class ClientCommandInbox {
                 reason = "operator_stop";
             }
             boolean inputsReleased = inputRelease.releaseAll(minecraft);
+            try {
+                inputsReleased &= emergencyStopHandler.stop(reason, session);
+            }
+            catch (RuntimeException | LinkageError failure) {
+                inputsReleased = false;
+            }
             armingState.lock(reason);
             int discarded = failPending(new CommandInvalidatedException("invalidated by emergency stop"));
             var receipt = new StopReceipt(
@@ -171,8 +237,12 @@ public final class ClientCommandInbox {
     private int failPending(Throwable failure) {
         var pending = new ArrayList<PendingCommand<?>>();
         normalQueue.drainTo(pending);
+        controlQueue.drainTo(pending);
+        int discardedStarts = Math.toIntExact(pending.stream()
+                .filter(command -> command.name().equals("start_routine"))
+                .count());
         pending.forEach(command -> command.result.completeExceptionally(failure));
-        return pending.size();
+        return discardedStarts;
     }
 
     /** Caller must hold {@link #admissionGate}. */
@@ -235,6 +305,12 @@ public final class ClientCommandInbox {
             boolean inputsReleased,
             boolean locked,
             int discardedPendingStarts) {
+    }
+
+    @FunctionalInterface
+    public interface EmergencyStopHandler {
+        /** Runs on the Minecraft client thread before stop waiters are completed. */
+        boolean stop(String reason, WorldSessionTracker.Snapshot session);
     }
 
     public static final class CommandTimeoutException extends RuntimeException {

@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 
-/** Builds the bounded Phase 1 tool catalog and bridges calls to the client-thread runtime port. */
+/** Builds the phase-gated tool catalog and bridges calls to the client-thread runtime port. */
 public final class CraftAgentToolRegistry {
     private static final McpSchema.ToolAnnotations READ_ONLY_ANNOTATIONS = McpSchema.ToolAnnotations.builder()
             .readOnlyHint(true)
@@ -30,6 +30,18 @@ public final class CraftAgentToolRegistry {
             .openWorldHint(true)
             .build();
     private static final McpSchema.ToolAnnotations STOP_ANNOTATIONS = McpSchema.ToolAnnotations.builder()
+            .readOnlyHint(false)
+            .destructiveHint(false)
+            .idempotentHint(true)
+            .openWorldHint(true)
+            .build();
+    private static final McpSchema.ToolAnnotations START_ANNOTATIONS = McpSchema.ToolAnnotations.builder()
+            .readOnlyHint(false)
+            .destructiveHint(true)
+            .idempotentHint(true)
+            .openWorldHint(true)
+            .build();
+    private static final McpSchema.ToolAnnotations CANCEL_ANNOTATIONS = McpSchema.ToolAnnotations.builder()
             .readOnlyHint(false)
             .destructiveHint(false)
             .idempotentHint(true)
@@ -77,6 +89,38 @@ public final class CraftAgentToolRegistry {
                                 McpToolSchemas.compareOutput(),
                                 READ_ONLY_ANNOTATIONS),
                         McpRuntimePort.CompareBlockPlan::new),
+                specification(
+                        tool(
+                                "list_routines",
+                                "List phase-gated routine kinds and their closed start schemas.",
+                                McpToolSchemas.listRoutinesInput(),
+                                McpToolSchemas.listRoutinesOutput(),
+                                READ_ONLY_ANNOTATIONS),
+                        ignored -> new McpRuntimePort.ListRoutines()),
+                specification(
+                        tool(
+                                "get_routine",
+                                "Read complete current routine state plus bounded events after an optional cursor.",
+                                McpToolSchemas.getRoutineInput(),
+                                McpToolSchemas.getRoutineOutput(),
+                                READ_ONLY_ANNOTATIONS),
+                        McpRuntimePort.GetRoutine::new),
+                specification(
+                        tool(
+                                "start_routine",
+                                "Start a bounded stationary_break routine after local arming and live safety validation.",
+                                McpToolSchemas.startRoutineInput(),
+                                McpToolSchemas.startRoutineOutput(),
+                                START_ANNOTATIONS),
+                        McpRuntimePort.StartRoutine::new),
+                specification(
+                        tool(
+                                "cancel_routine",
+                                "Idempotently release inputs and cancel one routine on the Minecraft client thread.",
+                                McpToolSchemas.cancelRoutineInput(),
+                                McpToolSchemas.cancelRoutineOutput(),
+                                CANCEL_ANNOTATIONS),
+                        this::cancelRoutineCommand),
                 specification(
                         tool(
                                 "emergency_stop",
@@ -209,6 +253,15 @@ public final class CraftAgentToolRegistry {
     }
 
     private McpRuntimePort.RuntimeCommand emergencyStopCommand(Map<String, Object> arguments) {
+        return new McpRuntimePort.EmergencyStop(validatedReason(arguments));
+    }
+
+    private McpRuntimePort.RuntimeCommand cancelRoutineCommand(Map<String, Object> arguments) {
+        validatedReason(arguments);
+        return new McpRuntimePort.CancelRoutine(arguments);
+    }
+
+    private static String validatedReason(Map<String, Object> arguments) {
         Object rawReason = arguments.get("reason");
         if (!(rawReason instanceof String reason) || reason.isBlank() || reason.length() > 160) {
             throw new IllegalArgumentException("reason must contain 1..160 characters");
@@ -217,7 +270,7 @@ public final class CraftAgentToolRegistry {
                 || Character.getType(codePoint) == Character.FORMAT)) {
             throw new IllegalArgumentException("reason must not contain control or formatting characters");
         }
-        return new McpRuntimePort.EmergencyStop(reason);
+        return reason;
     }
 
     private McpSchema.CallToolResult successResult(

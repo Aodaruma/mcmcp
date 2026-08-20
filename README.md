@@ -6,10 +6,13 @@ Minecraft 26.2 / NeoForge 26.2向けに、通常のサバイバル操作だけ�
 
 - Phase 0（設計と安全境界）: 完了
 - Phase 1（読み取り、観測記憶、loopback MCP、緊急停止）: 完了（実装・全受入ゲート合格）
-- Phase 2〜6（採掘、有限action、建築、農林業、one-shot）: 設計済み、未実装
+- Phase 2（`stationary_break`、routine lifecycle、Simple Voice Chat安全化）: 完了（実装・全受入ゲート合格）
+- Phase 3〜6（有限action、建築、農林業、one-shot）: 設計済み、未実装
 - Phase 7（収容済みEntity搬送）: v1対象外のexperimental設計
 
-Phase 1でMCPへ公開するtoolは、読み取り専用の`get_status`、scope必須の`get_snapshot`、block planとの差分を読む`compare_block_plan`、入力解放と処理停止を行う`emergency_stop`の4つです。現時点では採掘、移動、設置、クラフトなどの能動操作は公開していません。
+現在MCPへ公開するtoolは、`get_status`、`get_snapshot`、`compare_block_plan`、`list_routines`、`get_routine`、`start_routine`、`cancel_routine`、`emergency_stop`の8つです。能動操作はPhase 2の`stationary_break`だけを公開しており、移動、設置、クラフトなどPhase 3以降の操作はまだ公開していません。
+
+Phase 2完了時点で、unit/integration test 143件（失敗0）とGameTest 2/2を通過しました。development fixtureでは成功、想定失敗、cancel、`emergency_stop`（MCP stop）、F9、Escの各経路を確認し、productionのPrism実ModpackではSimple Voice Chatのmute/restore、サーバー確認済みbreak、再生成なしの想定失敗、正常shutdownを確認しています。
 
 ## 結論
 
@@ -108,12 +111,12 @@ Java 25を使用します。Windowsではリポジトリ直下から次を実行
 
 ## 段階導入
 
-1. 読み取り、観測記憶、MCP transport、緊急停止
-2. その場から動かない`stationary_break`
-3. 有限のblock interaction、移動、postcondition検証
-4. `compare_block_plan`と`apply_block_plan`による建築
-5. クラフト、コンテナ、農林業、食事、睡眠
-6. one-shot orchestration、安全な完了処理
+1. [完了] 読み取り、観測記憶、MCP transport、緊急停止
+2. [完了] その場から動かない`stationary_break`
+3. [未実装] 有限のblock interaction、移動、postcondition検証
+4. [未実装] `compare_block_plan`と`apply_block_plan`による建築
+5. [未実装] クラフト、コンテナ、農林業、食事、睡眠
+6. [未実装] one-shot orchestration、安全な完了処理
 7. 収容済みEntityの搬送をexperimentalとして個別検証
 
 各段階は前段の停止・同期・回復試験に合格してから有効化します。

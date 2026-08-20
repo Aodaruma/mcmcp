@@ -57,6 +57,34 @@ final class FixtureSecurity {
         return Decision.allow(new Context(server, level, player));
     }
 
+    /** Revalidates every safety invariant for a stored long-running fixture scenario. */
+    static Decision reauthorize(Context context) {
+        if (context == null) {
+            return Decision.reject("fixture context is missing");
+        }
+        if (!Boolean.getBoolean(CraftAgentTestFixtureMod.ENABLE_PROPERTY)) {
+            return Decision.reject("test harness property was removed");
+        }
+        IntegratedServer server = context.server();
+        ServerPlayer player = context.player();
+        if (Minecraft.getInstance().getSingleplayerServer() != server || !server.isSameThread()) {
+            return Decision.reject("integrated-server identity or thread changed");
+        }
+        if (!server.isSingleplayer() || server.isDedicatedServer() || server.isPublished()) {
+            return Decision.reject("singleplayer world is no longer private");
+        }
+        if (server.getPlayerList().getPlayerCount() != 1
+                || server.getPlayerList().getPlayer(player.getUUID()) != player
+                || !server.isSingleplayerOwner(player.nameAndId())) {
+            return Decision.reject("singleplayer owner identity changed");
+        }
+        if (player.level() != context.level()
+                || !Level.OVERWORLD.equals(context.level().dimension())) {
+            return Decision.reject("fixture player left the authorized Overworld");
+        }
+        return Decision.allow(context);
+    }
+
     record Context(IntegratedServer server, ServerLevel level, ServerPlayer player) {
     }
 
