@@ -105,6 +105,7 @@ final class FixtureCommands {
                         .then(phase5("tree", FixturePhase5Mode.TREE))
                         .then(phase5("sleep", FixturePhase5Mode.SLEEP))
                         .then(phase5("survey", FixturePhase5Mode.SURVEY))
+                        .then(phase5("iron_farm", FixturePhase5Mode.IRON_FARM))
                         .then(phase5("reset", FixturePhase5Mode.RESET)))
                 .then(Commands.literal("expose_hidden")
                         .executes(context -> execute(context.getSource(), (fixture, output) -> {
@@ -124,6 +125,12 @@ final class FixtureCommands {
                             success(context.getSource(),
                                     "sealed ground truth changed; observer must not learn it through the wall");
                         })))
+                .then(Commands.literal("iron_farm_oracle")
+                        .executes(context -> execute(
+                                context.getSource(), FixtureIronFarmScenario::sendOracle)))
+                .then(Commands.literal("iron_farm_activate")
+                        .executes(context -> execute(
+                                context.getSource(), FixtureIronFarmScenario::activate)))
                 .then(Commands.literal("oracle")
                         .executes(context -> execute(context.getSource(), FixtureArena::sendOracle))));
     }

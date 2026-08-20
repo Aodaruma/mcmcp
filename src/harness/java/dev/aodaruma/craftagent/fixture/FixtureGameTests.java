@@ -38,6 +38,7 @@ final class FixtureGameTests {
     private static final Identifier PHASE3_TEST_ID = id("phase3_action_fixture");
     private static final Identifier PHASE4_TEST_ID = id("phase4_block_plan_fixture");
     private static final Identifier PHASE5_TEST_ID = id("phase5_workspace_fixture");
+    private static final Identifier IRON_FARM_TEST_ID = id("iron_farm_lab_fixture");
     private static final Identifier ENVIRONMENT_ID = id("fixture_environment");
 
     private static final DeferredRegister<Consumer<GameTestHelper>> TEST_FUNCTIONS =
@@ -52,6 +53,9 @@ final class FixtureGameTests {
     private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PHASE5_WORKSPACE_FIXTURE =
             TEST_FUNCTIONS.register(
                     "phase5_workspace_fixture", () -> FixtureGameTests::runPhase5WorkspaceFixture);
+    private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> IRON_FARM_LAB_FIXTURE =
+            TEST_FUNCTIONS.register(
+                    "iron_farm_lab_fixture", () -> FixtureGameTests::runIronFarmLabFixture);
 
     private FixtureGameTests() {
     }
@@ -76,6 +80,8 @@ final class FixtureGameTests {
                 new FunctionGameTestInstance(PHASE4_BLOCK_PLAN_FIXTURE.getKey(), data));
         event.registerTest(PHASE5_TEST_ID,
                 new FunctionGameTestInstance(PHASE5_WORKSPACE_FIXTURE.getKey(), data));
+        event.registerTest(IRON_FARM_TEST_ID,
+                new FunctionGameTestInstance(IRON_FARM_LAB_FIXTURE.getKey(), data));
     }
 
     private static void runPhase1BlockStates(GameTestHelper helper) {
@@ -403,6 +409,142 @@ final class FixtureGameTests {
                 FixturePhase5Scenario.bedState(BedPart.HEAD), pairFlags);
         assertExactState(helper, foot, FixturePhase5Scenario.bedState(BedPart.FOOT));
         assertExactState(helper, head, FixturePhase5Scenario.bedState(BedPart.HEAD));
+        helper.succeed();
+    }
+
+    private static void runIronFarmLabFixture(GameTestHelper helper) {
+        int width = FixtureIronFarmScenario.LAB_MAX.getX()
+                - FixtureIronFarmScenario.LAB_MIN.getX() + 1;
+        int depth = FixtureIronFarmScenario.LAB_MAX.getZ()
+                - FixtureIronFarmScenario.LAB_MIN.getZ() + 1;
+        if (width < 64 || depth < 64
+                || FixtureIronFarmScenario.LAB_MIN.getX() <= FixtureArena.MAX.getX()
+                || FixtureIronFarmScenario.unfinishedPlatformCellCount() != 60) {
+            helper.fail(Component.literal("iron-farm lab is not a separate, broad unfinished workspace"));
+        }
+        var constructionTargets = FixtureIronFarmScenario.constructionTargets();
+        var constructionLanes = FixtureIronFarmScenario.constructionLanes();
+        for (BlockPos target : constructionTargets) {
+            boolean inNormalReach = constructionLanes.stream().anyMatch(lane -> {
+                double horizontal = Math.hypot(
+                        lane.getX() - target.getX(), lane.getZ() - target.getZ());
+                return horizontal <= 3.0D;
+            });
+            if (!inNormalReach || FixtureIronFarmScenario.CENTER_CHUTE.contains(target)) {
+                helper.fail(Component.literal("iron-farm floor target escaped normal cross-lane reach"));
+            }
+        }
+        for (BlockPos villager : FixtureIronFarmScenario.VILLAGER_POSITIONS) {
+            for (BlockPos chute : FixtureIronFarmScenario.CENTER_CHUTE) {
+                if (Math.abs(villager.getX() - chute.getX()) > 8
+                        || Math.abs(villager.getZ() - chute.getZ()) > 8) {
+                    helper.fail(Component.literal("iron-farm chute escaped a villager spawn volume"));
+                }
+            }
+            for (BlockPos peer : FixtureIronFarmScenario.VILLAGER_POSITIONS) {
+                if (Math.abs(villager.getX() - peer.getX()) > 10
+                        || Math.abs(villager.getZ() - peer.getZ()) > 10) {
+                    helper.fail(Component.literal("iron-farm villagers escaped their mutual range"));
+                }
+            }
+        }
+        if (!FixtureIronFarmScenario.VILLAGE_ROOF_STATE.equals(Blocks.GLASS.defaultBlockState())
+                || FixtureIronFarmScenario.waterSources().size() != 40
+                || FixtureIronFarmScenario.waterPlugs().size() != 36) {
+            helper.fail(Component.literal("iron-farm spawnproof roof or sealed reservoirs changed"));
+        }
+        for (BlockPos source : FixtureIronFarmScenario.waterSources()) {
+            boolean adjacentPlug = FixtureIronFarmScenario.waterPlugs().stream()
+                    .anyMatch(plug -> source.distManhattan(plug) == 1);
+            if (!adjacentPlug) {
+                helper.fail(Component.literal("iron-farm water source has no safe-break plug"));
+            }
+        }
+        var collection = FixtureIronFarmScenario.collectionLayout();
+        for (var entry : collection.entrySet()) {
+            if (!entry.getValue().is(Blocks.HOPPER)) {
+                continue;
+            }
+            BlockPos cursor = entry.getKey();
+            for (int step = 0; step < 4 && !cursor.equals(FixtureIronFarmScenario.COLLECTION_CONTAINER); step++) {
+                BlockState state = collection.get(cursor);
+                if (state == null || !state.is(Blocks.HOPPER)) {
+                    break;
+                }
+                cursor = cursor.relative(state.getValue(BlockStateProperties.FACING_HOPPER));
+            }
+            if (!cursor.equals(FixtureIronFarmScenario.COLLECTION_CONTAINER)) {
+                helper.fail(Component.literal("iron-farm hopper path does not reach the collection barrel"));
+            }
+        }
+        var completePlatform = new java.util.HashSet<BlockPos>();
+        completePlatform.addAll(constructionTargets);
+        completePlatform.addAll(constructionLanes);
+        completePlatform.addAll(FixtureIronFarmScenario.CENTER_CHUTE);
+        if (completePlatform.size() != 100
+                || FixtureIronFarmScenario.LAVA_SOURCE.getY() <= 200
+                || FixtureIronFarmScenario.LAVA_SOURCE.getY()
+                        >= FixtureIronFarmScenario.PLATFORM_MIN.getY()
+                || FixtureIronFarmScenario.LAVA_SOURCE.distManhattan(
+                        new BlockPos(255, FixtureIronFarmScenario.LAVA_SOURCE.getY(), 255)) != 1) {
+            helper.fail(Component.literal(
+                    "iron-farm spawn surface, central chute, or lava blade geometry changed"));
+        }
+        if (FixtureIronFarmScenario.scareDoorState(DoubleBlockHalf.LOWER)
+                    .getValue(BlockStateProperties.OPEN)) {
+            helper.fail(Component.literal("iron-farm scare doors must start with sight blocked"));
+        }
+        for (BlockPos position : FixtureIronFarmScenario.VILLAGER_BEDS) {
+            if (!FixtureIronFarmScenario.contains(position)) {
+                helper.fail(Component.literal("iron-farm bed escaped the dedicated lab boundary"));
+            }
+        }
+        if (FixtureIronFarmScenario.materialContents().size() != 4
+                || FixtureIronFarmScenario.materialContents().values().stream().anyMatch(java.util.List::isEmpty)) {
+            helper.fail(Component.literal("iron-farm material depot categories are incomplete"));
+        }
+
+        BlockPos bedFoot = new BlockPos(0, 1, 0);
+        BlockPos bedHead = bedFoot.relative(Direction.EAST);
+        helper.setBlock(bedFoot.below(), Blocks.SMOOTH_STONE);
+        helper.setBlock(bedHead.below(), Blocks.SMOOTH_STONE);
+        int pairFlags = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_SUPPRESS_DROPS;
+        helper.getLevel().setBlock(helper.absolutePos(bedFoot),
+                FixtureIronFarmScenario.bedState(BedPart.FOOT), pairFlags);
+        helper.getLevel().setBlock(helper.absolutePos(bedHead),
+                FixtureIronFarmScenario.bedState(BedPart.HEAD), pairFlags);
+        assertExactState(helper, bedFoot, FixtureIronFarmScenario.bedState(BedPart.FOOT));
+        assertExactState(helper, bedHead, FixtureIronFarmScenario.bedState(BedPart.HEAD));
+
+        BlockPos water = new BlockPos(3, 1, 0);
+        BlockPos lava = new BlockPos(7, 1, 7);
+        helper.setBlock(water.below(), Blocks.GLASS);
+        helper.setBlock(lava.below(), Blocks.GLASS);
+        helper.setBlock(water, Blocks.WATER);
+        helper.setBlock(lava, Blocks.LAVA);
+        if (!helper.getLevel().getFluidState(helper.absolutePos(water)).isSource()) {
+            helper.fail(Component.literal("iron-farm prerequisite water must be a source block"));
+        }
+        assertExactState(helper, lava, Blocks.LAVA.defaultBlockState());
+
+        for (int x = 0; x < 3; x++) {
+            var villager = helper.spawn(EntityTypes.VILLAGER, new BlockPos(x, 1, 3));
+            long currentGameTime = helper.getLevel().getGameTime();
+            FixtureIronFarmScenario.configureVillager(villager, currentGameTime);
+            if (villager.isBaby()
+                    || !villager.getBrain().getMemory(
+                            net.minecraft.world.entity.ai.memory.MemoryModuleType.LAST_SLEPT)
+                            .filter(value -> value == currentGameTime).isPresent()) {
+                helper.fail(Component.literal(
+                        "iron-farm fixture villager must be adult with deterministic LAST_SLEPT"));
+            }
+        }
+        var boat = helper.spawn(EntityTypes.OAK_BOAT, new BlockPos(4, 1, 3));
+        var zombie = helper.spawn(EntityTypes.ZOMBIE, new BlockPos(4, 1, 3));
+        FixtureIronFarmScenario.configureZombie(zombie);
+        if (zombie.isBaby() || !zombie.startRiding(boat) || zombie.getVehicle() != boat) {
+            helper.fail(Component.literal("iron-farm fixture zombie must be an adult boat passenger"));
+        }
         helper.succeed();
     }
 

@@ -11,6 +11,7 @@ enum FixturePhase5Mode {
     TREE("tree", 0, true),
     SLEEP("sleep", 0, true),
     SURVEY("survey", 0, true),
+    IRON_FARM("iron_farm", 1, true),
     RESET("reset", 0, false);
 
     private final String wireName;
@@ -33,6 +34,7 @@ enum FixturePhase5Mode {
             case "tree" -> TREE;
             case "sleep" -> SLEEP;
             case "survey" -> SURVEY;
+            case "iron_farm" -> IRON_FARM;
             case "reset" -> RESET;
             default -> throw new IllegalArgumentException(
                     "unsupported Phase 5 fixture mode: " + sanitize(rawMode));

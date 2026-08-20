@@ -14,7 +14,7 @@ class FixturePhase5AutorunConfigTest {
                 .map(FixturePhase5Mode::wireName))
                 .containsExactly(
                         "recipes", "craft", "transfer", "crop",
-                        "tree", "sleep", "survey", "reset");
+                        "tree", "sleep", "survey", "iron_farm", "reset");
 
         for (FixturePhase5Mode mode : FixturePhase5Mode.values()) {
             assertThat(FixturePhase5AutorunConfig.parse(
@@ -31,7 +31,7 @@ class FixturePhase5AutorunConfigTest {
     }
 
     @Test
-    void onlyTheSixRoutineModesMayAutoArm() {
+    void onlyRoutineModesMayAutoArm() {
         assertThat(Arrays.stream(FixturePhase5Mode.values())
                 .filter(FixturePhase5Mode::routine))
                 .containsExactly(
@@ -40,7 +40,8 @@ class FixturePhase5AutorunConfigTest {
                         FixturePhase5Mode.CROP,
                         FixturePhase5Mode.TREE,
                         FixturePhase5Mode.SLEEP,
-                        FixturePhase5Mode.SURVEY);
+                        FixturePhase5Mode.SURVEY,
+                        FixturePhase5Mode.IRON_FARM);
 
         for (FixturePhase5Mode mode : FixturePhase5Mode.values()) {
             assertThat(FixturePhase5AutorunConfig.parse(mode.wireName(), "true")).get()

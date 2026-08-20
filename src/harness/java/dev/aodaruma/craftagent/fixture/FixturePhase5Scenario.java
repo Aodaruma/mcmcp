@@ -82,6 +82,10 @@ final class FixturePhase5Scenario {
             FixtureSecurity.Context context,
             FixturePhase5Mode mode,
             Consumer<Component> output) {
+        if (mode == FixturePhase5Mode.IRON_FARM) {
+            FixtureIronFarmScenario.prepare(context, output);
+            return;
+        }
         if (mode == FixturePhase5Mode.RESET) {
             FixtureArena.load(context);
             resetKnownRecipes(context);
@@ -224,7 +228,8 @@ final class FixturePhase5Scenario {
             }
             case SLEEP, SURVEY -> player.getInventory().setItem(
                     0, new ItemStack(Items.BREAD, 4));
-            case RESET -> throw new IllegalArgumentException("reset does not configure Phase 5 inventory");
+            case IRON_FARM, RESET ->
+                    throw new IllegalArgumentException(mode.wireName() + " has separate inventory setup");
         }
         player.getInventory().setSelectedSlot(mode.selectedSlot());
         player.resetSentInfo();
@@ -266,7 +271,8 @@ final class FixturePhase5Scenario {
             case TREE -> new Pose(201.5D, 200.0D, 198.5D, -90.0F, 8.0F);
             case SLEEP -> new Pose(193.5D, 200.0D, 204.5D, -90.0F, 18.0F);
             case SURVEY -> new Pose(200.5D, 200.0D, 204.5D, -90.0F, 12.0F);
-            case RESET -> throw new IllegalArgumentException("reset has no Phase 5 pose");
+            case IRON_FARM, RESET ->
+                    throw new IllegalArgumentException(mode.wireName() + " has a separate pose");
         };
     }
 
