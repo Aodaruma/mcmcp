@@ -122,6 +122,7 @@ class RoutineWireMapperTest {
         var wire = RoutineWireMapper.toMap(snapshot);
 
         assertThat(wire).containsEntry("kind", "interact_block");
+        assertThat(wire).containsEntry("resources", null);
         assertThat(payload(wire, "current_step"))
                 .containsEntry("kind", "interact_block")
                 .containsEntry("target", snapshot.currentStep().fields().get("target"))
@@ -136,6 +137,59 @@ class RoutineWireMapperTest {
         assertThat(payload(wire, "wait")).containsEntry("reason", "server_sync");
         assertThat((List<?>) wire.get("effects")).singleElement().satisfies(effect ->
                 assertThat(((Map<?, ?>) effect).get("verification")).isEqualTo("confirmed"));
+    }
+
+    @Test
+    void mapsPlanCellAndSortedResourceSynchronizationWithoutLeakingDiagnostics() {
+        var snapshot = new RoutineSnapshot(
+                UUID.fromString("00000000-0000-0000-0000-000000000044"),
+                "apply_block_plan",
+                RoutineState.WAITING,
+                "wait_prepare",
+                false,
+                new RoutineProgress(1, 2, "cells"),
+                new RoutineStep("plan_cell", Map.of(
+                        "step_index", 1,
+                        "phase_id", "foundation",
+                        "cell_id", "stone-1",
+                        "operation", "place",
+                        "target", Map.of(
+                                "dimension", "minecraft:overworld", "x", 4, "y", 65, "z", 8),
+                        "expected_after", Map.of(
+                                "block", "minecraft:stone", "properties", Map.of()),
+                        "child_stage", "place",
+                        "item", "minecraft:stone")),
+                new RoutineCheckpoint(1, 90),
+                new RoutineVerification(1, 2, 0),
+                List.of(),
+                new RoutineWait("bounded_preparation", 120, "bounded aim is ready"),
+                92,
+                Map.of("resource_plan", Map.of(
+                        "planned", Map.of("minecraft:stone", 2, "minecraft:dirt", 1),
+                        "remaining", Map.of("minecraft:stone", 1),
+                        "available", Map.of("minecraft:stone", 12, "minecraft:dirt", 3),
+                        "server_synchronized", true,
+                        "basis_observation_revision", 91L)),
+                null,
+                false,
+                null,
+                new RoutineEventRing.EventPage(List.of(), false, false, 1, 0));
+
+        var wire = RoutineWireMapper.toMap(snapshot);
+
+        assertThat(payload(wire, "current_step"))
+                .containsEntry("kind", "plan_cell")
+                .containsEntry("operation", "place")
+                .containsEntry("cell_id", "stone-1");
+        var resources = payload(wire, "resources");
+        assertThat(resources)
+                .containsEntry("server_synchronized", true)
+                .containsEntry("basis_observation_revision", 91L);
+        var plannedItems = ((List<?>) resources.get("planned")).stream()
+                .map(item -> (String) ((Map<?, ?>) item).get("item"))
+                .toList();
+        assertThat(plannedItems)
+                .containsExactly("minecraft:dirt", "minecraft:stone");
     }
 
     private static RoutineSnapshot snapshot(

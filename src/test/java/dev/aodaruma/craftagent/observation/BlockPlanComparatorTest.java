@@ -22,7 +22,12 @@ class BlockPlanComparatorTest {
 
         assertThat(plan.expected().getFirst().worldPosition())
                 .isEqualTo(new BlockPosition("minecraft:overworld", 97, 65, 198));
-        assertThat(plan.hash()).startsWith("sha256:").hasSize(71);
+        assertThat(plan.expected().getFirst().sourceState().properties())
+                .containsEntry("facing", "south");
+        assertThat(plan.expected().getFirst().state().properties())
+                .containsEntry("facing", "west");
+        assertThat(plan.hash()).isEqualTo(
+                "sha256:9e7fa1e4b010a57a2f0e4f38ee2cae9dfb5a122fd4ccbe5ac8b533e7a19a81df");
     }
 
     @Test

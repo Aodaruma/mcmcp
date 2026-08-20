@@ -68,6 +68,12 @@ postconditionはaction実装へ固定し、LLMが任意predicateを注入する�
 
 単にpacketやclickを送れたことは成功にしません。`server-confirmed`という表現はpositive ACKとサーバーstateを持つblock actionに使い、navigationは上記の根拠を伴う`server-reconciled`と区別します。
 
+Phase 4の`apply_block_plan`（実装・受入完了）は、外部で分割した1 phaseを1 callで実行する、移動なしの局所routineです。1 phaseは1〜64 cellで、各cellはruntime registryに存在する完全な`expected_before`と`expected_after`、および`verify_only / break_to_air / place / replace`のいずれかを持ちます。offsetとBlockStateはmirrorを適用してからY軸時計回りに0/90/180/270度回転します。
+
+preflightでは全cellをcurrent-onlyで同じframeに収集し、unknown、before mismatch、資材不足、eligible hotbarにないitem、準備不能なtargetがあれば最初のdispatch前に失敗します。設置資材の開始baselineは現在のclient inventoryです。各place/replace-placeの直前にも残量・eligible hotbar・current stateを再確認し、実行後はcovering prediction ACK、targetの完全なserver state、およびfreshなinbound selected-slot inventory syncを待ちます。最終判定は全target cellを同じclient tickにcurrentとして再収集し、完全state一致かつunknown 0である場合だけ成功します。last-knownや別tickの寄せ集めは完成根拠にしません。
+
+このpostconditionは要求されたtarget cellだけを確認します。vanillaが通常発生させる隣接block更新やgame eventは抑止せず、target外がすべて無変化だったという保証は返しません。計画側は影響を受け得るcellを必要に応じて同じphaseの`verify_only`へ含めます。
+
 ## routine状態
 
 公開状態は次に限定します。
@@ -157,15 +163,17 @@ checkpointを作る前に、playerが安定床上にあり、全inputを解放�
 
 ## 建築
 
-建築planは巨大な命令DSLではなく、anchorからの相対座標、block ID、必要なBlockState propertyで表します。
+建築planは巨大な命令DSLではなく、anchorからの相対座標とBlockStateで表します。読み取り専用`compare_block_plan`は明示したpropertyによる部分比較を許しますが、能動`apply_block_plan`は省略のない完全なBlockStateだけを受けます。
 
 1. `get_snapshot`で現場、inventory、既知memoryを確認
 2. `compare_block_plan`でphaseの差分とunknownを取得
-3. 必要なら`get_recipes`、採取、craft、transferを実行
-4. `apply_block_plan`が通常操作で施工
+3. LLMが現在の資材とreachから、移動なし・最大64 cellのphaseへ外部分割
+4. `apply_block_plan`が通常操作で1 phaseを施工
 5. 各blockのserver-confirmed postcondition後にcheckpoint
-6. phase終了時に再比較
+6. phase終了時に同じtickのcurrent exact-state集合を確認
 7. 内部機構確認後に外装phaseを閉じる
+
+recipe列挙、採取、craft、transferによる資材準備はPhase 5です。`get_recipes`もPhase 5の未公開候補であり、Phase 4の`apply_block_plan`は開始時点でeligible hotbarにある資材だけを使います。
 
 施設固有の`build_iron_golem_farm`は作りません。LLMが設計を選び、汎用block plan、資材、Entity handoff、稼働観測を組み合わせます。
 

@@ -19,6 +19,7 @@ public final class RoutineManager {
 
     private final StationaryBreakPort stationaryBreakPort;
     private final SemanticActionPort semanticActionPort;
+    private final ApplyBlockPlanPort applyBlockPlanPort;
     private final int eventCapacity;
     private final int maxRetainedRoutines;
     private final long terminalTtlTicks;
@@ -30,6 +31,7 @@ public final class RoutineManager {
     public RoutineManager(StationaryBreakPort stationaryBreakPort) {
         this(
                 stationaryBreakPort,
+                null,
                 null,
                 DEFAULT_EVENT_CAPACITY,
                 DEFAULT_RETAINED_ROUTINES,
@@ -44,6 +46,22 @@ public final class RoutineManager {
         this(
                 stationaryBreakPort,
                 Objects.requireNonNull(semanticActionPort, "semanticActionPort"),
+                null,
+                DEFAULT_EVENT_CAPACITY,
+                DEFAULT_RETAINED_ROUTINES,
+                DEFAULT_TERMINAL_TTL_TICKS,
+                UUID::randomUUID);
+    }
+
+    /** Production constructor enabling Phase 2, Phase 3 and Phase 4 routine families. */
+    public RoutineManager(
+            StationaryBreakPort stationaryBreakPort,
+            SemanticActionPort semanticActionPort,
+            ApplyBlockPlanPort applyBlockPlanPort) {
+        this(
+                stationaryBreakPort,
+                Objects.requireNonNull(semanticActionPort, "semanticActionPort"),
+                Objects.requireNonNull(applyBlockPlanPort, "applyBlockPlanPort"),
                 DEFAULT_EVENT_CAPACITY,
                 DEFAULT_RETAINED_ROUTINES,
                 DEFAULT_TERMINAL_TTL_TICKS,
@@ -59,6 +77,7 @@ public final class RoutineManager {
         this(
                 stationaryBreakPort,
                 null,
+                null,
                 eventCapacity,
                 maxRetainedRoutines,
                 terminalTtlTicks,
@@ -72,8 +91,27 @@ public final class RoutineManager {
             int maxRetainedRoutines,
             long terminalTtlTicks,
             Supplier<UUID> routineIds) {
+        this(
+                stationaryBreakPort,
+                semanticActionPort,
+                null,
+                eventCapacity,
+                maxRetainedRoutines,
+                terminalTtlTicks,
+                routineIds);
+    }
+
+    RoutineManager(
+            StationaryBreakPort stationaryBreakPort,
+            SemanticActionPort semanticActionPort,
+            ApplyBlockPlanPort applyBlockPlanPort,
+            int eventCapacity,
+            int maxRetainedRoutines,
+            long terminalTtlTicks,
+            Supplier<UUID> routineIds) {
         this.stationaryBreakPort = Objects.requireNonNull(stationaryBreakPort, "stationaryBreakPort");
         this.semanticActionPort = semanticActionPort;
+        this.applyBlockPlanPort = applyBlockPlanPort;
         if (eventCapacity < 1 || maxRetainedRoutines < 1 || terminalTtlTicks < 1) {
             throw new IllegalArgumentException("routine manager limits must be positive");
         }
@@ -138,6 +176,45 @@ public final class RoutineManager {
                 (routineId, eventCapacity, tick) -> request instanceof NavigateToRequest navigation
                         ? new NavigateRoutine(routineId, navigation, port, eventCapacity, tick)
                         : new FiniteActionRoutine(routineId, request, port, eventCapacity, tick));
+    }
+
+    /** Starts one bounded Phase 4 plan while keeping all child actions private to its parent. */
+    public synchronized StartReceipt startApplyBlockPlan(
+            String idempotencyKey,
+            ApplyBlockPlanRequest request,
+            long admittedClientTick) {
+        Objects.requireNonNull(request, "request");
+        request.validateAdmissionTick(admittedClientTick);
+        return admitApplyBlockPlan(idempotencyKey, request, request, admittedClientTick);
+    }
+
+    public synchronized StartReceipt startApplyBlockPlan(
+            String idempotencyKey,
+            String requestIdentity,
+            ApplyBlockPlanRequest request,
+            long admittedClientTick) {
+        Objects.requireNonNull(request, "request");
+        request.validateAdmissionTick(admittedClientTick);
+        return admitApplyBlockPlan(
+                idempotencyKey,
+                requireRequestIdentity(requestIdentity),
+                request,
+                admittedClientTick);
+    }
+
+    private StartReceipt admitApplyBlockPlan(
+            String idempotencyKey,
+            Object requestIdentity,
+            ApplyBlockPlanRequest request,
+            long admittedClientTick) {
+        var port = requireApplyBlockPlanPort();
+        return admitRoutine(
+                ApplyBlockPlanRoutine.KIND,
+                idempotencyKey,
+                requestIdentity,
+                admittedClientTick,
+                (routineId, eventCapacity, tick) -> new ApplyBlockPlanRoutine(
+                        routineId, request, port, eventCapacity, tick));
     }
 
     /**
@@ -235,6 +312,18 @@ public final class RoutineManager {
         requireSemanticActionPort();
         return replayRoutine(
                 request.kind(),
+                idempotencyKey,
+                requireRequestIdentity(requestIdentity),
+                currentClientTick);
+    }
+
+    public synchronized Optional<StartReceipt> replayApplyBlockPlan(
+            String idempotencyKey,
+            String requestIdentity,
+            long currentClientTick) {
+        requireApplyBlockPlanPort();
+        return replayRoutine(
+                ApplyBlockPlanRoutine.KIND,
                 idempotencyKey,
                 requireRequestIdentity(requestIdentity),
                 currentClientTick);
@@ -457,6 +546,13 @@ public final class RoutineManager {
             throw new IllegalStateException("semantic action port is not configured");
         }
         return semanticActionPort;
+    }
+
+    private ApplyBlockPlanPort requireApplyBlockPlanPort() {
+        if (applyBlockPlanPort == null) {
+            throw new IllegalStateException("apply block plan port is not configured");
+        }
+        return applyBlockPlanPort;
     }
 
     private static int validateMaxEvents(int maxEvents) {

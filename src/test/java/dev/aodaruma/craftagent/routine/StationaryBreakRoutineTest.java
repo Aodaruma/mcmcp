@@ -76,6 +76,39 @@ class StationaryBreakRoutineTest {
     }
 
     @Test
+    void packetBoundaryUnsafeSourceKeepsPreconditionFailureClassification() {
+        var port = new FakePort();
+        port.unsafeOnBegin = true;
+        var manager = manager(port, request(100, 8));
+        var id = manager.activeRoutineId().orElseThrow();
+
+        runToAttack(manager, port);
+
+        var failed = manager.getRoutine(id, 0, 32);
+        assertThat(failed.state()).isEqualTo(RoutineState.FAILED);
+        assertThat(failed.failure().code()).isEqualTo("UNSAFE_BREAK_SOURCE");
+        assertThat(failed.failure().category()).isEqualTo(RoutineFailure.Category.PRECONDITION);
+    }
+
+    @Test
+    void heartbeatUnsafeSourceStopsAndKeepsPreconditionFailureClassification() {
+        var port = new FakePort();
+        var manager = manager(port, request(100, 8));
+        var id = manager.activeRoutineId().orElseThrow();
+        runToAttack(manager, port);
+        port.unsafeOnHold = true;
+
+        tick(manager, port, 14);
+
+        var failed = manager.getRoutine(id, 0, 32);
+        assertThat(failed.state()).isEqualTo(RoutineState.FAILED);
+        assertThat(failed.failure().code()).isEqualTo("UNSAFE_BREAK_SOURCE");
+        assertThat(failed.failure().category()).isEqualTo(RoutineFailure.Category.PRECONDITION);
+        assertThat(port.holdCount).isOne();
+        assertThat(port.releaseCount).isOne();
+    }
+
+    @Test
     void releasesInputAndStillVerifiesWhenTheBrokenTargetLeavesTheCrosshair() {
         var port = new FakePort();
         var manager = manager(port, request(100, 8));
@@ -391,6 +424,8 @@ class StationaryBreakRoutineTest {
         private boolean crosshairOnTarget = true;
         private boolean throwLinkageOnRelease;
         private boolean returnWrongTarget;
+        private boolean unsafeOnBegin;
+        private boolean unsafeOnHold;
         private AttackAttempt lastAttempt;
         private PredictionEvidence evidence =
                 new PredictionEvidence(0, false, false, Optional.empty(), 10, 0);
@@ -417,6 +452,9 @@ class StationaryBreakRoutineTest {
                 StationaryBreakRequest request,
                 long leaseExpiresAtClientTick) {
             beginCount++;
+            if (unsafeOnBegin) {
+                throw new SafeBreakSourcePolicy.UnsafeBreakSourceException();
+            }
             var returnedTarget = returnWrongTarget
                     ? new BlockTarget(
                             request.target().dimension(),
@@ -438,6 +476,9 @@ class StationaryBreakRoutineTest {
         @Override
         public void holdAttack(AttackAttempt attempt) {
             holdCount++;
+            if (unsafeOnHold) {
+                throw new SafeBreakSourcePolicy.UnsafeBreakSourceException();
+            }
         }
 
         @Override

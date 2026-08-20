@@ -5,21 +5,31 @@ import dev.aodaruma.craftagent.mcp.McpRuntimePort;
 import dev.aodaruma.craftagent.mcp.McpToolSchemas;
 import dev.aodaruma.craftagent.mcp.RuntimeCallContext;
 import dev.aodaruma.craftagent.observation.BlockPlanComparator;
+import dev.aodaruma.craftagent.observation.BlockPlan;
+import dev.aodaruma.craftagent.observation.BlockPlanStateTransformer;
+import dev.aodaruma.craftagent.observation.BlockPlanValidationException;
+import dev.aodaruma.craftagent.observation.BlockStateView;
 import dev.aodaruma.craftagent.observation.MinecraftObservationService;
 import dev.aodaruma.craftagent.observation.WorldMemory;
 import dev.aodaruma.craftagent.safety.InputReleaseController;
 import dev.aodaruma.craftagent.safety.LocalArmingState;
 import dev.aodaruma.craftagent.routine.ActionBounds;
+import dev.aodaruma.craftagent.routine.ApplyBlockPlanOperation;
+import dev.aodaruma.craftagent.routine.ApplyBlockPlanRequest;
+import dev.aodaruma.craftagent.routine.ApplyBlockPlanStep;
 import dev.aodaruma.craftagent.routine.BlockTarget;
 import dev.aodaruma.craftagent.routine.BlockStateFingerprint;
 import dev.aodaruma.craftagent.routine.BreakBlockRequest;
 import dev.aodaruma.craftagent.routine.InteractBlockRequest;
 import dev.aodaruma.craftagent.routine.InteractEntityRequest;
+import dev.aodaruma.craftagent.routine.MinecraftApplyBlockPlanPort;
 import dev.aodaruma.craftagent.routine.MinecraftSemanticActionPort;
 import dev.aodaruma.craftagent.routine.MinecraftStationaryBreakPort;
 import dev.aodaruma.craftagent.routine.NavigateToRequest;
 import dev.aodaruma.craftagent.routine.PlaceBlockRequest;
 import dev.aodaruma.craftagent.routine.RoutineManager;
+import dev.aodaruma.craftagent.routine.SafeBreakSourcePolicy;
+import dev.aodaruma.craftagent.routine.SafePlacementSupportPolicy;
 import dev.aodaruma.craftagent.routine.RoutineFailure;
 import dev.aodaruma.craftagent.routine.RoutineSnapshot;
 import dev.aodaruma.craftagent.routine.RoutineState;
@@ -33,7 +43,17 @@ import dev.aodaruma.craftagent.voice.VoiceChatSafetyController;
 import dev.aodaruma.craftagent.voice.VoiceTransmissionGuard;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.Holder;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.BedItem;
+import net.minecraft.world.item.DoubleHighBlockItem;
+import net.minecraft.world.item.SolidBucketItem;
+import net.minecraft.world.level.block.BedBlock;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -41,6 +61,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,7 +84,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             BreakBlockRequest.KIND,
             PlaceBlockRequest.KIND,
             InteractBlockRequest.KIND,
-            InteractEntityRequest.KIND);
+            InteractEntityRequest.KIND,
+            ApplyBlockPlanRequest.KIND);
 
     private final String modVersion;
     private final String neoForgeVersion;
@@ -76,6 +98,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     private final MinecraftStationaryBreakPort stationaryBreakPort;
     private final ClientReconciliationSignals reconciliationSignals;
     private final MinecraftSemanticActionPort semanticActionPort;
+    private final MinecraftApplyBlockPlanPort applyBlockPlanPort;
     private final RoutineManager routines;
     private final VoiceChatSafetyController voiceChat;
     private final ClientCommandInbox inbox;
@@ -104,7 +127,14 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 observations,
                 ClientPredictionSignals.global(),
                 reconciliationSignals);
-        routines = new RoutineManager(stationaryBreakPort, semanticActionPort);
+        applyBlockPlanPort = new MinecraftApplyBlockPlanPort(
+                Minecraft::getInstance,
+                sessions::snapshot,
+                memory,
+                observations,
+                ClientPredictionSignals.global(),
+                reconciliationSignals);
+        routines = new RoutineManager(stationaryBreakPort, semanticActionPort, applyBlockPlanPort);
         voiceChat = new VoiceChatSafetyController(
                 SimpleVoiceChat2622Adapter.forNeoForge(() -> {
                     var minecraft = Minecraft.getInstance();
@@ -132,8 +162,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         routines.clearSession("world_join");
         finalizationRetries.clear();
         voiceRoutineId = null;
-        stationaryBreakPort.clearSession();
-        semanticActionPort.clearSession();
+        clearAutomationPortSessions(
+                stationaryBreakPort::clearSession,
+                semanticActionPort::clearSession,
+                applyBlockPlanPort::clearSession);
         reconciliationSignals.closeLevel(minecraft.level);
         sessions.beginConnection();
         arming.lock("world_join");
@@ -144,8 +176,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         assertClientThread(minecraft);
         stopForLifecycle(minecraft, "level_or_dimension_change");
         ClientPredictionSignals.global().closeLevel(minecraft.level);
-        stationaryBreakPort.clearSession();
-        semanticActionPort.clearSession();
+        clearAutomationPortSessions(
+                stationaryBreakPort::clearSession,
+                semanticActionPort::clearSession,
+                applyBlockPlanPort::clearSession);
         reconciliationSignals.closeLevel(minecraft.level);
         sessions.suspendWorld();
         arming.lock("level_or_dimension_change");
@@ -159,8 +193,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         finalizationRetries.clear();
         voiceRoutineId = null;
         ClientPredictionSignals.global().closeLevel(minecraft.level);
-        stationaryBreakPort.clearSession();
-        semanticActionPort.clearSession();
+        clearAutomationPortSessions(
+                stationaryBreakPort::clearSession,
+                semanticActionPort::clearSession,
+                applyBlockPlanPort::clearSession);
         reconciliationSignals.closeLevel(minecraft.level);
         sessions.invalidate();
         memory.detachSession();
@@ -218,6 +254,15 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                     failure);
             requestSafetyStop("prediction_capture_failed");
         }
+        try {
+            applyBlockPlanPort.captureIssuedPredictions();
+        }
+        catch (RuntimeException | LinkageError failure) {
+            CraftAgentMod.LOGGER.error(
+                    "CraftAgent block-plan prediction capture failed; stopping automation",
+                    failure);
+            requestSafetyStop("prediction_capture_failed");
+        }
         inbox.drainReadsPostTick(sessions.snapshot());
         publishSession();
     }
@@ -256,6 +301,29 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         Objects.requireNonNull(drain, "drain").run();
     }
 
+    /** One lifecycle fence for every adapter that can retain input, slot or prediction ownership. */
+    static void clearAutomationPortSessions(
+            Runnable stationaryBreakClear,
+            Runnable semanticActionClear,
+            Runnable applyBlockPlanClear) {
+        clearAutomationPortSession("stationary_break", stationaryBreakClear);
+        clearAutomationPortSession("semantic_action", semanticActionClear);
+        clearAutomationPortSession("apply_block_plan", applyBlockPlanClear);
+    }
+
+    private static void clearAutomationPortSession(String name, Runnable clear) {
+        Objects.requireNonNull(clear, name + "Clear");
+        try {
+            clear.run();
+        }
+        catch (RuntimeException | LinkageError failure) {
+            CraftAgentMod.LOGGER.error(
+                    "CraftAgent {} session cleanup failed; continuing the lifecycle fence",
+                    name,
+                    failure);
+        }
+    }
+
     /** Returns whether an active/pending start was stopped before the caller can continue. */
     static boolean runPriorityEventStopIfRequired(
             boolean workPending,
@@ -280,8 +348,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         finalizationRetries.clear();
         voiceRoutineId = null;
         voiceChat.close();
-        stationaryBreakPort.clearSession();
-        semanticActionPort.clearSession();
+        clearAutomationPortSessions(
+                stationaryBreakPort::clearSession,
+                semanticActionPort::clearSession,
+                applyBlockPlanPort::clearSession);
         reconciliationSignals.closeLevel(minecraft.level);
         memory.detachSession();
         arming.lock("client_shutdown");
@@ -430,7 +500,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
 
     static Map<String, Object> routineCatalog() {
         return Map.of(
-                "catalog_version", "phase-3",
+                "catalog_version", "phase-4",
                 "routines", List.of(
                         routineCatalogEntry(
                                 "stationary_break",
@@ -481,7 +551,16 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                                 List.of(
                                         "the opaque entity reference is re-resolved as a visible, reachable, targeted adult cow",
                                         "exactly one main-hand interaction is dispatched with minecraft:bucket and without automatic retry",
-                                        "a fresh inbound inventory sync reaches the absolute minecraft:milk_bucket count goal"))));
+                                        "a fresh inbound inventory sync reaches the absolute minecraft:milk_bucket count goal")),
+                        routineCatalogEntry(
+                                ApplyBlockPlanRequest.KIND,
+                                4,
+                                McpToolSchemas.applyBlockPlanStartInput(),
+                                List.of(
+                                        "already-satisfied cells are skipped only after a current exact full-state observation",
+                                        "all mutations have a covering vanilla prediction ACK and exact server state",
+                                        "all required cells match current exact full states with unknown equal to zero",
+                                        "the current client inventory is accepted as the eligible-hotbar baseline; every placement requires a fresh inbound selected-slot inventory sync"))));
     }
 
     private static Map<String, Object> routineCatalogEntry(
@@ -528,6 +607,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                     InteractBlockRequest.KIND,
                     InteractEntityRequest.KIND -> startSemanticAction(
                             minecraft, session, arguments, context);
+            case ApplyBlockPlanRequest.KIND -> startApplyBlockPlan(
+                    minecraft, session, arguments, context);
             default -> throw new IllegalArgumentException("kind is not an available routine");
         };
     }
@@ -550,6 +631,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         }
 
         Set<String> allowedBlocks = stringSetArgument(parameters, "allowed_blocks");
+        validateStationaryBreakAllowedBlocks(allowedBlocks);
         var goalMap = objectArgument(parameters, "goal");
         requireExactKeys(goalMap, "goal", Set.of("item", "minimum_inventory_count"));
         var goal = new StationaryBreakGoal(
@@ -650,10 +732,62 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                     Map.of());
         }
         validateLiveBounds(minecraft, request.bounds(), semanticTarget(request).orElse(null));
+        if (request instanceof PlaceBlockRequest place) {
+            try {
+                semanticActionPort.requireSafePlacementSupportForAdmission(place);
+            } catch (SafePlacementSupportPolicy.UnsafePlacementSupportException rejected) {
+                throw new RuntimeInvocationException(
+                        "unsafe_state", SafePlacementSupportPolicy.REJECTION_MESSAGE, true,
+                        Map.of("placement_support", "not_safe"));
+            }
+        }
 
         var receipt = admitWithVoiceSafety(context, () -> routines.startSemanticAction(
                 idempotencyKey, requestIdentity, request, session.clientTick()));
         return startReceiptPayload(receipt);
+    }
+
+    private Map<String, Object> startApplyBlockPlan(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            Map<String, Object> arguments,
+            RuntimeCallContext context) {
+        var parsed = applyBlockPlanArgument(arguments, session.dimension());
+        var request = parsed.request();
+        var idempotencyKey = stringArgument(arguments, "idempotency_key");
+        var replay = replayApplyBlockPlanAfterFinalizationGate(
+                finalizationRetries,
+                routines,
+                idempotencyKey,
+                parsed.requestIdentity(),
+                session.clientTick());
+        if (replay.isPresent()) {
+            return startReceiptPayload(replay.orElseThrow(), parsed.resourceEstimate());
+        }
+
+        requireLiveCall(context, "start_routine");
+        long nowNanos = System.nanoTime();
+        long hardDeadlineNanos = saturatingAdd(
+                nowNanos, Duration.ofSeconds(request.bounds().maxDurationSeconds()).toNanos());
+        if (!arming.allows(
+                session.worldSessionId(), request.kind(), hardDeadlineNanos, nowNanos)) {
+            throw new RuntimeInvocationException(
+                    "locked",
+                    request.kind() + " is not armed for this world session and deadline",
+                    false,
+                    Map.of());
+        }
+        for (var step : request.steps()) {
+            validateLiveBounds(minecraft, request.bounds(), step.target());
+        }
+        validateApplyBlockPlanItems(request);
+
+        var receipt = admitWithVoiceSafety(context, () -> routines.startApplyBlockPlan(
+                idempotencyKey,
+                parsed.requestIdentity(),
+                request,
+                session.clientTick()));
+        return startReceiptPayload(receipt, parsed.resourceEstimate());
     }
 
     private RoutineManager.StartReceipt admitWithVoiceSafety(
@@ -708,12 +842,20 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     }
 
     private Map<String, Object> startReceiptPayload(RoutineManager.StartReceipt receipt) {
+        return startReceiptPayload(receipt, null);
+    }
+
+    private Map<String, Object> startReceiptPayload(
+            RoutineManager.StartReceipt receipt,
+            Map<String, Object> resourceEstimate) {
         var snapshot = routines.getRoutine(receipt.routineId(), Long.MAX_VALUE, 1);
-        return Map.of(
-                "routine_id", receipt.routineId().toString(),
-                "kind", snapshot.kind(),
-                "state", snapshot.state().name(),
-                "idempotent_replay", receipt.reused());
+        var result = new LinkedHashMap<String, Object>();
+        result.put("routine_id", receipt.routineId().toString());
+        result.put("kind", snapshot.kind());
+        result.put("state", snapshot.state().name());
+        result.put("idempotent_replay", receipt.reused());
+        result.put("resource_estimate", resourceEstimate);
+        return result;
     }
 
     private static String stationaryBreakIdentity(
@@ -1365,6 +1507,17 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 idempotencyKey, requestIdentity, request, clientTick);
     }
 
+    static Optional<RoutineManager.StartReceipt> replayApplyBlockPlanAfterFinalizationGate(
+            FinalizationRetryQueue retries,
+            RoutineManager routines,
+            String idempotencyKey,
+            String requestIdentity,
+            long clientTick) {
+        requireNoPendingFinalizations(retries);
+        return routines.replayApplyBlockPlan(
+                idempotencyKey, requestIdentity, clientTick);
+    }
+
     private static int intValue(Object value) {
         return value instanceof Number number ? Math.max(0, number.intValue()) : 0;
     }
@@ -1378,6 +1531,26 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     }
 
     private record CleanupOutcome(boolean inputsReleased, VoiceEndOutcome voice) {
+    }
+
+    record ParsedApplyBlockPlan(
+            ApplyBlockPlanRequest request,
+            String requestIdentity,
+            Map<String, Object> resourceEstimate) {
+        ParsedApplyBlockPlan {
+            Objects.requireNonNull(request, "request");
+            Objects.requireNonNull(requestIdentity, "requestIdentity");
+            Objects.requireNonNull(resourceEstimate, "resourceEstimate");
+        }
+    }
+
+    private record FullStatePair(
+            BlockStateFingerprint source,
+            BlockStateFingerprint transformed) {
+        private FullStatePair {
+            Objects.requireNonNull(source, "source");
+            Objects.requireNonNull(transformed, "transformed");
+        }
     }
 
     private record TerminalCleanup(
@@ -1422,9 +1595,11 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             case BreakBlockRequest.KIND -> {
                 requireExactKeys(parameters, "break_block parameters", Set.of(
                         "target", "expected_before", "expected_after"));
+                var expectedBefore = blockStateArgument(parameters, "expected_before");
+                SafeBreakSourcePolicy.requireRegisteredBlockId(expectedBefore.blockId());
                 yield new BreakBlockRequest(
                         dimensionBlockTargetArgument(parameters, "target"),
-                        blockStateArgument(parameters, "expected_before"),
+                        expectedBefore,
                         blockStateArgument(parameters, "expected_after"),
                         bounds);
             }
@@ -1464,6 +1639,203 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             }
             default -> throw new IllegalArgumentException("kind is not a Phase 3 semantic action");
         };
+    }
+
+    static ParsedApplyBlockPlan applyBlockPlanArgument(
+            Map<String, Object> arguments,
+            String currentDimension) {
+        Objects.requireNonNull(arguments, "arguments");
+        requireExactKeys(arguments, "start_routine", Set.of(
+                "kind", "parameters", "bounds", "completion_intent", "idempotency_key"));
+        if (!ApplyBlockPlanRequest.KIND.equals(stringArgument(arguments, "kind"))) {
+            throw new IllegalArgumentException("kind must be apply_block_plan");
+        }
+        if (!"finish_goal".equals(stringArgument(arguments, "completion_intent"))) {
+            throw new IllegalArgumentException("completion_intent must be finish_goal");
+        }
+
+        var parameters = objectArgument(arguments, "parameters");
+        requireExactKeys(parameters, "apply_block_plan parameters", Set.of(
+                "anchor", "transform", "phase", "entries"));
+        var bounds = actionBoundsArgument(arguments, currentDimension);
+        var anchor = dimensionBlockTargetArgument(parameters, "anchor");
+        if (!anchor.dimension().equals(bounds.dimension())) {
+            throw new IllegalArgumentException("anchor dimension must equal bounds.dimension");
+        }
+
+        var transformInput = objectArgument(parameters, "transform");
+        requireExactKeys(transformInput, "transform", Set.of("rotation", "mirror"));
+        int rotation = intArgument(transformInput, "rotation");
+        var transform = new BlockPlan.Transform(rotation, stringArgument(transformInput, "mirror"));
+
+        var phase = objectArgument(parameters, "phase");
+        requireExactKeys(phase, "phase", Set.of("id", "index", "total"));
+        String phaseId = stringArgument(phase, "id");
+        int phaseIndex = intArgument(phase, "index");
+        int phaseTotal = intArgument(phase, "total");
+
+        Object rawEntries = parameters.get("entries");
+        if (!(rawEntries instanceof List<?> entries)
+                || entries.isEmpty()
+                || entries.size() > ApplyBlockPlanRequest.MAX_STEPS) {
+            throw new IllegalArgumentException("entries must contain 1..64 items");
+        }
+
+        var canonical = new StringBuilder();
+        appendIdentity(canonical, "apply_block_plan/v1");
+        appendIdentity(canonical, ApplyBlockPlanRequest.KIND);
+        appendTargetIdentity(canonical, anchor);
+        appendIdentity(canonical, Integer.toString(transform.rotation()));
+        appendIdentity(canonical, transform.mirror());
+        appendIdentity(canonical, phaseId);
+        appendIdentity(canonical, Integer.toString(phaseIndex));
+        appendIdentity(canonical, Integer.toString(phaseTotal));
+        appendIdentity(canonical, Integer.toString(entries.size()));
+
+        var steps = new ArrayList<ApplyBlockPlanStep>(entries.size());
+        for (int index = 0; index < entries.size(); index++) {
+            String path = "entries[" + index + "]";
+            if (!(entries.get(index) instanceof Map<?, ?> rawEntry)) {
+                throw new IllegalArgumentException(path + " must be an object");
+            }
+            @SuppressWarnings("unchecked")
+            var entry = (Map<String, Object>) rawEntry;
+            String operationName = stringArgument(entry, "operation");
+            ApplyBlockPlanOperation operation = switch (operationName) {
+                case "verify_only" -> ApplyBlockPlanOperation.VERIFY_ONLY;
+                case "break_to_air" -> ApplyBlockPlanOperation.BREAK_TO_AIR;
+                case "place" -> ApplyBlockPlanOperation.PLACE;
+                case "replace" -> ApplyBlockPlanOperation.REPLACE;
+                default -> throw new IllegalArgumentException(path + ".operation is unsupported");
+            };
+            boolean itemRequired = operation == ApplyBlockPlanOperation.PLACE
+                    || operation == ApplyBlockPlanOperation.REPLACE;
+            var exactKeys = itemRequired
+                    ? Set.of("id", "offset", "operation", "expected_before", "expected_after", "item")
+                    : Set.of("id", "offset", "operation", "expected_before", "expected_after");
+            requireExactKeys(entry, path, exactKeys);
+
+            String id = stringArgument(entry, "id");
+            var offset = objectArgument(entry, "offset");
+            requireExactKeys(offset, path + ".offset", Set.of("x", "y", "z"));
+            int rawX = relativeCoordinate(offset, "x", path);
+            int rawY = relativeCoordinate(offset, "y", path);
+            int rawZ = relativeCoordinate(offset, "z", path);
+            var transformedOffset = transform.apply(new BlockPlan.Offset(rawX, rawY, rawZ));
+            final BlockTarget target;
+            try {
+                target = checkedBlockTarget(
+                        anchor.dimension(),
+                        Math.addExact(anchor.x(), transformedOffset.x()),
+                        Math.addExact(anchor.y(), transformedOffset.y()),
+                        Math.addExact(anchor.z(), transformedOffset.z()));
+            }
+            catch (ArithmeticException overflow) {
+                throw new IllegalArgumentException(path + ".offset transforms outside supported bounds", overflow);
+            }
+
+            var before = fullBlockStateArgument(entry, "expected_before", transform, path);
+            var after = fullBlockStateArgument(entry, "expected_after", transform, path);
+            Optional<String> item = itemRequired
+                    ? Optional.of(stringArgument(entry, "item"))
+                    : Optional.empty();
+            if (operation == ApplyBlockPlanOperation.REPLACE
+                    && before.transformed().equals(after.transformed())) {
+                throw new IllegalArgumentException(
+                        path + " replace requires different exact before and after states");
+            }
+            steps.add(new ApplyBlockPlanStep(
+                    id, operation, target, before.transformed(), after.transformed(), item));
+
+            appendIdentity(canonical, id);
+            appendIdentity(canonical, Integer.toString(rawX));
+            appendIdentity(canonical, Integer.toString(rawY));
+            appendIdentity(canonical, Integer.toString(rawZ));
+            appendIdentity(canonical, operation.wireName());
+            appendBlockStateIdentity(canonical, before.source());
+            appendBlockStateIdentity(canonical, after.source());
+            appendIdentity(canonical, item.orElse(""));
+        }
+
+        var request = new ApplyBlockPlanRequest(
+                phaseId, phaseIndex, phaseTotal, steps, bounds);
+        request.requiredResources().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> {
+                    appendIdentity(canonical, entry.getKey());
+                    appendIdentity(canonical, Integer.toString(entry.getValue()));
+                });
+        appendIdentity(canonical, Integer.toString(request.requiredResources().size()));
+        appendBoundsIdentity(canonical, bounds);
+        appendIdentity(canonical, "finish_goal");
+        return new ParsedApplyBlockPlan(
+                request,
+                sha256Identity(canonical),
+                resourceEstimate(request));
+    }
+
+    private static int relativeCoordinate(
+            Map<String, Object> offset,
+            String coordinate,
+            String entryPath) {
+        int value = intArgument(offset, coordinate);
+        if (value < -4_096 || value > 4_096) {
+            throw new IllegalArgumentException(
+                    entryPath + ".offset." + coordinate + " must be in -4096..4096");
+        }
+        return value;
+    }
+
+    private static FullStatePair fullBlockStateArgument(
+            Map<String, Object> source,
+            String name,
+            BlockPlan.Transform transform,
+            String entryPath) {
+        var state = objectArgument(source, name);
+        requireExactKeys(state, entryPath + "." + name, Set.of("block", "properties"));
+        var fingerprint = blockStateArgument(source, name);
+        var sourceView = new BlockStateView(fingerprint.blockId(), fingerprint.properties());
+        var transformed = BlockPlanStateTransformer.transformFull(
+                sourceView, transform, entryPath + "." + name);
+        return new FullStatePair(
+                fingerprint,
+                new BlockStateFingerprint(transformed.block(), transformed.properties()));
+    }
+
+    private static String sha256Identity(StringBuilder canonical) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(
+                    canonical.toString().getBytes(StandardCharsets.UTF_8));
+            return "sha256:" + java.util.HexFormat.of().formatHex(digest);
+        }
+        catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    private static Map<String, Object> resourceEstimate(ApplyBlockPlanRequest request) {
+        var items = request.requiredResources().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(entry -> Map.<String, Object>of(
+                        "item", entry.getKey(),
+                        "maximum_required_count", entry.getValue()))
+                .toList();
+        int breaks = 0;
+        int placements = 0;
+        for (var step : request.steps()) {
+            if (step.operation() == ApplyBlockPlanOperation.BREAK_TO_AIR
+                    || step.operation() == ApplyBlockPlanOperation.REPLACE) {
+                breaks++;
+            }
+            if (step.operation() == ApplyBlockPlanOperation.PLACE
+                    || step.operation() == ApplyBlockPlanOperation.REPLACE) {
+                placements++;
+            }
+        }
+        return Map.of(
+                "items", items,
+                "break_operations", breaks,
+                "place_operations", placements);
     }
 
     private static ActionBounds actionBoundsArgument(
@@ -1594,6 +1966,80 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                         new net.minecraft.core.BlockPos(target.x(), target.y(), target.z()))) {
             throw new IllegalArgumentException("target is outside the current world border");
         }
+    }
+
+    static void validateApplyBlockPlanItems(ApplyBlockPlanRequest request) {
+        for (var step : request.steps()) {
+            if (step.operation().mutating()
+                    && (unsupportedMultiCellBlock(step.expectedBefore().blockId())
+                            || unsupportedMultiCellBlock(step.expectedAfter().blockId()))) {
+                throw new IllegalArgumentException(
+                        "multi-cell mutation is not supported; verify each cell with verify_only");
+            }
+            if ((step.operation() == ApplyBlockPlanOperation.BREAK_TO_AIR
+                    || step.operation() == ApplyBlockPlanOperation.REPLACE)
+                    && !SafeBreakSourcePolicy.allowsRegisteredBlockId(
+                            step.expectedBefore().blockId())) {
+                throw new IllegalArgumentException(SafeBreakSourcePolicy.REJECTION_MESSAGE);
+            }
+            if (step.requiredItemId().isEmpty()) {
+                continue;
+            }
+            String itemId = step.requiredItemId().orElseThrow();
+            Identifier identifier = Identifier.tryParse(itemId);
+            var registered = identifier == null
+                    ? Optional.<Holder.Reference<net.minecraft.world.item.Item>>empty()
+                    : BuiltInRegistries.ITEM.get(identifier);
+            if (registered.isEmpty()
+                    || !(registered.orElseThrow().value() instanceof BlockItem blockItem)) {
+                throw new IllegalArgumentException("plan item must be a registered BlockItem");
+            }
+            if (blockItem instanceof SolidBucketItem) {
+                throw new IllegalArgumentException(
+                        "plan item must not replace itself with a different container item");
+            }
+            if (!MinecraftApplyBlockPlanPort.supportsPlacementItem(blockItem)) {
+                throw new IllegalArgumentException(
+                        "plan item uses an unsupported placement implementation");
+            }
+            var placedBlock = blockItem.getBlock();
+            String placedBlockId = BuiltInRegistries.BLOCK.getKey(placedBlock).toString();
+            if (!placedBlockId.equals(step.expectedAfter().blockId())) {
+                throw new IllegalArgumentException("plan item must place the expected_after block");
+            }
+            if (blockItem instanceof BedItem
+                    || blockItem instanceof DoubleHighBlockItem
+                    || placedBlock instanceof DoorBlock
+                    || placedBlock instanceof BedBlock
+                    || placedBlock.defaultBlockState().hasProperty(
+                            BlockStateProperties.DOUBLE_BLOCK_HALF)
+                    || placedBlock.defaultBlockState().hasProperty(
+                            BlockStateProperties.BED_PART)) {
+                throw new IllegalArgumentException(
+                        "multi-cell mutation is not supported; verify each cell with verify_only");
+            }
+        }
+    }
+
+    static void validateStationaryBreakAllowedBlocks(Set<String> allowedBlocks) {
+        Objects.requireNonNull(allowedBlocks, "allowedBlocks");
+        allowedBlocks.forEach(SafeBreakSourcePolicy::requireRegisteredBlockId);
+    }
+
+    private static boolean unsupportedMultiCellBlock(String blockId) {
+        Identifier identifier = Identifier.tryParse(blockId);
+        var registered = identifier == null
+                ? Optional.<Holder.Reference<net.minecraft.world.level.block.Block>>empty()
+                : BuiltInRegistries.BLOCK.get(identifier);
+        if (registered.isEmpty()) {
+            return false;
+        }
+        var block = registered.orElseThrow().value();
+        var state = block.defaultBlockState();
+        return block instanceof DoorBlock
+                || block instanceof BedBlock
+                || state.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)
+                || state.hasProperty(BlockStateProperties.BED_PART);
     }
 
     private static void requireExactKeys(
@@ -1810,6 +2256,13 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         }
         if (cause instanceof RoutineManager.RoutineNotFoundException) {
             return RuntimeReply.failure("routine_not_found", "The routine is not retained", false);
+        }
+        if (cause instanceof BlockPlanValidationException invalidPlan) {
+            var details = new LinkedHashMap<String, Object>(invalidPlan.details());
+            details.put("plan_validation_code", invalidPlan.code());
+            details.put("path", invalidPlan.path());
+            return RuntimeReply.failure(
+                    "invalid_argument", publicMessage(invalidPlan), false, details);
         }
         if (cause instanceof IllegalArgumentException) {
             return RuntimeReply.failure("invalid_argument", publicMessage(cause), false);

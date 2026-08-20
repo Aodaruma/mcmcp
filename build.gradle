@@ -77,7 +77,11 @@ neoForge {
                     .map { value -> value.strip().toLowerCase(Locale.ROOT) }
             if (phase3Mode.isPresent()) {
                 def requestedMode = phase3Mode.get()
-                def supportedModes = ['navigate', 'break', 'place', 'lever', 'cow', 'reset']
+                def supportedModes = [
+                        'navigate', 'break', 'place', 'lever', 'cow', 'reset',
+                        'all_satisfied', 'mutations', 'waterlogged', 'directional_stairs',
+                        'hopper', 'shortage', 'divergence', 'hidden'
+                ]
                 if (!supportedModes.contains(requestedMode)) {
                     throw new GradleException(
                             "Unsupported craftagentFixturePhase3Mode '${requestedMode}'; expected one of ${supportedModes}")

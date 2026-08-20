@@ -1,6 +1,9 @@
 package dev.aodaruma.craftagent.runtime;
 
 import dev.aodaruma.craftagent.routine.ActionBounds;
+import dev.aodaruma.craftagent.routine.ApplyBlockPlanOperation;
+import dev.aodaruma.craftagent.routine.ApplyBlockPlanRequest;
+import dev.aodaruma.craftagent.routine.ApplyBlockPlanStep;
 import dev.aodaruma.craftagent.routine.BlockTarget;
 import dev.aodaruma.craftagent.routine.BlockStateFingerprint;
 import dev.aodaruma.craftagent.routine.BreakBlockRequest;
@@ -27,12 +30,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 class CraftAgentRuntimeHardeningTest {
@@ -45,6 +50,30 @@ class CraftAgentRuntimeHardeningTest {
                 () -> calls.add("drain"));
 
         assertThat(calls).containsExactly("request", "drain");
+    }
+
+    @Test
+    void lifecycleFenceClearsEveryAutomationPortIncludingBlockPlans() {
+        var calls = new ArrayList<String>();
+
+        CraftAgentRuntime.clearAutomationPortSessions(
+                () -> calls.add("stationary_break"),
+                () -> calls.add("semantic_action"),
+                () -> calls.add("apply_block_plan"));
+
+        assertThat(calls).containsExactly(
+                "stationary_break", "semantic_action", "apply_block_plan");
+
+        calls.clear();
+        CraftAgentRuntime.clearAutomationPortSessions(
+                () -> {
+                    calls.add("stationary_failed");
+                    throw new IllegalStateException("fixture");
+                },
+                () -> calls.add("semantic_after_failure"),
+                () -> calls.add("plan_after_failure"));
+        assertThat(calls).containsExactly(
+                "stationary_failed", "semantic_after_failure", "plan_after_failure");
     }
 
     @Test
@@ -288,13 +317,13 @@ class CraftAgentRuntimeHardeningTest {
     }
 
     @Test
-    void advertisesExactlyTheSixReleasedRoutineKindsWithKindSpecificSchemas() {
+    void advertisesExactlyTheSevenReleasedRoutineKindsWithKindSpecificSchemas() {
         var catalog = CraftAgentRuntime.routineCatalog();
 
-        assertThat(catalog).containsEntry("catalog_version", "phase-3");
+        assertThat(catalog).containsEntry("catalog_version", "phase-4");
         @SuppressWarnings("unchecked")
         var entries = (List<Map<String, Object>>) catalog.get("routines");
-        assertThat(entries).hasSize(6);
+        assertThat(entries).hasSize(7);
         assertThat(entries).extracting(entry -> entry.get("kind"))
                 .containsExactly(
                         "stationary_break",
@@ -302,10 +331,14 @@ class CraftAgentRuntimeHardeningTest {
                         "break_block",
                         "place_block",
                         "interact_block",
-                        "interact_entity");
+                        "interact_entity",
+                        "apply_block_plan");
         assertThat(entries).allSatisfy(entry -> {
             assertThat(entry.get("input_schema")).isInstanceOf(Map.class);
-            assertThat((List<?>) entry.get("postconditions")).isNotEmpty();
+            assertThat((List<?>) entry.get("postconditions"))
+                    .isNotEmpty()
+                    .allSatisfy(postcondition -> assertThat((String) postcondition)
+                            .hasSizeLessThanOrEqualTo(160));
         });
         assertThat(entries.getFirst().get("input_schema"))
                 .isNotSameAs(entries.get(1).get("input_schema"));
@@ -419,6 +452,35 @@ class CraftAgentRuntimeHardeningTest {
     }
 
     @Test
+    void rejectsUnsafePhaseTwoAndThreeBreakSourcesBeforeVoiceAdmission() {
+        for (var unsafe : List.of(
+                "minecraft:tnt",
+                "minecraft:infested_stone",
+                "minecraft:chest",
+                "minecraft:ice",
+                "example:stone")) {
+            assertThatThrownBy(() -> CraftAgentRuntime.validateStationaryBreakAllowedBlocks(
+                    Set.of("minecraft:cobblestone", unsafe)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("closed safe allowlist");
+
+            var request = startArguments("break_block", Map.of(
+                    "target", targetMap(),
+                    "expected_before", blockState(unsafe),
+                    "expected_after", blockState("minecraft:air")), 0, 30, true);
+            var mapped = CraftAgentRuntime.mapFailure(catchThrowable(() ->
+                    CraftAgentRuntime.semanticActionArgument(
+                            request, "minecraft:overworld")));
+            assertThat(mapped.failure().code()).isEqualTo("invalid_argument");
+            assertThat(mapped.failure().message()).contains("closed safe allowlist");
+        }
+
+        assertThatCode(() -> CraftAgentRuntime.validateStationaryBreakAllowedBlocks(
+                Set.of("minecraft:cobblestone", "minecraft:stone")))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     void rejectsInteractBlockWithoutASameBlockPropertyTransitionDuringParsing() {
         var noPropertyTransition = startArguments("interact_block", Map.of(
                 "target", targetMap(),
@@ -472,6 +534,250 @@ class CraftAgentRuntimeHardeningTest {
                 .matches("sha256:[0-9a-f]{64}")
                 .isEqualTo(CraftAgentRuntime.semanticActionIdentity(second))
                 .isNotEqualTo(CraftAgentRuntime.semanticActionIdentity(changedDuration));
+    }
+
+    @Test
+    void strictlyParsesAllFourClosedApplyBlockPlanOperations() {
+        var verify = CraftAgentRuntime.applyBlockPlanArgument(
+                applyPlanArguments("verify_only", fullState("minecraft:air", Map.of()),
+                        fullState("minecraft:air", Map.of()), null, false),
+                "minecraft:overworld");
+        var breakToAir = CraftAgentRuntime.applyBlockPlanArgument(
+                applyPlanArguments("break_to_air", fullState("minecraft:stone", Map.of()),
+                        fullState("minecraft:air", Map.of()), null, true),
+                "minecraft:overworld");
+        var place = CraftAgentRuntime.applyBlockPlanArgument(
+                applyPlanArguments("place", fullState("minecraft:air", Map.of()),
+                        fullState("minecraft:stone", Map.of()), "minecraft:stone", false),
+                "minecraft:overworld");
+        var replace = CraftAgentRuntime.applyBlockPlanArgument(
+                applyPlanArguments("replace", fullState("minecraft:dirt", Map.of()),
+                        fullState("minecraft:stone", Map.of()), "minecraft:stone", true),
+                "minecraft:overworld");
+
+        assertThat(List.of(verify, breakToAir, place, replace))
+                .extracting(parsed -> parsed.request().steps().getFirst().operation())
+                .containsExactly(
+                        ApplyBlockPlanOperation.VERIFY_ONLY,
+                        ApplyBlockPlanOperation.BREAK_TO_AIR,
+                        ApplyBlockPlanOperation.PLACE,
+                        ApplyBlockPlanOperation.REPLACE);
+        assertThat(place.request().requiredResources()).containsEntry("minecraft:stone", 1);
+        assertThat(place.resourceEstimate())
+                .containsEntry("break_operations", 0)
+                .containsEntry("place_operations", 1);
+    }
+
+    @Test
+    void applyBlockPlanParserRequiresCompleteRuntimeBlockStatesBeforeAdmission() {
+        var incompleteStairs = fullState(
+                "minecraft:oak_stairs", Map.of("facing", "north"));
+        var arguments = applyPlanArguments(
+                "place",
+                fullState("minecraft:air", Map.of()),
+                incompleteStairs,
+                "minecraft:oak_stairs",
+                false);
+
+        var mapped = CraftAgentRuntime.mapFailure(catchThrowable(() ->
+                CraftAgentRuntime.applyBlockPlanArgument(arguments, "minecraft:overworld")));
+
+        assertThat(mapped.failure().code()).isEqualTo("invalid_argument");
+        assertThat(mapped.failure().message()).contains("complete runtime BlockState");
+        assertThat(mapped.failure().details())
+                .containsEntry("plan_validation_code", "incomplete_block_state")
+                .containsEntry("path", "entries[0].expected_after.properties");
+    }
+
+    @Test
+    void applyBlockPlanIdentityCoversRawTransformPhaseAndBounds() {
+        var first = applyPlanArguments(
+                "verify_only", fullState("minecraft:air", Map.of()),
+                fullState("minecraft:air", Map.of()), null, false);
+        var changedTransform = deepCopy(first);
+        @SuppressWarnings("unchecked")
+        var parameters = (Map<String, Object>) changedTransform.get("parameters");
+        parameters.put("transform", Map.of("rotation", 90, "mirror", "none"));
+        var changedDuration = deepCopy(first);
+        @SuppressWarnings("unchecked")
+        var bounds = (Map<String, Object>) changedDuration.get("bounds");
+        bounds.put("max_duration_seconds", 29);
+
+        var parsed = CraftAgentRuntime.applyBlockPlanArgument(first, "minecraft:overworld");
+        var transformed = CraftAgentRuntime.applyBlockPlanArgument(
+                changedTransform, "minecraft:overworld");
+        var shorter = CraftAgentRuntime.applyBlockPlanArgument(
+                changedDuration, "minecraft:overworld");
+
+        assertThat(parsed.requestIdentity()).matches("sha256:[0-9a-f]{64}")
+                .isNotEqualTo(transformed.requestIdentity())
+                .isNotEqualTo(shorter.requestIdentity());
+    }
+
+    @Test
+    void applyBlockPlanCanonicalizesFullPropertyOrderAndTransformsDirectionalState() {
+        var firstProperties = new LinkedHashMap<String, String>();
+        firstProperties.put("waterlogged", "false");
+        firstProperties.put("shape", "straight");
+        firstProperties.put("half", "bottom");
+        firstProperties.put("facing", "north");
+        var secondProperties = new LinkedHashMap<String, String>();
+        secondProperties.put("facing", "north");
+        secondProperties.put("half", "bottom");
+        secondProperties.put("shape", "straight");
+        secondProperties.put("waterlogged", "false");
+        var first = applyPlanArguments(
+                "verify_only",
+                fullState("minecraft:oak_stairs", firstProperties),
+                fullState("minecraft:oak_stairs", firstProperties),
+                null,
+                false);
+        var second = applyPlanArguments(
+                "verify_only",
+                fullState("minecraft:oak_stairs", secondProperties),
+                fullState("minecraft:oak_stairs", secondProperties),
+                null,
+                false);
+        var rotated = deepCopy(first);
+        @SuppressWarnings("unchecked")
+        var rotatedParameters = (Map<String, Object>) rotated.get("parameters");
+        rotatedParameters.put("transform", Map.of("rotation", 90, "mirror", "none"));
+
+        var firstParsed = CraftAgentRuntime.applyBlockPlanArgument(
+                first, "minecraft:overworld");
+        var secondParsed = CraftAgentRuntime.applyBlockPlanArgument(
+                second, "minecraft:overworld");
+        var rotatedParsed = CraftAgentRuntime.applyBlockPlanArgument(
+                rotated, "minecraft:overworld");
+
+        assertThat(firstParsed.requestIdentity()).isEqualTo(secondParsed.requestIdentity());
+        assertThat(rotatedParsed.request().steps().getFirst().expectedAfter().properties())
+                .containsEntry("facing", "east")
+                .containsEntry("half", "bottom")
+                .containsEntry("shape", "straight")
+                .containsEntry("waterlogged", "false");
+    }
+
+    @Test
+    void rejectsDoorBedAndDoubleHeightItemsBeforePlanAdmission() {
+        var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
+        var executionBounds = new ActionBounds(
+                target.dimension(), target, target, 0, 30, false);
+
+        for (var itemAndBlock : Map.of(
+                "minecraft:oak_door", "minecraft:oak_door",
+                "minecraft:red_bed", "minecraft:red_bed").entrySet()) {
+            var request = new ApplyBlockPlanRequest(
+                    "fixture", 1, 1,
+                    List.of(new ApplyBlockPlanStep(
+                            "cell-0",
+                            ApplyBlockPlanOperation.PLACE,
+                            target,
+                            new BlockStateFingerprint("minecraft:air", Map.of()),
+                            new BlockStateFingerprint(itemAndBlock.getValue(), Map.of()),
+                            Optional.of(itemAndBlock.getKey()))),
+                    executionBounds);
+
+            assertThatThrownBy(() -> CraftAgentRuntime.validateApplyBlockPlanItems(request))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("multi-cell mutation");
+        }
+
+        var stone = new ApplyBlockPlanRequest(
+                "fixture", 1, 1,
+                List.of(new ApplyBlockPlanStep(
+                        "cell-0",
+                        ApplyBlockPlanOperation.PLACE,
+                        target,
+                        new BlockStateFingerprint("minecraft:air", Map.of()),
+                        new BlockStateFingerprint("minecraft:stone", Map.of()),
+                        Optional.of("minecraft:stone"))),
+                executionBounds);
+        assertThatCode(() -> CraftAgentRuntime.validateApplyBlockPlanItems(stone))
+                .doesNotThrowAnyException();
+
+        var breakDoor = new ApplyBlockPlanRequest(
+                "fixture", 1, 1,
+                List.of(new ApplyBlockPlanStep(
+                        "door-break",
+                        ApplyBlockPlanOperation.BREAK_TO_AIR,
+                        target,
+                        new BlockStateFingerprint("minecraft:oak_door", Map.of()),
+                        new BlockStateFingerprint("minecraft:air", Map.of()),
+                        Optional.empty())),
+                new ActionBounds(target.dimension(), target, target, 0, 30, true));
+        assertThatThrownBy(() -> CraftAgentRuntime.validateApplyBlockPlanItems(breakDoor))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("multi-cell mutation");
+
+    }
+
+    @Test
+    void rejectsSolidBucketPlacementBeforePlanAdmission() {
+        var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
+        var request = new ApplyBlockPlanRequest(
+                "fixture", 1, 1,
+                List.of(new ApplyBlockPlanStep(
+                        "powder-snow",
+                        ApplyBlockPlanOperation.PLACE,
+                        target,
+                        new BlockStateFingerprint("minecraft:air", Map.of()),
+                        new BlockStateFingerprint("minecraft:powder_snow", Map.of()),
+                        Optional.of("minecraft:powder_snow_bucket"))),
+                new ActionBounds(target.dimension(), target, target, 0, 30, false));
+
+        assertThatThrownBy(() -> CraftAgentRuntime.validateApplyBlockPlanItems(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("different container item");
+    }
+
+    @Test
+    void rejectsUnsafeSourceMutationBeforePlanAdmission() {
+        var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
+        for (var unsafe : List.of(
+                "minecraft:tnt",
+                "minecraft:infested_stone",
+                "minecraft:hopper",
+                "minecraft:ice",
+                "example:stone")) {
+            for (var operation : List.of(
+                    ApplyBlockPlanOperation.BREAK_TO_AIR,
+                    ApplyBlockPlanOperation.REPLACE)) {
+                var request = new ApplyBlockPlanRequest(
+                        "fixture", 1, 1,
+                        List.of(new ApplyBlockPlanStep(
+                                "unsafe-source",
+                                operation,
+                                target,
+                                new BlockStateFingerprint(unsafe, Map.of()),
+                                operation == ApplyBlockPlanOperation.BREAK_TO_AIR
+                                        ? new BlockStateFingerprint("minecraft:air", Map.of())
+                                        : new BlockStateFingerprint("minecraft:stone", Map.of()),
+                                operation == ApplyBlockPlanOperation.REPLACE
+                                        ? Optional.of("minecraft:stone")
+                                        : Optional.empty())),
+                        new ActionBounds(target.dimension(), target, target, 0, 30, true));
+
+                assertThatThrownBy(() -> CraftAgentRuntime.validateApplyBlockPlanItems(request))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("closed safe allowlist");
+            }
+        }
+
+        var placeEmptyHopper = new ApplyBlockPlanRequest(
+                "fixture", 1, 1,
+                List.of(new ApplyBlockPlanStep(
+                        "new-hopper",
+                        ApplyBlockPlanOperation.PLACE,
+                        target,
+                        new BlockStateFingerprint("minecraft:air", Map.of()),
+                        new BlockStateFingerprint(
+                                "minecraft:hopper",
+                                Map.of("enabled", "true", "facing", "down")),
+                        Optional.of("minecraft:hopper"))),
+                new ActionBounds(target.dimension(), target, target, 0, 30, false));
+        assertThatCode(() -> CraftAgentRuntime.validateApplyBlockPlanItems(placeEmptyHopper))
+                .doesNotThrowAnyException();
     }
 
     @Test
@@ -585,6 +891,59 @@ class CraftAgentRuntimeHardeningTest {
 
     private static Map<String, Object> blockState(String block) {
         return Map.of("block", block);
+    }
+
+    private static Map<String, Object> fullState(
+            String block,
+            Map<String, String> properties) {
+        return Map.of("block", block, "properties", properties);
+    }
+
+    private static Map<String, Object> applyPlanArguments(
+            String operation,
+            Map<String, Object> expectedBefore,
+            Map<String, Object> expectedAfter,
+            String item,
+            boolean allowBreak) {
+        var entry = new LinkedHashMap<String, Object>();
+        entry.put("id", "cell-0");
+        entry.put("offset", Map.of("x", 0, "y", 0, "z", 0));
+        entry.put("operation", operation);
+        entry.put("expected_before", expectedBefore);
+        entry.put("expected_after", expectedAfter);
+        if (item != null) {
+            entry.put("item", item);
+        }
+        return rawStartArguments(
+                ApplyBlockPlanRequest.KIND,
+                new LinkedHashMap<>(Map.of(
+                        "anchor", targetMap(),
+                        "transform", Map.of("rotation", 0, "mirror", "none"),
+                        "phase", Map.of("id", "foundation", "index", 1, "total", 2),
+                        "entries", List.of(entry))),
+                boundsMap(0, 30, allowBreak));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> deepCopy(Map<String, Object> source) {
+        var result = new LinkedHashMap<String, Object>();
+        for (var entry : source.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof Map<?, ?> map) {
+                value = deepCopy((Map<String, Object>) map);
+            }
+            else if (value instanceof List<?> list) {
+                var copy = new ArrayList<>();
+                for (var item : list) {
+                    copy.add(item instanceof Map<?, ?> map
+                            ? deepCopy((Map<String, Object>) map)
+                            : item);
+                }
+                value = copy;
+            }
+            result.put(entry.getKey(), value);
+        }
+        return result;
     }
 
     private static StationaryBreakPort unusedStationaryBreakPort() {

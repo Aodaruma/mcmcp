@@ -25,7 +25,7 @@ MCPへ公開するのは、読み取りtool、制御tool、型付きroutineの�
 | `cancel_routine` | write | 指定routineを安全に取消 |
 | `emergency_stop` | write | 全入力解放、pending開始破棄、lock |
 
-現在の固定surfaceは上記8 toolです。`get_recipes`はPhase 4以降の設計候補で、現在の`tools/list`には含めません。
+現在の固定surfaceは上記8 toolです。Phase 4でもtoolは増やさず、7番目のroutine kindとして`apply_block_plan`を`start_routine`から開始します。`get_recipes`はPhase 5の設計候補で、現在の`tools/list`には含めません。
 
 スクリーンショットは未知MODの診断や見た目確認に有効ですが、structured observationとは性質が異なります。必要性を実測した段階で、明示的な読み取り専用`capture_view`として追加します。
 
@@ -138,7 +138,7 @@ server address、Bearer token、Microsoft認証情報、音声device名は返し
 }
 ```
 
-観測結果は全BlockStateを含みますが、期待状態の比較は`properties`へ明示したpropertyだけを必須にします。これにより向きやdoor halfを検査しながら、動的なcrop ageやpowered状態を必要に応じて期待条件から外せます。`required`の既定値は`true`で、`false`のdiagnostic項目は完成判定集合へ含めません。厳密一致が実需になった場合だけ`exact_state`を追加します。
+観測結果は全BlockStateを含みますが、この読み取り専用toolでの期待状態比較は`properties`へ明示したpropertyだけを必須にします。これにより向きやdoor halfを検査しながら、動的なcrop ageやpowered状態を必要に応じて期待条件から外せます。`required`の既定値は`true`で、`false`のdiagnostic項目は完成判定集合へ含めません。`compare_block_plan`自体に厳密一致が必要になった場合だけ`exact_state`の追加を検討します。能動`apply_block_plan`は後述のとおり常に完全state一致です。
 
 応答例:
 
@@ -201,7 +201,77 @@ server address、Bearer token、Microsoft認証情報、音声device名は返し
 
 この結果は実行許可tokenではありません。`apply_block_plan`は各操作直前にlive preconditionを取り直し、操作後にserver同期を確認します。
 
-## `get_recipes`（Phase 4以降の計画、未公開）
+## `apply_block_plan`（Phase 4、実装・受入完了）
+
+`start_routine`の`kind=apply_block_plan`は、外部で分割済みの1 phaseだけを現在の安全な立ち位置から施工します。
+
+```json
+{
+  "kind": "apply_block_plan",
+  "parameters": {
+    "anchor": {
+      "dimension": "minecraft:overworld",
+      "x": 120,
+      "y": 64,
+      "z": -32
+    },
+    "transform": {"rotation": 90, "mirror": "x"},
+    "phase": {"id": "foundation-1", "index": 1, "total": 3},
+    "entries": [
+      {
+        "id": "clear-1",
+        "offset": {"x": 0, "y": 0, "z": 0},
+        "operation": "break_to_air",
+        "expected_before": {"block": "minecraft:stone", "properties": {}},
+        "expected_after": {"block": "minecraft:air", "properties": {}}
+      },
+      {
+        "id": "stair-1",
+        "offset": {"x": 1, "y": 0, "z": 0},
+        "operation": "place",
+        "expected_before": {"block": "minecraft:air", "properties": {}},
+        "expected_after": {
+          "block": "minecraft:oak_stairs",
+          "properties": {
+            "facing": "east",
+            "half": "bottom",
+            "shape": "straight",
+            "waterlogged": "false"
+          }
+        },
+        "item": "minecraft:oak_stairs"
+      }
+    ]
+  },
+  "bounds": {
+    "dimension": "minecraft:overworld",
+    "region": {
+      "min": {"x": 118, "y": 63, "z": -34},
+      "max": {"x": 122, "y": 66, "z": -30}
+    },
+    "max_travel_blocks": 0,
+    "max_duration_seconds": 60,
+    "allow_break": true
+  },
+  "completion_intent": "finish_goal",
+  "idempotency_key": "7f7809c5-eae4-48a6-9fea-d50b600d5642"
+}
+```
+
+固定契約:
+
+- 1 callは1 phase、1〜64個の一意なtarget cellだけを扱い、移動を所有しません。phase間の移動と分割はMCP client側が行います
+- operationは`verify_only / break_to_air / place / replace`の4種です。`replace`は確認済みのbreakとplaceという2つの内部childに分かれます
+- `expected_before / expected_after`は、propertyのないblockでも`properties: {}`を含むruntime registry上の完全なBlockStateです。property省略や存在しないstateは開始前に拒否します
+- offsetとBlockStateにはmirror（`none / x / z`）を先に、Y軸時計回りrotation（`0 / 90 / 180 / 270`）を後に適用します
+- preflight、各操作直前、操作後、final verificationはcurrent-onlyです。last-known memoryでunknownや不一致を埋めません
+- 設置資材は開始時の現在client inventoryとeligible hotbarをbaselineに不足を拒否します。各place後はcovering prediction ACK、完全なserver state、freshなinbound selected-slot inventory syncを確認してから次へ進みます
+- 設置supportは`minecraft:cobblestone / dirt / grass_block / obsidian / smooth_stone / stone`の6 IDだけを許可し、canonicalなvanilla block、BlockEntityなし、空のFluidStateをcandidate選定時とpacket直前に再確認します
+- 最後に全targetを同じclient tickでcurrentとして収集し、完全な`expected_after`一致かつunknown 0の場合だけ成功します
+- `break_to_air`と`replace`には`allow_break=true`が必要です。破壊元は`minecraft:cobblestone / stone / dirt / obsidian / grass_block`の5 IDだけで、canonicalなvanilla block、BlockEntityなし、空のFluidStateを開始時とpacket直前に再確認します
+- 成功確認は要求されたtarget cellが対象です。通常vanilla処理による隣接block更新やgame eventを抑止せず、target外のworld stateがすべて無変化であることは保証しません
+
+## `get_recipes`（Phase 5の計画、未公開）
 
 ```json
 {
@@ -214,7 +284,7 @@ server address、Bearer token、Microsoft認証情報、音声device名は返し
 
 ## `list_routines`
 
-現在のversionと実装phaseに対応するroutine kind、kind固有input schema、bounds、postcondition、experimental flagを返します。Phase 3完了時点では、Phase 2の`stationary_break`とPhase 3の5 actionを合わせた6 kindを返します。
+現在のversionと実装phaseに対応するroutine kind、kind固有input schema、bounds、postcondition、experimental flagを返します。現在はPhase 2の`stationary_break`、Phase 3の5 action、Phase 4の`apply_block_plan`を合わせた7 kindを返します。
 
 MCPのprotocol capabilityとは別のdomain catalogです。tool一覧には`tools/list`を使い、`get_capabilities`は作りません。
 
@@ -277,6 +347,8 @@ MCPのprotocol capabilityとは別のdomain catalogです。tool一覧には`too
 
 event cursorがring bufferより古い場合は`events_truncated=true`としますが、現在state、progress、failureは常に完全に返します。`effects`は`{type, observed_before, observed_after, verification}`の配列で、睡眠によるrespawn point変更等の確認済み副作用を記録します。`WAITING`では`wait = {reason, deadline_client_tick, wake_condition}`、`FINALIZING`以降では`finalization`に必須policy、進捗phase、失敗点を返すため、過去eventが欠けても現在位置を解釈できます。
 
+`apply_block_plan`の`progress.completed`は、一度skipまたはserver-confirmされた処理済みcellのmonotonic checkpoint数です。その後のworld divergenceで現在状態が無効になったかは、`verification.confirmed / unknown`、`goal.verified`、`failure`を見て判断します。
+
 ## `start_routine`
 
 共通envelope:
@@ -317,11 +389,11 @@ event cursorがring bufferより古い場合は`events_truncated=true`としま�
 - kind固有schemaとpreconditionに合格
 - routine hard deadlineがunlock expiry以前に収まる
 
-`bounds.region`はwork regionです。Phase 3 actionは指定dimension・region・travel・duration・break許可を実行中に広げません。bed/safe anchorやtransit corridorを含む長時間`execution_envelope`はPhase 5〜6の計画であり、Phase 3の有限actionへ暗黙に追加しません。
+`bounds.region`はwork regionです。Phase 3 actionとPhase 4 block planは指定dimension・region・travel・duration・break許可を実行中に広げません。`apply_block_plan`は`max_travel_blocks=0`固定です。bed/safe anchorやtransit corridorを含む長時間`execution_envelope`はPhase 5〜6の計画であり、有限actionへ暗黙に追加しません。
 
-Phase 3の有限actionは`max_duration_seconds`からhard deadlineを固定し、到達時に入力を解放して未完了を失敗にします。maintenance/FINALIZING reserveとwork soft deadlineはPhase 5〜6の長時間routineで追加する計画です。
+Phase 3〜4の有限actionは`max_duration_seconds`からhard deadlineを固定し、到達時に入力を解放して未完了を失敗にします。maintenance/FINALIZING reserveとwork soft deadlineはPhase 5〜6の長時間routineで追加する計画です。
 
-Phase 3のschemaでは`completion_intent`を必須の`finish_goal`へ固定します。`continue_goal`による複数routine orchestrationはPhase 6の計画であり、現時点では受理しません。
+Phase 3〜4のschemaでは`completion_intent`を必須の`finish_goal`へ固定します。`continue_goal`による複数routine orchestrationはPhase 6の計画であり、現時点では受理しません。
 
 成功時はすぐに`routine_id`を返します。HTTP request timeout後に遅延開始しないよう、queue command自体にもdeadlineを持たせます。
 
@@ -335,7 +407,7 @@ Idempotency規則:
 
 ## routine catalog
 
-Phase 3完了時点で公開するkindは次の6つです。
+現在公開するkindは次の7つです。Phase 4まで実装・受入完了しています。
 
 | kind | phase | 概要 |
 |---|---:|---|
@@ -345,20 +417,21 @@ Phase 3完了時点で公開するkindは次の6つです。
 | `place_block` | 3 | 単一cell blockを1回設置しprediction ACKとサーバーBlockStateを確認 |
 | `interact_block` | 3 | allowlist blockをempty hand・non-sneakで1回use |
 | `interact_entity` | 3 | current-visibleなadult cowをbucketで1回搾乳 |
+| `apply_block_plan` | 4 | 移動なし・最大64 cellの1 phaseをcurrent exact-stateで施工 |
 
 Phase 3 actionの境界は次のとおりです。
 
 - `navigate_to`は回転を固定したforward/back/strafeによる短い平坦路だけを扱い、jump/sprint、段差越え、pathfinding、block破壊を行いません。loadedな足元・頭上空間、安定床、fluid/hazard不在、bounds/travel上限を毎tick確認します。positiveなserver ACKはないため、入力停止後、tolerance内、安定床上、低速、位置drift上限内を10 client tick連続で満たし、dispatch後のposition/rotation/motion correctionがない場合だけ`server-reconciled`とします
 - `break_block`、`place_block`、`interact_block`は、実際のcrosshair/hit、通常reach、liveな`expected_before`を操作直前に再確認し、vanilla prediction ACKとサーバー由来の完全なBlockStateが要求した`expected_after`と一致して初めて成功します。Phase 3 v1の`break_block.expected_after`はプロパティなしの`minecraft:air`固定です
-- `place_block`はmain handの単一cell `BlockItem`だけを扱い、bed/double-height itemを除外します
+- `place_block`はmain handの単一cell `BlockItem`だけを扱い、bed/double-height itemを除外します。設置supportは上記と同じclosed 6-ID allowlistに限定し、candidate判定時とpacket直前に再確認します
 - `interact_block`はlever、fence gate、vanillaのwooden trapdoorだけを許可します。empty main handかつnon-sneakを要求し、door、button、container、未知MOD blockは除外します。`expected_after`にはleverの`powered`またはgate/trapdoorの`open`だけを反転し、他の全propertyを維持した完全な同一block stateが必要です
 - `interact_entity`はcurrent world session/dimensionで現在可視な短寿命opaque `entity_ref`が指すadult cow、main handの`minecraft:bucket`、目標`minecraft:milk_bucket`だけを許可します。crosshair、LOS、通常reach、boundsをdispatch直前に再確認し、1回だけ通常interactionを送ります。成功にはdispatch後のfreshなselected-slot inventory syncと絶対目標countが必要で、retryしません
+- `apply_block_plan`の完全な契約は上記専用節に従います。Phase 2〜4の破壊操作は共通の5 ID safe-break allowlistを使います
 
-次はroadmapであり、Phase 4〜6が未実装の間はcatalogへ出しません。
+次はroadmapであり、Phase 5〜6が未実装の間はcatalogへ出しません。
 
 | kind | phase | 概要 |
 |---|---:|---|
-| `apply_block_plan` | 4 | phase分割された期待block stateへ施工 |
 | `craft_items` | 5 | 選択recipeで目標inventory countへcraft |
 | `transfer_items` | 5 | 指定containerをroutine自身が開き、目標countへ収束 |
 | `tend_crop_area` | 5 | 指定畑の成熟作物を収穫・植え直し |

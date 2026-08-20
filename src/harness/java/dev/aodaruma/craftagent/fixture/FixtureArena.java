@@ -6,7 +6,10 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.stats.Stats;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Relative;
+import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.food.FoodData;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -22,6 +25,7 @@ import net.minecraft.world.level.block.state.properties.Half;
 import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.level.block.state.properties.StairsShape;
 
+import java.util.ArrayList;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -243,8 +247,10 @@ final class FixtureArena {
     }
 
     static void resetPlayer(ServerPlayer player) {
+        player.resetStat(Stats.CUSTOM.get(Stats.TIME_SINCE_REST));
         player.setGameMode(GameType.SURVIVAL);
         player.teleportTo(199.5D, 200.0D, 194.5D);
+        clearNearbyHostiles(player);
         player.setYRot(0.0F);
         player.setXRot(5.0F);
         player.setYHeadRot(0.0F);
@@ -276,6 +282,16 @@ final class FixtureArena {
         player.resetSentInfo();
         player.initInventoryMenu();
         player.inventoryMenu.broadcastFullState();
+    }
+
+    private static void clearNearbyHostiles(ServerPlayer player) {
+        var nearbyHostiles = new ArrayList<Entity>();
+        for (Entity entity : player.level().getAllEntities()) {
+            if (entity instanceof Enemy && entity.distanceToSqr(player) <= 64.0D * 64.0D) {
+                nearbyHostiles.add(entity);
+            }
+        }
+        nearbyHostiles.forEach(Entity::discard);
     }
 
     private static String inventoryLine(ServerPlayer player) {

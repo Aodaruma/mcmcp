@@ -2,19 +2,19 @@
 
 ## 現在地点
 
-Phase 0〜3は完了しています。本体MODと別source setのdevelopment fixture MODを使って下記のgateを通過し、有限semantic actionまでproduction live gateを完了しました。Phase 4〜6は設計済み・未実装、Phase 7はv1に含めません。
+Phase 0〜4は完了しています。本体MODと別source setのdevelopment fixture MODを使って下記のgateを通過し、局所block plan施工まで受入を完了しました。Phase 5〜6は設計済み・未実装、Phase 7はv1に含めません。
 
-MCP tool surfaceは`get_status`、`get_snapshot`、`compare_block_plan`、`list_routines`、`get_routine`、`start_routine`、`cancel_routine`、`emergency_stop`の8つです。`stationary_break`、`navigate_to`、`break_block`、`place_block`、`interact_block`、`interact_entity`の6 routineをschema/catalogへ公開しています。
+MCP tool surfaceは`get_status`、`get_snapshot`、`compare_block_plan`、`list_routines`、`get_routine`、`start_routine`、`cancel_routine`、`emergency_stop`の8つを維持しています。現在は`stationary_break`、`navigate_to`、`break_block`、`place_block`、`interact_block`、`interact_entity`、`apply_block_plan`の7 routineをschema/catalogへ公開しています。`get_recipes`はPhase 5の未公開候補です。
 
-Phase 3完了判定の証跡は次のとおりです。
+Phase 4完了判定の証跡は次のとおりです。
 
 | 検証層 | 結果 |
 |---|---|
-| 自動test | Java 25でunit/integration test 215件、harness test 6件、いずれも失敗0。GameTest 3/3 |
-| Development fixture | `navigate_to`、`break_block`、`place_block`、leverへの`interact_block`、cowへの`interact_entity`が成功。stale Entity ref拒否と、実行中`navigate_to`への`emergency_stop`による入力解放・lock復帰を確認。Phase 1〜2の観測・停止・Voice Chat回帰も維持 |
-| Production Prism実Modpack | fixtureなしの本体JARで、正式MCP handshake、8 tools・6 routines、葉の足場での`ROUTE_NOT_SAFE`、草ブロックへのサーバー確認済み`break_block`成功（`unknown=0`）、現在airの再観測、Simple Voice Chatのmute/restore、F8 lock復帰、ワールド保存、正常shutdown、8765 listener解放を確認 |
+| 自動test | Java 25でunit/integration test 283件、harness test 8件、いずれも失敗0。GameTest 4/4 |
+| Development fixture | Phase 3 action回帰に加え、Phase 4の既達成skip、3-cell mutation、waterlogged slab、directional stairs、hopperが成功。資材不足、hidden必須cell、実行中divergenceは誤成功せず停止 |
+| Production Prism実Modpack | fixtureなしの最終JARで、正式MCP handshake、8 tools・7 routines、Simple Voice Chat接続、死亡時のlock復帰・active routineなし、全dimension保存、正常shutdown、PIDと8765 listenerの解放を確認。CraftAgent/MCP/Voice/MixinのERROR・FATALは0 |
 
-## Phase 1〜3の開発・検証手順
+## Phase 1〜4の開発・検証手順
 
 Java 25を指定し、リポジトリ直下で実行します。
 
@@ -32,6 +32,8 @@ Java 25を指定し、リポジトリ直下で実行します。
 手動試験では新規シングルプレイヤーワールドを使い、`/craftagent_fixture load`で固定arenaを準備します。fixtureは`-Dcraftagent.testHarness=true`、integrated server、単独playerなどをすべて満たさなければ変更を拒否します。コマンドと固定座標の詳細は[`src/harness/README.md`](../src/harness/README.md)を参照してください。
 
 Phase 3の固定scenarioは`/craftagent_fixture phase3 navigate|break|place|lever|cow|reset`で準備します。`phase3_action_fixture` GameTestは移動lane、採掘target、設置support/destination、leverの完全なBlockState、NoAIかつpersistentなcowというfixture前提を検査します。action実行、停止・失敗経路、production Prism実Modpackのlive gateは、上記の完了証跡として別途確認済みです。
+
+Phase 4の固定scenarioは`/craftagent_fixture phase4 all_satisfied|mutations|waterlogged|directional_stairs|hopper|shortage|divergence|hidden`で準備します。`phase4_block_plan_fixture` GameTestはexact full before/after state、operation順、資材不足、hidden current拒否、waterlogged slab、directional stairs、hopperを実BlockStateで検査します。semantic施工はdevelopment live gate、実Modpack互換性・起動停止はfixtureなしのproduction gateで分けて確認します。
 
 本体成果物は`build/libs/craftagent-<version>.jar`、fixtureは`build/libs/craftagent-<version>-test-harness.jar`です。後者は開発専用であり、通常のPrism Launcher instanceやマルチプレイ環境には導入しません。`runHarnessClient`は両source setを開発環境から読み込みます。
 
@@ -117,7 +119,7 @@ Phase 3の固定scenarioは`/craftagent_fixture phase3 navigate|break|place|leve
 
 - `navigate_to`: Phase 3 v1は回転を固定し、forward/back/strafeだけで進める短い平坦路に限定する。jump/sprint、段差越え、pathfinding、block破壊は行わず、loadedな足元・頭上空間、安定床、fluid/hazard不在、bounds/travel上限を毎tick確認する。positiveなserver ACKは存在しないため、入力停止後にtolerance内、安定床上、低速、位置drift上限内を10 client tick連続で満たし、その間にposition/rotation/motion correctionを受けないことを`server-reconciled`の根拠とする
 - `break_block`: 現在crosshair、通常reach、liveな`expected_before`一致を要求し、通常採掘後のprediction ACKとサーバー由来の完全なBlockStateが`expected_after`（v1ではair）と一致して初めて成功する
-- `place_block`: main handの単一cell `BlockItem`を、実際のhit/support faceから導かれる指定座標へ1回設置する。bed/double-height itemは除外し、prediction ACKとサーバー由来の完全なBlockStateを検証する
+- `place_block`: main handの単一cell `BlockItem`を、実際のhit/support faceから導かれる指定座標へ1回設置する。bed/double-height itemを除外し、supportは通常useが別操作を消費しないclosed 6-ID allowlistに限定する。prediction ACKとサーバー由来の完全なBlockStateを検証する
 - `interact_block`: empty main hand、non-sneak、現在crosshair、通常reachに限定する。v1 allowlistはlever、fence gate、vanillaのwooden trapdoorだけで、door、button、container、未知MOD blockは除外する。1回の通常use後、prediction ACKとサーバー由来の完全なBlockStateを検証する
 - `interact_entity`: current world session/dimensionで現在可視なopaque `entity_ref`が指すadult cowだけを、main handのbucketで1回搾乳する。crosshair、LOS、通常reach、bounds内を再確認し、dispatch後に届いたfreshなselected-slot inventory syncと絶対目標countの`minecraft:milk_bucket`を成功条件にする。曖昧な再dispatchを避けるためretryしない
 
@@ -136,26 +138,38 @@ Phase 3の固定scenarioは`/craftagent_fixture phase3 navigate|break|place|leve
 - `/craftagent_fixture phase3 navigate|break|place|lever|cow|reset`の各scenarioと`phase3_action_fixture` GameTestを通す
 - fixtureなしのproduction Prism実Modpackで起動、action、Voice Chat復元、正常shutdownを確認する
 
-## Phase 4: Block planと建築（未実装）
+## Phase 4: Block planと建築（完了）
 
-- `compare_block_plan`
-- phase分割された`apply_block_plan`
-- state property、rotation、mirror、air/clearance
-- checkpointとworld-based reconcile
-- 建築前後のresource estimateと`get_recipes`
+- 既存の読み取り専用`compare_block_plan`と、7番目のroutine `apply_block_plan`
+- 移動を所有しない、1 call = 外部分割済み1 phase、最大64 cell
+- `verify_only / break_to_air / place / replace`の閉じたoperation集合
+- runtime registry上の全propertyを含む完全な`expected_before / expected_after`
+- offsetとstateへmirrorを先、Y軸時計回りrotationを後に適用
+- current-only preflight、操作直前recheck、prediction ACK、完全なserver state、checkpoint、world-based reconcile
+- 設置資材は現在client inventoryとeligible hotbarを開始baselineにし、各place後にfreshなinbound selected-slot inventory syncを要求
+- final verificationは全targetを同じclient tickでcurrentとして再取得し、完全state一致・unknown 0を要求
+- Phase 2〜4共通の破壊元allowlistは`minecraft:cobblestone / stone / dirt / obsidian / grass_block`の5 ID。BlockEntity、流体state、未知・MOD blockは拒否
+- target cellのpostconditionだけを保証し、通常vanillaの隣接block更新やgame eventによるtarget外無変化は保証しない
 
 合格条件:
 
-- current/memory/unknownを混同しない
-- planを再実行してcompleted blockをskip
-- 他player/world変更を検出して停止
-- support face、waterlogged、door/bed multi-block、stairs、hopper等を正しく検証
+- current/memory/unknownを混同せず、hiddenな必須cellをfail closedにする
+- planを再実行してcurrent exact-stateでcompletedなblockだけをskipする
+- 他player/world変更をglobal reconcileで検出し、保持inputを解放して停止する
+- support face、waterlogged slab、directional stairs、hopperを正しく検証し、door/bed等のmulti-block itemは受理しない
 - 密閉内部を閉じる前にphase verificationし、wall-through再検査しない
-- partial update、server lag、chunk unload、material不足をfault injection
-- rollbackなしで残差planへ収束
+- partial update、server lag、chunk unload、material不足、資材sync不足をfault injectionする
+- `break_to_air / replace`で5 ID以外、BlockEntity、流体stateをadmissionとpacket直前の両方で拒否する
+- Phase 3/4の設置ではcanonicalな`cobblestone / dirt / grass_block / obsidian / smooth_stone / stone`以外のsupportを拒否し、containerやtoggle blockの通常useを呼ばない
+- all-satisfied、mutation、shortage、divergence、hiddenのdevelopment live scenarioを確認する
+- development fixtureで実施工とfault scenarioを確認し、fixtureなしのproduction Prism実Modpackでは8 tools・7 routines、lock/Voice Chat接続、正常shutdownを確認する
+- rollbackなしで残差planへ収束する
+
+上記合格条件はJava 25の全test、development live gate、production Prism互換性gateで確認済みです。`progress.completed`は処理済み／過去に確認済みの単調checkpointであり、現在の完成数は`verification.confirmed`と`goal.verified`で判断します。
 
 ## Phase 5: Inventory、農林業、maintenance（未実装）
 
+- `get_recipes`によるruntime recipe列挙とresource estimate
 - allowlist screen handler
 - `craft_items`、`transfer_items`
 - `tend_crop_area`、`harvest_tree_area`

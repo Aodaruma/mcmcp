@@ -64,7 +64,10 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
         if (!crosshairOn(position) || !withinReach(position)) {
             throw new IllegalArgumentException("target must be the current in-reach crosshair block");
         }
-        var fingerprint = fingerprint(level.getBlockState(position));
+        var state = level.getBlockState(position);
+        SafeBreakSourcePolicy.requireLiveState(
+                state, level.getBlockEntity(position) != null);
+        var fingerprint = fingerprint(state);
         if (!allowedBlocks.contains(fingerprint.blockId())) {
             throw new IllegalArgumentException("current target block is not in allowed_blocks");
         }
@@ -153,16 +156,21 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
         var minecraft = assertClientThread();
         var frame = observe(request);
         if (!frame.worldReady() || !frame.clientFocused() || !frame.playerAlive() || !frame.healthSafe()
-                || !frame.visibleThreatClear() || !frame.targetInReach() || !frame.crosshairOnTarget()
-                || frame.liveTargetState().filter(request.expectedSourceState()::matches).isEmpty()) {
+                || !frame.visibleThreatClear() || !frame.targetInReach() || !frame.crosshairOnTarget()) {
+            throw new IllegalStateException("stationary_break preconditions changed before attack");
+        }
+        var level = requireTargetLevel(request.target());
+        var position = blockPos(request.target());
+        SafeBreakSourcePolicy.requireLiveState(
+                level.getBlockState(position), level.getBlockEntity(position) != null);
+        if (frame.liveTargetState().filter(request.expectedSourceState()::matches).isEmpty()) {
             throw new IllegalStateException("stationary_break preconditions changed before attack");
         }
         if (leaseExpiresAtClientTick <= frame.clientTick()) {
             throw new IllegalArgumentException("attack lease is already expired");
         }
 
-        var level = requireTargetLevel(request.target());
-        var prediction = predictionSignals.begin(level, blockPos(request.target()), frame.clientTick());
+        var prediction = predictionSignals.begin(level, position, frame.clientTick());
         AttackInputLease lease = null;
         try {
             int sequenceBefore = prediction.sequenceBeforePrediction();
@@ -205,6 +213,10 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
             active.lease().close();
             throw new IllegalStateException("attack lease expired");
         }
+        var level = requireTargetLevel(attempt.target());
+        var position = blockPos(attempt.target());
+        SafeBreakSourcePolicy.requireLiveState(
+                level.getBlockState(position), level.getBlockEntity(position) != null);
         active.lease().renew(
                 System.nanoTime(),
                 leaseHorizon(currentTick, attempt.leaseExpiresAtClientTick()));

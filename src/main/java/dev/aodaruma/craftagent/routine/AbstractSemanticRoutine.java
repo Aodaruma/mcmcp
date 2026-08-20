@@ -95,6 +95,28 @@ abstract class AbstractSemanticRoutine implements ManagedRoutine {
         }
         try {
             tickFrame(frame);
+        } catch (SafeBreakSourcePolicy.UnsafeBreakSourceException rejected) {
+            fail(failure(
+                    RoutineFailure.Category.PRECONDITION,
+                    "UNSAFE_BREAK_SOURCE",
+                    false,
+                    RoutineFailure.Recovery.REPLAN,
+                    RoutineFailure.Scope.STEP,
+                    Map.of("safe_break_source", true),
+                    Map.of("safe_break_source", false),
+                    Map.of(),
+                    false));
+        } catch (SafePlacementSupportPolicy.UnsafePlacementSupportException rejected) {
+            fail(failure(
+                    RoutineFailure.Category.PRECONDITION,
+                    "UNSAFE_PLACEMENT_SUPPORT",
+                    false,
+                    RoutineFailure.Recovery.REPLAN,
+                    RoutineFailure.Scope.STEP,
+                    Map.of("safe_placement_support", true),
+                    Map.of("safe_placement_support", false),
+                    Map.of(),
+                    false));
         } catch (RuntimeException | LinkageError adapterFailure) {
             fail(adapterFailure("ACTION_ADAPTER_FAILURE"));
         }

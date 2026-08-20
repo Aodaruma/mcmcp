@@ -89,6 +89,22 @@ routineのwork soft deadlineでは新しい作業stepを止め、予約済み時
 - playerへの攻撃、窃盗、取引、蘇生等の対人影響を自動判断する操作
 - 任意Mob捕獲、汎用Entity transport、無期限combat/guard
 
+## 破壊元とblock planの境界
+
+Phase 2〜4の`stationary_break`、`break_block`、`apply_block_plan`は、破壊元を次の5 IDへ閉じます。
+
+- `minecraft:cobblestone`
+- `minecraft:stone`
+- `minecraft:dirt`
+- `minecraft:obsidian`
+- `minecraft:grass_block`
+
+文字列がallowlistに入るだけでは不十分です。canonicalな`minecraft` registry entryであり、`EntityBlock`でもBlockEntity付きstateでもなく、liveなBlockEntityが存在せず、FluidStateが空であることを確認します。開始時のschema/admissionに加えて実際のattack/packet直前にもlive stateで再確認し、TNT、infested block、container、ice、未知・MOD block、流体を含むstateはfail closedにします。Phase 4の`break_to_air / replace`は`bounds.allow_break=true`を必須とし、破壊operationがないplanでは逆に`false`を要求します。
+
+Phase 4 `apply_block_plan`は実装・受入完了しており、移動なしの1 phase・最大64 target、完全なbefore/after BlockState、current-onlyの再確認へ限定します。成功が示すのは、要求したtargetに対するprediction ACKとserver state、および最終same-tick current集合です。通常vanilla操作が引き起こす隣接block更新やgame eventは停止しないため、target外を含むworld全体の無変化保証ではありません。壊れ得るsupportや反応し得る隣接cellも守る必要がある場合、planへ明示してcurrent exact-state検証の対象にします。
+
+通常の`useItemOn`はitem設置よりsupport block自身の操作を先に試すため、Phase 3/4の設置supportは`minecraft:cobblestone / dirt / grass_block / obsidian / smooth_stone / stone`の6 IDに限定します。canonical registry entry、BlockEntityなし、FluidState空をcandidate選定時とpacket直前に再確認し、container、lever、trapdoor等は通常useを呼ぶ前にfail closedにします。
+
 ## 観測境界
 
 `loaded`と`observable`を分けます。

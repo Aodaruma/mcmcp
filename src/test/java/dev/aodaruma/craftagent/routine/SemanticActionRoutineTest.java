@@ -96,6 +96,59 @@ class SemanticActionRoutineTest {
     }
 
     @Test
+    void packetBoundaryUnsafeBreakSourceKeepsPreconditionFailureClassification() {
+        var port = new FakePort();
+        port.unsafeOnDispatch = true;
+        var manager = manager(port);
+        var id = manager.startSemanticAction(
+                UUID.randomUUID().toString(), breakRequest(), 10).routineId();
+
+        runToExecute(manager, port);
+        advance(manager, port);
+
+        var failed = manager.getRoutine(id, 0, 32);
+        assertThat(failed.state()).isEqualTo(RoutineState.FAILED);
+        assertThat(failed.failure().code()).isEqualTo("UNSAFE_BREAK_SOURCE");
+        assertThat(failed.failure().category()).isEqualTo(RoutineFailure.Category.PRECONDITION);
+    }
+
+    @Test
+    void packetBoundaryUnsafePlacementSupportKeepsPreconditionFailureClassification() {
+        var port = new FakePort();
+        port.unsafePlacementOnDispatch = true;
+        var manager = manager(port);
+        var id = manager.startSemanticAction(
+                UUID.randomUUID().toString(), placeRequest(), 10).routineId();
+
+        runToExecute(manager, port);
+        advance(manager, port);
+
+        var failed = manager.getRoutine(id, 0, 32);
+        assertThat(failed.state()).isEqualTo(RoutineState.FAILED);
+        assertThat(failed.failure().code()).isEqualTo("UNSAFE_PLACEMENT_SUPPORT");
+        assertThat(failed.failure().category()).isEqualTo(RoutineFailure.Category.PRECONDITION);
+    }
+
+    @Test
+    void heartbeatUnsafeBreakSourceStopsAndKeepsPreconditionFailureClassification() {
+        var port = new FakePort();
+        var manager = manager(port);
+        var id = manager.startSemanticAction(
+                UUID.randomUUID().toString(), breakRequest(), 10).routineId();
+        runToDispatch(manager, port);
+        port.unsafeOnMaintain = true;
+
+        advance(manager, port);
+
+        var failed = manager.getRoutine(id, 0, 32);
+        assertThat(failed.state()).isEqualTo(RoutineState.FAILED);
+        assertThat(failed.failure().code()).isEqualTo("UNSAFE_BREAK_SOURCE");
+        assertThat(failed.failure().category()).isEqualTo(RoutineFailure.Category.PRECONDITION);
+        assertThat(port.maintainCount).isOne();
+        assertThat(port.releaseCount).isOne();
+    }
+
+    @Test
     void blockAndEntityInteractionPreconditionsFailBeforeAnyDispatch() {
         for (var request : List.<SemanticActionRequest>of(interactBlockRequest(), entityRequest())) {
             var port = new FakePort();
@@ -744,6 +797,9 @@ class SemanticActionRoutineTest {
         private boolean safeToRetry = true;
         private boolean wrongAttemptKind;
         private boolean advanceRevisionOnDispatch;
+        private boolean unsafeOnDispatch;
+        private boolean unsafePlacementOnDispatch;
+        private boolean unsafeOnMaintain;
         private int dispatchCount;
         private int maintainCount;
         private int stopCount;
@@ -784,6 +840,12 @@ class SemanticActionRoutineTest {
         public SemanticActionAttempt dispatch(
                 SemanticActionRequest request, long leaseExpiresAtClientTick) {
             dispatchCount++;
+            if (unsafeOnDispatch) {
+                throw new SafeBreakSourcePolicy.UnsafeBreakSourceException();
+            }
+            if (unsafePlacementOnDispatch) {
+                throw new SafePlacementSupportPolicy.UnsafePlacementSupportException();
+            }
             if (advanceRevisionOnDispatch) {
                 observationRevision++;
             }
@@ -803,6 +865,9 @@ class SemanticActionRoutineTest {
         @Override
         public void maintain(SemanticActionAttempt attempt) {
             maintainCount++;
+            if (unsafeOnMaintain) {
+                throw new SafeBreakSourcePolicy.UnsafeBreakSourceException();
+            }
         }
 
         @Override

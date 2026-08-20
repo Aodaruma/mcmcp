@@ -28,6 +28,30 @@ class FixturePhase3AutorunConfigTest {
         assertThat(FixturePhase3AutorunConfig.parse("cow", "true")).get()
                 .extracting(FixturePhase3AutorunConfig::mode)
                 .isEqualTo(FixturePhase3AutorunConfig.Mode.COW);
+        assertThat(FixturePhase3AutorunConfig.parse("all_satisfied", "true")).get()
+                .extracting(FixturePhase3AutorunConfig::mode)
+                .isEqualTo(FixturePhase3AutorunConfig.Mode.ALL_SATISFIED);
+        assertThat(FixturePhase3AutorunConfig.parse("mutations", "true")).get()
+                .extracting(FixturePhase3AutorunConfig::mode)
+                .isEqualTo(FixturePhase3AutorunConfig.Mode.MUTATIONS);
+        assertThat(FixturePhase3AutorunConfig.parse("waterlogged", "true")).get()
+                .extracting(FixturePhase3AutorunConfig::mode)
+                .isEqualTo(FixturePhase3AutorunConfig.Mode.WATERLOGGED);
+        assertThat(FixturePhase3AutorunConfig.parse("directional_stairs", "true")).get()
+                .extracting(FixturePhase3AutorunConfig::mode)
+                .isEqualTo(FixturePhase3AutorunConfig.Mode.DIRECTIONAL_STAIRS);
+        assertThat(FixturePhase3AutorunConfig.parse("hopper", "true")).get()
+                .extracting(FixturePhase3AutorunConfig::mode)
+                .isEqualTo(FixturePhase3AutorunConfig.Mode.HOPPER);
+        assertThat(FixturePhase3AutorunConfig.parse("shortage", "true")).get()
+                .extracting(FixturePhase3AutorunConfig::mode)
+                .isEqualTo(FixturePhase3AutorunConfig.Mode.SHORTAGE);
+        assertThat(FixturePhase3AutorunConfig.parse("divergence", "true")).get()
+                .extracting(FixturePhase3AutorunConfig::mode)
+                .isEqualTo(FixturePhase3AutorunConfig.Mode.DIVERGENCE);
+        assertThat(FixturePhase3AutorunConfig.parse("hidden", "true")).get()
+                .extracting(FixturePhase3AutorunConfig::mode)
+                .isEqualTo(FixturePhase3AutorunConfig.Mode.HIDDEN);
     }
 
     @Test
@@ -44,6 +68,31 @@ class FixturePhase3AutorunConfigTest {
         assertThat(FixturePhase3AutorunConfig.Mode.LEVER.selectedSlot()).isEqualTo(6);
         assertThat(FixturePhase3AutorunConfig.Mode.COW.selectedSlot()).isZero();
         assertThat(FixturePhase3AutorunConfig.Mode.RESET.selectedSlot()).isZero();
+        assertThat(FixturePhase3AutorunConfig.Mode.ALL_SATISFIED.selectedSlot()).isZero();
+        assertThat(FixturePhase3AutorunConfig.Mode.MUTATIONS.selectedSlot()).isZero();
+        assertThat(FixturePhase3AutorunConfig.Mode.WATERLOGGED.selectedSlot()).isEqualTo(7);
+        assertThat(FixturePhase3AutorunConfig.Mode.DIRECTIONAL_STAIRS.selectedSlot()).isEqualTo(7);
+        assertThat(FixturePhase3AutorunConfig.Mode.HOPPER.selectedSlot()).isEqualTo(7);
+        assertThat(FixturePhase3AutorunConfig.Mode.SHORTAGE.selectedSlot()).isEqualTo(1);
+        assertThat(FixturePhase3AutorunConfig.Mode.DIVERGENCE.selectedSlot()).isZero();
+        assertThat(FixturePhase3AutorunConfig.Mode.HIDDEN.selectedSlot()).isZero();
+        assertThat(FixturePhase3AutorunConfig.Mode.values())
+                .filteredOn(FixturePhase3AutorunConfig.Mode::phase4)
+                .containsExactly(
+                        FixturePhase3AutorunConfig.Mode.ALL_SATISFIED,
+                        FixturePhase3AutorunConfig.Mode.MUTATIONS,
+                        FixturePhase3AutorunConfig.Mode.WATERLOGGED,
+                        FixturePhase3AutorunConfig.Mode.DIRECTIONAL_STAIRS,
+                        FixturePhase3AutorunConfig.Mode.HOPPER,
+                        FixturePhase3AutorunConfig.Mode.SHORTAGE,
+                        FixturePhase3AutorunConfig.Mode.DIVERGENCE,
+                        FixturePhase3AutorunConfig.Mode.HIDDEN);
+        assertThat(FixturePhase3AutorunConfig.Mode.values())
+                .filteredOn(FixturePhase3AutorunConfig.Mode::phase4)
+                .allSatisfy(mode -> assertThat(FixturePhase3AutorunConfig.parse(
+                        mode.name().toLowerCase(java.util.Locale.ROOT), "true")).get()
+                        .extracting(FixturePhase3AutorunConfig::autoArm)
+                        .isEqualTo(true));
     }
 
     @Test

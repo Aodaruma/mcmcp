@@ -60,12 +60,20 @@ class CraftAgentOutputSchemaContractTest {
     @ParameterizedTest(name = "start_routine accepts output kind {0}")
     @MethodSource("routineKinds")
     void everyAdvertisedRoutineKindMatchesTheStartOutputSchema(String kind) {
+        Object estimate = "apply_block_plan".equals(kind)
+                ? McpTestFixtures.fields(
+                        "items", List.of(Map.of(
+                                "item", "minecraft:stone", "maximum_required_count", 2)),
+                        "break_operations", 0,
+                        "place_operations", 2)
+                : null;
         CraftAgentToolRegistry registry = new CraftAgentToolRegistry(
-                (command, context) -> CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of(
+                (command, context) -> CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(McpTestFixtures.fields(
                         "routine_id", ROUTINE_ID,
                         "kind", kind,
                         "state", "VALIDATING",
-                        "idempotent_replay", false))),
+                        "idempotent_replay", false,
+                        "resource_estimate", estimate))),
                 Duration.ofSeconds(1));
 
         McpSchema.CallToolResult result = invoke(registry, "start_routine", startArguments());
@@ -181,14 +189,15 @@ class CraftAgentOutputSchemaContractTest {
 
     private static Map<String, Object> listRoutinesData() {
         return Map.of(
-                "catalog_version", "phase-3",
+                "catalog_version", "phase-4",
                 "routines", List.of(
                         catalogEntry("stationary_break", 2, McpToolSchemas.stationaryBreakStartInput()),
                         catalogEntry("navigate_to", 3, McpToolSchemas.navigateToStartInput()),
                         catalogEntry("break_block", 3, McpToolSchemas.breakBlockStartInput()),
                         catalogEntry("place_block", 3, McpToolSchemas.placeBlockStartInput()),
                         catalogEntry("interact_block", 3, McpToolSchemas.interactBlockStartInput()),
-                        catalogEntry("interact_entity", 3, McpToolSchemas.interactEntityStartInput())));
+                        catalogEntry("interact_entity", 3, McpToolSchemas.interactEntityStartInput()),
+                        catalogEntry("apply_block_plan", 4, McpToolSchemas.applyBlockPlanStartInput())));
     }
 
     private static Map<String, Object> catalogEntry(
@@ -214,6 +223,7 @@ class CraftAgentOutputSchemaContractTest {
                         "target", dimensionPosition(10, 64, -3)),
                 "checkpoint", Map.of("seq", 2L, "observation_revision", 12L),
                 "verification", Map.of("confirmed", 1, "expected", 4, "unknown", 0),
+                "resources", null,
                 "effects", List.of(),
                 "safety", Map.of("mode", "normal", "last_check_client_tick", 200L),
                 "wait", null,
@@ -236,7 +246,7 @@ class CraftAgentOutputSchemaContractTest {
     private static Stream<Arguments> routineKinds() {
         return Stream.of(
                 "stationary_break", "navigate_to", "break_block", "place_block",
-                "interact_block", "interact_entity").map(Arguments::of);
+                "interact_block", "interact_entity", "apply_block_plan").map(Arguments::of);
     }
 
     private static Stream<Arguments> phaseThreeRoutineData() {
@@ -272,7 +282,8 @@ class CraftAgentOutputSchemaContractTest {
                                 "kind", "interact_entity",
                                 "entity_ref", "AbCdEfGhIjKlMnOpQrStUvWx",
                                 "expected_type", "minecraft:cow"),
-                        "server_sync")));
+                        "server_sync")),
+                Arguments.of("apply_block_plan", applyBlockPlanRoutineData()));
     }
 
     private static Map<String, Object> routineData(
@@ -309,11 +320,40 @@ class CraftAgentOutputSchemaContractTest {
     }
 
     private static Map<String, Object> startRoutineData() {
-        return Map.of(
+        return McpTestFixtures.fields(
                 "routine_id", ROUTINE_ID,
                 "kind", "stationary_break",
                 "state", "VALIDATING",
-                "idempotent_replay", false);
+                "idempotent_replay", false,
+                "resource_estimate", null);
+    }
+
+    private static Map<String, Object> applyBlockPlanRoutineData() {
+        var result = new java.util.LinkedHashMap<String, Object>(routineData());
+        result.put("kind", "apply_block_plan");
+        result.put("progress", Map.of("completed", 0, "total", 1, "unit", "cells"));
+        result.put("current_step", McpTestFixtures.fields(
+                "kind", "plan_cell",
+                "step_index", 0,
+                "phase_id", "foundation",
+                "cell_id", "stone-0",
+                "operation", "place",
+                "target", dimensionPosition(10, 64, -3),
+                "expected_after", Map.of(
+                        "block", "minecraft:stone", "properties", Map.of()),
+                "child_stage", "place",
+                "item", "minecraft:stone"));
+        result.put("resources", McpTestFixtures.fields(
+                "planned", List.of(Map.of("item", "minecraft:stone", "count", 1)),
+                "remaining", List.of(Map.of("item", "minecraft:stone", "count", 1)),
+                "available", List.of(Map.of("item", "minecraft:stone", "count", 12)),
+                "server_synchronized", true,
+                "basis_observation_revision", 12L));
+        result.put("wait", McpTestFixtures.fields(
+                "reason", "bounded_preparation",
+                "deadline_client_tick", 240L,
+                "wake_condition", "The bounded preparation is ready."));
+        return result;
     }
 
     private static Map<String, Object> cancelRoutineData() {

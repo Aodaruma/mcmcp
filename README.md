@@ -8,12 +8,13 @@ Minecraft 26.2 / NeoForge 26.2向けに、通常のサバイバル操作だけ�
 - Phase 1（読み取り、観測記憶、loopback MCP、緊急停止）: 完了（実装・全受入ゲート合格）
 - Phase 2（`stationary_break`、routine lifecycle、Simple Voice Chat安全化）: 完了（実装・全受入ゲート合格）
 - Phase 3（有限semantic action）: 完了（実装・全受入ゲート合格）
-- Phase 4〜6（建築、農林業、one-shot）: 設計済み、未実装
+- Phase 4（`apply_block_plan`による局所block plan施工）: 完了（実装・全受入ゲート合格）
+- Phase 5〜6（inventory・農林業・one-shot）: 設計済み、未実装
 - Phase 7（収容済みEntity搬送）: v1対象外のexperimental設計
 
-MCP tool surfaceは、`get_status`、`get_snapshot`、`compare_block_plan`、`list_routines`、`get_routine`、`start_routine`、`cancel_routine`、`emergency_stop`の8つです。`stationary_break`、`navigate_to`、`break_block`、`place_block`、`interact_block`、`interact_entity`の6 routineをschemaとcatalogへ公開しています。
+MCP tool surfaceは、`get_status`、`get_snapshot`、`compare_block_plan`、`list_routines`、`get_routine`、`start_routine`、`cancel_routine`、`emergency_stop`の8つを維持しています。`stationary_break`、`navigate_to`、`break_block`、`place_block`、`interact_block`、`interact_entity`、`apply_block_plan`の7 routineをschemaとcatalogへ公開しています。`get_recipes`はPhase 5の未公開候補であり、現在のtool数には含みません。
 
-Phase 3完了時点で、unit/integration test 215件（失敗0）、harness test 6件（失敗0）、GameTest 3/3を通過しました。development fixtureでは`navigate_to`、`break_block`、`place_block`、leverへの`interact_block`、cowへの`interact_entity`、stale Entity ref拒否、実行中の`emergency_stop`を確認しています。productionのPrism実Modpackでは、正式MCP handshake、8 tools・6 routines、危険な足場でのfail-closed、サーバー確認済み`break_block`成功、Simple Voice Chatのmute/restore、BlockState再観測、ローカルlock復帰、正常保存・shutdownを確認しています。
+Phase 4完了時点で、Java 25のunit/integration test 283件、harness test 8件（いずれも失敗0）、GameTest 4/4を通過しました。development fixtureでは実際の3-cell施工、waterlogged slab、directional stairs、hopper、既達成skipに加え、資材不足・hidden必須cell・実行中divergenceのfail-closedを確認しています。fixtureなしのproduction Prism実Modpackでは、正式MCP handshake、8 tools・7 routines、Simple Voice Chat接続、死亡時のlock復帰、正常な全dimension保存・shutdown、8765 listener解放を確認しました。production互換性確認とsemantic施工確認は分離し、実施工の証跡にはdevelopment live gateを使用しています。
 
 ## 結論
 
@@ -23,7 +24,9 @@ Phase 3完了時点で、unit/integration test 215件（失敗0）、harness tes
 - クライアントMOD: 毎tickの視点・移動・操作、サーバー同期確認、局所retry、安全停止
 - Minecraftサーバー: 通常どおり最終的なゲーム状態を決定
 
-サーバー側MOD、OP権限、独自packetは使いません。移動・採掘・設置・クラフト・コンテナ操作は、通常プレイヤーと同じ経路で行います。block actionはprediction ACKとサーバー由来の完全なBlockStateで確認し、positive ACKがない通常移動は入力停止後の安定と補正packet不在を組み合わせた`server-reconciled`として確認します。
+サーバー側MOD、OP権限、独自packetは使いません。移動・採掘・設置・クラフト・コンテナ操作は、通常プレイヤーと同じ経路で行います。block actionはprediction ACKとサーバー由来の完全なBlockStateで確認し、positive ACKがない通常移動は入力停止後の安定と補正packet不在を組み合わせた`server-reconciled`として確認します。自動破壊は`minecraft:cobblestone`、`minecraft:stone`、`minecraft:dirt`、`minecraft:obsidian`、`minecraft:grass_block`の5 IDだけを許可し、BlockEntity、流体を含むstate、未知・MOD blockはpacket直前にも拒否します。設置時のsupportもcanonicalな`stone / smooth_stone / cobblestone / dirt / grass_block / obsidian`の6 IDに限定し、隣接blockの通常useが設置より先に実行されることを防ぎます。
+
+Phase 4の`apply_block_plan`は、移動を所有しない1回1phase・最大64 cellの局所施工です。各cellは`expected_before`と`expected_after`へruntime registry上の完全なBlockStateを指定し、`verify_only / break_to_air / place / replace`だけを扱います。相対座標とstateはmirror後にY軸時計回りrotationを適用し、開始前・各操作直前・操作後・最終確認をcurrent-onlyで行います。確認対象は要求したtarget cellであり、通常vanilla処理が発生させる隣接block更新やgame eventまで「無変化」と保証するものではありません。
 
 ## 到達目標
 
@@ -102,7 +105,7 @@ Java 25を使用します。Windowsではリポジトリ直下から次を実行
 - `runGameTestServer`: 実際のMinecraft BlockStateを使うfixtureの自動GameTest
 - `runHarnessClient`: 本体とfixtureを読み込む、破棄可能なシングルプレイヤー手動検証環境
 
-`runHarnessClient`でワールドを作成後、`/craftagent_fixture load`で固定テストarenaを準備できます。Phase 3用には`/craftagent_fixture phase3 navigate|break|place|lever|cow|reset`で固定scenarioを切り替えます。fixtureの安全境界とコマンドは[fixture README](src/harness/README.md)を参照してください。通常のPrism Launcher instanceではfixtureを使わず、本体JARだけを導入します。詳しいgateは[テストと段階導入](docs/testing-and-rollout.md)にあります。
+`runHarnessClient`でワールドを作成後、`/craftagent_fixture load`で固定テストarenaを準備できます。Phase 3用には`/craftagent_fixture phase3 navigate|break|place|lever|cow|reset`、Phase 4用には`/craftagent_fixture phase4 all_satisfied|mutations|waterlogged|directional_stairs|hopper|shortage|divergence|hidden`で固定scenarioを切り替えます。fixtureの安全境界とコマンドは[fixture README](src/harness/README.md)を参照してください。通常のPrism Launcher instanceではfixtureを使わず、本体JARだけを導入します。詳しいgateは[テストと段階導入](docs/testing-and-rollout.md)にあります。
 
 ### 生成物
 
@@ -116,7 +119,7 @@ Java 25を使用します。Windowsではリポジトリ直下から次を実行
 1. [完了] 読み取り、観測記憶、MCP transport、緊急停止
 2. [完了] その場から動かない`stationary_break`
 3. [完了] 有限のblock interaction、移動、kind固有postcondition検証
-4. [未実装] `compare_block_plan`と`apply_block_plan`による建築
+4. [完了] `compare_block_plan`と局所`apply_block_plan`による建築
 5. [未実装] クラフト、コンテナ、農林業、食事、睡眠
 6. [未実装] one-shot orchestration、安全な完了処理
 7. 収容済みEntityの搬送をexperimentalとして個別検証

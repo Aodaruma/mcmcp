@@ -32,6 +32,7 @@ import java.util.function.Consumer;
 final class FixtureGameTests {
     private static final Identifier TEST_ID = id("phase1_block_states");
     private static final Identifier PHASE3_TEST_ID = id("phase3_action_fixture");
+    private static final Identifier PHASE4_TEST_ID = id("phase4_block_plan_fixture");
     private static final Identifier ENVIRONMENT_ID = id("fixture_environment");
 
     private static final DeferredRegister<Consumer<GameTestHelper>> TEST_FUNCTIONS =
@@ -40,6 +41,9 @@ final class FixtureGameTests {
             TEST_FUNCTIONS.register("phase1_block_states", () -> FixtureGameTests::runPhase1BlockStates);
     private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PHASE3_ACTION_FIXTURE =
             TEST_FUNCTIONS.register("phase3_action_fixture", () -> FixtureGameTests::runPhase3ActionFixture);
+    private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PHASE4_BLOCK_PLAN_FIXTURE =
+            TEST_FUNCTIONS.register(
+                    "phase4_block_plan_fixture", () -> FixtureGameTests::runPhase4BlockPlanFixture);
 
     private FixtureGameTests() {
     }
@@ -60,6 +64,8 @@ final class FixtureGameTests {
                 true);
         event.registerTest(TEST_ID, new FunctionGameTestInstance(PHASE1_BLOCK_STATES.getKey(), data));
         event.registerTest(PHASE3_TEST_ID, new FunctionGameTestInstance(PHASE3_ACTION_FIXTURE.getKey(), data));
+        event.registerTest(PHASE4_TEST_ID,
+                new FunctionGameTestInstance(PHASE4_BLOCK_PLAN_FIXTURE.getKey(), data));
     }
 
     private static void runPhase1BlockStates(GameTestHelper helper) {
@@ -198,6 +204,96 @@ final class FixtureGameTests {
                 cow, entity -> entity.isNoAi() && entity.isPersistenceRequired(), true,
                 Component.literal("expected the Phase 3 cow to be NoAI and persistent"));
         helper.succeed();
+    }
+
+    private static void runPhase4BlockPlanFixture(GameTestHelper helper) {
+        for (var mode : FixturePhase4Scenario.Mode.values()) {
+            var layout = FixturePhase4Scenario.layout(mode);
+            var ids = new java.util.HashSet<String>();
+            var targets = new java.util.HashSet<BlockPos>();
+            for (var cell : FixturePhase4Scenario.plan(mode)) {
+                if (!ids.add(cell.id()) || !targets.add(cell.target())) {
+                    helper.fail(Component.literal(
+                            "Phase 4 plan ids and targets must be unique for " + mode.name()));
+                }
+                BlockPos relative = cell.target().subtract(FixturePhase4Scenario.ORIGIN);
+                assertLayoutState(helper, layout, relative, cell.before());
+                assertInsideArena(helper, cell.target());
+                if (cell.operation().equals("verify_only")
+                        && !cell.before().equals(cell.after())) {
+                    helper.fail(Component.literal("verify_only must be an exact no-op for " + cell.id()));
+                }
+            }
+        }
+
+        var mutationPlan = FixturePhase4Scenario.plan(FixturePhase4Scenario.Mode.MUTATIONS);
+        if (!mutationPlan.stream().map(FixturePhase4Scenario.PlanCell::operation).toList()
+                .equals(java.util.List.of("break_to_air", "place", "replace"))) {
+            helper.fail(Component.literal("mutation fixture must cover break/place/replace in order"));
+        }
+
+        long shortageCobblestone = FixturePhase4Scenario.plan(FixturePhase4Scenario.Mode.SHORTAGE)
+                .stream()
+                .filter(cell -> cell.item().filter(item -> item == net.minecraft.world.item.Items.COBBLESTONE)
+                        .isPresent())
+                .count();
+        if (shortageCobblestone != 2) {
+            helper.fail(Component.literal("shortage fixture must require two cobblestone items"));
+        }
+
+        var hiddenLayout = FixturePhase4Scenario.layout(FixturePhase4Scenario.Mode.HIDDEN);
+        assertLayoutState(
+                helper,
+                hiddenLayout,
+                FixturePhase4Scenario.HIDDEN_TARGET.subtract(FixturePhase4Scenario.ORIGIN),
+                Blocks.GOLD_BLOCK.defaultBlockState());
+        assertLayoutState(
+                helper,
+                hiddenLayout,
+                FixturePhase4Scenario.HIDDEN_APERTURE.subtract(FixturePhase4Scenario.ORIGIN),
+                Blocks.STONE.defaultBlockState());
+
+        // Exercise exact equality against the server's canonical state definitions. Reusing one
+        // sample cell keeps this independent of the tiny built-in empty GameTest template.
+        BlockPos sample = new BlockPos(1, 1, 1);
+        helper.setBlock(sample.below(), Blocks.SMOOTH_STONE);
+
+        BlockState water = Blocks.WATER.defaultBlockState();
+        helper.setBlock(sample, water);
+        assertExactState(helper, sample, water);
+        var fluid = helper.getLevel().getFluidState(helper.absolutePos(sample));
+        if (!fluid.isSource() || fluid.getAmount() != 8) {
+            helper.fail(Component.literal("Phase 4 water target must be a level-0 source"));
+        }
+
+        BlockState waterlogged = FixturePhase4Scenario.waterloggedSlab();
+        helper.setBlock(sample, waterlogged);
+        helper.assertBlockProperty(sample, BlockStateProperties.SLAB_TYPE, SlabType.BOTTOM);
+        helper.assertBlockProperty(sample, BlockStateProperties.WATERLOGGED, true);
+        assertExactState(helper, sample, waterlogged);
+
+        BlockState stairs = FixturePhase4Scenario.eastBottomStairs();
+        helper.setBlock(sample, stairs);
+        helper.assertBlockProperty(sample, BlockStateProperties.HORIZONTAL_FACING, Direction.EAST);
+        helper.assertBlockProperty(sample, BlockStateProperties.HALF, Half.BOTTOM);
+        helper.assertBlockProperty(sample, BlockStateProperties.STAIRS_SHAPE, StairsShape.STRAIGHT);
+        helper.assertBlockProperty(sample, BlockStateProperties.WATERLOGGED, false);
+        assertExactState(helper, sample, stairs);
+
+        BlockState hopper = FixturePhase4Scenario.downHopper();
+        helper.setBlock(sample, hopper);
+        helper.assertBlockProperty(sample, BlockStateProperties.FACING_HOPPER, Direction.DOWN);
+        helper.assertBlockProperty(sample, BlockStateProperties.ENABLED, true);
+        assertExactState(helper, sample, hopper);
+        helper.succeed();
+    }
+
+    private static void assertInsideArena(GameTestHelper helper, BlockPos position) {
+        if (position.getX() < FixtureArena.MIN.getX() || position.getX() > FixtureArena.MAX.getX()
+                || position.getY() < FixtureArena.MIN.getY() || position.getY() > FixtureArena.MAX.getY()
+                || position.getZ() < FixtureArena.MIN.getZ() || position.getZ() > FixtureArena.MAX.getZ()) {
+            helper.fail(Component.literal("Phase 4 fixture cell escaped the bounded arena: " + position));
+        }
     }
 
     private static void assertLayoutState(

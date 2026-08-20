@@ -338,6 +338,14 @@ final class StationaryBreakRoutine implements ManagedRoutine {
             }
             attempts++;
             startPhase(PHASE_WAIT_SERVER_SYNC, frame);
+        } catch (SafeBreakSourcePolicy.UnsafeBreakSourceException rejected) {
+            fail(simpleFailure(
+                    RoutineFailure.Category.PRECONDITION,
+                    "UNSAFE_BREAK_SOURCE",
+                    RoutineFailure.Recovery.REPLAN,
+                    "safe_break_source",
+                    false,
+                    false));
         } catch (RuntimeException adapterFailure) {
             fail(adapterFailure("ATTACK_ADAPTER_FAILURE"));
         }
@@ -368,6 +376,15 @@ final class StationaryBreakRoutine implements ManagedRoutine {
                     && frame.clientTick() < attackAttempt.leaseExpiresAtClientTick()) {
                 port.holdAttack(attackAttempt);
             }
+        } catch (SafeBreakSourcePolicy.UnsafeBreakSourceException rejected) {
+            fail(simpleFailure(
+                    RoutineFailure.Category.PRECONDITION,
+                    "UNSAFE_BREAK_SOURCE",
+                    RoutineFailure.Recovery.REPLAN,
+                    "safe_break_source",
+                    false,
+                    false));
+            return;
         } catch (RuntimeException adapterFailure) {
             fail(adapterFailure("PREDICTION_ADAPTER_FAILURE"));
             return;

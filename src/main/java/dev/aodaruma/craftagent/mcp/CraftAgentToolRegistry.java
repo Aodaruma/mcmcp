@@ -108,7 +108,7 @@ public final class CraftAgentToolRegistry {
                 specification(
                         tool(
                                 "start_routine",
-                                "Start a bounded phase-gated routine after local arming and live safety validation; Phase 3 entity interaction only milks a visible adult cow with a main-hand bucket.",
+                                "Start a bounded phase-gated routine after local arming and live safety validation; Phase 4 block plans contain at most 64 exact-state cells in one externally split phase.",
                                 McpToolSchemas.startRoutineInput(),
                                 McpToolSchemas.startRoutineOutput(),
                                 START_ANNOTATIONS),

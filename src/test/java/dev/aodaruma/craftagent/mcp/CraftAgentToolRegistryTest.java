@@ -112,7 +112,7 @@ class CraftAgentToolRegistryTest {
     }
 
     @Test
-    void acceptsEveryClosedPhaseThreeRoutineBranchAndKeepsTheToolCountFixed() {
+    void acceptsEveryClosedReleasedRoutineBranchAndKeepsTheToolCountFixed() {
         AtomicInteger calls = new AtomicInteger();
         CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
             calls.incrementAndGet();
@@ -125,7 +125,7 @@ class CraftAgentToolRegistryTest {
                     .isFalse();
         }
 
-        assertThat(calls).hasValue(6);
+        assertThat(calls).hasValue(7);
         assertThat(registry.specifications()).hasSize(8);
     }
 
@@ -212,10 +212,54 @@ class CraftAgentToolRegistryTest {
         assertThat(calls).hasValue(0);
     }
 
+    @Test
+    void rejectsMalformedPhaseFourPlansBeforeRuntimeDispatch() {
+        AtomicInteger calls = new AtomicInteger();
+        CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
+            calls.incrementAndGet();
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+        }, Duration.ofSeconds(1));
+
+        Map<String, Object> nonAirBreak = mutableApplyArguments();
+        Map<String, Object> breakParameters = parameters(nonAirBreak);
+        Map<String, Object> breakEntry = firstEntry(breakParameters);
+        breakEntry.put("operation", "break_to_air");
+        breakEntry.put("expected_before", Map.of(
+                "block", "minecraft:stone", "properties", Map.of()));
+        breakEntry.put("expected_after", Map.of(
+                "block", "minecraft:stone", "properties", Map.of()));
+        bounds(nonAirBreak).put("allow_break", true);
+
+        Map<String, Object> missingProperties = mutableApplyArguments();
+        firstEntry(parameters(missingProperties)).put(
+                "expected_after", Map.of("block", "minecraft:air"));
+
+        Map<String, Object> tooMany = mutableApplyArguments();
+        var entries = new java.util.ArrayList<Map<String, Object>>();
+        for (int index = 0; index < 65; index++) {
+            entries.add(McpTestFixtures.fields(
+                    "id", "cell-" + index,
+                    "offset", Map.of("x", index, "y", 0, "z", 0),
+                    "operation", "verify_only",
+                    "expected_before", Map.of(
+                            "block", "minecraft:air", "properties", Map.of()),
+                    "expected_after", Map.of(
+                            "block", "minecraft:air", "properties", Map.of())));
+        }
+        parameters(tooMany).put("entries", entries);
+
+        for (var invalid : List.of(nonAirBreak, missingProperties, tooMany)) {
+            McpSchema.CallToolResult result = invoke(registry, "start_routine", invalid);
+            assertThat(result.isError()).isTrue();
+            assertThat(result.structuredContent().toString()).contains("invalid_argument");
+        }
+        assertThat(calls).hasValue(0);
+    }
+
     private static List<Map<String, Object>> validRoutineArguments() {
         return List.of(
                 stationaryBreakArguments(), navigateArguments(), breakArguments(), placeArguments(),
-                interactBlockArguments(), interactEntityArguments());
+                interactBlockArguments(), interactEntityArguments(), applyBlockPlanArguments());
     }
 
     private static Map<String, Object> stationaryBreakArguments() {
@@ -278,6 +322,24 @@ class CraftAgentToolRegistryTest {
                 bounds(0, 10, false));
     }
 
+    private static Map<String, Object> applyBlockPlanArguments() {
+        return routineArguments(
+                "apply_block_plan",
+                McpTestFixtures.fields(
+                        "anchor", dimensionPosition(10, 64, -3),
+                        "transform", Map.of("rotation", 0, "mirror", "none"),
+                        "phase", Map.of("id", "foundation", "index", 1, "total", 2),
+                        "entries", List.of(McpTestFixtures.fields(
+                                "id", "clearance-0",
+                                "offset", Map.of("x", 0, "y", 0, "z", 0),
+                                "operation", "verify_only",
+                                "expected_before", Map.of(
+                                        "block", "minecraft:air", "properties", Map.of()),
+                                "expected_after", Map.of(
+                                        "block", "minecraft:air", "properties", Map.of())))),
+                bounds(0, 30, false));
+    }
+
     private static Map<String, Object> transitionParameters(String before, String after) {
         return McpTestFixtures.fields(
                 "target", dimensionPosition(10, 64, -3),
@@ -308,6 +370,37 @@ class CraftAgentToolRegistryTest {
 
     private static Map<String, Object> dimensionPosition(int x, int y, int z) {
         return Map.of("dimension", "minecraft:overworld", "x", x, "y", y, "z", z);
+    }
+
+    private static Map<String, Object> mutableApplyArguments() {
+        var result = new java.util.LinkedHashMap<String, Object>(applyBlockPlanArguments());
+        @SuppressWarnings("unchecked")
+        var originalParameters = (Map<String, Object>) result.get("parameters");
+        var copiedParameters = new java.util.LinkedHashMap<String, Object>(originalParameters);
+        @SuppressWarnings("unchecked")
+        var originalEntries = (List<Map<String, Object>>) originalParameters.get("entries");
+        copiedParameters.put("entries", new java.util.ArrayList<>(List.of(
+                new java.util.LinkedHashMap<>(originalEntries.getFirst()))));
+        result.put("parameters", copiedParameters);
+        @SuppressWarnings("unchecked")
+        var originalBounds = (Map<String, Object>) result.get("bounds");
+        result.put("bounds", new java.util.LinkedHashMap<>(originalBounds));
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parameters(Map<String, Object> arguments) {
+        return (Map<String, Object>) arguments.get("parameters");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> firstEntry(Map<String, Object> parameters) {
+        return ((List<Map<String, Object>>) parameters.get("entries")).getFirst();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> bounds(Map<String, Object> arguments) {
+        return (Map<String, Object>) arguments.get("bounds");
     }
 
     private static McpSchema.CallToolResult invoke(

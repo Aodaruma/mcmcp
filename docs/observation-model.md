@@ -167,7 +167,9 @@ memory keyは次の組です。
 - `mismatch_last_known`
 - `unknown`
 
-`match_last_known`は再計画材料にはできますが、現在の完成保証には使いません。必須expected座標は`current`かつ一致でなければphase完了にせず、optional/diagnostic座標は最初から必須verification集合へ含めません。`apply_block_plan`は各操作直前に再観測し、操作後にサーバー同期されたpostconditionを確認します。
+`match_last_known`は再計画材料にはできますが、現在の完成保証には使いません。読み取り専用の`compare_block_plan`は明示したpropertyだけによる部分一致を許し、`required=false`のdiagnostic座標を完成判定から外せます。一方、Phase 4の`apply_block_plan`（実装・受入完了）は全entryを必須targetとし、runtime registry上の全propertyを含む完全な`expected_before / expected_after`だけを受けます。
+
+`apply_block_plan`はpreflight、各操作直前、prediction ACK後の結果、最終確認をcurrent-onlyで行い、last-knownで補いません。各place後はfreshなinbound selected-slot inventory syncも待ちます。phase完了には、最大64 targetすべてを同じclient tickにcurrentとして収集し、完全state一致かつunknown 0であることが必要です。この集合は要求targetの確認であり、通常vanilla処理による隣接block更新やgame eventを含むtarget外stateの不変証明ではありません。
 
 密閉される内部機構は、基礎・機構・外装のようにphaseを分け、閉じる前に検査します。完成記録は「現在壁越しに検査済み」ではなく、「tick Nで機構を確認後、外装を閉じた」という証跡として扱います。
 

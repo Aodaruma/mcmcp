@@ -6,7 +6,10 @@ import dev.aodaruma.craftagent.routine.RoutineFailure;
 import dev.aodaruma.craftagent.routine.RoutineSnapshot;
 import dev.aodaruma.craftagent.routine.RoutineState;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /** Stable MCP wire projection for routine state; no Minecraft object crosses this boundary. */
@@ -38,6 +41,7 @@ final class RoutineWireMapper {
                 "confirmed", verification.confirmed(),
                 "expected", verification.expected(),
                 "unknown", verification.unknown()));
+        result.put("resources", resources(snapshot));
         result.put("effects", snapshot.effects().stream()
                 .map(RoutineWireMapper::effect)
                 .toList());
@@ -116,6 +120,46 @@ final class RoutineWireMapper {
         payload.put("phase", phase);
         payload.put("failure", failure);
         return payload;
+    }
+
+    private static Map<String, Object> resources(RoutineSnapshot snapshot) {
+        if (!"apply_block_plan".equals(snapshot.kind())) {
+            return null;
+        }
+        Object raw = snapshot.diagnostics().get("resource_plan");
+        if (!(raw instanceof Map<?, ?> plan)) {
+            throw new IllegalStateException("apply_block_plan snapshot has no resource_plan");
+        }
+        long basisRevision = snapshot.checkpoint().observationRevision();
+        Object rawBasis = plan.get("basis_observation_revision");
+        if (rawBasis instanceof Number number) {
+            basisRevision = number.longValue();
+        }
+        var result = new LinkedHashMap<String, Object>();
+        result.put("planned", resourceCounts(plan.get("planned"), "planned"));
+        result.put("remaining", resourceCounts(plan.get("remaining"), "remaining"));
+        result.put("available", resourceCounts(plan.get("available"), "available"));
+        result.put("server_synchronized", Boolean.TRUE.equals(plan.get("server_synchronized")));
+        result.put("basis_observation_revision", Math.max(0, basisRevision));
+        return Map.copyOf(result);
+    }
+
+    private static List<Map<String, Object>> resourceCounts(Object raw, String name) {
+        if (!(raw instanceof Map<?, ?> values)) {
+            throw new IllegalStateException("resource_plan." + name + " must be a map");
+        }
+        var result = new ArrayList<Map<String, Object>>(values.size());
+        for (var entry : values.entrySet()) {
+            if (!(entry.getKey() instanceof String item)
+                    || !(entry.getValue() instanceof Number count)
+                    || count.longValue() < 0
+                    || count.longValue() > Integer.MAX_VALUE) {
+                throw new IllegalStateException("resource_plan." + name + " is malformed");
+            }
+            result.add(Map.of("item", item, "count", count.intValue()));
+        }
+        result.sort(Comparator.comparing(entry -> (String) entry.get("item")));
+        return List.copyOf(result);
     }
 
     private static Map<String, Object> event(RoutineEvent event) {

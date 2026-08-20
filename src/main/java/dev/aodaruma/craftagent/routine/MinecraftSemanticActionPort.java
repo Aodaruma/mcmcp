@@ -99,6 +99,36 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         this.reconciliations = Objects.requireNonNull(reconciliations, "reconciliations");
     }
 
+    /** Live admission gate for place_block before the routine acquires voice/input ownership. */
+    public void requireSafePlacementSupportForAdmission(PlaceBlockRequest request) {
+        var minecraft = assertClientThread();
+        Objects.requireNonNull(request, "request");
+        if (!(minecraft.hitResult instanceof BlockHitResult hit)
+                || hit.getType() != HitResult.Type.BLOCK
+                || minecraft.player == null) {
+            return;
+        }
+        var stack = minecraft.player.getMainHandItem();
+        if (!(stack.getItem() instanceof BlockItem item)
+                || item instanceof BedItem || item instanceof DoubleHighBlockItem
+                || !request.item().equals(registryItemId(stack))) {
+            return;
+        }
+        var context = item.updatePlacementContext(new BlockPlaceContext(
+                new UseOnContext(minecraft.player, InteractionHand.MAIN_HAND, hit)));
+        if (context == null || !context.canPlace()
+                || !context.getClickedPos().equals(blockPos(request.target()))) {
+            return;
+        }
+        var level = minecraft.level;
+        if (level == null) {
+            return;
+        }
+        var support = hit.getBlockPos();
+        SafePlacementSupportPolicy.requireLiveState(
+                level.getBlockState(support), level.getBlockEntity(support) != null);
+    }
+
     @Override
     public SemanticActionFrame observe(SemanticActionRequest request) {
         var minecraft = assertClientThread();
@@ -461,23 +491,20 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
     }
 
     private void dispatchPlace(Minecraft minecraft, PlaceBlockRequest request, ActiveAttempt active) {
-        var hit = actualBlockHit(minecraft);
-        var stack = Objects.requireNonNull(minecraft.player).getMainHandItem();
-        if (!(stack.getItem() instanceof BlockItem item)
-                || item instanceof BedItem || item instanceof DoubleHighBlockItem
-                || !request.item().equals(registryItemId(stack))) {
-            throw new IllegalArgumentException("place_block requires the selected single-cell BlockItem");
-        }
-        var context = item.updatePlacementContext(new BlockPlaceContext(
-                new UseOnContext(minecraft.player, InteractionHand.MAIN_HAND, hit)));
-        if (context == null || !context.canPlace()
-                || !context.getClickedPos().equals(blockPos(request.target()))) {
-            throw new IllegalArgumentException("actual hit does not place at the requested target");
-        }
+        var prepared = requirePreparedPlacement(minecraft, request);
+        var hit = prepared.hit();
+        var context = prepared.context();
+        var level = Objects.requireNonNull(minecraft.level);
+        var support = hit.getBlockPos();
+        SafePlacementSupportPolicy.requireLiveState(
+                level.getBlockState(support), level.getBlockEntity(support) != null);
         var prediction = predictions.begin(minecraft.level, context.getClickedPos(), requireSession().clientTick());
         int before = prediction.sequenceBeforePrediction();
         active.prediction = prediction;
-        minecraft.gameMode.useItemOn(minecraft.player, InteractionHand.MAIN_HAND, hit);
+        SafePlacementSupportPolicy.dispatchUseIfAllowed(
+                level.getBlockState(support), level.getBlockEntity(support) != null,
+                () -> Objects.requireNonNull(minecraft.gameMode).useItemOn(
+                        minecraft.player, InteractionHand.MAIN_HAND, hit));
         int after = prediction.captureIssuedPredictions();
         if (after != before + 1) {
             throw new ClientPredictionSignals.PredictionBridgeException(
@@ -591,6 +618,10 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             stopInput(attempt);
             return;
         }
+        var level = Objects.requireNonNull(requireMinecraft().level);
+        var position = blockPos(request.target());
+        SafeBreakSourcePolicy.requireLiveState(
+                level.getBlockState(position), level.getBlockEntity(position) != null);
         if (active.attackLease == null || !active.attackLease.heartbeat(
                 System.nanoTime(), leaseHorizon(frame.clientTick(), attempt.leaseExpiresAtClientTick()))) {
             active.failure = failure("ACTION_LEASE_EXPIRED", RoutineFailure.Category.TRANSIENT,
@@ -709,8 +740,14 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             if (!frame.routeSafe()) throw new IllegalStateException("navigation route is unsafe");
         } else if (request instanceof BreakBlockRequest block) {
             if (!"minecraft:air".equals(block.expectedAfter().blockId())
-                    || !frame.crosshairOnBlock() || !frame.blockInReach()
-                    || frame.liveBlockState().filter(block.expectedBefore()::matches).isEmpty()) {
+                    || !frame.crosshairOnBlock() || !frame.blockInReach()) {
+                throw new IllegalStateException("break_block preconditions are not satisfied");
+            }
+            var level = Objects.requireNonNull(requireMinecraft().level);
+            var position = blockPos(block.target());
+            SafeBreakSourcePolicy.requireLiveState(
+                    level.getBlockState(position), level.getBlockEntity(position) != null);
+            if (frame.liveBlockState().filter(block.expectedBefore()::matches).isEmpty()) {
                 throw new IllegalStateException("break_block preconditions are not satisfied");
             }
         } else if (request instanceof PlaceBlockRequest place) {
@@ -743,6 +780,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         }
         boolean actualTarget = false;
         boolean reach = false;
+        boolean supportSafe = !placement;
         if (minecraft.hitResult instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK) {
             if (!placement) {
                 actualTarget = hit.getBlockPos().equals(position);
@@ -753,6 +791,9 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                 var context = item.updatePlacementContext(new BlockPlaceContext(
                         new UseOnContext(player, InteractionHand.MAIN_HAND, hit)));
                 actualTarget = context != null && context.getClickedPos().equals(position);
+                supportSafe = actualTarget && SafePlacementSupportPolicy.allowsLiveState(
+                        level.getBlockState(hit.getBlockPos()),
+                        level.getBlockEntity(hit.getBlockPos()) != null);
                 reach = actualTarget
                         && player.isWithinBlockInteractionRange(hit.getBlockPos(), 0.0D)
                         && player.isWithinBlockInteractionRange(position, 0.0D);
@@ -761,6 +802,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         Optional<BlockStateFingerprint> state = actualTarget
                 ? Optional.of(fingerprint(level.getBlockState(position))) : Optional.empty();
         boolean permitted = actualTarget && reach
+                && supportSafe
                 && level.getWorldBorder().isWithinBounds(position)
                 && !player.blockActionRestricted(level, position, minecraft.gameMode.getPlayerMode());
         return new BlockFacts(state, permitted, actualTarget);
@@ -1025,6 +1067,26 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         return hit;
     }
 
+    private static PreparedPlacement requirePreparedPlacement(
+            Minecraft minecraft, PlaceBlockRequest request) {
+        Objects.requireNonNull(request, "request");
+        var hit = actualBlockHit(minecraft);
+        var player = Objects.requireNonNull(minecraft.player);
+        var stack = player.getMainHandItem();
+        if (!(stack.getItem() instanceof BlockItem item)
+                || item instanceof BedItem || item instanceof DoubleHighBlockItem
+                || !request.item().equals(registryItemId(stack))) {
+            throw new IllegalArgumentException("place_block requires the selected single-cell BlockItem");
+        }
+        var context = item.updatePlacementContext(new BlockPlaceContext(
+                new UseOnContext(player, InteractionHand.MAIN_HAND, hit)));
+        if (context == null || !context.canPlace()
+                || !context.getClickedPos().equals(blockPos(request.target()))) {
+            throw new IllegalArgumentException("actual hit does not place at the requested target");
+        }
+        return new PreparedPlacement(hit, context);
+    }
+
     private int inventoryCount(String itemId) {
         var inventory = Objects.requireNonNull(requireMinecraft().player).getInventory();
         int count = 0;
@@ -1125,6 +1187,13 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
     }
 
     private record BlockFacts(Optional<BlockStateFingerprint> state, boolean inReach, boolean crosshair) {
+    }
+
+    private record PreparedPlacement(BlockHitResult hit, BlockPlaceContext context) {
+        private PreparedPlacement {
+            Objects.requireNonNull(hit, "hit");
+            Objects.requireNonNull(context, "context");
+        }
     }
 
     private record RouteCheck(boolean safe, String reason) {

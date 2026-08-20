@@ -71,6 +71,32 @@ final class FixtureCommands {
                         .then(phase3("lever", FixturePhase3Scenario.Mode.LEVER))
                         .then(phase3("cow", FixturePhase3Scenario.Mode.COW))
                         .then(phase3("reset", FixturePhase3Scenario.Mode.RESET)))
+                .then(Commands.literal("phase4")
+                        .then(phase4("all_satisfied", FixturePhase4Scenario.Mode.ALL_SATISFIED))
+                        .then(phase4("mutations", FixturePhase4Scenario.Mode.MUTATIONS))
+                        .then(phase4("waterlogged", FixturePhase4Scenario.Mode.WATERLOGGED))
+                        .then(phase4("directional_stairs",
+                                FixturePhase4Scenario.Mode.DIRECTIONAL_STAIRS))
+                        .then(phase4("hopper", FixturePhase4Scenario.Mode.HOPPER))
+                        .then(phase4("shortage", FixturePhase4Scenario.Mode.SHORTAGE))
+                        .then(phase4("divergence", FixturePhase4Scenario.Mode.DIVERGENCE))
+                        .then(phase4("hidden", FixturePhase4Scenario.Mode.HIDDEN))
+                        .then(Commands.literal("introduce_divergence")
+                                .executes(context -> execute(context.getSource(), (fixture, output) -> {
+                                    FixturePhase4Scenario.introduceDivergence(fixture);
+                                    success(context.getSource(),
+                                            "Phase 4 guard cell changed outside routine ownership");
+                                })))
+                        .then(Commands.literal("reveal_hidden")
+                                .executes(context -> execute(context.getSource(), (fixture, output) -> {
+                                    FixturePhase4Scenario.revealHidden(fixture);
+                                    success(context.getSource(), "Phase 4 hidden aperture opened");
+                                })))
+                        .then(Commands.literal("conceal_hidden")
+                                .executes(context -> execute(context.getSource(), (fixture, output) -> {
+                                    FixturePhase4Scenario.concealHidden(fixture);
+                                    success(context.getSource(), "Phase 4 hidden aperture sealed");
+                                }))))
                 .then(Commands.literal("expose_hidden")
                         .executes(context -> execute(context.getSource(), (fixture, output) -> {
                             FixtureArena.exposeHidden(fixture);
@@ -98,6 +124,13 @@ final class FixtureCommands {
         return Commands.literal(name)
                 .executes(context -> execute(context.getSource(), (fixture, output) ->
                         FixturePhase3Scenario.prepare(fixture, mode, output)));
+    }
+
+    private static com.mojang.brigadier.builder.LiteralArgumentBuilder<CommandSourceStack> phase4(
+            String name, FixturePhase4Scenario.Mode mode) {
+        return Commands.literal(name)
+                .executes(context -> execute(context.getSource(), (fixture, output) ->
+                        FixturePhase4Scenario.prepare(fixture, mode, output)));
     }
 
     private static int execute(CommandSourceStack source, FixtureAction action) {

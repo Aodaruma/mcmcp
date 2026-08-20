@@ -89,6 +89,10 @@ loaded chunk、hidden block update、同期済みEntityという理由だけで�
 - checkpointは安定床上で全inputを解放でき、未確定action/screen操作がない境界に限る
 - 再開はworldと目標状態を比較してreconcileし、rollbackしない
 
+Phase 4の`apply_block_plan`はこのsupervisor上で動く7番目のroutineです（実装・受入完了）。1 callは外部で分割済みの1 phase・最大64 cellに限定し、`max_travel_blocks=0`として現在の安全な立ち位置から視点とhotbarだけを一時所有します。各cellの`expected_before / expected_after`はruntime registry上の完全なBlockStateで、`verify_only / break_to_air / place / replace`以外を受けません。offsetとstateはいずれもmirrorを先、Y軸の時計回りrotationを後に適用します。
+
+preflight、各dispatch直前、prediction ACK後、最終確認はlast-known memoryを代用しないcurrent-onlyです。設置資材は開始時の現在client inventoryとeligible hotbarをbaselineとして不足を拒否し、各place後はfreshなinbound selected-slot inventory syncが届くまで次へ進みません。最後は全target cellを同じclient tickのcurrentな完全stateとして確認し、unknownが0の場合だけgoalを確認済みにします。
+
 公開stateは`QUEUED / VALIDATING / RUNNING / WAITING / FINALIZING / SUCCEEDED / FAILED / CANCELLED`です。phaseとfailure schemaは[自動化runtimeと回復](automation-runtime.md)に定めます。
 
 `WAITING`中もSafety controllerと期限監視を続けます。期限はwork用soft deadlineと、maintenance/FINALIZING reserveを含むhard deadlineに分け、soft deadlineではFINALIZINGへ移り、hard deadlineでは即時releaseします。非緊急failureは固定envelope内のsafe checkpointへbounded returnできますが、emergency stop、cancel、死亡、切断時は帰還を試みません。
@@ -102,8 +106,11 @@ loaded chunk、hidden block update、同期済みEntityという理由だけで�
 - block/entity reach、LOS、cooldown、collision、採掘速度を回避しない
 - `stop_all`は保持した入力とitem useを必ず解放し、複数回呼んでも安全にする
 - 予期しない画面では停止する
+- 破壊元は`minecraft:cobblestone / stone / dirt / obsidian / grass_block`の閉じた5 ID allowlistへ限定し、canonicalなvanilla registry entry、BlockEntityなし、空のFluidStateをadmissionとpacket直前の両方で確認する
 
 低レベルのhold操作は内部に閉じ込めます。MCPへ公開するのは、期限、対象、postconditionを持つ意味的なroutineだけです。
+
+block actionの確認範囲は要求したtarget cellです。通常のvanilla interactionに伴う隣接block更新、drop、音・particle等のgame eventを抑止せず、target外の全world stateが不変であることはpostconditionに含めません。
 
 ## Screen handler
 

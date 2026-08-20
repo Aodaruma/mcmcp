@@ -4,6 +4,10 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.lifecycle.ClientStartedEvent;
@@ -15,7 +19,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * One-shot, property-gated Phase 3 live-test setup for the disposable harness world.
+ * One-shot, property-gated Phase 3/4 live-test setup for the disposable harness world.
  *
  * <p>All world changes are scheduled onto the integrated-server thread and pass through the same
  * {@link FixtureSecurity} boundary as fixture commands. The production source set cannot reference
@@ -28,6 +32,8 @@ final class FixturePhase3Autorun {
 
     private final FixturePhase3AutorunConfig config;
     private final AtomicReference<Stage> stage = new AtomicReference<>(Stage.WAITING_FOR_WORLD);
+    private final FixturePhase4DivergenceTrigger divergenceTrigger =
+            new FixturePhase4DivergenceTrigger();
 
     private int clientTicksAfterPrepare;
     private boolean clientSelectedSlotApplied;
@@ -47,7 +53,7 @@ final class FixturePhase3Autorun {
             }
             config = requested.orElseThrow();
         } catch (IllegalArgumentException exception) {
-            LOGGER.error("CraftAgent Phase 3 autorun configuration rejected: {}", exception.getMessage());
+            LOGGER.error("CraftAgent fixture autorun configuration rejected: {}", exception.getMessage());
             return;
         }
 
@@ -55,7 +61,7 @@ final class FixturePhase3Autorun {
         eventBus.addListener(autorun::onClientStarted);
         eventBus.addListener(autorun::onClientTick);
         eventBus.addListener(autorun::onClientStopping);
-        LOGGER.warn("CraftAgent Phase 3 fixture autorun enabled: mode={}, autoArm={}",
+        LOGGER.warn("CraftAgent fixture autorun enabled: mode={}, autoArm={}",
                 config.mode().name().toLowerCase(Locale.ROOT), config.autoArm());
     }
 
@@ -71,6 +77,10 @@ final class FixturePhase3Autorun {
             schedulePreparationIfReady(Minecraft.getInstance());
             return;
         }
+        if (current == Stage.COMPLETE) {
+            scheduleDivergenceIfOwnedBreak(Minecraft.getInstance());
+            return;
+        }
         if (current != Stage.PREPARED) {
             return;
         }
@@ -79,7 +89,7 @@ final class FixturePhase3Autorun {
         }
         if (!config.autoArm()) {
             if (stage.compareAndSet(Stage.PREPARED, Stage.COMPLETE)) {
-                LOGGER.info("CraftAgent Phase 3 fixture prepared without auto-arming");
+                LOGGER.info("CraftAgent fixture prepared without auto-arming");
             }
             return;
         }
@@ -98,10 +108,93 @@ final class FixturePhase3Autorun {
             }
             KeyMapping.click(toggleArming.getKey());
             stage.set(Stage.COMPLETE);
-            LOGGER.info("CraftAgent Phase 3 fixture requested one local-arm toggle after {} client ticks",
+            LOGGER.info("CraftAgent fixture requested one local-arm toggle after {} client ticks",
                     ARM_DELAY_CLIENT_TICKS);
         } catch (RuntimeException exception) {
             fail("could not click the local-arm key mapping", exception);
+        }
+    }
+
+    private void scheduleDivergenceIfOwnedBreak(Minecraft minecraft) {
+        if (config.mode() != FixturePhase3AutorunConfig.Mode.DIVERGENCE
+                || !divergenceTrigger.observe(ownedDivergenceBreakActive(minecraft))) {
+            return;
+        }
+        var server = minecraft.getSingleplayerServer();
+        var player = minecraft.player;
+        if (server == null || player == null) {
+            fail("divergence injection lost the integrated-server owner", null);
+            return;
+        }
+
+        UUID playerId = player.getUUID();
+        try {
+            server.execute(() -> injectDivergenceOnServer(server, playerId));
+            LOGGER.info("CraftAgent fixture scheduled Phase 4 guard divergence after {} "
+                            + "consecutive owned-break ticks",
+                    FixturePhase4DivergenceTrigger.REQUIRED_CONSECUTIVE_OWNED_BREAK_TICKS);
+        } catch (RuntimeException exception) {
+            fail("divergence injection could not be scheduled", exception);
+        }
+    }
+
+    private static boolean ownedDivergenceBreakActive(Minecraft minecraft) {
+        var player = minecraft.player;
+        var level = minecraft.level;
+        var gameMode = minecraft.gameMode;
+        if (player == null || level == null || gameMode == null
+                || !minecraft.options.keyAttack.isDown()
+                || !gameMode.isDestroying()
+                || !player.getMainHandItem().is(Items.DIAMOND_PICKAXE)
+                || !(minecraft.hitResult instanceof BlockHitResult hit)
+                || hit.getType() != HitResult.Type.BLOCK
+                || !hit.getBlockPos().equals(FixturePhase4Scenario.TARGET_A)) {
+            return false;
+        }
+        return level.getBlockState(FixturePhase4Scenario.TARGET_A).is(Blocks.OBSIDIAN)
+                && level.getBlockState(FixturePhase4Scenario.TARGET_B).is(Blocks.DIRT);
+    }
+
+    private void injectDivergenceOnServer(
+            net.minecraft.client.server.IntegratedServer server, UUID playerId) {
+        try {
+            ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+            if (player == null) {
+                fail("divergence injection owner was unavailable on the integrated server", null);
+                return;
+            }
+            FixtureSecurity.Decision decision =
+                    FixtureSecurity.authorize(player.createCommandSourceStack());
+            if (!decision.allowed()) {
+                fail("security boundary rejected divergence injection: "
+                        + decision.rejection(), null);
+                return;
+            }
+            FixtureSecurity.Decision revalidated =
+                    FixtureSecurity.reauthorize(decision.context());
+            if (!revalidated.allowed()) {
+                fail("security boundary changed before divergence injection: "
+                        + revalidated.rejection(), null);
+                return;
+            }
+            var context = revalidated.context();
+            if (!context.level().getBlockState(FixturePhase4Scenario.TARGET_A)
+                    .is(Blocks.OBSIDIAN)
+                    || !context.level().getBlockState(FixturePhase4Scenario.TARGET_B)
+                            .is(Blocks.DIRT)) {
+                fail("divergence injection source or guard changed before server mutation", null);
+                return;
+            }
+            FixturePhase4Scenario.introduceDivergence(context);
+            if (!context.level().getBlockState(FixturePhase4Scenario.TARGET_B)
+                    .is(Blocks.GOLD_BLOCK)) {
+                fail("divergence injection did not produce the gold guard state", null);
+                return;
+            }
+            LOGGER.warn("CraftAgent fixture injected Phase 4 guard divergence during the "
+                    + "owned obsidian break");
+        } catch (RuntimeException exception) {
+            fail("server-side divergence injection failed", exception);
         }
     }
 
@@ -120,7 +213,7 @@ final class FixturePhase3Autorun {
             return false;
         }
         clientSelectedSlotApplied = true;
-        LOGGER.info("CraftAgent Phase 3 fixture applied client selected slot {} for mode={}",
+        LOGGER.info("CraftAgent fixture applied client selected slot {} for mode={}",
                 selectedSlot, config.mode().name().toLowerCase(Locale.ROOT));
         return true;
     }
@@ -165,10 +258,16 @@ final class FixturePhase3Autorun {
                 fail("security boundary changed during arena setup: " + revalidated.rejection(), null);
                 return;
             }
-            FixturePhase3Scenario.prepare(revalidated.context(), scenarioMode(config.mode()),
-                    component -> LOGGER.info("CraftAgent Phase 3 fixture: {}", component.getString()));
+            if (config.mode().phase4()) {
+                FixturePhase4Scenario.prepare(
+                        revalidated.context(), phase4ScenarioMode(config.mode()),
+                        component -> LOGGER.info("CraftAgent Phase 4 fixture: {}", component.getString()));
+            } else {
+                FixturePhase3Scenario.prepare(revalidated.context(), scenarioMode(config.mode()),
+                        component -> LOGGER.info("CraftAgent Phase 3 fixture: {}", component.getString()));
+            }
             stage.set(Stage.PREPARED);
-            LOGGER.info("CraftAgent Phase 3 fixture server setup complete: mode={}",
+            LOGGER.info("CraftAgent fixture server setup complete: mode={}",
                     config.mode().name().toLowerCase(Locale.ROOT));
         } catch (RuntimeException exception) {
             fail("server-side fixture preparation failed", exception);
@@ -185,9 +284,9 @@ final class FixturePhase3Autorun {
     private void fail(String reason, RuntimeException exception) {
         stage.set(Stage.FAILED);
         if (exception == null) {
-            LOGGER.error("CraftAgent Phase 3 fixture autorun failed: {}. Local arming was not requested", reason);
+            LOGGER.error("CraftAgent fixture autorun failed: {}. Local arming was not requested", reason);
         } else {
-            LOGGER.error("CraftAgent Phase 3 fixture autorun failed: {}. Local arming was not requested",
+            LOGGER.error("CraftAgent fixture autorun failed: {}. Local arming was not requested",
                     reason, exception);
         }
     }
@@ -200,6 +299,25 @@ final class FixturePhase3Autorun {
             case LEVER -> FixturePhase3Scenario.Mode.LEVER;
             case COW -> FixturePhase3Scenario.Mode.COW;
             case RESET -> FixturePhase3Scenario.Mode.RESET;
+            case ALL_SATISFIED, MUTATIONS, WATERLOGGED, DIRECTIONAL_STAIRS,
+                    HOPPER, SHORTAGE, DIVERGENCE, HIDDEN ->
+                    throw new IllegalArgumentException("Phase 4 mode cannot use the Phase 3 scenario");
+        };
+    }
+
+    private static FixturePhase4Scenario.Mode phase4ScenarioMode(
+            FixturePhase3AutorunConfig.Mode mode) {
+        return switch (mode) {
+            case ALL_SATISFIED -> FixturePhase4Scenario.Mode.ALL_SATISFIED;
+            case MUTATIONS -> FixturePhase4Scenario.Mode.MUTATIONS;
+            case WATERLOGGED -> FixturePhase4Scenario.Mode.WATERLOGGED;
+            case DIRECTIONAL_STAIRS -> FixturePhase4Scenario.Mode.DIRECTIONAL_STAIRS;
+            case HOPPER -> FixturePhase4Scenario.Mode.HOPPER;
+            case SHORTAGE -> FixturePhase4Scenario.Mode.SHORTAGE;
+            case DIVERGENCE -> FixturePhase4Scenario.Mode.DIVERGENCE;
+            case HIDDEN -> FixturePhase4Scenario.Mode.HIDDEN;
+            case NAVIGATE, BREAK, PLACE, LEVER, COW, RESET ->
+                    throw new IllegalArgumentException("Phase 3 mode cannot use the Phase 4 scenario");
         };
     }
 

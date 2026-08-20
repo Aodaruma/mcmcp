@@ -1,4 +1,4 @@
-# CraftAgent Phase 1 test fixture
+# CraftAgent Phase 1–4 test fixture
 
 This source set is a destructive development fixture, not part of the production mod. It is
 enabled only by `-Dcraftagent.testHarness=true` (the Gradle `harnessClient` run supplies this).
@@ -42,15 +42,35 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
   bucket, and places the player within normal visible interaction range.
 - `/craftagent_fixture phase3 reset` — removes fixture cows, clears the Phase 3 lane, and restores
   the original deterministic player state.
+- `/craftagent_fixture phase4 all_satisfied` — prepares three exact verify-only cells already in
+  their requested stone/air/cobblestone states; no child action should be dispatched.
+- `/craftagent_fixture phase4 mutations` — prepares one stone→air break, one air→cobblestone
+  placement, and one dirt→cobblestone replace in a single local three-cell phase.
+- `/craftagent_fixture phase4 waterlogged` — prepares a level-0 source-water target and a smooth
+  stone slab whose exact result is `type=bottom,waterlogged=true`.
+- `/craftagent_fixture phase4 directional_stairs|hopper` — prepares a single supported placement
+  with exact east/bottom/straight/non-waterlogged stair state or down-facing enabled hopper state.
+- `/craftagent_fixture phase4 shortage` — exposes two cobblestone placement cells but supplies
+  exactly one cobblestone, so resource preflight must fail before preparation.
+- `/craftagent_fixture phase4 divergence` — prepares a diamond-pickaxe obsidian break plus a verified
+  dirt guard cell. One-shot autorun changes the guard to gold on the integrated-server thread after
+  three consecutive owned-break ticks; the next global reconcile must stop on the change. The
+  bounded manual `phase4 introduce_divergence` command remains available for interactive diagnosis.
+- `/craftagent_fixture phase4 hidden` — seals a gold verify-only cell in a fully opaque box so
+  required-current preflight fails closed. `phase4 reveal_hidden|conceal_hidden` opens or reseals
+  its fixed west aperture without accepting arbitrary coordinates.
 
-For a repeatable one-shot Phase 3 live test, keep a disposable singleplayer world named `New World`
-and run, for example:
+For a repeatable one-shot Phase 3 or Phase 4 live test, keep a disposable singleplayer world named
+`New World` and run, for example:
 
 ```powershell
 .\gradlew.bat runHarnessClient -PcraftagentFixturePhase3Mode=navigate
+.\gradlew.bat runHarnessClient -PcraftagentFixturePhase3Mode=mutations
 ```
 
-Accepted modes are `navigate`, `break`, `place`, `lever`, `cow`, and `reset`. Only when this Gradle
+Accepted modes are `navigate`, `break`, `place`, `lever`, `cow`, `reset`, `all_satisfied`,
+`mutations`, `waterlogged`, `directional_stairs`, `hopper`, `shortage`, `divergence`, and `hidden`.
+Only when this Gradle
 property is present, `runHarnessClient` adds Quick Play for `New World` and passes
 `craftagent.fixture.phase3.mode`; modes other than `reset` also pass
 `craftagent.fixture.phase3.autoArm=true`. After the private integrated-server boundary is checked on
@@ -59,6 +79,11 @@ ticks, then clicks the registered `key.craftagent.toggle_lock` mapping exactly o
 after a setup/security failure, and `reset` never auto-arms. The autorun temporarily disables
 pause-on-lost-focus so an external MCP driver can run; the original option is restored when the
 client stops. With no mode property, all autorun listeners and option changes remain disabled.
+
+The legacy Gradle property and system-property names still contain `Phase3`; Phase 4 modes reuse the
+same bounded autorun transport and do not widen its security checks. The Phase 4 fixture supports an
+implementation that is currently under final acceptance; fixture availability does not mean the
+development-live or production-Prism gates have completed.
 
 The gallery includes age 0/7 wheat, hydrated farmland, an east-facing upper-half stair,
 both halves of an open hinged door, a powered lit lamp plus a block-light sample, a stable source
@@ -72,3 +97,14 @@ lamp, water, slab, and block-light assumptions against the actual dedicated Game
 For water it checks the exact BlockState plus source/amount FluidState; for the slab it checks every
 named property and exact BlockState equality. It never calls the absolute-coordinate interactive
 arena and does not expose its mutation commands.
+
+The additional `phase4_block_plan_fixture` GameTest verifies every mode's exact full before-state,
+unique ids/targets, arena bounds, mutation operation ordering, shortage resource count, opaque box,
+level-0 source water, waterlogged slab, directional stairs, and hopper state. Each representative
+after-state is installed on the GameTest server and compared with full `BlockState.equals`, not a
+property subset.
+
+Phase 4 destructive targets use only members of the production safe-break allowlist: stone and dirt
+in `mutations`, and obsidian in `divergence`. Live acceptance also verifies target-cell outcomes;
+ordinary vanilla neighbor updates and game events outside those declared targets are not asserted to
+remain unchanged.
