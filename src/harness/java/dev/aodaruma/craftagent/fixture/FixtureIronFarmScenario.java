@@ -33,6 +33,7 @@ import net.minecraft.world.clock.ClockTimeMarkers;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -148,16 +149,11 @@ final class FixtureIronFarmScenario {
     }
 
     static List<BlockPos> waterSources() {
-        var result = new ArrayList<BlockPos>();
-        for (int coordinate = PLATFORM_MIN.getX(); coordinate <= PLATFORM_MAX.getX(); coordinate++) {
-            result.add(new BlockPos(coordinate, 206, PLATFORM_MIN.getZ() - 1));
-            result.add(new BlockPos(coordinate, 206, PLATFORM_MAX.getZ() + 1));
-        }
-        for (int coordinate = PLATFORM_MIN.getZ(); coordinate <= PLATFORM_MAX.getZ(); coordinate++) {
-            result.add(new BlockPos(PLATFORM_MIN.getX() - 1, 206, coordinate));
-            result.add(new BlockPos(PLATFORM_MAX.getX() + 1, 206, coordinate));
-        }
-        return List.copyOf(result);
+        return List.of(
+                new BlockPos(255, 206, 250), new BlockPos(256, 206, 250),
+                new BlockPos(255, 206, 261), new BlockPos(256, 206, 261),
+                new BlockPos(250, 206, 255), new BlockPos(250, 206, 256),
+                new BlockPos(261, 206, 255), new BlockPos(261, 206, 256));
     }
 
     static List<BlockPos> waterPlugs() {
@@ -179,6 +175,15 @@ final class FixtureIronFarmScenario {
         return MATERIALS;
     }
 
+    static List<BlockPos> scareSightline() {
+        var result = new ArrayList<BlockPos>();
+        for (int x = 252; x <= 259; x++) {
+            result.add(new BlockPos(x, 201, 249));
+            result.add(new BlockPos(x, 202, 249));
+        }
+        return List.copyOf(result);
+    }
+
     static void sendOracle(FixtureSecurity.Context context, Consumer<Component> output) {
         AABB bounds = AABB.encapsulatingFullBlocks(LAB_MIN, LAB_MAX);
         int villagers = context.level().getEntities(
@@ -187,9 +192,14 @@ final class FixtureIronFarmScenario {
                 EntityTypes.ZOMBIE, bounds, entity -> entity.entityTags().contains(ENTITY_TAG)
                         && entity.getVehicle() instanceof Boat).size();
         int golems = context.level().getEntities(EntityTypes.IRON_GOLEM, bounds, entity -> true).size();
-        int looseIron = context.level().getEntities(
-                        EntityTypes.ITEM, bounds, entity -> entity.getItem().is(Items.IRON_INGOT))
-                .stream().mapToInt(entity -> entity.getItem().getCount()).sum();
+        var looseIronEntities = context.level().getEntities(
+                EntityTypes.ITEM, bounds, entity -> entity.getItem().is(Items.IRON_INGOT));
+        int looseIron = looseIronEntities.stream().mapToInt(entity -> entity.getItem().getCount()).sum();
+        String looseIronPositions = looseIronEntities.stream().limit(16)
+                .map(entity -> String.format(Locale.ROOT, "(%.2f,%.2f,%.2f)x%d",
+                        entity.getX(), entity.getY(), entity.getZ(), entity.getItem().getCount()))
+                .collect(java.util.stream.Collectors.joining(",", "[",
+                        looseIronEntities.size() > 16 ? ",...]" : "]"));
         int playerIron = 0;
         for (int slot = 0; slot < context.player().getInventory().getContainerSize(); slot++) {
             if (context.player().getInventory().getItem(slot).is(Items.IRON_INGOT)) {
@@ -209,6 +219,7 @@ final class FixtureIronFarmScenario {
                 + " zombie_in_boat=" + zombies
                 + " live_golems=" + golems
                 + " loose_iron=" + looseIron
+                + " loose_iron_positions=" + looseIronPositions
                 + " player_iron=" + playerIron
                 + " collected_iron=" + collectedIron));
     }
@@ -227,10 +238,8 @@ final class FixtureIronFarmScenario {
             }
             setBlock(context.level(), plug, Blocks.AIR.defaultBlockState());
         }
-        for (BlockPos blocker : SCARE_BLOCKERS) {
-            setPaired(context.level(),
-                    blocker, Blocks.AIR.defaultBlockState(),
-                    blocker.above(), Blocks.AIR.defaultBlockState());
+        for (BlockPos sightline : scareSightline()) {
+            setBlock(context.level(), sightline, Blocks.AIR.defaultBlockState());
         }
         output.accept(Component.literal(
                 "TEST-ONLY IRON-FARM ACTIVATION: floor=verified water=released scare=enabled player=safe_house"));

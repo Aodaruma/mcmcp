@@ -449,8 +449,8 @@ final class FixtureGameTests {
             }
         }
         if (!FixtureIronFarmScenario.VILLAGE_ROOF_STATE.equals(Blocks.GLASS.defaultBlockState())
-                || FixtureIronFarmScenario.waterSources().size() != 40
-                || FixtureIronFarmScenario.waterPlugs().size() != 36) {
+                || FixtureIronFarmScenario.waterSources().size() != 8
+                || FixtureIronFarmScenario.waterPlugs().size() != 8) {
             helper.fail(Component.literal("iron-farm spawnproof roof or sealed reservoirs changed"));
         }
         for (BlockPos source : FixtureIronFarmScenario.waterSources()) {
@@ -459,6 +459,23 @@ final class FixtureGameTests {
             if (!adjacentPlug) {
                 helper.fail(Component.literal("iron-farm water source has no safe-break plug"));
             }
+        }
+        for (BlockPos plug : FixtureIronFarmScenario.waterPlugs()) {
+            boolean alignedWithChute = plug.getX() == 255 || plug.getX() == 256
+                    || plug.getZ() == 255 || plug.getZ() == 256;
+            boolean onPlatformEdge = plug.getX() == FixtureIronFarmScenario.PLATFORM_MIN.getX()
+                    || plug.getX() == FixtureIronFarmScenario.PLATFORM_MAX.getX()
+                    || plug.getZ() == FixtureIronFarmScenario.PLATFORM_MIN.getZ()
+                    || plug.getZ() == FixtureIronFarmScenario.PLATFORM_MAX.getZ();
+            if (!alignedWithChute || !onPlatformEdge) {
+                helper.fail(Component.literal("iron-farm water stream is not aimed at the central chute"));
+            }
+        }
+        if (FixtureIronFarmScenario.scareSightline().size() != 16
+                || FixtureIronFarmScenario.SCARE_BLOCKERS.stream().anyMatch(blocker ->
+                        !FixtureIronFarmScenario.scareSightline().contains(blocker)
+                                || !FixtureIronFarmScenario.scareSightline().contains(blocker.above()))) {
+            helper.fail(Component.literal("iron-farm activation does not open the full scare sightline"));
         }
         var collection = FixtureIronFarmScenario.collectionLayout();
         for (var entry : collection.entrySet()) {
