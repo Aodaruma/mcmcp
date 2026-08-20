@@ -88,6 +88,7 @@ one-shotは「1回のMCP tool callで必ず成功すること」ではありま�
 - [アーキテクチャ](docs/architecture.md)
 - [観測・記憶モデル](docs/observation-model.md)
 - [自動化runtimeと回復](docs/automation-runtime.md)
+- [建築計画と決定論的実行の境界](docs/construction-planning-boundary.md)
 - [安全モデル](docs/safety-model.md)
 - [MCPインターフェース](docs/mcp-interface.md)
 - [くらふとぶ！互換性](docs/compatibility-kurafutobu-v01.2.md)
