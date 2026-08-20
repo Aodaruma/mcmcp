@@ -6,6 +6,9 @@ import java.util.Map;
 
 /** JSON Schema 2020-12 documents advertised by the Phase 1 tools. */
 public final class McpToolSchemas {
+    private static final List<String> ROUTINE_KINDS = List.of(
+            "stationary_break", "navigate_to", "break_block", "place_block",
+            "interact_block", "interact_entity");
     static final List<String> SNAPSHOT_SCOPES = List.of(
             "player", "inventory", "target", "visible_blocks", "visible_entities", "world", "screen");
 
@@ -80,6 +83,24 @@ public final class McpToolSchemas {
     }
 
     public static Map<String, Object> startRoutineInput() {
+        Map<String, Object> result = closedObject(fields(
+                "kind", enumString(ROUTINE_KINDS.toArray(String[]::new)),
+                "parameters", schema(),
+                "bounds", schema(),
+                "completion_intent", constant("finish_goal"),
+                "idempotency_key", uuid()),
+                "kind", "parameters", "bounds", "completion_intent", "idempotency_key");
+        result.put("oneOf", List.of(
+                stationaryBreakStartInput(),
+                navigateToStartInput(),
+                breakBlockStartInput(),
+                placeBlockStartInput(),
+                interactBlockStartInput(),
+                interactEntityStartInput()));
+        return result;
+    }
+
+    public static Map<String, Object> stationaryBreakStartInput() {
         Map<String, Object> goal = closedObject(fields(
                 "item", registryId(),
                 "minimum_inventory_count", integer(1, 2_304)),
@@ -102,6 +123,99 @@ public final class McpToolSchemas {
                 "dimension", "region", "max_travel_blocks", "max_duration_seconds", "allow_break");
         return closedObject(fields(
                 "kind", constant("stationary_break"),
+                "parameters", parameters,
+                "bounds", bounds,
+                "completion_intent", constant("finish_goal"),
+                "idempotency_key", uuid()),
+                "kind", "parameters", "bounds", "completion_intent", "idempotency_key");
+    }
+
+    public static Map<String, Object> navigateToStartInput() {
+        Map<String, Object> parameters = closedObject(fields(
+                "target", dimensionBlockPosition(),
+                "horizontal_tolerance_blocks", number(0.25, 2.0)),
+                "target", "horizontal_tolerance_blocks");
+        return routineStartBranch(
+                "navigate_to", parameters, phaseThreeBounds(integer(1, 128), integer(1, 120), false));
+    }
+
+    public static Map<String, Object> breakBlockStartInput() {
+        Map<String, Object> air = closedLikeRegistryObject(fields(
+                "block", constant("minecraft:air"),
+                "properties", closedObject(Map.of())), "block");
+        Map<String, Object> parameters = closedObject(fields(
+                "target", dimensionBlockPosition(),
+                "expected_before", expectedBlockState(),
+                "expected_after", air),
+                "target", "expected_before", "expected_after");
+        return routineStartBranch(
+                "break_block", parameters,
+                phaseThreeBounds(constant(0), integer(1, 30), true));
+    }
+
+    public static Map<String, Object> placeBlockStartInput() {
+        Map<String, Object> parameters = closedObject(fields(
+                "target", dimensionBlockPosition(),
+                "expected_before", expectedBlockState(),
+                "item", registryId(),
+                "expected_after", expectedBlockState()),
+                "target", "expected_before", "item", "expected_after");
+        return routineStartBranch(
+                "place_block", parameters, phaseThreeBounds(constant(0), integer(1, 30), false));
+    }
+
+    public static Map<String, Object> interactBlockStartInput() {
+        return routineStartBranch(
+                "interact_block", blockTransitionParameters(),
+                phaseThreeBounds(constant(0), integer(1, 30), false));
+    }
+
+    public static Map<String, Object> interactEntityStartInput() {
+        Map<String, Object> goal = closedObject(fields(
+                "item", constant("minecraft:milk_bucket"),
+                "minimum_inventory_count", integer(1, 2_304)),
+                "item", "minimum_inventory_count");
+        Map<String, Object> parameters = closedObject(fields(
+                "entity_ref", string(24, 24, "^[A-Za-z0-9_-]{24}$"),
+                "expected_type", constant("minecraft:cow"),
+                "hand", constant("main_hand"),
+                "held_item", constant("minecraft:bucket"),
+                "goal", goal),
+                "entity_ref", "expected_type", "hand", "held_item", "goal");
+        return routineStartBranch(
+                "interact_entity", parameters, phaseThreeBounds(constant(0), integer(1, 30), false));
+    }
+
+    private static Map<String, Object> blockTransitionParameters() {
+        return closedObject(fields(
+                "target", dimensionBlockPosition(),
+                "expected_before", expectedBlockState(),
+                "expected_after", expectedBlockState()),
+                "target", "expected_before", "expected_after");
+    }
+
+    private static Map<String, Object> phaseThreeBounds(
+            Map<String, Object> maxTravel,
+            Map<String, Object> maxDuration,
+            boolean allowBreak) {
+        Map<String, Object> region = closedObject(fields(
+                "min", blockPosition(),
+                "max", blockPosition()), "min", "max");
+        return closedObject(fields(
+                "dimension", registryId(),
+                "region", region,
+                "max_travel_blocks", maxTravel,
+                "max_duration_seconds", maxDuration,
+                "allow_break", constant(allowBreak)),
+                "dimension", "region", "max_travel_blocks", "max_duration_seconds", "allow_break");
+    }
+
+    private static Map<String, Object> routineStartBranch(
+            String kind,
+            Map<String, Object> parameters,
+            Map<String, Object> bounds) {
+        return closedObject(fields(
+                "kind", constant(kind),
                 "parameters", parameters,
                 "bounds", bounds,
                 "completion_intent", constant("finish_goal"),
@@ -361,8 +475,8 @@ public final class McpToolSchemas {
 
     static Map<String, Object> listRoutinesOutput() {
         Map<String, Object> catalogEntry = closedObject(fields(
-                "kind", constant("stationary_break"),
-                "phase", constant(2),
+                "kind", enumString(ROUTINE_KINDS.toArray(String[]::new)),
+                "phase", enumInteger(2, 3),
                 "experimental", constant(false),
                 "input_schema", schema(
                         "type", "object",
@@ -371,8 +485,8 @@ public final class McpToolSchemas {
                 "postconditions", array(string(1, 160, null), 1, 16, true)),
                 "kind", "phase", "experimental", "input_schema", "postconditions");
         Map<String, Object> data = closedObject(fields(
-                "catalog_version", constant("phase-2"),
-                "routines", array(catalogEntry, 1, 1)), "catalog_version", "routines");
+                "catalog_version", constant("phase-3"),
+                "routines", array(catalogEntry, 6, 6, true)), "catalog_version", "routines");
         return envelope("list_routines", data);
     }
 
@@ -383,7 +497,7 @@ public final class McpToolSchemas {
     static Map<String, Object> startRoutineOutput() {
         Map<String, Object> data = closedObject(fields(
                 "routine_id", uuid(),
-                "kind", constant("stationary_break"),
+                "kind", enumString(ROUTINE_KINDS.toArray(String[]::new)),
                 "state", routineState(),
                 "idempotent_replay", schema("type", "boolean")),
                 "routine_id", "kind", "state", "idempotent_replay");
@@ -406,10 +520,38 @@ public final class McpToolSchemas {
         Map<String, Object> progress = closedObject(fields(
                 "completed", integer(0, 2_304),
                 "total", integer(1, 2_304),
-                "unit", constant("items")), "completed", "total", "unit");
-        Map<String, Object> currentStep = nullable(closedObject(fields(
+                "unit", enumString("items", "blocks", "interactions", "destinations")),
+                "completed", "total", "unit");
+        Map<String, Object> stationaryBreakStep = closedObject(fields(
                 "kind", constant("break_block"),
-                "target", dimensionBlockPosition()), "kind", "target"));
+                "target", dimensionBlockPosition()), "kind", "target");
+        Map<String, Object> navigateStep = closedObject(fields(
+                "kind", constant("navigate_to"),
+                "target", dimensionBlockPosition(),
+                "horizontal_tolerance_blocks", number(0.25, 2.0)),
+                "kind", "target", "horizontal_tolerance_blocks");
+        Map<String, Object> breakStep = closedObject(fields(
+                "kind", constant("break_block"),
+                "target", dimensionBlockPosition(),
+                "expected_after", expectedBlockState()),
+                "kind", "target", "expected_after");
+        Map<String, Object> placeStep = closedObject(fields(
+                "kind", constant("place_block"),
+                "target", dimensionBlockPosition(),
+                "expected_after", expectedBlockState()),
+                "kind", "target", "expected_after");
+        Map<String, Object> interactBlockStep = closedObject(fields(
+                "kind", constant("interact_block"),
+                "target", dimensionBlockPosition(),
+                "expected_after", expectedBlockState()),
+                "kind", "target", "expected_after");
+        Map<String, Object> interactEntityStep = closedObject(fields(
+                "kind", constant("interact_entity"),
+                "entity_ref", string(24, 24, "^[A-Za-z0-9_-]{24}$"),
+                "expected_type", registryId()),
+                "kind", "entity_ref", "expected_type");
+        Map<String, Object> currentStep = nullable(schema("oneOf", List.of(
+                stationaryBreakStep, navigateStep, breakStep, placeStep, interactBlockStep, interactEntityStep)));
         Map<String, Object> checkpoint = closedObject(fields(
                 "seq", integer(0, Long.MAX_VALUE),
                 "observation_revision", integer(0, Long.MAX_VALUE)), "seq", "observation_revision");
@@ -428,7 +570,7 @@ public final class McpToolSchemas {
                 "last_check_client_tick", integer(0, Long.MAX_VALUE)),
                 "mode", "last_check_client_tick");
         Map<String, Object> wait = nullable(closedObject(fields(
-                "reason", string(1, 96, "^[a-z][a-z0-9_]*$"),
+                "reason", enumString("target_regeneration", "server_sync", "movement_settle"),
                 "deadline_client_tick", integer(0, Long.MAX_VALUE),
                 "wake_condition", string(1, 160, null)),
                 "reason", "deadline_client_tick", "wake_condition"));
@@ -450,7 +592,7 @@ public final class McpToolSchemas {
                 "seq", "type", "client_tick", "observation_revision", "details");
         return closedObject(fields(
                 "routine_id", uuid(),
-                "kind", constant("stationary_break"),
+                "kind", enumString(ROUTINE_KINDS.toArray(String[]::new)),
                 "state", routineState(),
                 "phase", string(1, 128, "^[a-z][a-z0-9_.]*$"),
                 "goal", goal,

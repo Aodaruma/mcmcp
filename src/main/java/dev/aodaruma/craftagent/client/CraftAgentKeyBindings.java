@@ -5,6 +5,7 @@ import dev.aodaruma.craftagent.CraftAgentMod;
 import dev.aodaruma.craftagent.runtime.CraftAgentRuntime;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.resources.Identifier;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import org.lwjgl.glfw.GLFW;
@@ -21,6 +22,15 @@ public final class CraftAgentKeyBindings {
     public void register(RegisterKeyMappingsEvent event) {
         event.register(toggleArming);
         event.register(emergencyStop);
+    }
+
+    /**
+     * Local safety controls have their own synchronous priority handlers. They must
+     * not also enter the generic manual-input path before those handlers run, or an
+     * F8 lock can be immediately toggled back to armed in the same client tick.
+     */
+    public boolean isLocalControlKey(KeyEvent event) {
+        return toggleArming.matches(event) || emergencyStop.matches(event);
     }
 
     public void handleClientTick(Minecraft minecraft, CraftAgentRuntime runtime) {

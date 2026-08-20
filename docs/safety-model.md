@@ -120,7 +120,7 @@ GUIは一律禁止せず、ownershipで制御します。
 
 ## Entityとuser handoff
 
-`interact_entity`は可視、LOS、通常reach内への有限右clickだけです。移動、捕獲、押し込み、攻撃、釣り竿を含めません。
+Phase 3 v1の`interact_entity`は、current world session/dimensionで現在可視な短寿命opaque refが指すadult cowを、crosshair・LOS・通常reach・declared bounds内でmain-hand bucketにより1回だけ搾乳する操作に限定します。dispatch後のfreshなselected-slot inventory syncと`minecraft:milk_bucket`の絶対目標countを確認し、retryしません。取引、餌やり、毛刈り、騎乗等の汎用interactionは後続phase、移動、捕獲、押し込み、攻撃、釣り竿は搬送用の個別experimental gateまで公開しません。
 
 Entity搬送は、初版ではユーザーが次を準備した後だけ自動化候補にします。
 

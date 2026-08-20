@@ -38,7 +38,7 @@ routineはVALIDATING時に、MCPで指定されたwork regionと、local UIで�
 
 ## finite actionの実行契約
 
-すべての意味的actionは次の順で動きます。
+block/entityの有限actionは次の順で動きます。
 
 ```text
 PRECHECK
@@ -49,21 +49,24 @@ PRECHECK
   -> SUCCEEDED
 ```
 
-失敗時はfresh observationを取り、同じpostconditionへ収束する局所retryだけを通常2〜3回行います。再照準、別の設置面、再接近、hotbar再選択、許可範囲内のrepathは可能です。資材方針、blueprint、Entity同定、許可regionを勝手に変更しません。
+`navigate_to`は`PRECHECK -> EXECUTE -> MOVE -> SETTLE -> VERIFY`で動き、destination toleranceへ入った時点で移動入力を解放します。Phase 3 v1は回転を固定したforward/back/strafeによる短い平坦路だけを扱い、jump/sprint、段差越え、pathfinding、block破壊は行いません。loadedな足元・頭上空間、安定床、fluid/hazard不在、bounds/travel上限を毎tick確認します。positiveなserver ACKはないため、入力停止後10 client tick連続でtolerance内、安定床上、低速、位置drift上限内を満たし、dispatch後にposition/rotation/motion correctionがない場合だけ`server-reconciled`とします。
+
+失敗時はfresh observationを取り、同じpostconditionへ収束することが安全だとaction実装が明示した場合だけbounded retryを行います。資材方針、blueprint、Entity同定、許可regionを勝手に変更しません。Phase 3の`interact_entity`は結果の重複を安全に否定できないためretryしません。
 
 postconditionはaction実装へ固定し、LLMが任意predicateを注入する機能は作りません。
 
 例:
 
-- `place_block`: 指定座標が期待block IDと必要propertyになった
-- `break_block`: 対象がなくなった、または指定replacementになった
-- `navigate_to`: tolerance内、安定床上、危険状態なし
+- `place_block`: prediction ACK後のサーバー由来の完全なBlockStateが、実際の設置予測stateおよび要求した`expected_after`と一致した
+- `break_block`: prediction ACK後のサーバー由来の完全なBlockStateが`expected_after`（Phase 3 v1ではair）と一致した
+- `navigate_to`: 入力解放後の10 client tick連続安定と、position/rotation/motion correction不在により`server-reconciled`となった
+- `interact_block`: allowlist対象への1回の通常useについて、prediction ACK後のサーバー由来の完全なBlockStateが`expected_after`と一致した
 - `craft_items`: サーバー同期後のinventoryが目標countを満たす
 - `transfer_items`: sourceとdestination双方の同期後countが目標を満たす
-- `interact_entity`: routineごとの観測可能な結果を確認した
+- `interact_entity`: dispatch後のfreshなselected-slot inventory syncと、絶対目標count以上の`minecraft:milk_bucket`を確認した
 - `apply_block_plan`: 対象phaseの必須expected座標がすべてcurrentかつ一致し、必須集合のunknownが0
 
-単にpacketやclickを送れたことは成功にしません。
+単にpacketやclickを送れたことは成功にしません。`server-confirmed`という表現はpositive ACKとサーバーstateを持つblock actionに使い、navigationは上記の根拠を伴う`server-reconciled`と区別します。
 
 ## routine状態
 
@@ -218,7 +221,9 @@ CHECKPOINT
 
 ## Entity interactionとuser handoff
 
-初版は可視・通常reach・LOS内への有限`interact_entity`だけを対象にします。取引、餌やり、搾乳、毛刈り、騎乗など、通常の右click相当です。移動、捕獲、押し込み、攻撃、投射物、釣り竿は含めません。
+Phase 3 v1の`interact_entity`は搾乳1種類だけです。current world session/dimensionで現在可視な短寿命opaque `entity_ref`が指すadult cowを、crosshair、LOS、通常reach、declared bounds内で再解決し、main handのbucketで通常interactionを1回だけ送ります。成功はdispatch後に届いたfreshなselected-slot inventory syncと、absolute goal count以上の`minecraft:milk_bucket`で確認します。retry、取引、餌やり、毛刈り、騎乗、移動、捕獲、押し込み、攻撃、投射物、釣り竿は含めません。
+
+Phase 3 v1の`interact_block`も汎用右clickではありません。empty main handかつnon-sneakで、現在crosshair・通常reach内にあるlever、fence gate、vanillaのwooden trapdoorだけを許可します。door、button、container、未知MOD blockは除外します。`expected_after`は現在の完全なBlockStateからleverの`powered`またはgate/trapdoorの`open`だけを反転した完全stateと一致しなければpacket送信前に拒否し、そのstateをprediction ACKとサーバー由来の完全なBlockStateで検証します。
 
 万能な`transport_entity`は初版で公開しません。村人や敵対MobはAI、衝突、遅延、地形により成功率が低いためです。
 

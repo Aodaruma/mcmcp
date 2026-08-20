@@ -34,6 +34,31 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
   cancellation/input-release tests.
 - `/craftagent_fixture phase2 status|off` — prints server break/regeneration counters or stops
   the scenario. The tick handler reauthorizes the private integrated-server boundary every tick.
+- `/craftagent_fixture phase3 navigate` — clears a flat short lane and places the player at its
+  deterministic start, facing the fixed destination.
+- `/craftagent_fixture phase3 break|place|lever` — prepares one stone break, cobblestone placement,
+  or unpowered floor-lever target with matching inventory selection and player pose.
+- `/craftagent_fixture phase3 cow` — spawns one fixture-tagged NoAI persistent cow, selects a
+  bucket, and places the player within normal visible interaction range.
+- `/craftagent_fixture phase3 reset` — removes fixture cows, clears the Phase 3 lane, and restores
+  the original deterministic player state.
+
+For a repeatable one-shot Phase 3 live test, keep a disposable singleplayer world named `New World`
+and run, for example:
+
+```powershell
+.\gradlew.bat runHarnessClient -PcraftagentFixturePhase3Mode=navigate
+```
+
+Accepted modes are `navigate`, `break`, `place`, `lever`, `cow`, and `reset`. Only when this Gradle
+property is present, `runHarnessClient` adds Quick Play for `New World` and passes
+`craftagent.fixture.phase3.mode`; modes other than `reset` also pass
+`craftagent.fixture.phase3.autoArm=true`. After the private integrated-server boundary is checked on
+its server thread, the autorun rebuilds the entire fixed arena, prepares that mode, waits 20 client
+ticks, then clicks the registered `key.craftagent.toggle_lock` mapping exactly once. It never arms
+after a setup/security failure, and `reset` never auto-arms. The autorun temporarily disables
+pause-on-lost-focus so an external MCP driver can run; the original option is restored when the
+client stops. With no mode property, all autorun listeners and option changes remain disabled.
 
 The gallery includes age 0/7 wheat, hydrated farmland, an east-facing upper-half stair,
 both halves of an open hinged door, a powered lit lamp plus a block-light sample, a stable source

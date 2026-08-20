@@ -6,7 +6,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 /** Client-tick-owned deterministic core for the Phase 2 stationary_break routine. */
-final class StationaryBreakRoutine {
+final class StationaryBreakRoutine implements ManagedRoutine {
     static final String KIND = "stationary_break";
 
     private static final String PHASE_QUEUED = "queued";
@@ -39,6 +39,7 @@ final class StationaryBreakRoutine {
     private AttackAttempt attackAttempt;
     private boolean attackInputStopped;
     private PredictionEvidence confirmedTransition;
+    private boolean retired;
 
     StationaryBreakRoutine(
             UUID routineId,
@@ -58,7 +59,8 @@ final class StationaryBreakRoutine {
                 Map.of("phase", PHASE_QUEUED));
     }
 
-    void tick() {
+    @Override
+    public void tick() {
         if (state.terminal() || state == RoutineState.FINALIZING) {
             return;
         }
@@ -144,7 +146,8 @@ final class StationaryBreakRoutine {
         }
     }
 
-    void cancel(String reason) {
+    @Override
+    public void cancel(String reason) {
         if (state.terminal()) {
             return;
         }
@@ -158,7 +161,8 @@ final class StationaryBreakRoutine {
                 Map.of("reason", sanitizeReason(reason)));
     }
 
-    void completeFinalization(RoutineFailure finalizationFailure) {
+    @Override
+    public void completeFinalization(RoutineFailure finalizationFailure) {
         if (state != RoutineState.FINALIZING) {
             throw new IllegalStateException("routine is not finalizing");
         }
@@ -181,7 +185,8 @@ final class StationaryBreakRoutine {
                 Map.of("verified_breaks", verifiedBreaks));
     }
 
-    void recordTerminalFinalization(RoutineFailure cleanupFailure) {
+    @Override
+    public void recordTerminalFinalization(RoutineFailure cleanupFailure) {
         if (!state.terminal()) {
             throw new IllegalStateException("routine is not terminal");
         }
@@ -199,46 +204,79 @@ final class StationaryBreakRoutine {
         finalizationFailure = cleanupFailure;
     }
 
-    RoutineSnapshot snapshot(long afterEventSeq, int maxEvents) {
+    @Override
+    public RoutineSnapshot snapshot(long afterEventSeq, int maxEvents) {
+        var progress = new RoutineProgress(
+                observedGoalCount,
+                request.goal().minimumInventoryCount(),
+                "items");
+        var diagnostics = Map.<String, Object>of(
+                "inventory_server_synchronized", inventoryServerSynchronized,
+                "verified_breaks", verifiedBreaks,
+                "attempts", attempts,
+                "target_item", request.goal().itemId());
         return new RoutineSnapshot(
                 routineId,
                 KIND,
                 state,
                 phase,
                 goalVerified,
-                new RoutineProgress(
-                        observedGoalCount,
-                        request.goal().minimumInventoryCount(),
-                        "items"),
-                request.target(),
-                state == RoutineState.WAITING ? regenerationDeadlineTick : null,
+                progress,
+                state.terminal() ? null : RoutineStep.block("break_block", request.target()),
+                new RoutineCheckpoint(verifiedBreaks, lastObservationRevision),
+                new RoutineVerification(
+                        inventoryServerSynchronized
+                                ? Math.min(progress.completed(), progress.total())
+                                : 0,
+                        progress.total(),
+                        inventoryServerSynchronized ? 0 : 1),
+                List.of(),
+                state == RoutineState.WAITING
+                        ? new RoutineWait(
+                                "target_regeneration",
+                                regenerationDeadlineTick,
+                                "target matches the original full block state")
+                        : null,
                 lastClientTick,
-                lastObservationRevision,
-                Map.of(
-                        "inventory_server_synchronized", inventoryServerSynchronized,
-                        "verified_breaks", verifiedBreaks,
-                        "attempts", attempts,
-                        "target_item", request.goal().itemId()),
+                diagnostics,
                 failure,
                 finalizationCompleted,
                 finalizationFailure,
                 events.page(afterEventSeq, maxEvents));
     }
 
-    UUID routineId() {
+    @Override
+    public UUID routineId() {
         return routineId;
+    }
+
+    @Override
+    public String kind() {
+        return KIND;
     }
 
     StationaryBreakRequest request() {
         return request;
     }
 
-    RoutineState state() {
+    @Override
+    public RoutineState state() {
         return state;
     }
 
-    long lastClientTick() {
+    @Override
+    public long lastClientTick() {
         return lastClientTick;
+    }
+
+    @Override
+    public void retire() {
+        if (retired) {
+            return;
+        }
+        retired = true;
+        safeReleaseAttack();
+        port.retire(request);
     }
 
     private void beginValidation(StationaryBreakFrame frame) {

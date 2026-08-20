@@ -56,6 +56,7 @@ final class FixtureArena {
 
     static void load(FixtureSecurity.Context context) {
         FixturePhase2Scenario.stop();
+        FixturePhase3Scenario.stop(context);
         ServerLevel level = context.level();
 
         // Every block write, including clearing, passes through the bounds-checked helper.
@@ -144,6 +145,7 @@ final class FixtureArena {
 
     static void resetInventoryAndStatus(FixtureSecurity.Context context) {
         FixturePhase2Scenario.stop();
+        FixturePhase3Scenario.stop(context);
         requireInitialized(context.level());
         resetPlayer(context.player());
     }
@@ -240,7 +242,7 @@ final class FixtureArena {
         }
     }
 
-    private static void resetPlayer(ServerPlayer player) {
+    static void resetPlayer(ServerPlayer player) {
         player.setGameMode(GameType.SURVIVAL);
         player.teleportTo(199.5D, 200.0D, 194.5D);
         player.setYRot(0.0F);
@@ -298,7 +300,7 @@ final class FixtureArena {
         return level.getBlockState(INITIALIZED_MARKER).is(Blocks.CONCRETE.yellow());
     }
 
-    private static void requireInitialized(ServerLevel level) {
+    static void requireInitialized(ServerLevel level) {
         if (!isInitialized(level)) {
             throw new IllegalStateException("run /craftagent_fixture load first");
         }
@@ -314,7 +316,7 @@ final class FixtureArena {
         return blockPos.getX() + "," + blockPos.getY() + "," + blockPos.getZ();
     }
 
-    private static void setBlock(ServerLevel level, BlockPos blockPos, BlockState state) {
+    static void setBlock(ServerLevel level, BlockPos blockPos, BlockState state) {
         setBlock(level, blockPos, state, MUTATION_FLAGS);
     }
 

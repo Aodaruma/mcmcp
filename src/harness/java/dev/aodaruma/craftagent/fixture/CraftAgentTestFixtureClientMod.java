@@ -15,5 +15,6 @@ public final class CraftAgentTestFixtureClientMod {
         NeoForge.EVENT_BUS.addListener(FixtureCommands::register);
         NeoForge.EVENT_BUS.addListener(FixturePhase2Scenario::onServerTick);
         NeoForge.EVENT_BUS.addListener(FixturePhase2Scenario::onServerStopped);
+        FixturePhase3Autorun.installIfRequested(NeoForge.EVENT_BUS);
     }
 }

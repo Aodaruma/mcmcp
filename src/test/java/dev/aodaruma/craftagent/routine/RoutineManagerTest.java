@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -73,6 +75,46 @@ class RoutineManagerTest {
     }
 
     @Test
+    void genericAdmissionUsesTheFactoryOnceAndNamespacesIdentityByKind() {
+        var manager = new RoutineManager(new FakeStationaryBreakPort());
+        var key = UUID.randomUUID().toString();
+        var factoryCalls = new AtomicInteger();
+        var created = new AtomicReference<FakeManagedRoutine>();
+
+        var first = manager.admitRoutine(
+                "break_block",
+                key,
+                "same-arguments",
+                10,
+                (id, capacity, tick) -> {
+                    factoryCalls.incrementAndGet();
+                    var routine = new FakeManagedRoutine(id, "break_block", tick);
+                    created.set(routine);
+                    return routine;
+                });
+        var repeated = manager.admitRoutine(
+                "break_block",
+                key,
+                "same-arguments",
+                10,
+                (id, capacity, tick) -> {
+                    factoryCalls.incrementAndGet();
+                    return new FakeManagedRoutine(id, "break_block", tick);
+                });
+
+        assertThat(repeated).isEqualTo(new RoutineManager.StartReceipt(first.routineId(), true));
+        assertThat(factoryCalls).hasValue(1);
+        assertThat(manager.replayRoutine("break_block", key, "same-arguments", 11))
+                .contains(new RoutineManager.StartReceipt(first.routineId(), true));
+        assertThatThrownBy(() -> manager.replayRoutine(
+                        "place_block", key, "same-arguments", 11))
+                .isInstanceOf(RoutineManager.IdempotencyConflictException.class);
+        manager.cancelRoutine(first.routineId(), "done", 0, 8);
+        manager.cancelRoutine(first.routineId(), "replay", 0, 8);
+        assertThat(created.get().retireCount).isEqualTo(1);
+    }
+
+    @Test
     void expiresTerminalIdempotencyRecordsWithinConfiguredBounds() {
         var ids = new ArrayDeque<>(java.util.List.of(
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
@@ -103,6 +145,20 @@ class RoutineManagerTest {
         assertThat(manager.retainedIdempotencyCount()).isZero();
         assertThatThrownBy(() -> manager.getRoutine(receipt.routineId(), 0, 8))
                 .isInstanceOf(RoutineManager.RoutineNotFoundException.class);
+    }
+
+    @Test
+    void terminalAndSessionCleanupRetireRequestScopedStateExactlyOnce() {
+        var port = new FakeStationaryBreakPort();
+        var manager = new RoutineManager(port);
+        var receipt = manager.startStationaryBreak(
+                UUID.randomUUID().toString(), request(100), 10);
+
+        manager.cancelRoutine(receipt.routineId(), "first", 0, 8);
+        manager.cancelRoutine(receipt.routineId(), "replay", 0, 8);
+        manager.clearSession("disconnect");
+
+        assertThat(port.retireCount).isEqualTo(1);
     }
 
     @Test
@@ -178,6 +234,7 @@ class RoutineManagerTest {
 
     private static final class FakeStationaryBreakPort implements StationaryBreakPort {
         private int releaseCount;
+        private int retireCount;
 
         @Override
         public StationaryBreakFrame observe(StationaryBreakRequest request) {
@@ -222,6 +279,91 @@ class RoutineManagerTest {
 
         @Override
         public void retire(StationaryBreakRequest request) {
+            retireCount++;
+        }
+    }
+
+    private static final class FakeManagedRoutine implements ManagedRoutine {
+        private final UUID routineId;
+        private final String kind;
+        private final long admittedClientTick;
+        private RoutineState state = RoutineState.QUEUED;
+        private int retireCount;
+
+        private FakeManagedRoutine(UUID routineId, String kind, long admittedClientTick) {
+            this.routineId = routineId;
+            this.kind = kind;
+            this.admittedClientTick = admittedClientTick;
+        }
+
+        @Override
+        public UUID routineId() {
+            return routineId;
+        }
+
+        @Override
+        public String kind() {
+            return kind;
+        }
+
+        @Override
+        public RoutineState state() {
+            return state;
+        }
+
+        @Override
+        public long lastClientTick() {
+            return admittedClientTick;
+        }
+
+        @Override
+        public void tick() {
+        }
+
+        @Override
+        public void cancel(String reason) {
+            state = RoutineState.CANCELLED;
+        }
+
+        @Override
+        public void completeFinalization(RoutineFailure finalizationFailure) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void recordTerminalFinalization(RoutineFailure cleanupFailure) {
+        }
+
+        @Override
+        public RoutineSnapshot snapshot(long afterEventSeq, int maxEvents) {
+            return new RoutineSnapshot(
+                    routineId,
+                    kind,
+                    state,
+                    state.name().toLowerCase(java.util.Locale.ROOT),
+                    false,
+                    new RoutineProgress(0, 1, "blocks"),
+                    state.terminal()
+                            ? null
+                            : new RoutineStep("break_block", Map.of(
+                                    "target", Map.of("dimension", "minecraft:overworld"))),
+                    new RoutineCheckpoint(0, 0),
+                    new RoutineVerification(0, 1, 1),
+                    List.of(),
+                    null,
+                    admittedClientTick,
+                    Map.of(),
+                    null,
+                    false,
+                    null,
+                    new RoutineEventRing.EventPage(List.of(), false, false, 1, 0));
+        }
+
+        @Override
+        public void retire() {
+            if (retireCount == 0) {
+                retireCount++;
+            }
         }
     }
 }

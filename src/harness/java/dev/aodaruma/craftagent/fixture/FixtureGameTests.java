@@ -11,6 +11,7 @@ import net.minecraft.gametest.framework.TestData;
 import net.minecraft.gametest.framework.TestEnvironmentDefinition;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -30,12 +31,15 @@ import java.util.function.Consumer;
 /** Small server-side fixture test for the BlockState assumptions used by the interactive arena. */
 final class FixtureGameTests {
     private static final Identifier TEST_ID = id("phase1_block_states");
+    private static final Identifier PHASE3_TEST_ID = id("phase3_action_fixture");
     private static final Identifier ENVIRONMENT_ID = id("fixture_environment");
 
     private static final DeferredRegister<Consumer<GameTestHelper>> TEST_FUNCTIONS =
             DeferredRegister.create(BuiltInRegistries.TEST_FUNCTION, CraftAgentTestFixtureMod.MOD_ID);
     private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PHASE1_BLOCK_STATES =
             TEST_FUNCTIONS.register("phase1_block_states", () -> FixtureGameTests::runPhase1BlockStates);
+    private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PHASE3_ACTION_FIXTURE =
+            TEST_FUNCTIONS.register("phase3_action_fixture", () -> FixtureGameTests::runPhase3ActionFixture);
 
     private FixtureGameTests() {
     }
@@ -54,8 +58,8 @@ final class FixtureGameTests {
                 100,
                 0,
                 true);
-        GameTestInstance test = new FunctionGameTestInstance(PHASE1_BLOCK_STATES.getKey(), data);
-        event.registerTest(TEST_ID, test);
+        event.registerTest(TEST_ID, new FunctionGameTestInstance(PHASE1_BLOCK_STATES.getKey(), data));
+        event.registerTest(PHASE3_TEST_ID, new FunctionGameTestInstance(PHASE3_ACTION_FIXTURE.getKey(), data));
     }
 
     private static void runPhase1BlockStates(GameTestHelper helper) {
@@ -130,6 +134,121 @@ final class FixtureGameTests {
                 helper.fail(Component.literal("expected positive block light above the powered lamp"));
             }
         });
+    }
+
+    private static void runPhase3ActionFixture(GameTestHelper helper) {
+        var navigation = FixturePhase3Scenario.layout(FixturePhase3Scenario.Mode.NAVIGATE);
+        for (int x = 0; x < 9; x++) {
+            for (int z = -1; z <= 1; z++) {
+                assertLayoutState(helper, navigation, new BlockPos(x, -1, z), Blocks.SMOOTH_STONE.defaultBlockState());
+                for (int y = 0; y <= 2; y++) {
+                    assertLayoutState(helper, navigation, new BlockPos(x, y, z), Blocks.AIR.defaultBlockState());
+                }
+            }
+        }
+
+        var breakLayout = FixturePhase3Scenario.layout(FixturePhase3Scenario.Mode.BREAK);
+        assertLayoutState(
+                helper,
+                breakLayout,
+                FixturePhase3Scenario.BREAK_TARGET.subtract(FixturePhase3Scenario.ORIGIN),
+                Blocks.STONE.defaultBlockState());
+
+        var placeLayout = FixturePhase3Scenario.layout(FixturePhase3Scenario.Mode.PLACE);
+        assertLayoutState(
+                helper,
+                placeLayout,
+                FixturePhase3Scenario.PLACEMENT_SUPPORT.subtract(FixturePhase3Scenario.ORIGIN),
+                Blocks.SMOOTH_STONE.defaultBlockState());
+        assertLayoutState(
+                helper,
+                placeLayout,
+                FixturePhase3Scenario.PLACEMENT_DESTINATION.subtract(FixturePhase3Scenario.ORIGIN),
+                Blocks.AIR.defaultBlockState());
+
+        var leverLayout = FixturePhase3Scenario.layout(FixturePhase3Scenario.Mode.LEVER);
+        BlockState lever = FixturePhase3Scenario.leverOffState();
+        assertLayoutState(
+                helper,
+                leverLayout,
+                FixturePhase3Scenario.LEVER.subtract(FixturePhase3Scenario.ORIGIN),
+                lever);
+        assertLeverAimGeometry(helper);
+
+        BlockPos corridorFloor = new BlockPos(0, 0, 0);
+        BlockPos corridorAir = corridorFloor.above();
+        helper.setBlock(corridorFloor, navigation.get(new BlockPos(0, -1, 0)));
+        helper.setBlock(corridorAir, navigation.get(new BlockPos(0, 0, 0)));
+        helper.assertBlockState(corridorFloor, Blocks.SMOOTH_STONE.defaultBlockState());
+        helper.assertBlockState(corridorAir, Blocks.AIR.defaultBlockState());
+
+        BlockPos leverSample = new BlockPos(1, 1, 1);
+        helper.setBlock(leverSample.below(), Blocks.SMOOTH_STONE);
+        helper.setBlock(leverSample, lever);
+        helper.assertBlockProperty(leverSample, BlockStateProperties.ATTACH_FACE,
+                net.minecraft.world.level.block.state.properties.AttachFace.FLOOR);
+        helper.assertBlockProperty(leverSample, BlockStateProperties.POWERED, false);
+        assertExactState(helper, leverSample, lever);
+
+        BlockPos cowSample = new BlockPos(3, 1, 1);
+        var cow = helper.spawn(EntityTypes.COW, cowSample);
+        FixturePhase3Scenario.configureCow(cow);
+        assertCowAimGeometry(helper, cow);
+        helper.assertEntityProperty(
+                cow, entity -> entity.isNoAi() && entity.isPersistenceRequired(), true,
+                Component.literal("expected the Phase 3 cow to be NoAI and persistent"));
+        helper.succeed();
+    }
+
+    private static void assertLayoutState(
+            GameTestHelper helper,
+            java.util.Map<BlockPos, BlockState> layout,
+            BlockPos relativePos,
+            BlockState expected) {
+        BlockState actual = layout.get(relativePos);
+        if (!expected.equals(actual)) {
+            helper.fail(Component.literal("expected fixture layout state " + expected + " at " + relativePos
+                    + " but found " + actual));
+        }
+    }
+
+    private static void assertLeverAimGeometry(GameTestHelper helper) {
+        double eyeY = FixturePhase3Scenario.ORIGIN.getY() + 1.62D;
+        double horizontalDistanceToLeverCenter = FixturePhase3Scenario.LEVER.getX() + 0.5D
+                - (FixturePhase3Scenario.ORIGIN.getX() + 1.5D);
+        double downwardSlope = Math.tan(Math.toRadians(
+                FixturePhase3Scenario.LEVER_PITCH_DEGREES));
+        double sightlineYAtLeverCenter = eyeY - downwardSlope * horizontalDistanceToLeverCenter;
+        double horizontalDistanceToSupportTop = (eyeY - FixturePhase3Scenario.LEVER.getY())
+                / downwardSlope;
+        boolean crossesLeverHeight = sightlineYAtLeverCenter
+                >= FixturePhase3Scenario.LEVER.getY() + 0.25D
+                && sightlineYAtLeverCenter <= FixturePhase3Scenario.LEVER.getY() + 0.45D;
+        if (!crossesLeverHeight
+                || horizontalDistanceToSupportTop <= horizontalDistanceToLeverCenter) {
+            helper.fail(Component.literal("lever pose ray misses the lever before the support floor"
+                    + ": pitch=" + FixturePhase3Scenario.LEVER_PITCH_DEGREES
+                    + " sightline_y=" + sightlineYAtLeverCenter
+                    + " support_distance=" + horizontalDistanceToSupportTop));
+        }
+    }
+
+    private static void assertCowAimGeometry(
+            GameTestHelper helper, net.minecraft.world.entity.animal.cow.Cow cow) {
+        double eyeY = FixturePhase3Scenario.ORIGIN.getY() + 1.62D;
+        double playerX = FixturePhase3Scenario.ORIGIN.getX() + 2.5D;
+        double cowCenterX = FixturePhase3Scenario.COW.getX() + 0.5D;
+        double horizontalDistanceToCowFront = cowCenterX - cow.getBbWidth() / 2.0D - playerX;
+        double sightlineYAtCowFront = eyeY - Math.tan(Math.toRadians(
+                FixturePhase3Scenario.COW_PITCH_DEGREES)) * horizontalDistanceToCowFront;
+        double cowMinY = FixturePhase3Scenario.COW.getY();
+        double cowMaxY = cowMinY + cow.getBbHeight();
+        if (sightlineYAtCowFront < cowMinY || sightlineYAtCowFront > cowMaxY) {
+            helper.fail(Component.literal("cow pose ray misses the adult cow bounding box"
+                    + ": pitch=" + FixturePhase3Scenario.COW_PITCH_DEGREES
+                    + " sightline_y=" + sightlineYAtCowFront
+                    + " cow_y=" + cowMinY + ".." + cowMaxY));
+        }
     }
 
     /** Equality covers the block id and the complete property set, including future additions. */

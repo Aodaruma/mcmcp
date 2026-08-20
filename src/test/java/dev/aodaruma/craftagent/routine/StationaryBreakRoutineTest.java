@@ -63,6 +63,10 @@ class StationaryBreakRoutineTest {
         assertThat(succeeded.state()).isEqualTo(RoutineState.SUCCEEDED);
         assertThat(succeeded.goalVerified()).isTrue();
         assertThat(succeeded.verification()).containsEntry("verified_breaks", 1);
+        assertThat(succeeded.currentStep()).isNull();
+        assertThat(succeeded.checkpoint()).isEqualTo(new RoutineCheckpoint(1, 7));
+        assertThat(succeeded.verificationSummary())
+                .isEqualTo(new RoutineVerification(64, 64, 0));
         assertThat(succeeded.eventPage().events())
                 .extracting(RoutineEvent::type)
                 .containsSubsequence(
@@ -89,7 +93,12 @@ class StationaryBreakRoutineTest {
         assertThat(port.releaseCount).isEqualTo(1);
 
         tick(manager, port, 15);
-        assertThat(manager.getRoutine(id, 0, 32).state()).isEqualTo(RoutineState.WAITING);
+        var waiting = manager.getRoutine(id, 0, 32);
+        assertThat(waiting.state()).isEqualTo(RoutineState.WAITING);
+        assertThat(waiting.waitState()).isEqualTo(new RoutineWait(
+                "target_regeneration",
+                35,
+                "target matches the original full block state"));
     }
 
     @Test

@@ -111,6 +111,205 @@ class CraftAgentToolRegistryTest {
         assertThat(calls).hasValue(0);
     }
 
+    @Test
+    void acceptsEveryClosedPhaseThreeRoutineBranchAndKeepsTheToolCountFixed() {
+        AtomicInteger calls = new AtomicInteger();
+        CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
+            calls.incrementAndGet();
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+        }, Duration.ofSeconds(1));
+
+        for (Map<String, Object> arguments : validRoutineArguments()) {
+            assertThat(invoke(registry, "start_routine", arguments).isError())
+                    .as("valid routine arguments %s", arguments.get("kind"))
+                    .isFalse();
+        }
+
+        assertThat(calls).hasValue(6);
+        assertThat(registry.specifications()).hasSize(8);
+    }
+
+    @Test
+    void rejectsUnknownHybridAndMalformedRoutineArgumentsBeforeRuntimeDispatch() {
+        AtomicInteger calls = new AtomicInteger();
+        CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
+            calls.incrementAndGet();
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+        }, Duration.ofSeconds(1));
+
+        Map<String, Object> unknown = new java.util.LinkedHashMap<>(navigateArguments());
+        unknown.put("kind", "fly_to");
+
+        Map<String, Object> hybrid = new java.util.LinkedHashMap<>(breakArguments());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> hybridParameters = new java.util.LinkedHashMap<>(
+                (Map<String, Object>) hybrid.get("parameters"));
+        hybridParameters.put("item", "minecraft:cobblestone");
+        hybrid.put("parameters", hybridParameters);
+
+        Map<String, Object> malformedRef = new java.util.LinkedHashMap<>(interactEntityArguments());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> malformedParameters = new java.util.LinkedHashMap<>(
+                (Map<String, Object>) malformedRef.get("parameters"));
+        malformedParameters.put("entity_ref", "too-short");
+        malformedRef.put("parameters", malformedParameters);
+
+        Map<String, Object> travellingAction = new java.util.LinkedHashMap<>(placeArguments());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> travellingBounds = new java.util.LinkedHashMap<>(
+                (Map<String, Object>) travellingAction.get("bounds"));
+        travellingBounds.put("max_travel_blocks", 1);
+        travellingAction.put("bounds", travellingBounds);
+
+        Map<String, Object> nonAirBreak = new java.util.LinkedHashMap<>(breakArguments());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> nonAirBreakParameters = new java.util.LinkedHashMap<>(
+                (Map<String, Object>) nonAirBreak.get("parameters"));
+        nonAirBreakParameters.put("expected_after", Map.of("block", "minecraft:stone"));
+        nonAirBreak.put("parameters", nonAirBreakParameters);
+
+        for (Map<String, Object> arguments : List.of(
+                unknown, hybrid, malformedRef, travellingAction, nonAirBreak)) {
+            McpSchema.CallToolResult result = invoke(registry, "start_routine", arguments);
+            assertThat(result.isError()).as("invalid arguments %s", arguments).isTrue();
+            assertThat(result.structuredContent().toString()).contains("invalid_argument");
+        }
+        assertThat(calls).hasValue(0);
+    }
+
+    @Test
+    void rejectsUnsupportedEntityInteractionsBeforeRuntimeDispatch() {
+        AtomicInteger calls = new AtomicInteger();
+        CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
+            calls.incrementAndGet();
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+        }, Duration.ofSeconds(1));
+
+        for (Map.Entry<String, String> unsupported : Map.of(
+                "expected_type", "minecraft:pig",
+                "held_item", "minecraft:shears").entrySet()) {
+            Map<String, Object> arguments = new java.util.LinkedHashMap<>(interactEntityArguments());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parameters = new java.util.LinkedHashMap<>(
+                    (Map<String, Object>) arguments.get("parameters"));
+            parameters.put(unsupported.getKey(), unsupported.getValue());
+            arguments.put("parameters", parameters);
+
+            McpSchema.CallToolResult result = invoke(registry, "start_routine", arguments);
+            assertThat(result.isError()).as("unsupported %s", unsupported.getKey()).isTrue();
+            assertThat(result.structuredContent().toString()).contains("invalid_argument");
+        }
+
+        Map<String, Object> wrongGoal = new java.util.LinkedHashMap<>(interactEntityArguments());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> parameters = new java.util.LinkedHashMap<>(
+                (Map<String, Object>) wrongGoal.get("parameters"));
+        parameters.put("goal", Map.of("item", "minecraft:beef", "minimum_inventory_count", 1));
+        wrongGoal.put("parameters", parameters);
+        McpSchema.CallToolResult result = invoke(registry, "start_routine", wrongGoal);
+        assertThat(result.isError()).isTrue();
+        assertThat(result.structuredContent().toString()).contains("invalid_argument");
+        assertThat(calls).hasValue(0);
+    }
+
+    private static List<Map<String, Object>> validRoutineArguments() {
+        return List.of(
+                stationaryBreakArguments(), navigateArguments(), breakArguments(), placeArguments(),
+                interactBlockArguments(), interactEntityArguments());
+    }
+
+    private static Map<String, Object> stationaryBreakArguments() {
+        return McpTestFixtures.fields(
+                "kind", "stationary_break",
+                "parameters", McpTestFixtures.fields(
+                        "target", dimensionPosition(10, 64, -3),
+                        "allowed_blocks", List.of("minecraft:cobblestone"),
+                        "goal", Map.of("item", "minecraft:cobblestone", "minimum_inventory_count", 4),
+                        "regeneration_timeout_seconds", 3),
+                "bounds", bounds(0, 30, true),
+                "completion_intent", "finish_goal",
+                "idempotency_key", "f47ac10b-58cc-4372-a567-0e02b2c3d479");
+    }
+
+    private static Map<String, Object> navigateArguments() {
+        return routineArguments(
+                "navigate_to",
+                McpTestFixtures.fields(
+                        "target", dimensionPosition(12, 64, -3),
+                        "horizontal_tolerance_blocks", 0.5),
+                bounds(16, 60, false));
+    }
+
+    private static Map<String, Object> breakArguments() {
+        return routineArguments(
+                "break_block",
+                transitionParameters("minecraft:stone", "minecraft:air"),
+                bounds(0, 15, true));
+    }
+
+    private static Map<String, Object> placeArguments() {
+        Map<String, Object> parameters = new java.util.LinkedHashMap<>(
+                transitionParameters("minecraft:air", "minecraft:cobblestone"));
+        parameters.put("item", "minecraft:cobblestone");
+        return routineArguments("place_block", parameters, bounds(0, 15, false));
+    }
+
+    private static Map<String, Object> interactBlockArguments() {
+        return routineArguments(
+                "interact_block",
+                McpTestFixtures.fields(
+                        "target", dimensionPosition(10, 64, -3),
+                        "expected_before", McpTestFixtures.fields(
+                                "block", "minecraft:lever", "properties", Map.of("powered", "false")),
+                        "expected_after", McpTestFixtures.fields(
+                                "block", "minecraft:lever", "properties", Map.of("powered", "true"))),
+                bounds(0, 10, false));
+    }
+
+    private static Map<String, Object> interactEntityArguments() {
+        return routineArguments(
+                "interact_entity",
+                McpTestFixtures.fields(
+                        "entity_ref", "AbCdEfGhIjKlMnOpQrStUvWx",
+                        "expected_type", "minecraft:cow",
+                        "hand", "main_hand",
+                        "held_item", "minecraft:bucket",
+                        "goal", Map.of("item", "minecraft:milk_bucket", "minimum_inventory_count", 1)),
+                bounds(0, 10, false));
+    }
+
+    private static Map<String, Object> transitionParameters(String before, String after) {
+        return McpTestFixtures.fields(
+                "target", dimensionPosition(10, 64, -3),
+                "expected_before", Map.of("block", before),
+                "expected_after", Map.of("block", after));
+    }
+
+    private static Map<String, Object> routineArguments(
+            String kind, Map<String, Object> parameters, Map<String, Object> bounds) {
+        return McpTestFixtures.fields(
+                "kind", kind,
+                "parameters", parameters,
+                "bounds", bounds,
+                "completion_intent", "finish_goal",
+                "idempotency_key", "f47ac10b-58cc-4372-a567-0e02b2c3d479");
+    }
+
+    private static Map<String, Object> bounds(int maxTravel, int maxDuration, boolean allowBreak) {
+        return McpTestFixtures.fields(
+                "dimension", "minecraft:overworld",
+                "region", Map.of(
+                        "min", Map.of("x", 0, "y", 60, "z", -10),
+                        "max", Map.of("x", 20, "y", 70, "z", 10)),
+                "max_travel_blocks", maxTravel,
+                "max_duration_seconds", maxDuration,
+                "allow_break", allowBreak);
+    }
+
+    private static Map<String, Object> dimensionPosition(int x, int y, int z) {
+        return Map.of("dimension", "minecraft:overworld", "x", x, "y", y, "z", z);
+    }
+
     private static McpSchema.CallToolResult invoke(
             CraftAgentToolRegistry registry, String name, Map<String, Object> arguments) {
         McpStatelessServerFeatures.SyncToolSpecification specification = registry.specifications().stream()

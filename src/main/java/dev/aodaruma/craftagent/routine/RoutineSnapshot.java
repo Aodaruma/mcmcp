@@ -1,5 +1,8 @@
 package dev.aodaruma.craftagent.routine;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -12,11 +15,13 @@ public record RoutineSnapshot(
         String phase,
         boolean goalVerified,
         RoutineProgress progress,
-        BlockTarget target,
-        Long waitDeadlineClientTick,
+        RoutineStep currentStep,
+        RoutineCheckpoint checkpoint,
+        RoutineVerification verificationSummary,
+        List<RoutineEffect> effects,
+        RoutineWait waitState,
         long lastClientTick,
-        long lastObservationRevision,
-        Map<String, Object> verification,
+        Map<String, Object> diagnostics,
         RoutineFailure failure,
         boolean finalizationCompleted,
         RoutineFailure finalizationFailure,
@@ -27,14 +32,17 @@ public record RoutineSnapshot(
         Objects.requireNonNull(state, "state");
         Objects.requireNonNull(phase, "phase");
         Objects.requireNonNull(progress, "progress");
-        Objects.requireNonNull(target, "target");
-        if (waitDeadlineClientTick != null && waitDeadlineClientTick < 0) {
-            throw new IllegalArgumentException("wait deadline must be non-negative");
+        Objects.requireNonNull(checkpoint, "checkpoint");
+        Objects.requireNonNull(verificationSummary, "verificationSummary");
+        effects = List.copyOf(effects);
+        if ((state == RoutineState.WAITING) != (waitState != null)) {
+            throw new IllegalArgumentException("wait state is required exactly for WAITING");
         }
-        if (lastClientTick < 0 || lastObservationRevision < 0) {
-            throw new IllegalArgumentException("routine clocks must be non-negative");
+        if (lastClientTick < 0) {
+            throw new IllegalArgumentException("routine clock must be non-negative");
         }
-        verification = Map.copyOf(verification);
+        Objects.requireNonNull(diagnostics, "diagnostics");
+        diagnostics = Collections.unmodifiableMap(new LinkedHashMap<>(diagnostics));
         Objects.requireNonNull(eventPage, "eventPage");
         if ((state == RoutineState.FAILED) != (failure != null)) {
             throw new IllegalArgumentException("failure is required exactly for FAILED state");
@@ -59,5 +67,74 @@ public record RoutineSnapshot(
             throw new IllegalArgumentException(
                     "a terminal FINALIZATION failure must also be the finalization outcome");
         }
+    }
+
+    /** Compatibility constructor for the Phase 2 stationary_break domain/tests. */
+    public RoutineSnapshot(
+            UUID routineId,
+            String kind,
+            RoutineState state,
+            String phase,
+            boolean goalVerified,
+            RoutineProgress progress,
+            BlockTarget target,
+            Long waitDeadlineClientTick,
+            long lastClientTick,
+            long lastObservationRevision,
+            Map<String, Object> verification,
+            RoutineFailure failure,
+            boolean finalizationCompleted,
+            RoutineFailure finalizationFailure,
+            RoutineEventRing.EventPage eventPage) {
+        this(
+                routineId,
+                kind,
+                state,
+                phase,
+                goalVerified,
+                progress,
+                state.terminal() ? null : RoutineStep.block("break_block", target),
+                new RoutineCheckpoint(
+                        nonNegativeInt(verification.get("verified_breaks")),
+                        lastObservationRevision),
+                stationaryBreakVerification(progress, verification),
+                List.of(),
+                state == RoutineState.WAITING && waitDeadlineClientTick != null
+                        ? new RoutineWait(
+                                "target_regeneration",
+                                waitDeadlineClientTick,
+                                "target matches the original full block state")
+                        : null,
+                lastClientTick,
+                verification,
+                failure,
+                finalizationCompleted,
+                finalizationFailure,
+                eventPage);
+    }
+
+    /** Phase 2 compatibility view used by finalization diagnostics. */
+    public Map<String, Object> verification() {
+        return diagnostics;
+    }
+
+    /** Compatibility clock accessor retained while callers migrate to checkpoint(). */
+    public long lastObservationRevision() {
+        return checkpoint.observationRevision();
+    }
+
+    private static RoutineVerification stationaryBreakVerification(
+            RoutineProgress progress,
+            Map<String, Object> diagnostics) {
+        boolean synchronizedInventory = Boolean.TRUE.equals(
+                diagnostics.get("inventory_server_synchronized"));
+        return new RoutineVerification(
+                synchronizedInventory ? Math.min(progress.completed(), progress.total()) : 0,
+                progress.total(),
+                synchronizedInventory ? 0 : 1);
+    }
+
+    private static int nonNegativeInt(Object value) {
+        return value instanceof Number number ? Math.max(0, number.intValue()) : 0;
     }
 }

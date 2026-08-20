@@ -62,11 +62,23 @@ class WorldMemoryTest {
 
         assertThat(mob.opaqueRef()).isNotBlank();
         assertThat(player.opaqueRef()).isNull();
-        assertThat(memory.resolveEntityRef(mob.opaqueRef(), 200)).contains(mob);
-        assertThat(memory.resolveEntityRef(mob.opaqueRef(), 201)).isEmpty();
+        assertThat(memory.resolveEntityRef(
+                mob.opaqueRef(), 200, session, "minecraft:overworld"))
+                .contains(new WorldMemory.ResolvedEntityRef(
+                        mob.internalUuid(), mob.type(), mob.dimension(),
+                        mob.observedAtClientTick(), mob.worldSessionId()));
+        assertThat(memory.resolveEntityRef(
+                mob.opaqueRef(), 201, session, "minecraft:overworld")).isEmpty();
+        assertThat(memory.resolveEntityRef(
+                mob.opaqueRef(), 200, UUID.randomUUID(), "minecraft:overworld")).isEmpty();
+        assertThat(memory.resolveEntityRef(
+                mob.opaqueRef(), 200, session, "minecraft:the_nether")).isEmpty();
+        assertThat(memory.resolveEntityRef(
+                player.opaqueRef(), 100, session, "minecraft:overworld")).isEmpty();
 
         memory.startSession(session, "minecraft:the_nether");
-        assertThat(memory.resolveEntityRef(mob.opaqueRef(), 150)).isEmpty();
+        assertThat(memory.resolveEntityRef(
+                mob.opaqueRef(), 150, session, "minecraft:the_nether")).isEmpty();
         assertThatThrownBy(() -> memory.rememberEntity(UUID.randomUUID(), "minecraft:zombie", 0, 0, 0,
                 0, 0, 0, false, false, false, "minecraft:overworld", 150))
                 .isInstanceOf(IllegalArgumentException.class)

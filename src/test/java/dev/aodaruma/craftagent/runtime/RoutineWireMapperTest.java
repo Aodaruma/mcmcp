@@ -2,10 +2,15 @@ package dev.aodaruma.craftagent.runtime;
 
 import dev.aodaruma.craftagent.routine.BlockTarget;
 import dev.aodaruma.craftagent.routine.RoutineEventRing;
+import dev.aodaruma.craftagent.routine.RoutineCheckpoint;
+import dev.aodaruma.craftagent.routine.RoutineEffect;
 import dev.aodaruma.craftagent.routine.RoutineFailure;
 import dev.aodaruma.craftagent.routine.RoutineProgress;
 import dev.aodaruma.craftagent.routine.RoutineSnapshot;
 import dev.aodaruma.craftagent.routine.RoutineState;
+import dev.aodaruma.craftagent.routine.RoutineStep;
+import dev.aodaruma.craftagent.routine.RoutineVerification;
+import dev.aodaruma.craftagent.routine.RoutineWait;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -85,6 +90,54 @@ class RoutineWireMapperTest {
         assertThat(CraftAgentRuntime.finalizationReleasedInputs(unfinished)).isFalse();
     }
 
+    @Test
+    void mapsTypedRoutineStateWithoutGuessingStationaryBreakFields() {
+        var snapshot = new RoutineSnapshot(
+                UUID.fromString("00000000-0000-0000-0000-000000000043"),
+                "interact_block",
+                RoutineState.WAITING,
+                "wait_server_sync",
+                false,
+                new RoutineProgress(0, 1, "interactions"),
+                new RoutineStep("interact_block", Map.of(
+                        "target", Map.of(
+                                "dimension", "minecraft:overworld", "x", 4, "y", 65, "z", 8),
+                        "expected_after", Map.of("block", "minecraft:lever", "properties", Map.of(
+                                "powered", "true")))),
+                new RoutineCheckpoint(3, 91),
+                new RoutineVerification(0, 1, 1),
+                List.of(new RoutineEffect(
+                        "block_toggled",
+                        Map.of("powered", false),
+                        Map.of("powered", true),
+                        RoutineEffect.Verification.CONFIRMED)),
+                new RoutineWait("server_sync", 120, "server confirms the expected block state"),
+                92,
+                Map.of("attempts", 1),
+                null,
+                false,
+                null,
+                new RoutineEventRing.EventPage(List.of(), false, false, 1, 0));
+
+        var wire = RoutineWireMapper.toMap(snapshot);
+
+        assertThat(wire).containsEntry("kind", "interact_block");
+        assertThat(payload(wire, "current_step"))
+                .containsEntry("kind", "interact_block")
+                .containsEntry("target", snapshot.currentStep().fields().get("target"))
+                .containsEntry("expected_after", snapshot.currentStep().fields().get("expected_after"));
+        assertThat(payload(wire, "checkpoint")).containsExactlyInAnyOrderEntriesOf(Map.of(
+                "seq", 3L,
+                "observation_revision", 91L));
+        assertThat(payload(wire, "verification")).containsExactlyInAnyOrderEntriesOf(Map.of(
+                "confirmed", 0,
+                "expected", 1,
+                "unknown", 1));
+        assertThat(payload(wire, "wait")).containsEntry("reason", "server_sync");
+        assertThat((List<?>) wire.get("effects")).singleElement().satisfies(effect ->
+                assertThat(((Map<?, ?>) effect).get("verification")).isEqualTo("confirmed"));
+    }
+
     private static RoutineSnapshot snapshot(
             RoutineState state,
             boolean goalVerified,
@@ -135,5 +188,10 @@ class RoutineWireMapperTest {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> failurePayload(Map<String, Object> wire) {
         return (Map<String, Object>) wire.get("failure");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> payload(Map<String, Object> wire, String key) {
+        return (Map<String, Object>) wire.get(key);
     }
 }

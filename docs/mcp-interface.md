@@ -19,12 +19,13 @@ MCPへ公開するのは、読み取りtool、制御tool、型付きroutineの�
 | `get_status` | read | 接続、lock、互換性、安全policy、能動routine |
 | `get_snapshot` | read | 必須scopeで同一tickの状態を観測 |
 | `compare_block_plan` | read | 期待block planと観測・記憶の差分 |
-| `get_recipes` | read | 現在のruntimeで有効なrecipe取得 |
-| `list_routines` | read | routine kind、schema、availability、limit |
+| `list_routines` | read | routine kind、phase、schema、postcondition、experimental flag |
 | `get_routine` | read | 状態、進捗、event差分、failure |
 | `start_routine` | write | 型付きroutineを非同期開始 |
 | `cancel_routine` | write | 指定routineを安全に取消 |
 | `emergency_stop` | write | 全入力解放、pending開始破棄、lock |
+
+現在の固定surfaceは上記8 toolです。`get_recipes`はPhase 4以降の設計候補で、現在の`tools/list`には含めません。
 
 スクリーンショットは未知MODの診断や見た目確認に有効ですが、structured observationとは性質が異なります。必要性を実測した段階で、明示的な読み取り専用`capture_view`として追加します。
 
@@ -200,7 +201,7 @@ server address、Bearer token、Microsoft認証情報、音声device名は返し
 
 この結果は実行許可tokenではありません。`apply_block_plan`は各操作直前にlive preconditionを取り直し、操作後にserver同期を確認します。
 
-## `get_recipes`
+## `get_recipes`（Phase 4以降の計画、未公開）
 
 ```json
 {
@@ -209,11 +210,11 @@ server address、Bearer token、Microsoft認証情報、音声device名は返し
 }
 ```
 
-現在接続中のruntime recipe managerが持つ有効recipeを返します。item/tag、recipe ID、ingredients、result、必要screenを含めます。再帰recipe solver、最適素材調達planner、JEI固有APIは初版に含めません。LLMがplanを作り、`craft_items`が選択済みrecipeを実行します。
+実装時は、現在接続中のruntime recipe managerが持つ有効recipeを返します。item/tag、recipe ID、ingredients、result、必要screenを含めます。再帰recipe solver、最適素材調達planner、JEI固有APIは初版に含めません。LLMがplanを作り、`craft_items`が選択済みrecipeを実行します。
 
 ## `list_routines`
 
-現在のversion、local policy、実装phaseで利用可能なroutine kindと、kind固有input schema、bounds、postcondition、experimental flagを返します。
+現在のversionと実装phaseに対応するroutine kind、kind固有input schema、bounds、postcondition、experimental flagを返します。Phase 3完了時点では、Phase 2の`stationary_break`とPhase 3の5 actionを合わせた6 kindを返します。
 
 MCPのprotocol capabilityとは別のdomain catalogです。tool一覧には`tools/list`を使い、`get_capabilities`は作りません。
 
@@ -221,7 +222,7 @@ MCPのprotocol capabilityとは別のdomain catalogです。tool一覧には`too
 
 ```json
 {
-  "routine_id": "uuid",
+  "routine_id": "874911aa-194c-4ba1-bc51-d5b279e2aa24",
   "after_event_seq": 41,
   "max_events": 32
 }
@@ -229,17 +230,27 @@ MCPのprotocol capabilityとは別のdomain catalogです。tool一覧には`too
 
 ```json
 {
-  "routine_id": "uuid",
+  "routine_id": "874911aa-194c-4ba1-bc51-d5b279e2aa24",
+  "kind": "place_block",
   "state": "RUNNING",
-  "phase": "build.place",
+  "phase": "wait_server_sync",
   "goal": {"verified": false},
-  "progress": {"completed": 38, "total": 120, "unit": "blocks"},
+  "progress": {"completed": 0, "total": 1, "unit": "blocks"},
   "current_step": {
     "kind": "place_block",
-    "target": {"x": 1, "y": 64, "z": 2}
+    "target": {
+      "dimension": "minecraft:overworld",
+      "x": 1,
+      "y": 64,
+      "z": 2
+    },
+    "expected_after": {
+      "block": "minecraft:cobblestone",
+      "properties": {}
+    }
   },
-  "checkpoint": {"seq": 17, "observation_revision": 9321},
-  "verification": {"confirmed": 38, "expected": 120, "unknown": 0},
+  "checkpoint": {"seq": 0, "observation_revision": 9321},
+  "verification": {"confirmed": 0, "expected": 1, "unknown": 1},
   "effects": [],
   "safety": {"mode": "normal", "last_check_client_tick": 123456},
   "wait": null,
@@ -252,9 +263,10 @@ MCPのprotocol capabilityとは別のdomain catalogです。tool一覧には`too
   "events": [
     {
       "seq": 42,
-      "type": "step_verified",
+      "type": "phase_started",
       "client_tick": 123456,
-      "observation_revision": 9321
+      "observation_revision": 9321,
+      "details": {"phase": "wait_server_sync"}
     }
   ],
   "failure": null,
@@ -271,20 +283,28 @@ event cursorがring bufferより古い場合は`events_truncated=true`としま�
 
 ```json
 {
-  "kind": "apply_block_plan",
-  "parameters": {},
+  "kind": "navigate_to",
+  "parameters": {
+    "target": {
+      "dimension": "minecraft:overworld",
+      "x": 120,
+      "y": 64,
+      "z": -32
+    },
+    "horizontal_tolerance_blocks": 0.5
+  },
   "bounds": {
     "dimension": "minecraft:overworld",
     "region": {
-      "min": {"x": 100, "y": 60, "z": -50},
-      "max": {"x": 150, "y": 90, "z": 0}
+      "min": {"x": 112, "y": 63, "z": -33},
+      "max": {"x": 121, "y": 66, "z": -31}
     },
-    "max_travel_blocks": 64,
-    "max_duration_seconds": 300,
+    "max_travel_blocks": 16,
+    "max_duration_seconds": 30,
     "allow_break": false
   },
   "completion_intent": "finish_goal",
-  "idempotency_key": "client-generated-uuid"
+  "idempotency_key": "7f7809c5-eae4-48a6-9fea-d50b600d5641"
 }
 ```
 
@@ -295,13 +315,13 @@ event cursorがring bufferより古い場合は`events_truncated=true`としま�
 - world、dimension、bounds、health、screen、Voice Chatが安全
 - 同時に能動routineなし
 - kind固有schemaとpreconditionに合格
-- routine hard deadlineがunlock expiry以前で、maintenance、`ask` timeout、fallback、FINALIZING reserveを収められる
+- routine hard deadlineがunlock expiry以前に収まる
 
-`bounds.region`はwork regionです。VALIDATING時にこれと、local UIで事前承認されたbed/safe anchorおよび各transit corridorを同じdimensionの固定`execution_envelope`へまとめます。anchor利用policyなのに経路を含めて固定できない場合は開始しません。実行中にenvelopeを広げることはできません。
+`bounds.region`はwork regionです。Phase 3 actionは指定dimension・region・travel・duration・break許可を実行中に広げません。bed/safe anchorやtransit corridorを含む長時間`execution_envelope`はPhase 5〜6の計画であり、Phase 3の有限actionへ暗黙に追加しません。
 
-`max_duration_seconds`の内側にmaintenance/FINALIZING用の内部reserveを確保します。work soft deadlineでは新しい作業stepを始めずFINALIZINGへ移り、reserveを含むhard deadlineでは即座に入力を解放します。
+Phase 3の有限actionは`max_duration_seconds`からhard deadlineを固定し、到達時に入力を解放して未完了を失敗にします。maintenance/FINALIZING reserveとwork soft deadlineはPhase 5〜6の長時間routineで追加する計画です。
 
-`completion_intent`は`continue_goal | finish_goal`です。省略時は`finish_goal`とします。`continue_goal`はroutine自身のscreen/temporary stateを片付け、安定safe checkpointで全inputを解放しますが、帰宅、`ask`、切断は実行しません。local UIでone-shot orchestrationを許可したworld sessionだけ受理し、unlock expiry、連続回数、総時間の上限を越えて完了処理を延期できません。`finish_goal`だけがlocal `after_completion` policyを実行します。
+Phase 3のschemaでは`completion_intent`を必須の`finish_goal`へ固定します。`continue_goal`による複数routine orchestrationはPhase 6の計画であり、現時点では受理しません。
 
 成功時はすぐに`routine_id`を返します。HTTP request timeout後に遅延開始しないよう、queue command自体にもdeadlineを持たせます。
 
@@ -315,14 +335,29 @@ Idempotency規則:
 
 ## routine catalog
 
+Phase 3完了時点で公開するkindは次の6つです。
+
 | kind | phase | 概要 |
 |---|---:|---|
 | `stationary_break` | 2 | その場で再生成blockを期限・数量まで採掘 |
-| `navigate_to` | 3 | 通常移動で観測済み座標/target regionへ到達 |
-| `break_block` | 3 | 1 blockを通常採掘しpostcondition確認 |
-| `place_block` | 3 | 1 blockを期待stateへ設置し確認 |
-| `interact_block` | 3 | 通常右click相当の有限interaction |
-| `interact_entity` | 3 | 可視・LOS・reach内Entityへの有限右click |
+| `navigate_to` | 3 | 通常移動後、10 tick安定と補正不在で`server-reconciled`を確認 |
+| `break_block` | 3 | 1 blockを通常採掘しprediction ACKとサーバーBlockStateを確認 |
+| `place_block` | 3 | 単一cell blockを1回設置しprediction ACKとサーバーBlockStateを確認 |
+| `interact_block` | 3 | allowlist blockをempty hand・non-sneakで1回use |
+| `interact_entity` | 3 | current-visibleなadult cowをbucketで1回搾乳 |
+
+Phase 3 actionの境界は次のとおりです。
+
+- `navigate_to`は回転を固定したforward/back/strafeによる短い平坦路だけを扱い、jump/sprint、段差越え、pathfinding、block破壊を行いません。loadedな足元・頭上空間、安定床、fluid/hazard不在、bounds/travel上限を毎tick確認します。positiveなserver ACKはないため、入力停止後、tolerance内、安定床上、低速、位置drift上限内を10 client tick連続で満たし、dispatch後のposition/rotation/motion correctionがない場合だけ`server-reconciled`とします
+- `break_block`、`place_block`、`interact_block`は、実際のcrosshair/hit、通常reach、liveな`expected_before`を操作直前に再確認し、vanilla prediction ACKとサーバー由来の完全なBlockStateが要求した`expected_after`と一致して初めて成功します。Phase 3 v1の`break_block.expected_after`はプロパティなしの`minecraft:air`固定です
+- `place_block`はmain handの単一cell `BlockItem`だけを扱い、bed/double-height itemを除外します
+- `interact_block`はlever、fence gate、vanillaのwooden trapdoorだけを許可します。empty main handかつnon-sneakを要求し、door、button、container、未知MOD blockは除外します。`expected_after`にはleverの`powered`またはgate/trapdoorの`open`だけを反転し、他の全propertyを維持した完全な同一block stateが必要です
+- `interact_entity`はcurrent world session/dimensionで現在可視な短寿命opaque `entity_ref`が指すadult cow、main handの`minecraft:bucket`、目標`minecraft:milk_bucket`だけを許可します。crosshair、LOS、通常reach、boundsをdispatch直前に再確認し、1回だけ通常interactionを送ります。成功にはdispatch後のfreshなselected-slot inventory syncと絶対目標countが必要で、retryしません
+
+次はroadmapであり、Phase 4〜6が未実装の間はcatalogへ出しません。
+
+| kind | phase | 概要 |
+|---|---:|---|
 | `apply_block_plan` | 4 | phase分割された期待block stateへ施工 |
 | `craft_items` | 5 | 選択recipeで目標inventory countへcraft |
 | `transfer_items` | 5 | 指定containerをroutine自身が開き、目標countへ収束 |
@@ -341,7 +376,7 @@ Idempotency規則:
 ## `cancel_routine`
 
 ```json
-{"routine_id": "uuid", "reason": "user requested"}
+{"routine_id": "874911aa-194c-4ba1-bc51-d5b279e2aa24", "reason": "user requested"}
 ```
 
 冪等です。既にterminalなら現在結果を返します。成功応答は、client threadで当該routineの入力/item-use/screen ownershipを解放し、pending stepを無効化したことを意味します。

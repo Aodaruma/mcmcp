@@ -2,25 +2,25 @@
 
 ## 現在地点
 
-Phase 0〜2は完了しています。本体MODと別source setのdevelopment fixture MODを使って下記のgateを通過し、Phase 2の`stationary_break`まで公開しました。Phase 3〜6は設計済みですが未実装で、実装と各Phaseのgateを通過するまでtool catalogへ追加しません。Phase 7はv1に含めません。
+Phase 0〜3は完了しています。本体MODと別source setのdevelopment fixture MODを使って下記のgateを通過し、有限semantic actionまでproduction live gateを完了しました。Phase 4〜6は設計済み・未実装、Phase 7はv1に含めません。
 
-現在の公開toolは`get_status`、`get_snapshot`、`compare_block_plan`、`list_routines`、`get_routine`、`start_routine`、`cancel_routine`、`emergency_stop`の8つです。`start_routine`で公開するroutine kindはPhase 2の`stationary_break`だけです。
+MCP tool surfaceは`get_status`、`get_snapshot`、`compare_block_plan`、`list_routines`、`get_routine`、`start_routine`、`cancel_routine`、`emergency_stop`の8つです。`stationary_break`、`navigate_to`、`break_block`、`place_block`、`interact_block`、`interact_entity`の6 routineをschema/catalogへ公開しています。
 
-Phase 2完了判定の証跡は次のとおりです。
+Phase 3完了判定の証跡は次のとおりです。
 
 | 検証層 | 結果 |
 |---|---|
-| 自動test | Java 25でunit/integration test 143件、失敗0。GameTest 2/2 |
-| Development fixture | `stationary_break`の成功、想定失敗、cancel、`emergency_stop`（MCP stop）、F9、Escを確認。Phase 1由来の38分連続稼働、dimension往復、全snapshot scope、観測境界、MCP securityも維持 |
-| Production Prism実Modpack | fixtureなしの本体JARで、Simple Voice Chatのmute/restore、サーバー確認済みbreak、再生成なしの想定失敗、正常shutdownを確認 |
+| 自動test | Java 25でunit/integration test 215件、harness test 6件、いずれも失敗0。GameTest 3/3 |
+| Development fixture | `navigate_to`、`break_block`、`place_block`、leverへの`interact_block`、cowへの`interact_entity`が成功。stale Entity ref拒否と、実行中`navigate_to`への`emergency_stop`による入力解放・lock復帰を確認。Phase 1〜2の観測・停止・Voice Chat回帰も維持 |
+| Production Prism実Modpack | fixtureなしの本体JARで、正式MCP handshake、8 tools・6 routines、葉の足場での`ROUTE_NOT_SAFE`、草ブロックへのサーバー確認済み`break_block`成功（`unknown=0`）、現在airの再観測、Simple Voice Chatのmute/restore、F8 lock復帰、ワールド保存、正常shutdown、8765 listener解放を確認 |
 
-## Phase 1〜2の開発・検証手順
+## Phase 1〜3の開発・検証手順
 
 Java 25を指定し、リポジトリ直下で実行します。
 
 ```powershell
 # 単体/統合テスト、本体JAR、fixture JAR
-.\gradlew.bat clean test harnessJar build
+.\gradlew.bat clean test harnessTest harnessJar build
 
 # fixtureの自動GameTest
 .\gradlew.bat runGameTestServer
@@ -30,6 +30,8 @@ Java 25を指定し、リポジトリ直下で実行します。
 ```
 
 手動試験では新規シングルプレイヤーワールドを使い、`/craftagent_fixture load`で固定arenaを準備します。fixtureは`-Dcraftagent.testHarness=true`、integrated server、単独playerなどをすべて満たさなければ変更を拒否します。コマンドと固定座標の詳細は[`src/harness/README.md`](../src/harness/README.md)を参照してください。
+
+Phase 3の固定scenarioは`/craftagent_fixture phase3 navigate|break|place|lever|cow|reset`で準備します。`phase3_action_fixture` GameTestは移動lane、採掘target、設置support/destination、leverの完全なBlockState、NoAIかつpersistentなcowというfixture前提を検査します。action実行、停止・失敗経路、production Prism実Modpackのlive gateは、上記の完了証跡として別途確認済みです。
 
 本体成果物は`build/libs/craftagent-<version>.jar`、fixtureは`build/libs/craftagent-<version>-test-harness.jar`です。後者は開発専用であり、通常のPrism Launcher instanceやマルチプレイ環境には導入しません。`runHarnessClient`は両source setを開発環境から読み込みます。
 
@@ -102,7 +104,7 @@ Java 25を指定し、リポジトリ直下で実行します。
 - already-satisfied、server lag、block replacementを誤成功しない
 - timeoutしたstart commandが後から発火しない
 
-## Phase 3: 有限semantic action（未実装）
+## Phase 3: 有限semantic action（完了）
 
 - `navigate_to`
 - `break_block`
@@ -111,9 +113,19 @@ Java 25を指定し、リポジトリ直下で実行します。
 - `interact_entity`
 - structured routine failureとevent cursor
 
+現在の実装境界:
+
+- `navigate_to`: Phase 3 v1は回転を固定し、forward/back/strafeだけで進める短い平坦路に限定する。jump/sprint、段差越え、pathfinding、block破壊は行わず、loadedな足元・頭上空間、安定床、fluid/hazard不在、bounds/travel上限を毎tick確認する。positiveなserver ACKは存在しないため、入力停止後にtolerance内、安定床上、低速、位置drift上限内を10 client tick連続で満たし、その間にposition/rotation/motion correctionを受けないことを`server-reconciled`の根拠とする
+- `break_block`: 現在crosshair、通常reach、liveな`expected_before`一致を要求し、通常採掘後のprediction ACKとサーバー由来の完全なBlockStateが`expected_after`（v1ではair）と一致して初めて成功する
+- `place_block`: main handの単一cell `BlockItem`を、実際のhit/support faceから導かれる指定座標へ1回設置する。bed/double-height itemは除外し、prediction ACKとサーバー由来の完全なBlockStateを検証する
+- `interact_block`: empty main hand、non-sneak、現在crosshair、通常reachに限定する。v1 allowlistはlever、fence gate、vanillaのwooden trapdoorだけで、door、button、container、未知MOD blockは除外する。1回の通常use後、prediction ACKとサーバー由来の完全なBlockStateを検証する
+- `interact_entity`: current world session/dimensionで現在可視なopaque `entity_ref`が指すadult cowだけを、main handのbucketで1回搾乳する。crosshair、LOS、通常reach、bounds内を再確認し、dispatch後に届いたfreshなselected-slot inventory syncと絶対目標countの`minecraft:milk_bucket`を成功条件にする。曖昧な再dispatchを避けるためretryしない
+
 合格条件:
 
-- すべてのactionでserver-confirmed postcondition
+- block actionはprediction ACKとサーバー由来の完全なBlockStateでpostconditionを確認する
+- navigationをpositive ACKがあるかのように表現せず、上記10 tickの`server-reconciled`根拠をevent/resultへ残す
+- cow搾乳はfreshなselected-slot inventory syncと絶対目標countを両方確認し、1 dispatch・retryなしを守る
 - retry前にfresh observation
 - retry/local repairがdeclared boundsを越えない
 - mismatch/unknownを`SUCCEEDED`にしない
@@ -121,6 +133,8 @@ Java 25を指定し、リポジトリ直下で実行します。
 - LOS/reach/cooldown/collisionを回避しない
 - event seq単調、ring buffer truncation時もcurrent state完全
 - `needs_replan` event後はfailureを保持して`FAILED`へ終端する
+- `/craftagent_fixture phase3 navigate|break|place|lever|cow|reset`の各scenarioと`phase3_action_fixture` GameTestを通す
+- fixtureなしのproduction Prism実Modpackで起動、action、Voice Chat復元、正常shutdownを確認する
 
 ## Phase 4: Block planと建築（未実装）
 
@@ -241,7 +255,7 @@ PoCには含めません。導入する場合は次を別gateにします。
 - 全stop pathの自動test
 - MCP loopback/auth/origin/protocol conformance
 - 観測・memoryのwall-through防止test
-- action/routineのserver-confirmed postcondition
+- action kind固有のserver-confirmedまたはserver-reconciled postconditionと、その根拠
 - failure/reconcileで未完了を成功扱いしないこと
 - Voice Chatのfail-closedとstate restore
 - 対象Modpackの起動・接続・30分稼働

@@ -29,6 +29,10 @@ sourceSets.main.resources {
 
 sourceSets {
     harness
+    harnessTest {
+        java.setSrcDirs(['src/harness/test/java'])
+        resources.setSrcDirs([])
+    }
 }
 
 configurations {
@@ -68,6 +72,24 @@ neoForge {
             loadedMods = [mods."${mod_id}", mods."${fixture_mod_id}"]
             systemProperty 'craftagent.testHarness', 'true'
             systemProperty 'neoforge.enabledGameTestNamespaces', fixture_mod_id
+
+            def phase3Mode = providers.gradleProperty('craftagentFixturePhase3Mode')
+                    .map { value -> value.strip().toLowerCase(Locale.ROOT) }
+            if (phase3Mode.isPresent()) {
+                def requestedMode = phase3Mode.get()
+                def supportedModes = ['navigate', 'break', 'place', 'lever', 'cow', 'reset']
+                if (!supportedModes.contains(requestedMode)) {
+                    throw new GradleException(
+                            "Unsupported craftagentFixturePhase3Mode '${requestedMode}'; expected one of ${supportedModes}")
+                }
+
+                programArgument '--quickPlaySingleplayer'
+                programArgument 'New World'
+                systemProperty 'craftagent.fixture.phase3.mode', requestedMode
+                if (requestedMode != 'reset') {
+                    systemProperty 'craftagent.fixture.phase3.autoArm', 'true'
+                }
+            }
         }
 
         serverSmoke {
@@ -110,6 +132,7 @@ repositories {
 
 dependencies {
     harnessImplementation sourceSets.main.output
+    harnessTestImplementation sourceSets.harness.output
 
     // Optional at runtime. The production pack supplies both the API and implementation;
     // CraftAgent is still usable without an audio path in single-player test environments.
@@ -165,6 +188,10 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'org.assertj:assertj-core:3.27.3'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    harnessTestImplementation enforcedPlatform('org.junit:junit-bom:5.14.1')
+    harnessTestImplementation 'org.junit.jupiter:junit-jupiter'
+    harnessTestImplementation 'org.assertj:assertj-core:3.27.3'
+    harnessTestRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 def mainMetadata = tasks.register('generateModMetadata', ProcessResources) {
@@ -215,6 +242,13 @@ tasks.withType(Test).configureEach {
     // NeoForge's unit-test discovery also sees the harness mod. Explicitly opt it
     // in for tests so the documented plain `gradlew test` command is reproducible.
     systemProperty 'craftagent.testHarness', 'true'
+}
+
+def harnessTest = tasks.register('harnessTest', Test) {
+    group = 'verification'
+    description = 'Runs pure unit tests for development-only harness configuration.'
+    testClassesDirs = sourceSets.harnessTest.output.classesDirs
+    classpath = sourceSets.harnessTest.runtimeClasspath
 }
 
 // MCP Java SDK 2.0.0 publishes invalid Automatic-Module-Name values containing
@@ -306,6 +340,42 @@ tasks.register('harnessJar', Jar) {
     manifest {
         attributes('Automatic-Module-Name': 'dev.aodaruma.craftagent.fixture')
     }
+}
+
+def verifyHarnessIsolation = tasks.register('verifyHarnessIsolation') {
+    group = 'verification'
+    description = 'Verifies that production and destructive fixture classes remain in separate JARs.'
+    dependsOn tasks.named('jar'), tasks.named('harnessJar')
+
+    def productionJar = tasks.named('jar', Jar).flatMap { it.archiveFile }
+    def fixtureJar = tasks.named('harnessJar', Jar).flatMap { it.archiveFile }
+    inputs.files(productionJar, fixtureJar)
+
+    doLast {
+        def productionEntries = new JarFile(productionJar.get().asFile, false).withCloseable { jar ->
+            jar.entries().collect { it.name }.toSet()
+        }
+        def fixtureEntries = new JarFile(fixtureJar.get().asFile, false).withCloseable { jar ->
+            jar.entries().collect { it.name }.toSet()
+        }
+        def fixturePrefix = 'dev/aodaruma/craftagent/fixture/'
+
+        def leakedFixtureEntries = productionEntries.findAll { it.startsWith(fixturePrefix) }
+        if (!leakedFixtureEntries.isEmpty()) {
+            throw new GradleException(
+                    "Production JAR contains harness-only entries: ${leakedFixtureEntries.sort()}")
+        }
+        if (!fixtureEntries.contains(fixturePrefix + 'FixturePhase3Autorun.class')) {
+            throw new GradleException('Harness JAR is missing FixturePhase3Autorun.class')
+        }
+        if (fixtureEntries.contains('dev/aodaruma/craftagent/CraftAgentMod.class')) {
+            throw new GradleException('Harness JAR unexpectedly contains the production mod entrypoint')
+        }
+    }
+}
+
+tasks.named('check').configure {
+    dependsOn verifyHarnessIsolation, harnessTest
 }
 
 tasks.named('jar', Jar).configure {

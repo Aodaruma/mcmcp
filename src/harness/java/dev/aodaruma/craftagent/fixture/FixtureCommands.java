@@ -64,6 +64,13 @@ final class FixtureCommands {
                                     FixturePhase2Scenario.stop();
                                     success(context.getSource(), "Phase 2 fixture stopped");
                                 }))))
+                .then(Commands.literal("phase3")
+                        .then(phase3("navigate", FixturePhase3Scenario.Mode.NAVIGATE))
+                        .then(phase3("break", FixturePhase3Scenario.Mode.BREAK))
+                        .then(phase3("place", FixturePhase3Scenario.Mode.PLACE))
+                        .then(phase3("lever", FixturePhase3Scenario.Mode.LEVER))
+                        .then(phase3("cow", FixturePhase3Scenario.Mode.COW))
+                        .then(phase3("reset", FixturePhase3Scenario.Mode.RESET)))
                 .then(Commands.literal("expose_hidden")
                         .executes(context -> execute(context.getSource(), (fixture, output) -> {
                             FixtureArena.exposeHidden(fixture);
@@ -84,6 +91,13 @@ final class FixtureCommands {
                         })))
                 .then(Commands.literal("oracle")
                         .executes(context -> execute(context.getSource(), FixtureArena::sendOracle))));
+    }
+
+    private static com.mojang.brigadier.builder.LiteralArgumentBuilder<CommandSourceStack> phase3(
+            String name, FixturePhase3Scenario.Mode mode) {
+        return Commands.literal(name)
+                .executes(context -> execute(context.getSource(), (fixture, output) ->
+                        FixturePhase3Scenario.prepare(fixture, mode, output)));
     }
 
     private static int execute(CommandSourceStack source, FixtureAction action) {

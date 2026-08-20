@@ -18,17 +18,32 @@ public final class RoutineManager {
     public static final long DEFAULT_TERMINAL_TTL_TICKS = 12_000;
 
     private final StationaryBreakPort stationaryBreakPort;
+    private final SemanticActionPort semanticActionPort;
     private final int eventCapacity;
     private final int maxRetainedRoutines;
     private final long terminalTtlTicks;
     private final Supplier<UUID> routineIds;
-    private final LinkedHashMap<UUID, StationaryBreakRoutine> routines = new LinkedHashMap<>();
+    private final LinkedHashMap<UUID, ManagedRoutine> routines = new LinkedHashMap<>();
     private final Map<String, IdempotencyEntry> idempotency = new LinkedHashMap<>();
     private UUID activeRoutineId;
 
     public RoutineManager(StationaryBreakPort stationaryBreakPort) {
         this(
                 stationaryBreakPort,
+                null,
+                DEFAULT_EVENT_CAPACITY,
+                DEFAULT_RETAINED_ROUTINES,
+                DEFAULT_TERMINAL_TTL_TICKS,
+                UUID::randomUUID);
+    }
+
+    /** Production constructor enabling both Phase 2 and Phase 3 routine families. */
+    public RoutineManager(
+            StationaryBreakPort stationaryBreakPort,
+            SemanticActionPort semanticActionPort) {
+        this(
+                stationaryBreakPort,
+                Objects.requireNonNull(semanticActionPort, "semanticActionPort"),
                 DEFAULT_EVENT_CAPACITY,
                 DEFAULT_RETAINED_ROUTINES,
                 DEFAULT_TERMINAL_TTL_TICKS,
@@ -41,7 +56,24 @@ public final class RoutineManager {
             int maxRetainedRoutines,
             long terminalTtlTicks,
             Supplier<UUID> routineIds) {
+        this(
+                stationaryBreakPort,
+                null,
+                eventCapacity,
+                maxRetainedRoutines,
+                terminalTtlTicks,
+                routineIds);
+    }
+
+    RoutineManager(
+            StationaryBreakPort stationaryBreakPort,
+            SemanticActionPort semanticActionPort,
+            int eventCapacity,
+            int maxRetainedRoutines,
+            long terminalTtlTicks,
+            Supplier<UUID> routineIds) {
         this.stationaryBreakPort = Objects.requireNonNull(stationaryBreakPort, "stationaryBreakPort");
+        this.semanticActionPort = semanticActionPort;
         if (eventCapacity < 1 || maxRetainedRoutines < 1 || terminalTtlTicks < 1) {
             throw new IllegalArgumentException("routine manager limits must be positive");
         }
@@ -56,7 +88,56 @@ public final class RoutineManager {
             String idempotencyKey,
             StationaryBreakRequest request,
             long admittedClientTick) {
-        return admitStationaryBreak(idempotencyKey, request, request, admittedClientTick);
+        Objects.requireNonNull(request, "request");
+        request.validateAdmissionTick(admittedClientTick);
+        return admitRoutine(
+                StationaryBreakRoutine.KIND,
+                idempotencyKey,
+                request,
+                admittedClientTick,
+                (routineId, eventCapacity, tick) -> new StationaryBreakRoutine(
+                        routineId, request, stationaryBreakPort, eventCapacity, tick));
+    }
+
+    /** Starts one typed Phase 3 action using the request itself as the local identity. */
+    public synchronized StartReceipt startSemanticAction(
+            String idempotencyKey,
+            SemanticActionRequest request,
+            long admittedClientTick) {
+        Objects.requireNonNull(request, "request");
+        request.validateAdmissionTick(admittedClientTick);
+        return admitSemanticAction(idempotencyKey, request, request, admittedClientTick);
+    }
+
+    /** Starts one typed Phase 3 action with a stable external canonical identity. */
+    public synchronized StartReceipt startSemanticAction(
+            String idempotencyKey,
+            String requestIdentity,
+            SemanticActionRequest request,
+            long admittedClientTick) {
+        Objects.requireNonNull(request, "request");
+        request.validateAdmissionTick(admittedClientTick);
+        return admitSemanticAction(
+                idempotencyKey,
+                requireRequestIdentity(requestIdentity),
+                request,
+                admittedClientTick);
+    }
+
+    private StartReceipt admitSemanticAction(
+            String idempotencyKey,
+            Object requestIdentity,
+            SemanticActionRequest request,
+            long admittedClientTick) {
+        var port = requireSemanticActionPort();
+        return admitRoutine(
+                request.kind(),
+                idempotencyKey,
+                requestIdentity,
+                admittedClientTick,
+                (routineId, eventCapacity, tick) -> request instanceof NavigateToRequest navigation
+                        ? new NavigateRoutine(routineId, navigation, port, eventCapacity, tick)
+                        : new FiniteActionRoutine(routineId, request, port, eventCapacity, tick));
     }
 
     /**
@@ -69,23 +150,37 @@ public final class RoutineManager {
             String requestIdentity,
             StationaryBreakRequest request,
             long admittedClientTick) {
-        return admitStationaryBreak(
-                idempotencyKey, requireRequestIdentity(requestIdentity), request, admittedClientTick);
-    }
-
-    private StartReceipt admitStationaryBreak(
-            String idempotencyKey,
-            Object requestIdentity,
-            StationaryBreakRequest request,
-            long admittedClientTick) {
         Objects.requireNonNull(request, "request");
         request.validateAdmissionTick(admittedClientTick);
+        return admitRoutine(
+                StationaryBreakRoutine.KIND,
+                idempotencyKey,
+                requireRequestIdentity(requestIdentity),
+                admittedClientTick,
+                (routineId, eventCapacity, tick) -> new StationaryBreakRoutine(
+                        routineId, request, stationaryBreakPort, eventCapacity, tick));
+    }
+
+    /** Shared atomic admission path used by typed routine-specific public entry points. */
+    synchronized StartReceipt admitRoutine(
+            String kind,
+            String idempotencyKey,
+            Object requestIdentity,
+            long admittedClientTick,
+            RoutineFactory factory) {
+        var normalizedKind = normalizeKind(kind);
+        var normalizedIdentity = new TypedRequestIdentity(
+                normalizedKind, Objects.requireNonNull(requestIdentity, "requestIdentity"));
+        Objects.requireNonNull(factory, "factory");
+        if (admittedClientTick < 0) {
+            throw new IllegalArgumentException("admission tick must be non-negative");
+        }
         var normalizedKey = normalizeIdempotencyKey(idempotencyKey);
         purgeExpired(admittedClientTick);
 
         var existing = idempotency.get(normalizedKey);
         if (existing != null) {
-            if (!existing.requestIdentity.equals(requestIdentity)) {
+            if (!existing.requestIdentity.equals(normalizedIdentity)) {
                 throw new IdempotencyConflictException(normalizedKey);
             }
             return new StartReceipt(existing.routineId, true);
@@ -98,15 +193,23 @@ public final class RoutineManager {
 
         evictOldestTerminalUntilRoom();
         var routineId = nextUniqueRoutineId();
-        var routine = new StationaryBreakRoutine(
-                routineId,
-                request,
-                stationaryBreakPort,
-                eventCapacity,
-                admittedClientTick);
+        var routine = Objects.requireNonNull(
+                factory.create(routineId, eventCapacity, admittedClientTick),
+                "routine factory returned null");
+        if (!routineId.equals(routine.routineId())
+                || !normalizedKind.equals(routine.kind())
+                || routine.state() != RoutineState.QUEUED
+                || routine.lastClientTick() != admittedClientTick) {
+            try {
+                routine.retire();
+            } catch (RuntimeException | LinkageError ignored) {
+                // A malformed factory cannot prevent deterministic admission rejection.
+            }
+            throw new IllegalArgumentException("routine factory violated the admission contract");
+        }
         routines.put(routineId, routine);
         idempotency.put(normalizedKey, new IdempotencyEntry(
-                normalizedKey, routineId, requestIdentity));
+                normalizedKey, routineId, normalizedIdentity));
         activeRoutineId = routineId;
         return new StartReceipt(routineId, false);
     }
@@ -116,8 +219,39 @@ public final class RoutineManager {
             String idempotencyKey,
             String requestIdentity,
             long currentClientTick) {
+        return replayRoutine(
+                StationaryBreakRoutine.KIND,
+                idempotencyKey,
+                requireRequestIdentity(requestIdentity),
+                currentClientTick);
+    }
+
+    public synchronized Optional<StartReceipt> replaySemanticAction(
+            String idempotencyKey,
+            String requestIdentity,
+            SemanticActionRequest request,
+            long currentClientTick) {
+        Objects.requireNonNull(request, "request");
+        requireSemanticActionPort();
+        return replayRoutine(
+                request.kind(),
+                idempotencyKey,
+                requireRequestIdentity(requestIdentity),
+                currentClientTick);
+    }
+
+    /** Shared replay path; callers must retain any external finalization gate before invoking it. */
+    synchronized Optional<StartReceipt> replayRoutine(
+            String kind,
+            String idempotencyKey,
+            Object requestIdentity,
+            long currentClientTick) {
+        var normalizedIdentity = new TypedRequestIdentity(
+                normalizeKind(kind), Objects.requireNonNull(requestIdentity, "requestIdentity"));
+        if (currentClientTick < 0) {
+            throw new IllegalArgumentException("current tick must be non-negative");
+        }
         var normalizedKey = normalizeIdempotencyKey(idempotencyKey);
-        var normalizedIdentity = requireRequestIdentity(requestIdentity);
         purgeExpired(currentClientTick);
         var existing = idempotency.get(normalizedKey);
         if (existing == null) {
@@ -201,7 +335,7 @@ public final class RoutineManager {
         }
         for (var routine : routines.values()) {
             try {
-                stationaryBreakPort.retire(routine.request());
+                routine.retire();
             } catch (RuntimeException | LinkageError ignored) {
                 // The Minecraft adapter also clears its whole session immediately afterwards.
             }
@@ -219,14 +353,14 @@ public final class RoutineManager {
         return idempotency.size();
     }
 
-    private Optional<StationaryBreakRoutine> activeRoutine() {
+    private Optional<ManagedRoutine> activeRoutine() {
         if (activeRoutineId == null) {
             return Optional.empty();
         }
         return Optional.ofNullable(routines.get(activeRoutineId));
     }
 
-    private StationaryBreakRoutine requireRoutine(UUID routineId) {
+    private ManagedRoutine requireRoutine(UUID routineId) {
         Objects.requireNonNull(routineId, "routineId");
         var routine = routines.get(routineId);
         if (routine == null) {
@@ -235,9 +369,9 @@ public final class RoutineManager {
         return routine;
     }
 
-    private void markTerminal(StationaryBreakRoutine routine) {
+    private void markTerminal(ManagedRoutine routine) {
         try {
-            stationaryBreakPort.retire(routine.request());
+            routine.retire();
         } catch (RuntimeException | LinkageError ignored) {
             // Terminal bookkeeping must remain deterministic; session clear is the final fence.
         }
@@ -266,7 +400,7 @@ public final class RoutineManager {
     private void evictOldestTerminalUntilRoom() {
         while (routines.size() >= maxRetainedRoutines) {
             UUID evicted = null;
-            Iterator<Map.Entry<UUID, StationaryBreakRoutine>> iterator = routines.entrySet().iterator();
+            Iterator<Map.Entry<UUID, ManagedRoutine>> iterator = routines.entrySet().iterator();
             while (iterator.hasNext()) {
                 var candidate = iterator.next();
                 if (candidate.getValue().state().terminal()) {
@@ -302,12 +436,27 @@ public final class RoutineManager {
         }
     }
 
+    private static String normalizeKind(String kind) {
+        Objects.requireNonNull(kind, "kind");
+        if (!kind.matches("[a-z][a-z0-9_]{0,63}")) {
+            throw new IllegalArgumentException("invalid routine kind");
+        }
+        return kind;
+    }
+
     private static String requireRequestIdentity(String identity) {
         Objects.requireNonNull(identity, "requestIdentity");
         if (identity.isBlank() || identity.length() > 4_096) {
             throw new IllegalArgumentException("request identity must be 1..4096 characters");
         }
         return identity;
+    }
+
+    private SemanticActionPort requireSemanticActionPort() {
+        if (semanticActionPort == null) {
+            throw new IllegalStateException("semantic action port is not configured");
+        }
+        return semanticActionPort;
     }
 
     private static int validateMaxEvents(int maxEvents) {
@@ -327,6 +476,18 @@ public final class RoutineManager {
     public record StartReceipt(UUID routineId, boolean reused) {
         public StartReceipt {
             Objects.requireNonNull(routineId, "routineId");
+        }
+    }
+
+    @FunctionalInterface
+    interface RoutineFactory {
+        ManagedRoutine create(UUID routineId, int eventCapacity, long admittedClientTick);
+    }
+
+    private record TypedRequestIdentity(String kind, Object requestIdentity) {
+        private TypedRequestIdentity {
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(requestIdentity, "requestIdentity");
         }
     }
 

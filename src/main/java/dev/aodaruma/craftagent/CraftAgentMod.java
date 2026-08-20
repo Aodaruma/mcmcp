@@ -105,7 +105,9 @@ public final class CraftAgentMod {
     }
 
     private void onKeyInput(InputEvent.Key event) {
-        runtime.onManualInput("manual_keyboard_input");
+        if (!keys.isLocalControlKey(event.getKeyEvent())) {
+            runtime.onManualInput("manual_keyboard_input");
+        }
     }
 
     private void onMouseButtonInput(InputEvent.MouseButton.Pre event) {

@@ -162,7 +162,7 @@ public final class WorldMemory {
         return List.copyOf(values.subList(0, Math.min(maxResults, values.size())));
     }
 
-    synchronized Optional<EntityObservation> resolveEntityRef(String opaqueRef, long currentTick) {
+    private synchronized Optional<EntityObservation> resolveEntityRef(String opaqueRef, long currentTick) {
         if (opaqueRef == null || opaqueRef.isBlank()) {
             return Optional.empty();
         }
@@ -173,6 +173,27 @@ public final class WorldMemory {
                 .filter(entity -> currentTick >= entity.observedAtClientTick())
                 .filter(entity -> currentTick - entity.observedAtClientTick() <= ENTITY_REF_TTL_TICKS)
                 .findFirst();
+    }
+
+    /**
+     * Resolves an opaque non-player reference only inside the caller's exact current session and
+     * dimension. The returned handle is for in-process action validation and is never serialized.
+     */
+    public synchronized Optional<ResolvedEntityRef> resolveEntityRef(
+            String opaqueRef,
+            long currentTick,
+            UUID expectedSessionId,
+            String expectedDimension) {
+        Objects.requireNonNull(expectedSessionId, "expectedSessionId");
+        Objects.requireNonNull(expectedDimension, "expectedDimension");
+        if (!expectedSessionId.equals(sessionId) || !expectedDimension.equals(dimension)) {
+            return Optional.empty();
+        }
+        return resolveEntityRef(opaqueRef, currentTick)
+                .filter(entity -> !entity.player() && entity.opaqueRef() != null)
+                .map(entity -> new ResolvedEntityRef(
+                        entity.internalUuid(), entity.type(), entity.dimension(),
+                        entity.observedAtClientTick(), entity.worldSessionId()));
     }
 
     public synchronized Stats stats() {
@@ -268,6 +289,20 @@ public final class WorldMemory {
                     "oldest_retained_tick", oldestRetainedTick,
                     "block_limit", blockLimit,
                     "entity_limit", entityLimit);
+        }
+    }
+
+    public record ResolvedEntityRef(
+            UUID internalUuid,
+            String type,
+            String dimension,
+            long observedAtClientTick,
+            UUID worldSessionId) {
+        public ResolvedEntityRef {
+            Objects.requireNonNull(internalUuid, "internalUuid");
+            Objects.requireNonNull(type, "type");
+            Objects.requireNonNull(dimension, "dimension");
+            Objects.requireNonNull(worldSessionId, "worldSessionId");
         }
     }
 }

@@ -80,10 +80,11 @@ loaded chunk、hidden block update、同期済みEntityという理由だけで�
 - 同時に入力またはscreenを所有する能動routineは1つだけ
 - routine開始時にworld session、work bounds、期限、local capability policyを固定する
 - work boundsとlocal UIで承認済みのbed/safe anchor/transit corridorを、同じdimensionの固定execution envelopeとしてVALIDATING時に確定する
-- すべてのactionは`PRECHECK -> EXECUTE -> WAIT_SERVER_SYNC -> VERIFY`で動く
+- block/entityの有限actionは`PRECHECK -> EXECUTE -> WAIT_SERVER_SYNC -> VERIFY`で動く
+- `navigate_to`は別FSMの`PRECHECK -> EXECUTE -> MOVE -> SETTLE -> VERIFY`で動く。Phase 3 v1は回転固定のforward/back/strafeによる短い平坦路だけを扱い、positive ACKではなく入力停止後10 client tickの安定とposition/rotation/motion correction不在を`server-reconciled`の根拠にする
 - 各input ownershipは最大2秒の内部leaseで、tick safetyに合格した場合だけ更新する
 - 高水準の別作戦は自動選択しない
-- 同じpostconditionへの有限retry、再照準、再接近、許可範囲内のrepathだけを行う
+- 同じpostconditionへの有限retry、再照準、再接近、許可範囲内のrepathだけを行う。Phase 3のEntity interactionは再dispatchの重複を否定できないためretryしない
 - postcondition確認済みの境界でのみcheckpointを進める
 - checkpointは安定床上で全inputを解放でき、未確定action/screen操作がない境界に限る
 - 再開はworldと目標状態を比較してreconcileし、rollbackしない
@@ -128,7 +129,9 @@ loaded chunk、hidden block update、同期済みEntityという理由だけで�
 
 ## Entity境界
 
-初版の公開能力は、可視・LOS・通常reach内への有限`interact_entity`です。万能な`transport_entity`、自動捕獲、押し込み、釣り竿pullは公開しません。
+Phase 3 v1の`interact_entity`は、current world session/dimensionで現在可視なopaque refが指すadult cowを、通常reach・LOS・crosshair内でmain-hand bucketにより1回だけ搾乳する操作に限定します。成功はdispatch後のfreshなselected-slot inventory syncと`minecraft:milk_bucket`の絶対目標countで確認し、retryしません。取引、餌やり、毛刈り、騎乗等の汎用interactionは、個別の観測可能なpostconditionを設計・検証する後続phaseまで公開しません。
+
+万能な`transport_entity`、自動捕獲、押し込み、釣り竿pullは公開しません。
 
 後期にEntity搬送を試す場合も、ユーザーが対象をboat/minecart/sealed cellへ収容し、routeとdestinationを封鎖した後の`operate_prepared_transfer`へ限定します。client側でEntity座標、AI、vehicle membershipを直接変更しません。
 
