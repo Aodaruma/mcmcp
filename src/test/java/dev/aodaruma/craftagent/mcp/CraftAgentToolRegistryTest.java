@@ -132,20 +132,40 @@ class CraftAgentToolRegistryTest {
     }
 
     @Test
-    void acceptsEveryClosedReleasedRoutineBranch() {
+    @SuppressWarnings("unchecked")
+    void acceptsEveryReleasedRoutineBranchWithEveryPhaseSixCompletionIntent() {
         AtomicInteger calls = new AtomicInteger();
         CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
             calls.incrementAndGet();
             return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
         }, Duration.ofSeconds(1));
 
-        for (Map<String, Object> arguments : validRoutineArguments()) {
-            assertThat(invoke(registry, "start_routine", arguments).isError())
-                    .as("valid routine arguments %s", arguments.get("kind"))
-                    .isFalse();
+        McpSchema.Tool startTool = registry.specifications().stream()
+                .map(McpStatelessServerFeatures.SyncToolSpecification::tool)
+                .filter(tool -> tool.name().equals("start_routine"))
+                .findFirst()
+                .orElseThrow();
+        Map<String, Object> properties = (Map<String, Object>) startTool.inputSchema().get("properties");
+        Map<String, Object> completionIntent = (Map<String, Object>) properties.get("completion_intent");
+        assertThat(completionIntent)
+                .containsEntry("enum", List.of("finish_goal", "continue_goal"))
+                .containsEntry("default", "finish_goal");
+
+        for (Map<String, Object> explicitFinish : validRoutineArguments()) {
+            Map<String, Object> explicitContinue = new java.util.LinkedHashMap<>(explicitFinish);
+            explicitContinue.put("completion_intent", "continue_goal");
+            Map<String, Object> omitted = new java.util.LinkedHashMap<>(explicitFinish);
+            omitted.remove("completion_intent");
+
+            for (Map<String, Object> arguments : List.of(explicitFinish, explicitContinue, omitted)) {
+                assertThat(invoke(registry, "start_routine", arguments).isError())
+                        .as("valid routine arguments %s with intent %s",
+                                arguments.get("kind"), arguments.get("completion_intent"))
+                        .isFalse();
+            }
         }
 
-        assertThat(calls).hasValue(13);
+        assertThat(calls).hasValue(39);
     }
 
     @Test
@@ -197,14 +217,14 @@ class CraftAgentToolRegistryTest {
     }
 
     @Test
-    void rejectsOpenIncompleteAndPhaseSixVariantsOfEveryPhaseFiveBranch() {
+    void rejectsOpenIncompleteAndUnknownIntentVariantsOfEveryReleasedBranch() {
         AtomicInteger calls = new AtomicInteger();
         CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
             calls.incrementAndGet();
             return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
         }, Duration.ofSeconds(1));
 
-        for (Map<String, Object> valid : validRoutineArguments().subList(7, 13)) {
+        for (Map<String, Object> valid : validRoutineArguments()) {
             Map<String, Object> open = new java.util.LinkedHashMap<>(valid);
             Map<String, Object> openParameters = new java.util.LinkedHashMap<>(parameters(open));
             openParameters.put("workflow", "free_form");
@@ -215,12 +235,12 @@ class CraftAgentToolRegistryTest {
             incompleteParameters.remove(incompleteParameters.keySet().iterator().next());
             incomplete.put("parameters", incompleteParameters);
 
-            Map<String, Object> phaseSixIntent = new java.util.LinkedHashMap<>(valid);
-            phaseSixIntent.put("completion_intent", "continue_goal");
+            Map<String, Object> unknownIntent = new java.util.LinkedHashMap<>(valid);
+            unknownIntent.put("completion_intent", "continue_forever");
 
-            for (Map<String, Object> invalid : List.of(open, incomplete, phaseSixIntent)) {
+            for (Map<String, Object> invalid : List.of(open, incomplete, unknownIntent)) {
                 McpSchema.CallToolResult result = invoke(registry, "start_routine", invalid);
-                assertThat(result.isError()).as("invalid Phase 5 arguments %s", valid.get("kind")).isTrue();
+                assertThat(result.isError()).as("invalid routine arguments %s", valid.get("kind")).isTrue();
                 assertThat(result.structuredContent().toString()).contains("invalid_argument");
             }
         }

@@ -108,7 +108,7 @@ public final class CraftAgentToolRegistry {
                 specification(
                         tool(
                                 "start_routine",
-                                "Start one bounded Phase 2-5 routine after local arming and live safety validation; completion_intent remains finish_goal until Phase 6 orchestration.",
+                                "Start one bounded routine after local arming and live safety validation; omit completion_intent to finish, or use continue_goal for a bounded MCP-client-owned chain.",
                                 McpToolSchemas.startRoutineInput(),
                                 McpToolSchemas.startRoutineOutput(),
                                 START_ANNOTATIONS),

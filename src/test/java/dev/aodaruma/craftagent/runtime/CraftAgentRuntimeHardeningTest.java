@@ -317,10 +317,10 @@ class CraftAgentRuntimeHardeningTest {
     }
 
     @Test
-    void advertisesExactlyTheThirteenPhaseFiveRoutineKindsWithKindSpecificSchemas() {
+    void advertisesExactlyTheThirteenPhaseSixRoutineKindsWithKindSpecificSchemas() {
         var catalog = CraftAgentRuntime.routineCatalog();
 
-        assertThat(catalog).containsEntry("catalog_version", "phase-5");
+        assertThat(catalog).containsEntry("catalog_version", "phase-6");
         @SuppressWarnings("unchecked")
         var entries = (List<Map<String, Object>>) catalog.get("routines");
         assertThat(entries).hasSize(13);
@@ -578,7 +578,44 @@ class CraftAgentRuntimeHardeningTest {
         assertThat(CraftAgentRuntime.semanticActionIdentity(first))
                 .matches("sha256:[0-9a-f]{64}")
                 .isEqualTo(CraftAgentRuntime.semanticActionIdentity(second))
-                .isNotEqualTo(CraftAgentRuntime.semanticActionIdentity(changedDuration));
+                .isNotEqualTo(CraftAgentRuntime.semanticActionIdentity(changedDuration))
+                .isEqualTo(CraftAgentRuntime.semanticActionIdentity(
+                        first, GoalContinuationSession.FINISH_GOAL))
+                .isNotEqualTo(CraftAgentRuntime.semanticActionIdentity(
+                        first, GoalContinuationSession.CONTINUE_GOAL));
+    }
+
+    @Test
+    void defaultsCompletionToFinishAndReservesFiveSecondsForFinalization() {
+        var omitted = Map.<String, Object>of();
+        var explicitContinue = Map.<String, Object>of(
+                "completion_intent", GoalContinuationSession.CONTINUE_GOAL);
+
+        assertThat(CraftAgentRuntime.completionIntentArgument(omitted))
+                .isEqualTo(GoalContinuationSession.FINISH_GOAL);
+        assertThat(CraftAgentRuntime.completionIntentArgument(explicitContinue))
+                .isEqualTo(GoalContinuationSession.CONTINUE_GOAL);
+        assertThatThrownBy(() -> CraftAgentRuntime.completionIntentArgument(
+                Map.of("completion_intent", "continue_forever")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(CraftAgentRuntime.admissionDeadlineNanos(1_000L, 30))
+                .isEqualTo(1_000L + Duration.ofSeconds(35).toNanos());
+    }
+
+    @Test
+    void safeStayRequiresAStableHealthyScreenFreeCheckpoint() {
+        assertThat(CraftAgentRuntime.safeStayFailure(
+                true, true, true, false, 20.0F, 0.0D,
+                false, true, true, true))
+                .isNull();
+        assertThat(CraftAgentRuntime.safeStayFailure(
+                true, true, true, false, 20.0F, 0.0D,
+                false, true, true, false))
+                .isEqualTo("safe_stay_visible_hostile");
+        assertThat(CraftAgentRuntime.safeStayFailure(
+                true, true, true, false, 5.0F, 0.0D,
+                false, true, true, true))
+                .isEqualTo("safe_stay_low_health");
     }
 
     @Test

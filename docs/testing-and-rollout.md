@@ -2,19 +2,20 @@
 
 ## 現在地点
 
-Phase 0〜5は完了しています。本体MODと別source setのdevelopment fixture MODを使って下記のgateを通過し、inventory・農林業・調査・睡眠まで受入を完了しました。Phase 6は設計済み・未実装、Phase 7はv1に含めません。
+Phase 0〜6は完了しています。本体MODと別source setのdevelopment fixture MODを使って下記のgateを通過し、one-shot continuationと固定`stay`完了処理まで受入を完了しました。Phase 7はv1に含めません。
 
-現在のMCP surfaceは、既存8 toolに読み取り専用`get_recipes`を加えた9 tool、既存7 routineにPhase 5の6 kindを加えた13 kindです。既存toolのshapeは変えず、`completion_intent`は`finish_goal`固定を維持します。
+現在のMCP surfaceは、既存8 toolに読み取り専用`get_recipes`を加えた9 tool、既存7 routineにPhase 5の6 kindを加えた13 kindです。Phase 6でもsurfaceを増やさず、全13 startの`completion_intent`を省略可能な`finish_goal | continue_goal`へ更新しました。省略時は`finish_goal`です。
 
-Phase 5完了判定の証跡は次のとおりです。
+現在の完了判定の証跡は次のとおりです。
 
 | 検証層 | 結果 |
 |---|---|
-| 自動test | Java 25でunit/integration test 344件、harness test 11件、いずれも失敗0。GameTest 5/5 |
-| Development fixture | `survey_area`が1/1確認で成功。`transfer_items`が通常barrel画面のopen、12 item移送、close/reopen full readbackを経て12/12確認・unknown 0で成功 |
-| Production Prism実Modpack | fixtureなしの最終JARで、正式MCP handshake、9 tools・13 routines、既知recipe限定応答、全dimension保存、正常shutdown、PIDと8765 listenerの解放を確認。CraftAgent由来ERROR・FATALは0 |
+| 自動test | Java 25でunit/integration test 347件・失敗0・error 0、harness test 11件・失敗0。GameTest 5/5 |
+| Phase 5 development fixture | `survey_area`が1/1確認で成功。`transfer_items`が通常barrel画面のopen、12 item移送、close/reopen full readbackを経て12/12確認・unknown 0で成功 |
+| Phase 6 development live chain | `survey_area(continue_goal)`が1/1確認・unknown 0で成功してunlockを維持。続く`survey_area(finish_goal)`も同結果で成功し、`goal_finished` lockを確認 |
+| Phase 6 Production Prism実Modpack | fixtureなしの最終JAR（SHA-256 `F97007854B671DC5DC0B9F9437761C1203D4AD309ED24E451118AF3F70E902D3`）で、MCP 2025-11-25、9 tools・13 routines、catalog `phase-6`、overworld接続、Voice Chat接続、CraftAgent error 0を確認。通常closeでserver stop、world/all dimensions保存、PIDと8765 listenerの解放を確認。Phase 5 JARは退避済み |
 
-## Phase 1〜5の開発・検証手順
+## Phase 1〜6の開発・検証手順
 
 Java 25を指定し、リポジトリ直下で実行します。
 
@@ -174,7 +175,7 @@ Phase 4の固定scenarioは`/craftagent_fixture phase4 all_satisfied|mutations|w
 - `craft_items`、`transfer_items`
 - `tend_crop_area`、`harvest_tree_area`
 - `survey_area`
-- standaloneの`sleep_at_bed`。食事や睡眠の自動挿入はPhase 6境界に残す
+- standaloneの`sleep_at_bed`。食事や睡眠の自動挿入は行わない
 
 合格条件:
 
@@ -192,35 +193,30 @@ Phase 4の固定scenarioは`/craftagent_fixture phase4 all_satisfied|mutations|w
 - `sleep=prefer`は安全なら継続し、`require`は確認不能を成功扱いしない
 - 睡眠のrespawn point変更は当該bed actionに対応する受信済みvanilla respawn設定signalがある場合だけ確認済み`effects`として返す
 - maintenance前checkpoint、帰還後diffを必須にする
-- 6 routineとも`completion_intent = finish_goal`だけを受け、Phase 6の`continue_goal`やouter loopを先取りしない
+- Phase 5時点では6 routineとも`completion_intent = finish_goal`だけを受け、Phase 6で共通schemaを更新するまで`continue_goal`を先取りしない
 
-## Phase 6: one-shotと完了後安全化（未実装）
+## Phase 6: one-shotと完了後安全化（完了）
 
 - LLM outer loopによる複数routine orchestration
-- 中間routineの`continue_goal`と最終routineの`finish_goal`
-- resource shortage、world divergence、safe handoffの再計画
-- safe anchor、food/sleep、finalization
-- local policyによるoptional normal disconnect
-- goal completionとfinalization failureの分離
+- 全13 startで省略可能な`completion_intent = finish_goal | continue_goal`。省略時は`finish_goal`
+- `continue_goal`後もroutine-local cleanup、Voice Chat復元、安全なstay checkpointを必須としてlocal armingを維持
+- 同じworld session・1回のlocal armにつき`continue_goal`最大16回、unlockから最大15分
+- `max_duration_seconds + 5秒のFINALIZING reserve`がunlock expiry内に収まる場合だけadmission
+- `finish_goal`成功後の固定`stay` policyと`goal_finished` lock
+- 失敗、cancel、emergency stop、world session変更時のchain破棄・lock
+- safe anchor、`ask`、自動disconnect、自動food/sleep maintenanceはv1対象外。必要ならLLMが明示的な`navigate_to`、`sleep_at_bed`を中間routineとして実行
 
 合格条件:
 
-- 一度のユーザーgoalから複数routineを実行し、確認済み完了か根拠付き停止になる
-- `continue_goal`で中間routine後に帰宅・切断せず、`finish_goal`だけが完了policyを実行する
-- 省略時は`finish_goal`となり、回数・総時間・unlock expiry上限を越えてfinalizationを延期できない
-- routine hard deadline、`ask` timeout、fallback、reserveがunlock expiry内に収まらなければ開始を拒否する
+- schema契約で全13 kindの省略、`finish_goal`、`continue_goal`を受理し、それ以外を拒否する
+- `survey_area(continue_goal)`から`survey_area(finish_goal)`のdevelopment live chainが各1/1確認・unknown 0で成功する
+- `continue_goal`成功後はunlocked、`finish_goal`成功後はlockedかつreasonが`goal_finished`
+- 16 routine上限、world session束縛、idempotent replay非加算を自動testで確認する
+- admission deadlineに常に5秒reserveを含め、unlock expiryを越える開始を拒否する
+- safe-stay checkpointがworld/player存在、alive、on-ground、非passenger、health 6以上、水平速度の二乗0.01以下、item-useなし、画面なし、screen ownership idle、現在可視hostileなしを要求する
 - unknownを含む必須predicateで成功しない
-- safe anchorが塞がれた場合、`goal.verified=true`とroutine failureを正しく併記
-- bed/safe anchorがwork region外でも、開始時に承認済みcorridorを固定できる場合だけ実行する
-- goalがwork deadline直前に完了しても、予約済みFINALIZING時間を確保する
-- user所有のgate/water/blockをcleanupせず、routine所有を証明できない場合はfinalization failureにする
-- `WAITING`中もhostile、低体力、hard deadlineを監視する
-- `ask`は期限付きlocal UI promptと固定fallback、`stay`はrelease後に無期限guardしない
-- disconnectは許可済みlocal policyでのみ発生
-- disconnect前にinput/screen release、audit event、Voice Chat復元
-- auto reconnect/loginしない
-- low health、visible hostile、fall riskでretreat/stop policyを守る
-- temporary shelterやcombatを暗黙に開始しない
+- 失敗、cancel、emergency stopでinput/screenを解放し、Voice Chatを復元してchainを破棄・lockする
+- `stay`はrelease後に無期限guardせず、safe anchor帰還、`ask`、disconnect、maintenance、temporary shelter、combatを暗黙に開始しない
 
 ## Phase 7: 収容済みEntity搬送（experimental）
 

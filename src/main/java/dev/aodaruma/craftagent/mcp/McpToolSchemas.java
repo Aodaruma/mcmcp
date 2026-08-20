@@ -102,9 +102,9 @@ public final class McpToolSchemas {
                 "kind", enumString(ROUTINE_KINDS.toArray(String[]::new)),
                 "parameters", schema(),
                 "bounds", schema(),
-                "completion_intent", constant("finish_goal"),
+                "completion_intent", completionIntent(),
                 "idempotency_key", uuid()),
-                "kind", "parameters", "bounds", "completion_intent", "idempotency_key");
+                "kind", "parameters", "bounds", "idempotency_key");
         result.put("oneOf", List.of(
                 stationaryBreakStartInput(),
                 navigateToStartInput(),
@@ -147,9 +147,9 @@ public final class McpToolSchemas {
                 "kind", constant("stationary_break"),
                 "parameters", parameters,
                 "bounds", bounds,
-                "completion_intent", constant("finish_goal"),
+                "completion_intent", completionIntent(),
                 "idempotency_key", uuid()),
-                "kind", "parameters", "bounds", "completion_intent", "idempotency_key");
+                "kind", "parameters", "bounds", "idempotency_key");
     }
 
     public static Map<String, Object> navigateToStartInput() {
@@ -436,9 +436,15 @@ public final class McpToolSchemas {
                 "kind", constant(kind),
                 "parameters", parameters,
                 "bounds", bounds,
-                "completion_intent", constant("finish_goal"),
+                "completion_intent", completionIntent(),
                 "idempotency_key", uuid()),
-                "kind", "parameters", "bounds", "completion_intent", "idempotency_key");
+                "kind", "parameters", "bounds", "idempotency_key");
+    }
+
+    private static Map<String, Object> completionIntent() {
+        Map<String, Object> result = enumString("finish_goal", "continue_goal");
+        result.put("default", "finish_goal");
+        return result;
     }
 
     static Map<String, Object> cancelRoutineInput() {
@@ -755,7 +761,7 @@ public final class McpToolSchemas {
                 "postconditions", array(string(1, 160, null), 1, 16, true)),
                 "kind", "phase", "experimental", "input_schema", "postconditions");
         Map<String, Object> data = closedObject(fields(
-                "catalog_version", constant("phase-5"),
+                "catalog_version", constant("phase-6"),
                 "routines", array(catalogEntry, 13, 13, true)), "catalog_version", "routines");
         return envelope("list_routines", data);
     }

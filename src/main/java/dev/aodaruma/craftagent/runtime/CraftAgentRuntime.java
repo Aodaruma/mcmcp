@@ -53,6 +53,8 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.BedItem;
 import net.minecraft.world.item.DoubleHighBlockItem;
@@ -83,6 +85,9 @@ import java.util.function.Supplier;
 /** Client runtime and the sole implementation of the MCP-to-Minecraft boundary. */
 public final class CraftAgentRuntime implements McpRuntimePort {
     private static final String MCP_PROTOCOL_VERSION = "2025-11-25";
+    private static final Duration FINALIZATION_RESERVE = Duration.ofSeconds(5);
+    private static final double MAX_SAFE_STAY_HORIZONTAL_SPEED_SQUARED = 0.01;
+    private static final float MIN_SAFE_STAY_HEALTH = 6.0F;
     /** Expanded only when a phase has passed its gate. */
     private static final Set<String> AVAILABLE_CAPABILITIES = Set.of(
             "stationary_break",
@@ -120,6 +125,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     private final VoiceChatSafetyController voiceChat;
     private final ClientCommandInbox inbox;
     private final FinalizationRetryQueue finalizationRetries = new FinalizationRetryQueue();
+    private final GoalContinuationSession goalContinuation = new GoalContinuationSession();
 
     private UUID voiceRoutineId;
 
@@ -191,6 +197,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         stopForLifecycle(minecraft, "world_join");
         routines.clearSession("world_join");
         finalizationRetries.clear();
+        goalContinuation.clear();
         voiceRoutineId = null;
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
@@ -218,6 +225,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         screenOwnership.clearLevel(minecraft.level);
         recipeCatalog.detachSession();
         sessions.suspendWorld();
+        goalContinuation.clear();
         arming.lock("level_or_dimension_change");
         publishSession();
     }
@@ -227,6 +235,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         stopForLifecycle(minecraft, "disconnect");
         routines.clearSession("disconnect");
         finalizationRetries.clear();
+        goalContinuation.clear();
         voiceRoutineId = null;
         ClientPredictionSignals.global().closeLevel(minecraft.level);
         clearAutomationPortSessions(
@@ -318,8 +327,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             runPriorityStop(
                     () -> inbox.requestEmergencyStop("local_key"),
                     () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
+            goalContinuation.clear();
             overlay(minecraft, "CraftAgent: ロックしました");
         } else {
+            goalContinuation.reset(session.worldSessionId());
             arming.arm(session.worldSessionId(), AVAILABLE_CAPABILITIES,
                     LocalArmingState.DEFAULT_ARM_DURATION, System.nanoTime());
             overlay(minecraft, "CraftAgent: 15分間ローカル解除しました");
@@ -331,6 +342,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         runPriorityStop(
                 () -> inbox.requestEmergencyStop("local_emergency_key"),
                 () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
+        goalContinuation.clear();
         overlay(minecraft, "CraftAgent: 緊急停止・ロック済み");
     }
 
@@ -391,6 +403,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         inbox.shutdown(minecraft, sessions.snapshot());
         routines.clearSession("client_shutdown");
         finalizationRetries.clear();
+        goalContinuation.clear();
         voiceRoutineId = null;
         voiceChat.close();
         clearAutomationPortSessions(
@@ -583,7 +596,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
 
     static Map<String, Object> routineCatalog() {
         return Map.of(
-                "catalog_version", "phase-5",
+                "catalog_version", "phase-6",
                 "routines", List.of(
                         routineCatalogEntry(
                                 "stationary_break",
@@ -720,29 +733,26 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             WorldSessionTracker.Snapshot session,
             Map<String, Object> arguments,
             RuntimeCallContext context) {
-        requireExactKeys(arguments, "start_routine", Set.of(
-                "kind", "parameters", "bounds", "completion_intent", "idempotency_key"));
+        requireStartRoutineKeys(arguments);
         String kind = stringArgument(arguments, "kind");
         if (!AVAILABLE_CAPABILITIES.contains(kind)) {
             throw new IllegalArgumentException("kind is not an available routine");
         }
-        if (!"finish_goal".equals(stringArgument(arguments, "completion_intent"))) {
-            throw new IllegalArgumentException("completion_intent must be finish_goal");
-        }
+        String completionIntent = completionIntentArgument(arguments);
         return switch (kind) {
             case "stationary_break" -> startStationaryBreak(
-                    minecraft, session, arguments, context);
+                    minecraft, session, arguments, completionIntent, context);
             case NavigateToRequest.KIND,
                     BreakBlockRequest.KIND,
                     PlaceBlockRequest.KIND,
                     InteractBlockRequest.KIND,
                     InteractEntityRequest.KIND -> startSemanticAction(
-                            minecraft, session, arguments, context);
+                            minecraft, session, arguments, completionIntent, context);
             case ApplyBlockPlanRequest.KIND -> startApplyBlockPlan(
-                    minecraft, session, arguments, context);
+                    minecraft, session, arguments, completionIntent, context);
             case "craft_items", "transfer_items", "tend_crop_area",
                     "harvest_tree_area", "sleep_at_bed", "survey_area" -> startPhaseFive(
-                            minecraft, session, arguments, context);
+                            minecraft, session, arguments, completionIntent, context);
             default -> throw new IllegalArgumentException("kind is not an available routine");
         };
     }
@@ -751,6 +761,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             Map<String, Object> arguments,
+            String completionIntent,
             RuntimeCallContext context) {
         var parameters = objectArgument(arguments, "parameters");
         requireExactKeys(parameters, "stationary_break parameters", Set.of(
@@ -784,7 +795,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 bounds.minimum(),
                 bounds.maximum(),
                 maxDurationSeconds,
-                regenerationSeconds);
+                regenerationSeconds,
+                completionIntent);
         var replay = replayStationaryBreakAfterFinalizationGate(
                 finalizationRetries,
                 routines,
@@ -798,8 +810,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         requireLiveCall(context, "start_routine");
 
         long nowNanos = System.nanoTime();
-        long hardDeadlineNanos = saturatingAdd(
-                nowNanos, Duration.ofSeconds(maxDurationSeconds).toNanos());
+        long hardDeadlineNanos = admissionDeadlineNanos(nowNanos, maxDurationSeconds);
         if (!arming.allows(
                 session.worldSessionId(), "stationary_break", hardDeadlineNanos, nowNanos)) {
             throw new RuntimeInvocationException(
@@ -829,7 +840,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 StationaryBreakRequest.MAX_ATTACK_LEASE_TICKS,
                 regenerationTicks);
 
-        var receipt = admitWithVoiceSafety(context, () -> routines.startStationaryBreak(
+        var receipt = admitWithVoiceSafety(
+                context, session.worldSessionId(), completionIntent, () -> routines.startStationaryBreak(
                 idempotencyKey, requestIdentity, request, session.clientTick()));
         return startReceiptPayload(receipt);
     }
@@ -838,10 +850,11 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             Map<String, Object> arguments,
+            String completionIntent,
             RuntimeCallContext context) {
         var request = semanticActionArgument(arguments, session);
         var idempotencyKey = stringArgument(arguments, "idempotency_key");
-        var requestIdentity = semanticActionIdentity(request);
+        var requestIdentity = semanticActionIdentity(request, completionIntent);
         var replay = replaySemanticActionAfterFinalizationGate(
                 finalizationRetries,
                 routines,
@@ -855,8 +868,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
 
         requireLiveCall(context, "start_routine");
         long nowNanos = System.nanoTime();
-        long hardDeadlineNanos = saturatingAdd(
-                nowNanos, Duration.ofSeconds(request.bounds().maxDurationSeconds()).toNanos());
+        long hardDeadlineNanos = admissionDeadlineNanos(
+                nowNanos, request.bounds().maxDurationSeconds());
         if (!arming.allows(
                 session.worldSessionId(), request.kind(), hardDeadlineNanos, nowNanos)) {
             throw new RuntimeInvocationException(
@@ -876,7 +889,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             }
         }
 
-        var receipt = admitWithVoiceSafety(context, () -> routines.startSemanticAction(
+        var receipt = admitWithVoiceSafety(
+                context, session.worldSessionId(), completionIntent, () -> routines.startSemanticAction(
                 idempotencyKey, requestIdentity, request, session.clientTick()));
         return startReceiptPayload(receipt);
     }
@@ -885,6 +899,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             Map<String, Object> arguments,
+            String completionIntent,
             RuntimeCallContext context) {
         var parsed = applyBlockPlanArgument(arguments, session.dimension());
         var request = parsed.request();
@@ -901,8 +916,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
 
         requireLiveCall(context, "start_routine");
         long nowNanos = System.nanoTime();
-        long hardDeadlineNanos = saturatingAdd(
-                nowNanos, Duration.ofSeconds(request.bounds().maxDurationSeconds()).toNanos());
+        long hardDeadlineNanos = admissionDeadlineNanos(
+                nowNanos, request.bounds().maxDurationSeconds());
         if (!arming.allows(
                 session.worldSessionId(), request.kind(), hardDeadlineNanos, nowNanos)) {
             throw new RuntimeInvocationException(
@@ -916,7 +931,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         }
         validateApplyBlockPlanItems(request);
 
-        var receipt = admitWithVoiceSafety(context, () -> routines.startApplyBlockPlan(
+        var receipt = admitWithVoiceSafety(
+                context, session.worldSessionId(), completionIntent, () -> routines.startApplyBlockPlan(
                 idempotencyKey,
                 parsed.requestIdentity(),
                 request,
@@ -928,6 +944,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             Map<String, Object> arguments,
+            String completionIntent,
             RuntimeCallContext context) {
         var parsed = phaseFiveRequestArgument(arguments, session.dimension());
         var request = parsed.request();
@@ -945,8 +962,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
 
         requireLiveCall(context, "start_routine");
         long nowNanos = System.nanoTime();
-        long hardDeadlineNanos = saturatingAdd(
-                nowNanos, Duration.ofSeconds(request.bounds().maxDurationSeconds()).toNanos());
+        long hardDeadlineNanos = admissionDeadlineNanos(
+                nowNanos, request.bounds().maxDurationSeconds());
         if (!arming.allows(
                 session.worldSessionId(), request.kind(), hardDeadlineNanos, nowNanos)) {
             throw new RuntimeInvocationException(
@@ -957,7 +974,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         }
         validateLiveBounds(minecraft, request.bounds(), parsed.targets());
 
-        var receipt = admitWithVoiceSafety(context, () -> routines.startPhaseFive(
+        var receipt = admitWithVoiceSafety(
+                context, session.worldSessionId(), completionIntent, () -> routines.startPhaseFive(
                 idempotencyKey,
                 parsed.requestIdentity(),
                 request,
@@ -967,7 +985,16 @@ public final class CraftAgentRuntime implements McpRuntimePort {
 
     private RoutineManager.StartReceipt admitWithVoiceSafety(
             RuntimeCallContext context,
+            UUID worldSessionId,
+            String completionIntent,
             Supplier<RoutineManager.StartReceipt> admission) {
+        if (!goalContinuation.canAdmit(worldSessionId, completionIntent)) {
+            throw new RuntimeInvocationException(
+                    "unsafe_state",
+                    "The local continuation routine limit is exhausted",
+                    false,
+                    Map.of("reason", "continuation_limit"));
+        }
         final VoiceChatSafetyController.BeginResult voiceBegin;
         try {
             requireLiveCall(context, "start_routine");
@@ -1013,6 +1040,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             throw withVoiceEndFailureDiagnostics(failure, voiceEnd);
         }
         voiceRoutineId = receipt.routineId();
+        goalContinuation.remember(
+                worldSessionId, receipt.routineId(), receipt.reused(), completionIntent);
         return receipt;
     }
 
@@ -1040,7 +1069,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             BlockTarget minimum,
             BlockTarget maximum,
             int maxDurationSeconds,
-            int regenerationSeconds) {
+            int regenerationSeconds,
+            String completionIntent) {
         var sortedBlocks = allowedBlocks.stream().sorted().toList();
         return String.join("\u001f",
                 target.dimension(),
@@ -1057,11 +1087,17 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 Integer.toString(maximum.y()),
                 Integer.toString(maximum.z()),
                 Integer.toString(maxDurationSeconds),
-                Integer.toString(regenerationSeconds));
+                Integer.toString(regenerationSeconds),
+                completionIntent);
     }
 
     static String semanticActionIdentity(SemanticActionRequest request) {
+        return semanticActionIdentity(request, GoalContinuationSession.FINISH_GOAL);
+    }
+
+    static String semanticActionIdentity(SemanticActionRequest request, String completionIntent) {
         Objects.requireNonNull(request, "request");
+        GoalContinuationSession.requireIntent(completionIntent);
         var canonical = new StringBuilder();
         appendIdentity(canonical, request.kind());
         switch (request) {
@@ -1097,6 +1133,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             }
         }
         appendBoundsIdentity(canonical, request.bounds());
+        appendIdentity(canonical, completionIntent);
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(
                     canonical.toString().getBytes(StandardCharsets.UTF_8));
@@ -1241,6 +1278,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
 
             if (snapshot.finalizationCompleted()) {
                 finalizationRetries.forget(routineId);
+                applyCompletionIntentAfterTerminal(snapshot);
             }
             else if (snapshot.state() == RoutineState.FINALIZING || snapshot.state().terminal()) {
                 finalizeRoutineBoundary(minecraft, snapshot);
@@ -1269,6 +1307,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     private boolean stopActiveRoutineForEmergency(
             String reason,
             WorldSessionTracker.Snapshot session) {
+        goalContinuation.clear();
         var active = routines.activeRoutineId();
         if (active.isEmpty()) {
             return endVoiceFor(voiceRoutineId);
@@ -1313,12 +1352,15 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                                 cleanup.voice().success(),
                                 cleanup.voice().failureCode());
                     }
+                    String boundaryFailureCode = priorIncident == null
+                            ? completionBoundaryFailure(minecraft, snapshot)
+                            : priorIncident.boundaryFailureCode();
                     var failure = finalizationFailure(
                             snapshot,
                             cleanup.inputsReleased(),
                             cleanup.voice().success(),
                             cleanup.voice().failureCode(),
-                            priorIncident == null ? null : priorIncident.boundaryFailureCode(),
+                            boundaryFailureCode,
                             priorIncident != null && priorIncident.previousInputReleaseFailure(),
                             priorIncident == null ? null : priorIncident.previousVoiceFailureCode());
                     var finalized = snapshot.state() == RoutineState.FINALIZING
@@ -1334,7 +1376,9 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 },
                 () -> releaseOwnedResources(minecraft, snapshot.routineId()));
         if (attempt.success()) {
-            return attempt.value();
+            var cleanup = attempt.value();
+            applyCompletionIntentAfterTerminal(cleanup.snapshot());
+            return cleanup;
         }
 
         if (attempt.incident().failedAttempts()
@@ -1351,6 +1395,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                     snapshot.routineId(),
                     attempt.failure());
         }
+        goalContinuation.clear();
         arming.lock("routine_finalization_failed");
         var emergencyRelease = attempt.emergencyRelease();
         if (!attempt.emergencyReleaseAttempted()) {
@@ -1392,6 +1437,99 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 snapshot,
                 emergencyRelease.inputsReleased(),
                 emergencyRelease.voice());
+    }
+
+    private String completionBoundaryFailure(Minecraft minecraft, RoutineSnapshot snapshot) {
+        if (snapshot.state() != RoutineState.FINALIZING || !snapshot.goalVerified()) {
+            return null;
+        }
+        var player = minecraft.player;
+        var level = minecraft.level;
+        if (player == null || level == null) {
+            return safeStayFailure(
+                    false, false, false, false, 0.0F, 0.0D,
+                    false, false, false, false);
+        }
+        var velocity = player.getDeltaMovement();
+        boolean visibleThreatClear = level.getEntities(
+                        player,
+                        player.getBoundingBox().inflate(16.0D),
+                        entity -> entity.isAlive() && (entity instanceof Enemy
+                                || entity instanceof Mob mob && mob.getTarget() == player))
+                .stream()
+                .noneMatch(entity -> observations.isEntityCurrentlyVisible(
+                        minecraft, entity, 16.0D));
+        return safeStayFailure(
+                true,
+                player.isAlive(),
+                player.onGround(),
+                player.isPassenger(),
+                player.getHealth(),
+                velocity.x * velocity.x + velocity.z * velocity.z,
+                player.isUsingItem(),
+                minecraft.gui.screen() == null,
+                screenOwnership.snapshot().phase() == ScreenOwnershipSignals.Phase.IDLE,
+                visibleThreatClear);
+    }
+
+    static String safeStayFailure(
+            boolean worldReady,
+            boolean alive,
+            boolean onGround,
+            boolean passenger,
+            float health,
+            double horizontalVelocitySquared,
+            boolean usingItem,
+            boolean screenClear,
+            boolean screenOwnershipIdle,
+            boolean visibleThreatClear) {
+        if (!worldReady) {
+            return "safe_stay_world_unavailable";
+        }
+        if (!alive) {
+            return "safe_stay_player_not_alive";
+        }
+        if (!onGround) {
+            return "safe_stay_not_on_ground";
+        }
+        if (passenger) {
+            return "safe_stay_passenger";
+        }
+        if (!Float.isFinite(health) || health < MIN_SAFE_STAY_HEALTH) {
+            return "safe_stay_low_health";
+        }
+        if (!Double.isFinite(horizontalVelocitySquared)
+                || horizontalVelocitySquared > MAX_SAFE_STAY_HORIZONTAL_SPEED_SQUARED) {
+            return "safe_stay_player_moving";
+        }
+        if (usingItem) {
+            return "safe_stay_item_use_active";
+        }
+        if (!screenClear) {
+            return "safe_stay_screen_open";
+        }
+        if (!screenOwnershipIdle) {
+            return "safe_stay_screen_ownership_active";
+        }
+        if (!visibleThreatClear) {
+            return "safe_stay_visible_hostile";
+        }
+        return null;
+    }
+
+    private void applyCompletionIntentAfterTerminal(RoutineSnapshot terminal) {
+        String completionIntent = goalContinuation.consumeIntent(terminal.routineId());
+        if (completionIntent == null) {
+            return;
+        }
+        boolean succeeded = terminal.state() == RoutineState.SUCCEEDED
+                && terminal.goalVerified()
+                && terminal.finalizationFailure() == null;
+        if (succeeded && GoalContinuationSession.CONTINUE_GOAL.equals(completionIntent)) {
+            return;
+        }
+        goalContinuation.clear();
+        arming.lock(succeeded ? "goal_finished" : "goal_aborted");
     }
 
     static boolean shouldRetryFinalizationCleanup(FinalizationRetryQueue.Incident incident) {
@@ -1773,11 +1911,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             Map<String, Object> arguments,
             String currentDimension) {
         Objects.requireNonNull(arguments, "arguments");
-        requireExactKeys(arguments, "start_routine", Set.of(
-                "kind", "parameters", "bounds", "completion_intent", "idempotency_key"));
-        if (!"finish_goal".equals(stringArgument(arguments, "completion_intent"))) {
-            throw new IllegalArgumentException("completion_intent must be finish_goal");
-        }
+        requireStartRoutineKeys(arguments);
+        completionIntentArgument(arguments);
         var kind = stringArgument(arguments, "kind");
         var parameters = objectArgument(arguments, "parameters");
         var bounds = actionBoundsArgument(arguments, currentDimension);
@@ -1843,14 +1978,11 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             Map<String, Object> arguments,
             String currentDimension) {
         Objects.requireNonNull(arguments, "arguments");
-        requireExactKeys(arguments, "start_routine", Set.of(
-                "kind", "parameters", "bounds", "completion_intent", "idempotency_key"));
+        requireStartRoutineKeys(arguments);
         if (!ApplyBlockPlanRequest.KIND.equals(stringArgument(arguments, "kind"))) {
             throw new IllegalArgumentException("kind must be apply_block_plan");
         }
-        if (!"finish_goal".equals(stringArgument(arguments, "completion_intent"))) {
-            throw new IllegalArgumentException("completion_intent must be finish_goal");
-        }
+        String completionIntent = completionIntentArgument(arguments);
 
         var parameters = objectArgument(arguments, "parameters");
         requireExactKeys(parameters, "apply_block_plan parameters", Set.of(
@@ -1965,7 +2097,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 });
         appendIdentity(canonical, Integer.toString(request.requiredResources().size()));
         appendBoundsIdentity(canonical, bounds);
-        appendIdentity(canonical, "finish_goal");
+        appendIdentity(canonical, completionIntent);
         return new ParsedApplyBlockPlan(
                 request,
                 sha256Identity(canonical),
@@ -1976,11 +2108,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             Map<String, Object> arguments,
             String currentDimension) {
         Objects.requireNonNull(arguments, "arguments");
-        requireExactKeys(arguments, "start_routine", Set.of(
-                "kind", "parameters", "bounds", "completion_intent", "idempotency_key"));
-        if (!"finish_goal".equals(stringArgument(arguments, "completion_intent"))) {
-            throw new IllegalArgumentException("completion_intent must be finish_goal");
-        }
+        requireStartRoutineKeys(arguments);
+        String completionIntent = completionIntentArgument(arguments);
         String kind = stringArgument(arguments, "kind");
         if (!PhaseFiveRequest.KINDS.contains(kind)) {
             throw new IllegalArgumentException("kind is not a Phase 5 routine");
@@ -2216,7 +2345,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 "max_travel_blocks", bounds.maxTravelBlocks(),
                 "max_duration_seconds", bounds.maxDurationSeconds(),
                 "allow_break", bounds.allowBreak()));
-        appendCanonicalValue(canonical, "finish_goal");
+        appendCanonicalValue(canonical, completionIntent);
         return new ParsedPhaseFive(
                 request, sha256Identity(canonical), targets.stream().distinct().toList());
     }
@@ -2679,6 +2808,38 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 || block instanceof BedBlock
                 || state.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)
                 || state.hasProperty(BlockStateProperties.BED_PART);
+    }
+
+    private static void requireStartRoutineKeys(Map<String, Object> arguments) {
+        Set<String> allowed = Set.of(
+                "kind", "parameters", "bounds", "completion_intent", "idempotency_key");
+        requireAllowedKeys(arguments, "start_routine", allowed);
+        Set<String> required = Set.of("kind", "parameters", "bounds", "idempotency_key");
+        if (!arguments.keySet().containsAll(required)
+                || arguments.size() < required.size()
+                || arguments.size() > allowed.size()) {
+            throw new IllegalArgumentException(
+                    "start_routine must contain kind, parameters, bounds, and idempotency_key; "
+                            + "completion_intent is optional");
+        }
+    }
+
+    static String completionIntentArgument(Map<String, Object> arguments) {
+        Objects.requireNonNull(arguments, "arguments");
+        String intent = arguments.containsKey("completion_intent")
+                ? stringArgument(arguments, "completion_intent")
+                : GoalContinuationSession.FINISH_GOAL;
+        GoalContinuationSession.requireIntent(intent);
+        return intent;
+    }
+
+    static long admissionDeadlineNanos(long nowNanos, int maxDurationSeconds) {
+        if (maxDurationSeconds <= 0) {
+            throw new IllegalArgumentException("max_duration_seconds must be positive");
+        }
+        long workDeadline = saturatingAdd(
+                nowNanos, Duration.ofSeconds(maxDurationSeconds).toNanos());
+        return saturatingAdd(workDeadline, FINALIZATION_RESERVE.toNanos());
     }
 
     private static void requireExactKeys(

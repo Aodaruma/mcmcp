@@ -10,12 +10,16 @@ Minecraft 26.2 / NeoForge 26.2向けに、通常のサバイバル操作だけ�
 - Phase 3（有限semantic action）: 完了（実装・全受入ゲート合格）
 - Phase 4（`apply_block_plan`による局所block plan施工）: 完了（実装・全受入ゲート合格）
 - Phase 5（inventory・農林業・maintenance）: 完了（実装・全受入ゲート合格）
-- Phase 6（one-shot orchestration・完了後安全化）: 設計済み、未実装
+- Phase 6（one-shot orchestration・完了後安全化）: 完了（実装・受入ゲート合格）
 - Phase 7（収容済みEntity搬送）: v1対象外のexperimental設計
 
 公開MCP surfaceは、既存8 toolに読み取り専用`get_recipes`を加えた9 toolと、既存7 kindに`craft_items`、`transfer_items`、`tend_crop_area`、`harvest_tree_area`、`sleep_at_bed`、`survey_area`を加えた13 routine kindです。`get_recipes`が返すのはクライアントが既知の`RecipeDisplayEntry`だけで、全`RecipeManager`の列挙ではありません。
 
-Phase 5完了時点で、Java 25のunit/integration test 344件、harness test 11件（いずれも失敗0）、GameTest 5/5を通過しました。development live gateでは`survey_area`と、通常container画面を開閉・再同期する`transfer_items`の成功を確認しています。fixtureなしのproduction Prism実Modpackでは、正式MCP handshake、9 tools・13 routines、既知recipe限定応答、正常な全dimension保存・shutdown、8765 listener解放を確認しました。
+Phase 6でも公開surfaceは9 tool・13 routineのままです。全13 routineの`completion_intent`は省略可能な`finish_goal | continue_goal`となり、省略時は`finish_goal`です。複数routineを選択・再計画するouter loopはLLM/MCP clientが担い、MODへworkflow DSLは追加していません。
+
+Phase 6完了時点で、Java 25のunit/integration test 347件、harness test 11件（いずれも失敗0）、GameTest 5/5を通過しました。Phase 5のdevelopment live gateでは`survey_area`と、通常container画面を開閉・再同期する`transfer_items`の成功を確認しています。fixtureなしのproduction Prism実ModpackではPhase 6最終JARについて、MCP 2025-11-25、9 tools・13 routines、catalog `phase-6`、Voice Chat接続、CraftAgent error 0、正常な全dimension保存・shutdown、PIDと8765 listenerの解放を確認しました。
+
+Phase 6のdevelopment live gateでは、`survey_area`を`continue_goal`、続けて`finish_goal`で実行し、各1/1確認・unknown 0で成功しました。中間完了後はunlockを維持し、最終完了後は`goal_finished`でlockすることを確認しています。
 
 ## 結論
 
@@ -38,7 +42,7 @@ Phase 4の`apply_block_plan`は、移動を所有しない1回1phase・最大64 
 - 農林業: 作物の収穫・植え直し、植林・伐採・再植林
 - 畜産: 可視Entityへの有限interaction。捕獲・任意搬送は別扱い
 - サバイバル維持: 食事、登録済みベッドでの睡眠、安全場所への退避
-- 完了後処理: 作業結果の検証、入力解放、安全化、ユーザー設定時のみ通常切断
+- 完了後処理: 作業結果の検証、入力解放、Voice Chat復元、固定`stay`の安全確認
 
 アイアンゴーレムTTのような依頼では、LLMが設計、資材、建築、稼働確認を担当できます。一方、敵対Mobや村人を未整備の地形で捕獲・押し込む処理は成功率と危険性が高いため、初版はユーザーへhandoffして終了します。ユーザーがボート、トロッコ、封鎖セルなどへ収容した後の操車も、Phase 7のexperimental gateに合格するまで公開しません。
 
@@ -122,7 +126,7 @@ Java 25を使用します。Windowsではリポジトリ直下から次を実行
 3. [完了] 有限のblock interaction、移動、kind固有postcondition検証
 4. [完了] `compare_block_plan`と局所`apply_block_plan`による建築
 5. [完了] クラフト、コンテナ、農林業、調査、睡眠
-6. [未実装] one-shot orchestration、安全な完了処理
+6. [完了] one-shot orchestration、安全なstay完了処理
 7. 収容済みEntityの搬送をexperimentalとして個別検証
 
 各段階は前段の停止・同期・回復試験に合格してから有効化します。
@@ -134,7 +138,7 @@ Java 25を使用します。Windowsではリポジトリ直下から次を実行
 - クリエイティブ相当のアイテム生成、任意packet、任意command・chat送信
 - 任意Java呼び出し、reflection、script実行、自由文goalや汎用workflow DSL
 - 汎用`transport_entity`、自動Mob捕獲、釣り竿による搬送、無期限の自動戦闘
-- 自動ログイン、自動再接続、ユーザー設定なしの自動切断
+- 自動ログイン、自動再接続、自動切断
 - ユーザーの緊急停止や実入力を無視する自動化
 
 ## Ponytailについて

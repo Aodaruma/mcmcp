@@ -40,13 +40,13 @@ terminal時は保持している場合だけVoice Chat所有状態を復元し�
 
 外部MCP heartbeatを必須にはしません。LLMやpollingの一時停止で宣言済みroutineが不意に切れることを避け、local deadlineとleaseで安全を担保します。
 
-routineのwork soft deadlineでは新しい作業stepを止め、予約済み時間でFINALIZINGへ移ります。maintenance/FINALIZING reserveまで使い切るhard deadlineでは即時releaseします。`WAITING`中もSafety controller、survival policy、両deadlineは有効です。
+開始時にroutineの`max_duration_seconds + 5秒のFINALIZING reserve`がunlock windowへ収まることを要求します。この5秒は独立したfinalization timerではありません。停止は既存routine deadlineとactive arming fenceに従い、`WAITING`中もSafety controllerとdeadlineは有効です。
 
 ## 技術停止とsurvival response
 
-低体力、敵対Mob、空腹、夜間等は、即座に全制御を放棄するとその場で死亡する可能性があります。技術的な異常とは分け、local survival policyの範囲で固定handlerが対処します。
+低体力、敵対Mob、空腹、夜間等は技術的な異常と分けて評価します。Phase 6 v1は自動food/sleep maintenance、safe anchor退避、自動防衛、通常disconnectを実行せず、安全checkpointを満たせなければ停止・lockします。
 
-優先順位:
+将来の自動survival handlerを追加する場合の優先順位:
 
 1. 進行中stepのpostconditionを安全に確定できるなら確定
 2. inputを解放して危険評価
@@ -54,18 +54,19 @@ routineのwork soft deadlineでは新しい作業stepを止め、予約済み時
 4. 明示opt-inの`defend_and_retreat`なら、退路を塞ぐ現在可視hostileだけへ有限防衛
 5. recovery不能ならpolicyによりstopまたは通常disconnect
 
-元routineの固定execution envelope、破壊許可、Entity対象、期限をsurvival handlerが広げてはいけません。execution envelopeは開始時にwork regionと、同じdimensionの事前承認済みbed/safe anchor/transit corridorから確定します。
+元routineの固定execution envelope、破壊許可、Entity対象、期限をsurvival handlerが広げてはいけません。Phase 6 v1のexecution envelopeは宣言済みwork regionに限り、safe anchorやtransit corridorを暗黙に追加しません。
 
-初版の既定は`stop_and_notify`です。`retreat_only`はsafe anchorとcorridorが開始前に固定できる場合だけ選べ、anchor不在時は`stop_and_notify`へ固定fallbackします。player、passive、tamed、named/protected Entityへの自動攻撃を禁止します。敵対Mobを追跡したりloot目的で戦ったりしません。
+将来`retreat_only`を追加する場合もsafe anchorとcorridorを開始前に固定し、anchor不在時は停止へfallbackします。player、passive、tamed、named/protected Entityへの自動攻撃を禁止します。敵対Mobを追跡したりloot目的で戦ったりしません。
 
 ## Local arming
 
 - unlockはlocal UI/keyだけで行い、MCP toolを設けない
 - current world sessionとlocal capability profileへ束縛する
 - inactivity/max duration、切断、emergency stop、互換性異常でauto-lock
-- 能動routine開始時に、routine hard deadlineが現在のunlock expiry以前であることを確認する
-- `ask` timeout、fallback、FINALIZING reserveもunlock残時間内に収める
-- Phase 5までは`finish_goal`だけを受理する。Phase 6で`continue_goal`を追加する場合もlocal UIが許可したsessionだけに限定し、回数・総時間・expiryで延期を制限する
+- 能動routine開始時に、`max_duration_seconds + 5秒のFINALIZING reserve`が現在のunlock expiry以前であることを確認する
+- 全13 routineの`completion_intent`は省略可能な`finish_goal | continue_goal`で、省略時は`finish_goal`
+- `continue_goal`は同じworld session・1回のlocal armにつき最大16回、unlockから最大15分に限定する
+- `finish_goal`成功は`goal_finished`でlockし、失敗、cancel、emergency stop、world session変更はchainを破棄してlockする
 - LLMはlocal policyを緩和できず、より狭いboundsだけを指定できる
 
 ## 能力境界
@@ -77,7 +78,7 @@ routineのwork soft deadlineでは新しい作業stepを止め、予約済み時
 - 同期済みの自分の状態、inventory、crosshair target
 - 現在観測できるblock/Entityと、出所・鮮度付きのlast-known memory
 - allowlist済みの有限・型付きroutine
-- user policyに基づく食事、睡眠、安全退避、完了後の通常切断
+- 明示的な`sleep_at_bed`と、宣言済みbounds内の`navigate_to`
 
 ### 禁止
 
@@ -170,27 +171,18 @@ Entity搬送は、初版ではユーザーが次を準備した後だけ自動�
 - 未観測洞窟・壁裏を含む場合は完全湧き潰し済みと断定しない
 - 指定した小さなregionを通常移動で調査する`survey_area`を使う
 
-## 完了後policy（Phase 6計画、未実装）
+## 完了後policy（Phase 6、実装済み）
 
-ユーザーがlocal UIで選びます。
+Phase 6 v1のlocal completion policyは固定`stay`です。全13 routineの`completion_intent`は省略可能な`finish_goal | continue_goal`で、省略時は`finish_goal`です。
 
-```text
-after_completion = ask | stay | return_to_safe_anchor | disconnect
-on_unrecoverable_danger = stop_and_notify | retreat | disconnect
-ask_timeout_seconds = bounded local value
-ask_fallback = stay | return_to_safe_anchor | disconnect
-```
-
-- LLMはpolicyを緩和・変更できない
-- Phase 5までは`completion_intent=finish_goal`だけを受理する。Phase 6で追加する`continue_goal`はroutine-local cleanupとstable checkpointで止め、`finish_goal`だけがこの`after_completion`を実行する
-- `ask`は全input解放済みの期限付き`WAITING`でlocal UIに問い、timeout時は固定fallbackを実行する
-- `stay`はその場の瞬間的safe-in-place検証後にreleaseし、以後の無期限guardを意味しない
-- `stop_and_notify`はlocal UIとevent/audit logへ通知し、MCP pushを必須にしない
-- disconnectは全input解放、screen cleanup、監査event、Voice Chat復元後に通常経路で行う
+- `continue_goal`でもroutine-local cleanup、全input/item-use/screen解放、Voice Chat復元、安全なstay checkpointを必須とし、その後はlocal armingを維持する
+- `finish_goal`成功は同じcheckpointを確認して`goal_finished`でlockする
+- checkpointはworld/player存在、alive、on-ground、非passenger、health 6以上、水平速度の二乗0.01以下、item-useなし、画面なし、screen ownership idle、現在可視hostileなしをすべて要求する
+- `stay`確認後の無期限guardは行わない
+- 失敗、cancel、emergency stop、world session変更はcontinuation chainを破棄してlockする
+- safe anchorへの自動帰還、`ask`、自動disconnect、自動food/sleep maintenanceは実装しない。必要ならLLM/MCP clientが明示的な`navigate_to`や`sleep_at_bed`を中間routineとして実行する
 - auto reconnect/loginは行わない
-- safe anchor要件があるのに未登録なら長時間routine開始を拒否
-- safe anchorへ戻れない場合、goal完成とfinalization失敗を分けて返す
-- cleanupはroutineが作成・変更したserver-confirmed ownership recordのあるtemporary effectだけに限定する
+- cleanup対象のownershipを証明できない場合はworldへ触れず、goal完成とfinalization failureを分ける
 
 Temporary shelterは初版に含めません。後段で実装する場合も、明示build region、allowlist素材、固定template、時間上限、撤去policyを必須にします。
 
@@ -212,7 +204,7 @@ Temporary shelterは初版に含めません。後段で実装する場合も、
 - precondition/postcondition、retry、failure category/code、停止理由
 - Minecraft/NeoForge/MOD/MCP/adapter version
 - 操作時間、進捗、observation revision、memory provenanceの要約
-- finalizationとdisconnect policyの実行結果
+- finalizationとcontinuation policyの実行結果
 
 残さないもの:
 

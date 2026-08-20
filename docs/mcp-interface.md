@@ -290,7 +290,7 @@ queryは`result_item`または`result_tag`のclosed unionです。返すのは�
 
 ## `list_routines`
 
-Phase 2の`stationary_break`、Phase 3の5 action、Phase 4の`apply_block_plan`、Phase 5の6 routineを合わせた13 kindと、各kind固有のclosed input schema、bounds、postcondition、experimental flagを返します。
+Phase 2の`stationary_break`、Phase 3の5 action、Phase 4の`apply_block_plan`、Phase 5の6 routineを合わせた13 kindと、各kind固有のclosed input schema、bounds、postcondition、experimental flagを返します。Phase 6でも公開kindは増やさず、catalog versionだけを`phase-6`へ更新します。
 
 MCPのprotocol capabilityとは別のdomain catalogです。tool一覧には`tools/list`を使い、`get_capabilities`は作りません。
 
@@ -393,13 +393,13 @@ event cursorがring bufferより古い場合は`events_truncated=true`としま�
 - world、dimension、bounds、health、screen、Voice Chatが安全
 - 同時に能動routineなし
 - kind固有schemaとpreconditionに合格
-- routine hard deadlineがunlock expiry以前に収まる
+- `max_duration_seconds + 5秒のFINALIZING reserve`がunlock expiry以前に収まる
 
-`bounds.region`はwork regionです。Phase 3〜5 routineは指定dimension・region・travel・duration・break許可を実行中に広げません。`apply_block_plan`は`max_travel_blocks=0`固定です。Phase 5の全public座標はdimension付きで、runtimeがcurrent/bounds dimensionとの一致を再検証します。Phase 6のsafe anchorや動的transit corridorを有限routineへ暗黙に追加しません。
+`bounds.region`はwork regionです。Phase 3〜5 routineは指定dimension・region・travel・duration・break許可を実行中に広げません。`apply_block_plan`は`max_travel_blocks=0`固定です。Phase 5の全public座標はdimension付きで、runtimeがcurrent/bounds dimensionとの一致を再検証します。Phase 6 v1もsafe anchorや動的transit corridorを有限routineへ暗黙に追加しません。
 
-Phase 3〜5の有限routineは`max_duration_seconds`からhard deadlineを固定し、到達時に入力を解放して未完了を失敗にします。複数routineにまたがるmaintenance/FINALIZING reserveとwork soft deadlineはPhase 6です。
+有限routineのwork deadlineは`max_duration_seconds`から固定し、開始admissionではさらに5秒のFINALIZING reserveを加えた時間がunlock window内に収まることを要求します。この5秒は独立したtimerではなく、停止は既存routine deadlineとactive arming fenceに従います。複数routineにまたがるfood/sleep maintenanceは行いません。
 
-Phase 2〜5のschemaでは`completion_intent`を必須の`finish_goal`へ固定します。`continue_goal`による複数routine orchestrationはPhase 6の計画であり、Phase 5では受理しません。
+全13 kindのschemaで`completion_intent`は省略可能な`finish_goal | continue_goal`です。省略時は`finish_goal`です。`continue_goal`成功はroutine-local cleanup、Voice Chat復元、安全なstay checkpoint後もlocal armingを維持し、`finish_goal`成功は`goal_finished`でlockします。outer loopはLLM/MCP clientが担います。
 
 成功時はすぐに`routine_id`を返します。HTTP request timeout後に遅延開始しないよう、queue command自体にもdeadlineを持たせます。
 
@@ -413,7 +413,7 @@ Idempotency規則:
 
 ## routine catalog
 
-現在の公開契約は次の13 kindで、Phase 5まで受入を完了しています。
+現在の公開契約は次の13 kindで、Phase 6まで受入を完了しています。routine自身のphase番号は追加時の2〜5を維持します。
 
 | kind | phase | 概要 |
 |---|---:|---|
@@ -449,7 +449,7 @@ Phase 5の6 kindはclosed schemaで実装済みです。特に次の境界を広
 - `survey_area`のspawn surface評価はclient-visible block/lightからの`predicted`であり、hidden洞窟・壁裏を含む完全coverageを主張しません
 - `sleep_at_bed`のrespawn point変更は、当該bed actionに対応する受信済みvanilla respawn設定signalがある場合だけconfirmed effectにします。睡眠開始、起床、位置変化だけから推定しません
 
-6 branchは共通top-levelの`kind / parameters / bounds / completion_intent / idempotency_key`だけを必須とし、全objectをclosedにします。parametersの独立positionはすべて`{dimension,x,y,z}`、boundsは既存互換の`dimension + region.min/max{x,y,z} + max_travel_blocks + max_duration_seconds + allow_break`です。
+6 branchは共通top-levelの`kind / parameters / bounds / idempotency_key`を必須、`completion_intent`を省略可能とし、全objectをclosedにします。parametersの独立positionはすべて`{dimension,x,y,z}`、boundsは既存互換の`dimension + region.min/max{x,y,z} + max_travel_blocks + max_duration_seconds + allow_break`です。
 
 | kind | parametersの固定境界 | bounds上限 |
 |---|---|---|
@@ -460,7 +460,7 @@ Phase 5の6 kindはclosed schemaで実装済みです。特に次の境界を広
 | `sleep_at_bed` | foot/headのpositionと完全state、return policyは`start_checkpoint`固定 | travel 128、600秒、break不可 |
 | `survey_area` | 1〜32 waypoint、1〜256 sample、絶対observed goal、coverage-onlyまたはspawn prediction | travel 128、600秒、break不可 |
 
-`operate_prepared_transfer`はPhase 7 experimentalで、Phase 5 catalogには含めません。Phase 6のouter loop、`continue_goal`、複数routine完了処理もPhase 5には含めません。
+`operate_prepared_transfer`はPhase 7 experimentalで、公開catalogには含めません。Phase 6は既存13 kindへ共通の`continue_goal`と完了処理を追加し、toolやroutine kindは増やしていません。
 
 `operate_prepared_transfer`を有効化する場合も、targetのdestination region内でのserver-confirmed安定、destination閉鎖、source/route開口閉鎖、routine所有のtemporary water/rail power停止、playerのhazard cell外退避、全input/item-use解放をkind固有postconditionにします。passenger入りvehicleをcleanup目的で攻撃破壊せず、target survival/despawnが確認不能なら`unknown`を保持します。
 

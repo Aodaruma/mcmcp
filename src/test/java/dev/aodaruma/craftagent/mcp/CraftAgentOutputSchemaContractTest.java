@@ -228,7 +228,7 @@ class CraftAgentOutputSchemaContractTest {
 
     private static Map<String, Object> listRoutinesData() {
         return Map.of(
-                "catalog_version", "phase-5",
+                "catalog_version", "phase-6",
                 "routines", List.of(
                         catalogEntry("stationary_break", 2, McpToolSchemas.stationaryBreakStartInput()),
                         catalogEntry("navigate_to", 3, McpToolSchemas.navigateToStartInput()),
