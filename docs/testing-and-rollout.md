@@ -1,5 +1,32 @@
 # テストと段階導入
 
+## 現在地点
+
+Phase 0とPhase 1は完了しています。Phase 1は本体MODと別source setのfixture MODを実装し、下記の合格条件をすべて通過しました。Phase 2〜6は設計済みですが未実装で、実装と各Phaseのgateを通過するまでtool catalogへ追加しません。Phase 7はv1に含めません。
+
+Phase 1の公開toolは`get_status`、`get_snapshot`、`compare_block_plan`、`emergency_stop`の4つだけです。
+
+Phase 1の検証では、Java 25でunit/integration test 44件（失敗0）、GameTest 2/2、development clientの38分連続稼働とdimension往復、全snapshot scope、BlockState（水・ハーフブロックを含む）、ガラス透過・石遮蔽・Entity last-knownの観測境界、MCP security・token ACL・最大viewport、正常shutdown、および正式なJar-in-Jar production JARのPrism Launcher起動を確認しました。
+
+## Phase 1の開発・検証手順
+
+Java 25を指定し、リポジトリ直下で実行します。
+
+```powershell
+# 単体/統合テスト、本体JAR、fixture JAR
+.\gradlew.bat clean test harnessJar build
+
+# fixtureの自動GameTest
+.\gradlew.bat runGameTestServer
+
+# 本体+fixtureによる破棄可能なシングルプレイヤー手動試験
+.\gradlew.bat runHarnessClient
+```
+
+手動試験では新規シングルプレイヤーワールドを使い、`/craftagent_fixture load`で固定arenaを準備します。fixtureは`-Dcraftagent.testHarness=true`、integrated server、単独playerなどをすべて満たさなければ変更を拒否します。コマンドと固定座標の詳細は[`src/harness/README.md`](../src/harness/README.md)を参照してください。
+
+本体成果物は`build/libs/craftagent-<version>.jar`、fixtureは`build/libs/craftagent-<version>-test-harness.jar`です。後者は開発専用であり、通常のPrism Launcher instanceやマルチプレイ環境には導入しません。`runHarnessClient`は両source setを開発環境から読み込みます。
+
 ## 原則
 
 メインの「くらふとぶ！」instanceを直接変更しません。Prism Launcherで複製した検証用instanceにだけMODを追加し、各gateを順番に通します。

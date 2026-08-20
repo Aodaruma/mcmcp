@@ -1,0 +1,6 @@
+{
+  "key.categories.craftagent": "CraftAgent",
+  "key.categories.craftagent.controls": "CraftAgent",
+  "key.craftagent.emergency_stop": "緊急停止",
+  "key.craftagent.toggle_lock": "ローカル解除を切り替え"
+}

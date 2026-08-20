@@ -1,8 +1,15 @@
 # Minecraft NeoForge MCP Automation
 
-Minecraft 26.2 / NeoForge 26.2向けに、通常のサバイバル操作だけを使う汎用クライアント自動化をMCP経由で制御するための設計リポジトリです。シングルプレイとマルチプレイの両方を対象とし、「くらふとぶ！ v01.2」を最初の互換性確認環境にします。
+Minecraft 26.2 / NeoForge 26.2向けに、通常のサバイバル操作だけを使う汎用クライアント自動化をMCP経由で制御するクライアントMODです。シングルプレイとマルチプレイの両方を対象とし、「くらふとぶ！ v01.2」を最初の互換性確認環境にします。
 
-現時点は設計段階で、実行可能なMODはまだ含まれていません。
+## 現在の実装状況
+
+- Phase 0（設計と安全境界）: 完了
+- Phase 1（読み取り、観測記憶、loopback MCP、緊急停止）: 完了（実装・全受入ゲート合格）
+- Phase 2〜6（採掘、有限action、建築、農林業、one-shot）: 設計済み、未実装
+- Phase 7（収容済みEntity搬送）: v1対象外のexperimental設計
+
+Phase 1でMCPへ公開するtoolは、読み取り専用の`get_status`、scope必須の`get_snapshot`、block planとの差分を読む`compare_block_plan`、入力解放と処理停止を行う`emergency_stop`の4つです。現時点では採掘、移動、設置、クラフトなどの能動操作は公開していません。
 
 ## 結論
 
@@ -58,7 +65,7 @@ one-shotは「1回のMCP tool callで必ず成功すること」ではありま�
 | NeoForge | 26.2.0.59 |
 | Java | 25.0.1 LTS |
 | Simple Voice Chat | 2.6.22+26.2 |
-| MCP Java SDK | 2.0.0を候補としてPoCで固定 |
+| MCP Java SDK | 2.0.0（Phase 1で固定） |
 | MCP protocol | 2025-11-25をPoC対象として固定 |
 
 実環境のMinecraft関連値はPrism Launcherインスタンス、導入済みJAR、起動ログから確認した固定値です。MCP 2026-07-28は公開済みですが、現行Java SDK 2.0.0が追従するのは2025-11-25までのため、SDKとクライアントの相互運用を確認せずに新しいprotocolへ上げません。
@@ -75,6 +82,29 @@ one-shotは「1回のMCP tool callで必ず成功すること」ではありま�
 - [Simple Voice Chat連携](docs/voice-chat.md)
 - [テストと段階導入](docs/testing-and-rollout.md)
 - [参照資料](docs/sources.md)
+
+## 開発と検証
+
+Java 25を使用します。Windowsではリポジトリ直下から次を実行します。
+
+```powershell
+.\gradlew.bat clean test harnessJar build
+.\gradlew.bat runGameTestServer
+.\gradlew.bat runHarnessClient
+```
+
+- `test`: MCP transport・入力検証・観測記憶・block plan差分・停止処理などの単体/統合テスト
+- `runGameTestServer`: 実際のMinecraft BlockStateを使うfixtureの自動GameTest
+- `runHarnessClient`: 本体とfixtureを読み込む、破棄可能なシングルプレイヤー手動検証環境
+
+`runHarnessClient`でワールドを作成後、`/craftagent_fixture load`で固定テストarenaを準備できます。fixtureの安全境界とコマンドは[fixture README](src/harness/README.md)を参照してください。通常のPrism Launcher instanceではfixtureを使わず、本体JARだけを導入します。詳しいgateは[テストと段階導入](docs/testing-and-rollout.md)にあります。
+
+### 生成物
+
+- `build/libs/craftagent-0.1.0-SNAPSHOT.jar`: 本体クライアントMOD。MCP実行依存をJar-in-Jarで同梱し、fixtureコードは含まない
+- `build/libs/craftagent-0.1.0-SNAPSHOT-test-harness.jar`: 開発専用fixture MOD。本体コードは含まず、通常instanceやマルチプレイ環境へ導入しない
+
+ファイル名のversionは`gradle.properties`の`mod_version`に従います。
 
 ## 段階導入
 

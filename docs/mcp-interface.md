@@ -90,7 +90,7 @@ server address、Bearer token、Microsoft認証情報、音声device名は返し
 
 応答envelopeとlive sampleは同じclient tickで確定し、`world_session_id`、`client_tick`、`observation_revision`を返します。memory値は現在tickで再観測したように扱わず、record固有の観測tick、経過tick、出所を保持します。`observation_revision`はクライアント内の観測更新番号であり、server/world全体のrevisionや実行許可tokenではありません。
 
-`visible_blocks`がblockを返す場合、registry IDと全BlockState propertyを常に含めます。`source`は`live / memory / live_and_memory`です。queryは初版で`viewport`と明示`positions`だけを許可し、denseな任意AABB全block取得は許可しません。`positions`は現在dimension固定で、要求した各座標に`current / last_known / not_currently_observable / unknown`のいずれかを返します。`not_currently_observable`はlive queryで今は見えないという結果、`unknown`はmemoryにも根拠がない状態で`reason = never_observed | evicted | unavailable`を持ちます。いずれも省略で表現しません。
+`visible_blocks`がblockを返す場合、registry IDと全BlockState propertyを常に含めます。流体はBlockStateとは別に、観測時のfluid ID、source判定、amountも含めます。`source`は`live / memory / live_and_memory`です。queryは初版で`viewport`と明示`positions`だけを許可し、denseな任意AABB全block取得は許可しません。`positions`は現在dimension固定で、要求した各座標に`current / last_known / not_currently_observable / unknown`のいずれかを返します。`not_currently_observable`はlive queryで今は見えないという結果、`unknown`はmemoryにも根拠がない状態で`reason = never_observed | evicted | unavailable`を持ちます。いずれも省略で表現しません。
 
 `visible_entities`はplayer識別子を返しません。遮蔽後は現在座標を更新せず、`last_known`と観測tickを返します。任意UUIDではなく短寿命のopaque `entity_ref`を使います。`types`にはruntimeで存在するregistry ID/tagだけを受け、敵対性はtypeだけで断定せず、現在可視の挙動とversion/MOD対応classifierによる`threat_relation`として別に返します。
 
@@ -196,7 +196,7 @@ server address、Bearer token、Microsoft認証情報、音声device名は返し
 }
 ```
 
-1回の座標数は初版で512程度の固定上限とし、超過時は`request_too_large`です。ページングで別tickを混ぜず、基礎・機構・外装などphaseへ分割します。
+1回の座標数は初版で512のschema上限とし、超過時は`invalid_argument`です。ページングで別tickを混ぜず、基礎・機構・外装などphaseへ分割します。`request_too_large`はschema検証後にruntimeで確定するresponse/cost上限超過へ使います。
 
 この結果は実行許可tokenではありません。`apply_block_plan`は各操作直前にlive preconditionを取り直し、操作後にserver同期を確認します。
 
@@ -373,7 +373,7 @@ Idempotency規則:
 | `busy` | 別routine実行中またはqueue上限 |
 | `incompatible` | version/adapter検査失敗 |
 | `invalid_argument` | schema、range、allowlist違反 |
-| `request_too_large` | positions、plan、responseの固定上限超過 |
+| `request_too_large` | schema検証後に判明したresponse、runtime costの固定上限超過 |
 | `idempotency_conflict` | 同じkeyへ異なる引数 |
 | `timeout` | client thread処理前のdeadline、または短時間tool timeout |
 

@@ -1,0 +1,6 @@
+{
+  "key.categories.craftagent": "CraftAgent",
+  "key.categories.craftagent.controls": "CraftAgent",
+  "key.craftagent.emergency_stop": "Emergency stop",
+  "key.craftagent.toggle_lock": "Toggle local arming"
+}

@@ -94,7 +94,7 @@ memoryへ記録するのは次だけです。
 記録の出所は少なくとも次を区別します。
 
 - `line_of_sight_observation`
-- `server_confirmed_action`
+- `interaction_confirmation`
 
 数値のconfidenceは偽精度になるため使いません。推論はworld memoryの事実と混ぜず、LLM側のplan/beliefとして扱います。
 
