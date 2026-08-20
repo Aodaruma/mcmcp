@@ -121,7 +121,13 @@ class CraftAgentOutputSchemaContractTest {
                 new ToolCase(
                         "emergency_stop",
                         Map.of("reason", "contract test"),
-                        emergencyStopData()))
+                        emergencyStopData()),
+                new ToolCase(
+                        "get_recipes",
+                        McpTestFixtures.fields(
+                                "query", Map.of("kind", "result_item", "item", "minecraft:hopper"),
+                                "max_results", 16),
+                        recipesData()))
                 .map(Arguments::of);
     }
 
@@ -187,9 +193,42 @@ class CraftAgentOutputSchemaContractTest {
                 "differences", List.of());
     }
 
+    private static Map<String, Object> recipesData() {
+        return McpTestFixtures.fields(
+                "basis", McpTestFixtures.fields(
+                        "world_session_id", "session-test",
+                        "client_tick", 200L,
+                        "recipe_book_revision", 12L),
+                "coverage", McpTestFixtures.fields(
+                        "source", "client_known_recipe_displays",
+                        "complete", false,
+                        "known", 20,
+                        "matched", 1,
+                        "returned", 1,
+                        "truncated", false),
+                "recipes", List.of(McpTestFixtures.fields(
+                        "recipe_ref", "AbCdEfGhIjKlMnOpQrStUvWx",
+                        "fingerprint", "sha256:" + "a".repeat(64),
+                        "display_kind", "shaped",
+                        "required_screen", "crafting_table",
+                        "supported", true,
+                        "unsupported_reason", null,
+                        "result", McpTestFixtures.fields(
+                                "deterministic", true,
+                                "alternatives", List.of(McpTestFixtures.fields(
+                                        "item", "minecraft:hopper",
+                                        "count", 1,
+                                        "stack_fingerprint", "sha256:" + "b".repeat(64)))),
+                        "ingredients", List.of(McpTestFixtures.fields(
+                                "index", 0,
+                                "count_per_craft", 5,
+                                "alternatives", List.of(Map.of("item", "minecraft:iron_ingot")))),
+                        "shape", Map.of("width", 3, "height", 3))));
+    }
+
     private static Map<String, Object> listRoutinesData() {
         return Map.of(
-                "catalog_version", "phase-4",
+                "catalog_version", "phase-5",
                 "routines", List.of(
                         catalogEntry("stationary_break", 2, McpToolSchemas.stationaryBreakStartInput()),
                         catalogEntry("navigate_to", 3, McpToolSchemas.navigateToStartInput()),
@@ -197,7 +236,13 @@ class CraftAgentOutputSchemaContractTest {
                         catalogEntry("place_block", 3, McpToolSchemas.placeBlockStartInput()),
                         catalogEntry("interact_block", 3, McpToolSchemas.interactBlockStartInput()),
                         catalogEntry("interact_entity", 3, McpToolSchemas.interactEntityStartInput()),
-                        catalogEntry("apply_block_plan", 4, McpToolSchemas.applyBlockPlanStartInput())));
+                        catalogEntry("apply_block_plan", 4, McpToolSchemas.applyBlockPlanStartInput()),
+                        catalogEntry("craft_items", 5, McpToolSchemas.craftItemsStartInput()),
+                        catalogEntry("transfer_items", 5, McpToolSchemas.transferItemsStartInput()),
+                        catalogEntry("tend_crop_area", 5, McpToolSchemas.tendCropAreaStartInput()),
+                        catalogEntry("harvest_tree_area", 5, McpToolSchemas.harvestTreeAreaStartInput()),
+                        catalogEntry("sleep_at_bed", 5, McpToolSchemas.sleepAtBedStartInput()),
+                        catalogEntry("survey_area", 5, McpToolSchemas.surveyAreaStartInput())));
     }
 
     private static Map<String, Object> catalogEntry(
@@ -246,7 +291,9 @@ class CraftAgentOutputSchemaContractTest {
     private static Stream<Arguments> routineKinds() {
         return Stream.of(
                 "stationary_break", "navigate_to", "break_block", "place_block",
-                "interact_block", "interact_entity", "apply_block_plan").map(Arguments::of);
+                "interact_block", "interact_entity", "apply_block_plan", "craft_items",
+                "transfer_items", "tend_crop_area", "harvest_tree_area", "sleep_at_bed",
+                "survey_area").map(Arguments::of);
     }
 
     private static Stream<Arguments> phaseThreeRoutineData() {

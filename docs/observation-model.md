@@ -185,14 +185,14 @@ Entityは`visible_entities`で、現在LOS/FOV内の観測とlast-knownを区別
 
 ## 湧き潰しと空間調査
 
-`survey_area`は、指定された小さな範囲を通常操作で移動・見回りし、観測できた表面と明るさをmemoryへ蓄積するroutineです。結果は次を区別します。
+`survey_area`は、入力で宣言された最大32 waypointと最大256 sampleだけを通常操作で移動・見回りし、観測できた表面と明るさをmemoryへ蓄積するroutineです。結果は次を区別します。
 
 - `checked`
 - `possibly_spawnable`
 - `unknown`
 - `coverage`
 
-spawn条件はversion、dimension、server設定、追加MODで変わり得るため、client-visibleなblock/lightからの判定は`predicted`とします。未観測洞窟や壁裏を含む場合に「完全に湧き潰し済み」とは返しません。
+spawn条件はversion、dimension、server設定、追加MODで変わり得るため、client-visibleなblock/lightからの判定は常に`predicted`とします。sampleごとのcurrent、last-known、unknownとcoverageを保ち、未観測洞窟や壁裏を含む場合に「完全に湧き潰し済み」とは返しません。
 
 ## 禁止する情報経路
 

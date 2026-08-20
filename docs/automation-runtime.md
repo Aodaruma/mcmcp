@@ -15,11 +15,11 @@ Client MOD inner loop (20 TPS)
 
 LLMは高水準の方針を選び、MODは宣言済みの範囲、期限、対象に限って決定論的に実行します。MCPクライアントがpollしていない間も、開始済みroutineは期限内で進められますが、新しい高水準作戦を勝手に選びません。
 
-## one-shot contract
+## one-shot contract（Phase 6計画、未実装）
 
 one-shotは、1回のユーザー依頼からLLMが複数のMCP呼び出しを組み合わせて完遂を目指すUXです。自由文goal、任意条件式、if/loopを含むworkflow DSLをMODへ渡す意味ではありません。
 
-複数routineの中間段階では`completion_intent=continue_goal`、ユーザーgoalを閉じる最後のroutineでは`finish_goal`を使います。省略時は安全側の`finish_goal`です。`continue_goal`はroutine-local cleanupとstable checkpointまでで、帰宅・問い合わせ・切断を先送りできますが、local armingの回数・総時間・expiry上限を越えられません。
+Phase 6では複数routineの中間段階に`completion_intent=continue_goal`、ユーザーgoalを閉じる最後のroutineに`finish_goal`を使う計画です。Phase 5までは必須の`finish_goal`だけを受理し、`continue_goal`を受理しません。将来の`continue_goal`もroutine-local cleanupとstable checkpointまでで、帰宅・問い合わせ・切断を先送りできますが、local armingの回数・総時間・expiry上限を越えられません。
 
 成功条件:
 
@@ -173,20 +173,20 @@ checkpointを作る前に、playerが安定床上にあり、全inputを解放�
 6. phase終了時に同じtickのcurrent exact-state集合を確認
 7. 内部機構確認後に外装phaseを閉じる
 
-recipe列挙、採取、craft、transferによる資材準備はPhase 5です。`get_recipes`もPhase 5の未公開候補であり、Phase 4の`apply_block_plan`は開始時点でeligible hotbarにある資材だけを使います。
+recipe列挙、採取、craft、transferによる資材準備はPhase 5として実装済みです。読み取り専用`get_recipes`はクライアント既知の`RecipeDisplayEntry`だけをopaque ref化して返し、`coverage.source = client_known_recipe_displays`、`complete = false`を固定します。全`RecipeManager`、未解除recipe、recipe IDは公開しません。Phase 4の`apply_block_plan`は引き続き、開始時点でeligible hotbarにある資材だけを使います。
 
 施設固有の`build_iron_golem_farm`は作りません。LLMが設計を選び、汎用block plan、資材、Entity handoff、稼働観測を組み合わせます。
 
 ## 農林業
 
-`tend_crop_area`と`harvest_tree_area`は、可視・記憶済みの指定regionだけで動くroutineです。
+`tend_crop_area`と`harvest_tree_area`は、入力で座標と完全stateを宣言した指定regionだけで動くPhase 5 routineとして実装済みです。
 
 - crop ID/tagと全BlockStateを確認する
 - 成熟条件をversion/runtime dataに基づいて判断する
 - 収穫、drop回収、植え直し後に状態を確認する
-- sapling、log、leaves、支持面、成長空間を確認する
+- sapling、宣言済みlog、支持面、成長空間をcurrent exact-stateで確認する
 - 成長待ちは`WAITING`で入力を解放し、deadlineを持つ
-- 未観測領域、自然地形全体、隠れた原木を直接検索しない
+- 未観測領域、自然地形全体、隣接・隠れた原木を直接検索しない。tree成功は宣言済みcurrent log cellの完了だけを意味し、木全体の完全伐採を保証しない
 
 ## クラフトとコンテナ
 
@@ -198,10 +198,11 @@ GUI全面禁止では、craftとtransferを実現できません。画面操作�
 - 予期しないscreen遷移、手動input、slot desyncで即停止
 - inventoryを直接書き換えず、通常のclick pathとserver同期を使う
 - container内容は通常画面を開いて確認できた間だけcurrentとして扱う
+- container clickにはpositive ACKがないため、click送信だけで成功にしない。automation-owned screenを閉じ、同じ宣言済みcontainerを通常interactionで再度開き、container/player全slotのfull readback後にsource/destinationの絶対目標countを確認する
 
 ## 睡眠とsurvival maintenance
 
-長時間routineは、安全なcheckpointで食事・睡眠を挟めます。これは汎用workflowではなく、固定のsurvival maintenanceです。
+Phase 5ではstandaloneの`sleep_at_bed`だけを公開します。長時間routineへ食事・睡眠を自動挿入する固定survival maintenanceはPhase 6計画で、Phase 5 routineの実行範囲を暗黙に広げません。
 
 ローカルpolicy例:
 
@@ -225,7 +226,9 @@ CHECKPOINT
 
 ベッドはユーザー登録済み、または現在のtaskで明示的に観測・設置確認したものに限ります。bedが危険なdimensionではfail closedにします。占有、時間外、近くのmonster、破壊、server timeoutは構造化failureとして返します。`prefer`では睡眠不能のeventを残し、現在のsurvival条件が許せば作業を続行します。`require`では睡眠を確認できなければ`FAILED`としてuser/LLMへ返します。
 
-睡眠によるrespawn point変更はvanilla副作用としてlocal UIへ明示し、routine resultにもeffectを記録します。standaloneの`sleep_at_bed`は開始時safe checkpointへ、maintenanceは中断したcheckpointへ戻り、必ずworld差分を再取得してから作業を再開します。
+睡眠によるrespawn point変更はvanilla副作用としてlocal UIへ明示しますが、routine resultで`confirmed` effectにするのは当該bed actionに対応する受信済みvanilla respawn設定signalがある場合だけです。睡眠開始、起床、位置変化だけからrespawn変更を推定しません。standaloneの`sleep_at_bed`は開始時safe checkpointへ戻り、必ずworld差分を再取得してから終了します。
+
+Phase 5の各public routineは単独で完結し、`completion_intent = finish_goal`だけを受理します。複数routineのouter loop、`continue_goal`、中間routineをまたぐfinalization reserve、任意のsurvival maintenance挿入はPhase 6です。
 
 ## Entity interactionとuser handoff
 
@@ -265,7 +268,7 @@ Phase 3 v1の`interact_block`も汎用右clickではありません。empty main
 
 `operate_prepared_transfer`の成功には、targetがdestination region内で連続したserver updateにより安定確認され、destinationとsource/routeの開口が閉じ、routine所有のtemporary water/rail powerが停止し、playerがhazard cell外へ出て全input/item-useを解放したことが必要です。passenger入りboat/cartをcleanup目的で攻撃破壊せず、target survivalやdespawn防止が確認不能なら`unknown`を返します。
 
-## 完了後の安全化
+## 完了後の安全化（Phase 6計画、未実装）
 
 domain goal確認後も、プレイヤーを危険な場所へ放置しないため`FINALIZING`を実行します。
 
@@ -277,7 +280,7 @@ domain goal確認後も、プレイヤーを危険な場所へ放置しないた
 6. Voice Chat状態を所有権規則に従って復元
 7. local policyが許可する場合だけ通常の切断経路を使う
 
-`completion_intent=continue_goal`では1、2、5、6とstable checkpoint確認までを必須とし、3、4、7および`after_completion`はまだ実行しません。`finish_goal`だけが全手順を実行します。これにより資材準備や建築phaseごとに帰宅・切断せず、LLM outer loopが次の型付きroutineへ進めます。
+Phase 6の`completion_intent=continue_goal`では1、2、5、6とstable checkpoint確認までを必須とし、3、4、7および`after_completion`はまだ実行しません。`finish_goal`だけが全手順を実行します。Phase 5はこの分岐を先取りしません。
 
 切断は公開MCP toolにせず、ローカルUIで次のようなpolicyを設定します。
 

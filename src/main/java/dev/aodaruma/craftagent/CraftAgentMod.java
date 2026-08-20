@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import dev.aodaruma.craftagent.client.CraftAgentKeyBindings;
 import dev.aodaruma.craftagent.runtime.CraftAgentRuntime;
 import dev.aodaruma.craftagent.runtime.McpServerController;
+import dev.aodaruma.craftagent.runtime.ScreenOwnershipSignals;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.neoforged.api.distmarker.Dist;
@@ -34,12 +35,14 @@ public final class CraftAgentMod {
 
     private final CraftAgentRuntime runtime;
     private final McpServerController mcpServer;
+    private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
     private final CraftAgentKeyBindings keys = new CraftAgentKeyBindings();
 
     public CraftAgentMod(IEventBus modEventBus, ModContainer modContainer) {
         var modVersion = modContainer.getModInfo().getVersion().toString();
         runtime = new CraftAgentRuntime(modVersion, NEOFORGE_VERSION);
         mcpServer = new McpServerController(runtime, modVersion);
+        screenOwnership.setFailureHandler(runtime::onManualInput);
 
         modEventBus.addListener(keys::register);
         var eventBus = NeoForge.EVENT_BUS;
@@ -56,6 +59,7 @@ public final class CraftAgentMod {
         eventBus.addListener(this::onMouseButtonInput);
         eventBus.addListener(this::onMouseScrollInput);
         eventBus.addListener(this::onScreenOpening);
+        eventBus.addListener(this::onScreenClosing);
         eventBus.addListener(this::onClientStopping);
         eventBus.addListener(this::onClientStopped);
 
@@ -74,6 +78,7 @@ public final class CraftAgentMod {
 
     private void onPreTick(ClientTickEvent.Pre event) {
         var minecraft = Minecraft.getInstance();
+        screenOwnership.onClientTick();
         keys.handleClientTick(minecraft, runtime);
         runtime.onPreTick(minecraft);
     }
@@ -106,22 +111,31 @@ public final class CraftAgentMod {
 
     private void onKeyInput(InputEvent.Key event) {
         if (!keys.isLocalControlKey(event.getKeyEvent())) {
+            screenOwnership.onManualInput("manual_keyboard_input");
             runtime.onManualInput("manual_keyboard_input");
         }
     }
 
     private void onMouseButtonInput(InputEvent.MouseButton.Pre event) {
+        screenOwnership.onManualInput("manual_mouse_button_input");
         runtime.onManualInput("manual_mouse_button_input");
     }
 
     private void onMouseScrollInput(InputEvent.MouseScrollingEvent event) {
+        screenOwnership.onManualInput("manual_mouse_scroll_input");
         runtime.onManualInput("manual_mouse_scroll_input");
     }
 
     private void onScreenOpening(ScreenEvent.Opening event) {
-        if (event.getNewScreen() != null) {
+        if (event.getNewScreen() != null
+                && !screenOwnership.allowScreenOpening(event.getNewScreen())) {
             runtime.onManualInput("unexpected_screen_opened");
         }
+    }
+
+    private void onScreenClosing(ScreenEvent.Closing event) {
+        screenOwnership.onScreenClosing(event.getScreen())
+                .ifPresent(runtime::onManualInput);
     }
 
     private void onClientStopping(ClientStoppingEvent event) {

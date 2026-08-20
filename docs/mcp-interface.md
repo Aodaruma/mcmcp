@@ -24,8 +24,9 @@ MCPへ公開するのは、読み取りtool、制御tool、型付きroutineの�
 | `start_routine` | write | 型付きroutineを非同期開始 |
 | `cancel_routine` | write | 指定routineを安全に取消 |
 | `emergency_stop` | write | 全入力解放、pending開始破棄、lock |
+| `get_recipes` | read | クライアント既知のrecipe displayを限定列挙 |
 
-現在の固定surfaceは上記8 toolです。Phase 4でもtoolは増やさず、7番目のroutine kindとして`apply_block_plan`を`start_routine`から開始します。`get_recipes`はPhase 5の設計候補で、現在の`tools/list`には含めません。
+現在の固定surfaceは上記9 toolです。既存8 toolの順序とinput/output shapeは変えず、読み取り専用`get_recipes`を末尾へ追加しています。
 
 スクリーンショットは未知MODの診断や見た目確認に有効ですが、structured observationとは性質が異なります。必要性を実測した段階で、明示的な読み取り専用`capture_view`として追加します。
 
@@ -271,20 +272,25 @@ server address、Bearer token、Microsoft認証情報、音声device名は返し
 - `break_to_air`と`replace`には`allow_break=true`が必要です。破壊元は`minecraft:cobblestone / stone / dirt / obsidian / grass_block`の5 IDだけで、canonicalなvanilla block、BlockEntityなし、空のFluidStateを開始時とpacket直前に再確認します
 - 成功確認は要求されたtarget cellが対象です。通常vanilla処理による隣接block更新やgame eventを抑止せず、target外のworld stateがすべて無変化であることは保証しません
 
-## `get_recipes`（Phase 5の計画、未公開）
+## `get_recipes`（Phase 5、実装済み）
 
 ```json
 {
-  "item": "minecraft:hopper",
+  "query": {
+    "kind": "result_item",
+    "item": "minecraft:hopper"
+  },
   "max_results": 16
 }
 ```
 
-実装時は、現在接続中のruntime recipe managerが持つ有効recipeを返します。item/tag、recipe ID、ingredients、result、必要screenを含めます。再帰recipe solver、最適素材調達planner、JEI固有APIは初版に含めません。LLMがplanを作り、`craft_items`が選択済みrecipeを実行します。
+queryは`result_item`または`result_tag`のclosed unionです。返すのは現在のクライアントが既知の`RecipeDisplayEntry`だけで、全`RecipeManager`、未解除recipe、server内部recipeを列挙しません。coverageは必ず`source = client_known_recipe_displays`、`complete = false`とし、`known / matched / returned / truncated`を返します。
+
+各結果は24文字の短寿命opaque `recipe_ref`と`fingerprint`、`display_kind`、`required_screen`、support可否、解析できたresult/ingredient/shapeを返します。recipe IDは公開・入力せず、`craft_items`は同じworld sessionとrecipe-book revisionで`recipe_ref`とfingerprintを再解決します。unsupported/context-dependent displayは理由と解析できた範囲だけを返し、空のresult alternatives、ingredients、`shape = null`を許します。再帰recipe solver、最適素材調達planner、JEI固有APIは初版に含めません。
 
 ## `list_routines`
 
-現在のversionと実装phaseに対応するroutine kind、kind固有input schema、bounds、postcondition、experimental flagを返します。現在はPhase 2の`stationary_break`、Phase 3の5 action、Phase 4の`apply_block_plan`を合わせた7 kindを返します。
+Phase 2の`stationary_break`、Phase 3の5 action、Phase 4の`apply_block_plan`、Phase 5の6 routineを合わせた13 kindと、各kind固有のclosed input schema、bounds、postcondition、experimental flagを返します。
 
 MCPのprotocol capabilityとは別のdomain catalogです。tool一覧には`tools/list`を使い、`get_capabilities`は作りません。
 
@@ -389,11 +395,11 @@ event cursorがring bufferより古い場合は`events_truncated=true`としま�
 - kind固有schemaとpreconditionに合格
 - routine hard deadlineがunlock expiry以前に収まる
 
-`bounds.region`はwork regionです。Phase 3 actionとPhase 4 block planは指定dimension・region・travel・duration・break許可を実行中に広げません。`apply_block_plan`は`max_travel_blocks=0`固定です。bed/safe anchorやtransit corridorを含む長時間`execution_envelope`はPhase 5〜6の計画であり、有限actionへ暗黙に追加しません。
+`bounds.region`はwork regionです。Phase 3〜5 routineは指定dimension・region・travel・duration・break許可を実行中に広げません。`apply_block_plan`は`max_travel_blocks=0`固定です。Phase 5の全public座標はdimension付きで、runtimeがcurrent/bounds dimensionとの一致を再検証します。Phase 6のsafe anchorや動的transit corridorを有限routineへ暗黙に追加しません。
 
-Phase 3〜4の有限actionは`max_duration_seconds`からhard deadlineを固定し、到達時に入力を解放して未完了を失敗にします。maintenance/FINALIZING reserveとwork soft deadlineはPhase 5〜6の長時間routineで追加する計画です。
+Phase 3〜5の有限routineは`max_duration_seconds`からhard deadlineを固定し、到達時に入力を解放して未完了を失敗にします。複数routineにまたがるmaintenance/FINALIZING reserveとwork soft deadlineはPhase 6です。
 
-Phase 3〜4のschemaでは`completion_intent`を必須の`finish_goal`へ固定します。`continue_goal`による複数routine orchestrationはPhase 6の計画であり、現時点では受理しません。
+Phase 2〜5のschemaでは`completion_intent`を必須の`finish_goal`へ固定します。`continue_goal`による複数routine orchestrationはPhase 6の計画であり、Phase 5では受理しません。
 
 成功時はすぐに`routine_id`を返します。HTTP request timeout後に遅延開始しないよう、queue command自体にもdeadlineを持たせます。
 
@@ -407,7 +413,7 @@ Idempotency規則:
 
 ## routine catalog
 
-現在公開するkindは次の7つです。Phase 4まで実装・受入完了しています。
+現在の公開契約は次の13 kindで、Phase 5まで受入を完了しています。
 
 | kind | phase | 概要 |
 |---|---:|---|
@@ -418,6 +424,12 @@ Idempotency規則:
 | `interact_block` | 3 | allowlist blockをempty hand・non-sneakで1回use |
 | `interact_entity` | 3 | current-visibleなadult cowをbucketで1回搾乳 |
 | `apply_block_plan` | 4 | 移動なし・最大64 cellの1 phaseをcurrent exact-stateで施工 |
+| `craft_items` | 5 | client-known recipe refを再解決し目標inventory countへcraft |
+| `transfer_items` | 5 | 指定containerをroutine自身が開き目標countへ収束 |
+| `tend_crop_area` | 5 | 宣言済み畑cellの成熟作物を収穫・植え直し |
+| `harvest_tree_area` | 5 | 宣言済みcurrent tree cellだけを伐採・回収・再植林 |
+| `sleep_at_bed` | 5 | 明示bedで睡眠し開始時checkpointへ帰還 |
+| `survey_area` | 5 | 宣言済みwaypoint/sampleを通常移動・視点操作で調査 |
 
 Phase 3 actionの境界は次のとおりです。
 
@@ -428,19 +440,27 @@ Phase 3 actionの境界は次のとおりです。
 - `interact_entity`はcurrent world session/dimensionで現在可視な短寿命opaque `entity_ref`が指すadult cow、main handの`minecraft:bucket`、目標`minecraft:milk_bucket`だけを許可します。crosshair、LOS、通常reach、boundsをdispatch直前に再確認し、1回だけ通常interactionを送ります。成功にはdispatch後のfreshなselected-slot inventory syncと絶対目標countが必要で、retryしません
 - `apply_block_plan`の完全な契約は上記専用節に従います。Phase 2〜4の破壊操作は共通の5 ID safe-break allowlistを使います
 
-次はroadmapであり、Phase 5〜6が未実装の間はcatalogへ出しません。
+Phase 5の6 kindはclosed schemaで実装済みです。特に次の境界を広げません。
 
-| kind | phase | 概要 |
-|---|---:|---|
-| `craft_items` | 5 | 選択recipeで目標inventory countへcraft |
-| `transfer_items` | 5 | 指定containerをroutine自身が開き、目標countへ収束 |
-| `tend_crop_area` | 5 | 指定畑の成熟作物を収穫・植え直し |
-| `harvest_tree_area` | 5 | 指定植林区画を伐採・回収・再植林 |
-| `sleep_at_bed` | 5 | 登録・確認済みbedへ移動して睡眠・帰還 |
-| `survey_area` | 5 | 通常移動と視点操作で可視表面を調査・記憶 |
-| `operate_prepared_transfer` | experimental | ユーザーが収容・封鎖済みEntity搬送系を操作 |
+- `craft_items`はopaque `recipe_ref`とfingerprintを再解決し、明示したvanilla crafting tableだけを使います。2x2 inventory craftingは初版ではserver full-readbackを強制できないため拒否します
+- `transfer_items`は対象containerを通常interactionで自ら開き、userが開いたscreenをadoptしません。container clickにpositive ACKはないため、click後に閉じ、同じ対象を再度開き、container/player全slotのfull readbackで目標countを確認します
+- `tend_crop_area`は最大64個の宣言済みplotとclosed vanilla crop adapterだけを扱います
+- `harvest_tree_area`は入力に列挙され、操作直前にもcurrent exact-stateを確認できた最大64 log cellだけを扱います。隣接・hidden logを探索せず、成功も「宣言済みcell完了」であって木全体の完全伐採を意味しません
+- `survey_area`のspawn surface評価はclient-visible block/lightからの`predicted`であり、hidden洞窟・壁裏を含む完全coverageを主張しません
+- `sleep_at_bed`のrespawn point変更は、当該bed actionに対応する受信済みvanilla respawn設定signalがある場合だけconfirmed effectにします。睡眠開始、起床、位置変化だけから推定しません
 
-`transfer_items`は対象block/refを受け、routine自身が通常interactionでscreenを開きます。ユーザーが事前に開いたscreenをadoptしません。
+6 branchは共通top-levelの`kind / parameters / bounds / completion_intent / idempotency_key`だけを必須とし、全objectをclosedにします。parametersの独立positionはすべて`{dimension,x,y,z}`、boundsは既存互換の`dimension + region.min/max{x,y,z} + max_travel_blocks + max_duration_seconds + allow_break`です。
+
+| kind | parametersの固定境界 | bounds上限 |
+|---|---|---|
+| `craft_items` | 24文字`recipe_ref`、sha256 fingerprint、default-components-onlyの絶対inventory goal、明示crafting table、最大64 craft | travel 32、120秒、break不可 |
+| `transfer_items` | container exact state、方向、default-components-only item、destination絶対count、最大2304 transfer | travel 32、120秒、break不可 |
+| `tend_crop_area` | 4種のvanilla crop adapter、1〜64宣言済みplot、replant/collect固定true、bounded wait policy | travel 128、600秒、break可 |
+| `harvest_tree_area` | 1〜8 tree、宣言済みlog/support/sapling/clearance、collect固定true。全tree合計logはruntime admissionで最大64 | travel 128、600秒、break可 |
+| `sleep_at_bed` | foot/headのpositionと完全state、return policyは`start_checkpoint`固定 | travel 128、600秒、break不可 |
+| `survey_area` | 1〜32 waypoint、1〜256 sample、絶対observed goal、coverage-onlyまたはspawn prediction | travel 128、600秒、break不可 |
+
+`operate_prepared_transfer`はPhase 7 experimentalで、Phase 5 catalogには含めません。Phase 6のouter loop、`continue_goal`、複数routine完了処理もPhase 5には含めません。
 
 `operate_prepared_transfer`を有効化する場合も、targetのdestination region内でのserver-confirmed安定、destination閉鎖、source/route開口閉鎖、routine所有のtemporary water/rail power停止、playerのhazard cell外退避、全input/item-use解放をkind固有postconditionにします。passenger入りvehicleをcleanup目的で攻撃破壊せず、target survival/despawnが確認不能なら`unknown`を保持します。
 

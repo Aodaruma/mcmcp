@@ -29,7 +29,7 @@ class CraftAgentToolRegistryTest {
         assertThat(tools).extracting(McpSchema.Tool::name)
                 .containsExactly(
                         "get_status", "get_snapshot", "compare_block_plan", "list_routines", "get_routine",
-                        "start_routine", "cancel_routine", "emergency_stop");
+                        "start_routine", "cancel_routine", "emergency_stop", "get_recipes");
         for (McpSchema.Tool tool : tools) {
             assertThat(tool.inputSchema()).containsEntry("additionalProperties", false);
             assertThat(tool.outputSchema()).containsEntry("additionalProperties", false);
@@ -38,13 +38,14 @@ class CraftAgentToolRegistryTest {
             assertThat(tool.annotations().idempotentHint()).isTrue();
             assertThat(tool.annotations().openWorldHint()).isTrue();
         }
-        assertThat(tools.subList(0, 5)).allSatisfy(tool ->
+        assertThat(List.of(tools.get(0), tools.get(1), tools.get(2), tools.get(3), tools.get(4),
+                tools.get(8))).allSatisfy(tool ->
                 assertThat(tool.annotations().readOnlyHint()).isTrue());
         assertThat(tools.subList(5, 8)).allSatisfy(tool ->
                 assertThat(tool.annotations().readOnlyHint()).isFalse());
         assertThat(tools.get(5).annotations().destructiveHint()).isTrue();
         assertThat(List.of(tools.get(0), tools.get(1), tools.get(2), tools.get(3), tools.get(4),
-                tools.get(6), tools.get(7))).allSatisfy(tool ->
+                tools.get(6), tools.get(7), tools.get(8))).allSatisfy(tool ->
                 assertThat(tool.annotations().destructiveHint()).isFalse());
     }
 
@@ -75,6 +76,25 @@ class CraftAgentToolRegistryTest {
                         .contains("\"ok\":true")
                         .contains("\"tool\":\"get_status\"")
                         .contains(envelope.get("request_id").toString()));
+    }
+
+    @Test
+    void dispatchesOnlyTheClosedClientKnownRecipeQuery() {
+        AtomicReference<McpRuntimePort.RuntimeCommand> received = new AtomicReference<>();
+        CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
+            received.set(command);
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+        }, Duration.ofSeconds(1));
+        Map<String, Object> arguments = McpTestFixtures.fields(
+                "query", Map.of("kind", "result_item", "item", "minecraft:hopper"),
+                "max_results", 16);
+
+        McpSchema.CallToolResult result = invoke(registry, "get_recipes", arguments);
+
+        assertThat(result.isError()).isFalse();
+        assertThat(received.get()).isInstanceOfSatisfying(
+                McpRuntimePort.GetRecipes.class,
+                command -> assertThat(command.arguments()).isEqualTo(arguments));
     }
 
     @Test
@@ -112,7 +132,7 @@ class CraftAgentToolRegistryTest {
     }
 
     @Test
-    void acceptsEveryClosedReleasedRoutineBranchAndKeepsTheToolCountFixed() {
+    void acceptsEveryClosedReleasedRoutineBranch() {
         AtomicInteger calls = new AtomicInteger();
         CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
             calls.incrementAndGet();
@@ -125,8 +145,7 @@ class CraftAgentToolRegistryTest {
                     .isFalse();
         }
 
-        assertThat(calls).hasValue(7);
-        assertThat(registry.specifications()).hasSize(8);
+        assertThat(calls).hasValue(13);
     }
 
     @Test
@@ -173,6 +192,37 @@ class CraftAgentToolRegistryTest {
             McpSchema.CallToolResult result = invoke(registry, "start_routine", arguments);
             assertThat(result.isError()).as("invalid arguments %s", arguments).isTrue();
             assertThat(result.structuredContent().toString()).contains("invalid_argument");
+        }
+        assertThat(calls).hasValue(0);
+    }
+
+    @Test
+    void rejectsOpenIncompleteAndPhaseSixVariantsOfEveryPhaseFiveBranch() {
+        AtomicInteger calls = new AtomicInteger();
+        CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
+            calls.incrementAndGet();
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+        }, Duration.ofSeconds(1));
+
+        for (Map<String, Object> valid : validRoutineArguments().subList(7, 13)) {
+            Map<String, Object> open = new java.util.LinkedHashMap<>(valid);
+            Map<String, Object> openParameters = new java.util.LinkedHashMap<>(parameters(open));
+            openParameters.put("workflow", "free_form");
+            open.put("parameters", openParameters);
+
+            Map<String, Object> incomplete = new java.util.LinkedHashMap<>(valid);
+            Map<String, Object> incompleteParameters = new java.util.LinkedHashMap<>(parameters(incomplete));
+            incompleteParameters.remove(incompleteParameters.keySet().iterator().next());
+            incomplete.put("parameters", incompleteParameters);
+
+            Map<String, Object> phaseSixIntent = new java.util.LinkedHashMap<>(valid);
+            phaseSixIntent.put("completion_intent", "continue_goal");
+
+            for (Map<String, Object> invalid : List.of(open, incomplete, phaseSixIntent)) {
+                McpSchema.CallToolResult result = invoke(registry, "start_routine", invalid);
+                assertThat(result.isError()).as("invalid Phase 5 arguments %s", valid.get("kind")).isTrue();
+                assertThat(result.structuredContent().toString()).contains("invalid_argument");
+            }
         }
         assertThat(calls).hasValue(0);
     }
@@ -259,7 +309,9 @@ class CraftAgentToolRegistryTest {
     private static List<Map<String, Object>> validRoutineArguments() {
         return List.of(
                 stationaryBreakArguments(), navigateArguments(), breakArguments(), placeArguments(),
-                interactBlockArguments(), interactEntityArguments(), applyBlockPlanArguments());
+                interactBlockArguments(), interactEntityArguments(), applyBlockPlanArguments(),
+                craftItemsArguments(), transferItemsArguments(), tendCropAreaArguments(),
+                harvestTreeAreaArguments(), sleepAtBedArguments(), surveyAreaArguments());
     }
 
     private static Map<String, Object> stationaryBreakArguments() {
@@ -340,6 +392,109 @@ class CraftAgentToolRegistryTest {
                 bounds(0, 30, false));
     }
 
+    private static Map<String, Object> craftItemsArguments() {
+        return routineArguments(
+                "craft_items",
+                McpTestFixtures.fields(
+                        "recipe_ref", "AbCdEfGhIjKlMnOpQrStUvWx",
+                        "recipe_fingerprint", sha256('a'),
+                        "goal", McpTestFixtures.fields(
+                                "item", "minecraft:crafting_table",
+                                "stack_policy", "default_components_only",
+                                "minimum_inventory_count", 1),
+                        "station", McpTestFixtures.fields(
+                                "kind", "crafting_table",
+                                "target", dimensionPosition(11, 64, -3),
+                                "expected_state", fullState("minecraft:crafting_table")),
+                        "max_crafts", 1),
+                bounds(4, 60, false));
+    }
+
+    private static Map<String, Object> transferItemsArguments() {
+        return routineArguments(
+                "transfer_items",
+                McpTestFixtures.fields(
+                        "container", McpTestFixtures.fields(
+                                "target", dimensionPosition(11, 64, -3),
+                                "expected_state", fullState("minecraft:chest")),
+                        "direction", "player_to_container",
+                        "stack", McpTestFixtures.fields(
+                                "item", "minecraft:cobblestone",
+                                "stack_policy", "default_components_only"),
+                        "goal", Map.of("minimum_destination_count", 16),
+                        "max_transfer_count", 16),
+                bounds(8, 90, false));
+    }
+
+    private static Map<String, Object> tendCropAreaArguments() {
+        return routineArguments(
+                "tend_crop_area",
+                McpTestFixtures.fields(
+                        "crop_adapter", "wheat",
+                        "plots", List.of(McpTestFixtures.fields(
+                                "id", "plot-1",
+                                "crop_position", dimensionPosition(10, 64, -3),
+                                "support_position", dimensionPosition(10, 63, -3),
+                                "expected_support_state", fullState("minecraft:farmland"))),
+                        "goal", McpTestFixtures.fields(
+                                "minimum_harvested_plots", 1,
+                                "replant", true,
+                                "collect_drops", true),
+                        "wait_policy", "no_wait"),
+                bounds(16, 180, true));
+    }
+
+    private static Map<String, Object> harvestTreeAreaArguments() {
+        return routineArguments(
+                "harvest_tree_area",
+                McpTestFixtures.fields(
+                        "trees", List.of(McpTestFixtures.fields(
+                                "id", "oak-1",
+                                "logs", List.of(McpTestFixtures.fields(
+                                        "position", dimensionPosition(10, 64, -3),
+                                        "expected_state", fullState("minecraft:oak_log"))),
+                                "support", McpTestFixtures.fields(
+                                        "position", dimensionPosition(10, 63, -3),
+                                        "expected_state", fullState("minecraft:dirt")),
+                                "sapling", McpTestFixtures.fields(
+                                        "item", "minecraft:oak_sapling",
+                                        "expected_after_state", fullState("minecraft:oak_sapling")),
+                                "growth_clearance", List.of(McpTestFixtures.fields(
+                                        "position", dimensionPosition(10, 65, -3),
+                                        "expected_state", fullState("minecraft:air"))))),
+                        "collect_drops", true),
+                bounds(16, 240, true));
+    }
+
+    private static Map<String, Object> sleepAtBedArguments() {
+        return routineArguments(
+                "sleep_at_bed",
+                McpTestFixtures.fields(
+                        "bed", McpTestFixtures.fields(
+                                "foot_position", dimensionPosition(10, 64, -3),
+                                "expected_foot_state", fullState("minecraft:red_bed"),
+                                "head_position", dimensionPosition(10, 64, -2),
+                                "expected_head_state", fullState("minecraft:red_bed")),
+                        "return_policy", "start_checkpoint"),
+                bounds(32, 300, false));
+    }
+
+    private static Map<String, Object> surveyAreaArguments() {
+        return routineArguments(
+                "survey_area",
+                McpTestFixtures.fields(
+                        "waypoints", List.of(McpTestFixtures.fields(
+                                "id", "waypoint-1",
+                                "target", dimensionPosition(10, 64, -3),
+                                "look_at", dimensionPosition(12, 64, -3))),
+                        "samples", List.of(McpTestFixtures.fields(
+                                "id", "sample-1",
+                                "position", dimensionPosition(12, 63, -3))),
+                        "goal", Map.of("minimum_observed_samples", 1),
+                        "assessment", "spawn_surface_prediction"),
+                bounds(32, 300, false));
+    }
+
     private static Map<String, Object> transitionParameters(String before, String after) {
         return McpTestFixtures.fields(
                 "target", dimensionPosition(10, 64, -3),
@@ -370,6 +525,14 @@ class CraftAgentToolRegistryTest {
 
     private static Map<String, Object> dimensionPosition(int x, int y, int z) {
         return Map.of("dimension", "minecraft:overworld", "x", x, "y", y, "z", z);
+    }
+
+    private static Map<String, Object> fullState(String block) {
+        return Map.of("block", block, "properties", Map.of());
+    }
+
+    private static String sha256(char digit) {
+        return "sha256:" + String.valueOf(digit).repeat(64);
     }
 
     private static Map<String, Object> mutableApplyArguments() {

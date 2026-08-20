@@ -142,7 +142,7 @@ Phase 3 v1の`interact_entity`は、current world session/dimensionで現在可�
 
 後期にEntity搬送を試す場合も、ユーザーが対象をboat/minecart/sealed cellへ収容し、routeとdestinationを封鎖した後の`operate_prepared_transfer`へ限定します。client側でEntity座標、AI、vehicle membershipを直接変更しません。
 
-## 完了処理
+## 完了処理（Phase 6計画、未実装）
 
 domain goal確認後、routineは`FINALIZING`へ移ります。
 
@@ -153,7 +153,7 @@ domain goal確認後、routineは`FINALIZING`へ移ります。
 5. Voice Chatの状態を復元する
 6. local policyが明示的に許す場合だけ通常切断する
 
-中間routineの`completion_intent=continue_goal`ではroutine-local cleanup、stable checkpoint、全input解放、Voice Chat復元まで行い、safe anchor帰還、`ask`、切断は実行しません。ユーザーgoalを閉じる`finish_goal`だけがlocal `after_completion` policyを実行します。省略時は`finish_goal`で、`continue_goal`はlocal UIが許可したsessionの回数・総時間・unlock expiry上限内だけ受理します。
+Phase 6の中間routineで計画する`completion_intent=continue_goal`は、routine-local cleanup、stable checkpoint、全input解放、Voice Chat復元までを行い、safe anchor帰還、`ask`、切断を実行しません。Phase 5までは`finish_goal`だけを受理します。Phase 6で追加する場合も、`continue_goal`はlocal UIが許可したsessionの回数・総時間・unlock expiry上限内だけに限定します。
 
 自動再接続と自動ログインは行いません。建築が完成しても必須finalizationに失敗した場合、`goal.verified=true`を保持しつつroutine全体は`FAILED`とします。
 

@@ -94,6 +94,31 @@ neoForge {
                     systemProperty 'craftagent.fixture.phase3.autoArm', 'true'
                 }
             }
+
+            def phase5Mode = providers.gradleProperty('craftagentFixturePhase5Mode')
+                    .map { value -> value.strip().toLowerCase(Locale.ROOT) }
+            if (phase5Mode.isPresent()) {
+                if (phase3Mode.isPresent()) {
+                    throw new GradleException(
+                            'craftagentFixturePhase3Mode and craftagentFixturePhase5Mode are mutually exclusive')
+                }
+                def requestedMode = phase5Mode.get()
+                def supportedModes = [
+                        'recipes', 'craft', 'transfer', 'crop',
+                        'tree', 'sleep', 'survey', 'reset'
+                ]
+                if (!supportedModes.contains(requestedMode)) {
+                    throw new GradleException(
+                            "Unsupported craftagentFixturePhase5Mode '${requestedMode}'; expected one of ${supportedModes}")
+                }
+
+                programArgument '--quickPlaySingleplayer'
+                programArgument 'New World'
+                systemProperty 'craftagent.fixture.phase5.mode', requestedMode
+                if (!['recipes', 'reset'].contains(requestedMode)) {
+                    systemProperty 'craftagent.fixture.phase5.autoArm', 'true'
+                }
+            }
         }
 
         serverSmoke {

@@ -20,6 +20,7 @@ public final class RoutineManager {
     private final StationaryBreakPort stationaryBreakPort;
     private final SemanticActionPort semanticActionPort;
     private final ApplyBlockPlanPort applyBlockPlanPort;
+    private final PhaseFivePort phaseFivePort;
     private final int eventCapacity;
     private final int maxRetainedRoutines;
     private final long terminalTtlTicks;
@@ -31,6 +32,7 @@ public final class RoutineManager {
     public RoutineManager(StationaryBreakPort stationaryBreakPort) {
         this(
                 stationaryBreakPort,
+                null,
                 null,
                 null,
                 DEFAULT_EVENT_CAPACITY,
@@ -47,6 +49,7 @@ public final class RoutineManager {
                 stationaryBreakPort,
                 Objects.requireNonNull(semanticActionPort, "semanticActionPort"),
                 null,
+                null,
                 DEFAULT_EVENT_CAPACITY,
                 DEFAULT_RETAINED_ROUTINES,
                 DEFAULT_TERMINAL_TTL_TICKS,
@@ -62,6 +65,24 @@ public final class RoutineManager {
                 stationaryBreakPort,
                 Objects.requireNonNull(semanticActionPort, "semanticActionPort"),
                 Objects.requireNonNull(applyBlockPlanPort, "applyBlockPlanPort"),
+                null,
+                DEFAULT_EVENT_CAPACITY,
+                DEFAULT_RETAINED_ROUTINES,
+                DEFAULT_TERMINAL_TTL_TICKS,
+                UUID::randomUUID);
+    }
+
+    /** Production constructor enabling Phase 2 through Phase 5 routine families. */
+    public RoutineManager(
+            StationaryBreakPort stationaryBreakPort,
+            SemanticActionPort semanticActionPort,
+            ApplyBlockPlanPort applyBlockPlanPort,
+            PhaseFivePort phaseFivePort) {
+        this(
+                stationaryBreakPort,
+                Objects.requireNonNull(semanticActionPort, "semanticActionPort"),
+                Objects.requireNonNull(applyBlockPlanPort, "applyBlockPlanPort"),
+                Objects.requireNonNull(phaseFivePort, "phaseFivePort"),
                 DEFAULT_EVENT_CAPACITY,
                 DEFAULT_RETAINED_ROUTINES,
                 DEFAULT_TERMINAL_TTL_TICKS,
@@ -76,6 +97,7 @@ public final class RoutineManager {
             Supplier<UUID> routineIds) {
         this(
                 stationaryBreakPort,
+                null,
                 null,
                 null,
                 eventCapacity,
@@ -95,6 +117,7 @@ public final class RoutineManager {
                 stationaryBreakPort,
                 semanticActionPort,
                 null,
+                null,
                 eventCapacity,
                 maxRetainedRoutines,
                 terminalTtlTicks,
@@ -109,9 +132,30 @@ public final class RoutineManager {
             int maxRetainedRoutines,
             long terminalTtlTicks,
             Supplier<UUID> routineIds) {
+        this(
+                stationaryBreakPort,
+                semanticActionPort,
+                applyBlockPlanPort,
+                null,
+                eventCapacity,
+                maxRetainedRoutines,
+                terminalTtlTicks,
+                routineIds);
+    }
+
+    RoutineManager(
+            StationaryBreakPort stationaryBreakPort,
+            SemanticActionPort semanticActionPort,
+            ApplyBlockPlanPort applyBlockPlanPort,
+            PhaseFivePort phaseFivePort,
+            int eventCapacity,
+            int maxRetainedRoutines,
+            long terminalTtlTicks,
+            Supplier<UUID> routineIds) {
         this.stationaryBreakPort = Objects.requireNonNull(stationaryBreakPort, "stationaryBreakPort");
         this.semanticActionPort = semanticActionPort;
         this.applyBlockPlanPort = applyBlockPlanPort;
+        this.phaseFivePort = phaseFivePort;
         if (eventCapacity < 1 || maxRetainedRoutines < 1 || terminalTtlTicks < 1) {
             throw new IllegalArgumentException("routine manager limits must be positive");
         }
@@ -214,6 +258,46 @@ public final class RoutineManager {
                 requestIdentity,
                 admittedClientTick,
                 (routineId, eventCapacity, tick) -> new ApplyBlockPlanRoutine(
+                        routineId, request, port, eventCapacity, tick));
+    }
+
+    /** Starts one bounded Phase 5 operation using the request as its local identity. */
+    public synchronized StartReceipt startPhaseFive(
+            String idempotencyKey,
+            PhaseFiveRequest request,
+            long admittedClientTick) {
+        Objects.requireNonNull(request, "request");
+        request.validateAdmissionTick(admittedClientTick);
+        return admitPhaseFive(idempotencyKey, request, request, admittedClientTick);
+    }
+
+    /** Starts one Phase 5 operation with a stable external canonical identity. */
+    public synchronized StartReceipt startPhaseFive(
+            String idempotencyKey,
+            String requestIdentity,
+            PhaseFiveRequest request,
+            long admittedClientTick) {
+        Objects.requireNonNull(request, "request");
+        request.validateAdmissionTick(admittedClientTick);
+        return admitPhaseFive(
+                idempotencyKey,
+                requireRequestIdentity(requestIdentity),
+                request,
+                admittedClientTick);
+    }
+
+    private StartReceipt admitPhaseFive(
+            String idempotencyKey,
+            Object requestIdentity,
+            PhaseFiveRequest request,
+            long admittedClientTick) {
+        var port = requirePhaseFivePort();
+        return admitRoutine(
+                request.kind(),
+                idempotencyKey,
+                requestIdentity,
+                admittedClientTick,
+                (routineId, eventCapacity, tick) -> new PhaseFiveRoutine(
                         routineId, request, port, eventCapacity, tick));
     }
 
@@ -324,6 +408,20 @@ public final class RoutineManager {
         requireApplyBlockPlanPort();
         return replayRoutine(
                 ApplyBlockPlanRoutine.KIND,
+                idempotencyKey,
+                requireRequestIdentity(requestIdentity),
+                currentClientTick);
+    }
+
+    public synchronized Optional<StartReceipt> replayPhaseFive(
+            String idempotencyKey,
+            String requestIdentity,
+            PhaseFiveRequest request,
+            long currentClientTick) {
+        Objects.requireNonNull(request, "request");
+        requirePhaseFivePort();
+        return replayRoutine(
+                request.kind(),
                 idempotencyKey,
                 requireRequestIdentity(requestIdentity),
                 currentClientTick);
@@ -553,6 +651,13 @@ public final class RoutineManager {
             throw new IllegalStateException("apply block plan port is not configured");
         }
         return applyBlockPlanPort;
+    }
+
+    private PhaseFivePort requirePhaseFivePort() {
+        if (phaseFivePort == null) {
+            throw new IllegalStateException("Phase 5 port is not configured");
+        }
+        return phaseFivePort;
     }
 
     private static int validateMaxEvents(int maxEvents) {

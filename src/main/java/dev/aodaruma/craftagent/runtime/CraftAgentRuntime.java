@@ -9,6 +9,7 @@ import dev.aodaruma.craftagent.observation.BlockPlan;
 import dev.aodaruma.craftagent.observation.BlockPlanStateTransformer;
 import dev.aodaruma.craftagent.observation.BlockPlanValidationException;
 import dev.aodaruma.craftagent.observation.BlockStateView;
+import dev.aodaruma.craftagent.observation.ClientRecipeCatalog;
 import dev.aodaruma.craftagent.observation.MinecraftObservationService;
 import dev.aodaruma.craftagent.observation.WorldMemory;
 import dev.aodaruma.craftagent.safety.InputReleaseController;
@@ -23,10 +24,15 @@ import dev.aodaruma.craftagent.routine.BreakBlockRequest;
 import dev.aodaruma.craftagent.routine.InteractBlockRequest;
 import dev.aodaruma.craftagent.routine.InteractEntityRequest;
 import dev.aodaruma.craftagent.routine.MinecraftApplyBlockPlanPort;
+import dev.aodaruma.craftagent.routine.MinecraftPhaseFiveInventoryPort;
+import dev.aodaruma.craftagent.routine.MinecraftPhaseFiveWorldPort;
 import dev.aodaruma.craftagent.routine.MinecraftSemanticActionPort;
 import dev.aodaruma.craftagent.routine.MinecraftStationaryBreakPort;
 import dev.aodaruma.craftagent.routine.NavigateToRequest;
 import dev.aodaruma.craftagent.routine.PlaceBlockRequest;
+import dev.aodaruma.craftagent.routine.PhaseFiveBounds;
+import dev.aodaruma.craftagent.routine.PhaseFivePortRouter;
+import dev.aodaruma.craftagent.routine.PhaseFiveRequest;
 import dev.aodaruma.craftagent.routine.RoutineManager;
 import dev.aodaruma.craftagent.routine.SafeBreakSourcePolicy;
 import dev.aodaruma.craftagent.routine.SafePlacementSupportPolicy;
@@ -85,7 +91,13 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             PlaceBlockRequest.KIND,
             InteractBlockRequest.KIND,
             InteractEntityRequest.KIND,
-            ApplyBlockPlanRequest.KIND);
+            ApplyBlockPlanRequest.KIND,
+            "craft_items",
+            "transfer_items",
+            "tend_crop_area",
+            "harvest_tree_area",
+            "sleep_at_bed",
+            "survey_area");
 
     private final String modVersion;
     private final String neoForgeVersion;
@@ -93,12 +105,17 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     private final WorldMemory memory = new WorldMemory();
     private final MinecraftObservationService observations = new MinecraftObservationService(memory);
     private final BlockPlanComparator blockPlans = new BlockPlanComparator(observations, memory);
+    private final ClientRecipeCatalog recipeCatalog = new ClientRecipeCatalog();
+    private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
     private final LocalArmingState arming = new LocalArmingState();
     private final InputReleaseController inputRelease = new InputReleaseController();
     private final MinecraftStationaryBreakPort stationaryBreakPort;
     private final ClientReconciliationSignals reconciliationSignals;
     private final MinecraftSemanticActionPort semanticActionPort;
     private final MinecraftApplyBlockPlanPort applyBlockPlanPort;
+    private final MinecraftPhaseFiveInventoryPort phaseFiveInventoryPort;
+    private final MinecraftPhaseFiveWorldPort phaseFiveWorldPort;
+    private final PhaseFivePortRouter phaseFivePort;
     private final RoutineManager routines;
     private final VoiceChatSafetyController voiceChat;
     private final ClientCommandInbox inbox;
@@ -134,7 +151,20 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 observations,
                 ClientPredictionSignals.global(),
                 reconciliationSignals);
-        routines = new RoutineManager(stationaryBreakPort, semanticActionPort, applyBlockPlanPort);
+        phaseFiveInventoryPort = new MinecraftPhaseFiveInventoryPort(
+                Minecraft::getInstance,
+                sessions::snapshot,
+                recipeCatalog,
+                screenOwnership);
+        phaseFiveWorldPort = new MinecraftPhaseFiveWorldPort(
+                Minecraft::getInstance,
+                sessions::snapshot,
+                memory,
+                observations,
+                semanticActionPort);
+        phaseFivePort = new PhaseFivePortRouter(phaseFiveInventoryPort, phaseFiveWorldPort);
+        routines = new RoutineManager(
+                stationaryBreakPort, semanticActionPort, applyBlockPlanPort, phaseFivePort);
         voiceChat = new VoiceChatSafetyController(
                 SimpleVoiceChat2622Adapter.forNeoForge(() -> {
                     var minecraft = Minecraft.getInstance();
@@ -166,7 +196,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 stationaryBreakPort::clearSession,
                 semanticActionPort::clearSession,
                 applyBlockPlanPort::clearSession);
+        clearPhaseFivePortSessions();
         reconciliationSignals.closeLevel(minecraft.level);
+        screenOwnership.clearLevel(minecraft.level);
+        recipeCatalog.detachSession();
         sessions.beginConnection();
         arming.lock("world_join");
         publishSession();
@@ -180,7 +213,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 stationaryBreakPort::clearSession,
                 semanticActionPort::clearSession,
                 applyBlockPlanPort::clearSession);
+        clearPhaseFivePortSessions();
         reconciliationSignals.closeLevel(minecraft.level);
+        screenOwnership.clearLevel(minecraft.level);
+        recipeCatalog.detachSession();
         sessions.suspendWorld();
         arming.lock("level_or_dimension_change");
         publishSession();
@@ -197,7 +233,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 stationaryBreakPort::clearSession,
                 semanticActionPort::clearSession,
                 applyBlockPlanPort::clearSession);
+        clearPhaseFivePortSessions();
         reconciliationSignals.closeLevel(minecraft.level);
+        screenOwnership.clearLevel(minecraft.level);
+        recipeCatalog.detachSession();
         sessions.invalidate();
         memory.detachSession();
         arming.lock("disconnect");
@@ -324,6 +363,12 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         }
     }
 
+    private void clearPhaseFivePortSessions() {
+        clearAutomationPortSession("phase_five_inventory", phaseFiveInventoryPort::clearSession);
+        clearAutomationPortSession("phase_five_world", phaseFiveWorldPort::clearSession);
+        clearAutomationPortSession("phase_five_router", phaseFivePort::clearSession);
+    }
+
     /** Returns whether an active/pending start was stopped before the caller can continue. */
     static boolean runPriorityEventStopIfRequired(
             boolean workPending,
@@ -352,7 +397,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 stationaryBreakPort::clearSession,
                 semanticActionPort::clearSession,
                 applyBlockPlanPort::clearSession);
+        clearPhaseFivePortSessions();
         reconciliationSignals.closeLevel(minecraft.level);
+        screenOwnership.clearLevel(minecraft.level);
+        recipeCatalog.detachSession();
         memory.detachSession();
         arming.lock("client_shutdown");
         publishSession();
@@ -410,6 +458,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 requireReady(session);
                 yield blockPlans.compare(minecraft, session.clientTick(), compare.arguments());
             }
+            case GetRecipes getRecipes -> {
+                requireReady(session);
+                yield getRecipes(minecraft, session, getRecipes.arguments());
+            }
             case ListRoutines ignored -> listRoutines();
             case GetRoutine get -> getRoutine(get.arguments());
             case StartRoutine start -> {
@@ -419,6 +471,37 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             case CancelRoutine cancel -> cancelRoutine(minecraft, cancel.arguments());
             case EmergencyStop ignored -> throw new AssertionError("emergency stop bypasses the normal queue");
         };
+    }
+
+    private Map<String, Object> getRecipes(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            Map<String, Object> arguments) {
+        requireExactKeys(arguments, "get_recipes", Set.of("query", "max_results"));
+        int maxResults = intArgument(arguments, "max_results");
+        if (maxResults < 1 || maxResults > 64) {
+            throw new IllegalArgumentException("max_results must be in 1..64");
+        }
+        Map<String, Object> queryInput = objectArgument(arguments, "query");
+        String kind = stringArgument(queryInput, "kind");
+        ClientRecipeCatalog.Query query = switch (kind) {
+            case "result_item" -> {
+                requireExactKeys(queryInput, "get_recipes query", Set.of("kind", "item"));
+                yield new ClientRecipeCatalog.Query(
+                        ClientRecipeCatalog.QueryKind.RESULT_ITEM,
+                        stringArgument(queryInput, "item"));
+            }
+            case "result_tag" -> {
+                requireExactKeys(queryInput, "get_recipes query", Set.of("kind", "tag"));
+                yield new ClientRecipeCatalog.Query(
+                        ClientRecipeCatalog.QueryKind.RESULT_TAG,
+                        stringArgument(queryInput, "tag"));
+            }
+            default -> throw new IllegalArgumentException("get_recipes query kind is unsupported");
+        };
+        recipeCatalog.refreshFromClient(
+                minecraft, Objects.requireNonNull(session.worldSessionId(), "worldSessionId"), session.clientTick());
+        return recipeCatalog.query(session.worldSessionId(), query, maxResults).toMap();
     }
 
     private Map<String, Object> status(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
@@ -500,7 +583,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
 
     static Map<String, Object> routineCatalog() {
         return Map.of(
-                "catalog_version", "phase-4",
+                "catalog_version", "phase-5",
                 "routines", List.of(
                         routineCatalogEntry(
                                 "stationary_break",
@@ -560,7 +643,55 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                                         "already-satisfied cells are skipped only after a current exact full-state observation",
                                         "all mutations have a covering vanilla prediction ACK and exact server state",
                                         "all required cells match current exact full states with unknown equal to zero",
-                                        "the current client inventory is accepted as the eligible-hotbar baseline; every placement requires a fresh inbound selected-slot inventory sync"))));
+                                        "the current client inventory is accepted as the eligible-hotbar baseline; every placement requires a fresh inbound selected-slot inventory sync")),
+                        routineCatalogEntry(
+                                "craft_items",
+                                5,
+                                McpToolSchemas.craftItemsStartInput(),
+                                List.of(
+                                        "the opaque client-known recipe reference and fingerprint are revalidated before dispatch",
+                                        "ambiguous container clicks are never retried blindly",
+                                        "success requires a fresh full-content readback with the absolute inventory goal and an empty cursor")),
+                        routineCatalogEntry(
+                                "transfer_items",
+                                5,
+                                McpToolSchemas.transferItemsStartInput(),
+                                List.of(
+                                        "only an automation-opened canonical single chest or barrel is used",
+                                        "one bounded quick-move segment is never retried blindly",
+                                        "success requires a fresh reopened full-content snapshot for both endpoints and an empty cursor")),
+                        routineCatalogEntry(
+                                "tend_crop_area",
+                                5,
+                                McpToolSchemas.tendCropAreaStartInput(),
+                                List.of(
+                                        "only declared current-visible cells using the closed vanilla crop adapters are mutated",
+                                        "every harvest and replant transition has server-positive block evidence",
+                                        "drop collection uncertainty remains explicit")),
+                        routineCatalogEntry(
+                                "harvest_tree_area",
+                                5,
+                                McpToolSchemas.harvestTreeAreaStartInput(),
+                                List.of(
+                                        "only declared current-visible vanilla log cells are claimed and mutated",
+                                        "hidden logs and complete natural-tree coverage are never inferred",
+                                        "drop collection uncertainty remains explicit")),
+                        routineCatalogEntry(
+                                "sleep_at_bed",
+                                5,
+                                McpToolSchemas.sleepAtBedStartInput(),
+                                List.of(
+                                        "both exact bed halves and the dimension sleep rule are revalidated before normal use",
+                                        "sleep and wake require server-synchronized player state",
+                                        "respawn change is confirmed only by the action-scoped vanilla semantic signal")),
+                        routineCatalogEntry(
+                                "survey_area",
+                                5,
+                                McpToolSchemas.surveyAreaStartInput(),
+                                List.of(
+                                        "only declared waypoints and samples are inspected through normal movement and view control",
+                                        "current, last-known, and unknown coverage remain distinct",
+                                        "spawn-surface assessment is explicitly predicted rather than server-confirmed"))));
     }
 
     private static Map<String, Object> routineCatalogEntry(
@@ -609,6 +740,9 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                             minecraft, session, arguments, context);
             case ApplyBlockPlanRequest.KIND -> startApplyBlockPlan(
                     minecraft, session, arguments, context);
+            case "craft_items", "transfer_items", "tend_crop_area",
+                    "harvest_tree_area", "sleep_at_bed", "survey_area" -> startPhaseFive(
+                            minecraft, session, arguments, context);
             default -> throw new IllegalArgumentException("kind is not an available routine");
         };
     }
@@ -788,6 +922,47 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 request,
                 session.clientTick()));
         return startReceiptPayload(receipt, parsed.resourceEstimate());
+    }
+
+    private Map<String, Object> startPhaseFive(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            Map<String, Object> arguments,
+            RuntimeCallContext context) {
+        var parsed = phaseFiveRequestArgument(arguments, session.dimension());
+        var request = parsed.request();
+        String idempotencyKey = stringArgument(arguments, "idempotency_key");
+        var replay = replayPhaseFiveAfterFinalizationGate(
+                finalizationRetries,
+                routines,
+                idempotencyKey,
+                parsed.requestIdentity(),
+                request,
+                session.clientTick());
+        if (replay.isPresent()) {
+            return startReceiptPayload(replay.orElseThrow());
+        }
+
+        requireLiveCall(context, "start_routine");
+        long nowNanos = System.nanoTime();
+        long hardDeadlineNanos = saturatingAdd(
+                nowNanos, Duration.ofSeconds(request.bounds().maxDurationSeconds()).toNanos());
+        if (!arming.allows(
+                session.worldSessionId(), request.kind(), hardDeadlineNanos, nowNanos)) {
+            throw new RuntimeInvocationException(
+                    "locked",
+                    request.kind() + " is not armed for this world session and deadline",
+                    false,
+                    Map.of());
+        }
+        validateLiveBounds(minecraft, request.bounds(), parsed.targets());
+
+        var receipt = admitWithVoiceSafety(context, () -> routines.startPhaseFive(
+                idempotencyKey,
+                parsed.requestIdentity(),
+                request,
+                session.clientTick()));
+        return startReceiptPayload(receipt);
     }
 
     private RoutineManager.StartReceipt admitWithVoiceSafety(
@@ -1518,6 +1693,18 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 idempotencyKey, requestIdentity, clientTick);
     }
 
+    static Optional<RoutineManager.StartReceipt> replayPhaseFiveAfterFinalizationGate(
+            FinalizationRetryQueue retries,
+            RoutineManager routines,
+            String idempotencyKey,
+            String requestIdentity,
+            PhaseFiveRequest request,
+            long clientTick) {
+        requireNoPendingFinalizations(retries);
+        return routines.replayPhaseFive(
+                idempotencyKey, requestIdentity, request, clientTick);
+    }
+
     private static int intValue(Object value) {
         return value instanceof Number number ? Math.max(0, number.intValue()) : 0;
     }
@@ -1541,6 +1728,17 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             Objects.requireNonNull(request, "request");
             Objects.requireNonNull(requestIdentity, "requestIdentity");
             Objects.requireNonNull(resourceEstimate, "resourceEstimate");
+        }
+    }
+
+    record ParsedPhaseFive(
+            PhaseFiveRequest request,
+            String requestIdentity,
+            List<BlockTarget> targets) {
+        ParsedPhaseFive {
+            Objects.requireNonNull(request, "request");
+            Objects.requireNonNull(requestIdentity, "requestIdentity");
+            targets = List.copyOf(Objects.requireNonNull(targets, "targets"));
         }
     }
 
@@ -1774,6 +1972,423 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 resourceEstimate(request));
     }
 
+    static ParsedPhaseFive phaseFiveRequestArgument(
+            Map<String, Object> arguments,
+            String currentDimension) {
+        Objects.requireNonNull(arguments, "arguments");
+        requireExactKeys(arguments, "start_routine", Set.of(
+                "kind", "parameters", "bounds", "completion_intent", "idempotency_key"));
+        if (!"finish_goal".equals(stringArgument(arguments, "completion_intent"))) {
+            throw new IllegalArgumentException("completion_intent must be finish_goal");
+        }
+        String kind = stringArgument(arguments, "kind");
+        if (!PhaseFiveRequest.KINDS.contains(kind)) {
+            throw new IllegalArgumentException("kind is not a Phase 5 routine");
+        }
+        var parameters = objectArgument(arguments, "parameters");
+        var bounds = phaseFiveBoundsArgument(arguments, currentDimension);
+        var targets = new ArrayList<BlockTarget>();
+        int expectedUnits;
+        String progressUnit;
+
+        switch (kind) {
+            case "craft_items" -> {
+                requireExactKeys(parameters, "craft_items parameters", Set.of(
+                        "recipe_ref", "recipe_fingerprint", "goal", "station", "max_crafts"));
+                requireOpaqueReference(parameters, "recipe_ref");
+                requireSha256Fingerprint(parameters, "recipe_fingerprint");
+                var goal = objectArgument(parameters, "goal");
+                requireExactKeys(goal, "craft_items goal", Set.of(
+                        "item", "stack_policy", "minimum_inventory_count"));
+                requireRegisteredItemId(stringArgument(goal, "item"));
+                requireLiteral(goal, "stack_policy", "default_components_only");
+                expectedUnits = requireRange(
+                        intArgument(goal, "minimum_inventory_count"), 1, 2_304,
+                        "minimum_inventory_count");
+                requireRange(intArgument(parameters, "max_crafts"), 1, 64, "max_crafts");
+
+                var station = objectArgument(parameters, "station");
+                requireExactKeys(station, "craft_items station", Set.of(
+                        "kind", "target", "expected_state"));
+                requireLiteral(station, "kind", "crafting_table");
+                var target = boundedDimensionTarget(station, "target", bounds);
+                targets.add(target);
+                var expected = exactFullState(station, "expected_state", "station");
+                if (!"minecraft:crafting_table".equals(expected.blockId())) {
+                    throw new IllegalArgumentException(
+                            "craft_items station must be minecraft:crafting_table");
+                }
+                progressUnit = "items";
+            }
+            case "transfer_items" -> {
+                requireExactKeys(parameters, "transfer_items parameters", Set.of(
+                        "container", "direction", "stack", "goal", "max_transfer_count"));
+                String direction = stringArgument(parameters, "direction");
+                if (!direction.equals("player_to_container")
+                        && !direction.equals("container_to_player")) {
+                    throw new IllegalArgumentException("transfer direction is unsupported");
+                }
+                var container = objectArgument(parameters, "container");
+                requireExactKeys(container, "transfer_items container", Set.of(
+                        "target", "expected_state"));
+                targets.add(boundedDimensionTarget(container, "target", bounds));
+                var expected = exactFullState(container, "expected_state", "container");
+                if (!expected.blockId().equals("minecraft:barrel")
+                        && !expected.blockId().equals("minecraft:chest")) {
+                    throw new IllegalArgumentException(
+                            "transfer container must be a canonical chest or barrel");
+                }
+                if (expected.blockId().equals("minecraft:chest")
+                        && !"single".equals(expected.properties().get("type"))) {
+                    throw new IllegalArgumentException("transfer chest must be single");
+                }
+                var stack = objectArgument(parameters, "stack");
+                requireExactKeys(stack, "transfer_items stack", Set.of("item", "stack_policy"));
+                requireRegisteredItemId(stringArgument(stack, "item"));
+                requireLiteral(stack, "stack_policy", "default_components_only");
+                var goal = objectArgument(parameters, "goal");
+                requireExactKeys(goal, "transfer_items goal", Set.of("minimum_destination_count"));
+                expectedUnits = requireRange(
+                        intArgument(goal, "minimum_destination_count"), 0, 2_304,
+                        "minimum_destination_count");
+                requireRange(intArgument(parameters, "max_transfer_count"), 1, 2_304,
+                        "max_transfer_count");
+                progressUnit = "items";
+            }
+            case "tend_crop_area" -> {
+                requireExactKeys(parameters, "tend_crop_area parameters", Set.of(
+                        "crop_adapter", "plots", "goal", "wait_policy"));
+                String adapter = stringArgument(parameters, "crop_adapter");
+                if (!Set.of("wheat", "carrots", "potatoes", "beetroots").contains(adapter)) {
+                    throw new IllegalArgumentException("crop_adapter is unsupported");
+                }
+                var plots = objectListArgument(parameters, "plots", 1, 64);
+                var ids = new java.util.HashSet<String>();
+                var cropTargets = new java.util.HashSet<BlockTarget>();
+                for (int index = 0; index < plots.size(); index++) {
+                    var plot = plots.get(index);
+                    String path = "plots[" + index + "]";
+                    requireExactKeys(plot, path, Set.of(
+                            "id", "crop_position", "support_position", "expected_support_state"));
+                    requireUniqueLocalId(ids, stringArgument(plot, "id"), path + ".id");
+                    var crop = boundedDimensionTarget(plot, "crop_position", bounds);
+                    if (!cropTargets.add(crop)) {
+                        throw new IllegalArgumentException("crop positions must be unique");
+                    }
+                    targets.add(crop);
+                    targets.add(boundedDimensionTarget(plot, "support_position", bounds));
+                    var support = exactFullState(plot, "expected_support_state", path);
+                    if (!"minecraft:farmland".equals(support.blockId())) {
+                        throw new IllegalArgumentException("crop support must be minecraft:farmland");
+                    }
+                }
+                var goal = objectArgument(parameters, "goal");
+                requireExactKeys(goal, "tend_crop_area goal", Set.of(
+                        "minimum_harvested_plots", "replant", "collect_drops"));
+                expectedUnits = requireRange(
+                        intArgument(goal, "minimum_harvested_plots"), 0, plots.size(),
+                        "minimum_harvested_plots");
+                requireTrue(goal, "replant");
+                requireTrue(goal, "collect_drops");
+                String waitPolicy = stringArgument(parameters, "wait_policy");
+                if (!waitPolicy.equals("no_wait") && !waitPolicy.equals("until_minimum")) {
+                    throw new IllegalArgumentException("wait_policy is unsupported");
+                }
+                progressUnit = "cells";
+            }
+            case "harvest_tree_area" -> {
+                requireExactKeys(parameters, "harvest_tree_area parameters", Set.of(
+                        "trees", "collect_drops"));
+                requireTrue(parameters, "collect_drops");
+                var trees = objectListArgument(parameters, "trees", 1, 8);
+                var ids = new java.util.HashSet<String>();
+                var logTargets = new java.util.HashSet<BlockTarget>();
+                int totalLogs = 0;
+                for (int treeIndex = 0; treeIndex < trees.size(); treeIndex++) {
+                    var tree = trees.get(treeIndex);
+                    String path = "trees[" + treeIndex + "]";
+                    requireExactKeys(tree, path, Set.of(
+                            "id", "logs", "support", "sapling", "growth_clearance"));
+                    requireUniqueLocalId(ids, stringArgument(tree, "id"), path + ".id");
+                    var logs = objectListArgument(tree, "logs", 1, 64);
+                    totalLogs = Math.addExact(totalLogs, logs.size());
+                    if (totalLogs > 64) {
+                        throw new IllegalArgumentException("all tree logs together must not exceed 64");
+                    }
+                    for (int logIndex = 0; logIndex < logs.size(); logIndex++) {
+                        var log = logs.get(logIndex);
+                        String logPath = path + ".logs[" + logIndex + "]";
+                        validateExpectedCell(log, logPath, bounds, targets, logTargets);
+                    }
+                    validateExpectedCell(
+                            objectArgument(tree, "support"), path + ".support",
+                            bounds, targets, null);
+                    var sapling = objectArgument(tree, "sapling");
+                    requireExactKeys(sapling, path + ".sapling", Set.of(
+                            "item", "expected_after_state"));
+                    requireRegisteredItemId(stringArgument(sapling, "item"));
+                    exactFullState(sapling, "expected_after_state", path + ".sapling");
+                    var clearance = objectListArgument(tree, "growth_clearance", 1, 64);
+                    for (int clearanceIndex = 0; clearanceIndex < clearance.size(); clearanceIndex++) {
+                        validateExpectedCell(
+                                clearance.get(clearanceIndex),
+                                path + ".growth_clearance[" + clearanceIndex + "]",
+                                bounds, targets, null);
+                    }
+                }
+                expectedUnits = totalLogs;
+                progressUnit = "blocks";
+            }
+            case "sleep_at_bed" -> {
+                requireExactKeys(parameters, "sleep_at_bed parameters", Set.of(
+                        "bed", "return_policy"));
+                requireLiteral(parameters, "return_policy", "start_checkpoint");
+                var bed = objectArgument(parameters, "bed");
+                requireExactKeys(bed, "sleep_at_bed bed", Set.of(
+                        "foot_position", "expected_foot_state",
+                        "head_position", "expected_head_state"));
+                var foot = boundedDimensionTarget(bed, "foot_position", bounds);
+                var head = boundedDimensionTarget(bed, "head_position", bounds);
+                if (foot.equals(head)) {
+                    throw new IllegalArgumentException("bed halves must use distinct positions");
+                }
+                targets.add(foot);
+                targets.add(head);
+                var footState = exactFullState(bed, "expected_foot_state", "bed");
+                var headState = exactFullState(bed, "expected_head_state", "bed");
+                if (!footState.blockId().equals(headState.blockId())
+                        || !footState.blockId().endsWith("_bed")) {
+                    throw new IllegalArgumentException("bed halves must use the same bed block");
+                }
+                expectedUnits = 1;
+                progressUnit = "interactions";
+            }
+            case "survey_area" -> {
+                requireExactKeys(parameters, "survey_area parameters", Set.of(
+                        "waypoints", "samples", "goal", "assessment"));
+                var waypoints = objectListArgument(parameters, "waypoints", 1, 32);
+                var waypointIds = new java.util.HashSet<String>();
+                for (int index = 0; index < waypoints.size(); index++) {
+                    var waypoint = waypoints.get(index);
+                    String path = "waypoints[" + index + "]";
+                    requireExactKeys(waypoint, path, Set.of("id", "target", "look_at"));
+                    requireUniqueLocalId(
+                            waypointIds, stringArgument(waypoint, "id"), path + ".id");
+                    targets.add(boundedDimensionTarget(waypoint, "target", bounds));
+                    targets.add(boundedDimensionTarget(waypoint, "look_at", bounds));
+                }
+                var samples = objectListArgument(parameters, "samples", 1, 256);
+                var sampleIds = new java.util.HashSet<String>();
+                for (int index = 0; index < samples.size(); index++) {
+                    var sample = samples.get(index);
+                    String path = "samples[" + index + "]";
+                    requireExactKeys(sample, path, Set.of("id", "position"));
+                    requireUniqueLocalId(sampleIds, stringArgument(sample, "id"), path + ".id");
+                    targets.add(boundedDimensionTarget(sample, "position", bounds));
+                }
+                var goal = objectArgument(parameters, "goal");
+                requireExactKeys(goal, "survey_area goal", Set.of("minimum_observed_samples"));
+                expectedUnits = requireRange(
+                        intArgument(goal, "minimum_observed_samples"), 1, samples.size(),
+                        "minimum_observed_samples");
+                String assessment = stringArgument(parameters, "assessment");
+                if (!assessment.equals("coverage_only")
+                        && !assessment.equals("spawn_surface_prediction")) {
+                    throw new IllegalArgumentException("survey assessment is unsupported");
+                }
+                progressUnit = "cells";
+            }
+            default -> throw new AssertionError("unreachable Phase 5 kind");
+        }
+
+        var request = new PhaseFiveRequest(
+                kind, parameters, bounds, expectedUnits, progressUnit);
+        var canonical = new StringBuilder();
+        appendIdentity(canonical, "phase-five/v1");
+        appendCanonicalValue(canonical, kind);
+        appendCanonicalValue(canonical, parameters);
+        appendCanonicalValue(canonical, Map.of(
+                "dimension", bounds.dimension(),
+                "minimum", Map.of(
+                        "x", bounds.minimum().x(), "y", bounds.minimum().y(), "z", bounds.minimum().z()),
+                "maximum", Map.of(
+                        "x", bounds.maximum().x(), "y", bounds.maximum().y(), "z", bounds.maximum().z()),
+                "max_travel_blocks", bounds.maxTravelBlocks(),
+                "max_duration_seconds", bounds.maxDurationSeconds(),
+                "allow_break", bounds.allowBreak()));
+        appendCanonicalValue(canonical, "finish_goal");
+        return new ParsedPhaseFive(
+                request, sha256Identity(canonical), targets.stream().distinct().toList());
+    }
+
+    private static PhaseFiveBounds phaseFiveBoundsArgument(
+            Map<String, Object> arguments,
+            String currentDimension) {
+        var bounds = objectArgument(arguments, "bounds");
+        requireExactKeys(bounds, "bounds", Set.of(
+                "dimension", "region", "max_travel_blocks",
+                "max_duration_seconds", "allow_break"));
+        String dimension = stringArgument(bounds, "dimension");
+        if (!dimension.equals(Objects.requireNonNull(currentDimension, "currentDimension"))) {
+            throw new IllegalArgumentException("bounds.dimension must equal the current dimension");
+        }
+        var region = objectArgument(bounds, "region");
+        requireExactKeys(region, "bounds.region", Set.of("min", "max"));
+        return new PhaseFiveBounds(
+                dimension,
+                positionTargetArgument(region, "min", dimension),
+                positionTargetArgument(region, "max", dimension),
+                intArgument(bounds, "max_travel_blocks"),
+                intArgument(bounds, "max_duration_seconds"),
+                booleanArgument(bounds, "allow_break"));
+    }
+
+    private static BlockTarget boundedDimensionTarget(
+            Map<String, Object> source,
+            String name,
+            PhaseFiveBounds bounds) {
+        var target = dimensionBlockTargetArgument(source, name);
+        if (!bounds.contains(target)) {
+            throw new IllegalArgumentException(name + " must be inside bounds.region");
+        }
+        return target;
+    }
+
+    private static BlockStateFingerprint exactFullState(
+            Map<String, Object> source,
+            String name,
+            String path) {
+        return fullBlockStateArgument(
+                source, name, new BlockPlan.Transform(0, "none"), path).transformed();
+    }
+
+    private static void validateExpectedCell(
+            Map<String, Object> cell,
+            String path,
+            PhaseFiveBounds bounds,
+            List<BlockTarget> targets,
+            Set<BlockTarget> uniqueTargets) {
+        requireExactKeys(cell, path, Set.of("position", "expected_state"));
+        var target = boundedDimensionTarget(cell, "position", bounds);
+        if (uniqueTargets != null && !uniqueTargets.add(target)) {
+            throw new IllegalArgumentException("declared log positions must be unique");
+        }
+        targets.add(target);
+        exactFullState(cell, "expected_state", path);
+    }
+
+    private static List<Map<String, Object>> objectListArgument(
+            Map<String, Object> source,
+            String name,
+            int minimum,
+            int maximum) {
+        Object raw = source.get(name);
+        if (!(raw instanceof List<?> values)
+                || values.size() < minimum
+                || values.size() > maximum) {
+            throw new IllegalArgumentException(
+                    name + " must contain " + minimum + ".." + maximum + " objects");
+        }
+        var result = new ArrayList<Map<String, Object>>(values.size());
+        for (Object value : values) {
+            if (!(value instanceof Map<?, ?> map)) {
+                throw new IllegalArgumentException(name + " must contain only objects");
+            }
+            @SuppressWarnings("unchecked")
+            var typed = (Map<String, Object>) map;
+            result.add(typed);
+        }
+        return List.copyOf(result);
+    }
+
+    private static void requireUniqueLocalId(Set<String> ids, String id, String path) {
+        if (!id.matches("[a-z][a-z0-9_.-]{0,63}") || !ids.add(id)) {
+            throw new IllegalArgumentException(path + " must be a unique local identifier");
+        }
+    }
+
+    private static void requireRegisteredItemId(String itemId) {
+        Identifier identifier = Identifier.tryParse(itemId);
+        var registered = identifier == null
+                ? Optional.<Holder.Reference<net.minecraft.world.item.Item>>empty()
+                : BuiltInRegistries.ITEM.get(identifier);
+        if (registered.isEmpty()
+                || registered.orElseThrow().value() == net.minecraft.world.item.Items.AIR) {
+            throw new IllegalArgumentException("item must be a registered item ID");
+        }
+    }
+
+    private static void requireOpaqueReference(Map<String, Object> source, String name) {
+        if (!stringArgument(source, name).matches("[A-Za-z0-9_-]{24}")) {
+            throw new IllegalArgumentException(name + " must be a 24-character opaque reference");
+        }
+    }
+
+    private static void requireSha256Fingerprint(Map<String, Object> source, String name) {
+        if (!stringArgument(source, name).matches("sha256:[0-9a-f]{64}")) {
+            throw new IllegalArgumentException(name + " must be a SHA-256 fingerprint");
+        }
+    }
+
+    private static void requireLiteral(
+            Map<String, Object> source, String name, String expected) {
+        if (!expected.equals(stringArgument(source, name))) {
+            throw new IllegalArgumentException(name + " must be " + expected);
+        }
+    }
+
+    private static void requireTrue(Map<String, Object> source, String name) {
+        if (!booleanArgument(source, name)) {
+            throw new IllegalArgumentException(name + " must be true");
+        }
+    }
+
+    private static int requireRange(int value, int minimum, int maximum, String name) {
+        if (value < minimum || value > maximum) {
+            throw new IllegalArgumentException(
+                    name + " must be in " + minimum + ".." + maximum);
+        }
+        return value;
+    }
+
+    private static void appendCanonicalValue(StringBuilder output, Object value) {
+        if (value instanceof Map<?, ?> map) {
+            appendIdentity(output, "map");
+            map.entrySet().stream()
+                    .sorted(java.util.Comparator.comparing(entry -> String.valueOf(entry.getKey())))
+                    .forEach(entry -> {
+                        if (!(entry.getKey() instanceof String key)) {
+                            throw new IllegalArgumentException("canonical map keys must be strings");
+                        }
+                        appendIdentity(output, key);
+                        appendCanonicalValue(output, entry.getValue());
+                    });
+            appendIdentity(output, Integer.toString(map.size()));
+        }
+        else if (value instanceof List<?> list) {
+            appendIdentity(output, "list");
+            for (Object element : list) {
+                appendCanonicalValue(output, element);
+            }
+            appendIdentity(output, Integer.toString(list.size()));
+        }
+        else if (value instanceof String text) {
+            appendIdentity(output, "string");
+            appendIdentity(output, text);
+        }
+        else if (value instanceof Boolean flag) {
+            appendIdentity(output, "boolean");
+            appendIdentity(output, flag.toString());
+        }
+        else if (value instanceof Number number) {
+            appendIdentity(output, "integer");
+            appendIdentity(output, Long.toString(exactLong(number)));
+        }
+        else {
+            throw new IllegalArgumentException("unsupported value in Phase 5 identity");
+        }
+    }
+
     private static int relativeCoordinate(
             Map<String, Object> offset,
             String coordinate,
@@ -1965,6 +2580,30 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 && !level.getWorldBorder().isWithinBounds(
                         new net.minecraft.core.BlockPos(target.x(), target.y(), target.z()))) {
             throw new IllegalArgumentException("target is outside the current world border");
+        }
+    }
+
+    private static void validateLiveBounds(
+            Minecraft minecraft,
+            PhaseFiveBounds bounds,
+            List<BlockTarget> targets) {
+        var level = minecraft.level;
+        if (level == null) {
+            throw new MinecraftObservationService.ObservationUnavailableException(
+                    "no_world", "No client world is ready");
+        }
+        if (!level.isInsideBuildHeight(bounds.minimum().y())
+                || !level.isInsideBuildHeight(bounds.maximum().y())) {
+            throw new IllegalArgumentException("bounds.region is outside the current build height");
+        }
+        for (var target : targets) {
+            if (!bounds.contains(target)) {
+                throw new IllegalArgumentException("Phase 5 target is outside bounds.region");
+            }
+            if (!level.getWorldBorder().isWithinBounds(
+                    new net.minecraft.core.BlockPos(target.x(), target.y(), target.z()))) {
+                throw new IllegalArgumentException("Phase 5 target is outside the current world border");
+            }
         }
     }
 
@@ -2204,6 +2843,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         var after = sessions.snapshot();
         if (changed) {
             memory.startSession(after.worldSessionId(), dimension);
+            screenOwnership.bindWorldSession(minecraft.level, after.worldSessionId());
             if (before.dimension() != null && !before.dimension().equals(dimension)) {
                 arming.lock("dimension_changed");
                 inputRelease.releaseAll(minecraft);

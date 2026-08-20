@@ -12,9 +12,13 @@ import net.minecraft.gametest.framework.TestEnvironmentDefinition;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BarrelBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DoorHingeSide;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
@@ -33,6 +37,7 @@ final class FixtureGameTests {
     private static final Identifier TEST_ID = id("phase1_block_states");
     private static final Identifier PHASE3_TEST_ID = id("phase3_action_fixture");
     private static final Identifier PHASE4_TEST_ID = id("phase4_block_plan_fixture");
+    private static final Identifier PHASE5_TEST_ID = id("phase5_workspace_fixture");
     private static final Identifier ENVIRONMENT_ID = id("fixture_environment");
 
     private static final DeferredRegister<Consumer<GameTestHelper>> TEST_FUNCTIONS =
@@ -44,6 +49,9 @@ final class FixtureGameTests {
     private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PHASE4_BLOCK_PLAN_FIXTURE =
             TEST_FUNCTIONS.register(
                     "phase4_block_plan_fixture", () -> FixtureGameTests::runPhase4BlockPlanFixture);
+    private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PHASE5_WORKSPACE_FIXTURE =
+            TEST_FUNCTIONS.register(
+                    "phase5_workspace_fixture", () -> FixtureGameTests::runPhase5WorkspaceFixture);
 
     private FixtureGameTests() {
     }
@@ -66,6 +74,8 @@ final class FixtureGameTests {
         event.registerTest(PHASE3_TEST_ID, new FunctionGameTestInstance(PHASE3_ACTION_FIXTURE.getKey(), data));
         event.registerTest(PHASE4_TEST_ID,
                 new FunctionGameTestInstance(PHASE4_BLOCK_PLAN_FIXTURE.getKey(), data));
+        event.registerTest(PHASE5_TEST_ID,
+                new FunctionGameTestInstance(PHASE5_WORKSPACE_FIXTURE.getKey(), data));
     }
 
     private static void runPhase1BlockStates(GameTestHelper helper) {
@@ -288,11 +298,119 @@ final class FixtureGameTests {
         helper.succeed();
     }
 
+    private static void runPhase5WorkspaceFixture(GameTestHelper helper) {
+        var layout = FixturePhase5Scenario.layout();
+        layout.keySet().forEach(position -> assertInsideArena(helper, position));
+
+        assertLayoutState(helper, layout, FixturePhase5Scenario.CRAFTING_TABLE,
+                Blocks.CRAFTING_TABLE.defaultBlockState());
+        assertLayoutState(helper, layout, FixturePhase5Scenario.TRANSFER_BARREL,
+                FixturePhase5Scenario.barrelState());
+        assertLayoutState(helper, layout, FixturePhase5Scenario.CROP_WATER,
+                Blocks.WATER.defaultBlockState());
+
+        for (int index = 0; index < FixturePhase5Scenario.CROP_SUPPORTS.size(); index++) {
+            assertLayoutState(helper, layout, FixturePhase5Scenario.CROP_SUPPORTS.get(index),
+                    FixturePhase5Scenario.hydratedFarmland());
+            assertLayoutState(helper, layout, FixturePhase5Scenario.MATURE_CROPS.get(index),
+                    FixturePhase5Scenario.matureWheat());
+        }
+
+        assertLayoutState(helper, layout, FixturePhase5Scenario.TREE_SUPPORT,
+                Blocks.DIRT.defaultBlockState());
+        if (!FixturePhase5Scenario.TREE_SAPLING_POSITION.equals(
+                FixturePhase5Scenario.TREE_SUPPORT.above())
+                || !FixturePhase5Scenario.TREE_LOGS.getFirst().equals(
+                        FixturePhase5Scenario.TREE_SAPLING_POSITION)) {
+            helper.fail(Component.literal(
+                    "Phase 5 oak logs must begin directly above the declared sapling support"));
+        }
+        for (BlockPos log : FixturePhase5Scenario.TREE_LOGS) {
+            assertLayoutState(helper, layout, log, FixturePhase5Scenario.oakLog());
+        }
+        for (BlockPos clearance : FixturePhase5Scenario.TREE_GROWTH_CLEARANCE) {
+            assertLayoutState(helper, layout, clearance, Blocks.AIR.defaultBlockState());
+        }
+
+        assertLayoutState(helper, layout, FixturePhase5Scenario.BED_FOOT,
+                FixturePhase5Scenario.bedState(BedPart.FOOT));
+        assertLayoutState(helper, layout, FixturePhase5Scenario.BED_HEAD,
+                FixturePhase5Scenario.bedState(BedPart.HEAD));
+        if (!FixturePhase5Scenario.BED_HEAD.equals(
+                FixturePhase5Scenario.BED_FOOT.relative(Direction.EAST))) {
+            helper.fail(Component.literal("Phase 5 bed halves must be an east-facing adjacent pair"));
+        }
+
+        for (BlockPos waypoint : FixturePhase5Scenario.SURVEY_WAYPOINTS) {
+            assertLayoutState(helper, layout, waypoint, Blocks.AIR.defaultBlockState());
+        }
+        for (BlockPos sample : FixturePhase5Scenario.SURVEY_SAMPLES) {
+            assertLayoutState(helper, layout, sample, Blocks.SMOOTH_STONE.defaultBlockState());
+            assertLayoutState(helper, layout, sample.above(), Blocks.AIR.defaultBlockState());
+        }
+
+        var declaredContents = FixturePhase5Scenario.transferContents();
+        if (declaredContents.size() != 2
+                || declaredContents.get(0).slot() != 0
+                || declaredContents.get(0).item() != net.minecraft.world.item.Items.COBBLESTONE
+                || declaredContents.get(0).count() != 12
+                || declaredContents.get(1).slot() != 8
+                || declaredContents.get(1).item() != net.minecraft.world.item.Items.OAK_LOG
+                || declaredContents.get(1).count() != 4) {
+            helper.fail(Component.literal("Phase 5 transfer contents are not deterministic"));
+        }
+
+        // Install one representative of every state family against the real GameTest level.
+        BlockPos cropSupport = new BlockPos(0, 0, 0);
+        BlockPos crop = cropSupport.above();
+        helper.setBlock(cropSupport, FixturePhase5Scenario.hydratedFarmland());
+        helper.setBlock(crop, FixturePhase5Scenario.matureWheat());
+        assertExactState(helper, cropSupport, FixturePhase5Scenario.hydratedFarmland());
+        assertExactState(helper, crop, FixturePhase5Scenario.matureWheat());
+
+        BlockPos table = new BlockPos(2, 1, 0);
+        helper.setBlock(table.below(), Blocks.SMOOTH_STONE);
+        helper.setBlock(table, Blocks.CRAFTING_TABLE);
+        assertExactState(helper, table, Blocks.CRAFTING_TABLE.defaultBlockState());
+
+        BlockPos barrelPosition = new BlockPos(3, 1, 0);
+        helper.setBlock(barrelPosition.below(), Blocks.SMOOTH_STONE);
+        helper.setBlock(barrelPosition, FixturePhase5Scenario.barrelState());
+        BarrelBlockEntity barrel = helper.getBlockEntity(barrelPosition, BarrelBlockEntity.class);
+        for (var entry : declaredContents) {
+            barrel.setItem(entry.slot(), new ItemStack(entry.item(), entry.count()));
+            ItemStack actual = barrel.getItem(entry.slot());
+            if (actual.getItem() != entry.item() || actual.getCount() != entry.count()) {
+                helper.fail(Component.literal("Phase 5 barrel content mismatch at slot " + entry.slot()));
+            }
+        }
+        assertExactState(helper, barrelPosition, FixturePhase5Scenario.barrelState());
+
+        BlockPos treeSupport = new BlockPos(4, 0, 0);
+        BlockPos treeLog = treeSupport.above();
+        helper.setBlock(treeSupport, Blocks.DIRT);
+        helper.setBlock(treeLog, FixturePhase5Scenario.oakLog());
+        assertExactState(helper, treeLog, FixturePhase5Scenario.oakLog());
+
+        BlockPos foot = new BlockPos(5, 1, 0);
+        BlockPos head = foot.relative(Direction.EAST);
+        helper.setBlock(foot.below(), Blocks.SMOOTH_STONE);
+        helper.setBlock(head.below(), Blocks.SMOOTH_STONE);
+        int pairFlags = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_SUPPRESS_DROPS;
+        helper.getLevel().setBlock(helper.absolutePos(foot),
+                FixturePhase5Scenario.bedState(BedPart.FOOT), pairFlags);
+        helper.getLevel().setBlock(helper.absolutePos(head),
+                FixturePhase5Scenario.bedState(BedPart.HEAD), pairFlags);
+        assertExactState(helper, foot, FixturePhase5Scenario.bedState(BedPart.FOOT));
+        assertExactState(helper, head, FixturePhase5Scenario.bedState(BedPart.HEAD));
+        helper.succeed();
+    }
+
     private static void assertInsideArena(GameTestHelper helper, BlockPos position) {
         if (position.getX() < FixtureArena.MIN.getX() || position.getX() > FixtureArena.MAX.getX()
                 || position.getY() < FixtureArena.MIN.getY() || position.getY() > FixtureArena.MAX.getY()
                 || position.getZ() < FixtureArena.MIN.getZ() || position.getZ() > FixtureArena.MAX.getZ()) {
-            helper.fail(Component.literal("Phase 4 fixture cell escaped the bounded arena: " + position));
+            helper.fail(Component.literal("fixture cell escaped the bounded arena: " + position));
         }
     }
 

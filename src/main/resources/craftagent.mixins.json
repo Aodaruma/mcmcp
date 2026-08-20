@@ -5,9 +5,11 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "client.BlockItemPlacementInvoker",
+    "client.ClientContainerSignalsMixin",
     "client.ClientLevelPredictionAccessor",
     "client.ClientLevelPredictionMixin",
-    "client.ClientPacketListenerMixin"
+    "client.ClientPacketListenerMixin",
+    "client.ClientSleepSemanticSignalsMixin"
   ],
   "injectors": {
     "defaultRequire": 1

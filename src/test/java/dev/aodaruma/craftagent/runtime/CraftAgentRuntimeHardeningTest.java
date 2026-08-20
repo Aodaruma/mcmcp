@@ -317,13 +317,13 @@ class CraftAgentRuntimeHardeningTest {
     }
 
     @Test
-    void advertisesExactlyTheSevenReleasedRoutineKindsWithKindSpecificSchemas() {
+    void advertisesExactlyTheThirteenPhaseFiveRoutineKindsWithKindSpecificSchemas() {
         var catalog = CraftAgentRuntime.routineCatalog();
 
-        assertThat(catalog).containsEntry("catalog_version", "phase-4");
+        assertThat(catalog).containsEntry("catalog_version", "phase-5");
         @SuppressWarnings("unchecked")
         var entries = (List<Map<String, Object>>) catalog.get("routines");
-        assertThat(entries).hasSize(7);
+        assertThat(entries).hasSize(13);
         assertThat(entries).extracting(entry -> entry.get("kind"))
                 .containsExactly(
                         "stationary_break",
@@ -332,7 +332,13 @@ class CraftAgentRuntimeHardeningTest {
                         "place_block",
                         "interact_block",
                         "interact_entity",
-                        "apply_block_plan");
+                        "apply_block_plan",
+                        "craft_items",
+                        "transfer_items",
+                        "tend_crop_area",
+                        "harvest_tree_area",
+                        "sleep_at_bed",
+                        "survey_area");
         assertThat(entries).allSatisfy(entry -> {
             assertThat(entry.get("input_schema")).isInstanceOf(Map.class);
             assertThat((List<?>) entry.get("postconditions"))
@@ -342,6 +348,45 @@ class CraftAgentRuntimeHardeningTest {
         });
         assertThat(entries.getFirst().get("input_schema"))
                 .isNotSameAs(entries.get(1).get("input_schema"));
+    }
+
+    @Test
+    void parsesBoundedSurveyAndUsesOrderIndependentPhaseFiveIdentity() {
+        var parameters = new LinkedHashMap<String, Object>();
+        parameters.put("waypoints", List.of(Map.of(
+                "id", "start", "target", targetMap(), "look_at", targetMap())));
+        parameters.put("samples", List.of(Map.of(
+                "id", "sample-0", "position", targetMap())));
+        parameters.put("goal", Map.of("minimum_observed_samples", 1));
+        parameters.put("assessment", "coverage_only");
+
+        var parsed = CraftAgentRuntime.phaseFiveRequestArgument(
+                startArguments("survey_area", parameters, 128, 600, false),
+                "minecraft:overworld");
+        var reordered = new LinkedHashMap<String, Object>();
+        reordered.put("assessment", "coverage_only");
+        reordered.put("goal", Map.of("minimum_observed_samples", 1));
+        reordered.put("samples", parameters.get("samples"));
+        reordered.put("waypoints", parameters.get("waypoints"));
+        var same = CraftAgentRuntime.phaseFiveRequestArgument(
+                startArguments("survey_area", reordered, 128, 600, false),
+                "minecraft:overworld");
+
+        assertThat(parsed.request().kind()).isEqualTo("survey_area");
+        assertThat(parsed.request().expectedUnits()).isEqualTo(1);
+        assertThat(parsed.request().progressUnit()).isEqualTo("cells");
+        assertThat(parsed.targets()).containsExactly(new BlockTarget(
+                "minecraft:overworld", 1, 64, 2));
+        assertThat(parsed.requestIdentity()).isEqualTo(same.requestIdentity())
+                .matches("sha256:[0-9a-f]{64}");
+
+        var impossibleGoal = new LinkedHashMap<>(parameters);
+        impossibleGoal.put("goal", Map.of("minimum_observed_samples", 2));
+        assertThatThrownBy(() -> CraftAgentRuntime.phaseFiveRequestArgument(
+                startArguments("survey_area", impossibleGoal, 128, 600, false),
+                "minecraft:overworld"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("minimum_observed_samples");
     }
 
     @Test

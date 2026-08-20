@@ -75,6 +75,7 @@ class McpHttpServerTest {
                 .contains("\"get_snapshot\"")
                 .contains("\"compare_block_plan\"")
                 .contains("\"emergency_stop\"")
+                .contains("\"get_recipes\"")
                 .contains("\"outputSchema\"");
 
         HttpResponse<String> call = send(GET_STATUS, McpTestFixtures.TOKEN,

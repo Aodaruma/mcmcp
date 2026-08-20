@@ -336,6 +336,16 @@ final class FixtureArena {
         setBlock(level, blockPos, state, MUTATION_FLAGS);
     }
 
+    static void setPairedBlocks(
+            ServerLevel level,
+            BlockPos firstPosition,
+            BlockState firstState,
+            BlockPos secondPosition,
+            BlockState secondState) {
+        setBlock(level, firstPosition, firstState, PAIRED_BLOCK_FLAGS);
+        setBlock(level, secondPosition, secondState, PAIRED_BLOCK_FLAGS);
+    }
+
     private static void setBlock(ServerLevel level, BlockPos blockPos, BlockState state, int flags) {
         if (blockPos.getX() < MIN.getX() || blockPos.getX() > MAX.getX()
                 || blockPos.getY() < MIN.getY() || blockPos.getY() > MAX.getY()

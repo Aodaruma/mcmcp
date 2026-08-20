@@ -65,7 +65,7 @@ routineのwork soft deadlineでは新しい作業stepを止め、予約済み時
 - inactivity/max duration、切断、emergency stop、互換性異常でauto-lock
 - 能動routine開始時に、routine hard deadlineが現在のunlock expiry以前であることを確認する
 - `ask` timeout、fallback、FINALIZING reserveもunlock残時間内に収める
-- `continue_goal`はlocal UIが許可したsessionだけで受理し、回数・総時間・expiryで延期を制限する
+- Phase 5までは`finish_goal`だけを受理する。Phase 6で`continue_goal`を追加する場合もlocal UIが許可したsessionだけに限定し、回数・総時間・expiryで延期を制限する
 - LLMはlocal policyを緩和できず、より狭いboundsだけを指定できる
 
 ## 能力境界
@@ -123,7 +123,8 @@ GUIは一律禁止せず、ownershipで制御します。
 
 - routine自身が通常interactionで開いたallowlist済みscreen/menu
 - screen identity、menu/sync ID、slot revisionが期待値と一致
-- 各click後にserver同期されたslot countを確認
+- container clickにはpositive ACKがないため、click後にautomation-owned screenを閉じ、同じ宣言済みcontainerを再度開いてcontainer/player全slotをfull readbackする
+- full readback後にsource/destinationのserver同期された絶対目標countを確認
 - userが事前に開いたscreenはadoptしない
 
 停止:
@@ -132,7 +133,7 @@ GUIは一律禁止せず、ownershipで制御します。
 - userが手動で開閉・操作
 - slot revision不一致、二重click疑い、response timeout
 
-`transfer_items`と`craft_items`は追加量をblind retryせず、毎回source/destinationの目標countとの差分を再計算します。
+`transfer_items`と`craft_items`は追加量をblind retryせず、毎回source/destinationの目標countとの差分を再計算します。click送信、slot revision増加、screen closeだけを成功根拠にしません。
 
 ## Entityとuser handoff
 
@@ -169,7 +170,7 @@ Entity搬送は、初版ではユーザーが次を準備した後だけ自動�
 - 未観測洞窟・壁裏を含む場合は完全湧き潰し済みと断定しない
 - 指定した小さなregionを通常移動で調査する`survey_area`を使う
 
-## 完了後policy
+## 完了後policy（Phase 6計画、未実装）
 
 ユーザーがlocal UIで選びます。
 
@@ -181,7 +182,7 @@ ask_fallback = stay | return_to_safe_anchor | disconnect
 ```
 
 - LLMはpolicyを緩和・変更できない
-- `completion_intent=continue_goal`はroutine-local cleanupとstable checkpointで止め、`finish_goal`だけがこの`after_completion`を実行する。省略時は`finish_goal`
+- Phase 5までは`completion_intent=finish_goal`だけを受理する。Phase 6で追加する`continue_goal`はroutine-local cleanupとstable checkpointで止め、`finish_goal`だけがこの`after_completion`を実行する
 - `ask`は全input解放済みの期限付き`WAITING`でlocal UIに問い、timeout時は固定fallbackを実行する
 - `stay`はその場の瞬間的safe-in-place検証後にreleaseし、以後の無期限guardを意味しない
 - `stop_and_notify`はlocal UIとevent/audit logへ通知し、MCP pushを必須にしない

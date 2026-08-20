@@ -2,19 +2,19 @@
 
 ## 現在地点
 
-Phase 0〜4は完了しています。本体MODと別source setのdevelopment fixture MODを使って下記のgateを通過し、局所block plan施工まで受入を完了しました。Phase 5〜6は設計済み・未実装、Phase 7はv1に含めません。
+Phase 0〜5は完了しています。本体MODと別source setのdevelopment fixture MODを使って下記のgateを通過し、inventory・農林業・調査・睡眠まで受入を完了しました。Phase 6は設計済み・未実装、Phase 7はv1に含めません。
 
-MCP tool surfaceは`get_status`、`get_snapshot`、`compare_block_plan`、`list_routines`、`get_routine`、`start_routine`、`cancel_routine`、`emergency_stop`の8つを維持しています。現在は`stationary_break`、`navigate_to`、`break_block`、`place_block`、`interact_block`、`interact_entity`、`apply_block_plan`の7 routineをschema/catalogへ公開しています。`get_recipes`はPhase 5の未公開候補です。
+現在のMCP surfaceは、既存8 toolに読み取り専用`get_recipes`を加えた9 tool、既存7 routineにPhase 5の6 kindを加えた13 kindです。既存toolのshapeは変えず、`completion_intent`は`finish_goal`固定を維持します。
 
-Phase 4完了判定の証跡は次のとおりです。
+Phase 5完了判定の証跡は次のとおりです。
 
 | 検証層 | 結果 |
 |---|---|
-| 自動test | Java 25でunit/integration test 283件、harness test 8件、いずれも失敗0。GameTest 4/4 |
-| Development fixture | Phase 3 action回帰に加え、Phase 4の既達成skip、3-cell mutation、waterlogged slab、directional stairs、hopperが成功。資材不足、hidden必須cell、実行中divergenceは誤成功せず停止 |
-| Production Prism実Modpack | fixtureなしの最終JARで、正式MCP handshake、8 tools・7 routines、Simple Voice Chat接続、死亡時のlock復帰・active routineなし、全dimension保存、正常shutdown、PIDと8765 listenerの解放を確認。CraftAgent/MCP/Voice/MixinのERROR・FATALは0 |
+| 自動test | Java 25でunit/integration test 344件、harness test 11件、いずれも失敗0。GameTest 5/5 |
+| Development fixture | `survey_area`が1/1確認で成功。`transfer_items`が通常barrel画面のopen、12 item移送、close/reopen full readbackを経て12/12確認・unknown 0で成功 |
+| Production Prism実Modpack | fixtureなしの最終JARで、正式MCP handshake、9 tools・13 routines、既知recipe限定応答、全dimension保存、正常shutdown、PIDと8765 listenerの解放を確認。CraftAgent由来ERROR・FATALは0 |
 
-## Phase 1〜4の開発・検証手順
+## Phase 1〜5の開発・検証手順
 
 Java 25を指定し、リポジトリ直下で実行します。
 
@@ -162,35 +162,37 @@ Phase 4の固定scenarioは`/craftagent_fixture phase4 all_satisfied|mutations|w
 - `break_to_air / replace`で5 ID以外、BlockEntity、流体stateをadmissionとpacket直前の両方で拒否する
 - Phase 3/4の設置ではcanonicalな`cobblestone / dirt / grass_block / obsidian / smooth_stone / stone`以外のsupportを拒否し、containerやtoggle blockの通常useを呼ばない
 - all-satisfied、mutation、shortage、divergence、hiddenのdevelopment live scenarioを確認する
-- development fixtureで実施工とfault scenarioを確認し、fixtureなしのproduction Prism実Modpackでは8 tools・7 routines、lock/Voice Chat接続、正常shutdownを確認する
+- development fixtureで実施工とfault scenarioを確認し、fixtureなしのproduction Prism実Modpackでは9 tools・13 routines、lock/Voice Chat接続、正常shutdownを確認する
 - rollbackなしで残差planへ収束する
 
 上記合格条件はJava 25の全test、development live gate、production Prism互換性gateで確認済みです。`progress.completed`は処理済み／過去に確認済みの単調checkpointであり、現在の完成数は`verification.confirmed`と`goal.verified`で判断します。
 
-## Phase 5: Inventory、農林業、maintenance（未実装）
+## Phase 5: Inventory、農林業、maintenance（完了）
 
-- `get_recipes`によるruntime recipe列挙とresource estimate
+- `get_recipes`によるclient-known `RecipeDisplayEntry`の限定列挙とresource estimate。coverageは`source = client_known_recipe_displays`、`complete = false`
 - allowlist screen handler
 - `craft_items`、`transfer_items`
 - `tend_crop_area`、`harvest_tree_area`
 - `survey_area`
-- 食事、`sleep_at_bed`
+- standaloneの`sleep_at_bed`。食事や睡眠の自動挿入はPhase 6境界に残す
 
 合格条件:
 
 - unexpected screen/manual click/slot desyncで停止
 - userが事前に開いたcontainer screenをadoptせず、routine自身が対象を開く
+- container clickをACK扱いせず、close→同じ対象をreopen→container/player全slotのfull readbackで目標countを確認する
 - craft/transfer retryで重複しない
 - source/destination双方のcountをserver同期後に確認
 - cropの全BlockStateを観測し成熟判断
-- tree routineが指定region外やhidden logを直接探索しない
+- tree routineが入力で宣言され操作直前にもcurrent exact-stateを確認できたcellだけを扱い、指定region外・隣接・hidden logを探索しない。成功を木全体の完全伐採と表現しない
 - surveyがcurrent/last-known/unknownとcoverageを返す
 - unknownな洞窟・壁裏があれば完全湧き潰しと断定せず、spawn surface評価を`predicted`と返す
 - bed-unsafe dimensionでsleepしない
 - bed occupied、monster nearby、time restriction、timeoutを構造化failureにする
 - `sleep=prefer`は安全なら継続し、`require`は確認不能を成功扱いしない
-- 睡眠のrespawn point変更を確認済み`effects`として返す
+- 睡眠のrespawn point変更は当該bed actionに対応する受信済みvanilla respawn設定signalがある場合だけ確認済み`effects`として返す
 - maintenance前checkpoint、帰還後diffを必須にする
+- 6 routineとも`completion_intent = finish_goal`だけを受け、Phase 6の`continue_goal`やouter loopを先取りしない
 
 ## Phase 6: one-shotと完了後安全化（未実装）
 

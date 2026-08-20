@@ -97,6 +97,15 @@ final class FixtureCommands {
                                     FixturePhase4Scenario.concealHidden(fixture);
                                     success(context.getSource(), "Phase 4 hidden aperture sealed");
                                 }))))
+                .then(Commands.literal("phase5")
+                        .then(phase5("recipes", FixturePhase5Mode.RECIPES))
+                        .then(phase5("craft", FixturePhase5Mode.CRAFT))
+                        .then(phase5("transfer", FixturePhase5Mode.TRANSFER))
+                        .then(phase5("crop", FixturePhase5Mode.CROP))
+                        .then(phase5("tree", FixturePhase5Mode.TREE))
+                        .then(phase5("sleep", FixturePhase5Mode.SLEEP))
+                        .then(phase5("survey", FixturePhase5Mode.SURVEY))
+                        .then(phase5("reset", FixturePhase5Mode.RESET)))
                 .then(Commands.literal("expose_hidden")
                         .executes(context -> execute(context.getSource(), (fixture, output) -> {
                             FixtureArena.exposeHidden(fixture);
@@ -131,6 +140,13 @@ final class FixtureCommands {
         return Commands.literal(name)
                 .executes(context -> execute(context.getSource(), (fixture, output) ->
                         FixturePhase4Scenario.prepare(fixture, mode, output)));
+    }
+
+    private static com.mojang.brigadier.builder.LiteralArgumentBuilder<CommandSourceStack> phase5(
+            String name, FixturePhase5Mode mode) {
+        return Commands.literal(name)
+                .executes(context -> execute(context.getSource(), (fixture, output) ->
+                        FixturePhase5Scenario.prepare(fixture, mode, output)));
     }
 
     private static int execute(CommandSourceStack source, FixtureAction action) {

@@ -9,12 +9,13 @@ Minecraft 26.2 / NeoForge 26.2向けに、通常のサバイバル操作だけ�
 - Phase 2（`stationary_break`、routine lifecycle、Simple Voice Chat安全化）: 完了（実装・全受入ゲート合格）
 - Phase 3（有限semantic action）: 完了（実装・全受入ゲート合格）
 - Phase 4（`apply_block_plan`による局所block plan施工）: 完了（実装・全受入ゲート合格）
-- Phase 5〜6（inventory・農林業・one-shot）: 設計済み、未実装
+- Phase 5（inventory・農林業・maintenance）: 完了（実装・全受入ゲート合格）
+- Phase 6（one-shot orchestration・完了後安全化）: 設計済み、未実装
 - Phase 7（収容済みEntity搬送）: v1対象外のexperimental設計
 
-MCP tool surfaceは、`get_status`、`get_snapshot`、`compare_block_plan`、`list_routines`、`get_routine`、`start_routine`、`cancel_routine`、`emergency_stop`の8つを維持しています。`stationary_break`、`navigate_to`、`break_block`、`place_block`、`interact_block`、`interact_entity`、`apply_block_plan`の7 routineをschemaとcatalogへ公開しています。`get_recipes`はPhase 5の未公開候補であり、現在のtool数には含みません。
+公開MCP surfaceは、既存8 toolに読み取り専用`get_recipes`を加えた9 toolと、既存7 kindに`craft_items`、`transfer_items`、`tend_crop_area`、`harvest_tree_area`、`sleep_at_bed`、`survey_area`を加えた13 routine kindです。`get_recipes`が返すのはクライアントが既知の`RecipeDisplayEntry`だけで、全`RecipeManager`の列挙ではありません。
 
-Phase 4完了時点で、Java 25のunit/integration test 283件、harness test 8件（いずれも失敗0）、GameTest 4/4を通過しました。development fixtureでは実際の3-cell施工、waterlogged slab、directional stairs、hopper、既達成skipに加え、資材不足・hidden必須cell・実行中divergenceのfail-closedを確認しています。fixtureなしのproduction Prism実Modpackでは、正式MCP handshake、8 tools・7 routines、Simple Voice Chat接続、死亡時のlock復帰、正常な全dimension保存・shutdown、8765 listener解放を確認しました。production互換性確認とsemantic施工確認は分離し、実施工の証跡にはdevelopment live gateを使用しています。
+Phase 5完了時点で、Java 25のunit/integration test 344件、harness test 11件（いずれも失敗0）、GameTest 5/5を通過しました。development live gateでは`survey_area`と、通常container画面を開閉・再同期する`transfer_items`の成功を確認しています。fixtureなしのproduction Prism実Modpackでは、正式MCP handshake、9 tools・13 routines、既知recipe限定応答、正常な全dimension保存・shutdown、8765 listener解放を確認しました。
 
 ## 結論
 
@@ -120,7 +121,7 @@ Java 25を使用します。Windowsではリポジトリ直下から次を実行
 2. [完了] その場から動かない`stationary_break`
 3. [完了] 有限のblock interaction、移動、kind固有postcondition検証
 4. [完了] `compare_block_plan`と局所`apply_block_plan`による建築
-5. [未実装] クラフト、コンテナ、農林業、食事、睡眠
+5. [完了] クラフト、コンテナ、農林業、調査、睡眠
 6. [未実装] one-shot orchestration、安全な完了処理
 7. 収容済みEntityの搬送をexperimentalとして個別検証
 

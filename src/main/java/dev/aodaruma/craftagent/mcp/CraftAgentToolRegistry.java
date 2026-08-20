@@ -92,7 +92,7 @@ public final class CraftAgentToolRegistry {
                 specification(
                         tool(
                                 "list_routines",
-                                "List phase-gated routine kinds and their closed start schemas.",
+                                "List all 13 phase-gated routine kinds and their closed start schemas.",
                                 McpToolSchemas.listRoutinesInput(),
                                 McpToolSchemas.listRoutinesOutput(),
                                 READ_ONLY_ANNOTATIONS),
@@ -108,7 +108,7 @@ public final class CraftAgentToolRegistry {
                 specification(
                         tool(
                                 "start_routine",
-                                "Start a bounded phase-gated routine after local arming and live safety validation; Phase 4 block plans contain at most 64 exact-state cells in one externally split phase.",
+                                "Start one bounded Phase 2-5 routine after local arming and live safety validation; completion_intent remains finish_goal until Phase 6 orchestration.",
                                 McpToolSchemas.startRoutineInput(),
                                 McpToolSchemas.startRoutineOutput(),
                                 START_ANNOTATIONS),
@@ -128,11 +128,24 @@ public final class CraftAgentToolRegistry {
                                 McpToolSchemas.emergencyStopInput(),
                                 McpToolSchemas.emergencyStopOutput(),
                                 STOP_ANNOTATIONS),
-                        this::emergencyStopCommand));
+                        this::emergencyStopCommand),
+                specification(
+                        getRecipesTool(),
+                        McpRuntimePort.GetRecipes::new));
     }
 
     public List<McpStatelessServerFeatures.SyncToolSpecification> specifications() {
         return specifications;
+    }
+
+    /** Phase 5 descriptor shared by the registered read-only recipe tool and contract tests. */
+    static McpSchema.Tool getRecipesTool() {
+        return tool(
+                "get_recipes",
+                "Read only client-known RecipeDisplayEntry records; opaque references are bounded and coverage is explicitly incomplete.",
+                McpToolSchemas.getRecipesInput(),
+                McpToolSchemas.getRecipesOutput(),
+                READ_ONLY_ANNOTATIONS);
     }
 
     private McpStatelessServerFeatures.SyncToolSpecification specification(
@@ -143,7 +156,7 @@ public final class CraftAgentToolRegistry {
                 .build();
     }
 
-    private McpSchema.Tool tool(
+    private static McpSchema.Tool tool(
             String name,
             String description,
             Map<String, Object> inputSchema,
