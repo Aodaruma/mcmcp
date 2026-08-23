@@ -408,7 +408,11 @@ public final class MinecraftObservationService {
         if (state.minecraft().hitResult instanceof BlockHitResult hit
                 && hit.getType() == HitResult.Type.BLOCK
                 && position.equals(hit.getBlockPos())) {
-            visibleFaces = List.of(hit.getDirection().getSerializedName());
+            SampledVisibility.Result sampled = visibility.block(
+                    state.minecraft(), position, blockState, MAX_LIVE_BLOCK_DISTANCE);
+            visibleFaces = mergeCrosshairVisibleFaces(
+                    hit.getDirection().getSerializedName(),
+                    sampled.visible() ? sampled.visibleFaces() : List.of());
             provenance = ObservationProvenance.CROSSHAIR_OBSERVATION;
         } else {
             SampledVisibility.Result result = visibility.block(
@@ -430,6 +434,14 @@ public final class MinecraftObservationService {
                 state.sessionId());
         memory.rememberBlock(observation);
         return new LiveBlock(observation, visibleFaces, withinReach, hiddenReason);
+    }
+
+    static List<String> mergeCrosshairVisibleFaces(
+            String hitFace, Collection<String> sampledFaces) {
+        var merged = new LinkedHashSet<String>();
+        merged.add(Objects.requireNonNull(hitFace, "hitFace"));
+        merged.addAll(Objects.requireNonNull(sampledFaces, "sampledFaces"));
+        return List.copyOf(merged);
     }
 
     private Map<String, Object> visibleEntities(ClientState state, Capture capture, Map<?, ?> options) {

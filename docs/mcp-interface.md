@@ -26,8 +26,9 @@ MCPへ公開するのは、読み取りtool、制御tool、型付きroutineの�
 | `emergency_stop` | write | 全入力解放、pending開始破棄、lock |
 | `get_recipes` | read | クライアント既知のrecipe displayを限定列挙 |
 | `capture_creative_region` | artifact write | ローカルCreative領域を非同期captureし、gzip Blueprint artifactを生成 |
+| `edit_creative_world` | destructive write | ローカルCreativeで閉じたblock/Entity操作とundo/redoを非同期実行 |
 
-現在の固定surfaceは上記10 toolです。Phase 6までの既存9 toolの順序とinput/output shapeは変えず、Creative専用のworld-read-onlyな非同期artifact export toolを末尾へ追加しています。routine kindは13のままです。
+現在の固定surfaceは上記11 toolです。Phase 6までの既存9 toolの順序とinput/output shapeは変えず、Creative専用toolを末尾へ追加しています。routine kindは13のままです。
 
 スクリーンショットは未知MODの診断や見た目確認に有効ですが、structured observationとは性質が異なります。必要性を実測した段階で、明示的な読み取り専用`capture_view`として追加します。
 
@@ -136,7 +137,17 @@ start/statusのMCP応答には全cellを含めません。成功statusはgzip by
 
 `include_entities=true`の場合、region内のaliveな非player Entityをchunk処理時点で限定集計します。UUID、health、AI、owner、equipment、NBTは保存せず、領域全体のatomicまたはserver-complete一覧とは扱いません。BlockEntity、fluid、multi-cell、clone item未解決はmanual再現情報へ分類します。
 
-このtoolはWorldMemoryへ書かず、world mutationや常設forceloadを行いません。直接`setBlock`、command、Creative item生成、任意NBT、summon/kill/teleportも公開しません。設計図SVGはlocalの`tools/export-blueprint-svg.ps1`でterminal statusが示すgzip artifactから生成します。
+このcapture toolはWorldMemoryへ書かず、world mutationや常設forceloadを行いません。設計図SVGはlocalの`tools/export-blueprint-svg.ps1`でterminal statusが示すgzip artifactから生成します。
+
+## `edit_creative_world`（Creative prototype）
+
+任意command文字列を公開せず、`operation`ごとの閉じた引数をintegrated server thread上の処理へ変換します。開始操作は`set_block / fill / summon_entities / undo / redo`、読取操作は`status / history`だけです。block指定は`state:{block,properties}`でruntime registry上の全propertyを必須とし、fillは各辺64・最大4,096 blockです。Entityは`armor_stand / chicken / cow / iron_golem / pig / sheep / villager`の固定allowlist、最大16体で、selector・任意NBT・playerは受けません。
+
+開始応答の`job_id`を`status`でpollします。成功時は`transaction_id`と現在のundo/redo headを返し、undo/redoには`expected_transaction_id`を必須として履歴競合をfail-closedにします。履歴は現在world sessionのmemory内だけに最大32件・30分保持します。block undo/redoは対象がtransaction境界の完全BlockStateと一致する場合だけ進み、Entity undoはこのtoolが生成して保持したUUIDだけを削除し、redoは記録したtype/poseから再生成します。
+
+権限gateはcaptureと同じprivate integrated owner、server-side Creative、cheats/GM permission、現在sessionの専用local armです。1 active job、10秒deadline、現在load済みchunkだけを対象とし、未load chunkをload・生成しません。BlockEntity、流体、多cell block、TNT/fireはbefore/afterとも拒否します。block更新はvanilla相当のneighbor/client更新を初回・undo・redoで共通使用し、neighbor更新後に指定した完全BlockStateを再検証します。undo/redoと失敗時rollbackが保証するのは要求対象cellだけで、redstoneなどのneighbor更新が対象外cellへ伝播した副作用までは履歴・復元対象にしません。対象cellのrollbackに失敗した場合は`rollback_failed`を返してlocal armをlockします。block境界が外部のMob・player・tickで変われば`divergence`で停止し、Entity undoは生成時UUIDの所有物だけを削除します。
+
+`gamerule / ban / kick / op / stop`、任意command、clone、kill、既存Entity teleport/delete、Creative item生成は公開しません。
 
 ## `compare_block_plan`
 
@@ -473,7 +484,7 @@ Idempotency規則:
 
 Phase 3 actionの境界は次のとおりです。
 
-- `navigate_to`は回転を固定したforward/back/strafeによる短い平坦路だけを扱い、jump/sprint、段差越え、pathfinding、block破壊を行いません。loadedな足元・頭上空間、安定床、fluid/hazard不在、bounds/travel上限を毎tick確認します。positiveなserver ACKはないため、入力停止後、tolerance内、安定床上、低速、位置drift上限内を10 client tick連続で満たし、dispatch後のposition/rotation/motion correctionがない場合だけ`server-reconciled`とします
+- `navigate_to`は短い平坦な直線路だけを扱います。次cellがCURRENTでなければ移動keyをneutralに保ったまま通常の視点を経路方向へ徐々に向けて再観測し、足元・頭上・床がCURRENTになってから歩行します。可視mob/playerが次cellを占有している間は40 client tickずつ最大3 window待機・再観測し、解消しなければ`REPLAN`します。jump/sprint、段差越え、迂回pathfinding、block破壊は行いません。loadedな足元・頭上空間、安定床、fluid/hazard不在、bounds/travel上限を毎tick確認します。positiveなserver ACKはないため、入力停止後、tolerance内、安定床上、低速、位置drift上限内を10 client tick連続で満たし、dispatch後のposition/rotation/motion correctionがない場合だけ`server-reconciled`とします
 - `break_block`、`place_block`、`interact_block`は、実際のcrosshair/hit、通常reach、liveな`expected_before`を操作直前に再確認し、vanilla prediction ACKとサーバー由来の完全なBlockStateが要求した`expected_after`と一致して初めて成功します。Phase 3 v1の`break_block.expected_after`はプロパティなしの`minecraft:air`固定です
 - `place_block`はmain handの単一cell `BlockItem`だけを扱い、bed/double-height itemを除外します。設置supportは上記と同じclosed 6-ID allowlistに限定し、candidate判定時とpacket直前に再確認します
 - `interact_block`はlever、fence gate、vanillaのwooden trapdoorだけを許可します。empty main handかつnon-sneakを要求し、door、button、container、未知MOD blockは除外します。`expected_after`にはleverの`powered`またはgate/trapdoorの`open`だけを反転し、他の全propertyを維持した完全な同一block stateが必要です

@@ -11,6 +11,7 @@ import dev.aodaruma.craftagent.observation.BlockPlanValidationException;
 import dev.aodaruma.craftagent.observation.BlockStateView;
 import dev.aodaruma.craftagent.observation.ClientRecipeCatalog;
 import dev.aodaruma.craftagent.observation.CreativeRegionCapture;
+import dev.aodaruma.craftagent.observation.CreativeWorldEdit;
 import dev.aodaruma.craftagent.observation.MinecraftObservationService;
 import dev.aodaruma.craftagent.observation.WorldMemory;
 import dev.aodaruma.craftagent.safety.InputReleaseController;
@@ -114,6 +115,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     private final MinecraftObservationService observations = new MinecraftObservationService(memory);
     private final BlockPlanComparator blockPlans = new BlockPlanComparator(observations, memory);
     private final CreativeRegionCapture creativeRegions = new CreativeRegionCapture();
+    private final CreativeWorldEdit creativeEdits = new CreativeWorldEdit();
     private final ClientRecipeCatalog recipeCatalog = new ClientRecipeCatalog();
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
     private final LocalArmingState arming = new LocalArmingState();
@@ -277,6 +279,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         sessions.tick();
         publishSession();
         creativeRegions.fenceClient(minecraft, publishedSession.worldSessionId());
+        creativeEdits.fenceClient(minecraft, publishedSession.worldSessionId());
         inbox.drainEmergencyStopPreTick(minecraft, publishedSession);
         inbox.drainControlsPreTick(sessions.snapshot());
         retryPendingFinalizations(minecraft);
@@ -322,10 +325,12 @@ public final class CraftAgentRuntime implements McpRuntimePort {
 
     public void onServerPostTick(MinecraftServer server) {
         creativeRegions.onServerPostTick(server);
+        creativeEdits.onServerPostTick(server);
     }
 
     public void onServerStopping(MinecraftServer server) {
         creativeRegions.onServerStopping(server);
+        creativeEdits.onServerStopping(server);
     }
 
     public void toggleLocalArming(Minecraft minecraft) {
@@ -357,6 +362,57 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
         goalContinuation.clear();
         overlay(minecraft, "CraftAgent: 緊急停止・ロック済み");
+    }
+
+    /** Read-only, client-thread view used by the local HUD and pause-menu indicator. */
+    public AutomationUiSnapshot automationUiSnapshot() {
+        var session = sessions.snapshot();
+        var lock = arming.snapshot(session.worldSessionId(), System.nanoTime());
+        return AutomationUiSnapshot.resolve(
+                session.worldReady(),
+                lock.locked(),
+                automationActivityPending(),
+                lock.lastLockReason());
+    }
+
+    /** Uses the same priority lane as F9 so a UI stop releases every owned input inline. */
+    public void disableAutomationFromUi(Minecraft minecraft) {
+        assertClientThread(minecraft);
+        runPriorityStop(
+                () -> inbox.requestEmergencyStop("local_ui_disabled"),
+                () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
+        goalContinuation.clear();
+        overlay(minecraft, "CraftAgent: MCP自動操作を無効にしました");
+    }
+
+    /** Local-only re-arming endpoint; the pause-menu controller requires a second confirmation. */
+    public boolean enableAutomationFromUi(Minecraft minecraft) {
+        assertClientThread(minecraft);
+        var session = sessions.snapshot();
+        if (!session.worldReady()) {
+            overlay(minecraft, "CraftAgent: ワールド準備前のため再許可できません");
+            return false;
+        }
+        if (automationActivityPending()) {
+            overlay(minecraft, "CraftAgent: 停止処理の完了後に再許可してください");
+            return false;
+        }
+        goalContinuation.reset(session.worldSessionId());
+        arming.arm(session.worldSessionId(), availableCapabilities(minecraft),
+                LocalArmingState.DEFAULT_ARM_DURATION, System.nanoTime());
+        overlay(minecraft, "CraftAgent: MCP自動操作を15分間再許可しました");
+        return true;
+    }
+
+    private boolean automationActivityPending() {
+        return routines.activeRoutineId().isPresent()
+                || creativeRegions.hasActiveJob()
+                || creativeEdits.hasActiveJob()
+                || inbox.hasPendingCommand("start_routine")
+                || inbox.hasPendingCommand("capture_creative_region")
+                || inbox.hasPendingCommand("edit_creative_world")
+                || finalizationRetries.hasPending()
+                || voiceRoutineId != null;
     }
 
     /** Local controls are already on the client thread and must finish the priority stop inline. */
@@ -413,6 +469,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         }
         shutdown = true;
         creativeRegions.cancelActive("client_shutdown");
+        creativeEdits.cancelActive("client_shutdown");
         sessions.stopping();
         inbox.shutdown(minecraft, sessions.snapshot());
         routines.clearSession("client_shutdown");
@@ -485,6 +542,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 requireReady(session);
                 yield captureCreativeRegion(minecraft, session, capture.arguments(), context);
             }
+            case EditCreativeWorld edit -> {
+                requireReady(session);
+                yield editCreativeWorld(minecraft, session, edit.arguments(), context);
+            }
             case CompareBlockPlan compare -> {
                 requireReady(session);
                 yield blockPlans.compare(minecraft, session.clientTick(), compare.arguments());
@@ -549,6 +610,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         if (!"start".equals(operation)) {
             throw new IllegalArgumentException("operation must be start or status");
         }
+        if (creativeEdits.hasActiveJob()) {
+            throw new RuntimeInvocationException(
+                    "busy", "A Creative world edit is active", true, Map.of());
+        }
         long nowNanos = System.nanoTime();
         long jobDeadlineNanos = saturatingAdd(
                 nowNanos, CreativeRegionCapture.JOB_TIMEOUT.toNanos());
@@ -581,12 +646,65 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                         System.nanoTime()));
     }
 
+    private Map<String, Object> editCreativeWorld(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            Map<String, Object> arguments,
+            RuntimeCallContext context) {
+        requireLiveCall(context, "edit_creative_world");
+        Object operation = arguments.get("operation");
+        UUID worldSessionId = Objects.requireNonNull(session.worldSessionId(), "worldSessionId");
+        if ("status".equals(operation)) {
+            return creativeEdits.status(worldSessionId, arguments);
+        }
+        if ("history".equals(operation)) {
+            return creativeEdits.history(worldSessionId, arguments);
+        }
+        if (!(operation instanceof String name) || !Set.of(
+                "set_block", "fill", "summon_entities", "undo", "redo").contains(name)) {
+            throw new IllegalArgumentException("unsupported Creative edit operation");
+        }
+        requireNoConcurrentWorldMutation(
+                false,
+                creativeRegions.hasActiveJob() || routines.activeRoutineId().isPresent());
+        long nowNanos = System.nanoTime();
+        long jobDeadlineNanos = saturatingAdd(nowNanos, CreativeWorldEdit.JOB_TIMEOUT.toNanos());
+        if (!arming.allows(
+                worldSessionId, CreativeWorldEdit.CAPABILITY, jobDeadlineNanos, nowNanos)) {
+            throw new RuntimeInvocationException(
+                    "locked",
+                    "Creative world edits are not locally armed for this world session",
+                    false,
+                    Map.of());
+        }
+        if (!CreativeRegionCapture.isConfirmedCreative(minecraft)) {
+            throw new RuntimeInvocationException(
+                    "unsafe_state",
+                    "Creative world edits require local integrated single-player Creative mode",
+                    false,
+                    Map.of("reason", "creative_mode_not_confirmed"));
+        }
+        requireLiveCall(context, "edit_creative_world");
+        return creativeEdits.start(
+                minecraft,
+                session.clientTick(),
+                worldSessionId,
+                arguments,
+                () -> arming.allows(
+                        worldSessionId,
+                        CreativeWorldEdit.CAPABILITY,
+                        jobDeadlineNanos,
+                        System.nanoTime()),
+                () -> arming.lock("creative_edit_rollback_failed"));
+    }
+
     private static Set<String> availableCapabilities(Minecraft minecraft) {
         if (!CreativeRegionCapture.isConfirmedCreative(minecraft)) {
             return AVAILABLE_CAPABILITIES;
         }
         var result = new LinkedHashSet<>(AVAILABLE_CAPABILITIES);
         result.add(CreativeRegionCapture.CAPABILITY);
+        result.add(CreativeWorldEdit.CAPABILITY);
         return Set.copyOf(result);
     }
 
@@ -811,6 +929,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         if (!AVAILABLE_CAPABILITIES.contains(kind)) {
             throw new IllegalArgumentException("kind is not an available routine");
         }
+        requireNoConcurrentWorldMutation(creativeEdits.hasActiveJob(), false);
         String completionIntent = completionIntentArgument(arguments);
         return switch (kind) {
             case "stationary_break" -> startStationaryBreak(
@@ -828,6 +947,15 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                             minecraft, session, arguments, completionIntent, context);
             default -> throw new IllegalArgumentException("kind is not an available routine");
         };
+    }
+
+    static void requireNoConcurrentWorldMutation(
+            boolean creativeEditActive,
+            boolean routineOrCaptureActive) {
+        if (creativeEditActive || routineOrCaptureActive) {
+            throw new RuntimeInvocationException(
+                    "busy", "Another world-mutating operation is active", true, Map.of());
+        }
     }
 
     private Map<String, Object> startStationaryBreak(
@@ -1382,6 +1510,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             WorldSessionTracker.Snapshot session) {
         goalContinuation.clear();
         boolean creativeReleased = creativeRegions.cancelActive(reason);
+        creativeReleased &= creativeEdits.cancelActive(reason);
         var active = routines.activeRoutineId();
         if (active.isEmpty()) {
             return creativeReleased && endVoiceFor(voiceRoutineId);
@@ -1849,8 +1978,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         runPriorityEventStopIfRequired(
                 routines.activeRoutineId().isPresent()
                         || creativeRegions.hasActiveJob()
+                        || creativeEdits.hasActiveJob()
                         || inbox.hasPendingCommand("start_routine")
-                        || inbox.hasPendingCommand("capture_creative_region"),
+                        || inbox.hasPendingCommand("capture_creative_region")
+                        || inbox.hasPendingCommand("edit_creative_world"),
                 () -> inbox.requestEmergencyStop(reason),
                 () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
     }
@@ -3137,6 +3268,17 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         if (cause instanceof CreativeRegionCapture.CaptureNotFoundException) {
             return RuntimeReply.failure(
                     "capture_not_found", "The Creative capture job is not retained", false);
+        }
+        if (cause instanceof CreativeWorldEdit.EditBusyException) {
+            return RuntimeReply.failure("busy", "Another Creative world edit is active", true);
+        }
+        if (cause instanceof CreativeWorldEdit.EditIdempotencyConflictException) {
+            return RuntimeReply.failure(
+                    "idempotency_conflict", "The idempotency key has different arguments", false);
+        }
+        if (cause instanceof CreativeWorldEdit.EditNotFoundException) {
+            return RuntimeReply.failure(
+                    "edit_not_found", "The Creative edit job is not retained", false);
         }
         if (cause instanceof RoutineManager.IdempotencyConflictException) {
             return RuntimeReply.failure(

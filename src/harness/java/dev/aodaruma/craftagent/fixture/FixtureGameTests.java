@@ -285,16 +285,35 @@ final class FixtureGameTests {
                 || FixturePhase4Scenario.BUILD_RUNNER_SECOND_COLUMN.get(0).getZ()
                         == FixturePhase4Scenario.ORIGIN.getZ()
                 || FixturePhase4Scenario.BUILD_RUNNER_START_POSE.getZ()
-                        != FixturePhase4Scenario.ORIGIN.getZ()) {
+                        != FixturePhase4Scenario.ORIGIN.getZ()
+                || FixturePhase4Scenario.BUILD_RUNNER_FIRST_POSE.getZ()
+                        >= FixturePhase4Scenario.BUILD_RUNNER_START_POSE.getZ()
+                || FixturePhase4Scenario.BUILD_RUNNER_SECOND_POSE.getZ()
+                        <= FixturePhase4Scenario.BUILD_RUNNER_START_POSE.getZ()) {
             helper.fail(Component.literal(
-                    "build-runner fixture must keep two vertical columns beside a clear lane"));
+                    "build-runner fixture must keep two vertical columns beside two work poses"));
         }
         assertInsideArena(helper, FixturePhase4Scenario.BUILD_RUNNER_START_POSE);
+        assertInsideArena(helper, FixturePhase4Scenario.BUILD_RUNNER_FIRST_POSE);
+        assertInsideArena(helper, FixturePhase4Scenario.BUILD_RUNNER_SECOND_POSE);
         long normalReachSquared = 20;
-        if (expectedBuildRunnerTargets.stream().anyMatch(target -> squaredBlockDistance(
-                FixturePhase4Scenario.BUILD_RUNNER_START_POSE, target) > normalReachSquared)) {
+        if (FixturePhase4Scenario.BUILD_RUNNER_FIRST_COLUMN.stream().anyMatch(target ->
+                    squaredBlockDistance(
+                            FixturePhase4Scenario.BUILD_RUNNER_FIRST_POSE, target)
+                            > normalReachSquared)
+                || FixturePhase4Scenario.BUILD_RUNNER_SECOND_COLUMN.stream().anyMatch(target ->
+                    squaredBlockDistance(
+                            FixturePhase4Scenario.BUILD_RUNNER_SECOND_POSE, target)
+                            > normalReachSquared)
+                || squaredBlockDistance(
+                        FixturePhase4Scenario.BUILD_RUNNER_START_POSE,
+                        FixturePhase4Scenario.BUILD_RUNNER_FIRST_POSE) > 4
+                || squaredBlockDistance(
+                        FixturePhase4Scenario.BUILD_RUNNER_FIRST_POSE,
+                        FixturePhase4Scenario.BUILD_RUNNER_SECOND_POSE) > 4
+                || FixturePhase4RouteBlocker.OCCUPANCY_TICKS != 20) {
             helper.fail(Component.literal(
-                    "build-runner fixture must keep both phases reachable from one safe pose"));
+                    "build-runner movement, reach and temporary blocker bounds are inconsistent"));
         }
 
         var hiddenLayout = FixturePhase4Scenario.layout(FixturePhase4Scenario.Mode.HIDDEN);

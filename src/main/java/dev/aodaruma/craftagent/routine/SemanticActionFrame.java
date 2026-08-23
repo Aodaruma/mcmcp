@@ -33,7 +33,10 @@ public record SemanticActionFrame(
         String routeCheckReason,
         long positionCorrectionRevision,
         boolean safeToRetry) {
-    static final String PROBE_VISIBILITY_GRACE = "probe_visibility_grace";
+    static final String PROBE_NOT_CURRENTLY_VISIBLE = "probe_not_currently_visible";
+    static final String VISIBLE_ROUTE_OCCUPIED = "visible_route_occupied";
+    static final String ROUTE_REOBSERVATION_WAIT = "route_reobservation_wait";
+    static final String ROUTE_OCCUPANCY_WAIT = "route_occupancy_wait";
     static final String STATIONARY_NAVIGATION = "stationary_navigation_no_lookahead";
 
     public SemanticActionFrame {
@@ -61,8 +64,19 @@ public record SemanticActionFrame(
                 && visibleThreatClear && screenClear;
     }
 
-    public boolean routeVisibilityGrace() {
-        return routeSafe && PROBE_VISIBILITY_GRACE.equals(routeCheckReason);
+    public boolean routeNeedsReobservation() {
+        return PROBE_NOT_CURRENTLY_VISIBLE.equals(routeCheckReason)
+                || ROUTE_REOBSERVATION_WAIT.equals(routeCheckReason);
+    }
+
+    public boolean routeTemporarilyOccupied() {
+        return VISIBLE_ROUTE_OCCUPIED.equals(routeCheckReason)
+                || ROUTE_OCCUPANCY_WAIT.equals(routeCheckReason);
+    }
+
+    public boolean routeTransientWait() {
+        return routeSafe && (ROUTE_REOBSERVATION_WAIT.equals(routeCheckReason)
+                || ROUTE_OCCUPANCY_WAIT.equals(routeCheckReason));
     }
 
     public boolean stationaryNavigation() {

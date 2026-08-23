@@ -109,6 +109,10 @@ class CraftAgentOutputSchemaContractTest {
                         creativeRegionArguments(),
                         creativeRegionData()),
                 new ToolCase(
+                        "edit_creative_world",
+                        creativeWorldEditArguments(),
+                        creativeWorldEditData()),
+                new ToolCase(
                         "compare_block_plan",
                         compareArguments(),
                         compareData()),
@@ -221,6 +225,38 @@ class CraftAgentOutputSchemaContractTest {
                                 "count", 0,
                                 "truncated", false,
                                 "complete", false)));
+    }
+
+    private static Map<String, Object> creativeWorldEditArguments() {
+        return McpTestFixtures.fields(
+                "operation", "set_block",
+                "position", Map.of(
+                        "dimension", "minecraft:overworld", "x", 10, "y", 64, "z", -3),
+                "state", Map.of("block", "minecraft:stone", "properties", Map.of()),
+                "idempotency_key", IDEMPOTENCY_KEY);
+    }
+
+    private static Map<String, Object> creativeWorldEditData() {
+        Map<String, Object> history = McpTestFixtures.fields(
+                "can_undo", true,
+                "can_redo", false,
+                "undo_depth", 1,
+                "redo_depth", 0,
+                "undo_transaction_id", ROUTINE_ID,
+                "redo_transaction_id", null,
+                "history_ttl_seconds", 1_800L);
+        return McpTestFixtures.fields(
+                "response", "job",
+                "job_id", ROUTINE_ID,
+                "operation", "set_block",
+                "state", "succeeded",
+                "idempotent_replay", false,
+                "started_client_tick", 200L,
+                "requested_changes", 1,
+                "applied_changes", 1,
+                "transaction_id", ROUTINE_ID,
+                "history", history,
+                "error", null);
     }
 
     private static Map<String, Object> compareArguments() {
@@ -371,6 +407,18 @@ class CraftAgentOutputSchemaContractTest {
                                 "target", dimensionPosition(12, 64, -3),
                                 "horizontal_tolerance_blocks", 0.5),
                         "movement_settle")),
+                Arguments.of("navigate_to_route_reobservation", routineData(
+                        "navigate_to", "destinations", McpTestFixtures.fields(
+                                "kind", "navigate_to",
+                                "target", dimensionPosition(12, 64, -3),
+                                "horizontal_tolerance_blocks", 0.5),
+                        "route_reobservation")),
+                Arguments.of("navigate_to_route_occupancy", routineData(
+                        "navigate_to", "destinations", McpTestFixtures.fields(
+                                "kind", "navigate_to",
+                                "target", dimensionPosition(12, 64, -3),
+                                "horizontal_tolerance_blocks", 0.5),
+                        "route_occupancy")),
                 Arguments.of("break_block", routineData(
                         "break_block", "blocks", McpTestFixtures.fields(
                                 "kind", "break_block",

@@ -77,6 +77,7 @@ class McpHttpServerTest {
                 .contains("\"emergency_stop\"")
                 .contains("\"get_recipes\"")
                 .contains("\"capture_creative_region\"")
+                .contains("\"edit_creative_world\"")
                 .contains("\"outputSchema\"");
 
         HttpResponse<String> call = send(GET_STATUS, McpTestFixtures.TOKEN,

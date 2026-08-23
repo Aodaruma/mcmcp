@@ -145,7 +145,15 @@ public final class CraftAgentToolRegistry {
                                 McpToolSchemas.creativeRegionInput(),
                                 McpToolSchemas.creativeRegionOutput(),
                                 EXPORT_ANNOTATIONS),
-                        McpRuntimePort.CaptureCreativeRegion::new));
+                        McpRuntimePort.CaptureCreativeRegion::new),
+                specification(
+                        tool(
+                                "edit_creative_world",
+                                "Run typed private-singleplayer Creative set_block, fill, allowlisted summon, undo, or redo operations; arbitrary commands, selectors, and NBT are not accepted.",
+                                McpToolSchemas.creativeWorldEditInput(),
+                                McpToolSchemas.creativeWorldEditOutput(),
+                                START_ANNOTATIONS),
+                        McpRuntimePort.EditCreativeWorld::new));
     }
 
     public List<McpStatelessServerFeatures.SyncToolSpecification> specifications() {

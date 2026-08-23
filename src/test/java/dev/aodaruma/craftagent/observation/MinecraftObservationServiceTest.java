@@ -105,4 +105,11 @@ class MinecraftObservationServiceTest {
         assertThatThrownBy(() -> new SampledVisibility.Result(false, List.of(), null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void crosshairObservationKeepsOtherSampledFacesForSequentialPlacement() {
+        assertThat(MinecraftObservationService.mergeCrosshairVisibleFaces(
+                "west", List.of("up", "west", "north")))
+                .containsExactly("west", "up", "north");
+    }
 }

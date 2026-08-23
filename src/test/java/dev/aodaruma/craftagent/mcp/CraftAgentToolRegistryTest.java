@@ -30,7 +30,7 @@ class CraftAgentToolRegistryTest {
                 .containsExactly(
                         "get_status", "get_snapshot", "compare_block_plan", "list_routines", "get_routine",
                         "start_routine", "cancel_routine", "emergency_stop", "get_recipes",
-                        "capture_creative_region");
+                        "capture_creative_region", "edit_creative_world");
         for (McpSchema.Tool tool : tools) {
             assertThat(tool.inputSchema()).containsEntry("additionalProperties", false);
             assertThat(tool.outputSchema()).containsEntry("additionalProperties", false);
@@ -42,12 +42,44 @@ class CraftAgentToolRegistryTest {
         assertThat(List.of(tools.get(0), tools.get(1), tools.get(2), tools.get(3), tools.get(4),
                 tools.get(8))).allSatisfy(tool ->
                 assertThat(tool.annotations().readOnlyHint()).isTrue());
-        assertThat(List.of(tools.get(5), tools.get(6), tools.get(7), tools.get(9))).allSatisfy(tool ->
+        assertThat(List.of(tools.get(5), tools.get(6), tools.get(7), tools.get(9), tools.get(10))).allSatisfy(tool ->
                 assertThat(tool.annotations().readOnlyHint()).isFalse());
-        assertThat(tools.get(5).annotations().destructiveHint()).isTrue();
+        assertThat(List.of(tools.get(5), tools.get(10))).allSatisfy(tool ->
+                assertThat(tool.annotations().destructiveHint()).isTrue());
         assertThat(List.of(tools.get(0), tools.get(1), tools.get(2), tools.get(3), tools.get(4),
                 tools.get(6), tools.get(7), tools.get(8), tools.get(9))).allSatisfy(tool ->
                 assertThat(tool.annotations().destructiveHint()).isFalse());
+    }
+
+    @Test
+    void dispatchesOnlyTypedCreativeWorldEdits() {
+        AtomicReference<McpRuntimePort.RuntimeCommand> received = new AtomicReference<>();
+        AtomicInteger calls = new AtomicInteger();
+        CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
+            calls.incrementAndGet();
+            received.set(command);
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+        }, Duration.ofSeconds(1));
+        Map<String, Object> arguments = McpTestFixtures.fields(
+                "operation", "set_block",
+                "position", Map.of(
+                        "dimension", "minecraft:overworld", "x", 1, "y", 64, "z", 2),
+                "state", Map.of("block", "minecraft:stone", "properties", Map.of()),
+                "idempotency_key", "3d7d9ed2-3bab-4a5a-a7aa-9b59b4f43243");
+
+        McpSchema.CallToolResult result = invoke(registry, "edit_creative_world", arguments);
+
+        assertThat(result.isError()).isFalse();
+        assertThat(received.get()).isInstanceOfSatisfying(
+                McpRuntimePort.EditCreativeWorld.class,
+                command -> assertThat(command.arguments()).isEqualTo(arguments));
+
+        McpSchema.CallToolResult rawCommand = invoke(registry, "edit_creative_world", Map.of(
+                "operation", "command",
+                "command", "ban @a"));
+        assertThat(rawCommand.isError()).isTrue();
+        assertThat(rawCommand.structuredContent().toString()).contains("invalid_argument");
+        assertThat(calls).hasValue(1);
     }
 
     @Test

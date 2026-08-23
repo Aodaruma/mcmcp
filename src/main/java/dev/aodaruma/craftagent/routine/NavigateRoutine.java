@@ -9,6 +9,7 @@ final class NavigateRoutine extends AbstractSemanticRoutine {
     private static final String PRECHECK = "precheck";
     private static final String EXECUTE = "execute";
     private static final String MOVE = "move";
+    private static final String WAIT_ROUTE_CLEAR = "wait_route_clear";
     private static final String SETTLE = "settle";
     private static final String VERIFY = "verify";
     private static final String RETRY_FRESH = "retry_fresh_observation";
@@ -16,11 +17,15 @@ final class NavigateRoutine extends AbstractSemanticRoutine {
     private static final double MAX_SETTLED_VELOCITY_SQUARED = 0.01D;
     private static final double MAX_SETTLE_DRIFT_SQUARED = 0.1D * 0.1D;
     private static final double MAX_VERTICAL_DISTANCE = 1.0D;
+    static final int MAX_ROUTE_WAIT_TICKS = 40;
 
     private final NavigateToRequest navigation;
     private int retries;
     private int verifiedDestinations;
     private long retryAfterTick;
+    private long routeWaitDeadlineTick;
+    private String routeWaitReason;
+    private String routeWaitResumePhase;
     private int consecutiveSettledTicks;
     private double settleAnchorX;
     private double settleAnchorY;
@@ -45,6 +50,7 @@ final class NavigateRoutine extends AbstractSemanticRoutine {
             case PRECHECK -> precheck(frame);
             case EXECUTE -> execute(frame);
             case MOVE -> move(frame);
+            case WAIT_ROUTE_CLEAR -> waitForRoute(frame);
             case SETTLE -> settle(frame);
             case VERIFY -> verify(frame);
             case RETRY_FRESH -> awaitFreshObservation(frame);
@@ -53,14 +59,21 @@ final class NavigateRoutine extends AbstractSemanticRoutine {
     }
 
     private void precheck(SemanticActionFrame frame) {
-        if (!frame.routeSafe()) {
-            fail(routeFailure("ROUTE_NOT_SAFE", frame));
+        if (frame.routeSafe()) {
+            startPhase(EXECUTE, RoutineState.RUNNING);
             return;
         }
-        // Being inside the tolerance is not durable proof of navigation success. Even an
-        // initially-satisfied destination gets a no-input attempt so the adapter can observe
-        // the server reconciliation window and corrections before this routine verifies it.
-        startPhase(EXECUTE, RoutineState.RUNNING);
+        if (frame.routeNeedsReobservation()) {
+            // Dispatch acquires neutral movement/view ownership only. The adapter cannot press a
+            // movement key until the ordinary first-person scan makes the next route cells CURRENT.
+            startPhase(EXECUTE, RoutineState.RUNNING);
+            return;
+        }
+        if (frame.routeTemporarilyOccupied()) {
+            beginRouteWait(frame, EXECUTE);
+            return;
+        }
+        fail(routeFailure("ROUTE_NOT_SAFE", frame));
     }
 
     private void execute(SemanticActionFrame frame) {
@@ -91,8 +104,9 @@ final class NavigateRoutine extends AbstractSemanticRoutine {
             startPhase(SETTLE, RoutineState.WAITING);
             return;
         }
-        if (frame.routeVisibilityGrace()) {
+        if (frame.routeTransientWait()) {
             port.maintain(attempt);
+            beginRouteWait(frame, MOVE);
             return;
         }
         if (!frame.routeSafe()) {
@@ -102,6 +116,42 @@ final class NavigateRoutine extends AbstractSemanticRoutine {
         // MovementInputLease is renewed by the adapter heartbeat. Its short watchdog is not
         // the navigation deadline; the shared routine hard deadline remains authoritative.
         port.maintain(attempt);
+    }
+
+    private void waitForRoute(SemanticActionFrame frame) {
+        if (frame.clientTick() >= routeWaitDeadlineTick) {
+            retryOrFail(routeWaitReason.equals("route_occupancy")
+                    ? "ROUTE_OCCUPANCY_TIMEOUT"
+                    : "ROUTE_REOBSERVATION_EXHAUSTED", frame);
+            return;
+        }
+        if (frame.routeTransientWait()) {
+            if (attempt != null) {
+                port.maintain(attempt);
+            }
+            return;
+        }
+        if (frame.routeSafe()) {
+            startPhase(routeWaitResumePhase, RoutineState.RUNNING);
+            return;
+        }
+        if (attempt == null && frame.routeNeedsReobservation()) {
+            startPhase(EXECUTE, RoutineState.RUNNING);
+            return;
+        }
+        if (frame.routeTemporarilyOccupied()) {
+            return;
+        }
+        fail(routeFailure("ROUTE_BECAME_UNSAFE", frame));
+    }
+
+    private void beginRouteWait(SemanticActionFrame frame, String resumePhase) {
+        routeWaitReason = frame.routeTemporarilyOccupied()
+                ? "route_occupancy" : "route_reobservation";
+        routeWaitResumePhase = resumePhase;
+        routeWaitDeadlineTick = Math.min(
+                hardDeadlineClientTick, frame.clientTick() + MAX_ROUTE_WAIT_TICKS);
+        startPhase(WAIT_ROUTE_CLEAR, RoutineState.WAITING);
     }
 
     private void settle(SemanticActionFrame frame) {
@@ -124,9 +174,10 @@ final class NavigateRoutine extends AbstractSemanticRoutine {
                     "POSITION_CORRECTION_UNREPORTED_DURING_SETTLE", frame, observed));
             return;
         }
-        if (frame.routeVisibilityGrace()) {
+        if (frame.routeTransientWait()) {
             consecutiveSettledTicks = 0;
             resetSettleAnchor(frame);
+            beginRouteWait(frame, SETTLE);
             return;
         }
         if (!withinDestination(frame)) {
@@ -146,10 +197,10 @@ final class NavigateRoutine extends AbstractSemanticRoutine {
     }
 
     private void verify(SemanticActionFrame frame) {
-        if (frame.routeVisibilityGrace()) {
+        if (frame.routeTransientWait()) {
             consecutiveSettledTicks = 0;
             resetSettleAnchor(frame);
-            startPhase(SETTLE, RoutineState.WAITING);
+            beginRouteWait(frame, SETTLE);
             return;
         }
         var observed = evidence();
@@ -335,6 +386,14 @@ final class NavigateRoutine extends AbstractSemanticRoutine {
 
     @Override
     protected RoutineWait waitState() {
+        if (phase.equals(WAIT_ROUTE_CLEAR)) {
+            return new RoutineWait(
+                    routeWaitReason,
+                    routeWaitDeadlineTick,
+                    routeWaitReason.equals("route_occupancy")
+                            ? "the currently visible mob or player leaves the next route cell"
+                            : "a fresh first-person scan makes all next route cells CURRENT");
+        }
         return new RoutineWait(
                 phase.equals(SETTLE) ? "movement_settle" : "server_sync",
                 hardDeadlineClientTick,

@@ -14,7 +14,7 @@ pwsh -File .\tools\run-build-gate.ps1 `
   .\tools\build-gates\build-runner.example.json
 ```
 
-manifestは`navigate_to / apply_block_plan`だけを最大17 step含められます。runner自身はblock、item、経路を推測せず、各routineのserver-confirmedなterminal結果を検査します。Bearer tokenは既定で`run/harness-client/config/craftagent/bearer.token`から読み、表示しません。
+manifestは`navigate_to / apply_block_plan`だけを最大17 step含められます。sampleは`移動→柱施工→移動→柱施工`の4 routineです。移動中に次の3 route cellが見えない場合、または可視なmob/playerが次cellを塞ぐ場合は、movement keyをneutralにした40 client tickの再観測windowを最大3回使います。危険block、敵対mob、被ダメージは待たずに停止します。runner自身はblock、item、経路を推測せず、各routineのserver-confirmedなterminal結果を検査します。Bearer tokenは既定で`run/harness-client/config/craftagent/bearer.token`から読み、表示しません。
 
 ## Blueprint SVG
 

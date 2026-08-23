@@ -1,0 +1,88 @@
+package dev.aodaruma.craftagent.routine;
+
+import org.junit.jupiter.api.Test;
+
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
+
+class NavigationViewLeaseTest {
+    @Test
+    void turnIsBoundedAndCloseRestoresTheOriginalViewAfterManualInterference() {
+        var owner = UUID.randomUUID();
+        var control = new FakeViewControl(20.0F, 10.0F, 1);
+        var lease = NavigationViewLease.acquire(control, owner);
+
+        lease.turnToward(owner, 80.0F, 40.0F);
+        assertThat(control.yaw).isEqualTo(28.0F);
+        assertThat(control.pitch).isEqualTo(18.0F);
+
+        control.yaw += 2.0F;
+        assertThat(lease.matches(owner)).isFalse();
+        assertThatIllegalStateException().isThrownBy(() ->
+                lease.turnToward(owner, 80.0F, 40.0F));
+
+        control.failNextTurn = true;
+        assertThatIllegalStateException().isThrownBy(() -> lease.close(owner));
+        lease.close(owner);
+        lease.close(owner);
+        assertThat(control.yaw).isEqualTo(20.0F);
+        assertThat(control.pitch).isEqualTo(10.0F);
+        assertThat(control.turnCount).isEqualTo(2);
+    }
+
+    @Test
+    void ownerTokenIsRequiredForTurnMatchAndClose() {
+        var owner = UUID.randomUUID();
+        var other = UUID.randomUUID();
+        var lease = NavigationViewLease.acquire(
+                new FakeViewControl(0.0F, 0.0F, 0), owner);
+
+        assertThatIllegalArgumentException().isThrownBy(() -> lease.matches(other));
+        assertThatIllegalArgumentException().isThrownBy(() ->
+                lease.turnToward(other, 0.0F, 0.0F));
+        assertThatIllegalArgumentException().isThrownBy(() -> lease.close(other));
+    }
+
+    private static final class FakeViewControl implements NavigationViewLease.ViewControl {
+        private float yaw;
+        private float pitch;
+        private int slot;
+        private int turnCount;
+        private boolean failNextTurn;
+
+        private FakeViewControl(float yaw, float pitch, int slot) {
+            this.yaw = yaw;
+            this.pitch = pitch;
+            this.slot = slot;
+        }
+
+        @Override
+        public float yaw() {
+            return yaw;
+        }
+
+        @Override
+        public float pitch() {
+            return pitch;
+        }
+
+        @Override
+        public int selectedSlot() {
+            return slot;
+        }
+
+        @Override
+        public void turn(float yawDeltaDegrees, float pitchDeltaDegrees) {
+            if (failNextTurn) {
+                failNextTurn = false;
+                throw new IllegalStateException("injected turn failure");
+            }
+            yaw += yawDeltaDegrees;
+            pitch += pitchDeltaDegrees;
+            turnCount++;
+        }
+    }
+}

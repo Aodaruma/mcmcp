@@ -4,7 +4,7 @@
 
 Phase 0〜6は完了しています。本体MODと別source setのdevelopment fixture MODを使って下記のgateを通過し、one-shot continuationと固定`stay`完了処理まで受入を完了しました。Phase 7はv1に含めません。現在はその後段として、決定論的build runnerとCreative Blueprint captureのStage 3/4 development prototypeを検証しています。
 
-現在のMCP surfaceは、Phase 6の9 toolへCreative専用のworld-read-only非同期artifact export `capture_creative_region`を末尾追加した10 tool、routineは13 kindです。全13 startの`completion_intent`は省略可能な`finish_goal | continue_goal`で、省略時は`finish_goal`です。
+現在のMCP surfaceは、Phase 6の9 toolへCreative専用の`capture_creative_region`と型付き`edit_creative_world`を末尾追加した11 tool、routineは13 kindです。全13 startの`completion_intent`は省略可能な`finish_goal | continue_goal`で、省略時は`finish_goal`です。
 
 現在の完了判定の証跡は次のとおりです。
 

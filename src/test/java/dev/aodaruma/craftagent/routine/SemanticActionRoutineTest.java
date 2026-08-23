@@ -252,44 +252,46 @@ class SemanticActionRoutineTest {
     }
 
     @Test
-    void navigationReportsTheFailClosedLiveVisibilityReasonWithoutDispatching() {
+    void navigationAcquiresOnlyNeutralOwnershipWhenTheRouteNeedsAFirstPersonScan() {
         var port = new FakePort();
         port.routeSafe = false;
-        port.routeReason = "probe_not_currently_visible";
+        port.routeReason = SemanticActionFrame.PROBE_NOT_CURRENTLY_VISIBLE;
         var manager = manager(port);
         var id = manager.startSemanticAction(
                 UUID.randomUUID().toString(), navigateRequest(), 10).routineId();
 
         advance(manager, port); // queued -> precheck
-        advance(manager, port); // precheck -> failed
+        advance(manager, port); // precheck -> execute
+        advance(manager, port); // execute -> move, neutral ownership only
 
-        var failed = manager.getRoutine(id, 0, 32);
-        assertThat(failed.failure().code()).isEqualTo("ROUTE_NOT_SAFE");
-        assertThat(failed.failure().evidence())
-                .containsEntry("route_check_reason", "probe_not_currently_visible");
-        assertThat(port.dispatchCount).isZero();
+        var scanning = manager.getRoutine(id, 0, 32);
+        assertThat(scanning.phase()).isEqualTo("move");
+        assertThat(port.dispatchCount).isOne();
+        assertThat(port.maintainCount).isZero();
+        assertThat(port.stopCount).isZero();
     }
 
     @Test
-    void activeNavigationVisibilityGracePausesWithoutStoppingOrVerifying() {
+    void activeNavigationReobservationWaitsWithNeutralInput() {
         var port = new FakePort();
         var manager = manager(port);
         var id = manager.startSemanticAction(
                 UUID.randomUUID().toString(), navigateRequest(), 10).routineId();
         runToDispatch(manager, port);
 
-        port.routeReason = SemanticActionFrame.PROBE_VISIBILITY_GRACE;
+        port.routeReason = SemanticActionFrame.ROUTE_REOBSERVATION_WAIT;
         advance(manager, port);
 
         var paused = manager.getRoutine(id, 0, 32);
-        assertThat(paused.phase()).isEqualTo("move");
+        assertThat(paused.phase()).isEqualTo("wait_route_clear");
+        assertThat(paused.waitState().reason()).isEqualTo("route_reobservation");
         assertThat(port.maintainCount).isEqualTo(1);
         assertThat(port.stopCount).isZero();
         assertThat(port.releaseCount).isZero();
     }
 
     @Test
-    void navigationInsideToleranceStopsInsteadOfWaitingForVisibilityGrace() {
+    void navigationInsideToleranceStopsInsteadOfWaitingForRouteReobservation() {
         var port = new FakePort();
         var request = navigateRequest();
         var manager = manager(port);
@@ -299,7 +301,7 @@ class SemanticActionRoutineTest {
         port.playerX = request.target().x() + 0.5D;
         port.playerY = request.target().y();
         port.playerZ = request.target().z() + 0.5D;
-        port.routeReason = SemanticActionFrame.PROBE_VISIBILITY_GRACE;
+        port.routeReason = SemanticActionFrame.ROUTE_REOBSERVATION_WAIT;
 
         advance(manager, port);
 
@@ -310,29 +312,62 @@ class SemanticActionRoutineTest {
     }
 
     @Test
-    void activeNavigationFailsAfterTheBoundedVisibilityGrace() {
+    void routeReobservationUsesThreeFiniteWindowsThenFailsWithReplan() {
         var port = new FakePort();
         var manager = manager(port);
         var id = manager.startSemanticAction(
                 UUID.randomUUID().toString(), navigateRequest(), 10).routineId();
         runToDispatch(manager, port);
 
-        port.routeReason = SemanticActionFrame.PROBE_VISIBILITY_GRACE;
-        for (int tick = 0; tick < MinecraftSemanticActionPort.MAX_PROBE_VISIBILITY_GRACE_TICKS; tick++) {
-            advance(manager, port);
+        for (int attempt = 0; attempt <= AbstractSemanticRoutine.MAX_RETRIES; attempt++) {
+            port.routeSafe = true;
+            port.routeReason = SemanticActionFrame.ROUTE_REOBSERVATION_WAIT;
+            advance(manager, port); // move -> bounded wait
+            for (int tick = 0; tick < NavigateRoutine.MAX_ROUTE_WAIT_TICKS; tick++) {
+                advance(manager, port);
+            }
+            if (attempt < AbstractSemanticRoutine.MAX_RETRIES) {
+                assertThat(manager.getRoutine(id, 0, 32).phase())
+                        .isEqualTo("retry_fresh_observation");
+                port.routeSafe = false;
+                port.routeReason = SemanticActionFrame.PROBE_NOT_CURRENTLY_VISIBLE;
+                advance(manager, port); // retry -> precheck
+                advance(manager, port); // precheck -> execute scan
+                advance(manager, port); // execute -> move
+            }
         }
-        assertThat(manager.getRoutine(id, 0, 32).phase()).isEqualTo("move");
-        assertThat(port.releaseCount).isZero();
-
-        port.routeSafe = false;
-        port.routeReason = "probe_not_currently_visible";
-        advance(manager, port);
 
         var failed = manager.getRoutine(id, 0, 32);
-        assertThat(failed.failure().code()).isEqualTo("ROUTE_BECAME_UNSAFE");
-        assertThat(failed.failure().evidence())
-                .containsEntry("route_check_reason", "probe_not_currently_visible");
-        assertThat(port.releaseCount).isOne();
+        assertThat(failed.state()).isEqualTo(RoutineState.FAILED);
+        assertThat(failed.failure().code()).isEqualTo("ROUTE_REOBSERVATION_EXHAUSTED");
+        assertThat(failed.failure().recovery()).isEqualTo(RoutineFailure.Recovery.REPLAN);
+        assertThat(port.dispatchCount).isEqualTo(3);
+        assertThat(port.releaseCount).isEqualTo(3);
+    }
+
+    @Test
+    void visibleRouteOccupantWaitsNeutrallyThenMovementResumes() {
+        var port = new FakePort();
+        var manager = manager(port);
+        var id = manager.startSemanticAction(
+                UUID.randomUUID().toString(), navigateRequest(), 10).routineId();
+        runToDispatch(manager, port);
+
+        port.routeReason = SemanticActionFrame.ROUTE_OCCUPANCY_WAIT;
+        advance(manager, port);
+        for (int tick = 0; tick < 5; tick++) {
+            advance(manager, port);
+        }
+        var waiting = manager.getRoutine(id, 0, 32);
+        assertThat(waiting.phase()).isEqualTo("wait_route_clear");
+        assertThat(waiting.waitState().reason()).isEqualTo("route_occupancy");
+        assertThat(port.stopCount).isZero();
+        assertThat(port.releaseCount).isZero();
+
+        port.routeReason = "safe";
+        advance(manager, port);
+        assertThat(manager.getRoutine(id, 0, 32).phase()).isEqualTo("move");
+        assertThat(port.releaseCount).isZero();
     }
 
     @Test
@@ -355,7 +390,25 @@ class SemanticActionRoutineTest {
     }
 
     @Test
-    void navigationVisibilityGraceInterruptsCompletedSettleBeforeVerification() {
+    void hostileThreatStopsNavigationImmediatelyWithoutWaitingOrRetrying() {
+        var port = new FakePort();
+        var manager = manager(port);
+        var id = manager.startSemanticAction(
+                UUID.randomUUID().toString(), navigateRequest(), 10).routineId();
+        runToDispatch(manager, port);
+
+        port.visibleThreatClear = false;
+        advance(manager, port);
+
+        var failed = manager.getRoutine(id, 0, 32);
+        assertThat(failed.failure().code()).isEqualTo("VISIBLE_THREAT");
+        assertThat(failed.failure().recovery()).isEqualTo(RoutineFailure.Recovery.USER);
+        assertThat(port.maintainCount).isZero();
+        assertThat(port.releaseCount).isOne();
+    }
+
+    @Test
+    void navigationReobservationInterruptsCompletedSettleBeforeVerification() {
         var port = new FakePort();
         var request = navigateRequest();
         var manager = manager(port);
@@ -372,10 +425,10 @@ class SemanticActionRoutineTest {
         }
         assertThat(manager.getRoutine(id, 0, 32).phase()).isEqualTo("verify");
 
-        port.routeReason = SemanticActionFrame.PROBE_VISIBILITY_GRACE;
+        port.routeReason = SemanticActionFrame.ROUTE_REOBSERVATION_WAIT;
         advance(manager, port);
 
-        assertThat(manager.getRoutine(id, 0, 32).phase()).isEqualTo("settle");
+        assertThat(manager.getRoutine(id, 0, 32).phase()).isEqualTo("wait_route_clear");
         assertThat(port.releaseCount).isZero();
         port.routeReason = "safe";
         advance(manager, port);
@@ -383,7 +436,7 @@ class SemanticActionRoutineTest {
     }
 
     @Test
-    void stationaryNavigationDriftReturnsThroughLiveRoutePrecheckBeforeRedispatch() {
+    void stationaryNavigationDriftCanRedispatchANeutralVisibilityScan() {
         var port = new FakePort();
         var request = navigateRequest();
         var manager = manager(port);
@@ -405,11 +458,11 @@ class SemanticActionRoutineTest {
         advance(manager, port); // later tick -> precheck
         port.routeSafe = false;
         port.routeReason = "probe_not_currently_visible";
-        advance(manager, port); // fresh precheck must fail before a second dispatch
+        advance(manager, port); // fresh precheck authorizes only a visibility scan
+        advance(manager, port); // second neutral dispatch
 
-        var failed = manager.getRoutine(id, 0, 32);
-        assertThat(failed.failure().code()).isEqualTo("ROUTE_NOT_SAFE");
-        assertThat(port.dispatchCount).isOne();
+        assertThat(manager.getRoutine(id, 0, 32).phase()).isEqualTo("move");
+        assertThat(port.dispatchCount).isEqualTo(2);
     }
 
     @Test
@@ -791,6 +844,8 @@ class SemanticActionRoutineTest {
         private double playerY = 64.0D;
         private double playerZ = 0.5D;
         private double horizontalVelocitySquared;
+        private boolean healthSafe = true;
+        private boolean visibleThreatClear = true;
         private boolean routeSafe = true;
         private String routeReason = "safe";
         private long positionCorrectionRevision;
@@ -813,7 +868,7 @@ class SemanticActionRoutineTest {
             return new SemanticActionFrame(
                     clientTick,
                     observationRevision,
-                    true, true, true, true, true, true,
+                    true, true, true, healthSafe, visibleThreatClear, true,
                     blockState,
                     blockInReach,
                     true,

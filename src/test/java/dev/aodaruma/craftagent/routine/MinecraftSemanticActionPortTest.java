@@ -82,25 +82,16 @@ class MinecraftSemanticActionPortTest {
     }
 
     @Test
-    void navigationVisibilityGraceIsTickIdempotentBoundedAndResettable() {
-        var grace = new MinecraftSemanticActionPort.ProbeVisibilityGrace();
-
-        assertThat(grace.allow(100)).isTrue();
-        assertThat(grace.allow(100)).isTrue();
-        assertThat(grace.holds(100)).isTrue();
-        assertThat(grace.allow(101)).isTrue();
-        assertThat(grace.allow(102)).isTrue();
-        assertThat(grace.allow(103)).isFalse();
-        assertThat(grace.allow(103)).isFalse();
-        assertThat(grace.holds(103)).isFalse();
-
-        grace.reset();
-        assertThat(grace.holds(103)).isFalse();
-        assertThat(grace.allow(104)).isTrue();
-
-        grace.reset();
-        assertThat(grace.allow(200)).isTrue();
-        assertThat(grace.allow(203)).isFalse();
+    void navigationWaitReasonsSeparateReobservationAndVisibleOccupancy() {
+        assertThat(frame(true, SemanticActionFrame.ROUTE_REOBSERVATION_WAIT)
+                .routeTransientWait()).isTrue();
+        assertThat(frame(true, SemanticActionFrame.ROUTE_REOBSERVATION_WAIT)
+                .routeNeedsReobservation()).isTrue();
+        assertThat(frame(true, SemanticActionFrame.ROUTE_OCCUPANCY_WAIT)
+                .routeTemporarilyOccupied()).isTrue();
+        assertThat(frame(false, SemanticActionFrame.PROBE_NOT_CURRENTLY_VISIBLE)
+                .routeTransientWait()).isFalse();
+        assertThat(frame(false, "feet_hazard").routeNeedsReobservation()).isFalse();
     }
 
     @Test
@@ -229,5 +220,14 @@ class MinecraftSemanticActionPortTest {
                 new BlockStateFingerprint("minecraft:lever", expectedBefore),
                 new BlockStateFingerprint("minecraft:lever", expectedAfter),
                 new ActionBounds(target.dimension(), target, target, 0, 30, false));
+    }
+
+    private static SemanticActionFrame frame(boolean routeSafe, String routeReason) {
+        return new SemanticActionFrame(
+                1, 1, true, true, true, true, true, true,
+                java.util.Optional.empty(), false, false,
+                false, java.util.Optional.empty(), false, false, false, false,
+                0, true, 0.5D, 64.0D, 0.5D, 0.0D, true,
+                routeSafe, routeReason, 0, true);
     }
 }

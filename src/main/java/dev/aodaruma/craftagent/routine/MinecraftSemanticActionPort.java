@@ -41,6 +41,7 @@ import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 import java.time.Duration;
@@ -66,8 +67,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
     private static final int STUCK_TICKS = 20;
     private static final double PROGRESS_EPSILON = 0.05D;
     private static final double ROUTE_SURFACE_EPSILON = 1.0e-4D;
-    private static final String PROBE_NOT_CURRENTLY_VISIBLE = "probe_not_currently_visible";
-    static final int MAX_PROBE_VISIBILITY_GRACE_TICKS = 3;
+    private static final float NAVIGATION_SCAN_PITCH_DEGREES = 40.0F;
     private static final Set<net.minecraft.world.level.block.Block> WOODEN_TRAPDOORS = Set.of(
             Blocks.OAK_TRAPDOOR, Blocks.SPRUCE_TRAPDOOR, Blocks.BIRCH_TRAPDOOR,
             Blocks.JUNGLE_TRAPDOOR, Blocks.ACACIA_TRAPDOOR, Blocks.CHERRY_TRAPDOOR,
@@ -147,8 +147,13 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         }
 
         var baseline = baselines.computeIfAbsent(request, ignored -> Baseline.capture(player));
+        var activeNavigation = request instanceof NavigateToRequest
+                ? activeAttempt(request).orElse(null) : null;
         boolean stationary = request instanceof NavigateToRequest
-                ? baseline.rotationAndSlotMatch(player)
+                ? activeNavigation == null
+                        ? baseline.rotationAndSlotMatch(player)
+                        : activeNavigation.navigationView != null
+                                && activeNavigation.navigationView.matches(activeNavigation.attemptId)
                 : baseline.matches(player);
         boolean focused = minecraft.isWindowActive()
                 && minecraft.mouseHandler.isMouseGrabbed()
@@ -217,40 +222,30 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             crosshairEntity = entity.filter(value -> minecraft.hitResult instanceof EntityHitResult hit
                     && hit.getType() == HitResult.Type.ENTITY && hit.getEntity() == value).isPresent();
         } else if (request instanceof NavigateToRequest navigation) {
-            var active = activeAttempt(request).orElse(null);
+            var active = activeNavigation;
             if (active != null && active.failure != null) {
-                active.probeVisibilityGrace.reset();
                 routeSafe = false;
                 routeCheckReason = "active_attempt_failed";
             } else if (active != null && active.inputStopped) {
                 // Once input ownership is closed there is no future cell to authorize. Settle
                 // uses live player/reconciliation facts; any later drift releases this attempt
                 // and returns through PRECHECK before movement can be acquired again.
-                active.probeVisibilityGrace.reset();
                 routeSafe = true;
                 routeCheckReason = SemanticActionFrame.STATIONARY_NAVIGATION;
             } else {
                 var route = routeCheck(
                         minecraft, level, player, navigation, baseline, session.clientTick());
-                // The renderer/frustum can trail a moving player for one tick. Only an
-                // already-active navigation may bridge that transient gap, and it does so with
-                // neutral input; raw route states still require all three cells to be CURRENT.
                 if (route.safe()) {
-                    if (active != null && active.probeVisibilityGrace.holds(session.clientTick())) {
-                        routeCheckReason = SemanticActionFrame.PROBE_VISIBILITY_GRACE;
-                    } else {
-                        if (active != null) active.probeVisibilityGrace.reset();
-                        routeCheckReason = route.reason();
-                    }
+                    routeCheckReason = route.reason();
                 } else if (active != null
-                        && PROBE_NOT_CURRENTLY_VISIBLE.equals(route.reason())
-                        && active.probeVisibilityGrace.allow(session.clientTick())) {
+                        && SemanticActionFrame.PROBE_NOT_CURRENTLY_VISIBLE.equals(route.reason())) {
                     routeSafe = true;
-                    routeCheckReason = SemanticActionFrame.PROBE_VISIBILITY_GRACE;
+                    routeCheckReason = SemanticActionFrame.ROUTE_REOBSERVATION_WAIT;
+                } else if (active != null
+                        && SemanticActionFrame.VISIBLE_ROUTE_OCCUPIED.equals(route.reason())) {
+                    routeSafe = true;
+                    routeCheckReason = SemanticActionFrame.ROUTE_OCCUPANCY_WAIT;
                 } else {
-                    if (active != null && !PROBE_NOT_CURRENTLY_VISIBLE.equals(route.reason())) {
-                        active.probeVisibilityGrace.reset();
-                    }
                     routeSafe = false;
                     routeCheckReason = route.reason();
                 }
@@ -287,13 +282,16 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         var attempt = new SemanticActionAttempt(
                 attemptId, request.kind(), frame.clientTick(), frame.observationRevision(),
                 leaseExpiresAtClientTick, recon.positionCorrectionRevision(), dispatchBasis);
-        var active = new ActiveAttempt(request, recon, frame.clientTick(), distanceToTarget(request, frame));
+        var active = new ActiveAttempt(
+                attemptId, request, recon, frame.clientTick(), distanceToTarget(request, frame));
 
         try {
             if (request instanceof NavigateToRequest) {
                 active.movementLease = MovementInputLease.acquire(
                         minecraft, attemptId, System.nanoTime(),
                         leaseHorizon(frame.clientTick(), leaseExpiresAtClientTick));
+                active.navigationView = NavigationViewLease.acquire(
+                        Objects.requireNonNull(minecraft.player), attemptId);
             } else if (request instanceof BreakBlockRequest block) {
                 var prediction = predictions.begin(minecraft.level, blockPos(block.target()), frame.clientTick());
                 prediction.sequenceBeforePrediction();
@@ -438,9 +436,11 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
     @Override
     public void release(SemanticActionAttempt attempt) {
         assertClientThread();
-        var active = activeAttempts.remove(Objects.requireNonNull(attempt, "attempt"));
+        Objects.requireNonNull(attempt, "attempt");
+        var active = activeAttempts.get(attempt);
         if (active != null) {
             closeActive(active, null);
+            activeAttempts.remove(attempt, active);
         }
     }
 
@@ -453,9 +453,9 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             if (entry.getValue().request != request) {
                 continue;
             }
-            activeAttempts.remove(entry.getKey());
             try {
                 closeActive(entry.getValue(), null);
+                activeAttempts.remove(entry.getKey(), entry.getValue());
             } catch (RuntimeException failure) {
                 if (releaseFailure == null) releaseFailure = failure;
                 else releaseFailure.addSuppressed(failure);
@@ -639,19 +639,22 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         var recon = reconciliations.bindAndSnapshot(
                 Objects.requireNonNull(requireMinecraft().level), requireSession().worldSessionId());
         detectReconciliationFailure(active, recon);
-        if (active.failure != null || !frame.routeSafe()) {
+        if (active.failure != null) {
+            stopInput(attempt);
+            return;
+        }
+        if (frame.routeTransientWait()) {
+            active.settleTicks = 0;
+            turnNavigationView(active, request, frame);
+            heartbeatMovement(attempt, active, frame, Set.of());
+            return;
+        }
+        if (!frame.routeSafe()) {
             if (active.failure == null) {
                 active.failure = failure("ROUTE_UNSAFE", RoutineFailure.Category.SAFETY,
                         false, RoutineFailure.Recovery.REPLAN, Map.of(), frameBasis(frame));
             }
             stopInput(attempt);
-            return;
-        }
-        if (frame.routeVisibilityGrace()) {
-            active.settleTicks = 0;
-            if (!active.inputStopped) {
-                heartbeatMovement(attempt, active, frame, Set.of());
-            }
             return;
         }
         double distance = horizontalDistance(frame.playerX(), frame.playerZ(), request.target());
@@ -670,6 +673,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         if (active.inputStopped) {
             return;
         }
+        turnNavigationView(active, request, frame);
         if (!heartbeatMovement(attempt, active, frame, steering(
                 frame.playerX(), frame.playerZ(), requireMinecraft().player.getYRot(), request.target()))) {
             return;
@@ -679,10 +683,25 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             active.lastProgressTick = frame.clientTick();
         } else if (frame.clientTick() - active.lastProgressTick >= STUCK_TICKS) {
             active.failure = failure("NAVIGATION_STUCK", RoutineFailure.Category.TRANSIENT,
-                    false, RoutineFailure.Recovery.REPLAN, Map.of(), frameBasis(frame));
+                    true, RoutineFailure.Recovery.RETRY, Map.of(), frameBasis(frame));
             stopInput(attempt);
             return;
         }
+    }
+
+    private void turnNavigationView(
+            ActiveAttempt active, NavigateToRequest request, SemanticActionFrame frame) {
+        if (active.navigationView == null) {
+            throw new IllegalStateException("navigation view ownership is unavailable");
+        }
+        double dx = request.target().x() + 0.5D - frame.playerX();
+        double dz = request.target().z() + 0.5D - frame.playerZ();
+        if (dx * dx + dz * dz <= 1.0e-6D) {
+            return;
+        }
+        float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0D);
+        active.navigationView.turnToward(
+                active.attemptId, yaw, NAVIGATION_SCAN_PITCH_DEGREES);
     }
 
     private boolean heartbeatMovement(
@@ -726,7 +745,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         } else if (active.request instanceof NavigateToRequest
                 && current.motionRevision() > before.motionRevision()) {
             active.failure = failure("SERVER_MOTION_APPLIED", RoutineFailure.Category.SAFETY,
-                    false, RoutineFailure.Recovery.REPLAN, Map.of(), Map.of(
+                    true, RoutineFailure.Recovery.RETRY, Map.of(), Map.of(
                             "revision", current.motionRevision()));
         }
     }
@@ -737,7 +756,9 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             throw new IllegalStateException("semantic action universal preconditions are not satisfied");
         }
         if (request instanceof NavigateToRequest) {
-            if (!frame.routeSafe()) throw new IllegalStateException("navigation route is unsafe");
+            if (!frame.routeSafe() && !frame.routeNeedsReobservation()) {
+                throw new IllegalStateException("navigation route is unsafe");
+            }
         } else if (request instanceof BreakBlockRequest block) {
             if (!"minecraft:air".equals(block.expectedAfter().blockId())
                     || !frame.crosshairOnBlock() || !frame.blockInReach()) {
@@ -914,7 +935,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         var routeCells = observations.observeBlocks(
                 minecraft, clientTick, List.of(feet, head, floor), BlockSource.LIVE);
         if (!routeCellsCurrentlyVisible(routeCells)) {
-            return RouteCheck.unsafe(PROBE_NOT_CURRENTLY_VISIBLE);
+            return RouteCheck.unsafe(SemanticActionFrame.PROBE_NOT_CURRENTLY_VISIBLE);
         }
         BlockState feetState = level.getBlockState(feet);
         BlockState headState = level.getBlockState(head);
@@ -929,6 +950,15 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         }
         if (!floorState.isFaceSturdy(level, floor, Direction.UP)) {
             return RouteCheck.unsafe("floor_not_sturdy");
+        }
+        var nextStand = player.getBoundingBox().move(dx * scale, 0.0D, dz * scale).inflate(0.05D);
+        boolean occupied = level.getEntities(player, nextStand, entity -> entity.isAlive()
+                        && !entity.isSpectator()
+                        && (entity instanceof Mob || entity instanceof Player))
+                .stream().anyMatch(entity -> observations.isEntityCurrentlyVisible(
+                        minecraft, entity, THREAT_RADIUS));
+        if (occupied) {
+            return RouteCheck.unsafe(SemanticActionFrame.VISIBLE_ROUTE_OCCUPIED);
         }
         return RouteCheck.clear();
     }
@@ -1009,6 +1039,13 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         }
         try {
             if (active.movementLease != null) active.movementLease.close();
+        } catch (RuntimeException | LinkageError closeFailure) {
+            failure = append(failure, closeFailure);
+        }
+        try {
+            if (active.navigationView != null) {
+                active.navigationView.close(active.attemptId);
+            }
         } catch (RuntimeException | LinkageError closeFailure) {
             failure = append(failure, closeFailure);
         }
@@ -1210,35 +1247,6 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         }
     }
 
-    static final class ProbeVisibilityGrace {
-        private int consecutiveMissTicks;
-        private long lastMissTick = Long.MIN_VALUE;
-
-        boolean allow(long clientTick) {
-            if (clientTick < 0) throw new IllegalArgumentException("clientTick must be non-negative");
-            if (clientTick != lastMissTick) {
-                long elapsedTicks = lastMissTick == Long.MIN_VALUE
-                        ? 1 : Math.max(1, clientTick - lastMissTick);
-                consecutiveMissTicks = (int) Math.min(
-                        MAX_PROBE_VISIBILITY_GRACE_TICKS + 1L,
-                        consecutiveMissTicks + elapsedTicks);
-                lastMissTick = clientTick;
-            }
-            return consecutiveMissTicks <= MAX_PROBE_VISIBILITY_GRACE_TICKS;
-        }
-
-        boolean holds(long clientTick) {
-            return consecutiveMissTicks > 0
-                    && consecutiveMissTicks <= MAX_PROBE_VISIBILITY_GRACE_TICKS
-                    && lastMissTick == clientTick;
-        }
-
-        void reset() {
-            consecutiveMissTicks = 0;
-            lastMissTick = Long.MIN_VALUE;
-        }
-    }
-
     private record Baseline(
             double x, double y, double z, float yaw, float pitch, int selectedSlot, float health) {
         static Baseline capture(LocalPlayer player) {
@@ -1262,14 +1270,15 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
     }
 
     private static final class ActiveAttempt {
+        private final UUID attemptId;
         private final SemanticActionRequest request;
         private final ClientReconciliationSignals.Snapshot reconciliationAtDispatch;
-        private final ProbeVisibilityGrace probeVisibilityGrace = new ProbeVisibilityGrace();
         private long lastProgressTick;
         private double bestDistance;
         private ClientPredictionSignals.PredictionAttempt prediction;
         private AttackInputLease attackLease;
         private MovementInputLease movementLease;
+        private NavigationViewLease navigationView;
         private BlockStateFingerprint expectedServerState;
         private RoutineFailure failure;
         private boolean inputStopped;
@@ -1278,10 +1287,12 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         private int settleTicks;
 
         private ActiveAttempt(
+                UUID attemptId,
                 SemanticActionRequest request,
                 ClientReconciliationSignals.Snapshot reconciliationAtDispatch,
                 long issuedTick,
                 double initialDistance) {
+            this.attemptId = Objects.requireNonNull(attemptId, "attemptId");
             this.request = request;
             this.reconciliationAtDispatch = reconciliationAtDispatch;
             this.lastProgressTick = issuedTick;

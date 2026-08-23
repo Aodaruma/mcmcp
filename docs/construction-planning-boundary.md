@@ -149,9 +149,9 @@ captureは`start / status`による非同期jobです。MCP応答は`job_id`、�
 
 ### Creative操作の現在境界
 
-Creative v1で新しく公開するのはworld-read-only captureです。gzipファイルを作るためMCP annotationは`readOnlyHint=false / destructiveHint=false`ですが、直接`setBlock`、command、任意packet、任意NBT、任意summon/kill/teleportは公開しません。
+Creative操作はcaptureと分離した`edit_creative_world` capabilityです。任意command文字列は受けず、完全BlockStateの`set_block / fill`、固定allowlist・最大16体の`summon_entities`、明示head指定の`undo / redo`だけを公開します。blockは各辺64・最大4,096 cell、現在load済みchunk限定で、BlockEntity、流体、多cell block、TNT/fireをbefore/afterとも拒否します。履歴は現在world sessionのmemory内に最大32件・30分保持し、外部変更との不一致は`divergence`として停止します。
 
-blockやEntityの能動操作は、既存の通常interaction経路をCreativeでも安全に再利用できることを別gateで確認してから追加します。特に、Creative inventoryからのitem準備、instant breakのACK、Entityの再生成契約を同時に一般化しません。この段階分けにより、Creative captureをSurvival側の権限拡張にしないことを優先します。
+Entity undoは生成時UUIDだけを削除し、redoは記録したtype/poseから再生成します。任意NBT、selector、player、kill、既存Entityのteleport/deleteは対象外です。`gamerule / ban / kick / op / stop`を含むsystem command、Creative inventoryからのitem準備、clone、任意commandは公開しません。この閉じたtoolはSurvival capabilityへ追加されません。
 
 ## 設計図画像
 
@@ -191,11 +191,13 @@ runnerは次を固定します。
 
 最初のgateは意図的に小さくします。10×10床や2層小屋へ先に一般化せず、次を1回のrunner起動で確認します。
 
-1. 1つの安全な開始poseから、片側の2段cobblestone柱を施工
-2. 同じposeから反対側の2段柱を施工
+1. 開始poseから1つ目のwork poseへ通常移動し、2段cobblestone柱を施工
+2. 2つ目のwork poseへ通常移動し、反対側の2段柱を施工
 3. 最後だけgoalをfinishし、全4セルをcurrent exactで確認
 
-fixtureは`build_runner` modeで、air→cobblestone 4セル、材料8個、1つのposeから届く2地点を固定します。各柱はbase→topの順に並ぶ2-cell phaseとし、合計2 apply phaseで実行します。これは一般dependency graphや不安定な移動付き施工を作る前に、必要最小限の順序をmanifestへ明示した例です。
+`navigate_to`は直線方向の次cellだけを逐次検査します。次のfeet/head/floorがfirst-person viewでCURRENTになるまでmovement keyをneutralにし、視線を1 tick最大8度だけ回して再観測します。可視なmob/playerが次cellを占有した場合もneutralで待ちます。各windowは40 client tick、再dispatchは最大2回で、解消しなければ入力と視線を復元してREPLANへ停止します。危険block、敵対mob、被ダメージはこの待機対象ではありません。
+
+fixtureは`build_runner` modeで、air→cobblestone 4セル、材料8個、2つのwork poseを固定します。1本目の完成後、tag付きNoAI cowが2本目へのlaneを20 server tickだけ塞ぎ、有限待機からの回復を確認します。他playerも同じ可視occupant判定を通りますが、private singleplayer fixtureでは未検証です。一般path findingや迂回はまだ実装せず、障害が残る場合は同じ有限routeを再観測して停止します。
 
 次の拡張は、この小gateがliveで安定してから行います。
 

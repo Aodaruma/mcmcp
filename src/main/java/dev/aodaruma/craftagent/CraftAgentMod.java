@@ -1,6 +1,7 @@
 package dev.aodaruma.craftagent;
 
 import com.mojang.logging.LogUtils;
+import dev.aodaruma.craftagent.client.AutomationIndicatorController;
 import dev.aodaruma.craftagent.client.CraftAgentKeyBindings;
 import dev.aodaruma.craftagent.runtime.CraftAgentRuntime;
 import dev.aodaruma.craftagent.runtime.McpServerController;
@@ -37,6 +38,7 @@ public final class CraftAgentMod {
 
     private final CraftAgentRuntime runtime;
     private final McpServerController mcpServer;
+    private final AutomationIndicatorController automationIndicator;
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
     private final CraftAgentKeyBindings keys = new CraftAgentKeyBindings();
 
@@ -44,6 +46,7 @@ public final class CraftAgentMod {
         var modVersion = modContainer.getModInfo().getVersion().toString();
         runtime = new CraftAgentRuntime(modVersion, NEOFORGE_VERSION);
         mcpServer = new McpServerController(runtime, modVersion);
+        automationIndicator = new AutomationIndicatorController(runtime);
         screenOwnership.setFailureHandler(runtime::onManualInput);
 
         modEventBus.addListener(keys::register);
@@ -62,6 +65,8 @@ public final class CraftAgentMod {
         eventBus.addListener(this::onMouseScrollInput);
         eventBus.addListener(this::onScreenOpening);
         eventBus.addListener(this::onScreenClosing);
+        eventBus.addListener(automationIndicator::onScreenInit);
+        eventBus.addListener(automationIndicator::onHudRender);
         eventBus.addListener(this::onClientStopping);
         eventBus.addListener(this::onClientStopped);
         eventBus.addListener(this::onServerPostTick);

@@ -2,5 +2,12 @@
   "key.categories.craftagent": "CraftAgent",
   "key.categories.craftagent.controls": "CraftAgent",
   "key.craftagent.emergency_stop": "緊急停止",
-  "key.craftagent.toggle_lock": "ローカル解除を切り替え"
+  "key.craftagent.toggle_lock": "ローカル解除を切り替え",
+  "gui.craftagent.automation.active": "自動操作中",
+  "gui.craftagent.automation.idle": "許可済み・待機中",
+  "gui.craftagent.automation.disabled": "MCP操作 無効",
+  "gui.craftagent.automation.confirm_enable": "再許可を確認",
+  "gui.craftagent.automation.tooltip.disable": "クリックすると自動操作を停止し、このワールドでMCP操作を無効にします",
+  "gui.craftagent.automation.tooltip.enable": "再許可するにはクリック後、5秒以内にもう一度クリックします",
+  "gui.craftagent.automation.tooltip.confirm_enable": "もう一度クリックするとMCP操作を15分間再許可します"
 }

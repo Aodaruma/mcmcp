@@ -74,6 +74,73 @@ public final class McpToolSchemas {
         return result;
     }
 
+    static Map<String, Object> creativeWorldEditInput() {
+        Map<String, Object> region = closedObject(fields(
+                "dimension", registryId(),
+                "min", blockPosition(),
+                "max", blockPosition()), "dimension", "min", "max");
+        Map<String, Object> entityPosition = closedObject(fields(
+                "x", number(-30_000_000, 29_999_999),
+                "y", number(-2_048, 2_047),
+                "z", number(-30_000_000, 29_999_999)), "x", "y", "z");
+        Map<String, Object> entity = closedObject(fields(
+                "type", enumString(
+                        "minecraft:armor_stand", "minecraft:chicken", "minecraft:cow",
+                        "minecraft:iron_golem", "minecraft:pig", "minecraft:sheep",
+                        "minecraft:villager"),
+                "position", entityPosition,
+                "yaw", number(-180, 180),
+                "pitch", number(-90, 90)), "type", "position", "yaw", "pitch");
+
+        Map<String, Object> setBlock = closedObject(fields(
+                "operation", constant("set_block"),
+                "position", dimensionBlockPosition(),
+                "state", fullBlockState(),
+                "idempotency_key", uuid()),
+                "operation", "position", "state", "idempotency_key");
+        Map<String, Object> fill = closedObject(fields(
+                "operation", constant("fill"),
+                "region", region,
+                "state", fullBlockState(),
+                "idempotency_key", uuid()),
+                "operation", "region", "state", "idempotency_key");
+        Map<String, Object> summon = closedObject(fields(
+                "operation", constant("summon_entities"),
+                "dimension", registryId(),
+                "entities", array(entity, 1, 16),
+                "idempotency_key", uuid()),
+                "operation", "dimension", "entities", "idempotency_key");
+        Map<String, Object> undo = closedObject(fields(
+                "operation", constant("undo"),
+                "expected_transaction_id", uuid(),
+                "idempotency_key", uuid()),
+                "operation", "expected_transaction_id", "idempotency_key");
+        Map<String, Object> redo = closedObject(fields(
+                "operation", constant("redo"),
+                "expected_transaction_id", uuid(),
+                "idempotency_key", uuid()),
+                "operation", "expected_transaction_id", "idempotency_key");
+        Map<String, Object> status = closedObject(fields(
+                "operation", constant("status"),
+                "job_id", uuid()), "operation", "job_id");
+        Map<String, Object> history = closedObject(fields(
+                "operation", constant("history")), "operation");
+
+        Map<String, Object> result = closedObject(fields(
+                "operation", enumString(
+                        "set_block", "fill", "summon_entities", "undo", "redo", "status", "history"),
+                "position", dimensionBlockPosition(),
+                "region", region,
+                "state", fullBlockState(),
+                "dimension", registryId(),
+                "entities", array(entity, 1, 16),
+                "expected_transaction_id", uuid(),
+                "idempotency_key", uuid(),
+                "job_id", uuid()), "operation");
+        result.put("oneOf", List.of(setBlock, fill, summon, undo, redo, status, history));
+        return result;
+    }
+
     static Map<String, Object> compareInput() {
         Map<String, Object> anchor = closedObject(fields(
                 "dimension", registryId(),
@@ -762,6 +829,41 @@ public final class McpToolSchemas {
         return envelope("capture_creative_region", data);
     }
 
+    static Map<String, Object> creativeWorldEditOutput() {
+        Map<String, Object> history = closedObject(fields(
+                "can_undo", schema("type", "boolean"),
+                "can_redo", schema("type", "boolean"),
+                "undo_depth", integer(0, 32),
+                "redo_depth", integer(0, 32),
+                "undo_transaction_id", nullable(uuid()),
+                "redo_transaction_id", nullable(uuid()),
+                "history_ttl_seconds", constant(1_800L)),
+                "can_undo", "can_redo", "undo_depth", "redo_depth",
+                "undo_transaction_id", "redo_transaction_id", "history_ttl_seconds");
+        Map<String, Object> editError = nullable(closedObject(fields(
+                "code", string(1, 64, "^[a-z][a-z0-9_]{0,63}$"),
+                "message", string(1, 160, null)), "code", "message"));
+        Map<String, Object> job = closedObject(fields(
+                "response", constant("job"),
+                "job_id", uuid(),
+                "operation", enumString("set_block", "fill", "summon_entities", "undo", "redo"),
+                "state", enumString("queued", "succeeded", "failed", "cancelled"),
+                "idempotent_replay", schema("type", "boolean"),
+                "started_client_tick", integer(0, Long.MAX_VALUE),
+                "requested_changes", integer(1, 4_096),
+                "applied_changes", integer(0, 4_096),
+                "transaction_id", nullable(uuid()),
+                "history", history,
+                "error", editError),
+                "response", "job_id", "operation", "state", "idempotent_replay",
+                "started_client_tick", "requested_changes", "applied_changes",
+                "transaction_id", "history", "error");
+        Map<String, Object> historyResponse = closedObject(fields(
+                "response", constant("history"),
+                "history", history), "response", "history");
+        return envelope("edit_creative_world", schema("oneOf", List.of(job, historyResponse)));
+    }
+
     static Map<String, Object> compareOutput() {
         Map<String, Object> basis = closedObject(fields(
                 "world_session_id", string(1, 96, null),
@@ -987,6 +1089,7 @@ public final class McpToolSchemas {
         Map<String, Object> wait = nullable(closedObject(fields(
                 "reason", enumString(
                         "target_regeneration", "server_sync", "movement_settle",
+                        "route_reobservation", "route_occupancy",
                         "bounded_preparation", "server_world_diff", "fresh_plan_observation",
                         "plan_progress", "server_terminal_evidence"),
                 "deadline_client_tick", integer(0, Long.MAX_VALUE),

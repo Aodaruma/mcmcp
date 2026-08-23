@@ -42,6 +42,7 @@ final class FixturePhase3Scenario {
 
     static void prepare(FixtureSecurity.Context context, Mode mode, Consumer<Component> output) {
         FixturePhase2Scenario.stop();
+        FixturePhase4RouteBlocker.stop();
         FixtureArena.requireInitialized(context.level());
         discardFixtureCows(context.level());
         applyLayout(context.level(), mode);

@@ -42,6 +42,21 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 
 class CraftAgentRuntimeHardeningTest {
     @Test
+    void creativeEditAndSurvivalRoutineAdmissionsAreMutuallyExclusive() {
+        var editThenRoutine = CraftAgentRuntime.mapFailure(catchThrowable(() ->
+                CraftAgentRuntime.requireNoConcurrentWorldMutation(true, false)));
+        var routineThenEdit = CraftAgentRuntime.mapFailure(catchThrowable(() ->
+                CraftAgentRuntime.requireNoConcurrentWorldMutation(false, true)));
+
+        assertThat(editThenRoutine.failure().code()).isEqualTo("busy");
+        assertThat(editThenRoutine.failure().retryable()).isTrue();
+        assertThat(routineThenEdit.failure().code()).isEqualTo("busy");
+        assertThat(routineThenEdit.failure().retryable()).isTrue();
+        assertThatCode(() -> CraftAgentRuntime.requireNoConcurrentWorldMutation(false, false))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     void localPriorityStopRequestsBeforeItDrainsSynchronously() {
         var calls = new ArrayList<String>();
 

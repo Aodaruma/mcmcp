@@ -60,8 +60,11 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
   required-current preflight fails closed. `phase4 reveal_hidden|conceal_hidden` opens or reseals
   its fixed west aperture without accepting arbitrary coordinates.
 - `/craftagent_fixture phase4 build_runner` — prepares two air-backed, two-block cobblestone
-  columns on opposite sides of one clear work pose. The player starts with all four cells in normal
-  reach and eight cobblestone selected in slot 1.
+  columns with separate work poses and eight cobblestone selected in slot 1. After the first column
+  becomes server-authoritative cobblestone, the fixture places one tagged NoAI cow on the second
+  route for exactly 20 server ticks, then removes it. This exercises neutral occupant wait and
+  recovery; another player uses the same production occupant check but is not covered by this
+  private-singleplayer fixture.
 
 The autorun-only `creative_capture` mode keeps the existing gallery layout, changes the owner to
 Creative, and places them more than 32 blocks from the fixed 1,024-cell capture region

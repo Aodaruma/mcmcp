@@ -32,7 +32,9 @@ final class FixturePhase4Scenario {
     static final BlockPos TARGET_C = ORIGIN.offset(4, 0, 1);
     static final BlockPos HIDDEN_TARGET = ORIGIN.offset(5, 1, 0);
     static final BlockPos HIDDEN_APERTURE = HIDDEN_TARGET.relative(Direction.WEST);
-    static final BlockPos BUILD_RUNNER_START_POSE = ORIGIN.offset(1, 0, 0);
+    static final BlockPos BUILD_RUNNER_START_POSE = ORIGIN;
+    static final BlockPos BUILD_RUNNER_FIRST_POSE = ORIGIN.offset(1, 0, -1);
+    static final BlockPos BUILD_RUNNER_SECOND_POSE = ORIGIN.offset(1, 0, 1);
     static final List<BlockPos> BUILD_RUNNER_FIRST_COLUMN = List.of(
             ORIGIN.offset(3, 0, -1), ORIGIN.offset(3, 1, -1));
     static final List<BlockPos> BUILD_RUNNER_SECOND_COLUMN = List.of(
@@ -50,6 +52,7 @@ final class FixturePhase4Scenario {
 
     static void prepare(FixtureSecurity.Context context, Mode mode, Consumer<Component> output) {
         FixturePhase2Scenario.stop();
+        FixturePhase4RouteBlocker.stop();
         FixturePhase3Scenario.stop(context);
         FixtureArena.requireInitialized(context.level());
         FixtureArena.resetPlayer(context.player());
@@ -61,6 +64,9 @@ final class FixturePhase4Scenario {
                 BUILD_RUNNER_START_POSE.getZ() + 0.5D,
                 PLAN_YAW_DEGREES,
                 mode == Mode.HIDDEN ? HIDDEN_PITCH_DEGREES : PLAN_PITCH_DEGREES);
+        if (mode == Mode.BUILD_RUNNER) {
+            FixturePhase4RouteBlocker.arm(context);
+        }
 
         output.accept(Component.literal("phase4.mode=" + mode.wireName
                 + " phase_id=" + mode.phaseId()
@@ -69,6 +75,9 @@ final class FixturePhase4Scenario {
                 + " selected_slot=" + mode.selectedSlot()
                 + (mode == Mode.BUILD_RUNNER
                         ? " cobblestone=" + BUILD_RUNNER_COBBLESTONE_COUNT
+                                + " poses=" + position(BUILD_RUNNER_FIRST_POSE)
+                                + ";" + position(BUILD_RUNNER_SECOND_POSE)
+                                + " blocker_ticks=" + FixturePhase4RouteBlocker.OCCUPANCY_TICKS
                         : "")));
     }
 
