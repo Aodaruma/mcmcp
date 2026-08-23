@@ -81,6 +81,7 @@ final class FixtureCommands {
                         .then(phase4("shortage", FixturePhase4Scenario.Mode.SHORTAGE))
                         .then(phase4("divergence", FixturePhase4Scenario.Mode.DIVERGENCE))
                         .then(phase4("hidden", FixturePhase4Scenario.Mode.HIDDEN))
+                        .then(phase4("build_runner", FixturePhase4Scenario.Mode.BUILD_RUNNER))
                         .then(Commands.literal("introduce_divergence")
                                 .executes(context -> execute(context.getSource(), (fixture, output) -> {
                                     FixturePhase4Scenario.introduceDivergence(fixture);

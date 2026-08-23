@@ -29,7 +29,8 @@ class CraftAgentToolRegistryTest {
         assertThat(tools).extracting(McpSchema.Tool::name)
                 .containsExactly(
                         "get_status", "get_snapshot", "compare_block_plan", "list_routines", "get_routine",
-                        "start_routine", "cancel_routine", "emergency_stop", "get_recipes");
+                        "start_routine", "cancel_routine", "emergency_stop", "get_recipes",
+                        "capture_creative_region");
         for (McpSchema.Tool tool : tools) {
             assertThat(tool.inputSchema()).containsEntry("additionalProperties", false);
             assertThat(tool.outputSchema()).containsEntry("additionalProperties", false);
@@ -41,12 +42,47 @@ class CraftAgentToolRegistryTest {
         assertThat(List.of(tools.get(0), tools.get(1), tools.get(2), tools.get(3), tools.get(4),
                 tools.get(8))).allSatisfy(tool ->
                 assertThat(tool.annotations().readOnlyHint()).isTrue());
-        assertThat(tools.subList(5, 8)).allSatisfy(tool ->
+        assertThat(List.of(tools.get(5), tools.get(6), tools.get(7), tools.get(9))).allSatisfy(tool ->
                 assertThat(tool.annotations().readOnlyHint()).isFalse());
         assertThat(tools.get(5).annotations().destructiveHint()).isTrue();
         assertThat(List.of(tools.get(0), tools.get(1), tools.get(2), tools.get(3), tools.get(4),
-                tools.get(6), tools.get(7), tools.get(8))).allSatisfy(tool ->
+                tools.get(6), tools.get(7), tools.get(8), tools.get(9))).allSatisfy(tool ->
                 assertThat(tool.annotations().destructiveHint()).isFalse());
+    }
+
+    @Test
+    void dispatchesOnlyTheClosedCreativeRegionCapture() {
+        AtomicReference<McpRuntimePort.RuntimeCommand> received = new AtomicReference<>();
+        CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
+            received.set(command);
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+        }, Duration.ofSeconds(1));
+        Map<String, Object> arguments = McpTestFixtures.fields(
+                "operation", "start",
+                "region", McpTestFixtures.fields(
+                        "dimension", "minecraft:overworld",
+                        "min", Map.of("x", 0, "y", 64, "z", 0),
+                        "max", Map.of("x", 7, "y", 71, "z", 7)),
+                "include_entities", true,
+                "idempotency_key", "3d7d9ed2-3bab-4a5a-a7aa-9b59b4f43243");
+
+        McpSchema.CallToolResult result = invoke(registry, "capture_creative_region", arguments);
+
+        assertThat(result.isError()).isFalse();
+        assertThat(received.get()).isInstanceOfSatisfying(
+                McpRuntimePort.CaptureCreativeRegion.class,
+                command -> assertThat(command.arguments()).isEqualTo(arguments));
+
+        Map<String, Object> statusArguments = Map.of(
+                "operation", "status",
+                "job_id", "123e4567-e89b-42d3-a456-426614174000");
+        McpSchema.CallToolResult statusResult = invoke(
+                registry, "capture_creative_region", statusArguments);
+
+        assertThat(statusResult.isError()).isFalse();
+        assertThat(received.get()).isInstanceOfSatisfying(
+                McpRuntimePort.CaptureCreativeRegion.class,
+                command -> assertThat(command.arguments()).isEqualTo(statusArguments));
     }
 
     @Test

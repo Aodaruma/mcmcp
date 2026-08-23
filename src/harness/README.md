@@ -59,6 +59,13 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
 - `/craftagent_fixture phase4 hidden` — seals a gold verify-only cell in a fully opaque box so
   required-current preflight fails closed. `phase4 reveal_hidden|conceal_hidden` opens or reseals
   its fixed west aperture without accepting arbitrary coordinates.
+- `/craftagent_fixture phase4 build_runner` — prepares two air-backed, two-block cobblestone
+  columns on opposite sides of one clear work pose. The player starts with all four cells in normal
+  reach and eight cobblestone selected in slot 1.
+
+The autorun-only `creative_capture` mode keeps the existing gallery layout, changes the owner to
+Creative, and places them more than 32 blocks from the fixed 1,024-cell capture region
+`192,199,192` through `207,202,207`.
 
 For a repeatable one-shot Phase 3 or Phase 4 live test, keep a disposable singleplayer world named
 `New World` and run, for example:
@@ -66,10 +73,13 @@ For a repeatable one-shot Phase 3 or Phase 4 live test, keep a disposable single
 ```powershell
 .\gradlew.bat runHarnessClient -PcraftagentFixturePhase3Mode=navigate
 .\gradlew.bat runHarnessClient -PcraftagentFixturePhase3Mode=mutations
+.\gradlew.bat runHarnessClient -PcraftagentFixturePhase3Mode=build_runner
+.\gradlew.bat runHarnessClient -PcraftagentFixturePhase3Mode=creative_capture
 ```
 
 Accepted modes are `navigate`, `break`, `place`, `lever`, `cow`, `reset`, `all_satisfied`,
-`mutations`, `waterlogged`, `directional_stairs`, `hopper`, `shortage`, `divergence`, and `hidden`.
+`mutations`, `waterlogged`, `directional_stairs`, `hopper`, `shortage`, `divergence`, `hidden`, and
+`build_runner`, plus the dedicated `creative_capture` mode.
 Only when this Gradle
 property is present, `runHarnessClient` adds Quick Play for `New World` and passes
 `craftagent.fixture.phase3.mode`; modes other than `reset` also pass

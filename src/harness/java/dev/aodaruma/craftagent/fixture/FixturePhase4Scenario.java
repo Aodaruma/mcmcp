@@ -32,6 +32,12 @@ final class FixturePhase4Scenario {
     static final BlockPos TARGET_C = ORIGIN.offset(4, 0, 1);
     static final BlockPos HIDDEN_TARGET = ORIGIN.offset(5, 1, 0);
     static final BlockPos HIDDEN_APERTURE = HIDDEN_TARGET.relative(Direction.WEST);
+    static final BlockPos BUILD_RUNNER_START_POSE = ORIGIN.offset(1, 0, 0);
+    static final List<BlockPos> BUILD_RUNNER_FIRST_COLUMN = List.of(
+            ORIGIN.offset(3, 0, -1), ORIGIN.offset(3, 1, -1));
+    static final List<BlockPos> BUILD_RUNNER_SECOND_COLUMN = List.of(
+            ORIGIN.offset(3, 0, 1), ORIGIN.offset(3, 1, 1));
+    static final int BUILD_RUNNER_COBBLESTONE_COUNT = 8;
     static final float PLAN_YAW_DEGREES = -90.0F;
     static final float PLAN_PITCH_DEGREES = 24.0F;
     static final float HIDDEN_PITCH_DEGREES = 5.0F;
@@ -50,17 +56,20 @@ final class FixturePhase4Scenario {
         applyLayout(context.level(), mode);
         configureInventory(context.player(), mode);
         teleport(context,
-                ORIGIN.getX() + 1.5D,
-                ORIGIN.getY(),
-                ORIGIN.getZ() + 0.5D,
+                BUILD_RUNNER_START_POSE.getX() + 0.5D,
+                BUILD_RUNNER_START_POSE.getY(),
+                BUILD_RUNNER_START_POSE.getZ() + 0.5D,
                 PLAN_YAW_DEGREES,
                 mode == Mode.HIDDEN ? HIDDEN_PITCH_DEGREES : PLAN_PITCH_DEGREES);
 
         output.accept(Component.literal("phase4.mode=" + mode.wireName
                 + " phase_id=" + mode.phaseId()
-                + " player=" + position(ORIGIN.offset(1, 0, 0))
+                + " player=" + position(BUILD_RUNNER_START_POSE)
                 + " cells=" + planLine(mode)
-                + " selected_slot=" + mode.selectedSlot()));
+                + " selected_slot=" + mode.selectedSlot()
+                + (mode == Mode.BUILD_RUNNER
+                        ? " cobblestone=" + BUILD_RUNNER_COBBLESTONE_COUNT
+                        : "")));
     }
 
     static void introduceDivergence(FixtureSecurity.Context context) {
@@ -101,6 +110,12 @@ final class FixturePhase4Scenario {
                 put(result, TARGET_B, Blocks.DIRT.defaultBlockState());
             }
             case HIDDEN -> buildHiddenBox(result);
+            case BUILD_RUNNER -> {
+                BUILD_RUNNER_FIRST_COLUMN.forEach(position ->
+                        put(result, position, Blocks.AIR.defaultBlockState()));
+                BUILD_RUNNER_SECOND_COLUMN.forEach(position ->
+                        put(result, position, Blocks.AIR.defaultBlockState()));
+            }
         }
         return Map.copyOf(result);
     }
@@ -142,6 +157,19 @@ final class FixturePhase4Scenario {
                     verify("guard_cell", TARGET_B, Blocks.DIRT.defaultBlockState()));
             case HIDDEN -> List.of(verify(
                     "hidden_gold", HIDDEN_TARGET, Blocks.GOLD_BLOCK.defaultBlockState()));
+            case BUILD_RUNNER -> List.of(
+                    cell("runner_first_base", BUILD_RUNNER_FIRST_COLUMN.get(0), "place",
+                            Blocks.AIR.defaultBlockState(), Blocks.COBBLESTONE.defaultBlockState(),
+                            Items.COBBLESTONE),
+                    cell("runner_first_top", BUILD_RUNNER_FIRST_COLUMN.get(1), "place",
+                            Blocks.AIR.defaultBlockState(), Blocks.COBBLESTONE.defaultBlockState(),
+                            Items.COBBLESTONE),
+                    cell("runner_second_base", BUILD_RUNNER_SECOND_COLUMN.get(0), "place",
+                            Blocks.AIR.defaultBlockState(), Blocks.COBBLESTONE.defaultBlockState(),
+                            Items.COBBLESTONE),
+                    cell("runner_second_top", BUILD_RUNNER_SECOND_COLUMN.get(1), "place",
+                            Blocks.AIR.defaultBlockState(), Blocks.COBBLESTONE.defaultBlockState(),
+                            Items.COBBLESTONE));
         };
     }
 
@@ -213,6 +241,8 @@ final class FixturePhase4Scenario {
             case SHORTAGE -> player.getInventory().setItem(1, new ItemStack(Items.COBBLESTONE, 1));
             case DIVERGENCE -> player.getInventory().setItem(
                     0, new ItemStack(Items.DIAMOND_PICKAXE));
+            case BUILD_RUNNER -> player.getInventory().setItem(
+                    1, new ItemStack(Items.COBBLESTONE, BUILD_RUNNER_COBBLESTONE_COUNT));
             case ALL_SATISFIED, HIDDEN -> {
             }
         }
@@ -307,7 +337,8 @@ final class FixturePhase4Scenario {
         HOPPER("hopper", "fixture_hopper", 7),
         SHORTAGE("shortage", "fixture_shortage", 1),
         DIVERGENCE("divergence", "fixture_divergence", 0),
-        HIDDEN("hidden", "fixture_hidden", 0);
+        HIDDEN("hidden", "fixture_hidden", 0),
+        BUILD_RUNNER("build_runner", "fixture_build_runner", 1);
 
         private final String wireName;
         private final String phaseId;

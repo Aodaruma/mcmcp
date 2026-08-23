@@ -47,6 +47,12 @@ public final class CraftAgentToolRegistry {
             .idempotentHint(true)
             .openWorldHint(true)
             .build();
+    private static final McpSchema.ToolAnnotations EXPORT_ANNOTATIONS = McpSchema.ToolAnnotations.builder()
+            .readOnlyHint(false)
+            .destructiveHint(false)
+            .idempotentHint(true)
+            .openWorldHint(true)
+            .build();
 
     private final McpRuntimePort runtimePort;
     private final Duration runtimeDispatchTimeout;
@@ -131,7 +137,15 @@ public final class CraftAgentToolRegistry {
                         this::emergencyStopCommand),
                 specification(
                         getRecipesTool(),
-                        McpRuntimePort.GetRecipes::new));
+                        McpRuntimePort.GetRecipes::new),
+                specification(
+                        tool(
+                                "capture_creative_region",
+                                "Start or poll one locally armed private-singleplayer Creative export to a bounded gzip blueprint artifact.",
+                                McpToolSchemas.creativeRegionInput(),
+                                McpToolSchemas.creativeRegionOutput(),
+                                EXPORT_ANNOTATIONS),
+                        McpRuntimePort.CaptureCreativeRegion::new));
     }
 
     public List<McpStatelessServerFeatures.SyncToolSpecification> specifications() {

@@ -10,6 +10,7 @@ import dev.aodaruma.craftagent.observation.BlockPlanStateTransformer;
 import dev.aodaruma.craftagent.observation.BlockPlanValidationException;
 import dev.aodaruma.craftagent.observation.BlockStateView;
 import dev.aodaruma.craftagent.observation.ClientRecipeCatalog;
+import dev.aodaruma.craftagent.observation.CreativeRegionCapture;
 import dev.aodaruma.craftagent.observation.MinecraftObservationService;
 import dev.aodaruma.craftagent.observation.WorldMemory;
 import dev.aodaruma.craftagent.safety.InputReleaseController;
@@ -53,6 +54,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.item.BlockItem;
@@ -71,6 +73,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -110,6 +113,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     private final WorldMemory memory = new WorldMemory();
     private final MinecraftObservationService observations = new MinecraftObservationService(memory);
     private final BlockPlanComparator blockPlans = new BlockPlanComparator(observations, memory);
+    private final CreativeRegionCapture creativeRegions = new CreativeRegionCapture();
     private final ClientRecipeCatalog recipeCatalog = new ClientRecipeCatalog();
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
     private final LocalArmingState arming = new LocalArmingState();
@@ -272,6 +276,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         synchronizeWorld(minecraft);
         sessions.tick();
         publishSession();
+        creativeRegions.fenceClient(minecraft, publishedSession.worldSessionId());
         inbox.drainEmergencyStopPreTick(minecraft, publishedSession);
         inbox.drainControlsPreTick(sessions.snapshot());
         retryPendingFinalizations(minecraft);
@@ -315,6 +320,14 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         publishSession();
     }
 
+    public void onServerPostTick(MinecraftServer server) {
+        creativeRegions.onServerPostTick(server);
+    }
+
+    public void onServerStopping(MinecraftServer server) {
+        creativeRegions.onServerStopping(server);
+    }
+
     public void toggleLocalArming(Minecraft minecraft) {
         assertClientThread(minecraft);
         var session = sessions.snapshot();
@@ -331,7 +344,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             overlay(minecraft, "CraftAgent: ロックしました");
         } else {
             goalContinuation.reset(session.worldSessionId());
-            arming.arm(session.worldSessionId(), AVAILABLE_CAPABILITIES,
+            arming.arm(session.worldSessionId(), availableCapabilities(minecraft),
                     LocalArmingState.DEFAULT_ARM_DURATION, System.nanoTime());
             overlay(minecraft, "CraftAgent: 15分間ローカル解除しました");
         }
@@ -399,6 +412,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             return;
         }
         shutdown = true;
+        creativeRegions.cancelActive("client_shutdown");
         sessions.stopping();
         inbox.shutdown(minecraft, sessions.snapshot());
         routines.clearSession("client_shutdown");
@@ -467,6 +481,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 requireReady(session);
                 yield observations.getSnapshot(minecraft, session.clientTick(), snapshot.arguments());
             }
+            case CaptureCreativeRegion capture -> {
+                requireReady(session);
+                yield captureCreativeRegion(minecraft, session, capture.arguments(), context);
+            }
             case CompareBlockPlan compare -> {
                 requireReady(session);
                 yield blockPlans.compare(minecraft, session.clientTick(), compare.arguments());
@@ -515,6 +533,61 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         recipeCatalog.refreshFromClient(
                 minecraft, Objects.requireNonNull(session.worldSessionId(), "worldSessionId"), session.clientTick());
         return recipeCatalog.query(session.worldSessionId(), query, maxResults).toMap();
+    }
+
+    private Map<String, Object> captureCreativeRegion(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            Map<String, Object> arguments,
+            RuntimeCallContext context) {
+        requireLiveCall(context, "capture_creative_region");
+        Object operation = arguments.get("operation");
+        UUID worldSessionId = Objects.requireNonNull(session.worldSessionId(), "worldSessionId");
+        if ("status".equals(operation)) {
+            return creativeRegions.status(worldSessionId, arguments);
+        }
+        if (!"start".equals(operation)) {
+            throw new IllegalArgumentException("operation must be start or status");
+        }
+        long nowNanos = System.nanoTime();
+        long jobDeadlineNanos = saturatingAdd(
+                nowNanos, CreativeRegionCapture.JOB_TIMEOUT.toNanos());
+        if (!arming.allows(
+                session.worldSessionId(), CreativeRegionCapture.CAPABILITY,
+                jobDeadlineNanos, nowNanos)) {
+            throw new RuntimeInvocationException(
+                    "locked",
+                    "Creative region capture is not locally armed for this world session",
+                    false,
+                    Map.of());
+        }
+        if (!CreativeRegionCapture.isConfirmedCreative(minecraft)) {
+            throw new RuntimeInvocationException(
+                    "unsafe_state",
+                    "Creative region capture requires local integrated single-player Creative mode",
+                    false,
+                    Map.of("reason", "creative_mode_not_confirmed"));
+        }
+        requireLiveCall(context, "capture_creative_region");
+        return creativeRegions.start(
+                minecraft,
+                session.clientTick(),
+                worldSessionId,
+                arguments,
+                () -> arming.allows(
+                        worldSessionId,
+                        CreativeRegionCapture.CAPABILITY,
+                        jobDeadlineNanos,
+                        System.nanoTime()));
+    }
+
+    private static Set<String> availableCapabilities(Minecraft minecraft) {
+        if (!CreativeRegionCapture.isConfirmedCreative(minecraft)) {
+            return AVAILABLE_CAPABILITIES;
+        }
+        var result = new LinkedHashSet<>(AVAILABLE_CAPABILITIES);
+        result.add(CreativeRegionCapture.CAPABILITY);
+        return Set.copyOf(result);
     }
 
     private Map<String, Object> status(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
@@ -575,7 +648,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         result.put("versions", versions);
         result.put("world", world);
         result.put("lock", lockPayload);
-        result.put("capability_profile", AVAILABLE_CAPABILITIES.stream().sorted().toList());
+        result.put("capability_profile", availableCapabilities(minecraft).stream().sorted().toList());
         var voiceChat = new LinkedHashMap<String, Object>();
         voiceChat.put("status", voiceStatus);
         voiceChat.put("adapter_version", voiceSnapshot.adapterVersion());
@@ -1308,14 +1381,15 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             String reason,
             WorldSessionTracker.Snapshot session) {
         goalContinuation.clear();
+        boolean creativeReleased = creativeRegions.cancelActive(reason);
         var active = routines.activeRoutineId();
         if (active.isEmpty()) {
-            return endVoiceFor(voiceRoutineId);
+            return creativeReleased && endVoiceFor(voiceRoutineId);
         }
         try {
             var cancelled = routines.cancelRoutine(active.orElseThrow(), reason, Long.MAX_VALUE, 1);
             var cleanup = finalizeTerminalRoutine(Minecraft.getInstance(), cancelled);
-            return cleanup.inputsReleased() && cleanup.voice().success();
+            return creativeReleased && cleanup.inputsReleased() && cleanup.voice().success();
         }
         catch (RuntimeException | LinkageError failure) {
             CraftAgentMod.LOGGER.error("CraftAgent routine cancellation failed during emergency stop", failure);
@@ -1774,7 +1848,9 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         assertClientThread(minecraft);
         runPriorityEventStopIfRequired(
                 routines.activeRoutineId().isPresent()
-                        || inbox.hasPendingCommand("start_routine"),
+                        || creativeRegions.hasActiveJob()
+                        || inbox.hasPendingCommand("start_routine")
+                        || inbox.hasPendingCommand("capture_creative_region"),
                 () -> inbox.requestEmergencyStop(reason),
                 () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
     }
@@ -3050,6 +3126,17 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                     ? Map.<String, Object>of()
                     : Map.<String, Object>of("active_routine_id", busy.activeRoutineId().toString());
             return RuntimeReply.failure("busy", "Another routine is active", true, details);
+        }
+        if (cause instanceof CreativeRegionCapture.CaptureBusyException) {
+            return RuntimeReply.failure("busy", "Another Creative capture is active", true);
+        }
+        if (cause instanceof CreativeRegionCapture.CaptureIdempotencyConflictException) {
+            return RuntimeReply.failure(
+                    "idempotency_conflict", "The idempotency key has different arguments", false);
+        }
+        if (cause instanceof CreativeRegionCapture.CaptureNotFoundException) {
+            return RuntimeReply.failure(
+                    "capture_not_found", "The Creative capture job is not retained", false);
         }
         if (cause instanceof RoutineManager.IdempotencyConflictException) {
             return RuntimeReply.failure(

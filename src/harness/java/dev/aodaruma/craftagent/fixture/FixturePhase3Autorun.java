@@ -258,7 +258,12 @@ final class FixturePhase3Autorun {
                 fail("security boundary changed during arena setup: " + revalidated.rejection(), null);
                 return;
             }
-            if (config.mode().phase4()) {
+            if (config.mode().creativeCapture()) {
+                FixtureCreativeCaptureScenario.prepare(
+                        revalidated.context(),
+                        component -> LOGGER.info(
+                                "CraftAgent creative capture fixture: {}", component.getString()));
+            } else if (config.mode().phase4()) {
                 FixturePhase4Scenario.prepare(
                         revalidated.context(), phase4ScenarioMode(config.mode()),
                         component -> LOGGER.info("CraftAgent Phase 4 fixture: {}", component.getString()));
@@ -300,7 +305,7 @@ final class FixturePhase3Autorun {
             case COW -> FixturePhase3Scenario.Mode.COW;
             case RESET -> FixturePhase3Scenario.Mode.RESET;
             case ALL_SATISFIED, MUTATIONS, WATERLOGGED, DIRECTIONAL_STAIRS,
-                    HOPPER, SHORTAGE, DIVERGENCE, HIDDEN ->
+                    HOPPER, SHORTAGE, DIVERGENCE, HIDDEN, BUILD_RUNNER, CREATIVE_CAPTURE ->
                     throw new IllegalArgumentException("Phase 4 mode cannot use the Phase 3 scenario");
         };
     }
@@ -316,7 +321,8 @@ final class FixturePhase3Autorun {
             case SHORTAGE -> FixturePhase4Scenario.Mode.SHORTAGE;
             case DIVERGENCE -> FixturePhase4Scenario.Mode.DIVERGENCE;
             case HIDDEN -> FixturePhase4Scenario.Mode.HIDDEN;
-            case NAVIGATE, BREAK, PLACE, LEVER, COW, RESET ->
+            case BUILD_RUNNER -> FixturePhase4Scenario.Mode.BUILD_RUNNER;
+            case NAVIGATE, BREAK, PLACE, LEVER, COW, RESET, CREATIVE_CAPTURE ->
                     throw new IllegalArgumentException("Phase 3 mode cannot use the Phase 4 scenario");
         };
     }

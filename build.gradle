@@ -80,7 +80,8 @@ neoForge {
                 def supportedModes = [
                         'navigate', 'break', 'place', 'lever', 'cow', 'reset',
                         'all_satisfied', 'mutations', 'waterlogged', 'directional_stairs',
-                        'hopper', 'shortage', 'divergence', 'hidden'
+                        'hopper', 'shortage', 'divergence', 'hidden', 'build_runner',
+                        'creative_capture'
                 ]
                 if (!supportedModes.contains(requestedMode)) {
                     throw new GradleException(

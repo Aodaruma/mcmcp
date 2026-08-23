@@ -1,389 +1,242 @@
-# 建築計画と決定論的実行の境界
+# 建築計画・Blueprint・決定論的実行の境界
 
-- 状態: 検討案（未実装）
-- 作成日: 2026-08-21
-- 対象: Phase 6完了後の建築自動化
-
-## 目的
-
-Phase 6までのCraftAgentは、LLMが複数の型付きroutineを選ぶouter loopと、Minecraft内で通常操作・server同期・安全停止を担うinner loopを分離しています。この境界は短い作業では機能しましたが、アイアンゴーレムトラップ（以下、TT）の評価で、建築セル、作業位置、工程、資材、機構、Mob条件までをLLMが逐次組み立てる方式は、token量と失敗確率の両面で拡張しにくいことが分かりました。
-
-本書は次を整理します。
-
-- 現在できていることと、TT評価で判明した不足
-- LLMへ任せる判断と、決定論的なtoolへ移す処理
-- 材料と検証済みplanがあれば、1回の開始指示で施工を進める仕組み
-- 汎用workflow DSLを導入せずに済む、有限な建築記述の案
-- 実装順と受入条件
+- 状態: Stage 3/4 development prototype
+- 初版: 2026-08-21
+- 更新: 2026-08-24
+- 対象: Phase 6完了後の建築自動化とCreative設計支援
 
 ## 結論
 
-次の一手は、LLMをより長く動かすことではありません。LLMが一度だけ宣言的な「何を建てるか」を出し、それをpure compilerが有限のセル、依存関係、作業地点、資材、検証集合へ展開し、決定論的runnerが既存の安全なroutineを用いて実行する層を追加するのが妥当です。
+現時点では、独自の「建築パッケージ」、組込みLua VM、汎用workflow DSLは作りません。
 
-この記述は自由なworkflow DSLにしません。任意の`if`、`loop`、tool呼び出し、コード実行、任意predicateを持たず、静的に上限を計算できる建築専用IR（中間表現）に限定します。本書ではこれを**建築パッケージ**と呼びます。
+まず必要なのは次の3点です。
 
-当面、アイアンゴーレムTT自体の完成を目標にしません。まず、Mob・睡眠・水流・溶岩を含まない一般建築で、建築パッケージから複数作業地点を経由して完成まで進めることを証明します。
+1. 完成状態だけを保持する有限な`Blueprint`
+2. 既存の`navigate_to`と`apply_block_plan`を、LLMなしで決められた順に呼ぶdevelopment runner
+3. Creativeワールドの明示領域を`Blueprint`、材料集計、設計図画像用のgzip artifactへ変換する、world-read-onlyな非同期経路
 
-## 現状
+作業地点、phase、checkpointは完成形の一部ではありません。初版では再利用artifactへ保存せず、実行時入力または現在のworld stateから派生させます。外部Lua等を使う場合も、Minecraftを直接操作するruntimeではなく、有限な相対cellを生成するpure generatorに限定します。
 
-### 実装済みの境界
+この判断は「決定論的toolなら必ず完成する」という意味ではありません。ここでの決定論性は、同じmanifestと同じ観測状態から同じ順序で動き、次のどちらかへ必ず収束することです。
 
-Phase 6時点の公開surfaceは9 tools・13 routine kindsです。主な建築能力は次のとおりです。
+- server-confirmedな完成
+- 理由を伴うtyped safe stop
 
-- `compare_block_plan`: 指定セルをcurrent / last-known / unknownに分けて比較
-- `apply_block_plan`: 1回1phase、最大64セル、移動なし、完全なbefore/after BlockState
-- `navigate_to`: 短距離の平坦な通常移動
-- `craft_items` / `transfer_items`: allowlist済み画面での資材準備
-- `survey_area`: 通常の視点と移動で有限サンプルを観測
-- `completion_intent=continue_goal`: 最大16回・15分のbounded chain
+reach、FOV、衝突、Mob、流体、server同期があるため、一般のプレイヤー操作に無条件の完成保証はできません。
 
-Minecraft内のrunnerは、各block操作の直前条件、prediction ACK、server由来state、inventory同期、入力解放を確認します。未観測状態や推定を成功にせず、失敗時にlockして停止する点は維持すべき強みです。
+## なぜ方針を縮小したか
 
-一方、現行設計は次をLLM側へ残しています。
+既存実装には、最大512セルの`BlockPlan`と、1phase最大64セルの`apply_block_plan`があります。この2つを使う前に、geometry primitive、dependency graph、work-pose compiler、package registryまで新設すると、実測していない問題へ先回りする設計になります。
 
-- 大きなblueprintの作成
-- phaseへの分割
-- 各phaseから届く作業位置の選択
-- 視点、reach、FOVを考慮したセル順序
-- phase間の移動
-- 資材補充と工程依存の管理
-- 失敗後にどのセルから再開するかの判断
+| 案 | 現在の判断 | 理由 |
+|---|---|---|
+| 有限`Blueprint` | 採用 | Creative captureと完成比較の共通artifactになる |
+| 外部の固定runner | 採用 | 建築開始後のLLM呼出しを0にして実測できる |
+| Luaによるpure generator | 必要時に許可 | 規則形状を短く書けるが、world操作権限は持たせない |
+| 独自の建築パッケージ/compiler | 保留 | 既存`BlockPlan`との重複が多い |
+| 組込みLua VM / 汎用DSL | 不採用 | 安全runtime、再開、同期を二重実装することになる |
 
-### アイアンゴーレムTT評価の実測
+建築パッケージを再検討するのは、少なくとも複数の一般建築gateで、`Blueprint`だけでは表せない同じ不足が繰り返し確認された後です。
 
-開発専用のflat labで、10×10床の中央2×2をchuteとし、60セルをagent施工対象にしました。村人、ゾンビ、ベッド、水、溶岩、回収系は、現行routineにない能力を混ぜないためfixtureが準備しました。
+## 現状の把握
 
-結果は次のとおりです。
+Phase 6までの境界は、LLMがroutineを選ぶouter loopと、Minecraft内で通常操作、同期、停止を担うinner loopに分かれています。
 
-| 項目 | 結果 |
-|---|---|
-| 単セル施工 | 3セルはprediction ACK・server state・最終current確認付きで成功 |
-| 複数セル施工 | `STEP_NOT_PREPARABLE / aim_feasible=false`で停止 |
-| 作業位置への移動 | `ROUTE_BECAME_UNSAFE / probe_not_currently_visible`で停止 |
-| false success | なし。失敗後はinput解放・finalization・lockを確認 |
-| TT発生条件 | 視線開口を手動補正後、ゴーレム1体のspawnを確認 |
-| 搬送・処理・回収 | 水流が静的な水面となり未達。鉄回収0 |
+### 機能している部分
 
-ゴーレムは`(254.5, 206.0, 252.5)`へspawnし、10×10の意図したspawn床内でした。問題はspawn座標ではなく、床の任意位置から中央へ運べる水流になっていなかったことです。また、村人とゾンビの初期視線開口が狭く、panic条件もfixture側の手動補正を要しました。
+- `compare_block_plan`: current / last-known / unknownを区別した最大512セルの比較
+- `apply_block_plan`: current-only precondition、完全BlockState、最大64セルの局所施工
+- `navigate_to`: 有限bounds内の通常移動
+- `completion_intent=continue_goal`: 最大16回の中間routine継続
+- prediction ACK、server由来state、入力解放、failure lock
 
-この評価から、次を区別できます。
+### アイアンゴーレムTT評価で分かった不足
 
-**機能した点**
+- 3セルの局所施工は成功したが、広い床は作業位置と視点の組合せで停止した
+- 移動は観測probeがcurrentにならず、安全側へ停止する場合があった
+- fixture支援後にゴーレムspawnは確認したが、水流搬送、kill、drop回収は未達だった
+- 建築、Mob条件、睡眠、流体、回収を一度に評価したため、原因が混ざった
+- false successやblind retryは起きず、安全停止は機能した
 
-- 完了を推測せず、確認済みセルだけを進捗にした
-- 視点・経路が安全条件を満たさないとき、副作用前に停止した
-- failure、cleanup、lockが構造化され、暴走やblind retryがなかった
+したがってTT自体の修正は一旦止め、まずMobや流体を含まない一般建築でrunnerの限界を測ります。
 
-**不足した点**
+## 問題の分割
 
-- LLMがセル単位の幾何、視点、移動を組み立てる負担が大きい
-- `apply_block_plan`が現在位置固定で、phaseと作業地点が別々の問題になっている
-- staticなfixture testが、水流、Mob衝突、kill、drop回収という時間発展を検証していない
-- 一般建築の問題と、Mob・睡眠・fluid機構の問題が同じ評価に混在した
-- fixtureによる支援完成と、agent自身の完成を明確に分ける必要がある
+建築は次の6層に分けます。
 
-## 問題を分ける
+1. 要求解釈: 用途、寸法、外観、許容条件
+2. 構造設計: 完成時の相対座標と完全BlockState
+3. 施工設計: 支持、閉鎖前確認、仮設、材料
+4. 作業計画: pose、経路、視点、64セル以内のphase
+5. 実行: 通常input、prediction、server同期、有限retry
+6. 受入確認: 完成状態と、必要なら時間発展
 
-「建築する」を少なくとも次の6層へ分けます。
+LLMは1と設計上の選択に使います。反復的な座標変換、phase loop、polling、同期確認はLLMの外へ出します。ただし、3と4を一般化するcompilerはまだ作らず、固定fixtureで必要性を測ります。
 
-1. **要求解釈**: 何を、どの規模・用途・外観で建てるか
-2. **構造設計**: 完成時の相対座標、BlockState、不変条件
-3. **施工設計**: 支持関係、閉鎖前検査、工程、資材、仮設の有無
-4. **作業計画**: 作業地点、移動経路、視点、hotbar、1回のphase
-5. **実行**: 通常input、prediction、server同期、局所回復
-6. **受入確認**: 完成状態、機構の時間発展、output、unknownの有無
-
-現状は1〜4を主にLLM、5〜6の一部をMODが担当します。大規模建築では2〜4が反復的かつ機械的であるため、ここをLLMから外す必要があります。
-
-## 推奨する責務分担
-
-| 判断・処理 | LLM | 決定論的tool / MOD |
-|---|---:|---:|
-| 曖昧な依頼の解釈、要件確認 | 主担当 | schema候補を提示 |
-| レビュー済みtemplateの選択 | 主担当 | compatibilityを検証 |
-| anchor、向き、寸法、paletteの決定 | 主担当 | bounds・registry・材料を検証 |
-| 数百セルの列挙と座標変換 | 行わない | compilerが展開 |
-| BlockStateのmirror / rotation | 行わない | Minecraft registryで変換 |
-| 支持関係と施工順 | 方針だけ | dependency graphで決定 |
-| 作業地点、reach、FOV、セル順 | 行わない | access plannerが決定 |
-| phase分割とhotbar補充 | 行わない | runnerが決定 |
-| tick操作、packet、ACK、retry | 行わない | 既存runtimeが担当 |
-| typed failure後の別方針 | 主担当 | 診断と再開候補を返す |
-| 完成・稼働の断定 | 意味を評価 | positive evidenceを収集 |
-
-LLMは「意図と選択」に使い、座標計算と実行管理には使いません。局所失敗が同じpostconditionへ収束できる範囲はrunnerが扱い、設計、bounds、材料、危険許可の変更はLLMまたはユーザーへ戻します。
-
-## 提案アーキテクチャ
+## 最小アーキテクチャ
 
 ```text
-User request
-    |
-    v
-LLM intent planner
-  - template selection
-  - parameters / style / policy
-    |
-    v
-Build Package (finite declarative IR)
-    |
-    v
-Pure compiler + validator
-  - exact cells / states
-  - dependency graph
-  - material manifest
-  - bounded work zones
-    |
-    v
-Execution Manifest (content-addressed plan_ref)
-    |
-    v
-Deterministic build runner
-  - observe -> choose work pose -> navigate
-  - refill -> apply phase -> reconcile -> checkpoint
-    |
-    v
-Existing Minecraft routines / ports
-    |
-    v
-Server-confirmed world state
+Creative local world ─ capture_creative_region ─┐
+                                                ├─ finite Blueprint
+LLM / optional pure generator ──────────────────┘
+                                                        │
+                                                        ├─ material list
+                                                        ├─ layer SVG
+                                                        └─ reviewed build manifest
+                                                                  │
+                                                                  v
+                                                     development fixed runner
+                                                     apply -> navigate -> apply
+                                                                  │
+                                                                  v
+                                                     existing bounded routines
+                                                                  │
+                                                                  v
+                                                     server-confirmed state
 ```
 
-### 建築パッケージ
+Blueprintからbuild manifestを自動生成する一般access plannerは、まだ存在しません。図の`reviewed build manifest`は、現段階ではfixture用に人間またはLLMが開始前に一度作る入力です。runner開始後はLLMを呼びません。
 
-建築パッケージは「完成形と施工上の制約」を記述します。操作手順や任意分岐は記述しません。
+## Blueprint artifact v1
 
-必要な要素は次です。
+外側の`craftagent.creative-blueprint-artifact/v1`がcapture根拠・集計を保持し、その`blueprint`に`craftagent.blueprint-palette-rle/v1`を格納します。内側Blueprintは大領域でも扱える完成状態のportable表現です。
 
-- schema version、package ID、Minecraft/registry compatibility
-- anchor、rotation、mirror、work bounds
-- paletteと必要item
-- 有限なgeometry primitive
-- component間の依存関係
-- 完成時のexact BlockStateとclearance
-- 許可する破壊、仮設、fluid、multi-block、BlockEntityのpolicy
-- 必須能力と、未対応時のuser handoff
-- 最終verificationと機構別acceptance probe
+- anchor、dimensions、clipped chunk segmentから決定的に復元できる相対offset
+- airを含む領域内の全cellを表すpalette＋run-length encoding（`chunk_z_x_then_y_z_x_within_clipped_chunk`順）
+- 各palette entryのregistry IDと全BlockState property
+- `y_z_x`順で計算し、anchorやdimensionに依存しない論理Blueprint SHA-256
+- paletteとblock別count
+- clone itemに基づく材料推定
+- 自動再構築できない要素の`manual_setup`
 
-初版のgeometry primitiveは、静的に展開数を計算できるものだけにします。
+次は保存しません。
 
-- `cell`
-- `line`
-- `plane`
-- `cuboid_shell`
-- `repeat_grid`（固定回数・固定上限）
+- 任意コード、条件分岐、loop、tool名
+- work pose、移動route、retry手順
+- 完了フラグ
+- BlockEntity NBT、container内容
+- Entity UUID、health、AI、owner、equipment
 
-`if`、データ依存loop、任意式、任意tool名、script、chat/commandは許可しません。展開後セル数、region、資材、所要phaseの上限を実行前に確定できなければ拒否します。
+再開時は保存済みフラグではなく、worldのcurrent exact stateと照合します。
 
-以下は説明用の案で、wire schemaの確定版ではありません。
+### 材料集計の意味
 
-```yaml
-schema: craftagent.build/v1
-id: dry_platform_with_chute
-parameters:
-  width: 10
-  depth: 10
-anchor:
-  dimension: minecraft:overworld
-  x: 251
-  y: 205
-  z: 251
-transform:
-  rotation: 0
-  mirror: none
-bounds:
-  min: {x: 248, y: 199, z: 248}
-  max: {x: 263, y: 209, z: 263}
-palette:
-  floor: {item: minecraft:smooth_stone, state: {}}
-components:
-  - id: spawn_floor
-    primitive: plane
-    from: [0, 0, 0]
-    size: [10, 10]
-    material: floor
-    except: [[4, 4], [5, 4], [4, 5], [5, 5]]
-stages:
-  - id: foundation
-    components: [spawn_floor]
-    verification: exact_current
-requirements:
-  unsupported_capabilities: [fluid_place, entity_transport]
-```
+材料数は`BlockState#getCloneItemStack(..., false)`を使う推定です。airとmulti-cell blockの副側は数えません。次は`manual_setup`へ分類し、完全な自動再現とは主張しません。
 
-### Execution Manifest
+- BlockEntity
+- fluid / waterlogged state
+- door、bed等のmulti-cell
+- clone itemを解決できないblock
+- Entity
+- 動的なredstoneの時間状態
 
-compilerは建築パッケージを、LLMへ再列挙させない実行用manifestへ変換します。
+## Creative観測profile
 
-- package hashとcanonical `plan_ref`
-- 全targetのabsolute座標とexact before/after state
-- support / clearance / close-before-coverのdependency graph
-- stageとcheckpoint
-- item別の必要数と補充単位
-- 候補work poseと、そこから担当するセル集合
-- 最大travel、最大duration、最大mutation数
-- final verification集合
-- 未対応能力とhandoff地点
+通常の`get_snapshot`とWorldMemoryの意味は変えません。Creativeだけ、明示的な別toolで観測範囲を広げます。
 
-manifestはcontent-addressedにし、同じpackage、anchor、transform、policyから同じhashを作ります。再開時は保存済み「完了フラグ」だけを信用せず、worldのcurrent exact stateと照合してalready-satisfiedをskipします。
+`capture_creative_region`の権限gateは次の4条件です。
 
-### Deterministic build runner
+- このクライアントが所有する非公開のintegrated single-player
+- 対応するserver playerの実GameTypeがCreative
+- cheatsが有効で、server playerがGM permissionを持つ
+- 現在のworld sessionでCreative capture capabilityがlocal arm済み
 
-runnerの状態遷移は固定します。
+playerからの距離、clientへの事前chunk load、512 cellは権限条件にしません。資源上限として、各辺256以下、volume 4,194,304以下、最大64 chunk column、同時1 job、同時に扱うchunkは1つ、artifact展開後64 MiBまでに制限します。現在dimension内の生成済みchunkをintegrated server threadで順次一時loadし、処理後に解放します。未生成chunkは生成せず、常設のforceloadも残しません。
 
-```text
-VALIDATE
-  -> PREFLIGHT_MATERIALS
-  -> PREFLIGHT_SITE
-  -> SELECT_STAGE
-  -> OBSERVE_WORK_ZONE
-  -> CHOOSE_WORK_POSE
-  -> NAVIGATE
-  -> REFILL_HOTBAR
-  -> APPLY_BOUNDED_PHASE
-  -> RECONCILE_STAGE
-  -> CHECKPOINT
-  -> ...
-  -> FINAL_VERIFY
-  -> FINALIZE
-```
+captureは`start / status`による非同期jobです。MCP応答は`job_id`、進捗、terminal summary、gzip bytesの`artifact.sha256`、論理Blueprintの`summary.blueprint_hash`、相対artifact path等の小さな情報だけを返し、全cellはgzip artifactへ保存します。artifactは`started_server_tick / completed_server_tick`と`consistency=server_thread_chunk_sequence`を持ち、領域全体のatomic snapshotではありません。結果はObserverやWorldMemoryへ書かず、Survivalの`last_known`へ混ぜません。
 
-別素材への変更、anchor変更、bounds拡張、破壊許可追加、Mob対処は自動で行いません。固定manifest内で別の可視face、同等のwork pose、already-satisfied skipを試すことはできます。world divergence、資材不足、到達不能、未対応能力では安全に停止し、stage、cell、現在state、必要なhandoffを返します。
+`include_entities=true`でも、Entityは各chunkの処理tick時点の限定censusです。型、位置、回転、接地、vehicle/passengerフラグだけを扱い、UUID、NBT、自動再構築情報は保存しません。領域全体のatomicまたはserver-complete snapshotとは表現しません。
 
-## one-shotの再定義
+### Creative操作の現在境界
 
-建築におけるone-shotは、ユーザーの1依頼でも、LLMがセルごとに数十回会話する意味でも、1packetで完成する意味でもありません。
+Creative v1で新しく公開するのはworld-read-only captureです。gzipファイルを作るためMCP annotationは`readOnlyHint=false / destructiveHint=false`ですが、直接`setBlock`、command、任意packet、任意NBT、任意summon/kill/teleportは公開しません。
 
-推奨する契約は次です。
+blockやEntityの能動操作は、既存の通常interaction経路をCreativeでも安全に再利用できることを別gateで確認してから追加します。特に、Creative inventoryからのitem準備、instant breakのACK、Entityの再生成契約を同時に一般化しません。この段階分けにより、Creative captureをSurvival側の権限拡張にしないことを優先します。
 
-1. LLMまたはユーザーが建築パッケージとparameterを1回確定する
-2. compilerが全セル、資材、作業地点、上限を副作用なしで検査する
-3. 必要資材がdeclared staging inventoryに揃った後、`plan_ref`を1回開始する
-4. runnerがcheckpoint間をLLMなしで進める
-5. 完成をpositive evidenceで確認するか、再計画材料を伴って停止する
+## 設計図画像
 
-将来の公開形は、既存13 kindへ急いで追加せず、development-only runnerで実証した後に検討します。候補は`compile_build_package`というread-only操作と、`execute_build_package(plan_ref, anchor, bounds, idempotency_key)`という1つの有限routineです。
+`tools/export-blueprint-svg.ps1`はterminal statusが示す`.json.gz` artifactを読み、Y layerごとのSVGを標準PowerShell/.NETだけで生成します。
 
-## tokenとcontextを抑える方法
+- Xを右、Zを下として表示
+- airも明示
+- 完全BlockState単位のpalette
+- 相対Yと絶対Y、anchor、Blueprint hashを記載
+- 最大4,194,304 cell、各辺256、最大64 chunk columnの完全な直方体だけを受理
 
-- レビュー済みtemplateは`template_ref + parameter`だけをLLMが出す
-- 新規形状も`plane`や`cuboid_shell`で表し、全セルを文章へ展開しない
-- 展開済みmanifestはhashで参照し、MCP応答へ毎回再掲しない
-- 通常進捗はstage、completed/expected、現在pose、資材残数だけ返す
-- cell詳細は失敗セルとその近傍だけをcursor付きで取得する
-- LLM pollingを毎tick行わず、terminalまたはtyped stop時だけ再計画する
-- 実行traceはlocal artifactへ残し、LLM contextへは要約を渡す
-- 稼働試験は定義済みprobeをrunnerが実行し、生ログの解釈をLLMへ任せない
+画像生成はMinecraft MODへ組み込みません。local artifact処理なので、Java依存やworld書込み権限を増やす必要がないためです。
 
-これにより、建築セル数とLLM token数をほぼ切り離せます。tokenは要件選択と例外対応へ使い、反復作業には使いません。
+## Stage 3: development runner
 
-## 安全境界
+`tools/run-build-gate.ps1`はclosed JSON manifestを検証し、次だけを順に呼びます。
 
-建築パッケージを導入しても、既存の安全規則は緩めません。
+- `navigate_to`
+- `apply_block_plan`
 
-- local arming、emergency stop、manual input、world session fence
-- finite bounds、deadline、travel、mutation、resource上限
-- current-only preconditionとserver-confirmed postcondition
-- raw input、任意packet、任意command、任意コードを非公開
-- unknown、last-known、推定を成功扱いしない
-- blind retryとtransaction rollbackを行わない
-- container、fluid、multi-block、Entity操作はtyped capabilityがない限り拒否
-- hidden cellを経路・支持・完成のBoolean oracleにしない
+runnerは次を固定します。
 
-建築パッケージは「大きな権限」ではなく、既存の小さな操作を静的に検証して順序付けるものです。compilerが作ったmanifestも、各操作直前のlive checkを省略する理由にはなりません。
+- 最大17 routine（中間`continue_goal`最大16＋最後の`finish_goal`）
+- apply 1phase最大64セル
+- 全step、phase、entry IDの一意性
+- 有限region、duration、travel、破壊許可
+- 非最終routineは`continue_goal`、最後だけ`finish_goal`
+- terminalまで`get_routine`をbounded polling
+- `SUCCEEDED`、`goal.verified=true`、`finalization.status=succeeded`をすべて要求
+- 既知のactive routineはcancelし、どの失敗経路でも最後に`emergency_stop`を試す
+- 最終step後は`active_routine=null`と`goal_finished` lockを確認
+- Bearer tokenを表示しない
 
-## 初版scope
+これはproduction用の新routineではなく、LLMを施工loopから外した効果を測るdevelopment toolです。manifestに自由なpredicate、script、任意tool callはありません。
 
-最初からTTを対象にすると、建築planner、Mob、睡眠、水流、kill、drop回収を同時に検証することになります。初版は次へ限定します。
+## Stage 4: generic live gate
 
-- flatで既知の作業床
-- 1 region、徒歩で届く複数work pose
-- jump、足場生成、落下移動なし
-- canonicalな単セルBlockItem
-- fluid、bed/door等のmulti-block、Entity、combatなし
-- safe break / placement support allowlistを維持
-- 全資材を開始前にstaging containerへ準備
-- 1 packageの展開上限と総時間を固定
-- completionは全target current exact、unknown 0
+最初のgateは意図的に小さくします。10×10床や2層小屋へ先に一般化せず、次を1回のrunner起動で確認します。
 
-このscopeで、LLMが生成するのはtemplateとparameterだけ、施工中のセル選択は0回、という状態を目標にします。
+1. 1つの安全な開始poseから、片側の2段cobblestone柱を施工
+2. 同じposeから反対側の2段柱を施工
+3. 最後だけgoalをfinishし、全4セルをcurrent exactで確認
 
-## 実装順
+fixtureは`build_runner` modeで、air→cobblestone 4セル、材料8個、1つのposeから届く2地点を固定します。各柱はbase→topの順に並ぶ2-cell phaseとし、合計2 apply phaseで実行します。これは一般dependency graphや不安定な移動付き施工を作る前に、必要最小限の順序をmanifestへ明示した例です。
 
-### 1. Pure compiler
+次の拡張は、この小gateがliveで安定してから行います。
 
-- closed schemaとcanonical hash
-- geometry primitiveの有限展開
-- Minecraft registryによるfull BlockState正規化とtransform
-- duplicate、bounds外、overlap、unsupported blockの拒否
-- material manifestとdependency graph
-- Minecraftを起動しないunit test
+1. 10×10床＋中央2×2穴
+2. 階段、slab、hopperを含む小構造
+3. 中断・再開、資材不足、外部divergence、到達不能
+4. Creative capture → Blueprint → Survival replay
+5. fluid、multi-cell、BlockEntity
+6. 準備済みEntity handoff
+7. アイアンゴーレムTT統合
 
-この段階ではworldを変更しません。
+## one-shotの定義
 
-### 2. Access planner
+one-shotは1 packetや1 Minecraft actionではありません。次の契約です。
 
-- flatな安全床から候補work poseを生成
-- normal reach、LOS、FOV、support faceで担当セルを割り当て
-- 全セルを覆えないplanは開始前に`UNREACHABLE_BUILD_CELLS`で拒否
-- pose間routeを既存navigation制約で事前検査
+1. ユーザーまたはLLMがBlueprint、anchor、bounds、材料を開始前に確定する
+2. manifestを副作用なしで検証する
+3. runnerを1回開始する
+4. 施工中のLLM呼出しを0にする
+5. 完成をpositive evidenceで確認するか、再計画材料を伴って安全停止する
 
-今回のように施工を始めて3セル目で視点不能になる問題を、最初のmutation前に検出します。
+セル数が増えたときにLLM tokenが増えないことは、巨大なartifactを毎回MCP応答へ再掲しないことで確認します。セル詳細はlocal gzip artifactへ置き、LLMへは`job_id / progress / terminal summary / artifact.sha256 / summary.blueprint_hash / relative path / server tick範囲`だけを戻します。
 
-### 3. Development-only runner
+## 残る不足
 
-- 既存`navigate_to`、`transfer_items`、`apply_block_plan`を決定論的に組み合わせる
-- LLMを呼ばずstage loopを進める
-- cancel、death、manual input、chunk unload、資材差替えで安全停止
-- checkpoint後の再開とalready-satisfied skip
+現段階で未実装なのは次です。
 
-公開MCP surfaceへ追加する前に、fixture内部で有効性を確認します。
+- Blueprintからwork poseとphaseを自動導出する一般access planner
+- staging containerからhotbarまでの確実な資材補充
+- Creative inventoryからのbounded item準備
+- Creativeでの能動block/Entity操作profile
+- 足場、jump、飛行、落下、複雑な経路
+- fluid、BlockEntity、multi-cell、動的回路の再現
+- Entityの生成、捕獲、搬送、配置
+- process再起動をまたぐcheckpoint
+- TTの水流、panic、kill、drop回収の時間発展probe
 
-### 4. Generic live gates
-
-次の順で対象を広げます。
-
-1. 10×10の乾いた床と中央穴
-2. 複数方向の壁、階段、slab、hopperを含む小構造
-3. 複数work poseを必要とする2層の小屋
-4. 中断・再開、外部divergence、資材不足
-5. fluid専用adapterと動的流体試験
-6. bed等multi-block
-7. 準備済みEntity handoff
-
-TTは5〜7が個別に合格した後の統合試験にします。
-
-### 5. 公開契約
-
-development gate通過後に、建築パッケージを新しい有限routineとして公開するか判断します。その際はADR 0002を更新し、「workflow DSLは非公開だが、有限な建築IRは許可する」という境界を明文化します。
-
-## 受入条件
-
-最低限、次をすべて満たすまで「材料があればone-shot建築」と呼びません。
-
-- LLMは開始後にセル列挙、視点選択、phase分割をしない
-- compilerが全セル、資材、work pose coverageをmutation前に確定する
-- 複数work poseを通常移動で巡回できる
-- 全targetがserver-confirmed current exact、unknown 0になる
-- 中断後の再開で重複設置・余分な消費がない
-- 未対応能力を暗黙にfixtureへ肩代わりさせず、resultへ明示する
-- failure時に全input、screen、slot、camera、Voiceを解放する
-- hidden stateやserver内部情報を成功根拠にしない
-- 実行セル数が増えても、LLM contextがほぼ一定である
-- 稼働機構はstatic BlockStateだけでなく、定義済みの時間発展probeに合格する
-
-## アイアンゴーレムTTの扱い
-
-TT作業は一旦停止します。現在のワールドは完成例ではなく、次の不足を再現した評価artifactです。
-
-- agentが3セルだけ施工し、安全に停止した状態
-- fixture支援で床を完成させた状態
-- 視線補正後にゴーレムがspawnした状態
-- 水流が搬送せず、kill・drop・回収が未確認の状態
-
-比較用saveは`run/iron-farm-evaluation-snapshot-20260821-0043`へ保存しています。今後TTを再開するときは、このworldを完成品として修正し続けるのではなく、上記generic gatesを通過した建築runnerと、独立したfluid・Mob・collection fixtureを組み合わせて新しい破棄可能worldで評価します。
+これらを一度にDSLへ入れません。generic gateで同じ不足が繰り返された機能だけを、型付きの小さなadapterとして追加します。
 
 ## 判断
 
-LLMだけで巨大な計画を反復実行する方式は、tokenを増やしても安定性が比例して上がりません。一方、施設ごとの専用`build_iron_golem_farm`を増やすと汎用性を失います。
+ComputerCraft風の短い記述から学ぶべき点は、LLMに反復操作をさせないことです。一方、プレイヤーにはreach、FOV、衝突、Mob、inventory、server同期があるため、Lua実行機そのものを移植しても問題は消えません。
 
-中間案として、LLMは有限な建築パッケージまたはレビュー済みtemplateのparameterを作り、pure compilerと固定runnerが施工へ落とす構成が最も妥当です。これなら、LLMの得意な要件解釈と設計選択を残し、不得意な座標列挙、作業順、視点、retry、同期をtoolへ移せます。
+したがって当面の境界は、`Blueprint`を交換形式、既存routineを実行単位、外部固定runnerを反復主体とします。豊富な建築パッケージは仮説のまま実装せず、この最小構成のlive結果から必要性を判断します。

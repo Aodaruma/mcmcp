@@ -257,6 +257,46 @@ final class FixtureGameTests {
             helper.fail(Component.literal("shortage fixture must require two cobblestone items"));
         }
 
+        var buildRunnerPlan = FixturePhase4Scenario.plan(
+                FixturePhase4Scenario.Mode.BUILD_RUNNER);
+        var expectedBuildRunnerTargets = java.util.List.of(
+                FixturePhase4Scenario.BUILD_RUNNER_FIRST_COLUMN.get(0),
+                FixturePhase4Scenario.BUILD_RUNNER_FIRST_COLUMN.get(1),
+                FixturePhase4Scenario.BUILD_RUNNER_SECOND_COLUMN.get(0),
+                FixturePhase4Scenario.BUILD_RUNNER_SECOND_COLUMN.get(1));
+        if (!buildRunnerPlan.stream().map(FixturePhase4Scenario.PlanCell::target).toList()
+                        .equals(expectedBuildRunnerTargets)
+                || buildRunnerPlan.stream().anyMatch(cell ->
+                        !cell.operation().equals("place")
+                                || !cell.before().equals(Blocks.AIR.defaultBlockState())
+                                || !cell.after().equals(Blocks.COBBLESTONE.defaultBlockState())
+                                || cell.item().filter(item -> item == net.minecraft.world.item.Items.COBBLESTONE)
+                                        .isEmpty())
+                || FixturePhase4Scenario.BUILD_RUNNER_COBBLESTONE_COUNT != 8) {
+            helper.fail(Component.literal(
+                    "build-runner fixture must declare four air-to-cobblestone placements and eight items"));
+        }
+        if (!FixturePhase4Scenario.BUILD_RUNNER_FIRST_COLUMN.get(1).equals(
+                        FixturePhase4Scenario.BUILD_RUNNER_FIRST_COLUMN.get(0).above())
+                || !FixturePhase4Scenario.BUILD_RUNNER_SECOND_COLUMN.get(1).equals(
+                        FixturePhase4Scenario.BUILD_RUNNER_SECOND_COLUMN.get(0).above())
+                || FixturePhase4Scenario.BUILD_RUNNER_FIRST_COLUMN.get(0).getZ()
+                        == FixturePhase4Scenario.ORIGIN.getZ()
+                || FixturePhase4Scenario.BUILD_RUNNER_SECOND_COLUMN.get(0).getZ()
+                        == FixturePhase4Scenario.ORIGIN.getZ()
+                || FixturePhase4Scenario.BUILD_RUNNER_START_POSE.getZ()
+                        != FixturePhase4Scenario.ORIGIN.getZ()) {
+            helper.fail(Component.literal(
+                    "build-runner fixture must keep two vertical columns beside a clear lane"));
+        }
+        assertInsideArena(helper, FixturePhase4Scenario.BUILD_RUNNER_START_POSE);
+        long normalReachSquared = 20;
+        if (expectedBuildRunnerTargets.stream().anyMatch(target -> squaredBlockDistance(
+                FixturePhase4Scenario.BUILD_RUNNER_START_POSE, target) > normalReachSquared)) {
+            helper.fail(Component.literal(
+                    "build-runner fixture must keep both phases reachable from one safe pose"));
+        }
+
         var hiddenLayout = FixturePhase4Scenario.layout(FixturePhase4Scenario.Mode.HIDDEN);
         assertLayoutState(
                 helper,
@@ -571,6 +611,13 @@ final class FixtureGameTests {
                 || position.getZ() < FixtureArena.MIN.getZ() || position.getZ() > FixtureArena.MAX.getZ()) {
             helper.fail(Component.literal("fixture cell escaped the bounded arena: " + position));
         }
+    }
+
+    private static long squaredBlockDistance(BlockPos first, BlockPos second) {
+        long x = (long) first.getX() - second.getX();
+        long y = (long) first.getY() - second.getY();
+        long z = (long) first.getZ() - second.getZ();
+        return x * x + y * y + z * z;
     }
 
     private static void assertLayoutState(

@@ -52,6 +52,12 @@ class FixturePhase3AutorunConfigTest {
         assertThat(FixturePhase3AutorunConfig.parse("hidden", "true")).get()
                 .extracting(FixturePhase3AutorunConfig::mode)
                 .isEqualTo(FixturePhase3AutorunConfig.Mode.HIDDEN);
+        assertThat(FixturePhase3AutorunConfig.parse("build_runner", "true")).get()
+                .extracting(FixturePhase3AutorunConfig::mode)
+                .isEqualTo(FixturePhase3AutorunConfig.Mode.BUILD_RUNNER);
+        assertThat(FixturePhase3AutorunConfig.parse("creative_capture", "true"))
+                .contains(new FixturePhase3AutorunConfig(
+                        FixturePhase3AutorunConfig.Mode.CREATIVE_CAPTURE, true));
     }
 
     @Test
@@ -76,6 +82,8 @@ class FixturePhase3AutorunConfigTest {
         assertThat(FixturePhase3AutorunConfig.Mode.SHORTAGE.selectedSlot()).isEqualTo(1);
         assertThat(FixturePhase3AutorunConfig.Mode.DIVERGENCE.selectedSlot()).isZero();
         assertThat(FixturePhase3AutorunConfig.Mode.HIDDEN.selectedSlot()).isZero();
+        assertThat(FixturePhase3AutorunConfig.Mode.BUILD_RUNNER.selectedSlot()).isEqualTo(1);
+        assertThat(FixturePhase3AutorunConfig.Mode.CREATIVE_CAPTURE.selectedSlot()).isZero();
         assertThat(FixturePhase3AutorunConfig.Mode.values())
                 .filteredOn(FixturePhase3AutorunConfig.Mode::phase4)
                 .containsExactly(
@@ -86,7 +94,9 @@ class FixturePhase3AutorunConfigTest {
                         FixturePhase3AutorunConfig.Mode.HOPPER,
                         FixturePhase3AutorunConfig.Mode.SHORTAGE,
                         FixturePhase3AutorunConfig.Mode.DIVERGENCE,
-                        FixturePhase3AutorunConfig.Mode.HIDDEN);
+                        FixturePhase3AutorunConfig.Mode.HIDDEN,
+                        FixturePhase3AutorunConfig.Mode.BUILD_RUNNER);
+        assertThat(FixturePhase3AutorunConfig.Mode.CREATIVE_CAPTURE.creativeCapture()).isTrue();
         assertThat(FixturePhase3AutorunConfig.Mode.values())
                 .filteredOn(FixturePhase3AutorunConfig.Mode::phase4)
                 .allSatisfy(mode -> assertThat(FixturePhase3AutorunConfig.parse(

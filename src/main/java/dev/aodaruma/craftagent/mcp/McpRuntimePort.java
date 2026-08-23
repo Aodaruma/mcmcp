@@ -17,8 +17,8 @@ import java.util.concurrent.CompletionStage;
 public interface McpRuntimePort {
     CompletionStage<RuntimeReply> submit(RuntimeCommand command, RuntimeCallContext context);
 
-    sealed interface RuntimeCommand permits GetStatus, GetSnapshot, CompareBlockPlan, GetRecipes, ListRoutines,
-            GetRoutine, StartRoutine, CancelRoutine, EmergencyStop {
+    sealed interface RuntimeCommand permits GetStatus, GetSnapshot, CaptureCreativeRegion, CompareBlockPlan,
+            GetRecipes, ListRoutines, GetRoutine, StartRoutine, CancelRoutine, EmergencyStop {
         String toolName();
     }
 
@@ -37,6 +37,17 @@ public interface McpRuntimePort {
         @Override
         public String toolName() {
             return "get_snapshot";
+        }
+    }
+
+    record CaptureCreativeRegion(Map<String, Object> arguments) implements RuntimeCommand {
+        public CaptureCreativeRegion {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "capture_creative_region";
         }
     }
 

@@ -82,6 +82,14 @@ BlockEntityの任意NBT、未開封container内容、村人POI、AI brain、serv
 
 現在のFOV外を読み取りtoolだけで360度観測したことにはしません。必要な場合は`survey_area` routineが通常操作で視点を回し、歩き、観測を蓄積します。
 
+### Creative captureの明示例外
+
+`capture_creative_region`は、private local integrated single-player、server-side Creative、cheats/GM permission、local armを満たす場合だけ、integrated server上の明示regionをLOSなしで読みます。
+
+clientへの事前loadやplayer距離は要求しません。資源上限は各辺256、4,194,304 block、64 chunk column、1 active job、1 chunk in flight、artifact展開後64 MiBです。現在dimensionの生成済みchunkだけをserver threadで順次扱い、未生成chunkは生成しません。
+
+複数chunkの内容は`started_server_tick`から`completed_server_tick`までの`server_thread_chunk_sequence`であり、atomic snapshotではありません。結果はgzip artifactへ保存し、通常ObserverやWorldMemoryへ記録しません。このためCreativeで得たhidden stateを後のSurvival sessionで`last_known`として利用しません。seed/POI/NBT読取もこの例外に含みません。
+
 ## World memory
 
 memoryへ記録するのは次だけです。
@@ -196,9 +204,11 @@ spawn条件はversion、dimension、server設定、追加MODで変わり得る�
 
 ## 禁止する情報経路
 
-- 壁越し・地中・未観測座標の現在BlockState取得
+- 通常profileでの壁越し・地中・未観測座標の現在BlockState取得
 - hidden座標に対する一致・不一致だけのBoolean oracle
 - hidden block updateによるmemoryの自動更新
 - 未ロードchunk、seed、structure、POI、mob AI内部状態の取得
 - stale memoryをcurrentとして表示すること
 - stale memoryだけを根拠に破壊・設置を開始すること
+
+`capture_creative_region`は上記の通常profileを暗黙に緩和するものではなく、前述のlocal Creative gate、非atomicなchunk sequence、gzip artifact出力を持つ別経路です。結果はWorldMemoryへ混ぜません。

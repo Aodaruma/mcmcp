@@ -105,6 +105,10 @@ class CraftAgentOutputSchemaContractTest {
                         Map.of("scopes", List.of("player")),
                         snapshotData()),
                 new ToolCase(
+                        "capture_creative_region",
+                        creativeRegionArguments(),
+                        creativeRegionData()),
+                new ToolCase(
                         "compare_block_plan",
                         compareArguments(),
                         compareData()),
@@ -154,6 +158,69 @@ class CraftAgentOutputSchemaContractTest {
                 "observation_revision", 12L,
                 "requested_scopes", List.of("player"),
                 "player", player);
+    }
+
+    private static Map<String, Object> creativeRegionArguments() {
+        return McpTestFixtures.fields(
+                "operation", "start",
+                "region", McpTestFixtures.fields(
+                        "dimension", "minecraft:overworld",
+                        "min", Map.of("x", 10, "y", 64, "z", -3),
+                        "max", Map.of("x", 10, "y", 64, "z", -3)),
+                "include_entities", true,
+                "idempotency_key", IDEMPOTENCY_KEY);
+    }
+
+    private static Map<String, Object> creativeRegionData() {
+        Map<String, Object> basis = McpTestFixtures.fields(
+                "world_session_id", ROUTINE_ID,
+                "started_client_tick", 200L,
+                "dimension", "minecraft:overworld",
+                "source", "integrated_server_chunk_sequence",
+                "game_mode", "creative",
+                "consistency", "server_thread_chunk_sequence",
+                "region", McpTestFixtures.fields(
+                        "min", Map.of("x", 10, "y", 64, "z", -3),
+                        "max", Map.of("x", 10, "y", 64, "z", -3)),
+                "volume", 1,
+                "started_server_tick", 100,
+                "completed_server_tick", 102);
+        return McpTestFixtures.fields(
+                "job_id", ROUTINE_ID,
+                "state", "succeeded",
+                "idempotent_replay", false,
+                "progress", McpTestFixtures.fields(
+                        "processed_cells", 1,
+                        "total_cells", 1,
+                        "loaded_chunks", 1,
+                        "processed_chunks", 1,
+                        "total_chunks", 1,
+                        "started_server_tick", 100),
+                "artifact", McpTestFixtures.fields(
+                        "relative_path", "craftagent/exports/creative-blueprints/" + ROUTINE_ID + ".json.gz",
+                        "format", "json+gzip",
+                        "sha256", "sha256:" + "a".repeat(64),
+                        "compressed_bytes", 512,
+                        "uncompressed_bytes", 1024),
+                "summary", McpTestFixtures.fields(
+                        "basis", basis,
+                        "blueprint_hash", "sha256:" + "c".repeat(64),
+                        "palette_size", 1,
+                        "manual_setup_count", 0,
+                        "block_counts", McpTestFixtures.fields(
+                                "items", List.of(Map.of("block", "minecraft:stone", "count", 1)),
+                                "unique_count", 1,
+                                "truncated", false),
+                        "materials", McpTestFixtures.fields(
+                                "complete", true,
+                                "items", List.of(Map.of("item", "minecraft:stone", "count", 1)),
+                                "unique_count", 1,
+                                "truncated", false),
+                        "entities", McpTestFixtures.fields(
+                                "included", true,
+                                "count", 0,
+                                "truncated", false,
+                                "complete", false)));
     }
 
     private static Map<String, Object> compareArguments() {

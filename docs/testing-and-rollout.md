@@ -2,9 +2,9 @@
 
 ## 現在地点
 
-Phase 0〜6は完了しています。本体MODと別source setのdevelopment fixture MODを使って下記のgateを通過し、one-shot continuationと固定`stay`完了処理まで受入を完了しました。Phase 7はv1に含めません。
+Phase 0〜6は完了しています。本体MODと別source setのdevelopment fixture MODを使って下記のgateを通過し、one-shot continuationと固定`stay`完了処理まで受入を完了しました。Phase 7はv1に含めません。現在はその後段として、決定論的build runnerとCreative Blueprint captureのStage 3/4 development prototypeを検証しています。
 
-現在のMCP surfaceは、既存8 toolに読み取り専用`get_recipes`を加えた9 tool、既存7 routineにPhase 5の6 kindを加えた13 kindです。Phase 6でもsurfaceを増やさず、全13 startの`completion_intent`を省略可能な`finish_goal | continue_goal`へ更新しました。省略時は`finish_goal`です。
+現在のMCP surfaceは、Phase 6の9 toolへCreative専用のworld-read-only非同期artifact export `capture_creative_region`を末尾追加した10 tool、routineは13 kindです。全13 startの`completion_intent`は省略可能な`finish_goal | continue_goal`で、省略時は`finish_goal`です。
 
 現在の完了判定の証跡は次のとおりです。
 
@@ -34,7 +34,7 @@ Java 25を指定し、リポジトリ直下で実行します。
 
 Phase 3の固定scenarioは`/craftagent_fixture phase3 navigate|break|place|lever|cow|reset`で準備します。`phase3_action_fixture` GameTestは移動lane、採掘target、設置support/destination、leverの完全なBlockState、NoAIかつpersistentなcowというfixture前提を検査します。action実行、停止・失敗経路、production Prism実Modpackのlive gateは、上記の完了証跡として別途確認済みです。
 
-Phase 4の固定scenarioは`/craftagent_fixture phase4 all_satisfied|mutations|waterlogged|directional_stairs|hopper|shortage|divergence|hidden`で準備します。`phase4_block_plan_fixture` GameTestはexact full before/after state、operation順、資材不足、hidden current拒否、waterlogged slab、directional stairs、hopperを実BlockStateで検査します。semantic施工はdevelopment live gate、実Modpack互換性・起動停止はfixtureなしのproduction gateで分けて確認します。
+Phase 4の固定scenarioは`/craftagent_fixture phase4 all_satisfied|mutations|waterlogged|directional_stairs|hopper|shortage|divergence|hidden|build_runner`で準備します。`phase4_block_plan_fixture` GameTestはexact full before/after state、operation順、資材不足、hidden current拒否、waterlogged slab、directional stairs、hopper、2作業地点のbuild-runner配置を実BlockStateで検査します。semantic施工はdevelopment live gate、実Modpack互換性・起動停止はfixtureなしのproduction gateで分けて確認します。
 
 本体成果物は`build/libs/craftagent-<version>.jar`、fixtureは`build/libs/craftagent-<version>-test-harness.jar`です。後者は開発専用であり、通常のPrism Launcher instanceやマルチプレイ環境には導入しません。`runHarnessClient`は両source setを開発環境から読み込みます。
 
@@ -217,6 +217,49 @@ Phase 4の固定scenarioは`/craftagent_fixture phase4 all_satisfied|mutations|w
 - unknownを含む必須predicateで成功しない
 - 失敗、cancel、emergency stopでinput/screenを解放し、Voice Chatを復元してchainを破棄・lockする
 - `stay`はrelease後に無期限guardせず、safe anchor帰還、`ask`、disconnect、maintenance、temporary shelter、combatを暗黙に開始しない
+
+## Post-Phase 6 Stage 3/4: build runnerとCreative Blueprint
+
+Stage 3は`tools/run-build-gate.ps1`です。`craftagent.dev-build-gate/v1`のclosed manifestだけを受け、`navigate_to / apply_block_plan`を最大17 routine、最大900秒で順次実行します。非最終stepは`continue_goal`、最後だけ`finish_goal`とし、各terminalで`SUCCEEDED / goal.verified / finalization.succeeded`をすべて要求します。
+
+Stage 4の固定modeは次です。
+
+- `build_runner`: base→top順の2-cell phaseで作る2段柱×2、途中に通常navigation 1回
+- `creative_capture`: 既存galleryをCreativeで開き、cheats/GM permissionを有効化し、playerから32 block超離れた固定1,024-cell region `192,199,192..207,202,207`をcapture可能にする
+
+実行例:
+
+```powershell
+# 副作用なしのmanifest検査
+pwsh -File tools/run-build-gate.ps1 tools/build-gates/build-runner.example.json -ValidateOnly
+
+# build runner用の破棄可能world
+.\gradlew.bat runHarnessClient -PcraftagentFixturePhase3Mode=build_runner
+pwsh -File tools/run-build-gate.ps1 tools/build-gates/build-runner.example.json
+
+# Creative capture用の破棄可能world
+.\gradlew.bat runHarnessClient -PcraftagentFixturePhase3Mode=creative_capture
+```
+
+Creative captureは`start / status`で実行します。距離、client preload、512 cell制限は設けず、各辺256、4,194,304 block、64 chunk column、1 active job、1 chunk in flight、artifact展開後64 MiBへ制限します。現在dimensionの生成済みchunkは順次一時loadし、未生成chunkは生成しません。全cellはgzip artifactへ保存し、MCP応答には進捗とterminal metadataだけを返します。通常観測memoryへ書かず、BlockEntity、fluid、multi-cell、Entity再構築はmanual扱いです。
+
+このprototypeの合格条件:
+
+- manifestのunknown property、bounds矛盾、重複target、phase順、継続予算を副作用前に拒否する
+- runner開始後のLLM呼出し0
+- 1つの安全なwork poseから2 apply phaseが1 chainで完了し、4 targetがcurrent exact、材料が8→4になる
+- failure時にactive routineをcancelし、その成否によらず最後にemergency stopを試す
+- 最終statusが`active_routine=null / lock.reason=goal_finished`になる
+- Creative capture hashがanchor、dimension、cell ID、入力順に依存せず、全BlockState propertyを結合する
+- Creativeのhidden readがWorldMemoryやSurvival profileへ混ざらない
+- 材料集計とmanual項目を分け、Entity censusをserver-completeと表現しない
+- multiplayer、Survival、cheatsなし、GM permissionなし、armなしを個別に拒否する
+- 32 block超、client未load、512 cell超が、それだけでは拒否理由にならない
+- 各辺256、4,194,304 block、64 chunk column、展開後64 MiBの境界値と超過拒否を確認する
+- unload済み生成chunkをcaptureでき、未生成chunkを生成しない
+- start/status応答に全cellを含めず、gzip artifactへ完全なpalette＋RLE Blueprintを保存する
+- start/end server tickと非atomic consistencyを明示し、world変更・arm失効・shutdownでjobと一時chunkを解放する
+- 最後にunit/integration、harness test、GameTest、上記2 live modeをまとめて確認する
 
 ## Phase 7: 収容済みEntity搬送（experimental）
 

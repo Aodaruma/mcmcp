@@ -79,16 +79,23 @@ terminal時は保持している場合だけVoice Chat所有状態を復元し�
 - 現在観測できるblock/Entityと、出所・鮮度付きのlast-known memory
 - allowlist済みの有限・型付きroutine
 - 明示的な`sleep_at_bed`と、宣言済みbounds内の`navigate_to`
+- 非公開local Creativeで、別capabilityとしてarmした上限付きのworld-read-only非同期region capture
 
 ### 禁止
 
 - 任意packet、任意chat、任意command、任意Java呼び出し
 - 座標、速度、Entity motion/AI、NBT、inventoryの直接変更
-- wall-throughの現在情報、hidden Boolean oracle、未ロード領域、seed/structure/POI取得
+- 通常profileでのwall-through現在情報、hidden Boolean oracle、未ロード領域、seed/structure/POI取得
 - reach、LOS、cooldown、採掘速度、移動速度、collisionの回避
 - 自動login、認証情報取得、自動reconnect
 - playerへの攻撃、窃盗、取引、蘇生等の対人影響を自動判断する操作
 - 任意Mob捕獲、汎用Entity transport、無期限combat/guard
+
+### Creative profile
+
+Creativeの観測拡張はSurvival capabilityと分離します。permission gateは、このclientが所有する非公開integrated single-player、対応するserver playerのCreative GameType、cheats/GM permission、現在world sessionでのlocal armだけです。32 block、client preload、512 cellは権限条件ではありません。
+
+資源上限として各辺256、4,194,304 block、64 chunk column、1 active job、1 chunk in flight、artifact展開後64 MiBを適用します。生成済みchunkはintegrated serverで一時loadして必ず解放し、未生成chunkは生成しません。WorldMemoryへ保存せず、world変更も行いませんが、gzip artifactを書き込むためMCP annotationは`readOnlyHint=false / destructiveHint=false`です。直接`setBlock`、Creative item生成、command、任意packet/NBT、Entity summon/kill/teleportは公開しません。Creativeでの能動操作は専用gateに合格するまで追加しません。
 
 ## 破壊元とblock planの境界
 

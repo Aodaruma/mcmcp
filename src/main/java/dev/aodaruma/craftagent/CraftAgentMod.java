@@ -22,6 +22,8 @@ import net.neoforged.neoforge.client.event.lifecycle.ClientStoppedEvent;
 import net.neoforged.neoforge.client.event.lifecycle.ClientStoppingEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.level.LevelEvent;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.slf4j.Logger;
 
 import java.util.concurrent.TimeUnit;
@@ -62,6 +64,8 @@ public final class CraftAgentMod {
         eventBus.addListener(this::onScreenClosing);
         eventBus.addListener(this::onClientStopping);
         eventBus.addListener(this::onClientStopped);
+        eventBus.addListener(this::onServerPostTick);
+        eventBus.addListener(this::onServerStopping);
 
         LOGGER.info("CraftAgent bootstrap: modVersion={}, physicalSide=CLIENT", modVersion);
     }
@@ -146,5 +150,13 @@ public final class CraftAgentMod {
     private void onClientStopped(ClientStoppedEvent event) {
         mcpServer.close();
         mcpServer.awaitStopped(5, TimeUnit.SECONDS);
+    }
+
+    private void onServerPostTick(ServerTickEvent.Post event) {
+        runtime.onServerPostTick(event.getServer());
+    }
+
+    private void onServerStopping(ServerStoppingEvent event) {
+        runtime.onServerStopping(event.getServer());
     }
 }

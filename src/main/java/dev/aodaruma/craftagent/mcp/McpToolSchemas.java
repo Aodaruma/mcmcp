@@ -47,6 +47,33 @@ public final class McpToolSchemas {
                 "options", options), "scopes");
     }
 
+    static Map<String, Object> creativeRegionInput() {
+        Map<String, Object> region = closedObject(fields(
+                "dimension", registryId(),
+                "min", blockPosition(),
+                "max", blockPosition()), "dimension", "min", "max");
+        Map<String, Object> result = closedObject(fields(
+                "operation", enumString("start", "status"),
+                "region", region,
+                "include_entities", schema("type", "boolean"),
+                "idempotency_key", uuid(),
+                "job_id", uuid()));
+        result.put("oneOf", List.of(
+                schema(
+                        "properties", fields("operation", constant("start")),
+                        "required", List.of(
+                                "operation", "region", "include_entities", "idempotency_key"),
+                        "not", schema("required", List.of("job_id"))),
+                schema(
+                        "properties", fields("operation", constant("status")),
+                        "required", List.of("operation", "job_id"),
+                        "not", schema("anyOf", List.of(
+                                schema("required", List.of("region")),
+                                schema("required", List.of("include_entities")),
+                                schema("required", List.of("idempotency_key")))))));
+        return result;
+    }
+
     static Map<String, Object> compareInput() {
         Map<String, Object> anchor = closedObject(fields(
                 "dimension", registryId(),
@@ -647,6 +674,92 @@ public final class McpToolSchemas {
                 "screen", screen),
                 "world_session_id", "client_tick", "observation_revision", "requested_scopes");
         return envelope("get_snapshot", data);
+    }
+
+    static Map<String, Object> creativeRegionOutput() {
+        Map<String, Object> region = closedObject(fields(
+                "min", blockPosition(),
+                "max", blockPosition()), "min", "max");
+        Map<String, Object> basis = closedObject(fields(
+                "world_session_id", uuid(),
+                "started_client_tick", integer(0, Long.MAX_VALUE),
+                "dimension", registryId(),
+                "source", constant("integrated_server_chunk_sequence"),
+                "game_mode", constant("creative"),
+                "consistency", constant("server_thread_chunk_sequence"),
+                "region", region,
+                "volume", integer(1, 4_194_304),
+                "started_server_tick", integer(0, Integer.MAX_VALUE),
+                "completed_server_tick", integer(0, Integer.MAX_VALUE)),
+                "world_session_id", "started_client_tick", "dimension", "source", "game_mode",
+                "consistency", "region", "volume", "started_server_tick", "completed_server_tick");
+        Map<String, Object> itemCount = closedObject(fields(
+                "item", registryId(),
+                "count", integer(1, Integer.MAX_VALUE)), "item", "count");
+        Map<String, Object> blockCount = closedObject(fields(
+                "block", registryId(),
+                "count", integer(1, 4_194_304)), "block", "count");
+        Map<String, Object> blockCounts = closedObject(fields(
+                "items", array(blockCount, 0, 512),
+                "unique_count", integer(0, 65_536),
+                "truncated", schema("type", "boolean")),
+                "items", "unique_count", "truncated");
+        Map<String, Object> materials = closedObject(fields(
+                "complete", schema("type", "boolean"),
+                "items", array(itemCount, 0, 512),
+                "unique_count", integer(0, 65_536),
+                "truncated", schema("type", "boolean")),
+                "complete", "items", "unique_count", "truncated");
+        Map<String, Object> entitySummary = closedObject(fields(
+                "included", schema("type", "boolean"),
+                "count", integer(0, 128),
+                "truncated", schema("type", "boolean"),
+                "complete", schema("type", "boolean")),
+                "included", "count", "truncated", "complete");
+        Map<String, Object> summary = closedObject(fields(
+                "basis", basis,
+                "blueprint_hash", sha256Fingerprint(),
+                "palette_size", integer(1, 65_536),
+                "manual_setup_count", integer(0, Integer.MAX_VALUE),
+                "block_counts", blockCounts,
+                "materials", materials,
+                "entities", entitySummary),
+                "basis", "blueprint_hash", "palette_size", "manual_setup_count",
+                "block_counts", "materials", "entities");
+        Map<String, Object> artifact = closedObject(fields(
+                "relative_path", string(80, 160,
+                        "^craftagent/exports/creative-blueprints/[0-9a-f-]{36}\\.json\\.gz$"),
+                "format", constant("json+gzip"),
+                "sha256", sha256Fingerprint(),
+                "compressed_bytes", integer(1, Long.MAX_VALUE),
+                "uncompressed_bytes", integer(1, 67_108_864)),
+                "relative_path", "format", "sha256", "compressed_bytes", "uncompressed_bytes");
+        Map<String, Object> progress = closedObject(fields(
+                "processed_cells", integer(0, 4_194_304),
+                "total_cells", integer(1, 4_194_304),
+                "loaded_chunks", integer(0, 64),
+                "processed_chunks", integer(0, 64),
+                "total_chunks", integer(1, 64),
+                "started_server_tick", integer(0, Integer.MAX_VALUE)),
+                "processed_cells", "total_cells", "loaded_chunks", "processed_chunks", "total_chunks");
+        Map<String, Object> captureError = closedObject(fields(
+                "code", enumString(
+                        "timeout", "locked", "cancelled", "server_stopping", "world_session_changed",
+                        "unsafe_state", "artifact_too_large", "chunk_not_generated",
+                        "artifact_write_failed", "capture_failed"),
+                "message", string(1, 256, null)), "code", "message");
+        Map<String, Object> data = closedObject(fields(
+                "job_id", uuid(),
+                "state", enumString(
+                        "queued", "loading_chunks", "capturing", "finalizing",
+                        "succeeded", "failed", "cancelled"),
+                "idempotent_replay", schema("type", "boolean"),
+                "progress", progress,
+                "artifact", artifact,
+                "summary", summary,
+                "error", captureError),
+                "job_id", "state", "idempotent_replay", "progress");
+        return envelope("capture_creative_region", data);
     }
 
     static Map<String, Object> compareOutput() {

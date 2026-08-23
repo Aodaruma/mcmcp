@@ -4,12 +4,12 @@
 
 MCPへ公開するのは、読み取りtool、制御tool、型付きroutineの開始だけです。生のキーhold、任意packet、自由文workflow、任意Java呼び出しは公開しません。
 
-- 短時間の観測と比較は同期tool
+- 短時間の観測と比較は同期tool。広域Creative captureだけは非同期artifact export
 - 能動操作と長時間処理は`start_routine`で開始し、`routine_id`で追跡
 - 毎tickのfeedback loopはMOD内部
 - `tools/list`はMCP tool一覧、`list_routines`はdomain routine kind一覧
 - 全input/output schemaは`additionalProperties: false`、文字列長、件数、座標範囲、deadlineを制限
-- read-only toolには`readOnlyHint: true`
+- 副作用のないread-only toolには`readOnlyHint: true`。Creative captureはworldを変更しませんがlocal fileを作るため`readOnlyHint: false / destructiveHint: false`
 - 能動toolはmutating/destructiveとして扱い、MCP clientの自動承認を前提にしない
 
 ## 公開tool一覧
@@ -25,8 +25,9 @@ MCPへ公開するのは、読み取りtool、制御tool、型付きroutineの�
 | `cancel_routine` | write | 指定routineを安全に取消 |
 | `emergency_stop` | write | 全入力解放、pending開始破棄、lock |
 | `get_recipes` | read | クライアント既知のrecipe displayを限定列挙 |
+| `capture_creative_region` | artifact write | ローカルCreative領域を非同期captureし、gzip Blueprint artifactを生成 |
 
-現在の固定surfaceは上記9 toolです。既存8 toolの順序とinput/output shapeは変えず、読み取り専用`get_recipes`を末尾へ追加しています。
+現在の固定surfaceは上記10 toolです。Phase 6までの既存9 toolの順序とinput/output shapeは変えず、Creative専用のworld-read-onlyな非同期artifact export toolを末尾へ追加しています。routine kindは13のままです。
 
 スクリーンショットは未知MODの診断や見た目確認に有効ですが、structured observationとは性質が異なります。必要性を実測した段階で、明示的な読み取り専用`capture_view`として追加します。
 
@@ -97,6 +98,45 @@ server address、Bearer token、Microsoft認証情報、音声device名は返し
 `visible_entities`はplayer識別子を返しません。遮蔽後は現在座標を更新せず、`last_known`と観測tickを返します。任意UUIDではなく短寿命のopaque `entity_ref`を使います。`types`にはruntimeで存在するregistry ID/tagだけを受け、敵対性はtypeだけで断定せず、現在可視の挙動とversion/MOD対応classifierによる`threat_relation`として別に返します。
 
 詳細な境界は[観測・記憶モデル](observation-model.md)に従います。
+
+## `capture_creative_region`（Creative prototype）
+
+```json
+{
+  "operation": "start",
+  "region": {
+    "dimension": "minecraft:overworld",
+    "min": {"x": 192, "y": 199, "z": 192},
+    "max": {"x": 207, "y": 202, "z": 207}
+  },
+  "include_entities": true,
+  "idempotency_key": "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+}
+```
+
+開始応答の`job_id`は、同じtoolのstatus操作で追跡します。
+
+```json
+{
+  "operation": "status",
+  "job_id": "9e69f17b-c38e-48ce-9ac7-7d02a4cc5fe2"
+}
+```
+
+通常の`get_snapshot`を緩めず、Creative設計取込みだけを独立したprofileにします。権限gateは次の4条件だけです。
+
+- このclientが所有する非公開integrated single-player
+- 対応するserver playerの実GameTypeがCreative
+- cheats有効かつserver playerがGM permissionを持つ
+- 現在のworld sessionでCreative capture capabilityがlocal arm済み
+
+player距離、clientへの事前chunk load、512 cellは権限条件ではありません。処理量は各辺256、volume 4,194,304、最大64 chunk column、同時1 job、同時1 chunk、artifact展開後64 MiBまでに制限します。現在dimensionの生成済みchunkは順次一時loadできますが、未生成chunkは生成しません。
+
+start/statusのMCP応答には全cellを含めません。成功statusはgzip bytesの`artifact.sha256`、論理Blueprintの`summary.blueprint_hash`、block/material summary、相対artifact path、`started_server_tick / completed_server_tick`を返します。gzip artifactは外側の`craftagent.creative-blueprint-artifact/v1`内に、airを含む全cellを表す`craftagent.blueprint-palette-rle/v1`のpalette＋RLEを保持します。`consistency=server_thread_chunk_sequence`であり、複数chunkを同時刻に凍結したatomic snapshotではありません。
+
+`include_entities=true`の場合、region内のaliveな非player Entityをchunk処理時点で限定集計します。UUID、health、AI、owner、equipment、NBTは保存せず、領域全体のatomicまたはserver-complete一覧とは扱いません。BlockEntity、fluid、multi-cell、clone item未解決はmanual再現情報へ分類します。
+
+このtoolはWorldMemoryへ書かず、world mutationや常設forceloadを行いません。直接`setBlock`、command、Creative item生成、任意NBT、summon/kill/teleportも公開しません。設計図SVGはlocalの`tools/export-blueprint-svg.ps1`でterminal statusが示すgzip artifactから生成します。
 
 ## `compare_block_plan`
 

@@ -32,6 +32,8 @@ record FixturePhase3AutorunConfig(Mode mode, boolean autoArm) {
             case "shortage" -> Mode.SHORTAGE;
             case "divergence" -> Mode.DIVERGENCE;
             case "hidden" -> Mode.HIDDEN;
+            case "build_runner" -> Mode.BUILD_RUNNER;
+            case "creative_capture" -> Mode.CREATIVE_CAPTURE;
             default -> throw new IllegalArgumentException(
                     "unsupported fixture autorun mode: " + sanitize(rawMode));
         };
@@ -71,7 +73,9 @@ record FixturePhase3AutorunConfig(Mode mode, boolean autoArm) {
         HOPPER(7),
         SHORTAGE(1),
         DIVERGENCE(0),
-        HIDDEN(0);
+        HIDDEN(0),
+        BUILD_RUNNER(1),
+        CREATIVE_CAPTURE(0);
 
         private final int selectedSlot;
 
@@ -86,9 +90,13 @@ record FixturePhase3AutorunConfig(Mode mode, boolean autoArm) {
         boolean phase4() {
             return switch (this) {
                 case ALL_SATISFIED, MUTATIONS, WATERLOGGED, DIRECTIONAL_STAIRS,
-                        HOPPER, SHORTAGE, DIVERGENCE, HIDDEN -> true;
-                case NAVIGATE, BREAK, PLACE, LEVER, COW, RESET -> false;
+                        HOPPER, SHORTAGE, DIVERGENCE, HIDDEN, BUILD_RUNNER -> true;
+                case NAVIGATE, BREAK, PLACE, LEVER, COW, RESET, CREATIVE_CAPTURE -> false;
             };
+        }
+
+        boolean creativeCapture() {
+            return this == CREATIVE_CAPTURE;
         }
     }
 }

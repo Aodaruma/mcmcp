@@ -12,10 +12,11 @@ Minecraft 26.2 / NeoForge 26.2向けに、通常のサバイバル操作だけ�
 - Phase 5（inventory・農林業・maintenance）: 完了（実装・全受入ゲート合格）
 - Phase 6（one-shot orchestration・完了後安全化）: 完了（実装・受入ゲート合格）
 - Phase 7（収容済みEntity搬送）: v1対象外のexperimental設計
+- Post-Phase 6 Stage 3/4（決定論的build runner・Creative Blueprint）: development prototype実装
 
-公開MCP surfaceは、既存8 toolに読み取り専用`get_recipes`を加えた9 toolと、既存7 kindに`craft_items`、`transfer_items`、`tend_crop_area`、`harvest_tree_area`、`sleep_at_bed`、`survey_area`を加えた13 routine kindです。`get_recipes`が返すのはクライアントが既知の`RecipeDisplayEntry`だけで、全`RecipeManager`の列挙ではありません。
+公開MCP surfaceは、Phase 6までの9 toolへCreative専用のworld-read-onlyな非同期artifact export `capture_creative_region`を末尾追加した10 toolと、13 routine kindです。Creative captureは`start / status`で追跡し、全cellはMCP応答ではなくgzip artifactへ保存します。`get_recipes`が返すのはクライアントが既知の`RecipeDisplayEntry`だけで、全`RecipeManager`の列挙ではありません。
 
-Phase 6でも公開surfaceは9 tool・13 routineのままです。全13 routineの`completion_intent`は省略可能な`finish_goal | continue_goal`となり、省略時は`finish_goal`です。複数routineを選択・再計画するouter loopはLLM/MCP clientが担い、MODへworkflow DSLは追加していません。
+全13 routineの`completion_intent`は省略可能な`finish_goal | continue_goal`となり、省略時は`finish_goal`です。複数routineを選択・再計画するouter loopはLLM/MCP clientが担い、MODへworkflow DSLや組込みLua VMは追加していません。development-only runnerが既存`navigate_to / apply_block_plan`をclosed manifest順に実行します。
 
 Phase 6完了時点で、Java 25のunit/integration test 347件、harness test 11件（いずれも失敗0）、GameTest 5/5を通過しました。Phase 5のdevelopment live gateでは`survey_area`と、通常container画面を開閉・再同期する`transfer_items`の成功を確認しています。fixtureなしのproduction Prism実ModpackではPhase 6最終JARについて、MCP 2025-11-25、9 tools・13 routines、catalog `phase-6`、Voice Chat接続、CraftAgent error 0、正常な全dimension保存・shutdown、PIDと8765 listenerの解放を確認しました。
 
@@ -29,7 +30,7 @@ Phase 6のdevelopment live gateでは、`survey_area`を`continue_goal`、続け
 - クライアントMOD: 毎tickの視点・移動・操作、サーバー同期確認、局所retry、安全停止
 - Minecraftサーバー: 通常どおり最終的なゲーム状態を決定
 
-サーバー側MOD、OP権限、独自packetは使いません。移動・採掘・設置・クラフト・コンテナ操作は、通常プレイヤーと同じ経路で行います。block actionはprediction ACKとサーバー由来の完全なBlockStateで確認し、positive ACKがない通常移動は入力停止後の安定と補正packet不在を組み合わせた`server-reconciled`として確認します。自動破壊は`minecraft:cobblestone`、`minecraft:stone`、`minecraft:dirt`、`minecraft:obsidian`、`minecraft:grass_block`の5 IDだけを許可し、BlockEntity、流体を含むstate、未知・MOD blockはpacket直前にも拒否します。設置時のsupportもcanonicalな`stone / smooth_stone / cobblestone / dirt / grass_block / obsidian`の6 IDに限定し、隣接blockの通常useが設置より先に実行されることを防ぎます。
+Survival routineでは、サーバー側MOD、OP権限、独自packetを使いません。移動・採掘・設置・クラフト・コンテナ操作は、通常プレイヤーと同じ経路で行います。Creative captureだけは、非公開local integrated single-player、server-side Creative、cheats/GM permission、local armをgateとして確認しますが、その権限でcommandやworld変更は行いません。生成済みchunkをintegrated server上で1つずつ一時loadし、Blueprintをgzip artifactへ出力します。block actionはprediction ACKとサーバー由来の完全なBlockStateで確認し、positive ACKがない通常移動は入力停止後の安定と補正packet不在を組み合わせた`server-reconciled`として確認します。自動破壊は`minecraft:cobblestone`、`minecraft:stone`、`minecraft:dirt`、`minecraft:obsidian`、`minecraft:grass_block`の5 IDだけを許可し、BlockEntity、流体を含むstate、未知・MOD blockはpacket直前にも拒否します。設置時のsupportもcanonicalな`stone / smooth_stone / cobblestone / dirt / grass_block / obsidian`の6 IDに限定し、隣接blockの通常useが設置より先に実行されることを防ぎます。
 
 Phase 4の`apply_block_plan`は、移動を所有しない1回1phase・最大64 cellの局所施工です。各cellは`expected_before`と`expected_after`へruntime registry上の完全なBlockStateを指定し、`verify_only / break_to_air / place / replace`だけを扱います。相対座標とstateはmirror後にY軸時計回りrotationを適用し、開始前・各操作直前・操作後・最終確認をcurrent-onlyで行います。確認対象は要求したtarget cellであり、通常vanilla処理が発生させる隣接block更新やgame eventまで「無変化」と保証するものではありません。
 
@@ -111,6 +112,8 @@ Java 25を使用します。Windowsではリポジトリ直下から次を実行
 - `runGameTestServer`: 実際のMinecraft BlockStateを使うfixtureの自動GameTest
 - `runHarnessClient`: 本体とfixtureを読み込む、破棄可能なシングルプレイヤー手動検証環境
 
+Post-Phase 6の決定論的runner、固定manifest、Creative Blueprintのlayer SVG出力は[development tools](tools/README.md)を参照してください。いずれもlocal development用で、本体MODへscript engineや任意tool実行機能を追加しません。
+
 `runHarnessClient`でワールドを作成後、`/craftagent_fixture load`で固定テストarenaを準備できます。Phase 3用には`/craftagent_fixture phase3 navigate|break|place|lever|cow|reset`、Phase 4用には`/craftagent_fixture phase4 all_satisfied|mutations|waterlogged|directional_stairs|hopper|shortage|divergence|hidden`で固定scenarioを切り替えます。fixtureの安全境界とコマンドは[fixture README](src/harness/README.md)を参照してください。通常のPrism Launcher instanceではfixtureを使わず、本体JARだけを導入します。詳しいgateは[テストと段階導入](docs/testing-and-rollout.md)にあります。
 
 ### 生成物
@@ -135,7 +138,7 @@ Java 25を使用します。Windowsではリポジトリ直下から次を実行
 ## 初版で公開しないもの
 
 - テレポート、飛行、リーチ延長、速度・クールダウン・衝突判定の回避
-- 壁越しの現在状態、未観測blockの一致oracle、未ロード領域、Entity ESP
+- 通常profileでの壁越し現在状態、未観測blockの一致oracle、未ロード領域、Entity ESP。例外は明示的なlocal Creative captureだけで、未生成chunkは例外でも生成しない
 - クリエイティブ相当のアイテム生成、任意packet、任意command・chat送信
 - 任意Java呼び出し、reflection、script実行、自由文goalや汎用workflow DSL
 - 汎用`transport_entity`、自動Mob捕獲、釣り竿による搬送、無期限の自動戦闘
