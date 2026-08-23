@@ -5,6 +5,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.inventory.AbstractContainerMenu;
 
 import java.util.List;
 import java.util.Objects;
@@ -377,7 +378,17 @@ public final class ScreenOwnershipSignals {
             return Optional.empty();
         }
         var menu = containerScreen.getMenu();
-        return Optional.of(new MenuView(menu.containerId, menuTypeId(menu.getType())));
+        return registeredMenuTypeId(menu)
+                .map(menuTypeId -> new MenuView(menu.containerId, menuTypeId));
+    }
+
+    static Optional<String> registeredMenuTypeId(AbstractContainerMenu menu) {
+        Objects.requireNonNull(menu, "menu");
+        try {
+            return Optional.of(menuTypeId(menu.getType()));
+        } catch (UnsupportedOperationException untypedMenu) {
+            return Optional.empty();
+        }
     }
 
     public static String menuTypeId(net.minecraft.world.inventory.MenuType<?> menuType) {

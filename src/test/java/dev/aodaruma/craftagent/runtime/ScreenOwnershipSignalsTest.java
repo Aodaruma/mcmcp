@@ -5,6 +5,10 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.UUID;
 
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.item.ItemStack;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -14,6 +18,23 @@ class ScreenOwnershipSignalsTest {
             ContainerSyncSignals.StackFingerprint.EMPTY;
     private static final ContainerSyncSignals.StackFingerprint STONE =
             new ContainerSyncSignals.StackFingerprint("minecraft:stone", 1, 77);
+
+    @Test
+    void playerInventoryWithoutARegisteredMenuTypeIsNotOwned() {
+        var menu = new AbstractContainerMenu(null, 0) {
+            @Override
+            public ItemStack quickMoveStack(Player player, int slot) {
+                return ItemStack.EMPTY;
+            }
+
+            @Override
+            public boolean stillValid(Player player) {
+                return true;
+            }
+        };
+
+        assertThat(ScreenOwnershipSignals.registeredMenuTypeId(menu)).isEmpty();
+    }
 
     @Test
     void ordinaryPlayerInventoryPacketsAreIgnoredWithoutOwnedScreenAuthority() {
