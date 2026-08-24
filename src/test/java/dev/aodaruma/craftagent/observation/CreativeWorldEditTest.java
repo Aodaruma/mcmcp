@@ -120,4 +120,20 @@ class CreativeWorldEditTest {
             assertThat(request.dimension()).isNull();
         }
     }
+
+    @Test
+    void wallClockTimeoutHandlesNegativeOriginsAndLongWraparound() {
+        long duration = CreativeWorldEdit.JOB_TIMEOUT.toNanos();
+        long negativeStart = -duration * 2;
+        long nearWrap = Long.MAX_VALUE - duration / 2;
+
+        assertThat(CreativeWorldEdit.timeoutElapsed(
+                negativeStart, CreativeWorldEdit.JOB_TIMEOUT, negativeStart + duration - 1)).isFalse();
+        assertThat(CreativeWorldEdit.timeoutElapsed(
+                negativeStart, CreativeWorldEdit.JOB_TIMEOUT, negativeStart + duration)).isTrue();
+        assertThat(CreativeWorldEdit.timeoutElapsed(
+                nearWrap, CreativeWorldEdit.JOB_TIMEOUT, nearWrap + duration - 1)).isFalse();
+        assertThat(CreativeWorldEdit.timeoutElapsed(
+                nearWrap, CreativeWorldEdit.JOB_TIMEOUT, nearWrap + duration)).isTrue();
+    }
 }

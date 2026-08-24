@@ -200,8 +200,8 @@ Phase 4の固定scenarioは`/craftagent_fixture phase4 all_satisfied|mutations|w
 - LLM outer loopによる複数routine orchestration
 - 全13 startで省略可能な`completion_intent = finish_goal | continue_goal`。省略時は`finish_goal`
 - `continue_goal`後もroutine-local cleanup、Voice Chat復元、安全なstay checkpointを必須としてlocal armingを維持
-- 同じworld session・1回のlocal armにつき`continue_goal`最大16回、unlockから最大15分
-- `max_duration_seconds + 5秒のFINALIZING reserve`がunlock expiry内に収まる場合だけadmission
+- 同じworld session・1回のlocal armにつき`continue_goal`最大16回。local armに時間上限なし
+- current world sessionのlocal armとcapabilityが有効な場合だけadmission
 - `finish_goal`成功後の固定`stay` policyと`goal_finished` lock
 - 失敗、cancel、emergency stop、world session変更時のchain破棄・lock
 - safe anchor、`ask`、自動disconnect、自動food/sleep maintenanceはv1対象外。必要ならLLMが明示的な`navigate_to`、`sleep_at_bed`を中間routineとして実行
@@ -212,7 +212,8 @@ Phase 4の固定scenarioは`/craftagent_fixture phase4 all_satisfied|mutations|w
 - `survey_area(continue_goal)`から`survey_area(finish_goal)`のdevelopment live chainが各1/1確認・unknown 0で成功する
 - `continue_goal`成功後はunlocked、`finish_goal`成功後はlockedかつreasonが`goal_finished`
 - 16 routine上限、world session束縛、idempotent replay非加算を自動testで確認する
-- admission deadlineに常に5秒reserveを含め、unlock expiryを越える開始を拒否する
+- 時間経過ではlocal armが失効せず、明示無効化またはworld session変更後は開始を拒否する
+- active routineはclient tickが止まっていても`max_duration_seconds + 5秒`のwall-clock deadlineで停止する
 - safe-stay checkpointがworld/player存在、alive、on-ground、非passenger、health 6以上、水平速度の二乗0.01以下、item-useなし、画面なし、screen ownership idle、現在可視hostileなしを要求する
 - unknownを含む必須predicateで成功しない
 - 失敗、cancel、emergency stopでinput/screenを解放し、Voice Chatを復元してchainを破棄・lockする

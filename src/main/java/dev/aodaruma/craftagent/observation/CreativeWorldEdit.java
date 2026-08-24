@@ -136,10 +136,10 @@ public final class CreativeWorldEdit {
 
         MinecraftServer server = Objects.requireNonNull(
                 minecraft.getSingleplayerServer(), "integratedServer");
-        long deadlineNanos = saturatingAdd(System.nanoTime(), JOB_TIMEOUT.toNanos());
+        long startedAtNanos = System.nanoTime();
         var job = new Job(
                 UUID.randomUUID(), worldSessionId, idempotencyKey, request, clientTick, server,
-                minecraft.player.getUUID(), deadlineNanos, remainsArmed, lockOnRollbackFailure);
+                minecraft.player.getUUID(), startedAtNanos, remainsArmed, lockOnRollbackFailure);
         pruneRetainedJobs();
         jobs.put(job.jobId, job);
         idempotency.put(identity, job);
@@ -165,7 +165,8 @@ public final class CreativeWorldEdit {
         if (job == null || !job.worldSessionId.equals(worldSessionId)) {
             throw new EditNotFoundException();
         }
-        if (!job.state.terminal && System.nanoTime() >= job.deadlineNanos) {
+        if (!job.state.terminal && timeoutElapsed(
+                job.startedAtNanos, JOB_TIMEOUT, System.nanoTime())) {
             cancel(job, "timeout", "Creative edit exceeded its 10 second deadline");
         }
         return job.toMap(false, historySnapshot());
@@ -604,8 +605,10 @@ public final class CreativeWorldEdit {
     }
 
     private void pruneHistory(long nowNanos) {
-        undo.removeIf(transaction -> nowNanos >= transaction.expiresAtNanos);
-        redo.removeIf(transaction -> nowNanos >= transaction.expiresAtNanos);
+        undo.removeIf(transaction -> timeoutElapsed(
+                transaction.createdAtNanos, HISTORY_TTL, nowNanos));
+        redo.removeIf(transaction -> timeoutElapsed(
+                transaction.createdAtNanos, HISTORY_TTL, nowNanos));
     }
 
     private Map<String, Object> historySnapshot() {
@@ -786,8 +789,9 @@ public final class CreativeWorldEdit {
         return result;
     }
 
-    private static long saturatingAdd(long left, long right) {
-        return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
+    static boolean timeoutElapsed(long startedAtNanos, Duration timeout, long nowNanos) {
+        long elapsedNanos = nowNanos - startedAtNanos;
+        return elapsedNanos < 0 || elapsedNanos >= timeout.toNanos();
     }
 
     private static String sanitize(String value) {
@@ -924,7 +928,7 @@ public final class CreativeWorldEdit {
         private final UUID id;
         private final UUID worldSessionId;
         private final String dimension;
-        private final long expiresAtNanos;
+        private final long createdAtNanos;
         private final List<BlockChange> blocks;
         private final List<EntitySpec> entities;
         private List<UUID> entityIds;
@@ -940,7 +944,7 @@ public final class CreativeWorldEdit {
             this.id = id;
             this.worldSessionId = worldSessionId;
             this.dimension = dimension;
-            expiresAtNanos = saturatingAdd(createdNanos, HISTORY_TTL.toNanos());
+            createdAtNanos = createdNanos;
             this.blocks = List.copyOf(blocks);
             this.entities = List.copyOf(entities);
             this.entityIds = List.copyOf(entityIds);
@@ -1029,7 +1033,7 @@ public final class CreativeWorldEdit {
         private final long clientTick;
         private volatile MinecraftServer server;
         private final UUID playerId;
-        private final long deadlineNanos;
+        private final long startedAtNanos;
         private volatile BooleanSupplier remainsArmed;
         private volatile Runnable lockOnRollbackFailure;
         private volatile CancelSignal cancelSignal;
@@ -1046,7 +1050,7 @@ public final class CreativeWorldEdit {
                 long clientTick,
                 MinecraftServer server,
                 UUID playerId,
-                long deadlineNanos,
+                long startedAtNanos,
                 BooleanSupplier remainsArmed,
                 Runnable lockOnRollbackFailure) {
             this.jobId = jobId;
@@ -1056,7 +1060,7 @@ public final class CreativeWorldEdit {
             this.clientTick = clientTick;
             this.server = server;
             this.playerId = playerId;
-            this.deadlineNanos = deadlineNanos;
+            this.startedAtNanos = startedAtNanos;
             this.remainsArmed = remainsArmed;
             this.lockOnRollbackFailure = lockOnRollbackFailure;
         }
@@ -1066,12 +1070,12 @@ public final class CreativeWorldEdit {
             if (cancellation != null) {
                 throw new EditCancelled(cancellation.code, cancellation.message);
             }
-            if (System.nanoTime() >= deadlineNanos) {
+            if (timeoutElapsed(startedAtNanos, JOB_TIMEOUT, System.nanoTime())) {
                 throw rejected("timeout", "Creative edit exceeded its 10 second deadline");
             }
             BooleanSupplier armed = remainsArmed;
             if (armed == null || !armed.getAsBoolean()) {
-                throw rejected("locked", "Local arming expired or was revoked during the Creative edit");
+                throw rejected("locked", "Local arming was revoked or the world session changed during the Creative edit");
             }
         }
 

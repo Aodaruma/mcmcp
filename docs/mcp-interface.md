@@ -38,7 +38,7 @@ MCPへ公開するのは、読み取りtool、制御tool、型付きroutineの�
 
 - MCP/MOD/Minecraft/NeoForge/adapter version
 - world接続、dimension、`world_session_id`
-- local lock、unlock expiry、利用可能capability profile
+- local lock、利用可能capability profile。互換性用の`unlock_expires_at_client_tick`は無期限のため`null`
 - Voice Chat状態
 - 有効なlocal survival/completion policyの非機密enum
 - 現在の能動routine IDとstate
@@ -444,11 +444,10 @@ event cursorがring bufferより古い場合は`events_truncated=true`としま�
 - world、dimension、bounds、health、screen、Voice Chatが安全
 - 同時に能動routineなし
 - kind固有schemaとpreconditionに合格
-- `max_duration_seconds + 5秒のFINALIZING reserve`がunlock expiry以前に収まる
 
 `bounds.region`はwork regionです。Phase 3〜5 routineは指定dimension・region・travel・duration・break許可を実行中に広げません。`apply_block_plan`は`max_travel_blocks=0`固定です。Phase 5の全public座標はdimension付きで、runtimeがcurrent/bounds dimensionとの一致を再検証します。Phase 6 v1もsafe anchorや動的transit corridorを有限routineへ暗黙に追加しません。
 
-有限routineのwork deadlineは`max_duration_seconds`から固定し、開始admissionではさらに5秒のFINALIZING reserveを加えた時間がunlock window内に収まることを要求します。この5秒は独立したtimerではなく、停止は既存routine deadlineとactive arming fenceに従います。複数routineにまたがるfood/sleep maintenanceは行いません。
+有限routineのwork deadlineは`max_duration_seconds`から固定し、wall-clock側には5秒のFINALIZING reserveを加えます。local arming自体に時間制限はありませんが、開始時と実行中にactive arming fenceを確認します。複数routineにまたがるfood/sleep maintenanceは行いません。
 
 全13 kindのschemaで`completion_intent`は省略可能な`finish_goal | continue_goal`です。省略時は`finish_goal`です。`continue_goal`成功はroutine-local cleanup、Voice Chat復元、安全なstay checkpoint後もlocal armingを維持し、`finish_goal`成功は`goal_finished`でlockします。outer loopはLLM/MCP clientが担います。
 

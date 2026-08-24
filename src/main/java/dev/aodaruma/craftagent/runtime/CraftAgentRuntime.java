@@ -132,6 +132,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     private final ClientCommandInbox inbox;
     private final FinalizationRetryQueue finalizationRetries = new FinalizationRetryQueue();
     private final GoalContinuationSession goalContinuation = new GoalContinuationSession();
+    private RoutineWallClockDeadline activeRoutineDeadline;
 
     private UUID voiceRoutineId;
 
@@ -340,7 +341,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             overlay(minecraft, "CraftAgent: ワールド準備前のため解除できません");
             return;
         }
-        var current = arming.snapshot(session.worldSessionId(), System.nanoTime());
+        var current = arming.snapshot(session.worldSessionId());
         if (!current.locked()) {
             runPriorityStop(
                     () -> inbox.requestEmergencyStop("local_key"),
@@ -349,9 +350,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             overlay(minecraft, "CraftAgent: ロックしました");
         } else {
             goalContinuation.reset(session.worldSessionId());
-            arming.arm(session.worldSessionId(), availableCapabilities(minecraft),
-                    LocalArmingState.DEFAULT_ARM_DURATION, System.nanoTime());
-            overlay(minecraft, "CraftAgent: 15分間ローカル解除しました");
+            arming.arm(session.worldSessionId(), availableCapabilities(minecraft));
+            overlay(minecraft, "CraftAgent: このワールドでMCP自動操作を許可しました");
         }
     }
 
@@ -367,7 +367,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     /** Read-only, client-thread view used by the local HUD and pause-menu indicator. */
     public AutomationUiSnapshot automationUiSnapshot() {
         var session = sessions.snapshot();
-        var lock = arming.snapshot(session.worldSessionId(), System.nanoTime());
+        var lock = arming.snapshot(session.worldSessionId());
         return AutomationUiSnapshot.resolve(
                 session.worldReady(),
                 lock.locked(),
@@ -398,9 +398,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             return false;
         }
         goalContinuation.reset(session.worldSessionId());
-        arming.arm(session.worldSessionId(), availableCapabilities(minecraft),
-                LocalArmingState.DEFAULT_ARM_DURATION, System.nanoTime());
-        overlay(minecraft, "CraftAgent: MCP自動操作を15分間再許可しました");
+        arming.arm(session.worldSessionId(), availableCapabilities(minecraft));
+        overlay(minecraft, "CraftAgent: このワールドでMCP自動操作を再許可しました");
         return true;
     }
 
@@ -614,12 +613,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             throw new RuntimeInvocationException(
                     "busy", "A Creative world edit is active", true, Map.of());
         }
-        long nowNanos = System.nanoTime();
-        long jobDeadlineNanos = saturatingAdd(
-                nowNanos, CreativeRegionCapture.JOB_TIMEOUT.toNanos());
-        if (!arming.allows(
-                session.worldSessionId(), CreativeRegionCapture.CAPABILITY,
-                jobDeadlineNanos, nowNanos)) {
+        if (!arming.allows(session.worldSessionId(), CreativeRegionCapture.CAPABILITY)) {
             throw new RuntimeInvocationException(
                     "locked",
                     "Creative region capture is not locally armed for this world session",
@@ -639,11 +633,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 session.clientTick(),
                 worldSessionId,
                 arguments,
-                () -> arming.allows(
-                        worldSessionId,
-                        CreativeRegionCapture.CAPABILITY,
-                        jobDeadlineNanos,
-                        System.nanoTime()));
+                () -> arming.allows(worldSessionId, CreativeRegionCapture.CAPABILITY));
     }
 
     private Map<String, Object> editCreativeWorld(
@@ -667,10 +657,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         requireNoConcurrentWorldMutation(
                 false,
                 creativeRegions.hasActiveJob() || routines.activeRoutineId().isPresent());
-        long nowNanos = System.nanoTime();
-        long jobDeadlineNanos = saturatingAdd(nowNanos, CreativeWorldEdit.JOB_TIMEOUT.toNanos());
-        if (!arming.allows(
-                worldSessionId, CreativeWorldEdit.CAPABILITY, jobDeadlineNanos, nowNanos)) {
+        if (!arming.allows(worldSessionId, CreativeWorldEdit.CAPABILITY)) {
             throw new RuntimeInvocationException(
                     "locked",
                     "Creative world edits are not locally armed for this world session",
@@ -690,11 +677,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 session.clientTick(),
                 worldSessionId,
                 arguments,
-                () -> arming.allows(
-                        worldSessionId,
-                        CreativeWorldEdit.CAPABILITY,
-                        jobDeadlineNanos,
-                        System.nanoTime()),
+                () -> arming.allows(worldSessionId, CreativeWorldEdit.CAPABILITY),
                 () -> arming.lock("creative_edit_rollback_failed"));
     }
 
@@ -709,11 +692,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     }
 
     private Map<String, Object> status(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
-        var lock = arming.snapshot(session.worldSessionId(), System.nanoTime());
+        var lock = arming.snapshot(session.worldSessionId());
         var stats = memory.stats();
-        Long unlockExpiryTick = lock.locked()
-                ? null
-                : session.clientTick() + Math.max(0L, lock.remainingNanos() / Duration.ofMillis(50).toNanos());
 
         var versions = new LinkedHashMap<String, Object>();
         versions.put("mcp", MCP_PROTOCOL_VERSION);
@@ -731,7 +711,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
 
         var lockPayload = new LinkedHashMap<String, Object>();
         lockPayload.put("locked", lock.locked());
-        lockPayload.put("unlock_expires_at_client_tick", unlockExpiryTick);
+        lockPayload.put("unlock_expires_at_client_tick", null);
         lockPayload.put("reason", lock.lastLockReason());
 
         long evicted = stats.evictedBlocks() + stats.evictedEntities();
@@ -1010,13 +990,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
 
         requireLiveCall(context, "start_routine");
 
-        long nowNanos = System.nanoTime();
-        long hardDeadlineNanos = admissionDeadlineNanos(nowNanos, maxDurationSeconds);
-        if (!arming.allows(
-                session.worldSessionId(), "stationary_break", hardDeadlineNanos, nowNanos)) {
+        if (!arming.allows(session.worldSessionId(), "stationary_break")) {
             throw new RuntimeInvocationException(
                     "locked",
-                    "stationary_break is not armed for this world session and deadline",
+                    "stationary_break is not armed for this world session",
                     false,
                     Map.of());
         }
@@ -1042,7 +1019,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 regenerationTicks);
 
         var receipt = admitWithVoiceSafety(
-                context, session.worldSessionId(), completionIntent, () -> routines.startStationaryBreak(
+                context, session.worldSessionId(), completionIntent, maxDurationSeconds,
+                () -> routines.startStationaryBreak(
                 idempotencyKey, requestIdentity, request, session.clientTick()));
         return startReceiptPayload(receipt);
     }
@@ -1068,14 +1046,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         }
 
         requireLiveCall(context, "start_routine");
-        long nowNanos = System.nanoTime();
-        long hardDeadlineNanos = admissionDeadlineNanos(
-                nowNanos, request.bounds().maxDurationSeconds());
-        if (!arming.allows(
-                session.worldSessionId(), request.kind(), hardDeadlineNanos, nowNanos)) {
+        if (!arming.allows(session.worldSessionId(), request.kind())) {
             throw new RuntimeInvocationException(
                     "locked",
-                    request.kind() + " is not armed for this world session and deadline",
+                    request.kind() + " is not armed for this world session",
                     false,
                     Map.of());
         }
@@ -1091,7 +1065,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         }
 
         var receipt = admitWithVoiceSafety(
-                context, session.worldSessionId(), completionIntent, () -> routines.startSemanticAction(
+                context, session.worldSessionId(), completionIntent,
+                request.bounds().maxDurationSeconds(), () -> routines.startSemanticAction(
                 idempotencyKey, requestIdentity, request, session.clientTick()));
         return startReceiptPayload(receipt);
     }
@@ -1116,14 +1091,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         }
 
         requireLiveCall(context, "start_routine");
-        long nowNanos = System.nanoTime();
-        long hardDeadlineNanos = admissionDeadlineNanos(
-                nowNanos, request.bounds().maxDurationSeconds());
-        if (!arming.allows(
-                session.worldSessionId(), request.kind(), hardDeadlineNanos, nowNanos)) {
+        if (!arming.allows(session.worldSessionId(), request.kind())) {
             throw new RuntimeInvocationException(
                     "locked",
-                    request.kind() + " is not armed for this world session and deadline",
+                    request.kind() + " is not armed for this world session",
                     false,
                     Map.of());
         }
@@ -1133,7 +1104,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         validateApplyBlockPlanItems(request);
 
         var receipt = admitWithVoiceSafety(
-                context, session.worldSessionId(), completionIntent, () -> routines.startApplyBlockPlan(
+                context, session.worldSessionId(), completionIntent,
+                request.bounds().maxDurationSeconds(), () -> routines.startApplyBlockPlan(
                 idempotencyKey,
                 parsed.requestIdentity(),
                 request,
@@ -1162,21 +1134,18 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         }
 
         requireLiveCall(context, "start_routine");
-        long nowNanos = System.nanoTime();
-        long hardDeadlineNanos = admissionDeadlineNanos(
-                nowNanos, request.bounds().maxDurationSeconds());
-        if (!arming.allows(
-                session.worldSessionId(), request.kind(), hardDeadlineNanos, nowNanos)) {
+        if (!arming.allows(session.worldSessionId(), request.kind())) {
             throw new RuntimeInvocationException(
                     "locked",
-                    request.kind() + " is not armed for this world session and deadline",
+                    request.kind() + " is not armed for this world session",
                     false,
                     Map.of());
         }
         validateLiveBounds(minecraft, request.bounds(), parsed.targets());
 
         var receipt = admitWithVoiceSafety(
-                context, session.worldSessionId(), completionIntent, () -> routines.startPhaseFive(
+                context, session.worldSessionId(), completionIntent,
+                request.bounds().maxDurationSeconds(), () -> routines.startPhaseFive(
                 idempotencyKey,
                 parsed.requestIdentity(),
                 request,
@@ -1188,6 +1157,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             RuntimeCallContext context,
             UUID worldSessionId,
             String completionIntent,
+            int maxDurationSeconds,
             Supplier<RoutineManager.StartReceipt> admission) {
         if (!goalContinuation.canAdmit(worldSessionId, completionIntent)) {
             throw new RuntimeInvocationException(
@@ -1239,6 +1209,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         catch (RuntimeException | LinkageError failure) {
             var voiceEnd = endVoiceSessionFor(null);
             throw withVoiceEndFailureDiagnostics(failure, voiceEnd);
+        }
+        if (!receipt.reused()) {
+            activeRoutineDeadline = RoutineWallClockDeadline.start(
+                    receipt.routineId(), maxDurationSeconds, System.nanoTime());
         }
         voiceRoutineId = receipt.routineId();
         goalContinuation.remember(
@@ -1405,10 +1379,18 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             return;
         }
         var session = sessions.snapshot();
-        var activeArming = arming.snapshot(session.worldSessionId(), System.nanoTime());
+        var routineId = before.orElseThrow();
+        if (activeRoutineDeadline == null
+                || !activeRoutineDeadline.allows(routineId, System.nanoTime())) {
+            runPriorityStop(
+                    () -> inbox.requestEmergencyStop("routine_wall_clock_deadline"),
+                    () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
+            return;
+        }
+        var activeArming = arming.snapshot(session.worldSessionId());
         if (!enforceActiveRoutineArming(
                 activeArming,
-                () -> inbox.requestEmergencyStop(activeArmingStopReason(activeArming)),
+                () -> inbox.requestEmergencyStop("local_arming_locked"),
                 () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()))) {
             return;
         }
@@ -1421,7 +1403,6 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
             return;
         }
-        var routineId = before.orElseThrow();
         if (finalizationRetries.contains(routineId)) {
             return;
         }
@@ -1449,13 +1430,6 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         }
         runPriorityStop(requestStop, drainStop);
         return false;
-    }
-
-    static String activeArmingStopReason(LocalArmingState.Snapshot snapshot) {
-        Objects.requireNonNull(snapshot, "snapshot");
-        return "expired".equals(snapshot.lastLockReason())
-                ? "local_arming_expired"
-                : "local_arming_locked";
     }
 
     private void retryPendingFinalizations(Minecraft minecraft) {
@@ -1580,6 +1554,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 () -> releaseOwnedResources(minecraft, snapshot.routineId()));
         if (attempt.success()) {
             var cleanup = attempt.value();
+            clearRoutineWallClockDeadline(cleanup.snapshot().routineId());
             applyCompletionIntentAfterTerminal(cleanup.snapshot());
             return cleanup;
         }
@@ -2103,8 +2078,47 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     }
 
     private void stopForLifecycle(Minecraft minecraft, String reason) {
-        inbox.requestEmergencyStop(reason);
-        inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
+        try {
+            inbox.requestEmergencyStop(reason);
+            inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
+        } finally {
+            activeRoutineDeadline = null;
+        }
+    }
+
+    private void clearRoutineWallClockDeadline(UUID routineId) {
+        if (activeRoutineDeadline != null
+                && activeRoutineDeadline.routineId().equals(routineId)) {
+            activeRoutineDeadline = null;
+        }
+    }
+
+    record RoutineWallClockDeadline(UUID routineId, long startedAtNanos, long durationNanos) {
+        RoutineWallClockDeadline {
+            Objects.requireNonNull(routineId, "routineId");
+            if (durationNanos <= 0) {
+                throw new IllegalArgumentException("durationNanos must be positive");
+            }
+        }
+
+        static RoutineWallClockDeadline start(UUID routineId, int maxDurationSeconds, long nowNanos) {
+            if (maxDurationSeconds <= 0) {
+                throw new IllegalArgumentException("max_duration_seconds must be positive");
+            }
+            return new RoutineWallClockDeadline(
+                    routineId,
+                    nowNanos,
+                    Math.addExact(
+                            Duration.ofSeconds(maxDurationSeconds).toNanos(),
+                            FINALIZATION_RESERVE.toNanos()));
+        }
+
+        boolean allows(UUID activeRoutineId, long nowNanos) {
+            long elapsedNanos = nowNanos - startedAtNanos;
+            return routineId.equals(activeRoutineId)
+                    && elapsedNanos >= 0
+                    && elapsedNanos < durationNanos;
+        }
     }
 
     static SemanticActionRequest semanticActionArgument(
@@ -3038,15 +3052,6 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 : GoalContinuationSession.FINISH_GOAL;
         GoalContinuationSession.requireIntent(intent);
         return intent;
-    }
-
-    static long admissionDeadlineNanos(long nowNanos, int maxDurationSeconds) {
-        if (maxDurationSeconds <= 0) {
-            throw new IllegalArgumentException("max_duration_seconds must be positive");
-        }
-        long workDeadline = saturatingAdd(
-                nowNanos, Duration.ofSeconds(maxDurationSeconds).toNanos());
-        return saturatingAdd(workDeadline, FINALIZATION_RESERVE.toNanos());
     }
 
     private static void requireExactKeys(

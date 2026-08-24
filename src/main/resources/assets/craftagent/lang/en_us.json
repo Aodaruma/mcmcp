@@ -9,5 +9,5 @@
   "gui.craftagent.automation.confirm_enable": "Confirm re-enable",
   "gui.craftagent.automation.tooltip.disable": "Click to stop automation and disable MCP control for this world",
   "gui.craftagent.automation.tooltip.enable": "Click, then click again within 5 seconds to re-enable",
-  "gui.craftagent.automation.tooltip.confirm_enable": "Click again to allow MCP automation for 15 minutes"
+  "gui.craftagent.automation.tooltip.confirm_enable": "Click again to re-enable MCP automation without a time limit"
 }

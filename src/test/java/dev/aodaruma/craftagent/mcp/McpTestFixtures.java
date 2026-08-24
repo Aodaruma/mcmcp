@@ -23,7 +23,7 @@ final class McpTestFixtures {
                 "world_session_id", "session-test");
         Map<String, Object> lock = fields(
                 "locked", false,
-                "unlock_expires_at_client_tick", 20_000L,
+                "unlock_expires_at_client_tick", null,
                 "reason", "operator_armed");
         Map<String, Object> voiceChat = fields(
                 "status", "unavailable",

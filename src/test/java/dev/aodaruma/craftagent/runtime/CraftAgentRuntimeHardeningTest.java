@@ -125,28 +125,47 @@ class CraftAgentRuntimeHardeningTest {
     }
 
     @Test
-    void wallClockArmingExpiryDuringAPauseOrLowTpsGapStopsBeforeTheNextRoutineTick() {
+    void explicitArmingLockStopsBeforeTheNextRoutineTick() {
         var arming = new LocalArmingState();
         var sessionId = UUID.randomUUID();
-        long armedAtNanos = 1_000L;
-        var duration = Duration.ofSeconds(10);
-        arming.arm(sessionId, Set.of("navigate_to"), duration, armedAtNanos);
-        var expired = arming.snapshot(
-                sessionId,
-                Math.addExact(armedAtNanos, duration.toNanos()));
+        arming.arm(sessionId, Set.of("navigate_to"));
+        arming.lock("local_ui_disabled");
+        var locked = arming.snapshot(sessionId);
         var calls = new ArrayList<String>();
 
         var mayTick = CraftAgentRuntime.enforceActiveRoutineArming(
-                expired,
-                () -> calls.add("request:" + CraftAgentRuntime.activeArmingStopReason(expired)),
+                locked,
+                () -> calls.add("request:local_arming_locked"),
                 () -> calls.add("drain"));
         if (mayTick) {
             calls.add("routine_tick");
         }
 
         assertThat(mayTick).isFalse();
-        assertThat(expired.lastLockReason()).isEqualTo("expired");
-        assertThat(calls).containsExactly("request:local_arming_expired", "drain");
+        assertThat(locked.lastLockReason()).isEqualTo("local_ui_disabled");
+        assertThat(calls).containsExactly("request:local_arming_locked", "drain");
+    }
+
+    @Test
+    void routineWallClockDeadlineIsIndependentFromTheUnlimitedLocalArm() {
+        var routineId = UUID.randomUUID();
+        long negativeStart = -Duration.ofSeconds(100).toNanos();
+        var negativeClock = CraftAgentRuntime.RoutineWallClockDeadline.start(
+                routineId, 30, negativeStart);
+        long nearWrap = Long.MAX_VALUE - Duration.ofSeconds(1).toNanos();
+        var wrappedClock = CraftAgentRuntime.RoutineWallClockDeadline.start(
+                routineId, 1, nearWrap);
+
+        assertThat(negativeClock.durationNanos()).isEqualTo(Duration.ofSeconds(35).toNanos());
+        assertThat(negativeClock.allows(
+                routineId, negativeStart + Duration.ofSeconds(35).toNanos() - 1)).isTrue();
+        assertThat(negativeClock.allows(
+                routineId, negativeStart + Duration.ofSeconds(35).toNanos())).isFalse();
+        assertThat(wrappedClock.allows(
+                routineId, nearWrap + Duration.ofSeconds(5).toNanos())).isTrue();
+        assertThat(wrappedClock.allows(
+                routineId, nearWrap + Duration.ofSeconds(6).toNanos())).isFalse();
+        assertThat(negativeClock.allows(UUID.randomUUID(), negativeStart)).isFalse();
     }
 
     @Test
@@ -601,7 +620,7 @@ class CraftAgentRuntimeHardeningTest {
     }
 
     @Test
-    void defaultsCompletionToFinishAndReservesFiveSecondsForFinalization() {
+    void defaultsCompletionToFinish() {
         var omitted = Map.<String, Object>of();
         var explicitContinue = Map.<String, Object>of(
                 "completion_intent", GoalContinuationSession.CONTINUE_GOAL);
@@ -613,8 +632,6 @@ class CraftAgentRuntimeHardeningTest {
         assertThatThrownBy(() -> CraftAgentRuntime.completionIntentArgument(
                 Map.of("completion_intent", "continue_forever")))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThat(CraftAgentRuntime.admissionDeadlineNanos(1_000L, 30))
-                .isEqualTo(1_000L + Duration.ofSeconds(35).toNanos());
     }
 
     @Test

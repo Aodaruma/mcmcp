@@ -21,7 +21,7 @@ one-shotは、1回のユーザー依頼からLLMが複数のMCP呼び出しを�
 
 全13 routineは省略可能な`completion_intent`として`finish_goal | continue_goal`を受理し、省略時は`finish_goal`です。中間routineの`continue_goal`はroutine-local cleanup、Voice Chat復元、安全なstay checkpointまで完了してlocal armingを維持し、最後の`finish_goal`がユーザーgoalを閉じます。outer loopはLLM/MCP clientが担い、MODへ自由文goalやworkflow DSLは追加しません。
 
-継続は1回のlocal armかつ同じworld session内で`continue_goal`最大16回、unlockから最大15分です。失敗、cancel、emergency stop、world session変更ではchainを破棄してlockします。
+継続は1回のlocal armかつ同じworld session内で`continue_goal`最大16回です。local arm自体に時間制限はなく、失敗、cancel、emergency stop、world session変更ではchainを破棄してlockします。
 
 成功条件:
 
@@ -36,7 +36,7 @@ one-shotは、1回のユーザー依頼からLLMが複数のMCP呼び出しを�
 
 routineはVALIDATING時に、MCPで指定されたwork region、dimension、travel、duration、break許可を固定`execution_envelope`にします。Phase 6 v1はsafe anchorや動的transit corridorを暗黙に加えず、実行中に権限を広げません。
 
-開始admissionでは`max_duration_seconds`に5秒のFINALIZING reserveを加えた時間がunlock expiry以前に収まることを要求します。この5秒は独立したfinalization timerではありません。停止は既存routine deadlineとactive arming fenceに従い、緊急停止、切断等では移動を試みず即座に入力を解放します。
+開始admissionではcurrent world sessionのlocal armとcapabilityを確認します。local armに時間制限はありませんが、各routineは`max_duration_seconds + 5秒のFINALIZING reserve`による独立したwall-clock deadlineとclient-tick deadlineを持ちます。active arming fenceも維持し、緊急停止、切断等では移動を試みず即座に入力を解放します。
 
 ## finite actionの実行契約
 

@@ -95,7 +95,7 @@ preflight、各dispatch直前、prediction ACK後、最終確認はlast-known me
 
 公開stateは`QUEUED / VALIDATING / RUNNING / WAITING / FINALIZING / SUCCEEDED / FAILED / CANCELLED`です。phaseとfailure schemaは[自動化runtimeと回復](automation-runtime.md)に定めます。
 
-`WAITING`中もSafety controllerと期限監視を続けます。期限はwork用soft deadlineと、maintenance/FINALIZING reserveを含むhard deadlineに分け、soft deadlineではFINALIZINGへ移り、hard deadlineでは即時releaseします。非緊急failureは固定envelope内のsafe checkpointへbounded returnできますが、emergency stop、cancel、死亡、切断時は帰還を試みません。
+`WAITING`中もSafety controllerと期限監視を続けます。各routineはclient-tick deadlineに加え、`max_duration_seconds + 5秒のFINALIZING reserve`によるwall-clock deadlineを持ち、長時間pause・OS suspend後に処理を再開しません。非緊急failureは固定envelope内のsafe checkpointへbounded returnできますが、emergency stop、cancel、死亡、切断時は帰還を試みません。
 
 外部MCP heartbeatは必須にしません。安全性はlocal unlock、routine deadline、内部action lease、毎tickのSafety controllerで担保します。
 
@@ -153,7 +153,7 @@ domain goal確認後、routineは`FINALIZING`へ移ります。
 5. Voice Chatの状態を復元する
 6. local policyが明示的に許す場合だけ通常切断する
 
-Phase 6の中間routineで計画する`completion_intent=continue_goal`は、routine-local cleanup、stable checkpoint、全input解放、Voice Chat復元までを行い、safe anchor帰還、`ask`、切断を実行しません。Phase 5までは`finish_goal`だけを受理します。Phase 6で追加する場合も、`continue_goal`はlocal UIが許可したsessionの回数・総時間・unlock expiry上限内だけに限定します。
+Phase 6の中間routineで計画する`completion_intent=continue_goal`は、routine-local cleanup、stable checkpoint、全input解放、Voice Chat復元までを行い、safe anchor帰還、`ask`、切断を実行しません。Phase 5までは`finish_goal`だけを受理します。Phase 6で追加する場合も、`continue_goal`はlocal UIが許可した同じworld session・1回のlocal armにつき最大16回に限定します。
 
 自動再接続と自動ログインは行いません。建築が完成しても必須finalizationに失敗した場合、`goal.verified=true`を保持しつつroutine全体は`FAILED`とします。
 
@@ -169,7 +169,7 @@ Phase 6の中間routineで計画する`completion_intent=continue_goal`は、rou
 8. world退出時にmemoryを旧sessionとして切り離しauto-lock
 9. client終了時にroutineを停止してMCP serverをgraceful shutdown
 
-Local unlockはcurrent world sessionとユーザーが有効化したcapability profileへ束縛し、期限切れ、切断、dimension safety failure、emergency stopで自動lockします。MCPからunlockするtoolは作りません。
+Local unlockはcurrent world sessionとユーザーが有効化したcapability profileへ束縛します。時間経過ではlockせず、明示無効化、切断、dimension safety failure、emergency stopで自動lockします。MCPからunlockするtoolは作りません。
 
 ## 依存関係
 

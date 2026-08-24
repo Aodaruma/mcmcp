@@ -40,7 +40,7 @@ terminal時は保持している場合だけVoice Chat所有状態を復元し�
 
 外部MCP heartbeatを必須にはしません。LLMやpollingの一時停止で宣言済みroutineが不意に切れることを避け、local deadlineとleaseで安全を担保します。
 
-開始時にroutineの`max_duration_seconds + 5秒のFINALIZING reserve`がunlock windowへ収まることを要求します。この5秒は独立したfinalization timerではありません。停止は既存routine deadlineとactive arming fenceに従い、`WAITING`中もSafety controllerとdeadlineは有効です。
+local armingに時間制限はありません。各routineは`max_duration_seconds + 5秒のFINALIZING reserve`による独立したwall-clock deadlineとclient-tick deadlineを持ち、停止はroutine deadlineとactive arming fenceに従います。`WAITING`中もSafety controllerとdeadlineは有効です。
 
 ## 技術停止とsurvival response
 
@@ -62,10 +62,10 @@ terminal時は保持している場合だけVoice Chat所有状態を復元し�
 
 - unlockはlocal UI/keyだけで行い、MCP toolを設けない
 - current world sessionとlocal capability profileへ束縛する
-- inactivity/max duration、切断、emergency stop、互換性異常でauto-lock
-- 能動routine開始時に、`max_duration_seconds + 5秒のFINALIZING reserve`が現在のunlock expiry以前であることを確認する
+- 時間経過だけではlockせず、明示無効化、切断、emergency stop、互換性異常でauto-lock
+- 能動routineの開始時と実行中にcurrent world sessionのlocal armを確認する
 - 全13 routineの`completion_intent`は省略可能な`finish_goal | continue_goal`で、省略時は`finish_goal`
-- `continue_goal`は同じworld session・1回のlocal armにつき最大16回、unlockから最大15分に限定する
+- `continue_goal`は同じworld session・1回のlocal armにつき最大16回に限定し、時間上限は設けない
 - `finish_goal`成功は`goal_finished`でlockし、失敗、cancel、emergency stop、world session変更はchainを破棄してlockする
 - LLMはlocal policyを緩和できず、より狭いboundsだけを指定できる
 

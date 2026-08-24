@@ -9,5 +9,5 @@
   "gui.craftagent.automation.confirm_enable": "再許可を確認",
   "gui.craftagent.automation.tooltip.disable": "クリックすると自動操作を停止し、このワールドでMCP操作を無効にします",
   "gui.craftagent.automation.tooltip.enable": "再許可するにはクリック後、5秒以内にもう一度クリックします",
-  "gui.craftagent.automation.tooltip.confirm_enable": "もう一度クリックするとMCP操作を15分間再許可します"
+  "gui.craftagent.automation.tooltip.confirm_enable": "もう一度クリックすると、時間制限なしでMCP操作を再許可します"
 }

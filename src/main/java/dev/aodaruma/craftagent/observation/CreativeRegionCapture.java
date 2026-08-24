@@ -151,7 +151,7 @@ public final class CreativeRegionCapture {
             throw new IllegalStateException("Creative export path escaped the game directory");
         }
         Path temporaryPath = finalPath.resolveSibling(finalPath.getFileName() + ".tmp");
-        long deadlineNanos = saturatingAdd(System.nanoTime(), JOB_TIMEOUT.toNanos());
+        long startedAtNanos = System.nanoTime();
         var job = new Job(
                 jobId,
                 worldSessionId,
@@ -163,7 +163,7 @@ public final class CreativeRegionCapture {
                 relativePath,
                 finalPath,
                 temporaryPath,
-                deadlineNanos,
+                startedAtNanos,
                 remainsArmed);
         pruneRetainedJobs();
         jobs.put(jobId, job);
@@ -187,7 +187,8 @@ public final class CreativeRegionCapture {
         if (job == null || !job.worldSessionId.equals(worldSessionId)) {
             throw new CaptureNotFoundException();
         }
-        if (!job.state.terminal() && System.nanoTime() >= job.deadlineNanos) {
+        if (!job.state.terminal() && timeoutElapsed(
+                job.startedAtNanos, JOB_TIMEOUT, System.nanoTime())) {
             requestCancel(job, "timeout", "Creative export exceeded its 120 second deadline");
         }
         return job.toMap(false);
@@ -207,12 +208,12 @@ public final class CreativeRegionCapture {
             cleanupTerminal(job);
             return;
         }
-        if (System.nanoTime() >= job.deadlineNanos) {
+        if (timeoutElapsed(job.startedAtNanos, JOB_TIMEOUT, System.nanoTime())) {
             fail(job, "timeout", "Creative export exceeded its 120 second deadline");
             return;
         }
         if (!job.remainsArmed.getAsBoolean()) {
-            fail(job, "locked", "Local arming expired or was revoked during Creative export");
+            fail(job, "locked", "Local arming was revoked or the world session changed during Creative export");
             return;
         }
         try {
@@ -893,8 +894,9 @@ public final class CreativeRegionCapture {
         return result;
     }
 
-    private static long saturatingAdd(long left, long right) {
-        return right < 0 || Long.MAX_VALUE - left < right ? Long.MAX_VALUE : left + right;
+    static boolean timeoutElapsed(long startedAtNanos, Duration timeout, long nowNanos) {
+        long elapsedNanos = nowNanos - startedAtNanos;
+        return elapsedNanos < 0 || elapsedNanos >= timeout.toNanos();
     }
 
     private static MessageDigest sha256() {
@@ -1221,7 +1223,7 @@ public final class CreativeRegionCapture {
         private final String relativePath;
         private final Path finalPath;
         private final Path temporaryPath;
-        private final long deadlineNanos;
+        private final long startedAtNanos;
         private final BooleanSupplier remainsArmed;
         private final List<ChunkPos> chunks;
         private final Set<ChunkPos> admittedTickets = new LinkedHashSet<>();
@@ -1262,7 +1264,7 @@ public final class CreativeRegionCapture {
                 String relativePath,
                 Path finalPath,
                 Path temporaryPath,
-                long deadlineNanos,
+                long startedAtNanos,
                 BooleanSupplier remainsArmed) {
             this.jobId = jobId;
             this.worldSessionId = worldSessionId;
@@ -1274,7 +1276,7 @@ public final class CreativeRegionCapture {
             this.relativePath = relativePath;
             this.finalPath = finalPath;
             this.temporaryPath = temporaryPath;
-            this.deadlineNanos = deadlineNanos;
+            this.startedAtNanos = startedAtNanos;
             this.remainsArmed = remainsArmed;
             this.chunks = request.region.chunks();
             this.paletteIdsByGlobalIndex = new int[request.region.volume()];
