@@ -2,6 +2,7 @@ package dev.aodaruma.craftagent.mcp;
 
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
+import io.modelcontextprotocol.json.TypeRef;
 import io.modelcontextprotocol.server.McpStatelessServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -16,14 +17,14 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Black-box contract checks between the public tool catalog and runtime reply envelopes. */
+/** Black-box contract checks between runtime reply envelopes and their internal wire schemas. */
 class CraftAgentOutputSchemaContractTest {
     private static final String ROUTINE_ID = "123e4567-e89b-42d3-a456-426614174000";
     private static final String IDEMPOTENCY_KEY = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
 
-    @ParameterizedTest(name = "{0} success matches advertised outputSchema")
+    @ParameterizedTest(name = "{0} success matches internal output schema")
     @MethodSource("toolCases")
-    void representativeSuccessResponseMatchesAdvertisedOutputSchema(ToolCase toolCase) {
+    void representativeSuccessResponseMatchesInternalOutputSchema(ToolCase toolCase) throws Exception {
         CraftAgentToolRegistry registry = new CraftAgentToolRegistry(
                 (command, context) -> CompletableFuture.completedFuture(
                         McpRuntimePort.RuntimeReply.success(toolCase.successData())),
@@ -32,13 +33,13 @@ class CraftAgentOutputSchemaContractTest {
         McpSchema.CallToolResult result = invoke(registry, toolCase.name(), toolCase.arguments());
 
         assertThat(result.isError()).as("%s must dispatch as a successful call", toolCase.name()).isFalse();
-        assertThat(result.structuredContent()).isInstanceOf(Map.class);
-        assertMatchesAdvertisedOutputSchema(registry, toolCase.name(), result.structuredContent());
+        assertThat(result.structuredContent()).isNull();
+        assertMatchesInternalOutputSchema(toolCase.name(), textEnvelope(result));
     }
 
-    @ParameterizedTest(name = "{0} failure matches advertised outputSchema")
+    @ParameterizedTest(name = "{0} failure matches internal output schema")
     @MethodSource("toolCases")
-    void runtimeFailureResponseMatchesAdvertisedOutputSchema(ToolCase toolCase) {
+    void runtimeFailureResponseMatchesInternalOutputSchema(ToolCase toolCase) throws Exception {
         CraftAgentToolRegistry registry = new CraftAgentToolRegistry(
                 (command, context) -> CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.failure(
                         "fixture_failure", "A bounded fixture failure.", true, Map.of("source", "contract_test"))),
@@ -47,19 +48,19 @@ class CraftAgentOutputSchemaContractTest {
         McpSchema.CallToolResult result = invoke(registry, toolCase.name(), toolCase.arguments());
 
         assertThat(result.isError()).as("%s must expose the runtime failure", toolCase.name()).isTrue();
-        assertThat(result.structuredContent()).isInstanceOf(Map.class);
-        Map<?, ?> envelope = (Map<?, ?>) result.structuredContent();
+        assertThat(result.structuredContent()).isNull();
+        Map<?, ?> envelope = textEnvelope(result);
         assertThat(envelope.get("ok")).isEqualTo(false);
         assertThat(envelope.get("tool")).isEqualTo(toolCase.name());
         assertThat(envelope.get("error")).isInstanceOf(Map.class);
         Map<?, ?> error = (Map<?, ?>) envelope.get("error");
         assertThat(error.get("code")).isEqualTo("fixture_failure");
-        assertMatchesAdvertisedOutputSchema(registry, toolCase.name(), envelope);
+        assertMatchesInternalOutputSchema(toolCase.name(), envelope);
     }
 
     @ParameterizedTest(name = "start_routine accepts output kind {0}")
     @MethodSource("routineKinds")
-    void everyAdvertisedRoutineKindMatchesTheStartOutputSchema(String kind) {
+    void everyAdvertisedRoutineKindMatchesTheStartOutputSchema(String kind) throws Exception {
         Object estimate = "apply_block_plan".equals(kind)
                 ? McpTestFixtures.fields(
                         "items", List.of(Map.of(
@@ -79,12 +80,13 @@ class CraftAgentOutputSchemaContractTest {
         McpSchema.CallToolResult result = invoke(registry, "start_routine", startArguments());
 
         assertThat(result.isError()).isFalse();
-        assertMatchesAdvertisedOutputSchema(registry, "start_routine", result.structuredContent());
+        assertMatchesInternalOutputSchema("start_routine", textEnvelope(result));
     }
 
     @ParameterizedTest(name = "get_routine accepts projection {0}")
     @MethodSource("phaseThreeRoutineData")
-    void phaseThreeRoutineProjectionsMatchTheRoutineOutputSchema(String ignored, Map<String, Object> routineData) {
+    void phaseThreeRoutineProjectionsMatchTheRoutineOutputSchema(
+            String ignored, Map<String, Object> routineData) throws Exception {
         CraftAgentToolRegistry registry = new CraftAgentToolRegistry(
                 (command, context) -> CompletableFuture.completedFuture(
                         McpRuntimePort.RuntimeReply.success(routineData)),
@@ -94,7 +96,7 @@ class CraftAgentOutputSchemaContractTest {
                 registry, "get_routine", Map.of("routine_id", ROUTINE_ID));
 
         assertThat(result.isError()).isFalse();
-        assertMatchesAdvertisedOutputSchema(registry, "get_routine", result.structuredContent());
+        assertMatchesInternalOutputSchema("get_routine", textEnvelope(result));
     }
 
     private static Stream<Arguments> toolCases() {
@@ -161,6 +163,7 @@ class CraftAgentOutputSchemaContractTest {
                 "client_tick", 200L,
                 "observation_revision", 12L,
                 "requested_scopes", List.of("player"),
+                "detail", "compact",
                 "player", player);
     }
 
@@ -331,31 +334,17 @@ class CraftAgentOutputSchemaContractTest {
 
     private static Map<String, Object> listRoutinesData() {
         return Map.of(
-                "catalog_version", "phase-6",
+                "catalog_version", "phase-6-compact-v1",
                 "routines", List.of(
-                        catalogEntry("stationary_break", 2, McpToolSchemas.stationaryBreakStartInput()),
-                        catalogEntry("navigate_to", 3, McpToolSchemas.navigateToStartInput()),
-                        catalogEntry("break_block", 3, McpToolSchemas.breakBlockStartInput()),
-                        catalogEntry("place_block", 3, McpToolSchemas.placeBlockStartInput()),
-                        catalogEntry("interact_block", 3, McpToolSchemas.interactBlockStartInput()),
-                        catalogEntry("interact_entity", 3, McpToolSchemas.interactEntityStartInput()),
-                        catalogEntry("apply_block_plan", 4, McpToolSchemas.applyBlockPlanStartInput()),
-                        catalogEntry("craft_items", 5, McpToolSchemas.craftItemsStartInput()),
-                        catalogEntry("transfer_items", 5, McpToolSchemas.transferItemsStartInput()),
-                        catalogEntry("tend_crop_area", 5, McpToolSchemas.tendCropAreaStartInput()),
-                        catalogEntry("harvest_tree_area", 5, McpToolSchemas.harvestTreeAreaStartInput()),
-                        catalogEntry("sleep_at_bed", 5, McpToolSchemas.sleepAtBedStartInput()),
-                        catalogEntry("survey_area", 5, McpToolSchemas.surveyAreaStartInput())));
+                        catalogEntry("stationary_break", 2)));
     }
 
-    private static Map<String, Object> catalogEntry(
-            String kind, int phase, Map<String, Object> inputSchema) {
+    private static Map<String, Object> catalogEntry(String kind, int phase) {
         return McpTestFixtures.fields(
                 "kind", kind,
                 "phase", phase,
                 "experimental", false,
-                "input_schema", inputSchema,
-                "postconditions", List.of("The kind-specific goal is server-confirmed."));
+                "capabilities", List.of("bounded server-confirmed work"));
     }
 
     private static Map<String, Object> routineData() {
@@ -445,6 +434,22 @@ class CraftAgentOutputSchemaContractTest {
                                 "entity_ref", "AbCdEfGhIjKlMnOpQrStUvWx",
                                 "expected_type", "minecraft:cow"),
                         "server_sync")),
+                Arguments.of("use_item_on_block", routineData(
+                        "use_item_on_block", "interactions", McpTestFixtures.fields(
+                                "kind", "use_item_on_block",
+                                "target", dimensionPosition(10, 64, -3),
+                                "expected_after", McpTestFixtures.fields(
+                                        "block", "minecraft:farmland",
+                                        "properties", Map.of("moisture", "0"))),
+                        "server_sync")),
+                Arguments.of("execute_plan", routineData(
+                        "execute_plan", "steps", McpTestFixtures.fields(
+                                "kind", "plan_step",
+                                "plan_id", "wheat-stack",
+                                "step_id", "till-0",
+                                "op", "action",
+                                "routine_kind", "use_item_on_block"),
+                        "action_confirmation")),
                 Arguments.of("apply_block_plan", applyBlockPlanRoutineData()));
     }
 
@@ -557,13 +562,30 @@ class CraftAgentOutputSchemaContractTest {
                 McpTransportContext.EMPTY, new McpSchema.CallToolRequest(name, arguments));
     }
 
-    private static void assertMatchesAdvertisedOutputSchema(
-            CraftAgentToolRegistry registry, String name, Object structuredContent) {
-        McpSchema.Tool tool = specification(registry, name).tool();
-        var validation = McpJsonDefaults.getSchemaValidator().validate(tool.outputSchema(), structuredContent);
+    private static void assertMatchesInternalOutputSchema(String name, Object envelope) {
+        Map<String, Object> schema = switch (name) {
+            case "get_status" -> McpToolSchemas.statusOutput();
+            case "get_snapshot" -> McpToolSchemas.snapshotOutput();
+            case "capture_creative_region" -> McpToolSchemas.creativeRegionOutput();
+            case "edit_creative_world" -> McpToolSchemas.creativeWorldEditOutput();
+            case "compare_block_plan" -> McpToolSchemas.compareOutput();
+            case "list_routines" -> McpToolSchemas.listRoutinesOutput();
+            case "get_routine" -> McpToolSchemas.getRoutineOutput();
+            case "start_routine" -> McpToolSchemas.startRoutineOutput();
+            case "cancel_routine" -> McpToolSchemas.cancelRoutineOutput();
+            case "emergency_stop" -> McpToolSchemas.emergencyStopOutput();
+            case "get_recipes" -> McpToolSchemas.getRecipesOutput();
+            default -> throw new IllegalArgumentException("unknown tool " + name);
+        };
+        var validation = McpJsonDefaults.getSchemaValidator().validate(schema, envelope);
         assertThat(validation.valid())
-                .as("%s output must match its advertised schema: %s", name, validation)
+                .as("%s output must match its internal schema: %s", name, validation)
                 .isTrue();
+    }
+
+    private static Map<String, Object> textEnvelope(McpSchema.CallToolResult result) throws Exception {
+        String text = ((McpSchema.TextContent) result.content().getFirst()).text();
+        return McpJsonDefaults.getMapper().readValue(text, new TypeRef<>() { });
     }
 
     private static McpStatelessServerFeatures.SyncToolSpecification specification(

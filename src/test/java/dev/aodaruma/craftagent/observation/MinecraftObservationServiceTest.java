@@ -62,6 +62,14 @@ class MinecraftObservationServiceTest {
         var observedContext = (Map<String, Object>) actual.get("observed_context");
         assertThat(observedContext).containsKeys(
                 "fluid_at_observation", "fluid_source_at_observation", "fluid_amount_at_observation");
+
+        Map<String, Object> compact = sample.toCompactMap(72);
+        assertThat(compact)
+                .containsKeys("outcome", "position", "state", "visible_faces", "within_reach")
+                .doesNotContainKeys("actual", "world_session_id", "observed_context", "knowledge");
+        assertThat(compact.get("position")).isEqualTo(position.toMap());
+        assertThat(compact.get("state")).isEqualTo(observation.state().toMap());
+        assertThat(compact.toString().length()).isLessThan(mapped.toString().length() / 2);
     }
 
     @Test

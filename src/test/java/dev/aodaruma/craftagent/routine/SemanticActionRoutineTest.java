@@ -221,6 +221,36 @@ class SemanticActionRoutineTest {
     }
 
     @Test
+    void offCrosshairBlockIsPreparedBeforeDispatchAndPreparationIsTransferredOnce() {
+        var port = new FakePort();
+        port.blockState = Optional.empty();
+        port.crosshairOnBlock = false;
+        var manager = manager(port);
+        var id = manager.startSemanticAction(
+                UUID.randomUUID().toString(), breakRequest(), 10).routineId();
+
+        advance(manager, port); // queued -> precheck
+        advance(manager, port); // precheck -> prepare
+        advance(manager, port); // prepare -> wait_prepare
+        advance(manager, port); // wait_prepare heartbeat
+        assertThat(manager.getRoutine(id, 0, 32).phase()).isEqualTo("wait_prepare");
+        assertThat(port.preparationMaintainCount).isOne();
+        assertThat(port.dispatchCount).isZero();
+
+        port.blockState = Optional.of(STONE);
+        port.crosshairOnBlock = true;
+        advance(manager, port); // prepared -> execute
+        advance(manager, port); // prepared dispatch
+
+        assertThat(port.preparationCount).isOne();
+        assertThat(port.preparationReleaseCount).isOne();
+        assertThat(port.preparedDispatchCount).isOne();
+        assertThat(port.dispatchCount).isOne();
+        manager.cancelRoutine(id, "test complete", 0, 32);
+        assertThat(port.releaseCount).isOne();
+    }
+
+    @Test
     void initiallySatisfiedNavigationStillRequiresReconciledSettleAttempt() {
         var port = new FakePort();
         var request = navigateRequest();
@@ -839,6 +869,7 @@ class SemanticActionRoutineTest {
         private Optional<String> entityType = Optional.of("minecraft:cow");
         private boolean entityInReach = true;
         private boolean blockInReach = true;
+        private boolean crosshairOnBlock = true;
         private int goalItemCount;
         private double playerX = 0.5D;
         private double playerY = 64.0D;
@@ -856,6 +887,10 @@ class SemanticActionRoutineTest {
         private boolean unsafePlacementOnDispatch;
         private boolean unsafeOnMaintain;
         private int dispatchCount;
+        private int preparationCount;
+        private int preparationMaintainCount;
+        private int preparationReleaseCount;
+        private int preparedDispatchCount;
         private int maintainCount;
         private int stopCount;
         private int releaseCount;
@@ -871,7 +906,7 @@ class SemanticActionRoutineTest {
                     true, true, true, healthSafe, visibleThreatClear, true,
                     blockState,
                     blockInReach,
-                    true,
+                    crosshairOnBlock,
                     entityResolved,
                     entityType,
                     true,
@@ -889,6 +924,42 @@ class SemanticActionRoutineTest {
                     routeReason,
                     positionCorrectionRevision,
                     safeToRetry);
+        }
+
+        @Override
+        public SemanticActionPreparationAttempt beginPreparation(
+                SemanticActionRequest request, long leaseExpiresAtClientTick) {
+            preparationCount++;
+            return new SemanticActionPreparationAttempt(
+                    UUID.randomUUID(), request.kind(), clientTick, observationRevision,
+                    leaseExpiresAtClientTick, positionCorrectionRevision);
+        }
+
+        @Override
+        public void maintainPreparation(SemanticActionPreparationAttempt attempt) {
+            preparationMaintainCount++;
+        }
+
+        @Override
+        public SemanticActionPreparationEvidence preparationEvidence(
+                SemanticActionPreparationAttempt attempt) {
+            return new SemanticActionPreparationEvidence(
+                    attempt.attemptId(), clientTick, observationRevision, blockState,
+                    blockInReach, crosshairOnBlock, true, null);
+        }
+
+        @Override
+        public void releasePreparation(SemanticActionPreparationAttempt attempt) {
+            preparationReleaseCount++;
+        }
+
+        @Override
+        public SemanticActionAttempt dispatchPrepared(
+                SemanticActionRequest request,
+                SemanticActionPreparationAttempt preparation,
+                long leaseExpiresAtClientTick) {
+            preparedDispatchCount++;
+            return dispatch(request, leaseExpiresAtClientTick);
         }
 
         @Override

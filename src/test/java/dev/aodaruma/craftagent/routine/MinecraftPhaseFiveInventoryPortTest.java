@@ -2,7 +2,11 @@ package dev.aodaruma.craftagent.routine;
 
 import dev.aodaruma.craftagent.runtime.ContainerSyncSignals.StackFingerprint;
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.MethodInsnNode;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -60,6 +64,38 @@ class MinecraftPhaseFiveInventoryPortTest {
                 2, 2, 4, 6).exactlyOneCraft()).isFalse();
         assertThat(MinecraftPhaseFiveInventoryPort.verifyCraftReadback(
                 2, 10, 4, 6).exactlyOneCraft()).isFalse();
+    }
+
+    @Test
+    void aimingChecksSafetyBeforeTurningAndReadbackCanRecoverAStaleCrosshair() throws Exception {
+        var node = new ClassNode();
+        try (var stream = getClass().getResourceAsStream(
+                "/dev/aodaruma/craftagent/routine/MinecraftPhaseFiveInventoryPort.class")) {
+            assertThat(stream).isNotNull();
+            new ClassReader(stream).accept(node, 0);
+        }
+
+        assertThat(invocations(node, "maintainAim"))
+                .containsSubsequence(
+                        "dev/aodaruma/craftagent/routine/MinecraftPhaseFiveInventoryPort#preflight",
+                        "dev/aodaruma/craftagent/routine/MinecraftPhaseFiveInventoryPort$ViewLease#turnToward");
+        assertThat(invocations(node, "targetReadyForReopen"))
+                .contains("net/minecraft/client/player/LocalPlayer#isWithinBlockInteractionRange")
+                .doesNotContain(
+                        "dev/aodaruma/craftagent/routine/MinecraftPhaseFiveInventoryPort#exactHit");
+    }
+
+    private static List<String> invocations(ClassNode node, String methodName) {
+        var calls = new ArrayList<String>();
+        node.methods.stream()
+                .filter(method -> method.name.equals(methodName))
+                .findFirst().orElseThrow()
+                .instructions.forEach(instruction -> {
+                    if (instruction instanceof MethodInsnNode call) {
+                        calls.add(call.owner + "#" + call.name);
+                    }
+                });
+        return calls;
     }
 
     private static StackFingerprint stack(String item, int count, int hash) {

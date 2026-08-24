@@ -25,8 +25,8 @@ public record PhaseFiveBounds(
         if (maxTravelBlocks < 0 || maxTravelBlocks > 128) {
             throw new IllegalArgumentException("max travel blocks must be in 0..128");
         }
-        if (maxDurationSeconds < 1 || maxDurationSeconds > 600) {
-            throw new IllegalArgumentException("max duration seconds must be in 1..600");
+        if (maxDurationSeconds < 1 || maxDurationSeconds > 7_200) {
+            throw new IllegalArgumentException("max duration seconds must be in 1..7200");
         }
     }
 

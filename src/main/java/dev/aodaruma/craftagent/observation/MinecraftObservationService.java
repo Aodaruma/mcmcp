@@ -59,8 +59,10 @@ public final class MinecraftObservationService {
 
     private static final double DEFAULT_VIEWPORT_DISTANCE = 8.0;
     private static final int DEFAULT_VIEWPORT_RESULTS = 128;
+    private static final int COMPACT_VIEWPORT_RESULTS = 16;
     private static final double DEFAULT_ENTITY_DISTANCE = 24.0;
     private static final int DEFAULT_ENTITY_RESULTS = 64;
+    private static final int COMPACT_ENTITY_RESULTS = 16;
     // A radius-12 viewport has at most 25^3 cells before the spherical distance filter.
     private static final int MAX_VIEWPORT_CANDIDATES = 15_625;
     private static final Set<String> SUPPORTED_SCOPES = Set.of(
@@ -133,6 +135,11 @@ public final class MinecraftObservationService {
         Objects.requireNonNull(arguments, "arguments");
         ClientState state = requireClientState(minecraft, clientTick);
         List<String> scopes = parseScopes(arguments.get("scopes"));
+        boolean compact = switch (optionalString(arguments.get("detail"), "compact")) {
+            case "compact" -> true;
+            case "full" -> false;
+            default -> throw new IllegalArgumentException("detail must be compact or full");
+        };
         Map<?, ?> options = optionalMap(arguments.get("options"), "options");
         var capture = new Capture();
         var payload = new LinkedHashMap<String, Object>();
@@ -143,7 +150,7 @@ public final class MinecraftObservationService {
             payload.put("player", player(state));
         }
         if (scopes.contains("inventory")) {
-            payload.put("inventory", inventory(state));
+            payload.put("inventory", inventory(state, compact));
         }
         if (scopes.contains("world")) {
             payload.put("world", world(state));
@@ -156,11 +163,11 @@ public final class MinecraftObservationService {
         }
         if (scopes.contains("visible_blocks")) {
             payload.put("visible_blocks", visibleBlocks(
-                    state, capture, optionalMap(options.get("visible_blocks"), "options.visible_blocks")));
+                    state, capture, optionalMap(options.get("visible_blocks"), "options.visible_blocks"), compact));
         }
         if (scopes.contains("visible_entities")) {
             payload.put("visible_entities", visibleEntities(
-                    state, capture, optionalMap(options.get("visible_entities"), "options.visible_entities")));
+                    state, capture, optionalMap(options.get("visible_entities"), "options.visible_entities"), compact));
         }
 
         var result = new LinkedHashMap<String, Object>();
@@ -168,6 +175,9 @@ public final class MinecraftObservationService {
         result.put("client_tick", clientTick);
         result.put("observation_revision", memory.revision());
         result.put("requested_scopes", List.copyOf(scopes));
+        if (compact) {
+            result.put("detail", "compact");
+        }
         result.putAll(payload);
         return result;
     }
@@ -240,19 +250,20 @@ public final class MinecraftObservationService {
         return List.copyOf(results);
     }
 
-    private Map<String, Object> visibleBlocks(ClientState state, Capture capture, Map<?, ?> options) {
+    private Map<String, Object> visibleBlocks(
+            ClientState state, Capture capture, Map<?, ?> options, boolean compact) {
         BlockSource source = BlockSource.parse(optionalString(options.get("source"), "live_and_memory"));
         Map<?, ?> query = optionalMap(options.get("query"), "options.visible_blocks.query");
         String kind = optionalString(query.get("kind"), "viewport");
         return switch (kind) {
-            case "positions" -> explicitBlocks(state, capture, source, query);
-            case "viewport" -> viewportBlocks(state, capture, source, query);
+            case "positions" -> explicitBlocks(state, capture, source, query, compact);
+            case "viewport" -> viewportBlocks(state, capture, source, query, compact);
             default -> throw new IllegalArgumentException("unsupported visible_blocks query kind: " + kind);
         };
     }
 
     private Map<String, Object> explicitBlocks(
-            ClientState state, Capture capture, BlockSource source, Map<?, ?> query) {
+            ClientState state, Capture capture, BlockSource source, Map<?, ?> query, boolean compact) {
         Object rawPositions = query.get("positions");
         if (!(rawPositions instanceof Collection<?> collection)) {
             throw new IllegalArgumentException("positions query requires an array");
@@ -281,16 +292,17 @@ public final class MinecraftObservationService {
         for (BlockPos position : unique) {
             samples.add(sampleBlock(state, capture, position, source));
         }
-        return blockQueryMap("positions", source, samples, unique.size(), false);
+        return blockQueryMap("positions", source, samples, unique.size(), false, compact);
     }
 
     private Map<String, Object> viewportBlocks(
-            ClientState state, Capture capture, BlockSource source, Map<?, ?> query) {
+            ClientState state, Capture capture, BlockSource source, Map<?, ?> query, boolean compact) {
         double maxDistance = boundedDouble(
                 query.get("max_distance"), DEFAULT_VIEWPORT_DISTANCE, 1.0, MAX_VIEWPORT_DISTANCE,
                 "visible_blocks.query.max_distance");
         int maxResults = boundedInt(
-                query.get("max_results"), DEFAULT_VIEWPORT_RESULTS, 1, MAX_VIEWPORT_RESULTS,
+                query.get("max_results"), compact ? COMPACT_VIEWPORT_RESULTS : DEFAULT_VIEWPORT_RESULTS,
+                1, MAX_VIEWPORT_RESULTS,
                 "visible_blocks.query.max_results");
         var samples = new ArrayList<BlockSample>(maxResults);
         var included = new HashSet<BlockPosition>();
@@ -341,7 +353,7 @@ public final class MinecraftObservationService {
         }
 
         var result = new LinkedHashMap<String, Object>(
-                blockQueryMap("viewport", source, samples, considered, truncated));
+                blockQueryMap("viewport", source, samples, considered, truncated, compact));
         result.put("max_distance", maxDistance);
         result.put("max_results", maxResults);
         return result;
@@ -444,13 +456,15 @@ public final class MinecraftObservationService {
         return List.copyOf(merged);
     }
 
-    private Map<String, Object> visibleEntities(ClientState state, Capture capture, Map<?, ?> options) {
+    private Map<String, Object> visibleEntities(
+            ClientState state, Capture capture, Map<?, ?> options, boolean compact) {
         BlockSource source = BlockSource.parse(optionalString(options.get("source"), "live_and_memory"));
         double maxDistance = boundedDouble(
                 options.get("max_distance"), DEFAULT_ENTITY_DISTANCE, 1.0, MAX_ENTITY_DISTANCE,
                 "visible_entities.max_distance");
         int maxResults = boundedInt(
-                options.get("max_results"), DEFAULT_ENTITY_RESULTS, 1, MAX_ENTITY_RESULTS,
+                options.get("max_results"), compact ? COMPACT_ENTITY_RESULTS : DEFAULT_ENTITY_RESULTS,
+                1, MAX_ENTITY_RESULTS,
                 "visible_entities.max_results");
         EntityFilter typeFilter = EntityFilter.parse(options.get("types"));
         String threatFilter = optionalString(options.get("threat_relation"), "any");
@@ -486,7 +500,9 @@ public final class MinecraftObservationService {
                     break;
                 }
                 current.add(entity.getUUID());
-                var mapped = entityMap(observed, state.clientTick(), true, origin.position());
+                var mapped = compact
+                        ? compactEntityMap(observed, state.clientTick(), true, origin.position())
+                        : entityMap(observed, state.clientTick(), true, origin.position());
                 mapped.put("threat_relation", activelyTargetingPlayer
                         ? "currently_hostile_to_player"
                         : "unknown");
@@ -507,7 +523,9 @@ public final class MinecraftObservationService {
                     truncated = true;
                     break;
                 }
-                var mapped = entityMap(remembered, state.clientTick(), false, origin.position());
+                var mapped = compact
+                        ? compactEntityMap(remembered, state.clientTick(), false, origin.position())
+                        : entityMap(remembered, state.clientTick(), false, origin.position());
                 mapped.put("threat_relation", "unknown");
                 results.add(mapped);
             }
@@ -628,12 +646,15 @@ public final class MinecraftObservationService {
         return result;
     }
 
-    private Map<String, Object> inventory(ClientState state) {
+    private Map<String, Object> inventory(ClientState state, boolean compact) {
         Inventory inventory = state.player().getInventory();
         int selected = inventory.getSelectedSlot();
         var slots = new ArrayList<Map<String, Object>>(inventory.getContainerSize());
         for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
             ItemStack stack = inventory.getItem(slot);
+            if (compact && stack.isEmpty()) {
+                continue;
+            }
             var value = new LinkedHashMap<String, Object>();
             value.put("slot", slot);
             value.put("slot_role", slotRole(slot));
@@ -665,10 +686,14 @@ public final class MinecraftObservationService {
             }
             slots.add(Map.copyOf(value));
         }
-        return Map.of(
-                "selected_slot", selected,
-                "size", inventory.getContainerSize(),
-                "slots", List.copyOf(slots));
+        var result = new LinkedHashMap<String, Object>();
+        result.put("selected_slot", selected);
+        result.put("size", inventory.getContainerSize());
+        if (compact) {
+            result.put("slot_encoding", "non_empty_only");
+        }
+        result.put("slots", List.copyOf(slots));
+        return result;
     }
 
     private Map<String, Object> world(ClientState state) {
@@ -804,7 +829,8 @@ public final class MinecraftObservationService {
             BlockSource source,
             List<BlockSample> samples,
             int requestedOrConsidered,
-            boolean truncated) {
+            boolean truncated,
+            boolean compact) {
         var counts = new LinkedHashMap<String, Integer>();
         for (BlockOutcome outcome : BlockOutcome.values()) {
             counts.put(outcome.wireName(), 0);
@@ -815,7 +841,11 @@ public final class MinecraftObservationService {
         var result = new LinkedHashMap<String, Object>();
         result.put("source", source.wireName());
         result.put("query_kind", kind);
-        result.put("results", samples.stream().map(sample -> sample.toMap(sample.currentTick())).toList());
+        result.put("results", samples.stream()
+                .map(sample -> compact
+                        ? sample.toCompactMap(sample.currentTick())
+                        : sample.toMap(sample.currentTick()))
+                .toList());
         result.put("coverage", Map.of(
                 "requested_or_considered", requestedOrConsidered,
                 "current", counts.get("current"),
@@ -869,6 +899,25 @@ public final class MinecraftObservationService {
         mapped.put("relative_position", vectorMap(relative));
         mapped.put("distance", relative.length());
         return mapped;
+    }
+
+    private static LinkedHashMap<String, Object> compactEntityMap(
+            WorldMemory.EntityObservation observation,
+            long currentTick,
+            boolean current,
+            Vec3 origin) {
+        Map<String, Object> full = entityMap(observation, currentTick, current, origin);
+        var compact = new LinkedHashMap<String, Object>();
+        for (String key : List.of("type", "position", "relative_position", "distance", "entity_ref")) {
+            if (full.containsKey(key)) {
+                compact.put(key, full.get(key));
+            }
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> knowledge = (Map<String, Object>) full.get("knowledge");
+        compact.put("currentness", knowledge.get("currentness"));
+        compact.put("age_ticks", knowledge.get("age_ticks"));
+        return compact;
     }
 
     private static double entityDistanceSquared(
@@ -1084,6 +1133,26 @@ public final class MinecraftObservationService {
                         withinReach));
             } else {
                 result.put("reason", reason);
+            }
+            return result;
+        }
+
+        public Map<String, Object> toCompactMap(long clientTick) {
+            var result = new LinkedHashMap<String, Object>();
+            result.put("outcome", outcome.wireName());
+            result.put("position", position.toMap());
+            if (observation == null) {
+                result.put("reason", reason);
+                return result;
+            }
+            result.put("state", observation.state().toMap());
+            if (outcome == BlockOutcome.CURRENT) {
+                result.put("visible_faces", visibleFaces);
+                result.put("within_reach", withinReach);
+            }
+            else {
+                result.put("provenance", observation.provenance().wireName());
+                result.put("age_ticks", Math.max(0L, clientTick - observation.observedAtClientTick()));
             }
             return result;
         }

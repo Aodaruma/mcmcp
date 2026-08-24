@@ -71,6 +71,16 @@ class MinecraftSemanticActionPortTest {
         assertThat(MinecraftSemanticActionPort.routeFeetY(199.999_999_9D)).isEqualTo(200);
         assertThat(MinecraftSemanticActionPort.routeFeetY(199.999_8D)).isEqualTo(199);
         assertThat(MinecraftSemanticActionPort.routeFeetY(200.0D)).isEqualTo(200);
+        assertThat(MinecraftSemanticActionPort.routeFeetY(
+                199.9375D, Blocks.FARMLAND.defaultBlockState())).isEqualTo(200);
+        assertThat(MinecraftSemanticActionPort.routeFeetY(
+                199.9375D, Blocks.AIR.defaultBlockState())).isEqualTo(199);
+        assertThat(MinecraftSemanticActionPort.lowFlatRouteFloor(
+                Blocks.FARMLAND.defaultBlockState())).isTrue();
+        assertThat(MinecraftSemanticActionPort.lowFlatRouteFloor(
+                Blocks.DIRT_PATH.defaultBlockState())).isTrue();
+        assertThat(MinecraftSemanticActionPort.lowFlatRouteFloor(
+                Blocks.WATER.defaultBlockState())).isFalse();
     }
 
     @Test

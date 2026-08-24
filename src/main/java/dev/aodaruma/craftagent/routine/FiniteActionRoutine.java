@@ -8,6 +8,8 @@ import java.util.UUID;
 /** Deterministic block/entity finite-action supervisor. */
 final class FiniteActionRoutine extends AbstractSemanticRoutine {
     private static final String PRECHECK = "precheck";
+    private static final String PREPARE = "prepare";
+    private static final String WAIT_PREPARE = "wait_prepare";
     private static final String EXECUTE = "execute";
     private static final String WAIT_SERVER_SYNC = "wait_server_sync";
     private static final String VERIFY = "verify";
@@ -19,6 +21,7 @@ final class FiniteActionRoutine extends AbstractSemanticRoutine {
     private long retryAfterRevision;
     private SemanticActionEvidence verificationEvidence;
     private SemanticActionEvidence lastEvidence;
+    private SemanticActionPreparationAttempt preparation;
 
     FiniteActionRoutine(
             UUID routineId,
@@ -34,6 +37,8 @@ final class FiniteActionRoutine extends AbstractSemanticRoutine {
         switch (phase) {
             case "queued" -> startPhase(PRECHECK, RoutineState.VALIDATING);
             case PRECHECK -> precheck(frame);
+            case PREPARE -> beginPreparation(frame);
+            case WAIT_PREPARE -> awaitPreparation();
             case EXECUTE -> execute(frame);
             case WAIT_SERVER_SYNC -> awaitServerSync(frame);
             case VERIFY -> verify();
@@ -50,15 +55,116 @@ final class FiniteActionRoutine extends AbstractSemanticRoutine {
         }
         var precondition = preconditionFailure(frame);
         if (precondition != null) {
+            if (blockNeedsPreparation(frame, precondition)) {
+                startPhase(PREPARE, RoutineState.RUNNING);
+                return;
+            }
             fail(precondition);
             return;
         }
         startPhase(EXECUTE, RoutineState.RUNNING);
     }
 
+    private void beginPreparation(SemanticActionFrame frame) {
+        var issued = java.util.Objects.requireNonNull(
+                port.beginPreparation(request, hardDeadlineClientTick),
+                "adapter returned no preparation attempt");
+        if (!kind().equals(issued.kind())
+                || issued.issuedClientTick() != frame.clientTick()
+                || issued.issuedObservationRevision() < frame.observationRevision()
+                || issued.leaseExpiresAtClientTick() != hardDeadlineClientTick
+                || issued.positionCorrectionRevisionAtStart()
+                        != frame.positionCorrectionRevision()) {
+            try {
+                port.releasePreparation(issued);
+            } catch (RuntimeException | LinkageError ignored) {
+            }
+            throw new IllegalStateException("semantic action adapter violated preparation contract");
+        }
+        preparation = issued;
+        startPhase(WAIT_PREPARE, RoutineState.WAITING);
+    }
+
+    private void awaitPreparation() {
+        var current = java.util.Objects.requireNonNull(
+                preparation, "no active preparation attempt");
+        var observed = java.util.Objects.requireNonNull(
+                port.preparationEvidence(current),
+                "adapter returned no preparation evidence");
+        if (!current.attemptId().equals(observed.attemptId())
+                || observed.clientTick() < current.issuedClientTick()
+                || observed.observationRevision() < current.issuedObservationRevision()) {
+            throw new IllegalStateException(
+                    "semantic action adapter violated preparation evidence contract");
+        }
+        if (observed.failure() != null) {
+            fail(observed.failure());
+            return;
+        }
+        if (!observed.prepared()) {
+            port.maintainPreparation(current);
+            return;
+        }
+        var live = observed.liveBlockState().orElseThrow();
+        if (expectedAfter().matches(live)) {
+            releasePreparation();
+            verifiedSteps = 1;
+            beginFinalization();
+            return;
+        }
+        if (!expectedBefore().matches(live)) {
+            fail(divergence(
+                    "PRECONDITION_CHANGED_DURING_PREPARE",
+                    stateMap(expectedBefore()), stateMap(live)));
+            return;
+        }
+        startPhase(EXECUTE, RoutineState.RUNNING);
+    }
+
     private void execute(SemanticActionFrame frame) {
-        dispatch(frame);
+        var precondition = preconditionFailure(frame);
+        if (precondition != null) {
+            fail(precondition);
+            return;
+        }
+        if (preparation == null) {
+            dispatch(frame);
+        } else {
+            dispatchPrepared(frame);
+        }
         startPhase(WAIT_SERVER_SYNC, RoutineState.RUNNING);
+    }
+
+    private void dispatchPrepared(SemanticActionFrame frame) {
+        var current = java.util.Objects.requireNonNull(
+                preparation, "no active preparation attempt");
+        var issued = java.util.Objects.requireNonNull(
+                port.dispatchPrepared(request, current, hardDeadlineClientTick),
+                "adapter returned no prepared attempt");
+        if (!kind().equals(issued.kind())
+                || issued.issuedClientTick() != frame.clientTick()
+                || issued.issuedObservationRevision() < frame.observationRevision()
+                || issued.leaseExpiresAtClientTick() != hardDeadlineClientTick
+                || issued.positionCorrectionRevisionAtDispatch()
+                        != frame.positionCorrectionRevision()) {
+            try {
+                port.release(issued);
+            } catch (RuntimeException | LinkageError ignored) {
+            }
+            throw new IllegalStateException(
+                    "semantic action adapter violated prepared dispatch contract");
+        }
+        attempt = issued;
+        attempts++;
+        releasePreparation();
+    }
+
+    private void releasePreparation() {
+        var current = preparation;
+        preparation = null;
+        if (current != null) {
+            port.releasePreparation(current);
+        }
     }
 
     private void awaitServerSync(SemanticActionFrame frame) {
@@ -208,6 +314,16 @@ final class FiniteActionRoutine extends AbstractSemanticRoutine {
         return null;
     }
 
+    private boolean blockNeedsPreparation(
+            SemanticActionFrame frame, RoutineFailure precondition) {
+        return !(request instanceof InteractEntityRequest)
+                && !frame.crosshairOnBlock()
+                && (frame.liveBlockState().isEmpty()
+                        || expectedBefore().matches(frame.liveBlockState().orElseThrow()))
+                && ("TARGET_NOT_CURRENTLY_OBSERVABLE".equals(precondition.code())
+                        || "BLOCK_NOT_INTERACTABLE".equals(precondition.code()));
+    }
+
     private RoutineFailure precondition(String code, String condition, boolean requiresUser) {
         return failure(
                 RoutineFailure.Category.PRECONDITION,
@@ -297,9 +413,11 @@ final class FiniteActionRoutine extends AbstractSemanticRoutine {
     @Override
     protected RoutineWait waitState() {
         return new RoutineWait(
-                "server_sync",
+                phase.equals(WAIT_PREPARE) ? "bounded_preparation" : "server_sync",
                 hardDeadlineClientTick,
-                phase.equals(RETRY_FRESH)
+                phase.equals(WAIT_PREPARE)
+                        ? "bounded aim and hotbar selection are ready"
+                        : phase.equals(RETRY_FRESH)
                         ? "a fresh client tick and observation revision are available"
                         : "server confirms the expected action result");
     }
@@ -321,6 +439,7 @@ final class FiniteActionRoutine extends AbstractSemanticRoutine {
         return switch (request) {
             case BreakBlockRequest action -> action.target();
             case PlaceBlockRequest action -> action.target();
+            case UseItemOnBlockRequest action -> action.target();
             case InteractBlockRequest action -> action.target();
             default -> throw new IllegalStateException("entity action has no block target");
         };
@@ -330,6 +449,7 @@ final class FiniteActionRoutine extends AbstractSemanticRoutine {
         return switch (request) {
             case BreakBlockRequest action -> action.expectedBefore();
             case PlaceBlockRequest action -> action.expectedBefore();
+            case UseItemOnBlockRequest action -> action.expectedBefore();
             case InteractBlockRequest action -> action.expectedBefore();
             default -> throw new IllegalStateException("entity action has no block state");
         };
@@ -339,6 +459,7 @@ final class FiniteActionRoutine extends AbstractSemanticRoutine {
         return switch (request) {
             case BreakBlockRequest action -> action.expectedAfter();
             case PlaceBlockRequest action -> action.expectedAfter();
+            case UseItemOnBlockRequest action -> action.expectedAfter();
             case InteractBlockRequest action -> action.expectedAfter();
             default -> throw new IllegalStateException("entity action has no block state");
         };

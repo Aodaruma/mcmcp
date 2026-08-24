@@ -4,6 +4,23 @@ package dev.aodaruma.craftagent.routine;
 public interface SemanticActionPort {
     SemanticActionFrame observe(SemanticActionRequest request);
 
+    SemanticActionPreparationAttempt beginPreparation(
+            SemanticActionRequest request,
+            long leaseExpiresAtClientTick);
+
+    void maintainPreparation(SemanticActionPreparationAttempt attempt);
+
+    SemanticActionPreparationEvidence preparationEvidence(
+            SemanticActionPreparationAttempt attempt);
+
+    void releasePreparation(SemanticActionPreparationAttempt attempt);
+
+    SemanticActionAttempt dispatchPrepared(
+            SemanticActionRequest request,
+            SemanticActionPreparationAttempt preparation,
+            long leaseExpiresAtClientTick);
+
+    /** Direct path retained for callers which already own exact aim and hotbar preparation. */
     SemanticActionAttempt dispatch(
             SemanticActionRequest request,
             long leaseExpiresAtClientTick);

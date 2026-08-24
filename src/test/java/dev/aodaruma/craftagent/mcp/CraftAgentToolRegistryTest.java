@@ -1,11 +1,13 @@
 package dev.aodaruma.craftagent.mcp;
 
 import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpStatelessServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -33,9 +35,8 @@ class CraftAgentToolRegistryTest {
                         "capture_creative_region", "edit_creative_world");
         for (McpSchema.Tool tool : tools) {
             assertThat(tool.inputSchema()).containsEntry("additionalProperties", false);
-            assertThat(tool.outputSchema()).containsEntry("additionalProperties", false);
             assertEveryObjectSchemaControlsAdditionalProperties(tool.inputSchema());
-            assertEveryObjectSchemaControlsAdditionalProperties(tool.outputSchema());
+            assertThat(tool.outputSchema()).isNull();
             assertThat(tool.annotations().idempotentHint()).isTrue();
             assertThat(tool.annotations().openWorldHint()).isTrue();
         }
@@ -78,7 +79,7 @@ class CraftAgentToolRegistryTest {
                 "operation", "command",
                 "command", "ban @a"));
         assertThat(rawCommand.isError()).isTrue();
-        assertThat(rawCommand.structuredContent().toString()).contains("invalid_argument");
+        assertThat(resultText(rawCommand)).contains("invalid_argument");
         assertThat(calls).hasValue(1);
     }
 
@@ -118,7 +119,7 @@ class CraftAgentToolRegistryTest {
     }
 
     @Test
-    void emitsTheSameJsonAsTextAndStructuredContent() {
+    void emitsJsonOnceAsTextContent() {
         AtomicReference<McpRuntimePort.RuntimeCommand> received = new AtomicReference<>();
         CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
             received.set(command);
@@ -130,20 +131,14 @@ class CraftAgentToolRegistryTest {
 
         assertThat(result.isError()).isFalse();
         assertThat(received.get()).isInstanceOf(McpRuntimePort.GetStatus.class);
-        assertThat(result.structuredContent()).isInstanceOf(Map.class);
-        @SuppressWarnings("unchecked")
-        Map<String, Object> envelope = (Map<String, Object>) result.structuredContent();
-        assertThat(envelope)
-                .containsEntry("ok", true)
-                .containsEntry("tool", "get_status")
-                .containsKey("request_id")
-                .containsEntry("data", McpTestFixtures.statusData());
+        assertThat(result.structuredContent()).isNull();
         assertThat(result.content()).singleElement().isInstanceOfSatisfying(
                 McpSchema.TextContent.class,
                 text -> assertThat(text.text())
                         .contains("\"ok\":true")
                         .contains("\"tool\":\"get_status\"")
-                        .contains(envelope.get("request_id").toString()));
+                        .contains("\"request_id\"")
+                        .contains("\"world_session_id\":\"session-test\""));
     }
 
     @Test
@@ -166,6 +161,22 @@ class CraftAgentToolRegistryTest {
     }
 
     @Test
+    void dispatchesAnOptionalRoutineCatalogKindFilter() {
+        AtomicReference<McpRuntimePort.RuntimeCommand> received = new AtomicReference<>();
+        CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
+            received.set(command);
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+        }, Duration.ofSeconds(1));
+
+        Map<String, Object> arguments = Map.of("kind", "tend_crop_area");
+        assertThat(invoke(registry, "list_routines", arguments).isError()).isFalse();
+        assertThat(received.get()).isInstanceOfSatisfying(
+                McpRuntimePort.ListRoutines.class,
+                command -> assertThat(command.arguments()).isEqualTo(arguments));
+        assertThat(invoke(registry, "list_routines", Map.of("kind", "unknown")).isError()).isTrue();
+    }
+
+    @Test
     void timeoutCancelsTheSharedContextSoLateRuntimeWorkCannotStart() {
         AtomicReference<RuntimeCallContext> receivedContext = new AtomicReference<>();
         CompletableFuture<McpRuntimePort.RuntimeReply> never = new CompletableFuture<>();
@@ -180,7 +191,7 @@ class CraftAgentToolRegistryTest {
         assertThat(receivedContext.get()).isNotNull();
         assertThat(receivedContext.get().isCancelled()).isTrue();
         assertThat(receivedContext.get().canBeginWork()).isFalse();
-        assertThat(result.structuredContent().toString()).contains("runtime_timeout");
+        assertThat(resultText(result)).contains("runtime_timeout");
     }
 
     @Test
@@ -195,13 +206,13 @@ class CraftAgentToolRegistryTest {
                 registry, "emergency_stop", Map.of("reason", "forged\nlog"));
 
         assertThat(result.isError()).isTrue();
-        assertThat(result.structuredContent().toString()).contains("invalid_argument");
+        assertThat(resultText(result)).contains("invalid_argument");
         assertThat(calls).hasValue(0);
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void acceptsEveryReleasedRoutineBranchWithEveryPhaseSixCompletionIntent() {
+    void acceptsEveryReleasedRoutineBranchWithEveryPhaseSixCompletionIntent() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         CraftAgentToolRegistry registry = new CraftAgentToolRegistry((command, context) -> {
             calls.incrementAndGet();
@@ -213,6 +224,9 @@ class CraftAgentToolRegistryTest {
                 .filter(tool -> tool.name().equals("start_routine"))
                 .findFirst()
                 .orElseThrow();
+        assertThat(startTool.inputSchema()).doesNotContainKey("oneOf");
+        assertThat(McpJsonDefaults.getMapper().writeValueAsString(startTool.inputSchema())
+                .getBytes(StandardCharsets.UTF_8).length).isLessThan(1_200);
         Map<String, Object> properties = (Map<String, Object>) startTool.inputSchema().get("properties");
         Map<String, Object> completionIntent = (Map<String, Object>) properties.get("completion_intent");
         assertThat(completionIntent)
@@ -279,7 +293,7 @@ class CraftAgentToolRegistryTest {
                 unknown, hybrid, malformedRef, travellingAction, nonAirBreak)) {
             McpSchema.CallToolResult result = invoke(registry, "start_routine", arguments);
             assertThat(result.isError()).as("invalid arguments %s", arguments).isTrue();
-            assertThat(result.structuredContent().toString()).contains("invalid_argument");
+            assertThat(resultText(result)).contains("invalid_argument");
         }
         assertThat(calls).hasValue(0);
     }
@@ -309,7 +323,7 @@ class CraftAgentToolRegistryTest {
             for (Map<String, Object> invalid : List.of(open, incomplete, unknownIntent)) {
                 McpSchema.CallToolResult result = invoke(registry, "start_routine", invalid);
                 assertThat(result.isError()).as("invalid routine arguments %s", valid.get("kind")).isTrue();
-                assertThat(result.structuredContent().toString()).contains("invalid_argument");
+                assertThat(resultText(result)).contains("invalid_argument");
             }
         }
         assertThat(calls).hasValue(0);
@@ -335,7 +349,7 @@ class CraftAgentToolRegistryTest {
 
             McpSchema.CallToolResult result = invoke(registry, "start_routine", arguments);
             assertThat(result.isError()).as("unsupported %s", unsupported.getKey()).isTrue();
-            assertThat(result.structuredContent().toString()).contains("invalid_argument");
+            assertThat(resultText(result)).contains("invalid_argument");
         }
 
         Map<String, Object> wrongGoal = new java.util.LinkedHashMap<>(interactEntityArguments());
@@ -346,7 +360,7 @@ class CraftAgentToolRegistryTest {
         wrongGoal.put("parameters", parameters);
         McpSchema.CallToolResult result = invoke(registry, "start_routine", wrongGoal);
         assertThat(result.isError()).isTrue();
-        assertThat(result.structuredContent().toString()).contains("invalid_argument");
+        assertThat(resultText(result)).contains("invalid_argument");
         assertThat(calls).hasValue(0);
     }
 
@@ -389,7 +403,7 @@ class CraftAgentToolRegistryTest {
         for (var invalid : List.of(nonAirBreak, missingProperties, tooMany)) {
             McpSchema.CallToolResult result = invoke(registry, "start_routine", invalid);
             assertThat(result.isError()).isTrue();
-            assertThat(result.structuredContent().toString()).contains("invalid_argument");
+            assertThat(resultText(result)).contains("invalid_argument");
         }
         assertThat(calls).hasValue(0);
     }
@@ -662,6 +676,10 @@ class CraftAgentToolRegistryTest {
                 .orElseThrow();
         return specification.callHandler().apply(
                 McpTransportContext.EMPTY, new McpSchema.CallToolRequest(name, arguments));
+    }
+
+    private static String resultText(McpSchema.CallToolResult result) {
+        return ((McpSchema.TextContent) result.content().getFirst()).text();
     }
 
     @SuppressWarnings("unchecked")

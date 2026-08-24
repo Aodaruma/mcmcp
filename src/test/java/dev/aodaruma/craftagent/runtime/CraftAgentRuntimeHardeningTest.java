@@ -1,5 +1,6 @@
 package dev.aodaruma.craftagent.runtime;
 
+import io.modelcontextprotocol.json.McpJsonDefaults;
 import dev.aodaruma.craftagent.routine.ActionBounds;
 import dev.aodaruma.craftagent.routine.ApplyBlockPlanOperation;
 import dev.aodaruma.craftagent.routine.ApplyBlockPlanRequest;
@@ -7,6 +8,7 @@ import dev.aodaruma.craftagent.routine.ApplyBlockPlanStep;
 import dev.aodaruma.craftagent.routine.BlockTarget;
 import dev.aodaruma.craftagent.routine.BlockStateFingerprint;
 import dev.aodaruma.craftagent.routine.BreakBlockRequest;
+import dev.aodaruma.craftagent.routine.FinitePlanRequest;
 import dev.aodaruma.craftagent.routine.InteractBlockRequest;
 import dev.aodaruma.craftagent.routine.InteractEntityRequest;
 import dev.aodaruma.craftagent.routine.NavigateToRequest;
@@ -20,11 +22,13 @@ import dev.aodaruma.craftagent.routine.RoutineState;
 import dev.aodaruma.craftagent.routine.StationaryBreakGoal;
 import dev.aodaruma.craftagent.routine.StationaryBreakPort;
 import dev.aodaruma.craftagent.routine.StationaryBreakRequest;
+import dev.aodaruma.craftagent.routine.UseItemOnBlockRequest;
 import dev.aodaruma.craftagent.safety.LocalArmingState;
 import dev.aodaruma.craftagent.voice.VoiceChatSafetyController;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Proxy;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -351,13 +355,13 @@ class CraftAgentRuntimeHardeningTest {
     }
 
     @Test
-    void advertisesExactlyTheThirteenPhaseSixRoutineKindsWithKindSpecificSchemas() {
+    void advertisesCompactRoutineSummariesAndOneOnDemandSchema() throws Exception {
         var catalog = CraftAgentRuntime.routineCatalog();
 
-        assertThat(catalog).containsEntry("catalog_version", "phase-6");
+        assertThat(catalog).containsEntry("catalog_version", "phase-6-compact-v1");
         @SuppressWarnings("unchecked")
         var entries = (List<Map<String, Object>>) catalog.get("routines");
-        assertThat(entries).hasSize(13);
+        assertThat(entries).hasSize(15);
         assertThat(entries).extracting(entry -> entry.get("kind"))
                 .containsExactly(
                         "stationary_break",
@@ -366,22 +370,34 @@ class CraftAgentRuntimeHardeningTest {
                         "place_block",
                         "interact_block",
                         "interact_entity",
+                        "use_item_on_block",
                         "apply_block_plan",
                         "craft_items",
                         "transfer_items",
                         "tend_crop_area",
                         "harvest_tree_area",
                         "sleep_at_bed",
-                        "survey_area");
+                        "survey_area",
+                        "execute_plan");
         assertThat(entries).allSatisfy(entry -> {
-            assertThat(entry.get("input_schema")).isInstanceOf(Map.class);
-            assertThat((List<?>) entry.get("postconditions"))
-                    .isNotEmpty()
-                    .allSatisfy(postcondition -> assertThat((String) postcondition)
-                            .hasSizeLessThanOrEqualTo(160));
+            assertThat(entry).containsKeys("capabilities").doesNotContainKeys("input_schema", "postconditions");
+            assertThat((List<?>) entry.get("capabilities")).isNotEmpty();
         });
-        assertThat(entries.getFirst().get("input_schema"))
-                .isNotSameAs(entries.get(1).get("input_schema"));
+        assertThat(McpJsonDefaults.getMapper().writeValueAsString(catalog)
+                .getBytes(StandardCharsets.UTF_8).length).isLessThan(8_000);
+
+        @SuppressWarnings("unchecked")
+        var detailed = (List<Map<String, Object>>) CraftAgentRuntime
+                .routineCatalog("tend_crop_area")
+                .get("routines");
+        assertThat(detailed).singleElement().satisfies(entry -> {
+            assertThat(entry).containsEntry("kind", "tend_crop_area");
+            assertThat(entry.get("input_schema")).isInstanceOf(Map.class);
+            assertThat(entry.get("postconditions")).isInstanceOf(List.class);
+        });
+        assertThat(McpJsonDefaults.getMapper().writeValueAsString(
+                        CraftAgentRuntime.routineCatalog("tend_crop_area"))
+                .getBytes(StandardCharsets.UTF_8).length).isLessThan(15_000);
     }
 
     @Test
@@ -424,7 +440,7 @@ class CraftAgentRuntimeHardeningTest {
     }
 
     @Test
-    void strictlyParsesAllFiveClosedSemanticActionBranches() {
+    void strictlyParsesAllSixClosedSemanticActionBranches() {
         assertThat(CraftAgentRuntime.semanticActionArgument(
                 startArguments("navigate_to", Map.of(
                         "target", targetMap(),
@@ -447,6 +463,14 @@ class CraftAgentRuntimeHardeningTest {
                 "minecraft:overworld"))
                 .isInstanceOf(PlaceBlockRequest.class);
         assertThat(CraftAgentRuntime.semanticActionArgument(
+                startArguments("use_item_on_block", Map.of(
+                        "target", targetMap(),
+                        "expected_before", blockState("minecraft:dirt"),
+                        "item", "minecraft:wooden_hoe",
+                        "expected_after", blockState("minecraft:farmland")), 0, 30, false),
+                "minecraft:overworld"))
+                .isInstanceOf(UseItemOnBlockRequest.class);
+        assertThat(CraftAgentRuntime.semanticActionArgument(
                 startArguments("interact_block", Map.of(
                         "target", targetMap(),
                         "expected_before", Map.of(
@@ -468,6 +492,46 @@ class CraftAgentRuntimeHardeningTest {
                                 "minimum_inventory_count", 1)), 0, 30, false),
                 "minecraft:overworld"))
                 .isInstanceOf(InteractEntityRequest.class);
+    }
+
+    @Test
+    void parsesTokenLightFinitePlanAndHashesFractionalChildArguments() {
+        var actionArguments = new LinkedHashMap<String, Object>();
+        actionArguments.put("parameters", Map.of(
+                "target", targetMap(),
+                "horizontal_tolerance_blocks", 0.5D));
+        actionArguments.put("bounds", boundsMap(1, 30, false));
+        var parameters = new LinkedHashMap<String, Object>();
+        parameters.put("plan_id", "farm-pass");
+        parameters.put("max_ticks", 72_000);
+        parameters.put("steps", List.of(Map.of(
+                "id", "move-to-plot",
+                "op", "action",
+                "kind", "navigate_to",
+                "arguments", actionArguments)));
+        var arguments = new LinkedHashMap<String, Object>();
+        arguments.put("kind", "execute_plan");
+        arguments.put("parameters", parameters);
+        arguments.put("bounds", Map.of());
+        arguments.put("idempotency_key", "7f7809c5-eae4-48a6-9fea-d50b600d5641");
+
+        var parsed = CraftAgentRuntime.finitePlanRequestArgument(arguments);
+
+        assertThat(parsed.request().maxTicks()).isEqualTo(72_000);
+        assertThat(((FinitePlanRequest.Action) parsed.request().steps().getFirst()).kind())
+                .isEqualTo(FinitePlanRequest.RoutineKind.NAVIGATE_TO);
+        assertThat(parsed.requestIdentity()).matches("sha256:[0-9a-f]{64}");
+
+        var invalidArguments = new LinkedHashMap<>(actionArguments);
+        invalidArguments.put("completion_intent", "finish_goal");
+        parameters.put("steps", List.of(Map.of(
+                "id", "bad-child-envelope",
+                "op", "action",
+                "kind", "navigate_to",
+                "arguments", invalidArguments)));
+        assertThatThrownBy(() -> CraftAgentRuntime.finitePlanRequestArgument(arguments))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("action arguments must contain exactly");
     }
 
     @Test

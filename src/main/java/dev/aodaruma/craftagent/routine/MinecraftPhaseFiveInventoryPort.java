@@ -10,6 +10,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -25,6 +26,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -51,6 +53,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     static final String SINGLE_CONTAINER_MENU = "minecraft:generic_9x3";
     private static final int OPEN_TIMEOUT_TICKS = 40;
     private static final float MIN_SAFE_HEALTH = 10.0F;
+    private static final float MAX_TURN_PER_TICK = 8.0F;
+    private static final float AIM_EPSILON = 0.75F;
+    private static final float ROTATION_EPSILON = 0.1F;
 
     private final Supplier<Minecraft> minecraftSupplier;
     private final Supplier<WorldSessionTracker.Snapshot> sessionSupplier;
@@ -166,7 +171,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             state.stage = Stage.TERMINAL;
             return attempt;
         }
-        dispatchExpectedOpen(attempt, state, false);
+        state.view = ViewLease.acquire(Objects.requireNonNull(minecraft.player));
+        state.stage = Stage.AIMING_INITIAL;
         return attempt;
     }
 
@@ -208,6 +214,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         }
 
         switch (state.stage) {
+            case AIMING_INITIAL -> maintainAim(attempt, state, false);
+            case AIMING_READBACK -> maintainAim(attempt, state, true);
             case OPENING_INITIAL, OPENING_READBACK -> acceptOwnedSnapshot(attempt, state, minecraft);
             case CRAFT_WAIT_RESULT -> maintainCraftResult(attempt, state, minecraft);
             case AWAITING_CLOSE -> {
@@ -217,7 +225,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                         && minecraft.player != null
                         && minecraft.player.containerMenu == minecraft.player.inventoryMenu) {
                     if (targetReadyForReopen(minecraft, state.parameters)) {
-                        dispatchExpectedOpen(attempt, state, true);
+                        state.stage = Stage.AIMING_READBACK;
                     } else if (tick > state.closeDeadlineClientTick) {
                         state.inconclusive = new InconclusiveState(
                                 PhaseFiveEvidence.Certainty.UNKNOWN,
@@ -258,6 +266,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         var state = attempts.get(attempt);
         cleanupOwnedScreen(attempt.attemptId());
         if (state != null) {
+            state.closeView(requireMinecraft());
             state.stage = Stage.TERMINAL;
         }
     }
@@ -270,6 +279,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             var entry = iterator.next();
             if (entry.getValue().request == request) {
                 cleanupOwnedScreen(entry.getKey().attemptId());
+                entry.getValue().closeView(requireMinecraft());
                 iterator.remove();
             }
         }
@@ -279,6 +289,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     public void clearSession() {
         for (var attempt : List.copyOf(attempts.keySet())) {
             cleanupOwnedScreen(attempt.attemptId());
+            attempts.get(attempt).closeView(requireMinecraft());
         }
         attempts.clear();
     }
@@ -570,6 +581,26 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         state.stage = readback ? Stage.OPENING_READBACK : Stage.OPENING_INITIAL;
     }
 
+    private void maintainAim(PhaseFiveAttempt attempt, AttemptState state, boolean readback) {
+        var minecraft = assertClientThread();
+        RoutineFailure failure = preflight(minecraft, sessionSupplier.get(), state.request);
+        if (failure != null) {
+            state.failure = failure;
+            state.stage = Stage.TERMINAL;
+            return;
+        }
+        var target = state.parameters.target();
+        Vec3 point = new Vec3(target.x() + 0.5D, target.y() + 0.5D, target.z() + 0.5D);
+        state.view.turnToward(minecraft, point);
+        if (state.view.aligned(minecraft, point)
+                && minecraft.hitResult instanceof BlockHitResult hit
+                && hit.getType() == HitResult.Type.BLOCK
+                && !hit.isWorldBorderHit()
+                && hit.getBlockPos().equals(blockPos(target))) {
+            dispatchExpectedOpen(attempt, state, readback);
+        }
+    }
+
     private RoutineFailure preflight(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
@@ -614,7 +645,11 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     RoutineFailure.Recovery.REPLAN,
                     Map.of("loaded_and_within_border", true), Map.of());
         }
-        exactHit(minecraft, parameters.target());
+        if (!player.isWithinBlockInteractionRange(position, 0.0)) {
+            return failure("INVENTORY_TARGET_OUT_OF_REACH", RoutineFailure.Category.PRECONDITION,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("within_reach", true), Map.of("within_reach", false));
+        }
         BlockState state = level.getBlockState(position);
         var actual = fingerprint(state);
         if (!parameters.expectedState().equals(actual)) {
@@ -848,17 +883,13 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
     private static boolean targetReadyForReopen(
             Minecraft minecraft, ParsedParameters parameters) {
-        if (minecraft.level == null) {
+        if (minecraft.level == null || minecraft.player == null) {
             return false;
         }
         var position = blockPos(parameters.target());
         if (!minecraft.level.isLoaded(position)
-                || !minecraft.level.getWorldBorder().isWithinBounds(position)) {
-            return false;
-        }
-        try {
-            exactHit(minecraft, parameters.target());
-        } catch (IllegalArgumentException ignored) {
+                || !minecraft.level.getWorldBorder().isWithinBounds(position)
+                || !minecraft.player.isWithinBlockInteractionRange(position, 0.0D)) {
             return false;
         }
         return parameters.expectedState().equals(
@@ -1020,9 +1051,11 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     }
 
     enum Stage {
+        AIMING_INITIAL,
         OPENING_INITIAL,
         CRAFT_WAIT_RESULT,
         AWAITING_CLOSE,
+        AIMING_READBACK,
         OPENING_READBACK,
         TERMINAL
     }
@@ -1121,6 +1154,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private int expectedCraftOutputCount;
         private long lastPacketRevision;
         private long closeDeadlineClientTick;
+        private ViewLease view;
 
         private AttemptState(PhaseFiveRequest request, ParsedParameters parameters) {
             this.request = Objects.requireNonNull(request, "request");
@@ -1160,5 +1194,88 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             }
             return basis;
         }
+
+        private void closeView(Minecraft minecraft) {
+            if (view != null) {
+                view.close(minecraft);
+                view = null;
+            }
+        }
     }
+
+    /** Bounded camera lease; container use remains a normal first-person interaction. */
+    private static final class ViewLease {
+        private final float originalYaw;
+        private final float originalPitch;
+        private float expectedYaw;
+        private float expectedPitch;
+        private boolean closed;
+
+        private ViewLease(LocalPlayer player) {
+            originalYaw = player.getYRot();
+            originalPitch = player.getXRot();
+            expectedYaw = originalYaw;
+            expectedPitch = originalPitch;
+        }
+
+        static ViewLease acquire(LocalPlayer player) {
+            return new ViewLease(Objects.requireNonNull(player, "player"));
+        }
+
+        void turnToward(Minecraft minecraft, Vec3 point) {
+            requireUndisturbed(minecraft);
+            LocalPlayer player = Objects.requireNonNull(minecraft.player);
+            Rotation target = rotation(player.getEyePosition(), point);
+            float yaw = Mth.clamp(Mth.wrapDegrees(target.yaw - player.getYRot()),
+                    -MAX_TURN_PER_TICK, MAX_TURN_PER_TICK);
+            float pitch = Mth.clamp(target.pitch - player.getXRot(),
+                    -MAX_TURN_PER_TICK, MAX_TURN_PER_TICK);
+            player.turn(yaw / 0.15D, pitch / 0.15D);
+            expectedYaw = player.getYRot();
+            expectedPitch = player.getXRot();
+        }
+
+        boolean aligned(Minecraft minecraft, Vec3 point) {
+            LocalPlayer player = Objects.requireNonNull(minecraft.player);
+            Rotation target = rotation(player.getEyePosition(), point);
+            return Math.abs(Mth.wrapDegrees(target.yaw - player.getYRot())) <= AIM_EPSILON
+                    && Math.abs(target.pitch - player.getXRot()) <= AIM_EPSILON;
+        }
+
+        void close(Minecraft minecraft) {
+            if (closed) {
+                return;
+            }
+            LocalPlayer player = minecraft.player;
+            if (player != null) {
+                float yaw = Mth.wrapDegrees(originalYaw - player.getYRot());
+                float pitch = originalPitch - player.getXRot();
+                player.turn(yaw / 0.15D, pitch / 0.15D);
+            }
+            closed = true;
+        }
+
+        private void requireUndisturbed(Minecraft minecraft) {
+            if (closed) {
+                throw new IllegalStateException("view lease is closed");
+            }
+            LocalPlayer player = Objects.requireNonNull(minecraft.player);
+            if (Math.abs(Mth.wrapDegrees(player.getYRot() - expectedYaw)) > ROTATION_EPSILON
+                    || Math.abs(player.getXRot() - expectedPitch) > ROTATION_EPSILON) {
+                throw new IllegalStateException("view ownership changed");
+            }
+        }
+
+        private static Rotation rotation(Vec3 from, Vec3 to) {
+            double dx = to.x - from.x;
+            double dy = to.y - from.y;
+            double dz = to.z - from.z;
+            double horizontal = Math.sqrt(dx * dx + dz * dz);
+            return new Rotation(
+                    (float) Math.toDegrees(Math.atan2(dz, dx)) - 90.0F,
+                    (float) -Math.toDegrees(Math.atan2(dy, horizontal)));
+        }
+    }
+
+    private record Rotation(float yaw, float pitch) {}
 }

@@ -76,15 +76,13 @@ public final class CraftAgentToolRegistry {
                                 "get_status",
                                 "Read connection, local lock, policy, compatibility, routine and memory status.",
                                 McpToolSchemas.statusInput(),
-                                McpToolSchemas.statusOutput(),
                                 READ_ONLY_ANNOTATIONS),
                         ignored -> new McpRuntimePort.GetStatus()),
                 specification(
                         tool(
                                 "get_snapshot",
-                                "Read a same-client-tick snapshot for explicitly requested observation scopes.",
+                                "Read a same-client-tick snapshot for explicitly requested observation scopes; compact is the default and full preserves the legacy verbose shape.",
                                 McpToolSchemas.snapshotInput(),
-                                McpToolSchemas.snapshotOutput(),
                                 READ_ONLY_ANNOTATIONS),
                         McpRuntimePort.GetSnapshot::new),
                 specification(
@@ -92,39 +90,35 @@ public final class CraftAgentToolRegistry {
                                 "compare_block_plan",
                                 "Compare up to 512 expected blocks against current observations and session memory.",
                                 McpToolSchemas.compareInput(),
-                                McpToolSchemas.compareOutput(),
                                 READ_ONLY_ANNOTATIONS),
                         McpRuntimePort.CompareBlockPlan::new),
                 specification(
                         tool(
                                 "list_routines",
-                                "List all 13 phase-gated routine kinds and their closed start schemas.",
+                                "List compact routine capabilities, or pass kind to read one closed start schema.",
                                 McpToolSchemas.listRoutinesInput(),
-                                McpToolSchemas.listRoutinesOutput(),
                                 READ_ONLY_ANNOTATIONS),
-                        ignored -> new McpRuntimePort.ListRoutines()),
+                        McpRuntimePort.ListRoutines::new),
                 specification(
                         tool(
                                 "get_routine",
                                 "Read complete current routine state plus bounded events after an optional cursor.",
                                 McpToolSchemas.getRoutineInput(),
-                                McpToolSchemas.getRoutineOutput(),
                                 READ_ONLY_ANNOTATIONS),
                         McpRuntimePort.GetRoutine::new),
                 specification(
                         tool(
                                 "start_routine",
-                                "Start one bounded routine after local arming and live safety validation; omit completion_intent to finish, or use continue_goal for a bounded MCP-client-owned chain.",
+                                "Start one bounded routine after local arming and live safety validation; call list_routines with kind first for its exact parameters and bounds.",
                                 McpToolSchemas.startRoutineInput(),
-                                McpToolSchemas.startRoutineOutput(),
                                 START_ANNOTATIONS),
+                        McpToolSchemas.startRoutineValidationInput(),
                         McpRuntimePort.StartRoutine::new),
                 specification(
                         tool(
                                 "cancel_routine",
                                 "Idempotently release inputs and cancel one routine on the Minecraft client thread.",
                                 McpToolSchemas.cancelRoutineInput(),
-                                McpToolSchemas.cancelRoutineOutput(),
                                 CANCEL_ANNOTATIONS),
                         this::cancelRoutineCommand),
                 specification(
@@ -132,7 +126,6 @@ public final class CraftAgentToolRegistry {
                                 "emergency_stop",
                                 "Release automation inputs, discard pending starts, cancel the routine and lock locally.",
                                 McpToolSchemas.emergencyStopInput(),
-                                McpToolSchemas.emergencyStopOutput(),
                                 STOP_ANNOTATIONS),
                         this::emergencyStopCommand),
                 specification(
@@ -143,7 +136,6 @@ public final class CraftAgentToolRegistry {
                                 "capture_creative_region",
                                 "Start or poll one locally armed private-singleplayer Creative export to a bounded gzip blueprint artifact.",
                                 McpToolSchemas.creativeRegionInput(),
-                                McpToolSchemas.creativeRegionOutput(),
                                 EXPORT_ANNOTATIONS),
                         McpRuntimePort.CaptureCreativeRegion::new),
                 specification(
@@ -151,7 +143,6 @@ public final class CraftAgentToolRegistry {
                                 "edit_creative_world",
                                 "Run typed private-singleplayer Creative set_block, fill, allowlisted summon, undo, or redo operations; arbitrary commands, selectors, and NBT are not accepted.",
                                 McpToolSchemas.creativeWorldEditInput(),
-                                McpToolSchemas.creativeWorldEditOutput(),
                                 START_ANNOTATIONS),
                         McpRuntimePort.EditCreativeWorld::new));
     }
@@ -166,15 +157,22 @@ public final class CraftAgentToolRegistry {
                 "get_recipes",
                 "Read only client-known RecipeDisplayEntry records; opaque references are bounded and coverage is explicitly incomplete.",
                 McpToolSchemas.getRecipesInput(),
-                McpToolSchemas.getRecipesOutput(),
                 READ_ONLY_ANNOTATIONS);
     }
 
     private McpStatelessServerFeatures.SyncToolSpecification specification(
             McpSchema.Tool tool, Function<Map<String, Object>, McpRuntimePort.RuntimeCommand> commandFactory) {
+        return specification(tool, tool.inputSchema(), commandFactory);
+    }
+
+    private McpStatelessServerFeatures.SyncToolSpecification specification(
+            McpSchema.Tool tool,
+            Map<String, Object> validationSchema,
+            Function<Map<String, Object>, McpRuntimePort.RuntimeCommand> commandFactory) {
         return McpStatelessServerFeatures.SyncToolSpecification.builder()
                 .tool(tool)
-                .callHandler((transportContext, request) -> invoke(tool, request.arguments(), commandFactory))
+                .callHandler((transportContext, request) ->
+                        invoke(tool, validationSchema, request.arguments(), commandFactory))
                 .build();
     }
 
@@ -182,29 +180,28 @@ public final class CraftAgentToolRegistry {
             String name,
             String description,
             Map<String, Object> inputSchema,
-            Map<String, Object> outputSchema,
             McpSchema.ToolAnnotations annotations) {
         return McpSchema.Tool.builder(name, inputSchema)
                 .description(description)
-                .outputSchema(outputSchema)
                 .annotations(annotations)
                 .build();
     }
 
     private McpSchema.CallToolResult invoke(
             McpSchema.Tool tool,
+            Map<String, Object> validationSchema,
             Map<String, Object> arguments,
             Function<Map<String, Object>, McpRuntimePort.RuntimeCommand> commandFactory) {
         String toolName = tool.name();
         RuntimeCallContext callContext = RuntimeCallContext.withTimeout(runtimeDispatchTimeout);
         Map<String, Object> safeArguments = arguments == null ? Map.of() : new LinkedHashMap<>(arguments);
-        var validation = schemaValidator.validate(tool.inputSchema(), safeArguments);
+        var validation = schemaValidator.validate(validationSchema, safeArguments);
         if (!validation.valid()) {
             return failureResult(
                     toolName,
                     callContext,
                     "invalid_argument",
-                    "The tool arguments do not match the advertised schema.",
+                    "The tool arguments do not match the accepted schema.",
                     false,
                     Map.of());
         }
@@ -340,15 +337,14 @@ public final class CraftAgentToolRegistry {
     }
 
     private McpSchema.CallToolResult callResult(Map<String, Object> envelope, boolean error) {
-        Map<String, Object> structured = envelope;
         String text;
         try {
-            text = jsonMapper.writeValueAsString(structured);
+            text = jsonMapper.writeValueAsString(envelope);
         }
         catch (IOException exception) {
-            structured = serializationFailureEnvelope(envelope);
+            Map<String, Object> replacement = serializationFailureEnvelope(envelope);
             try {
-                text = jsonMapper.writeValueAsString(structured);
+                text = jsonMapper.writeValueAsString(replacement);
             }
             catch (IOException impossibleForScalarEnvelope) {
                 throw new IllegalStateException("MCP JSON mapper could not serialize a scalar error envelope",
@@ -358,7 +354,6 @@ public final class CraftAgentToolRegistry {
         }
         return McpSchema.CallToolResult.builder()
                 .addContent(new McpSchema.TextContent(text))
-                .structuredContent(structured)
                 .isError(error)
                 .build();
     }

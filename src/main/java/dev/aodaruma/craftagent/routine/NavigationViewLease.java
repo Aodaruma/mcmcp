@@ -6,7 +6,7 @@ import net.minecraft.util.Mth;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Bounded, owner-token-bound first-person view control used only inside navigate_to. */
+/** Bounded, owner-token-bound first-person view and hotbar control. */
 final class NavigationViewLease {
     static final float MAX_TURN_DEGREES_PER_TICK = 8.0F;
     private static final float DRIFT_EPSILON_DEGREES = 0.25F;
@@ -15,9 +15,10 @@ final class NavigationViewLease {
     private final UUID ownerId;
     private final float originalYaw;
     private final float originalPitch;
-    private final int selectedSlot;
+    private final int originalSlot;
     private float expectedYaw;
     private float expectedPitch;
+    private int expectedSlot;
     private boolean closed;
 
     private NavigationViewLease(ViewControl control, UUID ownerId) {
@@ -25,9 +26,10 @@ final class NavigationViewLease {
         this.ownerId = Objects.requireNonNull(ownerId, "ownerId");
         originalYaw = finite(control.yaw(), "yaw");
         originalPitch = finite(control.pitch(), "pitch");
-        selectedSlot = control.selectedSlot();
+        originalSlot = control.selectedSlot();
         expectedYaw = originalYaw;
         expectedPitch = originalPitch;
+        expectedSlot = originalSlot;
     }
 
     static NavigationViewLease acquire(LocalPlayer player, UUID ownerId) {
@@ -44,7 +46,7 @@ final class NavigationViewLease {
                 && Math.abs(Mth.wrapDegrees(control.yaw() - expectedYaw))
                         <= DRIFT_EPSILON_DEGREES
                 && Math.abs(control.pitch() - expectedPitch) <= DRIFT_EPSILON_DEGREES
-                && control.selectedSlot() == selectedSlot;
+                && control.selectedSlot() == expectedSlot;
     }
 
     void turnToward(UUID owner, float desiredYaw, float desiredPitch) {
@@ -66,14 +68,48 @@ final class NavigationViewLease {
         expectedPitch = finite(control.pitch(), "pitch after turn");
     }
 
+    void selectSlot(UUID owner, int slot) {
+        requireOwner(owner);
+        if (slot < 0 || slot > 8) {
+            throw new IllegalArgumentException("hotbar slot must be 0..8");
+        }
+        if (!matches(owner)) {
+            throw new IllegalStateException("owned view or hotbar changed externally");
+        }
+        control.selectSlot(slot);
+        expectedSlot = control.selectedSlot();
+        if (expectedSlot != slot) {
+            throw new IllegalStateException("hotbar selection was not applied");
+        }
+    }
+
+    boolean slotSelected(UUID owner, int slot) {
+        requireOwner(owner);
+        return matches(owner) && control.selectedSlot() == slot;
+    }
+
     void close(UUID owner) {
         requireOwner(owner);
         if (closed) {
             return;
         }
-        float yawDelta = Mth.wrapDegrees(originalYaw - control.yaw());
-        float pitchDelta = originalPitch - control.pitch();
-        control.turn(yawDelta, pitchDelta);
+        RuntimeException failure = null;
+        try {
+            float yawDelta = Mth.wrapDegrees(originalYaw - control.yaw());
+            float pitchDelta = originalPitch - control.pitch();
+            control.turn(yawDelta, pitchDelta);
+        } catch (RuntimeException closeFailure) {
+            failure = closeFailure;
+        }
+        try {
+            control.selectSlot(originalSlot);
+        } catch (RuntimeException closeFailure) {
+            if (failure == null) failure = closeFailure;
+            else failure.addSuppressed(closeFailure);
+        }
+        if (failure != null) {
+            throw failure;
+        }
         closed = true;
     }
 
@@ -98,6 +134,8 @@ final class NavigationViewLease {
         int selectedSlot();
 
         void turn(float yawDeltaDegrees, float pitchDeltaDegrees);
+
+        void selectSlot(int slot);
     }
 
     private record VanillaViewControl(LocalPlayer player) implements ViewControl {
@@ -123,6 +161,11 @@ final class NavigationViewLease {
         @Override
         public void turn(float yawDeltaDegrees, float pitchDeltaDegrees) {
             player.turn(yawDeltaDegrees / 0.15D, pitchDeltaDegrees / 0.15D);
+        }
+
+        @Override
+        public void selectSlot(int slot) {
+            player.getInventory().setSelectedSlot(slot);
         }
     }
 }

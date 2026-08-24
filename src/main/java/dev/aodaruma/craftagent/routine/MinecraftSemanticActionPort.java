@@ -21,6 +21,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.cow.Cow;
 import net.minecraft.world.entity.monster.Enemy;
+import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BedItem;
 import net.minecraft.world.item.BlockItem;
@@ -38,6 +39,7 @@ import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.Portal;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -56,7 +58,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
-/** Minecraft 26.2 adapter for the five bounded Phase 3 semantic actions. */
+/** Minecraft 26.2 adapter for the bounded Phase 3 semantic actions. */
 public final class MinecraftSemanticActionPort implements SemanticActionPort {
     private static final float MIN_SAFE_HEALTH = 10.0F;
     private static final double THREAT_RADIUS = 8.0D;
@@ -68,6 +70,18 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
     private static final double PROGRESS_EPSILON = 0.05D;
     private static final double ROUTE_SURFACE_EPSILON = 1.0e-4D;
     private static final float NAVIGATION_SCAN_PITCH_DEGREES = 40.0F;
+    private static final float PREPARATION_AIM_EPSILON_DEGREES = 0.75F;
+    private static final int MAX_AIM_SHAPE_BOXES = 8;
+    private static final Set<String> HOE_ITEMS = Set.of(
+            "minecraft:wooden_hoe", "minecraft:stone_hoe", "minecraft:iron_hoe",
+            "minecraft:golden_hoe", "minecraft:diamond_hoe", "minecraft:netherite_hoe");
+    private static final Set<String> TILLABLE_BLOCKS = Set.of(
+            "minecraft:dirt", "minecraft:grass_block", "minecraft:dirt_path");
+    private static final Map<String, BlockStateFingerprint> CROP_PLACEMENTS = Map.of(
+            "minecraft:wheat_seeds", fingerprint(Blocks.WHEAT.defaultBlockState()),
+            "minecraft:carrot", fingerprint(Blocks.CARROTS.defaultBlockState()),
+            "minecraft:potato", fingerprint(Blocks.POTATOES.defaultBlockState()),
+            "minecraft:beetroot_seeds", fingerprint(Blocks.BEETROOTS.defaultBlockState()));
     private static final Set<net.minecraft.world.level.block.Block> WOODEN_TRAPDOORS = Set.of(
             Blocks.OAK_TRAPDOOR, Blocks.SPRUCE_TRAPDOOR, Blocks.BIRCH_TRAPDOOR,
             Blocks.JUNGLE_TRAPDOOR, Blocks.ACACIA_TRAPDOOR, Blocks.CHERRY_TRAPDOOR,
@@ -82,6 +96,8 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
     private final ClientPredictionSignals predictions;
     private final ClientReconciliationSignals reconciliations;
     private final Map<SemanticActionRequest, Baseline> baselines = new IdentityHashMap<>();
+    private final Map<SemanticActionPreparationAttempt, PreparationState> preparations =
+            new IdentityHashMap<>();
     private final Map<SemanticActionAttempt, ActiveAttempt> activeAttempts = new IdentityHashMap<>();
 
     public MinecraftSemanticActionPort(
@@ -125,8 +141,8 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             return;
         }
         var support = hit.getBlockPos();
-        SafePlacementSupportPolicy.requireLiveState(
-                level.getBlockState(support), level.getBlockEntity(support) != null);
+        requirePlacementSupport(
+                level.getBlockState(support), level.getBlockEntity(support) != null, request);
     }
 
     @Override
@@ -149,11 +165,22 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         var baseline = baselines.computeIfAbsent(request, ignored -> Baseline.capture(player));
         var activeNavigation = request instanceof NavigateToRequest
                 ? activeAttempt(request).orElse(null) : null;
+        var activePreparation = blockRequest(request)
+                ? activePreparation(request).orElse(null) : null;
+        var activeBlock = blockRequest(request)
+                ? activeAttempt(request).orElse(null) : null;
         boolean stationary = request instanceof NavigateToRequest
                 ? activeNavigation == null
                         ? baseline.rotationAndSlotMatch(player)
                         : activeNavigation.navigationView != null
                                 && activeNavigation.navigationView.matches(activeNavigation.attemptId)
+                : activePreparation != null && activePreparation.view != null
+                        ? baseline.positionMatches(player)
+                                && activePreparation.view.matches(
+                                        activePreparation.attempt.attemptId())
+                : activeBlock != null && activeBlock.blockView != null
+                        ? baseline.positionMatches(player)
+                                && activeBlock.blockView.matches(activeBlock.blockViewOwner)
                 : baseline.matches(player);
         boolean focused = minecraft.isWindowActive()
                 && minecraft.mouseHandler.isMouseGrabbed()
@@ -187,17 +214,25 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         String routeCheckReason = "not_applicable";
 
         if (request instanceof BreakBlockRequest block) {
-            var facts = blockFacts(minecraft, block.target(), false, null);
+            var facts = blockFacts(minecraft, block.target(), null);
             liveBlock = facts.state();
             blockReach = facts.inReach();
             crosshairBlock = facts.crosshair();
         } else if (request instanceof PlaceBlockRequest place) {
-            var facts = blockFacts(minecraft, place.target(), true, place.item());
+            var facts = blockFacts(minecraft, place.target(), place);
             liveBlock = facts.state();
             blockReach = facts.inReach();
             crosshairBlock = facts.crosshair();
+        } else if (request instanceof UseItemOnBlockRequest use) {
+            var facts = blockFacts(minecraft, use.target(), null);
+            liveBlock = facts.state();
+            boolean safeUse = facts.state().filter(use.expectedBefore()::matches).isPresent()
+                    && use.item().equals(registryItemId(player.getMainHandItem()))
+                    && allowedUseItemTransition(level, use);
+            blockReach = facts.inReach() && safeUse;
+            crosshairBlock = facts.crosshair() && safeUse;
         } else if (request instanceof InteractBlockRequest block) {
-            var facts = blockFacts(minecraft, block.target(), false, null);
+            var facts = blockFacts(minecraft, block.target(), null);
             liveBlock = facts.state();
             boolean safeHand = safeBlockInteractionHand(
                     player.isShiftKeyDown(), player.getMainHandItem().isEmpty())
@@ -266,6 +301,148 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
     }
 
     @Override
+    public SemanticActionPreparationAttempt beginPreparation(
+            SemanticActionRequest request, long leaseExpiresAtClientTick) {
+        var minecraft = assertClientThread();
+        Objects.requireNonNull(request, "request");
+        if (!blockRequest(request)) {
+            throw new IllegalArgumentException("only finite block actions support preparation");
+        }
+        var frame = observe(request);
+        if (!frame.universalSafetyClear() || leaseExpiresAtClientTick <= frame.clientTick()
+                || activePreparation(request).isPresent()) {
+            throw new IllegalStateException("block preparation preconditions are not satisfied");
+        }
+        var attempt = new SemanticActionPreparationAttempt(
+                UUID.randomUUID(), request.kind(), frame.clientTick(), frame.observationRevision(),
+                leaseExpiresAtClientTick, frame.positionCorrectionRevision());
+        var player = Objects.requireNonNull(minecraft.player);
+        int ownedSlot = preparationSlot(player, request);
+        List<Vec3> aimPoints = aimPoints(minecraft, request);
+        RoutineFailure preparationFailure = ownedSlot < 0
+                ? failure("REQUIRED_ITEM_NOT_IN_HOTBAR", RoutineFailure.Category.PRECONDITION,
+                        false, RoutineFailure.Recovery.REPLAN,
+                        Map.of("existing_hotbar_slot", true),
+                        Map.of("existing_hotbar_slot", false))
+                : aimPoints.isEmpty()
+                        ? failure("AIM_RAYCAST_UNAVAILABLE", RoutineFailure.Category.PRECONDITION,
+                                false, RoutineFailure.Recovery.REPLAN,
+                                Map.of("reachable_aim_candidate", true),
+                                Map.of("reachable_aim_candidate", false))
+                        : null;
+        NavigationViewLease view = null;
+        if (preparationFailure == null) {
+            view = NavigationViewLease.acquire(player, attempt.attemptId());
+            try {
+                view.selectSlot(attempt.attemptId(), ownedSlot);
+            } catch (RuntimeException | LinkageError selectionFailure) {
+                try {
+                    view.close(attempt.attemptId());
+                } catch (RuntimeException | LinkageError closeFailure) {
+                    selectionFailure.addSuppressed(closeFailure);
+                }
+                throw selectionFailure;
+            }
+        }
+        preparations.put(attempt, new PreparationState(
+                attempt, request, ownedSlot, aimPoints, view, preparationFailure));
+        return attempt;
+    }
+
+    @Override
+    public void maintainPreparation(SemanticActionPreparationAttempt attempt) {
+        var minecraft = assertClientThread();
+        var active = requirePreparation(attempt);
+        if (active.failure != null || active.transferred) {
+            return;
+        }
+        var frame = observe(active.request);
+        refreshPreparationFailure(active, frame);
+        if (active.failure != null) {
+            return;
+        }
+        Vec3 point = active.aimPoints.get(active.aimIndex);
+        Rotation target = rotationTo(
+                Objects.requireNonNull(minecraft.player).getEyePosition(), point);
+        try {
+            active.view.turnToward(attempt.attemptId(), target.yaw(), target.pitch());
+        } catch (RuntimeException | LinkageError drift) {
+            active.failure = controlOwnershipFailure();
+            return;
+        }
+        if (aimAligned(minecraft.player, point)
+                && !raycastPrepares(minecraft, active.request)) {
+            active.aimIndex++;
+            if (active.aimIndex >= active.aimPoints.size()) {
+                active.failure = failure("AIM_RAYCAST_UNAVAILABLE",
+                        RoutineFailure.Category.PRECONDITION, false,
+                        RoutineFailure.Recovery.REPLAN,
+                        Map.of("reachable_aim_candidate", true),
+                        Map.of("reachable_aim_candidate", false));
+            }
+        }
+    }
+
+    @Override
+    public SemanticActionPreparationEvidence preparationEvidence(
+            SemanticActionPreparationAttempt attempt) {
+        var minecraft = assertClientThread();
+        var active = requirePreparation(attempt);
+        var frame = observe(active.request);
+        refreshPreparationFailure(active, frame);
+        boolean selected = false;
+        boolean aligned = false;
+        if (active.failure == null && !active.transferred) {
+            try {
+                selected = active.view.slotSelected(attempt.attemptId(), active.ownedSlot);
+                aligned = aimAligned(
+                        Objects.requireNonNull(minecraft.player),
+                        active.aimPoints.get(active.aimIndex));
+            } catch (RuntimeException | LinkageError drift) {
+                active.failure = controlOwnershipFailure();
+            }
+        }
+        return new SemanticActionPreparationEvidence(
+                attempt.attemptId(), frame.clientTick(), frame.observationRevision(),
+                frame.liveBlockState(), frame.blockInReach(),
+                aligned && frame.crosshairOnBlock(), selected, active.failure);
+    }
+
+    @Override
+    public void releasePreparation(SemanticActionPreparationAttempt attempt) {
+        assertClientThread();
+        Objects.requireNonNull(attempt, "attempt");
+        var active = preparations.get(attempt);
+        if (active == null) {
+            return;
+        }
+        if (!active.transferred && active.view != null) {
+            active.view.close(attempt.attemptId());
+        }
+        preparations.remove(attempt, active);
+    }
+
+    @Override
+    public SemanticActionAttempt dispatchPrepared(
+            SemanticActionRequest request,
+            SemanticActionPreparationAttempt preparation,
+            long leaseExpiresAtClientTick) {
+        assertClientThread();
+        var active = requirePreparation(preparation);
+        if (active.transferred || active.request != request
+                || leaseExpiresAtClientTick != preparation.leaseExpiresAtClientTick()
+                || !preparationEvidence(preparation).prepared()) {
+            throw new IllegalStateException("block preparation is not current for dispatch");
+        }
+        var action = dispatch(request, leaseExpiresAtClientTick);
+        var dispatched = requireActive(action);
+        dispatched.blockView = active.view;
+        dispatched.blockViewOwner = preparation.attemptId();
+        active.transferred = true;
+        return action;
+    }
+
+    @Override
     public SemanticActionAttempt dispatch(
             SemanticActionRequest request, long leaseExpiresAtClientTick) {
         var minecraft = assertClientThread();
@@ -301,6 +478,8 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                         leaseHorizon(frame.clientTick(), leaseExpiresAtClientTick));
             } else if (request instanceof PlaceBlockRequest place) {
                 dispatchPlace(minecraft, place, active);
+            } else if (request instanceof UseItemOnBlockRequest use) {
+                dispatchUseItemOnBlock(minecraft, use, active);
             } else if (request instanceof InteractBlockRequest block) {
                 dispatchBlockInteraction(minecraft, block, active);
             } else if (request instanceof InteractEntityRequest entity) {
@@ -461,6 +640,17 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                 else releaseFailure.addSuppressed(failure);
             }
         }
+        for (var entry : new ArrayList<>(preparations.entrySet())) {
+            if (entry.getValue().request != request) {
+                continue;
+            }
+            try {
+                releasePreparation(entry.getKey());
+            } catch (RuntimeException failure) {
+                if (releaseFailure == null) releaseFailure = failure;
+                else releaseFailure.addSuppressed(failure);
+            }
+        }
         baselines.remove(request);
         if (releaseFailure != null) throw releaseFailure;
     }
@@ -485,7 +675,15 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                 // Existing global input release remains the final lifecycle fence.
             }
         }
+        for (var entry : new ArrayList<>(preparations.entrySet())) {
+            try {
+                releasePreparation(entry.getKey());
+            } catch (RuntimeException | LinkageError ignored) {
+                // Existing global input release remains the final lifecycle fence.
+            }
+        }
         activeAttempts.clear();
+        preparations.clear();
         baselines.clear();
         reconciliations.closeLevel(minecraft.level);
     }
@@ -496,15 +694,13 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         var context = prepared.context();
         var level = Objects.requireNonNull(minecraft.level);
         var support = hit.getBlockPos();
-        SafePlacementSupportPolicy.requireLiveState(
-                level.getBlockState(support), level.getBlockEntity(support) != null);
+        requirePlacementSupport(
+                level.getBlockState(support), level.getBlockEntity(support) != null, request);
         var prediction = predictions.begin(minecraft.level, context.getClickedPos(), requireSession().clientTick());
         int before = prediction.sequenceBeforePrediction();
         active.prediction = prediction;
-        SafePlacementSupportPolicy.dispatchUseIfAllowed(
-                level.getBlockState(support), level.getBlockEntity(support) != null,
-                () -> Objects.requireNonNull(minecraft.gameMode).useItemOn(
-                        minecraft.player, InteractionHand.MAIN_HAND, hit));
+        Objects.requireNonNull(minecraft.gameMode).useItemOn(
+                minecraft.player, InteractionHand.MAIN_HAND, hit);
         int after = prediction.captureIssuedPredictions();
         if (after != before + 1) {
             throw new ClientPredictionSignals.PredictionBridgeException(
@@ -543,6 +739,39 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         if (after != before + 1) {
             throw new ClientPredictionSignals.PredictionBridgeException(
                     "block interaction did not issue exactly one prediction");
+        }
+        active.safeToRetry = false;
+    }
+
+    private void dispatchUseItemOnBlock(
+            Minecraft minecraft, UseItemOnBlockRequest request, ActiveAttempt active) {
+        var hit = actualBlockHit(minecraft);
+        var level = Objects.requireNonNull(minecraft.level);
+        var position = blockPos(request.target());
+        if (!hit.getBlockPos().equals(position)
+                || !request.item().equals(registryItemId(
+                        Objects.requireNonNull(minecraft.player).getMainHandItem()))
+                || !request.expectedBefore().matches(fingerprint(level.getBlockState(position)))
+                || !allowedUseItemTransition(level, request)) {
+            throw new IllegalArgumentException("use_item_on_block transition is not allowlisted");
+        }
+        active.expectedServerState = request.expectedAfter();
+        var prediction = predictions.begin(level, position, requireSession().clientTick());
+        int before = prediction.sequenceBeforePrediction();
+        active.prediction = prediction;
+        Objects.requireNonNull(minecraft.gameMode).useItemOn(
+                minecraft.player, InteractionHand.MAIN_HAND, hit);
+        int after = prediction.captureIssuedPredictions();
+        if (after != before + 1) {
+            throw new ClientPredictionSignals.PredictionBridgeException(
+                    "block item use did not issue exactly one prediction");
+        }
+        if (!request.expectedAfter().matches(fingerprint(level.getBlockState(position)))) {
+            active.failure = failure("PREDICTED_POSTCONDITION_MISMATCH",
+                    RoutineFailure.Category.DIVERGENCE, false,
+                    RoutineFailure.Recovery.REPLAN,
+                    stateMap(request.expectedAfter()),
+                    stateMap(fingerprint(level.getBlockState(position))));
         }
         active.safeToRetry = false;
     }
@@ -776,6 +1005,13 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                     || frame.liveBlockState().filter(place.expectedBefore()::matches).isEmpty()) {
                 throw new IllegalStateException("place_block preconditions are not satisfied");
             }
+        } else if (request instanceof UseItemOnBlockRequest use) {
+            if (!frame.crosshairOnBlock() || !frame.blockInReach()
+                    || frame.liveBlockState().filter(use.expectedBefore()::matches).isEmpty()
+                    || !allowedUseItemTransition(
+                            Objects.requireNonNull(requireMinecraft().level), use)) {
+                throw new IllegalStateException("use_item_on_block preconditions are not satisfied");
+            }
         } else if (request instanceof InteractBlockRequest block) {
             if (!frame.crosshairOnBlock() || !frame.blockInReach()
                     || frame.liveBlockState().filter(block.expectedBefore()::matches).isEmpty()) {
@@ -792,7 +1028,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
     }
 
     private BlockFacts blockFacts(
-            Minecraft minecraft, BlockTarget target, boolean placement, String expectedItem) {
+            Minecraft minecraft, BlockTarget target, PlaceBlockRequest placement) {
         var level = Objects.requireNonNull(minecraft.level);
         var player = Objects.requireNonNull(minecraft.player);
         var position = blockPos(target);
@@ -801,20 +1037,20 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         }
         boolean actualTarget = false;
         boolean reach = false;
-        boolean supportSafe = !placement;
+        boolean supportSafe = placement == null;
         if (minecraft.hitResult instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK) {
-            if (!placement) {
+            if (placement == null) {
                 actualTarget = hit.getBlockPos().equals(position);
                 reach = actualTarget && player.isWithinBlockInteractionRange(position, 0.0D);
-            } else if (expectedItem != null
+            } else if (placement.item() != null
                     && player.getMainHandItem().getItem() instanceof BlockItem item
-                    && expectedItem.equals(registryItemId(player.getMainHandItem()))) {
+                    && placement.item().equals(registryItemId(player.getMainHandItem()))) {
                 var context = item.updatePlacementContext(new BlockPlaceContext(
                         new UseOnContext(player, InteractionHand.MAIN_HAND, hit)));
                 actualTarget = context != null && context.getClickedPos().equals(position);
-                supportSafe = actualTarget && SafePlacementSupportPolicy.allowsLiveState(
+                supportSafe = actualTarget && allowsPlacementSupport(
                         level.getBlockState(hit.getBlockPos()),
-                        level.getBlockEntity(hit.getBlockPos()) != null);
+                        level.getBlockEntity(hit.getBlockPos()) != null, placement);
                 reach = actualTarget
                         && player.isWithinBlockInteractionRange(hit.getBlockPos(), 0.0D)
                         && player.isWithinBlockInteractionRange(position, 0.0D);
@@ -861,6 +1097,51 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                 || WOODEN_TRAPDOORS.contains(block);
     }
 
+    static boolean allowedUseItemTransition(ClientLevel level, UseItemOnBlockRequest request) {
+        Objects.requireNonNull(level, "level");
+        Objects.requireNonNull(request, "request");
+        BlockPos position = blockPos(request.target());
+        if (!level.isLoaded(position) || !HOE_ITEMS.contains(request.item())) {
+            return false;
+        }
+        BlockState before = level.getBlockState(position);
+        return request.expectedBefore().matches(fingerprint(before))
+                && TILLABLE_BLOCKS.contains(request.expectedBefore().blockId())
+                && request.expectedAfter().equals(fingerprint(Blocks.FARMLAND.defaultBlockState()))
+                && level.getBlockState(position.above()).isAir()
+                && !before.hasBlockEntity()
+                && level.getBlockEntity(position) == null
+                && before.getFluidState().isEmpty();
+    }
+
+    static boolean allowsPlacementSupport(
+            BlockState state, boolean liveBlockEntityPresent, PlaceBlockRequest request) {
+        Objects.requireNonNull(state, "state");
+        Objects.requireNonNull(request, "request");
+        if (!closedCropPlacement(request)) {
+            return SafePlacementSupportPolicy.allowsLiveState(state, liveBlockEntityPresent);
+        }
+        return state.getBlock() == Blocks.FARMLAND
+                && !state.hasBlockEntity()
+                && !liveBlockEntityPresent
+                && state.getFluidState().isEmpty();
+    }
+
+    private static void requirePlacementSupport(
+            BlockState state, boolean liveBlockEntityPresent, PlaceBlockRequest request) {
+        if (!allowsPlacementSupport(state, liveBlockEntityPresent, request)) {
+            throw new SafePlacementSupportPolicy.UnsafePlacementSupportException();
+        }
+    }
+
+    private static boolean closedCropPlacement(PlaceBlockRequest request) {
+        BlockStateFingerprint crop = CROP_PLACEMENTS.get(request.item());
+        return crop != null
+                && "minecraft:air".equals(request.expectedBefore().blockId())
+                && request.expectedBefore().properties().isEmpty()
+                && crop.equals(request.expectedAfter());
+    }
+
     static boolean safeBlockInteractionHand(boolean shiftDown, boolean mainHandEmpty) {
         return !shiftDown && mainHandEmpty;
     }
@@ -896,6 +1177,9 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                     ? "player_not_grounded" : "vertical_target_mismatch");
         }
         int feetY = routeFeetY(player.getY());
+        BlockPos containingFeet = new BlockPos(
+                Mth.floor(player.getX()), feetY, Mth.floor(player.getZ()));
+        feetY = routeFeetY(player.getY(), level.getBlockState(containingFeet));
         BlockPos currentFeet = new BlockPos(
                 Mth.floor(player.getX()), feetY, Mth.floor(player.getZ()));
         var currentTarget = blockTarget(request.bounds().dimension(), currentFeet);
@@ -948,7 +1232,8 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         if (!headState.getCollisionShape(level, head).isEmpty()) {
             return RouteCheck.unsafe("head_collision");
         }
-        if (!floorState.isFaceSturdy(level, floor, Direction.UP)) {
+        if (!floorState.isFaceSturdy(level, floor, Direction.UP)
+                && !lowFlatRouteFloor(floorState)) {
             return RouteCheck.unsafe("floor_not_sturdy");
         }
         var nextStand = player.getBoundingBox().move(dx * scale, 0.0D, dz * scale).inflate(0.05D);
@@ -968,6 +1253,18 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             throw new IllegalArgumentException("playerY must be finite");
         }
         return Mth.floor(playerY + ROUTE_SURFACE_EPSILON);
+    }
+
+    static int routeFeetY(double playerY, BlockState containingState) {
+        Objects.requireNonNull(containingState, "containingState");
+        int feetY = routeFeetY(playerY);
+        return lowFlatRouteFloor(containingState)
+                && playerY - Math.floor(playerY) > 0.5D ? feetY + 1 : feetY;
+    }
+
+    static boolean lowFlatRouteFloor(BlockState state) {
+        Objects.requireNonNull(state, "state");
+        return state.is(Blocks.FARMLAND) || state.is(Blocks.DIRT_PATH);
     }
 
     static double horizontalVelocitySquared(Vec3 velocity) {
@@ -998,11 +1295,14 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             BlockStateFingerprint confirmed,
             WorldSessionTracker.Snapshot session) {
         if (confirmed == null || !(request instanceof BreakBlockRequest
-                || request instanceof PlaceBlockRequest || request instanceof InteractBlockRequest)) {
+                || request instanceof PlaceBlockRequest
+                || request instanceof UseItemOnBlockRequest
+                || request instanceof InteractBlockRequest)) {
             return;
         }
         var target = request instanceof BreakBlockRequest value ? value.target()
                 : request instanceof PlaceBlockRequest value ? value.target()
+                : request instanceof UseItemOnBlockRequest value ? value.target()
                 : ((InteractBlockRequest) request).target();
         var level = requireMinecraft().level;
         var position = blockPos(target);
@@ -1016,6 +1316,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
     private Optional<BlockStateFingerprint> currentBlockState(SemanticActionRequest request) {
         BlockTarget target = request instanceof BreakBlockRequest value ? value.target()
                 : request instanceof PlaceBlockRequest value ? value.target()
+                : request instanceof UseItemOnBlockRequest value ? value.target()
                 : request instanceof InteractBlockRequest value ? value.target() : null;
         var level = requireMinecraft().level;
         if (target == null || level == null || !level.isLoaded(blockPos(target))) {
@@ -1028,6 +1329,222 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         return activeAttempts.values().stream()
                 .filter(active -> active.request == request)
                 .findFirst();
+    }
+
+    private Optional<PreparationState> activePreparation(SemanticActionRequest request) {
+        return preparations.values().stream()
+                .filter(active -> active.request == request && !active.transferred)
+                .findFirst();
+    }
+
+    private PreparationState requirePreparation(SemanticActionPreparationAttempt attempt) {
+        var active = preparations.get(Objects.requireNonNull(attempt, "attempt"));
+        if (active == null) {
+            throw new IllegalStateException("semantic action preparation is not active");
+        }
+        return active;
+    }
+
+    private void refreshPreparationFailure(
+            PreparationState active, SemanticActionFrame frame) {
+        if (active.failure != null || active.transferred) {
+            return;
+        }
+        if (frame.clientTick() >= active.attempt.leaseExpiresAtClientTick()) {
+            active.failure = failure("ACTION_LEASE_EXPIRED", RoutineFailure.Category.TRANSIENT,
+                    false, RoutineFailure.Recovery.REPLAN, Map.of(), Map.of());
+        } else if (!frame.universalSafetyClear()) {
+            active.failure = failure("ACTION_SAFETY_CHANGED", RoutineFailure.Category.SAFETY,
+                    false, RoutineFailure.Recovery.USER,
+                    Map.of("safe", true), Map.of("safe", false));
+        } else if (active.view == null
+                || !active.view.matches(active.attempt.attemptId())) {
+            active.failure = controlOwnershipFailure();
+        }
+    }
+
+    private static RoutineFailure controlOwnershipFailure() {
+        return failure("BLOCK_CONTROL_OWNERSHIP_LOST", RoutineFailure.Category.SAFETY,
+                false, RoutineFailure.Recovery.USER,
+                Map.of("control_ownership", true), Map.of("control_ownership", false));
+    }
+
+    private static boolean blockRequest(SemanticActionRequest request) {
+        return request instanceof BreakBlockRequest
+                || request instanceof PlaceBlockRequest
+                || request instanceof UseItemOnBlockRequest
+                || request instanceof InteractBlockRequest;
+    }
+
+    private static int preparationSlot(LocalPlayer player, SemanticActionRequest request) {
+        var inventory = player.getInventory();
+        if (request instanceof BreakBlockRequest) {
+            return inventory.getSelectedSlot();
+        }
+        int selected = inventory.getSelectedSlot();
+        if (slotPrepares(inventory.getItem(selected), request)) {
+            return selected;
+        }
+        for (int slot = 0; slot < Inventory.getSelectionSize(); slot++) {
+            if (slot != selected && slotPrepares(inventory.getItem(slot), request)) {
+                return slot;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean slotPrepares(
+            ItemStack stack, SemanticActionRequest request) {
+        if (request instanceof InteractBlockRequest) {
+            return stack.isEmpty();
+        }
+        String required = request instanceof PlaceBlockRequest place ? place.item()
+                : request instanceof UseItemOnBlockRequest use ? use.item() : null;
+        return required != null && !stack.isEmpty()
+                && required.equals(registryItemId(stack))
+                && (!(request instanceof PlaceBlockRequest)
+                        || stack.getItem() instanceof BlockItem item
+                        && !(item instanceof BedItem)
+                        && !(item instanceof DoubleHighBlockItem));
+    }
+
+    private static List<Vec3> aimPoints(
+            Minecraft minecraft, SemanticActionRequest request) {
+        var level = Objects.requireNonNull(minecraft.level);
+        var player = Objects.requireNonNull(minecraft.player);
+        BlockPos target = blockPos(blockTarget(request));
+        if (!level.isLoaded(target) || !level.getWorldBorder().isWithinBounds(target)
+                || !player.isWithinBlockInteractionRange(target, 0.0D)) {
+            return List.of();
+        }
+        var points = new ArrayList<Vec3>();
+        if (request instanceof PlaceBlockRequest) {
+            for (Direction face : Direction.values()) {
+                BlockPos support = target.relative(face.getOpposite());
+                if (!level.isLoaded(support)
+                        || !level.getWorldBorder().isWithinBounds(support)
+                        || !player.isWithinBlockInteractionRange(support, 0.0D)
+                        || !allowsPlacementSupport(
+                                level.getBlockState(support),
+                                level.getBlockEntity(support) != null, (PlaceBlockRequest) request)) {
+                    continue;
+                }
+                addFaceAimPoints(points, level, player, support, face);
+            }
+        } else {
+            for (Direction face : Direction.values()) {
+                addFaceAimPoints(points, level, player, target, face);
+            }
+        }
+        Vec3 eye = player.getEyePosition();
+        points.sort(java.util.Comparator.comparingDouble(eye::distanceToSqr));
+        return List.copyOf(points);
+    }
+
+    private static void addFaceAimPoints(
+            List<Vec3> points,
+            ClientLevel level,
+            LocalPlayer player,
+            BlockPos position,
+            Direction face) {
+        var shape = level.getBlockState(position)
+                .getShape(level, position, CollisionContext.of(player));
+        List<AABB> boxes = shape.isEmpty()
+                ? List.of(new AABB(position))
+                : shape.toAabbs().stream().limit(MAX_AIM_SHAPE_BOXES)
+                        .map(box -> box.move(position)).toList();
+        for (AABB box : boxes) {
+            Vec3 point = faceCenter(box, face);
+            if (player.getEyePosition().distanceToSqr(point)
+                    <= square(player.blockInteractionRange() + 0.25D)) {
+                points.add(point);
+            }
+        }
+    }
+
+    private static boolean raycastPrepares(
+            Minecraft minecraft, SemanticActionRequest request) {
+        var player = Objects.requireNonNull(minecraft.player);
+        HitResult result = player.pick(player.blockInteractionRange(), 1.0F, false);
+        if (!(result instanceof BlockHitResult hit)
+                || hit.getType() != HitResult.Type.BLOCK || hit.isWorldBorderHit()) {
+            return false;
+        }
+        var level = Objects.requireNonNull(minecraft.level);
+        var target = blockPos(blockTarget(request));
+        if (request instanceof PlaceBlockRequest place) {
+            var stack = player.getMainHandItem();
+            if (!(stack.getItem() instanceof BlockItem item)
+                    || !place.item().equals(registryItemId(stack))) {
+                return false;
+            }
+            var context = item.updatePlacementContext(new BlockPlaceContext(
+                    new UseOnContext(player, InteractionHand.MAIN_HAND, hit)));
+            return context != null && context.canPlace()
+                    && context.getClickedPos().equals(target)
+                    && player.isWithinBlockInteractionRange(hit.getBlockPos(), 0.0D)
+                    && allowsPlacementSupport(
+                            level.getBlockState(hit.getBlockPos()),
+                            level.getBlockEntity(hit.getBlockPos()) != null, place);
+        }
+        if (!hit.getBlockPos().equals(target)
+                || !player.isWithinBlockInteractionRange(target, 0.0D)) {
+            return false;
+        }
+        if (request instanceof UseItemOnBlockRequest use) {
+            return use.item().equals(registryItemId(player.getMainHandItem()))
+                    && allowedUseItemTransition(level, use);
+        }
+        if (request instanceof InteractBlockRequest) {
+            return safeBlockInteractionHand(
+                    player.isShiftKeyDown(), player.getMainHandItem().isEmpty())
+                    && allowedInteractBlock(level.getBlockState(target));
+        }
+        return true;
+    }
+
+    private static boolean aimAligned(LocalPlayer player, Vec3 point) {
+        Rotation desired = rotationTo(player.getEyePosition(), point);
+        return Math.abs(Mth.wrapDegrees(desired.yaw() - player.getYRot()))
+                        <= PREPARATION_AIM_EPSILON_DEGREES
+                && Math.abs(desired.pitch() - player.getXRot())
+                        <= PREPARATION_AIM_EPSILON_DEGREES;
+    }
+
+    private static Rotation rotationTo(Vec3 eye, Vec3 point) {
+        Vec3 delta = point.subtract(eye);
+        double horizontal = Math.sqrt(delta.x * delta.x + delta.z * delta.z);
+        return new Rotation(
+                (float) (Math.toDegrees(Math.atan2(delta.z, delta.x)) - 90.0D),
+                (float) -Math.toDegrees(Math.atan2(delta.y, horizontal)));
+    }
+
+    private static Vec3 faceCenter(AABB box, Direction face) {
+        double x = (box.minX + box.maxX) * 0.5D;
+        double y = (box.minY + box.maxY) * 0.5D;
+        double z = (box.minZ + box.maxZ) * 0.5D;
+        return switch (face) {
+            case DOWN -> new Vec3(x, box.minY, z);
+            case UP -> new Vec3(x, box.maxY, z);
+            case NORTH -> new Vec3(x, y, box.minZ);
+            case SOUTH -> new Vec3(x, y, box.maxZ);
+            case WEST -> new Vec3(box.minX, y, z);
+            case EAST -> new Vec3(box.maxX, y, z);
+        };
+    }
+
+    private static double square(double value) {
+        return value * value;
+    }
+
+    private static BlockTarget blockTarget(SemanticActionRequest request) {
+        return switch (request) {
+            case BreakBlockRequest block -> block.target();
+            case PlaceBlockRequest block -> block.target();
+            case UseItemOnBlockRequest block -> block.target();
+            case InteractBlockRequest block -> block.target();
+            default -> throw new IllegalArgumentException("request has no block target");
+        };
     }
 
     private void closeActive(ActiveAttempt active, Throwable primary) {
@@ -1045,6 +1562,13 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         try {
             if (active.navigationView != null) {
                 active.navigationView.close(active.attemptId);
+            }
+        } catch (RuntimeException | LinkageError closeFailure) {
+            failure = append(failure, closeFailure);
+        }
+        try {
+            if (active.blockView != null) {
+                active.blockView.close(active.blockViewOwner);
             }
         } catch (RuntimeException | LinkageError closeFailure) {
             failure = append(failure, closeFailure);
@@ -1255,11 +1779,14 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         }
 
         boolean matches(LocalPlayer player) {
+            return positionMatches(player) && rotationAndSlotMatch(player);
+        }
+
+        boolean positionMatches(LocalPlayer player) {
             double dx = player.getX() - x;
             double dy = player.getY() - y;
             double dz = player.getZ() - z;
-            return dx * dx + dy * dy + dz * dz <= MAX_STATIONARY_DRIFT_SQUARED
-                    && rotationAndSlotMatch(player);
+            return dx * dx + dy * dy + dz * dz <= MAX_STATIONARY_DRIFT_SQUARED;
         }
 
         boolean rotationAndSlotMatch(LocalPlayer player) {
@@ -1279,6 +1806,8 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         private AttackInputLease attackLease;
         private MovementInputLease movementLease;
         private NavigationViewLease navigationView;
+        private NavigationViewLease blockView;
+        private UUID blockViewOwner;
         private BlockStateFingerprint expectedServerState;
         private RoutineFailure failure;
         private boolean inputStopped;
@@ -1302,5 +1831,34 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             // never evaluated with a null/always-false predicate in that window.
             this.expectedServerState = initialExpectedServerState(request);
         }
+    }
+
+    private static final class PreparationState {
+        private final SemanticActionPreparationAttempt attempt;
+        private final SemanticActionRequest request;
+        private final int ownedSlot;
+        private final List<Vec3> aimPoints;
+        private final NavigationViewLease view;
+        private int aimIndex;
+        private boolean transferred;
+        private RoutineFailure failure;
+
+        private PreparationState(
+                SemanticActionPreparationAttempt attempt,
+                SemanticActionRequest request,
+                int ownedSlot,
+                List<Vec3> aimPoints,
+                NavigationViewLease view,
+                RoutineFailure failure) {
+            this.attempt = Objects.requireNonNull(attempt, "attempt");
+            this.request = Objects.requireNonNull(request, "request");
+            this.ownedSlot = ownedSlot;
+            this.aimPoints = List.copyOf(aimPoints);
+            this.view = view;
+            this.failure = failure;
+        }
+    }
+
+    private record Rotation(float yaw, float pitch) {
     }
 }

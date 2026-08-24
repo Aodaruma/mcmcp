@@ -23,6 +23,7 @@ import dev.aodaruma.craftagent.routine.ApplyBlockPlanStep;
 import dev.aodaruma.craftagent.routine.BlockTarget;
 import dev.aodaruma.craftagent.routine.BlockStateFingerprint;
 import dev.aodaruma.craftagent.routine.BreakBlockRequest;
+import dev.aodaruma.craftagent.routine.FinitePlanRequest;
 import dev.aodaruma.craftagent.routine.InteractBlockRequest;
 import dev.aodaruma.craftagent.routine.InteractEntityRequest;
 import dev.aodaruma.craftagent.routine.MinecraftApplyBlockPlanPort;
@@ -44,6 +45,7 @@ import dev.aodaruma.craftagent.routine.RoutineState;
 import dev.aodaruma.craftagent.routine.SemanticActionRequest;
 import dev.aodaruma.craftagent.routine.StationaryBreakGoal;
 import dev.aodaruma.craftagent.routine.StationaryBreakRequest;
+import dev.aodaruma.craftagent.routine.UseItemOnBlockRequest;
 import dev.aodaruma.craftagent.voice.SimpleVoiceChat2622Adapter;
 import dev.aodaruma.craftagent.voice.VoiceChatAdapter;
 import dev.aodaruma.craftagent.voice.VoiceChatEventBridge;
@@ -100,13 +102,15 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             PlaceBlockRequest.KIND,
             InteractBlockRequest.KIND,
             InteractEntityRequest.KIND,
+            UseItemOnBlockRequest.KIND,
             ApplyBlockPlanRequest.KIND,
             "craft_items",
             "transfer_items",
             "tend_crop_area",
             "harvest_tree_area",
             "sleep_at_bed",
-            "survey_area");
+            "survey_area",
+            "execute_plan");
 
     private final String modVersion;
     private final String neoForgeVersion;
@@ -127,6 +131,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     private final MinecraftPhaseFiveInventoryPort phaseFiveInventoryPort;
     private final MinecraftPhaseFiveWorldPort phaseFiveWorldPort;
     private final PhaseFivePortRouter phaseFivePort;
+    private final MinecraftFinitePlanPort finitePlanPort;
     private final RoutineManager routines;
     private final VoiceChatSafetyController voiceChat;
     private final ClientCommandInbox inbox;
@@ -176,8 +181,16 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 observations,
                 semanticActionPort);
         phaseFivePort = new PhaseFivePortRouter(phaseFiveInventoryPort, phaseFiveWorldPort);
+        finitePlanPort = new MinecraftFinitePlanPort(
+                Minecraft::getInstance,
+                sessions::snapshot,
+                memory,
+                observations,
+                semanticActionPort,
+                phaseFivePort);
         routines = new RoutineManager(
-                stationaryBreakPort, semanticActionPort, applyBlockPlanPort, phaseFivePort);
+                stationaryBreakPort, semanticActionPort, applyBlockPlanPort,
+                phaseFivePort, finitePlanPort);
         voiceChat = new VoiceChatSafetyController(
                 SimpleVoiceChat2622Adapter.forNeoForge(() -> {
                     var minecraft = Minecraft.getInstance();
@@ -444,6 +457,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     }
 
     private void clearPhaseFivePortSessions() {
+        clearAutomationPortSession("finite_plan", finitePlanPort::clearSession);
         clearAutomationPortSession("phase_five_inventory", phaseFiveInventoryPort::clearSession);
         clearAutomationPortSession("phase_five_world", phaseFiveWorldPort::clearSession);
         clearAutomationPortSession("phase_five_router", phaseFivePort::clearSession);
@@ -553,7 +567,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 requireReady(session);
                 yield getRecipes(minecraft, session, getRecipes.arguments());
             }
-            case ListRoutines ignored -> listRoutines();
+            case ListRoutines list -> listRoutines(list.arguments());
             case GetRoutine get -> getRoutine(get.arguments());
             case StartRoutine start -> {
                 requireReady(session);
@@ -761,14 +775,37 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         return result;
     }
 
-    private Map<String, Object> listRoutines() {
-        return routineCatalog();
+    private Map<String, Object> listRoutines(Map<String, Object> arguments) {
+        Object kind = arguments.get("kind");
+        return kind == null
+                ? routineCatalog()
+                : routineCatalog(stringArgument(arguments, "kind"));
     }
 
     static Map<String, Object> routineCatalog() {
+        var summaries = detailedRoutineCatalog().stream()
+                .map(CraftAgentRuntime::routineCatalogSummary)
+                .toList();
         return Map.of(
-                "catalog_version", "phase-6",
-                "routines", List.of(
+                "catalog_version", "phase-6-compact-v1",
+                "routines", summaries);
+    }
+
+    static Map<String, Object> routineCatalog(String kind) {
+        Objects.requireNonNull(kind, "kind");
+        var entry = detailedRoutineCatalog().stream()
+                .filter(candidate -> kind.equals(candidate.get("kind")))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("kind is not an available routine"));
+        var detailed = new LinkedHashMap<>(entry);
+        detailed.put("capabilities", routineCapabilities(kind));
+        return Map.of(
+                "catalog_version", "phase-6-compact-v1",
+                "routines", List.of(Map.copyOf(detailed)));
+    }
+
+    private static List<Map<String, Object>> detailedRoutineCatalog() {
+        return List.of(
                         routineCatalogEntry(
                                 "stationary_break",
                                 2,
@@ -819,6 +856,14 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                                         "the opaque entity reference is re-resolved as a visible, reachable, targeted adult cow",
                                         "exactly one main-hand interaction is dispatched with minecraft:bucket and without automatic retry",
                                         "a fresh inbound inventory sync reaches the absolute minecraft:milk_bucket count goal")),
+                        routineCatalogEntry(
+                                UseItemOnBlockRequest.KIND,
+                                3,
+                                McpToolSchemas.useItemOnBlockStartInput(),
+                                List.of(
+                                        "exactly one allowlisted normal-use item action is dispatched",
+                                        "the action has a covering vanilla prediction ACK",
+                                        "the server-verified target state matches expected_after")),
                         routineCatalogEntry(
                                 ApplyBlockPlanRequest.KIND,
                                 4,
@@ -875,7 +920,46 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                                 List.of(
                                         "only declared waypoints and samples are inspected through normal movement and view control",
                                         "current, last-known, and unknown coverage remain distinct",
-                                        "spawn-surface assessment is explicitly predicted rather than server-confirmed"))));
+                                        "spawn-surface assessment is explicitly predicted rather than server-confirmed")),
+                        routineCatalogEntry(
+                                "execute_plan",
+                                6,
+                                McpToolSchemas.executePlanStartInput(),
+                                List.of(
+                                        "every child action remains private to one parent routine",
+                                        "all loops, waits, total ticks, nesting, and expanded executions are bounded",
+                                        "conditions authorize progress only from positive current evidence",
+                                        "the active child action is released before any terminal parent state")));
+    }
+
+    private static Map<String, Object> routineCatalogSummary(Map<String, Object> entry) {
+        String kind = (String) entry.get("kind");
+        return Map.of(
+                "kind", kind,
+                "phase", entry.get("phase"),
+                "experimental", entry.get("experimental"),
+                "capabilities", routineCapabilities(kind));
+    }
+
+    private static List<String> routineCapabilities(String kind) {
+        return switch (kind) {
+            case "stationary_break" -> List.of("break one regenerating target", "collect to inventory goal");
+            case NavigateToRequest.KIND -> List.of("bounded ground navigation");
+            case BreakBlockRequest.KIND -> List.of("break one exact block to air");
+            case PlaceBlockRequest.KIND -> List.of("place one exact block from main hand");
+            case InteractBlockRequest.KIND -> List.of("toggle one allowlisted block");
+            case InteractEntityRequest.KIND -> List.of("interact with one visible referenced entity");
+            case UseItemOnBlockRequest.KIND -> List.of("apply one allowlisted item to one exact block");
+            case ApplyBlockPlanRequest.KIND -> List.of("verify, break, place, or replace up to 64 declared cells");
+            case "craft_items" -> List.of("craft a client-known recipe to an inventory goal");
+            case "transfer_items" -> List.of("transfer one item type to or from one container");
+            case "tend_crop_area" -> List.of("harvest and replant declared crop plots");
+            case "harvest_tree_area" -> List.of("harvest and replant declared visible tree cells");
+            case "sleep_at_bed" -> List.of("sleep at one declared bed and return");
+            case "survey_area" -> List.of("visit declared waypoints and observe declared samples");
+            case "execute_plan" -> List.of("execute a bounded typed sequence with finite loops and checks");
+            default -> throw new IllegalArgumentException("kind is not an available routine");
+        };
     }
 
     private static Map<String, Object> routineCatalogEntry(
@@ -918,13 +1002,16 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                     BreakBlockRequest.KIND,
                     PlaceBlockRequest.KIND,
                     InteractBlockRequest.KIND,
-                    InteractEntityRequest.KIND -> startSemanticAction(
+                    InteractEntityRequest.KIND,
+                    UseItemOnBlockRequest.KIND -> startSemanticAction(
                             minecraft, session, arguments, completionIntent, context);
             case ApplyBlockPlanRequest.KIND -> startApplyBlockPlan(
                     minecraft, session, arguments, completionIntent, context);
             case "craft_items", "transfer_items", "tend_crop_area",
                     "harvest_tree_area", "sleep_at_bed", "survey_area" -> startPhaseFive(
                             minecraft, session, arguments, completionIntent, context);
+            case "execute_plan" -> startFinitePlan(
+                    session, arguments, completionIntent, context);
             default -> throw new IllegalArgumentException("kind is not an available routine");
         };
     }
@@ -1153,6 +1240,47 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         return startReceiptPayload(receipt);
     }
 
+    private Map<String, Object> startFinitePlan(
+            WorldSessionTracker.Snapshot session,
+            Map<String, Object> arguments,
+            String completionIntent,
+            RuntimeCallContext context) {
+        var parsed = finitePlanRequestArgument(arguments);
+        var request = parsed.request();
+        String idempotencyKey = stringArgument(arguments, "idempotency_key");
+        var replay = replayFinitePlanAfterFinalizationGate(
+                finalizationRetries,
+                routines,
+                idempotencyKey,
+                parsed.requestIdentity(),
+                session.clientTick());
+        if (replay.isPresent()) {
+            return startReceiptPayload(replay.orElseThrow());
+        }
+
+        requireLiveCall(context, "start_routine");
+        if (!arming.allows(session.worldSessionId(), "execute_plan")) {
+            throw new RuntimeInvocationException(
+                    "locked",
+                    "execute_plan is not armed for this world session",
+                    false,
+                    Map.of());
+        }
+        finitePlanPort.validate(request);
+        int maxDurationSeconds = (request.maxTicks() + 19) / 20;
+        var receipt = admitWithVoiceSafety(
+                context,
+                session.worldSessionId(),
+                completionIntent,
+                maxDurationSeconds,
+                () -> routines.startFinitePlan(
+                        idempotencyKey,
+                        parsed.requestIdentity(),
+                        request,
+                        session.clientTick()));
+        return startReceiptPayload(receipt);
+    }
+
     private RoutineManager.StartReceipt admitWithVoiceSafety(
             RuntimeCallContext context,
             UUID worldSessionId,
@@ -1291,6 +1419,12 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 appendBlockStateIdentity(canonical, place.expectedBefore());
                 appendIdentity(canonical, place.item());
                 appendBlockStateIdentity(canonical, place.expectedAfter());
+            }
+            case UseItemOnBlockRequest use -> {
+                appendTargetIdentity(canonical, use.target());
+                appendBlockStateIdentity(canonical, use.expectedBefore());
+                appendIdentity(canonical, use.item());
+                appendBlockStateIdentity(canonical, use.expectedAfter());
             }
             case InteractBlockRequest block -> {
                 appendTargetIdentity(canonical, block.target());
@@ -2025,6 +2159,16 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 idempotencyKey, requestIdentity, request, clientTick);
     }
 
+    static Optional<RoutineManager.StartReceipt> replayFinitePlanAfterFinalizationGate(
+            FinalizationRetryQueue retries,
+            RoutineManager routines,
+            String idempotencyKey,
+            String requestIdentity,
+            long clientTick) {
+        requireNoPendingFinalizations(retries);
+        return routines.replayFinitePlan(idempotencyKey, requestIdentity, clientTick);
+    }
+
     private static int intValue(Object value) {
         return value instanceof Number number ? Math.max(0, number.intValue()) : 0;
     }
@@ -2059,6 +2203,13 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             Objects.requireNonNull(request, "request");
             Objects.requireNonNull(requestIdentity, "requestIdentity");
             targets = List.copyOf(Objects.requireNonNull(targets, "targets"));
+        }
+    }
+
+    record ParsedFinitePlan(FinitePlanRequest request, String requestIdentity) {
+        ParsedFinitePlan {
+            Objects.requireNonNull(request, "request");
+            Objects.requireNonNull(requestIdentity, "requestIdentity");
         }
     }
 
@@ -2167,6 +2318,16 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                         blockStateArgument(parameters, "expected_after"),
                         bounds);
             }
+            case UseItemOnBlockRequest.KIND -> {
+                requireExactKeys(parameters, "use_item_on_block parameters", Set.of(
+                        "target", "expected_before", "item", "expected_after"));
+                yield new UseItemOnBlockRequest(
+                        dimensionBlockTargetArgument(parameters, "target"),
+                        blockStateArgument(parameters, "expected_before"),
+                        stringArgument(parameters, "item"),
+                        blockStateArgument(parameters, "expected_after"),
+                        bounds);
+            }
             case InteractBlockRequest.KIND -> {
                 requireExactKeys(parameters, "interact_block parameters", Set.of(
                         "target", "expected_before", "expected_after"));
@@ -2193,6 +2354,24 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             }
             default -> throw new IllegalArgumentException("kind is not a Phase 3 semantic action");
         };
+    }
+
+    static ParsedFinitePlan finitePlanRequestArgument(Map<String, Object> arguments) {
+        Objects.requireNonNull(arguments, "arguments");
+        requireStartRoutineKeys(arguments);
+        if (!"execute_plan".equals(stringArgument(arguments, "kind"))) {
+            throw new IllegalArgumentException("kind must be execute_plan");
+        }
+        String completionIntent = completionIntentArgument(arguments);
+        var outerBounds = objectArgument(arguments, "bounds");
+        requireExactKeys(outerBounds, "execute_plan bounds", Set.of());
+        var parameters = objectArgument(arguments, "parameters");
+        var request = FinitePlanRequest.parse(parameters);
+        var canonical = new StringBuilder();
+        appendIdentity(canonical, "finite-plan/v1");
+        appendCanonicalValue(canonical, parameters);
+        appendCanonicalValue(canonical, completionIntent);
+        return new ParsedFinitePlan(request, sha256Identity(canonical));
     }
 
     static ParsedApplyBlockPlan applyBlockPlanArgument(
@@ -2731,8 +2910,20 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             appendIdentity(output, flag.toString());
         }
         else if (value instanceof Number number) {
-            appendIdentity(output, "integer");
-            appendIdentity(output, Long.toString(exactLong(number)));
+            try {
+                long integral = exactLong(number);
+                appendIdentity(output, "integer");
+                appendIdentity(output, Long.toString(integral));
+            }
+            catch (ArithmeticException nonInteger) {
+                double finite = number.doubleValue();
+                if (!Double.isFinite(finite)) {
+                    throw new IllegalArgumentException("canonical numbers must be finite");
+                }
+                appendIdentity(output, "number");
+                appendIdentity(output, new BigDecimal(number.toString())
+                        .stripTrailingZeros().toPlainString());
+            }
         }
         else {
             throw new IllegalArgumentException("unsupported value in Phase 5 identity");
@@ -2908,12 +3099,13 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             case NavigateToRequest navigation -> Optional.of(navigation.target());
             case BreakBlockRequest block -> Optional.of(block.target());
             case PlaceBlockRequest place -> Optional.of(place.target());
+            case UseItemOnBlockRequest use -> Optional.of(use.target());
             case InteractBlockRequest block -> Optional.of(block.target());
             case InteractEntityRequest ignored -> Optional.empty();
         };
     }
 
-    private static void validateLiveBounds(
+    static void validateLiveBounds(
             Minecraft minecraft,
             ActionBounds bounds,
             BlockTarget target) {
@@ -2933,7 +3125,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         }
     }
 
-    private static void validateLiveBounds(
+    static void validateLiveBounds(
             Minecraft minecraft,
             PhaseFiveBounds bounds,
             List<BlockTarget> targets) {

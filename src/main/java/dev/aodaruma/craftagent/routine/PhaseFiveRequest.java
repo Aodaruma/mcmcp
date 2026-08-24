@@ -33,7 +33,8 @@ public record PhaseFiveRequest(
         }
         Objects.requireNonNull(bounds, "bounds");
         int maximumTravel = shortOperation(kind) ? 32 : 128;
-        int maximumDuration = shortOperation(kind) ? 120 : 600;
+        int maximumDuration = shortOperation(kind) ? 120
+                : kind.equals("tend_crop_area") ? 7_200 : 600;
         if (bounds.maxTravelBlocks() > maximumTravel
                 || bounds.maxDurationSeconds() > maximumDuration) {
             throw new IllegalArgumentException("bounds exceed the routine kind limit");

@@ -21,6 +21,7 @@ public final class RoutineManager {
     private final SemanticActionPort semanticActionPort;
     private final ApplyBlockPlanPort applyBlockPlanPort;
     private final PhaseFivePort phaseFivePort;
+    private final FinitePlanPort finitePlanPort;
     private final int eventCapacity;
     private final int maxRetainedRoutines;
     private final long terminalTtlTicks;
@@ -56,6 +57,22 @@ public final class RoutineManager {
                 UUID::randomUUID);
     }
 
+    /** Production constructor enabling only Phase 2 and the parent-only finite-plan family. */
+    public RoutineManager(
+            StationaryBreakPort stationaryBreakPort,
+            FinitePlanPort finitePlanPort) {
+        this(
+                stationaryBreakPort,
+                null,
+                null,
+                null,
+                Objects.requireNonNull(finitePlanPort, "finitePlanPort"),
+                DEFAULT_EVENT_CAPACITY,
+                DEFAULT_RETAINED_ROUTINES,
+                DEFAULT_TERMINAL_TTL_TICKS,
+                UUID::randomUUID);
+    }
+
     /** Production constructor enabling Phase 2, Phase 3 and Phase 4 routine families. */
     public RoutineManager(
             StationaryBreakPort stationaryBreakPort,
@@ -83,6 +100,25 @@ public final class RoutineManager {
                 Objects.requireNonNull(semanticActionPort, "semanticActionPort"),
                 Objects.requireNonNull(applyBlockPlanPort, "applyBlockPlanPort"),
                 Objects.requireNonNull(phaseFivePort, "phaseFivePort"),
+                DEFAULT_EVENT_CAPACITY,
+                DEFAULT_RETAINED_ROUTINES,
+                DEFAULT_TERMINAL_TTL_TICKS,
+                UUID::randomUUID);
+    }
+
+    /** Production constructor enabling Phase 2 through Phase 5 and finite plans. */
+    public RoutineManager(
+            StationaryBreakPort stationaryBreakPort,
+            SemanticActionPort semanticActionPort,
+            ApplyBlockPlanPort applyBlockPlanPort,
+            PhaseFivePort phaseFivePort,
+            FinitePlanPort finitePlanPort) {
+        this(
+                stationaryBreakPort,
+                Objects.requireNonNull(semanticActionPort, "semanticActionPort"),
+                Objects.requireNonNull(applyBlockPlanPort, "applyBlockPlanPort"),
+                Objects.requireNonNull(phaseFivePort, "phaseFivePort"),
+                Objects.requireNonNull(finitePlanPort, "finitePlanPort"),
                 DEFAULT_EVENT_CAPACITY,
                 DEFAULT_RETAINED_ROUTINES,
                 DEFAULT_TERMINAL_TTL_TICKS,
@@ -152,10 +188,33 @@ public final class RoutineManager {
             int maxRetainedRoutines,
             long terminalTtlTicks,
             Supplier<UUID> routineIds) {
+        this(
+                stationaryBreakPort,
+                semanticActionPort,
+                applyBlockPlanPort,
+                phaseFivePort,
+                null,
+                eventCapacity,
+                maxRetainedRoutines,
+                terminalTtlTicks,
+                routineIds);
+    }
+
+    RoutineManager(
+            StationaryBreakPort stationaryBreakPort,
+            SemanticActionPort semanticActionPort,
+            ApplyBlockPlanPort applyBlockPlanPort,
+            PhaseFivePort phaseFivePort,
+            FinitePlanPort finitePlanPort,
+            int eventCapacity,
+            int maxRetainedRoutines,
+            long terminalTtlTicks,
+            Supplier<UUID> routineIds) {
         this.stationaryBreakPort = Objects.requireNonNull(stationaryBreakPort, "stationaryBreakPort");
         this.semanticActionPort = semanticActionPort;
         this.applyBlockPlanPort = applyBlockPlanPort;
         this.phaseFivePort = phaseFivePort;
+        this.finitePlanPort = finitePlanPort;
         if (eventCapacity < 1 || maxRetainedRoutines < 1 || terminalTtlTicks < 1) {
             throw new IllegalArgumentException("routine manager limits must be positive");
         }
@@ -301,6 +360,43 @@ public final class RoutineManager {
                         routineId, request, port, eventCapacity, tick));
     }
 
+    /** Starts one bounded plan while keeping every child action private to its parent. */
+    public synchronized StartReceipt startFinitePlan(
+            String idempotencyKey,
+            FinitePlanRequest request,
+            long admittedClientTick) {
+        Objects.requireNonNull(request, "request");
+        return admitFinitePlan(idempotencyKey, request, request, admittedClientTick);
+    }
+
+    public synchronized StartReceipt startFinitePlan(
+            String idempotencyKey,
+            String requestIdentity,
+            FinitePlanRequest request,
+            long admittedClientTick) {
+        Objects.requireNonNull(request, "request");
+        return admitFinitePlan(
+                idempotencyKey,
+                requireRequestIdentity(requestIdentity),
+                request,
+                admittedClientTick);
+    }
+
+    private StartReceipt admitFinitePlan(
+            String idempotencyKey,
+            Object requestIdentity,
+            FinitePlanRequest request,
+            long admittedClientTick) {
+        var port = requireFinitePlanPort();
+        return admitRoutine(
+                FinitePlanRoutine.KIND,
+                idempotencyKey,
+                requestIdentity,
+                admittedClientTick,
+                (routineId, eventCapacity, tick) -> new FinitePlanRoutine(
+                        routineId, request, port, eventCapacity, tick));
+    }
+
     /**
      * Production admission separates the stable external request identity from derived live
      * preconditions and absolute deadlines. This makes a timed-out retry replayable even after
@@ -422,6 +518,18 @@ public final class RoutineManager {
         requirePhaseFivePort();
         return replayRoutine(
                 request.kind(),
+                idempotencyKey,
+                requireRequestIdentity(requestIdentity),
+                currentClientTick);
+    }
+
+    public synchronized Optional<StartReceipt> replayFinitePlan(
+            String idempotencyKey,
+            String requestIdentity,
+            long currentClientTick) {
+        requireFinitePlanPort();
+        return replayRoutine(
+                FinitePlanRoutine.KIND,
                 idempotencyKey,
                 requireRequestIdentity(requestIdentity),
                 currentClientTick);
@@ -658,6 +766,13 @@ public final class RoutineManager {
             throw new IllegalStateException("Phase 5 port is not configured");
         }
         return phaseFivePort;
+    }
+
+    private FinitePlanPort requireFinitePlanPort() {
+        if (finitePlanPort == null) {
+            throw new IllegalStateException("finite plan port is not configured");
+        }
+        return finitePlanPort;
     }
 
     private static int validateMaxEvents(int maxEvents) {

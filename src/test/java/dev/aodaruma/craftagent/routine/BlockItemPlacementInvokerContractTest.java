@@ -145,29 +145,30 @@ class BlockItemPlacementInvokerContractTest {
 
     @Test
     void phaseThreePlacementGatesAdmissionObservationAndNormalUseDispatch() throws Exception {
-        String policy = "dev/aodaruma/craftagent/routine/SafePlacementSupportPolicy#";
         assertThat(invocations(
                 "/dev/aodaruma/craftagent/runtime/CraftAgentRuntime.class",
                 "startSemanticAction"))
                 .contains("dev/aodaruma/craftagent/routine/MinecraftSemanticActionPort#"
                         + "requireSafePlacementSupportForAdmission");
+        String contextualPolicy =
+                "dev/aodaruma/craftagent/routine/MinecraftSemanticActionPort#";
         assertThat(invocations(
                 "/dev/aodaruma/craftagent/routine/MinecraftSemanticActionPort.class",
                 "requireSafePlacementSupportForAdmission"))
-                .contains(policy + "requireLiveState")
+                .contains(contextualPolicy + "requirePlacementSupport")
                 .doesNotContain("dev/aodaruma/craftagent/routine/MinecraftSemanticActionPort#"
                         + "requirePreparedPlacement");
         assertThat(invocations(
                 "/dev/aodaruma/craftagent/routine/MinecraftSemanticActionPort.class",
                 "blockFacts"))
-                .contains(policy + "allowsLiveState");
+                .contains(contextualPolicy + "allowsPlacementSupport");
         assertThat(invocations(
                 "/dev/aodaruma/craftagent/routine/MinecraftSemanticActionPort.class",
                 "dispatchPlace"))
                 .containsSubsequence(
-                        policy + "requireLiveState",
+                        contextualPolicy + "requirePlacementSupport",
                         "dev/aodaruma/craftagent/runtime/ClientPredictionSignals#begin",
-                        policy + "dispatchUseIfAllowed");
+                        "net/minecraft/client/multiplayer/MultiPlayerGameMode#useItemOn");
     }
 
     @Test

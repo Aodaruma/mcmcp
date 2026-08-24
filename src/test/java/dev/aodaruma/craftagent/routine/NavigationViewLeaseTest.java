@@ -18,6 +18,11 @@ class NavigationViewLeaseTest {
         lease.turnToward(owner, 80.0F, 40.0F);
         assertThat(control.yaw).isEqualTo(28.0F);
         assertThat(control.pitch).isEqualTo(18.0F);
+        lease.selectSlot(owner, 4);
+        assertThat(lease.slotSelected(owner, 4)).isTrue();
+        control.slot = 5;
+        assertThat(lease.matches(owner)).isFalse();
+        control.slot = 4;
 
         control.yaw += 2.0F;
         assertThat(lease.matches(owner)).isFalse();
@@ -26,10 +31,12 @@ class NavigationViewLeaseTest {
 
         control.failNextTurn = true;
         assertThatIllegalStateException().isThrownBy(() -> lease.close(owner));
+        assertThat(control.slot).isEqualTo(1);
         lease.close(owner);
         lease.close(owner);
         assertThat(control.yaw).isEqualTo(20.0F);
         assertThat(control.pitch).isEqualTo(10.0F);
+        assertThat(control.slot).isEqualTo(1);
         assertThat(control.turnCount).isEqualTo(2);
     }
 
@@ -43,6 +50,8 @@ class NavigationViewLeaseTest {
         assertThatIllegalArgumentException().isThrownBy(() -> lease.matches(other));
         assertThatIllegalArgumentException().isThrownBy(() ->
                 lease.turnToward(other, 0.0F, 0.0F));
+        assertThatIllegalArgumentException().isThrownBy(() -> lease.selectSlot(other, 1));
+        assertThatIllegalArgumentException().isThrownBy(() -> lease.selectSlot(owner, 9));
         assertThatIllegalArgumentException().isThrownBy(() -> lease.close(other));
     }
 
@@ -83,6 +92,11 @@ class NavigationViewLeaseTest {
             yaw += yawDeltaDegrees;
             pitch += pitchDeltaDegrees;
             turnCount++;
+        }
+
+        @Override
+        public void selectSlot(int selected) {
+            slot = selected;
         }
     }
 }

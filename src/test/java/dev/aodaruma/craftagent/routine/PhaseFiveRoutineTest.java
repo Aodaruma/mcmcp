@@ -185,10 +185,19 @@ class PhaseFiveRoutineTest {
     }
 
     @Test
-    void phaseFiveGetsItsOwnSixHundredSecondEnvelope() {
+    void cropWaitingMayUseTwoHoursWithoutWideningOtherPhaseFiveKinds() {
         assertThat(new PhaseFiveBounds(
-                DIMENSION, MINIMUM, MAXIMUM, 128, 600, false)
-                .hardDeadlineClientTick(10)).isEqualTo(12_010);
+                DIMENSION, MINIMUM, MAXIMUM, 128, 7_200, true)
+                .hardDeadlineClientTick(10)).isEqualTo(144_010);
+        assertThat(new PhaseFiveRequest(
+                "tend_crop_area", Map.of(),
+                new PhaseFiveBounds(DIMENSION, MINIMUM, MAXIMUM, 128, 7_200, true),
+                1, "cells").bounds().maxDurationSeconds()).isEqualTo(7_200);
+        assertThatThrownBy(() -> new PhaseFiveRequest(
+                        "survey_area", Map.of(),
+                        new PhaseFiveBounds(DIMENSION, MINIMUM, MAXIMUM, 128, 601, false),
+                        1, "cells"))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new ActionBounds(
                         DIMENSION, MINIMUM, MAXIMUM, 128, 121, false))
                 .isInstanceOf(IllegalArgumentException.class);

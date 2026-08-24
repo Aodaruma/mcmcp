@@ -14,11 +14,24 @@ public final class SafeBreakSourcePolicy {
             "break source is outside the closed safe allowlist";
 
     private static final Set<String> ALLOWED_BLOCK_IDS = Set.of(
+            "minecraft:acacia_log",
+            "minecraft:beetroots",
+            "minecraft:birch_log",
+            "minecraft:carrots",
+            "minecraft:cherry_log",
             "minecraft:cobblestone",
+            "minecraft:dark_oak_log",
             "minecraft:dirt",
             "minecraft:grass_block",
+            "minecraft:jungle_log",
+            "minecraft:mangrove_log",
+            "minecraft:oak_log",
             "minecraft:obsidian",
-            "minecraft:stone");
+            "minecraft:pale_oak_log",
+            "minecraft:potatoes",
+            "minecraft:spruce_log",
+            "minecraft:stone",
+            "minecraft:wheat");
 
     private SafeBreakSourcePolicy() {
     }

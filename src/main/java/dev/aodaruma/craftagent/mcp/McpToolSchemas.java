@@ -8,9 +8,13 @@ import java.util.Map;
 public final class McpToolSchemas {
     private static final List<String> ROUTINE_KINDS = List.of(
             "stationary_break", "navigate_to", "break_block", "place_block",
-            "interact_block", "interact_entity", "apply_block_plan", "craft_items",
-            "transfer_items", "tend_crop_area", "harvest_tree_area", "sleep_at_bed",
-            "survey_area");
+            "interact_block", "interact_entity", "use_item_on_block", "apply_block_plan",
+            "craft_items", "transfer_items", "tend_crop_area", "harvest_tree_area",
+            "sleep_at_bed", "survey_area", "execute_plan");
+    private static final List<String> FINITE_PLAN_ACTION_KINDS = List.of(
+            "navigate_to", "break_block", "place_block", "interact_block",
+            "use_item_on_block", "craft_items", "transfer_items",
+            "tend_crop_area", "harvest_tree_area", "sleep_at_bed", "survey_area");
     static final List<String> SNAPSHOT_SCOPES = List.of(
             "player", "inventory", "target", "visible_blocks", "visible_entities", "world", "screen");
 
@@ -44,7 +48,8 @@ public final class McpToolSchemas {
                 "visible_entities", entityOptions));
         return closedObject(fields(
                 "scopes", array(enumString(SNAPSHOT_SCOPES.toArray(String[]::new)), 1, SNAPSHOT_SCOPES.size(), true),
-                "options", options), "scopes");
+                "options", options,
+                "detail", enumString("compact", "full")), "scopes");
     }
 
     static Map<String, Object> creativeRegionInput() {
@@ -181,7 +186,8 @@ public final class McpToolSchemas {
     }
 
     static Map<String, Object> listRoutinesInput() {
-        return closedObject(fields());
+        return closedObject(fields(
+                "kind", enumString(ROUTINE_KINDS.toArray(String[]::new))));
     }
 
     static Map<String, Object> getRoutineInput() {
@@ -192,6 +198,21 @@ public final class McpToolSchemas {
     }
 
     public static Map<String, Object> startRoutineInput() {
+        Map<String, Object> openObject = schema(
+                "type", "object",
+                "additionalProperties", true,
+                "maxProperties", 64);
+        return closedObject(fields(
+                "kind", enumString(ROUTINE_KINDS.toArray(String[]::new)),
+                "parameters", openObject,
+                "bounds", openObject,
+                "completion_intent", completionIntent(),
+                "idempotency_key", uuid()),
+                "kind", "parameters", "bounds", "idempotency_key");
+    }
+
+    /** Full server-side validation contract; deliberately not advertised in tools/list. */
+    static Map<String, Object> startRoutineValidationInput() {
         Map<String, Object> result = closedObject(fields(
                 "kind", enumString(ROUTINE_KINDS.toArray(String[]::new)),
                 "parameters", schema(),
@@ -206,13 +227,15 @@ public final class McpToolSchemas {
                 placeBlockStartInput(),
                 interactBlockStartInput(),
                 interactEntityStartInput(),
+                useItemOnBlockStartInput(),
                 applyBlockPlanStartInput(),
                 craftItemsStartInput(),
                 transferItemsStartInput(),
                 tendCropAreaStartInput(),
                 harvestTreeAreaStartInput(),
                 sleepAtBedStartInput(),
-                surveyAreaStartInput()));
+                surveyAreaStartInput(),
+                executePlanStartInput()));
         return result;
     }
 
@@ -300,6 +323,31 @@ public final class McpToolSchemas {
                 "entity_ref", "expected_type", "hand", "held_item", "goal");
         return routineStartBranch(
                 "interact_entity", parameters, phaseThreeBounds(constant(0), integer(1, 30), false));
+    }
+
+    /** Closed Phase 3 contract for one exact normal-use state transition. */
+    public static Map<String, Object> useItemOnBlockStartInput() {
+        Map<String, Object> before = closedLikeRegistryObject(fields(
+                "block", enumString(
+                        "minecraft:dirt", "minecraft:dirt_path", "minecraft:grass_block"),
+                "properties", blockProperties()), "block");
+        Map<String, Object> after = closedLikeRegistryObject(fields(
+                "block", constant("minecraft:farmland"),
+                "properties", closedObject(fields(
+                        "moisture", constant("0")), "moisture")),
+                "block", "properties");
+        Map<String, Object> parameters = closedObject(fields(
+                "target", dimensionBlockPosition(),
+                "expected_before", before,
+                "item", enumString(
+                        "minecraft:wooden_hoe", "minecraft:stone_hoe",
+                        "minecraft:iron_hoe", "minecraft:golden_hoe",
+                        "minecraft:diamond_hoe", "minecraft:netherite_hoe"),
+                "expected_after", after),
+                "target", "expected_before", "item", "expected_after");
+        return routineStartBranch(
+                "use_item_on_block", parameters,
+                phaseThreeBounds(constant(0), integer(1, 30), false));
     }
 
     /** Closed Phase 4 contract for one bounded, externally phase-split block plan. */
@@ -421,7 +469,7 @@ public final class McpToolSchemas {
                 "wait_policy", enumString("no_wait", "until_minimum")),
                 "crop_adapter", "plots", "goal", "wait_policy");
         return routineStartBranch(
-                "tend_crop_area", parameters, phaseFiveBounds(128, 600, true));
+                "tend_crop_area", parameters, phaseFiveBounds(128, 7_200, true));
     }
 
     /** Closed Phase 5 contract for only the current tree cells declared by the caller. */
@@ -480,6 +528,69 @@ public final class McpToolSchemas {
                 "waypoints", "samples", "goal", "assessment");
         return routineStartBranch(
                 "survey_area", parameters, phaseFiveBounds(128, 600, false));
+    }
+
+    /** Closed outer envelope for the bounded Phase 6 finite-plan IR. */
+    public static Map<String, Object> executePlanStartInput() {
+        Map<String, Object> parameters = closedObject(fields(
+                "plan_id", localIdentifier(),
+                "max_ticks", integer(1, 144_000),
+                "steps", array(finitePlanStep(7), 1, 256)),
+                "plan_id", "max_ticks", "steps");
+        return routineStartBranch("execute_plan", parameters, closedObject(fields()));
+    }
+
+    private static Map<String, Object> finitePlanStep(int remainingDepth) {
+        Map<String, Object> openPayload = schema(
+                "type", "object",
+                "additionalProperties", true,
+                "maxProperties", 64);
+        Map<String, Object> actionArguments = closedObject(fields(
+                "parameters", openPayload,
+                "bounds", openPayload), "parameters", "bounds");
+        Map<String, Object> action = closedObject(fields(
+                "id", localIdentifier(),
+                "op", constant("action"),
+                "kind", enumString(FINITE_PLAN_ACTION_KINDS.toArray(String[]::new)),
+                "arguments", actionArguments), "id", "op", "kind", "arguments");
+        Map<String, Object> condition = finitePlanCondition();
+        Map<String, Object> assertion = closedObject(fields(
+                "id", localIdentifier(),
+                "op", constant("assert"),
+                "condition", condition), "id", "op", "condition");
+        Map<String, Object> wait = closedObject(fields(
+                "id", localIdentifier(),
+                "op", constant("wait_until"),
+                "condition", condition,
+                "max_ticks", integer(1, 144_000)),
+                "id", "op", "condition", "max_ticks");
+        var variants = new java.util.ArrayList<Map<String, Object>>(
+                List.of(action, assertion, wait));
+        if (remainingDepth > 0) {
+            variants.add(closedObject(fields(
+                    "id", localIdentifier(),
+                    "op", constant("repeat_until"),
+                    "until", condition,
+                    "max_iterations", integer(1, 128),
+                    "max_ticks", integer(1, 144_000),
+                    "steps", array(finitePlanStep(remainingDepth - 1), 1, 256)),
+                    "id", "op", "until", "max_iterations", "max_ticks", "steps"));
+        }
+        return schema("oneOf", List.copyOf(variants));
+    }
+
+    private static Map<String, Object> finitePlanCondition() {
+        Map<String, Object> inventory = closedObject(fields(
+                "kind", constant("inventory_at_least"),
+                "item", registryId(),
+                "minimum_count", integer(1, 2_304)),
+                "kind", "item", "minimum_count");
+        Map<String, Object> block = closedObject(fields(
+                "kind", constant("block_matches"),
+                "target", dimensionBlockPosition(),
+                "expected_state", fullBlockState()),
+                "kind", "target", "expected_state");
+        return schema("oneOf", List.of(inventory, block));
     }
 
     private static Map<String, Object> blockTransitionParameters() {
@@ -648,6 +759,7 @@ public final class McpToolSchemas {
         Map<String, Object> inventory = closedObject(fields(
                 "selected_slot", integer(0, 8),
                 "size", integer(0, 256),
+                "slot_encoding", enumString("non_empty_only", "all_slots"),
                 "slots", array(slot, 0, 256)), "selected_slot", "size", "slots");
         Map<String, Object> target = closedObject(fields(
                 "kind", enumString("miss", "block", "entity"),
@@ -667,7 +779,8 @@ public final class McpToolSchemas {
         Map<String, Object> visibleBlocks = closedObject(fields(
                 "source", enumString("live", "memory", "live_and_memory"),
                 "query_kind", enumString("positions", "viewport"),
-                "results", array(blockObservationResult(), 0, 512),
+                "results", array(schema("oneOf", List.of(
+                        blockObservationResult(), compactBlockObservationResult())), 0, 512),
                 "coverage", blockCoverage,
                 "truncated", schema("type", "boolean"),
                 "max_distance", number(1, 12),
@@ -679,7 +792,8 @@ public final class McpToolSchemas {
                 "max_distance", number(1, 64),
                 "max_results", integer(1, 256),
                 "relative_to", enumString("camera", "player_eye"),
-                "results", array(entityObservation(true), 0, 256),
+                "results", array(schema("oneOf", List.of(
+                        entityObservation(true), compactEntityObservation())), 0, 256),
                 "coverage", entityCoverage,
                 "threat_relation_basis", enumString("client_synced_direct_target_only", "not_filtered"),
                 "truncated", schema("type", "boolean")),
@@ -732,6 +846,7 @@ public final class McpToolSchemas {
                 "observation_revision", integer(0, Long.MAX_VALUE),
                 "requested_scopes", array(enumString(SNAPSHOT_SCOPES.toArray(String[]::new)),
                         1, SNAPSHOT_SCOPES.size(), true),
+                "detail", enumString("compact", "full"),
                 "player", player,
                 "inventory", inventory,
                 "target", target,
@@ -967,17 +1082,19 @@ public final class McpToolSchemas {
     static Map<String, Object> listRoutinesOutput() {
         Map<String, Object> catalogEntry = closedObject(fields(
                 "kind", enumString(ROUTINE_KINDS.toArray(String[]::new)),
-                "phase", enumInteger(2, 3, 4, 5),
+                "phase", enumInteger(2, 3, 4, 5, 6),
                 "experimental", constant(false),
+                "capabilities", array(string(1, 160, null), 1, 8, true),
                 "input_schema", schema(
                         "type", "object",
                         "additionalProperties", true,
                         "maxProperties", 64),
                 "postconditions", array(string(1, 160, null), 1, 16, true)),
-                "kind", "phase", "experimental", "input_schema", "postconditions");
+                "kind", "phase", "experimental", "capabilities");
         Map<String, Object> data = closedObject(fields(
-                "catalog_version", constant("phase-6"),
-                "routines", array(catalogEntry, 13, 13, true)), "catalog_version", "routines");
+                "catalog_version", constant("phase-6-compact-v1"),
+                "routines", array(catalogEntry, 1, ROUTINE_KINDS.size(), true)),
+                "catalog_version", "routines");
         return envelope("list_routines", data);
     }
 
@@ -1019,9 +1136,10 @@ public final class McpToolSchemas {
         Map<String, Object> goal = closedObject(fields(
                 "verified", schema("type", "boolean")), "verified");
         Map<String, Object> progress = closedObject(fields(
-                "completed", integer(0, 2_304),
-                "total", integer(0, 2_304),
-                "unit", enumString("items", "blocks", "cells", "interactions", "destinations")),
+                "completed", integer(0, 12_000),
+                "total", integer(0, 12_000),
+                "unit", enumString(
+                        "items", "blocks", "cells", "interactions", "destinations", "steps")),
                 "completed", "total", "unit");
         Map<String, Object> stationaryBreakStep = closedObject(fields(
                 "kind", constant("break_block"),
@@ -1046,6 +1164,11 @@ public final class McpToolSchemas {
                 "target", dimensionBlockPosition(),
                 "expected_after", expectedBlockState()),
                 "kind", "target", "expected_after");
+        Map<String, Object> useItemOnBlockStep = closedObject(fields(
+                "kind", constant("use_item_on_block"),
+                "target", dimensionBlockPosition(),
+                "expected_after", expectedBlockState()),
+                "kind", "target", "expected_after");
         Map<String, Object> interactEntityStep = closedObject(fields(
                 "kind", constant("interact_entity"),
                 "entity_ref", string(24, 24, "^[A-Za-z0-9_-]{24}$"),
@@ -1066,16 +1189,29 @@ public final class McpToolSchemas {
                 "kind", enumString(
                         "craft_items", "transfer_items", "tend_crop_area",
                         "harvest_tree_area", "sleep_at_bed", "survey_area")), "kind");
+        Map<String, Object> executePlanStep = closedObject(fields(
+                "kind", constant("execute_plan"),
+                "plan_id", localIdentifier()), "kind", "plan_id");
+        Map<String, Object> planStep = closedObject(fields(
+                "kind", constant("plan_step"),
+                "plan_id", localIdentifier(),
+                "step_id", localIdentifier(),
+                "op", enumString("action", "assert", "wait_until", "repeat_until"),
+                "routine_kind", enumString(FINITE_PLAN_ACTION_KINDS.toArray(String[]::new)),
+                "max_iterations", integer(1, 128),
+                "completed_iterations", integer(0, 128)),
+                "kind", "plan_id", "step_id", "op");
         Map<String, Object> currentStep = nullable(schema("oneOf", List.of(
                 stationaryBreakStep, navigateStep, breakStep, placeStep, interactBlockStep,
-                interactEntityStep, planCellStep, phaseFiveStep)));
+                useItemOnBlockStep, interactEntityStep, planCellStep, phaseFiveStep,
+                executePlanStep, planStep)));
         Map<String, Object> checkpoint = closedObject(fields(
                 "seq", integer(0, Long.MAX_VALUE),
                 "observation_revision", integer(0, Long.MAX_VALUE)), "seq", "observation_revision");
         Map<String, Object> verification = closedObject(fields(
-                "confirmed", integer(0, 2_304),
-                "expected", integer(0, 2_304),
-                "unknown", integer(0, 2_304)), "confirmed", "expected", "unknown");
+                "confirmed", integer(0, 12_000),
+                "expected", integer(0, 12_000),
+                "unknown", integer(0, 12_000)), "confirmed", "expected", "unknown");
         Map<String, Object> effect = closedObject(fields(
                 "type", string(1, 96, "^[a-z][a-z0-9_]*$"),
                 "observed_before", boundedDiagnosticDetails(),
@@ -1091,7 +1227,8 @@ public final class McpToolSchemas {
                         "target_regeneration", "server_sync", "movement_settle",
                         "route_reobservation", "route_occupancy",
                         "bounded_preparation", "server_world_diff", "fresh_plan_observation",
-                        "plan_progress", "server_terminal_evidence"),
+                        "plan_progress", "server_terminal_evidence", "action_confirmation",
+                        "condition_wait", "repeat_condition_unknown"),
                 "deadline_client_tick", integer(0, Long.MAX_VALUE),
                 "wake_condition", string(1, 160, null)),
                 "reason", "deadline_client_tick", "wake_condition"));
@@ -1221,6 +1358,21 @@ public final class McpToolSchemas {
                 "outcome", "position");
     }
 
+    private static Map<String, Object> compactBlockObservationResult() {
+        return closedObject(fields(
+                "outcome", enumString("current", "last_known", "not_currently_observable", "unknown"),
+                "position", dimensionBlockPosition(),
+                "state", blockState(),
+                "visible_faces", array(
+                        enumString("down", "up", "north", "south", "west", "east"), 0, 6, true),
+                "within_reach", schema("type", "boolean"),
+                "provenance", enumString(
+                        "line_of_sight_observation", "crosshair_observation", "interaction_confirmation"),
+                "age_ticks", integer(0, Long.MAX_VALUE),
+                "reason", blockObservationReason()),
+                "outcome", "position");
+    }
+
     private static Map<String, Object> observedBlock() {
         Map<String, Object> context = closedObject(fields(
                 "block_light_at_observation", integer(0, 15),
@@ -1287,6 +1439,20 @@ public final class McpToolSchemas {
             result.put("required", List.copyOf(required));
         }
         return result;
+    }
+
+    private static Map<String, Object> compactEntityObservation() {
+        return closedObject(fields(
+                "type", registryId(),
+                "position", vector3(),
+                "relative_position", vector3(),
+                "distance", nonNegativeNumber(),
+                "entity_ref", string(1, 128, null),
+                "currentness", enumString("current", "last_known"),
+                "age_ticks", integer(0, Long.MAX_VALUE),
+                "threat_relation", enumString("currently_hostile_to_player", "unknown")),
+                "type", "position", "relative_position", "distance", "currentness", "age_ticks",
+                "threat_relation");
     }
 
     private static Map<String, Object> blockObservationReason() {

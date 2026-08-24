@@ -78,16 +78,17 @@ class McpHttpServerTest {
                 .contains("\"get_recipes\"")
                 .contains("\"capture_creative_region\"")
                 .contains("\"edit_creative_world\"")
-                .contains("\"outputSchema\"");
+                .doesNotContain("\"outputSchema\"");
+        assertThat(tools.body().getBytes(StandardCharsets.UTF_8).length).isLessThan(20_000);
 
         HttpResponse<String> call = send(GET_STATUS, McpTestFixtures.TOKEN,
                 "application/json", "application/json, text/event-stream", null, true);
         assertThat(call.statusCode()).isEqualTo(200);
         assertThat(call.body())
-                .contains("\"structuredContent\"")
-                .contains("\"ok\":true")
-                .contains("\"tool\":\"get_status\"")
-                .contains("\"world_session_id\":\"session-test\"");
+                .doesNotContain("\"structuredContent\"")
+                .contains("ok\\\":true")
+                .contains("tool\\\":\\\"get_status")
+                .contains("world_session_id\\\":\\\"session-test");
 
         HttpResponse<String> invalidCall = send(
                 "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{"
@@ -96,9 +97,9 @@ class McpHttpServerTest {
                 "application/json", "application/json, text/event-stream", null, true);
         assertThat(invalidCall.statusCode()).isEqualTo(200);
         assertThat(invalidCall.body())
-                .contains("\"structuredContent\"")
-                .contains("\"ok\":false")
-                .contains("\"code\":\"invalid_argument\"")
+                .doesNotContain("\"structuredContent\"")
+                .contains("ok\\\":false")
+                .contains("code\\\":\\\"invalid_argument")
                 .doesNotContain("unexpected");
 
         assertThat(server.state()).isEqualTo(McpHttpServer.State.RUNNING);
@@ -258,13 +259,13 @@ class McpHttpServerTest {
         assertThat(firstStop.get(2, TimeUnit.SECONDS).statusCode()).isEqualTo(200);
         assertThat(secondStop.get(2, TimeUnit.SECONDS).statusCode()).isEqualTo(200);
         assertThat(firstStop.get().body())
-                .contains("\"ok\":true")
-                .contains("\"tool\":\"emergency_stop\"")
-                .contains("\"released_inputs\":true");
+                .contains("ok\\\":true")
+                .contains("tool\\\":\\\"emergency_stop")
+                .contains("released_inputs\\\":true");
         assertThat(secondStop.get().body())
-                .contains("\"ok\":true")
-                .contains("\"tool\":\"emergency_stop\"")
-                .contains("\"released_inputs\":true");
+                .contains("ok\\\":true")
+                .contains("tool\\\":\\\"emergency_stop")
+                .contains("released_inputs\\\":true");
 
         pendingRead.complete(McpRuntimePort.RuntimeReply.success(McpTestFixtures.statusData()));
         assertThat(first.get(2, TimeUnit.SECONDS).statusCode()).isEqualTo(200);

@@ -7,8 +7,8 @@ MCPへ公開するのは、読み取りtool、制御tool、型付きroutineの�
 - 短時間の観測と比較は同期tool。広域Creative captureだけは非同期artifact export
 - 能動操作と長時間処理は`start_routine`で開始し、`routine_id`で追跡
 - 毎tickのfeedback loopはMOD内部
-- `tools/list`はMCP tool一覧、`list_routines`はdomain routine kind一覧
-- 全input/output schemaは`additionalProperties: false`、文字列長、件数、座標範囲、deadlineを制限
+- `tools/list`は小さいMCP tool一覧、`list_routines`はdomain routine kind一覧。kind指定時だけ完全な開始schemaを返す
+- 公開input schemaは閉じ、`start_routine`のkind固有完全schemaはserver内部でも再検証する。outputは重複を避けたJSON TextContent 1本とする
 - 副作用のないread-only toolには`readOnlyHint: true`。Creative captureはworldを変更しませんがlocal fileを作るため`readOnlyHint: false / destructiveHint: false`
 - 能動toolはmutating/destructiveとして扱い、MCP clientの自動承認を前提にしない
 
@@ -19,7 +19,7 @@ MCPへ公開するのは、読み取りtool、制御tool、型付きroutineの�
 | `get_status` | read | 接続、lock、互換性、安全policy、能動routine |
 | `get_snapshot` | read | 必須scopeで同一tickの状態を観測 |
 | `compare_block_plan` | read | 期待block planと観測・記憶の差分 |
-| `list_routines` | read | routine kind、phase、schema、postcondition、experimental flag |
+| `list_routines` | read | 通常はroutine kind、phase、短いcapability。kind指定時はschemaとpostcondition |
 | `get_routine` | read | 状態、進捗、event差分、failure |
 | `start_routine` | write | 型付きroutineを非同期開始 |
 | `cancel_routine` | write | 指定routineを安全に取消 |
@@ -28,7 +28,7 @@ MCPへ公開するのは、読み取りtool、制御tool、型付きroutineの�
 | `capture_creative_region` | artifact write | ローカルCreative領域を非同期captureし、gzip Blueprint artifactを生成 |
 | `edit_creative_world` | destructive write | ローカルCreativeで閉じたblock/Entity操作とundo/redoを非同期実行 |
 
-現在の固定surfaceは上記11 toolです。Phase 6までの既存9 toolの順序とinput/output shapeは変えず、Creative専用toolを末尾へ追加しています。routine kindは13のままです。
+現在の固定surfaceは上記11 toolです。Creative専用toolは末尾へ置きます。MCP 2025-11-25で任意の`outputSchema / structuredContent`は公開せず、互換性の高いTextContent JSONを唯一の結果表現にします。
 
 スクリーンショットは未知MODの診断や見た目確認に有効ですが、structured observationとは性質が異なります。必要性を実測した段階で、明示的な読み取り専用`capture_view`として追加します。
 
@@ -52,6 +52,7 @@ server address、Bearer token、Microsoft認証情報、音声device名は返し
 
 ```json
 {
+  "detail": "compact",
   "scopes": [
     "player",
     "inventory",
@@ -79,6 +80,8 @@ server address、Bearer token、Microsoft認証情報、音声device名は返し
   }
 }
 ```
+
+`detail`は省略時`compact`です。compactはinventoryの非空slotだけを返し、viewport block/entityの既定上限を各16件にし、sampleごとに重複していたsession/tick/position metadataをsnapshot上位へ集約します。従来の全slot・詳細な観測contextと既定上限を必要とする診断では`detail = full`を明示します。明示した`max_results`の上限は変えません。
 
 ### scopes
 
@@ -318,7 +321,7 @@ start/statusのMCP応答には全cellを含めません。成功statusはgzip by
 - offsetとBlockStateにはmirror（`none / x / z`）を先に、Y軸時計回りrotation（`0 / 90 / 180 / 270`）を後に適用します
 - preflight、各操作直前、操作後、final verificationはcurrent-onlyです。last-known memoryでunknownや不一致を埋めません
 - 設置資材は開始時の現在client inventoryとeligible hotbarをbaselineに不足を拒否します。各place後はcovering prediction ACK、完全なserver state、freshなinbound selected-slot inventory syncを確認してから次へ進みます
-- 設置supportは`minecraft:cobblestone / dirt / grass_block / obsidian / smooth_stone / stone`の6 IDだけを許可し、canonicalなvanilla block、BlockEntityなし、空のFluidStateをcandidate選定時とpacket直前に再確認します
+- 通常の設置supportは`minecraft:cobblestone / dirt / grass_block / obsidian / smooth_stone / stone`の6 IDだけを許可します。例外は完全な初期stateを宣言したwheat/carrot/potato/beetrootの植付けに対するfarmlandだけで、canonicalなvanilla block、BlockEntityなし、空のFluidStateをcandidate選定時とpacket直前に再確認します
 - 最後に全targetを同じclient tickでcurrentとして収集し、完全な`expected_after`一致かつunknown 0の場合だけ成功します
 - `break_to_air`と`replace`には`allow_break=true`が必要です。破壊元は`minecraft:cobblestone / stone / dirt / obsidian / grass_block`の5 IDだけで、canonicalなvanilla block、BlockEntityなし、空のFluidStateを開始時とpacket直前に再確認します
 - 成功確認は要求されたtarget cellが対象です。通常vanilla処理による隣接block更新やgame eventを抑止せず、target外のworld stateがすべて無変化であることは保証しません
@@ -341,7 +344,9 @@ queryは`result_item`または`result_tag`のclosed unionです。返すのは�
 
 ## `list_routines`
 
-Phase 2の`stationary_break`、Phase 3の5 action、Phase 4の`apply_block_plan`、Phase 5の6 routineを合わせた13 kindと、各kind固有のclosed input schema、bounds、postcondition、experimental flagを返します。Phase 6でも公開kindは増やさず、catalog versionだけを`phase-6`へ更新します。
+引数なしでは各kindの`kind / phase / experimental / capabilities`だけを返します。特定kindの厳密な開始形式が必要なときだけ`{"kind":"tend_crop_area"}`のように呼び、その1件のclosed input schema、bounds、postconditionを取得します。巨大schemaを全件まとめて返しません。catalog versionは`phase-6-compact-v1`です。
+
+`start_routine`の`tools/list`上のschemaも共通envelopeだけです。kind固有schemaは上記on-demand catalogから取得し、serverは広告用の浅いschemaとは別に完全schemaを使ってpre-dispatch検証します。
 
 MCPのprotocol capabilityとは別のdomain catalogです。tool一覧には`tools/list`を使い、`get_capabilities`は作りません。
 
@@ -445,11 +450,11 @@ event cursorがring bufferより古い場合は`events_truncated=true`としま�
 - 同時に能動routineなし
 - kind固有schemaとpreconditionに合格
 
-`bounds.region`はwork regionです。Phase 3〜5 routineは指定dimension・region・travel・duration・break許可を実行中に広げません。`apply_block_plan`は`max_travel_blocks=0`固定です。Phase 5の全public座標はdimension付きで、runtimeがcurrent/bounds dimensionとの一致を再検証します。Phase 6 v1もsafe anchorや動的transit corridorを有限routineへ暗黙に追加しません。
+`bounds.region`はwork regionです。Phase 3〜5 routineは指定dimension・region・travel・duration・break許可を実行中に広げません。`apply_block_plan`は`max_travel_blocks=0`固定です。Phase 5の全public座標はdimension付きで、runtimeがcurrent/bounds dimensionとの一致を再検証します。`execute_plan`だけはouter `bounds`を空object `{}`とし、各childの`arguments.bounds`を実行境界、`parameters.max_ticks`をplan全体の唯一のdeadlineとします。safe anchorや動的transit corridorを有限planへ暗黙に追加しません。
 
-有限routineのwork deadlineは`max_duration_seconds`から固定し、wall-clock側には5秒のFINALIZING reserveを加えます。local arming自体に時間制限はありませんが、開始時と実行中にactive arming fenceを確認します。複数routineにまたがるfood/sleep maintenanceは行いません。
+有限routineのwork deadlineは`max_duration_seconds`から固定し、`execute_plan`は`max_ticks / 20`秒（端数切上げ、最大7,200秒）から固定します。wall-clock側には5秒のFINALIZING reserveを加えます。local arming自体に時間制限はありませんが、開始時と実行中にactive arming fenceを確認します。複数routineにまたがるfood/sleep maintenanceは行いません。
 
-全13 kindのschemaで`completion_intent`は省略可能な`finish_goal | continue_goal`です。省略時は`finish_goal`です。`continue_goal`成功はroutine-local cleanup、Voice Chat復元、安全なstay checkpoint後もlocal armingを維持し、`finish_goal`成功は`goal_finished`でlockします。outer loopはLLM/MCP clientが担います。
+全15 kindのschemaで`completion_intent`は省略可能な`finish_goal | continue_goal`です。省略時は`finish_goal`です。`continue_goal`成功はroutine-local cleanup、Voice Chat復元、安全なstay checkpoint後もlocal armingを維持し、`finish_goal`成功は`goal_finished`でlockします。outer loopはLLM/MCP clientが担います。
 
 成功時はすぐに`routine_id`を返します。HTTP request timeout後に遅延開始しないよう、queue command自体にもdeadlineを持たせます。
 
@@ -463,7 +468,7 @@ Idempotency規則:
 
 ## routine catalog
 
-現在の公開契約は次の13 kindで、Phase 6まで受入を完了しています。routine自身のphase番号は追加時の2〜5を維持します。
+現在の公開契約は次の15 kindです。
 
 | kind | phase | 概要 |
 |---|---:|---|
@@ -473,6 +478,7 @@ Idempotency規則:
 | `place_block` | 3 | 単一cell blockを1回設置しprediction ACKとサーバーBlockStateを確認 |
 | `interact_block` | 3 | allowlist blockをempty hand・non-sneakで1回use |
 | `interact_entity` | 3 | current-visibleなadult cowをbucketで1回搾乳 |
+| `use_item_on_block` | 3 | allowlist済みitemで単一blockの宣言済みstate transitionを1回実行 |
 | `apply_block_plan` | 4 | 移動なし・最大64 cellの1 phaseをcurrent exact-stateで施工 |
 | `craft_items` | 5 | client-known recipe refを再解決し目標inventory countへcraft |
 | `transfer_items` | 5 | 指定containerをroutine自身が開き目標countへ収束 |
@@ -480,14 +486,16 @@ Idempotency規則:
 | `harvest_tree_area` | 5 | 宣言済みcurrent tree cellだけを伐採・回収・再植林 |
 | `sleep_at_bed` | 5 | 明示bedで睡眠し開始時checkpointへ帰還 |
 | `survey_area` | 5 | 宣言済みwaypoint/sampleを通常移動・視点操作で調査 |
+| `execute_plan` | 6 | 型付きaction・assert・wait・有限repeatを1 parent routineとして実行 |
 
 Phase 3 actionの境界は次のとおりです。
 
-- `navigate_to`は短い平坦な直線路だけを扱います。次cellがCURRENTでなければ移動keyをneutralに保ったまま通常の視点を経路方向へ徐々に向けて再観測し、足元・頭上・床がCURRENTになってから歩行します。可視mob/playerが次cellを占有している間は40 client tickずつ最大3 window待機・再観測し、解消しなければ`REPLAN`します。jump/sprint、段差越え、迂回pathfinding、block破壊は行いません。loadedな足元・頭上空間、安定床、fluid/hazard不在、bounds/travel上限を毎tick確認します。positiveなserver ACKはないため、入力停止後、tolerance内、安定床上、低速、位置drift上限内を10 client tick連続で満たし、dispatch後のposition/rotation/motion correctionがない場合だけ`server-reconciled`とします
+- `navigate_to`は短い平坦な直線路だけを扱います。次cellがCURRENTでなければ移動keyをneutralに保ったまま通常の視点を経路方向へ徐々に向けて再観測し、足元・頭上・床がCURRENTになってから歩行します。可視mob/playerが次cellを占有している間は40 client tickずつ最大3 window待機・再観測し、解消しなければ`REPLAN`します。jump/sprint、段差越え、迂回pathfinding、block破壊は行いません。loadedな足元・頭上空間、通常の安定床または15/16高のfarmland/dirt path、fluid/hazard不在、bounds/travel上限を毎tick確認します。positiveなserver ACKはないため、入力停止後、tolerance内、安定床上、低速、位置drift上限内を10 client tick連続で満たし、dispatch後のposition/rotation/motion correctionがない場合だけ`server-reconciled`とします
 - `break_block`、`place_block`、`interact_block`は、実際のcrosshair/hit、通常reach、liveな`expected_before`を操作直前に再確認し、vanilla prediction ACKとサーバー由来の完全なBlockStateが要求した`expected_after`と一致して初めて成功します。Phase 3 v1の`break_block.expected_after`はプロパティなしの`minecraft:air`固定です
-- `place_block`はmain handの単一cell `BlockItem`だけを扱い、bed/double-height itemを除外します。設置supportは上記と同じclosed 6-ID allowlistに限定し、candidate判定時とpacket直前に再確認します
+- `place_block`はmain handの単一cell `BlockItem`だけを扱い、bed/double-height itemを除外します。通常supportは上記のclosed 6-ID allowlist、farmlandはwheat/carrot/potato/beetrootの完全な初期crop stateを置く場合だけ許可し、candidate判定時とpacket直前に再確認します
 - `interact_block`はlever、fence gate、vanillaのwooden trapdoorだけを許可します。empty main handかつnon-sneakを要求し、door、button、container、未知MOD blockは除外します。`expected_after`にはleverの`powered`またはgate/trapdoorの`open`だけを反転し、他の全propertyを維持した完全な同一block stateが必要です
 - `interact_entity`はcurrent world session/dimensionで現在可視な短寿命opaque `entity_ref`が指すadult cow、main handの`minecraft:bucket`、目標`minecraft:milk_bucket`だけを許可します。crosshair、LOS、通常reach、boundsをdispatch直前に再確認し、1回だけ通常interactionを送ります。成功にはdispatch後のfreshなselected-slot inventory syncと絶対目標countが必要で、retryしません
+- `use_item_on_block`は単一target、完全な`expected_before / expected_after`、使用itemを宣言し、通常useを1回だけ送ります。現在のclosed transitionはvanilla hoeによる`dirt / dirt_path / grass_block`から`farmland{moisture=0}`への耕作だけです
 - `apply_block_plan`の完全な契約は上記専用節に従います。Phase 2〜4の破壊操作は共通の5 ID safe-break allowlistを使います
 
 Phase 5の6 kindはclosed schemaで実装済みです。特に次の境界を広げません。
@@ -505,12 +513,14 @@ Phase 5の6 kindはclosed schemaで実装済みです。特に次の境界を広
 |---|---|---|
 | `craft_items` | 24文字`recipe_ref`、sha256 fingerprint、default-components-onlyの絶対inventory goal、明示crafting table、最大64 craft | travel 32、120秒、break不可 |
 | `transfer_items` | container exact state、方向、default-components-only item、destination絶対count、最大2304 transfer | travel 32、120秒、break不可 |
-| `tend_crop_area` | 4種のvanilla crop adapter、1〜64宣言済みplot、replant/collect固定true、bounded wait policy | travel 128、600秒、break可 |
+| `tend_crop_area` | 4種のvanilla crop adapter、1〜64宣言済みplot、replant/collect固定true、bounded wait policy | travel 128、7,200秒、break可 |
 | `harvest_tree_area` | 1〜8 tree、宣言済みlog/support/sapling/clearance、collect固定true。全tree合計logはruntime admissionで最大64 | travel 128、600秒、break可 |
 | `sleep_at_bed` | foot/headのpositionと完全state、return policyは`start_checkpoint`固定 | travel 128、600秒、break不可 |
 | `survey_area` | 1〜32 waypoint、1〜256 sample、絶対observed goal、coverage-onlyまたはspawn prediction | travel 128、600秒、break不可 |
 
-`operate_prepared_transfer`はPhase 7 experimentalで、公開catalogには含めません。Phase 6は既存13 kindへ共通の`continue_goal`と完了処理を追加し、toolやroutine kindは増やしていません。
+`execute_plan`のIRは最大256 declared step、最大12,000 expanded execution、深さ8、最大144,000 tickです。operationは`action / assert / wait_until / repeat_until`だけで、repeatは`max_iterations`と`max_ticks`の両方を必須とします。conditionはpositiveな`inventory_at_least`または完全stateの`block_matches`だけです。actionの`arguments`はtoken量と権限境界を固定するため、必ず`{"parameters": {...}, "bounds": {...}}`の2 fieldだけです。childの`kind`は兄弟fieldを正とし、child固有の`idempotency_key / completion_intent`は受け付けません。plan内actionは`navigate_to / break_block / place_block / interact_block / use_item_on_block`とPhase 5の6 kindだけで、`stationary_break / interact_entity / apply_block_plan`は現在のpreparation境界では除外します。
+
+`operate_prepared_transfer`はPhase 7 experimentalで、公開catalogには含めません。
 
 `operate_prepared_transfer`を有効化する場合も、targetのdestination region内でのserver-confirmed安定、destination閉鎖、source/route開口閉鎖、routine所有のtemporary water/rail power停止、playerのhazard cell外退避、全input/item-use解放をkind固有postconditionにします。passenger入りvehicleをcleanup目的で攻撃破壊せず、target survival/despawnが確認不能なら`unknown`を保持します。
 

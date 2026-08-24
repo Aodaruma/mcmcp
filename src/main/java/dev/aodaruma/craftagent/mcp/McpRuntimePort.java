@@ -85,7 +85,11 @@ public interface McpRuntimePort {
         }
     }
 
-    record ListRoutines() implements RuntimeCommand {
+    record ListRoutines(Map<String, Object> arguments) implements RuntimeCommand {
+        public ListRoutines {
+            arguments = immutableCopy(arguments);
+        }
+
         @Override
         public String toolName() {
             return "list_routines";

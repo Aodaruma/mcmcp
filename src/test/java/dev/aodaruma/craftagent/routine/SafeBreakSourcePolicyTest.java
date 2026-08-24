@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SafeBreakSourcePolicyTest {
     @Test
-    void acceptsOnlyTheFiveAuditedCanonicalVanillaIds() {
+    void acceptsAuditedConstructionAndAllPhaseFiveCropAndLogIds() {
         assertThat(List.of(
                 "minecraft:cobblestone",
                 "minecraft:dirt",
@@ -19,6 +19,10 @@ class SafeBreakSourcePolicyTest {
                 "minecraft:stone"))
                 .allSatisfy(id -> assertThat(
                         SafeBreakSourcePolicy.allowsRegisteredBlockId(id)).isTrue());
+        PhaseFiveWorldSpec.CROPS.values().forEach(adapter -> assertThat(
+                SafeBreakSourcePolicy.allowsRegisteredBlockId(adapter.blockId())).isTrue());
+        PhaseFiveWorldSpec.TREES.keySet().forEach(id -> assertThat(
+                SafeBreakSourcePolicy.allowsRegisteredBlockId(id)).isTrue());
 
         assertThat(List.of(
                 "minecraft:tnt",
@@ -26,6 +30,8 @@ class SafeBreakSourcePolicyTest {
                 "minecraft:chest",
                 "minecraft:ice",
                 "minecraft:netherrack",
+                "minecraft:stripped_oak_log",
+                "minecraft:sugar_cane",
                 "example:stone",
                 "stone"))
                 .allSatisfy(id -> assertThat(
@@ -38,6 +44,10 @@ class SafeBreakSourcePolicyTest {
                 Blocks.COBBLESTONE,
                 Blocks.DIRT,
                 Blocks.GRASS_BLOCK,
+                Blocks.WHEAT,
+                Blocks.BEETROOTS,
+                Blocks.OAK_LOG,
+                Blocks.MANGROVE_LOG,
                 Blocks.OBSIDIAN,
                 Blocks.STONE))
                 .allSatisfy(block -> assertThat(SafeBreakSourcePolicy.allowsLiveState(
@@ -53,6 +63,8 @@ class SafeBreakSourcePolicyTest {
                         block.defaultBlockState(), false)).isFalse());
         assertThat(SafeBreakSourcePolicy.allowsLiveState(
                 Blocks.STONE.defaultBlockState(), true)).isFalse();
+        assertThat(SafeBreakSourcePolicy.allowsLiveState(
+                Blocks.WHEAT.defaultBlockState(), true)).isFalse();
 
         assertThatThrownBy(() -> SafeBreakSourcePolicy.requireLiveState(
                 Blocks.CHEST.defaultBlockState(), true))

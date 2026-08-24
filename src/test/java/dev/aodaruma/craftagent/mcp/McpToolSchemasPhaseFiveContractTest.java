@@ -11,14 +11,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McpToolSchemasPhaseFiveContractTest {
     @Test
-    void getRecipesDescriptorIsReadOnlyAndUsesTheKnownDisplaySchemas() {
+    void getRecipesDescriptorIsReadOnlyAndAdvertisesOnlyItsInputSchema() {
         var tool = CraftAgentToolRegistry.getRecipesTool();
 
         assertThat(tool.name()).isEqualTo("get_recipes");
         assertThat(tool.annotations().readOnlyHint()).isTrue();
         assertThat(tool.annotations().destructiveHint()).isFalse();
         assertThat(tool.inputSchema()).isEqualTo(McpToolSchemas.getRecipesInput());
-        assertThat(tool.outputSchema()).isEqualTo(McpToolSchemas.getRecipesOutput());
+        assertThat(tool.outputSchema()).isNull();
         assertThat(tool.description()).contains("client-known RecipeDisplay").contains("incomplete");
     }
 
@@ -84,6 +84,86 @@ class McpToolSchemasPhaseFiveContractTest {
         recipe.put("shape", null);
 
         assertValid(McpToolSchemas.getRecipesOutput(), envelope);
+    }
+
+    @Test
+    void finitePlanIsDetailedOnlyAndAcceptsOnlyTokenLightBoundedChildren() {
+        Map<String, Object> valid = finitePlanStart("navigate_to");
+
+        assertValid(McpToolSchemas.executePlanStartInput(), valid);
+        assertValid(McpToolSchemas.startRoutineValidationInput(), valid);
+        assertEveryObjectSchemaControlsAdditionalProperties(
+                McpToolSchemas.executePlanStartInput());
+
+        Map<String, Object> extraChildField = deepMutableCopy(valid);
+        Map<String, Object> parameters = object(extraChildField, "parameters");
+        @SuppressWarnings("unchecked")
+        var steps = (List<Map<String, Object>>) parameters.get("steps");
+        object(steps.getFirst(), "arguments").put("completion_intent", "finish_goal");
+        assertInvalid(McpToolSchemas.executePlanStartInput(), extraChildField);
+
+        assertInvalid(McpToolSchemas.executePlanStartInput(), finitePlanStart("stationary_break"));
+    }
+
+    @Test
+    void useItemOnBlockHasAClosedStandaloneTransitionContract() {
+        Map<String, Object> value = McpTestFixtures.fields(
+                "kind", "use_item_on_block",
+                "parameters", McpTestFixtures.fields(
+                        "target", target(),
+                        "expected_before", state("minecraft:dirt"),
+                        "item", "minecraft:wooden_hoe",
+                        "expected_after", McpTestFixtures.fields(
+                                "block", "minecraft:farmland",
+                                "properties", Map.of("moisture", "0"))),
+                "bounds", bounds(0, 30, false),
+                "idempotency_key", "7f7809c5-eae4-48a6-9fea-d50b600d5641");
+
+        assertValid(McpToolSchemas.useItemOnBlockStartInput(), value);
+        assertValid(McpToolSchemas.startRoutineValidationInput(), value);
+        object(value, "parameters").put("hand", "main_hand");
+        assertInvalid(McpToolSchemas.useItemOnBlockStartInput(), value);
+    }
+
+    private static Map<String, Object> finitePlanStart(String childKind) {
+        Map<String, Object> child = McpTestFixtures.fields(
+                "id", "move-to-plot",
+                "op", "action",
+                "kind", childKind,
+                "arguments", McpTestFixtures.fields(
+                        "parameters", McpTestFixtures.fields(
+                                "target", target(),
+                                "horizontal_tolerance_blocks", 0.5D),
+                        "bounds", bounds(1, 30, false)));
+        return McpTestFixtures.fields(
+                "kind", "execute_plan",
+                "parameters", McpTestFixtures.fields(
+                        "plan_id", "farm-pass",
+                        "max_ticks", 72_000,
+                        "steps", List.of(child)),
+                "bounds", Map.of(),
+                "idempotency_key", "7f7809c5-eae4-48a6-9fea-d50b600d5641");
+    }
+
+    private static Map<String, Object> target() {
+        return McpTestFixtures.fields(
+                "dimension", "minecraft:overworld", "x", 1, "y", 64, "z", 2);
+    }
+
+    private static Map<String, Object> state(String block) {
+        return McpTestFixtures.fields("block", block, "properties", Map.of());
+    }
+
+    private static Map<String, Object> bounds(
+            int maxTravelBlocks, int maxDurationSeconds, boolean allowBreak) {
+        return McpTestFixtures.fields(
+                "dimension", "minecraft:overworld",
+                "region", McpTestFixtures.fields(
+                        "min", McpTestFixtures.fields("x", 0, "y", 63, "z", 0),
+                        "max", McpTestFixtures.fields("x", 4, "y", 66, "z", 4)),
+                "max_travel_blocks", maxTravelBlocks,
+                "max_duration_seconds", maxDurationSeconds,
+                "allow_break", allowBreak);
     }
 
     private static Map<String, Object> recipeEnvelope() {

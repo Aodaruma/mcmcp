@@ -114,7 +114,7 @@ Phase 2〜4の`stationary_break`、`break_block`、`apply_block_plan`は、破�
 
 Phase 4 `apply_block_plan`は実装・受入完了しており、移動なしの1 phase・最大64 target、完全なbefore/after BlockState、current-onlyの再確認へ限定します。成功が示すのは、要求したtargetに対するprediction ACKとserver state、および最終same-tick current集合です。通常vanilla操作が引き起こす隣接block更新やgame eventは停止しないため、target外を含むworld全体の無変化保証ではありません。壊れ得るsupportや反応し得る隣接cellも守る必要がある場合、planへ明示してcurrent exact-state検証の対象にします。
 
-通常の`useItemOn`はitem設置よりsupport block自身の操作を先に試すため、Phase 3/4の設置supportは`minecraft:cobblestone / dirt / grass_block / obsidian / smooth_stone / stone`の6 IDに限定します。canonical registry entry、BlockEntityなし、FluidState空をcandidate選定時とpacket直前に再確認し、container、lever、trapdoor等は通常useを呼ぶ前にfail closedにします。
+通常の`useItemOn`はitem設置よりsupport block自身の操作を先に試すため、Phase 3/4の通常設置supportは`minecraft:cobblestone / dirt / grass_block / obsidian / smooth_stone / stone`の6 IDに限定します。farmlandはwheat/carrot/potato/beetrootの完全な初期crop stateを置く場合だけ例外とします。canonical registry entry、BlockEntityなし、FluidState空をcandidate選定時とpacket直前に再確認し、container、lever、trapdoor等は通常useを呼ぶ前にfail closedにします。
 
 ## 観測境界
 
