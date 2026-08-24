@@ -149,6 +149,18 @@ class MinecraftSemanticActionPortTest {
     }
 
     @Test
+    void preparationPrefersSelectedThenHotbarBeforeMainInventory() {
+        assertThat(MinecraftSemanticActionPort.firstPreparingSlot(2, slot -> slot == 2))
+                .isEqualTo(2);
+        assertThat(MinecraftSemanticActionPort.firstPreparingSlot(2, slot -> slot == 7))
+                .isEqualTo(7);
+        assertThat(MinecraftSemanticActionPort.firstPreparingSlot(2, slot -> slot == 12))
+                .isEqualTo(12);
+        assertThat(MinecraftSemanticActionPort.firstPreparingSlot(2, slot -> false))
+                .isEqualTo(-1);
+    }
+
+    @Test
     void interactBlockFreezesExactExpectedStateBeforeAServerOnlyToggle() {
         var beforeState = Blocks.LEVER.defaultBlockState()
                 .setValue(BlockStateProperties.ATTACH_FACE, AttachFace.FLOOR)

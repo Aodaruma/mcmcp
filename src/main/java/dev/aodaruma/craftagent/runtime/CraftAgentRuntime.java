@@ -787,7 +787,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 .map(CraftAgentRuntime::routineCatalogSummary)
                 .toList();
         return Map.of(
-                "catalog_version", "phase-6-compact-v1",
+                "catalog_version", "phase-6-compact-v2",
                 "routines", summaries);
     }
 
@@ -800,7 +800,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         var detailed = new LinkedHashMap<>(entry);
         detailed.put("capabilities", routineCapabilities(kind));
         return Map.of(
-                "catalog_version", "phase-6-compact-v1",
+                "catalog_version", "phase-6-compact-v2",
                 "routines", List.of(Map.copyOf(detailed)));
     }
 
@@ -836,6 +836,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                                 3,
                                 McpToolSchemas.placeBlockStartInput(),
                                 List.of(
+                                        "the exact item is selected from hotbar or staged once from player inventory before dispatch",
+                                        "wheat, carrot, potato, and beetroot items may initially plant an exact age-0 crop above farmland",
                                         "exactly one bounded main-hand placement is dispatched",
                                         "the placement has a covering vanilla prediction ACK",
                                         "the server-verified target state matches expected_after")),
@@ -861,6 +863,8 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                                 3,
                                 McpToolSchemas.useItemOnBlockStartInput(),
                                 List.of(
+                                        "the exact item is selected from hotbar or staged once from player inventory before dispatch",
+                                        "the closed transition tills dirt, grass block, or dirt path to moisture-0 farmland with a vanilla hoe",
                                         "exactly one allowlisted normal-use item action is dispatched",
                                         "the action has a covering vanilla prediction ACK",
                                         "the server-verified target state matches expected_after")),
@@ -887,6 +891,9 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                                 McpToolSchemas.transferItemsStartInput(),
                                 List.of(
                                         "only an automation-opened canonical single chest or barrel is used",
+                                        "minimum_destination_count zero performs a no-mutation bounded content readback",
+                                        "default-only or exact item-ID whole stacks, including damaged tools, can be transferred",
+                                        "a missing requested item reports a bounded list of observed source item IDs for replanning",
                                         "one bounded quick-move segment is never retried blindly",
                                         "success requires a fresh reopened full-content snapshot for both endpoints and an empty cursor")),
                         routineCatalogEntry(
@@ -894,6 +901,7 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                                 5,
                                 McpToolSchemas.tendCropAreaStartInput(),
                                 List.of(
+                                        "only existing declared crop blocks are harvested or replanted; air cells require place_block",
                                         "only declared current-visible cells using the closed vanilla crop adapters are mutated",
                                         "every harvest and replant transition has server-positive block evidence",
                                         "drop collection uncertainty remains explicit")),
@@ -946,18 +954,29 @@ public final class CraftAgentRuntime implements McpRuntimePort {
             case "stationary_break" -> List.of("break one regenerating target", "collect to inventory goal");
             case NavigateToRequest.KIND -> List.of("bounded ground navigation");
             case BreakBlockRequest.KIND -> List.of("break one exact block to air");
-            case PlaceBlockRequest.KIND -> List.of("place one exact block from main hand");
+            case PlaceBlockRequest.KIND -> List.of(
+                    "place one exact block or initially plant one crop",
+                    "auto-stage the exact item from player inventory");
             case InteractBlockRequest.KIND -> List.of("toggle one allowlisted block");
             case InteractEntityRequest.KIND -> List.of("interact with one visible referenced entity");
-            case UseItemOnBlockRequest.KIND -> List.of("apply one allowlisted item to one exact block");
+            case UseItemOnBlockRequest.KIND -> List.of(
+                    "till one exact dirt, grass, or path block with a vanilla hoe",
+                    "auto-stage the exact item from player inventory");
             case ApplyBlockPlanRequest.KIND -> List.of("verify, break, place, or replace up to 64 declared cells");
             case "craft_items" -> List.of("craft a client-known recipe to an inventory goal");
-            case "transfer_items" -> List.of("transfer one item type to or from one container");
-            case "tend_crop_area" -> List.of("harvest and replant declared crop plots");
+            case "transfer_items" -> List.of(
+                    "open, transfer one item type to or from one container, verify, and close",
+                    "inspect bounded source item choices without mutation by setting the destination goal to zero",
+                    "report bounded source item choices when the requested item is absent");
+            case "tend_crop_area" -> List.of(
+                    "harvest and replant existing declared crop plots",
+                    "use place_block for initial planting into air");
             case "harvest_tree_area" -> List.of("harvest and replant declared visible tree cells");
             case "sleep_at_bed" -> List.of("sleep at one declared bed and return");
             case "survey_area" -> List.of("visit declared waypoints and observe declared samples");
-            case "execute_plan" -> List.of("execute a bounded typed sequence with finite loops and checks");
+            case "execute_plan" -> List.of(
+                    "execute a bounded typed sequence with finite loops and checks",
+                    "compose transfer_items, use_item_on_block, and place_block for farming");
             default -> throw new IllegalArgumentException("kind is not an available routine");
         };
     }
@@ -1608,9 +1627,6 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         if (terminal.finalizationFailure() != null) {
             arming.lock("routine_finalization_failed");
         }
-        else if (terminal.state() == RoutineState.FAILED) {
-            arming.lock("routine_failed_" + terminal.failure().code().toLowerCase(java.util.Locale.ROOT));
-        }
     }
 
     private boolean stopActiveRoutineForEmergency(
@@ -1832,6 +1848,10 @@ public final class CraftAgentRuntime implements McpRuntimePort {
     private void applyCompletionIntentAfterTerminal(RoutineSnapshot terminal) {
         String completionIntent = goalContinuation.consumeIntent(terminal.routineId());
         if (completionIntent == null) {
+            if (terminal.state() == RoutineState.FAILED) {
+                arming.lock("routine_failed_"
+                        + terminal.failure().code().toLowerCase(java.util.Locale.ROOT));
+            }
             return;
         }
         boolean succeeded = terminal.state() == RoutineState.SUCCEEDED
@@ -1840,8 +1860,25 @@ public final class CraftAgentRuntime implements McpRuntimePort {
         if (succeeded && GoalContinuationSession.CONTINUE_GOAL.equals(completionIntent)) {
             return;
         }
+        if (terminal.state() == RoutineState.FAILED
+                && recoverableContinuationFailure(
+                        completionIntent, terminal.failure(), terminal.finalizationFailure())) {
+            return;
+        }
         goalContinuation.clear();
         arming.lock(succeeded ? "goal_finished" : "goal_aborted");
+    }
+
+    static boolean recoverableContinuationFailure(
+            String completionIntent,
+            RoutineFailure failure,
+            RoutineFailure finalizationFailure) {
+        return GoalContinuationSession.CONTINUE_GOAL.equals(completionIntent)
+                && failure != null
+                && finalizationFailure == null
+                && !failure.requiresUser()
+                && failure.category() != RoutineFailure.Category.SAFETY
+                && failure.recovery() == RoutineFailure.Recovery.REPLAN;
     }
 
     static boolean shouldRetryFinalizationCleanup(FinalizationRetryQueue.Incident incident) {
@@ -2574,7 +2611,11 @@ public final class CraftAgentRuntime implements McpRuntimePort {
                 var stack = objectArgument(parameters, "stack");
                 requireExactKeys(stack, "transfer_items stack", Set.of("item", "stack_policy"));
                 requireRegisteredItemId(stringArgument(stack, "item"));
-                requireLiteral(stack, "stack_policy", "default_components_only");
+                String stackPolicy = stringArgument(stack, "stack_policy");
+                if (!Set.of("default_components_only", "item_id_any_components")
+                        .contains(stackPolicy)) {
+                    throw new IllegalArgumentException("transfer stack policy is unsupported");
+                }
                 var goal = objectArgument(parameters, "goal");
                 requireExactKeys(goal, "transfer_items goal", Set.of("minimum_destination_count"));
                 expectedUnits = requireRange(

@@ -344,7 +344,7 @@ queryは`result_item`または`result_tag`のclosed unionです。返すのは�
 
 ## `list_routines`
 
-引数なしでは各kindの`kind / phase / experimental / capabilities`だけを返します。特定kindの厳密な開始形式が必要なときだけ`{"kind":"tend_crop_area"}`のように呼び、その1件のclosed input schema、bounds、postconditionを取得します。巨大schemaを全件まとめて返しません。catalog versionは`phase-6-compact-v1`です。
+引数なしでは各kindの`kind / phase / experimental / capabilities`だけを返します。特定kindの厳密な開始形式が必要なときだけ`{"kind":"tend_crop_area"}`のように呼び、その1件のclosed input schema、bounds、postconditionを取得します。巨大schemaを全件まとめて返しません。catalog versionは`phase-6-compact-v2`です。
 
 `start_routine`の`tools/list`上のschemaも共通envelopeだけです。kind固有schemaは上記on-demand catalogから取得し、serverは広告用の浅いschemaとは別に完全schemaを使ってpre-dispatch検証します。
 
@@ -492,10 +492,12 @@ Phase 3 actionの境界は次のとおりです。
 
 - `navigate_to`は短い平坦な直線路だけを扱います。次cellがCURRENTでなければ移動keyをneutralに保ったまま通常の視点を経路方向へ徐々に向けて再観測し、足元・頭上・床がCURRENTになってから歩行します。可視mob/playerが次cellを占有している間は40 client tickずつ最大3 window待機・再観測し、解消しなければ`REPLAN`します。jump/sprint、段差越え、迂回pathfinding、block破壊は行いません。loadedな足元・頭上空間、通常の安定床または15/16高のfarmland/dirt path、fluid/hazard不在、bounds/travel上限を毎tick確認します。positiveなserver ACKはないため、入力停止後、tolerance内、安定床上、低速、位置drift上限内を10 client tick連続で満たし、dispatch後のposition/rotation/motion correctionがない場合だけ`server-reconciled`とします
 - `break_block`、`place_block`、`interact_block`は、実際のcrosshair/hit、通常reach、liveな`expected_before`を操作直前に再確認し、vanilla prediction ACKとサーバー由来の完全なBlockStateが要求した`expected_after`と一致して初めて成功します。Phase 3 v1の`break_block.expected_after`はプロパティなしの`minecraft:air`固定です
-- `place_block`はmain handの単一cell `BlockItem`だけを扱い、bed/double-height itemを除外します。通常supportは上記のclosed 6-ID allowlist、farmlandはwheat/carrot/potato/beetrootの完全な初期crop stateを置く場合だけ許可し、candidate判定時とpacket直前に再確認します
+- `place_block`は単一cell `BlockItem`だけを扱い、bed/double-height itemを除外します。exact itemがhotbarになければmain inventoryから現在slotへVanilla `SWAP`を1回だけ送って準備します。通常supportは上記のclosed 6-ID allowlist、farmlandはwheat/carrot/potato/beetrootの完全な初期crop stateを置く場合だけ許可し、candidate判定時とpacket直前に再確認します
 - `interact_block`はlever、fence gate、vanillaのwooden trapdoorだけを許可します。empty main handかつnon-sneakを要求し、door、button、container、未知MOD blockは除外します。`expected_after`にはleverの`powered`またはgate/trapdoorの`open`だけを反転し、他の全propertyを維持した完全な同一block stateが必要です
 - `interact_entity`はcurrent world session/dimensionで現在可視な短寿命opaque `entity_ref`が指すadult cow、main handの`minecraft:bucket`、目標`minecraft:milk_bucket`だけを許可します。crosshair、LOS、通常reach、boundsをdispatch直前に再確認し、1回だけ通常interactionを送ります。成功にはdispatch後のfreshなselected-slot inventory syncと絶対目標countが必要で、retryしません
-- `use_item_on_block`は単一target、完全な`expected_before / expected_after`、使用itemを宣言し、通常useを1回だけ送ります。現在のclosed transitionはvanilla hoeによる`dirt / dirt_path / grass_block`から`farmland{moisture=0}`への耕作だけです
+- `use_item_on_block`は単一target、完全な`expected_before / expected_after`、使用itemを宣言し、hotbarになければmain inventoryから自動準備して通常useを1回だけ送ります。現在のclosed transitionはvanilla hoeによる`dirt / dirt_path / grass_block`から`farmland{moisture=0}`への耕作だけです
+- `transfer_items.stack_policy`は`default_components_only`または`item_id_any_components`です。後者は耐久減少・名前・enchantment等を保持したまま、指定item IDの1 whole stackを移送し、両endpointのitem ID総数差分で再読取確認します。`minimum_destination_count=0`なら移送せず、通常interactionで開閉・full readbackした最大16件の`available_source_items`を成功証拠へ返します。指定itemが見つからない場合も同じ候補を失敗証拠へ返します
+- `tend_crop_area`は既存crop blockの収穫・再植付け専用です。airへの初回植付けは`place_block`を使い、複数cellは`execute_plan`に束ねます
 - `apply_block_plan`の完全な契約は上記専用節に従います。Phase 2〜4の破壊操作は共通の5 ID safe-break allowlistを使います
 
 Phase 5の6 kindはclosed schemaで実装済みです。特に次の境界を広げません。

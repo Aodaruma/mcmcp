@@ -435,7 +435,9 @@ public final class McpToolSchemas {
                 "expected_state", fullBlockState()), "target", "expected_state");
         Map<String, Object> stack = closedObject(fields(
                 "item", registryId(),
-                "stack_policy", constant("default_components_only")), "item", "stack_policy");
+                "stack_policy", enumString(
+                        "default_components_only", "item_id_any_components")),
+                "item", "stack_policy");
         Map<String, Object> goal = closedObject(fields(
                 "minimum_destination_count", integer(0, 2_304)), "minimum_destination_count");
         Map<String, Object> parameters = closedObject(fields(
@@ -1092,7 +1094,7 @@ public final class McpToolSchemas {
                 "postconditions", array(string(1, 160, null), 1, 16, true)),
                 "kind", "phase", "experimental", "capabilities");
         Map<String, Object> data = closedObject(fields(
-                "catalog_version", constant("phase-6-compact-v1"),
+                "catalog_version", constant("phase-6-compact-v2"),
                 "routines", array(catalogEntry, 1, ROUTINE_KINDS.size(), true)),
                 "catalog_version", "routines");
         return envelope("list_routines", data);

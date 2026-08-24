@@ -23,6 +23,8 @@ import net.minecraft.world.entity.animal.cow.Cow;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.item.BedItem;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.DoubleHighBlockItem;
@@ -317,19 +319,35 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                 UUID.randomUUID(), request.kind(), frame.clientTick(), frame.observationRevision(),
                 leaseExpiresAtClientTick, frame.positionCorrectionRevision());
         var player = Objects.requireNonNull(minecraft.player);
-        int ownedSlot = preparationSlot(player, request);
         List<Vec3> aimPoints = aimPoints(minecraft, request);
-        RoutineFailure preparationFailure = ownedSlot < 0
-                ? failure("REQUIRED_ITEM_NOT_IN_HOTBAR", RoutineFailure.Category.PRECONDITION,
+        int sourceSlot = preparationInventorySlot(player, request);
+        int ownedSlot = sourceSlot;
+        RoutineFailure preparationFailure = sourceSlot < 0
+                ? failure(request instanceof InteractBlockRequest
+                                ? "EMPTY_HAND_SLOT_UNAVAILABLE"
+                                : "REQUIRED_ITEM_NOT_IN_INVENTORY",
+                        RoutineFailure.Category.PRECONDITION,
                         false, RoutineFailure.Recovery.REPLAN,
-                        Map.of("existing_hotbar_slot", true),
-                        Map.of("existing_hotbar_slot", false))
+                        Map.of("existing_player_inventory_slot", true),
+                        Map.of("existing_player_inventory_slot", false))
                 : aimPoints.isEmpty()
                         ? failure("AIM_RAYCAST_UNAVAILABLE", RoutineFailure.Category.PRECONDITION,
                                 false, RoutineFailure.Recovery.REPLAN,
                                 Map.of("reachable_aim_candidate", true),
                                 Map.of("reachable_aim_candidate", false))
                         : null;
+        if (preparationFailure == null && sourceSlot >= Inventory.getSelectionSize()) {
+            ownedSlot = player.getInventory().getSelectedSlot();
+            if (!stageIntoSelectedHotbar(minecraft, player, sourceSlot, request)) {
+                preparationFailure = failure("INVENTORY_STAGE_NOT_APPLIED",
+                        RoutineFailure.Category.EXTERNAL, false,
+                        RoutineFailure.Recovery.REPLAN,
+                        Map.of("selected_hotbar_contains_required_item", true),
+                        Map.of("selected_hotbar_contains_required_item", false,
+                                "source_inventory_slot", sourceSlot,
+                                "selected_hotbar_slot", ownedSlot));
+            }
+        }
         NavigationViewLease view = null;
         if (preparationFailure == null) {
             view = NavigationViewLease.acquire(player, attempt.attemptId());
@@ -766,13 +784,8 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             throw new ClientPredictionSignals.PredictionBridgeException(
                     "block item use did not issue exactly one prediction");
         }
-        if (!request.expectedAfter().matches(fingerprint(level.getBlockState(position)))) {
-            active.failure = failure("PREDICTED_POSTCONDITION_MISMATCH",
-                    RoutineFailure.Category.DIVERGENCE, false,
-                    RoutineFailure.Recovery.REPLAN,
-                    stateMap(request.expectedAfter()),
-                    stateMap(fingerprint(level.getBlockState(position))));
-        }
+        // Hoe use is server-authoritative and need not mutate ClientLevel synchronously.
+        // The prediction latch below already requires both the matching server state and ACK.
         active.safeToRetry = false;
     }
 
@@ -1376,21 +1389,76 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                 || request instanceof InteractBlockRequest;
     }
 
-    private static int preparationSlot(LocalPlayer player, SemanticActionRequest request) {
+    private static int preparationInventorySlot(
+            LocalPlayer player, SemanticActionRequest request) {
         var inventory = player.getInventory();
         if (request instanceof BreakBlockRequest) {
             return inventory.getSelectedSlot();
         }
-        int selected = inventory.getSelectedSlot();
-        if (slotPrepares(inventory.getItem(selected), request)) {
-            return selected;
+        return firstPreparingSlot(
+                inventory.getSelectedSlot(),
+                slot -> slotPrepares(inventory.getItem(slot), request));
+    }
+
+    static int firstPreparingSlot(
+            int selectedSlot, java.util.function.IntPredicate prepares) {
+        Objects.requireNonNull(prepares, "prepares");
+        if (selectedSlot < 0 || selectedSlot >= Inventory.getSelectionSize()) {
+            throw new IllegalArgumentException("selected hotbar slot must be 0..8");
+        }
+        if (prepares.test(selectedSlot)) {
+            return selectedSlot;
         }
         for (int slot = 0; slot < Inventory.getSelectionSize(); slot++) {
-            if (slot != selected && slotPrepares(inventory.getItem(slot), request)) {
+            if (slot != selectedSlot && prepares.test(slot)) {
+                return slot;
+            }
+        }
+        for (int slot = Inventory.getSelectionSize(); slot < Inventory.INVENTORY_SIZE; slot++) {
+            if (prepares.test(slot)) {
                 return slot;
             }
         }
         return -1;
+    }
+
+    private static boolean stageIntoSelectedHotbar(
+            Minecraft minecraft,
+            LocalPlayer player,
+            int sourceInventorySlot,
+            SemanticActionRequest request) {
+        var inventory = player.getInventory();
+        int selectedSlot = inventory.getSelectedSlot();
+        if (sourceInventorySlot < Inventory.getSelectionSize()
+                || sourceInventorySlot >= Inventory.INVENTORY_SIZE
+                || player.containerMenu != player.inventoryMenu
+                || !player.inventoryMenu.getCarried().isEmpty()) {
+            return false;
+        }
+        int sourceMenuSlot = -1;
+        for (int slot = InventoryMenu.INV_SLOT_START;
+                slot < player.inventoryMenu.slots.size(); slot++) {
+            var candidate = player.inventoryMenu.slots.get(slot);
+            if (candidate.container == inventory
+                    && candidate.getContainerSlot() == sourceInventorySlot) {
+                sourceMenuSlot = slot;
+                break;
+            }
+        }
+        if (sourceMenuSlot < 0 || minecraft.gameMode == null) {
+            return false;
+        }
+        try {
+            minecraft.gameMode.handleContainerInput(
+                    player.inventoryMenu.containerId,
+                    sourceMenuSlot,
+                    selectedSlot,
+                    ContainerInput.SWAP,
+                    player);
+        } catch (RuntimeException | LinkageError failure) {
+            return false;
+        }
+        return slotPrepares(inventory.getItem(selectedSlot), request);
     }
 
     private static boolean slotPrepares(

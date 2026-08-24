@@ -14,6 +14,7 @@ import dev.aodaruma.craftagent.routine.InteractEntityRequest;
 import dev.aodaruma.craftagent.routine.NavigateToRequest;
 import dev.aodaruma.craftagent.routine.PlaceBlockRequest;
 import dev.aodaruma.craftagent.routine.RoutineEventRing;
+import dev.aodaruma.craftagent.routine.RoutineFailure;
 import dev.aodaruma.craftagent.routine.RoutineManager;
 import dev.aodaruma.craftagent.routine.RoutineProgress;
 import dev.aodaruma.craftagent.routine.SemanticActionPort;
@@ -358,7 +359,7 @@ class CraftAgentRuntimeHardeningTest {
     void advertisesCompactRoutineSummariesAndOneOnDemandSchema() throws Exception {
         var catalog = CraftAgentRuntime.routineCatalog();
 
-        assertThat(catalog).containsEntry("catalog_version", "phase-6-compact-v1");
+        assertThat(catalog).containsEntry("catalog_version", "phase-6-compact-v2");
         @SuppressWarnings("unchecked")
         var entries = (List<Map<String, Object>>) catalog.get("routines");
         assertThat(entries).hasSize(15);
@@ -997,6 +998,43 @@ class CraftAgentRuntimeHardeningTest {
 
         assertThat(cleanupAttempts)
                 .hasValue(FinalizationRetryQueue.MAX_AUTOMATIC_ATTEMPTS);
+    }
+
+    @Test
+    void continuedGoalKeepsArmingOnlyForSafeReplanFailures() {
+        var replan = new RoutineFailure(
+                RoutineFailure.Category.PRECONDITION,
+                "ITEM_NOT_FOUND",
+                false,
+                RoutineFailure.Recovery.REPLAN,
+                RoutineFailure.Scope.ROUTINE,
+                0,
+                Map.of(),
+                Map.of(),
+                Map.of(),
+                List.of("inventory"),
+                false);
+        var safety = new RoutineFailure(
+                RoutineFailure.Category.SAFETY,
+                "THREAT_VISIBLE",
+                false,
+                RoutineFailure.Recovery.REPLAN,
+                RoutineFailure.Scope.ROUTINE,
+                0,
+                Map.of(),
+                Map.of(),
+                Map.of(),
+                List.of("player"),
+                false);
+
+        assertThat(CraftAgentRuntime.recoverableContinuationFailure(
+                GoalContinuationSession.CONTINUE_GOAL, replan, null)).isTrue();
+        assertThat(CraftAgentRuntime.recoverableContinuationFailure(
+                GoalContinuationSession.FINISH_GOAL, replan, null)).isFalse();
+        assertThat(CraftAgentRuntime.recoverableContinuationFailure(
+                GoalContinuationSession.CONTINUE_GOAL, safety, null)).isFalse();
+        assertThat(CraftAgentRuntime.recoverableContinuationFailure(
+                GoalContinuationSession.CONTINUE_GOAL, replan, replan)).isFalse();
     }
 
     private static RoutineSnapshot terminalSnapshot() {

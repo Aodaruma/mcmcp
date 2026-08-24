@@ -440,11 +440,16 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     Map.of("menu_type", snapshot.menuTypeId()));
             return;
         }
-        int hash = defaultStackHash(transfer.item());
+        int hash = transfer.defaultComponentsOnly() ? defaultStackHash(transfer.item()) : 0;
         var layout = layout(menu, player.getInventory());
-        int playerCount = countExact(snapshot.slots(), layout.playerSlots(), transfer.item(), hash);
-        int containerCount = countExact(
-                snapshot.slots(), layout.containerSlots(), transfer.item(), hash);
+        int playerCount = countTransfer(
+                snapshot.slots(), layout.playerSlots(), transfer.item(), hash,
+                transfer.defaultComponentsOnly());
+        int containerCount = countTransfer(
+                snapshot.slots(), layout.containerSlots(), transfer.item(), hash,
+                transfer.defaultComponentsOnly());
+        List<Integer> sourceSlots = transfer.playerToContainer()
+                ? layout.playerSlots() : layout.containerSlots();
         int source = transfer.playerToContainer() ? playerCount : containerCount;
         int destination = transfer.playerToContainer() ? containerCount : playerCount;
 
@@ -478,13 +483,15 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 return;
             }
         } else if (destination >= transfer.minimumDestinationCount()) {
-            succeed(state, destination, Map.of(
-                    "source_count_before", source,
-                    "source_count_after", source,
-                    "destination_count_before", destination,
-                    "destination_count_after", destination,
-                    "transferred", 0,
-                    "full_readback", true));
+            var evidence = new LinkedHashMap<String, Object>();
+            evidence.put("source_count_before", source);
+            evidence.put("source_count_after", source);
+            evidence.put("destination_count_before", destination);
+            evidence.put("destination_count_after", destination);
+            evidence.put("transferred", 0);
+            evidence.put("full_readback", true);
+            evidence.putAll(availableItemEvidence(snapshot.slots(), sourceSlots, 16));
+            succeed(state, destination, evidence);
             return;
         }
 
@@ -497,15 +504,17 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                             "transferred", state.completedUnits));
             return;
         }
-        List<Integer> sourceSlots = transfer.playerToContainer()
-                ? layout.playerSlots() : layout.containerSlots();
-        var candidate = chooseFullStackSlot(
-                snapshot.slots(), sourceSlots, transfer.item(), hash, remaining);
+        var candidate = chooseTransferSlot(
+                snapshot.slots(), sourceSlots, transfer.item(), hash, remaining,
+                transfer.defaultComponentsOnly());
         if (candidate.isEmpty()) {
+            var observed = new LinkedHashMap<String, Object>();
+            observed.put("source_count", source);
+            observed.putAll(availableItemEvidence(snapshot.slots(), sourceSlots, 16));
             fail(state, "TRANSFER_FULL_STACK_UNAVAILABLE", RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
                     Map.of("item", transfer.item(), "maximum_remaining", remaining),
-                    Map.of("source_count", source));
+                    observed);
             return;
         }
         int slot = candidate.orElseThrow();
@@ -775,7 +784,11 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         var container = map(parameters.get("container"), "container");
         var stack = map(parameters.get("stack"), "stack");
         var goal = map(parameters.get("goal"), "goal");
-        requireDefaultComponents(stack, "stack");
+        String stackPolicy = string(stack.get("stack_policy"), "stack.stack_policy");
+        if (!"default_components_only".equals(stackPolicy)
+                && !"item_id_any_components".equals(stackPolicy)) {
+            throw new IllegalArgumentException("unsupported transfer stack policy");
+        }
         String direction = string(parameters.get("direction"), "direction");
         if (!"player_to_container".equals(direction)
                 && !"container_to_player".equals(direction)) {
@@ -784,6 +797,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         return new TransferParameters(
                 "player_to_container".equals(direction),
                 string(stack.get("item"), "stack.item"),
+                stackPolicy,
                 integer(goal.get("minimum_destination_count"),
                         "goal.minimum_destination_count"),
                 integer(parameters.get("max_transfer_count"), "max_transfer_count"),
@@ -979,6 +993,83 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         return Optional.empty();
     }
 
+    static int countTransfer(
+            List<ContainerSyncSignals.StackFingerprint> stacks,
+            List<Integer> slots,
+            String item,
+            int defaultHash,
+            boolean defaultComponentsOnly) {
+        if (defaultComponentsOnly) {
+            return countExact(stacks, slots, item, defaultHash);
+        }
+        int count = 0;
+        for (int slot : slots) {
+            if (slot < 0 || slot >= stacks.size()) {
+                throw new IllegalArgumentException("slot is outside the full snapshot");
+            }
+            var stack = stacks.get(slot);
+            if (!stack.empty() && item.equals(stack.itemId())) {
+                count = Math.addExact(count, stack.count());
+            }
+        }
+        return count;
+    }
+
+    static Optional<Integer> chooseTransferSlot(
+            List<ContainerSyncSignals.StackFingerprint> stacks,
+            List<Integer> sourceSlots,
+            String item,
+            int defaultHash,
+            int maximumCount,
+            boolean defaultComponentsOnly) {
+        if (defaultComponentsOnly) {
+            return chooseFullStackSlot(stacks, sourceSlots, item, defaultHash, maximumCount);
+        }
+        if (maximumCount < 1) {
+            return Optional.empty();
+        }
+        for (int slot : sourceSlots) {
+            if (slot < 0 || slot >= stacks.size()) {
+                throw new IllegalArgumentException("slot is outside the full snapshot");
+            }
+            var stack = stacks.get(slot);
+            if (!stack.empty() && item.equals(stack.itemId())
+                    && stack.count() > 0 && stack.count() <= maximumCount) {
+                return Optional.of(slot);
+            }
+        }
+        return Optional.empty();
+    }
+
+    static Map<String, Object> availableItemEvidence(
+            List<ContainerSyncSignals.StackFingerprint> stacks,
+            List<Integer> sourceSlots,
+            int maximumItems) {
+        Objects.requireNonNull(stacks, "stacks");
+        Objects.requireNonNull(sourceSlots, "sourceSlots");
+        if (maximumItems < 1) {
+            throw new IllegalArgumentException("maximumItems must be positive");
+        }
+        var counts = new java.util.TreeMap<String, Integer>();
+        for (int slot : sourceSlots) {
+            if (slot < 0 || slot >= stacks.size()) {
+                throw new IllegalArgumentException("slot is outside the full snapshot");
+            }
+            var stack = stacks.get(slot);
+            if (!stack.empty() && stack.count() > 0) {
+                counts.merge(stack.itemId(), stack.count(), Math::addExact);
+            }
+        }
+        var items = counts.entrySet().stream()
+                .limit(maximumItems)
+                .map(entry -> Map.<String, Object>of(
+                        "item", entry.getKey(), "count", entry.getValue()))
+                .toList();
+        return Map.of(
+                "available_source_items", items,
+                "available_source_items_truncated", counts.size() > maximumItems);
+    }
+
     private static boolean matchesDefaultStack(
             ContainerSyncSignals.StackFingerprint stack,
             String item,
@@ -1097,14 +1188,20 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     record TransferParameters(
             boolean playerToContainer,
             String item,
+            String stackPolicy,
             int minimumDestinationCount,
             int maxTransferCount,
             BlockTarget target,
             BlockStateFingerprint expectedState) implements ParsedParameters {
         TransferParameters {
             Objects.requireNonNull(item, "item");
+            Objects.requireNonNull(stackPolicy, "stackPolicy");
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(expectedState, "expectedState");
+            if (!"default_components_only".equals(stackPolicy)
+                    && !"item_id_any_components".equals(stackPolicy)) {
+                throw new IllegalArgumentException("unsupported transfer stack policy");
+            }
             if (minimumDestinationCount < 0 || minimumDestinationCount > 2_304
                     || maxTransferCount < 1 || maxTransferCount > 2_304) {
                 throw new IllegalArgumentException("transfer limits are outside the v1 contract");
@@ -1114,6 +1211,10 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         @Override
         public String menuTypeId() {
             return SINGLE_CONTAINER_MENU;
+        }
+
+        boolean defaultComponentsOnly() {
+            return "default_components_only".equals(stackPolicy);
         }
     }
 

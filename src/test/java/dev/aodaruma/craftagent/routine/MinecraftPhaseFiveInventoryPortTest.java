@@ -43,6 +43,25 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
+    void unavailableTransferReportsBoundedSourceItemChoices() {
+        var stacks = List.of(
+                stack("minecraft:wheat_seeds", 32, DEFAULT_HASH),
+                stack("minecraft:diamond_hoe", 1, 99),
+                stack("minecraft:wheat_seeds", 16, DEFAULT_HASH),
+                StackFingerprint.EMPTY);
+
+        assertThat(MinecraftPhaseFiveInventoryPort.availableItemEvidence(
+                stacks, List.of(0, 1, 2, 3), 16))
+                .containsEntry("available_source_items_truncated", false)
+                .containsEntry("available_source_items", List.of(
+                        java.util.Map.of("item", "minecraft:diamond_hoe", "count", 1),
+                        java.util.Map.of("item", "minecraft:wheat_seeds", "count", 48)));
+        assertThat(MinecraftPhaseFiveInventoryPort.availableItemEvidence(
+                stacks, List.of(0, 1, 2, 3), 1))
+                .containsEntry("available_source_items_truncated", true);
+    }
+
+    @Test
     void transferReadbackRequiresEqualFullStackDecreaseAndIncrease() {
         var confirmed = MinecraftPhaseFiveInventoryPort.verifyTransferReadback(
                 40, 3, 24, 19, 16, 18);
@@ -53,6 +72,24 @@ class MinecraftPhaseFiveInventoryPortTest {
                 40, 3, 24, 18, 16, 18).exactMove()).isFalse();
         assertThat(MinecraftPhaseFiveInventoryPort.verifyTransferReadback(
                 40, 3, 25, 19, 16, 18).exactMove()).isFalse();
+    }
+
+    @Test
+    void itemIdTransferCanBindAndMoveADamagedToolStack() {
+        var stacks = List.of(
+                stack("minecraft:diamond_hoe", 1, 99),
+                stack("minecraft:diamond_hoe", 1, DEFAULT_HASH),
+                stack("minecraft:wheat_seeds", 16, DEFAULT_HASH));
+
+        assertThat(MinecraftPhaseFiveInventoryPort.countTransfer(
+                stacks, List.of(0, 1, 2), "minecraft:diamond_hoe", 0, false))
+                .isEqualTo(2);
+        assertThat(MinecraftPhaseFiveInventoryPort.chooseTransferSlot(
+                stacks, List.of(0, 1, 2), "minecraft:diamond_hoe", 0, 1, false))
+                .contains(0);
+        assertThat(MinecraftPhaseFiveInventoryPort.chooseTransferSlot(
+                stacks, List.of(0, 1, 2), "minecraft:diamond_hoe", DEFAULT_HASH, 1, true))
+                .contains(1);
     }
 
     @Test
