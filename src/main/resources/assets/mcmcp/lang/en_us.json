@@ -1,0 +1,13 @@
+{
+  "key.categories.mcmcp": "MCMCP",
+  "key.categories.mcmcp.controls": "MCMCP",
+  "key.mcmcp.emergency_stop": "Emergency stop",
+  "key.mcmcp.toggle_lock": "Toggle local arming",
+  "gui.mcmcp.automation.active": "Automation active",
+  "gui.mcmcp.automation.idle": "Armed and waiting",
+  "gui.mcmcp.automation.disabled": "MCP automation disabled",
+  "gui.mcmcp.automation.confirm_enable": "Confirm re-enable",
+  "gui.mcmcp.automation.tooltip.disable": "Click to stop automation and disable MCP control for this world",
+  "gui.mcmcp.automation.tooltip.enable": "Click, then click again within 5 seconds to re-enable",
+  "gui.mcmcp.automation.tooltip.confirm_enable": "Click again to re-enable MCP automation without a time limit"
+}

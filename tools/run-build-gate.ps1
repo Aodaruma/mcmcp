@@ -19,7 +19,7 @@ $manifestSchema = @'
   "additionalProperties": false,
   "required": ["schema", "id", "max_total_seconds", "steps"],
   "properties": {
-    "schema": {"const": "craftagent.dev-build-gate/v1"},
+    "schema": {"const": "mcmcp.dev-build-gate/v1"},
     "id": {"$ref": "#/definitions/id"},
     "max_total_seconds": {"type": "integer", "minimum": 1, "maximum": 900},
     "steps": {
@@ -401,19 +401,19 @@ function Initialize-Mcp([string] $Token, [string] $Endpoint) {
     $reply = Invoke-Rpc 'initialize' ([ordered]@{
             protocolVersion = $script:ProtocolVersion
             capabilities = [ordered]@{}
-            clientInfo = [ordered]@{ name = 'craftagent-dev-build-gate'; version = '1' }
+            clientInfo = [ordered]@{ name = 'mcmcp-dev-build-gate'; version = '1' }
         }) $Token $Endpoint
     if ($reply.result.protocolVersion -cne $script:ProtocolVersion) { throw 'Unsupported MCP protocol version.' }
     [void] (Invoke-Rpc 'notifications/initialized' $null $Token $Endpoint -Notification -WithProtocol)
 }
 
 function Read-Token([string] $Directory) {
-    $path = Join-Path $Directory 'config/craftagent/bearer.token'
+    $path = Join-Path $Directory 'config/mcmcp/mcp-token'
     if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).Length -gt 256) {
-        throw 'CraftAgent bearer token file is missing or invalid.'
+        throw 'MCMCP bearer token file is missing or invalid.'
     }
     $token = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8).Trim()
-    if ($token -cnotmatch '^[A-Za-z0-9_-]{43,256}$') { throw 'CraftAgent bearer token file is malformed.' }
+    if ($token -cnotmatch '^[A-Za-z0-9_-]{43,256}$') { throw 'MCMCP bearer token file is malformed.' }
     return $token
 }
 

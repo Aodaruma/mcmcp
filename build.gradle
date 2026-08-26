@@ -9,7 +9,7 @@ import java.util.jar.Manifest
 plugins {
     id 'java-library'
     id 'maven-publish'
-    id 'net.neoforged.moddev' version '2.0.144'
+    id 'net.neoforged.moddev' version '2.0.143'
     id 'idea'
 }
 
@@ -17,7 +17,7 @@ version = mod_version
 group = mod_group_id
 
 base {
-    archivesName = mod_id
+    archivesName = "${mod_id}-neoforge-${minecraft_version}"
 }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(25)
@@ -70,10 +70,10 @@ neoForge {
             client()
             gameDirectory = file('run/harness-client')
             loadedMods = [mods."${mod_id}", mods."${fixture_mod_id}"]
-            systemProperty 'craftagent.testHarness', 'true'
+            systemProperty 'mcmcp.testHarness', 'true'
             systemProperty 'neoforge.enabledGameTestNamespaces', fixture_mod_id
 
-            def phase3Mode = providers.gradleProperty('craftagentFixturePhase3Mode')
+            def phase3Mode = providers.gradleProperty('mcmcpFixturePhase3Mode')
                     .map { value -> value.strip().toLowerCase(Locale.ROOT) }
             if (phase3Mode.isPresent()) {
                 def requestedMode = phase3Mode.get()
@@ -85,23 +85,23 @@ neoForge {
                 ]
                 if (!supportedModes.contains(requestedMode)) {
                     throw new GradleException(
-                            "Unsupported craftagentFixturePhase3Mode '${requestedMode}'; expected one of ${supportedModes}")
+                            "Unsupported mcmcpFixturePhase3Mode '${requestedMode}'; expected one of ${supportedModes}")
                 }
 
                 programArgument '--quickPlaySingleplayer'
                 programArgument 'New World'
-                systemProperty 'craftagent.fixture.phase3.mode', requestedMode
+                systemProperty 'mcmcp.fixture.phase3.mode', requestedMode
                 if (requestedMode != 'reset') {
-                    systemProperty 'craftagent.fixture.phase3.autoArm', 'true'
+                    systemProperty 'mcmcp.fixture.phase3.autoArm', 'true'
                 }
             }
 
-            def phase5Mode = providers.gradleProperty('craftagentFixturePhase5Mode')
+            def phase5Mode = providers.gradleProperty('mcmcpFixturePhase5Mode')
                     .map { value -> value.strip().toLowerCase(Locale.ROOT) }
             if (phase5Mode.isPresent()) {
                 if (phase3Mode.isPresent()) {
                     throw new GradleException(
-                            'craftagentFixturePhase3Mode and craftagentFixturePhase5Mode are mutually exclusive')
+                            'mcmcpFixturePhase3Mode and mcmcpFixturePhase5Mode are mutually exclusive')
                 }
                 def requestedMode = phase5Mode.get()
                 def supportedModes = [
@@ -110,14 +110,14 @@ neoForge {
                 ]
                 if (!supportedModes.contains(requestedMode)) {
                     throw new GradleException(
-                            "Unsupported craftagentFixturePhase5Mode '${requestedMode}'; expected one of ${supportedModes}")
+                            "Unsupported mcmcpFixturePhase5Mode '${requestedMode}'; expected one of ${supportedModes}")
                 }
 
                 programArgument '--quickPlaySingleplayer'
                 programArgument 'New World'
-                systemProperty 'craftagent.fixture.phase5.mode', requestedMode
+                systemProperty 'mcmcp.fixture.phase5.mode', requestedMode
                 if (!['recipes', 'reset'].contains(requestedMode)) {
-                    systemProperty 'craftagent.fixture.phase5.autoArm', 'true'
+                    systemProperty 'mcmcp.fixture.phase5.autoArm', 'true'
                 }
             }
         }
@@ -133,7 +133,7 @@ neoForge {
             type = 'gameTestServer'
             gameDirectory = file('run/game-test-server')
             loadedMods = [mods."${fixture_mod_id}"]
-            systemProperty 'craftagent.testHarness', 'true'
+            systemProperty 'mcmcp.testHarness', 'true'
             systemProperty 'neoforge.enabledGameTestNamespaces', fixture_mod_id
         }
 
@@ -165,7 +165,7 @@ dependencies {
     harnessTestImplementation sourceSets.harness.output
 
     // Optional at runtime. The production pack supplies both the API and implementation;
-    // CraftAgent is still usable without an audio path in single-player test environments.
+    // MCMCP is still usable without an audio path in single-player test environments.
     compileOnly 'de.maxhenkel.voicechat:voicechat-api:2.6.20'
     testRuntimeOnly 'de.maxhenkel.voicechat:voicechat-api:2.6.20'
 
@@ -271,7 +271,7 @@ tasks.withType(Test).configureEach {
     useJUnitPlatform()
     // NeoForge's unit-test discovery also sees the harness mod. Explicitly opt it
     // in for tests so the documented plain `gradlew test` command is reproducible.
-    systemProperty 'craftagent.testHarness', 'true'
+    systemProperty 'mcmcp.testHarness', 'true'
 }
 
 def harnessTest = tasks.register('harnessTest', Test) {
@@ -298,7 +298,7 @@ tasks.named('jarJar').configure {
                     fixed : 'io.modelcontextprotocol.sdk.mcp.json.jackson3',
             ],
     ]
-    inputs.property('craftagent.mcpAutomaticModuleNameFixes',
+    inputs.property('mcmcp.mcpAutomaticModuleNameFixes',
             moduleNameFixes.collectEntries { fix ->
                 [(fix.file): "${fix.broken}->${fix.fixed}"]
             })
@@ -368,7 +368,7 @@ tasks.register('harnessJar', Jar) {
     archiveClassifier = 'test-harness'
     from sourceSets.harness.output
     manifest {
-        attributes('Automatic-Module-Name': 'dev.aodaruma.craftagent.fixture')
+        attributes('Automatic-Module-Name': 'dev.aod.mcmcp.fixture')
     }
 }
 
@@ -388,7 +388,7 @@ def verifyHarnessIsolation = tasks.register('verifyHarnessIsolation') {
         def fixtureEntries = new JarFile(fixtureJar.get().asFile, false).withCloseable { jar ->
             jar.entries().collect { it.name }.toSet()
         }
-        def fixturePrefix = 'dev/aodaruma/craftagent/fixture/'
+        def fixturePrefix = 'dev/aod/mcmcp/fixture/'
 
         def leakedFixtureEntries = productionEntries.findAll { it.startsWith(fixturePrefix) }
         if (!leakedFixtureEntries.isEmpty()) {
@@ -398,7 +398,7 @@ def verifyHarnessIsolation = tasks.register('verifyHarnessIsolation') {
         if (!fixtureEntries.contains(fixturePrefix + 'FixturePhase3Autorun.class')) {
             throw new GradleException('Harness JAR is missing FixturePhase3Autorun.class')
         }
-        if (fixtureEntries.contains('dev/aodaruma/craftagent/CraftAgentMod.class')) {
+        if (fixtureEntries.contains('dev/aod/mcmcp/McmcpMod.class')) {
             throw new GradleException('Harness JAR unexpectedly contains the production mod entrypoint')
         }
     }
@@ -410,7 +410,7 @@ tasks.named('check').configure {
 
 tasks.named('jar', Jar).configure {
     manifest {
-        attributes('Automatic-Module-Name': 'dev.aodaruma.craftagent')
+        attributes('Automatic-Module-Name': 'dev.aod.mcmcp')
     }
 }
 

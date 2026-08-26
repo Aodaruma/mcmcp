@@ -1,5 +1,5 @@
 {
-  "schema": "craftagent.dev-build-gate/v1",
+  "schema": "mcmcp.dev-build-gate/v1",
   "id": "phase4_mutations",
   "max_total_seconds": 120,
   "steps": [

@@ -4,7 +4,6 @@ license="${mod_license}"
 modId="${mod_id}"
 version="${mod_version}"
 displayName="${mod_name}"
-displayTest="IGNORE_ALL_VERSION"
 description='''
 ${mod_description}
 '''
@@ -31,4 +30,4 @@ ordering="AFTER"
 side="CLIENT"
 
 [[mixins]]
-config="craftagent.mixins.json"
+config="mcmcp.mixins.json"

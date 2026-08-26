@@ -1,5 +1,5 @@
 {
-  "schema": "craftagent.dev-build-gate/v1",
+  "schema": "mcmcp.dev-build-gate/v1",
   "id": "phase4_build_runner",
   "max_total_seconds": 240,
   "steps": [

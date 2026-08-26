@@ -164,15 +164,15 @@ function Get-ChunkCoordinate([long] $BlockCoordinate) {
 $resolvedInput = (Resolve-Path -LiteralPath $InputPath).Path
 $document = Read-BoundedJsonText $resolvedInput | ConvertFrom-Json -AsHashtable -Depth 100
 $root = Get-Map $document 'artifact'
-if ([string] (Get-Required $root 'schema' 'artifact') -cne 'craftagent.creative-blueprint-artifact/v1') {
+if ([string] (Get-Required $root 'schema' 'artifact') -cne 'mcmcp.creative-blueprint-artifact/v1') {
     throw [IO.InvalidDataException]::new(
-        'artifact.schema must be craftagent.creative-blueprint-artifact/v1.')
+        'artifact.schema must be mcmcp.creative-blueprint-artifact/v1.')
 }
 
 $blueprint = Get-Map (Get-Required $root 'blueprint' 'artifact') 'artifact.blueprint'
-if ([string] (Get-Required $blueprint 'schema' 'blueprint') -cne 'craftagent.blueprint-palette-rle/v1') {
+if ([string] (Get-Required $blueprint 'schema' 'blueprint') -cne 'mcmcp.blueprint-palette-rle/v1') {
     throw [IO.InvalidDataException]::new(
-        'blueprint.schema must be craftagent.blueprint-palette-rle/v1.')
+        'blueprint.schema must be mcmcp.blueprint-palette-rle/v1.')
 }
 $hash = [string] (Get-Required $blueprint 'hash' 'blueprint')
 if ($hash -cnotmatch '^sha256:[0-9a-f]{64}$') {
@@ -378,7 +378,7 @@ if ($runIndex -ne $runs.Count - 1 -or $runRemaining -ne 0) {
 $blueprintDigest = [Security.Cryptography.IncrementalHash]::CreateHash(
     [Security.Cryptography.HashAlgorithmName]::SHA256)
 try {
-    $blueprintDigest.AppendData([Text.Encoding]::UTF8.GetBytes('craftagent.blueprint/v1'))
+    $blueprintDigest.AppendData([Text.Encoding]::UTF8.GetBytes('mcmcp.blueprint/v1'))
     for ($index = 0; $index -lt $cells.Length; $index++) {
         $relativeX = $index % $sizeX
         $remaining = [Math]::Floor($index / $sizeX)
@@ -398,7 +398,7 @@ if ($computedHash -cne $hash) {
 }
 
 $summary = [ordered]@{
-    schema = 'craftagent.blueprint-svg/v1'
+    schema = 'mcmcp.blueprint-svg/v1'
     blueprint_hash = $hash
     dimension = $dimension
     anchor = [ordered]@{ x = $anchorX; y = $anchorY; z = $anchorZ }

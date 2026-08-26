@@ -1,0 +1,13 @@
+{
+  "key.categories.mcmcp": "MCMCP",
+  "key.categories.mcmcp.controls": "MCMCP",
+  "key.mcmcp.emergency_stop": "緊急停止",
+  "key.mcmcp.toggle_lock": "ローカル解除を切り替え",
+  "gui.mcmcp.automation.active": "自動操作中",
+  "gui.mcmcp.automation.idle": "許可済み・待機中",
+  "gui.mcmcp.automation.disabled": "MCP操作 無効",
+  "gui.mcmcp.automation.confirm_enable": "再許可を確認",
+  "gui.mcmcp.automation.tooltip.disable": "クリックすると自動操作を停止し、このワールドでMCP操作を無効にします",
+  "gui.mcmcp.automation.tooltip.enable": "再許可するにはクリック後、5秒以内にもう一度クリックします",
+  "gui.mcmcp.automation.tooltip.confirm_enable": "もう一度クリックすると、時間制限なしでMCP操作を再許可します"
+}

@@ -13,7 +13,7 @@ MCMCPは、Minecraftのローカルプレイヤーを型付きAction DSLとク�
 
 ## Status
 
-設計を確定し、以前の同環境向け実装から、build、通常プレイヤー入力、観測、routine、test fixtureの検証済み基盤を履歴付きで移行中です。旧identityと旧MCP interfaceは規範文書に合わせて段階的に置き換えます。
+Phase 0として、以前の同環境向け実装からbuild、入力、観測、routine、test fixtureの検証済み基盤を履歴付きで移行し、MCMCP identityへ統一済みです。MCP interfaceと安全制御は規範文書に合わせて段階的に更新します。
 
 ## Documents
 

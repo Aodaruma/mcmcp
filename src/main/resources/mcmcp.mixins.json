@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "minVersion": "0.8.7",
+  "package": "dev.aod.mcmcp.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "client.BlockItemPlacementInvoker",
+    "client.ClientContainerSignalsMixin",
+    "client.ClientLevelPredictionAccessor",
+    "client.ClientLevelPredictionMixin",
+    "client.ClientPacketListenerMixin",
+    "client.ClientSleepSemanticSignalsMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
