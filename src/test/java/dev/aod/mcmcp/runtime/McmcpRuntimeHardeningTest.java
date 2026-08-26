@@ -176,6 +176,18 @@ class McmcpRuntimeHardeningTest {
     }
 
     @Test
+    void navigationReplanCanUseItsAdmittedOccurrenceTicks() {
+        var target = new ActionDsl.Position("minecraft:overworld", 1, 64, 1);
+        var navigate = new ActionDsl.NavigateToKnown("move", target, 0.75D);
+        var face = new ActionDsl.FaceKnownPosition("face", target);
+
+        assertThat(McmcpRuntime.agentReplanDeadlineTick(navigate, 2, 0, 38))
+                .isEqualTo(39);
+        assertThat(McmcpRuntime.agentReplanDeadlineTick(face, 2, 0, 38))
+                .isEqualTo(22);
+    }
+
+    @Test
     void onlyOneSingleRevisionPositionCorrectionGetsAReplanChance() {
         assertThat(McmcpRuntime.repeatedPositionCorrection(7, 8, 0)).isFalse();
         assertThat(McmcpRuntime.repeatedPositionCorrection(7, 9, 0)).isTrue();

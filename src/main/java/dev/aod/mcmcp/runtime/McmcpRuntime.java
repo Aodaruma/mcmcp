@@ -2758,14 +2758,29 @@ public final class McmcpRuntime implements McpRuntimePort {
         agentActions.setPhase(
                 agentExecution.actionId, AgentActionStore.Phase.REPLANNING, reason);
         agentExecution.replanning = true;
-        agentExecution.replanDeadlineTick = actionTick
-                + agentReplanWindowTicks(agentExecution.primitive);
+        agentExecution.replanDeadlineTick = agentReplanDeadlineTick(
+                agentExecution.primitive,
+                actionTick,
+                agentExecution.occurrenceBaseline.ticks(),
+                agentExecution.occurrenceLimit.ticks());
     }
 
     static long agentReplanWindowTicks(ActionDsl.Node primitive) {
         return primitive instanceof ActionDsl.BreakKnownFace
                 ? AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS
                 : 20L;
+    }
+
+    static long agentReplanDeadlineTick(
+            ActionDsl.Node primitive,
+            long actionTick,
+            long occurrenceStartTick,
+            long occurrenceTickLimit) {
+        long observationDeadline = Math.addExact(actionTick, agentReplanWindowTicks(primitive));
+        if (!(primitive instanceof ActionDsl.NavigateToKnown)) return observationDeadline;
+        long admittedNavigationDeadline = Math.addExact(
+                occurrenceStartTick, Math.addExact(occurrenceTickLimit, 1L));
+        return Math.max(observationDeadline, admittedNavigationDeadline);
     }
 
     private MinecraftRecoveryGovernor.TickResult tickAgentRecovery(
