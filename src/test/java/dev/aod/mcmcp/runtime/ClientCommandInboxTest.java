@@ -4,16 +4,54 @@ import dev.aod.mcmcp.safety.InputReleaseController;
 import dev.aod.mcmcp.safety.LocalArmingState;
 import org.junit.jupiter.api.Test;
 
-import java.util.concurrent.TimeUnit;
+import java.lang.reflect.Method;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.lang.reflect.Method;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ClientCommandInboxTest {
+    @Test
+    void successfulPhysicalEscReturnsAnActiveLeaseToReady() {
+        var arming = new LocalArmingState();
+        var session = UUID.randomUUID();
+        arming.arm(session, Set.of("navigate_to", "stationary_break"));
+        assertThat(arming.beginAction(session)).isTrue();
+        var beforeStop = arming.snapshot(session);
+        arming.lock("local_emergency_key");
+
+        assertThat(ClientCommandInbox.settleArmingAfterStop(
+                arming, beforeStop, session, true, true, "local_emergency_key")).isFalse();
+        assertThat(arming.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.READY);
+        assertThat(arming.snapshot(session).capabilities())
+                .containsExactlyInAnyOrder("navigate_to", "stationary_break");
+    }
+
+    @Test
+    void nonLocalOrFailedStopLocksInsteadOfRestoringReady() {
+        var arming = new LocalArmingState();
+        var session = UUID.randomUUID();
+        arming.arm(session, Set.of("navigate_to"));
+        assertThat(arming.beginAction(session)).isTrue();
+        var beforeStop = arming.snapshot(session);
+
+        assertThat(ClientCommandInbox.settleArmingAfterStop(
+                arming, beforeStop, session, false, true, "operator_stop")).isTrue();
+        assertThat(arming.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.OFF);
+
+        arming.arm(session, Set.of("navigate_to"));
+        assertThat(arming.beginAction(session)).isTrue();
+        beforeStop = arming.snapshot(session);
+        assertThat(ClientCommandInbox.settleArmingAfterStop(
+                arming, beforeStop, session, true, false, "release_failed")).isTrue();
+        assertThat(arming.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.OFF);
+    }
+
     @Test
     void rejectsExpiredAndWrongGenerationCommandsBeforeCallingAction() {
         var inbox = new ClientCommandInbox(4, new InputReleaseController(), new LocalArmingState());

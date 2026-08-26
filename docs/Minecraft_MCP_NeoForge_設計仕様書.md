@@ -252,7 +252,7 @@ commit時は同時Task、world/session、control epoch、READY、pose、predicat
 ### 6.1 優先順位
 
 ~~~text
-Esc緊急停止
+実行中の物理Esc緊急停止
   > Screen上のMCP操作OFF
   > world/player lifecycle
   > Safety Governor
@@ -270,31 +270,34 @@ OFF
        v
 READY（ON、時間制限なし、1 Action限り）
   ├─ valid agent_start_action → AGENT
+  ├─ Esc → READYのまま、VanillaのEsc動作だけ実行
   └─ OFF / world変更 → OFF
 
 AGENT
   ├─ 能動的危険 → RECOVERING
+  ├─ Esc → 現在ActionをEMERGENCY_STOP、入力解除、READY
   └─ success / failure / cancel → OFF
 
 RECOVERING
+  ├─ Esc → 現在ActionをEMERGENCY_STOP、入力解除、READY
   └─ 安全化 / 回避不能 / recovery budget超過 → OFF
 
 全状態
-  └─ Esc / OFF / world・player消失 → OFF
+  └─ OFF / world・player消失 → OFF
 ~~~
 
-Action終了後は必ずOFFへ戻す。複数stepは1つのDSL programにまとめられるため、実行中に再アームは不要である。一方、古いMCP接続がActionを連続投入することはできない。
+Action終了後は原則OFFへ戻す。唯一、AGENT/RECOVERING中の物理Escによる緊急停止だけは、現在Actionを終了した後に同じworld・capabilityのREADYへ戻す。複数stepは1つのDSL programにまとめられ、古いMCP接続がActionを連続投入することはできない。
 
 ### 6.3 即時停止条件
 
-- 物理Esc押下
+- AGENTまたはRECOVERING中の物理Esc押下
 - Screen右下のMCP操作OFF
 - `agent_cancel_action`
 - world unload、dimension変更、respawn、死亡、server disconnect
 - player、levelまたは入力所有権の不変条件消失
 - 未処理例外、内部状態破損
 
-停止時は同じClientTickまでにAgent所有のsynthetic入力をすべて解除し、pending commandを破棄し、control epochを進めて古いqueue entryを無効化する。Escは停止処理後にVanillaのEsc動作も通すため、ゲーム中ならpause menuを開き、Screen上なら通常どおり閉じられる。
+停止時は同じClientTickまでにAgent所有のsynthetic入力をすべて解除し、pending commandを破棄し、control epochを進めて古いqueue entryを無効化する。実行中EscはActionを`EMERGENCY_STOP`で終了してREADYへ戻し、その後にVanillaのEsc動作も通すため、ゲーム中ならpause menuを開き、Screen上なら通常どおり閉じられる。READY中のEscはMCMCPの停止処理を起こさず、Vanillaへそのまま渡す。
 
 次は、それ自体では停止条件にしない。
 
@@ -334,20 +337,22 @@ Vanillaがsingleplayerを実際にpauseしている間はActionをcancelせず�
 | RECOVERING | 紫色の盾 | 緊急回避中 |
 | FAULT | 赤色の感嘆符 | endpointまたは内部異常 |
 
-`FAULT`は6.2のcontrol stateではなく、`OFF`へ重ねて表示するUI専用presentation stateである。endpoint bind、token初期化、または内部不変条件の異常時に優先表示し、実行中Actionがあれば`INTERNAL_ERROR`で終了して入力を解除する。Screen buttonは`MCP操作: FAULT / <local error code> [disabled]`とし、world参加やONクリックだけでは解除しない。安全なendpoint再初期化に成功するかclientを再起動した場合だけ通常のOFF表示へ戻す。endpointが応答可能なら`agent_get_state.control.mode`は`off`、直前Actionの`end_reason`は`INTERNAL_ERROR`を返す。
+`FAULT`は6.2のcontrol stateではなく、`OFF`へ重ねて表示するUI専用presentation stateである。endpoint bind、token初期化、または内部不変条件の異常時に優先表示し、実行中Actionがあれば`INTERNAL_ERROR`で終了して入力を解除する。Screen buttonは`MCP操作: FAULT`とし、local error codeはtooltipへ表示する。world参加やONクリックだけでは解除せず、安全なendpoint再初期化に成功するかclientを再起動した場合だけ通常のOFF表示へ戻す。endpointが応答可能なら`agent_get_state.control.mode`は`off`、直前Actionの`end_reason`は`INTERNAL_ERROR`を返す。
 
 AGENT開始時だけ3秒間、「自動操作中 — Escで緊急停止」という短いoverlay noticeを出し、その後はiconだけに戻す。
 
+AGENTまたはRECOVERING中は、gameplayとScreenの双方でゲーム画面の外縁へ2 pxの黄色枠を常時表示する。READY、OFF、FAULTでは表示しない。
+
 chat、inventory、pause menuを含む任意の`Screen`表示中は、「icon + 状態文 + MCP操作 ON/OFF」の1 buttonを追加する。原則は右下だが、chatでは入力欄と候補一覧を塞がないよう右上へ配置する。
 
-- OFFでworldとplayerが有効: `MCP操作: OFF [ONにする]`
-- READY: `MCP操作: ON / 待機中 [OFF]`
-- AGENT: `MCP操作: ON / 実行中 — Escで緊急停止 [OFF]`
-- RECOVERING: `MCP操作: ON / 緊急回避中 — Escで緊急停止 [OFF]`
-- FAULT: `MCP操作: FAULT / <local error code> [disabled]`
+- OFFでworldとplayerが有効: `MCP操作: OFF`
+- READY: `MCP操作: ON / 待機中`
+- AGENT: `MCP操作: ON / 実行中`
+- RECOVERING: `MCP操作: ON / 緊急回避中`
+- FAULT: `MCP操作: FAULT`
 - worldなし、死亡画面、接続中: 状態を表示するがONはdisabled
 
-OFFクリックはActionを`USER_DISABLED`で終了し、入力を解除してOFFへ戻す。ボタン自身のclickだけは6.4の入力隔離を通過する。buttonはnarration textとkeyboard focusを持つが、AGENT中のkeyboard activationはEsc以外を遮断するためmouse click専用である。
+クリック時の操作説明とFAULTのlocal error codeはtooltipへ置き、button本文を状態だけにする。button幅は全状態の最長文ではなく、現在の状態文にiconとpaddingを加えた幅へ毎frame追従して画面占有を抑える。OFFクリックはActionを`USER_DISABLED`で終了し、入力を解除してOFFへ戻す。ボタン自身のclickだけは6.4の入力隔離を通過する。buttonはnarration textとkeyboard focusを持つが、AGENT中のkeyboard activationはEsc以外を遮断するためmouse click専用である。
 
 ゲームHUDは`RegisterGuiLayersEvent`、Screen buttonは`ScreenEvent.Init.Post`で追加し、既存Screen classを置換しない。`Minecraft.screen == null`のframeだけgameplay iconを描画し、Screen表示中はHUD側iconを描かず、button内のiconと状態文へ置き換える。右marginと下margin（chatでは上margin）は既定8 px、既存MODと重なる場合のためoffsetだけをclient configで変更可能にする。
 
@@ -1030,7 +1035,7 @@ Safety GovernorはGoalを達成せず、現在Actionより常に高優先度で�
 | CONTINUE | 変化が行動範囲外、または安全性が同等 | Mapだけ更新して継続 |
 | REPLAN | 現在地は安全だが、経路・支持・流体・対象が変化 | 入力を一度neutralにして局所再計画 |
 | RECOVER | 能動的な損害、呼吸不足、危険な落下などが進行 | Goalをpreemptし、有限の緊急回避 |
-| STOP | Esc、OFF、制御対象消失、内部不変条件違反 | 即時入力解除、queue破棄、OFF |
+| STOP | Esc、OFF、制御対象消失、内部不変条件違反 | 即時入力解除、queue破棄。物理EscはREADY、他はOFF |
 
 RECOVERへの昇格は固定health値ではなく、次で決める。
 
@@ -1313,7 +1318,8 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - READY中に受理するActionは1件だけで、terminal後はOFF
 - 同時2件目はTASK_BUSY
 - enqueue後、ClientTick前にworld、READY、control epochが変わった場合は入力せず失敗
-- AGENT/RECOVERING中のEscは1 ClientTick以内にEMERGENCY_STOP、queue破棄、OFF
+- READY中のEscは通常どおりchat/menuを閉じ、READYを維持
+- AGENT/RECOVERING中のEscは1 ClientTick以内にEMERGENCY_STOP、queue破棄、入力解除、READY
 - Screen buttonのOFFは1 ClientTick以内にUSER_DISABLED、queue破棄、OFF
 - Esc以外の物理key、mouse button、scroll、mouse turnはActionを止めず、Minecraftへ影響しない
 - MCMCP button hit box内の左clickだけが入力隔離を通過
@@ -1328,6 +1334,7 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - gameplay中は右下に状態iconだけを表示し、常設文字panelを出さない
 - AGENT開始時のEsc案内は3秒で消える
 - Screen表示中は右下にicon、状態文、ON/OFF buttonを表示
+- AGENT/RECOVERING中はgameplay、chat、inventory、menuの外縁に2 pxの黄色枠を表示し、停止後は同じframeで消える
 - iconはOFF、READY、AGENT、RECOVERING、FAULTで色と輪郭が異なる
 - gameplay HUD iconとScreen buttonが対象24 MODの主要Screenでcrashせず、offset設定が反映される
 
@@ -1487,10 +1494,10 @@ runnerがAuthorization headerを設定できないため、NeoForge development 
 ### 15.3 NeoForge GameTest / Client test
 
 - navigation固定scenario
-- Esc、Screen OFF、MCP cancel
+- READYのEsc透過、実行中EscのREADY復帰、Screen OFF、MCP cancel
 - AGENT中の物理keyboard/mouse隔離
 - focus喪失、non-paused chat、inventory、multiplayer pause menuを表示したままnavigation/camera/waitを完了
-- gameplay iconと全主要Screenへの状態button
+- gameplay icon、実行中の黄色外縁、全主要Screenへの省スペース状態button
 - world unload
 - dynamic obstacle
 - 10.3の危険分類とrecovery

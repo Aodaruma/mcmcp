@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.client;
 
+import dev.aod.mcmcp.runtime.AutomationUiSnapshot;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.tree.ClassNode;
@@ -8,12 +9,47 @@ import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.TypeInsnNode;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AutomationUiContractTest {
+    @Test
+    void yellowExecutionBorderOnlyCoversAgentOwnedModes() throws Exception {
+        assertThat(AutomationIndicatorController.executionBorderVisible(
+                AutomationUiSnapshot.State.AGENT)).isTrue();
+        assertThat(AutomationIndicatorController.executionBorderVisible(
+                AutomationUiSnapshot.State.RECOVERING)).isTrue();
+        assertThat(List.of(
+                AutomationUiSnapshot.State.OFF,
+                AutomationUiSnapshot.State.READY,
+                AutomationUiSnapshot.State.FAULT))
+                .allMatch(state -> !AutomationIndicatorController.executionBorderVisible(state));
+
+        assertThat(invocations(method(
+                classNode("/dev/aod/mcmcp/client/AutomationIndicatorController.class"),
+                "renderHud")))
+                .contains("dev/aod/mcmcp/client/AutomationIndicatorController#drawExecutionBorder");
+        assertThat(invocations(method(
+                classNode("/dev/aod/mcmcp/client/AutomationIndicatorController$IndicatorButton.class"),
+                "extractContents")))
+                .contains("dev/aod/mcmcp/client/AutomationIndicatorController#drawExecutionBorder");
+    }
+
+    @Test
+    void screenButtonLabelsStayCompactAndPutActionsInTooltips() throws Exception {
+        for (String language : List.of("en_us", "ja_jp")) {
+            try (var stream = getClass().getResourceAsStream(
+                    "/assets/mcmcp/lang/" + language + ".json")) {
+                assertThat(stream).isNotNull();
+                var translations = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+                assertThat(translations).doesNotContain("[").doesNotContain("]");
+            }
+        }
+    }
+
     @Test
     void hudUsesAboveAllLayerAndBothConfiguredOffsets() throws Exception {
         var controller = classNode(

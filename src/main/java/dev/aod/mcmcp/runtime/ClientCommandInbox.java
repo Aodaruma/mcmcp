@@ -15,7 +15,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -32,7 +31,7 @@ public final class ClientCommandInbox {
     private final ArrayBlockingQueue<PendingCommand<?>> normalQueue;
     private final ArrayBlockingQueue<PendingCommand<?>> controlQueue;
     private final ConcurrentLinkedQueue<CompletableFuture<StopReceipt>> stopWaiters = new ConcurrentLinkedQueue<>();
-    private final AtomicReference<String> pendingStopReason = new AtomicReference<>();
+    private StopRequest pendingStop;
     private final AtomicLong safetyEpoch = new AtomicLong();
     private final Object admissionGate = new Object();
     private final InputReleaseController inputRelease;
@@ -210,7 +209,17 @@ public final class ClientCommandInbox {
                 stopWaiters.add(waiter);
                 return waiter;
             }
-            return requestEmergencyStopLocked(reason);
+            return requestEmergencyStopLocked(reason, false);
+        }
+    }
+
+    /** Trusted physical Esc path: stop the active operation but retain the current local lease. */
+    CompletableFuture<StopReceipt> requestLocalEmergencyStop() {
+        synchronized (admissionGate) {
+            if (!accepting) {
+                return requestEmergencyStop("local_emergency_key");
+            }
+            return requestEmergencyStopLocked("local_emergency_key", true);
         }
     }
 
@@ -264,7 +273,7 @@ public final class ClientCommandInbox {
     public void shutdown(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
         synchronized (admissionGate) {
             accepting = false;
-            requestEmergencyStopLocked("client_shutdown");
+            requestEmergencyStopLocked("client_shutdown", false);
         }
         if (minecraft.isSameThread()) {
             processEmergencyStop(minecraft, session);
@@ -291,13 +300,14 @@ public final class ClientCommandInbox {
 
     private void processEmergencyStop(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
         synchronized (admissionGate) {
-            var reason = pendingStopReason.getAndSet(null);
-            if (reason == null && stopWaiters.isEmpty()) {
+            var request = pendingStop;
+            pendingStop = null;
+            if (request == null && stopWaiters.isEmpty()) {
                 return;
             }
-            if (reason == null) {
-                reason = "operator_stop";
-            }
+            request = request == null ? new StopRequest("operator_stop", false) : request;
+            var reason = request.reason();
+            var beforeStop = armingState.snapshot(session.worldSessionId());
             boolean inputsReleased = inputRelease.releaseAll(minecraft);
             try {
                 inputsReleased &= emergencyStopHandler.stop(reason, session);
@@ -305,10 +315,16 @@ public final class ClientCommandInbox {
             catch (RuntimeException | LinkageError failure) {
                 inputsReleased = false;
             }
-            armingState.lock(reason);
+            boolean locked = settleArmingAfterStop(
+                    armingState,
+                    beforeStop,
+                    session.worldSessionId(),
+                    request.keepReady(),
+                    inputsReleased,
+                    reason);
             int discarded = failPending(new CommandInvalidatedException("invalidated by emergency stop"));
             var receipt = new StopReceipt(
-                    reason, safetyEpoch.get(), session.generation(), inputsReleased, true, discarded);
+                    reason, safetyEpoch.get(), session.generation(), inputsReleased, locked, discarded);
             if (!accepting) {
                 terminalStopReceipt = receipt;
             }
@@ -332,12 +348,35 @@ public final class ClientCommandInbox {
     }
 
     /** Caller must hold {@link #admissionGate}. */
-    private CompletableFuture<StopReceipt> requestEmergencyStopLocked(String reason) {
+    private CompletableFuture<StopReceipt> requestEmergencyStopLocked(
+            String reason, boolean keepReady) {
         var future = new CompletableFuture<StopReceipt>();
         stopWaiters.add(future);
         safetyEpoch.incrementAndGet();
-        pendingStopReason.set(sanitizeReason(reason));
+        var request = new StopRequest(sanitizeReason(reason), keepReady);
+        if (pendingStop == null || pendingStop.keepReady()) {
+            pendingStop = request;
+        }
         return future;
+    }
+
+    static boolean settleArmingAfterStop(
+            LocalArmingState armingState,
+            LocalArmingState.Snapshot beforeStop,
+            java.util.UUID currentSessionId,
+            boolean keepReady,
+            boolean inputsReleased,
+            String reason) {
+        if (keepReady
+                && inputsReleased
+                && beforeStop.inputIsolationActive()
+                && currentSessionId != null
+                && currentSessionId.equals(beforeStop.worldSessionId())) {
+            armingState.arm(currentSessionId, beforeStop.capabilities());
+            return false;
+        }
+        armingState.lock(reason);
+        return true;
     }
 
     private static String sanitizeReason(String reason) {
@@ -346,6 +385,9 @@ public final class ClientCommandInbox {
         }
         var normalized = reason.replaceAll("[\\p{Cntrl}]", " ").strip();
         return normalized.substring(0, Math.min(normalized.length(), 96));
+    }
+
+    private record StopRequest(String reason, boolean keepReady) {
     }
 
     private record PendingCommand<T>(

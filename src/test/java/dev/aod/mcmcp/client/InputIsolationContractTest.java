@@ -58,13 +58,13 @@ class InputIsolationContractTest {
     }
 
     @Test
-    void readyEscStopsEvenThoughGeneralInputIsolationIsNotActive() {
+    void readyEscPassesThroughWithoutStopping() {
         var readyEscape = InputIsolationController.keyDecision(
                 AutomationUiSnapshot.State.READY,
                 false,
                 InputConstants.KEY_ESCAPE,
                 InputConstants.PRESS);
-        assertThat(readyEscape).isEqualTo(InputIsolationController.KeyDecision.EMERGENCY_STOP);
+        assertThat(readyEscape).isEqualTo(InputIsolationController.KeyDecision.PASS);
         assertThat(readyEscape.cancelsVanilla()).isFalse();
 
         for (var state : List.of(

@@ -118,8 +118,8 @@ public final class InputIsolationController {
         Objects.requireNonNull(state, "state");
         if (key == InputConstants.KEY_ESCAPE && action == InputConstants.PRESS) {
             return switch (state) {
-                case READY, AGENT, RECOVERING -> KeyDecision.EMERGENCY_STOP;
-                case OFF, FAULT -> KeyDecision.PASS;
+                case AGENT, RECOVERING -> KeyDecision.EMERGENCY_STOP;
+                case OFF, READY, FAULT -> KeyDecision.PASS;
             };
         }
         return isolationActive ? KeyDecision.BLOCK : KeyDecision.PASS;

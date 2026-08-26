@@ -1,13 +1,13 @@
 {
-  "gui.mcmcp.automation.off": "MCP操作: OFF [ONにする]",
-  "gui.mcmcp.automation.off_unavailable": "MCP操作: OFF [ワールド未準備]",
-  "gui.mcmcp.automation.ready": "MCP操作: ON / 待機中 [OFF]",
-  "gui.mcmcp.automation.agent": "MCP操作: ON / 実行中 — Escで緊急停止 [OFF]",
-  "gui.mcmcp.automation.recovering": "MCP操作: ON / 緊急回避中 — Escで緊急停止 [OFF]",
-  "gui.mcmcp.automation.fault": "MCP操作: FAULT / %s [無効]",
+  "gui.mcmcp.automation.off": "MCP操作: OFF",
+  "gui.mcmcp.automation.off_unavailable": "MCP操作: OFF / 未準備",
+  "gui.mcmcp.automation.ready": "MCP操作: ON / 待機中",
+  "gui.mcmcp.automation.agent": "MCP操作: ON / 実行中",
+  "gui.mcmcp.automation.recovering": "MCP操作: ON / 緊急回避中",
+  "gui.mcmcp.automation.fault": "MCP操作: FAULT",
   "gui.mcmcp.automation.agent_notice": "自動操作中 — Escで緊急停止",
   "gui.mcmcp.automation.tooltip.enable": "クリックするとMCP操作をONにし、1 Actionを待機します",
-  "gui.mcmcp.automation.tooltip.disable": "クリックすると自動操作を停止し、MCP操作をOFFにします",
+  "gui.mcmcp.automation.tooltip.disable": "クリックすると現在の操作を停止し、MCP操作をOFFにします",
   "gui.mcmcp.automation.tooltip.unavailable": "ワールドとプレイヤーの準備完了後にONにできます",
-  "gui.mcmcp.automation.tooltip.fault": "内部異常のためMCP操作は無効です"
+  "gui.mcmcp.automation.tooltip.fault": "内部異常のためMCP操作は無効です: %s"
 }

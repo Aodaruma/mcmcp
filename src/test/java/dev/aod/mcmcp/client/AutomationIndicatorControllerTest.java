@@ -7,10 +7,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AutomationIndicatorControllerTest {
     @Test
-    void menuButtonUsesTheLongestLabelAndClampsToTheScreen() {
-        assertThat(AutomationIndicatorController.menuButtonWidth(320, 8, 60, 123, 80, 90))
-                .isEqualTo(159);
-        assertThat(AutomationIndicatorController.menuButtonWidth(140, 8, 60, 123, 80, 90))
+    void menuButtonUsesTheCurrentLabelAndClampsToTheScreen() {
+        assertThat(AutomationIndicatorController.menuButtonWidth(320, 8, 60))
+                .isEqualTo(96);
+        assertThat(AutomationIndicatorController.menuButtonWidth(140, 8, 123))
                 .isEqualTo(124);
     }
 

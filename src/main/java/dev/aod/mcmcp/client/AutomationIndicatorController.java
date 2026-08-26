@@ -33,6 +33,8 @@ public final class AutomationIndicatorController {
     private static final int BUTTON_HEIGHT = 24;
     private static final int BUTTON_PADDING = 8;
     private static final int BACKGROUND = 0xD0101010;
+    private static final int EXECUTION_BORDER_COLOR = 0xFFFFFF00;
+    private static final int EXECUTION_BORDER_WIDTH = 2;
 
     private static final int OFF_COLOR = 0xFFB8B8B8;
     private static final int READY_COLOR = 0xFFFFA928;
@@ -95,6 +97,10 @@ public final class AutomationIndicatorController {
         if (minecraft.level == null
                 || minecraft.player == null) {
             return;
+        }
+
+        if (executionBorderVisible(snapshot.state())) {
+            drawExecutionBorder(graphics);
         }
 
         if (snapshot.state() == AutomationUiSnapshot.State.AGENT
@@ -177,9 +183,7 @@ public final class AutomationIndicatorController {
             case READY -> Component.translatable("gui.mcmcp.automation.ready");
             case AGENT -> Component.translatable("gui.mcmcp.automation.agent");
             case RECOVERING -> Component.translatable("gui.mcmcp.automation.recovering");
-            case FAULT -> Component.translatable(
-                    "gui.mcmcp.automation.fault",
-                    snapshot.detail() == null ? "internal_error" : snapshot.detail());
+            case FAULT -> Component.translatable("gui.mcmcp.automation.fault");
         };
     }
 
@@ -190,8 +194,33 @@ public final class AutomationIndicatorController {
                     : Component.translatable("gui.mcmcp.automation.tooltip.unavailable");
             case READY, AGENT, RECOVERING ->
                     Component.translatable("gui.mcmcp.automation.tooltip.disable");
-            case FAULT -> Component.translatable("gui.mcmcp.automation.tooltip.fault");
+            case FAULT -> Component.translatable(
+                    "gui.mcmcp.automation.tooltip.fault",
+                    snapshot.detail() == null ? "internal_error" : snapshot.detail());
         };
+    }
+
+    static boolean executionBorderVisible(AutomationUiSnapshot.State state) {
+        return state == AutomationUiSnapshot.State.AGENT
+                || state == AutomationUiSnapshot.State.RECOVERING;
+    }
+
+    private static void drawExecutionBorder(GuiGraphicsExtractor graphics) {
+        int width = graphics.guiWidth();
+        int height = graphics.guiHeight();
+        graphics.fill(0, 0, width, EXECUTION_BORDER_WIDTH, EXECUTION_BORDER_COLOR);
+        graphics.fill(
+                0, height - EXECUTION_BORDER_WIDTH,
+                width, height,
+                EXECUTION_BORDER_COLOR);
+        graphics.fill(
+                0, EXECUTION_BORDER_WIDTH,
+                EXECUTION_BORDER_WIDTH, height - EXECUTION_BORDER_WIDTH,
+                EXECUTION_BORDER_COLOR);
+        graphics.fill(
+                width - EXECUTION_BORDER_WIDTH, EXECUTION_BORDER_WIDTH,
+                width, height - EXECUTION_BORDER_WIDTH,
+                EXECUTION_BORDER_COLOR);
     }
 
     private static void drawAgentNotice(
@@ -266,8 +295,7 @@ public final class AutomationIndicatorController {
                 font.width(Component.translatable("gui.mcmcp.automation.ready")),
                 font.width(Component.translatable("gui.mcmcp.automation.agent")),
                 font.width(Component.translatable("gui.mcmcp.automation.recovering")),
-                font.width(Component.translatable(
-                        "gui.mcmcp.automation.fault", "internal_error")));
+                font.width(Component.translatable("gui.mcmcp.automation.fault")));
     }
 
     static int menuButtonWidth(int screenWidth, int rightOffset, int... labelWidths) {
@@ -337,7 +365,11 @@ public final class AutomationIndicatorController {
                 int mouseX,
                 int mouseY,
                 float partialTick) {
-            int width = menuButtonWidth(graphics.guiWidth());
+            controller.refresh(this, System.nanoTime());
+            int width = menuButtonWidth(
+                    graphics.guiWidth(),
+                    McmcpClientConfig.hudOffsetX(),
+                    Minecraft.getInstance().font.width(getMessage()));
             setWidth(width);
             setX(lowerRightCoordinate(
                     graphics.guiWidth(), width, McmcpClientConfig.hudOffsetX()));
@@ -346,13 +378,13 @@ public final class AutomationIndicatorController {
                     getHeight(),
                     McmcpClientConfig.hudOffsetY(),
                     chatScreen));
-            controller.refresh(this, System.nanoTime());
             extractDefaultSprite(graphics);
+            var state = controller.runtime.automationUiSnapshot().state();
             drawIcon(
                     graphics,
                     getX() + BUTTON_PADDING,
                     getY() + (getHeight() - ICON_SIZE) / 2,
-                    controller.runtime.automationUiSnapshot().state());
+                    state);
             graphics.textRendererForWidget(
                             this, GuiGraphicsExtractor.HoveredTextEffects.NONE)
                     .acceptScrollingWithDefaultCenter(
@@ -361,6 +393,9 @@ public final class AutomationIndicatorController {
                             getRight() - BUTTON_PADDING,
                             getY(),
                             getBottom());
+            if (executionBorderVisible(state)) {
+                drawExecutionBorder(graphics);
+            }
         }
     }
 }

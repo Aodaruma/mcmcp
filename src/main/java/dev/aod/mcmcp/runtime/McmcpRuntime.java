@@ -464,10 +464,10 @@ public final class McmcpRuntime implements McpRuntimePort {
     public void emergencyStopFromLocalKey(Minecraft minecraft) {
         assertClientThread(minecraft);
         runPriorityStop(
-                () -> inbox.requestEmergencyStop("local_emergency_key"),
+                inbox::requestLocalEmergencyStop,
                 () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
         goalContinuation.clear();
-        overlay(minecraft, "MCMCP: 緊急停止・ロック済み");
+        overlay(minecraft, "MCMCP: 現在の操作を緊急停止（MCP操作はON）");
     }
 
     /** Read-only, client-thread view used by the local HUD and pause-menu indicator. */
@@ -4164,22 +4164,25 @@ public final class McmcpRuntime implements McpRuntimePort {
         AgentActionStore.FailureCode actionCode = "local_ui_disabled".equals(reason)
                 ? AgentActionStore.FailureCode.USER_DISABLED
                 : AgentActionStore.FailureCode.EMERGENCY_STOP;
+        boolean actionStopped = true;
         try {
             agentActions.terminateActive(new AgentActionStore.Failure(
                     actionCode, true, List.of(sanitizeLocalCode(reason))));
         } catch (RuntimeException | LinkageError failure) {
+            actionStopped = false;
             McmcpMod.LOGGER.error("MCMCP emergency action termination failed", failure);
         } finally {
             closeAgentControl(Minecraft.getInstance(), sanitizeLocalCode(reason));
         }
         var active = routines.activeRoutineId();
         if (active.isEmpty()) {
-            return endVoiceFor(voiceRoutineId);
+            boolean voiceEnded = endVoiceFor(voiceRoutineId);
+            return actionStopped && voiceEnded;
         }
         try {
             var cancelled = routines.cancelRoutine(active.orElseThrow(), reason, Long.MAX_VALUE, 1);
             var cleanup = finalizeTerminalRoutine(Minecraft.getInstance(), cancelled);
-            return cleanup.inputsReleased() && cleanup.voice().success();
+            return actionStopped && cleanup.inputsReleased() && cleanup.voice().success();
         }
         catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error("MCMCP routine cancellation failed during emergency stop", failure);

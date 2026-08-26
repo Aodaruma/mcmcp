@@ -1,13 +1,13 @@
 {
-  "gui.mcmcp.automation.off": "MCP control: OFF [turn ON]",
-  "gui.mcmcp.automation.off_unavailable": "MCP control: OFF [world not ready]",
-  "gui.mcmcp.automation.ready": "MCP control: ON / ready [OFF]",
-  "gui.mcmcp.automation.agent": "MCP control: ON / running — Esc to stop [OFF]",
-  "gui.mcmcp.automation.recovering": "MCP control: ON / recovering — Esc to stop [OFF]",
-  "gui.mcmcp.automation.fault": "MCP control: FAULT / %s [disabled]",
+  "gui.mcmcp.automation.off": "MCP control: OFF",
+  "gui.mcmcp.automation.off_unavailable": "MCP control: OFF / not ready",
+  "gui.mcmcp.automation.ready": "MCP control: ON / ready",
+  "gui.mcmcp.automation.agent": "MCP control: ON / running",
+  "gui.mcmcp.automation.recovering": "MCP control: ON / recovering",
+  "gui.mcmcp.automation.fault": "MCP control: FAULT",
   "gui.mcmcp.automation.agent_notice": "Automation active — press Esc to stop",
   "gui.mcmcp.automation.tooltip.enable": "Click to enable MCP control for one Action",
-  "gui.mcmcp.automation.tooltip.disable": "Click to stop automation and turn MCP control off",
+  "gui.mcmcp.automation.tooltip.disable": "Click to stop the current operation and turn MCP control off",
   "gui.mcmcp.automation.tooltip.unavailable": "MCP control can be enabled after the world and player are ready",
-  "gui.mcmcp.automation.tooltip.fault": "MCP control is disabled because of an internal fault"
+  "gui.mcmcp.automation.tooltip.fault": "MCP control is disabled because of an internal fault: %s"
 }
