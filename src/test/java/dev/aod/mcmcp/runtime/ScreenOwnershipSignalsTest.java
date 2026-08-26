@@ -161,6 +161,19 @@ class ScreenOwnershipSignalsTest {
     }
 
     @Test
+    void nonContainerScreenOnlyFailsAnActiveContainerAuthority() {
+        var idle = new ScreenOwnershipSignals.Core();
+        idle.bindSession(UUID.randomUUID(), 0);
+        assertThat(idle.failIfActive("unexpected_screen_opened").relevant()).isFalse();
+        assertThat(idle.snapshot().phase()).isEqualTo(ScreenOwnershipSignals.Phase.IDLE);
+
+        var owned = ownedFixture(EMPTY);
+        assertThat(owned.core.failIfActive("unexpected_screen_opened").failedNow()).isTrue();
+        assertThat(owned.core.snapshot().phase()).isEqualTo(ScreenOwnershipSignals.Phase.FAILED);
+        assertThat(owned.core.snapshot().owned()).isFalse();
+    }
+
+    @Test
     void stateIdWrapIsAcceptedAsAnExactInboundUpdate() {
         var fixture = ownedFixture(EMPTY, Integer.MAX_VALUE);
         var update = fixture.channel.slot(7, MENU, Integer.MIN_VALUE, 0, EMPTY, 4);

@@ -1,13 +1,13 @@
 {
-  "key.categories.mcmcp": "MCMCP",
-  "key.categories.mcmcp.controls": "MCMCP",
-  "key.mcmcp.emergency_stop": "Emergency stop",
-  "key.mcmcp.toggle_lock": "Toggle local arming",
-  "gui.mcmcp.automation.active": "Automation active",
-  "gui.mcmcp.automation.idle": "Armed and waiting",
-  "gui.mcmcp.automation.disabled": "MCP automation disabled",
-  "gui.mcmcp.automation.confirm_enable": "Confirm re-enable",
-  "gui.mcmcp.automation.tooltip.disable": "Click to stop automation and disable MCP control for this world",
-  "gui.mcmcp.automation.tooltip.enable": "Click, then click again within 5 seconds to re-enable",
-  "gui.mcmcp.automation.tooltip.confirm_enable": "Click again to re-enable MCP automation without a time limit"
+  "gui.mcmcp.automation.off": "MCP control: OFF [turn ON]",
+  "gui.mcmcp.automation.off_unavailable": "MCP control: OFF [world not ready]",
+  "gui.mcmcp.automation.ready": "MCP control: ON / ready %ss [OFF]",
+  "gui.mcmcp.automation.agent": "MCP control: ON / running — Esc to stop [OFF]",
+  "gui.mcmcp.automation.recovering": "MCP control: ON / recovering — Esc to stop [OFF]",
+  "gui.mcmcp.automation.fault": "MCP control: FAULT / %s [disabled]",
+  "gui.mcmcp.automation.agent_notice": "Automation active — press Esc to stop",
+  "gui.mcmcp.automation.tooltip.enable": "Click to enable MCP control for one Action",
+  "gui.mcmcp.automation.tooltip.disable": "Click to stop automation and turn MCP control off",
+  "gui.mcmcp.automation.tooltip.unavailable": "MCP control can be enabled after the world and player are ready",
+  "gui.mcmcp.automation.tooltip.fault": "MCP control is disabled because of an internal fault"
 }

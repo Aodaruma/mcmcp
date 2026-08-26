@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.McmcpMod;
+import dev.aod.mcmcp.client.McmcpClientConfig;
 import dev.aod.mcmcp.mcp.McpRuntimePort;
 import dev.aod.mcmcp.mcp.McpToolSchemas;
 import dev.aod.mcmcp.mcp.RuntimeCallContext;
@@ -10,8 +11,6 @@ import dev.aod.mcmcp.observation.BlockPlanStateTransformer;
 import dev.aod.mcmcp.observation.BlockPlanValidationException;
 import dev.aod.mcmcp.observation.BlockStateView;
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
-import dev.aod.mcmcp.observation.CreativeRegionCapture;
-import dev.aod.mcmcp.observation.CreativeWorldEdit;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.observation.WorldMemory;
 import dev.aod.mcmcp.safety.InputReleaseController;
@@ -57,7 +56,7 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
-import net.minecraft.server.MinecraftServer;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.item.BlockItem;
@@ -74,10 +73,12 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -90,7 +91,7 @@ import java.util.function.Supplier;
 
 /** Client runtime and the sole implementation of the MCP-to-Minecraft boundary. */
 public final class McmcpRuntime implements McpRuntimePort {
-    private static final String MCP_PROTOCOL_VERSION = "2025-11-25";
+    private static final String MCP_PROTOCOL_VERSION = "2026-07-28";
     private static final Duration FINALIZATION_RESERVE = Duration.ofSeconds(5);
     private static final double MAX_SAFE_STAY_HORIZONTAL_SPEED_SQUARED = 0.01;
     private static final float MIN_SAFE_STAY_HEALTH = 6.0F;
@@ -118,8 +119,6 @@ public final class McmcpRuntime implements McpRuntimePort {
     private final WorldMemory memory = new WorldMemory();
     private final MinecraftObservationService observations = new MinecraftObservationService(memory);
     private final BlockPlanComparator blockPlans = new BlockPlanComparator(observations, memory);
-    private final CreativeRegionCapture creativeRegions = new CreativeRegionCapture();
-    private final CreativeWorldEdit creativeEdits = new CreativeWorldEdit();
     private final ClientRecipeCatalog recipeCatalog = new ClientRecipeCatalog();
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
     private final LocalArmingState arming = new LocalArmingState();
@@ -138,11 +137,13 @@ public final class McmcpRuntime implements McpRuntimePort {
     private final FinalizationRetryQueue finalizationRetries = new FinalizationRetryQueue();
     private final GoalContinuationSession goalContinuation = new GoalContinuationSession();
     private RoutineWallClockDeadline activeRoutineDeadline;
+    private long pauseStartedAtNanos;
 
     private UUID voiceRoutineId;
 
     private volatile WorldSessionTracker.Snapshot publishedSession = sessions.snapshot();
     private volatile boolean paused;
+    private volatile String endpointFaultCode;
     private volatile boolean shutdown;
 
     public McmcpRuntime(String modVersion, String neoForgeVersion) {
@@ -278,10 +279,22 @@ public final class McmcpRuntime implements McpRuntimePort {
     }
 
     public void onPauseChanged(boolean paused) {
-        this.paused = paused;
-        if (paused) {
-            stopForPriorityClientEvent("client_paused");
+        var minecraft = Minecraft.getInstance();
+        assertClientThread(minecraft);
+        if (paused == this.paused) {
+            return;
         }
+        long nowNanos = System.nanoTime();
+        if (paused) {
+            pauseStartedAtNanos = nowNanos;
+            inputRelease.releaseAll(minecraft);
+        } else {
+            if (activeRoutineDeadline != null) {
+                activeRoutineDeadline = activeRoutineDeadline.shiftStart(nowNanos - pauseStartedAtNanos);
+            }
+            pauseStartedAtNanos = 0L;
+        }
+        this.paused = paused;
     }
 
     public void onPreTick(Minecraft minecraft) {
@@ -292,8 +305,12 @@ public final class McmcpRuntime implements McpRuntimePort {
         synchronizeWorld(minecraft);
         sessions.tick();
         publishSession();
-        creativeRegions.fenceClient(minecraft, publishedSession.worldSessionId());
-        creativeEdits.fenceClient(minecraft, publishedSession.worldSessionId());
+        if (publishedSession.worldReady()
+                && !localControlAvailable(minecraft, publishedSession)
+                && (!arming.snapshot(publishedSession.worldSessionId()).locked()
+                || automationActivityPending())) {
+            inbox.requestEmergencyStop("player_unavailable");
+        }
         inbox.drainEmergencyStopPreTick(minecraft, publishedSession);
         inbox.drainControlsPreTick(sessions.snapshot());
         retryPendingFinalizations(minecraft);
@@ -337,37 +354,6 @@ public final class McmcpRuntime implements McpRuntimePort {
         publishSession();
     }
 
-    public void onServerPostTick(MinecraftServer server) {
-        creativeRegions.onServerPostTick(server);
-        creativeEdits.onServerPostTick(server);
-    }
-
-    public void onServerStopping(MinecraftServer server) {
-        creativeRegions.onServerStopping(server);
-        creativeEdits.onServerStopping(server);
-    }
-
-    public void toggleLocalArming(Minecraft minecraft) {
-        assertClientThread(minecraft);
-        var session = sessions.snapshot();
-        if (!session.worldReady()) {
-            overlay(minecraft, "MCMCP: ワールド準備前のため解除できません");
-            return;
-        }
-        var current = arming.snapshot(session.worldSessionId());
-        if (!current.locked()) {
-            runPriorityStop(
-                    () -> inbox.requestEmergencyStop("local_key"),
-                    () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
-            goalContinuation.clear();
-            overlay(minecraft, "MCMCP: ロックしました");
-        } else {
-            goalContinuation.reset(session.worldSessionId());
-            arming.arm(session.worldSessionId(), availableCapabilities(minecraft));
-            overlay(minecraft, "MCMCP: このワールドでMCP自動操作を許可しました");
-        }
-    }
-
     public void emergencyStopFromLocalKey(Minecraft minecraft) {
         assertClientThread(minecraft);
         runPriorityStop(
@@ -380,15 +366,31 @@ public final class McmcpRuntime implements McpRuntimePort {
     /** Read-only, client-thread view used by the local HUD and pause-menu indicator. */
     public AutomationUiSnapshot automationUiSnapshot() {
         var session = sessions.snapshot();
-        var lock = arming.snapshot(session.worldSessionId());
+        long nowNanos = System.nanoTime();
+        var lock = arming.snapshot(session.worldSessionId(), nowNanos);
         return AutomationUiSnapshot.resolve(
-                session.worldReady(),
-                lock.locked(),
-                automationActivityPending(),
-                lock.lastLockReason());
+                localControlAvailable(Minecraft.getInstance(), session),
+                lock,
+                nowNanos,
+                endpointFaultCode);
     }
 
-    /** Uses the same priority lane as F9 so a UI stop releases every owned input inline. */
+    public boolean inputIsolationActive() {
+        var session = sessions.snapshot();
+        return arming.snapshot(session.worldSessionId()).inputIsolationActive();
+    }
+
+    /** May be called by the endpoint lifecycle worker; client-thread cleanup uses the priority lane. */
+    public void reportEndpointFault(String code) {
+        endpointFaultCode = sanitizeLocalCode(code);
+        inbox.requestEmergencyStop("endpoint_fault");
+    }
+
+    public void clearEndpointFault() {
+        endpointFaultCode = null;
+    }
+
+    /** Uses the same priority lane as Esc so a UI stop releases every owned input inline. */
     public void disableAutomationFromUi(Minecraft minecraft) {
         assertClientThread(minecraft);
         runPriorityStop(
@@ -398,12 +400,20 @@ public final class McmcpRuntime implements McpRuntimePort {
         overlay(minecraft, "MCMCP: MCP自動操作を無効にしました");
     }
 
-    /** Local-only re-arming endpoint; the pause-menu controller requires a second confirmation. */
+    public void disableAutomationFromUi() {
+        disableAutomationFromUi(Minecraft.getInstance());
+    }
+
+    /** Local-only re-arming endpoint used by the Screen status button. */
     public boolean enableAutomationFromUi(Minecraft minecraft) {
         assertClientThread(minecraft);
         var session = sessions.snapshot();
-        if (!session.worldReady()) {
+        if (!localControlAvailable(minecraft, session)) {
             overlay(minecraft, "MCMCP: ワールド準備前のため再許可できません");
+            return false;
+        }
+        if (endpointFaultCode != null) {
+            overlay(minecraft, "MCMCP: MCPエンドポイント障害のため許可できません");
             return false;
         }
         if (automationActivityPending()) {
@@ -411,18 +421,45 @@ public final class McmcpRuntime implements McpRuntimePort {
             return false;
         }
         goalContinuation.reset(session.worldSessionId());
-        arming.arm(session.worldSessionId(), availableCapabilities(minecraft));
+        arming.armFor(
+                session.worldSessionId(),
+                availableCapabilities(minecraft),
+                Duration.ofSeconds(McmcpClientConfig.readyTimeoutSeconds()));
         overlay(minecraft, "MCMCP: このワールドでMCP自動操作を再許可しました");
         return true;
     }
 
+    public boolean enableAutomationFromUi() {
+        return enableAutomationFromUi(Minecraft.getInstance());
+    }
+
+    private static String sanitizeLocalCode(String code) {
+        if (code == null || code.isBlank()) {
+            return "internal_error";
+        }
+        String normalized = code.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9_]+", "_")
+                .replaceAll("^_+|_+$", "");
+        if (normalized.isEmpty()) {
+            return "internal_error";
+        }
+        return normalized.substring(0, Math.min(64, normalized.length()));
+    }
+
+    private static boolean localControlAvailable(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session) {
+        return session.worldReady()
+                && minecraft.level != null
+                && minecraft.player != null
+                && minecraft.player.isAlive()
+                && minecraft.gameMode != null
+                && minecraft.getConnection() != null;
+    }
+
     private boolean automationActivityPending() {
         return routines.activeRoutineId().isPresent()
-                || creativeRegions.hasActiveJob()
-                || creativeEdits.hasActiveJob()
                 || inbox.hasPendingCommand("start_routine")
-                || inbox.hasPendingCommand("capture_creative_region")
-                || inbox.hasPendingCommand("edit_creative_world")
                 || finalizationRetries.hasPending()
                 || voiceRoutineId != null;
     }
@@ -481,8 +518,6 @@ public final class McmcpRuntime implements McpRuntimePort {
             return;
         }
         shutdown = true;
-        creativeRegions.cancelActive("client_shutdown");
-        creativeEdits.cancelActive("client_shutdown");
         sessions.stopping();
         inbox.shutdown(minecraft, sessions.snapshot());
         routines.clearSession("client_shutdown");
@@ -546,18 +581,10 @@ public final class McmcpRuntime implements McpRuntimePort {
         assertClientThread(minecraft);
         var session = sessions.snapshot();
         return switch (command) {
-            case GetStatus ignored -> status(minecraft, session);
+            case GetState ignored -> status(minecraft, session);
             case GetSnapshot snapshot -> {
                 requireReady(session);
                 yield observations.getSnapshot(minecraft, session.clientTick(), snapshot.arguments());
-            }
-            case CaptureCreativeRegion capture -> {
-                requireReady(session);
-                yield captureCreativeRegion(minecraft, session, capture.arguments(), context);
-            }
-            case EditCreativeWorld edit -> {
-                requireReady(session);
-                yield editCreativeWorld(minecraft, session, edit.arguments(), context);
             }
             case CompareBlockPlan compare -> {
                 requireReady(session);
@@ -609,169 +636,110 @@ public final class McmcpRuntime implements McpRuntimePort {
         return recipeCatalog.query(session.worldSessionId(), query, maxResults).toMap();
     }
 
-    private Map<String, Object> captureCreativeRegion(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            Map<String, Object> arguments,
-            RuntimeCallContext context) {
-        requireLiveCall(context, "capture_creative_region");
-        Object operation = arguments.get("operation");
-        UUID worldSessionId = Objects.requireNonNull(session.worldSessionId(), "worldSessionId");
-        if ("status".equals(operation)) {
-            return creativeRegions.status(worldSessionId, arguments);
-        }
-        if (!"start".equals(operation)) {
-            throw new IllegalArgumentException("operation must be start or status");
-        }
-        if (creativeEdits.hasActiveJob()) {
-            throw new RuntimeInvocationException(
-                    "busy", "A Creative world edit is active", true, Map.of());
-        }
-        if (!arming.allows(session.worldSessionId(), CreativeRegionCapture.CAPABILITY)) {
-            throw new RuntimeInvocationException(
-                    "locked",
-                    "Creative region capture is not locally armed for this world session",
-                    false,
-                    Map.of());
-        }
-        if (!CreativeRegionCapture.isConfirmedCreative(minecraft)) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state",
-                    "Creative region capture requires local integrated single-player Creative mode",
-                    false,
-                    Map.of("reason", "creative_mode_not_confirmed"));
-        }
-        requireLiveCall(context, "capture_creative_region");
-        return creativeRegions.start(
-                minecraft,
-                session.clientTick(),
-                worldSessionId,
-                arguments,
-                () -> arming.allows(worldSessionId, CreativeRegionCapture.CAPABILITY));
-    }
-
-    private Map<String, Object> editCreativeWorld(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            Map<String, Object> arguments,
-            RuntimeCallContext context) {
-        requireLiveCall(context, "edit_creative_world");
-        Object operation = arguments.get("operation");
-        UUID worldSessionId = Objects.requireNonNull(session.worldSessionId(), "worldSessionId");
-        if ("status".equals(operation)) {
-            return creativeEdits.status(worldSessionId, arguments);
-        }
-        if ("history".equals(operation)) {
-            return creativeEdits.history(worldSessionId, arguments);
-        }
-        if (!(operation instanceof String name) || !Set.of(
-                "set_block", "fill", "summon_entities", "undo", "redo").contains(name)) {
-            throw new IllegalArgumentException("unsupported Creative edit operation");
-        }
-        requireNoConcurrentWorldMutation(
-                false,
-                creativeRegions.hasActiveJob() || routines.activeRoutineId().isPresent());
-        if (!arming.allows(worldSessionId, CreativeWorldEdit.CAPABILITY)) {
-            throw new RuntimeInvocationException(
-                    "locked",
-                    "Creative world edits are not locally armed for this world session",
-                    false,
-                    Map.of());
-        }
-        if (!CreativeRegionCapture.isConfirmedCreative(minecraft)) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state",
-                    "Creative world edits require local integrated single-player Creative mode",
-                    false,
-                    Map.of("reason", "creative_mode_not_confirmed"));
-        }
-        requireLiveCall(context, "edit_creative_world");
-        return creativeEdits.start(
-                minecraft,
-                session.clientTick(),
-                worldSessionId,
-                arguments,
-                () -> arming.allows(worldSessionId, CreativeWorldEdit.CAPABILITY),
-                () -> arming.lock("creative_edit_rollback_failed"));
-    }
-
     private static Set<String> availableCapabilities(Minecraft minecraft) {
-        if (!CreativeRegionCapture.isConfirmedCreative(minecraft)) {
-            return AVAILABLE_CAPABILITIES;
-        }
-        var result = new LinkedHashSet<>(AVAILABLE_CAPABILITIES);
-        result.add(CreativeRegionCapture.CAPABILITY);
-        result.add(CreativeWorldEdit.CAPABILITY);
-        return Set.copyOf(result);
+        Objects.requireNonNull(minecraft, "minecraft");
+        return AVAILABLE_CAPABILITIES;
     }
 
     private Map<String, Object> status(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
-        var lock = arming.snapshot(session.worldSessionId());
-        var stats = memory.stats();
+        long nowNanos = System.nanoTime();
+        var lock = arming.snapshot(session.worldSessionId(), nowNanos);
+        var inventory = new LinkedHashMap<String, Integer>();
+        Map<String, Object> world = null;
 
-        var versions = new LinkedHashMap<String, Object>();
-        versions.put("mcp", MCP_PROTOCOL_VERSION);
-        versions.put("mod", modVersion);
-        // The launcher string is NeoForge's launch target in dev/production and is not
-        // the Minecraft data version advertised by the running game.
-        versions.put("minecraft", SharedConstants.getCurrentVersion().name());
-        versions.put("neoforge", neoForgeVersion);
-        versions.put("adapter", "minecraft-26.2-prediction-v1");
+        if (session.worldReady() && minecraft.player != null && minecraft.level != null) {
+            var player = minecraft.player;
+            world = new LinkedHashMap<>();
+            world.put("dimension", session.dimension());
+            world.put("client_tick", session.clientTick());
+            world.put("world_revision", session.generation());
+            world.put("position", Map.of(
+                    "x", player.getX(),
+                    "y", player.getY(),
+                    "z", player.getZ()));
+            world.put("yaw", Mth.wrapDegrees(player.getYRot()));
+            world.put("pitch", Mth.clamp(player.getXRot(), -90.0F, 90.0F));
+            world.put("health", player.getHealth());
+            world.put("absorption", player.getAbsorptionAmount());
+            world.put("hunger", player.getFoodData().getFoodLevel());
+            world.put("air", player.getAirSupply());
+            world.put("max_air", player.getMaxAirSupply());
+            world.put("on_fire", player.isOnFire());
+            world.put("submerged", player.isUnderWater());
+            world.put("status_effects", player.getActiveEffects().stream()
+                    .map(effect -> effect.getEffect().getRegisteredName())
+                    .distinct()
+                    .sorted()
+                    .limit(64)
+                    .toList());
 
-        var world = new LinkedHashMap<String, Object>();
-        world.put("connected", session.worldReady());
-        world.put("dimension", session.dimension());
-        world.put("world_session_id", session.worldSessionId() == null ? null : session.worldSessionId().toString());
+            var playerInventory = player.getInventory();
+            for (int slot = 0; slot < playerInventory.getContainerSize(); slot++) {
+                var stack = playerInventory.getItem(slot);
+                if (!stack.isEmpty()) {
+                    String item = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+                    inventory.merge(item, stack.getCount(), Integer::sum);
+                }
+            }
+        }
 
-        var lockPayload = new LinkedHashMap<String, Object>();
-        lockPayload.put("locked", lock.locked());
-        lockPayload.put("unlock_expires_at_client_tick", null);
-        lockPayload.put("reason", lock.lastLockReason());
+        var inventoryPayload = inventory.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(entry -> Map.<String, Object>of(
+                        "item", entry.getKey(),
+                        "count", entry.getValue()))
+                .toList();
+        return statePayload(lock, paused, world, inventoryPayload, nowNanos, Instant.now());
+    }
 
-        long evicted = stats.evictedBlocks() + stats.evictedEntities();
-        var memoryPayload = new LinkedHashMap<String, Object>();
-        memoryPayload.put("count", stats.retainedBlocks() + stats.retainedEntities());
-        memoryPayload.put("retention_policy", "session_lru:block=" + stats.blockLimit() + ",entity=" + stats.entityLimit());
-        memoryPayload.put("evicted_count", evicted);
-        memoryPayload.put("oldest_retained_tick", stats.oldestRetainedTick() == 0 ? null : stats.oldestRetainedTick());
-        memoryPayload.put("warning", evicted == 0 ? null : "old observations have been evicted");
+    static Map<String, Object> statePayload(
+            LocalArmingState.Snapshot lock,
+            boolean paused,
+            Map<String, Object> world,
+            List<Map<String, Object>> inventory,
+            long nowNanos,
+            Instant wallClock) {
+        Objects.requireNonNull(lock, "lock");
+        Objects.requireNonNull(inventory, "inventory");
+        Objects.requireNonNull(wallClock, "wallClock");
 
-        var activeRoutine = routines.activeRoutineId()
-                .map(id -> routines.getRoutine(id, Long.MAX_VALUE, 1))
-                .map(snapshot -> Map.<String, Object>of(
-                        "routine_id", snapshot.routineId().toString(),
-                        "kind", snapshot.kind(),
-                        "state", snapshot.state().name()))
-                .orElse(null);
+        var control = new LinkedHashMap<String, Object>();
+        control.put("mode", lock.mode().name().toLowerCase(Locale.ROOT));
+        control.put("ready_expires_at", lock.mode() == LocalArmingState.Mode.READY
+                ? wallClock.plusSeconds(lock.readyRemainingSeconds(nowNanos)).toString()
+                : null);
+        control.put("game_paused", paused);
 
-        var voiceSnapshot = voiceChat.snapshot();
-        var voiceStatus = switch (voiceSnapshot.availability()) {
-            case NOT_INSTALLED -> "unavailable";
-            case READY -> voiceSnapshot.stateFailureCode() != null
-                            || Boolean.FALSE.equals(voiceSnapshot.connected())
-                    ? "error"
-                    : voiceSnapshot.active() || Boolean.TRUE.equals(voiceSnapshot.muted())
-                            ? "muted"
-                            : "ready";
-            case INCOMPATIBLE, UNAVAILABLE -> "error";
-        };
+        var actionDsl = Map.<String, Object>of(
+                "version", 1,
+                "max_ast_depth", 4,
+                "max_source_nodes", 64,
+                "max_executed_nodes", 256,
+                "max_repeat_count", 16,
+                "allowed_capabilities", List.of("movement", "camera"));
+        var policy = Map.<String, Object>ofEntries(
+                Map.entry("profile", "survival_omnidirectional"),
+                Map.entry("multiplayer_enabled", false),
+                Map.entry("max_duration_ms", 30_000),
+                Map.entry("max_ticks", 600),
+                Map.entry("max_distance_blocks", 32),
+                Map.entry("max_camera_degrees", 360),
+                Map.entry("omnidirectional_visual_radius_blocks", 16),
+                Map.entry("local_observation_radius_blocks", 4),
+                Map.entry("omnidirectional_direction_count", 2_048),
+                Map.entry("omnidirectional_rays_per_tick", 256),
+                Map.entry("max_recent_sound_clues", 32),
+                Map.entry("sound_clue_ttl_ticks", 600),
+                Map.entry("action_dsl", actionDsl));
 
         var result = new LinkedHashMap<String, Object>();
-        result.put("versions", versions);
+        result.put("schema_version", 1);
+        result.put("control", control);
         result.put("world", world);
-        result.put("lock", lockPayload);
-        result.put("capability_profile", availableCapabilities(minecraft).stream().sorted().toList());
-        var voiceChat = new LinkedHashMap<String, Object>();
-        voiceChat.put("status", voiceStatus);
-        voiceChat.put("adapter_version", voiceSnapshot.adapterVersion());
-        voiceChat.put("connected", voiceSnapshot.connected());
-        voiceChat.put("muted", voiceSnapshot.muted());
-        voiceChat.put("failure", voiceSnapshot.stateFailureCode());
-        voiceChat.put("recovery_required", voiceSnapshot.recoveryRequired());
-        result.put("voice_chat", voiceChat);
-        result.put("policies", Map.of("survival", "stop_and_notify", "completion", "stay"));
-        result.put("active_routine", activeRoutine);
-        result.put("memory", memoryPayload);
+        result.put("inventory", List.copyOf(inventory));
+        result.put("policy", policy);
+        result.put("observation", null);
+        result.put("action", null);
         return result;
     }
 
@@ -1012,7 +980,6 @@ public final class McmcpRuntime implements McpRuntimePort {
         if (!AVAILABLE_CAPABILITIES.contains(kind)) {
             throw new IllegalArgumentException("kind is not an available routine");
         }
-        requireNoConcurrentWorldMutation(creativeEdits.hasActiveJob(), false);
         String completionIntent = completionIntentArgument(arguments);
         return switch (kind) {
             case "stationary_break" -> startStationaryBreak(
@@ -1033,15 +1000,6 @@ public final class McmcpRuntime implements McpRuntimePort {
                     session, arguments, completionIntent, context);
             default -> throw new IllegalArgumentException("kind is not an available routine");
         };
-    }
-
-    static void requireNoConcurrentWorldMutation(
-            boolean creativeEditActive,
-            boolean routineOrCaptureActive) {
-        if (creativeEditActive || routineOrCaptureActive) {
-            throw new RuntimeInvocationException(
-                    "busy", "Another world-mutating operation is active", true, Map.of());
-        }
     }
 
     private Map<String, Object> startStationaryBreak(
@@ -1349,17 +1307,33 @@ public final class McmcpRuntime implements McpRuntimePort {
         }
 
         final RoutineManager.StartReceipt receipt;
+        if (!arming.beginAction(worldSessionId)) {
+            var voiceEnd = endVoiceSessionFor(null);
+            var details = new LinkedHashMap<String, Object>();
+            details.put("reason", "ready_lease_unavailable");
+            appendVoiceEndDetails(details, voiceEnd);
+            throw new RuntimeInvocationException(
+                    "locked",
+                    "The one-action READY lease is no longer available",
+                    true,
+                    details);
+        }
         try {
             requireLiveCall(context, "start_routine");
             receipt = admission.get();
         }
         catch (RuntimeException | LinkageError failure) {
+            arming.lock("action_admission_failed");
             var voiceEnd = endVoiceSessionFor(null);
             throw withVoiceEndFailureDiagnostics(failure, voiceEnd);
         }
         if (!receipt.reused()) {
+            long startedAtNanos = System.nanoTime();
             activeRoutineDeadline = RoutineWallClockDeadline.start(
-                    receipt.routineId(), maxDurationSeconds, System.nanoTime());
+                    receipt.routineId(), maxDurationSeconds, startedAtNanos);
+            if (paused) {
+                pauseStartedAtNanos = startedAtNanos;
+            }
         }
         voiceRoutineId = receipt.routineId();
         goalContinuation.remember(
@@ -1531,6 +1505,10 @@ public final class McmcpRuntime implements McpRuntimePort {
         if (before.isEmpty()) {
             return;
         }
+        if (paused) {
+            inputRelease.releaseAll(minecraft);
+            return;
+        }
         var session = sessions.snapshot();
         var routineId = before.orElseThrow();
         if (activeRoutineDeadline == null
@@ -1633,16 +1611,14 @@ public final class McmcpRuntime implements McpRuntimePort {
             String reason,
             WorldSessionTracker.Snapshot session) {
         goalContinuation.clear();
-        boolean creativeReleased = creativeRegions.cancelActive(reason);
-        creativeReleased &= creativeEdits.cancelActive(reason);
         var active = routines.activeRoutineId();
         if (active.isEmpty()) {
-            return creativeReleased && endVoiceFor(voiceRoutineId);
+            return endVoiceFor(voiceRoutineId);
         }
         try {
             var cancelled = routines.cancelRoutine(active.orElseThrow(), reason, Long.MAX_VALUE, 1);
             var cleanup = finalizeTerminalRoutine(Minecraft.getInstance(), cancelled);
-            return creativeReleased && cleanup.inputsReleased() && cleanup.voice().success();
+            return cleanup.inputsReleased() && cleanup.voice().success();
         }
         catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error("MCMCP routine cancellation failed during emergency stop", failure);
@@ -1846,26 +1822,11 @@ public final class McmcpRuntime implements McpRuntimePort {
     }
 
     private void applyCompletionIntentAfterTerminal(RoutineSnapshot terminal) {
-        String completionIntent = goalContinuation.consumeIntent(terminal.routineId());
-        if (completionIntent == null) {
-            if (terminal.state() == RoutineState.FAILED) {
-                arming.lock("routine_failed_"
-                        + terminal.failure().code().toLowerCase(java.util.Locale.ROOT));
-            }
-            return;
-        }
+        goalContinuation.consumeIntent(terminal.routineId());
+        goalContinuation.clear();
         boolean succeeded = terminal.state() == RoutineState.SUCCEEDED
                 && terminal.goalVerified()
                 && terminal.finalizationFailure() == null;
-        if (succeeded && GoalContinuationSession.CONTINUE_GOAL.equals(completionIntent)) {
-            return;
-        }
-        if (terminal.state() == RoutineState.FAILED
-                && recoverableContinuationFailure(
-                        completionIntent, terminal.failure(), terminal.finalizationFailure())) {
-            return;
-        }
-        goalContinuation.clear();
         arming.lock(succeeded ? "goal_finished" : "goal_aborted");
     }
 
@@ -2114,20 +2075,12 @@ public final class McmcpRuntime implements McpRuntimePort {
         inbox.requestEmergencyStop(reason);
     }
 
-    public void onManualInput(String reason) {
-        stopForPriorityClientEvent(reason);
-    }
-
-    private void stopForPriorityClientEvent(String reason) {
+    public void onScreenOwnershipFailure(String reason) {
+        Objects.requireNonNull(reason, "reason");
         var minecraft = Minecraft.getInstance();
         assertClientThread(minecraft);
         runPriorityEventStopIfRequired(
-                routines.activeRoutineId().isPresent()
-                        || creativeRegions.hasActiveJob()
-                        || creativeEdits.hasActiveJob()
-                        || inbox.hasPendingCommand("start_routine")
-                        || inbox.hasPendingCommand("capture_creative_region")
-                        || inbox.hasPendingCommand("edit_creative_world"),
+                automationActivityPending(),
                 () -> inbox.requestEmergencyStop(reason),
                 () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
     }
@@ -2306,6 +2259,13 @@ public final class McmcpRuntime implements McpRuntimePort {
             return routineId.equals(activeRoutineId)
                     && elapsedNanos >= 0
                     && elapsedNanos < durationNanos;
+        }
+
+        RoutineWallClockDeadline shiftStart(long pausedNanos) {
+            if (pausedNanos <= 0L) {
+                return this;
+            }
+            return new RoutineWallClockDeadline(routineId, startedAtNanos + pausedNanos, durationNanos);
         }
     }
 
@@ -3495,28 +3455,6 @@ public final class McmcpRuntime implements McpRuntimePort {
                     ? Map.<String, Object>of()
                     : Map.<String, Object>of("active_routine_id", busy.activeRoutineId().toString());
             return RuntimeReply.failure("busy", "Another routine is active", true, details);
-        }
-        if (cause instanceof CreativeRegionCapture.CaptureBusyException) {
-            return RuntimeReply.failure("busy", "Another Creative capture is active", true);
-        }
-        if (cause instanceof CreativeRegionCapture.CaptureIdempotencyConflictException) {
-            return RuntimeReply.failure(
-                    "idempotency_conflict", "The idempotency key has different arguments", false);
-        }
-        if (cause instanceof CreativeRegionCapture.CaptureNotFoundException) {
-            return RuntimeReply.failure(
-                    "capture_not_found", "The Creative capture job is not retained", false);
-        }
-        if (cause instanceof CreativeWorldEdit.EditBusyException) {
-            return RuntimeReply.failure("busy", "Another Creative world edit is active", true);
-        }
-        if (cause instanceof CreativeWorldEdit.EditIdempotencyConflictException) {
-            return RuntimeReply.failure(
-                    "idempotency_conflict", "The idempotency key has different arguments", false);
-        }
-        if (cause instanceof CreativeWorldEdit.EditNotFoundException) {
-            return RuntimeReply.failure(
-                    "edit_not_found", "The Creative edit job is not retained", false);
         }
         if (cause instanceof RoutineManager.IdempotencyConflictException) {
             return RuntimeReply.failure(

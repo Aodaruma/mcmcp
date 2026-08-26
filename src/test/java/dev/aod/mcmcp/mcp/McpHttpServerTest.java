@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.mcp;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -14,29 +16,14 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Map;
+import java.util.Base64;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class McpHttpServerTest {
-    private static final String INITIALIZE = """
-            {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-              "protocolVersion":"2025-11-25","capabilities":{},
-              "clientInfo":{"name":"black-box-test","version":"1"}}}
-            """;
-    private static final String INITIALIZED =
-            "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}";
-    private static final String TOOLS_LIST =
-            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}";
-    private static final String GET_STATUS = """
-            {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
-              "name":"get_status","arguments":{}}}
-            """;
-
     @TempDir
     Path temporaryDirectory;
 
@@ -46,287 +33,282 @@ class McpHttpServerTest {
     private McpHttpServer server;
 
     @AfterEach
-    void stopServer() throws Exception {
+    void closeServer() throws Exception {
         if (server != null) {
             server.close();
         }
     }
 
     @Test
-    void negotiatesStatelessProtocolAndServesToolsListAndCall() throws Exception {
-        start("basic", defaultRuntime(), builder("basic").build());
+    void servesModernDiscoverListAndFixedToolCallWithoutSessions() throws Exception {
+        start(defaultRuntime(), config("wire").rateLimit(100, 100).build());
 
-        HttpResponse<String> initialize = send(INITIALIZE, McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", null, false);
-        assertThat(initialize.statusCode()).isEqualTo(200);
-        assertThat(initialize.body())
-                .contains("\"protocolVersion\":\"2025-11-25\"")
-                .contains("\"tools\"");
+        HttpResponse<String> discover = send(request(
+                "server/discover", null, metaParams(), McpTestFixtures.TOKEN));
+        assertThat(discover.statusCode()).isEqualTo(200);
+        JsonObject discoverResult = json(discover).getAsJsonObject("result");
+        assertThat(discoverResult.get("resultType").getAsString()).isEqualTo("complete");
+        assertThat(discoverResult.getAsJsonArray("supportedVersions").get(0).getAsString())
+                .isEqualTo(McpHttpServer.PROTOCOL_VERSION);
+        assertThat(discoverResult.get("ttlMs").getAsInt()).isZero();
+        assertThat(discoverResult.get("cacheScope").getAsString()).isEqualTo("private");
 
-        HttpResponse<String> initialized = send(INITIALIZED, McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", null, true);
-        assertThat(initialized.statusCode()).isEqualTo(202);
+        HttpResponse<String> list = send(request(
+                "tools/list", null, metaParams(), McpTestFixtures.TOKEN));
+        JsonObject listResult = json(list).getAsJsonObject("result");
+        assertThat(listResult.getAsJsonArray("tools").asList().stream()
+                .map(tool -> tool.getAsJsonObject().get("name").getAsString()))
+                .containsExactlyElementsOf(McpToolCatalog.REQUIRED_NAMES);
+        assertThat(listResult.getAsJsonObject("_meta").toString()).contains("mcmcp", "0.1.0");
 
-        HttpResponse<String> tools = send(TOOLS_LIST, McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", null, true);
-        assertThat(tools.statusCode()).isEqualTo(200);
-        assertThat(tools.body())
-                .contains("\"get_status\"")
-                .contains("\"get_snapshot\"")
-                .contains("\"compare_block_plan\"")
-                .contains("\"emergency_stop\"")
-                .contains("\"get_recipes\"")
-                .contains("\"capture_creative_region\"")
-                .contains("\"edit_creative_world\"")
-                .doesNotContain("\"outputSchema\"");
-        assertThat(tools.body().getBytes(StandardCharsets.UTF_8).length).isLessThan(20_000);
-
-        HttpResponse<String> call = send(GET_STATUS, McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", null, true);
+        JsonObject callParams = metaParams();
+        callParams.addProperty("name", "agent_get_state");
+        callParams.add("arguments", new JsonObject());
+        String encodedName = "=?base64?" + Base64.getEncoder().encodeToString(
+                "agent_get_state".getBytes(StandardCharsets.UTF_8)) + "?=";
+        HttpResponse<String> call = send(request(
+                "tools/call", encodedName, callParams, McpTestFixtures.TOKEN));
+        JsonObject callResult = json(call).getAsJsonObject("result");
         assertThat(call.statusCode()).isEqualTo(200);
-        assertThat(call.body())
-                .doesNotContain("\"structuredContent\"")
-                .contains("ok\\\":true")
-                .contains("tool\\\":\\\"get_status")
-                .contains("world_session_id\\\":\\\"session-test");
-
-        HttpResponse<String> invalidCall = send(
-                "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{"
-                        + "\"name\":\"get_status\",\"arguments\":{\"unexpected\\nfield\":true}}}",
-                McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", null, true);
-        assertThat(invalidCall.statusCode()).isEqualTo(200);
-        assertThat(invalidCall.body())
-                .doesNotContain("\"structuredContent\"")
-                .contains("ok\\\":false")
-                .contains("code\\\":\\\"invalid_argument")
-                .doesNotContain("unexpected");
-
-        assertThat(server.state()).isEqualTo(McpHttpServer.State.RUNNING);
-        assertThat(server.localPort()).isPositive();
+        assertThat(callResult.get("resultType").getAsString()).isEqualTo("complete");
+        assertThat(callResult.get("isError").getAsBoolean()).isFalse();
+        assertThat(callResult.has("structuredContent")).isTrue();
+        assertThat(callResult.getAsJsonArray("content")).hasSize(1);
+        assertThat(call.headers().firstValue("Content-Type").orElseThrow())
+                .startsWith("application/json");
+        assertThat(call.headers().firstValue("Mcp-Session-Id")).isEmpty();
+        assertThat(call.body()).doesNotContain(McpTestFixtures.TOKEN);
     }
 
     @Test
-    void rejectsInvalidSecurityAndTransportHeadersBeforeSdkDispatch() throws Exception {
-        start("guards", defaultRuntime(), builder("guards")
+    void enforcesLoopbackAuthenticationHeadersAndBoundedJson() throws Exception {
+        start(defaultRuntime(), config("guards")
                 .maxRequestBodyBytes(1_024)
                 .maxJsonDepth(4)
+                .rateLimit(100, 100)
                 .build());
 
-        assertThat(send(INITIALIZE, McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", "http://localhost", false)
-                .statusCode()).isEqualTo(200);
-        assertThat(send(INITIALIZE, "wrong-token-that-is-long-enough-000000000000",
-                "application/json", "application/json, text/event-stream", null, false).statusCode())
-                .isEqualTo(401);
-        assertThat(send(INITIALIZE, McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", "https://evil.example", false)
-                .statusCode()).isEqualTo(403);
-        assertThat(send(INITIALIZE, McpTestFixtures.TOKEN,
-                "text/plain", "application/json, text/event-stream", null, false).statusCode())
-                .isEqualTo(415);
-        assertThat(send(INITIALIZE, McpTestFixtures.TOKEN,
-                "application/json", "application/json", null, false).statusCode())
-                .isEqualTo(406);
-        assertThat(send(TOOLS_LIST, McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", null, false).statusCode())
-                .isEqualTo(400);
+        HttpResponse<String> wrongToken = send(request(
+                "server/discover", null, metaParams(), "wrong-token-012345678901234567890123456"));
+        assertThat(wrongToken.statusCode()).isEqualTo(401);
+        assertThat(wrongToken.body()).doesNotContain(McpTestFixtures.TOKEN);
+
+        HttpRequest origin = HttpRequest.newBuilder(endpoint())
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Bearer " + McpTestFixtures.TOKEN)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header(McpHttpServer.PROTOCOL_HEADER, McpHttpServer.PROTOCOL_VERSION)
+                .header(McpHttpServer.METHOD_HEADER, "server/discover")
+                .header("Origin", "http://localhost")
+                .POST(HttpRequest.BodyPublishers.ofString(
+                        requestBody("server/discover", metaParams()), StandardCharsets.UTF_8))
+                .build();
+        HttpResponse<String> originRejected = send(origin);
+        assertThat(originRejected.statusCode()).isEqualTo(403);
+        assertThat(originRejected.headers().firstValue("Access-Control-Allow-Origin")).isEmpty();
+
+        HttpRequest get = HttpRequest.newBuilder(endpoint()).GET().build();
+        assertThat(send(get).statusCode()).isEqualTo(405);
 
         String oversized = "{\"padding\":\"" + "x".repeat(2_000) + "\"}";
-        assertThat(send(oversized, McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", null, true).statusCode())
-                .isEqualTo(413);
+        assertThat(send(rawPost(oversized, "server/discover", null,
+                McpTestFixtures.TOKEN, "application/json", "application/json, text/event-stream",
+                McpHttpServer.PROTOCOL_VERSION)).statusCode()).isEqualTo(413);
 
-        String tooDeep = "{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":1}}}}}";
-        HttpResponse<String> depthRejected = send(tooDeep, McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", null, true);
-        assertThat(depthRejected.statusCode()).isEqualTo(400);
-        assertThat(depthRejected.body()).contains("json_too_deep");
+        assertThat(send(rawPost("[]", "tools/list", null,
+                McpTestFixtures.TOKEN, "application/json", "application/json, text/event-stream",
+                McpHttpServer.PROTOCOL_VERSION)).statusCode()).isEqualTo(400);
 
-        HttpRequest get = HttpRequest.newBuilder(endpoint())
-                .header("Authorization", "Bearer " + McpTestFixtures.TOKEN)
-                .GET()
-                .build();
-        assertThat(client.send(get, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(405);
-        assertThat(rawRequestWithHost("localhost")).startsWith("HTTP/1.1 200");
+        HttpResponse<String> mediaRejected = send(rawPost("{}", "server/discover", null,
+                McpTestFixtures.TOKEN, "text/plain", "application/json, text/event-stream",
+                McpHttpServer.PROTOCOL_VERSION));
+        assertThat(mediaRejected.statusCode()).isEqualTo(415);
+
+        HttpResponse<String> mismatchedVersion = send(rawPost(
+                requestBody("server/discover", metaParams()), "server/discover", null,
+                McpTestFixtures.TOKEN, "application/json", "application/json, text/event-stream",
+                "2025-11-25"));
+        assertThat(mismatchedVersion.statusCode()).isEqualTo(400);
+        assertThat(json(mismatchedVersion).getAsJsonObject("error").get("code").getAsInt())
+                .isEqualTo(McpHttpServer.HEADER_MISMATCH);
+
+        JsonObject unsupportedParams = metaParams("2099-01-01");
+        HttpResponse<String> unsupportedVersion = send(rawPost(
+                requestBody("server/discover", unsupportedParams), "server/discover", null,
+                McpTestFixtures.TOKEN, "application/json", "application/json, text/event-stream",
+                "2099-01-01"));
+        JsonObject unsupportedError = json(unsupportedVersion).getAsJsonObject("error");
+        assertThat(unsupportedVersion.statusCode()).isEqualTo(400);
+        assertThat(unsupportedError.get("code").getAsInt())
+                .isEqualTo(McpHttpServer.UNSUPPORTED_PROTOCOL_VERSION);
+        assertThat(unsupportedError.getAsJsonObject("data").getAsJsonArray("supported")
+                .get(0).getAsString()).isEqualTo(McpHttpServer.PROTOCOL_VERSION);
+        assertThat(unsupportedError.getAsJsonObject("data").get("requested").getAsString())
+                .isEqualTo("2099-01-01");
+
         assertThat(rawRequestWithHost("evil.example")).startsWith("HTTP/1.1 421");
+        assertThat(rawRequestWithHost("localhost")).startsWith("HTTP/1.1 200");
     }
 
     @Test
-    void appliesTokenBucketRateLimit() throws Exception {
-        start("rate", defaultRuntime(), builder("rate").rateLimit(1, 0.001).build());
-
-        assertThat(send(INITIALIZE, McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", null, false).statusCode())
-                .isEqualTo(200);
-        HttpResponse<String> limited = send(INITIALIZE, McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", null, false);
-        assertThat(limited.statusCode()).isEqualTo(429);
-        assertThat(limited.headers().firstValue("Retry-After")).contains("1");
+    void conformanceAuthenticationBypassCannotActivateInProduction() {
+        assertThat(McpHttpServer.allowsConformanceAuthenticationBypass(true, true)).isFalse();
+        assertThat(McpHttpServer.allowsConformanceAuthenticationBypass(false, false)).isFalse();
+        assertThat(McpHttpServer.allowsConformanceAuthenticationBypass(false, true)).isTrue();
     }
 
     @Test
-    void rejectsConcurrentRequestWhileFirstRuntimeCallIsInFlight() throws Exception {
+    void developmentConformanceEndpointStillEnforcesEveryGuardExceptBearer() throws Exception {
+        server = new McpHttpServer(
+                config("conformance").rateLimit(100, 100).build(), defaultRuntime(), true);
+        server.start();
+
+        HttpResponse<String> unauthenticated = send(rawPost(
+                requestBody("server/discover", metaParams()), "server/discover", null,
+                null, "application/json", "application/json, text/event-stream",
+                McpHttpServer.PROTOCOL_VERSION));
+        assertThat(unauthenticated.statusCode()).isEqualTo(200);
+
+        HttpRequest withOrigin = HttpRequest.newBuilder(endpoint())
+                .timeout(Duration.ofSeconds(5))
+                .header("Origin", "http://localhost")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header(McpHttpServer.PROTOCOL_HEADER, McpHttpServer.PROTOCOL_VERSION)
+                .header(McpHttpServer.METHOD_HEADER, "server/discover")
+                .POST(HttpRequest.BodyPublishers.ofString(
+                        requestBody("server/discover", metaParams()), StandardCharsets.UTF_8))
+                .build();
+        assertThat(send(withOrigin).statusCode()).isEqualTo(403);
+
+        server.close();
+        server = new McpHttpServer(
+                config("production-conformance").rateLimit(100, 100).build(),
+                defaultRuntime(),
+                McpHttpServer.allowsConformanceAuthenticationBypass(true, true));
+        server.start();
+        assertThat(send(rawPost(
+                requestBody("server/discover", metaParams()), "server/discover", null,
+                null, "application/json", "application/json, text/event-stream",
+                McpHttpServer.PROTOCOL_VERSION)).statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void limitsEveryAuthenticatedMcpRequestAndConcurrentDispatch() throws Exception {
+        start(defaultRuntime(), config("rate")
+                .rateLimit(1, 0.001)
+                .build());
+        assertThat(send(request("server/discover", null, metaParams(), McpTestFixtures.TOKEN))
+                .statusCode()).isEqualTo(200);
+        HttpResponse<String> limitedList = send(request(
+                "tools/list", null, metaParams(), McpTestFixtures.TOKEN));
+        assertThat(limitedList.statusCode()).isEqualTo(429);
+        assertThat(limitedList.headers().firstValue("Retry-After")).contains("1");
+        server.close();
+
         CountDownLatch enteredRuntime = new CountDownLatch(1);
         CompletableFuture<McpRuntimePort.RuntimeReply> pending = new CompletableFuture<>();
-        McpRuntimePort runtime = (command, context) -> {
+        start((command, context) -> {
             enteredRuntime.countDown();
             return pending;
-        };
-        McpHttpServerConfig config = builder("concurrency")
+        }, config("concurrency")
                 .maxConcurrentRequests(1)
                 .runtimeDispatchTimeout(Duration.ofSeconds(3))
                 .rateLimit(100, 100)
-                .build();
-        start("concurrency", runtime, config);
+                .build());
 
+        JsonObject callParams = metaParams();
+        callParams.addProperty("name", "agent_get_state");
+        callParams.add("arguments", new JsonObject());
+        HttpRequest call = request("tools/call", "agent_get_state", callParams, McpTestFixtures.TOKEN);
         CompletableFuture<HttpResponse<String>> first = client.sendAsync(
-                request(GET_STATUS, McpTestFixtures.TOKEN, "application/json",
-                        "application/json, text/event-stream", null, true),
-                HttpResponse.BodyHandlers.ofString());
+                call, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         assertThat(enteredRuntime.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(send(call).statusCode()).isEqualTo(429);
 
-        HttpResponse<String> second = send(GET_STATUS, McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", null, true);
-        assertThat(second.statusCode()).isEqualTo(429);
-        assertThat(second.body()).contains("too_many_concurrent_requests");
-
-        pending.complete(McpRuntimePort.RuntimeReply.success(McpTestFixtures.statusData()));
+        pending.complete(McpRuntimePort.RuntimeReply.success(McpTestFixtures.state()));
         assertThat(first.get(2, TimeUnit.SECONDS).statusCode()).isEqualTo(200);
     }
 
-    @Test
-    void validEmergencyStopsBypassSaturatedAdmissionAndCoalesceWithout429() throws Exception {
-        CountDownLatch enteredRuntime = new CountDownLatch(1);
-        CountDownLatch stopsEnteredRuntime = new CountDownLatch(2);
-        CompletableFuture<McpRuntimePort.RuntimeReply> pendingRead = new CompletableFuture<>();
-        CompletableFuture<McpRuntimePort.RuntimeReply> pendingStop = new CompletableFuture<>();
-        AtomicInteger stopCalls = new AtomicInteger();
-        McpRuntimePort runtime = (command, context) -> {
-            if (command instanceof McpRuntimePort.EmergencyStop) {
-                stopCalls.incrementAndGet();
-                stopsEnteredRuntime.countDown();
-                return pendingStop;
-            }
-            enteredRuntime.countDown();
-            return pendingRead;
-        };
-        McpHttpServerConfig config = builder("emergency-reserve")
-                .maxConcurrentRequests(1)
-                .runtimeDispatchTimeout(Duration.ofSeconds(3))
-                .rateLimit(1, 0.001)
-                .build();
-        start("emergency-reserve", runtime, config);
-
-        CompletableFuture<HttpResponse<String>> first = client.sendAsync(
-                request(GET_STATUS, McpTestFixtures.TOKEN, "application/json",
-                        "application/json, text/event-stream", null, true),
-                HttpResponse.BodyHandlers.ofString());
-        assertThat(enteredRuntime.await(2, TimeUnit.SECONDS)).isTrue();
-
-        String invalidStop = """
-                {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{
-                  "name":"emergency_stop","arguments":{}}}
-                """;
-        HttpResponse<String> invalid = send(invalidStop, McpTestFixtures.TOKEN,
-                "application/json", "application/json, text/event-stream", null, true);
-        assertThat(invalid.statusCode()).isEqualTo(429);
-
-        String firstEmergencyStop = """
-                {"jsonrpc":"2.0","id":5,"method":"tools/call","params":{
-                  "name":"emergency_stop","arguments":{"reason":"first saturated stop"}}}
-                """;
-        String secondEmergencyStop = """
-                {"jsonrpc":"2.0","id":6,"method":"tools/call","params":{
-                  "name":"emergency_stop","arguments":{"reason":"second saturated stop"}}}
-                """;
-        CompletableFuture<HttpResponse<String>> firstStop = client.sendAsync(
-                request(firstEmergencyStop, McpTestFixtures.TOKEN, "application/json",
-                        "application/json, text/event-stream", null, true),
-                HttpResponse.BodyHandlers.ofString());
-        CompletableFuture<HttpResponse<String>> secondStop = client.sendAsync(
-                request(secondEmergencyStop, McpTestFixtures.TOKEN, "application/json",
-                        "application/json, text/event-stream", null, true),
-                HttpResponse.BodyHandlers.ofString());
-        assertThat(stopsEnteredRuntime.await(2, TimeUnit.SECONDS)).isTrue();
-        assertThat(stopCalls).hasValue(2);
-
-        pendingStop.complete(McpRuntimePort.RuntimeReply.success(Map.of(
-                "stop_requested", true,
-                "locked", true,
-                "released_inputs", true,
-                "discarded_pending_starts", 1)));
-        assertThat(firstStop.get(2, TimeUnit.SECONDS).statusCode()).isEqualTo(200);
-        assertThat(secondStop.get(2, TimeUnit.SECONDS).statusCode()).isEqualTo(200);
-        assertThat(firstStop.get().body())
-                .contains("ok\\\":true")
-                .contains("tool\\\":\\\"emergency_stop")
-                .contains("released_inputs\\\":true");
-        assertThat(secondStop.get().body())
-                .contains("ok\\\":true")
-                .contains("tool\\\":\\\"emergency_stop")
-                .contains("released_inputs\\\":true");
-
-        pendingRead.complete(McpRuntimePort.RuntimeReply.success(McpTestFixtures.statusData()));
-        assertThat(first.get(2, TimeUnit.SECONDS).statusCode()).isEqualTo(200);
-    }
-
-    private McpHttpServerConfig.Builder builder(String name) {
-        return McpHttpServerConfig.builder(temporaryDirectory.resolve(name), McpTestFixtures.TOKEN)
-                .port(0)
-                .rateLimit(100, 100);
-    }
-
-    private void start(String name, McpRuntimePort runtime, McpHttpServerConfig config) throws Exception {
+    private void start(McpRuntimePort runtime, McpHttpServerConfig config) throws Exception {
+        if (server != null && server.state() != McpHttpServer.State.STOPPED) {
+            server.close();
+        }
         server = new McpHttpServer(config, runtime);
         server.start();
     }
 
+    private McpHttpServerConfig.Builder config(String name) {
+        return McpHttpServerConfig.builder(temporaryDirectory.resolve(name), McpTestFixtures.TOKEN)
+                .port(0);
+    }
+
     private static McpRuntimePort defaultRuntime() {
         return (command, context) -> CompletableFuture.completedFuture(
-                McpRuntimePort.RuntimeReply.success(McpTestFixtures.statusData()));
+                McpRuntimePort.RuntimeReply.success(McpTestFixtures.state()));
     }
 
     private URI endpoint() {
         return URI.create("http://127.0.0.1:" + server.localPort() + "/mcp");
     }
 
-    private HttpResponse<String> send(
-            String body,
-            String token,
-            String contentType,
-            String accept,
-            String origin,
-            boolean protocolHeader) throws Exception {
-        return client.send(
-                request(body, token, contentType, accept, origin, protocolHeader),
-                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+    private HttpResponse<String> send(HttpRequest request) throws Exception {
+        return client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
-    private HttpRequest request(
-            String body,
-            String token,
-            String contentType,
-            String accept,
-            String origin,
-            boolean protocolHeader) {
+    private HttpRequest request(String method, String name, JsonObject params, String token) {
+        return rawPost(requestBody(method, params), method, name, token,
+                "application/json", "application/json, text/event-stream", McpHttpServer.PROTOCOL_VERSION);
+    }
+
+    private HttpRequest rawPost(
+            String body, String method, String name, String token, String contentType,
+            String accept, String protocolVersion) {
         HttpRequest.Builder request = HttpRequest.newBuilder(endpoint())
                 .timeout(Duration.ofSeconds(5))
-                .header("Authorization", "Bearer " + token)
                 .header("Content-Type", contentType)
                 .header("Accept", accept)
+                .header(McpHttpServer.PROTOCOL_HEADER, protocolVersion)
+                .header(McpHttpServer.METHOD_HEADER, method)
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
-        if (origin != null) {
-            request.header("Origin", origin);
+        if (token != null) {
+            request.header("Authorization", "Bearer " + token);
         }
-        if (protocolHeader) {
-            request.header(McpRequestGuardFilter.PROTOCOL_HEADER, McpRequestGuardFilter.PROTOCOL_VERSION);
+        if (name != null) {
+            request.header(McpHttpServer.NAME_HEADER, name);
         }
         return request.build();
     }
 
+    private static String requestBody(String method, JsonObject params) {
+        JsonObject body = new JsonObject();
+        body.addProperty("jsonrpc", "2.0");
+        body.addProperty("id", 1);
+        body.addProperty("method", method);
+        body.add("params", params);
+        return body.toString();
+    }
+
+    private static JsonObject metaParams() {
+        return metaParams(McpHttpServer.PROTOCOL_VERSION);
+    }
+
+    private static JsonObject metaParams(String protocolVersion) {
+        JsonObject meta = new JsonObject();
+        meta.addProperty("io.modelcontextprotocol/protocolVersion", protocolVersion);
+        meta.add("io.modelcontextprotocol/clientCapabilities", new JsonObject());
+        JsonObject params = new JsonObject();
+        params.add("_meta", meta);
+        return params;
+    }
+
+    private static JsonObject json(HttpResponse<String> response) {
+        return JsonParser.parseString(response.body()).getAsJsonObject();
+    }
+
     private String rawRequestWithHost(String host) throws Exception {
-        byte[] body = INITIALIZE.getBytes(StandardCharsets.UTF_8);
+        byte[] body = requestBody("server/discover", metaParams()).getBytes(StandardCharsets.UTF_8);
         try (Socket socket = new Socket("127.0.0.1", server.localPort())) {
             socket.setSoTimeout(2_000);
             String headers = "POST /mcp HTTP/1.1\r\n"
@@ -334,6 +316,8 @@ class McpHttpServerTest {
                     + "Authorization: Bearer " + McpTestFixtures.TOKEN + "\r\n"
                     + "Content-Type: application/json\r\n"
                     + "Accept: application/json, text/event-stream\r\n"
+                    + McpHttpServer.PROTOCOL_HEADER + ": " + McpHttpServer.PROTOCOL_VERSION + "\r\n"
+                    + McpHttpServer.METHOD_HEADER + ": server/discover\r\n"
                     + "Content-Length: " + body.length + "\r\n"
                     + "Connection: close\r\n\r\n";
             socket.getOutputStream().write(headers.getBytes(StandardCharsets.US_ASCII));

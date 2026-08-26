@@ -1,6 +1,6 @@
 package dev.aod.mcmcp.runtime;
 
-import io.modelcontextprotocol.json.McpJsonDefaults;
+import com.google.gson.Gson;
 import dev.aod.mcmcp.routine.ActionBounds;
 import dev.aod.mcmcp.routine.ApplyBlockPlanOperation;
 import dev.aod.mcmcp.routine.ApplyBlockPlanRequest;
@@ -31,6 +31,7 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,18 +48,30 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 
 class McmcpRuntimeHardeningTest {
     @Test
-    void creativeEditAndSurvivalRoutineAdmissionsAreMutuallyExclusive() {
-        var editThenRoutine = McmcpRuntime.mapFailure(catchThrowable(() ->
-                McmcpRuntime.requireNoConcurrentWorldMutation(true, false)));
-        var routineThenEdit = McmcpRuntime.mapFailure(catchThrowable(() ->
-                McmcpRuntime.requireNoConcurrentWorldMutation(false, true)));
+    void productionStateAdapterUsesTheNormativeAgentStateShape() {
+        var lock = new LocalArmingState.Snapshot(
+                LocalArmingState.Mode.OFF, null, Set.of(), 0L, "startup");
 
-        assertThat(editThenRoutine.failure().code()).isEqualTo("busy");
-        assertThat(editThenRoutine.failure().retryable()).isTrue();
-        assertThat(routineThenEdit.failure().code()).isEqualTo("busy");
-        assertThat(routineThenEdit.failure().retryable()).isTrue();
-        assertThatCode(() -> McmcpRuntime.requireNoConcurrentWorldMutation(false, false))
-                .doesNotThrowAnyException();
+        var state = McmcpRuntime.statePayload(
+                lock, false, null, List.of(), 0L, Instant.EPOCH);
+
+        assertThat(state.keySet()).containsExactly(
+                "schema_version", "control", "world", "inventory",
+                "policy", "observation", "action");
+        assertThat(state).containsEntry("schema_version", 1)
+                .containsEntry("world", null)
+                .containsEntry("inventory", List.of())
+                .containsEntry("observation", null)
+                .containsEntry("action", null);
+        var control = (Map<?, ?>) state.get("control");
+        assertThat(control.get("mode")).isEqualTo("off");
+        assertThat(control.get("ready_expires_at")).isNull();
+        assertThat(control.get("game_paused")).isEqualTo(false);
+        var policy = (Map<?, ?>) state.get("policy");
+        assertThat(policy.get("profile")).isEqualTo("survival_omnidirectional");
+        assertThat(policy.get("max_duration_ms")).isEqualTo(30_000);
+        assertThat(policy.get("max_ticks")).isEqualTo(600);
+        assertThat(policy.get("max_distance_blocks")).isEqualTo(32);
     }
 
     @Test
@@ -170,6 +183,11 @@ class McmcpRuntimeHardeningTest {
                 routineId, nearWrap + Duration.ofSeconds(5).toNanos())).isTrue();
         assertThat(wrappedClock.allows(
                 routineId, nearWrap + Duration.ofSeconds(6).toNanos())).isFalse();
+        var shiftedClock = negativeClock.shiftStart(Duration.ofSeconds(7).toNanos());
+        assertThat(shiftedClock.allows(
+                routineId, negativeStart + Duration.ofSeconds(42).toNanos() - 1)).isTrue();
+        assertThat(shiftedClock.allows(
+                routineId, negativeStart + Duration.ofSeconds(42).toNanos())).isFalse();
         assertThat(negativeClock.allows(UUID.randomUUID(), negativeStart)).isFalse();
     }
 
@@ -384,7 +402,7 @@ class McmcpRuntimeHardeningTest {
             assertThat(entry).containsKeys("capabilities").doesNotContainKeys("input_schema", "postconditions");
             assertThat((List<?>) entry.get("capabilities")).isNotEmpty();
         });
-        assertThat(McpJsonDefaults.getMapper().writeValueAsString(catalog)
+        assertThat(new Gson().toJson(catalog)
                 .getBytes(StandardCharsets.UTF_8).length).isLessThan(8_000);
 
         @SuppressWarnings("unchecked")
@@ -396,8 +414,7 @@ class McmcpRuntimeHardeningTest {
             assertThat(entry.get("input_schema")).isInstanceOf(Map.class);
             assertThat(entry.get("postconditions")).isInstanceOf(List.class);
         });
-        assertThat(McpJsonDefaults.getMapper().writeValueAsString(
-                        McmcpRuntime.routineCatalog("tend_crop_area"))
+        assertThat(new Gson().toJson(McmcpRuntime.routineCatalog("tend_crop_area"))
                 .getBytes(StandardCharsets.UTF_8).length).isLessThan(15_000);
     }
 

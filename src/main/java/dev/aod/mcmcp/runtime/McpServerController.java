@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.McmcpMod;
+import dev.aod.mcmcp.client.McmcpClientConfig;
 import dev.aod.mcmcp.mcp.McpHttpServer;
 import dev.aod.mcmcp.mcp.McpHttpServerConfig;
 import dev.aod.mcmcp.safety.BearerTokenStore;
@@ -11,7 +12,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Owns blocking Tomcat lifecycle work outside the Minecraft client thread. */
+/** Owns the embedded JDK HTTP endpoint lifecycle outside the Minecraft client thread. */
 public final class McpServerController implements AutoCloseable {
     private final McmcpRuntime runtime;
     private final String modVersion;
@@ -35,21 +36,30 @@ public final class McpServerController implements AutoCloseable {
 
     private void startBlocking(Path configDirectory) {
         try {
+            if (!McmcpClientConfig.endpointEnabled()) {
+                state.set(State.STOPPED);
+                runtime.reportEndpointFault("endpoint_disabled_by_config");
+                McmcpMod.LOGGER.info("MCMCP MCP endpoint is disabled by client config");
+                return;
+            }
             var token = new BearerTokenStore().loadOrCreate(configDirectory);
-            int port = Integer.getInteger("mcmcp.port", 8_765);
+            int port = Integer.getInteger("mcmcp.port", McmcpClientConfig.port());
             var config = McpHttpServerConfig.builder(configDirectory.resolve("runtime"), token.secret())
                     .port(port)
                     .serverInfo("mcmcp", modVersion)
+                    .maxRequestBodyBytes(McmcpClientConfig.maxRequestBytes())
                     .build();
             var candidate = new McpHttpServer(config, runtime);
             candidate.start();
             server.set(candidate);
             state.set(State.RUNNING);
+            runtime.clearEndpointFault();
             McmcpMod.LOGGER.info(
                     "MCMCP MCP listening on 127.0.0.1:{}; token file: config/mcmcp/mcp-token",
                     candidate.localPort());
         } catch (Exception failure) {
             state.set(State.FAILED);
+            runtime.reportEndpointFault("endpoint_start_failed");
             McmcpMod.LOGGER.error("MCMCP MCP failed to start; automation endpoint remains disabled", failure);
         }
     }
@@ -78,6 +88,7 @@ public final class McpServerController implements AutoCloseable {
                 } catch (McpHttpServer.McpHttpServerException failure) {
                     McmcpMod.LOGGER.error("MCMCP MCP shutdown failed", failure);
                     state.set(State.FAILED);
+                    runtime.reportEndpointFault("endpoint_shutdown_failed");
                     return;
                 }
             }

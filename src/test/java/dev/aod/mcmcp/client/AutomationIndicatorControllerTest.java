@@ -7,38 +7,63 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AutomationIndicatorControllerTest {
     @Test
-    void pauseButtonUsesTheLongestLabelAndClampsToTheScreen() {
-        assertThat(AutomationIndicatorController.pauseButtonWidth(320, 60, 123, 80, 90))
-                .isEqualTo(155);
-        assertThat(AutomationIndicatorController.pauseButtonWidth(140, 60, 123, 80, 90))
-                .isEqualTo(128);
+    void menuButtonUsesTheLongestLabelAndClampsToTheScreen() {
+        assertThat(AutomationIndicatorController.menuButtonWidth(320, 8, 60, 123, 80, 90))
+                .isEqualTo(159);
+        assertThat(AutomationIndicatorController.menuButtonWidth(140, 8, 60, 123, 80, 90))
+                .isEqualTo(124);
     }
 
     @Test
     void lowerRightPlacementNeverCrossesTheTopOrLeftEdge() {
-        assertThat(AutomationIndicatorController.lowerRightCoordinate(256, 20, 3))
-                .isEqualTo(233);
-        assertThat(AutomationIndicatorController.lowerRightCoordinate(10, 20, 3))
+        assertThat(AutomationIndicatorController.lowerRightCoordinate(256, 16, 8))
+                .isEqualTo(232);
+        assertThat(AutomationIndicatorController.lowerRightCoordinate(10, 16, 8))
                 .isZero();
     }
 
     @Test
-    void activeAndIdlePressesAlwaysChooseTheSafetyStop() {
-        assertThat(AutomationIndicatorController.pressAction(
-                AutomationUiSnapshot.State.ACTIVE, false))
-                .isEqualTo(AutomationIndicatorController.PressAction.DISABLE);
-        assertThat(AutomationIndicatorController.pressAction(
-                AutomationUiSnapshot.State.IDLE, false))
-                .isEqualTo(AutomationIndicatorController.PressAction.DISABLE);
+    void everyEnabledStatePressChoosesTheSafetyStop() {
+        for (var state : new AutomationUiSnapshot.State[] {
+                AutomationUiSnapshot.State.READY,
+                AutomationUiSnapshot.State.AGENT,
+                AutomationUiSnapshot.State.RECOVERING
+        }) {
+            assertThat(AutomationIndicatorController.pressAction(state, false))
+                    .isEqualTo(AutomationIndicatorController.PressAction.DISABLE);
+            assertThat(AutomationIndicatorController.buttonActive(state, false)).isTrue();
+        }
     }
 
     @Test
-    void disabledStateRequiresTwoDistinctPressesToEnable() {
+    void offStateEnablesInOnePressOnlyWhenTheWorldIsReady() {
         assertThat(AutomationIndicatorController.pressAction(
-                AutomationUiSnapshot.State.DISABLED, false))
-                .isEqualTo(AutomationIndicatorController.PressAction.REQUEST_ENABLE_CONFIRMATION);
-        assertThat(AutomationIndicatorController.pressAction(
-                AutomationUiSnapshot.State.DISABLED, true))
+                AutomationUiSnapshot.State.OFF, true))
                 .isEqualTo(AutomationIndicatorController.PressAction.ENABLE);
+        assertThat(AutomationIndicatorController.pressAction(
+                AutomationUiSnapshot.State.OFF, false))
+                .isEqualTo(AutomationIndicatorController.PressAction.NONE);
+        assertThat(AutomationIndicatorController.buttonActive(
+                AutomationUiSnapshot.State.OFF, true)).isTrue();
+        assertThat(AutomationIndicatorController.buttonActive(
+                AutomationUiSnapshot.State.OFF, false)).isFalse();
+    }
+
+    @Test
+    void enablingRequiresAReadyWorldAndALivePlayer() {
+        assertThat(AutomationIndicatorController.canEnable(true, true, true, true)).isTrue();
+        assertThat(AutomationIndicatorController.canEnable(false, true, true, true)).isFalse();
+        assertThat(AutomationIndicatorController.canEnable(true, false, true, true)).isFalse();
+        assertThat(AutomationIndicatorController.canEnable(true, true, false, true)).isFalse();
+        assertThat(AutomationIndicatorController.canEnable(true, true, true, false)).isFalse();
+    }
+
+    @Test
+    void faultStateCannotBePressed() {
+        assertThat(AutomationIndicatorController.pressAction(
+                AutomationUiSnapshot.State.FAULT, true))
+                .isEqualTo(AutomationIndicatorController.PressAction.NONE);
+        assertThat(AutomationIndicatorController.buttonActive(
+                AutomationUiSnapshot.State.FAULT, true)).isFalse();
     }
 }

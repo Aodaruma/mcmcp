@@ -281,11 +281,13 @@ public final class ScreenOwnershipSignals {
     public boolean allowScreenOpening(Screen screen) {
         var view = menuView(screen);
         synchronized (gate) {
-            return view.isPresent()
-                    && core.allowScreenOpening(
+            var transition = view.isEmpty()
+                    ? core.failIfActive("unexpected_screen_opened")
+                    : core.allowScreenOpening(
                             view.orElseThrow().containerId(),
                             view.orElseThrow().menuTypeId(),
-                            clientTick).allowed();
+                            clientTick);
+            return transition.allowed();
         }
     }
 
@@ -300,14 +302,6 @@ public final class ScreenOwnershipSignals {
             return transition.failedNow()
                     ? Optional.of(transition.reason())
                     : Optional.empty();
-        }
-    }
-
-    /** Invalidates ownership before the existing runtime human-override path is invoked. */
-    public void onManualInput(String reason) {
-        Objects.requireNonNull(reason, "reason");
-        synchronized (gate) {
-            core.failIfActive(reason);
         }
     }
 

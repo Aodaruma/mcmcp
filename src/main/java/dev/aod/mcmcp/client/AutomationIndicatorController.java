@@ -1,171 +1,281 @@
 package dev.aod.mcmcp.client;
 
+import dev.aod.mcmcp.McmcpMod;
 import dev.aod.mcmcp.runtime.AutomationUiSnapshot;
 import dev.aod.mcmcp.runtime.McmcpRuntime;
-import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Tooltip;
-import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.InputWithModifiers;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.input.MouseButtonInfo;
 import net.minecraft.network.chat.Component;
-import net.neoforged.neoforge.client.event.RenderGuiEvent;
+import net.minecraft.resources.Identifier;
+import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 
+import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
-/** Local HUD/pause-menu indicator; it never accepts MCP or network input. */
+/** Local-only HUD and Screen controls; neither accepts MCP or network input. */
 public final class AutomationIndicatorController {
-    static final long ENABLE_CONFIRMATION_NANOS = TimeUnit.SECONDS.toNanos(5);
+    static final long AGENT_NOTICE_NANOS = TimeUnit.SECONDS.toNanos(3);
 
-    private static final int ROBOT_SIZE = 12;
-    private static final int ROBOT_GAP = 4;
-    private static final int HUD_SIZE = 20;
-    private static final int HUD_MARGIN = 3;
-    private static final int PAUSE_HEIGHT = 20;
-    private static final int PAUSE_MARGIN = 6;
-    private static final int PAUSE_PADDING = 8;
+    private static final Identifier HUD_LAYER = Identifier.fromNamespaceAndPath(
+            McmcpMod.MOD_ID, "automation_status");
+    private static final int ICON_SIZE = 16;
+    private static final int ICON_TEXT_GAP = 4;
+    private static final int MIN_LEFT_MARGIN = 8;
+    private static final int BUTTON_HEIGHT = 24;
+    private static final int BUTTON_PADDING = 8;
+    private static final int BACKGROUND = 0xD0101010;
 
-    private static final int BACKGROUND = 0xC0101010;
-    private static final int ACTIVE_COLOR = 0xFF55FF55;
-    private static final int IDLE_COLOR = 0xFFFFD75F;
-    private static final int DISABLED_COLOR = 0xFFFF5555;
+    private static final int OFF_COLOR = 0xFFB8B8B8;
+    private static final int READY_COLOR = 0xFFFFA928;
+    private static final int AGENT_COLOR = 0xFF45A7FF;
+    private static final int RECOVERING_COLOR = 0xFFC17AFF;
+    private static final int FAULT_COLOR = 0xFFFF5555;
 
     private final McmcpRuntime runtime;
-    private long enableConfirmationDeadlineNanos;
+    private Screen indicatorScreen;
+    private IndicatorButton indicatorButton;
+    private AutomationUiSnapshot.State lastObservedState = AutomationUiSnapshot.State.OFF;
+    private long agentNoticeDeadlineNanos;
 
     public AutomationIndicatorController(McmcpRuntime runtime) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
     }
 
-    public void onScreenInit(ScreenEvent.Init.Post event) {
-        if (!(event.getScreen() instanceof PauseScreen)) {
-            return;
-        }
-        enableConfirmationDeadlineNanos = 0L;
-        int width = pauseButtonWidth(event.getScreen().width);
-        event.addListener(new IndicatorButton(
-                this, event.getScreen().width, event.getScreen().height, width));
+    public void onRegisterGuiLayers(RegisterGuiLayersEvent event) {
+        event.registerAboveAll(HUD_LAYER, this::renderHud);
     }
 
-    public void onHudRender(RenderGuiEvent.Post event) {
-        var minecraft = Minecraft.getInstance();
-        if (minecraft.gui.screen() instanceof PauseScreen) {
-            return;
+    public void onScreenInit(ScreenEvent.Init.Post event) {
+        var screen = event.getScreen();
+        int width = menuButtonWidth(screen.width);
+        var button = new IndicatorButton(this, screen.width, screen.height, width);
+        indicatorScreen = screen;
+        indicatorButton = button;
+        event.addListener(button);
+    }
+
+    /**
+     * Dispatches only the physical primary click that is inside the current MCMCP button.
+     * The caller still cancels the enclosing raw mouse event so no underlying Screen widget runs.
+     */
+    public boolean dispatchPrimaryClick(Minecraft minecraft, MouseButtonInfo buttonInfo) {
+        Objects.requireNonNull(minecraft, "minecraft");
+        Objects.requireNonNull(buttonInfo, "buttonInfo");
+        var button = indicatorButton;
+        if (buttonInfo.button() != 0
+                || button == null
+                || minecraft.gui.screen() != indicatorScreen
+                || !button.visible
+                || !button.active) {
+            return false;
         }
+        double mouseX = minecraft.mouseHandler.getScaledXPos(minecraft.getWindow());
+        double mouseY = minecraft.mouseHandler.getScaledYPos(minecraft.getWindow());
+        if (!button.isMouseOver(mouseX, mouseY)) {
+            return false;
+        }
+        return button.mouseClicked(
+                new MouseButtonEvent(mouseX, mouseY, buttonInfo), false);
+    }
+
+    private void renderHud(GuiGraphicsExtractor graphics, net.minecraft.client.DeltaTracker delta) {
+        var minecraft = Minecraft.getInstance();
         var snapshot = runtime.automationUiSnapshot();
-        if (!snapshot.worldReady()) {
+        observeState(snapshot.state(), System.nanoTime());
+        if (minecraft.level == null
+                || minecraft.player == null) {
             return;
         }
 
-        var graphics = event.getGuiGraphics();
-        int x = lowerRightCoordinate(graphics.guiWidth(), HUD_SIZE, HUD_MARGIN);
-        int y = lowerRightCoordinate(graphics.guiHeight(), HUD_SIZE, HUD_MARGIN);
-        int color = color(snapshot.state());
-        graphics.fill(x, y, x + HUD_SIZE, y + HUD_SIZE, BACKGROUND);
-        graphics.outline(x, y, HUD_SIZE, HUD_SIZE, color);
-        drawRobot(graphics, x + 4, y + 4, color);
+        if (snapshot.state() == AutomationUiSnapshot.State.AGENT
+                && System.nanoTime() < agentNoticeDeadlineNanos) {
+            drawAgentNotice(graphics, minecraft);
+        }
+        if (minecraft.gui.screen() != null) {
+            return;
+        }
+
+        int x = lowerRightCoordinate(
+                graphics.guiWidth(), ICON_SIZE, McmcpClientConfig.hudOffsetX());
+        int y = lowerRightCoordinate(
+                graphics.guiHeight(), ICON_SIZE, McmcpClientConfig.hudOffsetY());
+        drawIcon(graphics, x, y, snapshot.state());
     }
 
     private void press(IndicatorButton button) {
-        long nowNanos = System.nanoTime();
         var snapshot = runtime.automationUiSnapshot();
-        var action = pressAction(
-                snapshot.state(), nowNanos < enableConfirmationDeadlineNanos);
-        switch (action) {
-            case DISABLE -> {
-                enableConfirmationDeadlineNanos = 0L;
-                runtime.disableAutomationFromUi(Minecraft.getInstance());
-            }
-            case REQUEST_ENABLE_CONFIRMATION ->
-                    enableConfirmationDeadlineNanos = nowNanos + ENABLE_CONFIRMATION_NANOS;
-            case ENABLE -> {
-                if (runtime.enableAutomationFromUi(Minecraft.getInstance())) {
-                    enableConfirmationDeadlineNanos = 0L;
-                }
-            }
+        switch (pressAction(snapshot.state(), canEnable(Minecraft.getInstance(), snapshot))) {
+            case ENABLE -> runtime.enableAutomationFromUi();
+            case DISABLE -> runtime.disableAutomationFromUi();
+            case NONE -> { }
         }
         refresh(button, System.nanoTime());
     }
 
     private void refresh(IndicatorButton button, long nowNanos) {
         var snapshot = runtime.automationUiSnapshot();
-        boolean confirming = snapshot.state() == AutomationUiSnapshot.State.DISABLED
-                && nowNanos < enableConfirmationDeadlineNanos;
-        if (snapshot.state() != AutomationUiSnapshot.State.DISABLED) {
-            enableConfirmationDeadlineNanos = 0L;
-        }
-        button.setMessage(label(snapshot.state(), confirming));
-        button.setTooltip(Tooltip.create(tooltip(snapshot.state(), confirming)));
-        button.setIndicatorColor(confirming ? IDLE_COLOR : color(snapshot.state()));
+        observeState(snapshot.state(), nowNanos);
+        boolean canEnable = canEnable(Minecraft.getInstance(), snapshot);
+        button.setMessage(label(snapshot, canEnable));
+        button.setTooltip(Tooltip.create(tooltip(snapshot, canEnable)));
+        button.active = buttonActive(snapshot.state(), canEnable);
     }
 
-    static PressAction pressAction(
-            AutomationUiSnapshot.State state,
-            boolean enableConfirmationActive) {
+    private void observeState(AutomationUiSnapshot.State state, long nowNanos) {
+        if (state == AutomationUiSnapshot.State.AGENT
+                && lastObservedState != AutomationUiSnapshot.State.AGENT) {
+            agentNoticeDeadlineNanos = nowNanos + AGENT_NOTICE_NANOS;
+        }
+        lastObservedState = state;
+    }
+
+    static PressAction pressAction(AutomationUiSnapshot.State state, boolean canEnable) {
         Objects.requireNonNull(state, "state");
-        if (state != AutomationUiSnapshot.State.DISABLED) {
-            return PressAction.DISABLE;
-        }
-        return enableConfirmationActive
-                ? PressAction.ENABLE
-                : PressAction.REQUEST_ENABLE_CONFIRMATION;
-    }
-
-    private static Component label(AutomationUiSnapshot.State state, boolean confirming) {
-        if (confirming) {
-            return Component.translatable("gui.mcmcp.automation.confirm_enable")
-                    .withStyle(ChatFormatting.YELLOW);
-        }
         return switch (state) {
-            case ACTIVE -> Component.translatable("gui.mcmcp.automation.active")
-                    .withStyle(ChatFormatting.GREEN);
-            case IDLE -> Component.translatable("gui.mcmcp.automation.idle")
-                    .withStyle(ChatFormatting.YELLOW);
-            case DISABLED -> Component.translatable("gui.mcmcp.automation.disabled")
-                    .withStyle(ChatFormatting.RED);
+            case OFF -> canEnable ? PressAction.ENABLE : PressAction.NONE;
+            case READY, AGENT, RECOVERING -> PressAction.DISABLE;
+            case FAULT -> PressAction.NONE;
         };
     }
 
-    private static Component tooltip(AutomationUiSnapshot.State state, boolean confirming) {
-        if (confirming) {
-            return Component.translatable("gui.mcmcp.automation.tooltip.confirm_enable");
-        }
-        return switch (state) {
-            case ACTIVE, IDLE ->
+    static boolean buttonActive(AutomationUiSnapshot.State state, boolean canEnable) {
+        return pressAction(state, canEnable) != PressAction.NONE;
+    }
+
+    static boolean canEnable(
+            boolean snapshotWorldReady,
+            boolean levelPresent,
+            boolean playerPresent,
+            boolean playerAlive) {
+        return snapshotWorldReady && levelPresent && playerPresent && playerAlive;
+    }
+
+    private static boolean canEnable(
+            Minecraft minecraft, AutomationUiSnapshot snapshot) {
+        return canEnable(
+                snapshot.worldReady(),
+                minecraft.level != null,
+                minecraft.player != null,
+                minecraft.player != null && minecraft.player.isAlive());
+    }
+
+    private static Component label(AutomationUiSnapshot snapshot, boolean canEnable) {
+        return switch (snapshot.state()) {
+            case OFF -> canEnable
+                    ? Component.translatable("gui.mcmcp.automation.off")
+                    : Component.translatable("gui.mcmcp.automation.off_unavailable");
+            case READY -> Component.translatable(
+                    "gui.mcmcp.automation.ready", snapshot.readySeconds());
+            case AGENT -> Component.translatable("gui.mcmcp.automation.agent");
+            case RECOVERING -> Component.translatable("gui.mcmcp.automation.recovering");
+            case FAULT -> Component.translatable(
+                    "gui.mcmcp.automation.fault",
+                    snapshot.detail() == null ? "internal_error" : snapshot.detail());
+        };
+    }
+
+    private static Component tooltip(AutomationUiSnapshot snapshot, boolean canEnable) {
+        return switch (snapshot.state()) {
+            case OFF -> canEnable
+                    ? Component.translatable("gui.mcmcp.automation.tooltip.enable")
+                    : Component.translatable("gui.mcmcp.automation.tooltip.unavailable");
+            case READY, AGENT, RECOVERING ->
                     Component.translatable("gui.mcmcp.automation.tooltip.disable");
-            case DISABLED ->
-                    Component.translatable("gui.mcmcp.automation.tooltip.enable");
+            case FAULT -> Component.translatable("gui.mcmcp.automation.tooltip.fault");
         };
+    }
+
+    private static void drawAgentNotice(
+            GuiGraphicsExtractor graphics, Minecraft minecraft) {
+        var notice = Component.translatable("gui.mcmcp.automation.agent_notice");
+        int textWidth = minecraft.font.width(notice);
+        int x = Math.max(2, (graphics.guiWidth() - textWidth) / 2);
+        int y = Math.max(2, graphics.guiHeight() - 58);
+        graphics.fill(x - 4, y - 3, x + textWidth + 4, y + 12, 0xC0000000);
+        graphics.text(minecraft.font, notice, x, y, 0xFFFFFFFF, true);
+    }
+
+    private static void drawIcon(
+            GuiGraphicsExtractor graphics,
+            int x,
+            int y,
+            AutomationUiSnapshot.State state) {
+        graphics.fill(x, y, x + ICON_SIZE, y + ICON_SIZE, BACKGROUND);
+        int color = color(state);
+        switch (state) {
+            case OFF -> drawRing(graphics, x, y, color);
+            case READY -> {
+                drawRing(graphics, x, y, color);
+                graphics.fill(x + 7, y + 4, x + 9, y + 9, color);
+                graphics.fill(x + 8, y + 8, x + 12, y + 10, color);
+            }
+            case AGENT -> {
+                graphics.fill(x + 3, y + 7, x + 11, y + 10, color);
+                graphics.fill(x + 9, y + 4, x + 12, y + 13, color);
+                graphics.fill(x + 12, y + 6, x + 14, y + 11, color);
+            }
+            case RECOVERING -> {
+                graphics.fill(x + 3, y + 3, x + 13, y + 5, color);
+                graphics.fill(x + 3, y + 5, x + 5, y + 10, color);
+                graphics.fill(x + 11, y + 5, x + 13, y + 10, color);
+                graphics.fill(x + 5, y + 10, x + 11, y + 12, color);
+                graphics.fill(x + 7, y + 12, x + 9, y + 14, color);
+            }
+            case FAULT -> {
+                graphics.outline(x + 2, y + 2, 12, 12, color);
+                graphics.fill(x + 7, y + 4, x + 9, y + 10, color);
+                graphics.fill(x + 7, y + 12, x + 9, y + 14, color);
+            }
+        }
+    }
+
+    private static void drawRing(
+            GuiGraphicsExtractor graphics, int x, int y, int color) {
+        graphics.fill(x + 6, y + 3, x + 10, y + 5, color);
+        graphics.fill(x + 4, y + 5, x + 6, y + 11, color);
+        graphics.fill(x + 10, y + 5, x + 12, y + 11, color);
+        graphics.fill(x + 6, y + 11, x + 10, y + 13, color);
     }
 
     private static int color(AutomationUiSnapshot.State state) {
         return switch (state) {
-            case ACTIVE -> ACTIVE_COLOR;
-            case IDLE -> IDLE_COLOR;
-            case DISABLED -> DISABLED_COLOR;
+            case OFF -> OFF_COLOR;
+            case READY -> READY_COLOR;
+            case AGENT -> AGENT_COLOR;
+            case RECOVERING -> RECOVERING_COLOR;
+            case FAULT -> FAULT_COLOR;
         };
     }
 
-    private static int pauseButtonWidth(int screenWidth) {
+    private static int menuButtonWidth(int screenWidth) {
         var font = Minecraft.getInstance().font;
-        return pauseButtonWidth(
+        return menuButtonWidth(
                 screenWidth,
-                font.width(label(AutomationUiSnapshot.State.ACTIVE, false)),
-                font.width(label(AutomationUiSnapshot.State.IDLE, false)),
-                font.width(label(AutomationUiSnapshot.State.DISABLED, false)),
-                font.width(label(AutomationUiSnapshot.State.DISABLED, true)));
+                McmcpClientConfig.hudOffsetX(),
+                font.width(Component.translatable("gui.mcmcp.automation.off")),
+                font.width(Component.translatable("gui.mcmcp.automation.off_unavailable")),
+                font.width(Component.translatable("gui.mcmcp.automation.ready", 30)),
+                font.width(Component.translatable("gui.mcmcp.automation.agent")),
+                font.width(Component.translatable("gui.mcmcp.automation.recovering")),
+                font.width(Component.translatable(
+                        "gui.mcmcp.automation.fault", "internal_error")));
     }
 
-    static int pauseButtonWidth(int screenWidth, int... labelWidths) {
+    static int menuButtonWidth(int screenWidth, int rightOffset, int... labelWidths) {
         int longest = 0;
         for (int labelWidth : labelWidths) {
             longest = Math.max(longest, labelWidth);
         }
-        int available = Math.max(1, screenWidth - 2 * PAUSE_MARGIN);
-        int preferred = longest + ROBOT_SIZE + ROBOT_GAP + 2 * PAUSE_PADDING;
+        int available = Math.max(1, screenWidth - Math.max(0, rightOffset) - MIN_LEFT_MARGIN);
+        int preferred = longest + ICON_SIZE + ICON_TEXT_GAP + 2 * BUTTON_PADDING;
         return Math.min(preferred, available);
     }
 
@@ -173,25 +283,14 @@ public final class AutomationIndicatorController {
         return Math.max(0, screenExtent - elementExtent - margin);
     }
 
-    /** Twelve-pixel robot head: antenna, outlined face and two status-coloured eyes. */
-    private static void drawRobot(GuiGraphicsExtractor graphics, int x, int y, int statusColor) {
-        graphics.fill(x + 5, y, x + 7, y + 2, statusColor);
-        graphics.fill(x + 2, y + 2, x + 10, y + 4, statusColor);
-        graphics.fill(x, y + 4, x + 12, y + 12, statusColor);
-        graphics.fill(x + 2, y + 6, x + 10, y + 10, 0xFF202020);
-        graphics.fill(x + 3, y + 7, x + 5, y + 9, statusColor);
-        graphics.fill(x + 7, y + 7, x + 9, y + 9, statusColor);
-    }
-
     enum PressAction {
+        ENABLE,
         DISABLE,
-        REQUEST_ENABLE_CONFIRMATION,
-        ENABLE
+        NONE
     }
 
     private static final class IndicatorButton extends Button.Plain {
         private final AutomationIndicatorController controller;
-        private int indicatorColor = DISABLED_COLOR;
 
         private IndicatorButton(
                 AutomationIndicatorController controller,
@@ -199,15 +298,17 @@ public final class AutomationIndicatorController {
                 int screenHeight,
                 int width) {
             super(
-                    lowerRightCoordinate(screenWidth, width, PAUSE_MARGIN),
-                    lowerRightCoordinate(screenHeight, PAUSE_HEIGHT, PAUSE_MARGIN),
+                    lowerRightCoordinate(
+                            screenWidth, width, McmcpClientConfig.hudOffsetX()),
+                    lowerRightCoordinate(
+                            screenHeight, BUTTON_HEIGHT, McmcpClientConfig.hudOffsetY()),
                     width,
-                    PAUSE_HEIGHT,
+                    BUTTON_HEIGHT,
                     Component.empty(),
                     ignored -> { },
                     DEFAULT_NARRATION);
             this.controller = controller;
-            setTooltipDelay(java.time.Duration.ofMillis(250));
+            setTooltipDelay(Duration.ofMillis(250));
             controller.refresh(this, System.nanoTime());
         }
 
@@ -222,29 +323,27 @@ public final class AutomationIndicatorController {
                 int mouseX,
                 int mouseY,
                 float partialTick) {
-            int width = pauseButtonWidth(graphics.guiWidth());
+            int width = menuButtonWidth(graphics.guiWidth());
             setWidth(width);
-            setX(lowerRightCoordinate(graphics.guiWidth(), width, PAUSE_MARGIN));
-            setY(lowerRightCoordinate(graphics.guiHeight(), getHeight(), PAUSE_MARGIN));
+            setX(lowerRightCoordinate(
+                    graphics.guiWidth(), width, McmcpClientConfig.hudOffsetX()));
+            setY(lowerRightCoordinate(
+                    graphics.guiHeight(), getHeight(), McmcpClientConfig.hudOffsetY()));
             controller.refresh(this, System.nanoTime());
             extractDefaultSprite(graphics);
+            drawIcon(
+                    graphics,
+                    getX() + BUTTON_PADDING,
+                    getY() + (getHeight() - ICON_SIZE) / 2,
+                    controller.runtime.automationUiSnapshot().state());
             graphics.textRendererForWidget(
                             this, GuiGraphicsExtractor.HoveredTextEffects.NONE)
                     .acceptScrollingWithDefaultCenter(
                             getMessage(),
-                            getX() + PAUSE_PADDING + ROBOT_SIZE + ROBOT_GAP,
-                            getRight() - PAUSE_PADDING,
+                            getX() + BUTTON_PADDING + ICON_SIZE + ICON_TEXT_GAP,
+                            getRight() - BUTTON_PADDING,
                             getY(),
                             getBottom());
-            drawRobot(
-                    graphics,
-                    getX() + PAUSE_PADDING,
-                    getY() + (getHeight() - ROBOT_SIZE) / 2,
-                    indicatorColor);
-        }
-
-        private void setIndicatorColor(int indicatorColor) {
-            this.indicatorColor = indicatorColor;
         }
     }
 }

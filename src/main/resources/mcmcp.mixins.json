@@ -9,7 +9,9 @@
     "client.ClientLevelPredictionAccessor",
     "client.ClientLevelPredictionMixin",
     "client.ClientPacketListenerMixin",
-    "client.ClientSleepSemanticSignalsMixin"
+    "client.ClientSleepSemanticSignalsMixin",
+    "client.KeyboardHandlerMixin",
+    "client.MouseHandlerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

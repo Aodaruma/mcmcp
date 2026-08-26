@@ -1,10 +1,4 @@
-import java.lang.module.ModuleFinder
-import java.net.URI
-import java.nio.file.FileSystems
-import java.nio.file.Files
-import java.nio.file.StandardOpenOption
 import java.util.jar.JarFile
-import java.util.jar.Manifest
 
 plugins {
     id 'java-library'
@@ -25,6 +19,12 @@ java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 sourceSets.main.resources {
     srcDir 'src/generated/resources'
     exclude 'src/generated/**/.cache'
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    from('docs/MCMCP_MCP_Tool_Catalog.json') {
+        into 'mcmcp'
+    }
 }
 
 sourceSets {
@@ -64,6 +64,10 @@ neoForge {
             client()
             gameDirectory = file('run/client')
             loadedMods = [mods."${mod_id}"]
+            def conformanceTest = providers.systemProperty('mcmcp.conformanceTest')
+            if (conformanceTest.isPresent()) {
+                systemProperty 'mcmcp.conformanceTest', conformanceTest.get()
+            }
         }
 
         harnessClient {
@@ -169,51 +173,6 @@ dependencies {
     compileOnly 'de.maxhenkel.voicechat:voicechat-api:2.6.20'
     testRuntimeOnly 'de.maxhenkel.voicechat:voicechat-api:2.6.20'
 
-    // The MCP SDK uses Jackson 3 (tools.jackson.*), avoiding NeoForge's Jackson 2 packages.
-    // Jar-in-Jar keeps the production mod self-contained; exact versions are intentional
-    // until the final-JAR compatibility gate has passed.
-    jarJar(implementation("io.modelcontextprotocol.sdk:mcp-core:${mcp_sdk_version}")) {
-        version {
-            strictly "[${mcp_sdk_version}]"
-            prefer mcp_sdk_version
-        }
-    }
-    jarJar(implementation("io.modelcontextprotocol.sdk:mcp-json-jackson3:${mcp_sdk_version}")) {
-        version {
-            strictly "[${mcp_sdk_version}]"
-            prefer mcp_sdk_version
-        }
-    }
-    jarJar(implementation("org.apache.tomcat.embed:tomcat-embed-core:11.0.24")) {
-        version {
-            strictly '[11.0.24]'
-            prefer '11.0.24'
-        }
-    }
-
-    // ModDevGradle embeds only dependencies named on jarJar. Keep the MCP runtime's
-    // non-Minecraft transitive closure explicit so the production mod does not rely
-    // on the development classpath. SLF4J is intentionally supplied by NeoForge.
-    [
-            ['com.fasterxml.jackson.core:jackson-annotations:2.20', '2.20'],
-            ['io.projectreactor:reactor-core:3.7.0', '3.7.0'],
-            ['org.reactivestreams:reactive-streams:1.0.4', '1.0.4'],
-            ['tools.jackson.core:jackson-databind:3.0.3', '3.0.3'],
-            ['tools.jackson.core:jackson-core:3.0.3', '3.0.3'],
-            ['com.networknt:json-schema-validator:3.0.0', '3.0.0'],
-            ['com.ethlo.time:itu:1.14.0', '1.14.0'],
-            ['tools.jackson.dataformat:jackson-dataformat-yaml:3.0.3', '3.0.3'],
-            ['org.snakeyaml:snakeyaml-engine:2.10', '2.10'],
-            ['org.apache.tomcat:tomcat-annotations-api:11.0.24', '11.0.24'],
-    ].each { bundled ->
-        jarJar(implementation(bundled[0])) {
-            version {
-                strictly "[${bundled[1]}]"
-                prefer bundled[1]
-            }
-        }
-    }
-
     testImplementation enforcedPlatform('org.junit:junit-bom:5.14.1')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'org.assertj:assertj-core:3.27.3'
@@ -272,6 +231,7 @@ tasks.withType(Test).configureEach {
     // NeoForge's unit-test discovery also sees the harness mod. Explicitly opt it
     // in for tests so the documented plain `gradlew test` command is reproducible.
     systemProperty 'mcmcp.testHarness', 'true'
+    systemProperty 'mcmcp.projectDir', projectDir.absolutePath
 }
 
 def harnessTest = tasks.register('harnessTest', Test) {
@@ -279,87 +239,6 @@ def harnessTest = tasks.register('harnessTest', Test) {
     description = 'Runs pure unit tests for development-only harness configuration.'
     testClassesDirs = sourceSets.harnessTest.output.classesDirs
     classpath = sourceSets.harnessTest.runtimeClasspath
-}
-
-// MCP Java SDK 2.0.0 publishes invalid Automatic-Module-Name values containing
-// hyphens in both artifacts (https://github.com/modelcontextprotocol/java-sdk/issues/560).
-// Patch only ModDevGradle's copied JiJ outputs so the Gradle cache remains untouched
-// and META-INF/jarjar/metadata.json retains the upstream GAV and version constraints.
-tasks.named('jarJar').configure {
-    def moduleNameFixes = [
-            [
-                    file  : 'mcp-core-2.0.0.jar',
-                    broken: 'io.modelcontextprotocol.sdk.mcp-core',
-                    fixed : 'io.modelcontextprotocol.sdk.mcp.core',
-            ],
-            [
-                    file  : 'mcp-json-jackson3-2.0.0.jar',
-                    broken: 'io.modelcontextprotocol.sdk.mcp-json-jackson3',
-                    fixed : 'io.modelcontextprotocol.sdk.mcp.json.jackson3',
-            ],
-    ]
-    inputs.property('mcmcp.mcpAutomaticModuleNameFixes',
-            moduleNameFixes.collectEntries { fix ->
-                [(fix.file): "${fix.broken}->${fix.fixed}"]
-            })
-
-    doLast {
-        moduleNameFixes.each { fix ->
-            File nestedJar = outputDirectory
-                    .file("META-INF/jarjar/${fix.file}")
-                    .get().asFile
-            if (!nestedJar.isFile()) {
-                throw new GradleException("Expected MCP JiJ artifact is missing: ${nestedJar}")
-            }
-
-            Manifest manifest = new JarFile(nestedJar, false).withCloseable { jarFile ->
-                def entries = jarFile.entries()
-                while (entries.hasMoreElements()) {
-                    String entryName = entries.nextElement().name.toUpperCase(Locale.ROOT)
-                    if (entryName.startsWith('META-INF/')
-                            && ['.SF', '.RSA', '.DSA', '.EC'].any { entryName.endsWith(it) }) {
-                        throw new GradleException(
-                                "Refusing to rewrite signed MCP JiJ artifact ${nestedJar.name}: ${entryName}")
-                    }
-                }
-                jarFile.manifest
-            }
-            if (manifest == null) {
-                throw new GradleException("MCP JiJ artifact has no manifest: ${nestedJar}")
-            }
-
-            String currentName = manifest.mainAttributes.getValue('Automatic-Module-Name')
-            if (currentName != fix.fixed) {
-                if (currentName != fix.broken) {
-                    throw new GradleException(
-                            "Unexpected Automatic-Module-Name in ${nestedJar.name}: ${currentName}")
-                }
-
-                manifest.mainAttributes.putValue('Automatic-Module-Name', fix.fixed)
-                def manifestBytes = new ByteArrayOutputStream()
-                manifest.write(manifestBytes)
-
-                FileSystems.newFileSystem(
-                        URI.create('jar:' + nestedJar.toURI()),
-                        [create: 'false']
-                ).withCloseable { fileSystem ->
-                    Files.write(
-                            fileSystem.getPath('/META-INF/MANIFEST.MF'),
-                            manifestBytes.toByteArray(),
-                            StandardOpenOption.CREATE,
-                            StandardOpenOption.TRUNCATE_EXISTING,
-                            StandardOpenOption.WRITE
-                    )
-                }
-            }
-
-            def moduleReference = ModuleFinder.of(nestedJar.toPath()).find(fix.fixed)
-            if (moduleReference.isEmpty() || !moduleReference.get().descriptor().isAutomatic()) {
-                throw new GradleException(
-                        "Rewritten MCP JiJ artifact is not the expected automatic module ${fix.fixed}")
-            }
-        }
-    }
 }
 
 tasks.register('harnessJar', Jar) {

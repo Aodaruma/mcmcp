@@ -77,22 +77,21 @@ class ScreenOwnershipContractTest {
     }
 
     @Test
-    void screenEventsPreserveManualOverrideAndGateOnlyTheExpectedOpening() throws Exception {
+    void screenEventsStopOnOwnershipFailureAndGateOnlyTheExpectedOpening() throws Exception {
         var node = classNode("/dev/aod/mcmcp/McmcpMod.class");
+        var ownership = classNode(
+                "/dev/aod/mcmcp/runtime/ScreenOwnershipSignals.class");
 
         assertThat(invocations(method(node, "onScreenOpening")))
                 .containsSubsequence(
                         "dev/aod/mcmcp/runtime/ScreenOwnershipSignals#allowScreenOpening",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#onManualInput");
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#onScreenOwnershipFailure");
         assertThat(invocations(method(node, "onScreenClosing")))
                 .contains("dev/aod/mcmcp/runtime/ScreenOwnershipSignals#onScreenClosing");
-        for (String method : List.of(
-                "onKeyInput", "onMouseButtonInput", "onMouseScrollInput")) {
-            assertThat(invocations(method(node, method)))
-                    .contains(
-                            "dev/aod/mcmcp/runtime/ScreenOwnershipSignals#onManualInput",
-                            "dev/aod/mcmcp/runtime/McmcpRuntime#onManualInput");
-        }
+        assertThat(invocations(method(ownership, "allowScreenOpening")))
+                .contains("dev/aod/mcmcp/runtime/ScreenOwnershipSignals$Core#failIfActive");
+        assertThat(node.methods.stream().map(method -> method.name).toList())
+                .doesNotContain("onKeyInput", "onMouseButtonInput", "onMouseScrollInput");
     }
 
     @Test

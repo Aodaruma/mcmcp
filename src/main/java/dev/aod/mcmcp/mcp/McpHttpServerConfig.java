@@ -3,55 +3,55 @@ package dev.aod.mcmcp.mcp;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 
-/** Immutable configuration for the loopback-only MCP endpoint. */
+/** Immutable limits for the loopback-only MCP endpoint. */
 public final class McpHttpServerConfig {
     private final int port;
     private final Path baseDirectory;
-    private final String bearerToken;
+    private final byte[] bearerToken;
     private final String serverName;
     private final String serverVersion;
     private final Duration runtimeDispatchTimeout;
+    private final Duration ioTimeout;
     private final int maxRequestBodyBytes;
     private final int maxJsonDepth;
+    private final int maxJsonStringChars;
+    private final int maxJsonCollectionItems;
     private final int maxConcurrentRequests;
     private final int rateLimitBurst;
     private final double rateLimitPerSecond;
-    private final List<String> allowedHosts;
-    private final List<String> allowedOrigins;
 
     private McpHttpServerConfig(Builder builder) {
         port = builder.port;
         baseDirectory = builder.baseDirectory.toAbsolutePath().normalize();
-        bearerToken = builder.bearerToken;
+        bearerToken = builder.bearerToken.getBytes(StandardCharsets.UTF_8);
         serverName = builder.serverName;
         serverVersion = builder.serverVersion;
         runtimeDispatchTimeout = builder.runtimeDispatchTimeout;
+        ioTimeout = builder.ioTimeout;
         maxRequestBodyBytes = builder.maxRequestBodyBytes;
         maxJsonDepth = builder.maxJsonDepth;
+        maxJsonStringChars = builder.maxJsonStringChars;
+        maxJsonCollectionItems = builder.maxJsonCollectionItems;
         maxConcurrentRequests = builder.maxConcurrentRequests;
         rateLimitBurst = builder.rateLimitBurst;
         rateLimitPerSecond = builder.rateLimitPerSecond;
-        allowedHosts = List.copyOf(builder.allowedHosts);
-        allowedOrigins = List.copyOf(builder.allowedOrigins);
-        validate();
+        validate(builder.bearerToken);
     }
 
     public static Builder builder(Path baseDirectory, String bearerToken) {
         return new Builder(baseDirectory, bearerToken);
     }
 
-    private void validate() {
+    private void validate(String token) {
         if (port < 0 || port > 65_535) {
             throw new IllegalArgumentException("port must be in 0..65535");
         }
-        if (bearerToken.getBytes(StandardCharsets.UTF_8).length < 32) {
+        if (bearerToken.length < 32) {
             throw new IllegalArgumentException("bearerToken must contain at least 32 UTF-8 bytes");
         }
-        if (bearerToken.codePoints().anyMatch(codePoint -> Character.isWhitespace(codePoint)
+        if (token.codePoints().anyMatch(codePoint -> Character.isWhitespace(codePoint)
                 || Character.isISOControl(codePoint)
                 || Character.getType(codePoint) == Character.FORMAT)) {
             throw new IllegalArgumentException("bearerToken must not contain whitespace or control characters");
@@ -59,80 +59,67 @@ public final class McpHttpServerConfig {
         if (serverName.isBlank() || serverVersion.isBlank()) {
             throw new IllegalArgumentException("serverName and serverVersion must not be blank");
         }
-        if (runtimeDispatchTimeout.isZero() || runtimeDispatchTimeout.isNegative()) {
-            throw new IllegalArgumentException("runtimeDispatchTimeout must be positive");
+        requirePositive(runtimeDispatchTimeout, "runtimeDispatchTimeout");
+        requirePositive(ioTimeout, "ioTimeout");
+        if (runtimeDispatchTimeout.compareTo(Duration.ofSeconds(30)) > 0
+                || ioTimeout.compareTo(Duration.ofSeconds(60)) > 0) {
+            throw new IllegalArgumentException("endpoint timeouts exceed their hard limits");
         }
-        if (maxRequestBodyBytes < 1_024 || maxRequestBodyBytes > 8 * 1_024 * 1_024) {
-            throw new IllegalArgumentException("maxRequestBodyBytes must be in 1024..8388608");
+        if (maxRequestBodyBytes < 1_024 || maxRequestBodyBytes > 65_536) {
+            throw new IllegalArgumentException("maxRequestBodyBytes must be in 1024..65536");
         }
-        if (maxJsonDepth < 4 || maxJsonDepth > 128) {
-            throw new IllegalArgumentException("maxJsonDepth must be in 4..128");
+        if (maxJsonDepth < 4 || maxJsonDepth > 64) {
+            throw new IllegalArgumentException("maxJsonDepth must be in 4..64");
         }
-        if (maxConcurrentRequests < 1 || maxConcurrentRequests > 64) {
-            throw new IllegalArgumentException("maxConcurrentRequests must be in 1..64");
+        if (maxJsonStringChars < 128 || maxJsonStringChars > 65_536) {
+            throw new IllegalArgumentException("maxJsonStringChars must be in 128..65536");
         }
-        if (rateLimitBurst < 1 || rateLimitBurst > 10_000) {
-            throw new IllegalArgumentException("rateLimitBurst must be in 1..10000");
+        if (maxJsonCollectionItems < 16 || maxJsonCollectionItems > 4_096) {
+            throw new IllegalArgumentException("maxJsonCollectionItems must be in 16..4096");
         }
-        if (!Double.isFinite(rateLimitPerSecond) || rateLimitPerSecond <= 0 || rateLimitPerSecond > 10_000) {
-            throw new IllegalArgumentException("rateLimitPerSecond must be in (0,10000]");
+        if (maxConcurrentRequests < 1 || maxConcurrentRequests > 2) {
+            throw new IllegalArgumentException("maxConcurrentRequests must be in 1..2");
         }
-        if (allowedHosts.isEmpty()) {
-            throw new IllegalArgumentException("At least one allowed Host is required");
+        if (rateLimitBurst < 1 || rateLimitBurst > 10_000
+                || !Double.isFinite(rateLimitPerSecond)
+                || rateLimitPerSecond <= 0 || rateLimitPerSecond > 10_000) {
+            throw new IllegalArgumentException("invalid rate limit");
         }
     }
 
-    public int port() {
-        return port;
+    private static void requirePositive(Duration value, String name) {
+        if (value.isZero() || value.isNegative()) {
+            throw new IllegalArgumentException(name + " must be positive");
+        }
     }
 
-    public Path baseDirectory() {
-        return baseDirectory;
-    }
+    public int port() { return port; }
 
-    String bearerToken() {
-        return bearerToken;
-    }
+    public Path baseDirectory() { return baseDirectory; }
 
-    public String serverName() {
-        return serverName;
-    }
+    byte[] bearerToken() { return bearerToken.clone(); }
 
-    public String serverVersion() {
-        return serverVersion;
-    }
+    public String serverName() { return serverName; }
 
-    public Duration runtimeDispatchTimeout() {
-        return runtimeDispatchTimeout;
-    }
+    public String serverVersion() { return serverVersion; }
 
-    public int maxRequestBodyBytes() {
-        return maxRequestBodyBytes;
-    }
+    public Duration runtimeDispatchTimeout() { return runtimeDispatchTimeout; }
 
-    public int maxJsonDepth() {
-        return maxJsonDepth;
-    }
+    public Duration ioTimeout() { return ioTimeout; }
 
-    public int maxConcurrentRequests() {
-        return maxConcurrentRequests;
-    }
+    public int maxRequestBodyBytes() { return maxRequestBodyBytes; }
 
-    public int rateLimitBurst() {
-        return rateLimitBurst;
-    }
+    public int maxJsonDepth() { return maxJsonDepth; }
 
-    public double rateLimitPerSecond() {
-        return rateLimitPerSecond;
-    }
+    public int maxJsonStringChars() { return maxJsonStringChars; }
 
-    public List<String> allowedHosts() {
-        return allowedHosts;
-    }
+    public int maxJsonCollectionItems() { return maxJsonCollectionItems; }
 
-    public List<String> allowedOrigins() {
-        return allowedOrigins;
-    }
+    public int maxConcurrentRequests() { return maxConcurrentRequests; }
+
+    public int rateLimitBurst() { return rateLimitBurst; }
+
+    public double rateLimitPerSecond() { return rateLimitPerSecond; }
 
     @Override
     public String toString() {
@@ -148,25 +135,21 @@ public final class McpHttpServerConfig {
         private String serverName = "mcmcp";
         private String serverVersion = "0.1.0";
         private Duration runtimeDispatchTimeout = Duration.ofSeconds(2);
-        private int maxRequestBodyBytes = 1_048_576;
+        private Duration ioTimeout = Duration.ofSeconds(5);
+        private int maxRequestBodyBytes = 65_536;
         private int maxJsonDepth = 32;
-        private int maxConcurrentRequests = 4;
-        private int rateLimitBurst = 30;
-        private double rateLimitPerSecond = 15.0;
-        private List<String> allowedHosts = new ArrayList<>(List.of("127.0.0.1:*", "localhost:*"));
-        private List<String> allowedOrigins = new ArrayList<>(List.of(
-                "http://127.0.0.1:*", "https://127.0.0.1:*",
-                "http://localhost:*", "https://localhost:*"));
+        private int maxJsonStringChars = 16_384;
+        private int maxJsonCollectionItems = 1_024;
+        private int maxConcurrentRequests = 2;
+        private int rateLimitBurst = 40;
+        private double rateLimitPerSecond = 20.0;
 
         private Builder(Path baseDirectory, String bearerToken) {
             this.baseDirectory = Objects.requireNonNull(baseDirectory, "baseDirectory");
             this.bearerToken = Objects.requireNonNull(bearerToken, "bearerToken");
         }
 
-        public Builder port(int port) {
-            this.port = port;
-            return this;
-        }
+        public Builder port(int value) { port = value; return this; }
 
         public Builder serverInfo(String name, String version) {
             serverName = Objects.requireNonNull(name, "name");
@@ -174,25 +157,28 @@ public final class McpHttpServerConfig {
             return this;
         }
 
-        public Builder runtimeDispatchTimeout(Duration timeout) {
-            runtimeDispatchTimeout = Objects.requireNonNull(timeout, "timeout");
+        public Builder runtimeDispatchTimeout(Duration value) {
+            runtimeDispatchTimeout = Objects.requireNonNull(value, "value");
             return this;
         }
 
-        public Builder maxRequestBodyBytes(int bytes) {
-            maxRequestBodyBytes = bytes;
+        public Builder ioTimeout(Duration value) {
+            ioTimeout = Objects.requireNonNull(value, "value");
             return this;
         }
 
-        public Builder maxJsonDepth(int depth) {
-            maxJsonDepth = depth;
+        public Builder maxRequestBodyBytes(int value) { maxRequestBodyBytes = value; return this; }
+
+        public Builder maxJsonDepth(int value) { maxJsonDepth = value; return this; }
+
+        public Builder maxJsonStringChars(int value) { maxJsonStringChars = value; return this; }
+
+        public Builder maxJsonCollectionItems(int value) {
+            maxJsonCollectionItems = value;
             return this;
         }
 
-        public Builder maxConcurrentRequests(int count) {
-            maxConcurrentRequests = count;
-            return this;
-        }
+        public Builder maxConcurrentRequests(int value) { maxConcurrentRequests = value; return this; }
 
         public Builder rateLimit(int burst, double requestsPerSecond) {
             rateLimitBurst = burst;
@@ -200,18 +186,6 @@ public final class McpHttpServerConfig {
             return this;
         }
 
-        public Builder allowedHosts(List<String> hosts) {
-            allowedHosts = new ArrayList<>(Objects.requireNonNull(hosts, "hosts"));
-            return this;
-        }
-
-        public Builder allowedOrigins(List<String> origins) {
-            allowedOrigins = new ArrayList<>(Objects.requireNonNull(origins, "origins"));
-            return this;
-        }
-
-        public McpHttpServerConfig build() {
-            return new McpHttpServerConfig(this);
-        }
+        public McpHttpServerConfig build() { return new McpHttpServerConfig(this); }
     }
 }

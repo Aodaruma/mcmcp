@@ -1427,15 +1427,12 @@ if ($LASTEXITCODE -gt 1) { throw 'Dependency scan failed' }
 
 ### 15.2 MCP conformance
 
-conformance runnerは`@modelcontextprotocol/conformance@0.2.0-alpha.11`へ固定する。公式の`--requirements 2026-07-28`はResources、Prompts、MRTRなど本MODが宣言しないcapabilityのfixtureも要求するため、Tools-only serverの合格判定には使用しない。MinecraftをNeoForge development runで起動し、次のwire-level scenarioだけを固定実行する。
+conformance runnerは`@modelcontextprotocol/conformance@0.2.0-alpha.11`へ固定する。公式の`--requirements 2026-07-28`と`server-stateless`等は、Resources、Prompts、MRTR、runner固有diagnostic Toolを含むfixture serverを要求するため、製品固有の5 Toolだけを公開する本MODの合格判定には使用しない。MinecraftをPowerShellでは`.\gradlew.bat '-Dmcmcp.conformanceTest=true' runClient`でNeoForge development runとして起動し、次の製品非依存wire-level scenarioだけを固定実行する。
 
 ~~~powershell
 $scenarios = @(
-  'server-stateless',
   'tools-list',
-  'dns-rebinding-protection',
-  'http-header-validation',
-  'json-schema-2020-12'
+  'http-header-validation'
 )
 foreach ($scenario in $scenarios) {
   npx -y @modelcontextprotocol/conformance@0.2.0-alpha.11 server `
@@ -1448,7 +1445,9 @@ foreach ($scenario in $scenarios) {
 }
 ~~~
 
-合格条件は5 scenarioすべてprocess exit code 0、failure 0件、expected-failures不使用とする。全Toolのcall、cache hint、error分離は別紙catalogを使うintegration testで補完する。runnerがAuthorization headerを設定できないため、NeoForge development runでだけ有効な`mcmcp.conformanceTest` system propertyにより認証を迂回できるようにする。このpropertyはproduction environmentでは無視し、release jar試験でpropertyを指定してもtokenなしrequestが401になることを確認する。test endpointも127.0.0.1以外へbindしない。
+合格条件は2 scenarioともprocess exit code 0、failure 0件、expected-failures不使用とする。stateless/no-session、全Tool call、JSON Schema 2020-12、cache hint、error分離は別紙catalogを使うintegration testで補完する。Originをすべて拒否する本MODのbrowser非対応policyは、localhost Originを許可するrunnerの一般`dns-rebinding-protection` scenarioへ合わせて緩和せず、Originなし成功・Originあり403・Host制限をHTTP integration testで検証する。
+
+runnerがAuthorization headerを設定できないため、NeoForge development runでだけ有効な`mcmcp.conformanceTest` system propertyにより認証を迂回できるようにする。このpropertyはproduction environmentでは無視し、release jar試験でpropertyを指定してもtokenなしrequestが401になることを確認する。test endpointも127.0.0.1以外へbindせず、認証以外のOrigin、Host、body、JSON、rate、concurrency制限は迂回しない。
 
 ### 15.3 NeoForge GameTest / Client test
 
