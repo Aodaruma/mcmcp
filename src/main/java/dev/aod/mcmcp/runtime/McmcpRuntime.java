@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.action.ActionProgramCursor;
+import dev.aod.mcmcp.agent.action.KnownBlockBreakAttempt;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
@@ -87,6 +88,7 @@ import net.minecraft.SharedConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.sounds.SoundInstance;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.tags.DamageTypeTags;
@@ -96,13 +98,17 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.Enemy;
+import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.BedItem;
 import net.minecraft.world.item.DoubleHighBlockItem;
 import net.minecraft.world.item.SolidBucketItem;
+import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -143,7 +149,8 @@ public final class McmcpRuntime implements McpRuntimePort {
     private static final double MAX_SAFE_STAY_HORIZONTAL_SPEED_SQUARED = 0.01;
     private static final float MIN_SAFE_STAY_HEALTH = 6.0F;
     /** Expanded only when a phase has passed its gate. */
-    private static final Set<String> AVAILABLE_CAPABILITIES = Set.of("movement", "camera");
+    private static final Set<String> AVAILABLE_CAPABILITIES =
+            Set.of("movement", "camera", "block_break");
 
     private final String modVersion;
     private final String neoForgeVersion;
@@ -963,6 +970,9 @@ public final class McmcpRuntime implements McpRuntimePort {
         if (snapshot.control().capabilities().contains("camera")) {
             allowed.add(ActionDsl.Capability.CAMERA);
         }
+        if (snapshot.control().capabilities().contains("block_break")) {
+            allowed.add(ActionDsl.Capability.BLOCK_BREAK);
+        }
         final AgentPrimitivePlanner.Analysis analysis;
         try {
             analysis = AgentPrimitivePlanner.analyze(
@@ -1087,7 +1097,11 @@ public final class McmcpRuntime implements McpRuntimePort {
         return routeDependenciesCurrent(currentMap, prepared.analysis().routeDependencies())
                 && prepared.analysis().knownTargets().stream().allMatch(target ->
                         AgentPrimitivePlanner.knownTarget(
-                                currentMap, agentObservationFrames.latestFrame(), target));
+                                currentMap, agentObservationFrames.latestFrame(), target))
+                && prepared.analysis().knownSurfaces().stream().allMatch(surface ->
+                        AgentPrimitivePlanner.knownSurface(
+                                currentMap, agentObservationFrames.latestFrame(), surface))
+                && breakProgramPreconditionsCurrent(minecraft, prepared.program());
     }
 
     static boolean routeDependenciesCurrent(
@@ -1369,7 +1383,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                 "max_source_nodes", 64,
                 "max_executed_nodes", 256,
                 "max_repeat_count", 16,
-                "allowed_capabilities", List.of("movement", "camera"));
+                "allowed_capabilities", List.of("movement", "camera", "block_break"));
         var policy = Map.<String, Object>ofEntries(
                 Map.entry("profile", "survival_omnidirectional"),
                 Map.entry("multiplayer_enabled", multiplayerEnabled),
@@ -1377,6 +1391,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                 Map.entry("max_ticks", 600),
                 Map.entry("max_distance_blocks", 32),
                 Map.entry("max_camera_degrees", 360),
+                Map.entry("max_blocks_broken", 8),
                 Map.entry("omnidirectional_visual_radius_blocks", visualRadiusBlocks),
                 Map.entry("local_observation_radius_blocks", 4),
                 Map.entry("omnidirectional_direction_count", 2_048),
@@ -2198,6 +2213,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                         minecraft.player.position(),
                         minecraft.player.getYRot(),
                         minecraft.player.getXRot(),
+                        minecraft.player,
                         McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
                         reconciliationSignals.bindAndSnapshot(
                                         minecraft.level, session.worldSessionId())
@@ -2385,6 +2401,11 @@ public final class McmcpRuntime implements McpRuntimePort {
             }
 
             KnownTraversabilitySnapshot map = requireAgentMap(session);
+            if (agentExecution.primitive instanceof ActionDsl.BreakKnownFace block
+                    && agentExecution.breakAimComplete) {
+                tickAgentBreak(minecraft, session, action, map, block, actionTick);
+                return;
+            }
             if (!agentExecution.primitiveExecutor.active()
                     && !beginAgentPrimitive(minecraft, action, map, usedBeforeTick)) {
                 return;
@@ -2441,6 +2462,13 @@ public final class McmcpRuntime implements McpRuntimePort {
                     }
                 }
                 case SUCCEEDED -> {
+                    if (agentExecution.primitive instanceof ActionDsl.BreakKnownFace) {
+                        agentExecution.breakAimComplete = true;
+                        agentExecution.replanning = false;
+                        agentExecution.replanNotBeforeTick = 0L;
+                        agentExecution.replanDeadlineTick = 0L;
+                        return;
+                    }
                     closeAgentPrimitiveExecutor();
                     agentActions.completeNode(action.actionId());
                     agentExecution.primitive = null;
@@ -2567,6 +2595,49 @@ public final class McmcpRuntime implements McpRuntimePort {
                     return false;
                 }
                 agentExecution.primitiveExecutor.beginFace(target, cost.ticks());
+            } else if (agentExecution.primitive instanceof ActionDsl.BreakKnownFace block) {
+                AgentPrimitivePlanner.requireKnownBreakSurface(
+                        map, agentObservationFrames.latestFrame(), block);
+                cost = AgentPrimitivePlanner.breakCost(
+                        playerPose(player, map.dimension()),
+                        block,
+                        McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
+                long aimTicks = breakAimTicks(cost);
+                cost = breakExecutionCost(cost, agentExecution.replanning);
+                if (!fitsRemainingBudget(
+                        progressBeforeTick,
+                        action.program().effectiveBudget(),
+                        cost,
+                        activeElapsedNanos(agentExecution, System.nanoTime()))
+                        || !fitsOccurrenceRemaining(
+                                progressBeforeTick, agentExecution, cost)) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                            false,
+                            "break_known_face");
+                    return false;
+                }
+                int remainingBreaks = Math.toIntExact(Math.max(
+                        1L,
+                        action.program().worstCaseCost().blocksBroken()
+                                - progressBeforeTick.blocksBroken()));
+                int toolSlot = findDurableHotbarTool(
+                        player, block.toolItem(), remainingBreaks);
+                if (toolSlot < 0 || !inventoryCanReceiveKnownLogs(
+                        player, action.program())) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.WORLD_CHANGED,
+                            true,
+                            toolSlot < 0 ? "required_axe_unavailable" : "inventory_full");
+                    return false;
+                }
+                player.getInventory().setSelectedSlot(toolSlot);
+                agentExecution.agentSelectedSlot = toolSlot;
+                agentExecution.primitiveExecutor.beginFace(
+                        MinecraftActionPrimitiveExecutor.KnownFaceTarget.forBlockFace(
+                                map.worldSessionId(), map.worldRevision(),
+                                block.target(), block.face()),
+                        aimTicks);
             } else {
                 failAgentAction(
                         AgentActionStore.FailureCode.INTERNAL_ERROR, false, "primitive_unavailable");
@@ -2574,9 +2645,11 @@ public final class McmcpRuntime implements McpRuntimePort {
             }
         } catch (AgentPrimitivePlanner.PlanningException unavailable) {
             long actionTick = progressBeforeTick.ticks() + 1L;
-            if (agentExecution.replanning
-                    && !replanDeadlineReached(
-                            actionTick, agentExecution.replanDeadlineTick)) {
+            if (!agentExecution.replanning) {
+                requestAgentReplan(actionTick, unavailable.code().name().toLowerCase(Locale.ROOT));
+                return false;
+            }
+            if (!replanDeadlineReached(actionTick, agentExecution.replanDeadlineTick)) {
                 return false;
             }
             throw unavailable;
@@ -2585,15 +2658,115 @@ public final class McmcpRuntime implements McpRuntimePort {
         return true;
     }
 
+    private void tickAgentBreak(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action,
+            KnownTraversabilitySnapshot map,
+            ActionDsl.BreakKnownFace block,
+            long actionTick) {
+        var player = Objects.requireNonNull(minecraft.player, "player");
+        if (agentExecution.blockBreakAttempt == null) {
+            if (!breakTargetStateMatches(minecraft, block)) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.WORLD_CHANGED,
+                        true,
+                        "break_target_changed");
+                return;
+            }
+            if (!AgentPrimitivePlanner.knownSurface(
+                            map,
+                            agentObservationFrames.latestFrame(),
+                            new AgentPrimitivePlanner.KnownSurface(
+                                    block.target(), block.face(), block.expectedBlock()))
+                    || !breakSourceControlled(minecraft, block)) {
+                requestAgentReplan(actionTick, "break_target_reobservation");
+                return;
+            }
+            try {
+                var target = new BlockTarget(
+                        block.target().dimension(),
+                        block.target().x(),
+                        block.target().y(),
+                        block.target().z());
+                var expected = stationaryBreakPort.captureExpectedSource(
+                        target, Set.of(block.expectedBlock()));
+                var request = new StationaryBreakRequest(
+                        target,
+                        expected,
+                        new StationaryBreakGoal(block.expectedBlock(), 1),
+                        Math.addExact(
+                                session.clientTick(),
+                                AgentPrimitivePlanner.BREAK_TICK_UPPER_BOUND),
+                        StationaryBreakRequest.MAX_ATTACK_LEASE_TICKS,
+                        1);
+                agentExecution.blockBreakAttempt = new KnownBlockBreakAttempt(
+                        stationaryBreakPort, request, session.clientTick());
+                return;
+            } catch (SafeBreakSourcePolicy.UnsafeBreakSourceException
+                    | IllegalArgumentException changed) {
+                requestAgentReplan(actionTick, "break_precondition_changed");
+                return;
+            } catch (RuntimeException | LinkageError failure) {
+                McmcpMod.LOGGER.error("MCMCP known-face break could not start", failure);
+                failAgentAction(
+                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                        true,
+                        "break_start_failed");
+                return;
+            }
+        }
+
+        final KnownBlockBreakAttempt.TickResult result;
+        try {
+            result = agentExecution.blockBreakAttempt.tick(
+                    session.clientTick(), breakSourceControlled(minecraft, block));
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error("MCMCP known-face break confirmation failed", failure);
+            failAgentAction(
+                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                    true,
+                    "break_confirmation_failed");
+            return;
+        }
+        switch (result) {
+            case RUNNING -> { }
+            case SERVER_DENIED_OR_DESYNC -> failAgentAction(
+                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                    true,
+                    "break_not_server_confirmed");
+            case SUCCEEDED -> {
+                agentExecution.blockBreakAttempt = null;
+                agentActions.recordBlockBreak(action.actionId());
+                agentActions.completeNode(action.actionId());
+                agentExecution.primitive = null;
+                agentExecution.breakAimComplete = false;
+                agentExecution.replanning = false;
+                agentExecution.replanNotBeforeTick = 0L;
+                agentExecution.replanDeadlineTick = 0L;
+                advanceAgentProgram(
+                        minecraft, agentActions.get(action.actionId()).progress());
+            }
+        }
+    }
+
     private void requestAgentReplan(long actionTick, String reason) {
         closeAgentPrimitiveExecutor();
+        agentExecution.breakAimComplete = false;
         agentExecution.replanHeartbeatPending = false;
         agentExecution.replanNotBeforeTick = actionTick + 1L;
         if (agentExecution.replanning) return;
         agentActions.setPhase(
                 agentExecution.actionId, AgentActionStore.Phase.REPLANNING, reason);
         agentExecution.replanning = true;
-        agentExecution.replanDeadlineTick = actionTick + 20L;
+        agentExecution.replanDeadlineTick = actionTick
+                + agentReplanWindowTicks(agentExecution.primitive);
+    }
+
+    static long agentReplanWindowTicks(ActionDsl.Node primitive) {
+        return primitive instanceof ActionDsl.BreakKnownFace
+                ? AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS
+                : 20L;
     }
 
     private MinecraftRecoveryGovernor.TickResult tickAgentRecovery(
@@ -3278,6 +3451,156 @@ public final class McmcpRuntime implements McpRuntimePort {
                 : ((ActionDsl.LogicalPredicate) predicate).operands();
     }
 
+    private static boolean breakProgramPreconditionsCurrent(
+            Minecraft minecraft, ActionDslCompiler.CompiledProgram program) {
+        var player = minecraft.player;
+        if (player == null) return false;
+        var breaks = new ArrayList<ActionDsl.BreakKnownFace>();
+        collectBreakNodes(program.request().program().body(), breaks);
+        if (breaks.isEmpty()) return true;
+        if (!player.isAlive() || player.isDeadOrDying() || player.isUsingItem()
+                || !player.onGround() || player.isPassenger()
+                || player.isInWater() || player.isInLava()
+                || player.isFallFlying() || player.getAbilities().flying
+                || minecraft.gameMode == null
+                || minecraft.gameMode.getPlayerMode() != GameType.SURVIVAL) {
+            return false;
+        }
+        int requiredDurability = Math.toIntExact(program.worstCaseCost().blocksBroken());
+        // ponytail: mixed-tool branches use one conservative worst-path allowance per tool.
+        for (var block : breaks) {
+            if (findDurableHotbarTool(player, block.toolItem(), requiredDurability) < 0) {
+                return false;
+            }
+        }
+        return inventoryCanReceiveKnownLogs(player, program);
+    }
+
+    private static void collectBreakNodes(
+            List<ActionDsl.Node> nodes, List<ActionDsl.BreakKnownFace> output) {
+        for (var node : nodes) {
+            if (node instanceof ActionDsl.BreakKnownFace block) {
+                output.add(block);
+            } else if (node instanceof ActionDsl.If conditional) {
+                collectBreakNodes(conditional.thenBranch(), output);
+                collectBreakNodes(conditional.elseBranch(), output);
+            } else if (node instanceof ActionDsl.Repeat repeat) {
+                collectBreakNodes(repeat.body(), output);
+            }
+        }
+    }
+
+    private static int findDurableHotbarTool(
+            net.minecraft.client.player.LocalPlayer player,
+            String itemId,
+            int requiredDurability) {
+        if (requiredDurability < 1) return -1;
+        var inventory = player.getInventory();
+        for (int slot = 0; slot < Inventory.getSelectionSize(); slot++) {
+            var stack = inventory.getItem(slot);
+            if (!stack.isEmpty()
+                    && itemId.equals(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString())
+                    && stack.isDamageableItem()
+                    && stack.getMaxDamage() - stack.getDamageValue() >= requiredDurability) {
+                return slot;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean inventoryCanReceiveKnownLogs(
+            net.minecraft.client.player.LocalPlayer player,
+            ActionDslCompiler.CompiledProgram program) {
+        var breaks = new ArrayList<ActionDsl.BreakKnownFace>();
+        collectBreakNodes(program.request().program().body(), breaks);
+        var logItems = new LinkedHashSet<String>();
+        breaks.forEach(block -> logItems.add(block.expectedBlock()));
+        if (logItems.isEmpty()) return true;
+        int requiredPerType = Math.toIntExact(program.worstCaseCost().blocksBroken());
+        var inventory = player.getInventory();
+        int emptySlots = 0;
+        for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+            if (inventory.getItem(slot).isEmpty()) emptySlots++;
+        }
+        int newStacksNeeded = 0;
+        for (String itemId : logItems) {
+            int existingCapacity = 0;
+            for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+                var stack = inventory.getItem(slot);
+                if (!stack.isEmpty()
+                        && itemId.equals(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString())) {
+                    existingCapacity = Math.addExact(
+                            existingCapacity,
+                            Math.max(0, stack.getMaxStackSize() - stack.getCount()));
+                }
+            }
+            if (existingCapacity < requiredPerType) newStacksNeeded++;
+        }
+        return emptySlots >= newStacksNeeded;
+    }
+
+    private static boolean breakSourceControlled(
+            Minecraft minecraft, ActionDsl.BreakKnownFace block) {
+        var player = minecraft.player;
+        var level = minecraft.level;
+        var gameMode = minecraft.gameMode;
+        if (player == null || level == null || gameMode == null
+                || minecraft.getConnection() == null
+                || !player.isAlive() || player.isDeadOrDying() || player.isUsingItem()
+                || !player.onGround() || player.isPassenger()
+                || player.isInWater() || player.isInLava()
+                || player.isFallFlying() || player.getAbilities().flying
+                || gameMode.getPlayerMode() != GameType.SURVIVAL
+                || !block.target().dimension().equals(
+                        level.dimension().identifier().toString())) {
+            return false;
+        }
+        var position = new BlockPos(
+                block.target().x(), block.target().y(), block.target().z());
+        if (!level.isLoaded(position)
+                || !(minecraft.hitResult instanceof BlockHitResult hit)
+                || hit.getType() != HitResult.Type.BLOCK
+                || !hit.getBlockPos().equals(position)
+                || hit.getDirection() != Direction.valueOf(block.face().name())
+                || !player.isWithinBlockInteractionRange(position, 0.0D)
+                || !level.getWorldBorder().isWithinBounds(position)
+                || player.blockActionRestricted(level, position, gameMode.getPlayerMode())) {
+            return false;
+        }
+        var state = level.getBlockState(position);
+        var blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+        float destroyProgress = state.getDestroyProgress(player, level, position);
+        if (!block.expectedBlock().equals(blockId)
+                || !SafeBreakSourcePolicy.allowsLiveState(
+                        state, level.getBlockEntity(position) != null)
+                || destroyProgress <= 0.0F
+                || destroyProgress * StationaryBreakRequest.MAX_ATTACK_LEASE_TICKS < 1.0F) {
+            return false;
+        }
+        int selected = player.getInventory().getSelectedSlot();
+        if (selected < 0 || selected >= Inventory.getSelectionSize()) return false;
+        var tool = player.getInventory().getItem(selected);
+        return !tool.isEmpty()
+                && block.toolItem().equals(
+                        BuiltInRegistries.ITEM.getKey(tool.getItem()).toString())
+                && tool.isDamageableItem()
+                && tool.getMaxDamage() - tool.getDamageValue() >= 1;
+    }
+
+    private static boolean breakTargetStateMatches(
+            Minecraft minecraft, ActionDsl.BreakKnownFace block) {
+        var level = minecraft.level;
+        if (level == null || !block.target().dimension().equals(
+                level.dimension().identifier().toString())) {
+            return false;
+        }
+        var position = new BlockPos(
+                block.target().x(), block.target().y(), block.target().z());
+        return level.isLoaded(position)
+                && block.expectedBlock().equals(BuiltInRegistries.BLOCK.getKey(
+                        level.getBlockState(position).getBlock()).toString());
+    }
+
     static void validatePredicateAvailability(
             ActionDsl.Program program, PolicySnapshot snapshot) {
         for (var node : program.body()) {
@@ -3426,6 +3749,8 @@ public final class McmcpRuntime implements McpRuntimePort {
                 || primitive instanceof ActionDsl.NavigateToKnown
                         && used.distanceTravelled() >= budget.maxDistanceBlocks()
                 || primitive instanceof ActionDsl.FaceKnownPosition
+                        && used.cameraDegrees() >= budget.maxCameraDegrees()
+                || primitive instanceof ActionDsl.BreakKnownFace
                         && used.cameraDegrees() >= budget.maxCameraDegrees();
     }
 
@@ -3469,6 +3794,34 @@ public final class McmcpRuntime implements McpRuntimePort {
                         limit.blocksBroken())
                 && fits(consumedPlacements(used, baseline), next.blocksPlaced(),
                         limit.blocksPlaced());
+    }
+
+    static ActionDslCompiler.Cost breakExecutionCost(
+            ActionDslCompiler.Cost planned, boolean reobservationComplete) {
+        Objects.requireNonNull(planned, "planned");
+        if (!reobservationComplete) return planned;
+        long ticks = Math.subtractExact(
+                planned.ticks(), AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
+        long duration = Math.subtractExact(
+                planned.durationMillis(),
+                Math.multiplyExact(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS, 50L));
+        return new ActionDslCompiler.Cost(
+                duration,
+                ticks,
+                planned.distanceBlocks(),
+                planned.cameraDegrees(),
+                planned.interactions(),
+                planned.blocksBroken(),
+                planned.blocksPlaced());
+    }
+
+    static long breakAimTicks(ActionDslCompiler.Cost planned) {
+        Objects.requireNonNull(planned, "planned");
+        return Math.max(
+                1L,
+                planned.ticks()
+                        - AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS
+                        - AgentPrimitivePlanner.BREAK_TICK_UPPER_BOUND);
     }
 
     private static boolean occurrenceBudgetExceeded(
@@ -3660,6 +4013,16 @@ public final class McmcpRuntime implements McpRuntimePort {
         } catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error("MCMCP Action DSL input release failed", failure);
         }
+        if (agentExecution.blockBreakAttempt != null) {
+            try {
+                agentExecution.blockBreakAttempt.close();
+            } catch (RuntimeException | LinkageError failure) {
+                McmcpMod.LOGGER.error("MCMCP known-face break release failed", failure);
+            } finally {
+                agentExecution.blockBreakAttempt = null;
+            }
+        }
+        agentExecution.breakAimComplete = false;
     }
 
     private void closeRecoveryGovernor() {
@@ -3688,8 +4051,18 @@ public final class McmcpRuntime implements McpRuntimePort {
         closeRecoveryGovernor();
         inputRelease.releaseAll(minecraft);
         arming.lock(lockReason);
+        restoreAgentSelectedSlot(minecraft);
         agentExecution = null;
         pendingAgentAdmission = null;
+    }
+
+    private void restoreAgentSelectedSlot(Minecraft minecraft) {
+        if (agentExecution == null || agentExecution.agentSelectedSlot < 0) return;
+        var player = minecraft.player;
+        if (player == agentExecution.playerIdentity
+                && player.getInventory().getSelectedSlot() == agentExecution.agentSelectedSlot) {
+            player.getInventory().setSelectedSlot(agentExecution.originalSelectedSlot);
+        }
     }
 
     private void tickActiveRoutine(Minecraft minecraft) {
@@ -5901,6 +6274,11 @@ public final class McmcpRuntime implements McpRuntimePort {
         private int positionCorrections;
         private AgentActionStore.Progress occurrenceBaseline;
         private ActionDslCompiler.Cost occurrenceLimit;
+        private final Object playerIdentity;
+        private final int originalSelectedSlot;
+        private int agentSelectedSlot = -1;
+        private boolean breakAimComplete;
+        private KnownBlockBreakAttempt blockBreakAttempt;
 
         private AgentExecution(
                 AgentActionStore.Active action,
@@ -5909,6 +6287,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                 net.minecraft.world.phys.Vec3 lastPosition,
                 float lastYaw,
                 float lastPitch,
+                net.minecraft.client.player.LocalPlayer player,
                 float maxCameraDegreesPerTick,
                 long positionCorrectionRevision) {
             actionId = action.actionId();
@@ -5920,6 +6299,8 @@ public final class McmcpRuntime implements McpRuntimePort {
             this.lastPosition = Objects.requireNonNull(lastPosition, "lastPosition");
             this.lastYaw = lastYaw;
             this.lastPitch = lastPitch;
+            playerIdentity = Objects.requireNonNull(player, "player");
+            originalSelectedSlot = player.getInventory().getSelectedSlot();
             if (positionCorrectionRevision < 0L) {
                 throw new IllegalArgumentException(
                         "positionCorrectionRevision must be non-negative");

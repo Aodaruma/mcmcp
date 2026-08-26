@@ -29,7 +29,8 @@ public final class ActionDsl {
         }
     }
 
-    public sealed interface Node permits NavigateToKnown, FaceKnownPosition, WaitTicks, If, Repeat {
+    public sealed interface Node permits NavigateToKnown, FaceKnownPosition, BreakKnownFace,
+            WaitTicks, If, Repeat {
         String id();
     }
 
@@ -44,6 +45,21 @@ public final class ActionDsl {
         public FaceKnownPosition {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
+        }
+    }
+
+    public record BreakKnownFace(
+            String id,
+            Position target,
+            BlockFace face,
+            String expectedBlock,
+            String toolItem) implements Node {
+        public BreakKnownFace {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(face, "face");
+            Objects.requireNonNull(expectedBlock, "expectedBlock");
+            Objects.requireNonNull(toolItem, "toolItem");
         }
     }
 
@@ -81,11 +97,31 @@ public final class ActionDsl {
 
     public enum Capability {
         MOVEMENT("movement"),
-        CAMERA("camera");
+        CAMERA("camera"),
+        BLOCK_BREAK("block_break");
 
         private final String wireName;
 
         Capability(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
+    public enum BlockFace {
+        DOWN("down"),
+        UP("up"),
+        NORTH("north"),
+        SOUTH("south"),
+        WEST("west"),
+        EAST("east");
+
+        private final String wireName;
+
+        BlockFace(String wireName) {
             this.wireName = wireName;
         }
 

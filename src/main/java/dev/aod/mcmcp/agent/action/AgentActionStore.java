@@ -16,6 +16,7 @@ public final class AgentActionStore {
     public static final int MAX_RECORDED_TICKS = 800;
     public static final double MAX_RECORDED_DISTANCE = 48.0D;
     public static final double MAX_RECORDED_CAMERA_DEGREES = 720.0D;
+    public static final int MAX_RECORDED_BLOCKS_BROKEN = 12;
 
     private Mutable latest;
     private Snapshot previousTerminal;
@@ -168,6 +169,15 @@ public final class AgentActionStore {
                 action.distanceTravelled, distance, MAX_RECORDED_DISTANCE, "distance");
         action.cameraDegrees = boundedAdd(
                 action.cameraDegrees, cameraDegrees, MAX_RECORDED_CAMERA_DEGREES, "cameraDegrees");
+    }
+
+    /** Records one server-acknowledged authoritative transition to air. */
+    public synchronized void recordBlockBreak(UUID actionId) {
+        Mutable action = running(actionId);
+        if (action.blocksBroken >= MAX_RECORDED_BLOCKS_BROKEN) {
+            throw new IllegalStateException("Action block-break record limit exceeded");
+        }
+        action.blocksBroken++;
     }
 
     public synchronized void setPhase(UUID actionId, Phase phase, String detail) {

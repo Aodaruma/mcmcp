@@ -1,6 +1,6 @@
 # MCMCP NeoForge — Minecraft MCP Client MOD 設計・仕様書
 
-- 文書版: 0.5
+- 文書版: 0.6
 - 作成日: 2026-08-26
 - 状態: MOD本体は実装着手可、接続先MCP hostのみ未選定
 - 対象: Prism Launcher「くらふとぶ！-v01.2」
@@ -24,7 +24,7 @@
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
 - Agent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
-最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1に限定する。DSLの構文には有限分岐と固定回数反復を含めるが、伐採、農業、建築、資源入手、レッドストーン用primitiveは、操作・回避・観測境界が実機で成立した後に1種類ずつ追加する。
+最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。Phase 1の操作・回避・観測境界が成立したため、Phase 2の最初のprimitiveとして、宣言済みの可視面を持つoak / birch幹だけを通常attack入力で破壊する`break_known_face`を追加する。農業、建築、資源入手、レッドストーン用primitiveは引き続き1種類ずつ追加する。
 
 ## 1. 対象環境
 
@@ -653,15 +653,16 @@ Action DSL v1の制御構造:
 - while、until、再帰呼出し、並列実行、変数、任意式、catch、finally、on_cancelはなし
 - Safety Governor、Esc、OFF、cancelをDSLから捕捉・無効化できない
 
-MVPで許可するprimitive:
+現在許可するprimitive:
 
 | opcode | capability | 内容 |
 |---|---|---|
 | navigate_to_known | movement | Known Traversability Map上の地点へ移動 |
 | face_known_position | camera | 既知座標へ角速度制限付きで向く |
 | wait_ticks | なし | 1〜200 active tick待機 |
+| break_known_face | camera, block_break | 宣言した可視・既知のoak / birch幹1個を、指定したVanilla axeで通常入力から破壊 |
 
-後続Phaseでは`select_item`、`use_known_face`、`break_known_face`、`place_on_known_face`などを個別に追加する。raw attack/useや任意座標操作へ一般化しない。
+`break_known_face`の`tool_item`はhotbar内の該当axeを決定論的に選択する契約であり、任意slot操作を公開しない。後続Phaseでは`select_item`、`use_known_face`、`place_on_known_face`などを必要性と安全試験が成立した時だけ個別に追加する。raw attack/useや任意座標操作へ一般化しない。
 
 predicateは次のpolicy-filtered snapshot fieldだけを使用できる。
 
@@ -749,6 +750,7 @@ templateは`agent_start_action.inputSchema.examples`に掲載し、実装reposit
 - [`navigate_to_known.json`](action-templates/navigate_to_known.json): 1地点への移動
 - [`approach_and_face.json`](action-templates/approach_and_face.json): 移動、health分岐、視点変更または待機
 - [`known_route.json`](action-templates/known_route.json): 既知区間を固定回数だけ往復する
+- [`break_known_oak_column.json`](action-templates/break_known_oak_column.json): 地上から届く、現在可視な3段oak幹を下から順に破壊する
 
 templateもcustom programと同じvalidator、capability、budget、READY lease、安全条件を通る。
 
@@ -809,7 +811,7 @@ agent_get_action:
 }
 ~~~
 
-`progress`のschema上限は通常Actionと、そのActionをpreemptしたrecoveryの累積上限である。したがってdistanceは32 + 16 = 48 block、cameraは360 + 360 = 720度、tickは600 + 200 = 800となる。interaction、break、placeのPhase 1通常Action予算は0で、schema上限8 / 4 / 8はrecovery分である。同dimension内のserver correction、teleport、knockbackなど外力で実測値がこの固定契約を越えた場合、公開counterはschema上限へ飽和させると同時に内部overflow latchを立て、Actionをbudget超過として終了する。飽和値を「上限内」と誤認したり、契約外の値を返したり、外力を相殺したりはしない。
+`progress`のschema上限は通常Actionと、そのActionをpreemptしたrecoveryの累積上限である。したがってdistanceは32 + 16 = 48 block、cameraは360 + 360 = 720度、tickは600 + 200 = 800となる。通常Actionのinteraction / place予算は0、break予算は最大8で、recoveryはinteraction 8 / break 4 / place 8を別枠で持つため、公開break counterの上限は12である。同dimension内のserver correction、teleport、knockbackなど外力で実測値がこの固定契約を越えた場合、公開counterはschema上限へ飽和させると同時に内部overflow latchを立て、Actionをbudget超過として終了する。飽和値を「上限内」と誤認したり、契約外の値を返したり、外力を相殺したりはしない。
 
 agent_get_stateの返却対象:
 
@@ -944,22 +946,23 @@ Phase 2時点のmovement gateは、既に選ばれた上下edgeのVanilla resolv
 
 ### 9.3 harvest_tree — Phase 2
 
-対象を、地上から到達可能な可視・既知のoakまたはbirch、幹高8以下に限定する。
+対象を、地上から到達可能な可視・既知のoakまたはbirch、宣言幹数8以下に限定する。高位の固定`harvest_tree` opcodeは作らず、同じ`break_known_face`を並べた通常DSL templateとして表現する。
 
 事前条件:
 
 - treeが可視・既知
 - 道具耐久とinventory空き
 - 最大破壊数budget
-- server拒否や保護反応がない
+- survival、接地、非水中・非飛行で、各幹を攻撃lease内に破壊できる速度
+- 指定面へのVanilla reach、crosshair、world border、保護、block IDの直前一致
 
 事後条件:
 
-- 既知の対象幹をすべて処理
-- 取得item数を報告
-- 苗木を取得でき、元位置へ安全に置ける場合だけ植林
+- 宣言した対象幹をすべて処理
+- 各幹はVanilla prediction ACKとauthoritative airの両方で確認
+- 取得item数は観測値として報告できるが、drop由来や回収完了を保証しない
 
-隠れた幹をchunk走査して探索しない。露出した面から順に再観測する。
+初回sliceはAction受付時に全対象面が現在可視である単純な直立幹だけを扱う。同一targetの重複と`repeat`内の破壊を静的拒否し、隠れた幹をchunk走査して探索しない。破壊で新たに露出した面の遅延再観測、drop回収、苗木の植林は後続sliceとする。
 
 ### 9.4 tend_plot — Phase 2
 

@@ -18,46 +18,21 @@ class FixturePhase5AutorunConfigTest {
 
         for (FixturePhase5Mode mode : FixturePhase5Mode.values()) {
             assertThat(FixturePhase5AutorunConfig.parse(
-                    "  " + mode.wireName().toUpperCase(java.util.Locale.ROOT) + "  ", "false"))
-                    .contains(new FixturePhase5AutorunConfig(mode, false));
+                    "  " + mode.wireName().toUpperCase(java.util.Locale.ROOT) + "  "))
+                    .contains(new FixturePhase5AutorunConfig(mode));
         }
 
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> FixturePhase5AutorunConfig.parse("shortage", "false"));
+                .isThrownBy(() -> FixturePhase5AutorunConfig.parse("shortage"));
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> FixturePhase5AutorunConfig.parse("hidden", "false"));
+                .isThrownBy(() -> FixturePhase5AutorunConfig.parse("hidden"));
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> FixturePhase5AutorunConfig.parse("divergence", "false"));
+                .isThrownBy(() -> FixturePhase5AutorunConfig.parse("divergence"));
     }
 
     @Test
-    void onlyRoutineModesMayAutoArm() {
-        assertThat(Arrays.stream(FixturePhase5Mode.values())
-                .filter(FixturePhase5Mode::routine))
-                .containsExactly(
-                        FixturePhase5Mode.CRAFT,
-                        FixturePhase5Mode.TRANSFER,
-                        FixturePhase5Mode.CROP,
-                        FixturePhase5Mode.TREE,
-                        FixturePhase5Mode.SLEEP,
-                        FixturePhase5Mode.SURVEY,
-                        FixturePhase5Mode.IRON_FARM);
-
-        for (FixturePhase5Mode mode : FixturePhase5Mode.values()) {
-            assertThat(FixturePhase5AutorunConfig.parse(mode.wireName(), "true")).get()
-                    .extracting(FixturePhase5AutorunConfig::autoArm)
-                    .isEqualTo(mode.routine());
-        }
-    }
-
-    @Test
-    void absentModeDisablesAutorunAndBooleanParsingIsStrict() {
-        assertThat(FixturePhase5AutorunConfig.parse(null, "true")).isEmpty();
-        assertThat(FixturePhase5AutorunConfig.parse("  ", "true")).isEmpty();
-        assertThat(FixturePhase5AutorunConfig.parse("craft", null)).get()
-                .extracting(FixturePhase5AutorunConfig::autoArm)
-                .isEqualTo(false);
-        assertThatIllegalArgumentException()
-                .isThrownBy(() -> FixturePhase5AutorunConfig.parse("craft", "yes"));
+    void absentModeDisablesAutorun() {
+        assertThat(FixturePhase5AutorunConfig.parse(null)).isEmpty();
+        assertThat(FixturePhase5AutorunConfig.parse("  ")).isEmpty();
     }
 }

@@ -33,7 +33,7 @@ class OmnidirectionalObserverTest {
         Optional<ObservationFrame> completed = Optional.empty();
 
         for (long tick = 1L; tick <= 8L; tick++) {
-            var sample = sample(tick, tick + 100L, UnknownBoundaryReason.RADIUS_LIMIT);
+            var sample = sample(tick, 101L, UnknownBoundaryReason.RADIUS_LIMIT);
             completed = observer.collectTick(
                     sample,
                     (index, direction, actual) -> miss(direction, actual),
@@ -54,6 +54,36 @@ class OmnidirectionalObserverTest {
                 .hasSize(2_048)
                 .allMatch(UnknownBoundary.class::isInstance);
         assertThat(entityQueries).hasValue(1);
+    }
+
+    @Test
+    void worldRevisionChangeDiscardsThePartialFrame() {
+        var observer = new OmnidirectionalObserver(
+                8.0D,
+                512,
+                () -> "obs-0000000000000002");
+        Optional<ObservationFrame> completed = Optional.empty();
+
+        observer.collectTick(
+                sample(1L, 1L, UnknownBoundaryReason.RADIUS_LIMIT),
+                (index, direction, actual) -> new OmnidirectionalObserver.RayTrace(
+                        OmnidirectionalObserver.RayOutcome.UNKNOWN,
+                        List.of(surface(actual)),
+                        boundary(actual, UnknownBoundaryReason.UNLOADED, 4, 65, 0)),
+                OmnidirectionalObserver.EntityObservation::empty);
+        for (long tick = 2L; tick <= 5L; tick++) {
+            completed = observer.collectTick(
+                    sample(tick, 2L, UnknownBoundaryReason.RADIUS_LIMIT),
+                    (index, direction, actual) -> new OmnidirectionalObserver.RayTrace(
+                            OmnidirectionalObserver.RayOutcome.UNKNOWN,
+                            List.of(surface(actual)),
+                            boundary(actual, UnknownBoundaryReason.UNLOADED, 4, 65, 0)),
+                    OmnidirectionalObserver.EntityObservation::empty);
+            if (tick < 5L) assertThat(completed).isEmpty();
+        }
+
+        assertThat(completed.orElseThrow().records())
+                .allMatch(record -> record.worldRevision() == 2L);
     }
 
     @Test

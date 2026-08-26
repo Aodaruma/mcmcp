@@ -465,6 +465,12 @@ final class FixtureGameTests {
         for (BlockPos clearance : FixturePhase5Scenario.TREE_GROWTH_CLEARANCE) {
             assertLayoutState(helper, layout, clearance, Blocks.AIR.defaultBlockState());
         }
+        if (FixturePhase5Scenario.TREE_ENCLOSURE.size() != 26) {
+            helper.fail(Component.literal("Phase 5 tree enclosure must be one closed fence ring"));
+        }
+        for (BlockPos fence : FixturePhase5Scenario.TREE_ENCLOSURE) {
+            assertLayoutState(helper, layout, fence, Blocks.OAK_FENCE.defaultBlockState());
+        }
 
         assertLayoutState(helper, layout, FixturePhase5Scenario.BED_FOOT,
                 FixturePhase5Scenario.bedState(BedPart.FOOT));

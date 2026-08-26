@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "program": {
+    "dsl_version": 1,
+    "name": "break_known_oak_column",
+    "capabilities": ["camera", "block_break"],
+    "body": [
+      {
+        "id": "break_low",
+        "op": "break_known_face",
+        "target": {"dimension": "minecraft:overworld", "x": 204, "y": 200, "z": 198},
+        "face": "west",
+        "expected_block": "minecraft:oak_log",
+        "tool_item": "minecraft:iron_axe"
+      },
+      {
+        "id": "break_mid",
+        "op": "break_known_face",
+        "target": {"dimension": "minecraft:overworld", "x": 204, "y": 201, "z": 198},
+        "face": "west",
+        "expected_block": "minecraft:oak_log",
+        "tool_item": "minecraft:iron_axe"
+      },
+      {
+        "id": "break_high",
+        "op": "break_known_face",
+        "target": {"dimension": "minecraft:overworld", "x": 204, "y": 202, "z": 198},
+        "face": "west",
+        "expected_block": "minecraft:oak_log",
+        "tool_item": "minecraft:iron_axe"
+      }
+    ]
+  },
+  "budget": {
+    "max_duration_ms": 30000,
+    "max_ticks": 600,
+    "max_distance_blocks": 0,
+    "max_camera_degrees": 360,
+    "max_interactions": 0,
+    "max_blocks_broken": 3,
+    "max_blocks_placed": 0
+  }
+}

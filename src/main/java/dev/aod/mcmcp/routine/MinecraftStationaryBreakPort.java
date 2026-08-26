@@ -153,10 +153,25 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
 
     @Override
     public AttackAttempt beginAttack(StationaryBreakRequest request, long leaseExpiresAtClientTick) {
+        return beginAttack(request, leaseExpiresAtClientTick, true);
+    }
+
+    @Override
+    public AttackAttempt beginAgentAttack(
+            StationaryBreakRequest request, long leaseExpiresAtClientTick) {
+        return beginAttack(request, leaseExpiresAtClientTick, false);
+    }
+
+    private AttackAttempt beginAttack(
+            StationaryBreakRequest request,
+            long leaseExpiresAtClientTick,
+            boolean requireLegacyRoutineSafety) {
         var minecraft = assertClientThread();
         var frame = observe(request);
-        if (!frame.worldReady() || !frame.clientFocused() || !frame.playerAlive() || !frame.healthSafe()
-                || !frame.visibleThreatClear() || !frame.targetInReach() || !frame.crosshairOnTarget()) {
+        if (!frame.worldReady() || !frame.playerAlive()
+                || !frame.targetInReach() || !frame.crosshairOnTarget()
+                || requireLegacyRoutineSafety && (!frame.clientFocused() || !frame.healthSafe()
+                        || !frame.visibleThreatClear())) {
             throw new IllegalStateException("stationary_break preconditions changed before attack");
         }
         var level = requireTargetLevel(request.target());

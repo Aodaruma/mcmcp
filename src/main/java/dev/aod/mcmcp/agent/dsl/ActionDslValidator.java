@@ -9,6 +9,7 @@ import java.util.regex.Pattern;
 
 import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.CAPABILITY_DENIED;
 import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.INVALID_ARGUMENT;
+import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE;
 import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.PROGRAM_TOO_COMPLEX;
 
 /** Structural and semantic validation shared by parsed and programmatically built DSL trees. */
@@ -21,11 +22,23 @@ public final class ActionDslValidator {
     public static final int MAX_BRANCH_NODES = 16;
     public static final int MAX_PREDICATE_OPERANDS = 4;
     public static final int MAX_REQUEST_BYTES = 64 * 1024;
+    public static final int MAX_BLOCKS_BROKEN = 8;
 
     private static final Pattern NODE_ID = Pattern.compile("[a-z][a-z0-9_-]{0,31}");
     private static final Pattern PROGRAM_NAME = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
     private static final Pattern RESOURCE_LOCATION =
             Pattern.compile("[a-z0-9_.-]+:[a-z0-9_./-]+");
+    private static final Set<String> BREAKABLE_LOGS = Set.of(
+            "minecraft:oak_log",
+            "minecraft:birch_log");
+    private static final Set<String> VANILLA_AXES = Set.of(
+            "minecraft:wooden_axe",
+            "minecraft:stone_axe",
+            "minecraft:copper_axe",
+            "minecraft:iron_axe",
+            "minecraft:golden_axe",
+            "minecraft:diamond_axe",
+            "minecraft:netherite_axe");
 
     private ActionDslValidator() {
     }
@@ -40,8 +53,8 @@ public final class ActionDslValidator {
             throw invalid("dsl_version must be 1");
         }
         program.name().ifPresent(name -> requirePattern(name, PROGRAM_NAME, "program.name"));
-        if (program.capabilities().size() > 2) {
-            throw invalid("program.capabilities must contain at most 2 values");
+        if (program.capabilities().size() > 3) {
+            throw invalid("program.capabilities must contain at most 3 values");
         }
         validateRequestBudget(request.budget());
 
@@ -75,11 +88,10 @@ public final class ActionDslValidator {
         requireRange(budget.maxTicks(), 2, 600, "budget.max_ticks");
         requireFiniteRange(budget.maxDistanceBlocks(), 0, 32, "budget.max_distance_blocks");
         requireFiniteRange(budget.maxCameraDegrees(), 0, 360, "budget.max_camera_degrees");
-        if (budget.maxInteractions() != 0
-                || budget.maxBlocksBroken() != 0
-                || budget.maxBlocksPlaced() != 0) {
-            throw invalid("Phase 1 interaction, break, and place budgets must be 0");
-        }
+        requireRange(budget.maxInteractions(), 0, 0, "budget.max_interactions");
+        requireRange(budget.maxBlocksBroken(), 0, MAX_BLOCKS_BROKEN,
+                "budget.max_blocks_broken");
+        requireRange(budget.maxBlocksPlaced(), 0, 0, "budget.max_blocks_placed");
     }
 
     static void validateHardLimit(ActionDsl.Budget budget) {
@@ -135,6 +147,22 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             return 1;
         }
+        if (node instanceof ActionDsl.BreakKnownFace breakKnownFace) {
+            validatePosition(breakKnownFace.target(), path + ".target");
+            if (!walk.breakTargets.add(breakKnownFace.target())) {
+                throw unprovable("A break target cannot occur more than once: "
+                        + breakKnownFace.target());
+            }
+            if (!BREAKABLE_LOGS.contains(breakKnownFace.expectedBlock())) {
+                throw invalid(path + ".expected_block must be minecraft:oak_log or minecraft:birch_log");
+            }
+            if (!VANILLA_AXES.contains(breakKnownFace.toolItem())) {
+                throw invalid(path + ".tool_item must be an exact vanilla axe item id");
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
+            return 1;
+        }
         if (node instanceof ActionDsl.WaitTicks wait) {
             requireRange(wait.ticks(), 1, 200, path + ".ticks");
             return 1;
@@ -150,8 +178,22 @@ public final class ActionDslValidator {
         var repeat = (ActionDsl.Repeat) node;
         requireRange(repeat.count(), 1, MAX_REPEAT_COUNT, path + ".count");
         requireSequenceSize(repeat.body(), 1, MAX_BRANCH_NODES, path + ".body");
+        if (containsBreak(repeat.body())) {
+            throw unprovable("break_known_face cannot occur inside repeat");
+        }
         int bodyCount = walkSequence(repeat.body(), depth + 1, walk, path + ".body");
         return boundedAdd(1, boundedMultiply(bodyCount, repeat.count()));
+    }
+
+    private static boolean containsBreak(List<ActionDsl.Node> nodes) {
+        for (var node : nodes) {
+            if (node instanceof ActionDsl.BreakKnownFace) return true;
+            if (node instanceof ActionDsl.If conditional
+                    && (containsBreak(conditional.thenBranch())
+                            || containsBreak(conditional.elseBranch()))) return true;
+            if (node instanceof ActionDsl.Repeat repeat && containsBreak(repeat.body())) return true;
+        }
+        return false;
     }
 
     private static void validatePredicate(ActionDsl.Predicate predicate, String path) {
@@ -260,6 +302,10 @@ public final class ActionDslValidator {
         return new ActionDslException(PROGRAM_TOO_COMPLEX, message);
     }
 
+    private static ActionDslException unprovable(String message) {
+        return new ActionDslException(PROGRAM_BUDGET_UNPROVABLE, message);
+    }
+
     public record Validation(
             int sourceNodes,
             int executedNodesUpperBound,
@@ -271,6 +317,7 @@ public final class ActionDslValidator {
 
     private static final class Walk {
         private final Set<String> ids = new HashSet<>();
+        private final Set<ActionDsl.Position> breakTargets = new HashSet<>();
         private final EnumSet<ActionDsl.Capability> requiredCapabilities =
                 EnumSet.noneOf(ActionDsl.Capability.class);
         private int sourceNodes;

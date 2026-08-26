@@ -103,6 +103,17 @@ class AgentActionStoreTest {
         assertThat(progress.motionOverflowed()).isTrue();
     }
 
+    @Test
+    void countsOnlyExplicitlyRecordedServerConfirmedBreaks() {
+        var store = new AgentActionStore();
+        var accepted = store.start(program(), Instant.EPOCH);
+        store.markRunning(accepted.actionId());
+
+        store.recordBlockBreak(accepted.actionId());
+
+        assertThat(store.get(accepted.actionId()).progress().blocksBroken()).isOne();
+    }
+
     private static ActionDslCompiler.CompiledProgram program() {
         var request = ActionDslParser.parse(JsonParser.parseString("""
                 {

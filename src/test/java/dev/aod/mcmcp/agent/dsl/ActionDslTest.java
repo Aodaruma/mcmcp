@@ -22,7 +22,7 @@ class ActionDslTest {
     void parsesEveryNormativeCatalogExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
-        assertThat(examples).hasSize(3);
+        assertThat(examples).hasSize(4);
         for (int index = 0; index < examples.size(); index++) {
             ActionDsl.Request parsed = ActionDslParser.parse(examples.get(index).getAsJsonObject());
             assertThat(parsed.schemaVersion()).isEqualTo(1);
@@ -109,6 +109,92 @@ class ActionDslTest {
         assertThat(compiled.worstCaseCost())
                 .isEqualTo(new ActionDslCompiler.Cost(700, 16, 8, 60, 0, 0, 0));
         assertThat(compiled.executedNodesUpperBound()).isEqualTo(7);
+    }
+
+    @Test
+    void parsesAndCompilesBoundedKnownFaceBreaks() {
+        JsonArray breaks = new JsonArray();
+        for (int index = 0; index < 8; index++) {
+            JsonObject block = breakKnownFace("break_" + index);
+            block.add("target", position(64 + index));
+            breaks.add(block);
+        }
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "block_break"),
+                breaks,
+                budget(30_000, 600, 0, 360, 0, 8, 0)));
+
+        ActionDsl.BreakKnownFace breaking =
+                (ActionDsl.BreakKnownFace) request.program().body().getFirst();
+        assertThat(breaking.target()).isEqualTo(new ActionDsl.Position(
+                "minecraft:overworld", 10, 64, 10));
+        assertThat(breaking.face()).isEqualTo(ActionDsl.BlockFace.WEST);
+        assertThat(breaking.expectedBlock()).isEqualTo("minecraft:oak_log");
+        assertThat(breaking.toolItem()).isEqualTo("minecraft:iron_axe");
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.BLOCK_BREAK);
+
+        var perBreak = new ActionDslCompiler.Cost(3_750, 75, 0, 45, 0, 1, 0);
+        var compiled = ActionDslCompiler.compile(
+                request,
+                primitive -> Optional.of(perBreak),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_BREAK));
+
+        assertThat(compiled.worstCaseCost())
+                .isEqualTo(new ActionDslCompiler.Cost(30_000, 600, 0, 360, 0, 8, 0));
+        assertThat(compiled.primitiveCostBounds()).containsEntry("break_0", perBreak);
+    }
+
+    @Test
+    void rejectsUntypedBreakTargetsToolsFacesCapabilitiesAndCosts() {
+        JsonObject missingCamera = request(
+                capabilities("block_break"), breakKnownFace("break_log"),
+                budget(3_750, 75, 0, 45, 0, 1, 0));
+        assertCode(missingCamera, ActionDslException.Code.CAPABILITY_DENIED);
+
+        JsonObject wrongFace = breakKnownFace("wrong_face");
+        wrongFace.addProperty("face", "center");
+        assertCode(request(capabilities("camera", "block_break"), wrongFace,
+                        budget(3_750, 75, 0, 45, 0, 1, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject wrongLog = breakKnownFace("wrong_log");
+        wrongLog.addProperty("expected_block", "minecraft:spruce_log");
+        assertCode(request(capabilities("camera", "block_break"), wrongLog,
+                        budget(3_750, 75, 0, 45, 0, 1, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject wrongTool = breakKnownFace("wrong_tool");
+        wrongTool.addProperty("tool_item", "minecraft:diamond_pickaxe");
+        assertCode(request(capabilities("camera", "block_break"), wrongTool,
+                        budget(3_750, 75, 0, 45, 0, 1, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        ActionDsl.Request valid = ActionDslParser.parse(request(
+                capabilities("camera", "block_break"), breakKnownFace("break_log"),
+                budget(3_750, 75, 0, 45, 0, 1, 0)));
+        for (var invalid : new ActionDslCompiler.Cost[] {
+                new ActionDslCompiler.Cost(3_750, 75, 1, 45, 0, 1, 0),
+                new ActionDslCompiler.Cost(3_750, 75, 0, 45, 1, 1, 0),
+                new ActionDslCompiler.Cost(3_750, 75, 0, 45, 0, 0, 0),
+                new ActionDslCompiler.Cost(3_750, 75, 0, 45, 0, 1, 1)
+        }) {
+            assertThatThrownBy(() -> ActionDslCompiler.compile(
+                            valid,
+                            primitive -> Optional.of(invalid),
+                            Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_BREAK)))
+                    .isInstanceOf(ActionDslException.class)
+                    .extracting(failure -> ((ActionDslException) failure).code())
+                    .isEqualTo(ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE);
+        }
+
+        assertCode(request(
+                        capabilities("camera", "block_break"),
+                        repeat("twice", 2, array(breakKnownFace("break_log"))),
+                        budget(7_500, 150, 0, 90, 0, 2, 0)),
+                ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE);
     }
 
     @Test
@@ -221,6 +307,13 @@ class ActionDslTest {
         nonZeroInteraction.addProperty("max_interactions", 1);
         assertCode(request(capabilities(), waitNode("wait", 1), nonZeroInteraction),
                 ActionDslException.Code.INVALID_ARGUMENT);
+
+        assertCode(request(capabilities(), waitNode("wait", 1),
+                        budget(1_000, 20, 0, 0, 0, 9, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        assertCode(request(capabilities(), waitNode("wait", 1),
+                        budget(1_000, 20, 0, 0, 0, 0, 1)),
+                ActionDslException.Code.INVALID_ARGUMENT);
     }
 
     @Test
@@ -294,14 +387,25 @@ class ActionDslTest {
     }
 
     private static JsonObject budget(long duration, long ticks, double distance, double camera) {
+        return budget(duration, ticks, distance, camera, 0, 0, 0);
+    }
+
+    private static JsonObject budget(
+            long duration,
+            long ticks,
+            double distance,
+            double camera,
+            long interactions,
+            long blocksBroken,
+            long blocksPlaced) {
         JsonObject budget = new JsonObject();
         budget.addProperty("max_duration_ms", duration);
         budget.addProperty("max_ticks", ticks);
         budget.addProperty("max_distance_blocks", distance);
         budget.addProperty("max_camera_degrees", camera);
-        budget.addProperty("max_interactions", 0);
-        budget.addProperty("max_blocks_broken", 0);
-        budget.addProperty("max_blocks_placed", 0);
+        budget.addProperty("max_interactions", interactions);
+        budget.addProperty("max_blocks_broken", blocksBroken);
+        budget.addProperty("max_blocks_placed", blocksPlaced);
         return budget;
     }
 
@@ -328,6 +432,21 @@ class ActionDslTest {
         JsonObject node = baseNode(id, "face_known_position");
         node.add("target", position());
         return node;
+    }
+
+    private static JsonObject breakKnownFace(String id) {
+        JsonObject node = baseNode(id, "break_known_face");
+        node.add("target", position());
+        node.addProperty("face", "west");
+        node.addProperty("expected_block", "minecraft:oak_log");
+        node.addProperty("tool_item", "minecraft:iron_axe");
+        return node;
+    }
+
+    private static JsonObject position(int y) {
+        JsonObject value = position();
+        value.addProperty("y", y);
+        return value;
     }
 
     private static JsonObject waitNode(String id, int ticks) {

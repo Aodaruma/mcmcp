@@ -13,7 +13,7 @@ import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.PROGRAM_BUDGET_UNP
 /** Component-wise worst-case compiler for one already closed Action DSL v1 tree. */
 public final class ActionDslCompiler {
     public static final ActionDsl.Budget PHASE_ONE_HARD_LIMIT = new ActionDsl.Budget(
-            30_000, 600, 32, 360, 0, 0, 0);
+            30_000, 600, 32, 360, 0, ActionDslValidator.MAX_BLOCKS_BROKEN, 0);
     private static final long NOMINAL_TICK_MILLIS = 50;
 
     private ActionDslCompiler() {
@@ -79,15 +79,27 @@ public final class ActionDslCompiler {
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }
-        if (node instanceof ActionDsl.NavigateToKnown || node instanceof ActionDsl.FaceKnownPosition) {
+        if (node instanceof ActionDsl.NavigateToKnown
+                || node instanceof ActionDsl.FaceKnownPosition
+                || node instanceof ActionDsl.BreakKnownFace) {
             Optional<Cost> resolved = Objects.requireNonNull(
                     primitiveCosts.worstCase(node), "primitive cost result");
             if (resolved.isEmpty()) {
                 throw unprovable("No worst-case cost is available for node " + node.id());
             }
             Cost cost = resolved.get();
-            if (cost.interactions() != 0 || cost.blocksBroken() != 0 || cost.blocksPlaced() != 0) {
-                throw unprovable("Phase 1 primitive cost contains an interaction, break, or place");
+            if (node instanceof ActionDsl.BreakKnownFace) {
+                if (cost.distanceBlocks() != 0
+                        || cost.interactions() != 0
+                        || cost.blocksBroken() != 1
+                        || cost.blocksPlaced() != 0) {
+                    throw unprovable(
+                            "break_known_face must consume exactly one break and no movement, interaction, or place");
+                }
+            } else if (cost.interactions() != 0
+                    || cost.blocksBroken() != 0
+                    || cost.blocksPlaced() != 0) {
+                throw unprovable("Non-breaking primitive cost contains an interaction, break, or place");
             }
             if (node instanceof ActionDsl.FaceKnownPosition && cost.distanceBlocks() != 0) {
                 throw unprovable("face_known_position cannot consume movement distance");

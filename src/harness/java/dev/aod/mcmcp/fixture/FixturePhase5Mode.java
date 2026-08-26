@@ -4,24 +4,22 @@ import java.util.Locale;
 
 /** Closed Phase 5 fixture surface shared by commands and opt-in autorun configuration. */
 enum FixturePhase5Mode {
-    RECIPES("recipes", 0, false),
-    CRAFT("craft", 0, true),
-    TRANSFER("transfer", 0, true),
-    CROP("crop", 1, true),
-    TREE("tree", 0, true),
-    SLEEP("sleep", 0, true),
-    SURVEY("survey", 0, true),
-    IRON_FARM("iron_farm", 1, true),
-    RESET("reset", 0, false);
+    RECIPES("recipes", 0),
+    CRAFT("craft", 0),
+    TRANSFER("transfer", 0),
+    CROP("crop", 1),
+    TREE("tree", 0),
+    SLEEP("sleep", 0),
+    SURVEY("survey", 0),
+    IRON_FARM("iron_farm", 1),
+    RESET("reset", 0);
 
     private final String wireName;
     private final int selectedSlot;
-    private final boolean routine;
 
-    FixturePhase5Mode(String wireName, int selectedSlot, boolean routine) {
+    FixturePhase5Mode(String wireName, int selectedSlot) {
         this.wireName = wireName;
         this.selectedSlot = selectedSlot;
-        this.routine = routine;
     }
 
     static FixturePhase5Mode parse(String rawMode) {
@@ -47,10 +45,6 @@ enum FixturePhase5Mode {
 
     int selectedSlot() {
         return selectedSlot;
-    }
-
-    boolean routine() {
-        return routine;
     }
 
     private static String sanitize(String value) {

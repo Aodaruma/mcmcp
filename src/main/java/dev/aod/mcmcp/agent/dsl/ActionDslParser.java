@@ -69,8 +69,8 @@ public final class ActionDslParser {
                 ? Optional.of(string(object.get("name"), "program.name"))
                 : Optional.empty();
         JsonArray capabilityValues = array(object.get("capabilities"), "program.capabilities");
-        if (capabilityValues.size() > 2) {
-            throw invalid("program.capabilities must contain at most 2 values");
+        if (capabilityValues.size() > 3) {
+            throw invalid("program.capabilities must contain at most 3 values");
         }
         var capabilities = EnumSet.noneOf(ActionDsl.Capability.class);
         var seen = new HashSet<String>();
@@ -118,6 +118,7 @@ public final class ActionDslParser {
         return switch (operation) {
             case "navigate_to_known" -> navigate(object, path);
             case "face_known_position" -> face(object, path);
+            case "break_known_face" -> breakKnownFace(object, path);
             case "wait_ticks" -> waitTicks(object, path);
             case "if" -> conditional(object, path);
             case "repeat" -> repeat(object, path);
@@ -139,6 +140,18 @@ public final class ActionDslParser {
         return new ActionDsl.FaceKnownPosition(
                 string(source.get("id"), path + ".id"),
                 position(source.get("target"), path + ".target"));
+    }
+
+    private static ActionDsl.BreakKnownFace breakKnownFace(JsonObject source, String path) {
+        exactKeys(source, path,
+                Set.of("id", "op", "target", "face", "expected_block", "tool_item"),
+                Set.of("id", "op", "target", "face", "expected_block", "tool_item"));
+        return new ActionDsl.BreakKnownFace(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                blockFace(string(source.get("face"), path + ".face"), path + ".face"),
+                string(source.get("expected_block"), path + ".expected_block"),
+                string(source.get("tool_item"), path + ".tool_item"));
     }
 
     private static ActionDsl.WaitTicks waitTicks(JsonObject source, String path) {
@@ -261,7 +274,20 @@ public final class ActionDslParser {
         return switch (value) {
             case "movement" -> ActionDsl.Capability.MOVEMENT;
             case "camera" -> ActionDsl.Capability.CAMERA;
+            case "block_break" -> ActionDsl.Capability.BLOCK_BREAK;
             default -> throw invalid("Unsupported capability at " + path + ": " + value);
+        };
+    }
+
+    private static ActionDsl.BlockFace blockFace(String value, String path) {
+        return switch (value) {
+            case "down" -> ActionDsl.BlockFace.DOWN;
+            case "up" -> ActionDsl.BlockFace.UP;
+            case "north" -> ActionDsl.BlockFace.NORTH;
+            case "south" -> ActionDsl.BlockFace.SOUTH;
+            case "west" -> ActionDsl.BlockFace.WEST;
+            case "east" -> ActionDsl.BlockFace.EAST;
+            default -> throw invalid("Unsupported block face at " + path + ": " + value);
         };
     }
 

@@ -357,10 +357,9 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         }
 
         Vec3 eye = player.getEyePosition();
-        ActionDsl.Position target = state.target.target();
-        double dx = target.x() + 0.5D - eye.x;
-        double dy = target.y() + 0.5D - eye.y;
-        double dz = target.z() + 0.5D - eye.z;
+        double dx = state.target.aimX() - eye.x;
+        double dy = state.target.aimY() - eye.y;
+        double dz = state.target.aimZ() - eye.z;
         double horizontal = Math.hypot(dx, dz);
         if (horizontal < 1.0e-9D && Math.abs(dy) < 1.0e-9D) {
             return finish(Status.FAILED, Reason.INVALID_FACE_TARGET);
@@ -663,14 +662,57 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
     public record KnownFaceTarget(
             UUID worldSessionId,
             long worldRevision,
-            ActionDsl.Position target) {
+            ActionDsl.Position target,
+            double aimX,
+            double aimY,
+            double aimZ) {
+        public KnownFaceTarget(
+                UUID worldSessionId, long worldRevision, ActionDsl.Position target) {
+            this(
+                    worldSessionId,
+                    worldRevision,
+                    target,
+                    target.x() + 0.5D,
+                    target.y() + 0.5D,
+                    target.z() + 0.5D);
+        }
+
         public KnownFaceTarget {
             Objects.requireNonNull(worldSessionId, "worldSessionId");
             Objects.requireNonNull(target, "target");
-            if (worldRevision < 0) {
+            if (worldRevision < 0
+                    || !Double.isFinite(aimX) || !Double.isFinite(aimY) || !Double.isFinite(aimZ)
+                    || aimX < target.x() || aimX > target.x() + 1.0D
+                    || aimY < target.y() || aimY > target.y() + 1.0D
+                    || aimZ < target.z() || aimZ > target.z() + 1.0D) {
                 throw new IllegalArgumentException("worldRevision must be non-negative");
             }
         }
+
+        public static KnownFaceTarget forBlockFace(
+                UUID worldSessionId,
+                long worldRevision,
+                ActionDsl.Position target,
+                ActionDsl.BlockFace face) {
+            Vec3 aim = blockFaceAimPoint(target, face);
+            return new KnownFaceTarget(
+                    worldSessionId, worldRevision, target, aim.x, aim.y, aim.z);
+        }
+    }
+
+    public static Vec3 blockFaceAimPoint(
+            ActionDsl.Position target, ActionDsl.BlockFace face) {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(face, "face");
+        double inset = 1.0e-3D;
+        return switch (face) {
+            case DOWN -> new Vec3(target.x() + 0.5D, target.y() + inset, target.z() + 0.5D);
+            case UP -> new Vec3(target.x() + 0.5D, target.y() + 1.0D - inset, target.z() + 0.5D);
+            case NORTH -> new Vec3(target.x() + 0.5D, target.y() + 0.5D, target.z() + inset);
+            case SOUTH -> new Vec3(target.x() + 0.5D, target.y() + 0.5D, target.z() + 1.0D - inset);
+            case WEST -> new Vec3(target.x() + inset, target.y() + 0.5D, target.z() + 0.5D);
+            case EAST -> new Vec3(target.x() + 1.0D - inset, target.y() + 0.5D, target.z() + 0.5D);
+        };
     }
 
     public record TickResult(Status status, Reason reason) {

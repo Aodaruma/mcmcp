@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.agent.action;
 
+import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.navigation.DeterministicAStar;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilityMap;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
@@ -17,6 +18,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class MinecraftActionPrimitiveExecutorTest {
     private static final String DIMENSION = "minecraft:overworld";
+
+    @Test
+    void aimsInsideTheDeclaredBlockFaceRatherThanAtTheBlockCenter() {
+        var target = new ActionDsl.Position(DIMENSION, 10, 64, 20);
+
+        var west = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
+                target, ActionDsl.BlockFace.WEST);
+        var up = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
+                target, ActionDsl.BlockFace.UP);
+
+        assertThat(west.x).isEqualTo(10.001D);
+        assertThat(west.y).isEqualTo(64.5D);
+        assertThat(up.y).isEqualTo(64.999D);
+    }
 
     @Test
     void rechecksDiagonalCornerProofBeforeMovement() {

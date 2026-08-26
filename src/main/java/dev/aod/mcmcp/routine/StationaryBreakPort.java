@@ -11,6 +11,16 @@ public interface StationaryBreakPort {
             StationaryBreakRequest request,
             long leaseExpiresAtClientTick);
 
+    /**
+     * Starts the same normal-input attack under the Agent safety governor.
+     * Legacy routines keep their stricter focus/health gate in {@link #beginAttack}.
+     */
+    default AttackAttempt beginAgentAttack(
+            StationaryBreakRequest request,
+            long leaseExpiresAtClientTick) {
+        return beginAttack(request, leaseExpiresAtClientTick);
+    }
+
     void holdAttack(AttackAttempt attempt);
 
     /** Releases only the attack key while retaining prediction evidence for server confirmation. */

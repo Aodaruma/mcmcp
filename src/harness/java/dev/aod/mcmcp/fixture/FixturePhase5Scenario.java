@@ -22,6 +22,7 @@ import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.clock.ClockTimeMarkers;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -54,6 +55,9 @@ final class FixturePhase5Scenario {
             TREE_SUPPORT.above(2).relative(Direction.SOUTH),
             TREE_SUPPORT.above(2).relative(Direction.WEST),
             TREE_SUPPORT.above(2).relative(Direction.EAST));
+    static final BlockPos TREE_ENCLOSURE_MIN = new BlockPos(199, 200, 195);
+    static final BlockPos TREE_ENCLOSURE_MAX = new BlockPos(206, 200, 201);
+    static final List<BlockPos> TREE_ENCLOSURE = treeEnclosure();
 
     static final BlockPos BED_FOOT = new BlockPos(196, 200, 204);
     static final BlockPos BED_HEAD = BED_FOOT.relative(Direction.EAST);
@@ -146,6 +150,9 @@ final class FixturePhase5Scenario {
         for (BlockPos clearance : TREE_GROWTH_CLEARANCE) {
             result.put(clearance, Blocks.AIR.defaultBlockState());
         }
+        for (BlockPos fence : TREE_ENCLOSURE) {
+            result.put(fence, Blocks.OAK_FENCE.defaultBlockState());
+        }
         result.put(BED_FOOT, bedState(BedPart.FOOT));
         result.put(BED_HEAD, bedState(BedPart.HEAD));
         return Map.copyOf(result);
@@ -183,6 +190,34 @@ final class FixturePhase5Scenario {
         return TRANSFER_CONTENTS;
     }
 
+    static void verifyTreeGate(
+            FixtureSecurity.Context context, Consumer<Component> output) {
+        ServerLevel level = context.level();
+        ServerPlayer player = context.player();
+        long remainingLogs = TREE_LOGS.stream()
+                .filter(position -> !level.getBlockState(position).isAir())
+                .count();
+        boolean enclosureIntact = TREE_ENCLOSURE.stream()
+                .allMatch(position -> level.getBlockState(position).is(Blocks.OAK_FENCE));
+        boolean supportIntact = level.getBlockState(TREE_SUPPORT).is(Blocks.DIRT);
+        boolean playerInside = player.getX() > TREE_ENCLOSURE_MIN.getX()
+                && player.getX() < TREE_ENCLOSURE_MAX.getX()
+                && player.getZ() > TREE_ENCLOSURE_MIN.getZ()
+                && player.getZ() < TREE_ENCLOSURE_MAX.getZ();
+        ItemStack axe = player.getInventory().getItem(0);
+        boolean expectedAxe = axe.is(Items.IRON_AXE) && axe.getDamageValue() == TREE_LOGS.size();
+        if (remainingLogs != 0L || !enclosureIntact || !supportIntact
+                || !playerInside || !expectedAxe) {
+            throw new IllegalStateException("phase5.tree.gate=FAIL remaining_logs="
+                    + remainingLogs + " enclosure=" + enclosureIntact
+                    + " support=" + supportIntact + " player_inside=" + playerInside
+                    + " axe_damage=" + axe.getDamageValue());
+        }
+        output.accept(Component.literal("phase5.tree.gate=PASS broken_logs="
+                + TREE_LOGS.size() + " enclosure=true support=true player_inside=true axe_damage="
+                + axe.getDamageValue()));
+    }
+
     private static void applyLayout(ServerLevel level) {
         Map<BlockPos, BlockState> layout = layout();
         layout.forEach((position, state) -> {
@@ -192,6 +227,19 @@ final class FixturePhase5Scenario {
         });
         FixtureArena.setPairedBlocks(
                 level, BED_FOOT, bedState(BedPart.FOOT), BED_HEAD, bedState(BedPart.HEAD));
+    }
+
+    private static List<BlockPos> treeEnclosure() {
+        var result = new LinkedHashSet<BlockPos>();
+        for (int x = TREE_ENCLOSURE_MIN.getX(); x <= TREE_ENCLOSURE_MAX.getX(); x++) {
+            result.add(new BlockPos(x, TREE_ENCLOSURE_MIN.getY(), TREE_ENCLOSURE_MIN.getZ()));
+            result.add(new BlockPos(x, TREE_ENCLOSURE_MIN.getY(), TREE_ENCLOSURE_MAX.getZ()));
+        }
+        for (int z = TREE_ENCLOSURE_MIN.getZ(); z <= TREE_ENCLOSURE_MAX.getZ(); z++) {
+            result.add(new BlockPos(TREE_ENCLOSURE_MIN.getX(), TREE_ENCLOSURE_MIN.getY(), z));
+            result.add(new BlockPos(TREE_ENCLOSURE_MAX.getX(), TREE_ENCLOSURE_MIN.getY(), z));
+        }
+        return List.copyOf(result);
     }
 
     private static void configureBarrel(ServerLevel level) {

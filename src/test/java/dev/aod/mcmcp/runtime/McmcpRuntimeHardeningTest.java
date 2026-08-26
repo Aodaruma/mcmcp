@@ -2,6 +2,7 @@ package dev.aod.mcmcp.runtime;
 
 import com.google.gson.Gson;
 import dev.aod.mcmcp.agent.action.AgentActionStore;
+import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.agent.safety.ObservationRecord;
@@ -52,6 +53,30 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 class McmcpRuntimeHardeningTest {
+    @Test
+    void completedBreakReobservationDoesNotReserveTheSameWaitTwice() {
+        var planned = new ActionDslCompiler.Cost(5_500, 110, 0, 15, 0, 1, 0);
+
+        assertThat(McmcpRuntime.breakExecutionCost(planned, false)).isEqualTo(planned);
+        assertThat(McmcpRuntime.breakAimTicks(planned)).isEqualTo(10);
+        assertThat(McmcpRuntime.breakExecutionCost(planned, true)).isEqualTo(
+                new ActionDslCompiler.Cost(
+                        3_500,
+                        110 - AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS,
+                        0,
+                        15,
+                        0,
+                        1,
+                        0));
+        assertThat(McmcpRuntime.agentReplanWindowTicks(new ActionDsl.BreakKnownFace(
+                "chop",
+                new ActionDsl.Position("minecraft:overworld", 1, 64, 1),
+                ActionDsl.BlockFace.WEST,
+                "minecraft:oak_log",
+                "minecraft:iron_axe")))
+                .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
+    }
+
     @Test
     void recoveryGeometryUsesAabbCenterRatherThanFeetHeight() {
         var center = new Vec3(0.5D, 64.9D, 0.5D);
@@ -233,6 +258,7 @@ class McmcpRuntimeHardeningTest {
         assertThat(policy.get("max_duration_ms")).isEqualTo(30_000);
         assertThat(policy.get("max_ticks")).isEqualTo(600);
         assertThat(policy.get("max_distance_blocks")).isEqualTo(32);
+        assertThat(policy.get("max_blocks_broken")).isEqualTo(8);
     }
 
     @Test

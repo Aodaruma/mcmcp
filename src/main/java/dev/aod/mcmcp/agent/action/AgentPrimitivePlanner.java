@@ -11,6 +11,7 @@ import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import net.minecraft.util.Mth;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -33,6 +34,10 @@ public final class AgentPrimitivePlanner {
     private static final double VERTICAL_ARC_ALLOWANCE = 1.5D;
     private static final int MAX_TOTAL_ROUTE_EXPANSIONS = 32_768;
     private static final int MAX_POSE_TRANSITIONS = 16_384;
+    private static final double MAX_BREAK_REACH_BLOCKS = 4.5D;
+    private static final double MAX_BREAK_EYE_ORIGIN_DRIFT = 0.125D;
+    public static final long BREAK_TICK_UPPER_BOUND = 60L;
+    public static final long BREAK_REOBSERVATION_TICKS = 40L;
 
     private AgentPrimitivePlanner() {
     }
@@ -76,6 +81,7 @@ public final class AgentPrimitivePlanner {
         var costs = new LinkedHashMap<String, ActionDslCompiler.Cost>();
         var routeDependencies = new LinkedHashMap<TraversabilityEdge.Key, TraversabilityEdge>();
         var knownTargets = new LinkedHashSet<ActionDsl.Position>();
+        var knownSurfaces = new LinkedHashSet<KnownSurface>();
         var routeCache = new LinkedHashMap<RouteKey, RoutePlan>();
         var work = new PlanningWork(canContinue);
         analyzeSequence(
@@ -88,9 +94,10 @@ public final class AgentPrimitivePlanner {
                 costs,
                 routeDependencies,
                 knownTargets,
+                knownSurfaces,
                 routeCache,
                 work);
-        return new Analysis(costs, routeDependencies, knownTargets);
+        return new Analysis(costs, routeDependencies, knownTargets, knownSurfaces);
     }
 
     public static RoutePlan requireRoute(
@@ -144,6 +151,45 @@ public final class AgentPrimitivePlanner {
                 .anyMatch(record -> matches(record, target));
     }
 
+    public static KnownSurface requireKnownBreakSurface(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.BreakKnownFace target) {
+        var required = new KnownSurface(
+                target.target(), target.face(), target.expectedBlock());
+        if (knownSurfaceRecord(map, latestFrame, required).isEmpty()) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Break target face is not current matching visible-surface evidence");
+        }
+        return required;
+    }
+
+    public static boolean knownSurface(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            KnownSurface required) {
+        return knownSurfaceRecord(map, latestFrame, required).isPresent();
+    }
+
+    private static Optional<ObservationRecord.VisibleSurface> knownSurfaceRecord(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            KnownSurface required) {
+        Objects.requireNonNull(map, "map");
+        Objects.requireNonNull(latestFrame, "latestFrame");
+        Objects.requireNonNull(required, "required");
+        if (!map.dimension().equals(required.position().dimension())) return Optional.empty();
+        return latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(map.dimension()))
+                .flatMap(frame -> frame.records().stream())
+                .filter(ObservationRecord.VisibleSurface.class::isInstance)
+                .map(ObservationRecord.VisibleSurface.class::cast)
+                .filter(surface -> surface.worldRevision() == map.worldRevision())
+                .filter(surface -> matches(surface, required))
+                .findFirst();
+    }
+
     private static List<Pose> analyzeSequence(
             List<ActionDsl.Node> nodes,
             List<Pose> input,
@@ -154,6 +200,7 @@ public final class AgentPrimitivePlanner {
             Map<String, ActionDslCompiler.Cost> costs,
             Map<TraversabilityEdge.Key, TraversabilityEdge> routeDependencies,
             Set<ActionDsl.Position> knownTargets,
+            Set<KnownSurface> knownSurfaces,
             Map<RouteKey, RoutePlan> routeCache,
             PlanningWork work) {
         List<Pose> states = input;
@@ -161,7 +208,7 @@ public final class AgentPrimitivePlanner {
             work.check();
             states = analyzeNode(
                     node, states, map, pathfinder, latestFrame, cameraLimit,
-                    costs, routeDependencies, knownTargets, routeCache, work);
+                    costs, routeDependencies, knownTargets, knownSurfaces, routeCache, work);
         }
         return states;
     }
@@ -176,6 +223,7 @@ public final class AgentPrimitivePlanner {
             Map<String, ActionDslCompiler.Cost> costs,
             Map<TraversabilityEdge.Key, TraversabilityEdge> routeDependencies,
             Set<ActionDsl.Position> knownTargets,
+            Set<KnownSurface> knownSurfaces,
             Map<RouteKey, RoutePlan> routeCache,
             PlanningWork work) {
         if (node instanceof ActionDsl.WaitTicks) {
@@ -230,16 +278,35 @@ public final class AgentPrimitivePlanner {
             merge(costs, node.id(), Objects.requireNonNull(worst, "camera cost"));
             return distinct(output);
         }
+        if (node instanceof ActionDsl.BreakKnownFace block) {
+            var required = requireKnownBreakSurface(map, latestFrame, block);
+            var surface = knownSurfaceRecord(map, latestFrame, required).orElseThrow();
+            knownSurfaces.add(required);
+            ActionDslCompiler.Cost worst = null;
+            var output = new ArrayList<Pose>(input.size());
+            for (Pose pose : input) {
+                work.poseTransition();
+                requireBreakPose(pose, surface, block);
+                Vec3 point = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
+                        block.target(), block.face());
+                Aim aim = aim(pose, point);
+                AimError aimError = aimError(pose, point, aim);
+                worst = maximum(worst, breakCost(pose, block, cameraLimit));
+                output.add(pose.aimed(aim, aimError));
+            }
+            merge(costs, node.id(), Objects.requireNonNull(worst, "break cost"));
+            return distinct(output);
+        }
         if (node instanceof ActionDsl.If conditional) {
             var output = new ArrayList<Pose>();
             output.addAll(analyzeSequence(
                     conditional.thenBranch(), input, map, pathfinder,
                     latestFrame, cameraLimit, costs, routeDependencies,
-                    knownTargets, routeCache, work));
+                    knownTargets, knownSurfaces, routeCache, work));
             output.addAll(analyzeSequence(
                     conditional.elseBranch(), input, map, pathfinder,
                     latestFrame, cameraLimit, costs, routeDependencies,
-                    knownTargets, routeCache, work));
+                    knownTargets, knownSurfaces, routeCache, work));
             return distinct(output);
         }
         var repeat = (ActionDsl.Repeat) node;
@@ -248,7 +315,7 @@ public final class AgentPrimitivePlanner {
             output = analyzeSequence(
                     repeat.body(), output, map, pathfinder,
                     latestFrame, cameraLimit, costs, routeDependencies,
-                    knownTargets, routeCache, work);
+                    knownTargets, knownSurfaces, routeCache, work);
         }
         return output;
     }
@@ -305,6 +372,31 @@ public final class AgentPrimitivePlanner {
                 camera,
                 0,
                 0,
+                0);
+    }
+
+    public static ActionDslCompiler.Cost breakCost(
+            Pose pose, ActionDsl.BreakKnownFace target, float maxCameraDegreesPerTick) {
+        Objects.requireNonNull(target, "target");
+        Vec3 point = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
+                target.target(), target.face());
+        var aim = aim(pose, point);
+        var error = aimError(pose, point, aim);
+        double camera = Math.min(360.0D,
+                angularError(pose.yaw(), pose.pitch(), aim.yaw(), aim.pitch())
+                        + pose.orientationErrorDegrees() + error.totalDegrees());
+        long aimTicks = Math.max(
+                1L, (long) Math.ceil(camera / maxCameraDegreesPerTick));
+        long boundedTicks = Math.addExact(
+                aimTicks,
+                Math.addExact(BREAK_REOBSERVATION_TICKS, BREAK_TICK_UPPER_BOUND));
+        return new ActionDslCompiler.Cost(
+                Math.multiplyExact(boundedTicks, TICK_MILLIS),
+                boundedTicks,
+                0.0D,
+                camera,
+                0,
+                1,
                 0);
     }
 
@@ -385,10 +477,61 @@ public final class AgentPrimitivePlanner {
         return false;
     }
 
+    private static boolean matches(
+            ObservationRecord.VisibleSurface surface, KnownSurface required) {
+        var position = surface.position();
+        var target = required.position();
+        return position.dimension().value().equals(target.dimension())
+                && position.x() == target.x()
+                && position.y() == target.y()
+                && position.z() == target.z()
+                && surface.face().name().equals(required.face().name())
+                && surface.block().value().equals(required.block());
+    }
+
+    private static void requireBreakPose(
+            Pose pose,
+            ObservationRecord.VisibleSurface surface,
+            ActionDsl.BreakKnownFace target) {
+        var observedEye = surface.eyeOrigin();
+        double poseEyeY = pose.y() + pose.eyeHeight();
+        double horizontalDrift = Math.hypot(
+                observedEye.x() - pose.x(), observedEye.z() - pose.z());
+        double verticalDrift = Math.abs(observedEye.y() - poseEyeY);
+        if (horizontalDrift
+                        > pose.horizontalPositionError() + MAX_BREAK_EYE_ORIGIN_DRIFT
+                || verticalDrift
+                        > Math.max(pose.yErrorBelow(), pose.yErrorAbove())
+                                + MAX_BREAK_EYE_ORIGIN_DRIFT) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Visible break face was not observed from the planned interaction pose");
+        }
+        Vec3 point = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
+                target.target(), target.face());
+        double nominalDistance = Math.sqrt(
+                square(point.x - pose.x())
+                        + square(point.y - poseEyeY)
+                        + square(point.z - pose.z()));
+        double poseError = Math.hypot(
+                pose.horizontalPositionError(),
+                Math.max(pose.yErrorBelow(), pose.yErrorAbove()));
+        if (nominalDistance + poseError > MAX_BREAK_REACH_BLOCKS) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Visible break face is outside the proven interaction reach");
+        }
+    }
+
     private static Aim aim(Pose pose, ActionDsl.Position target) {
-        double dx = target.x() + 0.5D - pose.x();
-        double dy = target.y() + 0.5D - (pose.y() + pose.eyeHeight());
-        double dz = target.z() + 0.5D - pose.z();
+        return aim(pose, new Vec3(
+                target.x() + 0.5D, target.y() + 0.5D, target.z() + 0.5D));
+    }
+
+    private static Aim aim(Pose pose, Vec3 target) {
+        double dx = target.x - pose.x();
+        double dy = target.y - (pose.y() + pose.eyeHeight());
+        double dz = target.z - pose.z();
         double horizontal = Math.hypot(dx, dz);
         if (horizontal < 1.0e-9D && Math.abs(dy) < 1.0e-9D) {
             throw new PlanningException(Code.TARGET_UNKNOWN, "Face target coincides with the eye position");
@@ -399,9 +542,14 @@ public final class AgentPrimitivePlanner {
     }
 
     private static AimError aimError(Pose pose, ActionDsl.Position target, Aim nominal) {
-        double dx = target.x() + 0.5D - pose.x();
-        double dy = target.y() + 0.5D - (pose.y() + pose.eyeHeight());
-        double dz = target.z() + 0.5D - pose.z();
+        return aimError(pose, new Vec3(
+                target.x() + 0.5D, target.y() + 0.5D, target.z() + 0.5D), nominal);
+    }
+
+    private static AimError aimError(Pose pose, Vec3 target, Aim nominal) {
+        double dx = target.x - pose.x();
+        double dy = target.y - (pose.y() + pose.eyeHeight());
+        double dz = target.z - pose.z();
         double horizontal = Math.hypot(dx, dz);
         double horizontalError = pose.horizontalPositionError();
         double yawError = horizontal <= horizontalError
@@ -428,6 +576,10 @@ public final class AgentPrimitivePlanner {
             }
         }
         return new AimError(yawError, pitchError);
+    }
+
+    private static double square(double value) {
+        return value * value;
     }
 
     private static boolean zeroEdgeWithinTolerance(
@@ -540,16 +692,29 @@ public final class AgentPrimitivePlanner {
     public record Analysis(
             Map<String, ActionDslCompiler.Cost> primitiveCosts,
             Map<TraversabilityEdge.Key, TraversabilityEdge> routeDependencies,
-            Set<ActionDsl.Position> knownTargets) {
+            Set<ActionDsl.Position> knownTargets,
+            Set<KnownSurface> knownSurfaces) {
         public Analysis {
             primitiveCosts = Map.copyOf(Objects.requireNonNull(primitiveCosts, "primitiveCosts"));
             routeDependencies = Map.copyOf(
                     Objects.requireNonNull(routeDependencies, "routeDependencies"));
             knownTargets = Set.copyOf(Objects.requireNonNull(knownTargets, "knownTargets"));
+            knownSurfaces = Set.copyOf(Objects.requireNonNull(knownSurfaces, "knownSurfaces"));
         }
 
         public Optional<ActionDslCompiler.Cost> worstCase(ActionDsl.Node primitive) {
             return Optional.ofNullable(primitiveCosts.get(primitive.id()));
+        }
+    }
+
+    public record KnownSurface(
+            ActionDsl.Position position,
+            ActionDsl.BlockFace face,
+            String block) {
+        public KnownSurface {
+            Objects.requireNonNull(position, "position");
+            Objects.requireNonNull(face, "face");
+            Objects.requireNonNull(block, "block");
         }
     }
 

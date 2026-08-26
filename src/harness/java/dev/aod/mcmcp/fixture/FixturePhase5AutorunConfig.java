@@ -2,37 +2,18 @@ package dev.aod.mcmcp.fixture;
 
 import java.util.Optional;
 
-/** Pure, property-only boundary for a future one-shot Phase 5 harness autorun. */
-record FixturePhase5AutorunConfig(FixturePhase5Mode mode, boolean autoArm) {
+/** Pure, property-only boundary for one-shot Phase 5 harness setup. */
+record FixturePhase5AutorunConfig(FixturePhase5Mode mode) {
     static final String MODE_PROPERTY = "mcmcp.fixture.phase5.mode";
-    static final String AUTO_ARM_PROPERTY = "mcmcp.fixture.phase5.autoArm";
 
     static Optional<FixturePhase5AutorunConfig> fromSystemProperties() {
-        return parse(System.getProperty(MODE_PROPERTY), System.getProperty(AUTO_ARM_PROPERTY));
+        return parse(System.getProperty(MODE_PROPERTY));
     }
 
-    static Optional<FixturePhase5AutorunConfig> parse(String rawMode, String rawAutoArm) {
+    static Optional<FixturePhase5AutorunConfig> parse(String rawMode) {
         if (rawMode == null || rawMode.isBlank()) {
             return Optional.empty();
         }
-        FixturePhase5Mode mode = FixturePhase5Mode.parse(rawMode);
-        boolean requestedAutoArm = parseBoolean(rawAutoArm);
-        return Optional.of(new FixturePhase5AutorunConfig(
-                mode, requestedAutoArm && mode.routine()));
-    }
-
-    private static boolean parseBoolean(String rawValue) {
-        if (rawValue == null || rawValue.isBlank() || "false".equalsIgnoreCase(rawValue.strip())) {
-            return false;
-        }
-        if ("true".equalsIgnoreCase(rawValue.strip())) {
-            return true;
-        }
-        throw new IllegalArgumentException(
-                "invalid " + AUTO_ARM_PROPERTY + " value: " + sanitize(rawValue));
-    }
-
-    private static String sanitize(String value) {
-        return value.replaceAll("[\\p{Cntrl}]", " ").strip();
+        return Optional.of(new FixturePhase5AutorunConfig(FixturePhase5Mode.parse(rawMode)));
     }
 }

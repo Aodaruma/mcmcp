@@ -7,6 +7,9 @@ import dev.aod.mcmcp.agent.navigation.KnownTraversabilityMap;
 import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.agent.navigation.RoutePlan;
 import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
+import dev.aod.mcmcp.agent.observation.ObservationFrame;
+import dev.aod.mcmcp.agent.observation.ObservationRecord;
+import dev.aod.mcmcp.agent.observation.ObservationValues;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -164,6 +167,38 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void breakRequiresTheExactCurrentVisibleFaceAndAccountsForAimAndOneBreak() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var target = new ActionDsl.Position(DIMENSION, 3, 65, 0);
+        var block = new ActionDsl.BreakKnownFace(
+                "chop", target, ActionDsl.BlockFace.WEST,
+                "minecraft:oak_log", "minecraft:iron_axe");
+        var program = new ActionDsl.Program(
+                1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_BREAK),
+                List.of(block));
+        var frame = frame(target, ObservationRecord.Face.WEST, "minecraft:oak_log", 0);
+
+        var analysis = AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                Optional.of(frame), 4.5F);
+
+        assertThat(analysis.knownSurfaces()).containsExactly(new AgentPrimitivePlanner.KnownSurface(
+                target, ActionDsl.BlockFace.WEST, "minecraft:oak_log"));
+        assertThat(analysis.primitiveCosts().get("chop").blocksBroken()).isOne();
+        assertThat(analysis.primitiveCosts().get("chop").ticks())
+                .isGreaterThan(AgentPrimitivePlanner.BREAK_TICK_UPPER_BOUND
+                        + AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requireKnownBreakSurface(
+                map,
+                Optional.of(frame(target, ObservationRecord.Face.EAST, "minecraft:oak_log", 0)),
+                block))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+    }
+
+    @Test
     void replanCostUsesOnlyTheRemainingDistanceToTheFirstWaypoint() {
         UUID session = UUID.randomUUID();
         var map = map(session);
@@ -217,5 +252,25 @@ class AgentPrimitivePlannerTest {
                 from,
                 1,
                 0);
+    }
+
+    private static ObservationFrame frame(
+            ActionDsl.Position target,
+            ObservationRecord.Face face,
+            String block,
+            long revision) {
+        var dimension = new ObservationValues.ResourceId(target.dimension());
+        var eye = new ObservationValues.WorldPosition(dimension, 0.5, 65.62, 0.5);
+        var surface = new ObservationRecord.VisibleSurface(
+                new ObservationValues.BlockPosition(
+                        dimension, target.x(), target.y(), target.z()),
+                face,
+                new ObservationValues.ResourceId(block),
+                ObservationRecord.ShapeClass.OPAQUE,
+                eye,
+                1,
+                revision);
+        return new ObservationFrame(
+                "obs-0000000000000001", dimension, 1, 16, false, List.of(surface));
     }
 }

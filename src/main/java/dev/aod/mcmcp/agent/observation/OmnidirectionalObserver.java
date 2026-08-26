@@ -199,7 +199,7 @@ public final class OmnidirectionalObserver {
         if (sessionDimension == null
                 || !sessionDimension.equals(sample.dimension())
                 || sample.observedTick() < lastAcceptedTick
-                || sample.worldRevision() < lastWorldRevision) {
+                || lastWorldRevision >= 0L && sample.worldRevision() != lastWorldRevision) {
             clearAccumulation();
         }
         sessionDimension = sample.dimension();
