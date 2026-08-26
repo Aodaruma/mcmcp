@@ -1,0 +1,105 @@
+{
+  "schema": "craftagent.dev-build-gate/v1",
+  "id": "phase4_build_runner",
+  "max_total_seconds": 240,
+  "steps": [
+    {
+      "id": "move_to_first_pose",
+      "kind": "navigate_to",
+      "parameters": {
+        "target": {"dimension": "minecraft:overworld", "x": 199, "y": 200, "z": 193},
+        "horizontal_tolerance_blocks": 0.25
+      },
+      "bounds": {
+        "dimension": "minecraft:overworld",
+        "region": {"min": {"x": 198, "y": 199, "z": 192}, "max": {"x": 201, "y": 203, "z": 195}},
+        "max_travel_blocks": 2,
+        "max_duration_seconds": 30,
+        "allow_break": false
+      }
+    },
+    {
+      "id": "place_first_column",
+      "kind": "apply_block_plan",
+      "parameters": {
+        "anchor": {"dimension": "minecraft:overworld", "x": 198, "y": 200, "z": 194},
+        "transform": {"rotation": 0, "mirror": "none"},
+        "phase": {"id": "first_column", "index": 1, "total": 2},
+        "entries": [
+          {
+            "id": "first_base_block",
+            "offset": {"x": 3, "y": 0, "z": -1},
+            "operation": "place",
+            "expected_before": {"block": "minecraft:air", "properties": {}},
+            "expected_after": {"block": "minecraft:cobblestone", "properties": {}},
+            "item": "minecraft:cobblestone"
+          },
+          {
+            "id": "first_top_block",
+            "offset": {"x": 3, "y": 1, "z": -1},
+            "operation": "place",
+            "expected_before": {"block": "minecraft:air", "properties": {}},
+            "expected_after": {"block": "minecraft:cobblestone", "properties": {}},
+            "item": "minecraft:cobblestone"
+          }
+        ]
+      },
+      "bounds": {
+        "dimension": "minecraft:overworld",
+        "region": {"min": {"x": 198, "y": 199, "z": 193}, "max": {"x": 203, "y": 203, "z": 196}},
+        "max_travel_blocks": 0,
+        "max_duration_seconds": 60,
+        "allow_break": false
+      }
+    },
+    {
+      "id": "move_to_second_pose",
+      "kind": "navigate_to",
+      "parameters": {
+        "target": {"dimension": "minecraft:overworld", "x": 199, "y": 200, "z": 195},
+        "horizontal_tolerance_blocks": 0.25
+      },
+      "bounds": {
+        "dimension": "minecraft:overworld",
+        "region": {"min": {"x": 198, "y": 199, "z": 192}, "max": {"x": 201, "y": 203, "z": 196}},
+        "max_travel_blocks": 3,
+        "max_duration_seconds": 45,
+        "allow_break": false
+      }
+    },
+    {
+      "id": "place_second_column",
+      "kind": "apply_block_plan",
+      "parameters": {
+        "anchor": {"dimension": "minecraft:overworld", "x": 198, "y": 200, "z": 194},
+        "transform": {"rotation": 0, "mirror": "none"},
+        "phase": {"id": "second_column", "index": 2, "total": 2},
+        "entries": [
+          {
+            "id": "second_base_block",
+            "offset": {"x": 3, "y": 0, "z": 1},
+            "operation": "place",
+            "expected_before": {"block": "minecraft:air", "properties": {}},
+            "expected_after": {"block": "minecraft:cobblestone", "properties": {}},
+            "item": "minecraft:cobblestone"
+          },
+          {
+            "id": "second_top_block",
+            "offset": {"x": 3, "y": 1, "z": 1},
+            "operation": "place",
+            "expected_before": {"block": "minecraft:air", "properties": {}},
+            "expected_after": {"block": "minecraft:cobblestone", "properties": {}},
+            "item": "minecraft:cobblestone"
+          }
+        ]
+      },
+      "bounds": {
+        "dimension": "minecraft:overworld",
+        "region": {"min": {"x": 198, "y": 199, "z": 193}, "max": {"x": 203, "y": 203, "z": 196}},
+        "max_travel_blocks": 0,
+        "max_duration_seconds": 60,
+        "allow_break": false
+      }
+    }
+  ]
+}

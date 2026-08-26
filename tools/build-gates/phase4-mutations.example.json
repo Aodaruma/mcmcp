@@ -1,0 +1,86 @@
+{
+  "schema": "craftagent.dev-build-gate/v1",
+  "id": "phase4_mutations",
+  "max_total_seconds": 120,
+  "steps": [
+    {
+      "id": "settle_at_fixture_pose",
+      "kind": "navigate_to",
+      "parameters": {
+        "target": {
+          "dimension": "minecraft:overworld",
+          "x": 199,
+          "y": 200,
+          "z": 194
+        },
+        "horizontal_tolerance_blocks": 0.25
+      },
+      "bounds": {
+        "dimension": "minecraft:overworld",
+        "region": {
+          "min": {"x": 198, "y": 199, "z": 192},
+          "max": {"x": 203, "y": 203, "z": 196}
+        },
+        "max_travel_blocks": 1,
+        "max_duration_seconds": 30,
+        "allow_break": false
+      }
+    },
+    {
+      "id": "apply_fixture_mutations",
+      "kind": "apply_block_plan",
+      "parameters": {
+        "anchor": {
+          "dimension": "minecraft:overworld",
+          "x": 198,
+          "y": 200,
+          "z": 194
+        },
+        "transform": {
+          "rotation": 0,
+          "mirror": "none"
+        },
+        "phase": {
+          "id": "fixture_mutations",
+          "index": 1,
+          "total": 1
+        },
+        "entries": [
+          {
+            "id": "break_stone",
+            "offset": {"x": 4, "y": 0, "z": -1},
+            "operation": "break_to_air",
+            "expected_before": {"block": "minecraft:stone", "properties": {}},
+            "expected_after": {"block": "minecraft:air", "properties": {}}
+          },
+          {
+            "id": "place_cobble",
+            "offset": {"x": 4, "y": 0, "z": 0},
+            "operation": "place",
+            "expected_before": {"block": "minecraft:air", "properties": {}},
+            "expected_after": {"block": "minecraft:cobblestone", "properties": {}},
+            "item": "minecraft:cobblestone"
+          },
+          {
+            "id": "replace_dirt",
+            "offset": {"x": 4, "y": 0, "z": 1},
+            "operation": "replace",
+            "expected_before": {"block": "minecraft:dirt", "properties": {}},
+            "expected_after": {"block": "minecraft:cobblestone", "properties": {}},
+            "item": "minecraft:cobblestone"
+          }
+        ]
+      },
+      "bounds": {
+        "dimension": "minecraft:overworld",
+        "region": {
+          "min": {"x": 198, "y": 199, "z": 192},
+          "max": {"x": 203, "y": 203, "z": 196}
+        },
+        "max_travel_blocks": 0,
+        "max_duration_seconds": 60,
+        "allow_break": true
+      }
+    }
+  ]
+}

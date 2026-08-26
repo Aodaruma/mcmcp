@@ -7,7 +7,12 @@
 /.vscode/
 *.iml
 *.log
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
 local.properties
+*.local.*
+/secrets/
 
 # Local MCP credentials
 /config/mcmcp/mcp-token
+/config/mcp-token.txt
