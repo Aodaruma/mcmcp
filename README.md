@@ -13,7 +13,7 @@ MCMCPは、Minecraftのローカルプレイヤーを型付きAction DSLとク�
 
 ## Status
 
-Phase 1のControl / Navigation MVPを終え、Phase 2の最初のsliceとして、可視・既知のoak / birch幹を型付きDSLから破壊する実装を検証中です。
+Phase 1のControl / Navigation MVPを終え、Phase 2の最初のsliceである、可視・既知の3段oak幹を型付きDSLから破壊する実ワールド木こりgateに合格しました。
 
 - `agent_start_action`はclient threadでimmutable snapshotを取得し、期限・cancel・探索量を制限したHTTP workerでplanningした後、client threadで実行条件を再検証します。
 - Actionは内部で`UNCONFIRMED`として予約され、HTTP responseの送信成功後にだけconfirmされます。未confirm中と実行直前再検証の合格前は入力を出しません。
@@ -23,6 +23,7 @@ Phase 1のControl / Navigation MVPを終え、Phase 2の最初のsliceとして�
 - DSL例は[`docs/action-templates/`](docs/action-templates/)に置き、custom programと同じ検証経路を通します。
 - `break_known_face`は宣言したblock・面・axeを直前再検証し、Vanilla prediction ACKとauthoritative airが揃った場合だけ成功・破壊数を記録します。
 - 最初の木こりgateは地上から届く3段の既知oak幹に限定し、隠れた幹の探索、drop回収保証、植林はまだ対象外です。
+- 2026-08-27、Prismの単一検証profileでAction `32a87494-4768-445a-a142-3b688566bbbb`が`SUCCEEDED`（3 blocks、73 ticks、camera 59.63°）。fixtureも`phase5.tree.gate=PASS`（柵・支持面・player位置を保持、axe damage 3）を確認しました。
 - full-block 1段分の上下移動edge自動生成は未実装です。該当経路は推測せず`TARGET_UNKNOWN`または`NO_KNOWN_PATH`でfail-closedにします。
 
 ## Documents
