@@ -19,7 +19,7 @@ public record RoutePlan(
         long durationMillisUpperBound) {
     public static final int BASE_SETTLE_TICKS = 20;
     public static final int TICKS_PER_TRANSITION = 16;
-    public static final int EXTRA_TICKS_PER_PROBE = 8;
+    public static final int EXTRA_TICKS_PER_PROBE = 20;
     private static final int MILLIS_PER_ACTIVE_TICK = 50;
 
     public RoutePlan {

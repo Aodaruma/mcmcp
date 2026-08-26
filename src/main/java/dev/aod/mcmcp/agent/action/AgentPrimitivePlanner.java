@@ -438,6 +438,24 @@ public final class AgentPrimitivePlanner {
                 routeCost.blocksPlaced());
     }
 
+    /** Removes probe time already reserved by the admitted occurrence before a retry. */
+    public static ActionDslCompiler.Cost navigationReplanCost(
+            RoutePlan route, ActionDslCompiler.Cost planned) {
+        Objects.requireNonNull(route, "route");
+        Objects.requireNonNull(planned, "planned");
+        long reservedTicks = Math.multiplyExact(
+                (long) route.probeEdgeCount(), RoutePlan.EXTRA_TICKS_PER_PROBE);
+        long reservedMillis = Math.multiplyExact(reservedTicks, TICK_MILLIS);
+        return new ActionDslCompiler.Cost(
+                Math.subtractExact(planned.durationMillis(), reservedMillis),
+                Math.subtractExact(planned.ticks(), reservedTicks),
+                planned.distanceBlocks(),
+                planned.cameraDegrees(),
+                planned.interactions(),
+                planned.blocksBroken(),
+                planned.blocksPlaced());
+    }
+
     private static void merge(
             Map<String, ActionDslCompiler.Cost> costs,
             String nodeId,

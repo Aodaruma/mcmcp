@@ -2538,6 +2538,19 @@ public final class McmcpRuntime implements McpRuntimePort {
                         navigate.target());
                 cost = AgentPrimitivePlanner.navigationCost(
                         route, playerPose(player, map.dimension()));
+                if (agentExecution.replanning) {
+                    if (!fits(0L, cost.durationMillis(),
+                                    agentExecution.occurrenceLimit.durationMillis())
+                            || !fits(0L, cost.ticks(),
+                                    agentExecution.occurrenceLimit.ticks())) {
+                        failAgentAction(
+                                AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                                false,
+                                "primitive_replanned_route");
+                        return false;
+                    }
+                    cost = AgentPrimitivePlanner.navigationReplanCost(route, cost);
+                }
                 if (!fitsRemainingBudget(
                         progressBeforeTick,
                         action.program().effectiveBudget(),

@@ -216,6 +216,29 @@ class AgentPrimitivePlannerTest {
         assertThat(cost.distanceBlocks()).isEqualTo(1.35D);
     }
 
+    @Test
+    void navigationReplanDoesNotChargeReservedProbeTimeTwice() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        NavCell start = cell(0);
+        NavCell target = cell(1);
+        map.observe(probeAllowed(session, start, target));
+        RoutePlan route = new DeterministicAStar()
+                .findRoute(map.snapshot().orElseThrow(), start, target)
+                .route().orElseThrow();
+        var planned = AgentPrimitivePlanner.navigationCost(
+                route,
+                new AgentPrimitivePlanner.Pose(start, 0.5D, 64, 0.5D, 1.62D, 0, 0));
+
+        var retry = AgentPrimitivePlanner.navigationReplanCost(route, planned);
+
+        assertThat(retry.ticks()).isEqualTo(
+                planned.ticks() - RoutePlan.EXTRA_TICKS_PER_PROBE);
+        assertThat(retry.durationMillis()).isEqualTo(
+                planned.durationMillis() - RoutePlan.EXTRA_TICKS_PER_PROBE * 50L);
+        assertThat(retry.distanceBlocks()).isEqualTo(planned.distanceBlocks());
+    }
+
     private static ActionDsl.FaceKnownPosition face(String id, NavCell target) {
         return new ActionDsl.FaceKnownPosition(id, position(target));
     }
@@ -246,6 +269,22 @@ class AgentPrimitivePlannerTest {
                 TraversabilityEdge.TargetSupport.CONFIRMED,
                 TraversabilityEdge.Clearance.CONFIRMED,
                 TraversabilityEdge.Transition.CONFIRMED,
+                TraversabilityEdge.Fluid.NONE,
+                TraversabilityEdge.Hazard.NONE,
+                TraversabilityEdge.Provenance.LOCAL_VOLUME,
+                from,
+                1,
+                0);
+    }
+
+    private static TraversabilityEdge probeAllowed(UUID session, NavCell from, NavCell to) {
+        return new TraversabilityEdge(
+                session,
+                new TraversabilityEdge.Key(from, to),
+                TraversabilityEdge.Status.PROBE_ALLOWED,
+                TraversabilityEdge.TargetSupport.CONFIRMED,
+                TraversabilityEdge.Clearance.CONFIRMED,
+                TraversabilityEdge.Transition.PARTIAL,
                 TraversabilityEdge.Fluid.NONE,
                 TraversabilityEdge.Hazard.NONE,
                 TraversabilityEdge.Provenance.LOCAL_VOLUME,

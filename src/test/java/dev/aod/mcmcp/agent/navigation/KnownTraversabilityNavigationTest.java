@@ -276,9 +276,12 @@ class KnownTraversabilityNavigationTest {
         assertThat(route.worldRevision()).isZero();
         assertThat(route.probeEdgeCount()).isEqualTo(1);
         assertThat(route.edges().get(1).status()).isEqualTo(TraversabilityEdge.Status.PROBE_ALLOWED);
-        assertThat(route.tickUpperBound()).isEqualTo(60);
+        assertThat(route.tickUpperBound()).isEqualTo(
+                RoutePlan.BASE_SETTLE_TICKS
+                        + 2L * RoutePlan.TICKS_PER_TRANSITION
+                        + RoutePlan.EXTRA_TICKS_PER_PROBE);
         assertThat(route.toDslPrimitiveCost().distanceBlocks()).isEqualTo(2);
-        assertThat(route.toDslPrimitiveCost().ticks()).isEqualTo(60);
+        assertThat(route.toDslPrimitiveCost().ticks()).isEqualTo(route.tickUpperBound());
         assertThatThrownBy(() -> route.cells().add(cell(3, 64, 0)))
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> new RoutePlan(
