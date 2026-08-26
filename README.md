@@ -13,7 +13,15 @@ MCMCPは、Minecraftのローカルプレイヤーを型付きAction DSLとク�
 
 ## Status
 
-Phase 0として、以前の同環境向け実装からbuild、入力、観測、routine、test fixtureの検証済み基盤を履歴付きで移行し、MCMCP identityへ統一済みです。MCP interfaceと安全制御は規範文書に合わせて段階的に更新します。
+Phase 0の基盤移行とMCMCP identityへの統一を終え、現在はPhase 2へ向けたAction実行基盤を実装中です。
+
+- `agent_start_action`はclient threadでimmutable snapshotを取得し、期限・cancel・探索量を制限したHTTP workerでplanningした後、client threadで実行条件を再検証します。
+- Actionは内部で`UNCONFIRMED`として予約され、HTTP responseの送信成功後にだけconfirmされます。未confirm中と実行直前再検証の合格前は入力を出しません。
+- 溶岩、溺水、危険落下は安全状態が連続確認されるまでrecovery latchを維持し、cactus、wither rose、成長済みsweet berry bushを`contact_damage`として扱います。
+- program全体に加え、repeatやreplanをまたぐ各logical primitive occurrenceにも静的cost上限を適用します。
+- multiplayerは既定OFFで、`config/mcmcp/allowed-servers.json`の閉じたschemaに完全一致する接続先だけをローカル判定します。サーバーへの確認通信は行いません。
+- DSL例は[`docs/action-templates/`](docs/action-templates/)に置き、custom programと同じ検証経路を通します。
+- full-block 1段分の上下移動edge自動生成は未実装です。該当経路は推測せず`TARGET_UNKNOWN`または`NO_KNOWN_PATH`でfail-closedにします。
 
 ## Documents
 

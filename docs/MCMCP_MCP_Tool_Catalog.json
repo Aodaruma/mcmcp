@@ -173,9 +173,10 @@
                     },
                     "required": ["visible_surface", "visible_entity", "traversability", "hazard", "unknown_boundary", "sound_clue"]
                   },
+                  "visible_entities_truncated": {"type": "boolean"},
                   "recent_sound_clues_truncated": {"type": "boolean"}
                 },
-                "required": ["mode", "latest_frame_id", "configured_visual_radius_blocks", "near_volume_radius_blocks", "full_azimuth", "full_elevation", "sampling_coverage", "oldest_tick", "newest_tick", "camera_motion_generated", "record_counts", "recent_sound_clues_truncated"]
+                "required": ["mode", "latest_frame_id", "configured_visual_radius_blocks", "near_volume_radius_blocks", "full_azimuth", "full_elevation", "sampling_coverage", "oldest_tick", "newest_tick", "camera_motion_generated", "record_counts", "visible_entities_truncated", "recent_sound_clues_truncated"]
               }
             ]
           },
@@ -351,7 +352,7 @@
             "additionalProperties": false,
             "properties": {
               "kind": {"const": "hazard"},
-              "hazard_type": {"enum": ["fall", "lava", "fire", "water", "suffocation", "freezing", "collision", "unknown"]},
+              "hazard_type": {"enum": ["fall", "lava", "fire", "water", "suffocation", "freezing", "contact_damage", "collision", "unknown"]},
               "position": {"$ref": "#/$defs/worldPosition"},
               "severity": {"enum": ["caution", "urgent", "unknown"]},
               "observer_position": {"$ref": "#/$defs/worldPosition"},
@@ -405,6 +406,7 @@
             "pattern": "^obs-[0-9a-f]{16}$"
           },
           "frame_completed_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+          "visible_entities_truncated": {"type": "boolean"},
           "records": {
             "type": "array",
             "maxItems": 256,
@@ -422,7 +424,7 @@
           "next_cursor": {"type": ["string", "null"], "maxLength": 256},
           "sampling_coverage": {"const": 1}
         },
-        "required": ["schema_version", "frame_id", "frame_completed_tick", "records", "next_cursor", "sampling_coverage"]
+        "required": ["schema_version", "frame_id", "frame_completed_tick", "visible_entities_truncated", "records", "next_cursor", "sampling_coverage"]
       }
     },
     {

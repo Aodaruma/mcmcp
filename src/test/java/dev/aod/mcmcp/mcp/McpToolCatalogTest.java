@@ -10,12 +10,39 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class McpToolCatalogTest {
+    @Test
+    void startReceiptIsConfirmedOnlyAfterDeliveryOrAbandonedOnWriteFailure() throws Exception {
+        var commands = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        var registry = new McmcpToolRegistry((command, context) -> {
+            commands.add(command);
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(
+                    toolResult(command)));
+        }, Duration.ofSeconds(1));
+        var start = new McpToolCatalog().inputSchema("agent_start_action")
+                .getAsJsonArray("examples").get(0).getAsJsonObject();
+
+        var delivered = registry.prepareCall("agent_start_action", start);
+        assertThat(commands).singleElement().isInstanceOf(McpRuntimePort.StartAction.class);
+        registry.confirmDelivery(delivered);
+        assertThat(commands.getLast()).isInstanceOf(McpRuntimePort.ConfirmActionDelivery.class);
+
+        commands.clear();
+        var lost = registry.prepareCall("agent_start_action", start);
+        registry.abandonDelivery(lost);
+        assertThat(commands).extracting(Object::getClass).containsExactly(
+                McpRuntimePort.StartAction.class,
+                McpRuntimePort.AbandonActionDelivery.class);
+    }
+
     @Test
     void shippedCatalogIsTheNormativeFileAndHasTheFixedFiveTools() throws Exception {
         var file = JsonParser.parseReader(Files.newBufferedReader(
@@ -51,11 +78,12 @@ class McpToolCatalogTest {
     }
 
     @Test
-    void registryReturnsSchemaValidStateAndStructuredErrorsWithoutDispatchingRawTools() throws Exception {
+    void registryDispatchesExactlyTheFixedFiveToolsAndValidatesTheirOutputs() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         var registry = new McmcpToolRegistry((command, context) -> {
             calls.incrementAndGet();
-            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(McpTestFixtures.state()));
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(
+                    toolResult(command)));
         }, Duration.ofSeconds(1));
 
         var state = registry.call("agent_get_state", new com.google.gson.JsonObject());
@@ -70,10 +98,74 @@ class McpToolCatalogTest {
         assertThat(rejected.has("structuredContent")).isFalse();
         assertThat(rejected.toString()).contains("INVALID_ARGUMENT");
 
-        var getAction = new com.google.gson.JsonObject();
-        getAction.addProperty("action_id", "550e8400-e29b-41d4-a716-446655440000");
-        var unavailable = registry.call("agent_get_action", getAction);
-        assertThat(unavailable.toString()).contains("CAPABILITY_DENIED");
-        assertThat(calls).hasValue(1);
+        var catalog = new McpToolCatalog();
+        var observation = JsonParser.parseString("""
+                {"schema_version":1,"frame_id":"obs-0000000000000000",
+                 "kinds":["visible_surface"],"cursor":null,"limit":1}
+                """).getAsJsonObject();
+        var start = catalog.inputSchema("agent_start_action")
+                .getAsJsonArray("examples").get(0).getAsJsonObject();
+        var action = new com.google.gson.JsonObject();
+        action.addProperty("action_id", "550e8400-e29b-41d4-a716-446655440000");
+        assertThat(registry.call("agent_get_observation", observation).get("isError").getAsBoolean())
+                .isFalse();
+        assertThat(registry.call("agent_start_action", start).get("isError").getAsBoolean())
+                .isFalse();
+        assertThat(registry.call("agent_get_action", action).get("isError").getAsBoolean())
+                .isFalse();
+        assertThat(registry.call("agent_cancel_action", action).get("isError").getAsBoolean())
+                .isFalse();
+        assertThat(calls).hasValue(6);
+    }
+
+    private static Map<String, Object> toolResult(McpRuntimePort.RuntimeCommand command) {
+        return switch (command) {
+            case McpRuntimePort.GetState ignored -> McpTestFixtures.state();
+            case McpRuntimePort.GetObservation ignored -> nullableMap(
+                    "schema_version", 1,
+                    "frame_id", "obs-0000000000000000",
+                    "frame_completed_tick", 0,
+                    "visible_entities_truncated", false,
+                    "records", List.of(),
+                    "next_cursor", null,
+                    "sampling_coverage", 1);
+            case McpRuntimePort.StartAction ignored -> Map.of(
+                    "schema_version", 1,
+                    "action_id", "550e8400-e29b-41d4-a716-446655440000",
+                    "state", "queued",
+                    "accepted_at", "2026-08-26T00:00:00Z");
+            case McpRuntimePort.GetAction ignored -> nullableMap(
+                    "schema_version", 1,
+                    "action_id", "550e8400-e29b-41d4-a716-446655440000",
+                    "state", "queued",
+                    "progress", nullableMap(
+                            "phase", "queued", "current_node_id", null,
+                            "executed_nodes", 0, "total_node_upper_bound", 1,
+                            "distance_travelled", 0, "camera_degrees", 0,
+                            "interactions", 0, "blocks_broken", 0,
+                            "blocks_placed", 0, "ticks", 0),
+                    "failure", null,
+                    "trace", List.of());
+            case McpRuntimePort.CancelAction ignored -> Map.of(
+                    "schema_version", 1,
+                    "action_id", "550e8400-e29b-41d4-a716-446655440000",
+                    "cancel_requested", true,
+                    "state_at_request", "queued");
+            case McpRuntimePort.ConfirmActionDelivery delivery -> Map.of(
+                    "action_id", delivery.actionId().toString(),
+                    "confirmed", true);
+            case McpRuntimePort.AbandonActionDelivery delivery -> Map.of(
+                    "action_id", delivery.actionId().toString(),
+                    "abandoned", true);
+            default -> throw new AssertionError("Legacy runtime command escaped the five-tool registry");
+        };
+    }
+
+    private static Map<String, Object> nullableMap(Object... pairs) {
+        var result = new LinkedHashMap<String, Object>();
+        for (int index = 0; index < pairs.length; index += 2) {
+            result.put((String) pairs[index], pairs[index + 1]);
+        }
+        return result;
     }
 }

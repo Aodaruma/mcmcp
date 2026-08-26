@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.mcp.RuntimeCallContext;
 import dev.aod.mcmcp.safety.InputReleaseController;
 import dev.aod.mcmcp.safety.LocalArmingState;
 import net.minecraft.client.Minecraft;
@@ -15,6 +16,9 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * Bounded HTTP-to-client-thread bridge. Emergency stop has a dedicated lane,
@@ -63,17 +67,65 @@ public final class ClientCommandInbox {
             long expectedWorldGeneration,
             long deadlineNanos,
             Callable<T> action) {
+        return submit(
+                name, expectedWorldGeneration, deadlineNanos, action,
+                null, () -> false, ignored -> { });
+    }
+
+    <T> CompletableFuture<T> submit(
+            String name,
+            long expectedWorldGeneration,
+            long deadlineNanos,
+            Callable<T> action,
+            BooleanSupplier completionAbandoned,
+            Consumer<T> onAbandonedCompletion) {
+        return submit(
+                name, expectedWorldGeneration, deadlineNanos, action,
+                null, completionAbandoned, onAbandonedCompletion);
+    }
+
+    <T> CompletableFuture<T> submitMapped(
+            String name,
+            long expectedWorldGeneration,
+            long deadlineNanos,
+            Callable<T> action,
+            Function<Throwable, T> failureMapper,
+            BooleanSupplier completionAbandoned,
+            Consumer<T> onAbandonedCompletion) {
+        return submit(
+                name, expectedWorldGeneration, deadlineNanos, action,
+                Objects.requireNonNull(failureMapper, "failureMapper"),
+                completionAbandoned, onAbandonedCompletion);
+    }
+
+    private <T> CompletableFuture<T> submit(
+            String name,
+            long expectedWorldGeneration,
+            long deadlineNanos,
+            Callable<T> action,
+            Function<Throwable, T> failureMapper,
+            BooleanSupplier completionAbandoned,
+            Consumer<T> onAbandonedCompletion) {
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(action, "action");
+        Objects.requireNonNull(completionAbandoned, "completionAbandoned");
+        Objects.requireNonNull(onAbandonedCompletion, "onAbandonedCompletion");
         var result = new CompletableFuture<T>();
         synchronized (admissionGate) {
             if (!accepting) {
-                return CompletableFuture.failedFuture(new RejectedExecutionException("runtime is stopping"));
+                var failure = new RejectedExecutionException("runtime is stopping");
+                return failureMapper == null
+                        ? CompletableFuture.failedFuture(failure)
+                        : CompletableFuture.completedFuture(failureMapper.apply(failure));
             }
             var command = new PendingCommand<>(
-                    name, expectedWorldGeneration, safetyEpoch.get(), deadlineNanos, action, result);
+                    name, expectedWorldGeneration, safetyEpoch.get(), deadlineNanos,
+                    action, result, failureMapper, completionAbandoned, onAbandonedCompletion);
             if (!normalQueue.offer(command)) {
-                return CompletableFuture.failedFuture(new RejectedExecutionException("client command inbox is full"));
+                var failure = new RejectedExecutionException("client command inbox is full");
+                return failureMapper == null
+                        ? CompletableFuture.failedFuture(failure)
+                        : CompletableFuture.completedFuture(failureMapper.apply(failure));
             }
         }
         return result;
@@ -96,9 +148,37 @@ public final class ClientCommandInbox {
                 return CompletableFuture.failedFuture(new RejectedExecutionException("runtime is stopping"));
             }
             var command = new PendingCommand<>(
-                    name, expectedWorldGeneration, safetyEpoch.get(), deadlineNanos, action, result);
+                    name, expectedWorldGeneration, safetyEpoch.get(), deadlineNanos,
+                    action, result, null, () -> false, ignored -> { });
             if (!controlQueue.offer(command)) {
                 return CompletableFuture.failedFuture(new RejectedExecutionException("client control inbox is full"));
+            }
+        }
+        return result;
+    }
+
+    <T> CompletableFuture<T> submitControlMapped(
+            String name,
+            long expectedWorldGeneration,
+            long deadlineNanos,
+            Callable<T> action,
+            Function<Throwable, T> failureMapper) {
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(action, "action");
+        Objects.requireNonNull(failureMapper, "failureMapper");
+        var result = new CompletableFuture<T>();
+        synchronized (admissionGate) {
+            if (!accepting) {
+                return CompletableFuture.completedFuture(
+                        failureMapper.apply(new RejectedExecutionException("runtime is stopping")));
+            }
+            var command = new PendingCommand<>(
+                    name, expectedWorldGeneration, safetyEpoch.get(), deadlineNanos,
+                    action, result, failureMapper, () -> false, ignored -> { });
+            if (!controlQueue.offer(command)) {
+                return CompletableFuture.completedFuture(
+                        failureMapper.apply(new RejectedExecutionException(
+                                "client control inbox is full")));
             }
         }
         return result;
@@ -109,7 +189,12 @@ public final class ClientCommandInbox {
             long expectedWorldGeneration,
             Duration timeout,
             Callable<T> action) {
-        return submit(name, expectedWorldGeneration, System.nanoTime() + timeout.toNanos(), action);
+        Objects.requireNonNull(timeout, "timeout");
+        return submit(
+                name,
+                expectedWorldGeneration,
+                RuntimeCallContext.deadlineAfter(System.nanoTime(), timeout.toNanos()),
+                action);
     }
 
     /** Safe to call from any thread; completion occurs only after client-thread release and lock. */
@@ -239,9 +324,10 @@ public final class ClientCommandInbox {
         normalQueue.drainTo(pending);
         controlQueue.drainTo(pending);
         int discardedStarts = Math.toIntExact(pending.stream()
-                .filter(command -> command.name().equals("start_routine"))
+                .filter(command -> command.name().equals("start_routine")
+                        || command.name().equals("agent_start_action"))
                 .count());
-        pending.forEach(command -> command.result.completeExceptionally(failure));
+        pending.forEach(command -> command.completeFailure(failure));
         return discardedStarts;
     }
 
@@ -268,17 +354,20 @@ public final class ClientCommandInbox {
             long safetyEpoch,
             long deadlineNanos,
             Callable<T> action,
-            CompletableFuture<T> result) {
+            CompletableFuture<T> result,
+            Function<Throwable, T> failureMapper,
+            BooleanSupplier completionAbandoned,
+            Consumer<T> onAbandonedCompletion) {
         private boolean claimIfCurrent(long currentGeneration, long currentSafetyEpoch, long nowNanos) {
             if (result.isDone()) {
                 return false;
             }
-            if (nowNanos > deadlineNanos) {
-                result.completeExceptionally(new CommandTimeoutException(name));
+            if (RuntimeCallContext.deadlineReached(deadlineNanos, nowNanos)) {
+                completeFailure(new CommandTimeoutException(name));
                 return false;
             }
             if (worldGeneration != currentGeneration || safetyEpoch != currentSafetyEpoch) {
-                result.completeExceptionally(new CommandInvalidatedException(name));
+                completeFailure(new CommandInvalidatedException(name));
                 return false;
             }
             return true;
@@ -287,13 +376,33 @@ public final class ClientCommandInbox {
         private void runClaimed() {
             try {
                 // Deadline remains an execution fence after the command has been claimed.
-                if (System.nanoTime() > deadlineNanos) {
-                    result.completeExceptionally(new CommandTimeoutException(name));
+                if (RuntimeCallContext.deadlineReached(deadlineNanos, System.nanoTime())) {
+                    completeFailure(new CommandTimeoutException(name));
                     return;
                 }
-                result.complete(action.call());
+                T value = action.call();
+                if (completionAbandoned.getAsBoolean()
+                        || RuntimeCallContext.deadlineReached(
+                                deadlineNanos, System.nanoTime())) {
+                    onAbandonedCompletion.accept(value);
+                    completeFailure(new CommandTimeoutException(name));
+                } else if (!result.complete(value)) {
+                    onAbandonedCompletion.accept(value);
+                }
             } catch (Throwable failure) {
+                completeFailure(failure);
+            }
+        }
+
+        private void completeFailure(Throwable failure) {
+            if (failureMapper == null) {
                 result.completeExceptionally(failure);
+                return;
+            }
+            try {
+                result.complete(failureMapper.apply(failure));
+            } catch (Throwable mappingFailure) {
+                result.completeExceptionally(mappingFailure);
             }
         }
     }

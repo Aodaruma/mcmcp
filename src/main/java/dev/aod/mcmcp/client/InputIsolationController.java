@@ -31,7 +31,7 @@ public final class InputIsolationController {
         installed = this;
     }
 
-    /** Clears stale physical mappings before the runtime reasserts its owned inputs. */
+    /** Clears stale physical mappings; agent movement is applied later to final ClientInput. */
     public void onClientPreTick() {
         if (runtime.inputIsolationActive()) {
             KeyMapping.releaseAll();

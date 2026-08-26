@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentInputState;
 import net.minecraft.client.Minecraft;
 
 import java.time.Duration;
@@ -8,7 +9,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
-/** Renewable, owner-token-bound control of the five vanilla movement keys used by navigation. */
+/** Renewable, owner-token-bound control of the five agent movement inputs used by navigation. */
 public final class MovementInputLease implements AutoCloseable {
     public static final Duration MAX_HORIZON = Duration.ofSeconds(2);
     private static final long MAX_HORIZON_NANOS = MAX_HORIZON.toNanos();
@@ -24,10 +25,10 @@ public final class MovementInputLease implements AutoCloseable {
             MovementControl control, UUID ownerId, long nowNanos, Duration horizon) {
         this.control = Objects.requireNonNull(control, "control");
         this.ownerId = Objects.requireNonNull(ownerId, "ownerId");
-        deadlineNanos = deadline(nowNanos, validatedNanos(horizon));
+        deadlineNanos = deadline(control.watchdogTime(nowNanos), validatedNanos(horizon));
         active = true;
         try {
-            control.apply(Set.of());
+            control.apply(Set.of(), deadlineNanos);
         } catch (RuntimeException | LinkageError failure) {
             active = false;
             try {
@@ -70,13 +71,14 @@ public final class MovementInputLease implements AutoCloseable {
         requireOwner(owner);
         requireActive();
         long extension = validatedNanos(horizon);
-        if (nowNanos >= deadlineNanos) {
+        long watchdogNow = control.watchdogTime(nowNanos);
+        if (deadlineReached(deadlineNanos, watchdogNow)) {
             close(owner);
             return false;
         }
-        deadlineNanos = deadline(nowNanos, extension);
+        deadlineNanos = deadline(watchdogNow, extension);
         try {
-            control.apply(desired);
+            control.apply(desired, deadlineNanos);
             return true;
         } catch (RuntimeException | LinkageError failure) {
             try {
@@ -94,12 +96,12 @@ public final class MovementInputLease implements AutoCloseable {
         if (!active) {
             return false;
         }
-        if (nowNanos >= deadlineNanos) {
+        if (deadlineReached(deadlineNanos, control.watchdogTime(nowNanos))) {
             close(owner);
             return false;
         }
         try {
-            control.apply(desired);
+            control.apply(desired, deadlineNanos);
             return true;
         } catch (RuntimeException | LinkageError failure) {
             try {
@@ -167,11 +169,11 @@ public final class MovementInputLease implements AutoCloseable {
     }
 
     private static long deadline(long nowNanos, long horizonNanos) {
-        try {
-            return Math.addExact(nowNanos, horizonNanos);
-        } catch (ArithmeticException failure) {
-            return Long.MAX_VALUE;
-        }
+        return nowNanos + horizonNanos;
+    }
+
+    private static boolean deadlineReached(long deadlineNanos, long nowNanos) {
+        return nowNanos - deadlineNanos >= 0L;
     }
 
     public enum MovementKey {
@@ -185,11 +187,20 @@ public final class MovementInputLease implements AutoCloseable {
     public interface MovementControl {
         void apply(Set<MovementKey> keys);
 
+        default void apply(Set<MovementKey> keys, long validUntilNanos) {
+            apply(keys);
+        }
+
         void release();
+
+        default long watchdogTime(long nowNanos) {
+            return nowNanos;
+        }
     }
 
     private static final class VanillaMovementControl implements MovementControl {
         private final Minecraft minecraft;
+        private final AgentInputState inputState = AgentInputState.global();
 
         private VanillaMovementControl(Minecraft minecraft) {
             this.minecraft = Objects.requireNonNull(minecraft, "minecraft");
@@ -197,17 +208,31 @@ public final class MovementInputLease implements AutoCloseable {
 
         @Override
         public void apply(Set<MovementKey> keys) {
+            long now = inputState.watchdogTime(System.nanoTime());
+            apply(keys, deadline(now, MAX_HORIZON_NANOS));
+        }
+
+        @Override
+        public void apply(Set<MovementKey> keys, long validUntilNanos) {
             assertClientThread();
-            minecraft.options.keyUp.setDown(keys.contains(MovementKey.FORWARD));
-            minecraft.options.keyDown.setDown(keys.contains(MovementKey.BACK));
-            minecraft.options.keyLeft.setDown(keys.contains(MovementKey.LEFT));
-            minecraft.options.keyRight.setDown(keys.contains(MovementKey.RIGHT));
-            minecraft.options.keyJump.setDown(keys.contains(MovementKey.JUMP));
+            inputState.publishMovement(
+                    keys.contains(MovementKey.FORWARD),
+                    keys.contains(MovementKey.BACK),
+                    keys.contains(MovementKey.LEFT),
+                    keys.contains(MovementKey.RIGHT),
+                    keys.contains(MovementKey.JUMP),
+                    validUntilNanos);
         }
 
         @Override
         public void release() {
-            apply(Set.of());
+            assertClientThread();
+            inputState.releaseMovement();
+        }
+
+        @Override
+        public long watchdogTime(long nowNanos) {
+            return inputState.watchdogTime(nowNanos);
         }
 
         private void assertClientThread() {

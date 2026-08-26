@@ -8,6 +8,7 @@ import com.google.gson.JsonObject;
 
 import java.time.Duration;
 import java.util.Locale;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -15,6 +16,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.UUID;
 
 /** Fixed five-tool catalog plus the narrow bridge to the Minecraft client runtime. */
 public final class McmcpToolRegistry {
@@ -44,61 +46,142 @@ public final class McmcpToolRegistry {
     }
 
     JsonObject call(String name, JsonObject arguments) throws UnknownToolException {
+        PreparedCall prepared = prepareCall(name, arguments);
+        confirmDelivery(prepared);
+        return prepared.response();
+    }
+
+    PreparedCall prepareCall(String name, JsonObject arguments) throws UnknownToolException {
         if (!catalog.contains(name)) {
             throw new UnknownToolException();
         }
         if (!CatalogSchemaValidator.matches(catalog.inputSchema(name), arguments)) {
-            return domainFailure(
+            return new PreparedCall(domainFailure(
                     "INVALID_ARGUMENT",
                     "Tool arguments do not match the catalog schema.",
-                    true);
+                    true), null);
         }
 
-        if (!"agent_get_state".equals(name)) {
-            return domainFailure(
-                    "CAPABILITY_DENIED",
-                    "This domain capability is not active in the current implementation phase.",
-                    false);
-        }
-        return getState();
+        return dispatch(name, command(name, arguments));
     }
 
-    private JsonObject getState() {
+    private PreparedCall dispatch(String toolName, McpRuntimePort.RuntimeCommand command) {
         RuntimeCallContext context = RuntimeCallContext.withTimeout(runtimeDispatchTimeout);
-        var future = runtimePort.submit(new McpRuntimePort.GetState(), context).toCompletableFuture();
+        var future = runtimePort.submit(command, context).toCompletableFuture();
         McpRuntimePort.RuntimeReply reply;
         try {
             reply = future.get(context.remainingNanos(), TimeUnit.NANOSECONDS);
         } catch (TimeoutException failure) {
-            context.cancel();
-            future.cancel(true);
-            return domainFailure("INTERNAL_ERROR", "Minecraft client dispatch timed out.", true);
+            if (future.cancel(true)) {
+                context.cancel();
+                return serverBusyCall("Minecraft client dispatch timed out.");
+            }
+            try {
+                reply = future.join();
+            } catch (RuntimeException completionFailure) {
+                context.cancel();
+                return serverBusyCall("Minecraft client dispatch timed out.");
+            }
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
-            context.cancel();
-            future.cancel(true);
-            return domainFailure("INTERNAL_ERROR", "Minecraft client dispatch was interrupted.", true);
+            if (future.cancel(true)) {
+                context.cancel();
+                return failedCall("Minecraft client dispatch was interrupted.");
+            }
+            try {
+                reply = future.join();
+            } catch (RuntimeException completionFailure) {
+                context.cancel();
+                return failedCall("Minecraft client dispatch was interrupted.");
+            }
         } catch (CancellationException failure) {
             context.cancel();
-            return domainFailure("INTERNAL_ERROR", "Minecraft client dispatch was cancelled.", true);
+            return failedCall("Minecraft client dispatch was cancelled.");
         } catch (ExecutionException | RuntimeException failure) {
             context.cancel();
-            return domainFailure("INTERNAL_ERROR", "Minecraft client dispatch failed.", true);
+            return failedCall("Minecraft client dispatch failed.");
         }
 
         if (!reply.successful()) {
             McpRuntimePort.RuntimeFailure failure = reply.failure();
-            return domainFailure(publicCode(failure.code()), failure.message(), failure.retryable());
+            return new PreparedCall(domainFailure(
+                    publicCode(failure.code()), failure.message(), failure.retryable()), null);
         }
+        UUID deliveryActionId = deliveryActionId(toolName, reply.data());
         JsonElement output = GSON.toJsonTree(reply.data());
-        JsonObject schema = catalog.outputSchema("agent_get_state");
+        JsonObject schema = catalog.outputSchema(toolName);
         if (!output.isJsonObject() || !CatalogSchemaValidator.matches(schema, output)) {
-            return domainFailure(
-                    "CAPABILITY_DENIED",
-                    "The MCMCP state adapter is not active in the current implementation phase.",
-                    false);
+            abandonDelivery(deliveryActionId);
+            return new PreparedCall(domainFailure(
+                    "INTERNAL_ERROR",
+                    "The Minecraft client returned an invalid tool result.",
+                    true), null);
         }
-        return success(output.getAsJsonObject());
+        return new PreparedCall(success(output.getAsJsonObject()), deliveryActionId);
+    }
+
+    private PreparedCall failedCall(String message) {
+        return new PreparedCall(domainFailure("INTERNAL_ERROR", message, true), null);
+    }
+
+    private PreparedCall serverBusyCall(String message) {
+        return new PreparedCall(domainFailure("SERVER_BUSY", message, true), null);
+    }
+
+    void confirmDelivery(PreparedCall prepared) {
+        Objects.requireNonNull(prepared, "prepared");
+        if (prepared.actionId() != null) {
+            submitDelivery(new McpRuntimePort.ConfirmActionDelivery(prepared.actionId()));
+        }
+    }
+
+    void abandonDelivery(PreparedCall prepared) {
+        Objects.requireNonNull(prepared, "prepared");
+        abandonDelivery(prepared.actionId());
+    }
+
+    private void abandonDelivery(UUID actionId) {
+        if (actionId != null) {
+            submitDelivery(new McpRuntimePort.AbandonActionDelivery(actionId));
+        }
+    }
+
+    private void submitDelivery(McpRuntimePort.RuntimeCommand command) {
+        RuntimeCallContext context = RuntimeCallContext.withTimeout(runtimeDispatchTimeout);
+        try {
+            runtimePort.submit(command, context);
+        } catch (RuntimeException failure) {
+            context.cancel();
+        }
+    }
+
+    private static UUID deliveryActionId(String toolName, Map<String, Object> data) {
+        if (!"agent_start_action".equals(toolName)) return null;
+        Object value = data.get("action_id");
+        if (!(value instanceof String actionId)) return null;
+        try {
+            return UUID.fromString(actionId);
+        } catch (IllegalArgumentException failure) {
+            return null;
+        }
+    }
+
+    private static McpRuntimePort.RuntimeCommand command(String name, JsonObject arguments) {
+        Map<String, Object> values = jsonMap(arguments);
+        return switch (name) {
+            case "agent_get_state" -> new McpRuntimePort.GetState();
+            case "agent_get_observation" -> new McpRuntimePort.GetObservation(values);
+            case "agent_start_action" -> new McpRuntimePort.StartAction(values);
+            case "agent_get_action" -> new McpRuntimePort.GetAction(values);
+            case "agent_cancel_action" -> new McpRuntimePort.CancelAction(values);
+            default -> throw new AssertionError("Catalog and dispatch table diverged");
+        };
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> jsonMap(JsonObject arguments) {
+        Map<String, Object> decoded = GSON.fromJson(arguments, LinkedHashMap.class);
+        return decoded == null ? Map.of() : decoded;
     }
 
     private JsonObject success(JsonObject structuredContent) {
@@ -143,7 +226,7 @@ public final class McmcpToolRegistry {
         String normalized = runtimeCode.toUpperCase(Locale.ROOT);
         return switch (normalized) {
             case "LOCKED" -> "MCP_OPERATION_DISABLED";
-            case "BUSY" -> "TASK_BUSY";
+            case "BUSY", "TIMEOUT" -> "SERVER_BUSY";
             case "UNSAFE_STATE" -> "SAFETY_PRECONDITION";
             default -> PUBLIC_DOMAIN_CODES.contains(normalized) ? normalized : "INTERNAL_ERROR";
         };
@@ -165,5 +248,11 @@ public final class McmcpToolRegistry {
     }
 
     static final class UnknownToolException extends Exception {
+    }
+
+    record PreparedCall(JsonObject response, UUID actionId) {
+        PreparedCall {
+            Objects.requireNonNull(response, "response");
+        }
     }
 }

@@ -1,0 +1,226 @@
+package dev.aod.mcmcp.agent.observation;
+
+import java.util.Locale;
+import java.util.Objects;
+
+import static dev.aod.mcmcp.agent.observation.ObservationValues.Aabb;
+import static dev.aod.mcmcp.agent.observation.ObservationValues.BlockPosition;
+import static dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
+import static dev.aod.mcmcp.agent.observation.ObservationValues.Vector;
+import static dev.aod.mcmcp.agent.observation.ObservationValues.WorldPosition;
+
+/** Policy-filtered records permitted by the normative observation catalog. */
+public sealed interface ObservationRecord permits ObservationRecord.VisibleSurface,
+        ObservationRecord.VisibleEntity, ObservationRecord.Traversability,
+        ObservationRecord.Hazard, ObservationRecord.UnknownBoundary,
+        ObservationRecord.SoundClue {
+
+    ObservationKind kind();
+
+    ResourceId dimension();
+
+    long oldestObservedTick();
+
+    long newestObservedTick();
+
+    long worldRevision();
+
+    record VisibleSurface(
+            BlockPosition position,
+            Face face,
+            ResourceId block,
+            ShapeClass shapeClass,
+            WorldPosition eyeOrigin,
+            long observedTick,
+            long worldRevision) implements ObservationRecord {
+        public VisibleSurface {
+            Objects.requireNonNull(position, "position");
+            Objects.requireNonNull(face, "face");
+            Objects.requireNonNull(block, "block");
+            Objects.requireNonNull(shapeClass, "shapeClass");
+            Objects.requireNonNull(eyeOrigin, "eyeOrigin");
+            ObservationValues.requireSameDimension(position.dimension(), eyeOrigin.dimension());
+            ObservationValues.requireTick(observedTick, "observedTick");
+            ObservationValues.requireTick(worldRevision, "worldRevision");
+        }
+
+        @Override public ObservationKind kind() { return ObservationKind.VISIBLE_SURFACE; }
+        @Override public ResourceId dimension() { return position.dimension(); }
+        @Override public long oldestObservedTick() { return observedTick; }
+        @Override public long newestObservedTick() { return observedTick; }
+        public EvidenceProvenance provenance() { return EvidenceProvenance.OMNIDIRECTIONAL_VISUAL; }
+    }
+
+    record VisibleEntity(
+            ResourceId entityType,
+            WorldPosition position,
+            Vector velocity,
+            Aabb aabb,
+            EntityHazardClass hazardClass,
+            WorldPosition eyeOrigin,
+            long observedTick,
+            long worldRevision) implements ObservationRecord {
+        public VisibleEntity {
+            Objects.requireNonNull(entityType, "entityType");
+            Objects.requireNonNull(position, "position");
+            Objects.requireNonNull(velocity, "velocity");
+            Objects.requireNonNull(aabb, "aabb");
+            Objects.requireNonNull(hazardClass, "hazardClass");
+            Objects.requireNonNull(eyeOrigin, "eyeOrigin");
+            ObservationValues.requireSameDimension(position.dimension(), eyeOrigin.dimension());
+            ObservationValues.requireTick(observedTick, "observedTick");
+            ObservationValues.requireTick(worldRevision, "worldRevision");
+        }
+
+        @Override public ObservationKind kind() { return ObservationKind.VISIBLE_ENTITY; }
+        @Override public ResourceId dimension() { return position.dimension(); }
+        @Override public long oldestObservedTick() { return observedTick; }
+        @Override public long newestObservedTick() { return observedTick; }
+        public EvidenceProvenance provenance() { return EvidenceProvenance.OMNIDIRECTIONAL_VISUAL; }
+    }
+
+    record Traversability(
+            WorldPosition from,
+            WorldPosition to,
+            TraversabilityStatus status,
+            TargetSupport targetSupport,
+            TransitionClearance transitionClearance,
+            Fluid fluid,
+            WorldPosition observerPosition,
+            long observedTick,
+            long worldRevision,
+            EvidenceProvenance provenance) implements ObservationRecord {
+        public Traversability {
+            Objects.requireNonNull(from, "from");
+            Objects.requireNonNull(to, "to");
+            Objects.requireNonNull(status, "status");
+            Objects.requireNonNull(targetSupport, "targetSupport");
+            Objects.requireNonNull(transitionClearance, "transitionClearance");
+            Objects.requireNonNull(fluid, "fluid");
+            Objects.requireNonNull(observerPosition, "observerPosition");
+            Objects.requireNonNull(provenance, "provenance");
+            ObservationValues.requireSameDimension(from.dimension(), to.dimension());
+            ObservationValues.requireSameDimension(from.dimension(), observerPosition.dimension());
+            ObservationValues.requireTick(observedTick, "observedTick");
+            ObservationValues.requireTick(worldRevision, "worldRevision");
+            requireLocalOrContact(provenance);
+        }
+
+        @Override public ObservationKind kind() { return ObservationKind.TRAVERSABILITY; }
+        @Override public ResourceId dimension() { return from.dimension(); }
+        @Override public long oldestObservedTick() { return observedTick; }
+        @Override public long newestObservedTick() { return observedTick; }
+    }
+
+    record Hazard(
+            HazardType hazardType,
+            WorldPosition position,
+            HazardSeverity severity,
+            WorldPosition observerPosition,
+            long observedTick,
+            long worldRevision,
+            EvidenceProvenance provenance) implements ObservationRecord {
+        public Hazard {
+            Objects.requireNonNull(hazardType, "hazardType");
+            Objects.requireNonNull(position, "position");
+            Objects.requireNonNull(severity, "severity");
+            Objects.requireNonNull(observerPosition, "observerPosition");
+            Objects.requireNonNull(provenance, "provenance");
+            ObservationValues.requireSameDimension(position.dimension(), observerPosition.dimension());
+            ObservationValues.requireTick(observedTick, "observedTick");
+            ObservationValues.requireTick(worldRevision, "worldRevision");
+            requireLocalOrContact(provenance);
+        }
+
+        @Override public ObservationKind kind() { return ObservationKind.HAZARD; }
+        @Override public ResourceId dimension() { return position.dimension(); }
+        @Override public long oldestObservedTick() { return observedTick; }
+        @Override public long newestObservedTick() { return observedTick; }
+    }
+
+    record UnknownBoundary(
+            WorldPosition position,
+            UnknownBoundaryReason reason,
+            WorldPosition eyeOrigin,
+            long observedTick,
+            long worldRevision) implements ObservationRecord {
+        public UnknownBoundary {
+            Objects.requireNonNull(position, "position");
+            Objects.requireNonNull(reason, "reason");
+            Objects.requireNonNull(eyeOrigin, "eyeOrigin");
+            ObservationValues.requireSameDimension(position.dimension(), eyeOrigin.dimension());
+            ObservationValues.requireTick(observedTick, "observedTick");
+            ObservationValues.requireTick(worldRevision, "worldRevision");
+        }
+
+        @Override public ObservationKind kind() { return ObservationKind.UNKNOWN_BOUNDARY; }
+        @Override public ResourceId dimension() { return position.dimension(); }
+        @Override public long oldestObservedTick() { return observedTick; }
+        @Override public long newestObservedTick() { return observedTick; }
+    }
+
+    record SoundClue(
+            ResourceId soundEvent,
+            SoundCategory category,
+            WorldPosition position,
+            long firstObservedTick,
+            long lastObservedTick,
+            int ageTicks,
+            int occurrences,
+            ResourceId entityHint,
+            long worldRevision) implements ObservationRecord {
+        public SoundClue {
+            Objects.requireNonNull(soundEvent, "soundEvent");
+            Objects.requireNonNull(category, "category");
+            Objects.requireNonNull(position, "position");
+            ObservationValues.requireTick(firstObservedTick, "firstObservedTick");
+            ObservationValues.requireTick(lastObservedTick, "lastObservedTick");
+            ObservationValues.requireTick(worldRevision, "worldRevision");
+            if (lastObservedTick < firstObservedTick) {
+                throw new IllegalArgumentException("lastObservedTick precedes firstObservedTick");
+            }
+            ObservationValues.requireRange(ageTicks, 0, 600, "ageTicks");
+            if (occurrences < 1) {
+                throw new IllegalArgumentException("occurrences must be positive");
+            }
+        }
+
+        @Override public ObservationKind kind() { return ObservationKind.SOUND_CLUE; }
+        @Override public ResourceId dimension() { return position.dimension(); }
+        @Override public long oldestObservedTick() { return firstObservedTick; }
+        @Override public long newestObservedTick() { return lastObservedTick; }
+        public String provenance() { return "client_playback_start"; }
+    }
+
+    private static void requireLocalOrContact(EvidenceProvenance provenance) {
+        if (provenance != EvidenceProvenance.LOCAL_VOLUME
+                && provenance != EvidenceProvenance.CONTACT) {
+            throw new IllegalArgumentException("Record requires LOCAL_VOLUME or CONTACT provenance");
+        }
+    }
+
+    interface WireNamed {
+        default String wireName() {
+            return ((Enum<?>) this).name().toLowerCase(Locale.ROOT);
+        }
+    }
+
+    enum Face implements WireNamed { DOWN, UP, NORTH, SOUTH, WEST, EAST }
+    enum ShapeClass implements WireNamed { OPAQUE, TRANSPARENT, CUTOUT, PARTIAL, FLUID, UNKNOWN }
+    enum EntityHazardClass implements WireNamed { PASSIVE, NEUTRAL, HOSTILE, PLAYER, PROJECTILE, UNKNOWN }
+    enum TraversabilityStatus { CONFIRMED, PROBE_ALLOWED, BLOCKED, STALE }
+    enum TargetSupport implements WireNamed { CONFIRMED, ABSENT, UNKNOWN }
+    enum TransitionClearance implements WireNamed { CONFIRMED, BLOCKED, UNKNOWN }
+    enum Fluid implements WireNamed { NONE, WATER, LAVA, OTHER, UNKNOWN }
+    enum HazardType implements WireNamed {
+        FALL, LAVA, FIRE, WATER, SUFFOCATION, FREEZING, CONTACT_DAMAGE, COLLISION, UNKNOWN
+    }
+    enum HazardSeverity implements WireNamed { CAUTION, URGENT, UNKNOWN }
+    enum UnknownBoundaryReason implements WireNamed {
+        UNLOADED, OPAQUE_OCCLUSION, AMBIGUOUS_RENDER, RADIUS_LIMIT, FOG_LIMIT
+    }
+    enum SoundCategory implements WireNamed {
+        MASTER, RECORDS, WEATHER, BLOCKS, HOSTILE, NEUTRAL, PLAYERS, AMBIENT, VOICE
+    }
+    enum EvidenceProvenance { OMNIDIRECTIONAL_VISUAL, LOCAL_VOLUME, CONTACT }
+}

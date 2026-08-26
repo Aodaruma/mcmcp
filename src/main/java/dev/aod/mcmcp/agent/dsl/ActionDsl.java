@@ -1,0 +1,225 @@
+package dev.aod.mcmcp.agent.dsl;
+
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+
+/** Pure, immutable Action DSL v1 syntax tree. */
+public final class ActionDsl {
+    private ActionDsl() {
+    }
+
+    public record Request(int schemaVersion, Program program, Budget budget) {
+        public Request {
+            Objects.requireNonNull(program, "program");
+            Objects.requireNonNull(budget, "budget");
+        }
+    }
+
+    public record Program(
+            int dslVersion,
+            Optional<String> name,
+            Set<Capability> capabilities,
+            List<Node> body) {
+        public Program {
+            name = Objects.requireNonNull(name, "name");
+            capabilities = Set.copyOf(Objects.requireNonNull(capabilities, "capabilities"));
+            body = List.copyOf(Objects.requireNonNull(body, "body"));
+        }
+    }
+
+    public sealed interface Node permits NavigateToKnown, FaceKnownPosition, WaitTicks, If, Repeat {
+        String id();
+    }
+
+    public record NavigateToKnown(String id, Position target, double tolerance) implements Node {
+        public NavigateToKnown {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+        }
+    }
+
+    public record FaceKnownPosition(String id, Position target) implements Node {
+        public FaceKnownPosition {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+        }
+    }
+
+    public record WaitTicks(String id, int ticks) implements Node {
+        public WaitTicks {
+            Objects.requireNonNull(id, "id");
+        }
+    }
+
+    public record If(
+            String id,
+            Predicate condition,
+            List<Node> thenBranch,
+            List<Node> elseBranch) implements Node {
+        public If {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(condition, "condition");
+            thenBranch = List.copyOf(Objects.requireNonNull(thenBranch, "thenBranch"));
+            elseBranch = List.copyOf(Objects.requireNonNull(elseBranch, "elseBranch"));
+        }
+    }
+
+    public record Repeat(String id, int count, List<Node> body) implements Node {
+        public Repeat {
+            Objects.requireNonNull(id, "id");
+            body = List.copyOf(Objects.requireNonNull(body, "body"));
+        }
+    }
+
+    public record Position(String dimension, int x, int y, int z) {
+        public Position {
+            Objects.requireNonNull(dimension, "dimension");
+        }
+    }
+
+    public enum Capability {
+        MOVEMENT("movement"),
+        CAMERA("camera");
+
+        private final String wireName;
+
+        Capability(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
+    public sealed interface Predicate permits AtomicPredicate, LogicalPredicate {
+    }
+
+    public sealed interface AtomicPredicate extends Predicate
+            permits NumericPredicate, BooleanPredicate, InventoryPredicate, StatusPredicate {
+    }
+
+    public record NumericPredicate(
+            NumericField field,
+            Comparison comparison,
+            double value) implements AtomicPredicate {
+        public NumericPredicate {
+            Objects.requireNonNull(field, "field");
+            Objects.requireNonNull(comparison, "comparison");
+        }
+    }
+
+    public record BooleanPredicate(
+            BooleanField field,
+            Comparison comparison,
+            boolean value) implements AtomicPredicate {
+        public BooleanPredicate {
+            Objects.requireNonNull(field, "field");
+            Objects.requireNonNull(comparison, "comparison");
+        }
+    }
+
+    public record InventoryPredicate(
+            String item,
+            Comparison comparison,
+            int value) implements AtomicPredicate {
+        public InventoryPredicate {
+            Objects.requireNonNull(item, "item");
+            Objects.requireNonNull(comparison, "comparison");
+        }
+    }
+
+    public record StatusPredicate(
+            String effect,
+            Comparison comparison,
+            boolean value) implements AtomicPredicate {
+        public StatusPredicate {
+            Objects.requireNonNull(effect, "effect");
+            Objects.requireNonNull(comparison, "comparison");
+        }
+    }
+
+    public record LogicalPredicate(LogicalOperator operator, List<AtomicPredicate> operands)
+            implements Predicate {
+        public LogicalPredicate {
+            Objects.requireNonNull(operator, "operator");
+            operands = List.copyOf(Objects.requireNonNull(operands, "operands"));
+        }
+    }
+
+    public enum NumericField {
+        HEALTH("health"),
+        HUNGER("hunger"),
+        AIR("air");
+
+        private final String wireName;
+
+        NumericField(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
+    public enum BooleanField {
+        ON_FIRE("on_fire"),
+        SUBMERGED("submerged");
+
+        private final String wireName;
+
+        BooleanField(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
+    public enum Comparison {
+        LT("lt"),
+        LTE("lte"),
+        EQ("eq"),
+        GTE("gte"),
+        GT("gt");
+
+        private final String wireName;
+
+        Comparison(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
+    public enum LogicalOperator {
+        ALL("all"),
+        ANY("any");
+
+        private final String wireName;
+
+        LogicalOperator(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
+    public record Budget(
+            long maxDurationMillis,
+            long maxTicks,
+            double maxDistanceBlocks,
+            double maxCameraDegrees,
+            long maxInteractions,
+            long maxBlocksBroken,
+            long maxBlocksPlaced) {
+    }
+}

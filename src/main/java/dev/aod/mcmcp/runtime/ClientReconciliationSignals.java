@@ -1,10 +1,14 @@
 package dev.aod.mcmcp.runtime;
 
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayDeque;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.WeakHashMap;
 
@@ -32,6 +36,17 @@ public final class ClientReconciliationSignals {
         synchronized (gate) {
             return channels.computeIfAbsent(level, ignored -> new SessionChannel())
                     .bindAndSnapshot(worldSessionId);
+        }
+    }
+
+    /** Read-only current boundary; unlike bindAndSnapshot this never creates or rebinds state. */
+    public Optional<Snapshot> currentSnapshot(ClientLevel level) {
+        Objects.requireNonNull(level, "level");
+        synchronized (gate) {
+            var channel = channels.get(level);
+            return channel == null || !channel.bound()
+                    ? Optional.empty()
+                    : Optional.of(channel.snapshot());
         }
     }
 
@@ -68,6 +83,22 @@ public final class ClientReconciliationSignals {
                 selectedItemId, selectedCount)));
     }
 
+    /** Records a processed mutation whose exact scope is unavailable. */
+    public void onWorldMutation(ClientLevel level) {
+        record(level, SessionChannel::worldMutation);
+    }
+
+    public void onBlockMutation(ClientLevel level, BlockPos position) {
+        Objects.requireNonNull(position, "position");
+        record(level, channel -> channel.worldMutation(
+                WorldMutation.Kind.BLOCK, position.getX(), position.getY(), position.getZ()));
+    }
+
+    public void onChunkMutation(ClientLevel level, int chunkX, int chunkZ) {
+        record(level, channel -> channel.worldMutation(
+                WorldMutation.Kind.CHUNK, chunkX, 0, chunkZ));
+    }
+
     /** Explicit lifecycle fence for level replacement/disconnect. */
     public void closeLevel(ClientLevel level) {
         if (level == null) {
@@ -101,12 +132,15 @@ public final class ClientReconciliationSignals {
             long motionRevision,
             long inventoryRevision,
             long selectedSlotInventoryRevision,
+            long worldRevision,
+            List<WorldMutation> worldMutations,
             PositionCorrection lastPositionCorrection,
             ServerRotation lastServerRotation,
             LocalMotion lastLocalMotion,
             InventorySync lastInventorySync) {
         public Snapshot {
             Objects.requireNonNull(worldSessionId, "worldSessionId");
+            worldMutations = List.copyOf(worldMutations);
         }
 
         public boolean sameSession(Snapshot other) {
@@ -145,6 +179,17 @@ public final class ClientReconciliationSignals {
         }
     }
 
+    public record WorldMutation(long revision, Kind kind, int x, int y, int z) {
+        public WorldMutation {
+            if (revision < 1L) {
+                throw new IllegalArgumentException("mutation revision must be positive");
+            }
+            Objects.requireNonNull(kind, "kind");
+        }
+
+        public enum Kind { BLOCK, CHUNK, ALL }
+    }
+
     /** Package-private deterministic core used by unit tests. */
     static final class SessionChannel {
         private UUID worldSessionId;
@@ -153,6 +198,8 @@ public final class ClientReconciliationSignals {
         private long motionRevision;
         private long inventoryRevision;
         private long selectedSlotInventoryRevision;
+        private long worldRevision;
+        private final ArrayDeque<WorldMutation> worldMutations = new ArrayDeque<>(256);
         private PositionCorrection lastPositionCorrection;
         private ServerRotation lastServerRotation;
         private LocalMotion lastLocalMotion;
@@ -171,6 +218,8 @@ public final class ClientReconciliationSignals {
                 motionRevision = 0;
                 inventoryRevision = 0;
                 selectedSlotInventoryRevision = 0;
+                worldRevision = 0;
+                worldMutations.clear();
                 lastPositionCorrection = null;
                 lastServerRotation = null;
                 lastLocalMotion = null;
@@ -202,12 +251,25 @@ public final class ClientReconciliationSignals {
             }
         }
 
+        void worldMutation() {
+            worldMutation(WorldMutation.Kind.ALL, 0, 0, 0);
+        }
+
+        void worldMutation(WorldMutation.Kind kind, int x, int y, int z) {
+            worldRevision++;
+            if (worldMutations.size() == 256) {
+                worldMutations.removeFirst();
+            }
+            worldMutations.addLast(new WorldMutation(worldRevision, kind, x, y, z));
+        }
+
         Snapshot snapshot() {
             if (worldSessionId == null) {
                 throw new IllegalStateException("reconciliation channel is not session-bound");
             }
             return new Snapshot(worldSessionId, positionCorrectionRevision, rotationRevision,
-                    motionRevision, inventoryRevision, selectedSlotInventoryRevision,
+                    motionRevision, inventoryRevision, selectedSlotInventoryRevision, worldRevision,
+                    List.copyOf(worldMutations),
                     lastPositionCorrection, lastServerRotation, lastLocalMotion, lastInventorySync);
         }
     }

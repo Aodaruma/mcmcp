@@ -2,6 +2,9 @@ package dev.aod.mcmcp;
 
 import com.mojang.logging.LogUtils;
 import dev.aod.mcmcp.client.AutomationIndicatorController;
+import dev.aod.mcmcp.client.AgentBlockBreakChannel;
+import dev.aod.mcmcp.client.AgentInputState;
+import dev.aod.mcmcp.client.AgentMovementInput;
 import dev.aod.mcmcp.client.InputIsolationController;
 import dev.aod.mcmcp.client.McmcpClientConfig;
 import dev.aod.mcmcp.runtime.McmcpRuntime;
@@ -10,6 +13,7 @@ import dev.aod.mcmcp.runtime.ScreenOwnershipSignals;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.neoforged.api.distmarker.Dist;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
@@ -18,7 +22,10 @@ import net.neoforged.neoforge.client.event.ClientPauseChangeEvent;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientResourceLoadFinishedEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
+import net.neoforged.neoforge.client.event.sound.PlaySoundSourceEvent;
+import net.neoforged.neoforge.client.event.sound.PlayStreamingSourceEvent;
 import net.neoforged.neoforge.client.event.lifecycle.ClientStartedEvent;
 import net.neoforged.neoforge.client.event.lifecycle.ClientStoppedEvent;
 import net.neoforged.neoforge.client.event.lifecycle.ClientStoppingEvent;
@@ -39,6 +46,8 @@ public final class McmcpMod {
     private final McpServerController mcpServer;
     private final AutomationIndicatorController automationIndicator;
     private final InputIsolationController inputIsolation;
+    private final AgentInputState agentInput = AgentInputState.global();
+    private final AgentBlockBreakChannel agentBlockBreak = new AgentBlockBreakChannel(agentInput);
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
 
     public McmcpMod(IEventBus modEventBus, ModContainer modContainer) {
@@ -61,6 +70,9 @@ public final class McmcpMod {
         eventBus.addListener(this::onPlayerClone);
         eventBus.addListener(this::onLevelUnload);
         eventBus.addListener(this::onPauseChanged);
+        eventBus.addListener(this::onSoundSourceStarted);
+        eventBus.addListener(this::onStreamingSoundSourceStarted);
+        eventBus.addListener(EventPriority.LOWEST, this::onMovementInputUpdate);
         eventBus.addListener(inputIsolation::onMouseButton);
         eventBus.addListener(inputIsolation::onMouseScroll);
         eventBus.addListener(inputIsolation::onScreenMouseDragged);
@@ -92,10 +104,13 @@ public final class McmcpMod {
     }
 
     private void onPostTick(ClientTickEvent.Post event) {
-        runtime.onPostTick(Minecraft.getInstance());
+        var minecraft = Minecraft.getInstance();
+        agentBlockBreak.onClientPostTick(minecraft);
+        runtime.onPostTick(minecraft);
     }
 
     private void onLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
+        AgentMovementInput.install(event.getPlayer(), Minecraft.getInstance().options);
         runtime.onLoggingIn(Minecraft.getInstance());
     }
 
@@ -104,6 +119,7 @@ public final class McmcpMod {
     }
 
     private void onPlayerClone(ClientPlayerNetworkEvent.Clone event) {
+        AgentMovementInput.install(event.getNewPlayer(), Minecraft.getInstance().options);
         runtime.onPlayerClone(Minecraft.getInstance());
     }
 
@@ -114,7 +130,30 @@ public final class McmcpMod {
     }
 
     private void onPauseChanged(ClientPauseChangeEvent.Post event) {
+        var minecraft = Minecraft.getInstance();
+        agentInput.setPaused(event.isPaused(), System.nanoTime());
+        if (event.isPaused() && minecraft.player != null
+                && minecraft.player.input instanceof AgentMovementInput movementInput) {
+            movementInput.apply(agentInput.movementSnapshot());
+        }
         runtime.onPauseChanged(event.isPaused());
+    }
+
+    private void onMovementInputUpdate(MovementInputUpdateEvent event) {
+        if (!(event.getEntity() instanceof net.minecraft.client.player.LocalPlayer player)) {
+            return;
+        }
+        var movementInput = AgentMovementInput.install(
+                player, Minecraft.getInstance().options, event.getInput());
+        movementInput.apply(agentInput.movementSnapshot(player));
+    }
+
+    private void onSoundSourceStarted(PlaySoundSourceEvent event) {
+        runtime.onSoundPlaybackStart(event.getSound());
+    }
+
+    private void onStreamingSoundSourceStarted(PlayStreamingSourceEvent event) {
+        runtime.onSoundPlaybackStart(event.getSound());
     }
 
     private void onScreenOpening(ScreenEvent.Opening event) {

@@ -1,16 +1,17 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentInputState;
 import net.minecraft.client.Minecraft;
 
 import java.time.Duration;
 import java.util.Objects;
 
 /**
- * Renewable, client-thread-only ownership of vanilla's attack input.
+ * Renewable, client-thread-only ownership of the dedicated block-breaking action channel.
  *
  * <p>The deadline can never be more than two seconds ahead. A routine renews and maintains the
- * lease every tick; expiry, an input failure, or {@link #close()} releases both the key and the
- * current block-destroy action. Use try-with-resources around all setup which can throw.</p>
+ * lease every tick; expiry, an input failure, or {@link #close()} releases both the agent channel
+ * and the current block-destroy action. Use try-with-resources around all setup which can throw.</p>
  */
 public final class AttackInputLease implements AutoCloseable {
     public static final Duration MAX_HORIZON = Duration.ofSeconds(2);
@@ -23,7 +24,7 @@ public final class AttackInputLease implements AutoCloseable {
 
     private AttackInputLease(AttackControl control, long nowNanos, Duration horizon) {
         this.control = Objects.requireNonNull(control, "control");
-        deadlineNanos = deadline(nowNanos, validatedNanos(horizon));
+        deadlineNanos = deadline(control.watchdogTime(nowNanos), validatedNanos(horizon));
         active = true;
         try {
             control.press();
@@ -54,11 +55,12 @@ public final class AttackInputLease implements AutoCloseable {
     public boolean renew(long nowNanos, Duration horizon) {
         requireActive();
         long extension = validatedNanos(horizon);
-        if (nowNanos >= deadlineNanos) {
+        long watchdogNow = control.watchdogTime(nowNanos);
+        if (watchdogNow >= deadlineNanos) {
             close();
             return false;
         }
-        deadlineNanos = deadline(nowNanos, extension);
+        deadlineNanos = deadline(watchdogNow, extension);
         return true;
     }
 
@@ -75,7 +77,7 @@ public final class AttackInputLease implements AutoCloseable {
         if (!active) {
             return false;
         }
-        if (nowNanos >= deadlineNanos) {
+        if (control.watchdogTime(nowNanos) >= deadlineNanos) {
             close();
             return false;
         }
@@ -142,10 +144,15 @@ public final class AttackInputLease implements AutoCloseable {
         void press();
 
         void release();
+
+        default long watchdogTime(long nowNanos) {
+            return nowNanos;
+        }
     }
 
     private static final class VanillaAttackControl implements AttackControl {
         private final Minecraft minecraft;
+        private final AgentInputState inputState = AgentInputState.global();
 
         private VanillaAttackControl(Minecraft minecraft) {
             this.minecraft = Objects.requireNonNull(minecraft, "minecraft");
@@ -154,21 +161,15 @@ public final class AttackInputLease implements AutoCloseable {
         @Override
         public void press() {
             assertClientThread();
-            minecraft.options.keyAttack.setDown(true);
+            inputState.publishAttack();
         }
 
         @Override
         public void release() {
             assertClientThread();
+            inputState.releaseAttack();
             RuntimeException runtimeFailure = null;
             LinkageError linkageFailure = null;
-            try {
-                minecraft.options.keyAttack.setDown(false);
-            } catch (RuntimeException failure) {
-                runtimeFailure = failure;
-            } catch (LinkageError failure) {
-                linkageFailure = failure;
-            }
             if (minecraft.gameMode != null) {
                 try {
                     minecraft.gameMode.stopDestroyBlock();
@@ -196,6 +197,11 @@ public final class AttackInputLease implements AutoCloseable {
             if (linkageFailure != null) {
                 throw linkageFailure;
             }
+        }
+
+        @Override
+        public long watchdogTime(long nowNanos) {
+            return inputState.watchdogTime(nowNanos);
         }
 
         private void assertClientThread() {

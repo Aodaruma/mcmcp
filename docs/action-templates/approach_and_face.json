@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "program": {
+    "dsl_version": 1,
+    "name": "approach_and_face",
+    "capabilities": ["movement", "camera"],
+    "body": [
+      {
+        "id": "approach",
+        "op": "navigate_to_known",
+        "target": {"dimension": "minecraft:overworld", "x": 100, "y": 64, "z": 120},
+        "tolerance": 0.75
+      },
+      {
+        "id": "health_gate",
+        "op": "if",
+        "condition": {"field": "health", "comparison": "gte", "value": 8},
+        "then": [
+          {
+            "id": "face",
+            "op": "face_known_position",
+            "target": {"dimension": "minecraft:overworld", "x": 102, "y": 65, "z": 120}
+          }
+        ],
+        "else": [
+          {"id": "hold", "op": "wait_ticks", "ticks": 20}
+        ]
+      }
+    ]
+  },
+  "budget": {
+    "max_duration_ms": 30000,
+    "max_ticks": 600,
+    "max_distance_blocks": 32,
+    "max_camera_degrees": 360,
+    "max_interactions": 0,
+    "max_blocks_broken": 0,
+    "max_blocks_placed": 0
+  }
+}

@@ -1,7 +1,40 @@
 package dev.aod.mcmcp.runtime;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import dev.aod.mcmcp.agent.action.AgentActionStore;
+import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
+import dev.aod.mcmcp.agent.action.ActionProgramCursor;
+import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
+import dev.aod.mcmcp.agent.dsl.ActionDsl;
+import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
+import dev.aod.mcmcp.agent.dsl.ActionDslException;
+import dev.aod.mcmcp.agent.dsl.ActionDslParser;
+import dev.aod.mcmcp.agent.dsl.ActionDslValidator;
+import dev.aod.mcmcp.agent.dsl.PolicySnapshot;
+import dev.aod.mcmcp.agent.dsl.PredicateEvaluator;
+import dev.aod.mcmcp.agent.navigation.DeterministicAStar;
+import dev.aod.mcmcp.agent.navigation.KnownTraversabilityMap;
+import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
+import dev.aod.mcmcp.agent.navigation.LocalObservationProjector;
+import dev.aod.mcmcp.agent.navigation.NavCell;
+import dev.aod.mcmcp.agent.navigation.RoutePlan;
+import dev.aod.mcmcp.agent.observation.ObservationFrame;
+import dev.aod.mcmcp.agent.observation.ClientFogDistanceSignals;
+import dev.aod.mcmcp.agent.observation.ObservationFrameStore;
+import dev.aod.mcmcp.agent.observation.ObservationKind;
+import dev.aod.mcmcp.agent.observation.OmnidirectionalObserver;
+import dev.aod.mcmcp.agent.observation.ObservationStoreException;
+import dev.aod.mcmcp.agent.observation.ObservationWireMapper;
+import dev.aod.mcmcp.agent.observation.SoundClueStore;
+import dev.aod.mcmcp.agent.observation.SoundPlaybackQueue;
+import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
+import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
+import dev.aod.mcmcp.agent.safety.MinecraftRecoveryGovernor;
 import dev.aod.mcmcp.McmcpMod;
+import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.client.McmcpClientConfig;
+import dev.aod.mcmcp.client.MultiplayerAllowlist;
 import dev.aod.mcmcp.mcp.McpRuntimePort;
 import dev.aod.mcmcp.mcp.McpToolSchemas;
 import dev.aod.mcmcp.mcp.RuntimeCallContext;
@@ -52,11 +85,15 @@ import dev.aod.mcmcp.voice.VoiceChatSafetyController;
 import dev.aod.mcmcp.voice.VoiceTransmissionGuard;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.resources.sounds.SoundInstance;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.item.BlockItem;
@@ -82,40 +119,41 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.UUID;
+import java.util.EnumSet;
+import java.util.EnumMap;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 /** Client runtime and the sole implementation of the MCP-to-Minecraft boundary. */
 public final class McmcpRuntime implements McpRuntimePort {
+    private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private static final String MCP_PROTOCOL_VERSION = "2026-07-28";
     private static final Duration FINALIZATION_RESERVE = Duration.ofSeconds(5);
+    private static final long ACTION_DELIVERY_CONFIRM_NANOS = Duration.ofSeconds(5).toNanos();
     private static final double MAX_SAFE_STAY_HORIZONTAL_SPEED_SQUARED = 0.01;
     private static final float MIN_SAFE_STAY_HEALTH = 6.0F;
     /** Expanded only when a phase has passed its gate. */
-    private static final Set<String> AVAILABLE_CAPABILITIES = Set.of(
-            "stationary_break",
-            NavigateToRequest.KIND,
-            BreakBlockRequest.KIND,
-            PlaceBlockRequest.KIND,
-            InteractBlockRequest.KIND,
-            InteractEntityRequest.KIND,
-            UseItemOnBlockRequest.KIND,
-            ApplyBlockPlanRequest.KIND,
-            "craft_items",
-            "transfer_items",
-            "tend_crop_area",
-            "harvest_tree_area",
-            "sleep_at_bed",
-            "survey_area",
-            "execute_plan");
+    private static final Set<String> AVAILABLE_CAPABILITIES = Set.of("movement", "camera");
 
     private final String modVersion;
     private final String neoForgeVersion;
     private final WorldSessionTracker sessions = new WorldSessionTracker();
+    private final ObservationFrameStore agentObservationFrames = new ObservationFrameStore();
+    private final SoundClueStore soundClues = new SoundClueStore();
+    private final SoundPlaybackQueue soundPlaybacks = new SoundPlaybackQueue();
+    private final KnownTraversabilityMap knownTraversability = new KnownTraversabilityMap();
+    private final DeterministicAStar agentPathfinder = new DeterministicAStar();
+    private final AgentActionStore agentActions = new AgentActionStore();
     private final WorldMemory memory = new WorldMemory();
     private final MinecraftObservationService observations = new MinecraftObservationService(memory);
     private final BlockPlanComparator blockPlans = new BlockPlanComparator(observations, memory);
@@ -137,12 +175,23 @@ public final class McmcpRuntime implements McpRuntimePort {
     private final FinalizationRetryQueue finalizationRetries = new FinalizationRetryQueue();
     private final GoalContinuationSession goalContinuation = new GoalContinuationSession();
     private RoutineWallClockDeadline activeRoutineDeadline;
+    private AgentExecution agentExecution;
+    private PendingAgentAdmission pendingAgentAdmission;
+    private OmnidirectionalObserver agentObserver;
+    private LocalObservationVolume.Snapshot latestLocalObservation;
+    private MinecraftRecoveryGovernor recoveryGovernor;
+    private final RecoveryDescentTracker recoveryDescent = new RecoveryDescentTracker();
+    private LocalObservationProjector.CurrentSafety localSafety =
+            LocalObservationProjector.CurrentSafety.REPLAN;
+    private long knownTraversabilityRevision;
+    private boolean soundPlaybackTruncated;
     private long pauseStartedAtNanos;
 
     private UUID voiceRoutineId;
 
     private volatile WorldSessionTracker.Snapshot publishedSession = sessions.snapshot();
     private volatile boolean paused;
+    private volatile Thread clientThread;
     private volatile String endpointFaultCode;
     private volatile boolean shutdown;
 
@@ -215,6 +264,7 @@ public final class McmcpRuntime implements McpRuntimePort {
 
     public void onLoggingIn(Minecraft minecraft) {
         assertClientThread(minecraft);
+        clearAgentSessionState();
         stopForLifecycle(minecraft, "world_join");
         routines.clearSession("world_join");
         finalizationRetries.clear();
@@ -235,7 +285,12 @@ public final class McmcpRuntime implements McpRuntimePort {
 
     public void onLevelUnload(Minecraft minecraft) {
         assertClientThread(minecraft);
+        clearAgentSessionState();
         stopForLifecycle(minecraft, "level_or_dimension_change");
+        routines.clearSession("level_or_dimension_change");
+        finalizationRetries.clear();
+        goalContinuation.clear();
+        voiceRoutineId = null;
         ClientPredictionSignals.global().closeLevel(minecraft.level);
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
@@ -246,13 +301,14 @@ public final class McmcpRuntime implements McpRuntimePort {
         screenOwnership.clearLevel(minecraft.level);
         recipeCatalog.detachSession();
         sessions.suspendWorld();
-        goalContinuation.clear();
+        memory.detachSession();
         arming.lock("level_or_dimension_change");
         publishSession();
     }
 
     public void onLoggingOut(Minecraft minecraft) {
         assertClientThread(minecraft);
+        clearAgentSessionState();
         stopForLifecycle(minecraft, "disconnect");
         routines.clearSession("disconnect");
         finalizationRetries.clear();
@@ -275,7 +331,25 @@ public final class McmcpRuntime implements McpRuntimePort {
 
     public void onPlayerClone(Minecraft minecraft) {
         assertClientThread(minecraft);
-        inbox.requestEmergencyStop("player_respawn");
+        clearAgentSessionState();
+        stopForLifecycle(minecraft, "player_respawn");
+        routines.clearSession("player_respawn");
+        finalizationRetries.clear();
+        goalContinuation.clear();
+        voiceRoutineId = null;
+        ClientPredictionSignals.global().closeLevel(minecraft.level);
+        clearAutomationPortSessions(
+                stationaryBreakPort::clearSession,
+                semanticActionPort::clearSession,
+                applyBlockPlanPort::clearSession);
+        clearPhaseFivePortSessions();
+        reconciliationSignals.closeLevel(minecraft.level);
+        screenOwnership.clearLevel(minecraft.level);
+        recipeCatalog.detachSession();
+        sessions.invalidate();
+        memory.detachSession();
+        arming.lock("player_respawn");
+        publishSession();
     }
 
     public void onPauseChanged(boolean paused) {
@@ -289,21 +363,46 @@ public final class McmcpRuntime implements McpRuntimePort {
             pauseStartedAtNanos = nowNanos;
             inputRelease.releaseAll(minecraft);
         } else {
+            long pausedNanos = nonNegativeNanoElapsed(pauseStartedAtNanos, nowNanos);
             if (activeRoutineDeadline != null) {
-                activeRoutineDeadline = activeRoutineDeadline.shiftStart(nowNanos - pauseStartedAtNanos);
+                activeRoutineDeadline = activeRoutineDeadline.shiftStart(pausedNanos);
+            }
+            if (agentExecution != null) {
+                agentExecution.pausedNanos = saturatingNonNegativeAdd(
+                        agentExecution.pausedNanos, pausedNanos);
             }
             pauseStartedAtNanos = 0L;
         }
         this.paused = paused;
     }
 
+    /** May be called by NeoForge's audio source thread; it only performs a bounded enqueue. */
+    public void onSoundPlaybackStart(SoundInstance sound) {
+        soundPlaybacks.capturePlaybackStart(sound);
+    }
+
     public void onPreTick(Minecraft minecraft) {
         assertClientThread(minecraft);
+        clientThread = Thread.currentThread();
         if (shutdown) {
             return;
         }
-        synchronizeWorld(minecraft);
-        sessions.tick();
+        try {
+            recordPendingAgentMotion(minecraft);
+            synchronizeWorld(minecraft);
+            trackRecoveryDescent(minecraft);
+            sessions.tick();
+            synchronizeKnownTraversability(minecraft);
+            collectAgentObservation(minecraft);
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error(
+                    "MCMCP pre-tick observation failed; stopping automation before input reuse",
+                    failure);
+            inbox.requestEmergencyStop("observation_pipeline_failed");
+            inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
+            publishSession();
+            return;
+        }
         publishSession();
         if (publishedSession.worldReady()
                 && !localControlAvailable(minecraft, publishedSession)
@@ -315,6 +414,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         inbox.drainControlsPreTick(sessions.snapshot());
         retryPendingFinalizations(minecraft);
         tickActiveRoutine(minecraft);
+        tickAgentAction(minecraft);
         publishSession();
     }
 
@@ -459,7 +559,9 @@ public final class McmcpRuntime implements McpRuntimePort {
 
     private boolean automationActivityPending() {
         return routines.activeRoutineId().isPresent()
+                || agentActions.active().isPresent()
                 || inbox.hasPendingCommand("start_routine")
+                || inbox.hasPendingCommand("agent_start_action")
                 || finalizationRetries.hasPending()
                 || voiceRoutineId != null;
     }
@@ -500,6 +602,35 @@ public final class McmcpRuntime implements McpRuntimePort {
         clearAutomationPortSession("phase_five_router", phaseFivePort::clearSession);
     }
 
+    private void clearAgentSessionState() {
+        recoveryDescent.reset();
+        agentObservationFrames.clear();
+        soundClues.clear();
+        soundPlaybacks.clear();
+        soundPlaybackTruncated = false;
+        latestLocalObservation = null;
+        knownTraversability.clearWorld();
+        knownTraversabilityRevision = 0L;
+        localSafety = LocalObservationProjector.CurrentSafety.REPLAN;
+        try {
+            agentActions.terminateActive(new AgentActionStore.Failure(
+                    AgentActionStore.FailureCode.WORLD_CHANGED,
+                    true,
+                    List.of("world_boundary")));
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error("MCMCP action lifecycle termination failed", failure);
+        } finally {
+            try {
+                closeAgentControl(Minecraft.getInstance(), "world_boundary");
+            } finally {
+                agentActions.clear();
+            }
+        }
+        if (agentObserver != null) {
+            agentObserver.reset();
+        }
+    }
+
     /** Returns whether an active/pending start was stopped before the caller can continue. */
     static boolean runPriorityEventStopIfRequired(
             boolean workPending,
@@ -518,6 +649,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             return;
         }
         shutdown = true;
+        clearAgentSessionState();
         sessions.stopping();
         inbox.shutdown(minecraft, sessions.snapshot());
         routines.clearSession("client_shutdown");
@@ -552,26 +684,101 @@ public final class McmcpRuntime implements McpRuntimePort {
         }
         if (!context.canBeginWork()) {
             return java.util.concurrent.CompletableFuture.completedFuture(
-                    RuntimeReply.failure("timeout", "The client-thread deadline expired", true));
+                    RuntimeReply.failure("server_busy", "The client-thread deadline expired", true));
+        }
+        if (command instanceof StartAction start) {
+            return submitPreparedAgentStart(start, context);
         }
 
         var fence = publishedSession;
+        java.util.concurrent.Callable<RuntimeReply> work = () -> {
+            if (!context.canBeginWork()) {
+                throw new ClientCommandInbox.CommandTimeoutException(command.toolName());
+            }
+            return RuntimeReply.success(executeOnClientThread(command, context));
+        };
         var submitted = command instanceof CancelRoutine
-                ? inbox.submitControl(command.toolName(), fence.generation(), context.deadlineNanos(), () -> {
-                    if (!context.canBeginWork()) {
-                        throw new ClientCommandInbox.CommandTimeoutException(command.toolName());
+                || command instanceof CancelAction
+                || command instanceof ConfirmActionDelivery
+                || command instanceof AbandonActionDelivery
+                ? inbox.submitControlMapped(
+                        command.toolName(), fence.generation(), context.deadlineNanos(),
+                        work, McmcpRuntime::mapFailure)
+                : inbox.submitMapped(
+                        command.toolName(), fence.generation(), context.deadlineNanos(),
+                        work, McmcpRuntime::mapFailure, () -> false, ignored -> { });
+        return submitted;
+    }
+
+    private CompletionStage<RuntimeReply> submitPreparedAgentStart(
+            StartAction command, RuntimeCallContext context) {
+        if (Thread.currentThread() == clientThread) {
+            return CompletableFuture.completedFuture(RuntimeReply.failure(
+                    "internal_error", "Agent preflight cannot block the client thread", true));
+        }
+        final ActionDsl.Request request;
+        final PredicateRequirements predicateRequirements;
+        try {
+            request = ActionDslParser.parse(GSON.toJsonTree(command.arguments()).getAsJsonObject());
+            ActionDslValidator.validate(request);
+            predicateRequirements = predicateRequirements(request.program());
+        } catch (RuntimeException | LinkageError failure) {
+            return CompletableFuture.completedFuture(mapFailure(failure));
+        }
+        var fence = publishedSession;
+        var capture = inbox.submit(
+                command.toolName(),
+                fence.generation(),
+                context.deadlineNanos(),
+                () -> captureAgentAdmission(
+                        Minecraft.getInstance(), sessions.snapshot(), predicateRequirements));
+        final AgentAdmissionSnapshot snapshot;
+        try {
+            snapshot = capture.get(context.remainingNanos(), TimeUnit.NANOSECONDS);
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            capture.cancel(true);
+            context.cancel();
+            return CompletableFuture.completedFuture(RuntimeReply.failure(
+                    "server_busy", "Agent preflight was interrupted", true));
+        } catch (TimeoutException failure) {
+            capture.cancel(true);
+            context.cancel();
+            return CompletableFuture.completedFuture(RuntimeReply.failure(
+                    "server_busy", "Agent preflight capture timed out", true));
+        } catch (ExecutionException | RuntimeException failure) {
+            return CompletableFuture.completedFuture(mapFailure(failure));
+        }
+
+        final PreparedAgentAction prepared;
+        try {
+            requireLiveCall(context, command.toolName());
+            prepared = prepareAgentAction(request, snapshot, context);
+            requireLiveCall(context, command.toolName());
+        } catch (RuntimeException | LinkageError failure) {
+            return CompletableFuture.completedFuture(mapFailure(failure));
+        }
+
+        java.util.concurrent.Callable<RuntimeReply> commit = () -> {
+            if (!context.canBeginWork()) {
+                throw new ClientCommandInbox.CommandTimeoutException(command.toolName());
+            }
+            return RuntimeReply.success(commitAgentAction(
+                    Minecraft.getInstance(), sessions.snapshot(), prepared, context));
+        };
+        return inbox.submitMapped(
+                command.toolName(),
+                snapshot.session().generation(),
+                context.deadlineNanos(),
+                commit,
+                McmcpRuntime::mapFailure,
+                context::isCancelled,
+                reply -> {
+                    if (reply.successful()) {
+                        rollbackAbandonedAgentAction(
+                                reply.data(), "action_dispatch_abandoned");
                     }
-                    return executeOnClientThread(command, context);
-                })
-                : inbox.submit(command.toolName(), fence.generation(), context.deadlineNanos(), () -> {
-                    if (!context.canBeginWork()) {
-                        throw new ClientCommandInbox.CommandTimeoutException(command.toolName());
-                    }
-                    return executeOnClientThread(command, context);
                 });
-        return submitted.handle((data, failure) -> failure == null
-                        ? RuntimeReply.success(data)
-                        : mapFailure(failure));
     }
 
     private Map<String, Object> executeOnClientThread(
@@ -582,6 +789,17 @@ public final class McmcpRuntime implements McpRuntimePort {
         var session = sessions.snapshot();
         return switch (command) {
             case GetState ignored -> status(minecraft, session);
+            case GetObservation observation -> {
+                requireReady(session);
+                yield getAgentObservation(observation.arguments());
+            }
+            case StartAction action -> {
+                throw new AssertionError("agent_start_action must use worker preflight");
+            }
+            case GetAction action -> getAgentAction(action.arguments());
+            case CancelAction action -> cancelAgentAction(minecraft, action.arguments());
+            case ConfirmActionDelivery delivery -> confirmAgentActionDelivery(delivery.actionId());
+            case AbandonActionDelivery delivery -> abandonAgentActionDelivery(delivery.actionId());
             case GetSnapshot snapshot -> {
                 requireReady(session);
                 yield observations.getSnapshot(minecraft, session.clientTick(), snapshot.arguments());
@@ -636,6 +854,399 @@ public final class McmcpRuntime implements McpRuntimePort {
         return recipeCatalog.query(session.worldSessionId(), query, maxResults).toMap();
     }
 
+    private Map<String, Object> getAgentObservation(Map<String, Object> arguments) {
+        requireExactKeys(arguments, "agent_get_observation",
+                Set.of("schema_version", "frame_id", "kinds", "cursor", "limit"));
+        if (intArgument(arguments, "schema_version") != 1) {
+            throw new IllegalArgumentException("schema_version must be 1");
+        }
+        Object rawKinds = arguments.get("kinds");
+        if (!(rawKinds instanceof List<?> values)) {
+            throw new IllegalArgumentException("kinds must be an array");
+        }
+        var kinds = EnumSet.noneOf(ObservationKind.class);
+        for (Object value : values) {
+            if (!(value instanceof String wireName) || !kinds.add(ObservationKind.fromWireName(wireName))) {
+                throw new IllegalArgumentException("kinds must contain unique observation kinds");
+            }
+        }
+        Object rawCursor = arguments.get("cursor");
+        String cursor = rawCursor == null ? null : (String) rawCursor;
+        try {
+            return ObservationWireMapper.page(agentObservationFrames.page(
+                    stringArgument(arguments, "frame_id"),
+                    kinds,
+                    cursor,
+                    intArgument(arguments, "limit")));
+        } catch (ObservationStoreException failure) {
+            throw new RuntimeInvocationException(
+                    failure.code().name().toLowerCase(Locale.ROOT),
+                    failure.getMessage(),
+                    failure.code() != ObservationStoreException.Code.INVALID_CURSOR,
+                    Map.of());
+        }
+    }
+
+    private AgentAdmissionSnapshot captureAgentAdmission(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            PredicateRequirements predicateRequirements) {
+        assertClientThread(minecraft);
+        requireReady(session);
+        if (agentActions.active().isPresent() || routines.activeRoutineId().isPresent()) {
+            throw new RuntimeInvocationException(
+                    "task_busy", "Another action is already queued or running.", true, Map.of());
+        }
+        if (minecraft.isMultiplayerServer() && !multiplayerPolicyAllows(minecraft)) {
+            throw new RuntimeInvocationException(
+                    "multiplayer_not_allowed",
+                    "This local policy does not allow multiplayer automation.",
+                    false,
+                    Map.of());
+        }
+        var lock = arming.snapshot(session.worldSessionId());
+        if (lock.mode() != LocalArmingState.Mode.READY) {
+            throw new RuntimeInvocationException(
+                    "mcp_operation_disabled",
+                    "Enable MCP operation from the in-game Screen before starting an action.",
+                    true,
+                    Map.of());
+        }
+        if (localSafety != LocalObservationProjector.CurrentSafety.CONTINUE) {
+            throw new RuntimeInvocationException(
+                    "unsafe_state",
+                    "The Local Observation Volume does not permit action admission.",
+                    true,
+                    Map.of());
+        }
+        var map = requireAgentMap(session);
+        var player = Objects.requireNonNull(minecraft.player, "player");
+        var predicateSnapshot = AdmissionPolicySnapshot.capture(
+                policySnapshot(minecraft), predicateRequirements);
+        return new AgentAdmissionSnapshot(
+                session,
+                lock,
+                map,
+                playerPose(player, session.dimension()),
+                agentObservationFrames.latestFrame(),
+                localSafety,
+                predicateRequirements,
+                predicateSnapshot,
+                McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
+                minecraft.isMultiplayerServer(),
+                multiplayerPolicyAllows(minecraft),
+                reconciliationSignals.bindAndSnapshot(
+                        minecraft.level, session.worldSessionId())
+                        .positionCorrectionRevision());
+    }
+
+    private static boolean multiplayerPolicyAllows(Minecraft minecraft) {
+        if (!minecraft.isMultiplayerServer()) return true;
+        var server = minecraft.getCurrentServer();
+        return McmcpClientConfig.multiplayerDefault()
+                && server != null
+                && MultiplayerAllowlist.allows(
+                        minecraft.gameDirectory.toPath()
+                                .resolve("config/mcmcp/allowed-servers.json"),
+                        server.ip);
+    }
+
+    private PreparedAgentAction prepareAgentAction(
+            ActionDsl.Request request,
+            AgentAdmissionSnapshot snapshot,
+            RuntimeCallContext context) {
+        validatePredicateAvailability(request.program(), snapshot.predicateSnapshot());
+        var allowed = EnumSet.noneOf(ActionDsl.Capability.class);
+        if (snapshot.control().capabilities().contains("movement")) {
+            allowed.add(ActionDsl.Capability.MOVEMENT);
+        }
+        if (snapshot.control().capabilities().contains("camera")) {
+            allowed.add(ActionDsl.Capability.CAMERA);
+        }
+        final AgentPrimitivePlanner.Analysis analysis;
+        try {
+            analysis = AgentPrimitivePlanner.analyze(
+                    request.program(),
+                    snapshot.map(),
+                    agentPathfinder,
+                    snapshot.pose(),
+                    snapshot.frame(),
+                    snapshot.cameraDegreesPerTick(),
+                    context::canBeginWork);
+        } catch (AgentPrimitivePlanner.PlanningException failure) {
+            throw planningFailure(failure);
+        }
+        ActionDslCompiler.CompiledProgram program = ActionDslCompiler.compile(
+                request, analysis::worstCase, allowed);
+        return new PreparedAgentAction(snapshot, program, analysis);
+    }
+
+    private Map<String, Object> commitAgentAction(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            PreparedAgentAction prepared,
+            RuntimeCallContext context) {
+        assertClientThread(minecraft);
+        var captured = prepared.snapshot();
+        if (agentActions.active().isPresent() || routines.activeRoutineId().isPresent()) {
+            throw new RuntimeInvocationException(
+                    "task_busy", "Another action is already queued or running.", true, Map.of());
+        }
+        if (!admissionFenceCurrent(
+                minecraft,
+                session,
+                prepared,
+                LocalArmingState.Mode.READY,
+                captured.control().controlEpoch())) {
+            throw new RuntimeInvocationException(
+                    "unsafe_state",
+                    "The world, local control, pose, observation, or policy changed during preflight.",
+                    true,
+                    Map.of());
+        }
+        requireLiveCall(context, "agent_start_action");
+        if (!arming.beginAction(session.worldSessionId())) {
+            throw new RuntimeInvocationException(
+                    "mcp_operation_disabled",
+                    "The one-action READY lease is no longer available.",
+                    true,
+                    Map.of());
+        }
+        AgentActionStore.Accepted accepted = null;
+        try {
+            requireLiveCall(context, "agent_start_action");
+            accepted = agentActions.reserve(
+                    prepared.program(),
+                    Instant.now(),
+                    System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
+            pendingAgentAdmission = new PendingAgentAdmission(accepted.actionId(), prepared);
+            requireLiveCall(context, "agent_start_action");
+        } catch (RuntimeException | LinkageError failure) {
+            if (accepted == null) {
+                arming.lock("action_admission_failed");
+            } else {
+                rollbackAbandonedAgentAction(
+                        Map.of("action_id", accepted.actionId().toString()),
+                        "action_admission_abandoned");
+            }
+            throw failure;
+        }
+        return Map.of(
+                "schema_version", 1,
+                "action_id", accepted.actionId().toString(),
+                "state", "queued",
+                "accepted_at", accepted.acceptedAt().toString());
+    }
+
+    private static boolean sameAdmissionSession(
+            WorldSessionTracker.Snapshot captured,
+            WorldSessionTracker.Snapshot current) {
+        return current.worldReady()
+                && captured.generation() == current.generation()
+                && Objects.equals(captured.worldSessionId(), current.worldSessionId())
+                && Objects.equals(captured.dimension(), current.dimension());
+    }
+
+    private boolean admissionFenceCurrent(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            PreparedAgentAction prepared,
+            LocalArmingState.Mode expectedMode,
+            long expectedControlEpoch) {
+        var captured = prepared.snapshot();
+        var player = minecraft.player;
+        var lock = arming.snapshot(session.worldSessionId());
+        if (!sameAdmissionSession(captured.session(), session)
+                || player == null
+                || lock.mode() != expectedMode
+                || lock.controlEpoch() != expectedControlEpoch
+                || !lock.capabilities().equals(captured.control().capabilities())
+                || !playerPose(player, session.dimension()).equals(captured.pose())
+                || captured.localSafety() != LocalObservationProjector.CurrentSafety.CONTINUE
+                || localSafety != LocalObservationProjector.CurrentSafety.CONTINUE
+                || McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F
+                        != captured.cameraDegreesPerTick()
+                || minecraft.isMultiplayerServer() != captured.multiplayerServer()
+                || multiplayerPolicyAllows(minecraft) != captured.multiplayerAllowed()
+                || reconciliationSignals.bindAndSnapshot(
+                                minecraft.level, session.worldSessionId())
+                        .positionCorrectionRevision()
+                        != captured.positionCorrectionRevision()) {
+            return false;
+        }
+        final KnownTraversabilitySnapshot currentMap;
+        try {
+            currentMap = requireAgentMap(session);
+            validatePredicateAvailability(
+                    prepared.program().request().program(),
+                    AdmissionPolicySnapshot.capture(
+                            policySnapshot(minecraft), captured.predicateRequirements()));
+        } catch (RuntimeException | LinkageError changed) {
+            return false;
+        }
+        return routeDependenciesCurrent(currentMap, prepared.analysis().routeDependencies())
+                && prepared.analysis().knownTargets().stream().allMatch(target ->
+                        AgentPrimitivePlanner.knownTarget(
+                                currentMap, agentObservationFrames.latestFrame(), target));
+    }
+
+    static boolean routeDependenciesCurrent(
+            KnownTraversabilitySnapshot current,
+            Map<dev.aod.mcmcp.agent.navigation.TraversabilityEdge.Key,
+                    dev.aod.mcmcp.agent.navigation.TraversabilityEdge> required) {
+        for (var dependency : required.entrySet()) {
+            var currentEdge = current.edge(dependency.getKey()).orElse(null);
+            if (currentEdge == null || !sameOrSaferEdge(dependency.getValue(), currentEdge)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean sameOrSaferEdge(
+            dev.aod.mcmcp.agent.navigation.TraversabilityEdge captured,
+            dev.aod.mcmcp.agent.navigation.TraversabilityEdge current) {
+        return captured.worldSessionId().equals(current.worldSessionId())
+                && (captured.status() == current.status()
+                        || captured.status()
+                                == dev.aod.mcmcp.agent.navigation.TraversabilityEdge.Status.PROBE_ALLOWED
+                        && current.status()
+                                == dev.aod.mcmcp.agent.navigation.TraversabilityEdge.Status.CONFIRMED);
+    }
+
+    private void rollbackAbandonedAgentAction(
+            Map<String, Object> receipt, String reason) {
+        try {
+            Object rawActionId = receipt.get("action_id");
+            if (rawActionId instanceof String value) {
+                UUID actionId = UUID.fromString(value);
+                if (!agentActions.get(actionId).state().terminal()) {
+                    agentActions.cancel(actionId);
+                }
+            }
+        } finally {
+            closeAgentControl(Minecraft.getInstance(), reason);
+        }
+    }
+
+    private Map<String, Object> confirmAgentActionDelivery(UUID actionId) {
+        var pending = pendingAgentAdmission;
+        var minecraft = Minecraft.getInstance();
+        if (pending == null
+                || !pending.actionId().equals(actionId)
+                || !admissionFenceCurrent(
+                        minecraft,
+                        sessions.snapshot(),
+                        pending.prepared(),
+                        LocalArmingState.Mode.AGENT,
+                        pending.prepared().snapshot().control().controlEpoch() + 1L)) {
+            boolean abandoned;
+            try {
+                abandoned = agentActions.abandonUnconfirmed(
+                        actionId, "admission_changed_before_delivery_confirmation");
+            } catch (AgentActionStore.NotFoundException failure) {
+                abandoned = false;
+            }
+            if (abandoned) {
+                closeAgentControl(minecraft, "action_admission_changed");
+            }
+            return Map.of("action_id", actionId.toString(), "confirmed", false);
+        }
+        AgentActionStore.Confirmation confirmation;
+        try {
+            confirmation = agentActions.confirm(actionId, System.nanoTime());
+        } catch (AgentActionStore.NotFoundException failure) {
+            confirmation = AgentActionStore.Confirmation.STALE;
+        }
+        if (confirmation == AgentActionStore.Confirmation.EXPIRED) {
+            closeAgentControl(Minecraft.getInstance(), "action_delivery_confirmation_failed");
+        }
+        return Map.of(
+                "action_id", actionId.toString(),
+                "confirmed", confirmation.confirmed());
+    }
+
+    private Map<String, Object> abandonAgentActionDelivery(UUID actionId) {
+        boolean abandoned;
+        try {
+            abandoned = agentActions.abandonUnconfirmed(
+                    actionId, "http_response_not_delivered");
+        } catch (AgentActionStore.NotFoundException failure) {
+            abandoned = false;
+        }
+        if (abandoned) {
+            closeAgentControl(Minecraft.getInstance(), "action_delivery_abandoned");
+        }
+        return Map.of("action_id", actionId.toString(), "abandoned", abandoned);
+    }
+
+    private Map<String, Object> getAgentAction(Map<String, Object> arguments) {
+        requireExactKeys(arguments, "agent_get_action", Set.of("action_id"));
+        return actionPayload(agentActions.get(actionId(arguments)));
+    }
+
+    private Map<String, Object> cancelAgentAction(
+            Minecraft minecraft, Map<String, Object> arguments) {
+        requireExactKeys(arguments, "agent_cancel_action", Set.of("action_id"));
+        UUID requestedId = actionId(arguments);
+        boolean activeBeforeRequest = !agentActions.get(requestedId).state().terminal();
+        final AgentActionStore.CancelResult cancelled;
+        try {
+            cancelled = agentActions.cancel(requestedId);
+        } finally {
+            if (activeBeforeRequest) {
+                closeAgentControl(minecraft, "action_cancelled");
+            }
+        }
+        return Map.of(
+                "schema_version", 1,
+                "action_id", cancelled.actionId().toString(),
+                "cancel_requested", cancelled.cancelRequested(),
+                "state_at_request", cancelled.stateAtRequest().wireName());
+    }
+
+    private static UUID actionId(Map<String, Object> arguments) {
+        try {
+            return UUID.fromString(stringArgument(arguments, "action_id"));
+        } catch (IllegalArgumentException failure) {
+            throw new IllegalArgumentException("action_id must be a UUID", failure);
+        }
+    }
+
+    private static Map<String, Object> actionPayload(AgentActionStore.Snapshot snapshot) {
+        var progress = snapshot.progress();
+        var progressPayload = new LinkedHashMap<String, Object>();
+        progressPayload.put("phase", progress.phase().wireName());
+        progressPayload.put("current_node_id", progress.currentNodeId());
+        progressPayload.put("executed_nodes", progress.executedNodes());
+        progressPayload.put("total_node_upper_bound", progress.totalNodeUpperBound());
+        progressPayload.put("distance_travelled", progress.distanceTravelled());
+        progressPayload.put("camera_degrees", progress.cameraDegrees());
+        progressPayload.put("interactions", progress.interactions());
+        progressPayload.put("blocks_broken", progress.blocksBroken());
+        progressPayload.put("blocks_placed", progress.blocksPlaced());
+        progressPayload.put("ticks", progress.ticks());
+
+        Map<String, Object> failurePayload = null;
+        if (snapshot.failure() != null) {
+            failurePayload = Map.of(
+                    "code", snapshot.failure().code().wireName(),
+                    "recoverable", snapshot.failure().recoverable(),
+                    "evidence", snapshot.failure().evidence());
+        }
+        var result = new LinkedHashMap<String, Object>();
+        result.put("schema_version", 1);
+        result.put("action_id", snapshot.actionId().toString());
+        result.put("state", snapshot.state().wireName());
+        result.put("progress", progressPayload);
+        result.put("failure", failurePayload);
+        result.put("trace", snapshot.trace().stream().map(entry -> Map.<String, Object>of(
+                "tick", entry.tick(),
+                "event", entry.event(),
+                "detail", entry.detail())).toList());
+        return result;
+    }
+
     private static Set<String> availableCapabilities(Minecraft minecraft) {
         Objects.requireNonNull(minecraft, "minecraft");
         return AVAILABLE_CAPABILITIES;
@@ -652,7 +1263,9 @@ public final class McmcpRuntime implements McpRuntimePort {
             world = new LinkedHashMap<>();
             world.put("dimension", session.dimension());
             world.put("client_tick", session.clientTick());
-            world.put("world_revision", session.generation());
+            world.put("world_revision", reconciliationSignals
+                    .bindAndSnapshot(minecraft.level, session.worldSessionId())
+                    .worldRevision());
             world.put("position", Map.of(
                     "x", player.getX(),
                     "y", player.getY(),
@@ -689,7 +1302,30 @@ public final class McmcpRuntime implements McpRuntimePort {
                         "item", entry.getKey(),
                         "count", entry.getValue()))
                 .toList();
-        return statePayload(lock, paused, world, inventoryPayload, nowNanos, Instant.now());
+        var result = new LinkedHashMap<>(
+                statePayload(
+                        lock,
+                        paused,
+                        world,
+                        inventoryPayload,
+                        nowNanos,
+                        Instant.now(),
+                        minecraft.isMultiplayerServer() && multiplayerPolicyAllows(minecraft),
+                        McmcpClientConfig.visualRadiusBlocks(),
+                        McmcpClientConfig.raysPerTick()));
+        result.put("observation", agentObservationFrames.latestSummary()
+                .map(ObservationWireMapper::summary)
+                .orElse(null));
+        result.put("action", agentActions.latestSummary()
+                .map(summary -> {
+                    var value = new LinkedHashMap<String, Object>();
+                    value.put("action_id", summary.actionId().toString());
+                    value.put("state", summary.state().wireName());
+                    value.put("end_reason", summary.endReason());
+                    return value;
+                })
+                .orElse(null));
+        return result;
     }
 
     static Map<String, Object> statePayload(
@@ -699,6 +1335,23 @@ public final class McmcpRuntime implements McpRuntimePort {
             List<Map<String, Object>> inventory,
             long nowNanos,
             Instant wallClock) {
+        return statePayload(
+                lock, paused, world, inventory, nowNanos, wallClock,
+                false,
+                McmcpClientConfig.DEFAULT_VISUAL_RADIUS_BLOCKS,
+                McmcpClientConfig.DEFAULT_RAYS_PER_TICK);
+    }
+
+    static Map<String, Object> statePayload(
+            LocalArmingState.Snapshot lock,
+            boolean paused,
+            Map<String, Object> world,
+            List<Map<String, Object>> inventory,
+            long nowNanos,
+            Instant wallClock,
+            boolean multiplayerEnabled,
+            int visualRadiusBlocks,
+            int raysPerTick) {
         Objects.requireNonNull(lock, "lock");
         Objects.requireNonNull(inventory, "inventory");
         Objects.requireNonNull(wallClock, "wallClock");
@@ -719,15 +1372,15 @@ public final class McmcpRuntime implements McpRuntimePort {
                 "allowed_capabilities", List.of("movement", "camera"));
         var policy = Map.<String, Object>ofEntries(
                 Map.entry("profile", "survival_omnidirectional"),
-                Map.entry("multiplayer_enabled", false),
+                Map.entry("multiplayer_enabled", multiplayerEnabled),
                 Map.entry("max_duration_ms", 30_000),
                 Map.entry("max_ticks", 600),
                 Map.entry("max_distance_blocks", 32),
                 Map.entry("max_camera_degrees", 360),
-                Map.entry("omnidirectional_visual_radius_blocks", 16),
+                Map.entry("omnidirectional_visual_radius_blocks", visualRadiusBlocks),
                 Map.entry("local_observation_radius_blocks", 4),
                 Map.entry("omnidirectional_direction_count", 2_048),
-                Map.entry("omnidirectional_rays_per_tick", 256),
+                Map.entry("omnidirectional_rays_per_tick", raysPerTick),
                 Map.entry("max_recent_sound_clues", 32),
                 Map.entry("sound_clue_ttl_ticks", 600),
                 Map.entry("action_dsl", actionDsl));
@@ -1500,6 +2153,1545 @@ public final class McmcpRuntime implements McpRuntimePort {
                 "already_terminal", alreadyTerminal);
     }
 
+    private void tickAgentAction(Minecraft minecraft) {
+        var active = agentActions.active();
+        if (active.isEmpty()) {
+            closeAgentPrimitiveExecutor();
+            closeRecoveryGovernor();
+            agentExecution = null;
+            return;
+        }
+        var action = active.orElseThrow();
+        if (action.state() == AgentActionStore.State.UNCONFIRMED) {
+            if (agentActions.expireUnconfirmed(System.nanoTime())) {
+                closeAgentControl(minecraft, "action_delivery_confirmation_timeout");
+            }
+            return;
+        }
+        var session = sessions.snapshot();
+        try {
+            if (agentExecution == null || !agentExecution.actionId.equals(action.actionId())) {
+                if (minecraft.player == null || !session.worldReady()) {
+                    failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true, "world_unavailable");
+                    return;
+                }
+                var pending = pendingAgentAdmission;
+                if (pending == null
+                        || !pending.actionId().equals(action.actionId())
+                        || !admissionFenceCurrent(
+                                minecraft,
+                                session,
+                                pending.prepared(),
+                                LocalArmingState.Mode.AGENT,
+                                pending.prepared().snapshot().control().controlEpoch() + 1L)) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.WORLD_CHANGED,
+                            true,
+                            "admission_changed_before_execution");
+                    return;
+                }
+                long startedAtNanos = System.nanoTime();
+                var nextExecution = new AgentExecution(
+                        action,
+                        session.worldSessionId(),
+                        startedAtNanos,
+                        minecraft.player.position(),
+                        minecraft.player.getYRot(),
+                        minecraft.player.getXRot(),
+                        McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
+                        reconciliationSignals.bindAndSnapshot(
+                                        minecraft.level, session.worldSessionId())
+                                .positionCorrectionRevision());
+                agentActions.markRunning(action.actionId());
+                agentExecution = nextExecution;
+                pendingAgentAdmission = null;
+                if (paused) {
+                    pauseStartedAtNanos = startedAtNanos;
+                }
+            }
+            if (paused) {
+                inputRelease.releaseAll(minecraft);
+                return;
+            }
+            if (!session.worldReady()
+                    || !Objects.equals(agentExecution.worldSessionId, session.worldSessionId())) {
+                failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true, "world_session_changed");
+                return;
+            }
+            var control = arming.snapshot(session.worldSessionId());
+            if (control.mode() != LocalArmingState.Mode.AGENT
+                    && control.mode() != LocalArmingState.Mode.RECOVERING) {
+                failAgentAction(AgentActionStore.FailureCode.USER_DISABLED, true, "local_control_locked");
+                return;
+            }
+
+            long correctionRevision = reconciliationSignals.bindAndSnapshot(
+                    minecraft.level, session.worldSessionId()).positionCorrectionRevision();
+            if (correctionRevision > agentExecution.positionCorrectionRevision) {
+                long previousCorrectionRevision = agentExecution.positionCorrectionRevision;
+                agentExecution.positionCorrectionRevision = correctionRevision;
+                agentExecution.lastPosition = minecraft.player.position();
+                agentExecution.lastYaw = minecraft.player.getYRot();
+                agentExecution.lastPitch = minecraft.player.getXRot();
+                boolean repeated = repeatedPositionCorrection(
+                        previousCorrectionRevision,
+                        correctionRevision,
+                        agentExecution.positionCorrections);
+                agentExecution.positionCorrections++;
+                if (repeated) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                            true,
+                            "repeated_position_correction");
+                    return;
+                }
+                var correctionProgress = agentActions.get(action.actionId()).progress();
+                agentActions.recordTick(action.actionId());
+                requestAgentReplan(
+                        correctionProgress.ticks() + 1L, "server_position_correction");
+                return;
+            }
+
+            long now = System.nanoTime();
+            var player = minecraft.player;
+            recordAgentMotion(action.actionId(), player);
+            if (agentActions.get(action.actionId()).progress().motionOverflowed()) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                        false,
+                        "fixed_motion_contract");
+                return;
+            }
+            var recovery = tickAgentRecovery(minecraft, session, now);
+            switch (recovery.state()) {
+                case RECOVERING, PAUSED -> {
+                    agentActions.recordTick(action.actionId());
+                    return;
+                }
+                case RECOVERED -> {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.SAFETY_RECOVERED,
+                            true,
+                            recovery.reason().name().toLowerCase(Locale.ROOT));
+                    return;
+                }
+                case EXHAUSTED -> {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.RECOVERY_EXHAUSTED,
+                            false,
+                            recovery.reason().name().toLowerCase(Locale.ROOT));
+                    return;
+                }
+                case STOPPED -> {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.EMERGENCY_STOP,
+                            true,
+                            recovery.reason().name().toLowerCase(Locale.ROOT));
+                    return;
+                }
+                case IDLE, REPLAN_REQUIRED -> { }
+            }
+
+            var usedBeforeTick = agentActions.get(action.actionId()).progress();
+            boolean movementRejected = AgentInputState.global().consumeGoalMovementRejection();
+            long durationLimit = Duration.ofMillis(
+                    action.program().effectiveBudget().maxDurationMillis()).toNanos();
+            if (activeElapsedNanos(agentExecution, now) >= durationLimit) {
+                failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "duration");
+                return;
+            }
+            if (usedBeforeTick.ticks() >= action.program().effectiveBudget().maxTicks()) {
+                failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "ticks");
+                return;
+            }
+            if (usedBeforeTick.motionOverflowed()
+                    || usedBeforeTick.distanceTravelled()
+                            > action.program().effectiveBudget().maxDistanceBlocks()
+                    || usedBeforeTick.cameraDegrees()
+                            > action.program().effectiveBudget().maxCameraDegrees()) {
+                failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "motion");
+                return;
+            }
+            agentActions.recordTick(action.actionId());
+            long actionTick = usedBeforeTick.ticks() + 1L;
+            if (agentExecution.replanning
+                    && agentExecution.replanHeartbeatPending
+                    && !movementRejected) {
+                agentActions.setPhase(
+                        action.actionId(), AgentActionStore.Phase.EXECUTING,
+                        "replan_heartbeat_verified");
+                agentExecution.replanning = false;
+                agentExecution.replanHeartbeatPending = false;
+                agentExecution.replanDeadlineTick = 0L;
+            }
+            if (movementRejected) {
+                requestAgentReplan(actionTick, "unverified_actual_movement");
+                return;
+            }
+
+            if (agentExecution.primitive == null
+                    && !advanceAgentProgram(minecraft, usedBeforeTick)) {
+                return;
+            }
+            if (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
+                    || localSafety == LocalObservationProjector.CurrentSafety.REPLAN) {
+                if (agentExecution.primitive instanceof ActionDsl.WaitTicks) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.PATH_BLOCKED,
+                            true,
+                            "local_safety_changed_during_wait");
+                } else {
+                    requestAgentReplan(actionTick, "local_safety_changed");
+                }
+                return;
+            }
+            if (agentExecution.primitive instanceof ActionDsl.WaitTicks) {
+                if (occurrenceBudgetExceeded(
+                        agentActions.get(action.actionId()).progress(),
+                        agentExecution)) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                            false,
+                            "primitive_budget");
+                    return;
+                }
+                if (--agentExecution.waitTicksRemaining == 0) {
+                    agentActions.completeNode(action.actionId());
+                    agentExecution.primitive = null;
+                    advanceAgentProgram(
+                            minecraft, agentActions.get(action.actionId()).progress());
+                }
+                return;
+            }
+            if (agentExecution.replanning
+                    && replanDeadlineReached(actionTick, agentExecution.replanDeadlineTick)) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.PATH_BLOCKED,
+                        true,
+                        "replan_deadline_exhausted");
+                return;
+            }
+            if (agentExecution.replanNotBeforeTick > actionTick) {
+                return;
+            }
+            if (occurrenceBudgetExceeded(
+                    agentActions.get(action.actionId()).progress(),
+                    agentExecution)) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                        false,
+                        "primitive_budget");
+                return;
+            }
+
+            KnownTraversabilitySnapshot map = requireAgentMap(session);
+            if (!agentExecution.primitiveExecutor.active()
+                    && !beginAgentPrimitive(minecraft, action, map, usedBeforeTick)) {
+                return;
+            }
+            if (activeElapsedNanos(agentExecution, System.nanoTime()) >= durationLimit) {
+                failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "duration");
+                return;
+            }
+            final MinecraftActionPrimitiveExecutor.TickResult result;
+            try {
+                result = agentExecution.primitiveExecutor.tick(
+                        minecraft,
+                        map,
+                        LocalObservationVolume.global(),
+                        remainingDistance(
+                                usedBeforeTick,
+                                action.program().effectiveBudget(),
+                                agentExecution),
+                        remainingCameraDegrees(
+                                usedBeforeTick,
+                                action.program().effectiveBudget(),
+                                agentExecution),
+                        actionTick,
+                        () -> activeElapsedNanos(agentExecution, System.nanoTime())
+                                < durationLimit);
+            } finally {
+                recordAgentMotion(action.actionId(), player);
+            }
+            AgentInputState.global().capMovementValidity(actionMovementDeadline(
+                    agentExecution, durationLimit, System.nanoTime()));
+            if (activeElapsedNanos(agentExecution, System.nanoTime()) >= durationLimit) {
+                failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "duration");
+                return;
+            }
+            var usedAfterTick = agentActions.get(action.actionId()).progress();
+            if (motionBudgetExceededAfterPrimitive(
+                    usedAfterTick,
+                    action.program().effectiveBudget(),
+                    agentExecution.primitive,
+                    result.status())
+                    || occurrenceBudgetExceededAfterPrimitive(
+                            usedAfterTick,
+                            agentExecution,
+                            result.status())) {
+                failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "motion");
+                return;
+            }
+            switch (result.status()) {
+                case RUNNING -> {
+                    if (agentExecution.replanning
+                            && result.reason()
+                            != MinecraftActionPrimitiveExecutor.Reason.PROBE_MICRO_STEP) {
+                        agentExecution.replanHeartbeatPending = true;
+                    }
+                }
+                case SUCCEEDED -> {
+                    closeAgentPrimitiveExecutor();
+                    agentActions.completeNode(action.actionId());
+                    agentExecution.primitive = null;
+                    agentExecution.replanning = false;
+                    agentExecution.replanNotBeforeTick = 0L;
+                    agentExecution.replanDeadlineTick = 0L;
+                    advanceAgentProgram(minecraft, usedAfterTick);
+                }
+                case REPLAN_REQUIRED -> requestAgentReplan(
+                        actionTick, result.reason().name().toLowerCase(Locale.ROOT));
+                case FAILED -> failAgentAction(
+                        result.reason() == MinecraftActionPrimitiveExecutor.Reason.WORLD_UNAVAILABLE
+                                        || result.reason()
+                                        == MinecraftActionPrimitiveExecutor.Reason.WORLD_BOUNDARY_CHANGED
+                                ? AgentActionStore.FailureCode.WORLD_CHANGED
+                                : AgentActionStore.FailureCode.INTERNAL_ERROR,
+                        false,
+                        result.reason().name().toLowerCase(Locale.ROOT));
+            }
+        } catch (AgentPrimitivePlanner.PlanningException failure) {
+            failAgentAction(
+                    AgentActionStore.FailureCode.PATH_BLOCKED,
+                    true,
+                    failure.code().name().toLowerCase(Locale.ROOT));
+        } catch (ActionDslException failure) {
+            var code = failure.code() == ActionDslException.Code.PREDICATE_UNAVAILABLE
+                    ? AgentActionStore.FailureCode.PREDICATE_UNAVAILABLE
+                    : AgentActionStore.FailureCode.INTERNAL_ERROR;
+            failAgentAction(code, failure.code() == ActionDslException.Code.PREDICATE_UNAVAILABLE,
+                    failure.code().name().toLowerCase(Locale.ROOT));
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error("MCMCP Action DSL execution failed", failure);
+            failAgentAction(AgentActionStore.FailureCode.INTERNAL_ERROR, false, "runtime_exception");
+        }
+    }
+
+    /** Returns false when the action became terminal while advancing control nodes. */
+    private boolean advanceAgentProgram(
+            Minecraft minecraft, AgentActionStore.Progress occurrenceBaseline) {
+        ActionProgramCursor.Advance advance = agentExecution.cursor.next(policySnapshot(minecraft));
+        for (String controlNode : advance.completedControlNodeIds()) {
+            agentActions.beginNode(agentExecution.actionId, controlNode);
+            agentActions.completeNode(agentExecution.actionId);
+        }
+        if (advance.finished()) {
+            try {
+                agentActions.succeed(agentExecution.actionId);
+            } finally {
+                closeAgentControl(minecraft, "action_completed");
+            }
+            return false;
+        }
+        agentExecution.primitive = advance.primitive();
+        agentExecution.occurrenceBaseline = Objects.requireNonNull(
+                occurrenceBaseline, "occurrenceBaseline");
+        agentExecution.occurrenceLimit = agentExecution.program.primitiveCostBounds()
+                .get(advance.primitive().id());
+        if (agentExecution.occurrenceLimit == null) {
+            throw new IllegalStateException("Compiled primitive cost bound is unavailable");
+        }
+        agentActions.beginNode(agentExecution.actionId, advance.primitive().id());
+        if (advance.primitive() instanceof ActionDsl.WaitTicks wait) {
+            agentExecution.waitTicksRemaining = wait.ticks();
+        }
+        return true;
+    }
+
+    private boolean beginAgentPrimitive(
+            Minecraft minecraft,
+            AgentActionStore.Active action,
+            KnownTraversabilitySnapshot map,
+            AgentActionStore.Progress progressBeforeTick) {
+        var player = Objects.requireNonNull(minecraft.player, "player");
+        ActionDslCompiler.Cost cost;
+        try {
+            if (agentExecution.primitive instanceof ActionDsl.NavigateToKnown navigate) {
+                RoutePlan route = AgentPrimitivePlanner.requireRoute(
+                        map,
+                        agentPathfinder,
+                        playerCell(player, map.dimension()),
+                        navigate.target());
+                cost = AgentPrimitivePlanner.navigationCost(
+                        route, playerPose(player, map.dimension()));
+                if (!fitsRemainingBudget(
+                        progressBeforeTick,
+                        action.program().effectiveBudget(),
+                        cost,
+                        activeElapsedNanos(agentExecution, System.nanoTime()))) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "replanned_route");
+                    return false;
+                }
+                if (!fitsOccurrenceRemaining(
+                        progressBeforeTick, agentExecution, cost)) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                            false,
+                            "primitive_replanned_route");
+                    return false;
+                }
+                agentExecution.primitiveExecutor.beginNavigate(route, navigate.tolerance());
+            } else if (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition face) {
+                var target = AgentPrimitivePlanner.requireKnownFaceTarget(
+                        map, agentObservationFrames.latestFrame(), face.target());
+                cost = AgentPrimitivePlanner.faceCost(
+                        playerPose(player, map.dimension()),
+                        face.target(),
+                        McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
+                if (!fitsRemainingBudget(
+                        progressBeforeTick,
+                        action.program().effectiveBudget(),
+                        cost,
+                        activeElapsedNanos(agentExecution, System.nanoTime()))) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "face_target");
+                    return false;
+                }
+                if (!fitsOccurrenceRemaining(
+                        progressBeforeTick, agentExecution, cost)) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                            false,
+                            "primitive_face_target");
+                    return false;
+                }
+                agentExecution.primitiveExecutor.beginFace(target, cost.ticks());
+            } else {
+                failAgentAction(
+                        AgentActionStore.FailureCode.INTERNAL_ERROR, false, "primitive_unavailable");
+                return false;
+            }
+        } catch (AgentPrimitivePlanner.PlanningException unavailable) {
+            long actionTick = progressBeforeTick.ticks() + 1L;
+            if (agentExecution.replanning
+                    && !replanDeadlineReached(
+                            actionTick, agentExecution.replanDeadlineTick)) {
+                return false;
+            }
+            throw unavailable;
+        }
+        agentExecution.replanNotBeforeTick = 0L;
+        return true;
+    }
+
+    private void requestAgentReplan(long actionTick, String reason) {
+        closeAgentPrimitiveExecutor();
+        agentExecution.replanHeartbeatPending = false;
+        agentExecution.replanNotBeforeTick = actionTick + 1L;
+        if (agentExecution.replanning) return;
+        agentActions.setPhase(
+                agentExecution.actionId, AgentActionStore.Phase.REPLANNING, reason);
+        agentExecution.replanning = true;
+        agentExecution.replanDeadlineTick = actionTick + 20L;
+    }
+
+    private MinecraftRecoveryGovernor.TickResult tickAgentRecovery(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            long nowNanos) {
+        var player = Objects.requireNonNull(minecraft.player, "player");
+        var map = requireAgentMap(session);
+        var local = Objects.requireNonNull(
+                latestLocalObservation, "local safety observation");
+        if (local.worldRevision() != map.worldRevision()) {
+            throw new IllegalStateException("local safety observation crossed a world revision");
+        }
+        if (recoveryGovernor == null) {
+            recoveryGovernor = new MinecraftRecoveryGovernor(minecraft);
+        }
+        long activeTick = agentActions.get(agentExecution.actionId).progress().ticks() + 1L;
+        var evidence = recoveryEvidence(player, session, map, local, activeTick);
+        return recoveryGovernor.tick(
+                evidence,
+                recoveryCandidates(
+                        minecraft, player, map, evidence, recoveryGovernor.recovering()),
+                MinecraftRecoveryGovernor.StopSignal.NONE,
+                () -> preemptAgentGoalForRecovery(session),
+                nowNanos);
+    }
+
+    private void preemptAgentGoalForRecovery(WorldSessionTracker.Snapshot session) {
+        closeAgentPrimitiveExecutor();
+        if (agentExecution.goalPreempted) return;
+        if (!arming.beginRecovery(session.worldSessionId())) {
+            throw new IllegalStateException("recovery could not acquire the local control lease");
+        }
+        agentActions.setPhase(
+                agentExecution.actionId,
+                AgentActionStore.Phase.RECOVERING,
+                "goal_preempted_for_safety");
+        agentExecution.goalPreempted = true;
+    }
+
+    private MinecraftRecoveryGovernor.Evidence recoveryEvidence(
+            net.minecraft.client.player.LocalPlayer player,
+            WorldSessionTracker.Snapshot session,
+            KnownTraversabilitySnapshot map,
+            LocalObservationVolume.Snapshot local,
+            long activeTick) {
+        var current = local.current();
+        var damageSource = player.getLastDamageSource();
+        MinecraftRecoveryGovernor.DamageKind damageKind;
+        if (damageSource == null) {
+            damageKind = MinecraftRecoveryGovernor.DamageKind.NONE;
+        } else if (damageSource.getEntity() != null || damageSource.getDirectEntity() != null) {
+            damageKind = MinecraftRecoveryGovernor.DamageKind.ATTACK;
+        } else if (damageSource.is(DamageTypeTags.IS_FIRE)) {
+            damageKind = MinecraftRecoveryGovernor.DamageKind.FIRE;
+        } else if (damageSource.is(DamageTypeTags.IS_DROWNING)) {
+            damageKind = MinecraftRecoveryGovernor.DamageKind.DROWNING;
+        } else if (damageSource.is(DamageTypeTags.IS_FALL)) {
+            damageKind = MinecraftRecoveryGovernor.DamageKind.FALL;
+        } else {
+            damageKind = MinecraftRecoveryGovernor.DamageKind.OTHER;
+        }
+        var landingEvidence = LocalObservationVolume.global()
+                .directLanding(player, map.worldRevision());
+        MinecraftRecoveryGovernor.Landing landing = current.fluid()
+                == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.LAVA
+                ? MinecraftRecoveryGovernor.Landing.KNOWN_LAVA
+                : switch (landingEvidence) {
+                    case SAFE -> MinecraftRecoveryGovernor.Landing.KNOWN_SAFE;
+                    case LAVA -> MinecraftRecoveryGovernor.Landing.KNOWN_LAVA;
+                    case VOID -> MinecraftRecoveryGovernor.Landing.KNOWN_VOID;
+                    case UNKNOWN -> MinecraftRecoveryGovernor.Landing.UNKNOWN;
+                };
+        double descentSinceGround = recoveryDescent.current(
+                player, player.level(), session.worldSessionId());
+        RecoveryHazards hazards = recoveryHazards(
+                current.fluid(),
+                current.hazard(),
+                player.isInLava(),
+                player.onGround(),
+                player.getDeltaMovement().y,
+                descentSinceGround);
+        return new MinecraftRecoveryGovernor.Evidence(
+                activeTick,
+                session.worldSessionId(),
+                map.dimension(),
+                map.worldRevision(),
+                new MinecraftRecoveryGovernor.Position(
+                        player.getX(), player.getY(), player.getZ()),
+                player.getHealth(),
+                player.getAbsorptionAmount(),
+                player.getAirSupply(),
+                player.isUnderWater(),
+                effectDuration(player, MobEffects.WATER_BREATHING),
+                player.isOnFire(),
+                Math.max(0, player.getRemainingFireTicks()),
+                effectDuration(player, MobEffects.FIRE_RESISTANCE),
+                hazards.inLava(),
+                current.suffocation(),
+                hazards.onGround(),
+                hazards.verticalVelocity(),
+                hazards.descentSinceGround(),
+                landing,
+                player.hurtTime > 0 ? activeTick : -1L,
+                damageKind,
+                false,
+                current.fluid()
+                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.WATER,
+                current.hazard()
+                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.FIRE_DAMAGE
+                        || current.hazard()
+                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.CONTACT_DAMAGE
+                        || current.hazard()
+                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.FREEZING);
+    }
+
+    static RecoveryHazards recoveryHazards(
+            dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid fluid,
+            dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard hazard,
+            boolean playerInLava,
+            boolean onGround,
+            double verticalVelocity,
+            double descentSinceGround) {
+        boolean observedDangerousFall = hazard
+                == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.FALL;
+        return new RecoveryHazards(
+                playerInLava
+                        || fluid == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.LAVA,
+                onGround && !observedDangerousFall,
+                observedDangerousFall ? Math.min(-0.081D, verticalVelocity) : verticalVelocity,
+                observedDangerousFall
+                        ? Math.max(Math.nextUp(3.0D), descentSinceGround)
+                        : Math.max(0.0D, descentSinceGround));
+    }
+
+    record RecoveryHazards(
+            boolean inLava,
+            boolean onGround,
+            double verticalVelocity,
+            double descentSinceGround) {
+    }
+
+    private void trackRecoveryDescent(Minecraft minecraft) {
+        var session = sessions.snapshot();
+        if (!session.worldReady() || minecraft.player == null || minecraft.level == null) {
+            recoveryDescent.reset();
+            return;
+        }
+        long correctionRevision = reconciliationSignals.bindAndSnapshot(
+                minecraft.level, session.worldSessionId()).positionCorrectionRevision();
+        recoveryDescent.update(
+                minecraft.player,
+                minecraft.level,
+                session.worldSessionId(),
+                minecraft.player.getY(),
+                minecraft.player.onGround(),
+                minecraft.player.isInWater() && !minecraft.player.isInLava(),
+                correctionRevision);
+    }
+
+    static final class RecoveryDescentTracker {
+        private Object playerIdentity;
+        private Object levelIdentity;
+        private UUID worldSessionId;
+        private double lastY;
+        private double descent;
+        private long correctionRevision;
+
+        double update(
+                Object player,
+                Object level,
+                UUID sessionId,
+                double y,
+                boolean onGround,
+                boolean safeWater,
+                long currentCorrectionRevision) {
+            Objects.requireNonNull(player, "player");
+            Objects.requireNonNull(level, "level");
+            Objects.requireNonNull(sessionId, "sessionId");
+            if (!Double.isFinite(y) || currentCorrectionRevision < 0L) {
+                throw new IllegalArgumentException("descent evidence must be finite");
+            }
+            if (playerIdentity != player
+                    || levelIdentity != level
+                    || !sessionId.equals(worldSessionId)) {
+                playerIdentity = player;
+                levelIdentity = level;
+                worldSessionId = sessionId;
+                lastY = y;
+                descent = 0.0D;
+                correctionRevision = currentCorrectionRevision;
+            } else {
+                if (currentCorrectionRevision == correctionRevision) {
+                    descent += Math.max(0.0D, lastY - y);
+                }
+                lastY = y;
+                correctionRevision = currentCorrectionRevision;
+            }
+            if (onGround || safeWater) {
+                descent = 0.0D;
+            }
+            return descent;
+        }
+
+        double current(Object player, Object level, UUID sessionId) {
+            return playerIdentity == player
+                            && levelIdentity == level
+                            && Objects.equals(worldSessionId, sessionId)
+                    ? descent : 0.0D;
+        }
+
+        void reset() {
+            playerIdentity = null;
+            levelIdentity = null;
+            worldSessionId = null;
+            lastY = 0.0D;
+            descent = 0.0D;
+            correctionRevision = 0L;
+        }
+    }
+
+    record PredicateRequirements(
+            Set<ActionDsl.NumericField> numericFields,
+            Set<ActionDsl.BooleanField> booleanFields,
+            Set<String> inventoryItems,
+            Set<String> statusEffects) {
+        PredicateRequirements {
+            numericFields = Set.copyOf(Objects.requireNonNull(numericFields, "numericFields"));
+            booleanFields = Set.copyOf(Objects.requireNonNull(booleanFields, "booleanFields"));
+            inventoryItems = Set.copyOf(Objects.requireNonNull(inventoryItems, "inventoryItems"));
+            statusEffects = Set.copyOf(Objects.requireNonNull(statusEffects, "statusEffects"));
+        }
+    }
+
+    private record AdmissionPolicySnapshot(
+            Map<ActionDsl.NumericField, Double> numericValues,
+            Map<ActionDsl.BooleanField, Boolean> booleanValues,
+            Map<String, Integer> inventoryCounts,
+            Map<String, Boolean> statusEffectValues) implements PolicySnapshot {
+        private AdmissionPolicySnapshot {
+            numericValues = Map.copyOf(Objects.requireNonNull(numericValues, "numericValues"));
+            booleanValues = Map.copyOf(Objects.requireNonNull(booleanValues, "booleanValues"));
+            inventoryCounts = Map.copyOf(
+                    Objects.requireNonNull(inventoryCounts, "inventoryCounts"));
+            statusEffectValues = Map.copyOf(
+                    Objects.requireNonNull(statusEffectValues, "statusEffectValues"));
+        }
+
+        static AdmissionPolicySnapshot capture(
+                PolicySnapshot source, PredicateRequirements requirements) {
+            var numeric = new EnumMap<ActionDsl.NumericField, Double>(ActionDsl.NumericField.class);
+            for (var field : requirements.numericFields()) {
+                var value = source.numeric(field);
+                if (value.isPresent()) numeric.put(field, value.getAsDouble());
+            }
+            var bools = new EnumMap<ActionDsl.BooleanField, Boolean>(ActionDsl.BooleanField.class);
+            for (var field : requirements.booleanFields()) {
+                source.bool(field).ifPresent(value -> bools.put(field, value));
+            }
+            var items = new LinkedHashMap<String, Integer>();
+            for (var item : requirements.inventoryItems()) {
+                var value = source.inventoryCount(item);
+                if (value.isPresent()) items.put(item, value.getAsInt());
+            }
+            var effects = new LinkedHashMap<String, Boolean>();
+            for (var effect : requirements.statusEffects()) {
+                source.hasStatusEffect(effect).ifPresent(value -> effects.put(effect, value));
+            }
+            return new AdmissionPolicySnapshot(numeric, bools, items, effects);
+        }
+
+        @Override
+        public OptionalDouble numeric(ActionDsl.NumericField field) {
+            Double value = numericValues.get(field);
+            return value == null ? OptionalDouble.empty() : OptionalDouble.of(value);
+        }
+
+        @Override
+        public Optional<Boolean> bool(ActionDsl.BooleanField field) {
+            return Optional.ofNullable(booleanValues.get(field));
+        }
+
+        @Override
+        public OptionalInt inventoryCount(String item) {
+            Integer value = inventoryCounts.get(item);
+            return value == null ? OptionalInt.empty() : OptionalInt.of(value);
+        }
+
+        @Override
+        public Optional<Boolean> hasStatusEffect(String effect) {
+            return Optional.ofNullable(statusEffectValues.get(effect));
+        }
+    }
+
+    private record AgentAdmissionSnapshot(
+            WorldSessionTracker.Snapshot session,
+            LocalArmingState.Snapshot control,
+            KnownTraversabilitySnapshot map,
+            AgentPrimitivePlanner.Pose pose,
+            Optional<ObservationFrame> frame,
+            LocalObservationProjector.CurrentSafety localSafety,
+            PredicateRequirements predicateRequirements,
+            AdmissionPolicySnapshot predicateSnapshot,
+            float cameraDegreesPerTick,
+            boolean multiplayerServer,
+            boolean multiplayerAllowed,
+            long positionCorrectionRevision) {
+        private AgentAdmissionSnapshot {
+            Objects.requireNonNull(session, "session");
+            Objects.requireNonNull(control, "control");
+            Objects.requireNonNull(map, "map");
+            Objects.requireNonNull(pose, "pose");
+            frame = Objects.requireNonNull(frame, "frame");
+            Objects.requireNonNull(localSafety, "localSafety");
+            Objects.requireNonNull(predicateRequirements, "predicateRequirements");
+            Objects.requireNonNull(predicateSnapshot, "predicateSnapshot");
+            if (positionCorrectionRevision < 0L) {
+                throw new IllegalArgumentException(
+                        "positionCorrectionRevision must be non-negative");
+            }
+        }
+    }
+
+    private record PreparedAgentAction(
+            AgentAdmissionSnapshot snapshot,
+            ActionDslCompiler.CompiledProgram program,
+            AgentPrimitivePlanner.Analysis analysis) {
+        private PreparedAgentAction {
+            Objects.requireNonNull(snapshot, "snapshot");
+            Objects.requireNonNull(program, "program");
+            Objects.requireNonNull(analysis, "analysis");
+        }
+    }
+
+    private record PendingAgentAdmission(UUID actionId, PreparedAgentAction prepared) {
+        private PendingAgentAdmission {
+            Objects.requireNonNull(actionId, "actionId");
+            Objects.requireNonNull(prepared, "prepared");
+        }
+    }
+
+    private static int effectDuration(
+            net.minecraft.client.player.LocalPlayer player,
+            Holder<net.minecraft.world.effect.MobEffect> effect) {
+        var instance = player.getEffect(effect);
+        return instance == null ? 0
+                : instance.isInfiniteDuration()
+                ? Integer.MAX_VALUE
+                : Math.max(0, instance.getDuration());
+    }
+
+    private static List<MinecraftRecoveryGovernor.Candidate> recoveryCandidates(
+            Minecraft minecraft,
+            net.minecraft.client.player.LocalPlayer player,
+            KnownTraversabilitySnapshot map,
+            MinecraftRecoveryGovernor.Evidence evidence,
+            boolean continuingRecovery) {
+        var candidates = new ArrayList<MinecraftRecoveryGovernor.Candidate>();
+        var threat = recoveryThreat(player);
+        var currentHazard = LocalObservationVolume.global().latestFor(player)
+                .map(snapshot -> snapshot.current().hazard())
+                .orElse(dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.UNKNOWN);
+        var currentCenter = player.getBoundingBox().getCenter();
+        boolean lavaRecovery = evidence.inLava()
+                || continuingRecovery
+                        && !evidence.onGround()
+                        && evidence.landing() == MinecraftRecoveryGovernor.Landing.KNOWN_LAVA;
+        boolean continuingLavaEscape = lavaRecovery && !evidence.inLava();
+        for (var option : LocalObservationVolume.global()
+                .recoveryOptions(player, map.worldRevision())) {
+            var endpoint = option.endpoint();
+            var target = new net.minecraft.world.phys.Vec3(
+                    option.target().x(), option.target().y(), option.target().z());
+            var movement = EnumSet.noneOf(dev.aod.mcmcp.routine.MovementInputLease.MovementKey.class);
+            movement.addAll(MinecraftActionPrimitiveExecutor.steering(
+                    player.getX(),
+                    player.getZ(),
+                    player.getYRot(),
+                    target.x,
+                    target.z,
+                    0.05D));
+            if (requiresRecoveryJump(currentCenter.y, target)) {
+                movement.add(dev.aod.mcmcp.routine.MovementInputLease.MovementKey.JUMP);
+            }
+            if (movement.isEmpty()) continue;
+            boolean dryStable = recoveryDryStable(endpoint);
+            boolean waterStable = endpoint.loaded()
+                    == dev.aod.mcmcp.agent.safety.ObservationRecord.LoadedState.LOADED
+                    && endpoint.clearance()
+                    == dev.aod.mcmcp.agent.safety.ObservationRecord.Clearance.CLEAR
+                    && endpoint.fluid()
+                    == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.WATER
+                    && !endpoint.suffocation()
+                    && endpoint.hazard()
+                    == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.NONE;
+            boolean avoidsNewDamage = LocalObservationVolume.avoidsNewDamageHazard(
+                    currentHazard, option.path().hazard(), endpoint.hazard());
+            if (evidence.suffocating() && (dryStable || waterStable)) {
+                addRecoveryCandidate(
+                        candidates,
+                        player,
+                        map,
+                        recoveryCandidateId("free", target),
+                        MinecraftRecoveryGovernor.CandidateKind.BACK_TO_FREE_AABB,
+                        AgentInputState.RecoveryMode.ESCAPE_SUFFOCATION,
+                        target,
+                        null,
+                        movement,
+                        true,
+                        true);
+            }
+            if ((currentHazard
+                            == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.FIRE_DAMAGE
+                    || currentHazard
+                            == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.CONTACT_DAMAGE
+                    || currentHazard
+                            == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.FREEZING)
+                    && dryStable) {
+                addRecoveryCandidate(
+                        candidates,
+                        player,
+                        map,
+                        recoveryCandidateId("surface-exit", target),
+                        MinecraftRecoveryGovernor.CandidateKind.RETREAT_TO_KNOWN_SAFE,
+                        AgentInputState.RecoveryMode.EXIT_DAMAGE_SURFACE,
+                        target,
+                        null,
+                        movement,
+                        true,
+                        true);
+            }
+            if (lavaRecovery && avoidsNewDamage && (dryStable || waterStable)
+                    && endpoint.fluid()
+                    != dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.LAVA) {
+                addRecoveryCandidate(
+                        candidates,
+                        player,
+                        map,
+                        recoveryCandidateId("lava-exit", target),
+                        MinecraftRecoveryGovernor.CandidateKind.EXIT_HAZARDOUS_FLUID,
+                        continuingLavaEscape
+                                ? AgentInputState.RecoveryMode.CONTINUE_LAVA_ESCAPE
+                                : AgentInputState.RecoveryMode.EXIT_LAVA,
+                        target,
+                        null,
+                        movement,
+                        true,
+                        true);
+            }
+            if (lavaRecovery
+                    && !continuingLavaEscape
+                    && target.y > currentCenter.y
+                    && endpoint.loaded()
+                    == dev.aod.mcmcp.agent.safety.ObservationRecord.LoadedState.LOADED
+                    && endpoint.clearance()
+                    == dev.aod.mcmcp.agent.safety.ObservationRecord.Clearance.CLEAR
+                    && endpoint.fluid()
+                    == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.LAVA
+                    && !endpoint.suffocation()) {
+                addRecoveryCandidate(
+                        candidates,
+                        player,
+                        map,
+                        recoveryCandidateId("lava-progress", target),
+                        MinecraftRecoveryGovernor.CandidateKind.EXIT_HAZARDOUS_FLUID,
+                        AgentInputState.RecoveryMode.EXIT_LAVA,
+                        target,
+                        null,
+                        movement,
+                        false,
+                        false);
+            }
+            if (evidence.underwater()
+                    && endpoint.loaded()
+                    == dev.aod.mcmcp.agent.safety.ObservationRecord.LoadedState.LOADED
+                    && endpoint.fluid()
+                    != dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.LAVA
+                    && endpoint.fluid()
+                    != dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.UNKNOWN
+                    && !endpoint.suffocation()
+                    && endpoint.hazard()
+                    == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.NONE) {
+                boolean reachesAir = endpoint.fluid()
+                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.NONE;
+                if (reachesAir || target.y > currentCenter.y) {
+                    addRecoveryCandidate(
+                            candidates,
+                            player,
+                            map,
+                            recoveryCandidateId("air", target),
+                            MinecraftRecoveryGovernor.CandidateKind.REACH_BREATHING_SPACE,
+                            AgentInputState.RecoveryMode.REACH_BREATHING_SPACE,
+                            target,
+                            null,
+                            movement,
+                            reachesAir,
+                            reachesAir);
+                }
+            }
+            if (evidence.onFire() && waterStable && avoidsNewDamage) {
+                addRecoveryCandidate(
+                        candidates,
+                        player,
+                        map,
+                        recoveryCandidateId("water", target),
+                        MinecraftRecoveryGovernor.CandidateKind.EXIT_HAZARDOUS_FLUID,
+                        AgentInputState.RecoveryMode.ENTER_WATER,
+                        target,
+                        null,
+                        movement,
+                        true,
+                        true);
+            }
+            if (!evidence.onGround()
+                    && evidence.verticalVelocity() < -0.08D
+                    && option.landing()
+                    && dryStable) {
+                addRecoveryCandidate(
+                        candidates,
+                        player,
+                        map,
+                        recoveryCandidateId("landing", target),
+                        MinecraftRecoveryGovernor.CandidateKind.STEER_TO_KNOWN_LANDING,
+                        AgentInputState.RecoveryMode.STEER_TO_LANDING,
+                        target,
+                        null,
+                        movement,
+                        true,
+                        true);
+            }
+            if (threat != null && dryStable
+                    && fartherFromThreat(player.position(), target, threat)) {
+                addRecoveryCandidate(
+                        candidates,
+                        player,
+                        map,
+                        recoveryCandidateId("retreat", target),
+                        MinecraftRecoveryGovernor.CandidateKind.RETREAT_FROM_THREAT,
+                        AgentInputState.RecoveryMode.RETREAT_FROM_THREAT,
+                        target,
+                        threat,
+                        movement,
+                        false,
+                        true);
+            }
+        }
+        return List.copyOf(candidates);
+    }
+
+    private static void addRecoveryCandidate(
+            List<MinecraftRecoveryGovernor.Candidate> candidates,
+            net.minecraft.client.player.LocalPlayer player,
+            KnownTraversabilitySnapshot map,
+            String id,
+            MinecraftRecoveryGovernor.CandidateKind kind,
+            AgentInputState.RecoveryMode mode,
+            net.minecraft.world.phys.Vec3 target,
+            net.minecraft.world.phys.Vec3 threat,
+            Set<dev.aod.mcmcp.routine.MovementInputLease.MovementKey> movement,
+            boolean preventsFatalHarm,
+            boolean reachesStableState) {
+        var currentCenter = player.getBoundingBox().getCenter();
+        double distance = recoveryDistance(currentCenter, target);
+        if (distance <= 0.0D || movement.isEmpty()) return;
+        candidates.add(new MinecraftRecoveryGovernor.Candidate(
+                id,
+                map.worldSessionId(),
+                map.dimension(),
+                map.worldRevision(),
+                kind,
+                movement,
+                new AgentInputState.RecoveryIntent(mode, target, threat),
+                true,
+                true,
+                preventsFatalHarm,
+                true,
+                reachesStableState,
+                Math.max(1, (int) Math.ceil(distance * RoutePlan.TICKS_PER_TRANSITION)),
+                distance,
+                distance));
+    }
+
+    static boolean requiresRecoveryJump(double currentCenterY, net.minecraft.world.phys.Vec3 target) {
+        return target.y > currentCenterY + 0.1D;
+    }
+
+    static double recoveryDistance(
+            net.minecraft.world.phys.Vec3 currentCenter,
+            net.minecraft.world.phys.Vec3 target) {
+        return Math.hypot(target.x - currentCenter.x, target.z - currentCenter.z)
+                + Math.max(0.0D, target.y - currentCenter.y);
+    }
+
+    static String recoveryCandidateId(String prefix, net.minecraft.world.phys.Vec3 target) {
+        return prefix + "-"
+                + recoveryTargetCoordinate(target.x) + "_"
+                + recoveryTargetCoordinate(target.y) + "_"
+                + recoveryTargetCoordinate(target.z);
+    }
+
+    private static long recoveryTargetCoordinate(double coordinate) {
+        return (long) Math.floor(coordinate * 4.0D);
+    }
+
+    private static boolean recoveryDryStable(LocalObservationVolume.EndpointSafety endpoint) {
+        return endpoint.loaded()
+                        == dev.aod.mcmcp.agent.safety.ObservationRecord.LoadedState.LOADED
+                && endpoint.clearance()
+                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Clearance.CLEAR
+                && endpoint.support()
+                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Support.PRESENT
+                && endpoint.fluid()
+                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.NONE
+                && !endpoint.suffocation()
+                && endpoint.hazard()
+                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.NONE;
+    }
+
+    private static net.minecraft.world.phys.Vec3 recoveryThreat(
+            net.minecraft.client.player.LocalPlayer player) {
+        var source = player.getLastDamageSource();
+        if (source == null) return null;
+        var raw = source.sourcePositionRaw();
+        if (raw != null) return raw;
+        var causing = source.getEntity();
+        if (causing != null && !causing.isRemoved()) return causing.position();
+        var direct = source.getDirectEntity();
+        return direct == null || direct.isRemoved()
+                || direct.position().distanceToSqr(player.position()) <= 1.0E-6D
+                ? null : direct.position();
+    }
+
+    static boolean fartherFromThreat(
+            net.minecraft.world.phys.Vec3 current,
+            net.minecraft.world.phys.Vec3 target,
+            net.minecraft.world.phys.Vec3 threat) {
+        double currentDistance = Math.hypot(current.x - threat.x, current.z - threat.z);
+        double targetDistance = Math.hypot(target.x - threat.x, target.z - threat.z);
+        return targetDistance > currentDistance + 1.0E-7D;
+    }
+
+    static PredicateRequirements predicateRequirements(ActionDsl.Program program) {
+        Objects.requireNonNull(program, "program");
+        var numeric = EnumSet.noneOf(ActionDsl.NumericField.class);
+        var bools = EnumSet.noneOf(ActionDsl.BooleanField.class);
+        var items = new LinkedHashSet<String>();
+        var effects = new LinkedHashSet<String>();
+        collectPredicateRequirements(program.body(), numeric, bools, items, effects);
+        return new PredicateRequirements(numeric, bools, items, effects);
+    }
+
+    private static void collectPredicateRequirements(
+            List<ActionDsl.Node> nodes,
+            Set<ActionDsl.NumericField> numeric,
+            Set<ActionDsl.BooleanField> bools,
+            Set<String> items,
+            Set<String> effects) {
+        for (var node : nodes) {
+            if (node instanceof ActionDsl.If conditional) {
+                for (var atomic : predicateOperands(conditional.condition())) {
+                    switch (atomic) {
+                        case ActionDsl.NumericPredicate value -> numeric.add(value.field());
+                        case ActionDsl.BooleanPredicate value -> bools.add(value.field());
+                        case ActionDsl.InventoryPredicate value -> items.add(value.item());
+                        case ActionDsl.StatusPredicate value -> effects.add(value.effect());
+                    }
+                }
+                collectPredicateRequirements(
+                        conditional.thenBranch(), numeric, bools, items, effects);
+                collectPredicateRequirements(
+                        conditional.elseBranch(), numeric, bools, items, effects);
+            } else if (node instanceof ActionDsl.Repeat repeat) {
+                collectPredicateRequirements(repeat.body(), numeric, bools, items, effects);
+            }
+        }
+    }
+
+    private static List<ActionDsl.AtomicPredicate> predicateOperands(
+            ActionDsl.Predicate predicate) {
+        return predicate instanceof ActionDsl.AtomicPredicate atomic
+                ? List.of(atomic)
+                : ((ActionDsl.LogicalPredicate) predicate).operands();
+    }
+
+    static void validatePredicateAvailability(
+            ActionDsl.Program program, PolicySnapshot snapshot) {
+        for (var node : program.body()) {
+            validatePredicateAvailability(node, snapshot);
+        }
+    }
+
+    private static void validatePredicateAvailability(
+            ActionDsl.Node node, PolicySnapshot snapshot) {
+        if (node instanceof ActionDsl.If conditional) {
+            PredicateEvaluator.evaluate(conditional.condition(), snapshot);
+            conditional.thenBranch().forEach(child ->
+                    validatePredicateAvailability(child, snapshot));
+            conditional.elseBranch().forEach(child ->
+                    validatePredicateAvailability(child, snapshot));
+        } else if (node instanceof ActionDsl.Repeat repeat) {
+            repeat.body().forEach(child -> validatePredicateAvailability(child, snapshot));
+        }
+    }
+
+    private static PolicySnapshot policySnapshot(Minecraft minecraft) {
+        var player = Objects.requireNonNull(minecraft.player, "player");
+        return new PolicySnapshot() {
+            @Override
+            public OptionalDouble numeric(ActionDsl.NumericField field) {
+                return OptionalDouble.of(switch (field) {
+                    case HEALTH -> player.getHealth();
+                    case HUNGER -> player.getFoodData().getFoodLevel();
+                    case AIR -> player.getAirSupply();
+                });
+            }
+
+            @Override
+            public Optional<Boolean> bool(ActionDsl.BooleanField field) {
+                return Optional.of(switch (field) {
+                    case ON_FIRE -> player.isOnFire();
+                    case SUBMERGED -> player.isUnderWater();
+                });
+            }
+
+            @Override
+            public OptionalInt inventoryCount(String item) {
+                int count = 0;
+                var inventory = player.getInventory();
+                for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+                    var stack = inventory.getItem(slot);
+                    if (!stack.isEmpty()
+                            && BuiltInRegistries.ITEM.getKey(stack.getItem()).toString().equals(item)) {
+                        count = Math.addExact(count, stack.getCount());
+                    }
+                }
+                return OptionalInt.of(count);
+            }
+
+            @Override
+            public Optional<Boolean> hasStatusEffect(String effect) {
+                return Optional.of(player.getActiveEffects().stream()
+                        .anyMatch(instance -> instance.getEffect().getRegisteredName().equals(effect)));
+            }
+        };
+    }
+
+    private KnownTraversabilitySnapshot requireAgentMap(
+            WorldSessionTracker.Snapshot session) {
+        var map = knownTraversability.snapshot().orElseThrow(() ->
+                new RuntimeInvocationException(
+                        "unsafe_state", "No current traversability map is available.", true, Map.of()));
+        if (!session.worldReady()
+                || !session.worldSessionId().equals(map.worldSessionId())
+                || !session.dimension().equals(map.dimension())
+                || map.worldRevision() != knownTraversabilityRevision) {
+            throw new RuntimeInvocationException(
+                    "unsafe_state",
+                    "The traversability map crossed a world boundary.",
+                    true,
+                    Map.of());
+        }
+        return map;
+    }
+
+    private static AgentPrimitivePlanner.Pose playerPose(
+            net.minecraft.client.player.LocalPlayer player, String dimension) {
+        Objects.requireNonNull(player, "player");
+        return new AgentPrimitivePlanner.Pose(
+                playerCell(player, dimension),
+                player.getX(),
+                player.getY(),
+                player.getZ(),
+                player.getEyeY() - player.getY(),
+                player.getYRot(),
+                player.getXRot());
+    }
+
+    private static NavCell playerCell(
+            net.minecraft.client.player.LocalPlayer player, String dimension) {
+        return new NavCell(
+                dimension,
+                Mth.floor(player.getX()),
+                Mth.floor(player.getY()),
+                Mth.floor(player.getZ()));
+    }
+
+    private static RuntimeInvocationException planningFailure(
+            AgentPrimitivePlanner.PlanningException failure) {
+        String code = switch (failure.code()) {
+            case TIMEOUT -> "timeout";
+            case PROGRAM_BUDGET_UNPROVABLE -> "program_budget_unprovable";
+            case TARGET_UNKNOWN, NO_KNOWN_PATH ->
+                    failure.code().name().toLowerCase(Locale.ROOT);
+        };
+        return new RuntimeInvocationException(
+                code,
+                failure.getMessage(),
+                true,
+                Map.of());
+    }
+
+    static boolean fitsRemainingBudget(
+            AgentActionStore.Progress used,
+            ActionDsl.Budget budget,
+            ActionDslCompiler.Cost next,
+            long activeElapsedNanos) {
+        Objects.requireNonNull(used, "used");
+        Objects.requireNonNull(budget, "budget");
+        Objects.requireNonNull(next, "next");
+        if (activeElapsedNanos < 0L || used.motionOverflowed()) return false;
+        return fits(
+                        activeElapsedNanos,
+                        Duration.ofMillis(next.durationMillis()).toNanos(),
+                        Duration.ofMillis(budget.maxDurationMillis()).toNanos())
+                && fits(used.ticks(), next.ticks(), budget.maxTicks())
+                && fits(used.distanceTravelled(), next.distanceBlocks(), budget.maxDistanceBlocks())
+                && fits(used.cameraDegrees(), next.cameraDegrees(), budget.maxCameraDegrees())
+                && fits(used.interactions(), next.interactions(), budget.maxInteractions())
+                && fits(used.blocksBroken(), next.blocksBroken(), budget.maxBlocksBroken())
+                && fits(used.blocksPlaced(), next.blocksPlaced(), budget.maxBlocksPlaced());
+    }
+
+    static boolean motionBudgetExhausted(
+            AgentActionStore.Progress used,
+            ActionDsl.Budget budget,
+            ActionDsl.Node primitive) {
+        Objects.requireNonNull(used, "used");
+        Objects.requireNonNull(budget, "budget");
+        return used.motionOverflowed()
+                || primitive instanceof ActionDsl.NavigateToKnown
+                        && used.distanceTravelled() >= budget.maxDistanceBlocks()
+                || primitive instanceof ActionDsl.FaceKnownPosition
+                        && used.cameraDegrees() >= budget.maxCameraDegrees();
+    }
+
+    private static double remainingDistance(
+            AgentActionStore.Progress used,
+            ActionDsl.Budget budget,
+            AgentExecution execution) {
+        double global = budget.maxDistanceBlocks() - used.distanceTravelled();
+        double occurrence = execution.occurrenceLimit.distanceBlocks()
+                - consumedDistance(used, execution.occurrenceBaseline);
+        return Math.max(0.0D, Math.min(global, occurrence));
+    }
+
+    private static double remainingCameraDegrees(
+            AgentActionStore.Progress used,
+            ActionDsl.Budget budget,
+            AgentExecution execution) {
+        double global = budget.maxCameraDegrees() - used.cameraDegrees();
+        double occurrence = execution.occurrenceLimit.cameraDegrees()
+                - consumedCamera(used, execution.occurrenceBaseline);
+        return Math.max(0.0D, Math.min(global, occurrence));
+    }
+
+    private static boolean fitsOccurrenceRemaining(
+            AgentActionStore.Progress used,
+            AgentExecution execution,
+            ActionDslCompiler.Cost next) {
+        var baseline = Objects.requireNonNull(execution.occurrenceBaseline, "occurrenceBaseline");
+        var limit = Objects.requireNonNull(execution.occurrenceLimit, "occurrenceLimit");
+        return !used.motionOverflowed()
+                && fits(consumedDurationMillis(used, baseline), next.durationMillis(),
+                        limit.durationMillis())
+                && fits(consumedTicks(used, baseline), next.ticks(), limit.ticks())
+                && fits(consumedDistance(used, baseline), next.distanceBlocks(),
+                        limit.distanceBlocks())
+                && fits(consumedCamera(used, baseline), next.cameraDegrees(),
+                        limit.cameraDegrees())
+                && fits(consumedInteractions(used, baseline), next.interactions(),
+                        limit.interactions())
+                && fits(consumedBreaks(used, baseline), next.blocksBroken(),
+                        limit.blocksBroken())
+                && fits(consumedPlacements(used, baseline), next.blocksPlaced(),
+                        limit.blocksPlaced());
+    }
+
+    private static boolean occurrenceBudgetExceeded(
+            AgentActionStore.Progress used, AgentExecution execution) {
+        var baseline = Objects.requireNonNull(execution.occurrenceBaseline, "occurrenceBaseline");
+        var limit = Objects.requireNonNull(execution.occurrenceLimit, "occurrenceLimit");
+        return used.motionOverflowed()
+                || consumedDurationMillis(used, baseline) > limit.durationMillis()
+                || consumedTicks(used, baseline) > limit.ticks()
+                || consumedDistance(used, baseline) > limit.distanceBlocks() + 1.0e-9D
+                || consumedCamera(used, baseline) > limit.cameraDegrees() + 1.0e-9D
+                || consumedInteractions(used, baseline) > limit.interactions()
+                || consumedBreaks(used, baseline) > limit.blocksBroken()
+                || consumedPlacements(used, baseline) > limit.blocksPlaced();
+    }
+
+    private static boolean occurrenceBudgetExceededAfterPrimitive(
+            AgentActionStore.Progress used,
+            AgentExecution execution,
+            MinecraftActionPrimitiveExecutor.Status status) {
+        Objects.requireNonNull(status, "status");
+        return occurrenceBudgetExceeded(used, execution);
+    }
+
+    private static long consumedDurationMillis(
+            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
+        return Math.multiplyExact(consumedTicks(used, baseline), 50L);
+    }
+
+    private static long consumedTicks(
+            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
+        return nonNegativeDifference(used.ticks(), baseline.ticks());
+    }
+
+    private static double consumedDistance(
+            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
+        return nonNegativeDifference(used.distanceTravelled(), baseline.distanceTravelled());
+    }
+
+    private static double consumedCamera(
+            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
+        return nonNegativeDifference(used.cameraDegrees(), baseline.cameraDegrees());
+    }
+
+    private static long consumedInteractions(
+            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
+        return nonNegativeDifference(used.interactions(), baseline.interactions());
+    }
+
+    private static long consumedBreaks(
+            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
+        return nonNegativeDifference(used.blocksBroken(), baseline.blocksBroken());
+    }
+
+    private static long consumedPlacements(
+            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
+        return nonNegativeDifference(used.blocksPlaced(), baseline.blocksPlaced());
+    }
+
+    private static long nonNegativeDifference(long current, long baseline) {
+        if (current < baseline) throw new IllegalStateException("Action progress moved backwards");
+        return current - baseline;
+    }
+
+    private static double nonNegativeDifference(double current, double baseline) {
+        double difference = current - baseline;
+        if (!Double.isFinite(difference) || difference < -1.0e-9D) {
+            throw new IllegalStateException("Action progress moved backwards");
+        }
+        return Math.max(0.0D, difference);
+    }
+
+    static boolean motionBudgetExceededAfterPrimitive(
+            AgentActionStore.Progress used,
+            ActionDsl.Budget budget,
+            ActionDsl.Node primitive,
+            MinecraftActionPrimitiveExecutor.Status status) {
+        Objects.requireNonNull(status, "status");
+        if (used.motionOverflowed()
+                || used.distanceTravelled() > budget.maxDistanceBlocks()
+                || used.cameraDegrees() > budget.maxCameraDegrees()) {
+            return true;
+        }
+        return status == MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED
+                && motionBudgetExhausted(used, budget, primitive);
+    }
+
+    static boolean replanDeadlineReached(long actionTick, long deadlineTick) {
+        return deadlineTick > 0L && actionTick >= deadlineTick;
+    }
+
+    static boolean repeatedPositionCorrection(
+            long previousRevision, long currentRevision, int previousCorrections) {
+        return currentRevision - previousRevision > 1L || previousCorrections > 0;
+    }
+
+    private void recordAgentMotion(
+            UUID actionId, net.minecraft.client.player.LocalPlayer player) {
+        var position = player.position();
+        double distance = position.distanceTo(agentExecution.lastPosition);
+        double camera = Math.abs(Mth.wrapDegrees(player.getYRot() - agentExecution.lastYaw))
+                + Math.abs(player.getXRot() - agentExecution.lastPitch);
+        agentActions.recordMotion(actionId, distance, camera);
+        agentExecution.lastPosition = position;
+        agentExecution.lastYaw = player.getYRot();
+        agentExecution.lastPitch = player.getXRot();
+    }
+
+    private void recordPendingAgentMotion(Minecraft minecraft) {
+        if (agentExecution == null || minecraft.player == null || minecraft.level == null) return;
+        var session = sessions.snapshot();
+        if (!sameAgentMotionBoundary(
+                agentExecution.worldSessionId,
+                session,
+                minecraft.level.dimension().identifier().toString())) {
+            return;
+        }
+        long correctionRevision = reconciliationSignals.currentSnapshot(minecraft.level)
+                .map(ClientReconciliationSignals.Snapshot::positionCorrectionRevision)
+                .orElse(agentExecution.positionCorrectionRevision);
+        if (correctionRevision > agentExecution.positionCorrectionRevision) {
+            agentExecution.lastPosition = minecraft.player.position();
+            agentExecution.lastYaw = minecraft.player.getYRot();
+            agentExecution.lastPitch = minecraft.player.getXRot();
+            return;
+        }
+        var active = agentActions.active();
+        if (active.isPresent() && active.orElseThrow().actionId().equals(agentExecution.actionId)) {
+            recordAgentMotion(agentExecution.actionId, minecraft.player);
+        }
+    }
+
+    static boolean sameAgentMotionBoundary(
+            UUID executionSession,
+            WorldSessionTracker.Snapshot session,
+            String currentDimension) {
+        return session.worldReady()
+                && Objects.equals(executionSession, session.worldSessionId())
+                && Objects.equals(session.dimension(), currentDimension);
+    }
+
+    private static boolean fits(long used, long next, long maximum) {
+        return used >= 0L && next >= 0L && used <= maximum && next <= maximum - used;
+    }
+
+    private static boolean fits(double used, double next, double maximum) {
+        return Double.isFinite(used) && Double.isFinite(next) && Double.isFinite(maximum)
+                && used >= 0.0D && next >= 0.0D && used <= maximum
+                && next <= maximum - used + 1.0e-9D;
+    }
+
+    private static long activeElapsedNanos(AgentExecution execution, long nowNanos) {
+        return activeElapsedNanos(
+                execution.startedAtNanos, execution.pausedNanos, nowNanos);
+    }
+
+    private static long actionMovementDeadline(
+            AgentExecution execution, long durationLimitNanos, long nowNanos) {
+        long remaining = Math.max(
+                0L, durationLimitNanos - activeElapsedNanos(execution, nowNanos));
+        return AgentInputState.global().watchdogTime(nowNanos) + remaining;
+    }
+
+    static long activeElapsedNanos(long startedAtNanos, long pausedNanos, long nowNanos) {
+        if (pausedNanos < 0L) {
+            throw new IllegalArgumentException("pausedNanos must be non-negative");
+        }
+        long elapsed = nonNegativeNanoElapsed(startedAtNanos, nowNanos);
+        return pausedNanos >= elapsed ? 0L : elapsed - pausedNanos;
+    }
+
+    private static long nonNegativeNanoElapsed(long startedAtNanos, long nowNanos) {
+        long elapsed = nowNanos - startedAtNanos;
+        return elapsed < 0L ? 0L : elapsed;
+    }
+
+    private void closeAgentPrimitiveExecutor() {
+        if (agentExecution == null) return;
+        var player = Minecraft.getInstance().player;
+        if (player != null) {
+            try {
+                AgentInputState.global().neutralizeTrackedAgentVelocity(player);
+            } catch (RuntimeException | LinkageError failure) {
+                McmcpMod.LOGGER.error("MCMCP Agent velocity neutralization failed", failure);
+            }
+        }
+        try {
+            agentExecution.primitiveExecutor.close();
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error("MCMCP Action DSL input release failed", failure);
+        }
+    }
+
+    private void closeRecoveryGovernor() {
+        if (recoveryGovernor == null) return;
+        try {
+            recoveryGovernor.close();
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error("MCMCP recovery input release failed", failure);
+        } finally {
+            recoveryGovernor = null;
+        }
+    }
+
+    private void failAgentAction(
+            AgentActionStore.FailureCode code, boolean recoverable, String evidence) {
+        try {
+            agentActions.terminateActive(new AgentActionStore.Failure(
+                    code, recoverable, List.of(evidence)));
+        } finally {
+            closeAgentControl(Minecraft.getInstance(), code.wireName().toLowerCase(Locale.ROOT));
+        }
+    }
+
+    private void closeAgentControl(Minecraft minecraft, String lockReason) {
+        closeAgentPrimitiveExecutor();
+        closeRecoveryGovernor();
+        inputRelease.releaseAll(minecraft);
+        arming.lock(lockReason);
+        agentExecution = null;
+        pendingAgentAdmission = null;
+    }
+
     private void tickActiveRoutine(Minecraft minecraft) {
         var before = routines.activeRoutineId();
         if (before.isEmpty()) {
@@ -1611,6 +3803,17 @@ public final class McmcpRuntime implements McpRuntimePort {
             String reason,
             WorldSessionTracker.Snapshot session) {
         goalContinuation.clear();
+        AgentActionStore.FailureCode actionCode = "local_ui_disabled".equals(reason)
+                ? AgentActionStore.FailureCode.USER_DISABLED
+                : AgentActionStore.FailureCode.EMERGENCY_STOP;
+        try {
+            agentActions.terminateActive(new AgentActionStore.Failure(
+                    actionCode, true, List.of(sanitizeLocalCode(reason))));
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error("MCMCP emergency action termination failed", failure);
+        } finally {
+            closeAgentControl(Minecraft.getInstance(), sanitizeLocalCode(reason));
+        }
         var active = routines.activeRoutineId();
         if (active.isEmpty()) {
             return endVoiceFor(voiceRoutineId);
@@ -2234,11 +4437,16 @@ public final class McmcpRuntime implements McpRuntimePort {
         }
     }
 
-    record RoutineWallClockDeadline(UUID routineId, long startedAtNanos, long durationNanos) {
+    record RoutineWallClockDeadline(
+            UUID routineId, long startedAtNanos, long durationNanos, long pausedNanos) {
+        RoutineWallClockDeadline(UUID routineId, long startedAtNanos, long durationNanos) {
+            this(routineId, startedAtNanos, durationNanos, 0L);
+        }
+
         RoutineWallClockDeadline {
             Objects.requireNonNull(routineId, "routineId");
-            if (durationNanos <= 0) {
-                throw new IllegalArgumentException("durationNanos must be positive");
+            if (durationNanos <= 0 || pausedNanos < 0L) {
+                throw new IllegalArgumentException("durationNanos must be positive and pause non-negative");
             }
         }
 
@@ -2255,9 +4463,8 @@ public final class McmcpRuntime implements McpRuntimePort {
         }
 
         boolean allows(UUID activeRoutineId, long nowNanos) {
-            long elapsedNanos = nowNanos - startedAtNanos;
+            long elapsedNanos = activeElapsedNanos(startedAtNanos, pausedNanos, nowNanos);
             return routineId.equals(activeRoutineId)
-                    && elapsedNanos >= 0
                     && elapsedNanos < durationNanos;
         }
 
@@ -2265,7 +4472,11 @@ public final class McmcpRuntime implements McpRuntimePort {
             if (pausedNanos <= 0L) {
                 return this;
             }
-            return new RoutineWallClockDeadline(routineId, startedAtNanos + pausedNanos, durationNanos);
+            return new RoutineWallClockDeadline(
+                    routineId,
+                    startedAtNanos,
+                    durationNanos,
+                    saturatingNonNegativeAdd(this.pausedNanos, pausedNanos));
         }
     }
 
@@ -3392,7 +5603,17 @@ public final class McmcpRuntime implements McpRuntimePort {
     }
 
     private static long saturatingAdd(long left, long right) {
-        if (right < 0 || Long.MAX_VALUE - left < right) {
+        if (left < 0L || right < 0L) {
+            throw new IllegalArgumentException("saturating tick add requires non-negative operands");
+        }
+        return saturatingNonNegativeAdd(left, right);
+    }
+
+    private static long saturatingNonNegativeAdd(long left, long right) {
+        if (left < 0L || right < 0L) {
+            throw new IllegalArgumentException("saturating add requires non-negative operands");
+        }
+        if (left > Long.MAX_VALUE - right) {
             return Long.MAX_VALUE;
         }
         return left + right;
@@ -3408,13 +5629,141 @@ public final class McmcpRuntime implements McpRuntimePort {
         boolean changed = sessions.latchReady(dimension);
         var after = sessions.snapshot();
         if (changed) {
-            memory.startSession(after.worldSessionId(), dimension);
-            screenOwnership.bindWorldSession(minecraft.level, after.worldSessionId());
             if (before.dimension() != null && !before.dimension().equals(dimension)) {
+                clearAgentSessionState();
+                routines.clearSession("dimension_changed");
+                finalizationRetries.clear();
+                goalContinuation.clear();
+                voiceRoutineId = null;
+                clearAutomationPortSessions(
+                        stationaryBreakPort::clearSession,
+                        semanticActionPort::clearSession,
+                        applyBlockPlanPort::clearSession);
+                clearPhaseFivePortSessions();
+                recipeCatalog.detachSession();
+                memory.detachSession();
                 arming.lock("dimension_changed");
                 inputRelease.releaseAll(minecraft);
             }
+            memory.startSession(after.worldSessionId(), dimension);
+            var reconciliation = reconciliationSignals.bindAndSnapshot(
+                    minecraft.level, after.worldSessionId());
+            knownTraversability.startSession(
+                    after.worldSessionId(), dimension, reconciliation.worldRevision());
+            knownTraversabilityRevision = reconciliation.worldRevision();
+            screenOwnership.bindWorldSession(minecraft.level, after.worldSessionId());
         }
+    }
+
+    private void synchronizeKnownTraversability(Minecraft minecraft) {
+        var session = sessions.snapshot();
+        if (!session.worldReady() || minecraft.level == null) {
+            return;
+        }
+        var reconciliation = reconciliationSignals.bindAndSnapshot(
+                minecraft.level, session.worldSessionId());
+        if (reconciliation.worldRevision() <= knownTraversabilityRevision) {
+            return;
+        }
+        var mutations = reconciliation.worldMutations().stream()
+                .filter(mutation -> mutation.revision() > knownTraversabilityRevision)
+                .toList();
+        boolean ledgerGap = mutations.isEmpty()
+                || mutations.getFirst().revision() != knownTraversabilityRevision + 1L;
+        if (ledgerGap || mutations.stream().anyMatch(mutation ->
+                mutation.kind() == ClientReconciliationSignals.WorldMutation.Kind.ALL)) {
+            knownTraversability.startSession(
+                    session.worldSessionId(), session.dimension(), reconciliation.worldRevision());
+            knownTraversabilityRevision = reconciliation.worldRevision();
+            return;
+        }
+
+        var affected = new LinkedHashSet<NavCell>();
+        var map = knownTraversability.snapshot().orElseThrow();
+        for (var key : map.edges().keySet()) {
+            for (var mutation : mutations) {
+                if (mutationAffects(mutation, key.from()) || mutationAffects(mutation, key.to())) {
+                    affected.add(key.from());
+                    affected.add(key.to());
+                    break;
+                }
+            }
+        }
+        knownTraversability.advanceWorldRevision(
+                reconciliation.worldRevision(), affected, List.of());
+        knownTraversabilityRevision = reconciliation.worldRevision();
+    }
+
+    private static boolean mutationAffects(
+            ClientReconciliationSignals.WorldMutation mutation, NavCell cell) {
+        return switch (mutation.kind()) {
+            case ALL -> true;
+            case CHUNK -> (cell.x() >> 4) == mutation.x() && (cell.z() >> 4) == mutation.z();
+            case BLOCK -> Math.abs((long) cell.x() - mutation.x()) <= 1L
+                    && Math.abs((long) cell.z() - mutation.z()) <= 1L
+                    && cell.y() >= mutation.y() - 2
+                    && cell.y() <= mutation.y() + 3;
+        };
+    }
+
+    private void collectAgentObservation(Minecraft minecraft) {
+        var session = sessions.snapshot();
+        if (!session.worldReady() || minecraft.level == null || minecraft.player == null) {
+            return;
+        }
+        int radius = McmcpClientConfig.visualRadiusBlocks();
+        int rays = McmcpClientConfig.raysPerTick();
+        if (agentObserver == null
+                || agentObserver.configuredRadiusBlocks() != radius
+                || agentObserver.raysPerTick() != rays) {
+            agentObserver = new OmnidirectionalObserver(radius, rays);
+        }
+        long worldRevision = reconciliationSignals.bindAndSnapshot(
+                minecraft.level, session.worldSessionId()).worldRevision();
+        var dimension = new ResourceId(session.dimension());
+        latestLocalObservation = LocalObservationVolume.global().observe(
+                minecraft.player, session.clientTick(), worldRevision);
+        var local = LocalObservationProjector.project(
+                latestLocalObservation,
+                session.worldSessionId(),
+                session.dimension(),
+                worldRevision);
+        localSafety = local.currentSafety();
+        local.edges().forEach(knownTraversability::observe);
+        soundPlaybackTruncated = soundPlaybacks.drainInto(
+                soundClues,
+                dimension,
+                session.clientTick(),
+                worldRevision,
+                candidate -> {
+                    Identifier identifier = Identifier.tryParse(candidate);
+                    return identifier != null && BuiltInRegistries.ENTITY_TYPE.get(identifier).isPresent();
+                }).recentSoundCluesTruncated();
+        double fogDistance = ClientFogDistanceSignals.currentOr(
+                minecraft.level,
+                minecraft.player,
+                minecraft.player.tickCount,
+                1.0D);
+        agentObserver.tick(
+                        minecraft.level,
+                        minecraft.player,
+                        session.clientTick(),
+                        worldRevision,
+                        fogDistance)
+                .ifPresent(visual -> {
+                    var sounds = soundClues.snapshot(visual.frameCompletedTick());
+                    var records = new ArrayList<>(visual.records());
+                    records.addAll(local.records());
+                    records.addAll(sounds.clues());
+                    agentObservationFrames.publish(new ObservationFrame(
+                            visual.frameId(),
+                            visual.dimension(),
+                            visual.frameCompletedTick(),
+                            visual.configuredVisualRadiusBlocks(),
+                            visual.visibleEntitiesTruncated(),
+                            sounds.recentSoundCluesTruncated() || soundPlaybackTruncated,
+                            records));
+                });
     }
 
     private static void requireReady(WorldSessionTracker.Snapshot session) {
@@ -3435,16 +5784,28 @@ public final class McmcpRuntime implements McpRuntimePort {
                     original.code(), original.message(), original.retryable(), details);
         }
         if (cause instanceof ClientCommandInbox.CommandTimeoutException) {
-            return RuntimeReply.failure("timeout", "The client-thread deadline expired", true);
+            return RuntimeReply.failure("server_busy", "The client-thread deadline expired", true);
         }
         if (cause instanceof ClientCommandInbox.CommandInvalidatedException) {
             return RuntimeReply.failure("unsafe_state", "The world or safety epoch changed before execution", true);
         }
         if (cause instanceof RejectedExecutionException) {
-            return RuntimeReply.failure("busy", "The bounded client command inbox is full", true);
+            return RuntimeReply.failure("server_busy", "The bounded client command inbox is full", true);
         }
         if (cause instanceof MinecraftObservationService.ObservationUnavailableException unavailable) {
             return RuntimeReply.failure(unavailable.code(), unavailable.getMessage(), true);
+        }
+        if (cause instanceof ActionDslException invalidDsl) {
+            return RuntimeReply.failure(
+                    invalidDsl.code().name().toLowerCase(Locale.ROOT),
+                    publicMessage(invalidDsl),
+                    invalidDsl.code() != ActionDslException.Code.INVALID_ARGUMENT);
+        }
+        if (cause instanceof AgentActionStore.BusyException) {
+            return RuntimeReply.failure("task_busy", "Another action is active", true);
+        }
+        if (cause instanceof AgentActionStore.NotFoundException) {
+            return RuntimeReply.failure("action_not_found", "The action is not retained", false);
         }
         if (cause instanceof RuntimeInvocationException invocation) {
             return RuntimeReply.failure(
@@ -3454,7 +5815,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             var details = busy.activeRoutineId() == null
                     ? Map.<String, Object>of()
                     : Map.<String, Object>of("active_routine_id", busy.activeRoutineId().toString());
-            return RuntimeReply.failure("busy", "Another routine is active", true, details);
+            return RuntimeReply.failure("task_busy", "Another routine is active", true, details);
         }
         if (cause instanceof RoutineManager.IdempotencyConflictException) {
             return RuntimeReply.failure(
@@ -3516,6 +5877,55 @@ public final class McmcpRuntime implements McpRuntimePort {
 
     public WorldMemory memory() {
         return memory;
+    }
+
+    private static final class AgentExecution {
+        private final UUID actionId;
+        private final UUID worldSessionId;
+        private final ActionDslCompiler.CompiledProgram program;
+        private final ActionProgramCursor cursor;
+        private final MinecraftActionPrimitiveExecutor primitiveExecutor;
+        private final long startedAtNanos;
+        private long pausedNanos;
+        private net.minecraft.world.phys.Vec3 lastPosition;
+        private float lastYaw;
+        private float lastPitch;
+        private ActionDsl.Node primitive;
+        private int waitTicksRemaining;
+        private long replanNotBeforeTick;
+        private long replanDeadlineTick;
+        private boolean replanning;
+        private boolean replanHeartbeatPending;
+        private boolean goalPreempted;
+        private long positionCorrectionRevision;
+        private int positionCorrections;
+        private AgentActionStore.Progress occurrenceBaseline;
+        private ActionDslCompiler.Cost occurrenceLimit;
+
+        private AgentExecution(
+                AgentActionStore.Active action,
+                UUID worldSessionId,
+                long startedAtNanos,
+                net.minecraft.world.phys.Vec3 lastPosition,
+                float lastYaw,
+                float lastPitch,
+                float maxCameraDegreesPerTick,
+                long positionCorrectionRevision) {
+            actionId = action.actionId();
+            this.worldSessionId = Objects.requireNonNull(worldSessionId, "worldSessionId");
+            program = action.program();
+            cursor = new ActionProgramCursor(action.program().request().program());
+            primitiveExecutor = new MinecraftActionPrimitiveExecutor(maxCameraDegreesPerTick);
+            this.startedAtNanos = startedAtNanos;
+            this.lastPosition = Objects.requireNonNull(lastPosition, "lastPosition");
+            this.lastYaw = lastYaw;
+            this.lastPitch = lastPitch;
+            if (positionCorrectionRevision < 0L) {
+                throw new IllegalArgumentException(
+                        "positionCorrectionRevision must be non-negative");
+            }
+            this.positionCorrectionRevision = positionCorrectionRevision;
+        }
     }
 
     private static final class RuntimeInvocationException extends RuntimeException {

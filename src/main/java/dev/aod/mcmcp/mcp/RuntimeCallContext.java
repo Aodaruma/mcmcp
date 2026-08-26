@@ -29,7 +29,7 @@ public final class RuntimeCallContext {
         catch (ArithmeticException ignored) {
             timeoutNanos = Long.MAX_VALUE;
         }
-        long deadline = timeoutNanos >= Long.MAX_VALUE - now ? Long.MAX_VALUE : now + timeoutNanos;
+        long deadline = deadlineAfter(now, timeoutNanos);
         return new RuntimeCallContext(UUID.randomUUID().toString(), deadline);
     }
 
@@ -42,7 +42,7 @@ public final class RuntimeCallContext {
     }
 
     public long remainingNanos() {
-        return Math.max(0L, deadlineNanos - System.nanoTime());
+        return remainingNanos(deadlineNanos, System.nanoTime());
     }
 
     public boolean isExpired() {
@@ -60,5 +60,21 @@ public final class RuntimeCallContext {
 
     public void cancel() {
         cancelled.set(true);
+    }
+
+    public static long deadlineAfter(long nowNanos, long timeoutNanos) {
+        if (timeoutNanos <= 0L) {
+            throw new IllegalArgumentException("timeoutNanos must be positive");
+        }
+        return nowNanos + timeoutNanos;
+    }
+
+    public static boolean deadlineReached(long deadlineNanos, long nowNanos) {
+        return nowNanos - deadlineNanos >= 0L;
+    }
+
+    static long remainingNanos(long deadlineNanos, long nowNanos) {
+        long remaining = deadlineNanos - nowNanos;
+        return remaining > 0L ? remaining : 0L;
     }
 }

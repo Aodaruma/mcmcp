@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.lang.reflect.Method;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -74,6 +75,69 @@ class ClientCommandInboxTest {
             draining.get(1, TimeUnit.SECONDS);
             assertThat(queued.get(1, TimeUnit.SECONDS)).isEqualTo("done");
         }
+    }
+
+    @Test
+    void abandonedClaimedCompletionRunsItsClientThreadRollback() throws Exception {
+        var inbox = new ClientCommandInbox(4, new InputReleaseController(), new LocalArmingState());
+        var actionStarted = new CountDownLatch(1);
+        var allowActionToFinish = new CountDownLatch(1);
+        var abandoned = new AtomicBoolean();
+        var rolledBack = new AtomicBoolean();
+        var queued = inbox.submit(
+                "agent_start_action",
+                1,
+                Long.MAX_VALUE,
+                () -> {
+                    actionStarted.countDown();
+                    assertThat(allowActionToFinish.await(2, TimeUnit.SECONDS)).isTrue();
+                    return "accepted-action";
+                },
+                abandoned::get,
+                ignored -> rolledBack.set(true));
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var draining = executor.submit(() -> inbox.drainNormal(1, 10));
+            assertThat(actionStarted.await(1, TimeUnit.SECONDS)).isTrue();
+            abandoned.set(true);
+            allowActionToFinish.countDown();
+            draining.get(1, TimeUnit.SECONDS);
+        }
+
+        assertThat(rolledBack).isTrue();
+        assertThatThrownBy(() -> queued.get(1, TimeUnit.SECONDS))
+                .hasCauseInstanceOf(ClientCommandInbox.CommandTimeoutException.class);
+    }
+
+    @Test
+    void cancellingTheReturnedMappedFutureWinsBeforeAClaimedStartCanRemain() throws Exception {
+        var inbox = new ClientCommandInbox(4, new InputReleaseController(), new LocalArmingState());
+        var actionStarted = new CountDownLatch(1);
+        var allowActionToFinish = new CountDownLatch(1);
+        var rolledBack = new AtomicBoolean();
+        var queued = inbox.submitMapped(
+                "agent_start_action",
+                1,
+                Long.MAX_VALUE,
+                () -> {
+                    actionStarted.countDown();
+                    assertThat(allowActionToFinish.await(2, TimeUnit.SECONDS)).isTrue();
+                    return "accepted-action";
+                },
+                Throwable::getMessage,
+                () -> false,
+                ignored -> rolledBack.set(true));
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var draining = executor.submit(() -> inbox.drainNormal(1, 10));
+            assertThat(actionStarted.await(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(queued.cancel(true)).isTrue();
+            allowActionToFinish.countDown();
+            draining.get(1, TimeUnit.SECONDS);
+        }
+
+        assertThat(queued).isCancelled();
+        assertThat(rolledBack).isTrue();
     }
 
     @Test

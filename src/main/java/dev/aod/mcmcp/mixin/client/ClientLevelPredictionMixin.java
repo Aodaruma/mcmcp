@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.mixin.client;
 
 import dev.aod.mcmcp.runtime.ClientPredictionSignals;
+import dev.aod.mcmcp.runtime.ClientReconciliationSignals;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -39,6 +40,8 @@ public abstract class ClientLevelPredictionMixin {
             CallbackInfo callback) {
         ClientPredictionSignals.global().onServerVerifiedBlockState(
                 (ClientLevel) (Object) this, position, state);
+        ClientReconciliationSignals.global().onBlockMutation(
+                (ClientLevel) (Object) this, position);
     }
 
     @Inject(

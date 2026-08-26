@@ -1,0 +1,787 @@
+package dev.aod.mcmcp.agent.action;
+
+import dev.aod.mcmcp.agent.dsl.ActionDsl;
+import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
+import dev.aod.mcmcp.agent.navigation.NavCell;
+import dev.aod.mcmcp.agent.navigation.RoutePlan;
+import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
+import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
+import dev.aod.mcmcp.client.AgentInputState;
+import dev.aod.mcmcp.routine.MovementInputLease;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.util.Mth;
+import net.minecraft.world.phys.Vec3;
+
+import java.time.Duration;
+import java.util.EnumSet;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.function.BooleanSupplier;
+
+/**
+ * Client-thread executor for the movement and camera primitives in Action DSL v1.
+ *
+ * <p>All terrain decisions come from the supplied immutable Known Traversability Map snapshot.
+ * This adapter deliberately reads only the local player's pose; it never queries live blocks,
+ * entities, the camera frustum, focus, or the current Screen to fill an evidence gap.</p>
+ */
+public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
+    public static final float MAX_ALLOWED_CAMERA_DEGREES_PER_TICK = 18.0F;
+    public static final int STALL_TICKS = 20;
+    static final int SETTLE_STABLE_TICKS = 10;
+    private static final float AIM_TOLERANCE_DEGREES = 0.75F;
+    private static final double PROGRESS_EPSILON_BLOCKS = 0.03D;
+    private static final double SETTLE_DRIFT_EPSILON_SQUARED = 4.0E-6D;
+    private static final double INTERMEDIATE_WAYPOINT_TOLERANCE = 0.32D;
+    private static final double WAYPOINT_VERTICAL_TOLERANCE = 0.75D;
+    private static final double ROUTE_CORRIDOR_RADIUS = 0.85D;
+    private static final double ROUTE_VERTICAL_MARGIN = 1.25D;
+    private static final Duration LEASE_HORIZON = Duration.ofMillis(500);
+
+    private final UUID ownerId = UUID.randomUUID();
+    private final float maxCameraDegreesPerTick;
+    private NavigateState navigation;
+    private FaceState face;
+    private MovementInputLease movement;
+    private long lastClientTick = -1;
+
+    /** @param maxCameraDegreesPerTick configured degrees/second divided by 20 client ticks */
+    public MinecraftActionPrimitiveExecutor(float maxCameraDegreesPerTick) {
+        requireCameraLimit(maxCameraDegreesPerTick);
+        this.maxCameraDegreesPerTick = maxCameraDegreesPerTick;
+    }
+
+    public void beginNavigate(RoutePlan route, double tolerance) {
+        requireIdle();
+        Objects.requireNonNull(route, "route");
+        if (!Double.isFinite(tolerance) || tolerance < 0.1D || tolerance > 1.5D) {
+            throw new IllegalArgumentException("navigation tolerance must be within 0.1..1.5");
+        }
+        if (route.distanceBlocks() > 32.0D) {
+            throw new IllegalArgumentException("navigation route exceeds the Action DSL limit");
+        }
+        navigation = new NavigateState(route, tolerance);
+    }
+
+    /**
+     * Starts a face primitive from evidence already accepted by the observation policy.
+     * Constructing this plan is the caller's explicit proof that the target is known.
+     */
+    public void beginFace(KnownFaceTarget target, long tickUpperBound) {
+        requireIdle();
+        if (tickUpperBound < 1L || tickUpperBound > 600L) {
+            throw new IllegalArgumentException("face tickUpperBound must be within 1..600");
+        }
+        face = new FaceState(Objects.requireNonNull(target, "target"), tickUpperBound);
+    }
+
+    /** Executes at most one bounded camera update and one movement heartbeat. */
+    public TickResult tick(
+            Minecraft minecraft,
+            KnownTraversabilitySnapshot currentSnapshot,
+            LocalObservationVolume movementSafety,
+            double remainingDistance,
+            double remainingCameraDegrees,
+            long clientTick,
+            BooleanSupplier outputAllowed) {
+        Objects.requireNonNull(minecraft, "minecraft");
+        Objects.requireNonNull(currentSnapshot, "currentSnapshot");
+        Objects.requireNonNull(movementSafety, "movementSafety");
+        Objects.requireNonNull(outputAllowed, "outputAllowed");
+        if (!Double.isFinite(remainingDistance) || remainingDistance < 0.0D
+                || !Double.isFinite(remainingCameraDegrees) || remainingCameraDegrees < 0.0D) {
+            throw new IllegalArgumentException("remaining motion budgets must be finite and non-negative");
+        }
+        if (!minecraft.isSameThread()) {
+            throw new IllegalStateException("Action primitive execution must run on the client thread");
+        }
+        if (clientTick < 0 || clientTick <= lastClientTick) {
+            throw new IllegalArgumentException("clientTick must increase for every executor tick");
+        }
+        if (navigation == null && face == null) {
+            throw new IllegalStateException("No Action DSL primitive is active");
+        }
+        lastClientTick = clientTick;
+        LocalPlayer player = minecraft.player;
+        if (player == null) {
+            return finish(Status.FAILED, Reason.WORLD_UNAVAILABLE);
+        }
+        try {
+            return navigation != null
+                    ? tickNavigation(
+                            minecraft,
+                            player,
+                            currentSnapshot,
+                            movementSafety,
+                            remainingDistance,
+                            clientTick,
+                            outputAllowed)
+                    : tickFace(
+                            player,
+                            currentSnapshot,
+                            remainingCameraDegrees,
+                            clientTick,
+                            outputAllowed);
+        } catch (RuntimeException | LinkageError failure) {
+            try {
+                close();
+            } catch (RuntimeException | LinkageError closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            throw failure;
+        }
+    }
+
+    public boolean active() {
+        return navigation != null || face != null;
+    }
+
+    private TickResult tickNavigation(
+            Minecraft minecraft,
+            LocalPlayer player,
+            KnownTraversabilitySnapshot snapshot,
+            LocalObservationVolume movementSafety,
+            double remainingDistance,
+            long clientTick,
+            BooleanSupplier outputAllowed) {
+        NavigateState state = navigation;
+        if (!state.route.worldSessionId().equals(snapshot.worldSessionId())
+                || !state.route.dimension().equals(snapshot.dimension())) {
+            return finish(Status.FAILED, Reason.WORLD_BOUNDARY_CHANGED);
+        }
+        if (player.isPassenger() || player.isInWater() || player.isInLava()
+                || player.isFallFlying() || player.getAbilities().flying) {
+            return finish(Status.REPLAN_REQUIRED, Reason.UNSUPPORTED_LOCOMOTION);
+        }
+
+        // The previous tick's PROBE_ALLOWED command must be neutralized before any other work.
+        if (state.probeStepIssued) {
+            neutralHeartbeat();
+            return finish(Status.REPLAN_REQUIRED, Reason.PROBE_COMPLETED);
+        }
+
+        NavCell finalCell = state.route.cells().getLast();
+        if (state.route.edges().isEmpty()) {
+            return atWaypoint(player, finalCell, state.tolerance)
+                    ? finish(Status.SUCCEEDED, Reason.NONE)
+                    : finish(Status.REPLAN_REQUIRED, Reason.PLAYER_OFF_ROUTE);
+        }
+        if (state.settling) {
+            return tickNavigationSettlement(
+                    minecraft, player, snapshot, remainingDistance, clientTick, outputAllowed);
+        }
+
+        TraversabilityEdge planned = state.route.edges().get(state.edgeIndex);
+        if (!insideRouteCorridor(player, planned.key())) {
+            return finish(Status.REPLAN_REQUIRED, Reason.PLAYER_OFF_ROUTE);
+        }
+
+        NavCell waypoint = planned.key().to();
+        double waypointTolerance = state.edgeIndex == state.route.edges().size() - 1
+                ? state.tolerance : INTERMEDIATE_WAYPOINT_TOLERANCE;
+        if (atWaypoint(player, waypoint, waypointTolerance)) {
+            state.edgeIndex++;
+            state.resetProgress();
+            if (state.edgeIndex == state.route.edges().size()) {
+                state.settling = true;
+                return tickNavigationSettlement(
+                        minecraft, player, snapshot, remainingDistance, clientTick, outputAllowed);
+            }
+            planned = state.route.edges().get(state.edgeIndex);
+            if (!insideRouteCorridor(player, planned.key())) {
+                return finish(Status.REPLAN_REQUIRED, Reason.PLAYER_OFF_ROUTE);
+            }
+            waypoint = planned.key().to();
+        }
+
+        state.activeTicks++;
+        if (!navigationOutputAllowed(state.activeTicks, state.route.tickUpperBound())) {
+            return finish(Status.REPLAN_REQUIRED, Reason.PRIMITIVE_TICK_BUDGET_EXHAUSTED);
+        }
+        if (remainingDistance <= 0.0D) {
+            return finish(Status.REPLAN_REQUIRED, Reason.MOTION_BUDGET_EXHAUSTED);
+        }
+
+        EdgeDecision edge = edgeDecision(state.route, state.edgeIndex, snapshot);
+        if (edge == EdgeDecision.REPLAN) {
+            return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
+        }
+        // navigate_to_known owns movement only. Relative steering preserves the player's view;
+        // a caller that wants camera motion must declare and execute face_known_position.
+        Set<MovementInputLease.MovementKey> desired = steering(
+                player.getX(), player.getZ(), player.getYRot(), waypoint, waypointTolerance);
+        if (waypoint.y() > planned.key().from().y()) {
+            var withJump = EnumSet.noneOf(MovementInputLease.MovementKey.class);
+            withJump.addAll(desired);
+            withJump.add(MovementInputLease.MovementKey.JUMP);
+            desired = Set.copyOf(withJump);
+        }
+        Vec3 command = commandDirection(player.getYRot(), desired);
+        if (command.horizontalDistanceSqr() > 0.0D) {
+            double previewLength = Math.min(1.0D, horizontalDistance(player, waypoint));
+            Vec3 preview = command.scale(previewLength);
+            boolean verticalEdge = waypoint.y() != planned.key().from().y();
+            boolean previewSafe = verticalEdge
+                    ? movementSafety.canPreviewGoalMovement(
+                            player, preview, snapshot.worldRevision())
+                    : movementSafety.verifiesGoalHorizontalMovement(
+                            player,
+                            preview.x,
+                            preview.z,
+                            clientTick,
+                            snapshot.worldRevision());
+            if (!previewSafe) {
+                return finish(Status.REPLAN_REQUIRED, Reason.UNVERIFIED_MOVEMENT_VECTOR);
+            }
+        }
+        state.observeProgress(horizontalDistance(player, waypoint), clientTick);
+        if (state.stalled(clientTick)) {
+            return finish(Status.REPLAN_REQUIRED, Reason.MOVEMENT_STALLED);
+        }
+        if (!outputAllowed.getAsBoolean()) {
+            return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
+        }
+        long outputNanos = System.nanoTime();
+        if (movement == null) {
+            movement = MovementInputLease.acquire(
+                    minecraft, ownerId, outputNanos, LEASE_HORIZON);
+        }
+        if (!outputAllowed.getAsBoolean()) {
+            return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
+        }
+        outputNanos = System.nanoTime();
+        movement.setDesired(ownerId, desired);
+        if (!outputAllowed.getAsBoolean()) {
+            return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
+        }
+        outputNanos = System.nanoTime();
+        if (!movement.heartbeat(ownerId, outputNanos, LEASE_HORIZON)) {
+            movement = null;
+            return finish(Status.FAILED, Reason.MOVEMENT_LEASE_EXPIRED);
+        }
+        int verticalDelta = Integer.compare(waypoint.y(), planned.key().from().y());
+        if (verticalDelta == 0) {
+            AgentInputState.global().requireGoalMovementSafety(
+                    player, player.level(), snapshot.worldRevision(), remainingDistance);
+        } else {
+            AgentInputState.global().requireNavigationMovementSafety(
+                    player,
+                    player.level(),
+                    snapshot.worldRevision(),
+                    remainingDistance,
+                    new AgentInputState.NavigationIntent(
+                            new Vec3(
+                                    waypoint.x() + 0.5D,
+                                    waypoint.y() + player.getBbHeight() * 0.5D,
+                                    waypoint.z() + 0.5D),
+                            verticalDelta));
+        }
+        if (edge == EdgeDecision.PROBE && !desired.isEmpty()) {
+            state.probeStepIssued = true;
+        }
+        return TickResult.running(edge == EdgeDecision.PROBE && state.probeStepIssued
+                ? Reason.PROBE_MICRO_STEP : Reason.NONE);
+    }
+
+    private TickResult tickNavigationSettlement(
+            Minecraft minecraft,
+            LocalPlayer player,
+            KnownTraversabilitySnapshot snapshot,
+            double remainingDistance,
+            long clientTick,
+            BooleanSupplier outputAllowed) {
+        NavigateState state = navigation;
+        NavCell destination = state.route.cells().getLast();
+        if (!atWaypoint(player, destination, state.tolerance)) {
+            return finish(Status.REPLAN_REQUIRED, Reason.PLAYER_OFF_ROUTE);
+        }
+        if (state.lastSettlePosition != null
+                && player.position().distanceToSqr(state.lastSettlePosition)
+                        <= SETTLE_DRIFT_EPSILON_SQUARED) {
+            state.stableTicks++;
+        } else {
+            state.stableTicks = 0;
+        }
+        state.lastSettlePosition = player.position();
+        if (state.stableTicks >= SETTLE_STABLE_TICKS) {
+            return finish(Status.SUCCEEDED, Reason.NONE);
+        }
+        state.activeTicks++;
+        if (!navigationOutputAllowed(state.activeTicks, state.route.tickUpperBound())) {
+            return finish(Status.REPLAN_REQUIRED, Reason.PRIMITIVE_TICK_BUDGET_EXHAUSTED);
+        }
+        if (!outputAllowed.getAsBoolean()) {
+            return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
+        }
+        long outputNanos = System.nanoTime();
+        if (movement == null) {
+            movement = MovementInputLease.acquire(
+                    minecraft, ownerId, outputNanos, LEASE_HORIZON);
+        }
+        if (!outputAllowed.getAsBoolean()) {
+            return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
+        }
+        outputNanos = System.nanoTime();
+        movement.setDesired(ownerId, Set.of());
+        if (!outputAllowed.getAsBoolean()) {
+            return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
+        }
+        outputNanos = System.nanoTime();
+        if (!movement.heartbeat(ownerId, outputNanos, LEASE_HORIZON)) {
+            movement = null;
+            return finish(Status.FAILED, Reason.MOVEMENT_LEASE_EXPIRED);
+        }
+        AgentInputState.global().requireGoalMovementSafety(
+                player, player.level(), snapshot.worldRevision(), remainingDistance);
+        return TickResult.running(Reason.NONE);
+    }
+
+    private TickResult tickFace(
+            LocalPlayer player,
+            KnownTraversabilitySnapshot snapshot,
+            double remainingCameraDegrees,
+            long clientTick,
+            BooleanSupplier outputAllowed) {
+        FaceState state = face;
+        BoundaryDecision boundary = boundaryDecision(
+                state.target.worldSessionId(), state.target.target().dimension(),
+                state.target.worldRevision(), snapshot);
+        if (boundary != BoundaryDecision.CURRENT) {
+            return finish(
+                    boundary == BoundaryDecision.REVISION_CHANGED
+                            ? Status.REPLAN_REQUIRED : Status.FAILED,
+                    boundary == BoundaryDecision.REVISION_CHANGED
+                            ? Reason.WORLD_REVISION_CHANGED : Reason.WORLD_BOUNDARY_CHANGED);
+        }
+
+        Vec3 eye = player.getEyePosition();
+        ActionDsl.Position target = state.target.target();
+        double dx = target.x() + 0.5D - eye.x;
+        double dy = target.y() + 0.5D - eye.y;
+        double dz = target.z() + 0.5D - eye.z;
+        double horizontal = Math.hypot(dx, dz);
+        if (horizontal < 1.0e-9D && Math.abs(dy) < 1.0e-9D) {
+            return finish(Status.FAILED, Reason.INVALID_FACE_TARGET);
+        }
+        float desiredYaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0D);
+        float desiredPitch = (float) -Math.toDegrees(Math.atan2(dy, horizontal));
+        double error = angularError(player.getYRot(), player.getXRot(), desiredYaw, desiredPitch);
+        if (error <= AIM_TOLERANCE_DEGREES * 2.0D) {
+            return finish(Status.SUCCEEDED, Reason.NONE);
+        }
+        if (remainingCameraDegrees <= 0.0D) {
+            return finish(Status.REPLAN_REQUIRED, Reason.MOTION_BUDGET_EXHAUSTED);
+        }
+        state.observeProgress(error, clientTick);
+        if (state.stalled(clientTick)) {
+            return finish(Status.REPLAN_REQUIRED, Reason.CAMERA_STALLED);
+        }
+        if (!outputAllowed.getAsBoolean()) {
+            return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
+        }
+        turn(player, desiredYaw, desiredPitch, remainingCameraDegrees);
+        state.activeTicks++;
+        if (angularError(player.getYRot(), player.getXRot(), desiredYaw, desiredPitch)
+                <= AIM_TOLERANCE_DEGREES * 2.0D) {
+            return finish(Status.SUCCEEDED, Reason.NONE);
+        }
+        return state.activeTicks >= state.tickUpperBound
+                ? finish(Status.REPLAN_REQUIRED, Reason.PRIMITIVE_TICK_BUDGET_EXHAUSTED)
+                : TickResult.running(Reason.NONE);
+    }
+
+    private void neutralHeartbeat() {
+        if (movement == null) return;
+        long nowNanos = System.nanoTime();
+        movement.setDesired(ownerId, Set.of());
+        if (!movement.heartbeat(ownerId, nowNanos, LEASE_HORIZON)) {
+            movement = null;
+        }
+    }
+
+    private TickResult finish(Status status, Reason reason) {
+        try {
+            if (movement != null) {
+                movement.close(ownerId);
+            }
+        } finally {
+            movement = null;
+            navigation = null;
+            face = null;
+        }
+        return new TickResult(status, reason);
+    }
+
+    @Override
+    public void close() {
+        try {
+            if (movement != null) {
+                movement.close(ownerId);
+            }
+        } finally {
+            movement = null;
+            navigation = null;
+            face = null;
+        }
+    }
+
+    private void requireIdle() {
+        if (active()) {
+            throw new IllegalStateException("An Action DSL primitive is already active");
+        }
+        lastClientTick = -1;
+    }
+
+    static BoundaryDecision boundaryDecision(
+            UUID sessionId,
+            String dimension,
+            long worldRevision,
+            KnownTraversabilitySnapshot snapshot) {
+        Objects.requireNonNull(sessionId, "sessionId");
+        Objects.requireNonNull(dimension, "dimension");
+        Objects.requireNonNull(snapshot, "snapshot");
+        if (!sessionId.equals(snapshot.worldSessionId())
+                || !dimension.equals(snapshot.dimension())) {
+            return BoundaryDecision.WORLD_CHANGED;
+        }
+        return worldRevision == snapshot.worldRevision()
+                ? BoundaryDecision.CURRENT : BoundaryDecision.REVISION_CHANGED;
+    }
+
+    static EdgeDecision edgeDecision(
+            RoutePlan route,
+            int edgeIndex,
+            KnownTraversabilitySnapshot snapshot) {
+        Objects.requireNonNull(route, "route");
+        Objects.requireNonNull(snapshot, "snapshot");
+        if (edgeIndex < 0 || edgeIndex >= route.edges().size()
+                || !route.worldSessionId().equals(snapshot.worldSessionId())
+                || !route.dimension().equals(snapshot.dimension())) {
+            return EdgeDecision.REPLAN;
+        }
+        TraversabilityEdge planned = route.edges().get(edgeIndex);
+        TraversabilityEdge current = snapshot.edge(planned.key()).orElse(null);
+        if (current == null || !route.worldSessionId().equals(current.worldSessionId())
+                || !current.traversable() || !diagonalProofCurrent(current, snapshot)) {
+            return EdgeDecision.REPLAN;
+        }
+        if (current.requiresProbe()) {
+            // A newly downgraded edge was not included in the compiled probe/tick budget.
+            return planned.requiresProbe() ? EdgeDecision.PROBE : EdgeDecision.REPLAN;
+        }
+        return EdgeDecision.CONFIRMED;
+    }
+
+    static boolean navigationOutputAllowed(long activeTicks, long tickUpperBound) {
+        return activeTicks >= 0L && tickUpperBound > 0L && activeTicks < tickUpperBound;
+    }
+
+    private static boolean diagonalProofCurrent(
+            TraversabilityEdge edge,
+            KnownTraversabilitySnapshot snapshot) {
+        NavCell from = edge.key().from();
+        NavCell to = edge.key().to();
+        if (!from.horizontallyDiagonalTo(to)) return true;
+        NavCell xSide = new NavCell(from.dimension(), to.x(), from.y(), from.z());
+        NavCell zSide = new NavCell(from.dimension(), from.x(), from.y(), to.z());
+        return confirmed(snapshot, new TraversabilityEdge.Key(from, xSide))
+                && confirmed(snapshot, new TraversabilityEdge.Key(from, zSide));
+    }
+
+    private static boolean confirmed(
+            KnownTraversabilitySnapshot snapshot,
+            TraversabilityEdge.Key key) {
+        return snapshot.edge(key)
+                .map(edge -> edge.status() == TraversabilityEdge.Status.CONFIRMED)
+                .orElse(false);
+    }
+
+    static float boundedYawDelta(float currentYaw, float desiredYaw, float limit) {
+        requireCameraLimit(limit);
+        return Mth.clamp(
+                Mth.wrapDegrees(desiredYaw - currentYaw),
+                -limit,
+                limit);
+    }
+
+    static float boundedPitchDelta(float currentPitch, float desiredPitch, float limit) {
+        requireCameraLimit(limit);
+        return Mth.clamp(
+                Mth.clamp(desiredPitch, -90.0F, 90.0F) - currentPitch,
+                -limit,
+                limit);
+    }
+
+    private void turn(
+            LocalPlayer player,
+            float desiredYaw,
+            float desiredPitch,
+            double remainingCameraDegrees) {
+        float yaw = boundedYawDelta(player.getYRot(), desiredYaw, maxCameraDegreesPerTick);
+        float pitch = boundedPitchDelta(player.getXRot(), desiredPitch, maxCameraDegreesPerTick);
+        double total = Math.abs(yaw) + Math.abs(pitch);
+        if (total > remainingCameraDegrees) {
+            double scale = remainingCameraDegrees / total;
+            yaw *= (float) scale;
+            pitch *= (float) scale;
+        }
+        player.turn(yaw / 0.15D, pitch / 0.15D);
+    }
+
+    private static void requireCameraLimit(float limit) {
+        if (!Float.isFinite(limit) || limit <= 0.0F
+                || limit > MAX_ALLOWED_CAMERA_DEGREES_PER_TICK) {
+            throw new IllegalArgumentException("camera limit must be within (0, 18]");
+        }
+    }
+
+    private static double angularError(
+            float yaw, float pitch, float desiredYaw, float desiredPitch) {
+        return Math.abs(Mth.wrapDegrees(desiredYaw - yaw))
+                + Math.abs(Mth.clamp(desiredPitch, -90.0F, 90.0F) - pitch);
+    }
+
+    private static boolean atWaypoint(LocalPlayer player, NavCell cell, double tolerance) {
+        return waypointReached(
+                player.getX(), player.getY(), player.getZ(), cell, tolerance);
+    }
+
+    static boolean waypointReached(
+            double x, double y, double z, NavCell cell, double tolerance) {
+        Objects.requireNonNull(cell, "cell");
+        return Mth.floor(x) == cell.x()
+                && Mth.floor(y) == cell.y()
+                && Mth.floor(z) == cell.z()
+                && Math.hypot(cell.x() + 0.5D - x, cell.z() + 0.5D - z) <= tolerance
+                && Math.abs(y - cell.y()) <= WAYPOINT_VERTICAL_TOLERANCE;
+    }
+
+    private static double horizontalDistance(LocalPlayer player, NavCell cell) {
+        return Math.hypot(cell.x() + 0.5D - player.getX(), cell.z() + 0.5D - player.getZ());
+    }
+
+    public static Set<MovementInputLease.MovementKey> steering(
+            double playerX, double playerZ, float yaw, NavCell target) {
+        return steering(playerX, playerZ, yaw, target, 0.0D);
+    }
+
+    static Set<MovementInputLease.MovementKey> steering(
+            double playerX,
+            double playerZ,
+            float yaw,
+            NavCell target,
+            double tolerance) {
+        Objects.requireNonNull(target, "target");
+        return steering(
+                playerX, playerZ, yaw,
+                target.x() + 0.5D, target.z() + 0.5D, tolerance);
+    }
+
+    public static Set<MovementInputLease.MovementKey> steering(
+            double playerX,
+            double playerZ,
+            float yaw,
+            double targetX,
+            double targetZ,
+            double tolerance) {
+        if (!Double.isFinite(tolerance) || tolerance < 0.0D) {
+            throw new IllegalArgumentException("tolerance must be finite and non-negative");
+        }
+        if (!Double.isFinite(targetX) || !Double.isFinite(targetZ)) {
+            throw new IllegalArgumentException("target must be finite");
+        }
+        double dx = targetX - playerX;
+        double dz = targetZ - playerZ;
+        double radians = Math.toRadians(yaw);
+        double forwardX = -Math.sin(radians);
+        double forwardZ = Math.cos(radians);
+        double forward = dx * forwardX + dz * forwardZ;
+        double right = dx * -forwardZ + dz * forwardX;
+        var result = EnumSet.noneOf(MovementInputLease.MovementKey.class);
+        if (forward > 0.10D) result.add(MovementInputLease.MovementKey.FORWARD);
+        else if (forward < -0.10D) result.add(MovementInputLease.MovementKey.BACK);
+        if (right > 0.10D) result.add(MovementInputLease.MovementKey.RIGHT);
+        else if (right < -0.10D) result.add(MovementInputLease.MovementKey.LEFT);
+        if (result.isEmpty() && Math.hypot(dx, dz) > tolerance) {
+            if (Math.abs(forward) >= Math.abs(right)) {
+                result.add(forward >= 0.0D
+                        ? MovementInputLease.MovementKey.FORWARD
+                        : MovementInputLease.MovementKey.BACK);
+            } else {
+                result.add(right >= 0.0D
+                        ? MovementInputLease.MovementKey.RIGHT
+                        : MovementInputLease.MovementKey.LEFT);
+            }
+        }
+        return Set.copyOf(result);
+    }
+
+    static Vec3 commandDirection(
+            float yaw, Set<MovementInputLease.MovementKey> movement) {
+        Objects.requireNonNull(movement, "movement");
+        double forward = movement.contains(MovementInputLease.MovementKey.FORWARD) ? 1.0D
+                : movement.contains(MovementInputLease.MovementKey.BACK) ? -1.0D : 0.0D;
+        double left = movement.contains(MovementInputLease.MovementKey.LEFT) ? 1.0D
+                : movement.contains(MovementInputLease.MovementKey.RIGHT) ? -1.0D : 0.0D;
+        if (forward == 0.0D && left == 0.0D) return Vec3.ZERO;
+        double scale = 1.0D / Math.hypot(forward, left);
+        double radians = Math.toRadians(yaw);
+        double forwardX = -Math.sin(radians);
+        double forwardZ = Math.cos(radians);
+        return new Vec3(
+                (forward * forwardX + left * forwardZ) * scale,
+                0.0D,
+                (forward * forwardZ - left * forwardX) * scale);
+    }
+
+    static boolean insideRouteCorridor(double x, double y, double z, TraversabilityEdge.Key edge) {
+        NavCell from = edge.from();
+        NavCell to = edge.to();
+        if (y < Math.min(from.y(), to.y()) - ROUTE_VERTICAL_MARGIN
+                || y > Math.max(from.y(), to.y()) + ROUTE_VERTICAL_MARGIN) {
+            return false;
+        }
+        double ax = from.x() + 0.5D;
+        double az = from.z() + 0.5D;
+        double bx = to.x() + 0.5D;
+        double bz = to.z() + 0.5D;
+        double dx = bx - ax;
+        double dz = bz - az;
+        double lengthSquared = dx * dx + dz * dz;
+        double along = lengthSquared == 0.0D ? 0.0D
+                : Mth.clamp(((x - ax) * dx + (z - az) * dz) / lengthSquared, 0.0D, 1.0D);
+        return Math.hypot(x - (ax + along * dx), z - (az + along * dz))
+                <= ROUTE_CORRIDOR_RADIUS;
+    }
+
+    private static boolean insideRouteCorridor(LocalPlayer player, TraversabilityEdge.Key edge) {
+        return insideRouteCorridor(player.getX(), player.getY(), player.getZ(), edge);
+    }
+
+    public record KnownFaceTarget(
+            UUID worldSessionId,
+            long worldRevision,
+            ActionDsl.Position target) {
+        public KnownFaceTarget {
+            Objects.requireNonNull(worldSessionId, "worldSessionId");
+            Objects.requireNonNull(target, "target");
+            if (worldRevision < 0) {
+                throw new IllegalArgumentException("worldRevision must be non-negative");
+            }
+        }
+    }
+
+    public record TickResult(Status status, Reason reason) {
+        public TickResult {
+            Objects.requireNonNull(status, "status");
+            Objects.requireNonNull(reason, "reason");
+            if (status == Status.RUNNING && reason != Reason.NONE
+                    && reason != Reason.PROBE_MICRO_STEP) {
+                throw new IllegalArgumentException("running result has a terminal reason");
+            }
+            if (status != Status.RUNNING && reason == Reason.PROBE_MICRO_STEP) {
+                throw new IllegalArgumentException("probe micro-step is a running result");
+            }
+        }
+
+        static TickResult running(Reason reason) {
+            return new TickResult(Status.RUNNING, reason);
+        }
+
+        public boolean terminal() {
+            return status != Status.RUNNING;
+        }
+    }
+
+    public enum Status {
+        RUNNING,
+        SUCCEEDED,
+        REPLAN_REQUIRED,
+        FAILED
+    }
+
+    public enum Reason {
+        NONE,
+        PROBE_MICRO_STEP,
+        PROBE_COMPLETED,
+        WORLD_UNAVAILABLE,
+        WORLD_BOUNDARY_CHANGED,
+        WORLD_REVISION_CHANGED,
+        ROUTE_EDGE_CHANGED,
+        PLAYER_OFF_ROUTE,
+        UNVERIFIED_MOVEMENT_VECTOR,
+        MOVEMENT_STALLED,
+        CAMERA_STALLED,
+        PRIMITIVE_TICK_BUDGET_EXHAUSTED,
+        MOTION_BUDGET_EXHAUSTED,
+        MOVEMENT_LEASE_EXPIRED,
+        INVALID_FACE_TARGET,
+        UNSUPPORTED_LOCOMOTION,
+        HARD_DEADLINE
+    }
+
+    enum BoundaryDecision {
+        CURRENT,
+        REVISION_CHANGED,
+        WORLD_CHANGED
+    }
+
+    enum EdgeDecision {
+        CONFIRMED,
+        PROBE,
+        REPLAN
+    }
+
+    private static final class NavigateState extends ProgressState {
+        private final RoutePlan route;
+        private final double tolerance;
+        private int edgeIndex;
+        private long activeTicks;
+        private boolean probeStepIssued;
+        private boolean settling;
+        private Vec3 lastSettlePosition;
+        private int stableTicks;
+
+        private NavigateState(RoutePlan route, double tolerance) {
+            this.route = route;
+            this.tolerance = tolerance;
+        }
+    }
+
+    private static final class FaceState extends ProgressState {
+        private final KnownFaceTarget target;
+        private final long tickUpperBound;
+        private long activeTicks;
+
+        private FaceState(KnownFaceTarget target, long tickUpperBound) {
+            this.target = target;
+            this.tickUpperBound = tickUpperBound;
+        }
+    }
+
+    private abstract static class ProgressState {
+        private double best = Double.POSITIVE_INFINITY;
+        private long lastProgressTick = -1;
+
+        final void observeProgress(double value, long clientTick) {
+            if (!Double.isFinite(value) || value < 0) {
+                throw new IllegalArgumentException("progress value must be finite and non-negative");
+            }
+            if (lastProgressTick < 0 || best - value >= PROGRESS_EPSILON_BLOCKS) {
+                best = value;
+                lastProgressTick = clientTick;
+            }
+        }
+
+        final boolean stalled(long clientTick) {
+            return lastProgressTick >= 0 && clientTick - lastProgressTick >= STALL_TICKS;
+        }
+
+        final void resetProgress() {
+            best = Double.POSITIVE_INFINITY;
+            lastProgressTick = -1;
+        }
+    }
+}

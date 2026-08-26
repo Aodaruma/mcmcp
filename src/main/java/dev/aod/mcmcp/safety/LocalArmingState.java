@@ -15,6 +15,7 @@ public final class LocalArmingState {
     private UUID worldSessionId;
     private Set<String> capabilities = Set.of();
     private long readyExpiresAtNanos;
+    private long controlEpoch;
     private String lastLockReason = "startup";
 
     public synchronized void arm(UUID sessionId, Set<String> capabilityProfile) {
@@ -50,6 +51,7 @@ public final class LocalArmingState {
         // System.nanoTime() is defined only by differences; natural overflow is intentional.
         readyExpiresAtNanos = nowNanos + timeoutNanos;
         lastLockReason = null;
+        controlEpoch++;
     }
 
     /** Consumes READY exactly once; the active action no longer inherits the READY timeout. */
@@ -60,6 +62,7 @@ public final class LocalArmingState {
         }
         mode = Mode.AGENT;
         readyExpiresAtNanos = 0L;
+        controlEpoch++;
         return true;
     }
 
@@ -69,6 +72,7 @@ public final class LocalArmingState {
             return false;
         }
         mode = Mode.RECOVERING;
+        controlEpoch++;
         return true;
     }
 
@@ -78,6 +82,7 @@ public final class LocalArmingState {
         capabilities = Set.of();
         readyExpiresAtNanos = 0L;
         lastLockReason = sanitizeReason(reason);
+        controlEpoch++;
     }
 
     public synchronized Snapshot snapshot(UUID currentSessionId) {
@@ -91,7 +96,13 @@ public final class LocalArmingState {
         if (mode == Mode.READY && nowNanos - readyExpiresAtNanos >= 0L) {
             lock("ready_timeout");
         }
-        return new Snapshot(mode, worldSessionId, capabilities, readyExpiresAtNanos, lastLockReason);
+        return new Snapshot(
+                mode,
+                worldSessionId,
+                capabilities,
+                readyExpiresAtNanos,
+                lastLockReason,
+                controlEpoch);
     }
 
     public synchronized boolean allows(UUID currentSessionId, String capability) {
@@ -113,7 +124,8 @@ public final class LocalArmingState {
             UUID worldSessionId,
             Set<String> capabilities,
             long readyExpiresAtNanos,
-            String lastLockReason) {
+            String lastLockReason,
+            long controlEpoch) {
         public Snapshot {
             Objects.requireNonNull(mode, "mode");
         }

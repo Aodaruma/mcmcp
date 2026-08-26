@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.mixin.client;
 
+import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.runtime.ClientReconciliationSignals;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -7,6 +8,8 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.protocol.game.ClientboundContainerSetContentPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundExplodePacket;
+import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
+import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
@@ -26,11 +29,24 @@ public abstract class ClientPacketListenerMixin {
         ClientReconciliationSignals.global().closeLevel(Minecraft.getInstance().level);
     }
 
+    @Inject(method = "handleLevelChunkWithLight", at = @At("TAIL"), require = 1, expect = 1)
+    private void mcmcp$levelChunkLoaded(
+            ClientboundLevelChunkWithLightPacket packet, CallbackInfo callback) {
+        recordChunkMutation(packet.getX(), packet.getZ());
+    }
+
+    @Inject(method = "handleForgetLevelChunk", at = @At("TAIL"), require = 1, expect = 1)
+    private void mcmcp$levelChunkUnloaded(
+            ClientboundForgetLevelChunkPacket packet, CallbackInfo callback) {
+        recordChunkMutation(packet.pos().x(), packet.pos().z());
+    }
+
     @Inject(method = "handleMovePlayer", at = @At("TAIL"), require = 1, expect = 1)
     private void mcmcp$positionCorrection(
             ClientboundPlayerPositionPacket packet, CallbackInfo callback) {
         var minecraft = Minecraft.getInstance();
         if (minecraft.level != null && minecraft.player != null) {
+            AgentInputState.global().discardTrackedAgentVelocity();
             ClientReconciliationSignals.global().onPositionCorrection(
                     minecraft.level, packet.id(), minecraft.player.position());
         }
@@ -52,6 +68,7 @@ public abstract class ClientPacketListenerMixin {
         var minecraft = Minecraft.getInstance();
         if (minecraft.level != null && minecraft.player != null
                 && packet.id() == minecraft.player.getId()) {
+            AgentInputState.global().discardTrackedAgentVelocity();
             ClientReconciliationSignals.global().onLocalPlayerMotion(
                     minecraft.level, packet.movement(), "set_entity_motion");
         }
@@ -116,5 +133,12 @@ public abstract class ClientPacketListenerMixin {
         ClientReconciliationSignals.global().onInventorySync(
                 minecraft.level, kind, packetSlot, relevant, itemId,
                 selected.isEmpty() ? 0 : selected.getCount());
+    }
+
+    private static void recordChunkMutation(int chunkX, int chunkZ) {
+        var level = Minecraft.getInstance().level;
+        if (level != null) {
+            ClientReconciliationSignals.global().onChunkMutation(level, chunkX, chunkZ);
+        }
     }
 }

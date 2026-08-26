@@ -1,5 +1,10 @@
 package dev.aod.mcmcp.fixture;
 
+import dev.aod.mcmcp.agent.navigation.LocalObservationProjector;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.HazardSeverity;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.HazardType;
+import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
+import dev.aod.mcmcp.agent.safety.ObservationRecord;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Direction;
@@ -16,6 +21,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.SweetBerryBushBlock;
 import net.minecraft.world.level.block.entity.BarrelBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BedPart;
@@ -30,11 +36,14 @@ import net.neoforged.neoforge.event.RegisterGameTestsEvent;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
 
+import java.util.List;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 /** Small server-side fixture test for the BlockState assumptions used by the interactive arena. */
 final class FixtureGameTests {
     private static final Identifier TEST_ID = id("phase1_block_states");
+    private static final Identifier PHASE2_SAFETY_TEST_ID = id("phase2_local_safety_hazards");
     private static final Identifier PHASE3_TEST_ID = id("phase3_action_fixture");
     private static final Identifier PHASE4_TEST_ID = id("phase4_block_plan_fixture");
     private static final Identifier PHASE5_TEST_ID = id("phase5_workspace_fixture");
@@ -45,6 +54,9 @@ final class FixtureGameTests {
             DeferredRegister.create(BuiltInRegistries.TEST_FUNCTION, McmcpTestFixtureMod.MOD_ID);
     private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PHASE1_BLOCK_STATES =
             TEST_FUNCTIONS.register("phase1_block_states", () -> FixtureGameTests::runPhase1BlockStates);
+    private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PHASE2_LOCAL_SAFETY =
+            TEST_FUNCTIONS.register(
+                    "phase2_local_safety_hazards", () -> FixtureGameTests::runPhase2LocalSafetyHazards);
     private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PHASE3_ACTION_FIXTURE =
             TEST_FUNCTIONS.register("phase3_action_fixture", () -> FixtureGameTests::runPhase3ActionFixture);
     private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PHASE4_BLOCK_PLAN_FIXTURE =
@@ -75,6 +87,8 @@ final class FixtureGameTests {
                 0,
                 true);
         event.registerTest(TEST_ID, new FunctionGameTestInstance(PHASE1_BLOCK_STATES.getKey(), data));
+        event.registerTest(PHASE2_SAFETY_TEST_ID,
+                new FunctionGameTestInstance(PHASE2_LOCAL_SAFETY.getKey(), data));
         event.registerTest(PHASE3_TEST_ID, new FunctionGameTestInstance(PHASE3_ACTION_FIXTURE.getKey(), data));
         event.registerTest(PHASE4_TEST_ID,
                 new FunctionGameTestInstance(PHASE4_BLOCK_PLAN_FIXTURE.getKey(), data));
@@ -156,6 +170,61 @@ final class FixtureGameTests {
                 helper.fail(Component.literal("expected positive block light above the powered lamp"));
             }
         });
+    }
+
+    private static void runPhase2LocalSafetyHazards(GameTestHelper helper) {
+        BlockPos cactus = new BlockPos(0, 1, 0);
+        helper.setBlock(cactus.below(), Blocks.SAND);
+        helper.setBlock(cactus, Blocks.CACTUS);
+        assertHazardStateAndProjection(
+                helper,
+                cactus,
+                Blocks.CACTUS.defaultBlockState(),
+                ObservationRecord.Hazard.CONTACT_DAMAGE,
+                HazardType.CONTACT_DAMAGE);
+
+        BlockPos berryBush = new BlockPos(1, 1, 0);
+        BlockState berry = Blocks.SWEET_BERRY_BUSH.defaultBlockState()
+                .setValue(SweetBerryBushBlock.AGE, 2);
+        helper.setBlock(berryBush.below(), Blocks.DIRT);
+        helper.setBlock(berryBush, berry);
+        assertHazardStateAndProjection(
+                helper,
+                berryBush,
+                berry,
+                ObservationRecord.Hazard.CONTACT_DAMAGE,
+                HazardType.CONTACT_DAMAGE);
+
+        BlockPos witherRose = new BlockPos(2, 1, 0);
+        helper.setBlock(witherRose.below(), Blocks.DIRT);
+        helper.setBlock(witherRose, Blocks.WITHER_ROSE);
+        assertHazardStateAndProjection(
+                helper,
+                witherRose,
+                Blocks.WITHER_ROSE.defaultBlockState(),
+                ObservationRecord.Hazard.CONTACT_DAMAGE,
+                HazardType.CONTACT_DAMAGE);
+
+        BlockPos powderSnow = new BlockPos(3, 1, 0);
+        helper.setBlock(powderSnow.below(), Blocks.SMOOTH_STONE);
+        helper.setBlock(powderSnow, Blocks.POWDER_SNOW);
+        assertHazardStateAndProjection(
+                helper,
+                powderSnow,
+                Blocks.POWDER_SNOW.defaultBlockState(),
+                ObservationRecord.Hazard.FREEZING,
+                HazardType.FREEZING);
+
+        BlockPos fire = new BlockPos(4, 1, 0);
+        helper.setBlock(fire.below(), Blocks.NETHERRACK);
+        helper.setBlock(fire, Blocks.FIRE);
+        assertHazardStateAndProjection(
+                helper,
+                fire,
+                Blocks.FIRE.defaultBlockState(),
+                ObservationRecord.Hazard.FIRE_DAMAGE,
+                HazardType.FIRE);
+        helper.succeed();
     }
 
     private static void runPhase3ActionFixture(GameTestHelper helper) {
@@ -696,6 +765,64 @@ final class FixtureGameTests {
         if (!actual.equals(expected)) {
             helper.fail(Component.literal("expected exact BlockState " + expected + " at " + relativePos
                     + " but found " + actual));
+        }
+    }
+
+    private static void assertHazardStateAndProjection(
+            GameTestHelper helper,
+            BlockPos relativePos,
+            BlockState expectedState,
+            ObservationRecord.Hazard localHazard,
+            HazardType publicHazard) {
+        assertExactState(helper, relativePos, expectedState);
+        var point = new ObservationRecord.Point(
+                relativePos.getX() + 0.5D,
+                relativePos.getY() + 0.5D,
+                relativePos.getZ() + 0.5D);
+        var current = new ObservationRecord(
+                1L,
+                7L,
+                0,
+                point,
+                point,
+                point,
+                ObservationRecord.Support.PRESENT,
+                ObservationRecord.Clearance.CLEAR,
+                ObservationRecord.Transition.STATIONARY,
+                ObservationRecord.Fluid.NONE,
+                false,
+                localHazard,
+                ObservationRecord.LoadedState.LOADED,
+                ObservationRecord.Drop.SUPPORTED,
+                false);
+        var projection = LocalObservationProjector.project(
+                new LocalObservationVolume.Snapshot(1L, 7L, point, current, List.of()),
+                new UUID(0L, 1L),
+                "minecraft:overworld",
+                7L);
+        if (projection.currentSafety() != LocalObservationProjector.CurrentSafety.RECOVER) {
+            helper.fail(Component.literal(
+                    "expected RECOVER for " + expectedState + " but found "
+                            + projection.currentSafety()));
+        }
+        if (projection.records().size() != 1
+                || !(projection.records().getFirst()
+                        instanceof dev.aod.mcmcp.agent.observation.ObservationRecord.Hazard hazard)
+                || hazard.hazardType() != publicHazard
+                || hazard.severity() != HazardSeverity.URGENT) {
+            helper.fail(Component.literal(
+                    "unexpected projected hazard for " + expectedState + ": "
+                            + projection.records()));
+        }
+        if (LocalObservationVolume.avoidsNewDamageHazard(
+                ObservationRecord.Hazard.NONE, localHazard, ObservationRecord.Hazard.NONE)) {
+            helper.fail(Component.literal(
+                    "new damage hazard was accepted for " + expectedState));
+        }
+        if (!LocalObservationVolume.avoidsNewDamageHazard(
+                localHazard, localHazard, ObservationRecord.Hazard.NONE)) {
+            helper.fail(Component.literal(
+                    "same-hazard escape progress was rejected for " + expectedState));
         }
     }
 

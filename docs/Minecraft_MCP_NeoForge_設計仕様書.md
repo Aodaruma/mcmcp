@@ -216,13 +216,17 @@ Local MCP Host / LLM
 
 ~~~text
 HTTP worker
-  └─ auth → JSON検証 → command enqueue → snapshot返却
-                         |
-                         v
+  ├─ auth / JSON / DSL構造検証
+  ├─ bounded queueでclient snapshot取得
+  ├─ immutable snapshotだけでpredicate / A* / cost planning
+  ├─ bounded queueでcommit要求
+  └─ JSON response送信成功後にdelivery confirm
+
 NeoForge ClientTick
-  ├─ queue drain
-  ├─ Minecraft状態の取得
-  ├─ Taskを1 step進める
+  ├─ admission snapshotを取得
+  ├─ commit直前に現在状態を再検証
+  ├─ ActionをUNCONFIRMEDで予約
+  ├─ confirm済みActionだけを1 step進める
   ├─ 入力を反映する
   └─ immutable snapshotを公開
 ~~~
@@ -232,14 +236,16 @@ NeoForge ClientTick
 - HTTP workerはMinecraft APIへ直接触れない
 - ClientTickはHTTPやLLMを待たない
 - Minecraftのclient/world/player参照を別threadへ渡さない
-- 経路探索をworker化する場合も、渡すのはKnownTraversabilityMapのimmutable copyだけ
-- workerの結果はworld revisionを照合してから採用する
+- workerへ渡すのはsession、control epoch、pose、policy、observation frame、Known Traversability Map等のimmutable valueだけ
+- workerの結果はclient threadでworld/session、control、pose、policy、観測依存edge、安全条件を再照合してから採用する
 
 command queueはJDKのArrayBlockingQueueで固定長32件、公開snapshotはAtomicReferenceで保持する。満杯ならSERVER_BUSYを返し、無制限にメモリを消費しない。
 
 HttpServerはlisten backlog 16、daemon worker 2 threadの固定executorで動かす。virtual threadや無制限executorは使わない。
 
-`agent_start_action`はimmutableな`AgentSnapshot`、KnownTraversabilityMap copy、policyを使い、HTTP worker上でJSON Schema、DSL semantic、predicate availability、capability、静的budget、world、READY lease、既知経路、安全条件を完全preflightする。合格した場合だけpending/active action枠をcompare-and-setで1件予約し、同時2件目はTASK_BUSYとする。ClientTickでは操作権取得直前にcurrent snapshotでworld revision、control epoch、READY、predicate availability、capability、経路、安全条件を再評価し、preflight時のversionから安全側に維持されていることを確認する。状態が変わっていれば入力を一切発生させず、そのActionを構造化失敗で終了する。HTTP workerへMinecraftのclient/world/player参照は渡さない。
+`agent_start_action`はJSON/DSL構造をworkerで先に検証し、client threadへ固定長queueでimmutableな`AgentAdmissionSnapshot`の取得だけを依頼する。workerはそのcopy上でpredicate availability、capability、静的budget、既知経路、安全条件をpreflightし、合格結果だけをclient threadへcommitする。1つのabsolute call deadlineがcapture、planning、commitを通して有効で、既定2秒・設定上限30秒とする。planningはcancel/期限を各work単位で検査し、A*は1探索2,048・route expansion合計32,768、abstract pose 4,096、pose transition 16,384を上限とする。期限切れ・cancel・上限超過ではcommitせず入力を出さない。
+
+commit時は同時Task、world/session、control epoch、READY、pose、predicate availability、capability、観測依存edge、local safety、設定、multiplayer policy、position-correction revisionを現在値で再検証する。合格時だけActionを1件予約し、同時2件目は`TASK_BUSY`とする。HTTP workerへMinecraftのclient/world/player参照は渡さない。
 
 ## 6. 操作権
 
@@ -409,7 +415,11 @@ hypothetical transitionは同じVoxelShapeとVanillaのaxis順で保守的に評
 
 斜めpathのfluidは各axis segmentのswept player AABBと`FluidState#getAABB`相当の実高さ・形状との交差で接触を判定し、接触した`FluidState#getFluidType()`で危険度を分類する。包絡矩形の未通過cornerにあるfluidは接触扱いせず、途中segmentで触れたfluidはendpointが乾いていても記録する。未知のmodded FluidTypeは`UNKNOWN → REPLAN`とし、一律STOPにしない。非流体blockのinside判定は別にblock側のinside collision shapeとVanilla通過結果を使う。
 
-supportは最終AABB直下1e-6 blockの薄いslabを`findSupportingBlock`へ渡し、交差する支持blockが存在するかだけを確認する。返る代表BlockPosは移動前playerとの距離で選ばれ得るため、予測supportのidentityや面積としてMapへ保存しない。supportがなければ下方向collisionから実落差を求める。通常歩行の許容落差を越える場合はAgent由来の水平成分だけをneutralにしてREPLANし、重力、knockback、piston等の外力や垂直運動をゼロにしない。step-up候補は`maxUpStep`と頭上clearanceを含むVanilla結果へ従う。複数tick先を一括simulationせず、1回のVanilla moveごとに再観測する。
+supportは最終AABB直下1e-6 blockの薄いslabを`findSupportingBlock`へ渡し、交差する支持blockが存在するかだけを確認する。返る代表BlockPosは移動前playerとの距離で選ばれ得るため、予測supportのidentityや面積としてMapへ保存しない。supportがなければ下方向collisionから実落差を求める。通常歩行の許容落差を越える場合はAgent由来成分だけをneutralにしてREPLANし、重力、knockback、piston等の外力をゼロにしない。step-up候補は`maxUpStep`と頭上clearanceを含むVanilla結果へ従う。複数tick先を一括simulationせず、1回のVanilla moveごとに再観測する。
+
+各movement heartbeat直前には、現在の実AABB、camera yaw、発行予定keyからworld座標系の正規化deltaを再構成して早期検証する。最終gateは`Entity.move(SELF, intendedDelta)`の`maybeBackOffFromEdge`直後・private `collide(Vec3)`直前に置き、慣性、knockback、jump、step-upを含むVanillaの実deltaを同じresolverでpreviewして、残distance budgetと局所安全条件を再検証する。proofはplayer identity、level identity、world revision、1 player tickへ束縛し、直前のreconciliation revisionが変化していれば入力を拒否する。実移動traceにも発行時revisionを保持し、次の観測までにrevisionが変わったtraceは`CONTACT`へ昇格させない。
+
+Agent由来の加速・jumpはtick間で別台帳へ保持し、Vanillaのcollision、stuck reset、block speed factor、ground friction、air dragと同じ変換だけをその成分へ適用する。serverのvelocity全置換packetでは旧成分を破棄し、explosion等の加算外力では保持する。未証明、再計画、primitive完了、cancel、OFF、Escでは、その時点で追跡できるAgent成分だけを実velocityから差し引き、外力は残す。通常navigationが水、溶岩、騎乗、elytra、creative flightへ入った場合、またはcollision endpointの支持blockがbounce restitutionを持つ場合は、未実装のfluid/flying/restitution変換を推測せず移動前にneutralizeしてREPLANする。整数NavCell中心や経路corridorだけを、斜め入力の許可根拠にはしない。
 
 Volumeから外へ出せるのはsupport、clearance、transition、fluid、suffocation、hazard、loaded/unknownの派生値だけである。raw block ID、ore、container、block entity、構造名は捨てる。候補VoxelShapeを集める包絡broad phaseにcellが入っただけでは、BLOCKED、fluid接触、support、HAZARDへ昇格させない。
 
@@ -732,13 +742,13 @@ chat、scoreboard、看板、本、sound、raw ray、任意block/entity queryを
 - node id: program内で一意
 - request全体: 64 KiB以下
 
-compilerは各nodeを`ticks / duration / distance / camera / interactions / breaks / places`のworst-case cost vectorへ変換する。sequenceは和、`if`は各成分のbranch最大値、`repeat`は固定回数倍とする。overflow、上限を証明できないprogram、request budgetまたはlocal hard limitを越えるprogramは入力を発生させず拒否する。実行時も各node開始前と各ClientTickで実counterを再検証する。
+compilerは各nodeを`ticks / duration / distance / camera / interactions / breaks / places`のworst-case cost vectorへ変換する。sequenceは和、`if`は各成分のbranch最大値、`repeat`は固定回数倍とする。overflow、上限を証明できないprogram、request budgetまたはlocal hard limitを越えるprogramは入力を発生させず拒否する。実行時も各node開始前と各ClientTickで実counterを再検証する。さらにprimitive nodeごとのcost boundをcompiled programへ保持し、repeatで同じnodeを再度実行する場合もlogical occurrenceごとに開始counterを固定する。replanでは開始counterを更新せず、成功して次のoccurrenceへ進んだ時だけ更新するため、再計画でprimitive予算を補充できない。ここでcompile時の`duration`は20 TPSでのactive tick scheduling見積り（1 tick = 50 ms）であり、低TPSやclient stallを含むwall-clock完了保証ではない。`max_duration_ms`はこれと独立した`System.nanoTime`基準のhard deadlineとして各出力前に検査し、pause時間だけを除外するため、tick見積りを満たしていてもstall時は入力を出さず`BUDGET_EXCEEDED`で終了できる。
 
-templateは`agent_start_action.inputSchema.examples`に次を掲載し、実装repositoryの`docs/action-templates/`にも同じJSONを置く。
+templateは`agent_start_action.inputSchema.examples`に掲載し、実装repositoryにも次のJSONを置く。
 
-- navigate_to_known: 1地点への移動
-- approach_and_face: 移動、health分岐、任意の視点変更、待機
-- known_route: 明示した既知区間を固定回数だけ辿る
+- [`navigate_to_known.json`](action-templates/navigate_to_known.json): 1地点への移動
+- [`approach_and_face.json`](action-templates/approach_and_face.json): 移動、health分岐、視点変更または待機
+- [`known_route.json`](action-templates/known_route.json): 既知区間を固定回数だけ往復する
 
 templateもcustom programと同じvalidator、capability、budget、READY lease、安全条件を通る。
 
@@ -766,6 +776,10 @@ templateもcustom programと同じvalidator、capability、budget、READY lease�
   "accepted_at": "2026-08-26T00:00:00Z"
 }
 ~~~
+
+返却上の`state: "queued"`は、内部の`UNCONFIRMED`とconfirm後の`QUEUED`を同じ公開状態へ写像した値である。client threadでActionを`UNCONFIRMED`として予約した後、HTTP responseを送信できた場合だけdelivery confirmをqueueへ入れる。送信失敗時は予約をabandonし、confirmされないまま5秒経過したActionも自己失効する。`UNCONFIRMED`中はAction tick、primitive開始、入力出力を行わない。
+
+confirm後も最初の入力直前にadmission snapshotとの整合を再検証する。world/session、control、pose、policy、観測依存edge、安全条件等が変化していれば、公開済みaction_idを入力なしで`failed`へ遷移させる。
 
 agent_get_action:
 
@@ -795,7 +809,7 @@ agent_get_action:
 }
 ~~~
 
-`progress`のschema上限は通常Actionと、そのActionをpreemptしたrecoveryの累積上限である。したがってdistanceは32 + 16 = 48 block、cameraは360 + 360 = 720度、tickは600 + 200 = 800となる。interaction、break、placeのPhase 1通常Action予算は0で、schema上限8 / 4 / 8はrecovery分である。
+`progress`のschema上限は通常Actionと、そのActionをpreemptしたrecoveryの累積上限である。したがってdistanceは32 + 16 = 48 block、cameraは360 + 360 = 720度、tickは600 + 200 = 800となる。interaction、break、placeのPhase 1通常Action予算は0で、schema上限8 / 4 / 8はrecovery分である。同dimension内のserver correction、teleport、knockbackなど外力で実測値がこの固定契約を越えた場合、公開counterはschema上限へ飽和させると同時に内部overflow latchを立て、Actionをbudget超過として終了する。飽和値を「上限内」と誤認したり、契約外の値を返したり、外力を相殺したりはしない。
 
 agent_get_stateの返却対象:
 
@@ -813,14 +827,15 @@ agent_get_stateの返却対象:
 ### 8.6 内部Task state
 
 ~~~text
-QUEUED → RUNNING → SUCCEEDED
-                  → FAILED
-                  → CANCELLED
+UNCONFIRMED → QUEUED → RUNNING → SUCCEEDED
+     │                       → FAILED
+     │                       → CANCELLED
+     └─ delivery失敗 / 5秒失効 → FAILED
 
 QUEUED → CANCELLED
 ~~~
 
-RECOVERINGはTask stateではなくRUNNING中の高優先度runtime phaseとして記録する。Vanillaがpause中もTask stateはRUNNINGのまま入力を出さず、simulation再開時に再検証する。RETRYINGとRESUMINGを公開stateにはしない。terminal後の再試行は、新しいON操作とaction_idで行う。
+`UNCONFIRMED`はHTTP配信を確定するための内部状態で、公開wire stateでは`queued`とする。RECOVERINGはTask stateではなくRUNNING中の高優先度runtime phaseとして記録する。Vanillaがpause中もTask stateはRUNNINGのまま入力を出さず、simulation再開時に再検証する。RETRYINGとRESUMINGを公開stateにはしない。terminal後の再試行は、新しいON操作とaction_idで行う。
 
 MCP Tasks extensionは使用しない。MCP request自体は短時間でJSON responseを返し、ゲーム内の長時間処理はaction_idを持つ内部Taskとして管理する。
 
@@ -901,6 +916,8 @@ Validate JSON AST
 
 実行器は指定budgetとローカルhard limitの小さい方を採用する。超過しそうなGoal primitiveは実行しない。能動的危険がなければそのtickで`BUDGET_EXCEEDED`としてOFFへ戻し、危険が進行中ならGoalを破棄して第10章の固定recovery budgetだけを使用する。
 
+program全体のeffective budgetに加え、各logical primitive occurrenceにもcompile済みcost boundを適用する。距離とcameraの実行器へ渡す残量は両者の小さい方とし、tick、duration、interaction、break、placeも各tickで双方を検査する。`wait_ticks`も同じ対象であり、replanやprobeによってoccurrence上限を更新しない。
+
 ### 9.2 navigate_to_known — MVP
 
 対応:
@@ -908,7 +925,7 @@ Validate JSON AST
 - 5〜32 block
 - 同一dimension
 - CONFIRMEDまたは条件を満たすPROBE_ALLOWED edge
-- 通常のstep、slab、stairs
+- 同一高さの通常歩行と、既知edge上のslab、stairs
 - forward、back、strafe、視点調整
 
 非対応:
@@ -919,8 +936,11 @@ Validate JSON AST
 - gap jump、parkour
 - sprint、combat
 - frontier探索
+- full-block 1段分のstep-up / step-down edge自動生成
 
 経路が変化した場合は影響edgeだけをSTALEにし、現在AABBが安全なら再検証と局所再計画を行う。未知supportへは出ず、既知graphとPROBE_ALLOWEDだけで代替経路がない場合に`PATH_BLOCKED`とする。現在AABBが危険なら第10章のRECOVERINGへ昇格する。
+
+Phase 2時点のmovement gateは、既に選ばれた上下edgeのVanilla resolved movementを検証できるが、Local Observation Volumeからfull-block高低差edgeを能動生成する処理は未実装である。必要edgeを推測・合成せず、target自体が未知なら`TARGET_UNKNOWN`、targetは既知でも接続edgeがなければ`NO_KNOWN_PATH`として入力前にfail-closedとする。
 
 ### 9.3 harvest_tree — Phase 2
 
@@ -1046,11 +1066,14 @@ last damage sourceは過去値が残り得るため、non-nullだけで新しい
 | 経路外のblock更新 | CONTINUE | affected evidenceだけ更新 |
 | 次のVanilla axis別swept pathへlavaまたは崩落が到達 | RECOVER | 侵入方向と逆の既知安全空間へ離脱 |
 | suffocation | RECOVER | 直前のfree AABBへ戻る。breakは緊急policyと対象検証がある場合だけ |
+| cactus、wither rose、成長済みsweet berry bushとの接触 | RECOVER | `contact_damage`として記録し、同じdamage surfaceを増やさない既知の乾いた安全面へ退出 |
 | powder snow / freezing | REPLANまたはRECOVER | 既知退路または上方へ移動し、利用可能なら適切な装備へ切替 |
 | poison、wither、starvation | REPLANまたはRECOVER | 損害速度と回復所要時間を比較し、退避、食料、milk、回復itemから副作用込みで選択 |
 | server correction反復、world update停止 | REPLAN後STOP | 入力をneutral、1回だけ再同期を待ち、継続不可能なら`SERVER_DENIED_OR_DESYNC` |
 
 Respirationなど確率的効果を先読みせず、airの実測減少率を使う。下降bubble columnは呼吸を補えても下降自体が危険なため、底面と残り猶予を検証する。potionは消費完了まで生存できる場合だけ選ぶ。水bucketはNetherなど水を維持できないdimensionでは候補にしない。
+
+`LAVA`、`DROWNING`、`DANGEROUS_FALL`がRECOVER判定になった時点でcritical latchを立て、新しいcritical dangerが回避中に加わった場合も同様に保持する。単一tickの位置・air・接触の揺れでは解除せず、非溶岩かつ既知安全な接地/水域、呼吸回復、水または既知安全面への着地というdanger固有条件を2 ClientTick連続で満たした場合だけ解除する。contact damageはcritical latch対象ではないが、Local Observation Volumeのcurrent/swept領域で検出した時点でurgent hazardとしてRECOVERへ渡す。
 
 ### 10.4 block配置と一時避難
 
@@ -1095,6 +1118,14 @@ client-only構成では、サーバーが本MODを許可していることを技
 - multiplayerを使う場合: ユーザーが接続先をローカルallowlistへ明示登録し、接続sessionごとにScreenからON
 
 allowlistは許可を証明するものではなく、誤操作防止だけを目的とする。サーバー規約の確認責任はユーザーにある。
+
+`config/mcmcp/allowed-servers.json`のschemaは次へ固定する。
+
+~~~json
+{"schema_version":1,"servers":["example.org:25565"]}
+~~~
+
+root propertyは`schema_version`と`servers`だけ、versionは1、fileは16 KiB以下、entryは最大64件の文字列とする。各entryは前後空白除去・小文字化後255文字以下かつcontrol文字なしでなければならず、現在の接続addressとportを含めた文字列の完全一致だけを許可する。wildcard、DNS展開、port補完、未知property、壊れたJSON、欠損fileはすべて不許可とする。利用にはこの一致に加えて`multiplayer_default=true`とsessionごとのScreen上ONが必要である。
 
 MODは次を行わない。
 
@@ -1142,7 +1173,7 @@ Spring、Jetty、Netty追加、SQLite、DI container、独自event busは導入�
 
 ### 12.3 設定
 
-初回起動時に次を生成する。
+次のlocal設定を使用する。TOMLとtokenは初回起動時に生成し、`allowed-servers.json`はmultiplayerを明示許可する利用者だけが上記schemaで作成する。欠損時はfail-closedとする。
 
 ~~~text
 minecraft/config/mcmcp-client.toml
@@ -1165,6 +1196,8 @@ client config:
 - emergency_block_break
 - recovery_max_ticks / distance / camera_degrees / interactions / placements / breaks
 - multiplayer_default
+
+MVPではrecovery各値の設定可能な上限を200 ticks、16 blocks、360 degrees、8 interactions、8 placements、4 breaksとする。Goal上限との合算が`agent_get_action`の固定出力schema（800 ticks、48 blocks、720 degrees）を越えないことをconfig境界でも保証する。
 
 tokenはconfig screenへ平文表示しない。ローカルclient commandまたはMods画面のbuttonから、MCP接続設定をclipboardへコピーできるようにする。
 

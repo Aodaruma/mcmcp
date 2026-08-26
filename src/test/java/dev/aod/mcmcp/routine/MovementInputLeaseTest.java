@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentInputState;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -102,7 +103,28 @@ class MovementInputLeaseTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    private static final class FakeControl implements MovementInputLease.MovementControl {
+    @Test
+    void pauseClockPreventsWatchdogExpiryUntilSimulationResumes() {
+        var state = new AgentInputState();
+        var control = new FakeControl() {
+            @Override
+            public long watchdogTime(long nowNanos) {
+                return state.watchdogTime(nowNanos);
+            }
+        };
+        var owner = UUID.randomUUID();
+        var lease = MovementInputLease.acquire(control, owner, 100, Duration.ofNanos(50));
+        lease.setDesired(owner, Set.of(MovementInputLease.MovementKey.FORWARD));
+
+        state.setPaused(true, 120);
+        assertThat(lease.maintain(owner, 10_000)).isTrue();
+
+        state.setPaused(false, 10_100);
+        assertThat(lease.heartbeat(owner, 10_110, Duration.ofNanos(50))).isTrue();
+        assertThat(lease.deadlineNanos()).isEqualTo(180);
+    }
+
+    private static class FakeControl implements MovementInputLease.MovementControl {
         private Set<MovementInputLease.MovementKey> lastApplied = Set.of();
         private int releases;
         private boolean failApply;

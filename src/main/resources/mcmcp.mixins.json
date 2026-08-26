@@ -10,7 +10,13 @@
     "client.ClientLevelPredictionMixin",
     "client.ClientPacketListenerMixin",
     "client.ClientSleepSemanticSignalsMixin",
+    "client.EntityAgentCollisionMixin",
+    "client.FogRendererMixin",
+    "client.EntityCollisionInvoker",
     "client.KeyboardHandlerMixin",
+    "client.LivingEntityAgentMovementMixin",
+    "client.LocalPlayerMovementTickMixin",
+    "client.MinecraftAttackInputMixin",
     "client.MouseHandlerMixin"
   ],
   "injectors": {

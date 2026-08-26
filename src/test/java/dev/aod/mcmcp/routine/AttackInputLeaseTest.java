@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentInputState;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -120,7 +121,26 @@ class AttackInputLeaseTest {
         assertThat(control.releases).isEqualTo(2);
     }
 
-    private static final class FakeControl implements AttackInputLease.AttackControl {
+    @Test
+    void pauseClockPreventsActionWatchdogExpiryUntilSimulationResumes() {
+        var state = new AgentInputState();
+        var control = new FakeControl() {
+            @Override
+            public long watchdogTime(long nowNanos) {
+                return state.watchdogTime(nowNanos);
+            }
+        };
+        var lease = AttackInputLease.acquire(control, 100, Duration.ofNanos(50));
+
+        state.setPaused(true, 120);
+        assertThat(lease.maintain(10_000)).isTrue();
+
+        state.setPaused(false, 10_100);
+        assertThat(lease.heartbeat(10_110, Duration.ofNanos(50))).isTrue();
+        assertThat(lease.deadlineNanos()).isEqualTo(180);
+    }
+
+    private static class FakeControl implements AttackInputLease.AttackControl {
         private int presses;
         private int releases;
         private boolean failPress;

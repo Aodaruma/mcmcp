@@ -4,6 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletionStage;
+import java.util.UUID;
 
 /**
  * Minecraft-independent boundary between MCP request handling and the client runtime.
@@ -17,7 +18,8 @@ import java.util.concurrent.CompletionStage;
 public interface McpRuntimePort {
     CompletionStage<RuntimeReply> submit(RuntimeCommand command, RuntimeCallContext context);
 
-    sealed interface RuntimeCommand permits GetState, GetSnapshot, CompareBlockPlan,
+    sealed interface RuntimeCommand permits GetState, GetObservation, StartAction, GetAction,
+            CancelAction, ConfirmActionDelivery, AbandonActionDelivery, GetSnapshot, CompareBlockPlan,
             GetRecipes, ListRoutines, GetRoutine, StartRoutine, CancelRoutine, EmergencyStop {
         String toolName();
     }
@@ -26,6 +28,72 @@ public interface McpRuntimePort {
         @Override
         public String toolName() {
             return "agent_get_state";
+        }
+    }
+
+    record GetObservation(Map<String, Object> arguments) implements RuntimeCommand {
+        public GetObservation {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_get_observation";
+        }
+    }
+
+    record StartAction(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartAction {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_start_action";
+        }
+    }
+
+    record GetAction(Map<String, Object> arguments) implements RuntimeCommand {
+        public GetAction {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_get_action";
+        }
+    }
+
+    record CancelAction(Map<String, Object> arguments) implements RuntimeCommand {
+        public CancelAction {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_cancel_action";
+        }
+    }
+
+    record ConfirmActionDelivery(UUID actionId) implements RuntimeCommand {
+        public ConfirmActionDelivery {
+            Objects.requireNonNull(actionId, "actionId");
+        }
+
+        @Override
+        public String toolName() {
+            return "confirm_action_delivery";
+        }
+    }
+
+    record AbandonActionDelivery(UUID actionId) implements RuntimeCommand {
+        public AbandonActionDelivery {
+            Objects.requireNonNull(actionId, "actionId");
+        }
+
+        @Override
+        public String toolName() {
+            return "abandon_action_delivery";
         }
     }
 

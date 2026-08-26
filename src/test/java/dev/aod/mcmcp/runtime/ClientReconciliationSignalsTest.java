@@ -23,6 +23,8 @@ class ClientReconciliationSignalsTest {
                 "container_slot", 12, false, "minecraft:bucket", 1));
         channel.inventorySync(new ClientReconciliationSignals.InventorySync(
                 "player_inventory", 0, true, "minecraft:milk_bucket", 1));
+        channel.worldMutation();
+        channel.worldMutation();
         var current = channel.snapshot();
 
         assertThat(baseline.positionCorrectionRevision()).isZero();
@@ -31,6 +33,11 @@ class ClientReconciliationSignalsTest {
         assertThat(current.motionRevision()).isOne();
         assertThat(current.inventoryRevision()).isEqualTo(2);
         assertThat(current.selectedSlotInventoryRevision()).isOne();
+        assertThat(current.worldRevision()).isEqualTo(2);
+        assertThat(current.worldMutations()).extracting(ClientReconciliationSignals.WorldMutation::revision)
+                .containsExactly(1L, 2L);
+        assertThat(current.worldMutations()).extracting(ClientReconciliationSignals.WorldMutation::kind)
+                .containsOnly(ClientReconciliationSignals.WorldMutation.Kind.ALL);
         assertThat(current.lastPositionCorrection().teleportId()).isEqualTo(7);
         assertThat(current.lastInventorySync().selectedItemId()).isEqualTo("minecraft:milk_bucket");
     }
@@ -47,6 +54,8 @@ class ClientReconciliationSignalsTest {
 
         assertThat(second.worldSessionId()).isNotEqualTo(first);
         assertThat(second.positionCorrectionRevision()).isZero();
+        assertThat(second.worldRevision()).isZero();
+        assertThat(second.worldMutations()).isEmpty();
         assertThat(second.lastPositionCorrection()).isNull();
         assertThat(second.sameSession(channel.bindAndSnapshot(second.worldSessionId()))).isTrue();
     }

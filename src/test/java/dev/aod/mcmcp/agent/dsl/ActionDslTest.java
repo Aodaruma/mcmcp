@@ -1,0 +1,439 @@
+package dev.aod.mcmcp.agent.dsl;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
+import java.util.Set;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class ActionDslTest {
+    @Test
+    void parsesEveryNormativeCatalogExample() throws IOException {
+        JsonArray examples = startActionSchema().getAsJsonArray("examples");
+
+        assertThat(examples).hasSize(3);
+        for (int index = 0; index < examples.size(); index++) {
+            ActionDsl.Request parsed = ActionDslParser.parse(examples.get(index).getAsJsonObject());
+            assertThat(parsed.schemaVersion()).isEqualTo(1);
+            assertThat(parsed.program().dslVersion()).isEqualTo(1);
+            assertThat(ActionDslValidator.validate(parsed).sourceNodes()).isPositive();
+        }
+    }
+
+    @Test
+    void compilesSequenceAndComponentWiseIfMaximumAndEvaluatesSnapshotOnce() throws IOException {
+        ActionDsl.Request request = ActionDslParser.parse(
+                startActionSchema().getAsJsonArray("examples").get(1).getAsJsonObject());
+        var compiled = ActionDslCompiler.compile(
+                request,
+                primitive -> {
+                    if (primitive instanceof ActionDsl.NavigateToKnown) {
+                        return Optional.of(new ActionDslCompiler.Cost(
+                                10_000, 200, 12, 80, 0, 0, 0));
+                    }
+                    if (primitive instanceof ActionDsl.FaceKnownPosition) {
+                        return Optional.of(new ActionDslCompiler.Cost(
+                                1_000, 20, 0, 90, 0, 0, 0));
+                    }
+                    return Optional.empty();
+                },
+                Set.of(ActionDsl.Capability.MOVEMENT, ActionDsl.Capability.CAMERA));
+
+        // The else wait is 20 ticks / 1000 ms. The if takes each component's branch maximum.
+        assertThat(compiled.worstCaseCost()).isEqualTo(
+                new ActionDslCompiler.Cost(11_000, 220, 12, 170, 0, 0, 0));
+        assertThat(compiled.sourceNodes()).isEqualTo(4);
+        assertThat(compiled.executedNodesUpperBound()).isEqualTo(3);
+
+        var condition = ((ActionDsl.If) request.program().body().get(1)).condition();
+        var available = snapshot(Map.of(ActionDsl.NumericField.HEALTH, 9.0));
+        assertThat(PredicateEvaluator.evaluate(condition, available)).isTrue();
+        assertThatThrownBy(() -> PredicateEvaluator.evaluate(condition, snapshot(Map.of())))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(ActionDslException.Code.PREDICATE_UNAVAILABLE);
+    }
+
+    @Test
+    void compiledProgramRetainsEveryPrimitiveOccurrenceCostBound() {
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("movement", "camera"),
+                array(waitNode("hold", 3), navigate("move"), face("look")),
+                budget(30_000, 600, 32, 360)));
+        var navigation = new ActionDslCompiler.Cost(1_000, 20, 2, 0, 0, 0, 0);
+        var camera = new ActionDslCompiler.Cost(500, 10, 0, 45, 0, 0, 0);
+
+        var compiled = ActionDslCompiler.compile(
+                request,
+                primitive -> Optional.of(primitive instanceof ActionDsl.NavigateToKnown
+                        ? navigation : camera),
+                Set.of(ActionDsl.Capability.MOVEMENT, ActionDsl.Capability.CAMERA));
+
+        assertThat(compiled.primitiveCostBounds())
+                .hasSize(3)
+                .containsEntry("hold", new ActionDslCompiler.Cost(150, 3, 0, 0, 0, 0, 0))
+                .containsEntry("move", navigation)
+                .containsEntry("look", camera);
+    }
+
+    @Test
+    void repeatMultipliesTheComponentWiseBranchCost() {
+        JsonObject request = request(
+                capabilities("movement", "camera"),
+                repeat("twice", 2, array(
+                        conditional("choose", numeric("health", "gte", 8),
+                                array(face("look")), array(navigate("move"))),
+                        waitNode("settle", 3))),
+                budget(30_000, 600, 32, 360));
+        var compiled = ActionDslCompiler.compile(
+                ActionDslParser.parse(request),
+                primitive -> {
+                    if (primitive instanceof ActionDsl.FaceKnownPosition) {
+                        return Optional.of(new ActionDslCompiler.Cost(100, 2, 0, 30, 0, 0, 0));
+                    }
+                    return Optional.of(new ActionDslCompiler.Cost(200, 5, 4, 5, 0, 0, 0));
+                },
+                Set.of(ActionDsl.Capability.MOVEMENT, ActionDsl.Capability.CAMERA));
+
+        assertThat(compiled.worstCaseCost())
+                .isEqualTo(new ActionDslCompiler.Cost(700, 16, 8, 60, 0, 0, 0));
+        assertThat(compiled.executedNodesUpperBound()).isEqualTo(7);
+    }
+
+    @Test
+    void rejectsUnknownOpcodeArbitraryKeysAndUntrustedPredicateFields() {
+        JsonObject rawKey = waitNode("bad", 1);
+        rawKey.addProperty("key", "W");
+        assertCode(request(capabilities(), rawKey, budget(100, 2, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject unknown = waitNode("bad", 1);
+        unknown.addProperty("op", "raw_key_input");
+        assertCode(request(capabilities(), unknown, budget(100, 2, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject chatCondition = new JsonObject();
+        chatCondition.addProperty("field", "chat");
+        chatCondition.addProperty("comparison", "eq");
+        chatCondition.addProperty("value", true);
+        assertCode(request(capabilities(),
+                        conditional("bad", chatCondition, array(), array()),
+                        budget(100, 2, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
+    void enforcesDepthSourceExpandedRepeatAndUniqueIdBounds() {
+        JsonObject depthFive = waitNode("leaf", 1);
+        for (int depth = 4; depth >= 1; depth--) {
+            depthFive = repeat("depth_" + depth, 1, array(depthFive));
+        }
+        assertCode(request(capabilities(), depthFive, budget(1_000, 20, 0, 0)),
+                ActionDslException.Code.PROGRAM_TOO_COMPLEX);
+
+        JsonArray top = new JsonArray();
+        for (int index = 0; index < 31; index++) {
+            top.add(waitNode("top_" + index, 1));
+        }
+        JsonArray outerThen = new JsonArray();
+        for (int index = 0; index < 15; index++) {
+            outerThen.add(waitNode("then_" + index, 1));
+        }
+        outerThen.add(conditional("inner", numeric("health", "gte", 1),
+                array(waitNode("inner_leaf", 1)), array()));
+        JsonArray outerElse = new JsonArray();
+        for (int index = 0; index < 16; index++) {
+            outerElse.add(waitNode("else_" + index, 1));
+        }
+        top.add(conditional("outer", numeric("health", "gte", 1), outerThen, outerElse));
+        assertCode(request(capabilities(), top, budget(30_000, 600, 0, 0)),
+                ActionDslException.Code.PROGRAM_TOO_COMPLEX);
+
+        JsonArray sixteen = new JsonArray();
+        for (int index = 0; index < 16; index++) {
+            sixteen.add(waitNode("expanded_" + index, 1));
+        }
+        assertCode(request(capabilities(), repeat("expanded", 16, sixteen),
+                        budget(30_000, 600, 0, 0)),
+                ActionDslException.Code.PROGRAM_TOO_COMPLEX);
+        assertCode(request(capabilities(), repeat("repeat_17", 17, array(waitNode("once", 1))),
+                        budget(1_000, 20, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        assertCode(request(capabilities(), array(waitNode("same", 1), waitNode("same", 1)),
+                        budget(1_000, 20, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
+    void acceptsExactExpandedBoundaryAndRejectsRequestsOver64KiB() {
+        JsonArray body = new JsonArray();
+        for (int index = 0; index < 15; index++) {
+            body.add(waitNode("body_" + index, 1));
+        }
+        JsonArray top = new JsonArray();
+        for (int index = 0; index < 15; index++) {
+            top.add(waitNode("top_" + index, 1));
+        }
+        top.add(repeat("repeat_16", 16, body));
+
+        ActionDsl.Request parsed = ActionDslParser.parse(
+                request(capabilities(), top, budget(30_000, 600, 0, 0)));
+        assertThat(ActionDslValidator.validate(parsed).executedNodesUpperBound()).isEqualTo(256);
+
+        String oversized = " ".repeat(ActionDslValidator.MAX_REQUEST_BYTES) + "{}";
+        assertThatThrownBy(() -> ActionDslParser.parse(oversized))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(ActionDslException.Code.PROGRAM_TOO_COMPLEX);
+    }
+
+    @Test
+    void enforcesDeclaredLocalCapabilitiesAndEffectiveBudget() {
+        assertCode(request(capabilities(), navigate("go"), budget(30_000, 600, 32, 0)),
+                ActionDslException.Code.CAPABILITY_DENIED);
+
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("movement"), navigate("go"), budget(30_000, 600, 5, 90)));
+        var costs = (ActionDslCompiler.PrimitiveCostModel) primitive -> Optional.of(
+                new ActionDslCompiler.Cost(2_000, 40, 6, 20, 0, 0, 0));
+        assertThatThrownBy(() -> ActionDslCompiler.compile(
+                        request, costs, Set.of(ActionDsl.Capability.MOVEMENT)))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE);
+        assertThatThrownBy(() -> ActionDslCompiler.compile(request, costs, Set.of()))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(ActionDslException.Code.CAPABILITY_DENIED);
+
+        JsonObject nonZeroInteraction = budget(1_000, 20, 0, 0);
+        nonZeroInteraction.addProperty("max_interactions", 1);
+        assertCode(request(capabilities(), waitNode("wait", 1), nonZeroInteraction),
+                ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
+    void logicalPredicatesEvaluateAllOperandsAndNeverHideUnavailableFields() {
+        JsonObject all = new JsonObject();
+        all.add("all", array(
+                numeric("health", "gte", 1),
+                booleanPredicate("on_fire", false),
+                inventory("minecraft:oak_log", "gte", 2),
+                status("minecraft:fire_resistance", false)));
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities(), conditional("gate", all, array(), array()), budget(100, 2, 0, 0)));
+        ActionDsl.Predicate predicate = ((ActionDsl.If) request.program().body().getFirst()).condition();
+        var snapshot = new TestSnapshot(
+                Map.of(ActionDsl.NumericField.HEALTH, 20.0),
+                Map.of(ActionDsl.BooleanField.ON_FIRE, false),
+                Map.of("minecraft:oak_log", 2),
+                Map.of("minecraft:fire_resistance", false));
+        assertThat(PredicateEvaluator.evaluate(predicate, snapshot)).isTrue();
+
+        var missingLastOperand = new TestSnapshot(
+                Map.of(ActionDsl.NumericField.HEALTH, 0.0),
+                Map.of(ActionDsl.BooleanField.ON_FIRE, false),
+                Map.of("minecraft:oak_log", 2),
+                Map.of());
+        assertThatThrownBy(() -> PredicateEvaluator.evaluate(predicate, missingLastOperand))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(ActionDslException.Code.PREDICATE_UNAVAILABLE);
+    }
+
+    private static JsonObject startActionSchema() throws IOException {
+        Path catalogPath = Path.of(
+                System.getProperty("mcmcp.projectDir"), "docs", "MCMCP_MCP_Tool_Catalog.json");
+        JsonArray tools = JsonParser.parseString(Files.readString(catalogPath))
+                .getAsJsonObject().getAsJsonArray("tools");
+        for (var tool : tools) {
+            JsonObject object = tool.getAsJsonObject();
+            if ("agent_start_action".equals(object.get("name").getAsString())) {
+                return object.getAsJsonObject("inputSchema");
+            }
+        }
+        throw new AssertionError("agent_start_action catalog entry not found");
+    }
+
+    private static void assertCode(JsonObject source, ActionDslException.Code code) {
+        assertThatThrownBy(() -> ActionDslParser.parse(source))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(code);
+    }
+
+    private static PolicySnapshot snapshot(Map<ActionDsl.NumericField, Double> numbers) {
+        return new TestSnapshot(numbers, Map.of(), Map.of(), Map.of());
+    }
+
+    private static JsonObject request(JsonArray capabilities, JsonObject node, JsonObject budget) {
+        return request(capabilities, array(node), budget);
+    }
+
+    private static JsonObject request(JsonArray capabilities, JsonArray body, JsonObject budget) {
+        JsonObject program = new JsonObject();
+        program.addProperty("dsl_version", 1);
+        program.add("capabilities", capabilities);
+        program.add("body", body);
+        JsonObject request = new JsonObject();
+        request.addProperty("schema_version", 1);
+        request.add("program", program);
+        request.add("budget", budget);
+        return request;
+    }
+
+    private static JsonObject budget(long duration, long ticks, double distance, double camera) {
+        JsonObject budget = new JsonObject();
+        budget.addProperty("max_duration_ms", duration);
+        budget.addProperty("max_ticks", ticks);
+        budget.addProperty("max_distance_blocks", distance);
+        budget.addProperty("max_camera_degrees", camera);
+        budget.addProperty("max_interactions", 0);
+        budget.addProperty("max_blocks_broken", 0);
+        budget.addProperty("max_blocks_placed", 0);
+        return budget;
+    }
+
+    private static JsonArray capabilities(String... values) {
+        JsonArray result = new JsonArray();
+        for (String value : values) result.add(value);
+        return result;
+    }
+
+    private static JsonArray array(JsonObject... values) {
+        JsonArray result = new JsonArray();
+        for (JsonObject value : values) result.add(value);
+        return result;
+    }
+
+    private static JsonObject navigate(String id) {
+        JsonObject node = baseNode(id, "navigate_to_known");
+        node.add("target", position());
+        node.addProperty("tolerance", 0.75);
+        return node;
+    }
+
+    private static JsonObject face(String id) {
+        JsonObject node = baseNode(id, "face_known_position");
+        node.add("target", position());
+        return node;
+    }
+
+    private static JsonObject waitNode(String id, int ticks) {
+        JsonObject node = baseNode(id, "wait_ticks");
+        node.addProperty("ticks", ticks);
+        return node;
+    }
+
+    private static JsonObject conditional(
+            String id, JsonObject condition, JsonArray thenBranch, JsonArray elseBranch) {
+        JsonObject node = baseNode(id, "if");
+        node.add("condition", condition);
+        node.add("then", thenBranch);
+        node.add("else", elseBranch);
+        return node;
+    }
+
+    private static JsonObject repeat(String id, int count, JsonArray body) {
+        JsonObject node = baseNode(id, "repeat");
+        node.addProperty("count", count);
+        node.add("body", body);
+        return node;
+    }
+
+    private static JsonObject numeric(String field, String comparison, double value) {
+        JsonObject predicate = new JsonObject();
+        predicate.addProperty("field", field);
+        predicate.addProperty("comparison", comparison);
+        predicate.addProperty("value", value);
+        return predicate;
+    }
+
+    private static JsonObject booleanPredicate(String field, boolean value) {
+        JsonObject predicate = new JsonObject();
+        predicate.addProperty("field", field);
+        predicate.addProperty("comparison", "eq");
+        predicate.addProperty("value", value);
+        return predicate;
+    }
+
+    private static JsonObject inventory(String item, String comparison, int value) {
+        JsonObject predicate = new JsonObject();
+        predicate.addProperty("field", "inventory_count");
+        predicate.addProperty("item", item);
+        predicate.addProperty("comparison", comparison);
+        predicate.addProperty("value", value);
+        return predicate;
+    }
+
+    private static JsonObject status(String effect, boolean value) {
+        JsonObject predicate = new JsonObject();
+        predicate.addProperty("field", "has_status_effect");
+        predicate.addProperty("effect", effect);
+        predicate.addProperty("comparison", "eq");
+        predicate.addProperty("value", value);
+        return predicate;
+    }
+
+    private static JsonObject baseNode(String id, String operation) {
+        JsonObject node = new JsonObject();
+        node.addProperty("id", id);
+        node.addProperty("op", operation);
+        return node;
+    }
+
+    private static JsonObject position() {
+        JsonObject position = new JsonObject();
+        position.addProperty("dimension", "minecraft:overworld");
+        position.addProperty("x", 10);
+        position.addProperty("y", 64);
+        position.addProperty("z", 10);
+        return position;
+    }
+
+    private record TestSnapshot(
+            Map<ActionDsl.NumericField, Double> numbers,
+            Map<ActionDsl.BooleanField, Boolean> booleans,
+            Map<String, Integer> inventory,
+            Map<String, Boolean> statuses) implements PolicySnapshot {
+        private TestSnapshot {
+            numbers = Map.copyOf(numbers);
+            booleans = Map.copyOf(booleans);
+            inventory = Map.copyOf(inventory);
+            statuses = Map.copyOf(statuses);
+        }
+
+        @Override
+        public OptionalDouble numeric(ActionDsl.NumericField field) {
+            Double value = numbers.get(field);
+            return value == null ? OptionalDouble.empty() : OptionalDouble.of(value);
+        }
+
+        @Override
+        public Optional<Boolean> bool(ActionDsl.BooleanField field) {
+            return Optional.ofNullable(booleans.get(field));
+        }
+
+        @Override
+        public OptionalInt inventoryCount(String item) {
+            Integer value = inventory.get(item);
+            return value == null ? OptionalInt.empty() : OptionalInt.of(value);
+        }
+
+        @Override
+        public Optional<Boolean> hasStatusEffect(String effect) {
+            return Optional.ofNullable(statuses.get(effect));
+        }
+    }
+}

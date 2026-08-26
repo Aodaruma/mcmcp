@@ -14,12 +14,14 @@ class LocalArmingStateTest {
         var state = new LocalArmingState();
         var session = UUID.randomUUID();
         state.arm(session, Set.of("stationary_break"));
+        long armedEpoch = state.snapshot(session).controlEpoch();
 
         assertThat(state.allows(session, "stationary_break")).isTrue();
         assertThat(state.allows(session, "place_block")).isFalse();
         assertThat(state.snapshot(session).locked()).isFalse();
         assertThat(state.beginAction(session)).isTrue();
         assertThat(state.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.AGENT);
+        assertThat(state.snapshot(session).controlEpoch()).isGreaterThan(armedEpoch);
         assertThat(state.beginAction(session)).isFalse();
 
         state.lock("local_ui_disabled");

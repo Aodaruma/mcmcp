@@ -297,7 +297,14 @@ public final class McpHttpServer implements AutoCloseable {
             return;
         }
         try {
-            sendJson(exchange, 200, jsonRpcResult(id, tools.call(name, params.getAsJsonObject("arguments"))));
+            var prepared = tools.prepareCall(name, params.getAsJsonObject("arguments"));
+            try {
+                sendJson(exchange, 200, jsonRpcResult(id, prepared.response()));
+            } catch (IOException failure) {
+                tools.abandonDelivery(prepared);
+                throw failure;
+            }
+            tools.confirmDelivery(prepared);
         } catch (McmcpToolRegistry.UnknownToolException failure) {
             sendJson(exchange, 200, jsonRpcError(id, -32602, "Unknown tool", "UnknownTool"));
         }

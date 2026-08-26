@@ -47,10 +47,12 @@ public final class WorldSessionTracker {
         return worldSessionId;
     }
 
-    /** Fences work while a client level is being replaced, without losing join-scoped memory. */
+    /** Ends the current world session before a level replacement. */
     public void suspendWorld() {
         generation++;
+        worldSessionId = null;
         dimension = null;
+        clientTick = 0;
         if (readiness != Readiness.STOPPING) {
             readiness = Readiness.TITLE;
         }
@@ -70,10 +72,16 @@ public final class WorldSessionTracker {
             readiness = Readiness.WORLD_READY;
             return true;
         }
-        if (!currentDimension.equals(dimension)) {
-            // Dimension transitions fence queued commands but remain in the same join session.
-            generation++;
+        if (dimension == null) {
             dimension = currentDimension;
+            readiness = Readiness.WORLD_READY;
+            return true;
+        }
+        if (!currentDimension.equals(dimension)) {
+            generation++;
+            worldSessionId = UUID.randomUUID();
+            dimension = currentDimension;
+            clientTick = 0;
             readiness = Readiness.WORLD_READY;
             return true;
         }

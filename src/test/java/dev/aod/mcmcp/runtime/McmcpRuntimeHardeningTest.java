@@ -1,6 +1,10 @@
 package dev.aod.mcmcp.runtime;
 
 import com.google.gson.Gson;
+import dev.aod.mcmcp.agent.action.AgentActionStore;
+import dev.aod.mcmcp.agent.dsl.ActionDsl;
+import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
+import dev.aod.mcmcp.agent.safety.ObservationRecord;
 import dev.aod.mcmcp.routine.ActionBounds;
 import dev.aod.mcmcp.routine.ApplyBlockPlanOperation;
 import dev.aod.mcmcp.routine.ApplyBlockPlanRequest;
@@ -27,6 +31,7 @@ import dev.aod.mcmcp.routine.UseItemOnBlockRequest;
 import dev.aod.mcmcp.safety.LocalArmingState;
 import dev.aod.mcmcp.voice.VoiceChatSafetyController;
 import org.junit.jupiter.api.Test;
+import net.minecraft.world.phys.Vec3;
 
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
@@ -48,9 +53,165 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 
 class McmcpRuntimeHardeningTest {
     @Test
+    void recoveryGeometryUsesAabbCenterRatherThanFeetHeight() {
+        var center = new Vec3(0.5D, 64.9D, 0.5D);
+        var horizontal = new Vec3(1.5D, 64.9D, 0.5D);
+        var upward = new Vec3(1.5D, 65.2D, 0.5D);
+
+        assertThat(McmcpRuntime.requiresRecoveryJump(center.y, horizontal)).isFalse();
+        assertThat(McmcpRuntime.recoveryDistance(center, horizontal)).isEqualTo(1.0D);
+        assertThat(McmcpRuntime.requiresRecoveryJump(center.y, upward)).isTrue();
+        assertThat(McmcpRuntime.recoveryDistance(center, upward)).isCloseTo(
+                1.3D, org.assertj.core.data.Offset.offset(1.0E-9D));
+        assertThat(McmcpRuntime.recoveryCandidateId("exit", horizontal))
+                .isNotEqualTo(McmcpRuntime.recoveryCandidateId("exit", upward));
+    }
+
+    @Test
+    void replannedPrimitiveMustFitEveryRemainingBudgetComponent() {
+        var used = new AgentActionStore.Progress(
+                AgentActionStore.Phase.REPLANNING,
+                "move",
+                1,
+                4,
+                3.0D,
+                10.0D,
+                0,
+                0,
+                0,
+                40,
+                false);
+        var budget = new ActionDsl.Budget(10_000, 100, 8, 90, 0, 0, 0);
+        var fits = new ActionDslCompiler.Cost(2_000, 40, 5, 80, 0, 0, 0);
+        var tooFar = new ActionDslCompiler.Cost(2_000, 40, 5.01D, 80, 0, 0, 0);
+
+        assertThat(McmcpRuntime.fitsRemainingBudget(
+                used, budget, fits, Duration.ofMillis(8_000).toNanos())).isTrue();
+        assertThat(McmcpRuntime.fitsRemainingBudget(
+                used, budget, tooFar, Duration.ofMillis(8_000).toNanos())).isFalse();
+        assertThat(McmcpRuntime.fitsRemainingBudget(
+                used, budget, fits, Duration.ofMillis(8_001).toNanos())).isFalse();
+        assertThat(McmcpRuntime.fitsRemainingBudget(
+                new AgentActionStore.Progress(
+                        AgentActionStore.Phase.EXECUTING, "move", 0, 0,
+                        0, 0, 0, 0, 0, 0, false),
+                new ActionDsl.Budget(100, 100, 8, 90, 0, 0, 0),
+                new ActionDslCompiler.Cost(50, 1, 0, 0, 0, 0, 0),
+                Duration.ofMillis(50).toNanos() + 1)).isFalse();
+    }
+
+    @Test
+    void anActivePrimitiveCannotEmitAgainAtItsExactMotionLimit() {
+        var used = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING,
+                "move",
+                0,
+                1,
+                8.0D,
+                90.0D,
+                0,
+                0,
+                0,
+                10,
+                false);
+        var budget = new ActionDsl.Budget(10_000, 100, 8, 90, 0, 0, 0);
+        var target = new ActionDsl.Position("minecraft:overworld", 1, 64, 1);
+
+        assertThat(McmcpRuntime.motionBudgetExhausted(
+                used, budget, new ActionDsl.NavigateToKnown("move", target, 0.75D))).isTrue();
+        assertThat(McmcpRuntime.motionBudgetExhausted(
+                used, budget, new ActionDsl.FaceKnownPosition("face", target))).isTrue();
+        assertThat(McmcpRuntime.motionBudgetExhausted(
+                used, budget, new ActionDsl.WaitTicks("hold", 1))).isFalse();
+        var move = new ActionDsl.NavigateToKnown("move", target, 0.75D);
+        assertThat(McmcpRuntime.motionBudgetExceededAfterPrimitive(
+                used,
+                budget,
+                move,
+                dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor.Status.SUCCEEDED))
+                .isFalse();
+        assertThat(McmcpRuntime.motionBudgetExceededAfterPrimitive(
+                used,
+                budget,
+                move,
+                dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor.Status.RUNNING))
+                .isFalse();
+        assertThat(McmcpRuntime.motionBudgetExceededAfterPrimitive(
+                used,
+                budget,
+                move,
+                dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED))
+                .isTrue();
+    }
+
+    @Test
+    void replanGraceEndsAtTheFixedDeadlineRatherThanSlidingForever() {
+        assertThat(McmcpRuntime.replanDeadlineReached(119, 120)).isFalse();
+        assertThat(McmcpRuntime.replanDeadlineReached(120, 120)).isTrue();
+        assertThat(McmcpRuntime.replanDeadlineReached(121, 120)).isTrue();
+    }
+
+    @Test
+    void onlyOneSingleRevisionPositionCorrectionGetsAReplanChance() {
+        assertThat(McmcpRuntime.repeatedPositionCorrection(7, 8, 0)).isFalse();
+        assertThat(McmcpRuntime.repeatedPositionCorrection(7, 9, 0)).isTrue();
+        assertThat(McmcpRuntime.repeatedPositionCorrection(8, 9, 1)).isTrue();
+    }
+
+    @Test
+    void localVolumeLavaAndDangerousDropFeedTheRecoveryGovernorBeforeVanillaFlagsCatchUp() {
+        var hazards = McmcpRuntime.recoveryHazards(
+                ObservationRecord.Fluid.LAVA,
+                ObservationRecord.Hazard.FALL,
+                false,
+                true,
+                0.0D,
+                0.0D);
+
+        assertThat(hazards.inLava()).isTrue();
+        assertThat(hazards.onGround()).isFalse();
+        assertThat(hazards.verticalVelocity()).isLessThan(-0.08D);
+        assertThat(hazards.descentSinceGround()).isGreaterThan(3.0D);
+    }
+
+    @Test
+    void recoveryDescentAccumulatesOnlyRealDropsAndRetainsTheWorstEvidence() {
+        var tracker = new McmcpRuntime.RecoveryDescentTracker();
+        var player = new Object();
+        var level = new Object();
+        var session = UUID.randomUUID();
+
+        assertThat(tracker.update(player, level, session, 70, false, false, 0)).isZero();
+        assertThat(tracker.update(player, level, session, 68, false, false, 0)).isEqualTo(2);
+        assertThat(tracker.update(player, level, session, 69, false, false, 0)).isEqualTo(2);
+        assertThat(tracker.update(player, level, session, 50, false, false, 1)).isEqualTo(2);
+        assertThat(tracker.update(player, level, session, 49, false, false, 1)).isEqualTo(3);
+        assertThat(tracker.current(player, level, session)).isEqualTo(3);
+        assertThat(tracker.update(player, level, session, 48, true, false, 1)).isZero();
+    }
+
+    @Test
+    void pendingMotionNeverCrossesAWorldOrDimensionBoundary() {
+        UUID sessionId = UUID.randomUUID();
+        var current = new WorldSessionTracker.Snapshot(
+                WorldSessionTracker.Readiness.WORLD_READY,
+                4,
+                10,
+                sessionId,
+                "minecraft:overworld");
+
+        assertThat(McmcpRuntime.sameAgentMotionBoundary(
+                sessionId, current, "minecraft:overworld")).isTrue();
+        assertThat(McmcpRuntime.sameAgentMotionBoundary(
+                UUID.randomUUID(), current, "minecraft:overworld")).isFalse();
+        assertThat(McmcpRuntime.sameAgentMotionBoundary(
+                sessionId, current, "minecraft:the_nether")).isFalse();
+    }
+
+    @Test
     void productionStateAdapterUsesTheNormativeAgentStateShape() {
         var lock = new LocalArmingState.Snapshot(
-                LocalArmingState.Mode.OFF, null, Set.of(), 0L, "startup");
+                LocalArmingState.Mode.OFF, null, Set.of(), 0L, "startup", 0L);
 
         var state = McmcpRuntime.statePayload(
                 lock, false, null, List.of(), 0L, Instant.EPOCH);
@@ -189,6 +350,7 @@ class McmcpRuntimeHardeningTest {
         assertThat(shiftedClock.allows(
                 routineId, negativeStart + Duration.ofSeconds(42).toNanos())).isFalse();
         assertThat(negativeClock.allows(UUID.randomUUID(), negativeStart)).isFalse();
+        assertThat(McmcpRuntime.activeElapsedNanos(-100L, 20L, -50L)).isEqualTo(30L);
     }
 
     @Test
@@ -234,7 +396,7 @@ class McmcpRuntimeHardeningTest {
                 .containsEntry("voice.rollback_attempted", true)
                 .containsEntry("voice.rollback_restored", false)
                 .containsEntry("voice.rollback_failure", "restore_readback_mismatch");
-        assertThat(mapped.failure().code()).isEqualTo("timeout");
+        assertThat(mapped.failure().code()).isEqualTo("server_busy");
         assertThat(mapped.failure().message()).isEqualTo("The client-thread deadline expired");
         assertThat(mapped.failure().retryable()).isTrue();
         assertThat(mapped.failure().details())
