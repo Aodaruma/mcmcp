@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-26",
+  "instance_id": "くらふとぶ！-v01.2",
+  "minecraft_version": "26.2",
+  "neoforge_version": "26.2.0.59",
+  "java_version": "25.0.1",
+  "expected_mod_count_without_mcmcp": 24,
+  "mods": [
+    {
+      "name": "balm-neoforge-26.2-26.2.0.6.jar",
+      "size_bytes": 1175324,
+      "sha256": "8b25560955fce6dc1f73e783451f04971058317a9082c094aa1c7925c9440c2c"
+    },
+    {
+      "name": "carryon-neoforge-26.2-2.11.0.jar",
+      "size_bytes": 376755,
+      "sha256": "2374bbb4bc8d94fdd83eee1eb80f3075c1029bdabf4e6394ad14473be7177b99"
+    },
+    {
+      "name": "chat_heads-1.2.8-neoforge-26.1.jar",
+      "size_bytes": 97481,
+      "sha256": "fc752097d0436ebcc20de4c28fd69d7bf2c96d709688c90a073bbf9ca6bd1e6e"
+    },
+    {
+      "name": "corpse-neoforge-1.1.18+26.2.jar",
+      "size_bytes": 252309,
+      "sha256": "57bfba39845db6604333249a7d7b98ecb0b1a588b164a116cb5d77e8672a1535"
+    },
+    {
+      "name": "CreativeCore_NEOFORGE_v2.14.16_mc26.2.jar",
+      "size_bytes": 1345747,
+      "sha256": "54c5fab1aacac365f94ec8c3a2f98e4c59c821fd7413990f759396b5b4295042"
+    },
+    {
+      "name": "emotecraft-for-MC26.2-3.4.0-b.build.162.jar",
+      "size_bytes": 1202163,
+      "sha256": "f5673a134cc14f2ec2c6b7c41155b703b014df9a61ed4778f27ecc7591c7244c"
+    },
+    {
+      "name": "entity_model_features-3.2.6-26.2-neoforge.jar",
+      "size_bytes": 586363,
+      "sha256": "61c2beeb410e692098ade74b8af388c1b97a4a098f53a8e44c0f2622fda31c9b"
+    },
+    {
+      "name": "entity_player_compat-neoforge-2.2.0.jar",
+      "size_bytes": 42838,
+      "sha256": "adbed2a428246dac45e51f314cbe9e569788e61e46052fcb67fdd8ab525ce92f"
+    },
+    {
+      "name": "entity_texture_features-7.1.1-26.2-neoforge.jar",
+      "size_bytes": 762271,
+      "sha256": "91933d3f94566a61cf056d917212689864fd120ff1d38f7964bb2aaffa7ab7a1"
+    },
+    {
+      "name": "ferritecore-9.0.0-neoforge.jar",
+      "size_bytes": 71947,
+      "sha256": "a3292dadb1caf7ad220d3a4b68abff2ad58592ddd372160f9cf66c57d159b539"
+    },
+    {
+      "name": "IllagerInvasion-v26.2.0-mc26.2.x-NeoForge.jar",
+      "size_bytes": 2109297,
+      "sha256": "7829a36410c33c2a7011b95c86297a7bb6279e4248cfeb9e820ebb634adcf2fc"
+    },
+    {
+      "name": "jei-26.2-neoforge-30.23.0.159.jar",
+      "size_bytes": 1778174,
+      "sha256": "a7072a3ba9bd4bbfd4795b6d30a2986d765cbdedde73a04cb670d6a69b7c338b"
+    },
+    {
+      "name": "MutantMonsters-v26.2.1-mc26.2.x-NeoForge.jar",
+      "size_bytes": 1367805,
+      "sha256": "dfc04f61f95e77730eefc6f3dc8fd257f4b0d9be3e349c6aa893a79a6bc1a76c"
+    },
+    {
+      "name": "nemos-inventory-sorting-NeoForge-26.2-1.21.2.jar",
+      "size_bytes": 148997,
+      "sha256": "d9d65d8c49d6780594880e9e35837d1a6fe11cd69105b8482df729ac4efc272f"
+    },
+    {
+      "name": "PlayerAnimationLibMerged-1.2.5+mc.26.2.jar",
+      "size_bytes": 419286,
+      "sha256": "67f08c8d383d8982c53d6c99e0e0dd6bec5e2f47bd4ed210ab034583787960bf"
+    },
+    {
+      "name": "PlayerRevive_NEOFORGE_v2.1.2_mc26.2.jar",
+      "size_bytes": 5305995,
+      "sha256": "208da992b409d77414df048703cbdf04d655a51d3381dbe4508416604cef533e"
+    },
+    {
+      "name": "PuzzlesLib-v26.2.3-mc26.2.x-NeoForge.jar",
+      "size_bytes": 1072529,
+      "sha256": "44a871014da0de73be3f3efaa00d00c72e3cc1eb77c4750f8cf0c695a9e36e00"
+    },
+    {
+      "name": "shogi-neoforge-26.2-26.2.0.5.jar",
+      "size_bytes": 450953,
+      "sha256": "b25b15ca2050b1a5868438e9b81a3a6c2b81f80c948ef4d5cb954aea7475dda0"
+    },
+    {
+      "name": "sit-neoforge-26.1.2-1.5.2.jar",
+      "size_bytes": 69952,
+      "sha256": "b4a8db8dc3d537a08f2e86e97c84b200eb14f3715ed939a6c91da1f6cb6f76e9"
+    },
+    {
+      "name": "sodium-neoforge-0.9.1+mc26.2.jar",
+      "size_bytes": 1128681,
+      "sha256": "99211fc2a1d91c9beaa569044d191c08c68a1dbf5eb9bf1f5ee8296b9f768c81"
+    },
+    {
+      "name": "sophisticatedbackpacks-26.2-3.25.90.2084.jar",
+      "size_bytes": 1185549,
+      "sha256": "9b8b60c087937b141c8ed61c8fea357ac8931f86eda42a26198c231712eb4037"
+    },
+    {
+      "name": "sophisticatedcore-26.2-1.4.99.2265.jar",
+      "size_bytes": 1732856,
+      "sha256": "f80b8868d15b59882c642ebaa020100e9d1f59cfbae8bdb6a584140b658fb10e"
+    },
+    {
+      "name": "voicechat-neoforge-2.6.22+26.2.jar",
+      "size_bytes": 4921712,
+      "sha256": "96c5532288b960dcd5c806ed14ce31cb1f286389fcae4f8b8f24407ab221eb9b"
+    },
+    {
+      "name": "waystones-neoforge-26.2-26.2.0.9.jar",
+      "size_bytes": 1182115,
+      "sha256": "5b9e47b8f94a3a544e828a8063a088fc2d832b36d33a22f7f0167610a624f4c1"
+    }
+  ]
+}

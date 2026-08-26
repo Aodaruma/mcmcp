@@ -1,0 +1,13 @@
+/.gradle/
+/build/
+/out/
+/run/
+/runs/
+/.idea/
+/.vscode/
+*.iml
+*.log
+local.properties
+
+# Local MCP credentials
+/config/mcmcp/mcp-token

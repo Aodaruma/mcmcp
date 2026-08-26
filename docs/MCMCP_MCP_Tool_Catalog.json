@@ -1,0 +1,913 @@
+{
+  "resultType": "complete",
+  "_meta": {
+    "io.modelcontextprotocol/serverInfo": {
+      "name": "mcmcp",
+      "version": "0.1.0"
+    }
+  },
+  "ttlMs": 0,
+  "cacheScope": "private",
+  "tools": [
+    {
+      "name": "agent_get_state",
+      "title": "Get MCMCP State",
+      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. It never scans hidden world data.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {"const": 1},
+          "control": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "mode": {"enum": ["off", "ready", "agent", "recovering"]},
+              "ready_expires_at": {
+                "type": ["string", "null"],
+                "format": "date-time"
+              },
+              "game_paused": {"type": "boolean"}
+            },
+            "required": ["mode", "ready_expires_at", "game_paused"]
+          },
+          "world": {
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "dimension": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                    "maxLength": 128
+                  },
+                  "client_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+                  "world_revision": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+                  "position": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {"type": "number", "minimum": -30000000, "maximum": 30000000},
+                      "y": {"type": "number", "minimum": -2048, "maximum": 2048},
+                      "z": {"type": "number", "minimum": -30000000, "maximum": 30000000}
+                    },
+                    "required": ["x", "y", "z"]
+                  },
+                  "yaw": {"type": "number", "minimum": -180, "maximum": 180},
+                  "pitch": {"type": "number", "minimum": -90, "maximum": 90},
+                  "health": {"type": "number", "minimum": 0, "maximum": 2048},
+                  "absorption": {"type": "number", "minimum": 0, "maximum": 2048},
+                  "hunger": {"type": "integer", "minimum": 0, "maximum": 20},
+                  "air": {"type": "integer", "minimum": -2048, "maximum": 2048},
+                  "max_air": {"type": "integer", "minimum": 1, "maximum": 2048},
+                  "on_fire": {"type": "boolean"},
+                  "submerged": {"type": "boolean"},
+                  "status_effects": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                      "maxLength": 128
+                    }
+                  }
+                },
+                "required": ["dimension", "client_tick", "world_revision", "position", "yaw", "pitch", "health", "absorption", "hunger", "air", "max_air", "on_fire", "submerged", "status_effects"]
+              }
+            ]
+          },
+          "inventory": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "item": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                  "maxLength": 128
+                },
+                "count": {"type": "integer", "minimum": 1, "maximum": 2147483647}
+              },
+              "required": ["item", "count"]
+            }
+          },
+          "policy": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "profile": {"const": "survival_omnidirectional"},
+              "multiplayer_enabled": {"type": "boolean"},
+              "max_duration_ms": {"const": 30000},
+              "max_ticks": {"const": 600},
+              "max_distance_blocks": {"const": 32},
+              "max_camera_degrees": {"const": 360},
+              "omnidirectional_visual_radius_blocks": {"type": "number", "minimum": 1, "maximum": 32},
+              "local_observation_radius_blocks": {"const": 4},
+              "omnidirectional_direction_count": {"const": 2048},
+              "omnidirectional_rays_per_tick": {"type": "integer", "minimum": 64, "maximum": 512},
+              "max_recent_sound_clues": {"const": 32},
+              "sound_clue_ttl_ticks": {"const": 600},
+              "action_dsl": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "version": {"const": 1},
+                  "max_ast_depth": {"const": 4},
+                  "max_source_nodes": {"const": 64},
+                  "max_executed_nodes": {"const": 256},
+                  "max_repeat_count": {"const": 16},
+                  "allowed_capabilities": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "uniqueItems": true,
+                    "items": {"enum": ["movement", "camera"]}
+                  }
+                },
+                "required": ["version", "max_ast_depth", "max_source_nodes", "max_executed_nodes", "max_repeat_count", "allowed_capabilities"]
+              }
+            },
+            "required": ["profile", "multiplayer_enabled", "max_duration_ms", "max_ticks", "max_distance_blocks", "max_camera_degrees", "omnidirectional_visual_radius_blocks", "local_observation_radius_blocks", "omnidirectional_direction_count", "omnidirectional_rays_per_tick", "max_recent_sound_clues", "sound_clue_ttl_ticks", "action_dsl"]
+          },
+          "observation": {
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {"const": "omnidirectional_local"},
+                  "latest_frame_id": {
+                    "type": "string",
+                    "pattern": "^obs-[0-9a-f]{16}$"
+                  },
+                  "configured_visual_radius_blocks": {"type": "number", "minimum": 1, "maximum": 32},
+                  "near_volume_radius_blocks": {"const": 4},
+                  "full_azimuth": {"const": true},
+                  "full_elevation": {"const": true},
+                  "sampling_coverage": {"const": 1},
+                  "oldest_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+                  "newest_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+                  "camera_motion_generated": {"const": false},
+                  "record_counts": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "visible_surface": {"type": "integer", "minimum": 0},
+                      "visible_entity": {"type": "integer", "minimum": 0},
+                      "traversability": {"type": "integer", "minimum": 0},
+                      "hazard": {"type": "integer", "minimum": 0},
+                      "unknown_boundary": {"type": "integer", "minimum": 0},
+                      "sound_clue": {"type": "integer", "minimum": 0, "maximum": 32}
+                    },
+                    "required": ["visible_surface", "visible_entity", "traversability", "hazard", "unknown_boundary", "sound_clue"]
+                  },
+                  "recent_sound_clues_truncated": {"type": "boolean"}
+                },
+                "required": ["mode", "latest_frame_id", "configured_visual_radius_blocks", "near_volume_radius_blocks", "full_azimuth", "full_elevation", "sampling_coverage", "oldest_tick", "newest_tick", "camera_motion_generated", "record_counts", "recent_sound_clues_truncated"]
+              }
+            ]
+          },
+          "action": {
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "action_id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                  },
+                  "state": {"enum": ["queued", "running", "succeeded", "failed", "cancelled"]},
+                  "end_reason": {
+                    "type": ["string", "null"],
+                    "maxLength": 64
+                  }
+                },
+                "required": ["action_id", "state", "end_reason"]
+              }
+            ]
+          }
+        },
+        "required": ["schema_version", "control", "world", "inventory", "policy", "observation", "action"]
+      }
+    },
+    {
+      "name": "agent_get_observation",
+      "title": "Get MCMCP Observation",
+      "description": "Returns a stable, paged view of one policy-filtered omnidirectional observation frame. It accepts no arbitrary center or radius.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {"const": 1},
+          "frame_id": {
+            "type": "string",
+            "pattern": "^obs-[0-9a-f]{16}$"
+          },
+          "kinds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "uniqueItems": true,
+            "items": {
+              "enum": ["visible_surface", "visible_entity", "traversability", "hazard", "unknown_boundary", "sound_clue"]
+            }
+          },
+          "cursor": {
+            "type": ["string", "null"],
+            "maxLength": 256
+          },
+          "limit": {"type": "integer", "minimum": 1, "maximum": 256}
+        },
+        "required": ["schema_version", "frame_id", "kinds", "cursor", "limit"]
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "$defs": {
+          "resourceLocation": {
+            "type": "string",
+            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+            "maxLength": 128
+          },
+          "worldPosition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dimension": {"$ref": "#/$defs/resourceLocation"},
+              "x": {"type": "number", "minimum": -30000000, "maximum": 30000000},
+              "y": {"type": "number", "minimum": -2048, "maximum": 2048},
+              "z": {"type": "number", "minimum": -30000000, "maximum": 30000000}
+            },
+            "required": ["dimension", "x", "y", "z"]
+          },
+          "blockPosition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dimension": {"$ref": "#/$defs/resourceLocation"},
+              "x": {"type": "integer", "minimum": -30000000, "maximum": 30000000},
+              "y": {"type": "integer", "minimum": -2048, "maximum": 2048},
+              "z": {"type": "integer", "minimum": -30000000, "maximum": 30000000}
+            },
+            "required": ["dimension", "x", "y", "z"]
+          },
+          "vector": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {"type": "number", "minimum": -128, "maximum": 128},
+              "y": {"type": "number", "minimum": -128, "maximum": 128},
+              "z": {"type": "number", "minimum": -128, "maximum": 128}
+            },
+            "required": ["x", "y", "z"]
+          },
+          "worldRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9223372036854775807
+          },
+          "aabb": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "min_x": {"type": "number", "minimum": -30000002, "maximum": 30000002},
+              "min_y": {"type": "number", "minimum": -2050, "maximum": 2050},
+              "min_z": {"type": "number", "minimum": -30000002, "maximum": 30000002},
+              "max_x": {"type": "number", "minimum": -30000002, "maximum": 30000002},
+              "max_y": {"type": "number", "minimum": -2050, "maximum": 2050},
+              "max_z": {"type": "number", "minimum": -30000002, "maximum": 30000002}
+            },
+            "required": ["min_x", "min_y", "min_z", "max_x", "max_y", "max_z"]
+          },
+          "visibleSurface": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {"const": "visible_surface"},
+              "position": {"$ref": "#/$defs/blockPosition"},
+              "face": {"enum": ["down", "up", "north", "south", "west", "east"]},
+              "block": {"$ref": "#/$defs/resourceLocation"},
+              "shape_class": {"enum": ["opaque", "transparent", "cutout", "partial", "fluid", "unknown"]},
+              "eye_origin": {"$ref": "#/$defs/worldPosition"},
+              "observed_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+              "world_revision": {"$ref": "#/$defs/worldRevision"},
+              "provenance": {"const": "OMNIDIRECTIONAL_VISUAL"}
+            },
+            "required": ["kind", "position", "face", "block", "shape_class", "eye_origin", "observed_tick", "world_revision", "provenance"]
+          },
+          "visibleEntity": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {"const": "visible_entity"},
+              "entity_type": {"$ref": "#/$defs/resourceLocation"},
+              "position": {"$ref": "#/$defs/worldPosition"},
+              "velocity": {"$ref": "#/$defs/vector"},
+              "aabb": {"$ref": "#/$defs/aabb"},
+              "hazard_class": {"enum": ["passive", "neutral", "hostile", "player", "projectile", "unknown"]},
+              "eye_origin": {"$ref": "#/$defs/worldPosition"},
+              "observed_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+              "world_revision": {"$ref": "#/$defs/worldRevision"},
+              "provenance": {"const": "OMNIDIRECTIONAL_VISUAL"}
+            },
+            "required": ["kind", "entity_type", "position", "velocity", "aabb", "hazard_class", "eye_origin", "observed_tick", "world_revision", "provenance"]
+          },
+          "traversability": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {"const": "traversability"},
+              "from": {"$ref": "#/$defs/worldPosition"},
+              "to": {"$ref": "#/$defs/worldPosition"},
+              "status": {"enum": ["CONFIRMED", "PROBE_ALLOWED", "BLOCKED", "STALE"]},
+              "target_support": {"enum": ["confirmed", "absent", "unknown"]},
+              "transition_clearance": {"enum": ["confirmed", "blocked", "unknown"]},
+              "fluid": {"enum": ["none", "water", "lava", "other", "unknown"]},
+              "observer_position": {"$ref": "#/$defs/worldPosition"},
+              "observed_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+              "world_revision": {"$ref": "#/$defs/worldRevision"},
+              "provenance": {"enum": ["LOCAL_VOLUME", "CONTACT"]}
+            },
+            "required": ["kind", "from", "to", "status", "target_support", "transition_clearance", "fluid", "observer_position", "observed_tick", "world_revision", "provenance"]
+          },
+          "hazard": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {"const": "hazard"},
+              "hazard_type": {"enum": ["fall", "lava", "fire", "water", "suffocation", "freezing", "collision", "unknown"]},
+              "position": {"$ref": "#/$defs/worldPosition"},
+              "severity": {"enum": ["caution", "urgent", "unknown"]},
+              "observer_position": {"$ref": "#/$defs/worldPosition"},
+              "observed_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+              "world_revision": {"$ref": "#/$defs/worldRevision"},
+              "provenance": {"enum": ["LOCAL_VOLUME", "CONTACT"]}
+            },
+            "required": ["kind", "hazard_type", "position", "severity", "observer_position", "observed_tick", "world_revision", "provenance"]
+          },
+          "unknownBoundary": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {"const": "unknown_boundary"},
+              "position": {"$ref": "#/$defs/worldPosition"},
+              "reason": {"enum": ["unloaded", "opaque_occlusion", "ambiguous_render", "radius_limit", "fog_limit"]},
+              "eye_origin": {"$ref": "#/$defs/worldPosition"},
+              "observed_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+              "world_revision": {"$ref": "#/$defs/worldRevision"}
+            },
+            "required": ["kind", "position", "reason", "eye_origin", "observed_tick", "world_revision"]
+          },
+          "soundClue": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {"const": "sound_clue"},
+              "sound_event": {"$ref": "#/$defs/resourceLocation"},
+              "category": {"enum": ["master", "records", "weather", "blocks", "hostile", "neutral", "players", "ambient", "voice"]},
+              "position": {"$ref": "#/$defs/worldPosition"},
+              "first_observed_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+              "last_observed_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+              "age_ticks": {"type": "integer", "minimum": 0, "maximum": 600},
+              "occurrences": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+              "entity_hint": {
+                "oneOf": [
+                  {"type": "null"},
+                  {"$ref": "#/$defs/resourceLocation"}
+                ]
+              },
+              "world_revision": {"$ref": "#/$defs/worldRevision"},
+              "provenance": {"const": "client_playback_start"}
+            },
+            "required": ["kind", "sound_event", "category", "position", "first_observed_tick", "last_observed_tick", "age_ticks", "occurrences", "entity_hint", "world_revision", "provenance"]
+          }
+        },
+        "properties": {
+          "schema_version": {"const": 1},
+          "frame_id": {
+            "type": "string",
+            "pattern": "^obs-[0-9a-f]{16}$"
+          },
+          "frame_completed_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+          "records": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "oneOf": [
+                {"$ref": "#/$defs/visibleSurface"},
+                {"$ref": "#/$defs/visibleEntity"},
+                {"$ref": "#/$defs/traversability"},
+                {"$ref": "#/$defs/hazard"},
+                {"$ref": "#/$defs/unknownBoundary"},
+                {"$ref": "#/$defs/soundClue"}
+              ]
+            }
+          },
+          "next_cursor": {"type": ["string", "null"], "maxLength": 256},
+          "sampling_coverage": {"const": 1}
+        },
+        "required": ["schema_version", "frame_id", "frame_completed_tick", "records", "next_cursor", "sampling_coverage"]
+      }
+    },
+    {
+      "name": "agent_start_action",
+      "title": "Start MCMCP Action",
+      "description": "Queues one validated and statically bounded Action DSL v1 program after the in-game MCP operation button is enabled.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "$defs": {
+          "resourceLocation": {
+            "type": "string",
+            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+            "maxLength": 128
+          },
+          "position": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dimension": {"$ref": "#/$defs/resourceLocation"},
+              "x": {"type": "integer", "minimum": -30000000, "maximum": 30000000},
+              "y": {"type": "integer", "minimum": -2048, "maximum": 2048},
+              "z": {"type": "integer", "minimum": -30000000, "maximum": 30000000}
+            },
+            "required": ["dimension", "x", "y", "z"]
+          },
+          "nodeId": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+          },
+          "comparison": {
+            "enum": ["lt", "lte", "eq", "gte", "gt"]
+          },
+          "numericPredicate": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "field": {"enum": ["health", "hunger", "air"]},
+              "comparison": {"$ref": "#/$defs/comparison"},
+              "value": {"type": "number", "minimum": -2048, "maximum": 2048}
+            },
+            "required": ["field", "comparison", "value"]
+          },
+          "booleanPredicate": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "field": {"enum": ["on_fire", "submerged"]},
+              "comparison": {"const": "eq"},
+              "value": {"type": "boolean"}
+            },
+            "required": ["field", "comparison", "value"]
+          },
+          "inventoryPredicate": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "field": {"const": "inventory_count"},
+              "item": {"$ref": "#/$defs/resourceLocation"},
+              "comparison": {"$ref": "#/$defs/comparison"},
+              "value": {"type": "integer", "minimum": 0, "maximum": 2147483647}
+            },
+            "required": ["field", "item", "comparison", "value"]
+          },
+          "statusPredicate": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "field": {"const": "has_status_effect"},
+              "effect": {"$ref": "#/$defs/resourceLocation"},
+              "comparison": {"const": "eq"},
+              "value": {"type": "boolean"}
+            },
+            "required": ["field", "effect", "comparison", "value"]
+          },
+          "atomicPredicate": {
+            "oneOf": [
+              {"$ref": "#/$defs/numericPredicate"},
+              {"$ref": "#/$defs/booleanPredicate"},
+              {"$ref": "#/$defs/inventoryPredicate"},
+              {"$ref": "#/$defs/statusPredicate"}
+            ]
+          },
+          "predicate": {
+            "oneOf": [
+              {"$ref": "#/$defs/atomicPredicate"},
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "all": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {"$ref": "#/$defs/atomicPredicate"}
+                  }
+                },
+                "required": ["all"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "any": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {"$ref": "#/$defs/atomicPredicate"}
+                  }
+                },
+                "required": ["any"]
+              }
+            ]
+          },
+          "navigateNode": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "navigate_to_known"},
+              "target": {"$ref": "#/$defs/position"},
+              "tolerance": {"type": "number", "minimum": 0.1, "maximum": 1.5}
+            },
+            "required": ["id", "op", "target", "tolerance"]
+          },
+          "faceNode": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "face_known_position"},
+              "target": {"$ref": "#/$defs/position"}
+            },
+            "required": ["id", "op", "target"]
+          },
+          "waitNode": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "wait_ticks"},
+              "ticks": {"type": "integer", "minimum": 1, "maximum": 200}
+            },
+            "required": ["id", "op", "ticks"]
+          },
+          "ifNode": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "if"},
+              "condition": {"$ref": "#/$defs/predicate"},
+              "then": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {"$ref": "#/$defs/node"}
+              },
+              "else": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {"$ref": "#/$defs/node"}
+              }
+            },
+            "required": ["id", "op", "condition", "then", "else"]
+          },
+          "repeatNode": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "repeat"},
+              "count": {"type": "integer", "minimum": 1, "maximum": 16},
+              "body": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "items": {"$ref": "#/$defs/node"}
+              }
+            },
+            "required": ["id", "op", "count", "body"]
+          },
+          "node": {
+            "oneOf": [
+              {"$ref": "#/$defs/navigateNode"},
+              {"$ref": "#/$defs/faceNode"},
+              {"$ref": "#/$defs/waitNode"},
+              {"$ref": "#/$defs/ifNode"},
+              {"$ref": "#/$defs/repeatNode"}
+            ]
+          }
+        },
+        "properties": {
+          "schema_version": {"const": 1},
+          "program": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dsl_version": {"const": 1},
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+              },
+              "capabilities": {
+                "type": "array",
+                "minItems": 0,
+                "maxItems": 2,
+                "uniqueItems": true,
+                "items": {"enum": ["movement", "camera"]}
+              },
+              "body": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 32,
+                "items": {"$ref": "#/$defs/node"}
+              }
+            },
+            "required": ["dsl_version", "capabilities", "body"]
+          },
+          "budget": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "max_duration_ms": {"type": "integer", "minimum": 100, "maximum": 30000},
+              "max_ticks": {"type": "integer", "minimum": 2, "maximum": 600},
+              "max_distance_blocks": {"type": "number", "minimum": 0, "maximum": 32},
+              "max_camera_degrees": {"type": "number", "minimum": 0, "maximum": 360},
+              "max_interactions": {"const": 0},
+              "max_blocks_broken": {"const": 0},
+              "max_blocks_placed": {"const": 0}
+            },
+            "required": ["max_duration_ms", "max_ticks", "max_distance_blocks", "max_camera_degrees", "max_interactions", "max_blocks_broken", "max_blocks_placed"]
+          }
+        },
+        "required": ["schema_version", "program", "budget"],
+        "examples": [
+          {
+            "schema_version": 1,
+            "program": {
+              "dsl_version": 1,
+              "name": "navigate_to_known",
+              "capabilities": ["movement"],
+              "body": [
+                {
+                  "id": "go",
+                  "op": "navigate_to_known",
+                  "target": {"dimension": "minecraft:overworld", "x": 100, "y": 64, "z": 120},
+                  "tolerance": 0.75
+                }
+              ]
+            },
+            "budget": {
+              "max_duration_ms": 30000,
+              "max_ticks": 600,
+              "max_distance_blocks": 32,
+              "max_camera_degrees": 0,
+              "max_interactions": 0,
+              "max_blocks_broken": 0,
+              "max_blocks_placed": 0
+            }
+          },
+          {
+            "schema_version": 1,
+            "program": {
+              "dsl_version": 1,
+              "name": "approach_and_face",
+              "capabilities": ["movement", "camera"],
+              "body": [
+                {
+                  "id": "approach",
+                  "op": "navigate_to_known",
+                  "target": {"dimension": "minecraft:overworld", "x": 100, "y": 64, "z": 120},
+                  "tolerance": 0.75
+                },
+                {
+                  "id": "health_gate",
+                  "op": "if",
+                  "condition": {"field": "health", "comparison": "gte", "value": 8},
+                  "then": [
+                    {
+                      "id": "face",
+                      "op": "face_known_position",
+                      "target": {"dimension": "minecraft:overworld", "x": 102, "y": 65, "z": 120}
+                    }
+                  ],
+                  "else": [{"id": "hold", "op": "wait_ticks", "ticks": 20}]
+                }
+              ]
+            },
+            "budget": {
+              "max_duration_ms": 30000,
+              "max_ticks": 600,
+              "max_distance_blocks": 32,
+              "max_camera_degrees": 360,
+              "max_interactions": 0,
+              "max_blocks_broken": 0,
+              "max_blocks_placed": 0
+            }
+          },
+          {
+            "schema_version": 1,
+            "program": {
+              "dsl_version": 1,
+              "name": "known_route",
+              "capabilities": ["movement"],
+              "body": [
+                {
+                  "id": "patrol",
+                  "op": "repeat",
+                  "count": 2,
+                  "body": [
+                    {
+                      "id": "to_a",
+                      "op": "navigate_to_known",
+                      "target": {"dimension": "minecraft:overworld", "x": 96, "y": 64, "z": 120},
+                      "tolerance": 0.75
+                    },
+                    {
+                      "id": "to_b",
+                      "op": "navigate_to_known",
+                      "target": {"dimension": "minecraft:overworld", "x": 100, "y": 64, "z": 120},
+                      "tolerance": 0.75
+                    }
+                  ]
+                }
+              ]
+            },
+            "budget": {
+              "max_duration_ms": 30000,
+              "max_ticks": 600,
+              "max_distance_blocks": 32,
+              "max_camera_degrees": 0,
+              "max_interactions": 0,
+              "max_blocks_broken": 0,
+              "max_blocks_placed": 0
+            }
+          }
+        ]
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {"const": 1},
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "state": {"const": "queued"},
+          "accepted_at": {"type": "string", "format": "date-time"}
+        },
+        "required": ["schema_version", "action_id", "state", "accepted_at"]
+      }
+    },
+    {
+      "name": "agent_get_action",
+      "title": "Get MCMCP Action",
+      "description": "Returns bounded progress and a policy-filtered trace for one explicit action handle.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          }
+        },
+        "required": ["action_id"]
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {"const": 1},
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "state": {"enum": ["queued", "running", "succeeded", "failed", "cancelled"]},
+          "progress": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "phase": {"enum": ["queued", "executing", "replanning", "recovering", "finished"]},
+              "current_node_id": {
+                "type": ["string", "null"],
+                "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+              },
+              "executed_nodes": {"type": "integer", "minimum": 0, "maximum": 256},
+              "total_node_upper_bound": {"type": "integer", "minimum": 1, "maximum": 256},
+              "distance_travelled": {"type": "number", "minimum": 0, "maximum": 48},
+              "camera_degrees": {"type": "number", "minimum": 0, "maximum": 720},
+              "interactions": {"type": "integer", "minimum": 0, "maximum": 8},
+              "blocks_broken": {"type": "integer", "minimum": 0, "maximum": 4},
+              "blocks_placed": {"type": "integer", "minimum": 0, "maximum": 8},
+              "ticks": {"type": "integer", "minimum": 0, "maximum": 800}
+            },
+            "required": ["phase", "current_node_id", "executed_nodes", "total_node_upper_bound", "distance_travelled", "camera_degrees", "interactions", "blocks_broken", "blocks_placed", "ticks"]
+          },
+          "failure": {
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "CANCELLED_BY_CLIENT",
+                      "USER_DISABLED",
+                      "EMERGENCY_STOP",
+                      "BUDGET_EXCEEDED",
+                      "PATH_BLOCKED",
+                      "WORLD_CHANGED",
+                      "SAFETY_RECOVERED",
+                      "RECOVERY_EXHAUSTED",
+                      "SERVER_DENIED_OR_DESYNC",
+                      "PREDICATE_UNAVAILABLE",
+                      "CAPABILITY_DENIED",
+                      "INTERNAL_ERROR"
+                    ]
+                  },
+                  "recoverable": {"type": "boolean"},
+                  "evidence": {
+                    "type": "array",
+                    "maxItems": 16,
+                    "items": {"type": "string", "maxLength": 128}
+                  }
+                },
+                "required": ["code", "recoverable", "evidence"]
+              }
+            ]
+          },
+          "trace": {
+            "type": "array",
+            "maxItems": 256,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "tick": {"type": "integer", "minimum": 0, "maximum": 800},
+                "event": {"type": "string", "pattern": "^[A-Z0-9_]+$", "maxLength": 64},
+                "detail": {"type": "string", "maxLength": 256}
+              },
+              "required": ["tick", "event", "detail"]
+            }
+          }
+        },
+        "required": ["schema_version", "action_id", "state", "progress", "failure", "trace"]
+      }
+    },
+    {
+      "name": "agent_cancel_action",
+      "title": "Cancel MCMCP Action",
+      "description": "Idempotently requests cancellation of one explicit action handle.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          }
+        },
+        "required": ["action_id"]
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {"const": 1},
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "cancel_requested": {"type": "boolean"},
+          "state_at_request": {"enum": ["queued", "running", "succeeded", "failed", "cancelled"]}
+        },
+        "required": ["schema_version", "action_id", "cancel_requested", "state_at_request"]
+      }
+    }
+  ]
+}
