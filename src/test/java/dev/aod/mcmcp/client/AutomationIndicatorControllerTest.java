@@ -23,6 +23,16 @@ class AutomationIndicatorControllerTest {
     }
 
     @Test
+    void chatButtonUsesTheTopRightWhileOtherScreensStayAtTheBottomRight() {
+        assertThat(AutomationIndicatorController.screenButtonY(240, 24, 8, true))
+                .isEqualTo(8);
+        assertThat(AutomationIndicatorController.screenButtonY(240, 24, 8, false))
+                .isEqualTo(208);
+        assertThat(AutomationIndicatorController.screenButtonY(10, 24, 8, true))
+                .isZero();
+    }
+
+    @Test
     void everyEnabledStatePressChoosesTheSafetyStop() {
         for (var state : new AutomationUiSnapshot.State[] {
                 AutomationUiSnapshot.State.READY,

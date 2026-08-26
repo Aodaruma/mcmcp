@@ -2,7 +2,6 @@ package dev.aod.mcmcp.safety;
 
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
 import java.util.Set;
 import java.util.UUID;
 
@@ -34,29 +33,19 @@ class LocalArmingStateTest {
     }
 
     @Test
-    void readyLeaseExpiresWithoutConsumingAnAction() {
+    void readyWaitsUntilAnActionOrExplicitStop() {
         var state = new LocalArmingState();
         var session = UUID.randomUUID();
-        state.arm(session, Set.of("movement"), 100L);
+        state.arm(session, Set.of("movement"));
+        long armedEpoch = state.snapshot(session).controlEpoch();
 
-        assertThat(state.snapshot(session, 100L + LocalArmingState.READY_TIMEOUT_NANOS - 1L).mode())
-                .isEqualTo(LocalArmingState.Mode.READY);
-        assertThat(state.snapshot(session, 100L + LocalArmingState.READY_TIMEOUT_NANOS).mode())
-                .isEqualTo(LocalArmingState.Mode.OFF);
-        assertThat(state.snapshot(session).lastLockReason()).isEqualTo("ready_timeout");
-    }
+        assertThat(state.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.READY);
+        assertThat(state.snapshot(session).controlEpoch()).isEqualTo(armedEpoch);
 
-    @Test
-    void readyLeaseRemainsCorrectAcrossNanoTimeWrap() {
-        var state = new LocalArmingState();
-        var session = UUID.randomUUID();
-        long start = Long.MAX_VALUE - LocalArmingState.READY_TIMEOUT_NANOS / 2L;
-        state.arm(session, Set.of("movement"), start);
+        state.lock("local_ui_disabled");
 
-        assertThat(state.snapshot(session, start + LocalArmingState.READY_TIMEOUT_NANOS - 1L).mode())
-                .isEqualTo(LocalArmingState.Mode.READY);
-        assertThat(state.snapshot(session, start + LocalArmingState.READY_TIMEOUT_NANOS).mode())
-                .isEqualTo(LocalArmingState.Mode.OFF);
+        assertThat(state.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.OFF);
+        assertThat(state.snapshot(session).lastLockReason()).isEqualTo("local_ui_disabled");
     }
 
     @Test
@@ -66,16 +55,5 @@ class LocalArmingStateTest {
         state.lock("\u0000a\u0000");
 
         assertThat(state.snapshot(null).lastLockReason()).isEqualTo("a");
-    }
-
-    @Test
-    void supportsABoundedConfiguredReadyTimeout() {
-        var state = new LocalArmingState();
-        var session = UUID.randomUUID();
-
-        state.armFor(session, Set.of("movement"), Duration.ofSeconds(12));
-
-        assertThat(state.snapshot(session).readyRemainingSeconds(System.nanoTime()))
-                .isBetween(1L, 12L);
     }
 }

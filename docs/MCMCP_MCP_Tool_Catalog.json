@@ -31,7 +31,8 @@
               "mode": {"enum": ["off", "ready", "agent", "recovering"]},
               "ready_expires_at": {
                 "type": ["string", "null"],
-                "format": "date-time"
+                "format": "date-time",
+                "description": "Schema v1 compatibility field; always null because READY does not expire"
               },
               "game_paused": {"type": "boolean"}
             },

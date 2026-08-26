@@ -7,6 +7,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.InputWithModifiers;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -56,7 +57,8 @@ public final class AutomationIndicatorController {
     public void onScreenInit(ScreenEvent.Init.Post event) {
         var screen = event.getScreen();
         int width = menuButtonWidth(screen.width);
-        var button = new IndicatorButton(this, screen.width, screen.height, width);
+        var button = new IndicatorButton(
+                this, screen.width, screen.height, width, screen instanceof ChatScreen);
         indicatorScreen = screen;
         indicatorButton = button;
         event.addListener(button);
@@ -172,8 +174,7 @@ public final class AutomationIndicatorController {
             case OFF -> canEnable
                     ? Component.translatable("gui.mcmcp.automation.off")
                     : Component.translatable("gui.mcmcp.automation.off_unavailable");
-            case READY -> Component.translatable(
-                    "gui.mcmcp.automation.ready", snapshot.readySeconds());
+            case READY -> Component.translatable("gui.mcmcp.automation.ready");
             case AGENT -> Component.translatable("gui.mcmcp.automation.agent");
             case RECOVERING -> Component.translatable("gui.mcmcp.automation.recovering");
             case FAULT -> Component.translatable(
@@ -262,7 +263,7 @@ public final class AutomationIndicatorController {
                 McmcpClientConfig.hudOffsetX(),
                 font.width(Component.translatable("gui.mcmcp.automation.off")),
                 font.width(Component.translatable("gui.mcmcp.automation.off_unavailable")),
-                font.width(Component.translatable("gui.mcmcp.automation.ready", 30)),
+                font.width(Component.translatable("gui.mcmcp.automation.ready")),
                 font.width(Component.translatable("gui.mcmcp.automation.agent")),
                 font.width(Component.translatable("gui.mcmcp.automation.recovering")),
                 font.width(Component.translatable(
@@ -283,6 +284,13 @@ public final class AutomationIndicatorController {
         return Math.max(0, screenExtent - elementExtent - margin);
     }
 
+    static int screenButtonY(
+            int screenHeight, int buttonHeight, int margin, boolean chatScreen) {
+        return chatScreen
+                ? Math.min(Math.max(0, margin), Math.max(0, screenHeight - buttonHeight))
+                : lowerRightCoordinate(screenHeight, buttonHeight, margin);
+    }
+
     enum PressAction {
         ENABLE,
         DISABLE,
@@ -291,23 +299,29 @@ public final class AutomationIndicatorController {
 
     private static final class IndicatorButton extends Button.Plain {
         private final AutomationIndicatorController controller;
+        private final boolean chatScreen;
 
         private IndicatorButton(
                 AutomationIndicatorController controller,
                 int screenWidth,
                 int screenHeight,
-                int width) {
+                int width,
+                boolean chatScreen) {
             super(
                     lowerRightCoordinate(
                             screenWidth, width, McmcpClientConfig.hudOffsetX()),
-                    lowerRightCoordinate(
-                            screenHeight, BUTTON_HEIGHT, McmcpClientConfig.hudOffsetY()),
+                    screenButtonY(
+                            screenHeight,
+                            BUTTON_HEIGHT,
+                            McmcpClientConfig.hudOffsetY(),
+                            chatScreen),
                     width,
                     BUTTON_HEIGHT,
                     Component.empty(),
                     ignored -> { },
                     DEFAULT_NARRATION);
             this.controller = controller;
+            this.chatScreen = chatScreen;
             setTooltipDelay(Duration.ofMillis(250));
             controller.refresh(this, System.nanoTime());
         }
@@ -327,8 +341,11 @@ public final class AutomationIndicatorController {
             setWidth(width);
             setX(lowerRightCoordinate(
                     graphics.guiWidth(), width, McmcpClientConfig.hudOffsetX()));
-            setY(lowerRightCoordinate(
-                    graphics.guiHeight(), getHeight(), McmcpClientConfig.hudOffsetY()));
+            setY(screenButtonY(
+                    graphics.guiHeight(),
+                    getHeight(),
+                    McmcpClientConfig.hudOffsetY(),
+                    chatScreen));
             controller.refresh(this, System.nanoTime());
             extractDefaultSprite(graphics);
             drawIcon(

@@ -1,7 +1,7 @@
 {
   "gui.mcmcp.automation.off": "MCP操作: OFF [ONにする]",
   "gui.mcmcp.automation.off_unavailable": "MCP操作: OFF [ワールド未準備]",
-  "gui.mcmcp.automation.ready": "MCP操作: ON / 待機 %s秒 [OFF]",
+  "gui.mcmcp.automation.ready": "MCP操作: ON / 待機中 [OFF]",
   "gui.mcmcp.automation.agent": "MCP操作: ON / 実行中 — Escで緊急停止 [OFF]",
   "gui.mcmcp.automation.recovering": "MCP操作: ON / 緊急回避中 — Escで緊急停止 [OFF]",
   "gui.mcmcp.automation.fault": "MCP操作: FAULT / %s [無効]",

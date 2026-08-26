@@ -6,6 +6,7 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.JumpInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.TypeInsnNode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +41,9 @@ class AutomationUiContractTest {
                         "net/neoforged/neoforge/client/event/ScreenEvent$Init$Post#addListener");
         assertThat(init.instructions)
                 .noneMatch(instruction -> instruction instanceof JumpInsnNode);
+        assertThat(init.instructions)
+                .anyMatch(instruction -> instruction instanceof TypeInsnNode type
+                        && type.desc.equals("net/minecraft/client/gui/screens/ChatScreen"));
     }
 
     @Test

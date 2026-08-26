@@ -15,17 +15,15 @@ class McmcpClientConfigTest {
                         "endpoint_enabled",
                         "port",
                         "max_request_bytes",
-                        "ready_timeout_seconds",
                         "hud_offset_x",
                         "hud_offset_y");
+        assertThat(values).doesNotContainKey("ready_timeout_seconds");
         assertThat(((ModConfigSpec.BooleanValue) values.get("endpoint_enabled")).getDefault())
                 .isEqualTo(true);
         assertThat(((ModConfigSpec.IntValue) values.get("port")).getDefault())
                 .isEqualTo(8_765);
         assertThat(((ModConfigSpec.IntValue) values.get("max_request_bytes")).getDefault())
                 .isEqualTo(65_536);
-        assertThat(((ModConfigSpec.IntValue) values.get("ready_timeout_seconds")).getDefault())
-                .isEqualTo(30);
         assertThat(((ModConfigSpec.IntValue) values.get("hud_offset_x")).getDefault())
                 .isEqualTo(8);
         assertThat(((ModConfigSpec.IntValue) values.get("hud_offset_y")).getDefault())

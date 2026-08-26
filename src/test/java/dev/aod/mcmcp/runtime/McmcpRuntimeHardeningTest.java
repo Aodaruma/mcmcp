@@ -37,7 +37,6 @@ import net.minecraft.world.phys.Vec3;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -236,10 +235,14 @@ class McmcpRuntimeHardeningTest {
     @Test
     void productionStateAdapterUsesTheNormativeAgentStateShape() {
         var lock = new LocalArmingState.Snapshot(
-                LocalArmingState.Mode.OFF, null, Set.of(), 0L, "startup", 0L);
+                LocalArmingState.Mode.READY,
+                UUID.randomUUID(),
+                Set.of("movement"),
+                null,
+                1L);
 
         var state = McmcpRuntime.statePayload(
-                lock, false, null, List.of(), 0L, Instant.EPOCH);
+                lock, false, null, List.of());
 
         assertThat(state.keySet()).containsExactly(
                 "schema_version", "control", "world", "inventory",
@@ -250,7 +253,7 @@ class McmcpRuntimeHardeningTest {
                 .containsEntry("observation", null)
                 .containsEntry("action", null);
         var control = (Map<?, ?>) state.get("control");
-        assertThat(control.get("mode")).isEqualTo("off");
+        assertThat(control.get("mode")).isEqualTo("ready");
         assertThat(control.get("ready_expires_at")).isNull();
         assertThat(control.get("game_paused")).isEqualTo(false);
         var policy = (Map<?, ?>) state.get("policy");

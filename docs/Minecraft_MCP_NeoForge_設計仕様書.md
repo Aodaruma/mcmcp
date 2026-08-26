@@ -73,7 +73,7 @@ NeoForge公式の26.2 MDKもJava 25を対象としている。開発は公式の
 
 ### 3.1 目的
 
-ユーザーがScreen右下のボタンでMCP操作をONにした短時間だけ、ローカルMCPクライアントから受けた型付きAction DSLに従い、現在のプレイヤーを安全に代行操作する。
+ユーザーがScreen buttonでMCP操作をONにしている間、ローカルMCPクライアントから受けた型付きAction DSLに従い、現在のプレイヤーを安全に代行操作する。
 
 将来の製品Goalは次のとおり。
 
@@ -262,15 +262,15 @@ Esc緊急停止
 
 ### 6.2 状態
 
-公開lease APIは作らない。Screen右下のON操作と1 Actionを1回の内部leaseとして扱う。MCP操作ON/OFFはAgentの変更操作を許可するgateであり、内蔵HTTP endpoint自体の起動・停止ではない。OFF中も`agent_get_state`と終了済みActionの参照は可能で、`agent_start_action`だけを拒否する。
+公開lease APIは作らない。Screen buttonのON操作を、時間制限のない1 Action限りの内部許可として扱う。MCP操作ON/OFFはAgentの変更操作を許可するgateであり、内蔵HTTP endpoint自体の起動・停止ではない。OFF中も`agent_get_state`と終了済みActionの参照は可能で、`agent_start_action`だけを拒否する。
 
 ~~~text
 OFF
   └─ Screen右下のMCP操作ON
        v
-READY（ON、30秒、1 Action限り）
+READY（ON、時間制限なし、1 Action限り）
   ├─ valid agent_start_action → AGENT
-  └─ timeout / OFF / world変更 → OFF
+  └─ OFF / world変更 → OFF
 
 AGENT
   ├─ 能動的危険 → RECOVERING
@@ -338,10 +338,10 @@ Vanillaがsingleplayerを実際にpauseしている間はActionをcancelせず�
 
 AGENT開始時だけ3秒間、「自動操作中 — Escで緊急停止」という短いoverlay noticeを出し、その後はiconだけに戻す。
 
-chat、inventory、pause menuを含む任意の`Screen`表示中は、右下へ「icon + 状態文 + MCP操作 ON/OFF」の1 buttonを追加する。
+chat、inventory、pause menuを含む任意の`Screen`表示中は、「icon + 状態文 + MCP操作 ON/OFF」の1 buttonを追加する。原則は右下だが、chatでは入力欄と候補一覧を塞がないよう右上へ配置する。
 
 - OFFでworldとplayerが有効: `MCP操作: OFF [ONにする]`
-- READY: `MCP操作: ON / 待機 xx秒 [OFF]`
+- READY: `MCP操作: ON / 待機中 [OFF]`
 - AGENT: `MCP操作: ON / 実行中 — Escで緊急停止 [OFF]`
 - RECOVERING: `MCP操作: ON / 緊急回避中 — Escで緊急停止 [OFF]`
 - FAULT: `MCP操作: FAULT / <local error code> [disabled]`
@@ -349,7 +349,7 @@ chat、inventory、pause menuを含む任意の`Screen`表示中は、右下へ�
 
 OFFクリックはActionを`USER_DISABLED`で終了し、入力を解除してOFFへ戻す。ボタン自身のclickだけは6.4の入力隔離を通過する。buttonはnarration textとkeyboard focusを持つが、AGENT中のkeyboard activationはEsc以外を遮断するためmouse click専用である。
 
-ゲームHUDは`RegisterGuiLayersEvent`、Screen buttonは`ScreenEvent.Init.Post`で追加し、既存Screen classを置換しない。`Minecraft.screen == null`のframeだけgameplay iconを描画し、Screen表示中はHUD側iconを描かず、button内のiconと状態文へ置き換える。右・下marginは既定8 px、既存MODと重なる場合のためoffsetだけをclient configで変更可能にする。
+ゲームHUDは`RegisterGuiLayersEvent`、Screen buttonは`ScreenEvent.Init.Post`で追加し、既存Screen classを置換しない。`Minecraft.screen == null`のframeだけgameplay iconを描画し、Screen表示中はHUD側iconを描かず、button内のiconと状態文へ置き換える。右marginと下margin（chatでは上margin）は既定8 px、既存MODと重なる場合のためoffsetだけをclient configで変更可能にする。
 
 ## 7. 観測境界
 
@@ -752,14 +752,14 @@ templateは`agent_start_action.inputSchema.examples`に掲載し、実装reposit
 - [`known_route.json`](action-templates/known_route.json): 既知区間を固定回数だけ往復する
 - [`break_known_oak_column.json`](action-templates/break_known_oak_column.json): 地上から届く、現在可視な3段oak幹を下から順に破壊する
 
-templateもcustom programと同じvalidator、capability、budget、READY lease、安全条件を通る。
+templateもcustom programと同じvalidator、capability、budget、READY許可、安全条件を通る。
 
 #### 8.5.3 受付と応答
 
 受付条件:
 
 - worldとplayerが存在
-- READY leaseが有効
+- READY許可が有効
 - 実行中Taskがない
 - AST、predicate、capability、static budgetが有効
 - 全targetと必要経路がKnown Traversability Mapで使用可能
@@ -818,7 +818,7 @@ agent_get_stateの返却対象:
 - health、absorption、hunger、air、fire、submerged、位置、向き、dimension
 - current client tickとworld revision
 - 自inventoryのitem別集計
-- OFF / READY / AGENT / RECOVERING状態、READY期限、game pause
+- OFF / READY / AGENT / RECOVERING状態、game pause
 - 有効policyとhard limit
 - DSL version、構造上限、現在許可されたcapability
 - 最新immutable observation frameのID、範囲、鮮度、coverage、kind別件数
@@ -897,7 +897,7 @@ domain errorのTextContentは次のJSON objectを1件だけ直列化する。sch
 ~~~text
 Validate JSON AST
   → Compile predicates、capabilities、worst-case budget
-  → Check READY lease and world preconditions
+  → Check READY authorization and world preconditions
   → Build bounded primitive plan
   → Execute at most one deterministic primitive step per ClientTick
   → Safety Governor preemption / local replan
@@ -1189,7 +1189,6 @@ client config:
 - endpoint_enabled
 - port
 - max_request_bytes
-- ready_timeout_seconds
 - hud_offset_x / hud_offset_y
 - omnidirectional_visual_radius_blocks
 - omnidirectional_rays_per_tick
@@ -1310,7 +1309,7 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 ### 14.3 操作権
 
 - OFF中のagent_start_actionはMCP_OPERATION_DISABLEDで入力を変更しない
-- 有効worldのScreen右下buttonからONにでき、READY leaseを30秒だけ付与
+- 有効worldのScreen buttonからONにでき、READYはAction開始、明示OFF、またはworld変更まで維持
 - READY中に受理するActionは1件だけで、terminal後はOFF
 - 同時2件目はTASK_BUSY
 - enqueue後、ClientTick前にworld、READY、control epochが変わった場合は入力せず失敗
@@ -1532,7 +1531,7 @@ world、mmc-pack.json、instance.cfg、既存jarは変更しない。
 1. NeoForge 26.2.0.59 skeletonと単一jar
 2. Prism複製インスタンスで起動
 3. loopback MCP、auth、5 Toolsのstub
-4. GameGateway、Task state、READY lease、Esc、入力隔離、gameplay HUD icon、Screen button
+4. GameGateway、Task state、READY許可、Esc、入力隔離、gameplay HUD icon、Screen button
 5. Action DSL v1 parser、bounded if/repeat、static budget compiler
 6. survival_omnidirectional evidence、immutable observation frame、Local Observation Volume、sound clue、Known Traversability Map
 7. navigate_to_known / face_known_position / wait_ticks

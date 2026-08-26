@@ -473,12 +473,10 @@ public final class McmcpRuntime implements McpRuntimePort {
     /** Read-only, client-thread view used by the local HUD and pause-menu indicator. */
     public AutomationUiSnapshot automationUiSnapshot() {
         var session = sessions.snapshot();
-        long nowNanos = System.nanoTime();
-        var lock = arming.snapshot(session.worldSessionId(), nowNanos);
+        var lock = arming.snapshot(session.worldSessionId());
         return AutomationUiSnapshot.resolve(
                 localControlAvailable(Minecraft.getInstance(), session),
                 lock,
-                nowNanos,
                 endpointFaultCode);
     }
 
@@ -528,10 +526,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             return false;
         }
         goalContinuation.reset(session.worldSessionId());
-        arming.armFor(
-                session.worldSessionId(),
-                availableCapabilities(minecraft),
-                Duration.ofSeconds(McmcpClientConfig.readyTimeoutSeconds()));
+        arming.arm(session.worldSessionId(), availableCapabilities(minecraft));
         overlay(minecraft, "MCMCP: このワールドでMCP自動操作を再許可しました");
         return true;
     }
@@ -1018,7 +1013,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         if (!arming.beginAction(session.worldSessionId())) {
             throw new RuntimeInvocationException(
                     "mcp_operation_disabled",
-                    "The one-action READY lease is no longer available.",
+                    "The one-action READY authorization is no longer available.",
                     true,
                     Map.of());
         }
@@ -1267,8 +1262,7 @@ public final class McmcpRuntime implements McpRuntimePort {
     }
 
     private Map<String, Object> status(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
-        long nowNanos = System.nanoTime();
-        var lock = arming.snapshot(session.worldSessionId(), nowNanos);
+        var lock = arming.snapshot(session.worldSessionId());
         var inventory = new LinkedHashMap<String, Integer>();
         Map<String, Object> world = null;
 
@@ -1322,8 +1316,6 @@ public final class McmcpRuntime implements McpRuntimePort {
                         paused,
                         world,
                         inventoryPayload,
-                        nowNanos,
-                        Instant.now(),
                         minecraft.isMultiplayerServer() && multiplayerPolicyAllows(minecraft),
                         McmcpClientConfig.visualRadiusBlocks(),
                         McmcpClientConfig.raysPerTick()));
@@ -1346,11 +1338,9 @@ public final class McmcpRuntime implements McpRuntimePort {
             LocalArmingState.Snapshot lock,
             boolean paused,
             Map<String, Object> world,
-            List<Map<String, Object>> inventory,
-            long nowNanos,
-            Instant wallClock) {
+            List<Map<String, Object>> inventory) {
         return statePayload(
-                lock, paused, world, inventory, nowNanos, wallClock,
+                lock, paused, world, inventory,
                 false,
                 McmcpClientConfig.DEFAULT_VISUAL_RADIUS_BLOCKS,
                 McmcpClientConfig.DEFAULT_RAYS_PER_TICK);
@@ -1361,20 +1351,16 @@ public final class McmcpRuntime implements McpRuntimePort {
             boolean paused,
             Map<String, Object> world,
             List<Map<String, Object>> inventory,
-            long nowNanos,
-            Instant wallClock,
             boolean multiplayerEnabled,
             int visualRadiusBlocks,
             int raysPerTick) {
         Objects.requireNonNull(lock, "lock");
         Objects.requireNonNull(inventory, "inventory");
-        Objects.requireNonNull(wallClock, "wallClock");
 
         var control = new LinkedHashMap<String, Object>();
         control.put("mode", lock.mode().name().toLowerCase(Locale.ROOT));
-        control.put("ready_expires_at", lock.mode() == LocalArmingState.Mode.READY
-                ? wallClock.plusSeconds(lock.readyRemainingSeconds(nowNanos)).toString()
-                : null);
+        // Kept nullable for MCP clients written against schema version 1; READY no longer expires.
+        control.put("ready_expires_at", null);
         control.put("game_paused", paused);
 
         var actionDsl = Map.<String, Object>of(
@@ -1982,7 +1968,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             appendVoiceEndDetails(details, voiceEnd);
             throw new RuntimeInvocationException(
                     "locked",
-                    "The one-action READY lease is no longer available",
+                    "The one-action READY authorization is no longer available",
                     true,
                     details);
         }
@@ -4112,9 +4098,8 @@ public final class McmcpRuntime implements McpRuntimePort {
     }
 
     /**
-     * A routine may span a pause or a low-TPS interval, so admission-time deadline checks are not
-     * enough. Recheck the wall-clock local lease immediately before every routine tick and finish a
-     * priority stop inline when it is no longer armed.
+     * Recheck local arming immediately before every routine tick and finish a priority stop inline
+     * when it is no longer armed.
      */
     static boolean enforceActiveRoutineArming(
             LocalArmingState.Snapshot snapshot,

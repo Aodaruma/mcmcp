@@ -8,31 +8,26 @@ import java.util.Objects;
 public record AutomationUiSnapshot(
         State state,
         boolean worldReady,
-        long readySeconds,
         String detail) {
     public AutomationUiSnapshot {
         Objects.requireNonNull(state, "state");
-        if (readySeconds < 0L || (state == State.READY) != (readySeconds > 0L)) {
-            throw new IllegalArgumentException("Only READY may expose a positive countdown");
-        }
     }
 
     public static AutomationUiSnapshot resolve(
             boolean worldReady,
             LocalArmingState.Snapshot control,
-            long nowNanos,
             String faultCode) {
         Objects.requireNonNull(control, "control");
         if (faultCode != null) {
-            return new AutomationUiSnapshot(State.FAULT, worldReady, 0L, faultCode);
+            return new AutomationUiSnapshot(State.FAULT, worldReady, faultCode);
         }
         return switch (control.mode()) {
             case OFF -> new AutomationUiSnapshot(
-                    State.OFF, worldReady, 0L, control.lastLockReason());
+                    State.OFF, worldReady, control.lastLockReason());
             case READY -> new AutomationUiSnapshot(
-                    State.READY, worldReady, control.readyRemainingSeconds(nowNanos), null);
-            case AGENT -> new AutomationUiSnapshot(State.AGENT, worldReady, 0L, null);
-            case RECOVERING -> new AutomationUiSnapshot(State.RECOVERING, worldReady, 0L, null);
+                    State.READY, worldReady, null);
+            case AGENT -> new AutomationUiSnapshot(State.AGENT, worldReady, null);
+            case RECOVERING -> new AutomationUiSnapshot(State.RECOVERING, worldReady, null);
         };
     }
 

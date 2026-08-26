@@ -1,7 +1,7 @@
 {
   "gui.mcmcp.automation.off": "MCP control: OFF [turn ON]",
   "gui.mcmcp.automation.off_unavailable": "MCP control: OFF [world not ready]",
-  "gui.mcmcp.automation.ready": "MCP control: ON / ready %ss [OFF]",
+  "gui.mcmcp.automation.ready": "MCP control: ON / ready [OFF]",
   "gui.mcmcp.automation.agent": "MCP control: ON / running — Esc to stop [OFF]",
   "gui.mcmcp.automation.recovering": "MCP control: ON / recovering — Esc to stop [OFF]",
   "gui.mcmcp.automation.fault": "MCP control: FAULT / %s [disabled]",
