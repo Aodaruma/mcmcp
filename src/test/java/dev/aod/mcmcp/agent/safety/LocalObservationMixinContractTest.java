@@ -205,14 +205,16 @@ class LocalObservationMixinContractTest {
     }
 
     @Test
-    void executorRevalidatesItsExactCommandVectorThroughTheSafetyVolume() throws Exception {
+    void executorFencesItsCommandPreviewWhileTheMixinGuardsResolvedMovement() throws Exception {
         var tickNavigation = method(
                 classNode("/dev/aod/mcmcp/agent/action/MinecraftActionPrimitiveExecutor.class"),
                 "tickNavigation");
 
         assertThat(invocations(tickNavigation))
                 .contains("dev/aod/mcmcp/agent/action/MinecraftActionPrimitiveExecutor#commandDirection")
-                .contains("dev/aod/mcmcp/agent/safety/LocalObservationVolume#verifiesGoalHorizontalMovement");
+                .contains("dev/aod/mcmcp/agent/safety/LocalObservationVolume#canPreviewGoalMovement")
+                .doesNotContain(
+                        "dev/aod/mcmcp/agent/safety/LocalObservationVolume#verifiesGoalHorizontalMovement");
     }
 
     @Test

@@ -222,17 +222,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         if (command.horizontalDistanceSqr() > 0.0D) {
             double previewLength = Math.min(1.0D, horizontalDistance(player, waypoint));
             Vec3 preview = command.scale(previewLength);
-            boolean verticalEdge = waypoint.y() != planned.key().from().y();
-            boolean previewSafe = verticalEdge
-                    ? movementSafety.canPreviewGoalMovement(
-                            player, preview, snapshot.worldRevision())
-                    : movementSafety.verifiesGoalHorizontalMovement(
-                            player,
-                            preview.x,
-                            preview.z,
-                            clientTick,
-                            snapshot.worldRevision());
-            if (!previewSafe) {
+            if (!movementSafety.canPreviewGoalMovement(
+                    player, preview, snapshot.worldRevision())) {
                 return finish(Status.REPLAN_REQUIRED, Reason.UNVERIFIED_MOVEMENT_VECTOR);
             }
         }
