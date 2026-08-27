@@ -29,6 +29,16 @@ final class FixtureCommands {
                         })))
                 .then(Commands.literal("status")
                         .executes(context -> execute(context.getSource(), FixtureArena::sendStatus)))
+                .then(Commands.literal("random_ticks")
+                        .then(Commands.literal("status")
+                                .executes(context -> execute(
+                                        context.getSource(), FixtureRandomTicks::status)))
+                        .then(Commands.literal("accelerate")
+                                .executes(context -> execute(
+                                        context.getSource(), FixtureRandomTicks::accelerate)))
+                        .then(Commands.literal("restore")
+                                .executes(context -> execute(
+                                        context.getSource(), FixtureRandomTicks::restore))))
                 .then(Commands.literal("reset_player")
                         .executes(context -> execute(context.getSource(), (fixture, output) -> {
                             FixtureArena.resetInventoryAndStatus(fixture);

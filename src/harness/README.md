@@ -20,6 +20,11 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
 - `/mcmcp_fixture load` — clears/rebuilds the fixed arena, teleports the player, and resets
   inventory/status.
 - `/mcmcp_fixture status` — prints public BlockState/light/player/inventory checkpoints.
+- `/mcmcp_fixture random_ticks status` — prints the current fixed random-tick fixture state.
+- `/mcmcp_fixture random_ticks accelerate` — saves the world's current value once and sets the
+  fixed harness-only `random_tick_speed` value to 30.
+- `/mcmcp_fixture random_ticks restore` — restores the saved value. Normal server shutdown also
+  restores it before the world is saved; no command accepts an arbitrary value.
 - `/mcmcp_fixture expose_hidden` — opens the opaque box so the gold/diamond cell is visible.
 - `/mcmcp_fixture conceal_hidden` — seals the box; observations should return remembered data.
 - `/mcmcp_fixture mutate_hidden` — seals the box and changes gold to diamond behind the wall.
