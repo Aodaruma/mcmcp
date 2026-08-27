@@ -4323,12 +4323,19 @@ public final class McmcpRuntime implements McpRuntimePort {
             UUID actionId, net.minecraft.client.player.LocalPlayer player) {
         var position = player.position();
         double distance = position.distanceTo(agentExecution.lastPosition);
-        double camera = Math.abs(Mth.wrapDegrees(player.getYRot() - agentExecution.lastYaw))
-                + Math.abs(player.getXRot() - agentExecution.lastPitch);
+        double camera = cameraDelta(
+                player.getYRot(), player.getXRot(),
+                agentExecution.lastYaw, agentExecution.lastPitch);
         agentActions.recordMotion(actionId, distance, camera);
         agentExecution.lastPosition = position;
         agentExecution.lastYaw = player.getYRot();
         agentExecution.lastPitch = player.getXRot();
+    }
+
+    static double cameraDelta(
+            float yaw, float pitch, float previousYaw, float previousPitch) {
+        return Math.abs(Mth.wrapDegrees((double) yaw - previousYaw))
+                + Math.abs((double) pitch - previousPitch);
     }
 
     private void recordPendingAgentMotion(Minecraft minecraft) {

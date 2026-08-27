@@ -437,6 +437,19 @@ class McmcpRuntimeHardeningTest {
     }
 
     @Test
+    void cameraMeterDoesNotRoundFloatEndpointsBeforeAccumulation() {
+        float yaw = -14.365085F;
+        float pitch = -8.478999F;
+        float previousYaw = 1.5507406F;
+        float previousPitch = -40.073437F;
+
+        assertThat(McmcpRuntime.cameraDelta(yaw, pitch, previousYaw, previousPitch))
+                .isEqualTo(
+                        Math.abs((double) yaw - previousYaw)
+                                + Math.abs((double) pitch - previousPitch));
+    }
+
+    @Test
     void productionStateAdapterUsesTheNormativeAgentStateShape() {
         var lock = new LocalArmingState.Snapshot(
                 LocalArmingState.Mode.READY,
