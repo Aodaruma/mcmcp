@@ -107,6 +107,24 @@ class ObservationModelContractTest {
     }
 
     @Test
+    void cropSurfaceAddsOnlyTheCompactMaturitySignal() {
+        var wheat = new VisibleSurface(
+                new BlockPosition(DIMENSION, 1, 65, 1),
+                Face.UP,
+                new ResourceId("minecraft:wheat"),
+                ShapeClass.CUTOUT,
+                true,
+                world(0, 65.62, 0),
+                10,
+                7);
+
+        assertThat(ObservationWireMapper.record(wheat))
+                .containsEntry("crop_mature", true);
+        assertThat(ObservationWireMapper.record(surface(10, 0)))
+                .doesNotContainKey("crop_mature");
+    }
+
+    @Test
     void rejectsOutOfCatalogValuesMixedDimensionsAndMutableSoundAge() {
         assertThatThrownBy(() -> new ResourceId("Minecraft:Overworld"))
                 .isInstanceOf(IllegalArgumentException.class);

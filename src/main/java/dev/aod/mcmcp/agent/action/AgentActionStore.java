@@ -17,6 +17,8 @@ public final class AgentActionStore {
     public static final double MAX_RECORDED_DISTANCE = 48.0D;
     public static final double MAX_RECORDED_CAMERA_DEGREES = 720.0D;
     public static final int MAX_RECORDED_BLOCKS_BROKEN = 12;
+    public static final int MAX_RECORDED_INTERACTIONS = 12;
+    public static final int MAX_RECORDED_BLOCKS_PLACED = 12;
 
     private Mutable latest;
     private Snapshot previousTerminal;
@@ -178,6 +180,22 @@ public final class AgentActionStore {
             throw new IllegalStateException("Action block-break record limit exceeded");
         }
         action.blocksBroken++;
+    }
+
+    public synchronized void recordInteraction(UUID actionId) {
+        Mutable action = running(actionId);
+        if (action.interactions >= MAX_RECORDED_INTERACTIONS) {
+            throw new IllegalStateException("Action interaction record limit exceeded");
+        }
+        action.interactions++;
+    }
+
+    public synchronized void recordBlockPlace(UUID actionId) {
+        Mutable action = running(actionId);
+        if (action.blocksPlaced >= MAX_RECORDED_BLOCKS_PLACED) {
+            throw new IllegalStateException("Action block-place record limit exceeded");
+        }
+        action.blocksPlaced++;
     }
 
     public synchronized void setPhase(UUID actionId, Phase phase, String detail) {

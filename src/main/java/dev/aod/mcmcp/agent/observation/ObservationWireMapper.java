@@ -58,16 +58,7 @@ public final class ObservationWireMapper {
 
     public static Map<String, Object> record(ObservationRecord record) {
         return switch (record) {
-            case VisibleSurface surface -> map(
-                    "kind", surface.kind().wireName(),
-                    "position", blockPosition(surface.position()),
-                    "face", surface.face().wireName(),
-                    "block", surface.block().value(),
-                    "shape_class", surface.shapeClass().wireName(),
-                    "eye_origin", worldPosition(surface.eyeOrigin()),
-                    "observed_tick", surface.observedTick(),
-                    "world_revision", surface.worldRevision(),
-                    "provenance", surface.provenance().name());
+            case VisibleSurface surface -> visibleSurface(surface);
             case VisibleEntity entity -> map(
                     "kind", entity.kind().wireName(),
                     "entity_type", entity.entityType().value(),
@@ -128,6 +119,21 @@ public final class ObservationWireMapper {
                 "x", position.x(),
                 "y", position.y(),
                 "z", position.z());
+    }
+
+    private static Map<String, Object> visibleSurface(VisibleSurface surface) {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("kind", surface.kind().wireName());
+        result.put("position", blockPosition(surface.position()));
+        result.put("face", surface.face().wireName());
+        result.put("block", surface.block().value());
+        result.put("shape_class", surface.shapeClass().wireName());
+        if (surface.cropMature() != null) result.put("crop_mature", surface.cropMature());
+        result.put("eye_origin", worldPosition(surface.eyeOrigin()));
+        result.put("observed_tick", surface.observedTick());
+        result.put("world_revision", surface.worldRevision());
+        result.put("provenance", surface.provenance().name());
+        return Collections.unmodifiableMap(result);
     }
 
     private static Map<String, Object> blockPosition(BlockPosition position) {

@@ -636,7 +636,7 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 - `cursor`: 初回null、続きは直前の`next_cursor`
 - `limit`: 1〜256件
 
-返却recordは第7章の許可条件に従い、responseには`frame_completed_tick`を含める。traversabilityは単一cell座標でなく`from / to` edge、target support、transition clearance、fluidとして返し、斜めtransitionも曖昧にしない。cursorは`SecureRandom`で生成した128 bit以上のopaqueなBase64URL tokenとし、server-side lease内のframe、kind集合、offsetへ束縛する。任意center、任意radius、任意chunk、任意entity IDをqueryする入力は設けない。壊れた・未知・期限切れcursor、別frame/kindへの使い回しは`INVALID_CURSOR`とする。同じ有効cursorの再送は同じpageを返し、失われたHTTP responseを再試行できる。`next_cursor=null`でpage終了である。
+返却recordは第7章の許可条件に従い、responseには`frame_completed_tick`を含める。CropBlockの`visible_surface`だけは、成長段階の数値列挙を増やさず、収穫判断に必要な`crop_mature: boolean`を追加する。非作物surfaceではこのfield自体を返さない。traversabilityは単一cell座標でなく`from / to` edge、target support、transition clearance、fluidとして返し、斜めtransitionも曖昧にしない。cursorは`SecureRandom`で生成した128 bit以上のopaqueなBase64URL tokenとし、server-side lease内のframe、kind集合、offsetへ束縛する。任意center、任意radius、任意chunk、任意entity IDをqueryする入力は設けない。壊れた・未知・期限切れcursor、別frame/kindへの使い回しは`INVALID_CURSOR`とする。同じ有効cursorの再送は同じpageを返し、失われたHTTP responseを再試行できる。`next_cursor=null`でpage終了である。
 
 全周観測はcamera yaw/pitch、入力、Action camera budgetを変更しない。LLMが明示的に`face_known_position`を使うことは妨げず、その回数は通常のAST、実行node、時間、camera累積budgetだけで制限する。
 
@@ -666,8 +666,11 @@ Action DSL v1の制御構造:
 | face_known_position | camera | 既知座標へ角速度制限付きで向く |
 | wait_ticks | なし | 1〜200 active tick待機 |
 | break_known_face | camera, block_break | 宣言した可視・既知のoak / birch幹1個を、指定したVanilla axeで通常入力から破壊 |
+| till_known_block | camera, block_interact | 可視・既知のdirt / grass_block / dirt_path 1個を、指定したVanilla hoeの通常useでfarmlandへ変換 |
+| plant_known_wheat | camera, block_place | 可視・既知のfarmland直上のairへwheat_seedsを通常useで植え、age=0を確認 |
+| harvest_known_wheat | camera, block_break | 可視・既知かつ実行時age=7のwheat 1個だけを通常破壊し、airを確認 |
 
-`break_known_face`の`tool_item`はhotbar内の該当axeを決定論的に選択する契約であり、任意slot操作を公開しない。後続Phaseでは`select_item`、`use_known_face`、`place_on_known_face`などを必要性と安全試験が成立した時だけ個別に追加する。raw attack/useや任意座標操作へ一般化しない。
+`break_known_face`の`tool_item`と`till_known_block`の`hoe_item`はinventory内の該当toolをhotbarへ一時退避して決定論的に選択する契約であり、任意slot操作を公開しない。`plant_known_wheat`も同じ準備経路でwheat_seedsを選ぶ。各変化はclient prediction ACKとauthoritative block stateで確認し、toolや種を生成・補充しない。成熟待ちはAction外で`crop_mature`を再観測し、収穫と植え直しを新しい有限Actionとして反復する。raw attack/useや任意座標操作へ一般化しない。
 
 predicateは次のpolicy-filtered snapshot fieldだけを使用できる。
 

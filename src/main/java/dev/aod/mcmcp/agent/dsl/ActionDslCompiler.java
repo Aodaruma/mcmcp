@@ -13,7 +13,10 @@ import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.PROGRAM_BUDGET_UNP
 /** Component-wise worst-case compiler for one already closed Action DSL v1 tree. */
 public final class ActionDslCompiler {
     public static final ActionDsl.Budget PHASE_ONE_HARD_LIMIT = new ActionDsl.Budget(
-            30_000, 600, 32, 360, 0, ActionDslValidator.MAX_BLOCKS_BROKEN, 0);
+            30_000, 600, 32, 360,
+            ActionDslValidator.MAX_INTERACTIONS,
+            ActionDslValidator.MAX_BLOCKS_BROKEN,
+            ActionDslValidator.MAX_BLOCKS_PLACED);
     private static final long NOMINAL_TICK_MILLIS = 50;
 
     private ActionDslCompiler() {
@@ -81,7 +84,10 @@ public final class ActionDslCompiler {
         }
         if (node instanceof ActionDsl.NavigateToKnown
                 || node instanceof ActionDsl.FaceKnownPosition
-                || node instanceof ActionDsl.BreakKnownFace) {
+                || node instanceof ActionDsl.BreakKnownFace
+                || node instanceof ActionDsl.TillKnownBlock
+                || node instanceof ActionDsl.PlantKnownWheat
+                || node instanceof ActionDsl.HarvestKnownWheat) {
             Optional<Cost> resolved = Objects.requireNonNull(
                     primitiveCosts.worstCase(node), "primitive cost result");
             if (resolved.isEmpty()) {
@@ -96,6 +102,12 @@ public final class ActionDslCompiler {
                     throw unprovable(
                             "break_known_face must consume exactly one break and no movement, interaction, or place");
                 }
+            } else if (node instanceof ActionDsl.TillKnownBlock) {
+                requireMutationCost(cost, 1, 0, 0, "till_known_block");
+            } else if (node instanceof ActionDsl.PlantKnownWheat) {
+                requireMutationCost(cost, 0, 0, 1, "plant_known_wheat");
+            } else if (node instanceof ActionDsl.HarvestKnownWheat) {
+                requireMutationCost(cost, 0, 1, 0, "harvest_known_wheat");
             } else if (cost.interactions() != 0
                     || cost.blocksBroken() != 0
                     || cost.blocksPlaced() != 0) {
@@ -118,6 +130,16 @@ public final class ActionDslCompiler {
         return multiply(
                 compileSequence(repeat.body(), primitiveCosts, primitiveCostBounds),
                 repeat.count());
+    }
+
+    private static void requireMutationCost(
+            Cost cost, long interactions, long breaks, long placements, String operation) {
+        if (cost.distanceBlocks() != 0
+                || cost.interactions() != interactions
+                || cost.blocksBroken() != breaks
+                || cost.blocksPlaced() != placements) {
+            throw unprovable(operation + " has an invalid primitive cost");
+        }
     }
 
     private static ActionDsl.Budget minimum(ActionDsl.Budget request, ActionDsl.Budget local) {

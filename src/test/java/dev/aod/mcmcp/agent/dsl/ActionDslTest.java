@@ -148,6 +148,43 @@ class ActionDslTest {
     }
 
     @Test
+    void parsesAndCompilesClosedWheatMutations() {
+        JsonArray body = array(
+                tillKnownBlock("till"),
+                plantKnownWheat("plant"),
+                harvestKnownWheat("harvest"));
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "block_interact", "block_place", "block_break"),
+                body,
+                budget(30_000, 600, 0, 360, 1, 1, 1)));
+
+        assertThat(request.program().body())
+                .extracting(node -> node.getClass().getSimpleName())
+                .containsExactly("TillKnownBlock", "PlantKnownWheat", "HarvestKnownWheat");
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.BLOCK_INTERACT,
+                        ActionDsl.Capability.BLOCK_PLACE,
+                        ActionDsl.Capability.BLOCK_BREAK);
+
+        var compiled = ActionDslCompiler.compile(
+                request,
+                node -> Optional.of(node instanceof ActionDsl.TillKnownBlock
+                        ? new ActionDslCompiler.Cost(5_000, 100, 0, 60, 1, 0, 0)
+                        : node instanceof ActionDsl.PlantKnownWheat
+                        ? new ActionDslCompiler.Cost(5_000, 100, 0, 60, 0, 0, 1)
+                        : new ActionDslCompiler.Cost(5_000, 100, 0, 60, 0, 1, 0)),
+                Set.of(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.BLOCK_INTERACT,
+                        ActionDsl.Capability.BLOCK_PLACE,
+                        ActionDsl.Capability.BLOCK_BREAK));
+        assertThat(compiled.worstCaseCost())
+                .isEqualTo(new ActionDslCompiler.Cost(15_000, 300, 0, 180, 1, 1, 1));
+    }
+
+    @Test
     void rejectsUntypedBreakTargetsToolsFacesCapabilitiesAndCosts() {
         JsonObject missingCamera = request(
                 capabilities("block_break"), breakKnownFace("break_log"),
@@ -303,16 +340,16 @@ class ActionDslTest {
                 .extracting(failure -> ((ActionDslException) failure).code())
                 .isEqualTo(ActionDslException.Code.CAPABILITY_DENIED);
 
-        JsonObject nonZeroInteraction = budget(1_000, 20, 0, 0);
-        nonZeroInteraction.addProperty("max_interactions", 1);
-        assertCode(request(capabilities(), waitNode("wait", 1), nonZeroInteraction),
-                ActionDslException.Code.INVALID_ARGUMENT);
+        ActionDsl.Request interactionBudget = ActionDslParser.parse(request(
+                capabilities(), waitNode("wait", 1), budget(1_000, 20, 0, 0, 1, 0, 1)));
+        assertThat(interactionBudget.budget().maxInteractions()).isOne();
+        assertThat(interactionBudget.budget().maxBlocksPlaced()).isOne();
 
         assertCode(request(capabilities(), waitNode("wait", 1),
                         budget(1_000, 20, 0, 0, 0, 9, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
         assertCode(request(capabilities(), waitNode("wait", 1),
-                        budget(1_000, 20, 0, 0, 0, 0, 1)),
+                        budget(1_000, 20, 0, 0, 9, 0, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
     }
 
@@ -440,6 +477,28 @@ class ActionDslTest {
         node.addProperty("face", "west");
         node.addProperty("expected_block", "minecraft:oak_log");
         node.addProperty("tool_item", "minecraft:iron_axe");
+        return node;
+    }
+
+    private static JsonObject tillKnownBlock(String id) {
+        JsonObject node = baseNode(id, "till_known_block");
+        node.add("target", position());
+        node.addProperty("expected_block", "minecraft:dirt");
+        node.addProperty("hoe_item", "minecraft:iron_hoe");
+        return node;
+    }
+
+    private static JsonObject plantKnownWheat(String id) {
+        JsonObject node = baseNode(id, "plant_known_wheat");
+        node.add("target", position(65));
+        node.add("support", position(64));
+        node.addProperty("seed_item", "minecraft:wheat_seeds");
+        return node;
+    }
+
+    private static JsonObject harvestKnownWheat(String id) {
+        JsonObject node = baseNode(id, "harvest_known_wheat");
+        node.add("target", position(65));
         return node;
     }
 

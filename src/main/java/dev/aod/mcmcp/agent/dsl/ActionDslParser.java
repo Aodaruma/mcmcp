@@ -69,8 +69,8 @@ public final class ActionDslParser {
                 ? Optional.of(string(object.get("name"), "program.name"))
                 : Optional.empty();
         JsonArray capabilityValues = array(object.get("capabilities"), "program.capabilities");
-        if (capabilityValues.size() > 3) {
-            throw invalid("program.capabilities must contain at most 3 values");
+        if (capabilityValues.size() > ActionDsl.Capability.values().length) {
+            throw invalid("program.capabilities contains too many values");
         }
         var capabilities = EnumSet.noneOf(ActionDsl.Capability.class);
         var seen = new HashSet<String>();
@@ -119,6 +119,9 @@ public final class ActionDslParser {
             case "navigate_to_known" -> navigate(object, path);
             case "face_known_position" -> face(object, path);
             case "break_known_face" -> breakKnownFace(object, path);
+            case "till_known_block" -> tillKnownBlock(object, path);
+            case "plant_known_wheat" -> plantKnownWheat(object, path);
+            case "harvest_known_wheat" -> harvestKnownWheat(object, path);
             case "wait_ticks" -> waitTicks(object, path);
             case "if" -> conditional(object, path);
             case "repeat" -> repeat(object, path);
@@ -152,6 +155,36 @@ public final class ActionDslParser {
                 blockFace(string(source.get("face"), path + ".face"), path + ".face"),
                 string(source.get("expected_block"), path + ".expected_block"),
                 string(source.get("tool_item"), path + ".tool_item"));
+    }
+
+    private static ActionDsl.TillKnownBlock tillKnownBlock(JsonObject source, String path) {
+        exactKeys(source, path,
+                Set.of("id", "op", "target", "expected_block", "hoe_item"),
+                Set.of("id", "op", "target", "expected_block", "hoe_item"));
+        return new ActionDsl.TillKnownBlock(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                string(source.get("expected_block"), path + ".expected_block"),
+                string(source.get("hoe_item"), path + ".hoe_item"));
+    }
+
+    private static ActionDsl.PlantKnownWheat plantKnownWheat(JsonObject source, String path) {
+        exactKeys(source, path,
+                Set.of("id", "op", "target", "support", "seed_item"),
+                Set.of("id", "op", "target", "support", "seed_item"));
+        return new ActionDsl.PlantKnownWheat(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                position(source.get("support"), path + ".support"),
+                string(source.get("seed_item"), path + ".seed_item"));
+    }
+
+    private static ActionDsl.HarvestKnownWheat harvestKnownWheat(
+            JsonObject source, String path) {
+        exactKeys(source, path, Set.of("id", "op", "target"), Set.of("id", "op", "target"));
+        return new ActionDsl.HarvestKnownWheat(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"));
     }
 
     private static ActionDsl.WaitTicks waitTicks(JsonObject source, String path) {
@@ -275,6 +308,8 @@ public final class ActionDslParser {
             case "movement" -> ActionDsl.Capability.MOVEMENT;
             case "camera" -> ActionDsl.Capability.CAMERA;
             case "block_break" -> ActionDsl.Capability.BLOCK_BREAK;
+            case "block_interact" -> ActionDsl.Capability.BLOCK_INTERACT;
+            case "block_place" -> ActionDsl.Capability.BLOCK_PLACE;
             default -> throw invalid("Unsupported capability at " + path + ": " + value);
         };
     }

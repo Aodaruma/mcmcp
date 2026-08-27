@@ -30,7 +30,7 @@ public final class ActionDsl {
     }
 
     public sealed interface Node permits NavigateToKnown, FaceKnownPosition, BreakKnownFace,
-            WaitTicks, If, Repeat {
+            TillKnownBlock, PlantKnownWheat, HarvestKnownWheat, WaitTicks, If, Repeat {
         String id();
     }
 
@@ -60,6 +60,41 @@ public final class ActionDsl {
             Objects.requireNonNull(face, "face");
             Objects.requireNonNull(expectedBlock, "expectedBlock");
             Objects.requireNonNull(toolItem, "toolItem");
+        }
+    }
+
+    public record TillKnownBlock(
+            String id,
+            Position target,
+            String expectedBlock,
+            String hoeItem) implements Node {
+        public TillKnownBlock {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(expectedBlock, "expectedBlock");
+            Objects.requireNonNull(hoeItem, "hoeItem");
+        }
+    }
+
+    /** Plants wheat into target air using the known farmland block directly below it. */
+    public record PlantKnownWheat(
+            String id,
+            Position target,
+            Position support,
+            String seedItem) implements Node {
+        public PlantKnownWheat {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(support, "support");
+            Objects.requireNonNull(seedItem, "seedItem");
+        }
+    }
+
+    /** Breaks only a currently mature (age=7) wheat block. */
+    public record HarvestKnownWheat(String id, Position target) implements Node {
+        public HarvestKnownWheat {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
         }
     }
 
@@ -98,7 +133,9 @@ public final class ActionDsl {
     public enum Capability {
         MOVEMENT("movement"),
         CAMERA("camera"),
-        BLOCK_BREAK("block_break");
+        BLOCK_BREAK("block_break"),
+        BLOCK_INTERACT("block_interact"),
+        BLOCK_PLACE("block_place");
 
         private final String wireName;
 

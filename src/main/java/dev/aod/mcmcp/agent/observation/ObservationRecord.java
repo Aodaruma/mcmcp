@@ -30,6 +30,7 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
             Face face,
             ResourceId block,
             ShapeClass shapeClass,
+            Boolean cropMature,
             WorldPosition eyeOrigin,
             long observedTick,
             long worldRevision) implements ObservationRecord {
@@ -42,6 +43,17 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
             ObservationValues.requireSameDimension(position.dimension(), eyeOrigin.dimension());
             ObservationValues.requireTick(observedTick, "observedTick");
             ObservationValues.requireTick(worldRevision, "worldRevision");
+        }
+
+        public VisibleSurface(
+                BlockPosition position,
+                Face face,
+                ResourceId block,
+                ShapeClass shapeClass,
+                WorldPosition eyeOrigin,
+                long observedTick,
+                long worldRevision) {
+            this(position, face, block, shapeClass, null, eyeOrigin, observedTick, worldRevision);
         }
 
         @Override public ObservationKind kind() { return ObservationKind.VISIBLE_SURFACE; }

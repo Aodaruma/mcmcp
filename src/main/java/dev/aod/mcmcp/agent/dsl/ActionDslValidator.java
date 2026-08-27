@@ -23,6 +23,8 @@ public final class ActionDslValidator {
     public static final int MAX_PREDICATE_OPERANDS = 4;
     public static final int MAX_REQUEST_BYTES = 64 * 1024;
     public static final int MAX_BLOCKS_BROKEN = 8;
+    public static final int MAX_INTERACTIONS = 8;
+    public static final int MAX_BLOCKS_PLACED = 8;
 
     private static final Pattern NODE_ID = Pattern.compile("[a-z][a-z0-9_-]{0,31}");
     private static final Pattern PROGRAM_NAME = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
@@ -39,6 +41,11 @@ public final class ActionDslValidator {
             "minecraft:golden_axe",
             "minecraft:diamond_axe",
             "minecraft:netherite_axe");
+    private static final Set<String> TILLABLE_BLOCKS = Set.of(
+            "minecraft:dirt", "minecraft:grass_block", "minecraft:dirt_path");
+    private static final Set<String> VANILLA_HOES = Set.of(
+            "minecraft:wooden_hoe", "minecraft:stone_hoe", "minecraft:iron_hoe",
+            "minecraft:golden_hoe", "minecraft:diamond_hoe", "minecraft:netherite_hoe");
 
     private ActionDslValidator() {
     }
@@ -53,8 +60,8 @@ public final class ActionDslValidator {
             throw invalid("dsl_version must be 1");
         }
         program.name().ifPresent(name -> requirePattern(name, PROGRAM_NAME, "program.name"));
-        if (program.capabilities().size() > 3) {
-            throw invalid("program.capabilities must contain at most 3 values");
+        if (program.capabilities().size() > ActionDsl.Capability.values().length) {
+            throw invalid("program.capabilities contains too many values");
         }
         validateRequestBudget(request.budget());
 
@@ -88,10 +95,11 @@ public final class ActionDslValidator {
         requireRange(budget.maxTicks(), 2, 600, "budget.max_ticks");
         requireFiniteRange(budget.maxDistanceBlocks(), 0, 32, "budget.max_distance_blocks");
         requireFiniteRange(budget.maxCameraDegrees(), 0, 360, "budget.max_camera_degrees");
-        requireRange(budget.maxInteractions(), 0, 0, "budget.max_interactions");
+        requireRange(budget.maxInteractions(), 0, MAX_INTERACTIONS, "budget.max_interactions");
         requireRange(budget.maxBlocksBroken(), 0, MAX_BLOCKS_BROKEN,
                 "budget.max_blocks_broken");
-        requireRange(budget.maxBlocksPlaced(), 0, 0, "budget.max_blocks_placed");
+        requireRange(budget.maxBlocksPlaced(), 0, MAX_BLOCKS_PLACED,
+                "budget.max_blocks_placed");
     }
 
     static void validateHardLimit(ActionDsl.Budget budget) {
@@ -163,6 +171,40 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
             return 1;
         }
+        if (node instanceof ActionDsl.TillKnownBlock till) {
+            validatePosition(till.target(), path + ".target");
+            if (!TILLABLE_BLOCKS.contains(till.expectedBlock())) {
+                throw invalid(path + ".expected_block must be dirt, grass_block, or dirt_path");
+            }
+            if (!VANILLA_HOES.contains(till.hoeItem())) {
+                throw invalid(path + ".hoe_item must be an exact vanilla hoe item id");
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_INTERACT);
+            return 1;
+        }
+        if (node instanceof ActionDsl.PlantKnownWheat plant) {
+            validatePosition(plant.target(), path + ".target");
+            validatePosition(plant.support(), path + ".support");
+            if (!plant.target().dimension().equals(plant.support().dimension())
+                    || plant.target().x() != plant.support().x()
+                    || plant.target().y() != plant.support().y() + 1
+                    || plant.target().z() != plant.support().z()) {
+                throw invalid(path + ".support must be the block directly below target");
+            }
+            if (!"minecraft:wheat_seeds".equals(plant.seedItem())) {
+                throw invalid(path + ".seed_item must be minecraft:wheat_seeds");
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_PLACE);
+            return 1;
+        }
+        if (node instanceof ActionDsl.HarvestKnownWheat harvest) {
+            validatePosition(harvest.target(), path + ".target");
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
+            return 1;
+        }
         if (node instanceof ActionDsl.WaitTicks wait) {
             requireRange(wait.ticks(), 1, 200, path + ".ticks");
             return 1;
@@ -178,20 +220,24 @@ public final class ActionDslValidator {
         var repeat = (ActionDsl.Repeat) node;
         requireRange(repeat.count(), 1, MAX_REPEAT_COUNT, path + ".count");
         requireSequenceSize(repeat.body(), 1, MAX_BRANCH_NODES, path + ".body");
-        if (containsBreak(repeat.body())) {
-            throw unprovable("break_known_face cannot occur inside repeat");
+        if (containsWorldMutation(repeat.body())) {
+            throw unprovable("world mutation primitives cannot occur inside repeat");
         }
         int bodyCount = walkSequence(repeat.body(), depth + 1, walk, path + ".body");
         return boundedAdd(1, boundedMultiply(bodyCount, repeat.count()));
     }
 
-    private static boolean containsBreak(List<ActionDsl.Node> nodes) {
+    private static boolean containsWorldMutation(List<ActionDsl.Node> nodes) {
         for (var node : nodes) {
-            if (node instanceof ActionDsl.BreakKnownFace) return true;
+            if (node instanceof ActionDsl.BreakKnownFace
+                    || node instanceof ActionDsl.TillKnownBlock
+                    || node instanceof ActionDsl.PlantKnownWheat
+                    || node instanceof ActionDsl.HarvestKnownWheat) return true;
             if (node instanceof ActionDsl.If conditional
-                    && (containsBreak(conditional.thenBranch())
-                            || containsBreak(conditional.elseBranch()))) return true;
-            if (node instanceof ActionDsl.Repeat repeat && containsBreak(repeat.body())) return true;
+                    && (containsWorldMutation(conditional.thenBranch())
+                            || containsWorldMutation(conditional.elseBranch()))) return true;
+            if (node instanceof ActionDsl.Repeat repeat
+                    && containsWorldMutation(repeat.body())) return true;
         }
         return false;
     }

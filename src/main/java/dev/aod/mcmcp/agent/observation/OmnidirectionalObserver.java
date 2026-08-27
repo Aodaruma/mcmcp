@@ -29,6 +29,7 @@ import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.BushBlock;
+import net.minecraft.world.level.block.CropBlock;
 import net.minecraft.world.level.block.HalfTransparentBlock;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.LiquidBlock;
@@ -337,6 +338,8 @@ public final class OmnidirectionalObserver {
                             new ResourceId(
                                     BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString()),
                             shapeClass,
+                            state.getBlock() instanceof CropBlock crop
+                                    ? crop.isMaxAge(state) : null,
                             sample.eyeOrigin(),
                             sample.observedTick(),
                             sample.worldRevision()));

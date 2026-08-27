@@ -307,6 +307,7 @@
               "face": {"enum": ["down", "up", "north", "south", "west", "east"]},
               "block": {"$ref": "#/$defs/resourceLocation"},
               "shape_class": {"enum": ["opaque", "transparent", "cutout", "partial", "fluid", "unknown"]},
+              "crop_mature": {"type": "boolean"},
               "eye_origin": {"$ref": "#/$defs/worldPosition"},
               "observed_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
               "world_revision": {"$ref": "#/$defs/worldRevision"},
@@ -582,6 +583,45 @@
             },
             "required": ["id", "op", "target", "face", "expected_block", "tool_item"]
           },
+          "tillNode": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "till_known_block"},
+              "target": {"$ref": "#/$defs/position"},
+              "expected_block": {"enum": ["minecraft:dirt", "minecraft:grass_block", "minecraft:dirt_path"]},
+              "hoe_item": {
+                "enum": [
+                  "minecraft:wooden_hoe", "minecraft:stone_hoe", "minecraft:iron_hoe",
+                  "minecraft:golden_hoe", "minecraft:diamond_hoe", "minecraft:netherite_hoe"
+                ]
+              }
+            },
+            "required": ["id", "op", "target", "expected_block", "hoe_item"]
+          },
+          "plantWheatNode": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "plant_known_wheat"},
+              "target": {"$ref": "#/$defs/position"},
+              "support": {"$ref": "#/$defs/position"},
+              "seed_item": {"const": "minecraft:wheat_seeds"}
+            },
+            "required": ["id", "op", "target", "support", "seed_item"]
+          },
+          "harvestWheatNode": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "harvest_known_wheat"},
+              "target": {"$ref": "#/$defs/position"}
+            },
+            "required": ["id", "op", "target"]
+          },
           "waitNode": {
             "type": "object",
             "additionalProperties": false,
@@ -633,6 +673,9 @@
               {"$ref": "#/$defs/navigateNode"},
               {"$ref": "#/$defs/faceNode"},
               {"$ref": "#/$defs/breakNode"},
+              {"$ref": "#/$defs/tillNode"},
+              {"$ref": "#/$defs/plantWheatNode"},
+              {"$ref": "#/$defs/harvestWheatNode"},
               {"$ref": "#/$defs/waitNode"},
               {"$ref": "#/$defs/ifNode"},
               {"$ref": "#/$defs/repeatNode"}
@@ -653,9 +696,9 @@
               "capabilities": {
                 "type": "array",
                 "minItems": 0,
-                "maxItems": 3,
+                "maxItems": 5,
                 "uniqueItems": true,
-                "items": {"enum": ["movement", "camera", "block_break"]}
+                "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place"]}
               },
               "body": {
                 "type": "array",
@@ -674,9 +717,9 @@
               "max_ticks": {"type": "integer", "minimum": 2, "maximum": 600},
               "max_distance_blocks": {"type": "number", "minimum": 0, "maximum": 32},
               "max_camera_degrees": {"type": "number", "minimum": 0, "maximum": 360},
-              "max_interactions": {"const": 0},
+              "max_interactions": {"type": "integer", "minimum": 0, "maximum": 8},
               "max_blocks_broken": {"type": "integer", "minimum": 0, "maximum": 8},
-              "max_blocks_placed": {"const": 0}
+              "max_blocks_placed": {"type": "integer", "minimum": 0, "maximum": 8}
             },
             "required": ["max_duration_ms", "max_ticks", "max_distance_blocks", "max_camera_degrees", "max_interactions", "max_blocks_broken", "max_blocks_placed"]
           }

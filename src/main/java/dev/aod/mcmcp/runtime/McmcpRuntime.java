@@ -6,6 +6,7 @@ import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.action.ActionProgramCursor;
 import dev.aod.mcmcp.agent.action.KnownBlockBreakAttempt;
+import dev.aod.mcmcp.agent.action.KnownBlockMutationAttempt;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
@@ -150,7 +151,7 @@ public final class McmcpRuntime implements McpRuntimePort {
     private static final float MIN_SAFE_STAY_HEALTH = 6.0F;
     /** Expanded only when a phase has passed its gate. */
     private static final Set<String> AVAILABLE_CAPABILITIES =
-            Set.of("movement", "camera", "block_break");
+            Set.of("movement", "camera", "block_break", "block_interact", "block_place");
 
     private final String modVersion;
     private final String neoForgeVersion;
@@ -967,6 +968,12 @@ public final class McmcpRuntime implements McpRuntimePort {
         }
         if (snapshot.control().capabilities().contains("block_break")) {
             allowed.add(ActionDsl.Capability.BLOCK_BREAK);
+        }
+        if (snapshot.control().capabilities().contains("block_interact")) {
+            allowed.add(ActionDsl.Capability.BLOCK_INTERACT);
+        }
+        if (snapshot.control().capabilities().contains("block_place")) {
+            allowed.add(ActionDsl.Capability.BLOCK_PLACE);
         }
         final AgentPrimitivePlanner.Analysis analysis;
         try {
@@ -2386,6 +2393,13 @@ public final class McmcpRuntime implements McpRuntimePort {
                 return;
             }
 
+            if (agentExecution.primitive instanceof ActionDsl.TillKnownBlock
+                    || agentExecution.primitive instanceof ActionDsl.PlantKnownWheat
+                    || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheat) {
+                tickAgentBlockMutation(minecraft, session, action);
+                return;
+            }
+
             KnownTraversabilitySnapshot map = requireAgentMap(session);
             if (agentExecution.primitive instanceof ActionDsl.BreakKnownFace block
                     && agentExecution.breakAimComplete) {
@@ -2747,6 +2761,79 @@ public final class McmcpRuntime implements McpRuntimePort {
                         minecraft, agentActions.get(action.actionId()).progress());
             }
         }
+    }
+
+    private void tickAgentBlockMutation(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action) {
+        if (agentExecution.blockMutationAttempt == null) {
+            SemanticActionRequest request = blockMutationRequest(agentExecution.primitive);
+            long deadline = Math.addExact(
+                    session.clientTick(), AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND);
+            agentExecution.blockMutationAttempt = new KnownBlockMutationAttempt(
+                    semanticActionPort, request, session.clientTick(), deadline);
+        }
+        KnownBlockMutationAttempt.TickResult result =
+                agentExecution.blockMutationAttempt.tick(session.clientTick());
+        switch (result.status()) {
+            case RUNNING -> { }
+            case FAILED -> failAgentAction(
+                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                    true,
+                    result.evidence());
+            case SUCCEEDED -> {
+                agentExecution.blockMutationAttempt = null;
+                if (agentExecution.primitive instanceof ActionDsl.TillKnownBlock) {
+                    agentActions.recordInteraction(action.actionId());
+                } else if (agentExecution.primitive instanceof ActionDsl.PlantKnownWheat) {
+                    agentActions.recordBlockPlace(action.actionId());
+                } else {
+                    agentActions.recordBlockBreak(action.actionId());
+                }
+                agentActions.completeNode(action.actionId());
+                agentExecution.primitive = null;
+                agentExecution.replanning = false;
+                agentExecution.replanNotBeforeTick = 0L;
+                agentExecution.replanDeadlineTick = 0L;
+                advanceAgentProgram(
+                        minecraft, agentActions.get(action.actionId()).progress());
+            }
+        }
+    }
+
+    private static SemanticActionRequest blockMutationRequest(ActionDsl.Node node) {
+        ActionDsl.Position position = switch (node) {
+            case ActionDsl.TillKnownBlock value -> value.target();
+            case ActionDsl.PlantKnownWheat value -> value.target();
+            case ActionDsl.HarvestKnownWheat value -> value.target();
+            default -> throw new IllegalArgumentException("node is not a known block mutation");
+        };
+        var target = new BlockTarget(
+                position.dimension(), position.x(), position.y(), position.z());
+        boolean breaking = node instanceof ActionDsl.HarvestKnownWheat;
+        var bounds = new ActionBounds(
+                position.dimension(), target, target, 0, 5, breaking);
+        return switch (node) {
+            case ActionDsl.TillKnownBlock till -> new UseItemOnBlockRequest(
+                    target,
+                    new BlockStateFingerprint(till.expectedBlock(), Map.of()),
+                    till.hoeItem(),
+                    new BlockStateFingerprint("minecraft:farmland", Map.of("moisture", "0")),
+                    bounds);
+            case ActionDsl.PlantKnownWheat plant -> new PlaceBlockRequest(
+                    target,
+                    new BlockStateFingerprint("minecraft:air", Map.of()),
+                    plant.seedItem(),
+                    new BlockStateFingerprint("minecraft:wheat", Map.of("age", "0")),
+                    bounds);
+            case ActionDsl.HarvestKnownWheat ignored -> new BreakBlockRequest(
+                    target,
+                    new BlockStateFingerprint("minecraft:wheat", Map.of("age", "7")),
+                    new BlockStateFingerprint("minecraft:air", Map.of()),
+                    bounds);
+            default -> throw new IllegalArgumentException("node is not a known block mutation");
+        };
     }
 
     private void requestAgentReplan(long actionTick, String reason) {
@@ -4034,6 +4121,15 @@ public final class McmcpRuntime implements McpRuntimePort {
                 McmcpMod.LOGGER.error("MCMCP known-face break release failed", failure);
             } finally {
                 agentExecution.blockBreakAttempt = null;
+            }
+        }
+        if (agentExecution.blockMutationAttempt != null) {
+            try {
+                agentExecution.blockMutationAttempt.close();
+            } catch (RuntimeException | LinkageError failure) {
+                McmcpMod.LOGGER.error("MCMCP known-block mutation release failed", failure);
+            } finally {
+                agentExecution.blockMutationAttempt = null;
             }
         }
         agentExecution.breakAimComplete = false;
@@ -6295,6 +6391,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         private int agentSelectedSlot = -1;
         private boolean breakAimComplete;
         private KnownBlockBreakAttempt blockBreakAttempt;
+        private KnownBlockMutationAttempt blockMutationAttempt;
 
         private AgentExecution(
                 AgentActionStore.Active action,
