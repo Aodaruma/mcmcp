@@ -31,6 +31,7 @@ Phase 1のControl / Navigation MVPを終え、Phase 2の最初のsliceである�
 - [設計・仕様書](docs/Minecraft_MCP_NeoForge_設計仕様書.md)
 - [MCP Tool Catalog](docs/MCMCP_MCP_Tool_Catalog.json)
 - [Prism互換試験ベースライン](docs/MCMCP_Prism_互換試験ベースライン.json)
+- [実ワールド検証記録](docs/MCMCP_実ワールド検証記録.md)
 
 ## Identity
 

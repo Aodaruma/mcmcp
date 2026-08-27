@@ -221,6 +221,9 @@ class AgentPrimitivePlannerTest {
                         target, ActionDsl.BlockFace.UP, "minecraft:dirt"));
         assertThat(analysis.primitiveCosts().get("till").interactions()).isOne();
         assertThat(analysis.primitiveCosts().get("till").blocksBroken()).isZero();
+        assertThat(analysis.primitiveCosts().get("till").cameraDegrees()).isEqualTo(360.0D);
+        assertThat(analysis.primitiveCosts().get("till").ticks())
+                .isEqualTo(AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND + 80L);
         assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
                 program, map, new DeterministicAStar(),
                 new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),

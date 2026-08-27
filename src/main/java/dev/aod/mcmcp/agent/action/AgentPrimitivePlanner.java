@@ -484,11 +484,9 @@ public final class AgentPrimitivePlanner {
         if (!Float.isFinite(maxCameraDegreesPerTick) || maxCameraDegreesPerTick <= 0.0F) {
             throw new IllegalArgumentException("camera limit must be positive");
         }
-        Aim aim = aim(pose, aimPoint);
-        AimError error = aimError(pose, aimPoint, aim);
-        double camera = Math.min(360.0D,
-                angularError(pose.yaw(), pose.pitch(), aim.yaw(), aim.pitch())
-                        + pose.orientationErrorDegrees() + error.totalDegrees());
+        // ponytail: semantic preparation may choose any reachable block face; narrow this
+        // bound when it publishes the selected aim point to admission planning.
+        double camera = 360.0D;
         long aimTicks = Math.max(1L, (long) Math.ceil(camera / maxCameraDegreesPerTick));
         long ticks = Math.addExact(aimTicks, BLOCK_MUTATION_TICK_UPPER_BOUND);
         return new ActionDslCompiler.Cost(
