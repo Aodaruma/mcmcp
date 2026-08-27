@@ -4459,12 +4459,8 @@ public final class McmcpRuntime implements McpRuntimePort {
             agentActions.terminateActive(new AgentActionStore.Failure(
                     code, recoverable, List.of(evidence)));
         } finally {
-            var minecraft = Minecraft.getInstance();
-            if (recoverable) {
-                finishAgentControlReady(minecraft, code.wireName().toLowerCase(Locale.ROOT));
-            } else {
-                closeAgentControl(minecraft, code.wireName().toLowerCase(Locale.ROOT));
-            }
+            finishAgentControlReady(
+                    Minecraft.getInstance(), code.wireName().toLowerCase(Locale.ROOT));
         }
     }
 

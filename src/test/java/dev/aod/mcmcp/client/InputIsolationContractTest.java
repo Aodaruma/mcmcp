@@ -129,6 +129,15 @@ class InputIsolationContractTest {
     }
 
     @Test
+    void terminalActionFailureKeepsLocalAuthorizationIndependentOfRetryability() throws Exception {
+        var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
+
+        assertThat(invocations(method(runtime, "failAgentAction")))
+                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#finishAgentControlReady")
+                .doesNotContain("dev/aod/mcmcp/runtime/McmcpRuntime#closeAgentControl");
+    }
+
+    @Test
     void legacyFunctionKeyControlsAreAbsent() throws Exception {
         var mod = classNode("/dev/aod/mcmcp/McmcpMod.class");
         assertThat(mod.methods.stream().flatMap(method -> invocations(method).stream()).toList())
