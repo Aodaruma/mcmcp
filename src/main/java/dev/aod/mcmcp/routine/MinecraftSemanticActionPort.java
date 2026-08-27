@@ -123,6 +123,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         Objects.requireNonNull(request, "request");
         if (!(minecraft.hitResult instanceof BlockHitResult hit)
                 || hit.getType() != HitResult.Type.BLOCK
+                || !matchesPlannedAim(request, hit)
                 || minecraft.player == null) {
             return;
         }
@@ -216,17 +217,17 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         String routeCheckReason = "not_applicable";
 
         if (request instanceof BreakBlockRequest block) {
-            var facts = blockFacts(minecraft, block.target(), null);
+            var facts = blockFacts(minecraft, block.target(), null, block.plannedAim());
             liveBlock = facts.state();
             blockReach = facts.inReach();
             crosshairBlock = facts.crosshair();
         } else if (request instanceof PlaceBlockRequest place) {
-            var facts = blockFacts(minecraft, place.target(), place);
+            var facts = blockFacts(minecraft, place.target(), place, place.plannedAim());
             liveBlock = facts.state();
             blockReach = facts.inReach();
             crosshairBlock = facts.crosshair();
         } else if (request instanceof UseItemOnBlockRequest use) {
-            var facts = blockFacts(minecraft, use.target(), null);
+            var facts = blockFacts(minecraft, use.target(), null, use.plannedAim());
             liveBlock = facts.state();
             boolean safeUse = facts.state().filter(use.expectedBefore()::matches).isPresent()
                     && use.item().equals(registryItemId(player.getMainHandItem()))
@@ -234,7 +235,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             blockReach = facts.inReach() && safeUse;
             crosshairBlock = facts.crosshair() && safeUse;
         } else if (request instanceof InteractBlockRequest block) {
-            var facts = blockFacts(minecraft, block.target(), null);
+            var facts = blockFacts(minecraft, block.target(), null, block.plannedAim());
             liveBlock = facts.state();
             boolean safeHand = safeBlockInteractionHand(
                     player.isShiftKeyDown(), player.getMainHandItem().isEmpty())
@@ -739,7 +740,8 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         var hit = actualBlockHit(minecraft);
         var position = blockPos(request.target());
         var beforeState = minecraft.level.getBlockState(position);
-        if (!hit.getBlockPos().equals(position)
+        if (!matchesPlannedAim(request, hit)
+                || !hit.getBlockPos().equals(position)
                 || !safeBlockInteractionHand(
                         minecraft.player.isShiftKeyDown(), minecraft.player.getMainHandItem().isEmpty())
                 || !allowedInteractBlock(beforeState)) {
@@ -766,7 +768,8 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         var hit = actualBlockHit(minecraft);
         var level = Objects.requireNonNull(minecraft.level);
         var position = blockPos(request.target());
-        if (!hit.getBlockPos().equals(position)
+        if (!matchesPlannedAim(request, hit)
+                || !hit.getBlockPos().equals(position)
                 || !request.item().equals(registryItemId(
                         Objects.requireNonNull(minecraft.player).getMainHandItem()))
                 || !request.expectedBefore().matches(fingerprint(level.getBlockState(position)))
@@ -1041,7 +1044,10 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
     }
 
     private BlockFacts blockFacts(
-            Minecraft minecraft, BlockTarget target, PlaceBlockRequest placement) {
+            Minecraft minecraft,
+            BlockTarget target,
+            PlaceBlockRequest placement,
+            Optional<BlockAimWitness> plannedAim) {
         var level = Objects.requireNonNull(minecraft.level);
         var player = Objects.requireNonNull(minecraft.player);
         var position = blockPos(target);
@@ -1052,6 +1058,9 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         boolean reach = false;
         boolean supportSafe = placement == null;
         if (minecraft.hitResult instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK) {
+            if (!matchesPlannedAim(plannedAim, hit)) {
+                return new BlockFacts(Optional.empty(), false, false);
+            }
             if (placement == null) {
                 actualTarget = hit.getBlockPos().equals(position);
                 reach = actualTarget && player.isWithinBlockInteractionRange(position, 0.0D);
@@ -1481,6 +1490,16 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         var level = Objects.requireNonNull(minecraft.level);
         var player = Objects.requireNonNull(minecraft.player);
         BlockPos target = blockPos(blockTarget(request));
+        if (request.plannedAim().isPresent()) {
+            var aim = request.plannedAim().orElseThrow();
+            BlockPos block = blockPos(aim.block());
+            if (!level.isLoaded(block)
+                    || !level.getWorldBorder().isWithinBounds(block)
+                    || !player.isWithinBlockInteractionRange(block, 0.0D)) {
+                return List.of();
+            }
+            return List.of(new Vec3(aim.x(), aim.y(), aim.z()));
+        }
         if (!level.isLoaded(target) || !level.getWorldBorder().isWithinBounds(target)
                 || !player.isWithinBlockInteractionRange(target, 0.0D)) {
             return List.of();
@@ -1533,9 +1552,15 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
     private static boolean raycastPrepares(
             Minecraft minecraft, SemanticActionRequest request) {
         var player = Objects.requireNonNull(minecraft.player);
-        HitResult result = player.pick(player.blockInteractionRange(), 1.0F, false);
+        if (minecraft.getCameraEntity() != player) {
+            return false;
+        }
+        HitResult result = player.raycastHitResult(1.0F, minecraft.getCameraEntity());
         if (!(result instanceof BlockHitResult hit)
                 || hit.getType() != HitResult.Type.BLOCK || hit.isWorldBorderHit()) {
+            return false;
+        }
+        if (!matchesPlannedAim(request, hit)) {
             return false;
         }
         var level = Objects.requireNonNull(minecraft.level);
@@ -1700,6 +1725,9 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             Minecraft minecraft, PlaceBlockRequest request) {
         Objects.requireNonNull(request, "request");
         var hit = actualBlockHit(minecraft);
+        if (!matchesPlannedAim(request, hit)) {
+            throw new IllegalArgumentException("actual hit does not match the planned block face");
+        }
         var player = Objects.requireNonNull(minecraft.player);
         var stack = player.getMainHandItem();
         if (!(stack.getItem() instanceof BlockItem item)
@@ -1714,6 +1742,22 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             throw new IllegalArgumentException("actual hit does not place at the requested target");
         }
         return new PreparedPlacement(hit, context);
+    }
+
+    static boolean matchesPlannedAim(
+            SemanticActionRequest request, BlockHitResult hit) {
+        Objects.requireNonNull(request, "request");
+        return matchesPlannedAim(request.plannedAim(), hit);
+    }
+
+    private static boolean matchesPlannedAim(
+            Optional<BlockAimWitness> plannedAim, BlockHitResult hit) {
+        Objects.requireNonNull(plannedAim, "plannedAim");
+        Objects.requireNonNull(hit, "hit");
+        return plannedAim.isEmpty()
+                || hit.getBlockPos().equals(blockPos(plannedAim.orElseThrow().block()))
+                        && hit.getDirection() == Direction.valueOf(
+                                plannedAim.orElseThrow().face().name());
     }
 
     private int inventoryCount(String itemId) {

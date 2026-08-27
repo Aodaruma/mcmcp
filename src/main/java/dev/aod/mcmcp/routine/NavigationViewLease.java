@@ -13,8 +13,6 @@ final class NavigationViewLease {
 
     private final ViewControl control;
     private final UUID ownerId;
-    private final float originalYaw;
-    private final float originalPitch;
     private final int originalSlot;
     private float expectedYaw;
     private float expectedPitch;
@@ -24,8 +22,8 @@ final class NavigationViewLease {
     private NavigationViewLease(ViewControl control, UUID ownerId) {
         this.control = Objects.requireNonNull(control, "control");
         this.ownerId = Objects.requireNonNull(ownerId, "ownerId");
-        originalYaw = finite(control.yaw(), "yaw");
-        originalPitch = finite(control.pitch(), "pitch");
+        float originalYaw = finite(control.yaw(), "yaw");
+        float originalPitch = finite(control.pitch(), "pitch");
         originalSlot = control.selectedSlot();
         expectedYaw = originalYaw;
         expectedPitch = originalPitch;
@@ -93,23 +91,7 @@ final class NavigationViewLease {
         if (closed) {
             return;
         }
-        RuntimeException failure = null;
-        try {
-            float yawDelta = Mth.wrapDegrees(originalYaw - control.yaw());
-            float pitchDelta = originalPitch - control.pitch();
-            control.turn(yawDelta, pitchDelta);
-        } catch (RuntimeException closeFailure) {
-            failure = closeFailure;
-        }
-        try {
-            control.selectSlot(originalSlot);
-        } catch (RuntimeException closeFailure) {
-            if (failure == null) failure = closeFailure;
-            else failure.addSuppressed(closeFailure);
-        }
-        if (failure != null) {
-            throw failure;
-        }
+        control.selectSlot(originalSlot);
         closed = true;
     }
 

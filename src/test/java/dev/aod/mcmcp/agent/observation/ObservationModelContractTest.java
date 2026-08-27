@@ -114,12 +114,14 @@ class ObservationModelContractTest {
                 new ResourceId("minecraft:wheat"),
                 ShapeClass.CUTOUT,
                 true,
+                world(1.5, 66, 1.5),
                 world(0, 65.62, 0),
                 10,
                 7);
 
         assertThat(ObservationWireMapper.record(wheat))
-                .containsEntry("crop_mature", true);
+                .containsEntry("crop_mature", true)
+                .doesNotContainKey("ray_hit");
         assertThat(ObservationWireMapper.record(surface(10, 0)))
                 .doesNotContainKey("crop_mature");
     }
@@ -140,6 +142,17 @@ class ObservationModelContractTest {
                 new WorldPosition(OTHER_DIMENSION, 0.5, 65.5, 0.5),
                 1,
                 1)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new VisibleSurface(
+                new BlockPosition(DIMENSION, 0, 64, 0),
+                Face.UP,
+                new ResourceId("minecraft:stone"),
+                ShapeClass.OPAQUE,
+                null,
+                world(1.01, 65, 0.5),
+                world(0.5, 65.62, 0.5),
+                1,
+                1)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("ray hit");
 
         var wrongAge = new SoundClue(
                 new ResourceId("minecraft:entity.zombie.ambient"),

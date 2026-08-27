@@ -22,7 +22,7 @@ class ActionDslTest {
     void parsesEveryNormativeCatalogExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
-        assertThat(examples).hasSize(4);
+        assertThat(examples).hasSize(5);
         for (int index = 0; index < examples.size(); index++) {
             ActionDsl.Request parsed = ActionDslParser.parse(examples.get(index).getAsJsonObject());
             assertThat(parsed.schemaVersion()).isEqualTo(1);
@@ -182,6 +182,60 @@ class ActionDslTest {
                         ActionDsl.Capability.BLOCK_BREAK));
         assertThat(compiled.worstCaseCost())
                 .isEqualTo(new ActionDslCompiler.Cost(15_000, 300, 0, 180, 1, 1, 1));
+    }
+
+    @Test
+    void parsesAndCompilesBoundedCropMaturityWait() {
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities(), waitUntil("await_mature", 12_000),
+                budget(600_000, 12_000, 0, 0)));
+
+        ActionDsl.WaitUntil wait = (ActionDsl.WaitUntil) request.program().body().getFirst();
+        assertThat(wait.condition().target()).isEqualTo(new ActionDsl.Position(
+                "minecraft:overworld", 10, 65, 10));
+        assertThat(wait.maxTicks()).isEqualTo(12_000);
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities()).isEmpty();
+
+        var compiled = ActionDslCompiler.compile(
+                request,
+                primitive -> {
+                    throw new AssertionError("wait_until must have an intrinsic cost");
+                },
+                Set.of());
+        var expected = new ActionDslCompiler.Cost(600_000, 12_000, 0, 0, 0, 0, 0);
+        assertThat(compiled.worstCaseCost()).isEqualTo(expected);
+        assertThat(compiled.primitiveCostBounds()).containsOnlyKeys("await_mature")
+                .containsEntry("await_mature", expected);
+    }
+
+    @Test
+    void rejectsOpenOrUnboundedCropMaturityWaits() {
+        assertCode(request(capabilities(), waitNode("legacy_wait", 201),
+                        budget(600_000, 12_000, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        for (int maxTicks : new int[] {0, 12_001}) {
+            assertCode(request(capabilities(), waitUntil("bad_ticks", maxTicks),
+                            budget(600_000, 12_000, 0, 0)),
+                    ActionDslException.Code.INVALID_ARGUMENT);
+        }
+
+        JsonObject unsupported = waitUntil("bad_type", 1);
+        unsupported.getAsJsonObject("condition").addProperty("type", "block_matches");
+        assertCode(request(capabilities(), unsupported, budget(100, 2, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject open = waitUntil("open_condition", 1);
+        open.getAsJsonObject("condition").addProperty("expression", "age >= 7");
+        assertCode(request(capabilities(), open, budget(100, 2, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        assertCode(request(capabilities(), waitUntil("long", 12_000),
+                        budget(600_001, 12_000, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        assertCode(request(capabilities(), waitUntil("long", 12_000),
+                        budget(600_000, 12_001, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
     }
 
     @Test
@@ -511,6 +565,16 @@ class ActionDslTest {
     private static JsonObject waitNode(String id, int ticks) {
         JsonObject node = baseNode(id, "wait_ticks");
         node.addProperty("ticks", ticks);
+        return node;
+    }
+
+    private static JsonObject waitUntil(String id, int maxTicks) {
+        JsonObject condition = new JsonObject();
+        condition.addProperty("type", "crop_mature");
+        condition.add("target", position(65));
+        JsonObject node = baseNode(id, "wait_until");
+        node.add("condition", condition);
+        node.addProperty("max_ticks", maxTicks);
         return node;
     }
 

@@ -10,6 +10,7 @@ import dev.aod.mcmcp.agent.navigation.RoutePlan;
 import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
+import dev.aod.mcmcp.agent.observation.ObservationValues;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 
@@ -83,6 +84,7 @@ public final class AgentPrimitivePlanner {
         var routeDependencies = new LinkedHashMap<TraversabilityEdge.Key, TraversabilityEdge>();
         var knownTargets = new LinkedHashSet<ActionDsl.Position>();
         var knownSurfaces = new LinkedHashSet<KnownSurface>();
+        var mutationAims = new LinkedHashMap<String, MutationAim>();
         var routeCache = new LinkedHashMap<RouteKey, RoutePlan>();
         var work = new PlanningWork(canContinue);
         analyzeSequence(
@@ -96,9 +98,10 @@ public final class AgentPrimitivePlanner {
                 routeDependencies,
                 knownTargets,
                 knownSurfaces,
+                mutationAims,
                 routeCache,
                 work);
-        return new Analysis(costs, routeDependencies, knownTargets, knownSurfaces);
+        return new Analysis(costs, routeDependencies, knownTargets, knownSurfaces, mutationAims);
     }
 
     public static RoutePlan requireRoute(
@@ -197,6 +200,40 @@ public final class AgentPrimitivePlanner {
                         "Mutation target is not current matching visible-surface evidence"));
     }
 
+    private static MutationSurface requireMutationSurface(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            List<Pose> poses,
+            ActionDsl.Position position,
+            String block,
+            java.util.function.Predicate<ObservationRecord.VisibleSurface> allowed,
+            String failure) {
+        return latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(map.dimension()))
+                .flatMap(frame -> frame.records().stream())
+                .filter(ObservationRecord.VisibleSurface.class::isInstance)
+                .map(ObservationRecord.VisibleSurface.class::cast)
+                .filter(surface -> surface.worldRevision() == map.worldRevision())
+                .filter(surface -> matches(surface, position, block))
+                .filter(allowed)
+                .filter(surface -> surface.rayHit() != null
+                        && poses.stream().allMatch(pose -> mutationSurfaceValid(pose, surface)))
+                .sorted(java.util.Comparator
+                        .comparingInt((ObservationRecord.VisibleSurface surface) ->
+                                surface.face() == ObservationRecord.Face.UP ? 0 : 1)
+                        .thenComparingDouble(surface -> distanceSquared(
+                                poses.getFirst(), surface.rayHit())))
+                .map(surface -> new MutationSurface(
+                        new KnownSurface(
+                                position,
+                                ActionDsl.BlockFace.valueOf(surface.face().name()),
+                                block,
+                                Boolean.TRUE.equals(surface.cropMature()) ? true : null),
+                        rayHit(surface)))
+                .findFirst()
+                .orElseThrow(() -> new PlanningException(Code.TARGET_UNKNOWN, failure));
+    }
+
     private static Optional<ObservationRecord.VisibleSurface> knownSurfaceRecord(
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
@@ -226,6 +263,7 @@ public final class AgentPrimitivePlanner {
             Map<TraversabilityEdge.Key, TraversabilityEdge> routeDependencies,
             Set<ActionDsl.Position> knownTargets,
             Set<KnownSurface> knownSurfaces,
+            Map<String, MutationAim> mutationAims,
             Map<RouteKey, RoutePlan> routeCache,
             PlanningWork work) {
         List<Pose> states = input;
@@ -233,7 +271,8 @@ public final class AgentPrimitivePlanner {
             work.check();
             states = analyzeNode(
                     node, states, map, pathfinder, latestFrame, cameraLimit,
-                    costs, routeDependencies, knownTargets, knownSurfaces, routeCache, work);
+                    costs, routeDependencies, knownTargets, knownSurfaces,
+                    mutationAims, routeCache, work);
         }
         return states;
     }
@@ -249,9 +288,10 @@ public final class AgentPrimitivePlanner {
             Map<TraversabilityEdge.Key, TraversabilityEdge> routeDependencies,
             Set<ActionDsl.Position> knownTargets,
             Set<KnownSurface> knownSurfaces,
+            Map<String, MutationAim> mutationAims,
             Map<RouteKey, RoutePlan> routeCache,
             PlanningWork work) {
-        if (node instanceof ActionDsl.WaitTicks) {
+        if (node instanceof ActionDsl.WaitTicks || node instanceof ActionDsl.WaitUntil) {
             return input;
         }
         if (node instanceof ActionDsl.NavigateToKnown navigate) {
@@ -323,30 +363,46 @@ public final class AgentPrimitivePlanner {
             return distinct(output);
         }
         if (node instanceof ActionDsl.TillKnownBlock till) {
+            MutationSurface surface = requireMutationSurface(
+                    map, latestFrame, input, till.target(), till.expectedBlock(),
+                    value -> value.face() != ObservationRecord.Face.DOWN,
+                    "Till target requires a current non-DOWN visible surface");
             return analyzeMutation(
-                    node, input, map, latestFrame, cameraLimit, costs, knownSurfaces, work,
-                    till.target(), till.expectedBlock(), 1, 0, 0);
+                    node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
+                    surface, 1, 0, 0);
         }
         if (node instanceof ActionDsl.PlantKnownWheat plant) {
+            if (!directlyAbove(plant.target(), plant.support())) {
+                throw new PlanningException(
+                        Code.TARGET_UNKNOWN, "Plant target must be directly above its support");
+            }
+            MutationSurface surface = requireMutationSurface(
+                    map, latestFrame, input, plant.support(), "minecraft:farmland",
+                    value -> value.face() == ObservationRecord.Face.UP,
+                    "Plant support requires its current UP face");
             return analyzeMutation(
-                    node, input, map, latestFrame, cameraLimit, costs, knownSurfaces, work,
-                    plant.support(), "minecraft:farmland", 0, 0, 1);
+                    node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
+                    surface, 0, 0, 1);
         }
         if (node instanceof ActionDsl.HarvestKnownWheat harvest) {
+            MutationSurface surface = requireMutationSurface(
+                    map, latestFrame, input, harvest.target(), "minecraft:wheat",
+                    value -> Boolean.TRUE.equals(value.cropMature()),
+                    "Harvest target requires current crop_mature=true evidence");
             return analyzeMutation(
-                    node, input, map, latestFrame, cameraLimit, costs, knownSurfaces, work,
-                    harvest.target(), "minecraft:wheat", 0, 1, 0);
+                    node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
+                    surface, 0, 1, 0);
         }
         if (node instanceof ActionDsl.If conditional) {
             var output = new ArrayList<Pose>();
             output.addAll(analyzeSequence(
                     conditional.thenBranch(), input, map, pathfinder,
                     latestFrame, cameraLimit, costs, routeDependencies,
-                    knownTargets, knownSurfaces, routeCache, work));
+                    knownTargets, knownSurfaces, mutationAims, routeCache, work));
             output.addAll(analyzeSequence(
                     conditional.elseBranch(), input, map, pathfinder,
                     latestFrame, cameraLimit, costs, routeDependencies,
-                    knownTargets, knownSurfaces, routeCache, work));
+                    knownTargets, knownSurfaces, mutationAims, routeCache, work));
             return distinct(output);
         }
         var repeat = (ActionDsl.Repeat) node;
@@ -355,7 +411,7 @@ public final class AgentPrimitivePlanner {
             output = analyzeSequence(
                     repeat.body(), output, map, pathfinder,
                     latestFrame, cameraLimit, costs, routeDependencies,
-                    knownTargets, knownSurfaces, routeCache, work);
+                    knownTargets, knownSurfaces, mutationAims, routeCache, work);
         }
         return output;
     }
@@ -363,23 +419,27 @@ public final class AgentPrimitivePlanner {
     private static List<Pose> analyzeMutation(
             ActionDsl.Node node,
             List<Pose> input,
-            KnownTraversabilitySnapshot map,
-            Optional<ObservationFrame> latestFrame,
             float cameraLimit,
             Map<String, ActionDslCompiler.Cost> costs,
             Set<KnownSurface> knownSurfaces,
+            Map<String, MutationAim> mutationAims,
             PlanningWork work,
-            ActionDsl.Position aimTarget,
-            String expectedBlock,
+            MutationSurface mutationSurface,
             long interactions,
             long blocksBroken,
             long blocksPlaced) {
-        KnownSurface surface = requireKnownSurface(map, latestFrame, aimTarget, expectedBlock);
+        KnownSurface surface = mutationSurface.surface();
         knownSurfaces.add(surface);
         ActionDslCompiler.Cost worst = null;
         var output = new ArrayList<Pose>(input.size());
-        Vec3 point = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
-                surface.position(), surface.face());
+        Vec3 point = mutationSurface.point();
+        MutationAim candidate = new MutationAim(surface.position(), surface.face(), point);
+        MutationAim previous = mutationAims.putIfAbsent(node.id(), candidate);
+        if (previous != null && !previous.equals(candidate)) {
+            throw new PlanningException(
+                    Code.PROGRAM_BUDGET_UNPROVABLE,
+                    "Mutation node resolves to more than one aim witness");
+        }
         for (Pose pose : input) {
             work.poseTransition();
             Aim aim = aim(pose, point);
@@ -390,6 +450,51 @@ public final class AgentPrimitivePlanner {
         }
         merge(costs, node.id(), Objects.requireNonNull(worst, "mutation cost"));
         return distinct(output);
+    }
+
+    private static boolean directlyAbove(
+            ActionDsl.Position target, ActionDsl.Position support) {
+        return target.dimension().equals(support.dimension())
+                && target.x() == support.x()
+                && target.y() == support.y() + 1
+                && target.z() == support.z();
+    }
+
+    private static boolean mutationSurfaceValid(
+            Pose pose, ObservationRecord.VisibleSurface surface) {
+        var eye = surface.eyeOrigin();
+        if (!eye.dimension().value().equals(pose.cell().dimension())) {
+            return false;
+        }
+        double poseEyeY = pose.y() + pose.eyeHeight();
+        if (Math.hypot(eye.x() - pose.x(), eye.z() - pose.z())
+                        > pose.horizontalPositionError() + MAX_BREAK_EYE_ORIGIN_DRIFT
+                || Math.abs(eye.y() - poseEyeY)
+                        > Math.max(pose.yErrorBelow(), pose.yErrorAbove())
+                                + MAX_BREAK_EYE_ORIGIN_DRIFT) {
+            return false;
+        }
+        var hit = surface.rayHit();
+        double distance = Math.sqrt(
+                square(hit.x() - pose.x())
+                        + square(hit.y() - poseEyeY)
+                        + square(hit.z() - pose.z()));
+        double poseError = Math.hypot(
+                pose.horizontalPositionError(),
+                Math.max(pose.yErrorBelow(), pose.yErrorAbove()));
+        return distance + poseError <= MAX_BREAK_REACH_BLOCKS;
+    }
+
+    private static double distanceSquared(
+            Pose pose, ObservationValues.WorldPosition point) {
+        return square(point.x() - pose.x())
+                + square(point.y() - (pose.y() + pose.eyeHeight()))
+                + square(point.z() - pose.z());
+    }
+
+    private static Vec3 rayHit(ObservationRecord.VisibleSurface surface) {
+        var hit = Objects.requireNonNull(surface.rayHit(), "rayHit");
+        return new Vec3(hit.x(), hit.y(), hit.z());
     }
 
     private static List<Pose> distinct(List<Pose> poses) {
@@ -484,9 +589,11 @@ public final class AgentPrimitivePlanner {
         if (!Float.isFinite(maxCameraDegreesPerTick) || maxCameraDegreesPerTick <= 0.0F) {
             throw new IllegalArgumentException("camera limit must be positive");
         }
-        // ponytail: semantic preparation may choose any reachable block face; narrow this
-        // bound when it publishes the selected aim point to admission planning.
-        double camera = 360.0D;
+        Aim aim = aim(pose, aimPoint);
+        AimError error = aimError(pose, aimPoint, aim);
+        double camera = Math.min(360.0D,
+                angularError(pose.yaw(), pose.pitch(), aim.yaw(), aim.pitch())
+                        + pose.orientationErrorDegrees() + error.totalDegrees());
         long aimTicks = Math.max(1L, (long) Math.ceil(camera / maxCameraDegreesPerTick));
         long ticks = Math.addExact(aimTicks, BLOCK_MUTATION_TICK_UPPER_BOUND);
         return new ActionDslCompiler.Cost(
@@ -598,7 +705,9 @@ public final class AgentPrimitivePlanner {
                 && position.y() == target.y()
                 && position.z() == target.z()
                 && surface.face().name().equals(required.face().name())
-                && surface.block().value().equals(required.block());
+                && surface.block().value().equals(required.block())
+                && (required.cropMature() == null
+                        || required.cropMature().equals(surface.cropMature()));
     }
 
     private static boolean matches(
@@ -817,13 +926,15 @@ public final class AgentPrimitivePlanner {
             Map<String, ActionDslCompiler.Cost> primitiveCosts,
             Map<TraversabilityEdge.Key, TraversabilityEdge> routeDependencies,
             Set<ActionDsl.Position> knownTargets,
-            Set<KnownSurface> knownSurfaces) {
+            Set<KnownSurface> knownSurfaces,
+            Map<String, MutationAim> mutationAims) {
         public Analysis {
             primitiveCosts = Map.copyOf(Objects.requireNonNull(primitiveCosts, "primitiveCosts"));
             routeDependencies = Map.copyOf(
                     Objects.requireNonNull(routeDependencies, "routeDependencies"));
             knownTargets = Set.copyOf(Objects.requireNonNull(knownTargets, "knownTargets"));
             knownSurfaces = Set.copyOf(Objects.requireNonNull(knownSurfaces, "knownSurfaces"));
+            mutationAims = Map.copyOf(Objects.requireNonNull(mutationAims, "mutationAims"));
         }
 
         public Optional<ActionDslCompiler.Cost> worstCase(ActionDsl.Node primitive) {
@@ -834,11 +945,35 @@ public final class AgentPrimitivePlanner {
     public record KnownSurface(
             ActionDsl.Position position,
             ActionDsl.BlockFace face,
-            String block) {
+            String block,
+            Boolean cropMature) {
+        public KnownSurface(
+                ActionDsl.Position position, ActionDsl.BlockFace face, String block) {
+            this(position, face, block, null);
+        }
+
         public KnownSurface {
             Objects.requireNonNull(position, "position");
             Objects.requireNonNull(face, "face");
             Objects.requireNonNull(block, "block");
+        }
+    }
+
+    public record MutationAim(
+            ActionDsl.Position block,
+            ActionDsl.BlockFace face,
+            Vec3 point) {
+        public MutationAim {
+            Objects.requireNonNull(block, "block");
+            Objects.requireNonNull(face, "face");
+            Objects.requireNonNull(point, "point");
+        }
+    }
+
+    private record MutationSurface(KnownSurface surface, Vec3 point) {
+        private MutationSurface {
+            Objects.requireNonNull(surface, "surface");
+            Objects.requireNonNull(point, "point");
         }
     }
 

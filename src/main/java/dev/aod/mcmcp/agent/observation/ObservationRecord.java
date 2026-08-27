@@ -31,6 +31,7 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
             ResourceId block,
             ShapeClass shapeClass,
             Boolean cropMature,
+            WorldPosition rayHit,
             WorldPosition eyeOrigin,
             long observedTick,
             long worldRevision) implements ObservationRecord {
@@ -40,6 +41,14 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
             Objects.requireNonNull(block, "block");
             Objects.requireNonNull(shapeClass, "shapeClass");
             Objects.requireNonNull(eyeOrigin, "eyeOrigin");
+            if (rayHit != null) {
+                ObservationValues.requireSameDimension(position.dimension(), rayHit.dimension());
+                if (rayHit.x() < position.x() || rayHit.x() > position.x() + 1.0D
+                        || rayHit.y() < position.y() || rayHit.y() > position.y() + 1.0D
+                        || rayHit.z() < position.z() || rayHit.z() > position.z() + 1.0D) {
+                    throw new IllegalArgumentException("Visible surface ray hit must be inside its block");
+                }
+            }
             ObservationValues.requireSameDimension(position.dimension(), eyeOrigin.dimension());
             ObservationValues.requireTick(observedTick, "observedTick");
             ObservationValues.requireTick(worldRevision, "worldRevision");
@@ -50,10 +59,24 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
                 Face face,
                 ResourceId block,
                 ShapeClass shapeClass,
+                Boolean cropMature,
                 WorldPosition eyeOrigin,
                 long observedTick,
                 long worldRevision) {
-            this(position, face, block, shapeClass, null, eyeOrigin, observedTick, worldRevision);
+            this(position, face, block, shapeClass, cropMature, null,
+                    eyeOrigin, observedTick, worldRevision);
+        }
+
+        public VisibleSurface(
+                BlockPosition position,
+                Face face,
+                ResourceId block,
+                ShapeClass shapeClass,
+                WorldPosition eyeOrigin,
+                long observedTick,
+                long worldRevision) {
+            this(position, face, block, shapeClass, null, null,
+                    eyeOrigin, observedTick, worldRevision);
         }
 
         @Override public ObservationKind kind() { return ObservationKind.VISIBLE_SURFACE; }

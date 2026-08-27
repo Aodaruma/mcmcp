@@ -11,11 +11,14 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -158,6 +161,35 @@ class MinecraftSemanticActionPortTest {
                 .isEqualTo(12);
         assertThat(MinecraftSemanticActionPort.firstPreparingSlot(2, slot -> false))
                 .isEqualTo(-1);
+    }
+
+    @Test
+    void plannedAimRequiresTheExactRaycastBlockAndFace() {
+        var block = new BlockTarget("minecraft:overworld", 1, 64, 2);
+        var bounds = new ActionBounds(block.dimension(), block, block, 0, 30, true);
+        var request = new BreakBlockRequest(
+                block,
+                new BlockStateFingerprint("minecraft:wheat", Map.of("age", "7")),
+                new BlockStateFingerprint("minecraft:air", Map.of()),
+                bounds,
+                Optional.of(new BlockAimWitness(
+                        block, BlockAimWitness.Face.UP, 1.5D, 64.999D, 2.5D)));
+
+        assertThat(MinecraftSemanticActionPort.matchesPlannedAim(
+                request,
+                new BlockHitResult(
+                        new Vec3(1.5D, 65.0D, 2.5D), Direction.UP,
+                        new BlockPos(1, 64, 2), false))).isTrue();
+        assertThat(MinecraftSemanticActionPort.matchesPlannedAim(
+                request,
+                new BlockHitResult(
+                        new Vec3(1.5D, 64.5D, 2.0D), Direction.NORTH,
+                        new BlockPos(1, 64, 2), false))).isFalse();
+        assertThat(MinecraftSemanticActionPort.matchesPlannedAim(
+                request,
+                new BlockHitResult(
+                        new Vec3(2.5D, 65.0D, 2.5D), Direction.UP,
+                        new BlockPos(2, 64, 2), false))).isFalse();
     }
 
     @Test

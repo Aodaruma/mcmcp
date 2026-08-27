@@ -21,8 +21,8 @@ final class McpTestFixtures {
                 "policy", Map.ofEntries(
                         Map.entry("profile", "survival_omnidirectional"),
                         Map.entry("multiplayer_enabled", false),
-                        Map.entry("max_duration_ms", 30_000),
-                        Map.entry("max_ticks", 600),
+                        Map.entry("max_duration_ms", 600_000),
+                        Map.entry("max_ticks", 12_000),
                         Map.entry("max_distance_blocks", 32),
                         Map.entry("max_camera_degrees", 360),
                         Map.entry("max_blocks_broken", 8),

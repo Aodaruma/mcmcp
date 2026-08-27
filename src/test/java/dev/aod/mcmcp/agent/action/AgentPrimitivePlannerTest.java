@@ -10,6 +10,7 @@ import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.ObservationValues;
+import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -199,7 +200,7 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
-    void wheatMutationCostsUseCurrentVisibleSurfaceEvidence() {
+    void wheatMutationCostsUseTheSelectedSurfaceAngleAndPreferUpForTilling() {
         UUID session = UUID.randomUUID();
         var map = map(session).snapshot().orElseThrow();
         var target = new ActionDsl.Position(DIMENSION, 3, 64, 0);
@@ -213,7 +214,9 @@ class AgentPrimitivePlannerTest {
         var analysis = AgentPrimitivePlanner.analyze(
                 program, map, new DeterministicAStar(),
                 new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
-                Optional.of(frame(target, ObservationRecord.Face.UP, "minecraft:dirt", 0)),
+                Optional.of(frame(List.of(
+                        surface(target, ObservationRecord.Face.NORTH, "minecraft:dirt", null, 0),
+                        surface(target, ObservationRecord.Face.UP, "minecraft:dirt", null, 0)))),
                 4.5F);
 
         assertThat(analysis.knownSurfaces()).containsExactly(
@@ -221,14 +224,108 @@ class AgentPrimitivePlannerTest {
                         target, ActionDsl.BlockFace.UP, "minecraft:dirt"));
         assertThat(analysis.primitiveCosts().get("till").interactions()).isOne();
         assertThat(analysis.primitiveCosts().get("till").blocksBroken()).isZero();
-        assertThat(analysis.primitiveCosts().get("till").cameraDegrees()).isEqualTo(360.0D);
+        assertThat(analysis.mutationAims().get("till").face())
+                .isEqualTo(ActionDsl.BlockFace.UP);
+        double camera = analysis.primitiveCosts().get("till").cameraDegrees();
+        assertThat(camera).isLessThan(360.0D);
         assertThat(analysis.primitiveCosts().get("till").ticks())
-                .isEqualTo(AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND + 80L);
+                .isEqualTo(AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND
+                        + (long) Math.ceil(camera / 4.5D));
         assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
                 program, map, new DeterministicAStar(),
                 new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
                 Optional.of(frame(target, ObservationRecord.Face.UP, "minecraft:stone", 0)),
                 4.5F)).isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                Optional.of(frame(target, ObservationRecord.Face.DOWN, "minecraft:dirt", 0)),
+                4.5F)).isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+    }
+
+    @Test
+    void plantBindsSupportUpWhileHarvestRequiresMatureCropEvidence() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var support = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var crop = new ActionDsl.Position(DIMENSION, 3, 65, 0);
+        var plant = new ActionDsl.PlantKnownWheat(
+                "plant", crop, support, "minecraft:wheat_seeds");
+        var harvest = new ActionDsl.HarvestKnownWheat("harvest", crop);
+        var program = new ActionDsl.Program(
+                1, Optional.empty(), Set.of(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.BLOCK_PLACE,
+                        ActionDsl.Capability.BLOCK_BREAK),
+                List.of(plant, harvest));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5, 64, 0.5, 1.62, 0, 0);
+
+        var analysis = AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(), pose,
+                Optional.of(frame(List.of(
+                        surface(support, ObservationRecord.Face.NORTH,
+                                "minecraft:farmland", null, 0),
+                        surface(support, ObservationRecord.Face.UP,
+                                "minecraft:farmland", null, 0),
+                        surface(crop, ObservationRecord.Face.WEST,
+                                "minecraft:wheat", true, 0)))),
+                4.5F);
+
+        assertThat(analysis.mutationAims().get("plant"))
+                .extracting(
+                        AgentPrimitivePlanner.MutationAim::block,
+                        AgentPrimitivePlanner.MutationAim::face,
+                        AgentPrimitivePlanner.MutationAim::point)
+                .containsExactly(
+                        support,
+                        ActionDsl.BlockFace.UP,
+                        new Vec3(3.5D, 64.9375D, 0.5D));
+        assertThat(analysis.knownSurfaces()).contains(
+                new AgentPrimitivePlanner.KnownSurface(
+                        crop, ActionDsl.BlockFace.WEST, "minecraft:wheat", true));
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                new ActionDsl.Program(
+                        1, Optional.empty(), program.capabilities(), List.of(harvest)),
+                map, new DeterministicAStar(), pose,
+                Optional.of(frame(List.of(surface(
+                        crop, ObservationRecord.Face.WEST, "minecraft:wheat", false, 0)))),
+                4.5F)).isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+    }
+
+    @Test
+    void mutationRejectsAStaleEyeOriginAndAnOutOfReachRayHit() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var target = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var program = new ActionDsl.Program(
+                1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_INTERACT),
+                List.of(new ActionDsl.TillKnownBlock(
+                        "till", target, "minecraft:dirt", "minecraft:iron_hoe")));
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(cell(1), 1.5D, 64, 0.5D, 1.62D, 0, 0),
+                Optional.of(frame(target, ObservationRecord.Face.UP, "minecraft:dirt", 0)),
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+
+        var distant = new ActionDsl.Position(DIMENSION, 6, 64, 0);
+        var distantProgram = new ActionDsl.Program(
+                1, Optional.empty(), program.capabilities(),
+                List.of(new ActionDsl.TillKnownBlock(
+                        "far", distant, "minecraft:dirt", "minecraft:iron_hoe")));
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                distantProgram, map, new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(cell(0), 0.5D, 64, 0.5D, 1.62D, 0, 0),
+                Optional.of(frame(distant, ObservationRecord.Face.UP, "minecraft:dirt", 0)),
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
     }
 
     @Test
@@ -332,17 +429,57 @@ class AgentPrimitivePlannerTest {
             String block,
             long revision) {
         var dimension = new ObservationValues.ResourceId(target.dimension());
+        return frame(List.of(surface(target, face, block, null, revision)));
+    }
+
+    private static ObservationRecord.VisibleSurface surface(
+            ActionDsl.Position target,
+            ObservationRecord.Face face,
+            String block,
+            Boolean cropMature,
+            long revision) {
+        var dimension = new ObservationValues.ResourceId(target.dimension());
         var eye = new ObservationValues.WorldPosition(dimension, 0.5, 65.62, 0.5);
-        var surface = new ObservationRecord.VisibleSurface(
+        Vec3 hit = rayHit(target, face, block);
+        return new ObservationRecord.VisibleSurface(
                 new ObservationValues.BlockPosition(
                         dimension, target.x(), target.y(), target.z()),
                 face,
                 new ObservationValues.ResourceId(block),
                 ObservationRecord.ShapeClass.OPAQUE,
+                cropMature,
+                new ObservationValues.WorldPosition(
+                        dimension, hit.x, hit.y, hit.z),
                 eye,
                 1,
                 revision);
+    }
+
+    private static Vec3 rayHit(
+            ActionDsl.Position target, ObservationRecord.Face face, String block) {
+        double x = target.x() + 0.5D;
+        double y = target.y() + 0.5D;
+        double z = target.z() + 0.5D;
+        if ("minecraft:farmland".equals(block) && face == ObservationRecord.Face.UP) {
+            y = target.y() + 0.9375D;
+        } else {
+            switch (face) {
+                case DOWN -> y = target.y();
+                case UP -> y = target.y() + 1.0D;
+                case NORTH -> z = target.z();
+                case SOUTH -> z = target.z() + 1.0D;
+                case WEST -> x = target.x();
+                case EAST -> x = target.x() + 1.0D;
+            }
+        }
+        return new Vec3(x, y, z);
+    }
+
+    private static ObservationFrame frame(
+            List<ObservationRecord.VisibleSurface> surfaces) {
+        var dimension = new ObservationValues.ResourceId(DIMENSION);
         return new ObservationFrame(
-                "obs-0000000000000001", dimension, 1, 16, false, List.of(surface));
+                "obs-0000000000000001", dimension, 1, 16, false,
+                new java.util.ArrayList<ObservationRecord>(surfaces));
     }
 }

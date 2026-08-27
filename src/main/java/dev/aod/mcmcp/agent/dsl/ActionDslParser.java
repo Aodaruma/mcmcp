@@ -123,6 +123,7 @@ public final class ActionDslParser {
             case "plant_known_wheat" -> plantKnownWheat(object, path);
             case "harvest_known_wheat" -> harvestKnownWheat(object, path);
             case "wait_ticks" -> waitTicks(object, path);
+            case "wait_until" -> waitUntil(object, path);
             case "if" -> conditional(object, path);
             case "repeat" -> repeat(object, path);
             default -> throw invalid("Unknown Action DSL opcode at " + path + ": " + operation);
@@ -192,6 +193,27 @@ public final class ActionDslParser {
         return new ActionDsl.WaitTicks(
                 string(source.get("id"), path + ".id"),
                 integer(source.get("ticks"), path + ".ticks"));
+    }
+
+    private static ActionDsl.WaitUntil waitUntil(JsonObject source, String path) {
+        exactKeys(source, path, Set.of("id", "op", "condition", "max_ticks"),
+                Set.of("id", "op", "condition", "max_ticks"));
+        return new ActionDsl.WaitUntil(
+                string(source.get("id"), path + ".id"),
+                cropMatureCondition(source.get("condition"), path + ".condition"),
+                integer(source.get("max_ticks"), path + ".max_ticks"));
+    }
+
+    private static ActionDsl.CropMatureCondition cropMatureCondition(
+            JsonElement value, String path) {
+        JsonObject object = object(value, path, Set.of("type", "target"),
+                Set.of("type", "target"));
+        String type = string(object.get("type"), path + ".type");
+        if (!"crop_mature".equals(type)) {
+            throw invalid("Unsupported wait condition type at " + path + ": " + type);
+        }
+        return new ActionDsl.CropMatureCondition(
+                position(object.get("target"), path + ".target"));
     }
 
     private static ActionDsl.If conditional(JsonObject source, String path) {

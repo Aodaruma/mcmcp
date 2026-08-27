@@ -25,6 +25,7 @@ import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ClientFogDistanceSignals;
 import dev.aod.mcmcp.agent.observation.ObservationFrameStore;
 import dev.aod.mcmcp.agent.observation.ObservationKind;
+import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.OmnidirectionalObserver;
 import dev.aod.mcmcp.agent.observation.ObservationStoreException;
 import dev.aod.mcmcp.agent.observation.ObservationWireMapper;
@@ -55,6 +56,7 @@ import dev.aod.mcmcp.routine.ApplyBlockPlanOperation;
 import dev.aod.mcmcp.routine.ApplyBlockPlanRequest;
 import dev.aod.mcmcp.routine.ApplyBlockPlanStep;
 import dev.aod.mcmcp.routine.BlockTarget;
+import dev.aod.mcmcp.routine.BlockAimWitness;
 import dev.aod.mcmcp.routine.BlockStateFingerprint;
 import dev.aod.mcmcp.routine.BreakBlockRequest;
 import dev.aod.mcmcp.routine.FinitePlanRequest;
@@ -975,22 +977,89 @@ public final class McmcpRuntime implements McpRuntimePort {
         if (snapshot.control().capabilities().contains("block_place")) {
             allowed.add(ActionDsl.Capability.BLOCK_PLACE);
         }
+        ActionDslCompiler.CompiledProgram program = ActionDslCompiler.compile(
+                request, McmcpRuntime::structuralPrimitiveCost, allowed);
+        Optional<ActionDsl.Node> initialPrimitive = firstPrimitive(
+                request.program(), snapshot.predicateSnapshot());
         final AgentPrimitivePlanner.Analysis analysis;
         try {
-            analysis = AgentPrimitivePlanner.analyze(
-                    request.program(),
-                    snapshot.map(),
-                    agentPathfinder,
-                    snapshot.pose(),
-                    snapshot.frame(),
-                    snapshot.cameraDegreesPerTick(),
-                    context::canBeginWork);
+            analysis = initialPrimitive
+                    .filter(McmcpRuntime::requiresWorldPlanning)
+                    .map(primitive -> analyzePrimitive(
+                            request.program(),
+                            primitive,
+                            snapshot.map(),
+                            snapshot.pose(),
+                            snapshot.frame(),
+                            snapshot.cameraDegreesPerTick(),
+                            context::canBeginWork))
+                    .orElseGet(McmcpRuntime::emptyPrimitiveAnalysis);
+            initialPrimitive.flatMap(analysis::worstCase).ifPresent(cost -> {
+                if (!costWithinBudget(cost, program.effectiveBudget())) {
+                    throw new ActionDslException(
+                            ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE,
+                            "The initial primitive exceeds the effective action budget");
+                }
+            });
         } catch (AgentPrimitivePlanner.PlanningException failure) {
             throw planningFailure(failure);
         }
-        ActionDslCompiler.CompiledProgram program = ActionDslCompiler.compile(
-                request, analysis::worstCase, allowed);
-        return new PreparedAgentAction(snapshot, program, analysis);
+        return new PreparedAgentAction(snapshot, program, analysis, initialPrimitive);
+    }
+
+    private AgentPrimitivePlanner.Analysis analyzePrimitive(
+            ActionDsl.Program program,
+            ActionDsl.Node primitive,
+            KnownTraversabilitySnapshot map,
+            AgentPrimitivePlanner.Pose pose,
+            Optional<ObservationFrame> frame,
+            float cameraDegreesPerTick,
+            java.util.function.BooleanSupplier canContinue) {
+        var oneNode = new ActionDsl.Program(
+                program.dslVersion(), Optional.empty(), program.capabilities(), List.of(primitive));
+        return AgentPrimitivePlanner.analyze(
+                oneNode,
+                map,
+                agentPathfinder,
+                pose,
+                frame,
+                cameraDegreesPerTick,
+                canContinue);
+    }
+
+    private static AgentPrimitivePlanner.Analysis emptyPrimitiveAnalysis() {
+        return new AgentPrimitivePlanner.Analysis(
+                Map.of(), Map.of(), Set.of(), Set.of(), Map.of());
+    }
+
+    private static Optional<ActionDsl.Node> firstPrimitive(
+            ActionDsl.Program program, PolicySnapshot snapshot) {
+        return Optional.ofNullable(new ActionProgramCursor(program).next(snapshot).primitive());
+    }
+
+    private static boolean requiresWorldPlanning(ActionDsl.Node node) {
+        return !(node instanceof ActionDsl.WaitTicks || node instanceof ActionDsl.WaitUntil);
+    }
+
+    static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
+        long interactions = node instanceof ActionDsl.TillKnownBlock ? 1L : 0L;
+        long breaks = node instanceof ActionDsl.BreakKnownFace
+                        || node instanceof ActionDsl.HarvestKnownWheat
+                ? 1L : 0L;
+        long placements = node instanceof ActionDsl.PlantKnownWheat ? 1L : 0L;
+        return Optional.of(new ActionDslCompiler.Cost(
+                0L, 0L, 0.0D, 0.0D, interactions, breaks, placements));
+    }
+
+    private static boolean costWithinBudget(
+            ActionDslCompiler.Cost cost, ActionDsl.Budget budget) {
+        return cost.durationMillis() <= budget.maxDurationMillis()
+                && cost.ticks() <= budget.maxTicks()
+                && cost.distanceBlocks() <= budget.maxDistanceBlocks()
+                && cost.cameraDegrees() <= budget.maxCameraDegrees()
+                && cost.interactions() <= budget.maxInteractions()
+                && cost.blocksBroken() <= budget.maxBlocksBroken()
+                && cost.blocksPlaced() <= budget.maxBlocksPlaced();
     }
 
     private Map<String, Object> commitAgentAction(
@@ -1087,23 +1156,27 @@ public final class McmcpRuntime implements McpRuntimePort {
             return false;
         }
         final KnownTraversabilitySnapshot currentMap;
+        final AdmissionPolicySnapshot currentPredicates;
         try {
             currentMap = requireAgentMap(session);
+            currentPredicates = AdmissionPolicySnapshot.capture(
+                    policySnapshot(minecraft), captured.predicateRequirements());
             validatePredicateAvailability(
-                    prepared.program().request().program(),
-                    AdmissionPolicySnapshot.capture(
-                            policySnapshot(minecraft), captured.predicateRequirements()));
+                    prepared.program().request().program(), currentPredicates);
         } catch (RuntimeException | LinkageError changed) {
             return false;
         }
-        return routeDependenciesCurrent(currentMap, prepared.analysis().routeDependencies())
+        return firstPrimitive(prepared.program().request().program(), currentPredicates)
+                        .equals(prepared.initialPrimitive())
+                && routeDependenciesCurrent(currentMap, prepared.analysis().routeDependencies())
                 && prepared.analysis().knownTargets().stream().allMatch(target ->
                         AgentPrimitivePlanner.knownTarget(
                                 currentMap, agentObservationFrames.latestFrame(), target))
                 && prepared.analysis().knownSurfaces().stream().allMatch(surface ->
                         AgentPrimitivePlanner.knownSurface(
                                 currentMap, agentObservationFrames.latestFrame(), surface))
-                && breakProgramPreconditionsCurrent(minecraft, prepared.program());
+                && breakProgramPreconditionsCurrent(
+                        minecraft, prepared.program(), prepared.initialPrimitive());
     }
 
     static boolean routeDependenciesCurrent(
@@ -1380,8 +1453,8 @@ public final class McmcpRuntime implements McpRuntimePort {
         var policy = Map.<String, Object>ofEntries(
                 Map.entry("profile", "survival_omnidirectional"),
                 Map.entry("multiplayer_enabled", multiplayerEnabled),
-                Map.entry("max_duration_ms", 30_000),
-                Map.entry("max_ticks", 600),
+                Map.entry("max_duration_ms", 600_000),
+                Map.entry("max_ticks", 12_000),
                 Map.entry("max_distance_blocks", 32),
                 Map.entry("max_camera_degrees", 360),
                 Map.entry("max_blocks_broken", 8),
@@ -2210,6 +2283,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                         minecraft.player.getXRot(),
                         minecraft.player,
                         McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
+                        pending.prepared().analysis().mutationAims(),
                         reconciliationSignals.bindAndSnapshot(
                                         minecraft.level, session.worldSessionId())
                                 .positionCorrectionRevision());
@@ -2258,8 +2332,10 @@ public final class McmcpRuntime implements McpRuntimePort {
                 }
                 var correctionProgress = agentActions.get(action.actionId()).progress();
                 agentActions.recordTick(action.actionId());
-                requestAgentReplan(
-                        correctionProgress.ticks() + 1L, "server_position_correction");
+                if (agentExecution.primitive != null && agentExecution.occurrenceLimit != null) {
+                    requestAgentReplan(
+                            correctionProgress.ticks() + 1L, "server_position_correction");
+                }
                 return;
             }
 
@@ -2336,7 +2412,9 @@ public final class McmcpRuntime implements McpRuntimePort {
                 agentExecution.replanDeadlineTick = 0L;
             }
             if (movementRejected) {
-                requestAgentReplan(actionTick, "unverified_actual_movement");
+                if (agentExecution.primitive != null && agentExecution.occurrenceLimit != null) {
+                    requestAgentReplan(actionTick, "unverified_actual_movement");
+                }
                 return;
             }
 
@@ -2344,9 +2422,18 @@ public final class McmcpRuntime implements McpRuntimePort {
                     && !advanceAgentProgram(minecraft, usedBeforeTick)) {
                 return;
             }
+            if (agentExecution.occurrenceLimit == null
+                    && !bindAgentPrimitive(
+                            minecraft,
+                            session,
+                            action,
+                            usedBeforeTick,
+                            actionTick)) {
+                return;
+            }
             if (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
                     || localSafety == LocalObservationProjector.CurrentSafety.REPLAN) {
-                if (agentExecution.primitive instanceof ActionDsl.WaitTicks) {
+                if (isAgentWait(agentExecution.primitive)) {
                     failAgentAction(
                             AgentActionStore.FailureCode.PATH_BLOCKED,
                             true,
@@ -2356,7 +2443,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                 }
                 return;
             }
-            if (agentExecution.primitive instanceof ActionDsl.WaitTicks) {
+            if (isAgentWait(agentExecution.primitive)) {
                 if (occurrenceBudgetExceeded(
                         agentActions.get(action.actionId()).progress(),
                         agentExecution)) {
@@ -2366,11 +2453,23 @@ public final class McmcpRuntime implements McpRuntimePort {
                             "primitive_budget");
                     return;
                 }
-                if (--agentExecution.waitTicksRemaining == 0) {
+                boolean complete = agentExecution.primitive instanceof ActionDsl.WaitUntil wait
+                        && cropMatureConditionSatisfied(
+                                wait.condition(),
+                                requireAgentMap(session),
+                                agentObservationFrames.latestFrame());
+                if (complete || agentExecution.primitive instanceof ActionDsl.WaitTicks
+                        && --agentExecution.waitTicksRemaining == 0) {
                     agentActions.completeNode(action.actionId());
                     agentExecution.primitive = null;
                     advanceAgentProgram(
                             minecraft, agentActions.get(action.actionId()).progress());
+                } else if (agentExecution.primitive instanceof ActionDsl.WaitUntil
+                        && --agentExecution.waitTicksRemaining == 0) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.CONDITION_TIMEOUT,
+                            true,
+                            "crop_mature_timeout");
                 }
                 return;
             }
@@ -2526,16 +2625,131 @@ public final class McmcpRuntime implements McpRuntimePort {
         agentExecution.primitive = advance.primitive();
         agentExecution.occurrenceBaseline = Objects.requireNonNull(
                 occurrenceBaseline, "occurrenceBaseline");
-        agentExecution.occurrenceLimit = agentExecution.program.primitiveCostBounds()
-                .get(advance.primitive().id());
-        if (agentExecution.occurrenceLimit == null) {
-            throw new IllegalStateException("Compiled primitive cost bound is unavailable");
-        }
+        agentExecution.occurrenceLimit = null;
+        agentExecution.retainOccurrenceBaseline = false;
+        agentExecution.primitivePlanning = false;
+        agentExecution.primitivePlanDeadlineTick = Math.addExact(
+                occurrenceBaseline.ticks(), primitiveReobservationTicks(advance.primitive()));
+        agentExecution.mutationAims.clear();
         agentActions.beginNode(agentExecution.actionId, advance.primitive().id());
         if (advance.primitive() instanceof ActionDsl.WaitTicks wait) {
             agentExecution.waitTicksRemaining = wait.ticks();
+            agentExecution.occurrenceLimit = agentExecution.program.primitiveCostBounds()
+                    .get(advance.primitive().id());
+        } else if (advance.primitive() instanceof ActionDsl.WaitUntil wait) {
+            agentExecution.waitTicksRemaining = wait.maxTicks();
+            agentExecution.occurrenceLimit = agentExecution.program.primitiveCostBounds()
+                    .get(advance.primitive().id());
+        }
+        if (isAgentWait(advance.primitive()) && agentExecution.occurrenceLimit == null) {
+            throw new IllegalStateException("Compiled wait cost bound is unavailable");
+        }
+        if (isAgentWait(advance.primitive())
+                && !fitsRemainingBudget(
+                        occurrenceBaseline,
+                        agentExecution.program.effectiveBudget(),
+                        agentExecution.occurrenceLimit,
+                        activeElapsedNanos(agentExecution, System.nanoTime()))) {
+            failAgentAction(
+                    AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                    false,
+                    "wait_remaining_budget");
+            return false;
         }
         return true;
+    }
+
+    private boolean bindAgentPrimitive(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action,
+            AgentActionStore.Progress progress,
+            long actionTick) {
+        try {
+            var player = Objects.requireNonNull(minecraft.player, "player");
+            var analysis = analyzePrimitive(
+                    action.program().request().program(),
+                    agentExecution.primitive,
+                    requireAgentMap(session),
+                    playerPose(player, session.dimension()),
+                    agentObservationFrames.latestFrame(),
+                    McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
+                    () -> true);
+            ActionDslCompiler.Cost cost = analysis.worstCase(agentExecution.primitive)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "JIT primitive analysis did not produce a cost"));
+            if (!fitsRemainingBudget(
+                    progress,
+                    action.program().effectiveBudget(),
+                    cost,
+                    activeElapsedNanos(agentExecution, System.nanoTime()))) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                        false,
+                        "jit_primitive_budget");
+                return false;
+            }
+            if (agentExecution.retainOccurrenceBaseline) {
+                agentExecution.occurrenceLimit = occurrenceCostIncludingConsumed(
+                        progress, agentExecution.occurrenceBaseline, cost);
+                agentExecution.retainOccurrenceBaseline = false;
+            } else {
+                agentExecution.occurrenceBaseline = progress;
+                agentExecution.occurrenceLimit = cost;
+            }
+            agentExecution.mutationAims.putAll(analysis.mutationAims());
+            agentExecution.primitivePlanDeadlineTick = 0L;
+            if (agentExecution.primitivePlanning) {
+                agentActions.setPhase(
+                        action.actionId(), AgentActionStore.Phase.EXECUTING, "jit_primitive_bound");
+                agentExecution.primitivePlanning = false;
+            }
+            return true;
+        } catch (AgentPrimitivePlanner.PlanningException unavailable) {
+            inputRelease.releaseAll(minecraft);
+            if (replanDeadlineReached(actionTick, agentExecution.primitivePlanDeadlineTick)) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.PATH_BLOCKED,
+                        true,
+                        "jit_" + unavailable.code().name().toLowerCase(Locale.ROOT));
+                return false;
+            }
+            if (!agentExecution.primitivePlanning) {
+                agentActions.setPhase(
+                        action.actionId(),
+                        AgentActionStore.Phase.REPLANNING,
+                        unavailable.code().name().toLowerCase(Locale.ROOT));
+                agentExecution.primitivePlanning = true;
+            }
+            return false;
+        }
+    }
+
+    static long primitiveReobservationTicks(ActionDsl.Node primitive) {
+        return requiresWorldPlanning(primitive)
+                ? AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS : 0L;
+    }
+
+    static boolean cropMatureConditionSatisfied(
+            ActionDsl.CropMatureCondition condition,
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame) {
+        var target = condition.target();
+        return latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(target.dimension()))
+                .flatMap(frame -> frame.records().stream())
+                .filter(ObservationRecord.VisibleSurface.class::isInstance)
+                .map(ObservationRecord.VisibleSurface.class::cast)
+                .anyMatch(surface -> surface.worldRevision() == map.worldRevision()
+                        && surface.position().x() == target.x()
+                        && surface.position().y() == target.y()
+                        && surface.position().z() == target.z()
+                        && surface.block().value().equals("minecraft:wheat")
+                        && Boolean.TRUE.equals(surface.cropMature()));
+    }
+
+    private static boolean isAgentWait(ActionDsl.Node primitive) {
+        return primitive instanceof ActionDsl.WaitTicks || primitive instanceof ActionDsl.WaitUntil;
     }
 
     private boolean beginAgentPrimitive(
@@ -2770,7 +2984,9 @@ public final class McmcpRuntime implements McpRuntimePort {
             WorldSessionTracker.Snapshot session,
             AgentActionStore.Active action) {
         if (agentExecution.blockMutationAttempt == null) {
-            SemanticActionRequest request = blockMutationRequest(agentExecution.primitive);
+            SemanticActionRequest request = blockMutationRequest(
+                    agentExecution.primitive,
+                    agentExecution.mutationAims.get(agentExecution.primitive.id()));
             long deadline = Math.addExact(
                     session.clientTick(), AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND);
             agentExecution.blockMutationAttempt = new KnownBlockMutationAttempt(
@@ -2780,10 +2996,16 @@ public final class McmcpRuntime implements McpRuntimePort {
                 agentExecution.blockMutationAttempt.tick(session.clientTick());
         switch (result.status()) {
             case RUNNING -> { }
-            case FAILED -> failAgentAction(
-                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                    true,
-                    result.evidence());
+            case FAILED -> {
+                if (retryableMutationAimFailure(result.evidence())) {
+                    retryAgentMutationAim(minecraft, action, result.evidence());
+                } else {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                            true,
+                            result.evidence());
+                }
+            }
             case SUCCEEDED -> {
                 agentExecution.blockMutationAttempt = null;
                 if (agentExecution.primitive instanceof ActionDsl.TillKnownBlock) {
@@ -2804,7 +3026,31 @@ public final class McmcpRuntime implements McpRuntimePort {
         }
     }
 
-    private static SemanticActionRequest blockMutationRequest(ActionDsl.Node node) {
+    private void retryAgentMutationAim(
+            Minecraft minecraft, AgentActionStore.Active action, String evidence) {
+        agentExecution.blockMutationAttempt.close();
+        agentExecution.blockMutationAttempt = null;
+        agentExecution.occurrenceLimit = null;
+        agentExecution.retainOccurrenceBaseline = true;
+        agentExecution.mutationAims.clear();
+        agentExecution.primitivePlanDeadlineTick = Math.addExact(
+                agentActions.get(action.actionId()).progress().ticks(),
+                AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
+        agentExecution.replanning = false;
+        agentExecution.replanNotBeforeTick = 0L;
+        agentExecution.replanDeadlineTick = 0L;
+        agentExecution.primitivePlanning = true;
+        inputRelease.releaseAll(minecraft);
+        agentActions.setPhase(action.actionId(), AgentActionStore.Phase.REPLANNING, evidence);
+    }
+
+    static boolean retryableMutationAimFailure(String evidence) {
+        return "aim_raycast_unavailable".equals(evidence);
+    }
+
+    static SemanticActionRequest blockMutationRequest(
+            ActionDsl.Node node, AgentPrimitivePlanner.MutationAim plannedAim) {
+        Objects.requireNonNull(plannedAim, "plannedAim");
         ActionDsl.Position position = switch (node) {
             case ActionDsl.TillKnownBlock value -> value.target();
             case ActionDsl.PlantKnownWheat value -> value.target();
@@ -2816,26 +3062,40 @@ public final class McmcpRuntime implements McpRuntimePort {
         boolean breaking = node instanceof ActionDsl.HarvestKnownWheat;
         var bounds = new ActionBounds(
                 position.dimension(), target, target, 0, 5, breaking);
+        var aim = Optional.of(blockAimWitness(plannedAim));
         return switch (node) {
             case ActionDsl.TillKnownBlock till -> new UseItemOnBlockRequest(
                     target,
                     new BlockStateFingerprint(till.expectedBlock(), Map.of()),
                     till.hoeItem(),
                     new BlockStateFingerprint("minecraft:farmland", Map.of("moisture", "0")),
-                    bounds);
+                    bounds,
+                    aim);
             case ActionDsl.PlantKnownWheat plant -> new PlaceBlockRequest(
                     target,
                     new BlockStateFingerprint("minecraft:air", Map.of()),
                     plant.seedItem(),
                     new BlockStateFingerprint("minecraft:wheat", Map.of("age", "0")),
-                    bounds);
+                    bounds,
+                    aim);
             case ActionDsl.HarvestKnownWheat ignored -> new BreakBlockRequest(
                     target,
                     new BlockStateFingerprint("minecraft:wheat", Map.of("age", "7")),
                     new BlockStateFingerprint("minecraft:air", Map.of()),
-                    bounds);
+                    bounds,
+                    aim);
             default -> throw new IllegalArgumentException("node is not a known block mutation");
         };
+    }
+
+    private static BlockAimWitness blockAimWitness(AgentPrimitivePlanner.MutationAim aim) {
+        var block = aim.block();
+        return new BlockAimWitness(
+                new BlockTarget(block.dimension(), block.x(), block.y(), block.z()),
+                BlockAimWitness.Face.valueOf(aim.face().name()),
+                aim.point().x,
+                aim.point().y,
+                aim.point().z);
     }
 
     private void requestAgentReplan(long actionTick, String reason) {
@@ -3196,11 +3456,13 @@ public final class McmcpRuntime implements McpRuntimePort {
     private record PreparedAgentAction(
             AgentAdmissionSnapshot snapshot,
             ActionDslCompiler.CompiledProgram program,
-            AgentPrimitivePlanner.Analysis analysis) {
+            AgentPrimitivePlanner.Analysis analysis,
+            Optional<ActionDsl.Node> initialPrimitive) {
         private PreparedAgentAction {
             Objects.requireNonNull(snapshot, "snapshot");
             Objects.requireNonNull(program, "program");
             Objects.requireNonNull(analysis, "analysis");
+            Objects.requireNonNull(initialPrimitive, "initialPrimitive");
         }
     }
 
@@ -3555,7 +3817,12 @@ public final class McmcpRuntime implements McpRuntimePort {
     }
 
     private static boolean breakProgramPreconditionsCurrent(
-            Minecraft minecraft, ActionDslCompiler.CompiledProgram program) {
+            Minecraft minecraft,
+            ActionDslCompiler.CompiledProgram program,
+            Optional<ActionDsl.Node> initialPrimitive) {
+        if (initialPrimitive.filter(ActionDsl.BreakKnownFace.class::isInstance).isEmpty()) {
+            return true;
+        }
         var player = minecraft.player;
         if (player == null) return false;
         var breaks = new ArrayList<ActionDsl.BreakKnownFace>();
@@ -3947,6 +4214,20 @@ public final class McmcpRuntime implements McpRuntimePort {
             MinecraftActionPrimitiveExecutor.Status status) {
         Objects.requireNonNull(status, "status");
         return occurrenceBudgetExceeded(used, execution);
+    }
+
+    static ActionDslCompiler.Cost occurrenceCostIncludingConsumed(
+            AgentActionStore.Progress used,
+            AgentActionStore.Progress baseline,
+            ActionDslCompiler.Cost next) {
+        return new ActionDslCompiler.Cost(
+                Math.addExact(consumedDurationMillis(used, baseline), next.durationMillis()),
+                Math.addExact(consumedTicks(used, baseline), next.ticks()),
+                consumedDistance(used, baseline) + next.distanceBlocks(),
+                consumedCamera(used, baseline) + next.cameraDegrees(),
+                Math.addExact(consumedInteractions(used, baseline), next.interactions()),
+                Math.addExact(consumedBreaks(used, baseline), next.blocksBroken()),
+                Math.addExact(consumedPlacements(used, baseline), next.blocksPlaced()));
     }
 
     private static long consumedDurationMillis(
@@ -6390,6 +6671,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         private final ActionDslCompiler.CompiledProgram program;
         private final ActionProgramCursor cursor;
         private final MinecraftActionPrimitiveExecutor primitiveExecutor;
+        private final Map<String, AgentPrimitivePlanner.MutationAim> mutationAims;
         private final long startedAtNanos;
         private long pausedNanos;
         private net.minecraft.world.phys.Vec3 lastPosition;
@@ -6399,7 +6681,10 @@ public final class McmcpRuntime implements McpRuntimePort {
         private int waitTicksRemaining;
         private long replanNotBeforeTick;
         private long replanDeadlineTick;
+        private long primitivePlanDeadlineTick;
         private boolean replanning;
+        private boolean primitivePlanning;
+        private boolean retainOccurrenceBaseline;
         private boolean replanHeartbeatPending;
         private boolean goalPreempted;
         private long positionCorrectionRevision;
@@ -6422,12 +6707,15 @@ public final class McmcpRuntime implements McpRuntimePort {
                 float lastPitch,
                 net.minecraft.client.player.LocalPlayer player,
                 float maxCameraDegreesPerTick,
+                Map<String, AgentPrimitivePlanner.MutationAim> mutationAims,
                 long positionCorrectionRevision) {
             actionId = action.actionId();
             this.worldSessionId = Objects.requireNonNull(worldSessionId, "worldSessionId");
             program = action.program();
             cursor = new ActionProgramCursor(action.program().request().program());
             primitiveExecutor = new MinecraftActionPrimitiveExecutor(maxCameraDegreesPerTick);
+            this.mutationAims = new LinkedHashMap<>(
+                    Objects.requireNonNull(mutationAims, "mutationAims"));
             this.startedAtNanos = startedAtNanos;
             this.lastPosition = Objects.requireNonNull(lastPosition, "lastPosition");
             this.lastYaw = lastYaw;

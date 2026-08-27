@@ -30,7 +30,7 @@ public final class ActionDsl {
     }
 
     public sealed interface Node permits NavigateToKnown, FaceKnownPosition, BreakKnownFace,
-            TillKnownBlock, PlantKnownWheat, HarvestKnownWheat, WaitTicks, If, Repeat {
+            TillKnownBlock, PlantKnownWheat, HarvestKnownWheat, WaitTicks, WaitUntil, If, Repeat {
         String id();
     }
 
@@ -101,6 +101,22 @@ public final class ActionDsl {
     public record WaitTicks(String id, int ticks) implements Node {
         public WaitTicks {
             Objects.requireNonNull(id, "id");
+        }
+    }
+
+    public record WaitUntil(
+            String id,
+            CropMatureCondition condition,
+            int maxTicks) implements Node {
+        public WaitUntil {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(condition, "condition");
+        }
+    }
+
+    public record CropMatureCondition(Position target) {
+        public CropMatureCondition {
+            Objects.requireNonNull(target, "target");
         }
     }
 

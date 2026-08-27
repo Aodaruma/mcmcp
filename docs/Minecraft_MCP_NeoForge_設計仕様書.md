@@ -655,7 +655,8 @@ Action DSL v1の制御構造:
 - `if`はnodeへ入った時点のpolicy-filtered `AgentSnapshot`を1回評価
 - `repeat`はJSON内の固定`count`だけを使用し、1〜16回
 - primitive失敗はAction全体を失敗
-- while、until、再帰呼出し、並列実行、変数、任意式、catch、finally、on_cancelはなし
+- 汎用while/until、再帰呼出し、並列実行、変数、任意式、catch、finally、on_cancelはなし
+- `wait_until`は閉じた条件と固定`max_ticks`を持つ有限待機だけを許可
 - Safety Governor、Esc、OFF、cancelをDSLから捕捉・無効化できない
 
 現在許可するprimitive:
@@ -665,12 +666,13 @@ Action DSL v1の制御構造:
 | navigate_to_known | movement | Known Traversability Map上の地点へ移動 |
 | face_known_position | camera | 既知座標へ角速度制限付きで向く |
 | wait_ticks | なし | 1〜200 active tick待機 |
+| wait_until | なし | 指定した既知座標の`crop_mature=true`を最大1〜12,000 active tick待機 |
 | break_known_face | camera, block_break | 宣言した可視・既知のoak / birch幹1個を、指定したVanilla axeで通常入力から破壊 |
 | till_known_block | camera, block_interact | 可視・既知のdirt / grass_block / dirt_path 1個を、指定したVanilla hoeの通常useでfarmlandへ変換 |
 | plant_known_wheat | camera, block_place | 可視・既知のfarmland直上のairへwheat_seedsを通常useで植え、age=0を確認 |
 | harvest_known_wheat | camera, block_break | 可視・既知かつ実行時age=7のwheat 1個だけを通常破壊し、airを確認 |
 
-`break_known_face`の`tool_item`と`till_known_block`の`hoe_item`はinventory内の該当toolをhotbarへ一時退避して決定論的に選択する契約であり、任意slot操作を公開しない。`plant_known_wheat`も同じ準備経路でwheat_seedsを選ぶ。各変化はclient prediction ACKとauthoritative block stateで確認し、toolや種を生成・補充しない。成熟待ちはAction外で`crop_mature`を再観測し、収穫と植え直しを新しい有限Actionとして反復する。raw attack/useや任意座標操作へ一般化しない。
+`break_known_face`の`tool_item`と`till_known_block`の`hoe_item`はinventory内の該当toolをhotbarへ一時退避して決定論的に選択する契約であり、任意slot操作を公開しない。`plant_known_wheat`も同じ準備経路でwheat_seedsを選ぶ。各変化はclient prediction ACKとauthoritative block stateで確認し、toolや種を生成・補充しない。成熟待ちは`wait_until`内でpolicy-filteredな`crop_mature`だけを再観測し、timeout時は入力を発生させずActionを終了する。raw attack/useや任意座標操作へ一般化しない。
 
 predicateは次のpolicy-filtered snapshot fieldだけを使用できる。
 
@@ -751,7 +753,13 @@ chat、scoreboard、看板、本、sound、raw ray、任意block/entity queryを
 - node id: program内で一意
 - request全体: 64 KiB以下
 
-compilerは各nodeを`ticks / duration / distance / camera / interactions / breaks / places`のworst-case cost vectorへ変換する。sequenceは和、`if`は各成分のbranch最大値、`repeat`は固定回数倍とする。overflow、上限を証明できないprogram、request budgetまたはlocal hard limitを越えるprogramは入力を発生させず拒否する。実行時も各node開始前と各ClientTickで実counterを再検証する。さらにprimitive nodeごとのcost boundをcompiled programへ保持し、repeatで同じnodeを再度実行する場合もlogical occurrenceごとに開始counterを固定する。replanでは開始counterを更新せず、成功して次のoccurrenceへ進んだ時だけ更新するため、再計画でprimitive予算を補充できない。ここでcompile時の`duration`は20 TPSでのactive tick scheduling見積り（1 tick = 50 ms）であり、低TPSやclient stallを含むwall-clock完了保証ではない。`max_duration_ms`はこれと独立した`System.nanoTime`基準のhard deadlineとして各出力前に検査し、pause時間だけを除外するため、tick見積りを満たしていてもstall時は入力を出さず`BUDGET_EXCEEDED`で終了できる。
+compilerはtree全体について、node数、有限制御構造、capability、`interactions / breaks / places`の最大回数、`wait_ticks / wait_until`の最大時間を静的に証明する。sequenceは和、`if`は各成分のbranch最大値、`repeat`は固定回数倍とする。overflow、上限を証明できないprogram、request budgetまたはlocal hard limitを越えるprogramは入力を発生させず拒否する。
+
+world状態、経路、照準に依存するprimitiveは、Action受付時に最初の実行nodeだけを現在snapshotへbindし、以後は各node開始直前にfreshなKnown Traversability Map、Observation Frame、player poseでJIT計画する。前nodeのworld mutation後に次nodeの証拠がまだ更新されていない場合は、入力をneutralに保った最大40 active tickのreobservation window内でだけ再試行する。
+
+block mutationのaim pointはfull cubeの仮想中心ではなく、360度観測rayが実VoxelShapeに命中したXYZをwire非公開の内部証拠として使う。その観測時eye originが現在poseと許容誤差内で一致し、命中点がinteraction reach内で、world revision、block、face、必要な成熟状態も一致する場合だけbindする。計画時に選んだblock、face、aim pointはそのlogical occurrenceへ固定し、実行層が別faceや別supportを探索し直してはならない。終点でVanilla互換raycastを1回検証し、不一致ならuse / attackを送らずfresh observationへ戻る。同じlogical occurrence内で既に消費したtick / camera予算は戻さない。
+
+実行時はprogram全体とlogical primitive occurrenceの両方について、各node開始前と各ClientTickで実counterを再検証する。repeatで同じnodeを再度実行しても開始counterはoccurrenceごとに一度だけ固定し、replanで予算を補充しない。`max_duration_ms`は`System.nanoTime`基準のhard deadlineとして各出力前に検査し、pause時間だけを除外するため、client stall時も入力を出さず`BUDGET_EXCEEDED`で終了できる。
 
 templateは`agent_start_action.inputSchema.examples`に掲載し、実装repositoryにも次のJSONを置く。
 
@@ -759,6 +767,7 @@ templateは`agent_start_action.inputSchema.examples`に掲載し、実装reposit
 - [`approach_and_face.json`](action-templates/approach_and_face.json): 移動、health分岐、視点変更または待機
 - [`known_route.json`](action-templates/known_route.json): 既知区間を固定回数だけ往復する
 - [`break_known_oak_column.json`](action-templates/break_known_oak_column.json): 地上から届く、現在可視な3段oak幹を下から順に破壊する
+- [`wheat_cycle.json`](action-templates/wheat_cycle.json): 1区画を耕し、植え、有限成熟待機後に収穫する
 
 templateもcustom programと同じvalidator、capability、budget、READY許可、安全条件を通る。
 
@@ -770,7 +779,8 @@ templateもcustom programと同じvalidator、capability、budget、READY許可�
 - READY許可が有効
 - 実行中Taskがない
 - AST、predicate、capability、static budgetが有効
-- 全targetと必要経路がKnown Traversability Mapで使用可能
+- 最初に実行するtargetと必要経路が現在のKnown Traversability Mapで使用可能
+- 2 node目以降は各node開始直前のfresh observationで同じ条件を再検証
 - targetが同じdimension
 - 第10章の安全事前条件を満たす
 - multiplayerの場合はローカルallowlist済み
@@ -819,7 +829,7 @@ agent_get_action:
 }
 ~~~
 
-`progress`のschema上限は通常Actionと、そのActionをpreemptしたrecoveryの累積上限である。したがってdistanceは32 + 16 = 48 block、cameraは360 + 360 = 720度、tickは600 + 200 = 800となる。通常Actionのinteraction / place予算は0、break予算は最大8で、recoveryはinteraction 8 / break 4 / place 8を別枠で持つため、公開break counterの上限は12である。同dimension内のserver correction、teleport、knockbackなど外力で実測値がこの固定契約を越えた場合、公開counterはschema上限へ飽和させると同時に内部overflow latchを立て、Actionをbudget超過として終了する。飽和値を「上限内」と誤認したり、契約外の値を返したり、外力を相殺したりはしない。
+`progress`のschema上限は通常Actionと、そのActionをpreemptしたrecoveryの累積上限である。したがってdistanceは32 + 16 = 48 block、cameraは360 + 360 = 720度、tickは12,000 + 200 = 12,200となる。通常Actionはinteraction / break / placeを各最大8、recoveryはinteraction 8 / break 4 / place 8を別枠で持つため、公開counterの上限はinteraction 16 / break 12 / place 16である。同dimension内のserver correction、teleport、knockbackなど外力で実測値がこの固定契約を越えた場合、公開counterはschema上限へ飽和させると同時に内部overflow latchを立て、Actionをbudget超過として終了する。飽和値を「上限内」と誤認したり、契約外の値を返したり、外力を相殺したりはしない。
 
 agent_get_stateの返却対象:
 
@@ -1207,7 +1217,7 @@ client config:
 - recovery_max_ticks / distance / camera_degrees / interactions / placements / breaks
 - multiplayer_default
 
-MVPではrecovery各値の設定可能な上限を200 ticks、16 blocks、360 degrees、8 interactions、8 placements、4 breaksとする。Goal上限との合算が`agent_get_action`の固定出力schema（800 ticks、48 blocks、720 degrees）を越えないことをconfig境界でも保証する。
+MVPではrecovery各値の設定可能な上限を200 ticks、16 blocks、360 degrees、8 interactions、8 placements、4 breaksとする。Goal上限との合算が`agent_get_action`の固定出力schema（12,200 ticks、48 blocks、720 degrees）を越えないことをconfig境界でも保証する。
 
 tokenはconfig screenへ平文表示しない。ローカルclient commandまたはMods画面のbuttonから、MCP接続設定をclipboardへコピーできるようにする。
 

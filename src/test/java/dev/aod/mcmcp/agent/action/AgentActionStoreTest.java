@@ -65,7 +65,7 @@ class AgentActionStoreTest {
     }
 
     @Test
-    void permitsTerminalTraceAtEightHundredTicksButNeverMutatesToEightHundredOne() {
+    void permitsTerminalTraceAtTheRecordedTickLimitButNeverExceedsIt() {
         var store = new AgentActionStore();
         var accepted = store.start(program(), Instant.EPOCH);
         store.markRunning(accepted.actionId());

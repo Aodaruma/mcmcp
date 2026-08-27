@@ -22,6 +22,8 @@ public final class ActionDslValidator {
     public static final int MAX_BRANCH_NODES = 16;
     public static final int MAX_PREDICATE_OPERANDS = 4;
     public static final int MAX_REQUEST_BYTES = 64 * 1024;
+    public static final int MAX_ACTION_TICKS = 12_000;
+    public static final long MAX_ACTION_DURATION_MILLIS = MAX_ACTION_TICKS * 50L;
     public static final int MAX_BLOCKS_BROKEN = 8;
     public static final int MAX_INTERACTIONS = 8;
     public static final int MAX_BLOCKS_PLACED = 8;
@@ -91,8 +93,9 @@ public final class ActionDslValidator {
 
     static void validateRequestBudget(ActionDsl.Budget budget) {
         Objects.requireNonNull(budget, "budget");
-        requireRange(budget.maxDurationMillis(), 100, 30_000, "budget.max_duration_ms");
-        requireRange(budget.maxTicks(), 2, 600, "budget.max_ticks");
+        requireRange(budget.maxDurationMillis(), 100, MAX_ACTION_DURATION_MILLIS,
+                "budget.max_duration_ms");
+        requireRange(budget.maxTicks(), 2, MAX_ACTION_TICKS, "budget.max_ticks");
         requireFiniteRange(budget.maxDistanceBlocks(), 0, 32, "budget.max_distance_blocks");
         requireFiniteRange(budget.maxCameraDegrees(), 0, 360, "budget.max_camera_degrees");
         requireRange(budget.maxInteractions(), 0, MAX_INTERACTIONS, "budget.max_interactions");
@@ -207,6 +210,11 @@ public final class ActionDslValidator {
         }
         if (node instanceof ActionDsl.WaitTicks wait) {
             requireRange(wait.ticks(), 1, 200, path + ".ticks");
+            return 1;
+        }
+        if (node instanceof ActionDsl.WaitUntil wait) {
+            validatePosition(wait.condition().target(), path + ".condition.target");
+            requireRange(wait.maxTicks(), 1, MAX_ACTION_TICKS, path + ".max_ticks");
             return 1;
         }
         if (node instanceof ActionDsl.If conditional) {

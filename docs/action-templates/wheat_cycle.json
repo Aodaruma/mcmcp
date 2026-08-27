@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "program": {
+    "dsl_version": 1,
+    "name": "wheat_cycle",
+    "capabilities": [
+      "camera",
+      "block_interact",
+      "block_place",
+      "block_break"
+    ],
+    "body": [
+      {
+        "id": "till",
+        "op": "till_known_block",
+        "target": {
+          "dimension": "minecraft:overworld",
+          "x": 0,
+          "y": 64,
+          "z": 0
+        },
+        "expected_block": "minecraft:dirt",
+        "hoe_item": "minecraft:iron_hoe"
+      },
+      {
+        "id": "plant",
+        "op": "plant_known_wheat",
+        "target": {
+          "dimension": "minecraft:overworld",
+          "x": 0,
+          "y": 65,
+          "z": 0
+        },
+        "support": {
+          "dimension": "minecraft:overworld",
+          "x": 0,
+          "y": 64,
+          "z": 0
+        },
+        "seed_item": "minecraft:wheat_seeds"
+      },
+      {
+        "id": "grow",
+        "op": "wait_until",
+        "condition": {
+          "type": "crop_mature",
+          "target": {
+            "dimension": "minecraft:overworld",
+            "x": 0,
+            "y": 65,
+            "z": 0
+          }
+        },
+        "max_ticks": 11000
+      },
+      {
+        "id": "harvest",
+        "op": "harvest_known_wheat",
+        "target": {
+          "dimension": "minecraft:overworld",
+          "x": 0,
+          "y": 65,
+          "z": 0
+        }
+      }
+    ]
+  },
+  "budget": {
+    "max_duration_ms": 600000,
+    "max_ticks": 12000,
+    "max_distance_blocks": 0,
+    "max_camera_degrees": 360,
+    "max_interactions": 1,
+    "max_blocks_broken": 1,
+    "max_blocks_placed": 1
+  }
+}

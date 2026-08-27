@@ -5,6 +5,7 @@ import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
+import dev.aod.mcmcp.agent.navigation.KnownTraversabilityMap;
 import dev.aod.mcmcp.agent.safety.ObservationRecord;
 import dev.aod.mcmcp.routine.ActionBounds;
 import dev.aod.mcmcp.routine.ApplyBlockPlanOperation;
@@ -52,6 +53,172 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 class McmcpRuntimeHardeningTest {
+    @Test
+    void staticCompilationCountsFutureMutationsWithoutPlanningFutureWorldStates() {
+        var support = new ActionDsl.Position("minecraft:overworld", 1, 64, 1);
+        var crop = new ActionDsl.Position("minecraft:overworld", 1, 65, 1);
+        var request = new ActionDsl.Request(
+                1,
+                new ActionDsl.Program(
+                        1,
+                        Optional.of("jit_wheat"),
+                        Set.of(
+                                ActionDsl.Capability.CAMERA,
+                                ActionDsl.Capability.BLOCK_INTERACT,
+                                ActionDsl.Capability.BLOCK_PLACE,
+                                ActionDsl.Capability.BLOCK_BREAK),
+                        List.of(
+                                new ActionDsl.TillKnownBlock(
+                                        "till", support, "minecraft:dirt", "minecraft:iron_hoe"),
+                                new ActionDsl.PlantKnownWheat(
+                                        "plant", crop, support, "minecraft:wheat_seeds"),
+                                new ActionDsl.WaitUntil(
+                                        "grow", new ActionDsl.CropMatureCondition(crop), 10),
+                                new ActionDsl.HarvestKnownWheat("harvest", crop))),
+                new ActionDsl.Budget(10_000, 100, 0, 0, 1, 1, 1));
+
+        var compiled = ActionDslCompiler.compile(
+                request,
+                McmcpRuntime::structuralPrimitiveCost,
+                request.program().capabilities());
+
+        assertThat(compiled.worstCaseCost()).isEqualTo(
+                new ActionDslCompiler.Cost(500, 10, 0, 0, 1, 1, 1));
+        assertThat(compiled.primitiveCostBounds().get("plant").ticks()).isZero();
+        assertThat(McmcpRuntime.primitiveReobservationTicks(request.program().body().get(1)))
+                .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
+        assertThat(McmcpRuntime.primitiveReobservationTicks(
+                new ActionDsl.NavigateToKnown("move", support, 0.75)))
+                .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
+        assertThat(McmcpRuntime.primitiveReobservationTicks(
+                new ActionDsl.FaceKnownPosition("face", support)))
+                .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
+        assertThat(McmcpRuntime.primitiveReobservationTicks(new ActionDsl.WaitTicks("hold", 1)))
+                .isZero();
+    }
+
+    @Test
+    void waitNodeStartMustFitItsWholeRemainingBound() {
+        var usedAtBoundary = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING,
+                "grow",
+                1,
+                2,
+                0,
+                0,
+                0,
+                0,
+                0,
+                10,
+                false);
+        var budget = new ActionDsl.Budget(2_000, 30, 0, 0, 0, 0, 0);
+        var waitCost = new ActionDslCompiler.Cost(1_000, 20, 0, 0, 0, 0, 0);
+
+        assertThat(McmcpRuntime.fitsRemainingBudget(
+                usedAtBoundary,
+                budget,
+                waitCost,
+                Duration.ofMillis(1_000).toNanos())).isTrue();
+        assertThat(McmcpRuntime.fitsRemainingBudget(
+                new AgentActionStore.Progress(
+                        AgentActionStore.Phase.EXECUTING,
+                        "grow",
+                        1,
+                        2,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        11,
+                        false),
+                budget,
+                waitCost,
+                Duration.ofMillis(1_000).toNanos())).isFalse();
+        assertThat(McmcpRuntime.fitsRemainingBudget(
+                usedAtBoundary,
+                budget,
+                waitCost,
+                Duration.ofMillis(1_001).toNanos())).isFalse();
+    }
+
+    @Test
+    void onlyAimRaycastFailureRebindsWithoutErasingConsumedOccurrenceBudget() {
+        assertThat(McmcpRuntime.retryableMutationAimFailure("aim_raycast_unavailable")).isTrue();
+        assertThat(McmcpRuntime.retryableMutationAimFailure("mutation_precondition_changed"))
+                .isFalse();
+        assertThat(McmcpRuntime.retryableMutationAimFailure("AIM_RAYCAST_UNAVAILABLE")).isFalse();
+
+        var baseline = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING,
+                "plant",
+                0,
+                1,
+                0,
+                10,
+                0,
+                0,
+                0,
+                20,
+                false);
+        var used = new AgentActionStore.Progress(
+                AgentActionStore.Phase.REPLANNING,
+                "plant",
+                0,
+                1,
+                0,
+                25,
+                0,
+                0,
+                0,
+                25,
+                false);
+        var rebound = new ActionDslCompiler.Cost(5_050, 101, 0, 5, 0, 0, 1);
+
+        assertThat(McmcpRuntime.occurrenceCostIncludingConsumed(used, baseline, rebound))
+                .isEqualTo(new ActionDslCompiler.Cost(5_300, 106, 0, 20, 0, 0, 1));
+    }
+
+    @Test
+    void waitUntilAcceptsOnlyCurrentMatureWheatEvidence() {
+        var target = new ActionDsl.Position("minecraft:overworld", 2, 65, 3);
+        var dimension = new dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId(
+                target.dimension());
+        var surface = new dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleSurface(
+                new dev.aod.mcmcp.agent.observation.ObservationValues.BlockPosition(
+                        dimension, target.x(), target.y(), target.z()),
+                dev.aod.mcmcp.agent.observation.ObservationRecord.Face.UP,
+                new dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId("minecraft:wheat"),
+                dev.aod.mcmcp.agent.observation.ObservationRecord.ShapeClass.CUTOUT,
+                true,
+                new dev.aod.mcmcp.agent.observation.ObservationValues.WorldPosition(
+                        dimension, 2.5, 66.62, 3.5),
+                10,
+                7);
+        var frame = new dev.aod.mcmcp.agent.observation.ObservationFrame(
+                "obs-0000000000000001",
+                dimension,
+                10,
+                16,
+                false,
+                List.of(surface));
+        var map = new KnownTraversabilityMap();
+        map.startSession(UUID.randomUUID(), target.dimension(), 7);
+
+        assertThat(McmcpRuntime.cropMatureConditionSatisfied(
+                new ActionDsl.CropMatureCondition(target),
+                map.snapshot().orElseThrow(),
+                Optional.of(frame))).isTrue();
+
+        map.advanceWorldRevision(8, List.of(), List.of());
+        assertThat(McmcpRuntime.cropMatureConditionSatisfied(
+                new ActionDsl.CropMatureCondition(target),
+                map.snapshot().orElseThrow(),
+                Optional.of(frame))).isFalse();
+        assertThat(AgentActionStore.FailureCode.CONDITION_TIMEOUT.wireName())
+                .isEqualTo("CONDITION_TIMEOUT");
+    }
+
     @Test
     void completedBreakReobservationDoesNotReserveTheSameWaitTwice() {
         var planned = new ActionDslCompiler.Cost(5_500, 110, 0, 15, 0, 1, 0);
@@ -270,8 +437,8 @@ class McmcpRuntimeHardeningTest {
         assertThat(control.get("game_paused")).isEqualTo(false);
         var policy = (Map<?, ?>) state.get("policy");
         assertThat(policy.get("profile")).isEqualTo("survival_omnidirectional");
-        assertThat(policy.get("max_duration_ms")).isEqualTo(30_000);
-        assertThat(policy.get("max_ticks")).isEqualTo(600);
+        assertThat(policy.get("max_duration_ms")).isEqualTo(600_000);
+        assertThat(policy.get("max_ticks")).isEqualTo(12_000);
         assertThat(policy.get("max_distance_blocks")).isEqualTo(32);
         assertThat(policy.get("max_blocks_broken")).isEqualTo(8);
     }

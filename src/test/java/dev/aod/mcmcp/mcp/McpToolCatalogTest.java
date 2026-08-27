@@ -2,6 +2,7 @@ package dev.aod.mcmcp.mcp;
 
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParser;
+import dev.aod.mcmcp.agent.action.AgentActionStore;
 import org.junit.jupiter.api.Test;
 
 import java.io.InputStreamReader;
@@ -75,6 +76,51 @@ class McpToolCatalogTest {
                 .getAsJsonObject().getAsJsonObject("outputSchema");
         var state = new GsonBuilder().serializeNulls().create().toJsonTree(McpTestFixtures.state());
         assertThat(CatalogSchemaValidator.matches(stateSchema, state)).as(state.toString()).isTrue();
+    }
+
+    @Test
+    void catalogClosesAndBoundsCropMaturityWaits() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var request = schema.getAsJsonArray("examples").get(0).getAsJsonObject().deepCopy();
+        var wait = JsonParser.parseString("""
+                {"id":"await_mature","op":"wait_until",
+                 "condition":{"type":"crop_mature","target":{
+                   "dimension":"minecraft:overworld","x":10,"y":65,"z":10}},
+                 "max_ticks":12000}
+                """).getAsJsonObject();
+        request.getAsJsonObject("program").add("body", new com.google.gson.JsonArray());
+        request.getAsJsonObject("program").getAsJsonArray("body").add(wait);
+        request.getAsJsonObject("budget").addProperty("max_duration_ms", 600_000);
+        request.getAsJsonObject("budget").addProperty("max_ticks", 12_000);
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+
+        var unsupported = request.deepCopy();
+        unsupported.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().getAsJsonObject("condition")
+                .addProperty("type", "expression");
+        assertThat(CatalogSchemaValidator.matches(schema, unsupported)).isFalse();
+
+        var unbounded = request.deepCopy();
+        unbounded.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().addProperty("max_ticks", 12_001);
+        assertThat(CatalogSchemaValidator.matches(schema, unbounded)).isFalse();
+    }
+
+    @Test
+    void actionProgressSchemaMatchesTheRuntimeRecordingLimits() {
+        var output = new McpToolCatalog().outputSchema("agent_get_action");
+        var progress = output.getAsJsonObject("properties")
+                .getAsJsonObject("progress")
+                .getAsJsonObject("properties");
+
+        assertThat(progress.getAsJsonObject("ticks").get("maximum").getAsInt())
+                .isEqualTo(AgentActionStore.MAX_RECORDED_TICKS);
+        assertThat(progress.getAsJsonObject("interactions").get("maximum").getAsInt())
+                .isEqualTo(AgentActionStore.MAX_RECORDED_INTERACTIONS);
+        assertThat(progress.getAsJsonObject("blocks_broken").get("maximum").getAsInt())
+                .isEqualTo(AgentActionStore.MAX_RECORDED_BLOCKS_BROKEN);
+        assertThat(progress.getAsJsonObject("blocks_placed").get("maximum").getAsInt())
+                .isEqualTo(AgentActionStore.MAX_RECORDED_BLOCKS_PLACED);
     }
 
     @Test

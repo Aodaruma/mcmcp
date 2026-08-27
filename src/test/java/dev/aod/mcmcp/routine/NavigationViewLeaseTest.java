@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 
 class NavigationViewLeaseTest {
     @Test
-    void turnIsBoundedAndCloseRestoresTheOriginalViewAfterManualInterference() {
+    void turnIsBoundedAndCloseKeepsThePlannedViewWhileRestoringTheSlot() {
         var owner = UUID.randomUUID();
         var control = new FakeViewControl(20.0F, 10.0F, 1);
         var lease = NavigationViewLease.acquire(control, owner);
@@ -29,15 +29,12 @@ class NavigationViewLeaseTest {
         assertThatIllegalStateException().isThrownBy(() ->
                 lease.turnToward(owner, 80.0F, 40.0F));
 
-        control.failNextTurn = true;
-        assertThatIllegalStateException().isThrownBy(() -> lease.close(owner));
-        assertThat(control.slot).isEqualTo(1);
         lease.close(owner);
         lease.close(owner);
-        assertThat(control.yaw).isEqualTo(20.0F);
-        assertThat(control.pitch).isEqualTo(10.0F);
+        assertThat(control.yaw).isEqualTo(30.0F);
+        assertThat(control.pitch).isEqualTo(18.0F);
         assertThat(control.slot).isEqualTo(1);
-        assertThat(control.turnCount).isEqualTo(2);
+        assertThat(control.turnCount).isOne();
     }
 
     @Test
@@ -60,7 +57,6 @@ class NavigationViewLeaseTest {
         private float pitch;
         private int slot;
         private int turnCount;
-        private boolean failNextTurn;
 
         private FakeViewControl(float yaw, float pitch, int slot) {
             this.yaw = yaw;
@@ -85,10 +81,6 @@ class NavigationViewLeaseTest {
 
         @Override
         public void turn(float yawDeltaDegrees, float pitchDeltaDegrees) {
-            if (failNextTurn) {
-                failNextTurn = false;
-                throw new IllegalStateException("injected turn failure");
-            }
             yaw += yawDeltaDegrees;
             pitch += pitchDeltaDegrees;
             turnCount++;

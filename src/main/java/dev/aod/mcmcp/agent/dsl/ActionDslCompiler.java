@@ -13,7 +13,8 @@ import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.PROGRAM_BUDGET_UNP
 /** Component-wise worst-case compiler for one already closed Action DSL v1 tree. */
 public final class ActionDslCompiler {
     public static final ActionDsl.Budget PHASE_ONE_HARD_LIMIT = new ActionDsl.Budget(
-            30_000, 600, 32, 360,
+            ActionDslValidator.MAX_ACTION_DURATION_MILLIS,
+            ActionDslValidator.MAX_ACTION_TICKS, 32, 360,
             ActionDslValidator.MAX_INTERACTIONS,
             ActionDslValidator.MAX_BLOCKS_BROKEN,
             ActionDslValidator.MAX_BLOCKS_PLACED);
@@ -76,11 +77,10 @@ public final class ActionDslCompiler {
             PrimitiveCostModel primitiveCosts,
             Map<String, Cost> primitiveCostBounds) {
         if (node instanceof ActionDsl.WaitTicks wait) {
-            Cost cost = new Cost(
-                    multiplyExact(wait.ticks(), NOMINAL_TICK_MILLIS),
-                    wait.ticks(), 0, 0, 0, 0, 0);
-            primitiveCostBounds.put(node.id(), cost);
-            return cost;
+            return compileWait(node, wait.ticks(), primitiveCostBounds);
+        }
+        if (node instanceof ActionDsl.WaitUntil wait) {
+            return compileWait(node, wait.maxTicks(), primitiveCostBounds);
         }
         if (node instanceof ActionDsl.NavigateToKnown
                 || node instanceof ActionDsl.FaceKnownPosition
@@ -130,6 +130,15 @@ public final class ActionDslCompiler {
         return multiply(
                 compileSequence(repeat.body(), primitiveCosts, primitiveCostBounds),
                 repeat.count());
+    }
+
+    private static Cost compileWait(
+            ActionDsl.Node node, int ticks, Map<String, Cost> primitiveCostBounds) {
+        Cost cost = new Cost(
+                multiplyExact(ticks, NOMINAL_TICK_MILLIS),
+                ticks, 0, 0, 0, 0, 0);
+        primitiveCostBounds.put(node.id(), cost);
+        return cost;
     }
 
     private static void requireMutationCost(

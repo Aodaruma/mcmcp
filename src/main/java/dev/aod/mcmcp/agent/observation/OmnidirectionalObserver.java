@@ -340,6 +340,7 @@ public final class OmnidirectionalObserver {
                             shapeClass,
                             state.getBlock() instanceof CropBlock crop
                                     ? crop.isMaxAge(state) : null,
+                            worldPosition(sample.dimension(), hit.getLocation()),
                             sample.eyeOrigin(),
                             sample.observedTick(),
                             sample.worldRevision()));
