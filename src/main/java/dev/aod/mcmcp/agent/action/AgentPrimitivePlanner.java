@@ -823,8 +823,8 @@ public final class AgentPrimitivePlanner {
 
     private static double angularError(
             float yaw, float pitch, float desiredYaw, float desiredPitch) {
-        return Math.abs(Mth.wrapDegrees(desiredYaw - yaw))
-                + Math.abs(Mth.clamp(desiredPitch, -90.0F, 90.0F) - pitch);
+        return Math.abs(Mth.wrapDegrees((double) desiredYaw - yaw))
+                + Math.abs((double) Mth.clamp(desiredPitch, -90.0F, 90.0F) - pitch);
     }
 
     private static NavCell navCell(ActionDsl.Position position) {

@@ -110,6 +110,19 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void cameraCostDoesNotRoundBelowTheFloatRotationEndpoints() {
+        var pose = new AgentPrimitivePlanner.Pose(
+                new NavCell(DIMENSION, 0, 0, 0),
+                0.5D, 0.0D, 0.5D, 1.5D, 46.28893F, 0.0F);
+
+        var cost = AgentPrimitivePlanner.faceCost(
+                pose, new ActionDsl.Position(DIMENSION, 1, 1, 1), 4.5F);
+
+        assertThat(cost.cameraDegrees())
+                .isEqualTo(Math.abs(-45.0D - (double) pose.yaw()));
+    }
+
+    @Test
     void navigationCostUsesThePriorPrimitiveDestination() {
         UUID session = UUID.randomUUID();
         var map = map(session);
