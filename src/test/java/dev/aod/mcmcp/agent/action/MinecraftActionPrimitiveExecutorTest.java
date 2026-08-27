@@ -169,6 +169,18 @@ class MinecraftActionPrimitiveExecutorTest {
                 1.5D, 63.99D, 0.5D, waypoint, 0.75D)).isFalse();
     }
 
+    @Test
+    void steeringQuantizesToTheEightDirectionWithMaximumWorldVectorDot() {
+        assertThat(MinecraftActionPrimitiveExecutor.steering(
+                0.0D,
+                0.0D,
+                -174.75365F,
+                0.464821D,
+                -1.062151D,
+                0.0D))
+                .containsExactly(MovementInputLease.MovementKey.FORWARD);
+    }
+
     private static RoutePlan route(
             KnownTraversabilitySnapshot snapshot, NavCell start, NavCell target) {
         return new DeterministicAStar().findRoute(snapshot, start, target).route().orElseThrow();

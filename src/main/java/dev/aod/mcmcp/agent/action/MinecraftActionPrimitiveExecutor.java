@@ -598,23 +598,38 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         double forwardZ = Math.cos(radians);
         double forward = dx * forwardX + dz * forwardZ;
         double right = dx * -forwardZ + dz * forwardX;
-        var result = EnumSet.noneOf(MovementInputLease.MovementKey.class);
-        if (forward > 0.10D) result.add(MovementInputLease.MovementKey.FORWARD);
-        else if (forward < -0.10D) result.add(MovementInputLease.MovementKey.BACK);
-        if (right > 0.10D) result.add(MovementInputLease.MovementKey.RIGHT);
-        else if (right < -0.10D) result.add(MovementInputLease.MovementKey.LEFT);
-        if (result.isEmpty() && Math.hypot(dx, dz) > tolerance) {
-            if (Math.abs(forward) >= Math.abs(right)) {
-                result.add(forward >= 0.0D
-                        ? MovementInputLease.MovementKey.FORWARD
-                        : MovementInputLease.MovementKey.BACK);
-            } else {
-                result.add(right >= 0.0D
-                        ? MovementInputLease.MovementKey.RIGHT
-                        : MovementInputLease.MovementKey.LEFT);
+        if (Math.abs(forward) <= 0.10D && Math.abs(right) <= 0.10D
+                && Math.hypot(dx, dz) <= tolerance) {
+            return Set.of();
+        }
+
+        var best = EnumSet.noneOf(MovementInputLease.MovementKey.class);
+        double bestDot = Double.NEGATIVE_INFINITY;
+        for (int forwardInput = -1; forwardInput <= 1; forwardInput++) {
+            for (int leftInput = -1; leftInput <= 1; leftInput++) {
+                if (forwardInput == 0 && leftInput == 0) {
+                    continue;
+                }
+                var candidate = EnumSet.noneOf(MovementInputLease.MovementKey.class);
+                if (forwardInput > 0) {
+                    candidate.add(MovementInputLease.MovementKey.FORWARD);
+                } else if (forwardInput < 0) {
+                    candidate.add(MovementInputLease.MovementKey.BACK);
+                }
+                if (leftInput > 0) {
+                    candidate.add(MovementInputLease.MovementKey.LEFT);
+                } else if (leftInput < 0) {
+                    candidate.add(MovementInputLease.MovementKey.RIGHT);
+                }
+                Vec3 direction = commandDirection(yaw, candidate);
+                double dot = direction.x * dx + direction.z * dz;
+                if (dot > bestDot) {
+                    bestDot = dot;
+                    best = candidate;
+                }
             }
         }
-        return Set.copyOf(result);
+        return Set.copyOf(best);
     }
 
     static Vec3 commandDirection(
