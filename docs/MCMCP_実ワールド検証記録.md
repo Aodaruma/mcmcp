@@ -3,6 +3,7 @@
 - 更新日: 2026-08-28
 - 対象: Prism Launcherの単一検証profile、Minecraft 26.2 / NeoForge 26.2.0.59
 - 状態: 木こりの最小gateは合格。畑の栽培・収穫ループはMCP操作だけでwheat 64個へ到達。chest取得からのend-to-endは未合格
+- 詳細実験ノート: [`experiments/02_wheet/2026-08-28_wheat-1-stack.md`](experiments/02_wheet/2026-08-28_wheat-1-stack.md)
 
 ## 完成目標と判定原則
 
@@ -127,10 +128,10 @@ commit `7fabfca`で、vanillaの段階的なcamera回転とfloat丸めをadmissi
 
 優先順は次のとおり。
 
-1. `interact_known_block`相当の型付きprimitiveでfence gateの現在の`open`状態を観測し、通常use後の反転を検証する。
+1. 既存の`open_known_fence_gate`でfence gateの現在の`open`状態を観測し、通常use後の反転を実ワールド検証する。
 2. gateの開閉でKnown Traversability Mapのedgeを更新し、player AABBが通る幅の狭路を過度に`PATH_BLOCKED`へしない。
 3. `face_known_position`とnavigation replanのcamera / motion budget消費をtraceから分離して調べ、同じprimitive内の再計画でbudgetを意図せず使い切らない。camera上限は実行前に十分な値を宣言する。
-4. chestのinventoryを許可された観測として取得し、slot指定のpickup / transferを型付き操作と事後inventory検証で実装する。
+4. 既存のcontainer同期・`transfer_items`を現在のAction DSLへ接続し、chestのinventory観測、item取得、事後inventory検証をlive確認する。
 5. 上記の入口工程をMCP単独で通し、今回合格した栽培・収穫DSLへ接続する。
 6. 最終収穫後の区画も再播種し、wheat 64個と畑の復旧を同じ受入Action列で確認する。
 
