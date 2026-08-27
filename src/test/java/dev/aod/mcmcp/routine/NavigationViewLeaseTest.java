@@ -52,6 +52,16 @@ class NavigationViewLeaseTest {
         assertThatIllegalArgumentException().isThrownBy(() -> lease.close(other));
     }
 
+    @Test
+    void cameraBoundIncludesVanillaFloatActuationRounding() {
+        float yaw = -150.25603F;
+        float desiredYaw = 99.29556F;
+
+        assertThat(NavigationViewLease.cameraTravelUpperBound(
+                yaw, 0.0F, desiredYaw, 0.0F, 100))
+                .isEqualTo(110.44847106933594D);
+    }
+
     private static final class FakeViewControl implements NavigationViewLease.ViewControl {
         private float yaw;
         private float pitch;

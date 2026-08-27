@@ -11,6 +11,7 @@ import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.ObservationValues;
+import dev.aod.mcmcp.routine.NavigationViewLease;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 
@@ -592,7 +593,9 @@ public final class AgentPrimitivePlanner {
         Aim aim = aim(pose, aimPoint);
         AimError error = aimError(pose, aimPoint, aim);
         double camera = Math.min(360.0D,
-                angularError(pose.yaw(), pose.pitch(), aim.yaw(), aim.pitch())
+                NavigationViewLease.cameraTravelUpperBound(
+                        pose.yaw(), pose.pitch(), aim.yaw(), aim.pitch(),
+                        Math.toIntExact(BLOCK_MUTATION_TICK_UPPER_BOUND))
                         + pose.orientationErrorDegrees() + error.totalDegrees());
         long aimTicks = Math.max(1L, (long) Math.ceil(camera / maxCameraDegreesPerTick));
         long ticks = Math.addExact(aimTicks, BLOCK_MUTATION_TICK_UPPER_BOUND);

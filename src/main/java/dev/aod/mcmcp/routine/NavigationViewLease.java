@@ -7,7 +7,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 /** Bounded, owner-token-bound first-person view and hotbar control. */
-final class NavigationViewLease {
+public final class NavigationViewLease {
     static final float MAX_TURN_DEGREES_PER_TICK = 8.0F;
     private static final float DRIFT_EPSILON_DEGREES = 0.25F;
 
@@ -52,15 +52,10 @@ final class NavigationViewLease {
         if (!matches(owner)) {
             throw new IllegalStateException("owned navigation view changed externally");
         }
-        float yawDelta = Mth.clamp(
-                Mth.wrapDegrees(finite(desiredYaw, "desiredYaw") - control.yaw()),
-                -MAX_TURN_DEGREES_PER_TICK,
-                MAX_TURN_DEGREES_PER_TICK);
-        float pitchDelta = Mth.clamp(
-                Mth.clamp(finite(desiredPitch, "desiredPitch"), -90.0F, 90.0F)
-                        - control.pitch(),
-                -MAX_TURN_DEGREES_PER_TICK,
-                MAX_TURN_DEGREES_PER_TICK);
+        float yawDelta = boundedYawDelta(
+                control.yaw(), finite(desiredYaw, "desiredYaw"));
+        float pitchDelta = boundedPitchDelta(
+                control.pitch(), finite(desiredPitch, "desiredPitch"));
         control.turn(yawDelta, pitchDelta);
         expectedYaw = finite(control.yaw(), "yaw after turn");
         expectedPitch = finite(control.pitch(), "pitch after turn");
@@ -93,6 +88,52 @@ final class NavigationViewLease {
         }
         control.selectSlot(originalSlot);
         closed = true;
+    }
+
+    /** Upper-bounds the camera travel produced by this lease's vanilla float actuation. */
+    public static double cameraTravelUpperBound(
+            float yaw, float pitch, float desiredYaw, float desiredPitch, int maxTicks) {
+        yaw = finite(yaw, "yaw");
+        pitch = finite(pitch, "pitch");
+        desiredYaw = finite(desiredYaw, "desiredYaw");
+        desiredPitch = finite(desiredPitch, "desiredPitch");
+        if (maxTicks < 1) {
+            throw new IllegalArgumentException("maxTicks must be positive");
+        }
+        double travel = 0.0D;
+        for (int tick = 0; tick < maxTicks; tick++) {
+            float yawDelta = boundedYawDelta(yaw, desiredYaw);
+            float pitchDelta = boundedPitchDelta(pitch, desiredPitch);
+            float nextYaw = yaw + vanillaTurnDelta(yawDelta);
+            float nextPitch = Mth.clamp(
+                    pitch + vanillaTurnDelta(pitchDelta), -90.0F, 90.0F);
+            travel += Math.abs(Mth.wrapDegrees((double) nextYaw - yaw))
+                    + Math.abs((double) nextPitch - pitch);
+            if (nextYaw == yaw && nextPitch == pitch) {
+                return travel;
+            }
+            yaw = nextYaw;
+            pitch = nextPitch;
+        }
+        return travel;
+    }
+
+    private static float vanillaTurnDelta(float requestedDegrees) {
+        return (float) (requestedDegrees / 0.15D) * 0.15F;
+    }
+
+    private static float boundedYawDelta(float yaw, float desiredYaw) {
+        return Mth.clamp(
+                Mth.wrapDegrees(desiredYaw - yaw),
+                -MAX_TURN_DEGREES_PER_TICK,
+                MAX_TURN_DEGREES_PER_TICK);
+    }
+
+    private static float boundedPitchDelta(float pitch, float desiredPitch) {
+        return Mth.clamp(
+                Mth.clamp(desiredPitch, -90.0F, 90.0F) - pitch,
+                -MAX_TURN_DEGREES_PER_TICK,
+                MAX_TURN_DEGREES_PER_TICK);
     }
 
     private void requireOwner(UUID owner) {
