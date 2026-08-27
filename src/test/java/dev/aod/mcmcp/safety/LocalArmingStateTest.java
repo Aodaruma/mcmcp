@@ -9,7 +9,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class LocalArmingStateTest {
     @Test
-    void readyLeaseIsOneActionAndWorldScoped() {
+    void readyLeaseReturnsAfterCompletionAndRemainsWorldScoped() {
         var state = new LocalArmingState();
         var session = UUID.randomUUID();
         state.arm(session, Set.of("stationary_break"));
@@ -22,6 +22,9 @@ class LocalArmingStateTest {
         assertThat(state.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.AGENT);
         assertThat(state.snapshot(session).controlEpoch()).isGreaterThan(armedEpoch);
         assertThat(state.beginAction(session)).isFalse();
+        assertThat(state.completeAction(session)).isTrue();
+        assertThat(state.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.READY);
+        assertThat(state.beginAction(session)).isTrue();
 
         state.lock("local_ui_disabled");
 

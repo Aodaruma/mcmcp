@@ -262,13 +262,13 @@ commit時は同時Task、world/session、control epoch、READY、pose、predicat
 
 ### 6.2 状態
 
-公開lease APIは作らない。Screen buttonのON操作を、時間制限のない1 Action限りの内部許可として扱う。MCP操作ON/OFFはAgentの変更操作を許可するgateであり、内蔵HTTP endpoint自体の起動・停止ではない。OFF中も`agent_get_state`と終了済みActionの参照は可能で、`agent_start_action`だけを拒否する。
+公開lease APIは作らない。Screen buttonのON操作を、同一world session内で明示OFFまで維持される内部許可として扱う。MCP操作ON/OFFはAgentの変更操作を許可するgateであり、内蔵HTTP endpoint自体の起動・停止ではない。OFF中も`agent_get_state`と終了済みActionの参照は可能で、`agent_start_action`だけを拒否する。
 
 ~~~text
 OFF
   └─ Screen右下のMCP操作ON
        v
-READY（ON、時間制限なし、1 Action限り）
+READY（ON、時間制限なし、明示OFFまで維持）
   ├─ valid agent_start_action → AGENT
   ├─ Esc → READYのまま、VanillaのEsc動作だけ実行
   └─ OFF / world変更 → OFF
@@ -286,7 +286,7 @@ RECOVERING
   └─ OFF / world・player消失 → OFF
 ~~~
 
-Action終了後は原則OFFへ戻す。唯一、AGENT/RECOVERING中の物理Escによる緊急停止だけは、現在Actionを終了した後に同じworld・capabilityのREADYへ戻す。複数stepは1つのDSL programにまとめられ、古いMCP接続がActionを連続投入することはできない。
+Action成功、明示cancel、recoverable failure、またはAGENT/RECOVERING中の物理Escでは、現在Actionを終了して全synthetic入力を解除した後、同じworld・capabilityのREADYへ戻す。world変更、明示OFF、endpoint fault、入力解放失敗、unrecoverable failureではOFFへ戻す。同時に受理するActionは1件だけである。
 
 ### 6.3 即時停止条件
 
@@ -1114,7 +1114,7 @@ Respirationなど確率的効果を先読みせず、airの実測減少率を使
 
 既定recovery budgetは、最大200 active tick、移動16 block、camera累積360度、interaction 8回、block設置8個、block破壊4個とする。cameraは通常Actionと同じ角速度上限に従い、purpose=`safety`をtraceへ残す。これらはlocal configのhard range内でだけ調整でき、DSLやMCP clientから変更できない。既定policyは移動、盾、回復・耐性item、検証済み配置を許可し、緊急attackとblind breakを禁止する。
 
-候補が失敗してもknown worsening stateで即座に立ち止まらず、budget内で次の低リスク候補へ切り替える。安全化したら元programを暗黙resumeせず、Actionを`SAFETY_RECOVERED`で終了してOFFへ戻す。全候補とbudgetが尽きたら入力を解除し、`RECOVERY_EXHAUSTED`、試した候補、最終状態を返す。EscとOFFはRECOVER中も常に最優先である。
+候補が失敗してもknown worsening stateで即座に立ち止まらず、budget内で次の低リスク候補へ切り替える。安全化したら元programを暗黙resumeせず、Actionを`SAFETY_RECOVERED`で終了してREADYへ戻す。全候補とbudgetが尽きたら入力を解除し、`RECOVERY_EXHAUSTED`、試した候補、最終状態を返す。EscとOFFはRECOVER中も常に最優先である。
 
 Phase 1の実装対象は、neutral、既知nodeへの短い退避、上方向への水泳、既知非危険流体への退出、既知着地点への姿勢制御までとする。item use、block配置、breakを使う回避は、それぞれの専用GameTestを通過したPhaseで有効化する。後続実装を見越した安全分類とbudget契約はPhase 1から固定する。
 
@@ -1318,7 +1318,7 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 
 - OFF中のagent_start_actionはMCP_OPERATION_DISABLEDで入力を変更しない
 - 有効worldのScreen buttonからONにでき、READYはAction開始、明示OFF、またはworld変更まで維持
-- READY中に受理するActionは1件だけで、terminal後はOFF
+- READY中に同時受理するActionは1件だけで、成功・明示cancel・recoverable failure後はREADYへ戻る
 - 同時2件目はTASK_BUSY
 - enqueue後、ClientTick前にworld、READY、control epochが変わった場合は入力せず失敗
 - READY中のEscは通常どおりchat/menuを閉じ、READYを維持
@@ -1429,7 +1429,7 @@ if ($LASTEXITCODE -gt 1) { throw 'Dependency scan failed' }
 - 致死落下で既知横着地点がある場合はRECOVER
 - 経路外block更新はCONTINUE
 - 次のswept AABBへのlava流入はRECOVER
-- recovery成功後は元ActionをresumeせずSAFETY_RECOVERED、OFF
+- recovery成功後は元ActionをresumeせずSAFETY_RECOVERED、READY
 - recovery budget超過はRECOVERY_EXHAUSTEDで全入力up
 - block配置を伴う回避は窒息、退路、fluid、gravity、server拒否のnegative testを通る
 - 斜め移動の包絡AABBだけに入るcorner blockを衝突扱いせず、実axis segmentのswept player AABBとcollision VoxelShapeが交差するblockだけを衝突扱いする

@@ -1020,7 +1020,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         if (!arming.beginAction(session.worldSessionId())) {
             throw new RuntimeInvocationException(
                     "mcp_operation_disabled",
-                    "The one-action READY authorization is no longer available.",
+                    "The READY authorization is no longer available.",
                     true,
                     Map.of());
         }
@@ -1211,7 +1211,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             cancelled = agentActions.cancel(requestedId);
         } finally {
             if (activeBeforeRequest) {
-                closeAgentControl(minecraft, "action_cancelled");
+                finishAgentControlReady(minecraft, "action_cancelled");
             }
         }
         return Map.of(
@@ -1977,7 +1977,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             appendVoiceEndDetails(details, voiceEnd);
             throw new RuntimeInvocationException(
                     "locked",
-                    "The one-action READY authorization is no longer available",
+                    "The READY authorization is no longer available",
                     true,
                     details);
         }
@@ -2519,7 +2519,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             try {
                 agentActions.succeed(agentExecution.actionId);
             } finally {
-                closeAgentControl(minecraft, "action_completed");
+                finishAgentControlReady(minecraft, "action_completed");
             }
             return false;
         }
@@ -4154,7 +4154,25 @@ public final class McmcpRuntime implements McpRuntimePort {
             agentActions.terminateActive(new AgentActionStore.Failure(
                     code, recoverable, List.of(evidence)));
         } finally {
-            closeAgentControl(Minecraft.getInstance(), code.wireName().toLowerCase(Locale.ROOT));
+            var minecraft = Minecraft.getInstance();
+            if (recoverable) {
+                finishAgentControlReady(minecraft, code.wireName().toLowerCase(Locale.ROOT));
+            } else {
+                closeAgentControl(minecraft, code.wireName().toLowerCase(Locale.ROOT));
+            }
+        }
+    }
+
+    private void finishAgentControlReady(Minecraft minecraft, String fallbackLockReason) {
+        var session = sessions.snapshot();
+        closeAgentPrimitiveExecutor();
+        closeRecoveryGovernor();
+        inputRelease.releaseAll(minecraft);
+        restoreAgentSelectedSlot(minecraft);
+        agentExecution = null;
+        pendingAgentAdmission = null;
+        if (session.worldSessionId() == null || !arming.completeAction(session.worldSessionId())) {
+            arming.lock(fallbackLockReason);
         }
     }
 

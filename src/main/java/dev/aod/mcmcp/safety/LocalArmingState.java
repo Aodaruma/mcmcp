@@ -5,7 +5,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
-/** Local-only, session-scoped one-action control lease. */
+/** Local-only, session-scoped control lease. */
 public final class LocalArmingState {
     private Mode mode = Mode.OFF;
     private UUID worldSessionId;
@@ -23,7 +23,7 @@ public final class LocalArmingState {
         controlEpoch++;
     }
 
-    /** Consumes READY exactly once. */
+    /** Temporarily moves a persistent READY lease into active execution. */
     public synchronized boolean beginAction(UUID sessionId) {
         var current = snapshot(sessionId);
         if (current.mode() != Mode.READY) {
@@ -40,6 +40,17 @@ public final class LocalArmingState {
             return false;
         }
         mode = Mode.RECOVERING;
+        controlEpoch++;
+        return true;
+    }
+
+    /** Returns a completed action to READY without extending it across a world boundary. */
+    public synchronized boolean completeAction(UUID sessionId) {
+        var current = snapshot(sessionId);
+        if (current.mode() != Mode.AGENT && current.mode() != Mode.RECOVERING) {
+            return false;
+        }
+        mode = Mode.READY;
         controlEpoch++;
         return true;
     }
