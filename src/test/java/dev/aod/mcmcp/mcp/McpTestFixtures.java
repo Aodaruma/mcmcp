@@ -26,6 +26,8 @@ final class McpTestFixtures {
                         Map.entry("max_distance_blocks", 32),
                         Map.entry("max_camera_degrees", 360),
                         Map.entry("max_blocks_broken", 8),
+                        Map.entry("max_interactions", 8),
+                        Map.entry("max_blocks_placed", 8),
                         Map.entry("omnidirectional_visual_radius_blocks", 16),
                         Map.entry("local_observation_radius_blocks", 4),
                         Map.entry("omnidirectional_direction_count", 2_048),
@@ -39,7 +41,7 @@ final class McpTestFixtures {
                                 "max_executed_nodes", 256,
                                 "max_repeat_count", 16,
                                 "allowed_capabilities", List.of(
-                                        "movement", "camera", "block_break")))),
+                                        "block_break", "block_interact", "block_place", "camera", "movement")))),
                 "observation", nullValue(),
                 "action", nullValue());
     }

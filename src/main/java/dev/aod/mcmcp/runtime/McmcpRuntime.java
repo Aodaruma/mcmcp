@@ -1376,7 +1376,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                 "max_source_nodes", 64,
                 "max_executed_nodes", 256,
                 "max_repeat_count", 16,
-                "allowed_capabilities", List.of("movement", "camera", "block_break"));
+                "allowed_capabilities", AVAILABLE_CAPABILITIES.stream().sorted().toList());
         var policy = Map.<String, Object>ofEntries(
                 Map.entry("profile", "survival_omnidirectional"),
                 Map.entry("multiplayer_enabled", multiplayerEnabled),
@@ -1385,6 +1385,8 @@ public final class McmcpRuntime implements McpRuntimePort {
                 Map.entry("max_distance_blocks", 32),
                 Map.entry("max_camera_degrees", 360),
                 Map.entry("max_blocks_broken", 8),
+                Map.entry("max_interactions", 8),
+                Map.entry("max_blocks_placed", 8),
                 Map.entry("omnidirectional_visual_radius_blocks", visualRadiusBlocks),
                 Map.entry("local_observation_radius_blocks", 4),
                 Map.entry("omnidirectional_direction_count", 2_048),

@@ -114,6 +114,8 @@
               "max_distance_blocks": {"const": 32},
               "max_camera_degrees": {"const": 360},
               "max_blocks_broken": {"const": 8},
+              "max_interactions": {"const": 8},
+              "max_blocks_placed": {"const": 8},
               "omnidirectional_visual_radius_blocks": {"type": "number", "minimum": 1, "maximum": 32},
               "local_observation_radius_blocks": {"const": 4},
               "omnidirectional_direction_count": {"const": 2048},
@@ -131,16 +133,16 @@
                   "max_repeat_count": {"const": 16},
                   "allowed_capabilities": {
                     "type": "array",
-                    "minItems": 3,
-                    "maxItems": 3,
+                    "minItems": 5,
+                    "maxItems": 5,
                     "uniqueItems": true,
-                    "items": {"enum": ["movement", "camera", "block_break"]}
+                    "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place"]}
                   }
                 },
                 "required": ["version", "max_ast_depth", "max_source_nodes", "max_executed_nodes", "max_repeat_count", "allowed_capabilities"]
               }
             },
-            "required": ["profile", "multiplayer_enabled", "max_duration_ms", "max_ticks", "max_distance_blocks", "max_camera_degrees", "max_blocks_broken", "omnidirectional_visual_radius_blocks", "local_observation_radius_blocks", "omnidirectional_direction_count", "omnidirectional_rays_per_tick", "max_recent_sound_clues", "sound_clue_ttl_ticks", "action_dsl"]
+            "required": ["profile", "multiplayer_enabled", "max_duration_ms", "max_ticks", "max_distance_blocks", "max_camera_degrees", "max_blocks_broken", "max_interactions", "max_blocks_placed", "omnidirectional_visual_radius_blocks", "local_observation_radius_blocks", "omnidirectional_direction_count", "omnidirectional_rays_per_tick", "max_recent_sound_clues", "sound_clue_ttl_ticks", "action_dsl"]
           },
           "observation": {
             "oneOf": [
