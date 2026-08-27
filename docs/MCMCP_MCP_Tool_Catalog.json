@@ -624,6 +624,16 @@
             },
             "required": ["id", "op", "target"]
           },
+          "openFenceGateNode": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "open_known_fence_gate"},
+              "target": {"$ref": "#/$defs/position"}
+            },
+            "required": ["id", "op", "target"]
+          },
           "waitNode": {
             "type": "object",
             "additionalProperties": false,
@@ -698,6 +708,7 @@
               {"$ref": "#/$defs/tillNode"},
               {"$ref": "#/$defs/plantWheatNode"},
               {"$ref": "#/$defs/harvestWheatNode"},
+              {"$ref": "#/$defs/openFenceGateNode"},
               {"$ref": "#/$defs/waitNode"},
               {"$ref": "#/$defs/waitUntilNode"},
               {"$ref": "#/$defs/ifNode"},

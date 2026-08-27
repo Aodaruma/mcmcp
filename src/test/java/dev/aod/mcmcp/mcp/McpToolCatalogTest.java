@@ -107,6 +107,29 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void catalogAdmitsOnlyTheClosedFenceGateOpenNodeShape() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var request = schema.getAsJsonArray("examples").get(0).getAsJsonObject().deepCopy();
+        var program = request.getAsJsonObject("program");
+        program.add("capabilities", JsonParser.parseString(
+                "[\"camera\",\"block_interact\"]"));
+        program.add("body", JsonParser.parseString("""
+                [{"id":"open_gate","op":"open_known_fence_gate","target":{
+                  "dimension":"minecraft:overworld","x":-11,"y":56,"z":-15}}]
+                """));
+        var budget = request.getAsJsonObject("budget");
+        budget.addProperty("max_distance_blocks", 0);
+        budget.addProperty("max_camera_degrees", 360);
+        budget.addProperty("max_interactions", 1);
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+
+        var widened = request.deepCopy();
+        widened.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().addProperty("expected_block", "minecraft:oak_fence_gate");
+        assertThat(CatalogSchemaValidator.matches(schema, widened)).isFalse();
+    }
+
+    @Test
     void actionProgressSchemaMatchesTheRuntimeRecordingLimits() {
         var output = new McpToolCatalog().outputSchema("agent_get_action");
         var progress = output.getAsJsonObject("properties")

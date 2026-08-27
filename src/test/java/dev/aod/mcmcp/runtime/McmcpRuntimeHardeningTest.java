@@ -94,6 +94,12 @@ class McmcpRuntimeHardeningTest {
         assertThat(McmcpRuntime.primitiveReobservationTicks(
                 new ActionDsl.FaceKnownPosition("face", support)))
                 .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
+        assertThat(McmcpRuntime.structuralPrimitiveCost(
+                new ActionDsl.OpenKnownFenceGate("open_gate", support))).contains(
+                        new ActionDslCompiler.Cost(0, 0, 0, 0, 1, 0, 0));
+        assertThat(McmcpRuntime.primitiveReobservationTicks(
+                new ActionDsl.OpenKnownFenceGate("open_gate", support)))
+                .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
         assertThat(McmcpRuntime.primitiveReobservationTicks(new ActionDsl.WaitTicks("hold", 1)))
                 .isZero();
     }

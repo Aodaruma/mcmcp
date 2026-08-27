@@ -122,6 +122,7 @@ public final class ActionDslParser {
             case "till_known_block" -> tillKnownBlock(object, path);
             case "plant_known_wheat" -> plantKnownWheat(object, path);
             case "harvest_known_wheat" -> harvestKnownWheat(object, path);
+            case "open_known_fence_gate" -> openKnownFenceGate(object, path);
             case "wait_ticks" -> waitTicks(object, path);
             case "wait_until" -> waitUntil(object, path);
             case "if" -> conditional(object, path);
@@ -184,6 +185,14 @@ public final class ActionDslParser {
             JsonObject source, String path) {
         exactKeys(source, path, Set.of("id", "op", "target"), Set.of("id", "op", "target"));
         return new ActionDsl.HarvestKnownWheat(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"));
+    }
+
+    private static ActionDsl.OpenKnownFenceGate openKnownFenceGate(
+            JsonObject source, String path) {
+        exactKeys(source, path, Set.of("id", "op", "target"), Set.of("id", "op", "target"));
+        return new ActionDsl.OpenKnownFenceGate(
                 string(source.get("id"), path + ".id"),
                 position(source.get("target"), path + ".target"));
     }

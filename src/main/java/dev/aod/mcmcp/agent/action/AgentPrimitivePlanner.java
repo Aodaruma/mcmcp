@@ -393,6 +393,15 @@ public final class AgentPrimitivePlanner {
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
                     surface, 0, 1, 0);
         }
+        if (node instanceof ActionDsl.OpenKnownFenceGate gate) {
+            MutationSurface surface = requireMutationSurface(
+                    map, latestFrame, input, gate.target(), "minecraft:oak_fence_gate",
+                    value -> true,
+                    "Fence gate target requires a current visible oak fence gate surface");
+            return analyzeMutation(
+                    node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
+                    surface, 1, 0, 0);
+        }
         if (node instanceof ActionDsl.If conditional) {
             var output = new ArrayList<Pose>();
             output.addAll(analyzeSequence(

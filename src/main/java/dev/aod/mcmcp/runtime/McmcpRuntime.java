@@ -1042,7 +1042,9 @@ public final class McmcpRuntime implements McpRuntimePort {
     }
 
     static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
-        long interactions = node instanceof ActionDsl.TillKnownBlock ? 1L : 0L;
+        long interactions = node instanceof ActionDsl.TillKnownBlock
+                        || node instanceof ActionDsl.OpenKnownFenceGate
+                ? 1L : 0L;
         long breaks = node instanceof ActionDsl.BreakKnownFace
                         || node instanceof ActionDsl.HarvestKnownWheat
                 ? 1L : 0L;
@@ -2496,7 +2498,8 @@ public final class McmcpRuntime implements McpRuntimePort {
 
             if (agentExecution.primitive instanceof ActionDsl.TillKnownBlock
                     || agentExecution.primitive instanceof ActionDsl.PlantKnownWheat
-                    || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheat) {
+                    || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheat
+                    || agentExecution.primitive instanceof ActionDsl.OpenKnownFenceGate) {
                 tickAgentBlockMutation(minecraft, session, action);
                 return;
             }
@@ -3006,7 +3009,8 @@ public final class McmcpRuntime implements McpRuntimePort {
             }
             case SUCCEEDED -> {
                 agentExecution.blockMutationAttempt = null;
-                if (agentExecution.primitive instanceof ActionDsl.TillKnownBlock) {
+                if (agentExecution.primitive instanceof ActionDsl.TillKnownBlock
+                        || agentExecution.primitive instanceof ActionDsl.OpenKnownFenceGate) {
                     agentActions.recordInteraction(action.actionId());
                 } else if (agentExecution.primitive instanceof ActionDsl.PlantKnownWheat) {
                     agentActions.recordBlockPlace(action.actionId());
@@ -3053,6 +3057,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             case ActionDsl.TillKnownBlock value -> value.target();
             case ActionDsl.PlantKnownWheat value -> value.target();
             case ActionDsl.HarvestKnownWheat value -> value.target();
+            case ActionDsl.OpenKnownFenceGate value -> value.target();
             default -> throw new IllegalArgumentException("node is not a known block mutation");
         };
         var target = new BlockTarget(
@@ -3080,6 +3085,14 @@ public final class McmcpRuntime implements McpRuntimePort {
                     target,
                     new BlockStateFingerprint("minecraft:wheat", Map.of("age", "7")),
                     new BlockStateFingerprint("minecraft:air", Map.of()),
+                    bounds,
+                    aim);
+            case ActionDsl.OpenKnownFenceGate ignored -> new InteractBlockRequest(
+                    target,
+                    new BlockStateFingerprint(
+                            "minecraft:oak_fence_gate", Map.of("open", "false")),
+                    new BlockStateFingerprint(
+                            "minecraft:oak_fence_gate", Map.of("open", "true")),
                     bounds,
                     aim);
             default -> throw new IllegalArgumentException("node is not a known block mutation");

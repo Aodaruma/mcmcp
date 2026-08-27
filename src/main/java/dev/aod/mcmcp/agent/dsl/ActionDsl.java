@@ -30,7 +30,8 @@ public final class ActionDsl {
     }
 
     public sealed interface Node permits NavigateToKnown, FaceKnownPosition, BreakKnownFace,
-            TillKnownBlock, PlantKnownWheat, HarvestKnownWheat, WaitTicks, WaitUntil, If, Repeat {
+            TillKnownBlock, PlantKnownWheat, HarvestKnownWheat, OpenKnownFenceGate,
+            WaitTicks, WaitUntil, If, Repeat {
         String id();
     }
 
@@ -93,6 +94,14 @@ public final class ActionDsl {
     /** Breaks only a currently mature (age=7) wheat block. */
     public record HarvestKnownWheat(String id, Position target) implements Node {
         public HarvestKnownWheat {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+        }
+    }
+
+    /** Opens one currently closed, visible oak fence gate. */
+    public record OpenKnownFenceGate(String id, Position target) implements Node {
+        public OpenKnownFenceGate {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
         }

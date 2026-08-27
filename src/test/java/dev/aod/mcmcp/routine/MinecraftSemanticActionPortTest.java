@@ -203,7 +203,7 @@ class MinecraftSemanticActionPortTest {
                 Map.of("face", "floor", "facing", "west", "powered", "true"));
 
         var expected = MinecraftSemanticActionPort.expectedInteractionServerState(
-                beforeState, request);
+                beforeState, request, Direction.NORTH);
 
         assertThat(beforeState.getValue(BlockStateProperties.POWERED)).isFalse();
         assertThat(expected).isEqualTo(new BlockStateFingerprint(
@@ -220,22 +220,65 @@ class MinecraftSemanticActionPortTest {
                 MinecraftSemanticActionPort.expectedInteractionServerState(
                         beforeState,
                         interactBlockRequest(Map.of("powered", "false"),
-                                Map.of("powered", "not_boolean"))));
+                                Map.of("face", "wall")),
+                        Direction.NORTH));
         assertThatIllegalArgumentException().isThrownBy(() ->
                 MinecraftSemanticActionPort.expectedInteractionServerState(
                         beforeState,
                         interactBlockRequest(Map.of("powered", "false"),
-                                Map.of("missing", "true"))));
+                                Map.of("powered", "not_boolean")),
+                        Direction.NORTH));
         assertThatIllegalArgumentException().isThrownBy(() ->
                 MinecraftSemanticActionPort.expectedInteractionServerState(
                         beforeState,
                         interactBlockRequest(Map.of("powered", "false"),
-                                Map.of("face", "wall", "facing", "north", "powered", "false"))));
+                                Map.of("missing", "true")),
+                        Direction.NORTH));
         assertThatIllegalArgumentException().isThrownBy(() ->
                 MinecraftSemanticActionPort.expectedInteractionServerState(
                         beforeState,
                         interactBlockRequest(Map.of("powered", "false"),
-                                Map.of("face", "wall", "facing", "east", "powered", "true"))));
+                                Map.of("face", "wall", "facing", "north", "powered", "false")),
+                        Direction.NORTH));
+        assertThatIllegalArgumentException().isThrownBy(() ->
+                MinecraftSemanticActionPort.expectedInteractionServerState(
+                        beforeState,
+                        interactBlockRequest(Map.of("powered", "false"),
+                                Map.of("face", "wall", "facing", "east", "powered", "true")),
+                        Direction.NORTH));
+    }
+
+    @Test
+    void fenceGateOpenUsesTheVanillaPlayerFacingTransitionAndFreezesTheFullState() {
+        var beforeState = Blocks.OAK_FENCE_GATE.defaultBlockState()
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.NORTH)
+                .setValue(BlockStateProperties.OPEN, false)
+                .setValue(BlockStateProperties.POWERED, false)
+                .setValue(BlockStateProperties.IN_WALL, false);
+        var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
+        var request = new InteractBlockRequest(
+                target,
+                new BlockStateFingerprint(
+                        "minecraft:oak_fence_gate", Map.of("open", "false")),
+                new BlockStateFingerprint(
+                        "minecraft:oak_fence_gate", Map.of("open", "true")),
+                new ActionBounds(target.dimension(), target, target, 0, 5, false));
+
+        var expected = MinecraftSemanticActionPort.expectedInteractionServerState(
+                beforeState, request, Direction.SOUTH);
+
+        assertThat(expected).isEqualTo(new BlockStateFingerprint(
+                "minecraft:oak_fence_gate",
+                Map.of(
+                        "facing", "south",
+                        "in_wall", "false",
+                        "open", "true",
+                        "powered", "false")));
+        assertThatIllegalArgumentException().isThrownBy(() ->
+                MinecraftSemanticActionPort.expectedInteractionServerState(
+                        beforeState.setValue(BlockStateProperties.OPEN, true),
+                        request,
+                        Direction.SOUTH));
     }
 
     @Test

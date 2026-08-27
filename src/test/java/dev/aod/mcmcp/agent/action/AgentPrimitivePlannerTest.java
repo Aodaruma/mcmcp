@@ -244,6 +244,41 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void openFenceGateBindsOneVisibleOakGateRayWitness() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var target = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var program = new ActionDsl.Program(
+                1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_INTERACT),
+                List.of(new ActionDsl.OpenKnownFenceGate("open_gate", target)));
+
+        var analysis = AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                Optional.of(frame(
+                        target, ObservationRecord.Face.SOUTH, "minecraft:oak_fence_gate", 0)),
+                4.5F);
+
+        assertThat(analysis.primitiveCosts().get("open_gate").interactions()).isOne();
+        assertThat(analysis.mutationAims().get("open_gate"))
+                .extracting(
+                        AgentPrimitivePlanner.MutationAim::block,
+                        AgentPrimitivePlanner.MutationAim::face,
+                        AgentPrimitivePlanner.MutationAim::point)
+                .containsExactly(
+                        target,
+                        ActionDsl.BlockFace.SOUTH,
+                        new Vec3(3.5D, 64.5D, 1.0D));
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                Optional.of(frame(
+                        target, ObservationRecord.Face.SOUTH, "minecraft:spruce_fence_gate", 0)),
+                4.5F)).isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+    }
+
+    @Test
     void plantBindsSupportUpWhileHarvestRequiresMatureCropEvidence() {
         UUID session = UUID.randomUUID();
         var map = map(session).snapshot().orElseThrow();

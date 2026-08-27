@@ -208,6 +208,12 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
             return 1;
         }
+        if (node instanceof ActionDsl.OpenKnownFenceGate gate) {
+            validatePosition(gate.target(), path + ".target");
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_INTERACT);
+            return 1;
+        }
         if (node instanceof ActionDsl.WaitTicks wait) {
             requireRange(wait.ticks(), 1, 200, path + ".ticks");
             return 1;
@@ -240,7 +246,8 @@ public final class ActionDslValidator {
             if (node instanceof ActionDsl.BreakKnownFace
                     || node instanceof ActionDsl.TillKnownBlock
                     || node instanceof ActionDsl.PlantKnownWheat
-                    || node instanceof ActionDsl.HarvestKnownWheat) return true;
+                    || node instanceof ActionDsl.HarvestKnownWheat
+                    || node instanceof ActionDsl.OpenKnownFenceGate) return true;
             if (node instanceof ActionDsl.If conditional
                     && (containsWorldMutation(conditional.thenBranch())
                             || containsWorldMutation(conditional.elseBranch()))) return true;

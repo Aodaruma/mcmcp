@@ -87,7 +87,8 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.BreakKnownFace
                 || node instanceof ActionDsl.TillKnownBlock
                 || node instanceof ActionDsl.PlantKnownWheat
-                || node instanceof ActionDsl.HarvestKnownWheat) {
+                || node instanceof ActionDsl.HarvestKnownWheat
+                || node instanceof ActionDsl.OpenKnownFenceGate) {
             Optional<Cost> resolved = Objects.requireNonNull(
                     primitiveCosts.worstCase(node), "primitive cost result");
             if (resolved.isEmpty()) {
@@ -108,6 +109,8 @@ public final class ActionDslCompiler {
                 requireMutationCost(cost, 0, 0, 1, "plant_known_wheat");
             } else if (node instanceof ActionDsl.HarvestKnownWheat) {
                 requireMutationCost(cost, 0, 1, 0, "harvest_known_wheat");
+            } else if (node instanceof ActionDsl.OpenKnownFenceGate) {
+                requireMutationCost(cost, 1, 0, 0, "open_known_fence_gate");
             } else if (cost.interactions() != 0
                     || cost.blocksBroken() != 0
                     || cost.blocksPlaced() != 0) {

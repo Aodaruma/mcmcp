@@ -750,7 +750,8 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         // Unlike placement, vanilla interactions such as levers need not mutate the local level
         // optimistically. Freeze the exact same-block transition before sending its packet so a
         // fast server-only state update is checked against the requested result, not stale local state.
-        active.expectedServerState = expectedInteractionServerState(beforeState, request);
+        active.expectedServerState = expectedInteractionServerState(
+                beforeState, request, minecraft.player.getDirection());
         var prediction = predictions.begin(minecraft.level, position, requireSession().clientTick());
         int before = prediction.sequenceBeforePrediction();
         active.prediction = prediction;
@@ -793,9 +794,12 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
     }
 
     static BlockStateFingerprint expectedInteractionServerState(
-            BlockState beforeState, InteractBlockRequest request) {
+            BlockState beforeState,
+            InteractBlockRequest request,
+            Direction playerDirection) {
         Objects.requireNonNull(beforeState, "beforeState");
         Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(playerDirection, "playerDirection");
         var before = fingerprint(beforeState);
         if (!allowedInteractBlock(beforeState)
                 || !request.expectedBefore().blockId().equals(before.blockId())
@@ -805,14 +809,31 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                     "interact_block source and expected transition must match the live block");
         }
 
-        var toggleProperty = beforeState.getBlock() instanceof LeverBlock
-                ? BlockStateProperties.POWERED : BlockStateProperties.OPEN;
-        BlockState expectedState = beforeState.setValue(
-                toggleProperty, !beforeState.getValue(toggleProperty));
+        boolean lever = beforeState.getBlock() instanceof LeverBlock;
+        String toggledProperty = lever ? "powered" : "open";
+        BlockState expectedState;
+        if (lever) {
+            expectedState = beforeState.setValue(
+                    BlockStateProperties.POWERED,
+                    !beforeState.getValue(BlockStateProperties.POWERED));
+        } else {
+            expectedState = beforeState;
+            if (beforeState.getBlock() instanceof FenceGateBlock
+                    && !beforeState.getValue(BlockStateProperties.OPEN)
+                    && beforeState.getValue(BlockStateProperties.HORIZONTAL_FACING)
+                            == playerDirection.getOpposite()) {
+                expectedState = expectedState.setValue(
+                        BlockStateProperties.HORIZONTAL_FACING, playerDirection);
+            }
+            expectedState = expectedState.setValue(
+                    BlockStateProperties.OPEN,
+                    !beforeState.getValue(BlockStateProperties.OPEN));
+        }
         var expected = fingerprint(expectedState);
-        if (!request.expectedAfter().equals(expected)) {
+        if (!request.expectedAfter().properties().containsKey(toggledProperty)
+                || !request.expectedAfter().matches(expected)) {
             throw new IllegalArgumentException(
-                    "interact_block expected_after must be the exact allowlisted toggle state");
+                    "interact_block expected_after must match the allowlisted toggle state");
         }
         return expected;
     }

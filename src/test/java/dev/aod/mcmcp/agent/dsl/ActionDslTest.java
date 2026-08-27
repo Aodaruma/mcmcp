@@ -185,6 +185,39 @@ class ActionDslTest {
     }
 
     @Test
+    void parsesAndCompilesOnlyTheClosedOpenFenceGateShape() {
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "block_interact"),
+                openKnownFenceGate("open_gate"),
+                budget(5_000, 100, 0, 60, 1, 0, 0)));
+
+        assertThat(request.program().body()).singleElement()
+                .isInstanceOf(ActionDsl.OpenKnownFenceGate.class);
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.BLOCK_INTERACT);
+        var cost = new ActionDslCompiler.Cost(5_000, 100, 0, 60, 1, 0, 0);
+        assertThat(ActionDslCompiler.compile(
+                request,
+                node -> Optional.of(cost),
+                request.program().capabilities()).worstCaseCost()).isEqualTo(cost);
+
+        JsonObject openNode = openKnownFenceGate("open_gate");
+        openNode.addProperty("expected_block", "minecraft:oak_fence_gate");
+        assertCode(request(
+                        capabilities("camera", "block_interact"),
+                        openNode,
+                        budget(5_000, 100, 0, 60, 1, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        assertCode(request(
+                        capabilities("block_interact"),
+                        openKnownFenceGate("open_gate"),
+                        budget(5_000, 100, 0, 60, 1, 0, 0)),
+                ActionDslException.Code.CAPABILITY_DENIED);
+    }
+
+    @Test
     void parsesAndCompilesBoundedCropMaturityWait() {
         ActionDsl.Request request = ActionDslParser.parse(request(
                 capabilities(), waitUntil("await_mature", 12_000),
@@ -553,6 +586,12 @@ class ActionDslTest {
     private static JsonObject harvestKnownWheat(String id) {
         JsonObject node = baseNode(id, "harvest_known_wheat");
         node.add("target", position(65));
+        return node;
+    }
+
+    private static JsonObject openKnownFenceGate(String id) {
+        JsonObject node = baseNode(id, "open_known_fence_gate");
+        node.add("target", position());
         return node;
     }
 
