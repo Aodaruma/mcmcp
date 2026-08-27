@@ -217,6 +217,21 @@ class BlockItemPlacementInvokerContractTest {
     }
 
     @Test
+    void semanticBreakStopsOnAnOwnedLocalPostconditionWhileAwaitingServerEvidence() throws Exception {
+        assertThat(invocations(
+                "/dev/aod/mcmcp/routine/MinecraftSemanticActionPort.class",
+                "maintainBreak"))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/ClientPredictionSignals$PredictionAttempt#confirmation",
+                        "dev/aod/mcmcp/routine/MinecraftSemanticActionPort#currentBlockState",
+                        "dev/aod/mcmcp/runtime/ClientPredictionSignals$Confirmation#issuedSequence",
+                        "java/util/Optional#filter",
+                        "java/util/Optional#isPresent",
+                        "dev/aod/mcmcp/runtime/ClientPredictionSignals$Confirmation#postconditionObserved",
+                        "dev/aod/mcmcp/routine/MinecraftSemanticActionPort#stopInput");
+    }
+
+    @Test
     void stationaryStandPolicyUsesOnlyGroundingVehicleAndPositionFacts() {
         assertThat(MinecraftApplyBlockPlanPort.stationaryStandReady(
                 true, false, 0.0D)).isTrue();

@@ -868,7 +868,10 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         active.prediction.captureIssuedPredictions();
         var confirmation = active.prediction.confirmation(
                 state -> request.expectedAfter().matches(fingerprint(state)));
-        if (confirmation.postconditionObserved()) {
+        var current = currentBlockState(request);
+        boolean locallyPredictedAfter = confirmation.issuedSequence() != null
+                && current.filter(request.expectedAfter()::matches).isPresent();
+        if (confirmation.postconditionObserved() || locallyPredictedAfter) {
             active.expectedServerState = request.expectedAfter();
             stopInput(attempt);
             active.safeToRetry = false;
@@ -879,8 +882,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             active.failure = failure("BLOCK_TARGET_CHANGED", RoutineFailure.Category.DIVERGENCE,
                     false, RoutineFailure.Recovery.REPLAN,
                     stateMap(request.expectedBefore()),
-                    frame.liveBlockState().map(
-                            MinecraftSemanticActionPort::stateMap).orElse(Map.of()));
+                    current.map(MinecraftSemanticActionPort::stateMap).orElse(Map.of()));
             stopInput(attempt);
             return;
         }
