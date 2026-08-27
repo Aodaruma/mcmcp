@@ -156,12 +156,6 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             return finish(Status.REPLAN_REQUIRED, Reason.UNSUPPORTED_LOCOMOTION);
         }
 
-        // The previous tick's PROBE_ALLOWED command must be neutralized before any other work.
-        if (state.probeStepIssued) {
-            neutralHeartbeat();
-            return finish(Status.REPLAN_REQUIRED, Reason.PROBE_COMPLETED);
-        }
-
         NavCell finalCell = state.route.cells().getLast();
         if (state.route.edges().isEmpty()) {
             return atWaypoint(player, finalCell, state.tolerance)
@@ -269,11 +263,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                                     waypoint.z() + 0.5D),
                             verticalDelta));
         }
-        if (edge == EdgeDecision.PROBE && !desired.isEmpty()) {
-            state.probeStepIssued = true;
-        }
-        return TickResult.running(edge == EdgeDecision.PROBE && state.probeStepIssued
-                ? Reason.PROBE_MICRO_STEP : Reason.NONE);
+        return runningNavigationResult(edge, !desired.isEmpty());
     }
 
     private TickResult tickNavigationSettlement(
@@ -382,15 +372,6 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 : TickResult.running(Reason.NONE);
     }
 
-    private void neutralHeartbeat() {
-        if (movement == null) return;
-        long nowNanos = System.nanoTime();
-        movement.setDesired(ownerId, Set.of());
-        if (!movement.heartbeat(ownerId, nowNanos, LEASE_HORIZON)) {
-            movement = null;
-        }
-    }
-
     private TickResult finish(Status status, Reason reason) {
         try {
             if (movement != null) {
@@ -466,6 +447,12 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
 
     static boolean navigationOutputAllowed(long activeTicks, long tickUpperBound) {
         return activeTicks >= 0L && tickUpperBound > 0L && activeTicks < tickUpperBound;
+    }
+
+    static TickResult runningNavigationResult(EdgeDecision edge, boolean movementIssued) {
+        Objects.requireNonNull(edge, "edge");
+        return TickResult.running(edge == EdgeDecision.PROBE && movementIssued
+                ? Reason.PROBE_MICRO_STEP : Reason.NONE);
     }
 
     private static boolean diagonalProofCurrent(
@@ -753,7 +740,6 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
     public enum Reason {
         NONE,
         PROBE_MICRO_STEP,
-        PROBE_COMPLETED,
         WORLD_UNAVAILABLE,
         WORLD_BOUNDARY_CHANGED,
         WORLD_REVISION_CHANGED,
@@ -787,7 +773,6 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         private final double tolerance;
         private int edgeIndex;
         private long activeTicks;
-        private boolean probeStepIssued;
         private boolean settling;
         private Vec3 lastSettlePosition;
         private int stableTicks;

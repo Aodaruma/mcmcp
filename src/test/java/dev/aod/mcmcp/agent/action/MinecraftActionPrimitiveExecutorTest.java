@@ -83,6 +83,21 @@ class MinecraftActionPrimitiveExecutorTest {
     }
 
     @Test
+    void probeRemainsRunningAcrossFreshTicksWithinItsFiniteRouteBound() {
+        var first = MinecraftActionPrimitiveExecutor.runningNavigationResult(
+                MinecraftActionPrimitiveExecutor.EdgeDecision.PROBE, true);
+        var next = MinecraftActionPrimitiveExecutor.runningNavigationResult(
+                MinecraftActionPrimitiveExecutor.EdgeDecision.PROBE, true);
+
+        assertThat(first).isEqualTo(new MinecraftActionPrimitiveExecutor.TickResult(
+                MinecraftActionPrimitiveExecutor.Status.RUNNING,
+                MinecraftActionPrimitiveExecutor.Reason.PROBE_MICRO_STEP));
+        assertThat(next).isEqualTo(first);
+        assertThat(MinecraftActionPrimitiveExecutor.navigationOutputAllowed(55, 56)).isTrue();
+        assertThat(MinecraftActionPrimitiveExecutor.navigationOutputAllowed(56, 56)).isFalse();
+    }
+
+    @Test
     void fencesEveryPlanToItsExactWorldRevision() {
         UUID session = UUID.randomUUID();
         var map = new KnownTraversabilityMap();

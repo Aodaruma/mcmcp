@@ -3,6 +3,7 @@ package dev.aod.mcmcp.runtime;
 import com.google.gson.Gson;
 import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
+import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilityMap;
@@ -340,6 +341,24 @@ class McmcpRuntimeHardeningTest {
         assertThat(McmcpRuntime.replanDeadlineReached(119, 120)).isFalse();
         assertThat(McmcpRuntime.replanDeadlineReached(120, 120)).isTrue();
         assertThat(McmcpRuntime.replanDeadlineReached(121, 120)).isTrue();
+    }
+
+    @Test
+    void acceptedProbeStartsTheSameReplanHeartbeatVerificationAsOtherRunningWork() {
+        var probe = new MinecraftActionPrimitiveExecutor.TickResult(
+                MinecraftActionPrimitiveExecutor.Status.RUNNING,
+                MinecraftActionPrimitiveExecutor.Reason.PROBE_MICRO_STEP);
+        var ordinary = new MinecraftActionPrimitiveExecutor.TickResult(
+                MinecraftActionPrimitiveExecutor.Status.RUNNING,
+                MinecraftActionPrimitiveExecutor.Reason.NONE);
+        var terminal = new MinecraftActionPrimitiveExecutor.TickResult(
+                MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED,
+                MinecraftActionPrimitiveExecutor.Reason.ROUTE_EDGE_CHANGED);
+
+        assertThat(McmcpRuntime.shouldVerifyReplanHeartbeat(true, probe)).isTrue();
+        assertThat(McmcpRuntime.shouldVerifyReplanHeartbeat(true, ordinary)).isTrue();
+        assertThat(McmcpRuntime.shouldVerifyReplanHeartbeat(false, probe)).isFalse();
+        assertThat(McmcpRuntime.shouldVerifyReplanHeartbeat(true, terminal)).isFalse();
     }
 
     @Test

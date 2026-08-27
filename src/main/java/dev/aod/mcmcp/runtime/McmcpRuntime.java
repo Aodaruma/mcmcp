@@ -2556,9 +2556,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             }
             switch (result.status()) {
                 case RUNNING -> {
-                    if (agentExecution.replanning
-                            && result.reason()
-                            != MinecraftActionPrimitiveExecutor.Reason.PROBE_MICRO_STEP) {
+                    if (shouldVerifyReplanHeartbeat(agentExecution.replanning, result)) {
                         agentExecution.replanHeartbeatPending = true;
                     }
                 }
@@ -4295,6 +4293,12 @@ public final class McmcpRuntime implements McpRuntimePort {
 
     static boolean replanDeadlineReached(long actionTick, long deadlineTick) {
         return deadlineTick > 0L && actionTick >= deadlineTick;
+    }
+
+    static boolean shouldVerifyReplanHeartbeat(
+            boolean replanning, MinecraftActionPrimitiveExecutor.TickResult result) {
+        Objects.requireNonNull(result, "result");
+        return replanning && result.status() == MinecraftActionPrimitiveExecutor.Status.RUNNING;
     }
 
     static boolean repeatedPositionCorrection(
