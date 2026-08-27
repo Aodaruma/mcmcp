@@ -91,10 +91,11 @@ public record RoutePlan(
     }
 
     private static long executionTicks(int edgeCount, int probes) {
+        long transitions = Math.max(1L, edgeCount);
         return Math.addExact(
                 BASE_SETTLE_TICKS,
                 Math.addExact(
-                        Math.multiplyExact((long) edgeCount, TICKS_PER_TRANSITION),
+                        Math.multiplyExact(transitions, TICKS_PER_TRANSITION),
                         Math.multiplyExact((long) probes, EXTRA_TICKS_PER_PROBE)));
     }
 

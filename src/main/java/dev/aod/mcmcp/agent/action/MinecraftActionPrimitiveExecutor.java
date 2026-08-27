@@ -33,9 +33,9 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
     static final int SETTLE_STABLE_TICKS = 10;
     private static final float AIM_TOLERANCE_DEGREES = 0.75F;
     private static final double PROGRESS_EPSILON_BLOCKS = 0.03D;
+    private static final double STEP_EPSILON = 1.0E-7D;
     private static final double SETTLE_DRIFT_EPSILON_SQUARED = 4.0E-6D;
     private static final double INTERMEDIATE_WAYPOINT_TOLERANCE = 0.32D;
-    private static final double WAYPOINT_VERTICAL_TOLERANCE = 0.75D;
     private static final double ROUTE_CORRIDOR_RADIUS = 0.85D;
     private static final double ROUTE_VERTICAL_MARGIN = 1.25D;
     private static final Duration LEASE_HORIZON = Duration.ofMillis(500);
@@ -157,14 +157,43 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         }
 
         NavCell finalCell = state.route.cells().getLast();
-        if (state.route.edges().isEmpty()) {
-            return atWaypoint(player, finalCell, state.tolerance)
-                    ? finish(Status.SUCCEEDED, Reason.NONE)
-                    : finish(Status.REPLAN_REQUIRED, Reason.PLAYER_OFF_ROUTE);
+        if (state.route.edges().isEmpty() && !sameCellRouteCurrent(state.route, snapshot)) {
+            return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
         }
         if (state.settling) {
             return tickNavigationSettlement(
                     minecraft, player, snapshot, remainingDistance, clientTick, outputAllowed);
+        }
+        if (state.route.edges().isEmpty()) {
+            switch (sameCellDecision(
+                    player.getX(), player.getY(), player.getZ(), finalCell, state.tolerance)) {
+                case OFF_ROUTE -> {
+                    return finish(Status.REPLAN_REQUIRED, Reason.PLAYER_OFF_ROUTE);
+                }
+                case SETTLE -> {
+                    state.settling = true;
+                    return tickNavigationSettlement(
+                            minecraft,
+                            player,
+                            snapshot,
+                            remainingDistance,
+                            clientTick,
+                            outputAllowed);
+                }
+                case DRIVE -> { }
+            }
+            return driveNavigationWaypoint(
+                    minecraft,
+                    player,
+                    snapshot,
+                    movementSafety,
+                    remainingDistance,
+                    clientTick,
+                    outputAllowed,
+                    finalCell,
+                    state.tolerance,
+                    0,
+                    EdgeDecision.CONFIRMED);
         }
 
         TraversabilityEdge planned = state.route.edges().get(state.edgeIndex);
@@ -190,6 +219,37 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             waypoint = planned.key().to();
         }
 
+        EdgeDecision edge = edgeDecision(state.route, state.edgeIndex, snapshot);
+        if (edge == EdgeDecision.REPLAN) {
+            return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
+        }
+        return driveNavigationWaypoint(
+                minecraft,
+                player,
+                snapshot,
+                movementSafety,
+                remainingDistance,
+                clientTick,
+                outputAllowed,
+                waypoint,
+                waypointTolerance,
+                Integer.compare(waypoint.y(), planned.key().from().y()),
+                edge);
+    }
+
+    private TickResult driveNavigationWaypoint(
+            Minecraft minecraft,
+            LocalPlayer player,
+            KnownTraversabilitySnapshot snapshot,
+            LocalObservationVolume movementSafety,
+            double remainingDistance,
+            long clientTick,
+            BooleanSupplier outputAllowed,
+            NavCell waypoint,
+            double waypointTolerance,
+            int verticalDelta,
+            EdgeDecision edge) {
+        NavigateState state = navigation;
         state.activeTicks++;
         if (!navigationOutputAllowed(state.activeTicks, state.route.tickUpperBound())) {
             return finish(Status.REPLAN_REQUIRED, Reason.PRIMITIVE_TICK_BUDGET_EXHAUSTED);
@@ -197,16 +257,12 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         if (remainingDistance <= 0.0D) {
             return finish(Status.REPLAN_REQUIRED, Reason.MOTION_BUDGET_EXHAUSTED);
         }
-
-        EdgeDecision edge = edgeDecision(state.route, state.edgeIndex, snapshot);
-        if (edge == EdgeDecision.REPLAN) {
-            return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
-        }
         // navigate_to_known owns movement only. Relative steering preserves the player's view;
         // a caller that wants camera motion must declare and execute face_known_position.
         Set<MovementInputLease.MovementKey> desired = steering(
                 player.getX(), player.getZ(), player.getYRot(), waypoint, waypointTolerance);
-        if (waypoint.y() > planned.key().from().y()) {
+        if (jumpRequired(
+                verticalDelta, waypoint.y() - player.getY(), player.maxUpStep())) {
             var withJump = EnumSet.noneOf(MovementInputLease.MovementKey.class);
             withJump.addAll(desired);
             withJump.add(MovementInputLease.MovementKey.JUMP);
@@ -246,7 +302,6 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             movement = null;
             return finish(Status.FAILED, Reason.MOVEMENT_LEASE_EXPIRED);
         }
-        int verticalDelta = Integer.compare(waypoint.y(), planned.key().from().y());
         if (verticalDelta == 0) {
             AgentInputState.global().requireGoalMovementSafety(
                     player, player.level(), snapshot.worldRevision(), remainingDistance);
@@ -445,8 +500,29 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         return EdgeDecision.CONFIRMED;
     }
 
+    static boolean sameCellRouteCurrent(
+            RoutePlan route, KnownTraversabilitySnapshot snapshot) {
+        Objects.requireNonNull(route, "route");
+        Objects.requireNonNull(snapshot, "snapshot");
+        return route.edges().isEmpty()
+                && route.worldSessionId().equals(snapshot.worldSessionId())
+                && route.dimension().equals(snapshot.dimension())
+                && snapshot.worldRevision() >= route.worldRevision()
+                && snapshot.containsCell(route.cells().getLast());
+    }
+
     static boolean navigationOutputAllowed(long activeTicks, long tickUpperBound) {
         return activeTicks >= 0L && tickUpperBound > 0L && activeTicks < tickUpperBound;
+    }
+
+    static boolean jumpRequired(int verticalDelta, double stepHeight, double maxUpStep) {
+        if (!Double.isFinite(stepHeight)
+                || !Double.isFinite(maxUpStep)
+                || maxUpStep < 0.0D) {
+            throw new IllegalArgumentException(
+                    "step height must be finite and maxUpStep non-negative");
+        }
+        return verticalDelta > 0 && stepHeight > maxUpStep + STEP_EPSILON;
     }
 
     static TickResult runningNavigationResult(EdgeDecision edge, boolean movementIssued) {
@@ -531,8 +607,18 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         return Mth.floor(x) == cell.x()
                 && Mth.floor(y) == cell.y()
                 && Mth.floor(z) == cell.z()
-                && Math.hypot(cell.x() + 0.5D - x, cell.z() + 0.5D - z) <= tolerance
-                && Math.abs(y - cell.y()) <= WAYPOINT_VERTICAL_TOLERANCE;
+                && Math.hypot(cell.x() + 0.5D - x, cell.z() + 0.5D - z) <= tolerance;
+    }
+
+    static SameCellDecision sameCellDecision(
+            double x, double y, double z, NavCell cell, double tolerance) {
+        if (Mth.floor(x) != cell.x()
+                || Mth.floor(y) != cell.y()
+                || Mth.floor(z) != cell.z()) {
+            return SameCellDecision.OFF_ROUTE;
+        }
+        return waypointReached(x, y, z, cell, tolerance)
+                ? SameCellDecision.SETTLE : SameCellDecision.DRIVE;
     }
 
     private static double horizontalDistance(LocalPlayer player, NavCell cell) {
@@ -766,6 +852,12 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         CONFIRMED,
         PROBE,
         REPLAN
+    }
+
+    enum SameCellDecision {
+        OFF_ROUTE,
+        DRIVE,
+        SETTLE
     }
 
     private static final class NavigateState extends ProgressState {

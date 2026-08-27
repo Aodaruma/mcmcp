@@ -205,12 +205,24 @@ class LocalObservationMixinContractTest {
     }
 
     @Test
-    void executorFencesItsCommandPreviewWhileTheMixinGuardsResolvedMovement() throws Exception {
-        var tickNavigation = method(
-                classNode("/dev/aod/mcmcp/agent/action/MinecraftActionPrimitiveExecutor.class"),
-                "tickNavigation");
+    void exactMovementGuardsDoNotUseCandidateGraphLandingProjection() throws Exception {
+        var volume = classNode("/dev/aod/mcmcp/agent/safety/LocalObservationVolume.class");
 
-        assertThat(invocations(tickNavigation))
+        assertThat(invocations(method(volume, "verifiesGoalResolvedMovement")))
+                .contains("dev/aod/mcmcp/agent/safety/LocalObservationVolume#evaluateResolvedHypothetical")
+                .doesNotContain("dev/aod/mcmcp/agent/safety/LocalObservationVolume#evaluateHypothetical");
+        assertThat(invocations(method(volume, "verifiesNavigationResolvedMovement")))
+                .contains("dev/aod/mcmcp/agent/safety/LocalObservationVolume#evaluateResolvedHypothetical")
+                .doesNotContain("dev/aod/mcmcp/agent/safety/LocalObservationVolume#evaluateHypothetical");
+    }
+
+    @Test
+    void executorFencesItsCommandPreviewWhileTheMixinGuardsResolvedMovement() throws Exception {
+        var driveNavigationWaypoint = method(
+                classNode("/dev/aod/mcmcp/agent/action/MinecraftActionPrimitiveExecutor.class"),
+                "driveNavigationWaypoint");
+
+        assertThat(invocations(driveNavigationWaypoint))
                 .contains("dev/aod/mcmcp/agent/action/MinecraftActionPrimitiveExecutor#commandDirection")
                 .contains("dev/aod/mcmcp/agent/safety/LocalObservationVolume#canPreviewGoalMovement")
                 .doesNotContain(
@@ -295,7 +307,7 @@ class LocalObservationMixinContractTest {
     void executorChecksTheFreshHardDeadlineAtEachOutputBoundary() throws Exception {
         var executor = classNode(
                 "/dev/aod/mcmcp/agent/action/MinecraftActionPrimitiveExecutor.class");
-        var navigation = invocations(method(executor, "tickNavigation"));
+        var navigation = invocations(method(executor, "driveNavigationWaypoint"));
         var face = invocations(method(executor, "tickFace"));
 
         assertThat(navigation.indexOf("java/util/function/BooleanSupplier#getAsBoolean"))

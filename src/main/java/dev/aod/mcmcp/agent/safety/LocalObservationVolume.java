@@ -519,7 +519,7 @@ public final class LocalObservationVolume {
                 >= -MOVEMENT_EPSILON;
     }
 
-    private static boolean movesTowardNavigationTarget(
+    static boolean movesTowardNavigationTarget(
             Point start, Point end, AgentInputState.NavigationIntent intent) {
         var target = point(intent.target());
         double horizontalBefore = square(start.x() - target.x()) + square(start.z() - target.z());
@@ -529,6 +529,7 @@ public final class LocalObservationVolume {
                 && start.y() + MOVEMENT_EPSILON < target.y()
                 && end.y() > start.y() + MOVEMENT_EPSILON
                 || intent.verticalDelta() < 0
+                && horizontalAfter <= horizontalBefore + MOVEMENT_EPSILON
                 && start.y() > target.y() + MOVEMENT_EPSILON
                 && end.y() + MOVEMENT_EPSILON < start.y();
     }
@@ -806,12 +807,14 @@ public final class LocalObservationVolume {
                 if (!attempted.add(edge)) {
                     continue;
                 }
-                var intended = new Vec3(direction.x(), 0.0D, direction.z());
+                var intended = adjacentCellCenterDelta(
+                        node.box(), direction.x(), direction.z());
                 var targetCenter = point(node.box().move(intended).getCenter());
                 if (origin.distanceSquared(targetCenter) > RADIUS_SQUARED) {
                     continue;
                 }
 
+                // Candidate graph only: exact runtime guards keep using the resolved tick path.
                 var evaluation = evaluateHypothetical(
                         player,
                         level,
@@ -819,7 +822,8 @@ public final class LocalObservationVolume {
                         node.box(),
                         intended,
                         node.depth() + 1,
-                        worldRevision);
+                        worldRevision,
+                        true);
                 if (evaluation.record().canExpand()
                         && withinVolume(origin, evaluation.record())) {
                     var targetKey = NodeKey.at(targetOffset, evaluation.endBox());
@@ -927,6 +931,19 @@ public final class LocalObservationVolume {
             Vec3 intended,
             int depth,
             long worldRevision) {
+        return evaluateHypothetical(
+                player, level, origin, start, intended, depth, worldRevision, false);
+    }
+
+    private Evaluation evaluateHypothetical(
+            LocalPlayer player,
+            ClientLevel level,
+            Point origin,
+            AABB start,
+            Vec3 intended,
+            int depth,
+            long worldRevision,
+            boolean allowWalkingLanding) {
         var intendedRegions = sweptRegions(SweptAabbPath.segments(start, intended, intended));
         if (loadedState(level, origin, intendedRegions) == LoadedState.UNKNOWN) {
             var from = point(start.getCenter());
@@ -943,8 +960,20 @@ public final class LocalObservationVolume {
                     start);
         }
         var resolved = VanillaCollisionResolver.resolve(player, level, start, intended);
-        return evaluateResolvedHypothetical(
-                player, level, origin, start, intended, resolved, depth, worldRevision);
+        return evaluateResolvedPath(
+                player,
+                level,
+                origin,
+                start,
+                point(start.move(intended).getCenter()),
+                SweptAabbPath.segments(start, intended, resolved),
+                start.move(resolved),
+                horizontallyClipped(intended, resolved),
+                depth,
+                worldRevision,
+                allowWalkingLanding
+                        && intended.y == 0.0D
+                        && intended.horizontalDistanceSqr() > 0.0D);
     }
 
     private Evaluation evaluateResolvedHypothetical(
@@ -973,8 +1002,33 @@ public final class LocalObservationVolume {
                     start);
         }
 
-        var segments = SweptAabbPath.segments(start, intended, resolved);
-        var end = start.move(resolved);
+        return evaluateResolvedPath(
+                player,
+                level,
+                origin,
+                start,
+                intendedTo,
+                SweptAabbPath.segments(start, intended, resolved),
+                start.move(resolved),
+                horizontallyClipped(intended, resolved),
+                depth,
+                worldRevision,
+                false);
+    }
+
+    private Evaluation evaluateResolvedPath(
+            LocalPlayer player,
+            ClientLevel level,
+            Point origin,
+            AABB start,
+            Point intendedTo,
+            List<SweptAabbPath.AxisSegment> segments,
+            AABB end,
+            boolean clipped,
+            int depth,
+            long worldRevision,
+            boolean allowWalkingLanding) {
+        var from = point(start.getCenter());
         var regions = sweptRegions(segments);
         var loaded = loadedState(level, origin, append(append(regions, end), supportSlab(end)));
         if (loaded == LoadedState.UNKNOWN) {
@@ -990,14 +1044,32 @@ public final class LocalObservationVolume {
                     start);
         }
 
-        boolean clipped = horizontallyClipped(intended, resolved);
         var clearance = !clipped && level.noCollision(player, end)
                 ? Clearance.CLEAR
                 : Clearance.BLOCKED;
         var support = support(level, player, origin, end);
         var fluid = fluid(level, origin, regions);
         var suffocation = level.collidesWithSuffocatingBlock(player, end);
-        var drop = classifyDrop(player, level, origin, end, support, fluid, false);
+        var dropEvaluation = dropEvaluation(
+                player, level, origin, end, support, fluid, false);
+        if (allowWalkingLanding
+                && dropEvaluation.drop() == Drop.WITHIN_WALKING_LIMIT
+                && dropEvaluation.resolvedDelta().y < -MOVEMENT_EPSILON) {
+            return evaluateResolvedPath(
+                    player,
+                    level,
+                    origin,
+                    start,
+                    intendedTo,
+                    appendWalkingLandingSegments(
+                            segments, end, dropEvaluation.resolvedDelta()),
+                    end.move(dropEvaluation.resolvedDelta()),
+                    clipped,
+                    depth,
+                    worldRevision,
+                    false);
+        }
+        var drop = dropEvaluation.drop();
         if (drop == Drop.UNKNOWN) {
             loaded = LoadedState.UNKNOWN;
         }
@@ -1122,30 +1194,71 @@ public final class LocalObservationVolume {
             Support support,
             Fluid fluid,
             boolean currentAabb) {
+        return dropEvaluation(
+                player, level, origin, box, support, fluid, currentAabb).drop();
+    }
+
+    private static DropEvaluation dropEvaluation(
+            LocalPlayer player,
+            ClientLevel level,
+            Point origin,
+            AABB box,
+            Support support,
+            Fluid fluid,
+            boolean currentAabb) {
         if (support == Support.PRESENT) {
-            return Drop.SUPPORTED;
+            return new DropEvaluation(Drop.SUPPORTED, Vec3.ZERO);
         }
         if (support == Support.UNKNOWN) {
-            return Drop.UNKNOWN;
+            return new DropEvaluation(Drop.UNKNOWN, Vec3.ZERO);
         }
         if (currentAabb && !player.onGround()) {
-            return Drop.AIRBORNE_OR_SWIMMING;
+            return new DropEvaluation(Drop.AIRBORNE_OR_SWIMMING, Vec3.ZERO);
         }
         if (fluid == Fluid.WATER) {
-            return Drop.AIRBORNE_OR_SWIMMING;
+            return new DropEvaluation(Drop.AIRBORNE_OR_SWIMMING, Vec3.ZERO);
         }
 
         var intended = new Vec3(0.0D, -DROP_PROBE, 0.0D);
         var regions = sweptRegions(SweptAabbPath.segments(box, intended, intended));
         if (loadedState(level, origin, regions) == LoadedState.UNKNOWN) {
-            return Drop.UNKNOWN;
+            return new DropEvaluation(Drop.UNKNOWN, Vec3.ZERO);
         }
         var entityCollisions = level.getEntityCollisions(player, box.expandTowards(intended));
         var resolved = Entity.collideBoundingBox(player, intended, box, level, entityCollisions);
         double distance = Math.max(0.0D, -resolved.y);
-        return distance <= MAX_WALKING_DROP + MOVEMENT_EPSILON
-                ? Drop.WITHIN_WALKING_LIMIT
-                : Drop.EXCEEDS_WALKING_LIMIT;
+        return new DropEvaluation(
+                distance <= MAX_WALKING_DROP + MOVEMENT_EPSILON
+                        ? Drop.WITHIN_WALKING_LIMIT
+                        : Drop.EXCEEDS_WALKING_LIMIT,
+                resolved);
+    }
+
+    static Vec3 adjacentCellCenterDelta(AABB start, int x, int z) {
+        Objects.requireNonNull(start, "start");
+        if ((x == 0 && z == 0) || Math.abs(x) > 1 || Math.abs(z) > 1) {
+            throw new IllegalArgumentException("direction must be an adjacent horizontal offset");
+        }
+        Vec3 center = start.getCenter();
+        return new Vec3(
+                Mth.floor(center.x) + x + 0.5D - center.x,
+                0.0D,
+                Mth.floor(center.z) + z + 0.5D - center.z);
+    }
+
+    static List<SweptAabbPath.AxisSegment> appendWalkingLandingSegments(
+            List<SweptAabbPath.AxisSegment> horizontal,
+            AABB horizontalEnd,
+            Vec3 resolvedDrop) {
+        Objects.requireNonNull(horizontal, "horizontal");
+        Objects.requireNonNull(horizontalEnd, "horizontalEnd");
+        Objects.requireNonNull(resolvedDrop, "resolvedDrop");
+        var result = new ArrayList<>(horizontal);
+        result.addAll(SweptAabbPath.segments(
+                horizontalEnd,
+                new Vec3(0.0D, -DROP_PROBE, 0.0D),
+                resolvedDrop));
+        return List.copyOf(result);
     }
 
     private static Fluid fluid(ClientLevel level, Point origin, List<AABB> regions) {
@@ -1469,6 +1582,16 @@ public final class LocalObservationVolume {
         private Evaluation {
             Objects.requireNonNull(record, "record");
             Objects.requireNonNull(endBox, "endBox");
+        }
+    }
+
+    private record DropEvaluation(Drop drop, Vec3 resolvedDelta) {
+        private DropEvaluation {
+            Objects.requireNonNull(drop, "drop");
+            Objects.requireNonNull(resolvedDelta, "resolvedDelta");
+            if (!finite(resolvedDelta)) {
+                throw new IllegalArgumentException("drop resolution must be finite");
+            }
         }
     }
 

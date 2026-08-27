@@ -805,7 +805,8 @@ final class FixtureGameTests {
                 new LocalObservationVolume.Snapshot(1L, 7L, point, current, List.of()),
                 new UUID(0L, 1L),
                 "minecraft:overworld",
-                7L);
+                7L,
+                point.y() - 0.5D);
         if (projection.currentSafety() != LocalObservationProjector.CurrentSafety.RECOVER) {
             helper.fail(Component.literal(
                     "expected RECOVER for " + expectedState + " but found "

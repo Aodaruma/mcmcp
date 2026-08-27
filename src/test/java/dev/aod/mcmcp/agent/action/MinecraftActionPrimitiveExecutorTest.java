@@ -177,11 +177,57 @@ class MinecraftActionPrimitiveExecutorTest {
         assertThat(MinecraftActionPrimitiveExecutor.navigationOutputAllowed(36, 36)).isFalse();
         var waypoint = cell(1, 64, 0);
         assertThat(MinecraftActionPrimitiveExecutor.waypointReached(
-                1.5D, 64.7D, 0.5D, waypoint, 0.75D)).isTrue();
+                1.5D, 64.9375D, 0.5D, waypoint, 0.75D)).isTrue();
+        assertThat(MinecraftActionPrimitiveExecutor.waypointReached(
+                1.5D, 65.0D, 0.5D, waypoint, 0.75D)).isFalse();
         assertThat(MinecraftActionPrimitiveExecutor.waypointReached(
                 0.99D, 64.0D, 0.5D, waypoint, 0.75D)).isFalse();
         assertThat(MinecraftActionPrimitiveExecutor.waypointReached(
                 1.5D, 63.99D, 0.5D, waypoint, 0.75D)).isFalse();
+    }
+
+    @Test
+    void zeroEdgeRouteDrivesToCenterBeforeUsingTheSettlementPath() {
+        UUID session = UUID.randomUUID();
+        var map = new KnownTraversabilityMap();
+        map.startSession(session, DIMENSION, 4);
+        var cell = cell(0, 64, 0);
+        map.observe(edge(
+                session, cell, cell(1, 64, 0), TraversabilityEdge.Status.CONFIRMED, 1));
+        var original = map.snapshot().orElseThrow();
+        var route = route(original, cell, cell);
+
+        assertThat(route.tickUpperBound()).isEqualTo(36L);
+        assertThat(route.durationMillisUpperBound()).isEqualTo(1_800L);
+        assertThat(MinecraftActionPrimitiveExecutor.sameCellRouteCurrent(route, original)).isTrue();
+        assertThat(MinecraftActionPrimitiveExecutor.sameCellDecision(
+                0.01D, 64.0D, 0.5D, cell, 0.1D))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SameCellDecision.DRIVE);
+        assertThat(MinecraftActionPrimitiveExecutor.sameCellDecision(
+                0.5D, 64.9375D, 0.5D, cell, 0.1D))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SameCellDecision.SETTLE);
+        assertThat(MinecraftActionPrimitiveExecutor.sameCellDecision(
+                1.0D, 64.0D, 0.5D, cell, 0.1D))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SameCellDecision.OFF_ROUTE);
+
+        map.advanceWorldRevision(5, List.of(), List.of());
+        var advanced = map.snapshot().orElseThrow();
+        assertThat(MinecraftActionPrimitiveExecutor.sameCellRouteCurrent(route, advanced)).isTrue();
+        var newerRoute = route(advanced, cell, cell);
+        assertThat(MinecraftActionPrimitiveExecutor.sameCellRouteCurrent(newerRoute, original))
+                .isFalse();
+
+        map.advanceWorldRevision(6, List.of(cell), List.of());
+        assertThat(MinecraftActionPrimitiveExecutor.sameCellRouteCurrent(
+                route, map.snapshot().orElseThrow())).isFalse();
+    }
+
+    @Test
+    void shallowAscentUsesVanillaAutoStepAndFullBlockAscentJumps() {
+        assertThat(MinecraftActionPrimitiveExecutor.jumpRequired(
+                1, 0.0625D, 0.6D)).isFalse();
+        assertThat(MinecraftActionPrimitiveExecutor.jumpRequired(
+                1, 1.0D, 0.6D)).isTrue();
     }
 
     @Test

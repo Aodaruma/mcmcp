@@ -29,7 +29,7 @@ public final class AgentPrimitivePlanner {
     private static final long TICK_MILLIS = 50L;
     private static final int MAX_ABSTRACT_POSES = 4_096;
     private static final double MAX_CELL_HORIZONTAL_ERROR = Math.sqrt(0.5D);
-    private static final double NAVIGATION_VERTICAL_ERROR_ABOVE = 0.75D;
+    private static final double NAVIGATION_VERTICAL_ERROR_ABOVE = 1.0D;
     private static final double FACE_COMPLETION_ERROR_DEGREES = 1.5D;
     private static final double NAVIGATION_TRAJECTORY_FACTOR = 1.5D;
     private static final double VERTICAL_ARC_ALLOWANCE = 1.5D;
@@ -314,16 +314,7 @@ public final class AgentPrimitivePlanner {
                 }
                 addRouteDependencies(map, route, routeDependencies);
                 worst = maximum(worst, navigationCost(route, pose));
-                if (route.edges().isEmpty()) {
-                    if (!zeroEdgeWithinTolerance(pose, navigate.target(), navigate.tolerance())) {
-                        throw new PlanningException(
-                                Code.NO_KNOWN_PATH,
-                                "A zero-edge route cannot prove the requested tolerance");
-                    }
-                    output.add(pose);
-                } else {
-                    output.add(pose.at(navCell(navigate.target()), navigate.tolerance()));
-                }
+                output.add(pose.at(navCell(navigate.target()), navigate.tolerance()));
             }
             merge(costs, node.id(), Objects.requireNonNull(worst, "navigation cost"));
             return distinct(output);
@@ -617,8 +608,14 @@ public final class AgentPrimitivePlanner {
         if (!route.cells().getFirst().equals(pose.cell())) {
             throw new IllegalArgumentException("route does not start at the supplied pose cell");
         }
-        double geometricDistance = 0.0D;
-        if (!route.edges().isEmpty()) {
+        double geometricDistance;
+        if (route.edges().isEmpty()) {
+            NavCell waypoint = route.cells().getFirst();
+            geometricDistance = Math.hypot(
+                    pose.x() - (waypoint.x() + 0.5D),
+                    pose.z() - (waypoint.z() + 0.5D))
+                    + pose.horizontalPositionError();
+        } else {
             NavCell waypoint = route.cells().get(1);
             double horizontal = Math.hypot(
                     pose.x() - (waypoint.x() + 0.5D),
@@ -822,18 +819,6 @@ public final class AgentPrimitivePlanner {
 
     private static double square(double value) {
         return value * value;
-    }
-
-    private static boolean zeroEdgeWithinTolerance(
-            Pose pose, ActionDsl.Position target, double tolerance) {
-        double horizontal = Math.hypot(
-                target.x() + 0.5D - pose.x(),
-                target.z() + 0.5D - pose.z()) + pose.horizontalPositionError();
-        double minimumY = pose.y() - pose.yErrorBelow();
-        double maximumY = pose.y() + pose.yErrorAbove();
-        return horizontal <= tolerance
-                && minimumY >= target.y()
-                && maximumY <= target.y() + NAVIGATION_VERTICAL_ERROR_ABOVE;
     }
 
     private static double angularError(

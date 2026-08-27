@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.agent.safety;
 
 import dev.aod.mcmcp.client.AgentInputState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
@@ -17,6 +18,7 @@ import static dev.aod.mcmcp.agent.safety.ObservationRecord.Support;
 import static dev.aod.mcmcp.agent.safety.ObservationRecord.Transition;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.data.Offset.offset;
 
 class LocalObservationVolumeTest {
     private static final Point ORIGIN = new Point(0.0D, 64.0D, 0.0D);
@@ -71,9 +73,53 @@ class LocalObservationVolumeTest {
                 LoadedState.LOADED,
                 Drop.WITHIN_WALKING_LIMIT,
                 false);
+        assertThat(airborneStep.canExpand()).isFalse();
         assertThat(LocalObservationVolume.goalIntendedMovementSafe(airborneStep)).isTrue();
         assertThat(LocalObservationVolume.goalIntendedMovementSafe(blocked(
                 1, new Point(1.0D, 64.0D, 0.0D)))).isFalse();
+    }
+
+    @Test
+    void adjacentProbeEndsAtTheDestinationCellCenterFromFractionalNegativeCoordinates() {
+        var box = new AABB(
+                -9.781D, 56.0D, -15.433D,
+                -9.181D, 57.8D, -14.833D);
+
+        var delta = LocalObservationVolume.adjacentCellCenterDelta(box, 0, 1);
+        var end = box.move(delta).getCenter();
+
+        assertThat(delta.x).isCloseTo(-0.019D, offset(1.0E-12D));
+        assertThat(delta.z).isCloseTo(0.633D, offset(1.0E-12D));
+        assertThat(end.x).isCloseTo(-9.5D, offset(1.0E-12D));
+        assertThat(end.z).isCloseTo(-14.5D, offset(1.0E-12D));
+    }
+
+    @Test
+    void shallowLandingSweepContinuesFromTheHorizontalEndpoint() {
+        var start = new AABB(0.0D, 0.0D, 0.0D, 1.0D, 1.0D, 1.0D);
+        var horizontalDelta = new Vec3(1.0D, 0.0D, 0.0D);
+        var horizontal = SweptAabbPath.segments(start, horizontalDelta, horizontalDelta);
+        var horizontalEnd = start.move(horizontalDelta);
+
+        var path = LocalObservationVolume.appendWalkingLandingSegments(
+                horizontal, horizontalEnd, new Vec3(0.0D, -0.0625D, 0.0D));
+
+        assertThat(path).extracting(SweptAabbPath.AxisSegment::axis)
+                .containsExactly(SweptAabbPath.Axis.X, SweptAabbPath.Axis.Y);
+        assertThat(path.get(1).start()).isEqualTo(horizontalEnd);
+        assertThat(path.getLast().end()).isEqualTo(horizontalEnd.move(0.0D, -0.0625D, 0.0D));
+    }
+
+    @Test
+    void descendingTowardAWaypointCannotWorsenHorizontalDistance() {
+        var start = new Point(0.0D, 64.0D, 0.0D);
+        var intent = new AgentInputState.NavigationIntent(
+                new Vec3(0.0D, 63.0D, 0.0D), -1);
+
+        assertThat(LocalObservationVolume.movesTowardNavigationTarget(
+                start, new Point(0.0D, 63.9D, 0.0D), intent)).isTrue();
+        assertThat(LocalObservationVolume.movesTowardNavigationTarget(
+                start, new Point(0.2D, 63.9D, 0.0D), intent)).isFalse();
     }
 
     @Test

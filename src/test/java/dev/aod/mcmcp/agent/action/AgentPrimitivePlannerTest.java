@@ -143,10 +143,10 @@ class AgentPrimitivePlannerTest {
         assertThat(analysis.primitiveCosts().get("left").distanceBlocks()).isEqualTo(3.0D);
         assertThat(analysis.primitiveCosts().get("right").distanceBlocks())
                 .isEqualTo(1.5D * (3.0D + Math.hypot(
-                        1.0D + Math.sqrt(0.5D), 0.75D)));
+                        1.0D + Math.sqrt(0.5D), 1.0D)));
         assertThat(compiled.worstCaseCost().distanceBlocks())
                 .isEqualTo(1.5D * (5.0D + Math.hypot(
-                        1.0D + Math.sqrt(0.5D), 0.75D)));
+                        1.0D + Math.sqrt(0.5D), 1.0D)));
     }
 
     @Test
@@ -165,6 +165,37 @@ class AgentPrimitivePlannerTest {
                 new AgentPrimitivePlanner.Pose(start, 0.01, 64, 0.5, 1.62, 0, 0));
 
         assertThat(cost.distanceBlocks()).isEqualTo(2.235D);
+    }
+
+    @Test
+    void sameCellNavigationCentersWithinToleranceAndChargesTheOffset() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        NavCell start = cell(0);
+        map.observe(confirmed(session, start, cell(1)));
+        var navigate = new ActionDsl.NavigateToKnown(
+                "center", position(start), 0.1D);
+        var program = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(ActionDsl.Capability.MOVEMENT),
+                List.of(navigate));
+
+        var analysis = AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(
+                        start, 0.01D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F),
+                Optional.empty(),
+                4.5F);
+
+        assertThat(analysis.knownTargets()).containsExactly(position(start));
+        var cost = analysis.primitiveCosts().get("center");
+        assertThat(cost.distanceBlocks())
+                .isEqualTo(1.5D * 0.49D);
+        assertThat(cost.ticks()).isEqualTo(36L);
+        assertThat(cost.durationMillis()).isEqualTo(1_800L);
     }
 
     @Test

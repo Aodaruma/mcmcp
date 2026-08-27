@@ -24,12 +24,17 @@ public final class LocalObservationProjector {
             LocalObservationVolume.Snapshot snapshot,
             UUID worldSessionId,
             String dimension,
-            long currentWorldRevision) {
+            long currentWorldRevision,
+            double currentFeetY) {
         Objects.requireNonNull(snapshot, "snapshot");
         Objects.requireNonNull(worldSessionId, "worldSessionId");
         var dimensionId = new ResourceId(Objects.requireNonNull(dimension, "dimension"));
         if (currentWorldRevision < 0L) {
             throw new IllegalArgumentException("currentWorldRevision must be non-negative");
+        }
+        double centerToFeet = snapshot.center().y() - currentFeetY;
+        if (!Double.isFinite(centerToFeet) || centerToFeet <= 0.0D) {
+            throw new IllegalArgumentException("currentFeetY must be below the observation center");
         }
         if (snapshot.worldRevision() != currentWorldRevision
                 || snapshot.current().worldRevision() != currentWorldRevision) {
@@ -43,6 +48,7 @@ public final class LocalObservationProjector {
             projectTransition(
                     source,
                     snapshot.center(),
+                    centerToFeet,
                     worldSessionId,
                     dimensionId,
                     currentWorldRevision,
@@ -58,6 +64,7 @@ public final class LocalObservationProjector {
     private static void projectTransition(
             dev.aod.mcmcp.agent.safety.ObservationRecord source,
             dev.aod.mcmcp.agent.safety.ObservationRecord.Point observer,
+            double centerToFeet,
             UUID worldSessionId,
             ResourceId dimension,
             long worldRevision,
@@ -72,9 +79,9 @@ public final class LocalObservationProjector {
         }
 
         TraversabilityEdge.Status status = status(source);
-        NavCell from = navCell(dimension.value(), source.from());
-        NavCell requested = navCell(dimension.value(), source.requestedTo());
-        NavCell resolved = navCell(dimension.value(), source.to());
+        NavCell from = navCell(dimension.value(), source.from(), centerToFeet);
+        NavCell requested = navCell(dimension.value(), source.requestedTo(), centerToFeet);
+        NavCell resolved = navCell(dimension.value(), source.to(), centerToFeet);
         var to = new NavCell(
                 dimension.value(), requested.x(), resolved.y(), requested.z());
         final TraversabilityEdge.Key key;
@@ -115,7 +122,7 @@ public final class LocalObservationProjector {
                 provenance == EvidenceProvenance.CONTACT
                         ? TraversabilityEdge.Provenance.CONTACT
                         : TraversabilityEdge.Provenance.LOCAL_VOLUME,
-                navCell(dimension.value(), observer),
+                navCell(dimension.value(), observer, centerToFeet),
                 source.observedTick(),
                 worldRevision));
     }
@@ -300,11 +307,12 @@ public final class LocalObservationProjector {
 
     private static NavCell navCell(
             String dimension,
-            dev.aod.mcmcp.agent.safety.ObservationRecord.Point point) {
+            dev.aod.mcmcp.agent.safety.ObservationRecord.Point point,
+            double centerToFeet) {
         return new NavCell(
                 dimension,
                 floor(point.x()),
-                floor(point.y() - 0.5D),
+                floor(point.y() - centerToFeet),
                 floor(point.z()));
     }
 

@@ -6530,7 +6530,8 @@ public final class McmcpRuntime implements McpRuntimePort {
                 latestLocalObservation,
                 session.worldSessionId(),
                 session.dimension(),
-                worldRevision);
+                worldRevision,
+                minecraft.player.getY());
         localSafety = local.currentSafety();
         local.edges().forEach(knownTraversability::observe);
         soundPlaybackTruncated = soundPlaybacks.drainInto(
