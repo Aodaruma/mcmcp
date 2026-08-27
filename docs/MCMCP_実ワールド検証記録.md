@@ -1,8 +1,8 @@
 # MCMCP 実ワールド検証記録
 
-- 更新日: 2026-08-27
+- 更新日: 2026-08-28
 - 対象: Prism Launcherの単一検証profile、Minecraft 26.2 / NeoForge 26.2.0.59
-- 状態: 木こりの最小gateは合格、畑テストは進行中
+- 状態: 木こりの最小gateは合格。畑の栽培・収穫ループはMCP操作だけでwheat 64個へ到達。chest取得からのend-to-endは未合格
 
 ## 完成目標と判定原則
 
@@ -67,6 +67,62 @@ chest内のhoeとwheat seedsを取得し、fence gateを通って畑へ入り、
 | 播種、成長待機、収穫 | 未到達 | 耕作primitiveの予算不整合を先に修正する |
 | wheat 1 stack | 未達 | 反復試験を開始できていない |
 
+### 2026-08-28 追加検証
+
+commit `7fabfca`で、vanillaの段階的なcamera回転とfloat丸めをadmission側でも再現し、実行時と同じcamera消費量を事前予約するよう修正した。これにより、解析上の角度との差で正常な操作が`BUDGET_EXCEEDED`になる問題を根治した。
+
+| 工程 | 結果 | 詳細 |
+|---|---|---|
+| camera予算修正後の収穫 | 成功 | Action `7e1617de-c820-4466-bfcb-6aa246d93510`でwheat 2株を収穫した |
+| 8区画への播種 | 部分成功 | Action `1eaeb2ae-29ea-424f-8dff-1d6980a6ab02`で6株を播種後、7株目の実行前にglobal camera上限360°へ到達して停止した。修正前の誤差ではなく、宣言したAction全体予算による正当な停止である |
+| 観測遮蔽を伴う播種 | 部分成功 | Action `178859fa-e8ac-4eb4-ab72-d33b3709ed6c`は1株を播種後、次の支持面を現在の観測から確定できず`TARGET_UNKNOWN`で停止した |
+| 1区画ずつの播種 | 成功 | Actions `7a611dae-f11e-4ae0-a5bd-1b86df69b095`、`eddf4a41-cf9d-45a0-962c-1f972de754ff`で各1株を播種した |
+| 3区画batch | 成功 | Actions `29a7da88-2fe1-4387-a65f-9d837e5fe6d8`、`83d57409-bbf0-4256-9194-be4be65c9e91`が各3株を播種した |
+| 畑内の区画間移動 | 成功 | cardinal方向の1区画移動を複数回実行し、既知の作物上を安全に通過できた。未知区画への直接移動は`TARGET_UNKNOWN`で拒否された |
+| 作付面積 | 進行中 | 合計20区画へ播種した。inventoryはwheat 7、wheat seeds 50、hoe 1 |
+| 成熟待機 | 進行中 | Action `b6eb16c8-d34b-48bf-8fe0-de4c3624d112`で既知の1株が成熟するまで最大11,000 ticks待機中 |
+| wheat 1 stack | 進行中 | 成熟後の収穫、drop回収、再播種の反復が残る |
+
+追加で判明した改善点は次のとおり。
+
+1. 多数区画を1 Actionへ詰め込まず、camera消費を見ながら2～4区画程度の小さいbatchへ分割する。
+2. mutation直前に対象面を再観測し、player自身や作物による遮蔽、world revision更新で失効した証拠を使わない。
+3. 収穫後はdropが消失する前にcardinal移動を組み合わせた回収routeを実行し、inventory増加で回収を確認する。
+4. 成熟待機、収穫、drop回収、再播種を小さいDSL単位で反復し、wheat 64個到達を確認する。
+
+### 2026-08-28 1 stack到達結果
+
+20区画の畑で、移動、照準、成熟作物の破壊、drop回収、播種をMCMCPのAction DSLから実行し、inventoryのwheatを32個から64個まで増やした。Minecraftの移動・視点・attack・useに`computer-use`は使用していない。`computer-use`は、待機時間を短縮する検証fixtureのコマンド投入にだけ使用したため、gameplay操作の成功には含めていない。
+
+| 項目 | 結果 | 根拠・範囲 |
+|---|---|---|
+| wheat 1 stack | 合格 | 最終Action `3f6aded9-b54f-4881-9cea-711b1a8233eb`が`succeeded`。wheat 63→64、seeds 168、control mode `ready` |
+| MCPだけの栽培・収穫操作 | 合格 | gameplay中の移動、視点、破壊、回収、播種はすべてMCP Toolから実行した |
+| programmed DSL | 合格 | 経路移動、複数株の収穫、待機、複数区画の播種を複数nodeの1 Actionとして実行した |
+| drop回収 | 合格 | 作物中央へ寄ってから破壊し20 ticks待機する手順で、最終15株を含む連続収穫がすべてwheat +1になった |
+| 再播種 | 合格 | 収穫後の区画へ複数回再播種し、成長・再収穫の周期を確認した。最終64個到達直後の15区画は未再播種 |
+| 成熟待機fixture | 復旧済み | `/mcmcp_fixture random_ticks accelerate`で待機を短縮し、終了時に`normal`へ戻した。最終値は3 |
+| Action失敗後の状態 | 合格 | `BUDGET_EXCEEDED`と`PATH_BLOCKED`の失敗後もMCPはOFFにならず、入力解放後に`ready`へ戻った |
+| chest・gateを含むend-to-end | 未合格 | この一連の試行より前にchest内item取得と入口通過へ手動補助が入っているため、完全なMCP-only受入とは分ける |
+
+代表Actionは次のとおり。
+
+- 2株収穫: `8314f5c5-2a14-4957-b238-e200c0d973fe`（49→51）から`5fa5cb2e-a968-4611-8a3e-64e587d7428b`（61→63）まで、7 Action連続で各+2
+- 最終移動: `9d3eebbb-e707-45bc-985a-66030bea128d`（4 nodesすべて成功）
+- 最終収穫: `3f6aded9-b54f-4881-9cea-711b1a8233eb`（63→64、+1）
+- 正当な予算停止: `bc6e8a52-8aea-43e5-982d-68ec75f09c8a`（11/13 nodes実行後にcamera 337.81°で`BUDGET_EXCEEDED`、wheat 32→34、controlは`ready`）
+
+実ワールドで有効だった最小戦略は、収穫を1 Actionあたり2株、播種を観測遮蔽の少ない遠い区画から2～4区画ずつ処理することである。多数の対象を1 Actionへ詰め込む必要はなく、宣言済みcamera上限内に収めた小さいprogrammed DSLを反復すればよい。
+
+残る改善点は次のとおり。
+
+1. 作物やplayer自身で支持面が隠れる順序を避けるため、播種対象を遠い順に並べ、必要ならnode間で再観測する。
+2. full dirtの1 block高低差を含む経路は、plannerが中間cellとY座標を自動挿入する。今回の試験では明示的な直交routeで補った。
+3. camera予算から安全なbatch数を事前計算し、途中までworldを変更してから`BUDGET_EXCEEDED`になる頻度を下げる。
+4. 観測paginationの完了時にleaseを即時解放する。現状は最大2 leaseがTTLまで残り、短時間の再観測が`SERVER_BUSY`になる場合がある。
+5. 農地上の平坦移動では踏み荒らしを再現しなかったが、落下・jumpを伴う進入は別のGameTestで検証し、必要ならfarmland保護をnavigationへ追加する。
+6. 通常のrandom tickだけを使う長時間試験を別途実施する。今回のfixtureは待機時間短縮専用であり、収穫・播種そのものは支援していない。
+
 ### 改善点
 
 優先順は次のとおり。
@@ -75,8 +131,8 @@ chest内のhoeとwheat seedsを取得し、fence gateを通って畑へ入り、
 2. gateの開閉でKnown Traversability Mapのedgeを更新し、player AABBが通る幅の狭路を過度に`PATH_BLOCKED`へしない。
 3. `face_known_position`とnavigation replanのcamera / motion budget消費をtraceから分離して調べ、同じprimitive内の再計画でbudgetを意図せず使い切らない。camera上限は実行前に十分な値を宣言する。
 4. chestのinventoryを許可された観測として取得し、slot指定のpickup / transferを型付き操作と事後inventory検証で実装する。
-5. 上記の入口工程がMCP単独で通った後、`till_known_block`、`plant_known_wheat`、`crop_mature`、`harvest_known_wheat`を1区画ずつ実ワールド検証する。
-6. 最後に、播種可能数、成熟状態、wheat / seedsのinventory差分を見ながら、wheat 64個まで有限反復する。
+5. 上記の入口工程をMCP単独で通し、今回合格した栽培・収穫DSLへ接続する。
+6. 最終収穫後の区画も再播種し、wheat 64個と畑の復旧を同じ受入Action列で確認する。
 
 `till_known_block`の失敗は、admissionが観測面の照準点でcamera costを見積もる一方、semantic preparationが複数の到達可能面から別の照準点を選べるため、実消費がprimitive単位の見積もりを上回ったことが原因である。修正後は、実行側の照準点がadmissionへ公開されるまで、1回のblock mutationに安全側の360°上限を予約して再検証する。
 

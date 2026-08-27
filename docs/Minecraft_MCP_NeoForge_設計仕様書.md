@@ -276,17 +276,17 @@ READY（ON、時間制限なし、明示OFFまで維持）
 AGENT
   ├─ 能動的危険 → RECOVERING
   ├─ Esc → 現在ActionをEMERGENCY_STOP、入力解除、READY
-  └─ success / failure / cancel → OFF
+  └─ success / failure / cancel → 入力解除、READY
 
 RECOVERING
   ├─ Esc → 現在ActionをEMERGENCY_STOP、入力解除、READY
-  └─ 安全化 / 回避不能 / recovery budget超過 → OFF
+  └─ 安全化 / 回避不能 / recovery budget超過 → 入力解除、READY
 
 全状態
   └─ OFF / world・player消失 → OFF
 ~~~
 
-Action成功、明示cancel、recoverable failure、またはAGENT/RECOVERING中の物理Escでは、現在Actionを終了して全synthetic入力を解除した後、同じworld・capabilityのREADYへ戻す。world変更、明示OFF、endpoint fault、入力解放失敗、unrecoverable failureではOFFへ戻す。同時に受理するActionは1件だけである。
+Action成功、明示cancel、recoverable / unrecoverableを問わないAction failure、またはAGENT/RECOVERING中の物理Escでは、現在Actionを終了して全synthetic入力を解除した後、同じworld・capabilityのREADYへ戻す。Action failureの`recoverable`はMCP client向けの結果メタデータであり、local authorizationをOFFにする条件には使わない。world変更、明示OFF、endpoint fault、入力解放失敗ではOFFへ戻す。同時に受理するActionは1件だけである。
 
 ### 6.3 即時停止条件
 
