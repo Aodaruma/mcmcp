@@ -1613,7 +1613,11 @@ world、mmc-pack.json、instance.cfg、既存jarは変更しない。
 
 接続先MCP hostは既存Streamable HTTP endpointへ固定Authorization Bearer headerを付け、ローカルloopbackへ到達できること。製品基準はMCP 2026-07-28とする。実運用で固定するCodex CLI 0.146.1に限り、実capture済みの`initialize` / `2025-06-18`互換経路を併設する。それ以外のlegacy host向け汎用downgradeは行わない。
 
-Codex CLIのversionを更新する場合は、先にwire handshake、JSONL event schema、固定5 Toolの呼出しを再取得し、compatibility contractとfresh MCP-only評価を更新する。再検証なしに別versionを合格扱いしない。
+fresh MCP-only実験は製品runtimeと分け、script内定数へpinした`codex-cli 0.146.1 app-server --stdio --strict-config`のexperimental `dynamicTools`へ、MCP 2026-07-28 `tools/list`から得た固定5 Tool schemaだけを渡す。canonical catalogのfile/surface hashとlive resultをexact比較した後、評価runnerは`item/tool/call`をliteral `127.0.0.1` endpointへ1対1 forwardする。Bearerはrunner内だけでAuthorization headerへ使い、proxy/redirectを禁止してCodex childへ渡さない。この評価専用bridgeは、MOD内MCP serverだけで完結する製品要件を変更せず、永続MCP config未登録時にユーザーが許可したdirect fallbackとして、モデルへ余分なbuilt-in/MCP Toolを見せないための隔離hostである。
+
+評価threadは毎回credential/config fileを持たないclean isolated `CODEX_HOME` / cwd、ephemeral、read-only、approval never、environmentなしで開始する。親runnerはcanonical `~/.codex/auth.json`からaccess token/account IDだけをメモリへ取り込み、JWT lifetimeをstartup/login/T0で検査して、artifactへ記録しない`account/login/start`から`cli_auth_credentials_store=ephemeral`へ注入する。元authは複製・hardlink・更新しない。production promptは`turn/start`のtext input 1件だけとし、MCMCP以外のshell、computer-use、browser/web、sub-agent、skill、app/plugin等をCLI featureとthread configの両方で無効化する。正当な`isError=true` domain resultはモデルへ保持して返し、transport/protocol/secret failureと区別する。詳細な固定値、T0、17分上限、両token scan、raw JSONL/bridge相互監査は`docs/experiments/MCMCP_fresh_MCP-only_評価protocol.md`を規範とする。
+
+Codex CLIのversionを更新する場合は、先にlegacy wire handshake、app-server UNSTABLE APIのgenerated schema、external token login、dynamic Tool lifecycle、hardening config、固定5 Toolの呼出しを再取得し、compatibility contractとfresh MCP-only評価を更新する。再検証なしに別versionを合格扱いしない。
 
 ## 18. repository名と製品identity
 
