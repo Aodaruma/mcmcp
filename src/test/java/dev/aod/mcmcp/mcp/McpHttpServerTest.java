@@ -81,6 +81,151 @@ class McpHttpServerTest {
     }
 
     @Test
+    void servesCodex01461LegacyLifecycleAndFixedToolsWithoutSessions() throws Exception {
+        start(defaultRuntime(), config("codex-legacy").rateLimit(100, 100).build());
+
+        JsonObject initializeParams = new JsonObject();
+        initializeParams.addProperty("protocolVersion", McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION);
+        JsonObject clientCapabilities = new JsonObject();
+        clientCapabilities.add("elicitation", new JsonObject());
+        initializeParams.add("capabilities", clientCapabilities);
+        JsonObject clientInfo = new JsonObject();
+        clientInfo.addProperty("name", "codex-mcp-client");
+        clientInfo.addProperty("title", "Codex");
+        clientInfo.addProperty("version", "0.146.1");
+        initializeParams.add("clientInfo", clientInfo);
+
+        HttpResponse<String> initialize = send(codexLegacyPost(
+                requestBody("initialize", initializeParams), null, null, null, null));
+        assertThat(initialize.statusCode()).isEqualTo(200);
+        JsonObject initializeResult = json(initialize).getAsJsonObject("result");
+        assertThat(initializeResult.get("protocolVersion").getAsString())
+                .isEqualTo(McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION);
+        assertThat(initializeResult.getAsJsonObject("capabilities").keySet())
+                .containsExactly("tools");
+        assertThat(initializeResult.getAsJsonObject("capabilities")
+                .getAsJsonObject("tools").get("listChanged").getAsBoolean()).isFalse();
+        assertThat(initializeResult.getAsJsonObject("serverInfo").get("name").getAsString())
+                .isEqualTo("mcmcp");
+        assertThat(initialize.headers().firstValue("Mcp-Session-Id")).isEmpty();
+
+        HttpResponse<String> initialized = send(codexLegacyPost(
+                notificationBody("notifications/initialized"),
+                McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null));
+        assertThat(initialized.statusCode()).isEqualTo(202);
+        assertThat(initialized.body()).isEmpty();
+        assertThat(initialized.headers().firstValue("Mcp-Session-Id")).isEmpty();
+
+        JsonObject listMeta = new JsonObject();
+        listMeta.addProperty("progressToken", 1);
+        JsonObject listParams = new JsonObject();
+        listParams.add("_meta", listMeta);
+        HttpResponse<String> list = send(codexLegacyPost(
+                requestBody("tools/list", listParams),
+                McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null));
+        JsonObject listResult = json(list).getAsJsonObject("result");
+        assertThat(list.statusCode()).isEqualTo(200);
+        assertThat(listResult.keySet()).containsExactly("tools");
+        assertThat(listResult.getAsJsonArray("tools").asList().stream()
+                .map(tool -> tool.getAsJsonObject().get("name").getAsString()))
+                .containsExactlyElementsOf(McpToolCatalog.REQUIRED_NAMES);
+
+        JsonObject callMeta = new JsonObject();
+        callMeta.addProperty("progressToken", "call-1");
+        JsonObject callParams = new JsonObject();
+        callParams.addProperty("name", "agent_get_state");
+        callParams.add("arguments", new JsonObject());
+        callParams.add("_meta", callMeta);
+        HttpResponse<String> call = send(codexLegacyPost(
+                requestBody("tools/call", callParams),
+                McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null));
+        JsonObject callResult = json(call).getAsJsonObject("result");
+        assertThat(call.statusCode()).isEqualTo(200);
+        assertThat(callResult.get("isError").getAsBoolean()).isFalse();
+        assertThat(callResult.has("structuredContent")).isTrue();
+        assertThat(callResult.has("resultType")).isFalse();
+        assertThat(callResult.has("_meta")).isFalse();
+        assertThat(call.headers().firstValue("Mcp-Session-Id")).isEmpty();
+        assertThat(call.body()).doesNotContain(McpTestFixtures.TOKEN);
+
+        JsonObject argumentlessCall = new JsonObject();
+        argumentlessCall.addProperty("name", "agent_get_state");
+        HttpResponse<String> argumentless = send(codexLegacyPost(
+                requestBody("tools/call", argumentlessCall),
+                McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null));
+        assertThat(argumentless.statusCode()).isEqualTo(200);
+        assertThat(json(argumentless).getAsJsonObject("result").get("isError").getAsBoolean())
+                .isFalse();
+
+        JsonObject initializedWithEmptyParams = new JsonObject();
+        initializedWithEmptyParams.addProperty("jsonrpc", "2.0");
+        initializedWithEmptyParams.addProperty("method", "notifications/initialized");
+        initializedWithEmptyParams.add("params", new JsonObject());
+        HttpResponse<String> initializedEmpty = send(codexLegacyPost(
+                initializedWithEmptyParams.toString(),
+                McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null));
+        assertThat(initializedEmpty.statusCode()).isEqualTo(202);
+        assertThat(initializedEmpty.body()).isEmpty();
+    }
+
+    @Test
+    void codexLegacyPathRejectsNonCapturedHeadersMethodsAndParameterShapes() throws Exception {
+        start(defaultRuntime(), config("codex-legacy-closed").rateLimit(100, 100).build());
+
+        JsonObject initializeParams = new JsonObject();
+        initializeParams.addProperty("protocolVersion", McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION);
+        initializeParams.add("capabilities", new JsonObject());
+        JsonObject clientInfo = new JsonObject();
+        clientInfo.addProperty("name", "codex-mcp-client");
+        clientInfo.addProperty("version", "0.146.1");
+        initializeParams.add("clientInfo", clientInfo);
+
+        HttpResponse<String> initializeWithCustomHeader = send(codexLegacyPost(
+                requestBody("initialize", initializeParams), null, "initialize", null, null));
+        assertThat(initializeWithCustomHeader.statusCode()).isEqualTo(400);
+        assertThat(json(initializeWithCustomHeader).getAsJsonObject("error").get("code").getAsInt())
+                .isEqualTo(McpHttpServer.HEADER_MISMATCH);
+
+        JsonObject unexpectedInitializeParams = initializeParams.deepCopy();
+        unexpectedInitializeParams.addProperty("unexpected", true);
+        assertThat(send(codexLegacyPost(requestBody("initialize", unexpectedInitializeParams),
+                null, null, null, null)).statusCode()).isEqualTo(400);
+
+        JsonObject initializedWithParams = new JsonObject();
+        initializedWithParams.addProperty("jsonrpc", "2.0");
+        initializedWithParams.addProperty("method", "notifications/initialized");
+        JsonObject nonEmptyNotificationParams = new JsonObject();
+        nonEmptyNotificationParams.addProperty("unexpected", true);
+        initializedWithParams.add("params", nonEmptyNotificationParams);
+        assertThat(send(codexLegacyPost(initializedWithParams.toString(),
+                McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null)).statusCode())
+                .isEqualTo(400);
+
+        JsonObject invalidListParams = new JsonObject();
+        invalidListParams.addProperty("unexpected", true);
+        assertThat(send(codexLegacyPost(requestBody("tools/list", invalidListParams),
+                McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null)).statusCode())
+                .isEqualTo(400);
+        assertThat(send(codexLegacyPost(requestBody("tools/list", new JsonObject()),
+                McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, "tools/list", null, null)).statusCode())
+                .isEqualTo(400);
+
+        JsonObject callParams = new JsonObject();
+        callParams.addProperty("name", "agent_get_state");
+        callParams.add("arguments", new JsonObject());
+        assertThat(send(codexLegacyPost(requestBody("tools/call", callParams),
+                McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, "agent_get_state", null)).statusCode())
+                .isEqualTo(400);
+        assertThat(send(codexLegacyPost(requestBody("tools/call", callParams),
+                McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, "forbidden-session")).statusCode())
+                .isEqualTo(400);
+
+        assertThat(send(codexLegacyPost(requestBody("resources/list", new JsonObject()),
+                McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null)).statusCode())
+                .isEqualTo(404);
+    }
+
+    @Test
     void enforcesLoopbackAuthenticationHeadersAndBoundedJson() throws Exception {
         start(defaultRuntime(), config("guards")
                 .maxRequestBodyBytes(1_024)
@@ -281,12 +426,42 @@ class McpHttpServerTest {
         return request.build();
     }
 
+    private HttpRequest codexLegacyPost(
+            String body, String protocolVersion, String method, String name, String sessionId) {
+        HttpRequest.Builder request = HttpRequest.newBuilder(endpoint())
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Bearer " + McpTestFixtures.TOKEN)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
+        if (protocolVersion != null) {
+            request.header(McpHttpServer.PROTOCOL_HEADER, protocolVersion);
+        }
+        if (method != null) {
+            request.header(McpHttpServer.METHOD_HEADER, method);
+        }
+        if (name != null) {
+            request.header(McpHttpServer.NAME_HEADER, name);
+        }
+        if (sessionId != null) {
+            request.header("Mcp-Session-Id", sessionId);
+        }
+        return request.build();
+    }
+
     private static String requestBody(String method, JsonObject params) {
         JsonObject body = new JsonObject();
         body.addProperty("jsonrpc", "2.0");
         body.addProperty("id", 1);
         body.addProperty("method", method);
         body.add("params", params);
+        return body.toString();
+    }
+
+    private static String notificationBody(String method) {
+        JsonObject body = new JsonObject();
+        body.addProperty("jsonrpc", "2.0");
+        body.addProperty("method", method);
         return body.toString();
     }
 

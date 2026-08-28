@@ -29,12 +29,18 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
-/** JDK-only, stateless MCP 2026-07-28 Streamable HTTP endpoint. */
+/**
+ * JDK-only MCP Streamable HTTP endpoint. The normative stateless 2026-07-28
+ * dialect remains primary; a deliberately narrow 2025-06-18 projection supports
+ * the wire shape used by Codex CLI 0.146.1.
+ */
 public final class McpHttpServer implements AutoCloseable {
     static final String PROTOCOL_VERSION = "2026-07-28";
+    static final String CODEX_LEGACY_PROTOCOL_VERSION = "2025-06-18";
     static final String PROTOCOL_HEADER = "MCP-Protocol-Version";
     static final String METHOD_HEADER = "Mcp-Method";
     static final String NAME_HEADER = "Mcp-Name";
+    private static final String SESSION_HEADER = "Mcp-Session-Id";
     static final int HEADER_MISMATCH = -32_020;
     static final int UNSUPPORTED_PROTOCOL_VERSION = -32_022;
     private static final String PROTOCOL_META = "io.modelcontextprotocol/protocolVersion";
@@ -192,6 +198,11 @@ public final class McpHttpServer implements AutoCloseable {
             return;
         }
         JsonObject request = parsed.getAsJsonObject();
+        String candidateMethod = stringValue(request.get("method"));
+        if (isCodexLegacyCandidate(headers, candidateMethod)) {
+            dispatchCodexLegacy(exchange, headers, request);
+            return;
+        }
         JsonElement id = validRequestId(request.get("id")) ? request.get("id").deepCopy() : JsonNull.INSTANCE;
         if (!validRequestObject(request)) {
             sendJson(exchange, 400, jsonRpcError(id, -32600, "Invalid Request", "InvalidRequest"));
@@ -232,6 +243,128 @@ public final class McpHttpServer implements AutoCloseable {
             case "tools/call" -> callTool(exchange, id, params, headers);
             default -> sendJson(exchange, 404, jsonRpcError(id, -32601,
                     "Method not found", "MethodNotFound"));
+        }
+    }
+
+    private void dispatchCodexLegacy(HttpExchange exchange, Headers headers, JsonObject request)
+            throws IOException {
+        JsonElement id = validRequestId(request.get("id")) ? request.get("id").deepCopy() : JsonNull.INSTANCE;
+        String method = stringValue(request.get("method"));
+        if (!validJsonRpcMethod(request, method)) {
+            sendJson(exchange, 400, jsonRpcError(id, -32600, "Invalid Request", "InvalidRequest"));
+            return;
+        }
+
+        switch (method) {
+            case "initialize" -> initializeCodexLegacy(exchange, id, request, headers);
+            case "notifications/initialized" -> initializedCodexLegacy(exchange, request, headers);
+            case "tools/list" -> listToolsCodexLegacy(exchange, id, request, headers);
+            case "tools/call" -> callToolCodexLegacy(exchange, id, request, headers);
+            default -> sendJson(exchange, 404, jsonRpcError(id, -32601,
+                    "Method not found", "MethodNotFound"));
+        }
+    }
+
+    private void initializeCodexLegacy(
+            HttpExchange exchange, JsonElement id, JsonObject request, Headers headers) throws IOException {
+        if (!REQUEST_KEYS.equals(request.keySet()) || !validRequestId(request.get("id"))
+                || !request.get("params").isJsonObject()) {
+            sendJson(exchange, 400, jsonRpcError(id, -32600, "Invalid Request", "InvalidRequest"));
+            return;
+        }
+        if (!legacyHeadersMatch(headers, false)) {
+            sendJson(exchange, 400, headerMismatch(id));
+            return;
+        }
+        JsonObject params = request.getAsJsonObject("params");
+        if (!validLegacyInitializeParams(params)) {
+            sendJson(exchange, 400, jsonRpcError(id, -32602, "Invalid params", "InvalidParams"));
+            return;
+        }
+        String requestedVersion = params.get("protocolVersion").getAsString();
+        if (!CODEX_LEGACY_PROTOCOL_VERSION.equals(requestedVersion)) {
+            sendJson(exchange, 400, unsupportedLegacyProtocolVersion(id, requestedVersion));
+            return;
+        }
+
+        JsonObject toolsCapability = new JsonObject();
+        toolsCapability.addProperty("listChanged", false);
+        JsonObject capabilities = new JsonObject();
+        capabilities.add("tools", toolsCapability);
+        JsonObject result = new JsonObject();
+        result.addProperty("protocolVersion", CODEX_LEGACY_PROTOCOL_VERSION);
+        result.add("capabilities", capabilities);
+        result.add("serverInfo", tools.serverMeta()
+                .getAsJsonObject("io.modelcontextprotocol/serverInfo").deepCopy());
+        sendJson(exchange, 200, jsonRpcResult(id, result));
+    }
+
+    private void initializedCodexLegacy(HttpExchange exchange, JsonObject request, Headers headers)
+            throws IOException {
+        if (!validLegacyInitializedRequest(request)) {
+            sendJson(exchange, 400, jsonRpcError(JsonNull.INSTANCE, -32600,
+                    "Invalid Request", "InvalidRequest"));
+            return;
+        }
+        if (!legacyHeadersMatch(headers, true)) {
+            sendJson(exchange, 400, headerMismatch(JsonNull.INSTANCE));
+            return;
+        }
+        sendEmpty(exchange, 202);
+    }
+
+    private void listToolsCodexLegacy(
+            HttpExchange exchange, JsonElement id, JsonObject request, Headers headers) throws IOException {
+        if (!REQUEST_KEYS.equals(request.keySet()) || !validRequestId(request.get("id"))
+                || !request.get("params").isJsonObject()) {
+            sendJson(exchange, 400, jsonRpcError(id, -32600, "Invalid Request", "InvalidRequest"));
+            return;
+        }
+        if (!legacyHeadersMatch(headers, true)) {
+            sendJson(exchange, 400, headerMismatch(id));
+            return;
+        }
+        JsonObject params = request.getAsJsonObject("params");
+        if (!validLegacyListParams(params)) {
+            sendJson(exchange, 400, jsonRpcError(id, -32602, "Invalid params", "InvalidParams"));
+            return;
+        }
+        JsonObject result = new JsonObject();
+        result.add("tools", tools.listResult().getAsJsonArray("tools").deepCopy());
+        sendJson(exchange, 200, jsonRpcResult(id, result));
+    }
+
+    private void callToolCodexLegacy(
+            HttpExchange exchange, JsonElement id, JsonObject request, Headers headers) throws IOException {
+        if (!REQUEST_KEYS.equals(request.keySet()) || !validRequestId(request.get("id"))
+                || !request.get("params").isJsonObject()) {
+            sendJson(exchange, 400, jsonRpcError(id, -32600, "Invalid Request", "InvalidRequest"));
+            return;
+        }
+        if (!legacyHeadersMatch(headers, true)) {
+            sendJson(exchange, 400, headerMismatch(id));
+            return;
+        }
+        JsonObject params = request.getAsJsonObject("params");
+        if (!validLegacyCallParams(params)) {
+            sendJson(exchange, 400, jsonRpcError(id, -32602, "Invalid params", "InvalidToolCall"));
+            return;
+        }
+        String name = params.get("name").getAsString();
+        try {
+            JsonObject arguments = params.has("arguments")
+                    ? params.getAsJsonObject("arguments") : new JsonObject();
+            var prepared = tools.prepareCall(name, arguments);
+            JsonObject result = legacyToolResult(prepared.response());
+            try {
+                sendJson(exchange, 200, jsonRpcResult(id, result));
+            } catch (IOException failure) {
+                tools.abandonDelivery(prepared);
+                throw failure;
+            }
+            tools.confirmDelivery(prepared);
+        } catch (McmcpToolRegistry.UnknownToolException failure) {
+            sendJson(exchange, 200, jsonRpcError(id, -32602, "Unknown tool", "UnknownTool"));
         }
     }
 
@@ -308,6 +441,99 @@ public final class McpHttpServer implements AutoCloseable {
         } catch (McmcpToolRegistry.UnknownToolException failure) {
             sendJson(exchange, 200, jsonRpcError(id, -32602, "Unknown tool", "UnknownTool"));
         }
+    }
+
+    private static boolean isCodexLegacyCandidate(Headers headers, String method) {
+        return "initialize".equals(method)
+                || "notifications/initialized".equals(method)
+                || CODEX_LEGACY_PROTOCOL_VERSION.equals(singleHeader(headers, PROTOCOL_HEADER));
+    }
+
+    private static boolean legacyHeadersMatch(Headers headers, boolean requireProtocolHeader) {
+        if (headers.get(METHOD_HEADER) != null
+                || headers.get(NAME_HEADER) != null
+                || headers.get(SESSION_HEADER) != null) {
+            return false;
+        }
+        if (!requireProtocolHeader) {
+            return headers.get(PROTOCOL_HEADER) == null;
+        }
+        return CODEX_LEGACY_PROTOCOL_VERSION.equals(singleHeader(headers, PROTOCOL_HEADER));
+    }
+
+    private static boolean validJsonRpcMethod(JsonObject request, String method) {
+        return request.has("jsonrpc") && request.get("jsonrpc").isJsonPrimitive()
+                && request.getAsJsonPrimitive("jsonrpc").isString()
+                && "2.0".equals(request.get("jsonrpc").getAsString())
+                && method != null && !method.isBlank() && method.length() <= 128;
+    }
+
+    private static boolean validLegacyInitializeParams(JsonObject params) {
+        if (!params.keySet().equals(Set.of("protocolVersion", "capabilities", "clientInfo"))
+                || stringValue(params.get("protocolVersion")) == null
+                || !params.get("capabilities").isJsonObject()
+                || !params.get("clientInfo").isJsonObject()) {
+            return false;
+        }
+        JsonObject clientInfo = params.getAsJsonObject("clientInfo");
+        if (!Set.of("name", "title", "version").containsAll(clientInfo.keySet())
+                || !clientInfo.has("name") || !clientInfo.has("version")
+                || !validBoundedString(clientInfo.get("name"))
+                || !validBoundedString(clientInfo.get("version"))) {
+            return false;
+        }
+        return !clientInfo.has("title") || validBoundedString(clientInfo.get("title"));
+    }
+
+    private static boolean validLegacyListParams(JsonObject params) {
+        return Set.of("_meta", "cursor").containsAll(params.keySet())
+                && (!params.has("cursor") || params.get("cursor").isJsonNull())
+                && validLegacyRequestMeta(params);
+    }
+
+    private static boolean validLegacyCallParams(JsonObject params) {
+        return Set.of("_meta", "name", "arguments").containsAll(params.keySet())
+                && params.has("name") && params.get("name").isJsonPrimitive()
+                && params.getAsJsonPrimitive("name").isString()
+                && (!params.has("arguments") || params.get("arguments").isJsonObject())
+                && validLegacyRequestMeta(params);
+    }
+
+    private static boolean validLegacyInitializedRequest(JsonObject request) {
+        if (!Set.of("jsonrpc", "method", "params").containsAll(request.keySet())
+                || !request.has("jsonrpc") || !request.has("method") || request.has("id")) {
+            return false;
+        }
+        return !request.has("params")
+                || request.get("params").isJsonObject()
+                        && request.getAsJsonObject("params").size() == 0;
+    }
+
+    private static JsonObject legacyToolResult(JsonObject source) {
+        JsonObject result = new JsonObject();
+        result.add("content", source.getAsJsonArray("content").deepCopy());
+        if (source.has("structuredContent")) {
+            result.add("structuredContent", source.getAsJsonObject("structuredContent").deepCopy());
+        }
+        result.addProperty("isError", source.get("isError").getAsBoolean());
+        return result;
+    }
+
+    private static boolean validLegacyRequestMeta(JsonObject params) {
+        if (!params.has("_meta")) {
+            return true;
+        }
+        if (!params.get("_meta").isJsonObject()) {
+            return false;
+        }
+        JsonObject meta = params.getAsJsonObject("_meta");
+        return Set.of("progressToken").containsAll(meta.keySet())
+                && (!meta.has("progressToken") || validRequestId(meta.get("progressToken")));
+    }
+
+    private static boolean validBoundedString(JsonElement value) {
+        String string = stringValue(value);
+        return string != null && !string.isBlank() && string.length() <= 128;
     }
 
     private boolean validAuthorization(String authorization) {
@@ -539,6 +765,16 @@ public final class McpHttpServer implements AutoCloseable {
                 id, UNSUPPORTED_PROTOCOL_VERSION, "Unsupported protocol version", data);
     }
 
+    private static JsonObject unsupportedLegacyProtocolVersion(JsonElement id, String requested) {
+        JsonObject data = new JsonObject();
+        var supported = new com.google.gson.JsonArray();
+        supported.add(CODEX_LEGACY_PROTOCOL_VERSION);
+        data.add("supported", supported);
+        data.addProperty("requested", requested);
+        return jsonRpcError(
+                id, UNSUPPORTED_PROTOCOL_VERSION, "Unsupported protocol version", data);
+    }
+
     private static JsonObject jsonRpcError(
             JsonElement id, int numericCode, String message, JsonObject data) {
         JsonObject error = new JsonObject();
@@ -571,6 +807,11 @@ public final class McpHttpServer implements AutoCloseable {
         try (var output = exchange.getResponseBody()) {
             output.write(bytes);
         }
+    }
+
+    private static void sendEmpty(HttpExchange exchange, int status) throws IOException {
+        exchange.getResponseHeaders().set("Cache-Control", "no-store");
+        exchange.sendResponseHeaders(status, -1);
     }
 
     public State state() {
