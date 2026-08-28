@@ -114,6 +114,67 @@ class AgentActionStoreTest {
         assertThat(store.get(accepted.actionId()).progress().blocksBroken()).isOne();
     }
 
+    @Test
+    void boundedTerminalWaitWakesOnCancellationAndTimesOutWithCurrentShape() throws Exception {
+        var store = new AgentActionStore();
+        var accepted = store.start(program(), Instant.EPOCH);
+        Thread canceller = Thread.ofPlatform().start(() -> {
+            try {
+                Thread.sleep(50L);
+            } catch (InterruptedException failure) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            store.cancel(accepted.actionId());
+        });
+
+        var terminal = store.awaitTerminal(accepted.actionId(), 1_000);
+        canceller.join();
+        assertThat(terminal.state()).isEqualTo(AgentActionStore.State.CANCELLED);
+
+        var next = store.start(program(), Instant.EPOCH.plusSeconds(1));
+        var timedOut = store.awaitTerminal(next.actionId(), 10);
+        assertThat(timedOut.state()).isEqualTo(AgentActionStore.State.QUEUED);
+        assertThat(timedOut.actionId()).isEqualTo(next.actionId());
+    }
+
+    @Test
+    void terminalWaitBoundsAndUnknownHandlesFailClosed() {
+        var store = new AgentActionStore();
+        var accepted = store.start(program(), Instant.EPOCH);
+
+        assertThatThrownBy(() -> store.awaitTerminal(
+                accepted.actionId(), AgentActionStore.MAX_TERMINAL_WAIT_MILLIS + 1))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> store.awaitTerminal(java.util.UUID.randomUUID(), 0))
+                .isInstanceOf(AgentActionStore.NotFoundException.class);
+    }
+
+    @Test
+    void clearingStoreReleasesTerminalWaitAsNotFound() throws Exception {
+        var store = new AgentActionStore();
+        var accepted = store.start(program(), Instant.EPOCH);
+        var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        Thread waiter = Thread.ofPlatform().start(() -> {
+            try {
+                store.awaitTerminal(
+                        accepted.actionId(), AgentActionStore.MAX_TERMINAL_WAIT_MILLIS);
+            } catch (Throwable caught) {
+                failure.set(caught);
+            }
+        });
+
+        Thread.sleep(50L);
+        store.clear();
+        waiter.join(1_000L);
+        if (waiter.isAlive()) {
+            waiter.interrupt();
+        }
+
+        assertThat(waiter.isAlive()).isFalse();
+        assertThat(failure.get()).isInstanceOf(AgentActionStore.NotFoundException.class);
+    }
+
     private static ActionDslCompiler.CompiledProgram program() {
         var request = ActionDslParser.parse(JsonParser.parseString("""
                 {

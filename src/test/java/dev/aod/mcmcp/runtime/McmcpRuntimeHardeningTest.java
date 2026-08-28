@@ -1134,6 +1134,25 @@ class McmcpRuntimeHardeningTest {
     }
 
     @Test
+    void actionTerminalWaitDefaultsToImmediateAndRejectsWidening() {
+        String actionId = "550e8400-e29b-41d4-a716-446655440000";
+        assertThat(McmcpRuntime.agentActionWaitTimeoutMillis(
+                Map.of("action_id", actionId))).isZero();
+        assertThat(McmcpRuntime.agentActionWaitTimeoutMillis(Map.of(
+                "action_id", actionId,
+                "wait_timeout_ms", AgentActionStore.MAX_TERMINAL_WAIT_MILLIS)))
+                .isEqualTo(AgentActionStore.MAX_TERMINAL_WAIT_MILLIS);
+        assertThatThrownBy(() -> McmcpRuntime.agentActionWaitTimeoutMillis(Map.of(
+                "action_id", actionId,
+                "wait_timeout_ms", AgentActionStore.MAX_TERMINAL_WAIT_MILLIS + 1)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> McmcpRuntime.agentActionWaitTimeoutMillis(Map.of(
+                "action_id", actionId,
+                "unexpected", true)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void safeStayRequiresAStableHealthyScreenFreeCheckpoint() {
         assertThat(McmcpRuntime.safeStayFailure(
                 true, true, true, false, 20.0F, 0.0D,

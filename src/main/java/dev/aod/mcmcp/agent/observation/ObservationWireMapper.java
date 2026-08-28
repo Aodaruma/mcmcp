@@ -59,17 +59,7 @@ public final class ObservationWireMapper {
     public static Map<String, Object> record(ObservationRecord record) {
         return switch (record) {
             case VisibleSurface surface -> visibleSurface(surface);
-            case VisibleEntity entity -> map(
-                    "kind", entity.kind().wireName(),
-                    "entity_type", entity.entityType().value(),
-                    "position", worldPosition(entity.position()),
-                    "velocity", vector(entity.velocity()),
-                    "aabb", aabb(entity.aabb()),
-                    "hazard_class", entity.hazardClass().wireName(),
-                    "eye_origin", worldPosition(entity.eyeOrigin()),
-                    "observed_tick", entity.observedTick(),
-                    "world_revision", entity.worldRevision(),
-                    "provenance", entity.provenance().name());
+            case VisibleEntity entity -> visibleEntity(entity);
             case Traversability edge -> map(
                     "kind", edge.kind().wireName(),
                     "from", worldPosition(edge.from()),
@@ -133,6 +123,24 @@ public final class ObservationWireMapper {
         result.put("observed_tick", surface.observedTick());
         result.put("world_revision", surface.worldRevision());
         result.put("provenance", surface.provenance().name());
+        return Collections.unmodifiableMap(result);
+    }
+
+    private static Map<String, Object> visibleEntity(VisibleEntity entity) {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("kind", entity.kind().wireName());
+        result.put("entity_type", entity.entityType().value());
+        if (entity.displayedItem() != null) {
+            result.put("displayed_item", entity.displayedItem().value());
+        }
+        result.put("position", worldPosition(entity.position()));
+        result.put("velocity", vector(entity.velocity()));
+        result.put("aabb", aabb(entity.aabb()));
+        result.put("hazard_class", entity.hazardClass().wireName());
+        result.put("eye_origin", worldPosition(entity.eyeOrigin()));
+        result.put("observed_tick", entity.observedTick());
+        result.put("world_revision", entity.worldRevision());
+        result.put("provenance", entity.provenance().name());
         return Collections.unmodifiableMap(result);
     }
 

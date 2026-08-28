@@ -2,7 +2,7 @@
 
 - 文書版: 0.6
 - 作成日: 2026-08-26
-- 状態: MOD本体は実装着手可、接続先MCP hostのみ未選定
+- 状態: 実装中、評価MCP hostはCodex CLI 0.146.1に固定
 - 対象: Prism Launcher「くらふとぶ！-v01.2」
 - 規範別紙: MCMCP_MCP_Tool_Catalog.json
 - 試験別紙: MCMCP_Prism_互換試験ベースライン.json
@@ -14,7 +14,7 @@
 - Minecraft 26.2 / NeoForge 26.2.0.59 / Java 25 向けのクライアント専用MOD
 - 配布物は、Prism Launcherのmodsフォルダーへ入れる単一jar
 - MCPサーバーはMODと同じMinecraft JVM内で起動
-- MCP接続はMCP 2026-07-28準拠、127.0.0.1限定のStreamable HTTP
+- MCP接続はMCP 2026-07-28を製品基準とする127.0.0.1限定のStreamable HTTP。Codex CLI 0.146.1向けに`initialize` / `2025-06-18`の限定互換経路も同じMOD内endpointで提供する
 - サーバーコンパニオン、対Minecraftゲームサーバーcapability handshake、独自の対ゲームサーバー通信、外部MCP bridgeは作らない
 - LLMは型付きAction DSLまたは同じDSLで書かれたtemplateを渡し、各primitiveはMOD内の決定論的ランタイムが実行
 - サバイバルでは、player eyeから遮蔽されない全周visual、局所移動安全volume、実再生soundなど、明示した観測情報だけで判断する
@@ -241,7 +241,7 @@ NeoForge ClientTick
 
 command queueはJDKのArrayBlockingQueueで固定長32件、公開snapshotはAtomicReferenceで保持する。満杯ならSERVER_BUSYを返し、無制限にメモリを消費しない。
 
-HttpServerはlisten backlog 16、daemon worker 2 threadの固定executorで動かす。virtual threadや無制限executorは使わない。
+HttpServerはlisten backlog 16、daemon worker 2 threadの固定executorで動かす。virtual threadや無制限executorは使わない。製品endpointのI/O timeoutは30秒とする。`agent_get_action.wait_timeout_ms`による待機は最大25秒で、Minecraft非依存のAction state monitor上でHTTP workerを1本だけ待たせ、もう1本を状態取得・取消に残す。Minecraft client threadは待機させない。
 
 `agent_start_action`はJSON/DSL構造をworkerで先に検証し、client threadへ固定長queueでimmutableな`AgentAdmissionSnapshot`の取得だけを依頼する。workerはそのcopy上でpredicate availability、capability、静的budget、既知経路、安全条件をpreflightし、合格結果だけをclient threadへcommitする。1つのabsolute call deadlineがcapture、planning、commitを通して有効で、既定2秒・設定上限30秒とする。planningはcancel/期限を各work単位で検査し、A*は1探索2,048・route expansion合計32,768、abstract pose 4,096、pose transition 16,384を上限とする。期限切れ・cancel・上限超過ではcommitせず入力を出さない。
 
@@ -404,7 +404,9 @@ rayは次を別channelで評価する。
 
 glassのように視覚を通すが衝突するblock、slab、stairs、fence、trapdoor、snow、waterlogged blockを`air/solid`二値へ潰さない。visible surfaceには視覚で判別可能なblock ID、位置、面、shape classを記録する。透過面はその面を記録してrayを継続するが、custom renderer、alpha semantics、未ロード境界、shape内部開始、例外は`UNKNOWN`とする。
 
-近傍entityは半径内のbounded query後、eye位置からAABBの複数sample点へのVISUAL line-of-sightでfilterする。1点以上が遮蔽されていなければ正確なEntityType、AABB、XYZ、velocityをvisible recordへ出せる。UUID、NBT、inventory、AI target、壁裏entityは公開しない。sparse rayが小さいentityを偶然外すことは、このentity専用line-of-sightで補う。
+近傍entityは半径内のbounded query後、eye位置からAABBの複数sample点へのVISUAL line-of-sightでfilterする。1点以上が遮蔽されていなければ正確なEntityType、AABB、XYZ、velocityをvisible recordへ出せる。`minecraft:item`のときだけ、実際に描画されるnon-empty ItemStackのregistry item IDを任意field `displayed_item`として併記する。これは落下物の見た目に対するsemantic labelであり、stack count、data component、UUID、owner、pickup delay、age、NBTは公開しない。emptyまたはregistry不明のdisplay stackはidentityを推測せず、そのentity recordを省略して`visible_entities_truncated=true`とする。非ItemEntityへ`displayed_item`を付けることも拒否する。inventory、AI target、壁裏entityは公開しない。sparse rayが小さいentityを偶然外すことは、このentity専用line-of-sightで補う。
+
+落下物の回収専用opcodeは設けない。LLMは最新frameの`entity_type=minecraft:item`と`displayed_item`を確認し、そのXYZに最も近い、同じ最新観測内の既知かつ安全なTraversability終点NavCellへ既存の`navigate_to_known`で接近して有限`wait_ticks`を行う。落下中のentity XYZからYを機械的にfloorしてNavCellを捏造してはならない。その後の取得成否は`agent_get_state.inventory`の絶対個数で確認し、移動中にitemが移動・merge・消滅した場合は最新frameから再計画する。entityの通常移動は`world_revision`を更新しないため、古いframeをitem追跡の継続証拠にしない。経路は引き続きKnown Traversability Mapと毎tickのswept-AABB safety gateを通り、未知領域や危険領域へ落下物を追ってはならない。
 
 ray結果は`HIT / MISS / UNKNOWN`の三値とする。`MISS`が証明するのは検証済み有限segmentだけで、周辺cell、曲がり角、終端の裏側を既知にしない。
 
@@ -517,8 +519,9 @@ Local Observation Volume外の未知危険、opaque wall裏、未ロード領域
 
 - Endpoint: http://127.0.0.1:8765/mcp
 - Transport: Streamable HTTP
-- 対応基準: MCP 2026-07-28
-- 通信形式: stateless / POST-only / JSON response
+- 製品基準: MCP 2026-07-28
+- Codex互換: MCP 2025-06-18形式の`initialize`、`notifications/initialized`、`tools/list`、`tools/call`のみ
+- 通信形式: stateless / POST-only / JSON response（`notifications/initialized`のみ202 empty）
 - 同時に実行できるTask: 1件
 - stdio: 非対応
 - GET、protocol session、長時間SSE: 非対応
@@ -526,7 +529,7 @@ Local Observation Volume外の未知危険、opaque wall裏、未ロード領域
 
 Minecraftはすでに起動しているプロセスなので、MCP clientがsubprocessを起動するstdioは適さない。Streamable HTTPを使う。
 
-MCP 2026-07-28は各requestが自己完結するstateless仕様であり、GET streamとprotocol-level sessionを廃止している。MVPはTools server profileだけを使い、各POSTへ単一JSON responseを返す。
+MCP 2026-07-28は各requestが自己完結するstateless仕様であり、GET streamとprotocol-level sessionを廃止している。MVPはTools server profileだけを使い、各POSTへ単一JSON responseを返す。Codex互換経路もGET、SSE、session IDを使わず、公開Toolを5個から増やさない。
 
 JDK 25標準のHttpServerとMinecraft同梱Gsonでclean-room実装する。Spring、Node、Servlet containerは追加しない。公式MCP Java SDK 2.0.1はMCP 2025-11-25世代で、現行stateless仕様へ未対応のため採用しない。SDK 3.x以降が現行仕様へ対応した時点でのみ再評価する。
 
@@ -550,7 +553,7 @@ MCP仕様も、ローカルHTTP serverについてOrigin検証、localhost限定
 ### 8.3 lifecycle
 
 - MODのphysical client初期化でHTTP serverを起動
-- world未参加時もserver/discover、tools/list、tools/call(name=agent_get_state)は応答
+- world未参加時もserver/discover / initialize、tools/list、tools/call(name=agent_get_state)は応答
 - worldがなければ操作系callはNO_WORLD
 - client終了時にserverとexecutorをclose
 - endpoint例外はgame threadへ伝播させない
@@ -559,7 +562,9 @@ MCP仕様も、ローカルHTTP serverについてOrigin検証、localhost限定
 
 ### 8.4 request contract
 
-すべてのPOSTで次を検証する。
+認証、loopback / Host / Origin、Content-Type、body上限、JSON depth、rate / concurrencyの検証は2026製品経路とCodex互換経路で共通にする。どちらもbodyは単一のJSON-RPC 2.0 objectであり、batch、GET、SSE、protocol sessionは受理しない。
+
+2026-07-28製品経路のすべてのPOSTで次を検証する。
 
 - Content-Typeがapplication/json
 - bodyが単一のJSON-RPC 2.0 request objectであり、batch配列やresponseではない
@@ -575,11 +580,22 @@ MCP仕様も、ローカルHTTP serverについてOrigin検証、localhost限定
 
 不一致は400とHeaderMismatch、非対応versionは400とUnsupportedProtocolVersionError、未知methodは404とJSON-RPC -32601を返す。
 
-成功する全JSON-RPC responseのresult._metaへ`io.modelcontextprotocol/serverInfo`（name=`mcmcp`、version=`0.1.0`）を付ける。HTTP JSON responseのContent-Typeは`application/json`、文字encodingはUTF-8とする。
+2026-07-28製品経路で成功する全JSON-RPC responseの`result._meta`へ`io.modelcontextprotocol/serverInfo`（name=`mcmcp`、version=`0.1.0`）を付ける。Codex互換経路はlegacy clientが解釈できる標準fieldだけへ射影し、`initialize`では`protocolVersion` / `capabilities` / `serverInfo`、`tools/list`では`tools`、`tools/call`では`content` / 任意の`structuredContent` / `isError`だけを返す。両経路のHTTP JSON responseはContent-Typeを`application/json`、文字encodingをUTF-8とする。
+
+Codex CLI 0.146.1互換経路は、実wire captureと同じ次の並びに限定する。
+
+1. `initialize`: IDあり、paramsは`protocolVersion`、object型`capabilities`、`name` / `version`（`title`は任意）の`clientInfo`だけとし、protocol versionは`2025-06-18`に固定する。`MCP-Protocol-Version`、`Mcp-Method`、`Mcp-Name`は受理しない。`protocolVersion`、Tools capability、serverInfoを標準initialize resultで返す。
+2. `notifications/initialized`: IDなし、paramsは省略または空object、`MCP-Protocol-Version: 2025-06-18`、custom MCP headerなし。HTTP 202、empty bodyを返す。
+3. `tools/list`: IDあり、`MCP-Protocol-Version: 2025-06-18`、custom MCP headerなし。固定5 Toolの標準resultを返す。`params._meta.progressToken`は許可するが、任意のpaginationやTool追加には使わない。
+4. `tools/call`: IDあり、同protocol header、custom MCP headerなし。`params.name`は固定5 Toolのいずれかとする。`params.arguments`は省略時に空objectとして扱い、存在する場合はobjectかつ別紙schema適合を必須とする。
+
+`initialize`に2026 headerを付ける、`server/discover`に2025 versionを付ける、compatibility methodへ`Mcp-Method` / `Mcp-Name`を混ぜる、notificationにIDを付けるなどの経路混同はfail closedにする。互換経路でもBearer、Origin、Host、body、rate-limitに例外を作らず、`Mcp-Session-Id`は発行・受理しない。
 
 MVPで実装するmethod:
 
 - server/discover
+- initialize
+- notifications/initialized
 - tools/list
 - tools/call
 
@@ -603,7 +619,7 @@ discover resultのcapabilitiesはToolsだけとする。
 }
 ~~~
 
-Resources、Prompts、Tasks extension、Subscriptions、Sampling、Elicitation、SSE、Progressは実装しない。
+Resources、Prompts、Tasks extension、Subscriptions、Sampling、Elicitation、SSEは実装しない。Codexが`tools/list`へ付けるprogress tokenは受理するが、progress notificationは送信しない。
 
 ### 8.5 Tools
 
@@ -612,16 +628,16 @@ Resources、Prompts、Tasks extension、Subscriptions、Sampling、Elicitation�
 | agent_get_state | No | player、inventory集計、policy、DSL capability、Agent状態、最新観測frame概要を取得 |
 | agent_get_observation | No | 最新の全周visual、局所traversability、hazard、sound clueをframe単位でpage取得 |
 | agent_start_action | Yes | READY状態で検証済みAction DSL v1を1件開始 |
-| agent_get_action | No | Action、現在node、resource counter、回避、失敗、traceを取得 |
+| agent_get_action | No | Action、現在node、resource counter、回避、失敗、traceを取得。任意でterminalまで最大25秒待機 |
 | agent_cancel_action | Yes | actionを冪等にcancel |
 
 raw key、raw mouse、packet、任意commandを操作するToolは公開しない。`agent_start_action`がLLM生成DSLの検証・実行口を兼ねるため、template専用ToolやDSL実行Toolを追加しない。`agent_get_observation`は読み取り専用で、OFF中も使用できる。
 
-`tools/list`は上表の順序で固定し、各ToolへJSON Schema 2020-12のinputSchemaとoutputSchemaを付ける。単一pageの`resultType: "complete"`として返し、必須cache hintは`ttlMs: 0`、`cacheScope: "private"`とする。Tool一覧は実行中に変えず、`listChanged`はfalseとする。
+`tools/list`は上表の順序で固定し、各ToolへJSON Schema 2020-12のinputSchemaとoutputSchemaを付ける。2026製品経路では単一pageの`resultType: "complete"`として返し、必須cache hintは`ttlMs: 0`、`cacheScope: "private"`とする。Codex互換経路では同じ5 Tool配列だけを標準`tools` fieldへ射影する。Tool一覧は実行中に変えず、`listChanged`はfalseとする。
 
 Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMCP_MCP_Tool_Catalog.json`とする。Java実装、`tools/list`、schema unit testは同じcatalog内容から生成または照合し、別々の手書き定義を持たない。
 
-全Toolの成功応答は`resultType: "complete"`、`isError: false`、outputSchemaに一致する`structuredContent`を返す。互換性のため、同じJSONを直列化したTextContentも`content`へ1件入れる。業務上の拒否や実行失敗は`isError: true`とし、success用outputSchemaとの混同を避けるため`structuredContent`を付けず、`content`へ`code`、`message`、`recoverable`を持つJSON文字列を返す。未知Toolや壊れたrequestはJSON-RPC errorとする。以下の応答例は成功時`structuredContent`の中身を示す。
+2026製品経路の全Tool成功応答は`resultType: "complete"`、`isError: false`、outputSchemaに一致する`structuredContent`を返す。Codex互換経路では`resultType`と`_meta`を除き、同じ`structuredContent`と`isError`を返す。両経路とも同じJSONを直列化したTextContentを`content`へ1件入れる。業務上の拒否や実行失敗は`isError: true`とし、success用outputSchemaとの混同を避けるため`structuredContent`を付けず、`content`へ`code`、`message`、`recoverable`を持つJSON文字列を返す。未知Toolや壊れたrequestはJSON-RPC errorとする。以下の応答例は成功時`structuredContent`の中身を示す。
 
 #### 8.5.1 Observation frame
 
@@ -772,6 +788,7 @@ block mutationのaim pointはfull cubeの仮想中心ではなく、360度観測
 templateは`agent_start_action.inputSchema.examples`に掲載し、実装repositoryにも次のJSONを置く。
 
 - [`navigate_to_known.json`](action-templates/navigate_to_known.json): 1地点への移動
+- [`collect_visible_drop.json`](action-templates/collect_visible_drop.json): 最新frameで識別した落下物のNavCellへ移動して有限時間pickupを待つ
 - [`approach_and_face.json`](action-templates/approach_and_face.json): 移動、health分岐、視点変更または待機
 - [`known_route.json`](action-templates/known_route.json): 既知区間を固定回数だけ往復する
 - [`break_known_oak_column.json`](action-templates/break_known_oak_column.json): 地上から届く、現在可視な3段oak幹を下から順に破壊する
@@ -813,6 +830,8 @@ templateもcustom programと同じvalidator、capability、budget、READY許可�
 confirm後も最初の入力直前にadmission snapshotとの整合を再検証する。world/session、control、pose、policy、観測依存edge、安全条件等が変化していれば、公開済みaction_idを入力なしで`failed`へ遷移させる。
 
 agent_get_action:
+
+入力は`action_id`必須、`wait_timeout_ms`任意（0..25,000、既定0）とする。省略または0なら即時snapshotを返す。正値ならActionがterminalになるか指定時間が経過するまで、同期済みAction stateだけをHTTP worker上で待つ。時間切れはerrorにせず、その時点の非terminal snapshotを同じoutput shapeで返す。Action tickだけではwaiterを起こさず、`succeeded`、`failed`、`cancelled`への遷移で起こす。このlong pollは同時1件に限定し、2件目は`SERVER_BUSY`を返すため、取消・状態確認用のHTTP workerを残す。Minecraft API、client thread、game tickを待機blockしない。
 
 ~~~json
 {
@@ -872,7 +891,7 @@ MCP Tasks extensionは使用しない。MCP request自体は短時間でJSON res
 
 action_idはJDKのUUID.randomUUIDで生成する。保持するのは実行中Actionと直前のterminal Actionの最大2件だけで、world離脱とclient終了時に全件破棄する。期限切れまたは未知のIDはACTION_NOT_FOUNDとする。
 
-認証・HTTP制限違反はTool dispatch前にHTTP error、MCP request構造の違反はJSON-RPC error、domain errorは`resultType: "complete"`かつ`isError: true`のTool resultとして返す。
+認証・HTTP制限違反はTool dispatch前にHTTP error、MCP request構造の違反はJSON-RPC error、domain errorは`isError: true`のTool resultとして返す。2026製品経路だけはこれに`resultType: "complete"`と`_meta`も付け、Codex互換経路ではlegacy射影から除く。
 
 domain errorのTextContentは次のJSON objectを1件だけ直列化する。schema外fieldは付けない。
 
@@ -1325,13 +1344,15 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - application/json以外のrequestは415
 - JSON-RPC batchは拒否
 - GETとDELETEは405、POSTだけを受理
-- `MCP-Protocol-Version`欠落・不一致を拒否
-- `Mcp-Method`とJSON-RPC methodの不一致を拒否
+- 2026経路の`MCP-Protocol-Version`欠落・不一致を拒否
+- 2026経路の`Mcp-Method`とJSON-RPC methodの不一致を拒否
 - clientInfoを省略した適合requestを受理
-- 対象MCP hostからserver/discover、tools/list、tools/callが成功
+- Codex CLI 0.146.1の実captureと同じ`initialize` / `2025-06-18` → `notifications/initialized` / HTTP 202 → `tools/list` → `tools/call`が成功
+- 2025/2026 method、version、custom headerを混ぜたrequestはfail closedになる
+- 2026経路でserver/discover、tools/list、tools/callが成功
 - tools/listが別紙どおり5 Toolを固定順で返す
-- server/discoverとtools/listがresultType、ttlMs、cacheScopeを常に含む
-- 成功responseがresult._metaのserverInfoとContent-Type application/jsonを含む
+- 2026経路のserver/discoverとtools/listがresultType、ttlMs、cacheScopeを常に含む
+- 2026経路の成功responseがresult._metaのserverInfoを含み、両経路のJSON responseがContent-Type application/jsonを含む
 - `@modelcontextprotocol/conformance@0.2.0-alpha.11`の固定Tools-only scenarioが全件成功
 - tokenがlog、URI、Tool resultに含まれない
 
@@ -1590,9 +1611,9 @@ world、mmc-pack.json、instance.cfg、既存jarは変更しない。
 
 ### 接続時に確認する運用条件
 
-接続先MCP hostはMCP 2026-07-28のStreamable HTTP、既存endpointへの接続、固定Authorization Bearer headerに対応し、ローカルloopbackへ到達できること。2025-11-25以前しか扱えないhost向け互換層は初版の対象外とし、実際に必要になった場合だけ別要件として追加する。
+接続先MCP hostは既存Streamable HTTP endpointへ固定Authorization Bearer headerを付け、ローカルloopbackへ到達できること。製品基準はMCP 2026-07-28とする。実運用で固定するCodex CLI 0.146.1に限り、実capture済みの`initialize` / `2025-06-18`互換経路を併設する。それ以外のlegacy host向け汎用downgradeは行わない。
 
-host固有の接続smokeは製品名とversionが選定された時点で実施する。host未選定でもMOD本体とprotocol conformanceの実装は開始できるが、利用環境へのMCP接続完了とは判定しない。
+Codex CLIのversionを更新する場合は、先にwire handshake、JSONL event schema、固定5 Toolの呼出しを再取得し、compatibility contractとfresh MCP-only評価を更新する。再検証なしに別versionを合格扱いしない。
 
 ## 18. repository名と製品identity
 
@@ -1651,6 +1672,7 @@ repository作成直前に、選択したowner配下で`mcmcp`が作成可能か�
 - [MCP server/discover](https://modelcontextprotocol.io/specification/2026-07-28/server/discover)
 - [MCP Tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools)
 - [MCP Conformance Test Framework](https://github.com/modelcontextprotocol/conformance)
+- [Codex MCP configuration](https://developers.openai.com/codex/mcp/)
 - [MCP Java SDK 2.0.x changelog](https://github.com/modelcontextprotocol/java-sdk/blob/main/CHANGELOG.md)
 - [mcpfabric](https://github.com/Etoryx/mcpfabric)
 - [mc_aiplayer](https://github.com/zoyluoblue/mc_aiplayer)

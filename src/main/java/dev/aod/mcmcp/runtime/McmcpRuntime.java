@@ -696,6 +696,9 @@ public final class McmcpRuntime implements McpRuntimePort {
         if (command instanceof StartAction start) {
             return submitPreparedAgentStart(start, context);
         }
+        if (command instanceof GetAction action) {
+            return submitAgentGetAction(action, context);
+        }
 
         var fence = publishedSession;
         java.util.concurrent.Callable<RuntimeReply> work = () -> {
@@ -715,6 +718,39 @@ public final class McmcpRuntime implements McpRuntimePort {
                         command.toolName(), fence.generation(), context.deadlineNanos(),
                         work, McmcpRuntime::mapFailure, () -> false, ignored -> { });
         return submitted;
+    }
+
+    /**
+     * Handles the optional terminal wait on the calling MCP worker. AgentActionStore is a
+     * synchronized, Minecraft-independent state machine, so no client-thread dispatch or game
+     * state access is needed while this read-only request waits.
+     */
+    private CompletionStage<RuntimeReply> submitAgentGetAction(
+            GetAction command, RuntimeCallContext context) {
+        try {
+            UUID requestedId = actionId(command.arguments());
+            int requestedWaitMillis = agentActionWaitTimeoutMillis(command.arguments());
+            if (requestedWaitMillis > 0 && Thread.currentThread() == clientThread) {
+                return CompletableFuture.completedFuture(RuntimeReply.failure(
+                        "internal_error",
+                        "Action terminal waits cannot run on the Minecraft client thread",
+                        true));
+            }
+            requireLiveCall(context, command.toolName());
+            long remainingMillis = TimeUnit.NANOSECONDS.toMillis(context.remainingNanos());
+            int effectiveWaitMillis = (int) Math.min(
+                    requestedWaitMillis, Math.min(Integer.MAX_VALUE, remainingMillis));
+            AgentActionStore.Snapshot snapshot = agentActions.awaitTerminal(
+                    requestedId, effectiveWaitMillis);
+            return CompletableFuture.completedFuture(RuntimeReply.success(actionPayload(snapshot)));
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            context.cancel();
+            return CompletableFuture.completedFuture(RuntimeReply.failure(
+                    "server_busy", "The action terminal wait was interrupted", true));
+        } catch (RuntimeException | LinkageError failure) {
+            return CompletableFuture.completedFuture(mapFailure(failure));
+        }
     }
 
     private CompletionStage<RuntimeReply> submitPreparedAgentStart(
@@ -1280,8 +1316,25 @@ public final class McmcpRuntime implements McpRuntimePort {
     }
 
     private Map<String, Object> getAgentAction(Map<String, Object> arguments) {
-        requireExactKeys(arguments, "agent_get_action", Set.of("action_id"));
+        agentActionWaitTimeoutMillis(arguments);
         return actionPayload(agentActions.get(actionId(arguments)));
+    }
+
+    static int agentActionWaitTimeoutMillis(Map<String, Object> arguments) {
+        requireAllowedKeys(
+                arguments, "agent_get_action", Set.of("action_id", "wait_timeout_ms"));
+        if (!arguments.containsKey("action_id")) {
+            throw new IllegalArgumentException("agent_get_action must contain action_id");
+        }
+        int timeoutMillis = arguments.containsKey("wait_timeout_ms")
+                ? intArgument(arguments, "wait_timeout_ms")
+                : 0;
+        if (timeoutMillis < 0
+                || timeoutMillis > AgentActionStore.MAX_TERMINAL_WAIT_MILLIS) {
+            throw new IllegalArgumentException("wait_timeout_ms must be in 0.."
+                    + AgentActionStore.MAX_TERMINAL_WAIT_MILLIS);
+        }
+        return timeoutMillis;
     }
 
     private Map<String, Object> cancelAgentAction(

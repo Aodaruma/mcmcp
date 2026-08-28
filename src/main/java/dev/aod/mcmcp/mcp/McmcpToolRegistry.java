@@ -14,6 +14,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.UUID;
@@ -21,6 +22,8 @@ import java.util.UUID;
 /** Fixed five-tool catalog plus the narrow bridge to the Minecraft client runtime. */
 public final class McmcpToolRegistry {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().serializeNulls().create();
+    private static final Duration ACTION_WAIT_DISPATCH_HEADROOM = Duration.ofSeconds(2);
+    private static final Duration MAX_EFFECTIVE_DISPATCH_TIMEOUT = Duration.ofSeconds(30);
     private static final Set<String> PUBLIC_DOMAIN_CODES = Set.of(
             "INVALID_ARGUMENT", "MCP_OPERATION_DISABLED", "NO_WORLD", "TASK_BUSY",
             "MULTIPLAYER_NOT_ALLOWED", "TARGET_UNKNOWN", "NO_KNOWN_PATH",
@@ -31,6 +34,7 @@ public final class McmcpToolRegistry {
     private final McpRuntimePort runtimePort;
     private final Duration runtimeDispatchTimeout;
     private final McpToolCatalog catalog = new McpToolCatalog();
+    private final Semaphore terminalWaitAdmission = new Semaphore(1);
 
     public McmcpToolRegistry(McpRuntimePort runtimePort, Duration runtimeDispatchTimeout) {
         this.runtimePort = Objects.requireNonNull(runtimePort, "runtimePort");
@@ -66,7 +70,23 @@ public final class McmcpToolRegistry {
     }
 
     private PreparedCall dispatch(String toolName, McpRuntimePort.RuntimeCommand command) {
-        RuntimeCallContext context = RuntimeCallContext.withTimeout(runtimeDispatchTimeout);
+        boolean terminalWait = isTerminalWait(command);
+        if (terminalWait && !terminalWaitAdmission.tryAcquire()) {
+            return serverBusyCall("Another action terminal wait is already active.");
+        }
+        try {
+            return dispatchAdmitted(toolName, command);
+        } finally {
+            if (terminalWait) {
+                terminalWaitAdmission.release();
+            }
+        }
+    }
+
+    private PreparedCall dispatchAdmitted(
+            String toolName, McpRuntimePort.RuntimeCommand command) {
+        RuntimeCallContext context = RuntimeCallContext.withTimeout(
+                effectiveDispatchTimeout(command));
         var future = runtimePort.submit(command, context).toCompletableFuture();
         McpRuntimePort.RuntimeReply reply;
         try {
@@ -118,6 +138,31 @@ public final class McmcpToolRegistry {
                     true), null);
         }
         return new PreparedCall(success(output.getAsJsonObject()), deliveryActionId);
+    }
+
+    private static boolean isTerminalWait(McpRuntimePort.RuntimeCommand command) {
+        if (!(command instanceof McpRuntimePort.GetAction getAction)) {
+            return false;
+        }
+        Object value = getAction.arguments().get("wait_timeout_ms");
+        return value instanceof Number number && number.longValue() > 0L;
+    }
+
+    Duration effectiveDispatchTimeout(McpRuntimePort.RuntimeCommand command) {
+        if (!(command instanceof McpRuntimePort.GetAction getAction)) {
+            return runtimeDispatchTimeout;
+        }
+        Object value = getAction.arguments().get("wait_timeout_ms");
+        if (!(value instanceof Number number) || number.longValue() <= 0L) {
+            return runtimeDispatchTimeout;
+        }
+        Duration required = Duration.ofMillis(number.longValue())
+                .plus(ACTION_WAIT_DISPATCH_HEADROOM);
+        if (required.compareTo(MAX_EFFECTIVE_DISPATCH_TIMEOUT) > 0) {
+            required = MAX_EFFECTIVE_DISPATCH_TIMEOUT;
+        }
+        return required.compareTo(runtimeDispatchTimeout) > 0
+                ? required : runtimeDispatchTimeout;
     }
 
     private PreparedCall failedCall(String message) {

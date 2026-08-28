@@ -15,6 +15,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -185,6 +187,77 @@ class McpToolCatalogTest {
                 .isEqualTo(AgentActionStore.MAX_RECORDED_BLOCKS_BROKEN);
         assertThat(progress.getAsJsonObject("blocks_placed").get("maximum").getAsInt())
                 .isEqualTo(AgentActionStore.MAX_RECORDED_BLOCKS_PLACED);
+    }
+
+    @Test
+    void getActionLongPollIsOptionalBoundedAndReceivesDispatchHeadroom() {
+        var catalog = new McpToolCatalog();
+        var schema = catalog.inputSchema("agent_get_action");
+        var immediate = new com.google.gson.JsonObject();
+        immediate.addProperty("action_id", "550e8400-e29b-41d4-a716-446655440000");
+        assertThat(CatalogSchemaValidator.matches(schema, immediate)).isTrue();
+
+        var maximum = immediate.deepCopy();
+        maximum.addProperty(
+                "wait_timeout_ms", AgentActionStore.MAX_TERMINAL_WAIT_MILLIS);
+        assertThat(CatalogSchemaValidator.matches(schema, maximum)).isTrue();
+        var unbounded = maximum.deepCopy();
+        unbounded.addProperty(
+                "wait_timeout_ms", AgentActionStore.MAX_TERMINAL_WAIT_MILLIS + 1);
+        assertThat(CatalogSchemaValidator.matches(schema, unbounded)).isFalse();
+        var fractional = maximum.deepCopy();
+        fractional.addProperty("wait_timeout_ms", 1.5D);
+        assertThat(CatalogSchemaValidator.matches(schema, fractional)).isFalse();
+
+        var registry = new McmcpToolRegistry((command, context) ->
+                CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(
+                        toolResult(command))), Duration.ofSeconds(1));
+        var command = new McpRuntimePort.GetAction(Map.of(
+                "action_id", "550e8400-e29b-41d4-a716-446655440000",
+                "wait_timeout_ms", AgentActionStore.MAX_TERMINAL_WAIT_MILLIS));
+        assertThat(registry.effectiveDispatchTimeout(command))
+                .isEqualTo(Duration.ofSeconds(27));
+        assertThat(registry.effectiveDispatchTimeout(new McpRuntimePort.GetState()))
+                .isEqualTo(Duration.ofSeconds(1));
+    }
+
+    @Test
+    void keepsOneHttpWorkerAvailableByAdmittingOnlyOneTerminalWait() throws Exception {
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var registry = new McmcpToolRegistry((command, context) -> {
+            if (command instanceof McpRuntimePort.GetAction) {
+                entered.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException failure) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException(failure);
+                }
+            }
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(
+                    toolResult(command)));
+        }, Duration.ofSeconds(1));
+        var arguments = new com.google.gson.JsonObject();
+        arguments.addProperty("action_id", "550e8400-e29b-41d4-a716-446655440000");
+        arguments.addProperty("wait_timeout_ms", 1_000);
+
+        var first = CompletableFuture.supplyAsync(() -> {
+            try {
+                return registry.call("agent_get_action", arguments);
+            } catch (McmcpToolRegistry.UnknownToolException failure) {
+                throw new RuntimeException(failure);
+            }
+        });
+        try {
+            assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+            var rejected = registry.call("agent_get_action", arguments);
+            assertThat(rejected.get("isError").getAsBoolean()).isTrue();
+            assertThat(rejected.toString()).contains("SERVER_BUSY");
+        } finally {
+            release.countDown();
+        }
+        assertThat(first.get(1, TimeUnit.SECONDS).get("isError").getAsBoolean()).isFalse();
     }
 
     @Test

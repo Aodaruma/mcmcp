@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /** Synchronized one-active-plus-one-terminal action state machine. */
 public final class AgentActionStore {
@@ -19,6 +20,7 @@ public final class AgentActionStore {
     public static final int MAX_RECORDED_BLOCKS_BROKEN = 12;
     public static final int MAX_RECORDED_INTERACTIONS = 16;
     public static final int MAX_RECORDED_BLOCKS_PLACED = 16;
+    public static final int MAX_TERMINAL_WAIT_MILLIS = 25_000;
 
     private Mutable latest;
     private Snapshot previousTerminal;
@@ -55,7 +57,7 @@ public final class AgentActionStore {
             return Confirmation.STALE;
         }
         if (deadlineReached(nowNanos, action.confirmationDeadlineNanos)) {
-            action.finish(State.FAILED, deliveryFailure("confirmation_timeout"));
+            finish(action, State.FAILED, deliveryFailure("confirmation_timeout"));
             return Confirmation.EXPIRED;
         }
         action.state = State.QUEUED;
@@ -69,7 +71,7 @@ public final class AgentActionStore {
         if (action.state != State.UNCONFIRMED) {
             return false;
         }
-        action.finish(State.FAILED, deliveryFailure(bounded(evidence, 128)));
+        finish(action, State.FAILED, deliveryFailure(bounded(evidence, 128)));
         return true;
     }
 
@@ -78,7 +80,7 @@ public final class AgentActionStore {
                 || !deadlineReached(nowNanos, latest.confirmationDeadlineNanos)) {
             return false;
         }
-        latest.finish(State.FAILED, deliveryFailure("confirmation_timeout"));
+        finish(latest, State.FAILED, deliveryFailure("confirmation_timeout"));
         return true;
     }
 
@@ -107,6 +109,56 @@ public final class AgentActionStore {
         throw new NotFoundException();
     }
 
+    /**
+     * Returns the retained snapshot once it is terminal, or the latest snapshot when the bounded
+     * wait elapses. This monitor wait is used only by an MCP worker; it never owns Minecraft state
+     * and terminal transitions wake all waiters.
+     */
+    public synchronized Snapshot awaitTerminal(UUID actionId, int timeoutMillis)
+            throws InterruptedException {
+        Objects.requireNonNull(actionId, "actionId");
+        if (timeoutMillis < 0 || timeoutMillis > MAX_TERMINAL_WAIT_MILLIS) {
+            throw new IllegalArgumentException(
+                    "timeoutMillis must be in 0.." + MAX_TERMINAL_WAIT_MILLIS);
+        }
+        if (previousTerminal != null && previousTerminal.actionId().equals(actionId)) {
+            return previousTerminal;
+        }
+        if (latest == null || !latest.id.equals(actionId)) {
+            throw new NotFoundException();
+        }
+
+        Mutable target = latest;
+        if (target.state.terminal() || timeoutMillis == 0) {
+            return target.snapshot();
+        }
+        long deadlineNanos = System.nanoTime()
+                + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while (!target.state.terminal()) {
+            if (!retains(target)) {
+                throw new NotFoundException();
+            }
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0L) {
+                break;
+            }
+            long waitMillis = TimeUnit.NANOSECONDS.toMillis(remainingNanos);
+            int waitNanos = (int) (remainingNanos
+                    - TimeUnit.MILLISECONDS.toNanos(waitMillis));
+            wait(waitMillis, waitNanos);
+        }
+        if (!retains(target)) {
+            throw new NotFoundException();
+        }
+        return target.snapshot();
+    }
+
+    private boolean retains(Mutable target) {
+        return latest == target
+                || (previousTerminal != null
+                && previousTerminal.actionId().equals(target.id));
+    }
+
     public synchronized Optional<Summary> latestSummary() {
         return latest == null ? Optional.empty() : Optional.of(new Summary(
                 latest.id, latest.state, latest.endReason));
@@ -118,7 +170,7 @@ public final class AgentActionStore {
                 && latest.id.equals(actionId)
                 && !latest.state.terminal();
         if (requested) {
-            latest.finish(State.CANCELLED,
+            finish(latest, State.CANCELLED,
                     new Failure(FailureCode.CANCELLED_BY_CLIENT, true, List.of("client_request")));
         }
         return new CancelResult(actionId, requested, stateAtRequest);
@@ -214,11 +266,11 @@ public final class AgentActionStore {
     }
 
     public synchronized void succeed(UUID actionId) {
-        running(actionId).finish(State.SUCCEEDED, null);
+        finish(running(actionId), State.SUCCEEDED, null);
     }
 
     public synchronized void fail(UUID actionId, Failure failure) {
-        running(actionId).finish(State.FAILED, Objects.requireNonNull(failure, "failure"));
+        finish(running(actionId), State.FAILED, Objects.requireNonNull(failure, "failure"));
     }
 
     public synchronized boolean terminateActive(Failure failure) {
@@ -226,13 +278,19 @@ public final class AgentActionStore {
         if (latest == null || latest.state.terminal()) {
             return false;
         }
-        latest.finish(State.FAILED, failure);
+        finish(latest, State.FAILED, failure);
         return true;
     }
 
     public synchronized void clear() {
         latest = null;
         previousTerminal = null;
+        notifyAll();
+    }
+
+    private void finish(Mutable action, State terminal, Failure terminalFailure) {
+        action.finish(terminal, terminalFailure);
+        notifyAll();
     }
 
     private Mutable current(UUID actionId) {

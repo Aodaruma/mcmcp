@@ -127,6 +127,74 @@ class ObservationModelContractTest {
     }
 
     @Test
+    void visibleItemExposesOnlyItsDisplayedRegistryIdentity() {
+        var item = new VisibleEntity(
+                new ResourceId("minecraft:item"),
+                new ResourceId("minecraft:wheat"),
+                world(2, 64, 2),
+                new Vector(0, 0, 0),
+                new Aabb(1.875, 64, 1.875, 2.125, 64.25, 2.125),
+                EntityHazardClass.UNKNOWN,
+                world(0, 65.62, 0),
+                96,
+                7);
+
+        assertThat(ObservationWireMapper.record(item))
+                .containsEntry("entity_type", "minecraft:item")
+                .containsEntry("displayed_item", "minecraft:wheat")
+                .doesNotContainKeys(
+                        "count", "components", "uuid", "owner", "pickup_delay", "age", "nbt");
+
+        var zombie = new VisibleEntity(
+                new ResourceId("minecraft:zombie"),
+                world(2, 64, 2),
+                new Vector(0, 0, 0),
+                new Aabb(1.7, 64, 1.7, 2.3, 65.95, 2.3),
+                EntityHazardClass.HOSTILE,
+                world(0, 65.62, 0),
+                96,
+                7);
+        assertThat(ObservationWireMapper.record(zombie))
+                .doesNotContainKey("displayed_item");
+    }
+
+    @Test
+    void displayedItemFailsClosedOutsideANonEmptyItemEntity() {
+        assertThatThrownBy(() -> new VisibleEntity(
+                new ResourceId("minecraft:zombie"),
+                new ResourceId("minecraft:wheat"),
+                world(2, 64, 2),
+                new Vector(0, 0, 0),
+                new Aabb(1.7, 64, 1.7, 2.3, 65.95, 2.3),
+                EntityHazardClass.HOSTILE,
+                world(0, 65.62, 0),
+                96,
+                7)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("displayedItem");
+        assertThatThrownBy(() -> new VisibleEntity(
+                new ResourceId("minecraft:item"),
+                world(2, 64, 2),
+                new Vector(0, 0, 0),
+                new Aabb(1.875, 64, 1.875, 2.125, 64.25, 2.125),
+                EntityHazardClass.UNKNOWN,
+                world(0, 65.62, 0),
+                96,
+                7)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("displayedItem");
+        assertThatThrownBy(() -> new VisibleEntity(
+                new ResourceId("minecraft:item"),
+                new ResourceId("minecraft:air"),
+                world(2, 64, 2),
+                new Vector(0, 0, 0),
+                new Aabb(1.875, 64, 1.875, 2.125, 64.25, 2.125),
+                EntityHazardClass.UNKNOWN,
+                world(0, 65.62, 0),
+                96,
+                7)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("displayedItem");
+    }
+
+    @Test
     void rejectsOutOfCatalogValuesMixedDimensionsAndMutableSoundAge() {
         assertThatThrownBy(() -> new ResourceId("Minecraft:Overworld"))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -192,11 +260,12 @@ class ObservationModelContractTest {
         return List.of(
                 surface(95, 0),
                 new VisibleEntity(
-                        new ResourceId("minecraft:zombie"),
+                        new ResourceId("minecraft:item"),
+                        new ResourceId("minecraft:wheat"),
                         world(2, 64, 2),
-                        new Vector(0.1, 0, -0.1),
-                        new Aabb(1.7, 64, 1.7, 2.3, 65.95, 2.3),
-                        EntityHazardClass.HOSTILE,
+                        new Vector(0, 0, 0),
+                        new Aabb(1.875, 64, 1.875, 2.125, 64.25, 2.125),
+                        EntityHazardClass.UNKNOWN,
                         world(0, 65.62, 0),
                         96,
                         7),

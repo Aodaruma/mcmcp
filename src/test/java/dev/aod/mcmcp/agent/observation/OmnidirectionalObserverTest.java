@@ -10,6 +10,7 @@ import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
 import dev.aod.mcmcp.agent.observation.ObservationValues.WorldPosition;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
@@ -162,11 +163,23 @@ class OmnidirectionalObserverTest {
                 .doesNotContain(".screen")
                 .doesNotContain(".options")
                 .doesNotContain("getFov(")
+                .doesNotContain("getCount(")
+                .doesNotContain("getComponents(")
+                .doesNotContain("getUUID(")
+                .doesNotContain("getOwner(")
+                .doesNotContain("getPickupDelay(")
                 .doesNotContain("SampledVisibility");
         assertThat(code)
                 .contains("player.getEyePosition()")
                 .contains("entity.isInvisibleTo(player)")
                 .contains("state.is(Blocks.GLASS_PANE)");
+    }
+
+    @Test
+    void displayedItemExtractionRejectsEmptyStacks() {
+        assertThatThrownBy(() -> OmnidirectionalObserver.displayedItem(ItemStack.EMPTY))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("empty");
     }
 
     @Test

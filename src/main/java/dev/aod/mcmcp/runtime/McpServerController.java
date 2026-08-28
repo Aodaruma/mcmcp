@@ -7,6 +7,7 @@ import dev.aod.mcmcp.mcp.McpHttpServerConfig;
 import dev.aod.mcmcp.safety.BearerTokenStore;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -48,6 +49,7 @@ public final class McpServerController implements AutoCloseable {
                     .port(port)
                     .serverInfo("mcmcp", modVersion)
                     .maxRequestBodyBytes(McmcpClientConfig.maxRequestBytes())
+                    .ioTimeout(Duration.ofSeconds(30))
                     .build();
             var candidate = new McpHttpServer(config, runtime);
             candidate.start();

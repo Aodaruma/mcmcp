@@ -19,12 +19,14 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.NeutralMob;
 import net.minecraft.world.entity.animal.Animal;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -77,6 +79,8 @@ public final class OmnidirectionalObserver {
 
     private static final Comparator<VisibleEntity> ENTITY_ORDER = Comparator
             .comparing((VisibleEntity value) -> value.entityType().value())
+            .thenComparing(value -> value.displayedItem() == null
+                    ? "" : value.displayedItem().value())
             .thenComparingDouble(value -> value.position().x())
             .thenComparingDouble(value -> value.position().y())
             .thenComparingDouble(value -> value.position().z())
@@ -405,6 +409,7 @@ public final class OmnidirectionalObserver {
                 AABB box = entity.getBoundingBox();
                 result.add(new VisibleEntity(
                         new ResourceId(BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString()),
+                        displayedItem(entity),
                         worldPosition(sample.dimension(), position),
                         new Vector(velocity.x, velocity.y, velocity.z),
                         new Aabb(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ),
@@ -418,6 +423,25 @@ public final class OmnidirectionalObserver {
             }
         }
         return new EntityObservation(result, truncated);
+    }
+
+    private static ResourceId displayedItem(Entity entity) {
+        return entity instanceof ItemEntity itemEntity
+                ? displayedItem(itemEntity.getItem())
+                : null;
+    }
+
+    /** Extracts only the registry identity used to render an item entity, never stack metadata. */
+    static ResourceId displayedItem(ItemStack stack) {
+        Objects.requireNonNull(stack, "stack");
+        if (stack.isEmpty()) {
+            throw new IllegalArgumentException("Visible item entity has an empty display stack");
+        }
+        var key = BuiltInRegistries.ITEM.getKey(stack.getItem());
+        if (key == null || "minecraft:air".equals(key.toString())) {
+            throw new IllegalArgumentException("Visible item entity has no registered display item");
+        }
+        return new ResourceId(key.toString());
     }
 
     private boolean hasLineOfSight(

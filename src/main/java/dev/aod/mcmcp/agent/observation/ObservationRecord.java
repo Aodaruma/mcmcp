@@ -88,6 +88,7 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
 
     record VisibleEntity(
             ResourceId entityType,
+            ResourceId displayedItem,
             WorldPosition position,
             Vector velocity,
             Aabb aabb,
@@ -102,9 +103,29 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
             Objects.requireNonNull(aabb, "aabb");
             Objects.requireNonNull(hazardClass, "hazardClass");
             Objects.requireNonNull(eyeOrigin, "eyeOrigin");
+            boolean itemEntity = "minecraft:item".equals(entityType.value());
+            if (itemEntity != (displayedItem != null)
+                    || displayedItem != null && "minecraft:air".equals(displayedItem.value())) {
+                throw new IllegalArgumentException(
+                        "displayedItem is required exactly for a non-empty minecraft:item entity");
+            }
             ObservationValues.requireSameDimension(position.dimension(), eyeOrigin.dimension());
             ObservationValues.requireTick(observedTick, "observedTick");
             ObservationValues.requireTick(worldRevision, "worldRevision");
+        }
+
+        /** Backward-compatible constructor for visible entities that do not render an item stack. */
+        public VisibleEntity(
+                ResourceId entityType,
+                WorldPosition position,
+                Vector velocity,
+                Aabb aabb,
+                EntityHazardClass hazardClass,
+                WorldPosition eyeOrigin,
+                long observedTick,
+                long worldRevision) {
+            this(entityType, null, position, velocity, aabb, hazardClass,
+                    eyeOrigin, observedTick, worldRevision);
         }
 
         @Override public ObservationKind kind() { return ObservationKind.VISIBLE_ENTITY; }

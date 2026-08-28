@@ -22,7 +22,7 @@ class ActionDslTest {
     void parsesEveryNormativeCatalogExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
-        assertThat(examples).hasSize(8);
+        assertThat(examples).hasSize(9);
         for (int index = 0; index < examples.size(); index++) {
             ActionDsl.Request parsed = ActionDslParser.parse(examples.get(index).getAsJsonObject());
             assertThat(parsed.schemaVersion()).isEqualTo(1);
@@ -33,8 +33,7 @@ class ActionDslTest {
 
     @Test
     void compilesSequenceAndComponentWiseIfMaximumAndEvaluatesSnapshotOnce() throws IOException {
-        ActionDsl.Request request = ActionDslParser.parse(
-                startActionSchema().getAsJsonArray("examples").get(1).getAsJsonObject());
+        ActionDsl.Request request = ActionDslParser.parse(exampleNamed("approach_and_face"));
         var compiled = ActionDslCompiler.compile(
                 request,
                 primitive -> {
@@ -522,6 +521,16 @@ class ActionDslTest {
             }
         }
         throw new AssertionError("agent_start_action catalog entry not found");
+    }
+
+    private static JsonObject exampleNamed(String name) throws IOException {
+        for (var example : startActionSchema().getAsJsonArray("examples")) {
+            JsonObject object = example.getAsJsonObject();
+            if (name.equals(object.getAsJsonObject("program").get("name").getAsString())) {
+                return object;
+            }
+        }
+        throw new AssertionError("agent_start_action example not found: " + name);
     }
 
     private static void assertCode(JsonObject source, ActionDslException.Code code) {

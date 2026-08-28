@@ -9,10 +9,11 @@ import java.util.UUID;
 /**
  * Minecraft-independent boundary between MCP request handling and the client runtime.
  *
- * <p>The implementation owns dispatch onto the Minecraft client thread. It must inspect
- * {@link RuntimeCallContext#canBeginWork()} immediately before starting work and again
- * immediately before every side effect. A future that completes after cancellation or the
- * deadline must not cause a delayed side effect.</p>
+ * <p>The implementation owns dispatch onto the Minecraft client thread. A read-only wait on an
+ * already-created, synchronized action-state handle may remain on the MCP worker, but it must not
+ * access Minecraft state. The implementation must inspect {@link RuntimeCallContext#canBeginWork()}
+ * immediately before starting work and again immediately before every side effect. A future that
+ * completes after cancellation or the deadline must not cause a delayed side effect.</p>
  */
 @FunctionalInterface
 public interface McpRuntimePort {
