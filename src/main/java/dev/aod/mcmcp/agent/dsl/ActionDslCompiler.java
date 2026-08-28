@@ -159,11 +159,19 @@ public final class ActionDslCompiler {
 
     private static Cost compileWait(
             ActionDsl.Node node, int ticks, Map<String, Cost> primitiveCostBounds) {
-        Cost cost = new Cost(
-                multiplyExact(ticks, NOMINAL_TICK_MILLIS),
-                ticks, 0, 0, 0, 0, 0);
+        Cost cost = intrinsicWaitCost(ticks);
         primitiveCostBounds.put(node.id(), cost);
         return cost;
+    }
+
+    /** Exact structural cost shared by compile-time and JIT wait admission. */
+    public static Cost intrinsicWaitCost(int ticks) {
+        if (ticks <= 0) {
+            throw new IllegalArgumentException("wait ticks must be positive");
+        }
+        return new Cost(
+                multiplyExact(ticks, NOMINAL_TICK_MILLIS),
+                ticks, 0, 0, 0, 0, 0);
     }
 
     private static void requireMutationCost(

@@ -30,12 +30,17 @@ $ProductionPrompt = 'チェストに小麦の種と鍬が入っています。�
 $RequiredCodexVersion = 'codex-cli 0.146.1'
 $ModernProtocolVersion = '2026-07-28'
 $EvaluatorTimeout = [TimeSpan]::FromMinutes(17)
+$TurnCompletionReserveSeconds = 15
+$MaximumMcpForwardSeconds = 35
+$AgentGetActionTransportMarginSeconds = 2
+$DeadlineCleanupCancelTimeoutSeconds = 5
+$DeadlineRejectedOutputText = '{"code":"EVALUATION_DEADLINE_IMMINENT","message":"The evaluation deadline is too close to safely forward another MCP request.","recoverable":false}'
 $AuthExpirySafetyMargin = [TimeSpan]::FromMinutes(5)
 $MinimumMcpRequestIntervalMilliseconds = 60
 $ExpectedMcmcpServerName = 'mcmcp'
 $ExpectedMcmcpServerVersion = '0.1.0'
-$ExpectedCatalogFileSha256 = '0c3d4c9dfc3fa754e6828ab07d02d5b943c5d2dcab1891507b2644c6239310af'
-$ExpectedToolSurfaceSha256 = '61bb5ee768750492fe6742dec31c370b33e7b384239a776e2758ba312669b95e'
+$ExpectedCatalogFileSha256 = 'ba091fba2b87a17ffd33753b2c1da544f7aa0412ed814619d59332f2c6655d4e'
+$ExpectedToolSurfaceSha256 = '926f0cf8251bbd599645bd4491cebe4a8e32293a7cd6c219edc8a2f9eb7fe855'
 $AllowedTools = @(
     'agent_get_state',
     'agent_get_observation',
@@ -650,6 +655,52 @@ function Get-McmcpHttpFailureStatus {
     } catch {
         return $null
     }
+}
+
+function Test-JsonIntegerValue {
+    param([AllowNull()][object]$Value)
+    if ($null -eq $Value) { return $false }
+    return $Value.GetType().FullName -in @(
+        'System.Byte', 'System.SByte', 'System.Int16', 'System.UInt16',
+        'System.Int32', 'System.UInt32', 'System.Int64', 'System.UInt64')
+}
+
+function Get-DynamicForwardTimeoutSeconds {
+    param(
+        [Parameter(Mandatory)][string]$Tool,
+        [Parameter(Mandatory)][object]$Arguments
+    )
+    if ($Tool -cne 'agent_get_action') {
+        return $MaximumMcpForwardSeconds
+    }
+
+    $waitTimeoutMilliseconds = 0L
+    $waitProperty = Get-Property -Object $Arguments -Name 'wait_timeout_ms'
+    if ($null -ne $waitProperty) {
+        if (-not (Test-JsonIntegerValue $waitProperty.Value) -or
+            $waitProperty.Value -lt 0 -or $waitProperty.Value -gt 25000) {
+            throw 'agent_get_action wait_timeout_ms failed strict validation'
+        }
+        $waitTimeoutMilliseconds = [long]$waitProperty.Value
+    }
+    $waitSeconds = [int][Math]::Ceiling($waitTimeoutMilliseconds / 1000.0D)
+    return [int][Math]::Min(
+        $MaximumMcpForwardSeconds,
+        [Math]::Max(1, $waitSeconds + $AgentGetActionTransportMarginSeconds))
+}
+
+function Test-DeadlineCleanupCancelArguments {
+    param([Parameter(Mandatory)][object]$Arguments)
+    if (-not (Test-IsObjectValue $Arguments)) { return $false }
+    $propertyNames = if ($Arguments -is [Collections.IDictionary]) {
+        @($Arguments.Keys | ForEach-Object { [string]$_ })
+    } else {
+        @($Arguments.PSObject.Properties | ForEach-Object { $_.Name })
+    }
+    $actionId = Get-PropertyValue -Object $Arguments -Name 'action_id'
+    return @($propertyNames).Count -eq 1 -and @($propertyNames)[0] -ceq 'action_id' -and
+        $actionId -is [string] -and $actionId -cmatch
+            '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 }
 
 function Wait-McmcpRequestSlot {
@@ -1341,27 +1392,92 @@ function Invoke-DynamicBridge {
         throw 'duplicate dynamic callId'
     }
 
-    $remainingSeconds = [Math]::Floor(
-        ($script:TurnDeadline - [DateTimeOffset]::UtcNow).TotalSeconds)
-    if ($remainingSeconds -lt 1) {
-        throw 'evaluation deadline expired before MCP forward'
-    }
-    $httpTimeoutSeconds = [int][Math]::Min(35, $remainingSeconds)
-
     $argumentsJson = ConvertTo-CompactJson $arguments
-    Wait-McmcpRequestSlot
+    $normalHttpTimeoutSeconds = Get-DynamicForwardTimeoutSeconds `
+        -Tool $tool -Arguments $arguments
+    $isDeadlineCleanupCancel = $script:Terminalizing -and
+        $script:DeadlineCleanupCancelForwardCount -eq 0 -and
+        $tool -ceq 'agent_cancel_action' -and
+        (Test-DeadlineCleanupCancelArguments $arguments)
+    $httpTimeoutSeconds = if ($isDeadlineCleanupCancel) {
+        $DeadlineCleanupCancelTimeoutSeconds
+    } else {
+        $normalHttpTimeoutSeconds
+    }
+    $requiredHeadroomSeconds = $httpTimeoutSeconds + $TurnCompletionReserveSeconds
+    $deadlineRejectionReason = if ($script:Terminalizing -and
+        -not $isDeadlineCleanupCancel) {
+        'terminalization_latched'
+    } else {
+        Wait-McmcpRequestSlot
+        $null
+    }
+    $remainingSeconds = [int][Math]::Max(0, [Math]::Floor(
+            ($script:TurnDeadline - [DateTimeOffset]::UtcNow).TotalSeconds))
+    if (($script:Terminalizing -and -not $isDeadlineCleanupCancel) -or
+        $remainingSeconds -le $requiredHeadroomSeconds) {
+        if (-not $script:Terminalizing) {
+            $script:Terminalizing = $true
+            $deadlineRejectionReason = 'insufficient_deadline_headroom'
+        }
+        $script:DeadlineRejectionCount++
+        $outputHash = Get-Sha256 $DeadlineRejectedOutputText
+        Write-BridgeEvent ([ordered]@{
+                event = 'dynamic_deadline_rejected'
+                app_request_id = $requestId
+                call_id = $callId
+                thread_id = $threadId
+                turn_id = $turnId
+                tool = $tool
+                arguments_sha256 = Get-Sha256 $argumentsJson
+                reason = $deadlineRejectionReason
+                remaining_seconds = $remainingSeconds
+                forward_timeout_seconds = $httpTimeoutSeconds
+                terminalization_reserve_seconds = $TurnCompletionReserveSeconds
+                required_headroom_seconds = $requiredHeadroomSeconds
+                success = $false
+                output_sha256 = $outputHash
+            })
+        Send-AppMessage -Message ([ordered]@{
+                id = $requestId
+                result = [ordered]@{
+                    success = $false
+                    contentItems = @(
+                        [ordered]@{ type = 'inputText'; text = $DeadlineRejectedOutputText }
+                    )
+                }
+            })
+        Write-BridgeEvent ([ordered]@{
+                event = 'dynamic_response_sent'
+                app_request_id = $requestId
+                call_id = $callId
+                tool = $tool
+                success = $false
+                output_sha256 = $outputHash
+            })
+        return
+    }
+
     $mcpId = $script:McpRequestId + 1
-    Write-BridgeEvent ([ordered]@{
-            event = 'mcp_forward_started'
-            app_request_id = $requestId
-            call_id = $callId
-            thread_id = $threadId
-            turn_id = $turnId
-            tool = $tool
-            arguments_sha256 = Get-Sha256 $argumentsJson
-            mcp_request_id = $mcpId
-            http_timeout_seconds = $httpTimeoutSeconds
-        })
+    $forwardStart = [ordered]@{
+        event = 'mcp_forward_started'
+        app_request_id = $requestId
+        call_id = $callId
+        thread_id = $threadId
+        turn_id = $turnId
+        tool = $tool
+        arguments_sha256 = Get-Sha256 $argumentsJson
+        mcp_request_id = $mcpId
+        http_timeout_seconds = $httpTimeoutSeconds
+    }
+    if ($isDeadlineCleanupCancel) {
+        $script:DeadlineCleanupCancelForwardCount++
+        $forwardStart.forward_mode = 'deadline_cleanup_cancel'
+        $forwardStart.remaining_seconds = $remainingSeconds
+        $forwardStart.terminalization_reserve_seconds = $TurnCompletionReserveSeconds
+        $forwardStart.required_headroom_seconds = $requiredHeadroomSeconds
+    }
+    Write-BridgeEvent $forwardStart
 
     try {
         $mcpResponse = Invoke-McmcpJsonRpc -Method 'tools/call' -ToolName $tool `
@@ -1505,6 +1621,9 @@ $script:BridgeSecretDetected = $false
 $script:ActiveThreadId = $null
 $script:ActiveTurnId = $null
 $script:TurnDeadline = [DateTimeOffset]::MinValue
+$script:Terminalizing = $false
+$script:DeadlineRejectionCount = 0
+$script:DeadlineCleanupCancelForwardCount = 0
 $script:ReadinessFailure = $null
 $script:SeenAppRequestIds = [Collections.Generic.HashSet[string]]::new(
     [StringComparer]::Ordinal)
@@ -1829,6 +1948,7 @@ try {
     $script:TurnDeadline = $deadline
     Write-BridgeEvent ([ordered]@{
             event = 't0'
+            utc = $startedAt.ToString('o')
             prompt_sha256 = Get-Sha256 $ProductionPrompt
             timeout_seconds = [int]$EvaluatorTimeout.TotalSeconds
             readiness_rechecked = $true
@@ -2050,13 +2170,17 @@ try {
     $gitCommit = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1)
     $gitStatus = @(& git -C $repoRoot status --porcelain=v1 2>$null)
     $manifest = [ordered]@{
-        schema_version = 3
+        schema_version = 5
         baseline_id = $BaselineId
         model = $Model
         reasoning_effort = $ReasoningEffort
         prompt_sha256 = Get-Sha256 $ProductionPrompt
         prompt_delivery = 'app_server_stdio_jsonl_turn_start_exact_text'
         evaluator_timeout_seconds = [int]$EvaluatorTimeout.TotalSeconds
+        terminalization_reserve_seconds = $TurnCompletionReserveSeconds
+        deadline_rejection_count = $script:DeadlineRejectionCount
+        deadline_cleanup_cancel_forward_count = $script:DeadlineCleanupCancelForwardCount
+        terminalizing_entered = $script:Terminalizing
         mcp_protocol_version = $ModernProtocolVersion
         bridge = 'codex_app_server_dynamic_tools_direct_mcp'
         model_visible_tools = @($AllowedTools)

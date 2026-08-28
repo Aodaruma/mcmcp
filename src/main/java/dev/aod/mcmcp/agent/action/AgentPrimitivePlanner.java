@@ -41,6 +41,7 @@ public final class AgentPrimitivePlanner {
     private static final int MAX_POSE_TRANSITIONS = 16_384;
     private static final double MAX_BREAK_REACH_BLOCKS = 4.5D;
     private static final double MAX_BREAK_EYE_ORIGIN_DRIFT = 0.125D;
+    public static final double WAIT_WITNESS_EYE_EPSILON_BLOCKS = 1.0D / 1024.0D;
     private static final double BATCH_NEAR_RAY_DEGREES = 2.0D;
     private static final double FARMLAND_SETTLING_BLOCKS = 1.0D / 16.0D;
     private static final double VISIBLE_ITEM_MATCH_RADIUS = 0.75D;
@@ -157,6 +158,7 @@ public final class AgentPrimitivePlanner {
         var mutationBatchPlans = new LinkedHashMap<String, MutationBatchPlan>();
         var routeCache = new LinkedHashMap<RouteKey, RoutePlan>();
         var work = new PlanningWork(canContinue);
+        Set<String> waitsBackedByPriorPlant = waitsBackedByPriorPlant(program.body());
         analyzeSequence(
                 program.body(),
                 List.of(initialPose),
@@ -173,6 +175,7 @@ public final class AgentPrimitivePlanner {
                 mutationAims,
                 mutationBatchPlans,
                 routeCache,
+                waitsBackedByPriorPlant,
                 work);
         return new Analysis(
                 costs, routeDependencies, knownTargets, knownSurfaces,
@@ -336,6 +339,49 @@ public final class AgentPrimitivePlanner {
                         "Mutation target is not current matching visible-surface evidence"));
     }
 
+    /**
+     * Authorizes one explicit crop wait from current policy-visible wheat evidence.
+     * Crop maturity is deliberately not retained in the fence: normal AGE changes are
+     * the state transition the bounded wait is intended to observe.
+     */
+    public static KnownSurface requireKnownWheatWaitSurface(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            List<Pose> poses,
+            ActionDsl.Position position,
+            long surfaceBarrierWorldRevision) {
+        Objects.requireNonNull(position, "position");
+        Objects.requireNonNull(poses, "poses");
+        if (poses.isEmpty()) {
+            throw new IllegalArgumentException("crop wait requires at least one current pose");
+        }
+        requireSurfaceBarrierWorldRevision(map, surfaceBarrierWorldRevision);
+        return latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(map.dimension()))
+                .flatMap(frame -> frame.records().stream())
+                .filter(ObservationRecord.VisibleSurface.class::isInstance)
+                .map(ObservationRecord.VisibleSurface.class::cast)
+                .filter(surface -> surface.worldRevision() >= surfaceBarrierWorldRevision
+                        && surface.worldRevision() <= map.worldRevision())
+                .filter(surface -> matches(surface, position, "minecraft:wheat"))
+                .filter(surface -> surface.cropMature() != null)
+                .filter(surface -> poses.stream().allMatch(pose ->
+                        waitWitnessOriginMatches(pose, surface.eyeOrigin())))
+                .map(surface -> new KnownSurface(
+                        position,
+                        ActionDsl.BlockFace.valueOf(surface.face().name()),
+                        "minecraft:wheat",
+                        null,
+                        new Vec3(
+                                surface.eyeOrigin().x(),
+                                surface.eyeOrigin().y(),
+                                surface.eyeOrigin().z())))
+                .findFirst()
+                .orElseThrow(() -> new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Crop wait target requires current visible wheat evidence"));
+    }
+
     private static MutationSurface requireMutationSurface(
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
@@ -402,6 +448,56 @@ public final class AgentPrimitivePlanner {
                 .findFirst();
     }
 
+    /**
+     * Proves only the static control dependency needed to admit a closed
+     * plant -> wait program before the crop exists. Runtime JIT admission still
+     * requires newly visible wheat when the wait occurrence actually begins.
+     */
+    private static Set<String> waitsBackedByPriorPlant(List<ActionDsl.Node> nodes) {
+        var waits = new LinkedHashSet<String>();
+        guaranteedWheatAfter(nodes, Set.of(), waits);
+        return Set.copyOf(waits);
+    }
+
+    private static Set<ActionDsl.Position> guaranteedWheatAfter(
+            List<ActionDsl.Node> nodes,
+            Set<ActionDsl.Position> input,
+            Set<String> waitsBackedByPriorPlant) {
+        var present = new LinkedHashSet<>(input);
+        for (ActionDsl.Node node : nodes) {
+            if (node instanceof ActionDsl.PlantKnownWheat plant) {
+                present.add(plant.target());
+            } else if (node instanceof ActionDsl.PlantKnownWheatBatch batch) {
+                batch.targets().stream().map(ActionDsl.PlantPlot::target).forEach(present::add);
+            } else if (node instanceof ActionDsl.HarvestKnownWheat harvest) {
+                present.remove(harvest.target());
+            } else if (node instanceof ActionDsl.HarvestKnownWheatBatch batch) {
+                present.removeAll(batch.targets());
+            } else if (node instanceof ActionDsl.WaitUntil wait) {
+                if (present.contains(wait.condition().target())) {
+                    waitsBackedByPriorPlant.add(wait.id());
+                }
+            } else if (node instanceof ActionDsl.If conditional) {
+                Set<ActionDsl.Position> thenPresent = guaranteedWheatAfter(
+                        conditional.thenBranch(), present, waitsBackedByPriorPlant);
+                Set<ActionDsl.Position> elsePresent = guaranteedWheatAfter(
+                        conditional.elseBranch(), present, waitsBackedByPriorPlant);
+                present = new LinkedHashSet<>(thenPresent);
+                present.retainAll(elsePresent);
+            } else if (node instanceof ActionDsl.Repeat repeat) {
+                // Eligibility inside a repeat is based on its first occurrence only;
+                // later iterations must not retroactively authorize that same node ID.
+                present = new LinkedHashSet<>(guaranteedWheatAfter(
+                        repeat.body(), present, waitsBackedByPriorPlant));
+                for (int count = 1; count < repeat.count(); count++) {
+                    present = new LinkedHashSet<>(guaranteedWheatAfter(
+                            repeat.body(), present, new LinkedHashSet<>()));
+                }
+            }
+        }
+        return Set.copyOf(present);
+    }
+
     private static List<Pose> analyzeSequence(
             List<ActionDsl.Node> nodes,
             List<Pose> input,
@@ -418,6 +514,7 @@ public final class AgentPrimitivePlanner {
             Map<String, MutationAim> mutationAims,
             Map<String, MutationBatchPlan> mutationBatchPlans,
             Map<RouteKey, RoutePlan> routeCache,
+            Set<String> waitsBackedByPriorPlant,
             PlanningWork work) {
         List<Pose> states = input;
         for (ActionDsl.Node node : nodes) {
@@ -426,7 +523,8 @@ public final class AgentPrimitivePlanner {
                     node, states, map, pathfinder, latestFrame,
                     visualBarrierWorldRevision, surfaceRevisionBarrier, cameraLimit,
                     costs, routeDependencies, knownTargets, knownSurfaces,
-                    mutationAims, mutationBatchPlans, routeCache, work);
+                    mutationAims, mutationBatchPlans, routeCache,
+                    waitsBackedByPriorPlant, work);
         }
         return states;
     }
@@ -447,8 +545,21 @@ public final class AgentPrimitivePlanner {
             Map<String, MutationAim> mutationAims,
             Map<String, MutationBatchPlan> mutationBatchPlans,
             Map<RouteKey, RoutePlan> routeCache,
+            Set<String> waitsBackedByPriorPlant,
             PlanningWork work) {
-        if (node instanceof ActionDsl.WaitTicks || node instanceof ActionDsl.WaitUntil) {
+        if (node instanceof ActionDsl.WaitTicks) {
+            return input;
+        }
+        if (node instanceof ActionDsl.WaitUntil wait) {
+            if (!waitsBackedByPriorPlant.contains(wait.id())) {
+                long surfaceBarrier = surfaceBarrierWorldRevision(
+                        map, surfaceRevisionBarrier, wait.condition().target());
+                KnownSurface surface = requireKnownWheatWaitSurface(
+                        map, latestFrame, input,
+                        wait.condition().target(), surfaceBarrier);
+                knownSurfaces.add(surface);
+            }
+            merge(costs, node.id(), ActionDslCompiler.intrinsicWaitCost(wait.maxTicks()));
             return input;
         }
         if (node instanceof ActionDsl.NavigateToKnown navigate) {
@@ -626,14 +737,16 @@ public final class AgentPrimitivePlanner {
                     surfaceRevisionBarrier, cameraLimit,
                     costs, routeDependencies,
                     knownTargets, knownSurfaces, mutationAims,
-                    mutationBatchPlans, routeCache, work));
+                    mutationBatchPlans, routeCache,
+                    waitsBackedByPriorPlant, work));
             output.addAll(analyzeSequence(
                     conditional.elseBranch(), input, map, pathfinder,
                     latestFrame, visualBarrierWorldRevision,
                     surfaceRevisionBarrier, cameraLimit,
                     costs, routeDependencies,
                     knownTargets, knownSurfaces, mutationAims,
-                    mutationBatchPlans, routeCache, work));
+                    mutationBatchPlans, routeCache,
+                    waitsBackedByPriorPlant, work));
             return distinct(output);
         }
         var repeat = (ActionDsl.Repeat) node;
@@ -645,7 +758,8 @@ public final class AgentPrimitivePlanner {
                     surfaceRevisionBarrier, cameraLimit,
                     costs, routeDependencies,
                     knownTargets, knownSurfaces, mutationAims,
-                    mutationBatchPlans, routeCache, work);
+                    mutationBatchPlans, routeCache,
+                    waitsBackedByPriorPlant, work);
         }
         return output;
     }
@@ -1107,6 +1221,18 @@ public final class AgentPrimitivePlanner {
                 pose.horizontalPositionError(),
                 Math.max(pose.yErrorBelow(), pose.yErrorAbove()));
         return distance + poseError <= MAX_BREAK_REACH_BLOCKS;
+    }
+
+    private static boolean waitWitnessOriginMatches(
+            Pose pose, ObservationValues.WorldPosition eyeOrigin) {
+        if (!eyeOrigin.dimension().value().equals(pose.cell().dimension())) {
+            return false;
+        }
+        double epsilonSquared = WAIT_WITNESS_EYE_EPSILON_BLOCKS
+                * WAIT_WITNESS_EYE_EPSILON_BLOCKS;
+        return square(eyeOrigin.x() - pose.x())
+                + square(eyeOrigin.y() - (pose.y() + pose.eyeHeight()))
+                + square(eyeOrigin.z() - pose.z()) <= epsilonSquared;
     }
 
     private static double distanceSquared(
@@ -1713,7 +1839,14 @@ public final class AgentPrimitivePlanner {
                 && surface.face().name().equals(required.face().name())
                 && surface.block().value().equals(required.block())
                 && (required.cropMature() == null
-                        || required.cropMature().equals(surface.cropMature()));
+                        || required.cropMature().equals(surface.cropMature()))
+                && (required.eyeOrigin() == null
+                        || surface.eyeOrigin().dimension().value().equals(target.dimension())
+                                && square(required.eyeOrigin().x - surface.eyeOrigin().x())
+                                + square(required.eyeOrigin().y - surface.eyeOrigin().y())
+                                + square(required.eyeOrigin().z - surface.eyeOrigin().z())
+                                <= WAIT_WITNESS_EYE_EPSILON_BLOCKS
+                                        * WAIT_WITNESS_EYE_EPSILON_BLOCKS);
     }
 
     private static boolean matches(
@@ -1955,16 +2088,30 @@ public final class AgentPrimitivePlanner {
             ActionDsl.Position position,
             ActionDsl.BlockFace face,
             String block,
-            Boolean cropMature) {
+            Boolean cropMature,
+            Vec3 eyeOrigin) {
         public KnownSurface(
                 ActionDsl.Position position, ActionDsl.BlockFace face, String block) {
-            this(position, face, block, null);
+            this(position, face, block, null, null);
+        }
+
+        public KnownSurface(
+                ActionDsl.Position position,
+                ActionDsl.BlockFace face,
+                String block,
+                Boolean cropMature) {
+            this(position, face, block, cropMature, null);
         }
 
         public KnownSurface {
             Objects.requireNonNull(position, "position");
             Objects.requireNonNull(face, "face");
             Objects.requireNonNull(block, "block");
+            if (eyeOrigin != null && (!Double.isFinite(eyeOrigin.x)
+                    || !Double.isFinite(eyeOrigin.y)
+                    || !Double.isFinite(eyeOrigin.z))) {
+                throw new IllegalArgumentException("surface eye origin must be finite");
+            }
         }
     }
 

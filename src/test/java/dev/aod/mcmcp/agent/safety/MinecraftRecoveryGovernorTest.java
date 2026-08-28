@@ -30,6 +30,26 @@ class MinecraftRecoveryGovernorTest {
     private static final String DIMENSION = "minecraft:overworld";
 
     @Test
+    void consecutiveCollectNodesUseWorldTicksEvenWhenActionProgressDoesNotAdvance() {
+        var fixture = fixture(defaultLimits());
+        long unchangedActionProgressTick = 3L;
+        var pickupA = sample(100, 20, 300, false, false, 0, false, false,
+                true, 0, 0, Landing.KNOWN_SAFE, -1, DamageKind.NONE);
+        var pickupB = sample(101, 20, 300, false, false, 0, false, false,
+                true, 0, 0, Landing.KNOWN_SAFE, -1, DamageKind.NONE);
+
+        var first = fixture.governor.tick(
+                pickupA, List.of(), StopSignal.NONE, () -> { }, pickupA.clientTick());
+        var second = fixture.governor.tick(
+                pickupB, List.of(), StopSignal.NONE, () -> { }, pickupB.clientTick());
+
+        assertThat(unchangedActionProgressTick).isEqualTo(3L);
+        assertThat(first.state()).isEqualTo(State.IDLE);
+        assertThat(second.state()).isEqualTo(State.IDLE);
+        assertThat(second.reason()).isNotEqualTo(MinecraftRecoveryGovernor.Reason.INTERNAL_INVARIANT);
+    }
+
+    @Test
     void lowHealthAloneReplansWithoutStoppingOrOwningInput() {
         var fixture = fixture(new Limits(200, 16, 360, 8, 8, 4));
 

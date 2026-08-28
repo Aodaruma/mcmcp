@@ -41,11 +41,11 @@ runnerはclean cwdからfilesystem rootまでの全祖先とisolated `CODEX_HOME
 2. `tools/list`
 3. `tools/call` / `agent_get_state`
 
-`agent_start_action`や`agent_cancel_action`はpreflightで呼ばない。各HTTP requestはliteral `127.0.0.1`だけへ`-NoProxy -MaximumRedirection 0`で送り、UTF-8 JSON Content-Type、JSON-RPC 2.0、request/response IDの型と値、result/errorの排他的存在を検査する。`server/discover`は`resultType=complete`、`supportedVersions=[2026-07-28]`、`capabilities.tools.listChanged=false`、`ttlMs=0`、`cacheScope=private`、serverInfo=`mcmcp/0.1.0`とsemantic exactで一致させる。`tools/list`は`docs/MCMCP_MCP_Tool_Catalog.json`のraw SHA-256 `7e937841398c24678f189ebdf5953c619201a4fa3422b74cf84ed210a1b4e9ea`とsemantic tool surface SHA-256 `586818aeaa44a71c1c0aafda223d52a31bcbf4d6f41fe485702d240bd93628aa`をscript内定数へpinし、full resultと固定5件の名前、description、inputSchemaをexact比較してからdynamicToolsへ変換する。
+`agent_start_action`や`agent_cancel_action`はpreflightで呼ばない。各HTTP requestはliteral `127.0.0.1`だけへ`-NoProxy -MaximumRedirection 0`で送り、UTF-8 JSON Content-Type、JSON-RPC 2.0、request/response IDの型と値、result/errorの排他的存在を検査する。`server/discover`は`resultType=complete`、`supportedVersions=[2026-07-28]`、`capabilities.tools.listChanged=false`、`ttlMs=0`、`cacheScope=private`、serverInfo=`mcmcp/0.1.0`とsemantic exactで一致させる。`tools/list`は`docs/MCMCP_MCP_Tool_Catalog.json`のraw SHA-256 `ba091fba2b87a17ffd33753b2c1da544f7aa0412ed814619d59332f2c6655d4e`とsemantic tool surface SHA-256 `926f0cf8251bbd599645bd4491cebe4a8e32293a7cd6c219edc8a2f9eb7fe855`をscript内定数へpinし、full resultと固定5件の名前、description、inputSchemaをexact比較してからdynamicToolsへ変換する。
 
 `agent_get_state`は`isError`の存在とBoolean型、`resultType=complete`、serverInfo、TextContent/structuredContent型を検証する。さらに`control.mode=ready`、unpaused、world/observationあり、inventory空、`omnidirectional_rays_per_tick=512`、`observation.record_counts.visible_entity=0`、actionがnullまたはterminalでなければT0へ進まない。このfixtureはmobを生成しないため、visible entityが1件でもあれば作業領域の落下item等による開始条件汚染として扱う。state body、座標、fixture知識はartifactへ保存せず、各判定のBooleanだけを残す。thread作成成功後にも同じreadinessを再取得し、8判定が全てtrueであることをT0 eventへ記録する。
 
-preflightとapp-server thread作成が成功した後、runnerがT0を記録し、exact promptを含む`turn/start`をstdin JSONLへ1回だけ送る。T0後はモデルのdynamic tool requestに対する機械的な1対1 forward以外、operator/runnerからMinecraftやMCPを操作しない。17分でturnが完了しなければrunを終了し、一般的なapp-server応答障害ではなく`evaluation deadline expired before turn/completed`として分類する。
+preflightとapp-server thread作成が成功した後、runnerがT0を記録し、exact promptを含む`turn/start`をstdin JSONLへ1回だけ送る。T0後はモデルのdynamic tool requestに対する機械的な1対1 forward以外、operator/runnerからMinecraftやMCPを操作しない。唯一の例外として、残時間が安全なHTTP完了とturn終端に足りないrequestはMCPへ送信せず、後述の固定deadline拒否をapp-serverへ返す。この拒否はMinecraftを操作せず、引数も変更しない。拒否後もモデル自身が発行した厳密な`agent_cancel_action` 1件だけは、残時間を満たす場合にcleanupとしてforwardできるが、runnerが自動cancelを生成することはない。17分のTurnDeadlineは延長せず、15秒のterminalization reserveをその内側に確保する。17分でturnが完了しなければrunを終了し、一般的なapp-server応答障害ではなく`evaluation deadline expired before turn/completed`として分類する。
 
 ## app-server isolation と hardening
 
@@ -100,7 +100,7 @@ MCMCP Bearer、Codex access token、account IDをcommand line、app-server confi
 
 app-server client request IDは`init`、`login`、`config`、`thread`、`turn`という文字列を使い、app-serverが発行するserver request ID（`0`を含む）と名前空間を分ける。artifactに残す`client_send`は`initialize`、`initialized`、`thread_start`、`turn_start`のexact 4件だけである。`initialize`はexact clientInfoと`experimentalApi=true`、notification opt-out配列だけ、`initialized`は空paramsだけを許可する。setup proofは`launcher → initialize → init response → initialized → login response → login成功 → effective config確認 → preflight → thread/start → thread response → T0再readiness → turn/start → turn response`の順に固定し、その後だけdynamic forwardを許可する。
 
-turn中に受理するapp-server requestは`item/tool/call`だけである。requestに`id` propertyが存在するかを確認するため、値`0`も有効である。ID/callId一意性、namespaceが省略またはnull、threadId/turnIdが現在のturnとstrict一致、tool/argumentsをforward**前**に検証する。違反request、未知tool、別methodはMCMCPへ送らずfail closedとする。T0後の各HTTP timeoutは残global deadlineと35秒の小さい方へcapする。
+turn中に受理するapp-server requestは`item/tool/call`だけである。requestに`id` propertyが存在するかを確認するため、値`0`も有効である。ID/callId一意性、namespaceが省略またはnull、threadId/turnIdが現在のturnとstrict一致、tool/argumentsをforward**前**に検証する。違反request、未知tool、別methodはMCMCPへ送らずfail closedとする。pacing後に残時間を再計算し、`agent_get_action`は厳密検証済み`wait_timeout_ms`を秒へ切り上げた値+2秒（上限35秒）、他toolは35秒をforward timeoutとする。残時間が`forward timeout + 15秒`以下ならMCP request IDを採番せず、`dynamic_deadline_rejected`を記録して固定の`success=false`結果を返し、terminalizingをlatchする。最初の理由は`insufficient_deadline_headroom`、以後のrequestは`terminalization_latched`として同様にMCPへ送らない。ただしlatch後、exact `{action_id}`かつ正規UUIDのモデル起点`agent_cancel_action`は1件だけcleanup候補にできる。pacing後の残時間が固定5秒timeout+15秒reserveの20秒を**超える**場合だけ、`forward_mode=deadline_cleanup_cancel`と残時間/headroom proofを付け、通常のMCP request ID採番・start/completion/response lifecycleでliteral forwardする。2件目、他tool、不正引数、残時間20秒以下は拒否を継続する。deadline拒否とcleanup startの`remaining_seconds`は、bridgeのT0 UTC+1020秒と各event UTCから再計算したfloor値に対して、event書込遅延分の0..1秒だけを許容して照合する。
 
 MCP成功結果をmodelへ返す`inputText`はtoken節約のため次の優先順で作る。
 
@@ -108,7 +108,7 @@ MCP成功結果をmodelへ返す`inputText`はtoken節約のため次の優先�
 2. なければtext contentを使う。
 3. どちらもなければresult全体をcompact JSONにする。
 
-正当なdomain resultの`isError: true`はモデルが回復または理由報告に使う有効なtool結果である。ただしoutput textはJSON object `{code,message,recoverable}`のexact 3 member（case-sensitive、重複なし、型はstring/string/bool）で、`structuredContent`が存在しない場合だけ許可する。内容を保持し、`success:false`、`payload_mode=tool_error`として返す。一方、transport error、JSON-RPC error、missing/malformed result、secret filter発火はrun/auditを無効にする。bridge logにはcall対応、arguments/outputのSHA-256、成功可否、payload modeに加え、`mcp_is_error`、domain契約valid、structuredContent有無のBoolean proofだけを残し、MCP result本体を重複保存しない。
+正当なdomain resultの`isError: true`はモデルが回復または理由報告に使う有効なtool結果である。ただしoutput textはJSON object `{code,message,recoverable}`のexact 3 member（case-sensitive、重複なし、型はstring/string/bool）で、`structuredContent`が存在しない場合だけ許可する。内容を保持し、`success:false`、`payload_mode=tool_error`として返す。一方、transport error、JSON-RPC error、missing/malformed result、secret filter発火はrun/auditを無効にする。deadline拒否も同じ3 member shapeだが、固定code/message、`recoverable=false`、固定output hashを要求し、MCP domain errorとは別集計にする。bridge logにはcall対応、arguments/outputのSHA-256、成功可否、payload modeに加え、`mcp_is_error`、domain契約valid、structuredContent有無のBoolean proofだけを残し、MCP result本体を重複保存しない。
 
 `agent_get_action`は`wait_timeout_ms: 25000`を指定してterminalまで反復することを推奨する。25秒でactionがterminalにならない場合、同shapeの非terminal snapshotが**成功応答**として返る。これはtimeout errorではないため、状態を確認して同じaction IDを再pollする。固定5 toolsは増やさない。
 
@@ -163,11 +163,11 @@ pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
 - raw response IDが`init`、`login`、`thread`、`turn`の各1件かつこの順で、errorがない。secret-bearing login requestとconfig exchange自体はartifactに存在しない。
 - server requestは`item/tool/call`だけで、ID `0`を正しく扱う。
 - item typeは`userMessage`、`reasoning`、`agentMessage`、`dynamicToolCall`だけで、`item/started|completed`のthreadId/turnIdがactive routeとstrict一致し、startedAtMs/completedAtMsがnumericで、全item lifecycleがstarted/completedになる。
-- 各dynamic request、bridge start/completion/response、completed `dynamicToolCall`がrequest ID、call ID、tool、argument hash、output hash、successで双方向1対1対応する。`success=true/status=completed`とexact domain `tool_error`の`success=false/status=failed`をproofまで照合してともに有効とする。
+- 各dynamic requestは、通常forwardの`start=1/completion=1/response=1/reject=0`、またはdeadline拒否の`start=0/completion=0/reject=1/response=1`のどちらか一方だけに対応する。request ID、call ID、tool、route、argument hash、output hash、success、event順を双方向照合する。通常forwardでは`success=true/status=completed`とexact domain `tool_error`の`success=false/status=failed`をproofまで検証する。deadline拒否では固定error、`success=false/status=failed`、T0/event UTC由来の残時間とheadroom計算を検証し、MCP成功/domain error件数とは分離する。最初の拒否後のforwardは原則禁止し、拒否response後に始まる1件の`agent_cancel_action`だけを、exact引数、5秒timeout、20秒headroom、cleanup mode、UTC proofがすべて一致する場合に許可する。
 - `turn/completed`は`status="completed"`かつ`error=null`で、完了agent messageがある。
 - 禁止tool/item/request/notification、未知event/client_send、壊れたJSONL、orphan、重複、turn terminal後のresponse/server request/notificationを含む全messageをfail closedにする。
 
-dynamic requestが0件でも、trace構造とturn正常完了はprotocol上validになり得る。ただし自動監査は理由の意味を保証できないため、能力不足の具体的理由が最終agentMessageにあることを条件付きmanual reviewへ必ず出し、任意の短文を課題成功とは扱わない。監査は0件/成功/domain error件数をreportし、課題達成可否とは分離する。自動監査だけではgame内の達成を証明できないため、MCMCP action auditと突き合わせ、全actionがterminal、小麦64個、fixture外への危険な副作用なしを実験ノートで判定する。失敗runへ追加入力して直さず、artifactを保全してbaselineからやり直す。
+dynamic requestが0件でも、trace構造とturn正常完了はprotocol上validになり得る。ただし自動監査は理由の意味を保証できないため、能力不足の具体的理由が最終agentMessageにあることを条件付きmanual reviewへ必ず出し、任意の短文を課題成功とは扱わない。監査は0件/成功/domain error/deadline拒否件数をreportし、課題達成可否とは分離する。deadline拒否が1件以上なら、cleanup cancelの有無にかかわらず、全Actionがterminalであることを別artifactで確認するmanual reviewも必須にする。runnerはモデルがcancelしないActionを自動cancelしない。自動監査だけではgame内の達成を証明できないため、MCMCP action auditと突き合わせ、全actionがterminal、小麦64個、fixture外への危険な副作用なしを実験ノートで判定する。失敗runへ追加入力して直さず、artifactを保全してbaselineからやり直す。
 
 ## 変更時の検証
 
@@ -188,6 +188,6 @@ pwsh -NoProfile -File .\tools\eval\Test-McmcpEvalTrace.ps1 -SelfTest
 if ($LASTEXITCODE -ne 0) { throw 'audit self-test failed' }
 ```
 
-self-testはrequest ID `0`を含むsuccess、回復可能domain error、dynamic call 0件、JSON-RPC/protocol failure、route/namespace違反、必須property欠落、禁止item、malformed JSONLに加え、未知client_send、setup順序、terminal後response、domain member欠落/重複/proof不一致、追加instruction/context、無効model/effort、item route/timestamp、notification `emittedAtMs`の欠落・非整数・範囲外・順序違反、readiness proofの欠落・raw混入、failure diagnostic違反、property大小文字違反を含む29ケースを検証する。Codex CLIを更新する場合はversion pinを先に緩めず、generated experimental schema、external auth、dynamic lifecycle、hardening key、synthetic auditを再確認する。
+self-testはrequest ID `0`を含むsuccess、回復可能domain error、dynamic call 0件、JSON-RPC/protocol failure、route/namespace違反、必須property欠落、禁止item、malformed JSONLに加え、未知client_send、setup順序、terminal後response、domain member欠落/重複/proof不一致、追加instruction/context、無効model/effort、item route/timestamp、notification `emittedAtMs`の欠落・非整数・範囲外・順序違反、readiness proofの欠落・raw混入、failure diagnostic違反、property大小文字違反、正常deadline拒否、`agent_get_action(25000)`のheadroom境界と不正型、latch後の連続拒否、正常cleanup cancel、cleanupのtimeout/headroom/引数/order/回数違反、T0/reject UTC欠落・改変・早すぎる拒否、response欠落、重複拒否、reject/forward混在、hash/success/headroom/reason/identity不一致を含む54ケースを検証する。Codex CLIを更新する場合はversion pinを先に緩めず、generated experimental schema、external auth、dynamic lifecycle、hardening key、synthetic auditを再確認する。
 
 参考: [Codex app server](https://developers.openai.com/codex/app-server/)、[Codex MCP](https://developers.openai.com/codex/mcp/)

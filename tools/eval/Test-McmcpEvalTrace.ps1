@@ -28,8 +28,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $ProductionPrompt = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
-$ExpectedCatalogFileSha256 = '0c3d4c9dfc3fa754e6828ab07d02d5b943c5d2dcab1891507b2644c6239310af'
-$ExpectedToolSurfaceSha256 = '61bb5ee768750492fe6742dec31c370b33e7b384239a776e2758ba312669b95e'
+$ExpectedCatalogFileSha256 = 'ba091fba2b87a17ffd33753b2c1da544f7aa0412ed814619d59332f2c6655d4e'
+$ExpectedToolSurfaceSha256 = '926f0cf8251bbd599645bd4491cebe4a8e32293a7cd6c219edc8a2f9eb7fe855'
+$TurnCompletionReserveSeconds = 15
+$MaximumMcpForwardSeconds = 35
+$AgentGetActionTransportMarginSeconds = 2
+$DeadlineCleanupCancelTimeoutSeconds = 5
+$DeadlineRejectedOutputText = '{"code":"EVALUATION_DEADLINE_IMMINENT","message":"The evaluation deadline is too close to safely forward another MCP request.","recoverable":false}'
 $AllowedTools = @(
     'agent_get_state',
     'agent_get_observation',
@@ -259,6 +264,45 @@ function Test-IsJsonInteger {
         'System.Int32', 'System.UInt32', 'System.Int64', 'System.UInt64')
 }
 
+function Get-ExpectedDynamicForwardTimeoutSeconds {
+    param(
+        [Parameter(Mandatory)][string]$Tool,
+        [Parameter(Mandatory)][AllowNull()][object]$Arguments
+    )
+    if (-not (Test-IsObjectValue $Arguments)) { return $null }
+    if ($Tool -cne 'agent_get_action') {
+        return $MaximumMcpForwardSeconds
+    }
+
+    $waitTimeoutMilliseconds = 0L
+    $waitProperty = Get-Property -Object $Arguments -Name 'wait_timeout_ms'
+    if ($null -ne $waitProperty) {
+        if (-not (Test-IsJsonInteger $waitProperty.Value) -or
+            $waitProperty.Value -lt 0 -or $waitProperty.Value -gt 25000) {
+            return $null
+        }
+        $waitTimeoutMilliseconds = [long]$waitProperty.Value
+    }
+    $waitSeconds = [int][Math]::Ceiling($waitTimeoutMilliseconds / 1000.0D)
+    return [int][Math]::Min(
+        $MaximumMcpForwardSeconds,
+        [Math]::Max(1, $waitSeconds + $AgentGetActionTransportMarginSeconds))
+}
+
+function Test-DeadlineCleanupCancelArguments {
+    param([Parameter(Mandatory)][AllowNull()][object]$Arguments)
+    if (-not (Test-IsObjectValue $Arguments)) { return $false }
+    $propertyNames = if ($Arguments -is [Collections.IDictionary]) {
+        @($Arguments.Keys | ForEach-Object { [string]$_ })
+    } else {
+        @($Arguments.PSObject.Properties | ForEach-Object { $_.Name })
+    }
+    $actionId = Get-PropertyValue -Object $Arguments -Name 'action_id'
+    return @($propertyNames).Count -eq 1 -and @($propertyNames)[0] -ceq 'action_id' -and
+        $actionId -is [string] -and $actionId -cmatch
+            '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+}
+
 function Test-DomainErrorText {
     param([AllowNull()][object]$Value)
     if ($Value -isnot [string]) { return $false }
@@ -426,7 +470,8 @@ function Invoke-TraceAudit {
                 'external_auth_login_ok', 'effective_config_checked', 'client_send',
                 't0', 'readiness_check_failed',
                 'mcp_forward_started', 'mcp_forward_completed',
-                'mcp_forward_failed', 'dynamic_response_sent')) {
+                'mcp_forward_failed', 'dynamic_deadline_rejected',
+                'dynamic_response_sent')) {
             $violations.Add("bridge line $($record.line): unknown event '$event'")
         }
         $utc = Get-PropertyValue -Object $record.value -Name 'utc'
@@ -451,7 +496,8 @@ function Invoke-TraceAudit {
             $violations.Add("bridge line $($record.line): client_send property set mismatch")
         }
         if ($event -in @('mcp_forward_started', 'mcp_forward_completed',
-                'mcp_forward_failed', 'dynamic_response_sent')) {
+                'mcp_forward_failed', 'dynamic_deadline_rejected',
+                'dynamic_response_sent')) {
             foreach ($forbiddenField in @('authorization', 'bearer', 'result', 'response', 'content', 'text')) {
                 if ($null -ne (Get-Property -Object $record.value -Name $forbiddenField)) {
                     $violations.Add("bridge line $($record.line): dynamic audit record contains '$forbiddenField'")
@@ -499,6 +545,44 @@ function Invoke-TraceAudit {
             }
             Add-ViolationUnless $diagnosticContractValid `
                 "bridge line $($record.line): MCP failure diagnostic contract mismatch" $violations
+        }
+        if ($event -ceq 'dynamic_deadline_rejected') {
+            Add-ViolationUnless (Test-ExactPropertySet $record.value @(
+                    'sequence', 'utc', 'event', 'app_request_id', 'call_id',
+                    'thread_id', 'turn_id', 'tool', 'arguments_sha256', 'reason',
+                    'remaining_seconds', 'forward_timeout_seconds',
+                    'terminalization_reserve_seconds', 'required_headroom_seconds',
+                    'success', 'output_sha256')) `
+                "bridge line $($record.line): deadline rejection property set mismatch" $violations
+            $reason = Get-PropertyValue $record.value 'reason'
+            Add-ViolationUnless ($reason -is [string] -and $reason -cin @(
+                    'insufficient_deadline_headroom', 'terminalization_latched')) `
+                "bridge line $($record.line): deadline rejection reason mismatch" $violations
+            $remainingSeconds = Get-PropertyValue $record.value 'remaining_seconds'
+            $forwardTimeoutSeconds = Get-PropertyValue $record.value 'forward_timeout_seconds'
+            $reserveSeconds = Get-PropertyValue $record.value 'terminalization_reserve_seconds'
+            $requiredHeadroomSeconds = Get-PropertyValue $record.value 'required_headroom_seconds'
+            Add-ViolationUnless ((Test-IsJsonInteger $remainingSeconds) -and
+                $remainingSeconds -ge 0 -and $remainingSeconds -le 1020) `
+                "bridge line $($record.line): deadline rejection remaining seconds mismatch" $violations
+            Add-ViolationUnless ((Test-IsJsonInteger $forwardTimeoutSeconds) -and
+                $forwardTimeoutSeconds -ge 1 -and
+                $forwardTimeoutSeconds -le $MaximumMcpForwardSeconds) `
+                "bridge line $($record.line): deadline rejection forward timeout mismatch" $violations
+            Add-ViolationUnless ((Test-IsJsonInteger $reserveSeconds) -and
+                $reserveSeconds -eq $TurnCompletionReserveSeconds) `
+                "bridge line $($record.line): deadline rejection reserve mismatch" $violations
+            Add-ViolationUnless ((Test-IsJsonInteger $requiredHeadroomSeconds) -and
+                (Test-IsJsonInteger $forwardTimeoutSeconds) -and
+                $requiredHeadroomSeconds -eq
+                    ($forwardTimeoutSeconds + $TurnCompletionReserveSeconds)) `
+                "bridge line $($record.line): deadline rejection headroom mismatch" $violations
+            Add-ViolationUnless ((Get-PropertyValue $record.value 'success') -is [bool] -and
+                -not (Get-PropertyValue $record.value 'success')) `
+                "bridge line $($record.line): deadline rejection success must be false" $violations
+            Add-ViolationUnless ((Get-PropertyValue $record.value 'output_sha256') -ceq
+                (Get-Sha256 $DeadlineRejectedOutputText)) `
+                "bridge line $($record.line): deadline rejection output hash mismatch" $violations
         }
         if ($event -ceq 'readiness_check_failed') {
             $readinessNames = @(
@@ -734,9 +818,18 @@ function Invoke-TraceAudit {
     $t0Records = @($bridgeRecords | Where-Object {
             (Get-PropertyValue -Object $_.value -Name 'event') -eq 't0'
         })
+    $t0DeadlineUtc = $null
     Add-ViolationUnless ($t0Records.Count -eq 1) 'bridge t0 は1件必須です' $violations
     if ($t0Records.Count -eq 1) {
         $t0 = $t0Records[0].value
+        try {
+            $t0DeadlineUtc = [DateTimeOffset]::Parse(
+                [string](Get-PropertyValue $t0 'utc'),
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind)
+        } catch {
+            $violations.Add('T0 UTC deadline proof is missing or invalid')
+        }
         Add-ViolationUnless ((Get-PropertyValue $t0 'prompt_sha256') -eq
             (Get-Sha256 $ProductionPrompt)) 'T0 prompt hash mismatch' $violations
         Add-ViolationUnless ((Get-PropertyValue $t0 'timeout_seconds') -eq 1020) `
@@ -755,7 +848,8 @@ function Invoke-TraceAudit {
     $orderedKinds = @($bridgeRecords | Where-Object {
             (Get-PropertyValue $_.value 'event') -notin @(
                 'mcp_forward_started', 'mcp_forward_completed',
-                'mcp_forward_failed', 'dynamic_response_sent',
+                'mcp_forward_failed', 'dynamic_deadline_rejected',
+                'dynamic_response_sent',
                 'readiness_check_failed')
         } | ForEach-Object {
             $event = [string](Get-PropertyValue $_.value 'event')
@@ -1401,6 +1495,9 @@ function Invoke-TraceAudit {
     $bridgeFailures = @($bridgeRecords | Where-Object {
             (Get-PropertyValue $_.value 'event') -eq 'mcp_forward_failed'
         })
+    $bridgeRejections = @($bridgeRecords | Where-Object {
+            (Get-PropertyValue $_.value 'event') -eq 'dynamic_deadline_rejected'
+        })
     Add-ViolationUnless ($bridgeFailures.Count -eq 0) `
         'MCP transport/protocol bridge failure recordがあります' $violations
     $turnResponseProof = @($appResponseRecords | Where-Object {
@@ -1410,14 +1507,91 @@ function Invoke-TraceAudit {
         Get-PropertyValue $turnResponseProof[0].value 'sequence'
     } else { [long]::MaxValue }
     foreach ($dynamicBridgeRecord in @(
-            $bridgeStarts + $bridgeCompletions + $bridgeResponses + $bridgeFailures)) {
+            $bridgeStarts + $bridgeCompletions + $bridgeResponses +
+            $bridgeFailures + $bridgeRejections)) {
         Add-ViolationUnless ((Get-PropertyValue $dynamicBridgeRecord.value 'sequence') -gt
             $turnResponseProofSequence) `
             "dynamic bridge event must follow validated turn/start response" $violations
     }
+    $orderedBridgeRejections = @($bridgeRejections | Sort-Object {
+            Get-PropertyValue $_.value 'sequence'
+        })
+    $firstRejectionSequence = $null
+    $firstRejectionResponseSequence = $null
+    $deadlineCleanupForwardCount = 0
+    if ($orderedBridgeRejections.Count -gt 0) {
+        for ($rejectionIndex = 0; $rejectionIndex -lt $orderedBridgeRejections.Count;
+            $rejectionIndex++) {
+            $expectedReason = if ($rejectionIndex -eq 0) {
+                'insufficient_deadline_headroom'
+            } else {
+                'terminalization_latched'
+            }
+            Add-ViolationUnless ((Get-PropertyValue `
+                        $orderedBridgeRejections[$rejectionIndex].value 'reason') -ceq
+                $expectedReason) `
+                "deadline rejection latch order mismatch at index $rejectionIndex" $violations
+            $rejection = $orderedBridgeRejections[$rejectionIndex].value
+            $rejectionUtc = $null
+            try {
+                $rejectionUtc = [DateTimeOffset]::Parse(
+                    [string](Get-PropertyValue $rejection 'utc'),
+                    [Globalization.CultureInfo]::InvariantCulture,
+                    [Globalization.DateTimeStyles]::RoundtripKind)
+            } catch {
+                $violations.Add(
+                    "deadline rejection UTC proof is missing or invalid at index $rejectionIndex")
+            }
+            if ($null -ne $t0DeadlineUtc -and $null -ne $rejectionUtc) {
+                $elapsedSeconds = ($rejectionUtc - $t0DeadlineUtc).TotalSeconds
+                $expectedRemainingSeconds = [int][Math]::Max(
+                    0, [Math]::Floor(1020.0D - $elapsedSeconds))
+                $recordedRemainingSeconds = Get-PropertyValue `
+                    $rejection 'remaining_seconds'
+                $remainingDelta = if (Test-IsJsonInteger $recordedRemainingSeconds) {
+                    [long]$recordedRemainingSeconds - $expectedRemainingSeconds
+                } else { [long]::MinValue }
+                Add-ViolationUnless ($elapsedSeconds -ge 0.0D -and
+                    $elapsedSeconds -le 1021.0D) `
+                    "deadline rejection UTC is outside the T0 deadline window at index $rejectionIndex" `
+                    $violations
+                Add-ViolationUnless ($remainingDelta -ge 0 -and $remainingDelta -le 1) `
+                    "deadline rejection remaining UTC proof mismatch at index $rejectionIndex" `
+                    $violations
+            }
+        }
+        $firstRejectionSequence = Get-PropertyValue `
+            $orderedBridgeRejections[0].value 'sequence'
+        $firstRejectionCallId = [string](Get-PropertyValue `
+                $orderedBridgeRejections[0].value 'call_id')
+        $firstRejectionResponses = @($bridgeResponses | Where-Object {
+                (Get-PropertyValue $_.value 'call_id') -ceq $firstRejectionCallId -and
+                (Get-PropertyValue $_.value 'sequence') -gt $firstRejectionSequence
+            })
+        if ($firstRejectionResponses.Count -eq 1) {
+            $firstRejectionResponseSequence = Get-PropertyValue `
+                $firstRejectionResponses[0].value 'sequence'
+        }
+        $startsAfterRejection = @($bridgeStarts | Where-Object {
+                (Get-PropertyValue $_.value 'sequence') -gt $firstRejectionSequence
+            })
+        $deadlineCleanupForwardCount = @($startsAfterRejection | Where-Object {
+                (Get-PropertyValue $_.value 'tool') -ceq 'agent_cancel_action'
+            }).Count
+        Add-ViolationUnless ($startsAfterRejection.Count -le 1) `
+            'more than one deadline cleanup cancel forward is forbidden' $violations
+        foreach ($startAfterRejection in $startsAfterRejection) {
+            $cleanupTool = [string](Get-PropertyValue $startAfterRejection.value 'tool')
+            if ($cleanupTool -cne 'agent_cancel_action') {
+                $violations.Add("non-cancel MCP forward after deadline rejection is forbidden: $([string](
+                            Get-PropertyValue $startAfterRejection.value 'call_id'))")
+            }
+        }
+    }
     $validDynamicCalls = 0
     $successfulDynamicCalls = 0
     $domainToolErrorCalls = 0
+    $validDeadlineRejections = 0
     foreach ($request in $dynamicRequests) {
         $violationCountBeforeCall = $violations.Count
         $callId = $request.call_id
@@ -1432,87 +1606,240 @@ function Invoke-TraceAudit {
         $responses = @($bridgeResponses | Where-Object {
                 (Get-PropertyValue $_.value 'call_id') -ceq $callId
             })
-        if ($starts.Count -ne 1 -or $completions.Count -ne 1 -or $responses.Count -ne 1) {
-            $violations.Add("dynamic call '$callId' bridge mapping is not 1:1:1")
+        $rejections = @($bridgeRejections | Where-Object {
+                (Get-PropertyValue $_.value 'call_id') -ceq $callId
+            })
+        $isForwardLifecycle = $starts.Count -eq 1 -and $completions.Count -eq 1 -and
+            $rejections.Count -eq 0 -and $responses.Count -eq 1
+        $isDeadlineRejectionLifecycle = $starts.Count -eq 0 -and
+            $completions.Count -eq 0 -and $rejections.Count -eq 1 -and
+            $responses.Count -eq 1
+        if (-not $isForwardLifecycle -and -not $isDeadlineRejectionLifecycle) {
+            $violations.Add(
+                "dynamic call '$callId' bridge mapping is neither forward 1:1:1 nor deadline-reject 1:1")
             continue
         }
-        $start = $starts[0].value
-        $completion = $completions[0].value
         $response = $responses[0].value
         $requestIdKey = Get-AppRequestIdKey $request.app_request_id
-        Add-ViolationUnless ((Get-AppRequestIdKey (Get-PropertyValue $start 'app_request_id')) -ceq
-            $requestIdKey) `
-            "dynamic call '$callId' app request id mismatch" $violations
-        Add-ViolationUnless ((Get-PropertyValue $start 'tool') -ceq $request.tool) `
-            "dynamic call '$callId' tool mismatch" $violations
-        Add-ViolationUnless ((Get-PropertyValue $start 'thread_id') -ceq $request.thread_id -and
-            (Get-PropertyValue $start 'turn_id') -ceq $request.turn_id) `
-            "dynamic call '$callId' thread/turn mismatch" $violations
-        Add-ViolationUnless ((Get-PropertyValue $start 'arguments_sha256') -eq
-            (Get-Sha256 (ConvertTo-CompactJson $request.arguments))) `
-            "dynamic call '$callId' arguments hash mismatch" $violations
-        Add-ViolationUnless ((Get-PropertyValue $completion 'mcp_request_id') -eq
-            (Get-PropertyValue $start 'mcp_request_id')) `
-            "dynamic call '$callId' MCP request id mismatch" $violations
-        Add-ViolationUnless ((Get-PropertyValue $start 'sequence') -lt
-            (Get-PropertyValue $completion 'sequence') -and
-            (Get-PropertyValue $completion 'sequence') -lt
-            (Get-PropertyValue $response 'sequence')) `
-            "dynamic call '$callId' bridge lifecycle order mismatch" $violations
-        $httpTimeout = Get-PropertyValue $start 'http_timeout_seconds'
-        Add-ViolationUnless ($httpTimeout -is [long] -or $httpTimeout -is [int]) `
-            "dynamic call '$callId' HTTP timeout is missing" $violations
-        if ($httpTimeout -is [long] -or $httpTimeout -is [int]) {
-            Add-ViolationUnless ($httpTimeout -ge 1 -and $httpTimeout -le 35) `
-                "dynamic call '$callId' HTTP timeout is outside 1..35" $violations
-        }
-        $completionSuccess = Get-PropertyValue $completion 'success'
         $responseSuccess = Get-PropertyValue $response 'success'
-        Add-ViolationUnless ($completionSuccess -is [bool] -and
-            $responseSuccess -is [bool] -and $completionSuccess -eq $responseSuccess) `
-            "dynamic call '$callId' bridge success mismatch" $violations
-        Add-ViolationUnless ((Get-AppRequestIdKey (
-                    Get-PropertyValue $completion 'app_request_id')) -ceq $requestIdKey -and
-            (Get-AppRequestIdKey (Get-PropertyValue $response 'app_request_id')) -ceq
-            $requestIdKey) "dynamic call '$callId' completion/response request id mismatch" $violations
-        Add-ViolationUnless ((Get-PropertyValue $completion 'tool') -ceq $request.tool -and
-            (Get-PropertyValue $response 'tool') -ceq $request.tool) `
-            "dynamic call '$callId' completion/response tool mismatch" $violations
-        $payloadMode = [string](Get-PropertyValue $completion 'payload_mode')
-        $jsonRpcResponseValid = Get-PropertyValue $completion 'jsonrpc_response_valid'
-        Add-ViolationUnless (Test-ExactPropertySet $completion @(
+        Add-ViolationUnless (Test-ExactPropertySet $response @(
                 'sequence', 'utc', 'event', 'app_request_id', 'call_id', 'tool',
-                'mcp_request_id', 'success', 'payload_mode', 'output_sha256',
-                'jsonrpc_response_valid', 'mcp_is_error',
-                'domain_error_contract_valid', 'structured_content_present')) `
-            "dynamic call '$callId' completion property set mismatch" $violations
-        Add-ViolationUnless ($jsonRpcResponseValid -is [bool] -and $jsonRpcResponseValid) `
-            "dynamic call '$callId' JSON-RPC response validation proof missing" $violations
-        $mcpIsError = Get-PropertyValue $completion 'mcp_is_error'
-        $domainErrorContractValid = Get-PropertyValue $completion 'domain_error_contract_valid'
-        $structuredContentPresent = Get-PropertyValue $completion 'structured_content_present'
-        Add-ViolationUnless ($mcpIsError -is [bool] -and
-            $domainErrorContractValid -is [bool] -and
-            $structuredContentPresent -is [bool]) `
-            "dynamic call '$callId' MCP result proof types are invalid" $violations
-        if ($completionSuccess -is [bool]) {
-            if ($completionSuccess) {
-                Add-ViolationUnless ($payloadMode -in @(
-                        'structuredContent', 'textContent', 'wholeResult')) `
-                    "dynamic call '$callId' success payload mode is invalid: $payloadMode" $violations
-                Add-ViolationUnless (-not $mcpIsError -and
-                    -not $domainErrorContractValid -and $structuredContentPresent) `
-                    "dynamic call '$callId' success MCP result proof mismatch" $violations
-            } else {
-                Add-ViolationUnless ($payloadMode -eq 'tool_error') `
-                    "dynamic call '$callId' non-domain failure payload mode is invalid: $payloadMode" $violations
-                Add-ViolationUnless ($mcpIsError -and $domainErrorContractValid -and
-                    -not $structuredContentPresent) `
-                    "dynamic call '$callId' domain error MCP result proof mismatch" $violations
+                'success', 'output_sha256')) `
+            "dynamic call '$callId' response property set mismatch" $violations
+        Add-ViolationUnless ((Get-AppRequestIdKey (
+                    Get-PropertyValue $response 'app_request_id')) -ceq $requestIdKey) `
+            "dynamic call '$callId' response request id mismatch" $violations
+        Add-ViolationUnless ((Get-PropertyValue $response 'tool') -ceq $request.tool) `
+            "dynamic call '$callId' response tool mismatch" $violations
+
+        $terminalSuccess = $null
+        $expectedOutputHash = $null
+        $isDomainToolError = $false
+        if ($isForwardLifecycle) {
+            $start = $starts[0].value
+            $completion = $completions[0].value
+            $isDeadlineCleanupForward = $null -ne $firstRejectionSequence -and
+                (Get-PropertyValue $start 'sequence') -gt $firstRejectionSequence
+            $expectedStartProperties = @(
+                'sequence', 'utc', 'event', 'app_request_id', 'call_id',
+                'thread_id', 'turn_id', 'tool', 'arguments_sha256',
+                'mcp_request_id', 'http_timeout_seconds')
+            if ($isDeadlineCleanupForward) {
+                $expectedStartProperties += @(
+                    'forward_mode', 'remaining_seconds',
+                    'terminalization_reserve_seconds', 'required_headroom_seconds')
             }
+            Add-ViolationUnless (Test-ExactPropertySet $start $expectedStartProperties) `
+                "dynamic call '$callId' forward start property set mismatch" $violations
+            Add-ViolationUnless ((Get-AppRequestIdKey (
+                        Get-PropertyValue $start 'app_request_id')) -ceq $requestIdKey) `
+                "dynamic call '$callId' app request id mismatch" $violations
+            Add-ViolationUnless ((Get-PropertyValue $start 'tool') -ceq $request.tool) `
+                "dynamic call '$callId' tool mismatch" $violations
+            Add-ViolationUnless ((Get-PropertyValue $start 'thread_id') -ceq
+                $request.thread_id -and (Get-PropertyValue $start 'turn_id') -ceq
+                $request.turn_id) `
+                "dynamic call '$callId' thread/turn mismatch" $violations
+            Add-ViolationUnless ((Get-PropertyValue $start 'arguments_sha256') -eq
+                (Get-Sha256 (ConvertTo-CompactJson $request.arguments))) `
+                "dynamic call '$callId' arguments hash mismatch" $violations
+            Add-ViolationUnless ((Get-PropertyValue $completion 'mcp_request_id') -eq
+                (Get-PropertyValue $start 'mcp_request_id')) `
+                "dynamic call '$callId' MCP request id mismatch" $violations
+            Add-ViolationUnless ((Get-PropertyValue $start 'sequence') -lt
+                (Get-PropertyValue $completion 'sequence') -and
+                (Get-PropertyValue $completion 'sequence') -lt
+                (Get-PropertyValue $response 'sequence')) `
+                "dynamic call '$callId' bridge lifecycle order mismatch" $violations
+            $httpTimeout = Get-PropertyValue $start 'http_timeout_seconds'
+            Add-ViolationUnless (Test-IsJsonInteger $httpTimeout) `
+                "dynamic call '$callId' HTTP timeout is missing" $violations
+            if (Test-IsJsonInteger $httpTimeout) {
+                Add-ViolationUnless ($httpTimeout -ge 1 -and
+                    $httpTimeout -le $MaximumMcpForwardSeconds) `
+                    "dynamic call '$callId' HTTP timeout is outside 1..35" $violations
+            }
+            if ($isDeadlineCleanupForward) {
+                Add-ViolationUnless ($request.tool -ceq 'agent_cancel_action' -and
+                    (Test-DeadlineCleanupCancelArguments $request.arguments)) `
+                    "dynamic call '$callId' deadline cleanup cancel contract mismatch" $violations
+                Add-ViolationUnless ($httpTimeout -eq $DeadlineCleanupCancelTimeoutSeconds) `
+                    "dynamic call '$callId' deadline cleanup cancel timeout mismatch" $violations
+                Add-ViolationUnless ((Get-PropertyValue $start 'forward_mode') -ceq
+                    'deadline_cleanup_cancel') `
+                    "dynamic call '$callId' deadline cleanup forward mode mismatch" $violations
+                $cleanupRemainingSeconds = Get-PropertyValue $start 'remaining_seconds'
+                $cleanupReserveSeconds = Get-PropertyValue `
+                    $start 'terminalization_reserve_seconds'
+                $cleanupRequiredHeadroom = Get-PropertyValue `
+                    $start 'required_headroom_seconds'
+                Add-ViolationUnless ((Test-IsJsonInteger $cleanupRemainingSeconds) -and
+                    $cleanupRemainingSeconds -ge 0 -and $cleanupRemainingSeconds -le 1020) `
+                    "dynamic call '$callId' deadline cleanup remaining seconds mismatch" $violations
+                Add-ViolationUnless ((Test-IsJsonInteger $cleanupReserveSeconds) -and
+                    $cleanupReserveSeconds -eq $TurnCompletionReserveSeconds) `
+                    "dynamic call '$callId' deadline cleanup reserve mismatch" $violations
+                Add-ViolationUnless ((Test-IsJsonInteger $cleanupRequiredHeadroom) -and
+                    $cleanupRequiredHeadroom -eq
+                        ($DeadlineCleanupCancelTimeoutSeconds +
+                            $TurnCompletionReserveSeconds)) `
+                    "dynamic call '$callId' deadline cleanup headroom mismatch" $violations
+                Add-ViolationUnless ((Test-IsJsonInteger $cleanupRemainingSeconds) -and
+                    (Test-IsJsonInteger $cleanupRequiredHeadroom) -and
+                    $cleanupRemainingSeconds -gt $cleanupRequiredHeadroom) `
+                    "dynamic call '$callId' deadline cleanup has insufficient headroom" $violations
+                Add-ViolationUnless ($null -ne $firstRejectionResponseSequence -and
+                    (Get-PropertyValue $start 'sequence') -gt
+                        $firstRejectionResponseSequence) `
+                    "dynamic call '$callId' deadline cleanup started before rejection response" `
+                    $violations
+                $cleanupStartUtc = $null
+                try {
+                    $cleanupStartUtc = [DateTimeOffset]::Parse(
+                        [string](Get-PropertyValue $start 'utc'),
+                        [Globalization.CultureInfo]::InvariantCulture,
+                        [Globalization.DateTimeStyles]::RoundtripKind)
+                } catch {
+                    $violations.Add(
+                        "dynamic call '$callId' deadline cleanup UTC proof is invalid")
+                }
+                if ($null -ne $t0DeadlineUtc -and $null -ne $cleanupStartUtc) {
+                    $cleanupElapsedSeconds = ($cleanupStartUtc - $t0DeadlineUtc).TotalSeconds
+                    $expectedCleanupRemaining = [int][Math]::Max(
+                        0, [Math]::Floor(1020.0D - $cleanupElapsedSeconds))
+                    $cleanupRemainingDelta = if (
+                        Test-IsJsonInteger $cleanupRemainingSeconds) {
+                        [long]$cleanupRemainingSeconds - $expectedCleanupRemaining
+                    } else { [long]::MinValue }
+                    Add-ViolationUnless ($cleanupElapsedSeconds -ge 0.0D -and
+                        $cleanupElapsedSeconds -le 1021.0D -and
+                        $cleanupRemainingDelta -ge 0 -and
+                        $cleanupRemainingDelta -le 1) `
+                        "dynamic call '$callId' deadline cleanup remaining UTC proof mismatch" `
+                        $violations
+                }
+            } else {
+                $expectedForwardTimeout = Get-ExpectedDynamicForwardTimeoutSeconds `
+                    -Tool $request.tool -Arguments $request.arguments
+                Add-ViolationUnless ($null -ne $expectedForwardTimeout) `
+                    "dynamic call '$callId' forward arguments are invalid" $violations
+                if ($null -ne $expectedForwardTimeout) {
+                    Add-ViolationUnless ($httpTimeout -eq $expectedForwardTimeout) `
+                        "dynamic call '$callId' forward tool timeout mismatch" $violations
+                }
+            }
+            $terminalSuccess = Get-PropertyValue $completion 'success'
+            Add-ViolationUnless ($terminalSuccess -is [bool] -and
+                $responseSuccess -is [bool] -and $terminalSuccess -eq $responseSuccess) `
+                "dynamic call '$callId' bridge success mismatch" $violations
+            Add-ViolationUnless ((Get-AppRequestIdKey (
+                        Get-PropertyValue $completion 'app_request_id')) -ceq $requestIdKey) `
+                "dynamic call '$callId' completion request id mismatch" $violations
+            Add-ViolationUnless ((Get-PropertyValue $completion 'tool') -ceq $request.tool) `
+                "dynamic call '$callId' completion tool mismatch" $violations
+            $payloadMode = [string](Get-PropertyValue $completion 'payload_mode')
+            $jsonRpcResponseValid = Get-PropertyValue $completion 'jsonrpc_response_valid'
+            Add-ViolationUnless (Test-ExactPropertySet $completion @(
+                    'sequence', 'utc', 'event', 'app_request_id', 'call_id', 'tool',
+                    'mcp_request_id', 'success', 'payload_mode', 'output_sha256',
+                    'jsonrpc_response_valid', 'mcp_is_error',
+                    'domain_error_contract_valid', 'structured_content_present')) `
+                "dynamic call '$callId' completion property set mismatch" $violations
+            Add-ViolationUnless ($jsonRpcResponseValid -is [bool] -and
+                $jsonRpcResponseValid) `
+                "dynamic call '$callId' JSON-RPC response validation proof missing" $violations
+            $mcpIsError = Get-PropertyValue $completion 'mcp_is_error'
+            $domainErrorContractValid = Get-PropertyValue `
+                $completion 'domain_error_contract_valid'
+            $structuredContentPresent = Get-PropertyValue `
+                $completion 'structured_content_present'
+            Add-ViolationUnless ($mcpIsError -is [bool] -and
+                $domainErrorContractValid -is [bool] -and
+                $structuredContentPresent -is [bool]) `
+                "dynamic call '$callId' MCP result proof types are invalid" $violations
+            if ($terminalSuccess -is [bool]) {
+                if ($terminalSuccess) {
+                    Add-ViolationUnless ($payloadMode -in @(
+                            'structuredContent', 'textContent', 'wholeResult')) `
+                        "dynamic call '$callId' success payload mode is invalid: $payloadMode" $violations
+                    Add-ViolationUnless (-not $mcpIsError -and
+                        -not $domainErrorContractValid -and $structuredContentPresent) `
+                        "dynamic call '$callId' success MCP result proof mismatch" $violations
+                } else {
+                    $isDomainToolError = $true
+                    Add-ViolationUnless ($payloadMode -eq 'tool_error') `
+                        "dynamic call '$callId' non-domain failure payload mode is invalid: $payloadMode" $violations
+                    Add-ViolationUnless ($mcpIsError -and $domainErrorContractValid -and
+                        -not $structuredContentPresent) `
+                        "dynamic call '$callId' domain error MCP result proof mismatch" $violations
+                }
+            }
+            $expectedOutputHash = Get-PropertyValue $completion 'output_sha256'
+        } else {
+            $rejection = $rejections[0].value
+            Add-ViolationUnless ((Get-AppRequestIdKey (
+                        Get-PropertyValue $rejection 'app_request_id')) -ceq $requestIdKey) `
+                "dynamic call '$callId' deadline rejection request id mismatch" $violations
+            Add-ViolationUnless ((Get-PropertyValue $rejection 'tool') -ceq $request.tool) `
+                "dynamic call '$callId' deadline rejection tool mismatch" $violations
+            Add-ViolationUnless ((Get-PropertyValue $rejection 'thread_id') -ceq
+                $request.thread_id -and (Get-PropertyValue $rejection 'turn_id') -ceq
+                $request.turn_id) `
+                "dynamic call '$callId' deadline rejection thread/turn mismatch" $violations
+            Add-ViolationUnless ((Get-PropertyValue $rejection 'arguments_sha256') -ceq
+                (Get-Sha256 (ConvertTo-CompactJson $request.arguments))) `
+                "dynamic call '$callId' deadline rejection arguments hash mismatch" $violations
+            Add-ViolationUnless ((Get-PropertyValue $rejection 'sequence') -lt
+                (Get-PropertyValue $response 'sequence')) `
+                "dynamic call '$callId' deadline rejection lifecycle order mismatch" $violations
+            $expectedForwardTimeout = Get-ExpectedDynamicForwardTimeoutSeconds `
+                -Tool $request.tool -Arguments $request.arguments
+            Add-ViolationUnless ($null -ne $expectedForwardTimeout) `
+                "dynamic call '$callId' deadline rejection arguments are invalid" $violations
+            if ($null -ne $expectedForwardTimeout) {
+                Add-ViolationUnless ((Get-PropertyValue $rejection 'forward_timeout_seconds') -eq
+                    $expectedForwardTimeout) `
+                    "dynamic call '$callId' deadline rejection tool timeout mismatch" $violations
+                Add-ViolationUnless ((Get-PropertyValue $rejection 'required_headroom_seconds') -eq
+                    ($expectedForwardTimeout + $TurnCompletionReserveSeconds)) `
+                    "dynamic call '$callId' deadline rejection required headroom mismatch" $violations
+            }
+            if ((Get-PropertyValue $rejection 'reason') -ceq
+                'insufficient_deadline_headroom') {
+                Add-ViolationUnless ((Get-PropertyValue $rejection 'remaining_seconds') -le
+                    (Get-PropertyValue $rejection 'required_headroom_seconds')) `
+                    "dynamic call '$callId' deadline rejection had sufficient headroom" $violations
+            }
+            $terminalSuccess = Get-PropertyValue $rejection 'success'
+            Add-ViolationUnless ($terminalSuccess -is [bool] -and
+                -not $terminalSuccess -and $responseSuccess -is [bool] -and
+                -not $responseSuccess) `
+                "dynamic call '$callId' deadline rejection success mismatch" $violations
+            $expectedOutputHash = Get-PropertyValue $rejection 'output_sha256'
         }
-        Add-ViolationUnless ((Get-PropertyValue $completion 'output_sha256') -eq
-            (Get-PropertyValue $response 'output_sha256')) `
+
+        Add-ViolationUnless ((Get-PropertyValue $response 'output_sha256') -ceq
+            $expectedOutputHash) `
             "dynamic call '$callId' bridge output hash mismatch" $violations
 
         if (-not $dynamicCompleted.ContainsKey($callId)) {
@@ -1525,12 +1852,13 @@ function Invoke-TraceAudit {
                 (Get-Sha256 (ConvertTo-CompactJson $request.arguments))) `
                 "dynamic call '$callId' completed item arguments mismatch" $violations
             Add-ViolationUnless ($item.output_sha256 -eq
-                (Get-PropertyValue $completion 'output_sha256')) `
+                $expectedOutputHash) `
                 "dynamic call '$callId' completed item output mismatch" $violations
             Add-ViolationUnless ($item.success -is [bool] -and
-                $item.success -eq $completionSuccess) `
+                $item.success -eq $terminalSuccess) `
                 "dynamic call '$callId' completed item success mismatch" $violations
-            if ($completionSuccess -is [bool] -and -not $completionSuccess) {
+            if ($isForwardLifecycle -and $terminalSuccess -is [bool] -and
+                -not $terminalSuccess) {
                 Add-ViolationUnless ($item.domain_error_contract_valid -and
                     $domainErrorContractValid) `
                     "dynamic call '$callId' domain error body/proof mismatch" $violations
@@ -1538,15 +1866,17 @@ function Invoke-TraceAudit {
         }
         if ($violations.Count -eq $violationCountBeforeCall) {
             $validDynamicCalls++
-            if ($completionSuccess) {
+            if ($isDeadlineRejectionLifecycle) {
+                $validDeadlineRejections++
+            } elseif ($terminalSuccess) {
                 $successfulDynamicCalls++
-            } else {
+            } elseif ($isDomainToolError) {
                 $domainToolErrorCalls++
             }
         }
     }
-    if ($bridgeStarts.Count -ne $dynamicRequests.Count -or
-        $bridgeCompletions.Count -ne $dynamicRequests.Count -or
+    if (($bridgeStarts.Count + $bridgeRejections.Count) -ne $dynamicRequests.Count -or
+        $bridgeCompletions.Count -ne $bridgeStarts.Count -or
         $bridgeResponses.Count -ne $dynamicRequests.Count) {
         $violations.Add('orphan/duplicate dynamic bridge recordがあります')
     }
@@ -1558,7 +1888,8 @@ function Invoke-TraceAudit {
             $violations.Add("completed dynamicToolCall '$completedCallId' request mapping is not 1:1")
         }
     }
-    foreach ($bridgeGroup in @($bridgeStarts, $bridgeCompletions, $bridgeResponses)) {
+    foreach ($bridgeGroup in @(
+            $bridgeStarts, $bridgeCompletions, $bridgeRejections, $bridgeResponses)) {
         foreach ($bridgeRecord in @($bridgeGroup)) {
             $bridgeCallId = [string](Get-PropertyValue $bridgeRecord.value 'call_id')
             $matchingRequests = @($dynamicRequests | Where-Object {
@@ -1584,8 +1915,12 @@ function Invoke-TraceAudit {
         $manualReviewRequired.Add(
             'zero-call run: capability不足の具体的理由が最終agentMessageに記載されていること')
     }
+    if ($bridgeRejections.Count -gt 0) {
+        $manualReviewRequired.Add(
+            'deadline-rejected run: Minecraft内の全Actionがterminalであることを別artifactで確認すること')
+    }
     $report = [ordered]@{
-        schema_version = 3
+        schema_version = 5
         passed = ($violations.Count -eq 0)
         trace_message_count = $traceRecords.Count
         bridge_record_count = $bridgeRecords.Count
@@ -1594,6 +1929,9 @@ function Invoke-TraceAudit {
         successful_dynamic_call_count = $successfulDynamicCalls
         failed_dynamic_call_count = $domainToolErrorCalls
         domain_tool_error_count = $domainToolErrorCalls
+        deadline_rejection_count = $bridgeRejections.Count
+        valid_deadline_rejection_count = $validDeadlineRejections
+        deadline_cleanup_cancel_forward_count = $deadlineCleanupForwardCount
         no_dynamic_call_capability_run = ($dynamicRequests.Count -eq 0)
         allowed_tools = $AllowedTools
         violations = @($violations)
@@ -1775,6 +2113,7 @@ function Invoke-AuditSelfTest {
         }
     )
     $syntheticUtcBase = [DateTimeOffset]::Parse('2026-08-28T00:00:00.0000000+00:00')
+    $syntheticT0Utc = $syntheticUtcBase.AddMilliseconds(10)
     for ($index = 0; $index -lt $bridge.Count; $index++) {
         $bridge[$index].Add(
             'utc', $syntheticUtcBase.AddMilliseconds($index).ToString('o'))
@@ -1885,6 +2224,462 @@ function Invoke-AuditSelfTest {
             if ((Get-PropertyValue $copy 'event') -eq 'mcp_forward_completed') {
                 $copy.payload_mode = 'rpc_error'
                 $copy.jsonrpc_response_valid = $false
+            }
+            $copy
+        })
+
+    $deadlineTrace = @($domainTrace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-NestedValue $copy 'params.item.id') -eq 'call_1' -and
+                (Get-PropertyValue $copy 'method') -eq 'item/completed') {
+                $copy.params.item.contentItems[0].text = $DeadlineRejectedOutputText
+            }
+            $copy
+        })
+    $deadlineBridge = @($bridge[0..12] | ForEach-Object {
+            ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+        })
+    $deadlineBridge += [pscustomobject][ordered]@{
+        sequence = 14
+        utc = $syntheticT0Utc.AddSeconds(979.5D).ToString('o')
+        event = 'dynamic_deadline_rejected'
+        app_request_id = 0
+        call_id = 'call_1'
+        thread_id = 'thread_1'
+        turn_id = 'turn_1'
+        tool = 'agent_get_state'
+        arguments_sha256 = Get-Sha256 (ConvertTo-CompactJson $arguments)
+        reason = 'insufficient_deadline_headroom'
+        remaining_seconds = 40
+        forward_timeout_seconds = 35
+        terminalization_reserve_seconds = 15
+        required_headroom_seconds = 50
+        success = $false
+        output_sha256 = Get-Sha256 $DeadlineRejectedOutputText
+    }
+    $deadlineBridge += [pscustomobject][ordered]@{
+        sequence = 15
+        utc = $syntheticT0Utc.AddSeconds(979.51D).ToString('o')
+        event = 'dynamic_response_sent'
+        app_request_id = 0
+        call_id = 'call_1'
+        tool = 'agent_get_state'
+        success = $false
+        output_sha256 = Get-Sha256 $DeadlineRejectedOutputText
+    }
+
+    $getActionArguments = [ordered]@{
+        action_id = '00000000-0000-0000-0000-000000000001'
+        wait_timeout_ms = 25000
+    }
+    $deadlineGetActionTrace = @($deadlineTrace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-NestedValue $copy 'params.item.id') -eq 'call_1') {
+                $copy.params.item.tool = 'agent_get_action'
+                $copy.params.item.arguments = $getActionArguments
+            }
+            if ((Get-PropertyValue $copy 'method') -ceq 'item/tool/call') {
+                $copy.params.tool = 'agent_get_action'
+                $copy.params.arguments = $getActionArguments
+            }
+            $copy
+        })
+    $deadlineGetActionBridge = @($deadlineBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
+                $copy.tool = 'agent_get_action'
+                $copy.arguments_sha256 = Get-Sha256 (ConvertTo-CompactJson $getActionArguments)
+                $copy.utc = $syntheticT0Utc.AddSeconds(977.5D).ToString('o')
+                $copy.remaining_seconds = 42
+                $copy.forward_timeout_seconds = 27
+                $copy.required_headroom_seconds = 42
+            } elseif ((Get-PropertyValue $copy 'event') -ceq 'dynamic_response_sent') {
+                $copy.tool = 'agent_get_action'
+                $copy.utc = $syntheticT0Utc.AddSeconds(977.51D).ToString('o')
+            }
+            $copy
+        })
+    $deadlineGetActionSufficientBridge = @($deadlineGetActionBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
+                $copy.remaining_seconds = 43
+            }
+            $copy
+        })
+    $invalidWaitArguments = [ordered]@{
+        action_id = '00000000-0000-0000-0000-000000000001'
+        wait_timeout_ms = '25000'
+    }
+    $deadlineInvalidWaitTrace = @($deadlineGetActionTrace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-NestedValue $copy 'params.item.id') -eq 'call_1') {
+                $copy.params.item.arguments = $invalidWaitArguments
+            }
+            if ((Get-PropertyValue $copy 'method') -ceq 'item/tool/call') {
+                $copy.params.arguments = $invalidWaitArguments
+            }
+            $copy
+        })
+    $deadlineInvalidWaitBridge = @($deadlineGetActionBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
+                $copy.arguments_sha256 = Get-Sha256 (ConvertTo-CompactJson $invalidWaitArguments)
+            }
+            $copy
+        })
+
+    $deadlineLatchTraceBase = @($deadlineTrace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-NestedValue $copy 'params.item.id') -eq 'agent_1') {
+                if ((Get-PropertyValue $copy 'method') -eq 'item/started') {
+                    $copy.params.startedAtMs = 7
+                } elseif ((Get-PropertyValue $copy 'method') -eq 'item/completed') {
+                    $copy.params.completedAtMs = 8
+                }
+            }
+            $copy
+        })
+    $deadlineLatchTrace = @(
+        $deadlineLatchTraceBase[0..10]
+        [ordered]@{
+            method = 'item/started'
+            params = [ordered]@{
+                threadId = 'thread_1'; turnId = 'turn_1'; startedAtMs = 5
+                item = [ordered]@{
+                    id = 'call_2'; type = 'dynamicToolCall'; tool = 'agent_get_state'
+                    arguments = $arguments; status = 'inProgress'
+                }
+            }
+        }
+        [ordered]@{
+            method = 'item/tool/call'; id = 1
+            params = [ordered]@{
+                callId = 'call_2'; threadId = 'thread_1'; turnId = 'turn_1'
+                tool = 'agent_get_state'; arguments = $arguments
+            }
+        }
+        [ordered]@{
+            method = 'item/completed'
+            params = [ordered]@{
+                threadId = 'thread_1'; turnId = 'turn_1'; completedAtMs = 6
+                item = [ordered]@{
+                    id = 'call_2'; type = 'dynamicToolCall'; tool = 'agent_get_state'
+                    arguments = $arguments; status = 'failed'; success = $false
+                    contentItems = @([ordered]@{
+                            type = 'inputText'; text = $DeadlineRejectedOutputText
+                        })
+                }
+            }
+        }
+        $deadlineLatchTraceBase[11..($deadlineLatchTraceBase.Count - 1)]
+    )
+    $latchEmittedAtMs = $syntheticUtcBase.ToUnixTimeMilliseconds()
+    foreach ($traceMessage in $deadlineLatchTrace) {
+        $traceMethod = [string](Get-PropertyValue $traceMessage 'method')
+        if ($traceMethod -cin $AllowedNotifications) {
+            if ($null -eq (Get-Property $traceMessage 'emittedAtMs')) {
+                $traceMessage.Add('emittedAtMs', $latchEmittedAtMs)
+            } else {
+                $traceMessage.emittedAtMs = $latchEmittedAtMs
+            }
+            $latchEmittedAtMs++
+        }
+    }
+    $deadlineLatchBridge = @($deadlineBridge | ForEach-Object {
+            ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+        })
+    $deadlineLatchBridge += [pscustomobject][ordered]@{
+        sequence = 16
+        utc = $syntheticT0Utc.AddSeconds(980.5D).ToString('o')
+        event = 'dynamic_deadline_rejected'
+        app_request_id = 1
+        call_id = 'call_2'
+        thread_id = 'thread_1'
+        turn_id = 'turn_1'
+        tool = 'agent_get_state'
+        arguments_sha256 = Get-Sha256 (ConvertTo-CompactJson $arguments)
+        reason = 'terminalization_latched'
+        remaining_seconds = 39
+        forward_timeout_seconds = 35
+        terminalization_reserve_seconds = 15
+        required_headroom_seconds = 50
+        success = $false
+        output_sha256 = Get-Sha256 $DeadlineRejectedOutputText
+    }
+    $deadlineLatchBridge += [pscustomobject][ordered]@{
+        sequence = 17
+        utc = $syntheticT0Utc.AddSeconds(980.51D).ToString('o')
+        event = 'dynamic_response_sent'
+        app_request_id = 1
+        call_id = 'call_2'
+        tool = 'agent_get_state'
+        success = $false
+        output_sha256 = Get-Sha256 $DeadlineRejectedOutputText
+    }
+
+    $cleanupActionId = '00000000-0000-4000-8000-000000000001'
+    $cleanupArguments = [ordered]@{ action_id = $cleanupActionId }
+    $cleanupOutputText = ConvertTo-CompactJson ([ordered]@{
+            schema_version = 1
+            action_id = $cleanupActionId
+            cancel_requested = $true
+            state_at_request = 'running'
+        })
+    $deadlineCleanupTrace = @($deadlineLatchTrace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-NestedValue $copy 'params.item.id') -eq 'call_2') {
+                $copy.params.item.tool = 'agent_cancel_action'
+                $copy.params.item.arguments = $cleanupArguments
+                if ((Get-PropertyValue $copy 'method') -ceq 'item/completed') {
+                    $copy.params.item.status = 'completed'
+                    $copy.params.item.success = $true
+                    $copy.params.item.contentItems[0].text = $cleanupOutputText
+                }
+            }
+            if ((Get-PropertyValue $copy 'method') -ceq 'item/tool/call' -and
+                (Get-NestedValue $copy 'params.callId') -ceq 'call_2') {
+                $copy.params.tool = 'agent_cancel_action'
+                $copy.params.arguments = $cleanupArguments
+            }
+            $copy
+        })
+    $deadlineCleanupBridge = @($deadlineBridge | ForEach-Object {
+            ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+        })
+    $deadlineCleanupBridge += [pscustomobject][ordered]@{
+        sequence = 16
+        utc = $syntheticT0Utc.AddSeconds(981.5D).ToString('o')
+        event = 'mcp_forward_started'
+        app_request_id = 1
+        call_id = 'call_2'
+        thread_id = 'thread_1'
+        turn_id = 'turn_1'
+        tool = 'agent_cancel_action'
+        arguments_sha256 = Get-Sha256 (ConvertTo-CompactJson $cleanupArguments)
+        mcp_request_id = 4
+        http_timeout_seconds = 5
+        forward_mode = 'deadline_cleanup_cancel'
+        remaining_seconds = 38
+        terminalization_reserve_seconds = 15
+        required_headroom_seconds = 20
+    }
+    $deadlineCleanupBridge += [pscustomobject][ordered]@{
+        sequence = 17
+        utc = $syntheticT0Utc.AddSeconds(981.6D).ToString('o')
+        event = 'mcp_forward_completed'
+        app_request_id = 1
+        call_id = 'call_2'
+        tool = 'agent_cancel_action'
+        mcp_request_id = 4
+        success = $true
+        payload_mode = 'structuredContent'
+        output_sha256 = Get-Sha256 $cleanupOutputText
+        jsonrpc_response_valid = $true
+        mcp_is_error = $false
+        domain_error_contract_valid = $false
+        structured_content_present = $true
+    }
+    $deadlineCleanupBridge += [pscustomobject][ordered]@{
+        sequence = 18
+        utc = $syntheticT0Utc.AddSeconds(981.7D).ToString('o')
+        event = 'dynamic_response_sent'
+        app_request_id = 1
+        call_id = 'call_2'
+        tool = 'agent_cancel_action'
+        success = $true
+        output_sha256 = Get-Sha256 $cleanupOutputText
+    }
+    $deadlineCleanupTimeoutBridge = @($deadlineCleanupBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'mcp_forward_started' -and
+                (Get-PropertyValue $copy 'call_id') -ceq 'call_2') {
+                $copy.http_timeout_seconds = 6
+            }
+            $copy
+        })
+    $deadlineCleanupInsufficientBridge = @($deadlineCleanupBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            $event = [string](Get-PropertyValue $copy 'event')
+            $callId = [string](Get-PropertyValue $copy 'call_id')
+            if ($callId -ceq 'call_2') {
+                if ($event -ceq 'mcp_forward_started') {
+                    $copy.utc = $syntheticT0Utc.AddSeconds(999.5D).ToString('o')
+                    $copy.remaining_seconds = 20
+                } elseif ($event -ceq 'mcp_forward_completed') {
+                    $copy.utc = $syntheticT0Utc.AddSeconds(999.6D).ToString('o')
+                } elseif ($event -ceq 'dynamic_response_sent') {
+                    $copy.utc = $syntheticT0Utc.AddSeconds(999.7D).ToString('o')
+                }
+            }
+            $copy
+        })
+    $invalidCleanupArguments = [ordered]@{
+        action_id = $cleanupActionId
+        unexpected = $true
+    }
+    $deadlineCleanupInvalidTrace = @($deadlineCleanupTrace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-NestedValue $copy 'params.item.id') -eq 'call_2') {
+                $copy.params.item.arguments = $invalidCleanupArguments
+            }
+            if ((Get-PropertyValue $copy 'method') -ceq 'item/tool/call' -and
+                (Get-NestedValue $copy 'params.callId') -ceq 'call_2') {
+                $copy.params.arguments = $invalidCleanupArguments
+            }
+            $copy
+        })
+    $deadlineCleanupInvalidBridge = @($deadlineCleanupBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'mcp_forward_started' -and
+                (Get-PropertyValue $copy 'call_id') -ceq 'call_2') {
+                $copy.arguments_sha256 = Get-Sha256 (
+                    ConvertTo-CompactJson $invalidCleanupArguments)
+            }
+            $copy
+        })
+    $deadlineCleanupBeforeResponseBridge = @(
+        $deadlineCleanupBridge[0..13] | ForEach-Object {
+            ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+        }
+        $deadlineCleanupBridge[15..17] | ForEach-Object {
+            ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+        }
+        (ConvertTo-CompactJson $deadlineCleanupBridge[14] |
+            ConvertFrom-Json -Depth 100)
+    )
+    for ($index = 0; $index -lt $deadlineCleanupBeforeResponseBridge.Count; $index++) {
+        $deadlineCleanupBeforeResponseBridge[$index].sequence = $index + 1
+    }
+    $deadlineCleanupBeforeResponseBridge[14].utc =
+        $syntheticT0Utc.AddSeconds(979.6D).ToString('o')
+    $deadlineCleanupBeforeResponseBridge[14].remaining_seconds = 40
+    $deadlineCleanupBeforeResponseBridge[15].utc =
+        $syntheticT0Utc.AddSeconds(979.7D).ToString('o')
+    $deadlineCleanupBeforeResponseBridge[16].utc =
+        $syntheticT0Utc.AddSeconds(979.8D).ToString('o')
+    $deadlineCleanupBeforeResponseBridge[17].utc =
+        $syntheticT0Utc.AddSeconds(979.9D).ToString('o')
+    $deadlineSecondCleanupBridge = @($deadlineCleanupBridge | ForEach-Object {
+            ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+        })
+    $secondCleanupStart = ConvertTo-CompactJson $deadlineCleanupBridge[15] |
+        ConvertFrom-Json -Depth 100
+    $secondCleanupStart.sequence = 19
+    $secondCleanupStart.utc = $syntheticT0Utc.AddSeconds(982.5D).ToString('o')
+    $secondCleanupStart.app_request_id = 2
+    $secondCleanupStart.call_id = 'call_3'
+    $secondCleanupStart.mcp_request_id = 5
+    $secondCleanupStart.remaining_seconds = 37
+    $deadlineSecondCleanupBridge += $secondCleanupStart
+
+    $deadlineMissingT0UtcBridge = @($deadlineBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 't0') {
+                $copy.PSObject.Properties.Remove('utc')
+            }
+            $copy
+        })
+    $deadlineMissingRejectUtcBridge = @($deadlineBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
+                $copy.PSObject.Properties.Remove('utc')
+            }
+            $copy
+        })
+    $deadlineTamperedRemainingBridge = @($deadlineBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
+                $copy.remaining_seconds = 38
+            }
+            $copy
+        })
+    $deadlineEarlyRejectionBridge = @($deadlineBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
+                $copy.utc = $syntheticT0Utc.AddSeconds(1.5D).ToString('o')
+                $copy.remaining_seconds = 1018
+            } elseif ((Get-PropertyValue $copy 'event') -ceq 'dynamic_response_sent') {
+                $copy.utc = $syntheticT0Utc.AddSeconds(1.51D).ToString('o')
+            }
+            $copy
+        })
+    $deadlineTamperedT0UtcBridge = @($deadlineBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 't0') {
+                $copy.utc = $syntheticUtcBase.AddSeconds(-1.59D).ToString('o')
+            }
+            $copy
+        })
+
+    $deadlineMissingResponseBridge = @($deadlineBridge | Where-Object {
+            (Get-PropertyValue $_ 'event') -cne 'dynamic_response_sent'
+        } | ForEach-Object { ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100 })
+    $deadlineDuplicateRejectionBridge = @($deadlineBridge | ForEach-Object {
+            ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+        })
+    $duplicateRejection = ConvertTo-CompactJson $deadlineDuplicateRejectionBridge[13] |
+        ConvertFrom-Json -Depth 100
+    $duplicateRejection.reason = 'terminalization_latched'
+    $duplicateRejection.utc = $syntheticT0Utc.AddSeconds(980.5D).ToString('o')
+    $duplicateRejection.remaining_seconds = 39
+    $deadlineDuplicateRejectionBridge += $duplicateRejection
+    for ($index = 0; $index -lt $deadlineDuplicateRejectionBridge.Count; $index++) {
+        $deadlineDuplicateRejectionBridge[$index].sequence = $index + 1
+    }
+    $deadlineMixedBridge = @(
+        $deadlineBridge[0..13] | ForEach-Object {
+            ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+        }
+        $bridge[13..15] | ForEach-Object {
+            ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+        }
+    )
+    for ($index = 0; $index -lt $deadlineMixedBridge.Count; $index++) {
+        $deadlineMixedBridge[$index].sequence = $index + 1
+        if ($index -ge 14) {
+            $deadlineMixedBridge[$index].utc = $syntheticT0Utc.AddSeconds(
+                979.51D + (($index - 13) / 100.0D)).ToString('o')
+        }
+    }
+    $deadlineArgumentsHashBridge = @($deadlineBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
+                $copy.arguments_sha256 = ('0' * 64)
+            }
+            $copy
+        })
+    $deadlineOutputHashBridge = @($deadlineBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
+                $copy.output_sha256 = ('0' * 64)
+            }
+            $copy
+        })
+    $deadlineSuccessBridge = @($deadlineBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
+                $copy.success = $true
+            }
+            $copy
+        })
+    $deadlineHeadroomBridge = @($deadlineBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
+                $copy.remaining_seconds = 51
+            }
+            $copy
+        })
+    $deadlineReasonBridge = @($deadlineBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
+                $copy.reason = 'terminalization_latched'
+            }
+            $copy
+        })
+    $deadlineIdentityBridge = @($deadlineBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
+                $copy.tool = 'agent_get_observation'
             }
             $copy
         })
@@ -2167,6 +2962,136 @@ function Invoke-AuditSelfTest {
             required = @(); required_manual = @('zero-call run')
         },
         [ordered]@{
+            name = 'deadline_rejection'; trace = $deadlineTrace; bridge = $deadlineBridge
+            expected_exit = 0; expected_success = 0; expected_failure = 0
+            expected_rejection = 1; required = @()
+            required_manual = @('deadline-rejected run')
+        },
+        [ordered]@{
+            name = 'deadline_get_action_boundary'; trace = $deadlineGetActionTrace
+            bridge = $deadlineGetActionBridge; expected_exit = 0
+            expected_success = 0; expected_failure = 0; expected_rejection = 1
+            required = @(); required_manual = @('deadline-rejected run')
+        },
+        [ordered]@{
+            name = 'deadline_get_action_above_boundary'; trace = $deadlineGetActionTrace
+            bridge = $deadlineGetActionSufficientBridge; expected_exit = 1
+            required = @('deadline rejection had sufficient headroom')
+        },
+        [ordered]@{
+            name = 'deadline_get_action_invalid_wait'; trace = $deadlineInvalidWaitTrace
+            bridge = $deadlineInvalidWaitBridge; expected_exit = 1
+            required = @('deadline rejection arguments are invalid')
+        },
+        [ordered]@{
+            name = 'deadline_rejection_latched'; trace = $deadlineLatchTrace
+            bridge = $deadlineLatchBridge; expected_exit = 0
+            expected_success = 0; expected_failure = 0; expected_rejection = 2
+            required = @(); required_manual = @('deadline-rejected run')
+        },
+        [ordered]@{
+            name = 'deadline_cleanup_cancel'; trace = $deadlineCleanupTrace
+            bridge = $deadlineCleanupBridge; expected_exit = 0
+            expected_success = 1; expected_failure = 0; expected_rejection = 1
+            required = @(); required_manual = @('deadline-rejected run')
+        },
+        [ordered]@{
+            name = 'deadline_cleanup_timeout'; trace = $deadlineCleanupTrace
+            bridge = $deadlineCleanupTimeoutBridge; expected_exit = 1
+            required = @('deadline cleanup cancel timeout mismatch')
+        },
+        [ordered]@{
+            name = 'deadline_cleanup_insufficient'; trace = $deadlineCleanupTrace
+            bridge = $deadlineCleanupInsufficientBridge; expected_exit = 1
+            required = @('deadline cleanup has insufficient headroom')
+        },
+        [ordered]@{
+            name = 'deadline_cleanup_invalid_arguments'; trace = $deadlineCleanupInvalidTrace
+            bridge = $deadlineCleanupInvalidBridge; expected_exit = 1
+            required = @('deadline cleanup cancel contract mismatch')
+        },
+        [ordered]@{
+            name = 'deadline_cleanup_before_response'; trace = $deadlineCleanupTrace
+            bridge = $deadlineCleanupBeforeResponseBridge; expected_exit = 1
+            required = @('deadline cleanup started before rejection response')
+        },
+        [ordered]@{
+            name = 'deadline_second_cleanup'; trace = $deadlineCleanupTrace
+            bridge = $deadlineSecondCleanupBridge; expected_exit = 1
+            required = @('more than one deadline cleanup cancel forward is forbidden')
+        },
+        [ordered]@{
+            name = 'deadline_missing_t0_utc'; trace = $deadlineTrace
+            bridge = $deadlineMissingT0UtcBridge; expected_exit = 1
+            required = @('T0 UTC deadline proof is missing or invalid')
+        },
+        [ordered]@{
+            name = 'deadline_missing_reject_utc'; trace = $deadlineTrace
+            bridge = $deadlineMissingRejectUtcBridge; expected_exit = 1
+            required = @('deadline rejection UTC proof is missing or invalid')
+        },
+        [ordered]@{
+            name = 'deadline_tampered_remaining'; trace = $deadlineTrace
+            bridge = $deadlineTamperedRemainingBridge; expected_exit = 1
+            required = @('deadline rejection remaining UTC proof mismatch')
+        },
+        [ordered]@{
+            name = 'deadline_early_rejection'; trace = $deadlineTrace
+            bridge = $deadlineEarlyRejectionBridge; expected_exit = 1
+            required = @('deadline rejection had sufficient headroom')
+        },
+        [ordered]@{
+            name = 'deadline_tampered_t0_utc'; trace = $deadlineTrace
+            bridge = $deadlineTamperedT0UtcBridge; expected_exit = 1
+            required = @('deadline rejection remaining UTC proof mismatch')
+        },
+        [ordered]@{
+            name = 'deadline_missing_response'; trace = $deadlineTrace
+            bridge = $deadlineMissingResponseBridge; expected_exit = 1
+            required = @('neither forward 1:1:1 nor deadline-reject 1:1')
+        },
+        [ordered]@{
+            name = 'deadline_duplicate_rejection'; trace = $deadlineTrace
+            bridge = $deadlineDuplicateRejectionBridge; expected_exit = 1
+            required = @('neither forward 1:1:1 nor deadline-reject 1:1')
+        },
+        [ordered]@{
+            name = 'deadline_forward_mixed'; trace = $deadlineTrace
+            bridge = $deadlineMixedBridge; expected_exit = 1
+            required = @('non-cancel MCP forward after deadline rejection is forbidden',
+                'neither forward 1:1:1 nor deadline-reject 1:1')
+        },
+        [ordered]@{
+            name = 'deadline_arguments_hash'; trace = $deadlineTrace
+            bridge = $deadlineArgumentsHashBridge; expected_exit = 1
+            required = @('deadline rejection arguments hash mismatch')
+        },
+        [ordered]@{
+            name = 'deadline_output_hash'; trace = $deadlineTrace
+            bridge = $deadlineOutputHashBridge; expected_exit = 1
+            required = @('deadline rejection output hash mismatch')
+        },
+        [ordered]@{
+            name = 'deadline_success_true'; trace = $deadlineTrace
+            bridge = $deadlineSuccessBridge; expected_exit = 1
+            required = @('deadline rejection success must be false')
+        },
+        [ordered]@{
+            name = 'deadline_sufficient_headroom'; trace = $deadlineTrace
+            bridge = $deadlineHeadroomBridge; expected_exit = 1
+            required = @('deadline rejection had sufficient headroom')
+        },
+        [ordered]@{
+            name = 'deadline_latch_reason'; trace = $deadlineTrace
+            bridge = $deadlineReasonBridge; expected_exit = 1
+            required = @('deadline rejection latch order mismatch')
+        },
+        [ordered]@{
+            name = 'deadline_identity'; trace = $deadlineTrace
+            bridge = $deadlineIdentityBridge; expected_exit = 1
+            required = @('deadline rejection tool mismatch')
+        },
+        [ordered]@{
             name = 'protocol_failure'; trace = $domainTrace; bridge = $protocolFailureBridge
             expected_exit = 1
             required = @('JSON-RPC response validation proof missing',
@@ -2341,6 +3266,10 @@ function Invoke-AuditSelfTest {
                 ($report.successful_dynamic_call_count -ne $case.expected_success -or
                     $report.failed_dynamic_call_count -ne $case.expected_failure)) {
                 throw "self-test '$($case.name)' success/failure count mismatch"
+            }
+            if ($case.Contains('expected_rejection') -and
+                $report.deadline_rejection_count -ne $case.expected_rejection) {
+                throw "self-test '$($case.name)' deadline rejection count mismatch"
             }
             foreach ($needle in $case.required) {
                 if (@($report.violations | Where-Object { [string]$_ -like "*$needle*" }).Count -eq 0) {

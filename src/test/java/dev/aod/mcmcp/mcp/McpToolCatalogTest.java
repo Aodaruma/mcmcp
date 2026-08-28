@@ -144,6 +144,43 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void cropWaitCatalogDocumentsItsExactLiveReadBoundary() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        String contract = schema.getAsJsonObject("$defs")
+                .getAsJsonObject("waitUntilNode")
+                .get("description").getAsString();
+
+        assertThat(contract)
+                .contains("current policy-visible wheat surface")
+                .contains("target-scoped fresh proof")
+                .contains("without being invalidated by unrelated mutation evictions")
+                .contains("global eviction floor applies fail-closed")
+                .contains("visible_surface.eye_origin must match the current JIT observer eye")
+                .contains("a stale frame from a previous observer position is rejected")
+                .contains("preserves that witness eye_origin rather than substituting")
+                .contains("terminates before BlockState is read")
+                .contains("navigation-neutral wheat AGE updates")
+                .contains("only at that authorized loaded coordinate")
+                .contains("replacement, unload, or world/session change")
+                .contains("without exposing live state");
+
+        var wheatCycle = schema.getAsJsonArray("examples").asList().stream()
+                .map(example -> example.getAsJsonObject())
+                .filter(example -> example.getAsJsonObject("program")
+                        .get("name").getAsString().equals("wheat_cycle"))
+                .findFirst().orElseThrow();
+        assertThat(CatalogSchemaValidator.matches(schema, wheatCycle)).isTrue();
+        assertThat(wheatCycle.getAsJsonObject("program").getAsJsonArray("body").asList()
+                .stream()
+                .map(node -> node.getAsJsonObject().get("op").getAsString())
+                .toList())
+                .containsSubsequence(
+                        "plant_known_wheat_batch",
+                        "wait_until",
+                        "harvest_known_wheat_batch");
+    }
+
+    @Test
     void catalogClosesVisibleItemCollectionAroundContinuousObservationEvidence() {
         var schema = new McpToolCatalog().inputSchema("agent_start_action");
         var request = schema.getAsJsonArray("examples").get(0).getAsJsonObject().deepCopy();

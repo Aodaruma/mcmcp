@@ -49,6 +49,157 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void cropWaitRequiresCurrentPolicyVisibleWheatButNotCurrentMaturity() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        var target = new ActionDsl.Position(DIMENSION, 2, 65, 3);
+        var wait = new ActionDsl.WaitUntil(
+                "wait", new ActionDsl.CropMatureCondition(target), 200);
+        var program = new ActionDsl.Program(
+                1, Optional.empty(), Set.of(), List.of(wait));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5, 64, 0.5, 1.62, 0, 0);
+
+        var immature = AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                pose,
+                Optional.of(frame(List.of(surface(
+                        target, ObservationRecord.Face.UP,
+                        "minecraft:wheat", false, 0)))),
+                4.5F);
+
+        assertThat(immature.worstCase(wait)).contains(
+                ActionDslCompiler.intrinsicWaitCost(200));
+        assertThat(immature.knownSurfaces()).containsExactly(
+                new AgentPrimitivePlanner.KnownSurface(
+                        target, ActionDsl.BlockFace.UP, "minecraft:wheat", null,
+                        new Vec3(0.5D, 65.62D, 0.5D)));
+        var waitWitness = immature.knownSurfaces().iterator().next();
+        assertThat(AgentPrimitivePlanner.knownSurface(
+                map.snapshot().orElseThrow(),
+                Optional.of(frame(List.of(surface(
+                        target, ObservationRecord.Face.UP,
+                        "minecraft:wheat", false, 0)))),
+                waitWitness,
+                0L)).isTrue();
+        assertThat(AgentPrimitivePlanner.knownSurface(
+                map.snapshot().orElseThrow(),
+                Optional.of(frame(List.of(surface(
+                        target, ObservationRecord.Face.UP,
+                        "minecraft:wheat", false, 0, 66.62D)))),
+                waitWitness,
+                0L)).isFalse();
+        assertThatCode(() -> AgentPrimitivePlanner.requireKnownWheatWaitSurface(
+                map.snapshot().orElseThrow(),
+                Optional.of(frame(List.of(surface(
+                        target, ObservationRecord.Face.UP,
+                        "minecraft:wheat", true, 0)))),
+                List.of(pose),
+                target,
+                0L)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requireKnownWheatWaitSurface(
+                map.snapshot().orElseThrow(),
+                Optional.of(frame(List.of(surface(
+                        target, ObservationRecord.Face.UP,
+                        "minecraft:stone", null, 0)))),
+                List.of(pose),
+                target,
+                0L)).isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requireKnownWheatWaitSurface(
+                map.snapshot().orElseThrow(),
+                Optional.of(frame(List.of(surface(
+                        target, ObservationRecord.Face.UP,
+                        "minecraft:wheat", null, 0)))),
+                List.of(pose),
+                target,
+                0L)).isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+
+        var movedPose = new AgentPrimitivePlanner.Pose(
+                cell(1), 1.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                movedPose,
+                Optional.of(frame(List.of(surface(
+                        target, ObservationRecord.Face.UP,
+                        "minecraft:wheat", false, 0)))),
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+
+        map.advanceWorldRevision(1, List.of(), List.of());
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                pose,
+                Optional.of(frame(List.of(surface(
+                        target, ObservationRecord.Face.UP,
+                        "minecraft:wheat", false, 0)))),
+                4.5F,
+                0L,
+                ignored -> 1L,
+                () -> true))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+    }
+
+    @Test
+    void cropWaitAfterGuaranteedPlantDefersWheatEvidenceToItsJitBind() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        var support = new ActionDsl.Position(DIMENSION, 0, 64, 0);
+        var crop = new ActionDsl.Position(DIMENSION, 0, 65, 0);
+        var plant = new ActionDsl.PlantKnownWheat(
+                "plant", crop, support, "minecraft:wheat_seeds");
+        var wait = new ActionDsl.WaitUntil(
+                "grow", new ActionDsl.CropMatureCondition(crop), 200);
+        var program = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_PLACE),
+                List.of(plant, wait));
+
+        var analysis = AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(
+                        cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                Optional.of(frame(List.of(surface(
+                        support, ObservationRecord.Face.UP,
+                        "minecraft:farmland", null, 0)))),
+                4.5F);
+
+        assertThat(analysis.worstCase(plant)).isPresent();
+        assertThat(analysis.worstCase(wait)).contains(
+                ActionDslCompiler.intrinsicWaitCost(200));
+        assertThat(analysis.knownSurfaces())
+                .extracting(AgentPrimitivePlanner.KnownSurface::position)
+                .contains(support)
+                .doesNotContain(crop);
+
+        var waitOnly = new ActionDsl.Program(
+                1, Optional.empty(), Set.of(), List.of(wait));
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                waitOnly,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(
+                        cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                Optional.of(frame(List.of(surface(
+                        support, ObservationRecord.Face.UP,
+                        "minecraft:farmland", null, 0)))),
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+    }
+
+    @Test
     void recordsEveryNavigationAndFaceTargetForCommitRevalidation() {
         UUID session = UUID.randomUUID();
         NavCell start = cell(0);

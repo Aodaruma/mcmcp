@@ -8,10 +8,29 @@ import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ClientReconciliationSignalsTest {
+    @Test
+    void waitBarrierPrefersExactTargetRevisionAndFallsBackWhenItIsAbsent() {
+        UUID session = UUID.randomUUID();
+        var target = new BlockPos(1, 65, 1);
+        var exact = reconciliationSnapshot(
+                session, 20L, 4L, Map.of(target, 7L), 12L);
+
+        assertThat(exact.surfaceBarrierWorldRevision(1, 65, 1)).isEqualTo(12L);
+        assertThat(exact.waitTargetSurfaceBarrierWorldRevision(1, 65, 1)).isEqualTo(7L);
+        assertThat(exact.waitTargetSurfaceBarrierWorldRevision(9, 65, 9)).isEqualTo(12L);
+
+        var visualDominates = reconciliationSnapshot(
+                session, 20L, 14L, Map.of(target, 7L), 12L);
+        assertThat(visualDominates.waitTargetSurfaceBarrierWorldRevision(1, 65, 1))
+                .isEqualTo(14L);
+    }
+
     @Test
     void surfaceBarrierTracksOnlyTheMutatedPositionUntilALocalMutation() {
         var channel = new ClientReconciliationSignals.SessionChannel();
@@ -50,6 +69,8 @@ class ClientReconciliationSignalsTest {
                 target.getX(), target.getY(), target.getZ())).isEqualTo(4L);
         assertThat(channel.snapshot().surfaceBarrierWorldRevision(
                 unrelated.getX(), unrelated.getY(), unrelated.getZ())).isEqualTo(4L);
+        assertThat(channel.snapshot().waitTargetSurfaceBarrierWorldRevision(
+                target.getX(), target.getY(), target.getZ())).isEqualTo(4L);
     }
 
     @Test
@@ -91,10 +112,16 @@ class ClientReconciliationSignalsTest {
                 crop,
                 ClientReconciliationSignals.NavigationClass.WHEAT,
                 ClientReconciliationSignals.NavigationClass.WHEAT);
+        assertThat(channel.snapshot().visualBarrierWorldRevision()).isZero();
+        assertThat(channel.snapshot().waitTargetSurfaceBarrierWorldRevision(
+                crop.getX(), crop.getY(), crop.getZ())).isEqualTo(1L);
         channel.blockMutation(
                 crop,
                 ClientReconciliationSignals.NavigationClass.WHEAT,
                 ClientReconciliationSignals.NavigationClass.WHEAT);
+        assertThat(channel.snapshot().visualBarrierWorldRevision()).isZero();
+        assertThat(channel.snapshot().waitTargetSurfaceBarrierWorldRevision(
+                crop.getX(), crop.getY(), crop.getZ())).isEqualTo(2L);
         channel.blockMutation(
                 crop,
                 ClientReconciliationSignals.NavigationClass.AIR,
@@ -310,5 +337,30 @@ class ClientReconciliationSignalsTest {
         assertThat(second.worldMutations()).isEmpty();
         assertThat(second.lastPositionCorrection()).isNull();
         assertThat(second.sameSession(channel.bindAndSnapshot(second.worldSessionId()))).isTrue();
+    }
+
+    private static ClientReconciliationSignals.Snapshot reconciliationSnapshot(
+            UUID session,
+            long worldRevision,
+            long visualBarrierWorldRevision,
+            Map<BlockPos, Long> revisions,
+            long evictionFloor) {
+        return new ClientReconciliationSignals.Snapshot(
+                session,
+                0L,
+                0L,
+                0L,
+                0L,
+                0L,
+                worldRevision,
+                visualBarrierWorldRevision,
+                visualBarrierWorldRevision,
+                revisions,
+                evictionFloor,
+                List.of(),
+                null,
+                null,
+                null,
+                null);
     }
 }

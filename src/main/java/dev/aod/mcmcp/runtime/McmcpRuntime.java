@@ -109,11 +109,14 @@ import net.minecraft.world.item.DoubleHighBlockItem;
 import net.minecraft.world.item.SolidBucketItem;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.BedBlock;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -156,6 +159,8 @@ public final class McmcpRuntime implements McpRuntimePort {
     private static final Duration FINALIZATION_RESERVE = Duration.ofSeconds(5);
     private static final long ACTION_DELIVERY_CONFIRM_NANOS = Duration.ofSeconds(5).toNanos();
     private static final double MAX_SAFE_STAY_HORIZONTAL_SPEED_SQUARED = 0.01;
+    static final double CROP_WAIT_OBSERVER_EPSILON_BLOCKS =
+            AgentPrimitivePlanner.WAIT_WITNESS_EYE_EPSILON_BLOCKS;
     private static final float MIN_SAFE_STAY_HEALTH = 6.0F;
     /** Expanded only when a phase has passed its gate. */
     private static final Set<String> AVAILABLE_CAPABILITIES =
@@ -1065,8 +1070,10 @@ public final class McmcpRuntime implements McpRuntimePort {
                             snapshot.frame(),
                             snapshot.cameraDegreesPerTick(),
                             snapshot.visualBarrierWorldRevision(),
-                            surfaceRevisionBarrier(
-                                    snapshot.map(), snapshot.reconciliation()),
+                            primitiveSurfaceRevisionBarrier(
+                                    primitive,
+                                    snapshot.map(),
+                                    snapshot.reconciliation()),
                             context::canBeginWork))
                     .orElseGet(McmcpRuntime::emptyPrimitiveAnalysis);
             initialPrimitive.flatMap(analysis::worstCase).ifPresent(cost -> {
@@ -1117,7 +1124,7 @@ public final class McmcpRuntime implements McpRuntimePort {
     }
 
     private static boolean requiresWorldPlanning(ActionDsl.Node node) {
-        return !(node instanceof ActionDsl.WaitTicks || node instanceof ActionDsl.WaitUntil);
+        return !(node instanceof ActionDsl.WaitTicks);
     }
 
     static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
@@ -1254,8 +1261,11 @@ public final class McmcpRuntime implements McpRuntimePort {
                     Objects.requireNonNull(minecraft.level, "level"), session.worldSessionId());
             currentVisualBarrierWorldRevision = visualBarrierWorldRevision(
                     currentMap, currentReconciliation);
-            currentSurfaceRevisionBarrier = surfaceRevisionBarrier(
-                    currentMap, currentReconciliation);
+            currentSurfaceRevisionBarrier = prepared.initialPrimitive()
+                    .map(primitive -> primitiveSurfaceRevisionBarrier(
+                            primitive, currentMap, currentReconciliation))
+                    .orElseGet(() -> surfaceRevisionBarrier(
+                            currentMap, currentReconciliation));
             if (currentReconciliation.positionCorrectionRevision()
                     != captured.positionCorrectionRevision()) {
                 return false;
@@ -2614,17 +2624,40 @@ public final class McmcpRuntime implements McpRuntimePort {
                 }
                 boolean complete = false;
                 if (agentExecution.primitive instanceof ActionDsl.WaitUntil wait) {
-                    var waitMap = requireAgentMap(session);
-                    var waitReconciliation = reconciliationSignals.bindAndSnapshot(
-                            Objects.requireNonNull(minecraft.level, "level"),
-                            session.worldSessionId());
-                    var waitSurfaceBarrier = surfaceRevisionBarrier(
-                            waitMap, waitReconciliation);
-                    complete = cropMatureConditionSatisfied(
-                            wait.condition(),
-                            waitMap,
-                            agentObservationFrames.latestFrame(),
-                            waitSurfaceBarrier.applyAsLong(wait.condition().target()));
+                    CropWaitLiveState live = authorizedCropWaitLiveState(
+                            minecraft,
+                            session,
+                            wait,
+                            agentExecution.cropWaitAuthorization);
+                    if (live == CropWaitLiveState.WORLD_CHANGED) {
+                        failAgentAction(
+                                AgentActionStore.FailureCode.WORLD_CHANGED,
+                                true,
+                                "crop_wait_world_changed");
+                        return;
+                    }
+                    if (live == CropWaitLiveState.VISIBILITY_INVALIDATED) {
+                        failAgentAction(
+                                AgentActionStore.FailureCode.PATH_BLOCKED,
+                                true,
+                                "crop_wait_visibility_invalidated");
+                        return;
+                    }
+                    if (live == CropWaitLiveState.UNLOADED) {
+                        failAgentAction(
+                                AgentActionStore.FailureCode.PATH_BLOCKED,
+                                true,
+                                "crop_wait_target_unloaded");
+                        return;
+                    }
+                    if (live == CropWaitLiveState.TARGET_CHANGED) {
+                        failAgentAction(
+                                AgentActionStore.FailureCode.PATH_BLOCKED,
+                                true,
+                                "crop_wait_target_changed");
+                        return;
+                    }
+                    complete = live == CropWaitLiveState.MATURE;
                 }
                 if (complete || agentExecution.primitive instanceof ActionDsl.WaitTicks
                         && --agentExecution.waitTicksRemaining == 0) {
@@ -2903,6 +2936,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         agentExecution.mutationBatchTargetAim = null;
         agentExecution.mutationBatchTargetBound = false;
         agentExecution.mutationBatchTargetDeadlineTick = 0L;
+        agentExecution.cropWaitAuthorization = null;
         agentExecution.primitivePlanDeadlineTick = Math.addExact(
                 occurrenceBaseline.ticks(), primitiveReobservationTicks(advance.primitive()));
         agentExecution.mutationAims.clear();
@@ -2923,13 +2957,12 @@ public final class McmcpRuntime implements McpRuntimePort {
                     .get(advance.primitive().id());
         } else if (advance.primitive() instanceof ActionDsl.WaitUntil wait) {
             agentExecution.waitTicksRemaining = wait.maxTicks();
-            agentExecution.occurrenceLimit = agentExecution.program.primitiveCostBounds()
-                    .get(advance.primitive().id());
         }
-        if (isAgentWait(advance.primitive()) && agentExecution.occurrenceLimit == null) {
+        if (advance.primitive() instanceof ActionDsl.WaitTicks
+                && agentExecution.occurrenceLimit == null) {
             throw new IllegalStateException("Compiled wait cost bound is unavailable");
         }
-        if (isAgentWait(advance.primitive())
+        if (agentExecution.occurrenceLimit != null
                 && !fitsRemainingBudget(
                         occurrenceBaseline,
                         agentExecution.program.effectiveBudget(),
@@ -2965,7 +2998,8 @@ public final class McmcpRuntime implements McpRuntimePort {
                     agentObservationFrames.latestFrame(),
                     McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
                     visualBarrierWorldRevision,
-                    surfaceRevisionBarrier(map, reconciliation),
+                    primitiveSurfaceRevisionBarrier(
+                            agentExecution.primitive, map, reconciliation),
                     () -> true);
             ActionDslCompiler.Cost cost = analysis.worstCase(agentExecution.primitive)
                     .orElseThrow(() -> new IllegalStateException(
@@ -2981,6 +3015,16 @@ public final class McmcpRuntime implements McpRuntimePort {
                         "jit_primitive_budget");
                 return false;
             }
+            CropWaitAuthorization cropWaitAuthorization =
+                    agentExecution.primitive instanceof ActionDsl.WaitUntil wait
+                            ? requireCropWaitAuthorization(
+                                    session,
+                                    wait,
+                                    analysis,
+                                    visualBarrierWorldRevision,
+                                    player.position(),
+                                    player.getEyePosition())
+                            : null;
             if (agentExecution.retainOccurrenceBaseline) {
                 agentExecution.occurrenceLimit = occurrenceCostIncludingConsumed(
                         progress, agentExecution.occurrenceBaseline, cost);
@@ -2992,6 +3036,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             agentExecution.mutationAims.putAll(analysis.mutationAims());
             Optional.ofNullable(analysis.mutationBatchPlans().get(agentExecution.primitive.id()))
                     .ifPresent(plan -> agentExecution.mutationBatchPlan = plan);
+            agentExecution.cropWaitAuthorization = cropWaitAuthorization;
             agentExecution.primitivePlanDeadlineTick = 0L;
             if (agentExecution.primitivePlanning) {
                 agentActions.setPhase(
@@ -3026,34 +3071,106 @@ public final class McmcpRuntime implements McpRuntimePort {
                 ? AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS : 0L;
     }
 
-    static boolean cropMatureConditionSatisfied(
-            ActionDsl.CropMatureCondition condition,
-            KnownTraversabilitySnapshot map,
-            Optional<ObservationFrame> latestFrame) {
-        return cropMatureConditionSatisfied(
-                condition, map, latestFrame, map.worldRevision());
+    static CropWaitAuthorization requireCropWaitAuthorization(
+            WorldSessionTracker.Snapshot session,
+            ActionDsl.WaitUntil wait,
+            AgentPrimitivePlanner.Analysis analysis,
+            long visualBarrierWorldRevision,
+            Vec3 playerPosition,
+            Vec3 observerEye) {
+        Objects.requireNonNull(session, "session");
+        Objects.requireNonNull(wait, "wait");
+        Objects.requireNonNull(analysis, "analysis");
+        Objects.requireNonNull(playerPosition, "playerPosition");
+        Objects.requireNonNull(observerEye, "observerEye");
+        ActionDsl.Position target = wait.condition().target();
+        AgentPrimitivePlanner.KnownSurface visibleWheat = analysis.knownSurfaces().stream()
+                .filter(surface -> surface.position().equals(target)
+                        && surface.block().equals("minecraft:wheat")
+                        && surface.eyeOrigin() != null)
+                .findFirst()
+                .orElse(null);
+        double epsilonSquared = CROP_WAIT_OBSERVER_EPSILON_BLOCKS
+                * CROP_WAIT_OBSERVER_EPSILON_BLOCKS;
+        if (!session.worldReady()
+                || !Objects.equals(session.dimension(), target.dimension())
+                || visibleWheat == null
+                || observerEye.distanceToSqr(visibleWheat.eyeOrigin())
+                        > epsilonSquared) {
+            throw new IllegalStateException(
+                    "crop wait authorization requires current-origin visible wheat evidence");
+        }
+        return new CropWaitAuthorization(
+                session.worldSessionId(), session.dimension(), target,
+                visualBarrierWorldRevision, playerPosition, visibleWheat.eyeOrigin());
     }
 
-    static boolean cropMatureConditionSatisfied(
-            ActionDsl.CropMatureCondition condition,
-            KnownTraversabilitySnapshot map,
-            Optional<ObservationFrame> latestFrame,
-            long surfaceBarrierWorldRevision) {
-        var target = condition.target();
-        AgentPrimitivePlanner.requireSurfaceBarrierWorldRevision(
-                map, surfaceBarrierWorldRevision);
-        return latestFrame.stream()
-                .filter(frame -> frame.dimension().value().equals(target.dimension()))
-                .flatMap(frame -> frame.records().stream())
-                .filter(ObservationRecord.VisibleSurface.class::isInstance)
-                .map(ObservationRecord.VisibleSurface.class::cast)
-                .anyMatch(surface -> surface.worldRevision() >= surfaceBarrierWorldRevision
-                        && surface.worldRevision() <= map.worldRevision()
-                        && surface.position().x() == target.x()
-                        && surface.position().y() == target.y()
-                        && surface.position().z() == target.z()
-                        && surface.block().value().equals("minecraft:wheat")
-                        && Boolean.TRUE.equals(surface.cropMature()));
+    private CropWaitLiveState authorizedCropWaitLiveState(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            ActionDsl.WaitUntil wait,
+            CropWaitAuthorization authorization) {
+        var level = minecraft.level;
+        var player = minecraft.player;
+        if (level == null || player == null) {
+            return CropWaitLiveState.WORLD_CHANGED;
+        }
+        var reconciliation = reconciliationSignals.bindAndSnapshot(
+                level, session.worldSessionId());
+        CropWaitVisibilityState visibility = cropWaitVisibilityState(
+                authorization,
+                session,
+                wait.condition().target(),
+                reconciliation.visualBarrierWorldRevision(),
+                player.position(),
+                player.getEyePosition());
+        if (visibility == CropWaitVisibilityState.WORLD_CHANGED) {
+            return CropWaitLiveState.WORLD_CHANGED;
+        }
+        if (visibility == CropWaitVisibilityState.VISIBILITY_INVALIDATED) {
+            return CropWaitLiveState.VISIBILITY_INVALIDATED;
+        }
+        ActionDsl.Position target = authorization.target();
+        var position = new BlockPos(target.x(), target.y(), target.z());
+        if (!level.isLoaded(position) || !level.getWorldBorder().isWithinBounds(position)) {
+            return CropWaitLiveState.UNLOADED;
+        }
+        // The authorization is coordinate-exact; do not inspect any neighboring or hidden state.
+        return cropWaitLiveState(true, level.getBlockState(position));
+    }
+
+    static CropWaitVisibilityState cropWaitVisibilityState(
+            CropWaitAuthorization authorization,
+            WorldSessionTracker.Snapshot session,
+            ActionDsl.Position requestedTarget,
+            long currentVisualBarrierWorldRevision,
+            Vec3 currentPlayerPosition,
+            Vec3 currentObserverEye) {
+        Objects.requireNonNull(session, "session");
+        Objects.requireNonNull(requestedTarget, "requestedTarget");
+        Objects.requireNonNull(currentPlayerPosition, "currentPlayerPosition");
+        Objects.requireNonNull(currentObserverEye, "currentObserverEye");
+        if (authorization == null || !authorization.matches(session, requestedTarget)) {
+            return CropWaitVisibilityState.WORLD_CHANGED;
+        }
+        double epsilonSquared = CROP_WAIT_OBSERVER_EPSILON_BLOCKS
+                * CROP_WAIT_OBSERVER_EPSILON_BLOCKS;
+        if (currentVisualBarrierWorldRevision != authorization.visualBarrierWorldRevision()
+                || currentPlayerPosition.distanceToSqr(authorization.playerPosition())
+                        > epsilonSquared
+                || currentObserverEye.distanceToSqr(authorization.observerEye())
+                        > epsilonSquared) {
+            return CropWaitVisibilityState.VISIBILITY_INVALIDATED;
+        }
+        return CropWaitVisibilityState.CURRENT;
+    }
+
+    static CropWaitLiveState cropWaitLiveState(boolean loaded, BlockState state) {
+        if (!loaded) return CropWaitLiveState.UNLOADED;
+        Objects.requireNonNull(state, "state");
+        if (!state.is(Blocks.WHEAT)) return CropWaitLiveState.TARGET_CHANGED;
+        return state.getValue(BlockStateProperties.AGE_7) == 7
+                ? CropWaitLiveState.MATURE : CropWaitLiveState.PENDING;
     }
 
     private static boolean isAgentWait(ActionDsl.Node primitive) {
@@ -3975,6 +4092,14 @@ public final class McmcpRuntime implements McpRuntimePort {
         return Math.max(observationDeadline, admittedNavigationDeadline);
     }
 
+    static long recoveryEvidenceClientTick(WorldSessionTracker.Snapshot session) {
+        Objects.requireNonNull(session, "session");
+        if (!session.worldReady() || session.clientTick() < 0L) {
+            throw new IllegalStateException("recovery evidence requires a ready world clock");
+        }
+        return session.clientTick();
+    }
+
     private MinecraftRecoveryGovernor.TickResult tickAgentRecovery(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
@@ -3989,8 +4114,8 @@ public final class McmcpRuntime implements McpRuntimePort {
         if (recoveryGovernor == null) {
             recoveryGovernor = new MinecraftRecoveryGovernor(minecraft);
         }
-        long activeTick = agentActions.get(agentExecution.actionId).progress().ticks() + 1L;
-        var evidence = recoveryEvidence(player, session, map, local, activeTick);
+        long clientTick = recoveryEvidenceClientTick(session);
+        var evidence = recoveryEvidence(player, session, map, local, clientTick);
         return recoveryGovernor.tick(
                 evidence,
                 recoveryCandidates(
@@ -4018,7 +4143,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             WorldSessionTracker.Snapshot session,
             KnownTraversabilitySnapshot map,
             LocalObservationVolume.Snapshot local,
-            long activeTick) {
+            long clientTick) {
         var current = local.current();
         var damageSource = player.getLastDamageSource();
         MinecraftRecoveryGovernor.DamageKind damageKind;
@@ -4056,7 +4181,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                 player.getDeltaMovement().y,
                 descentSinceGround);
         return new MinecraftRecoveryGovernor.Evidence(
-                activeTick,
+                clientTick,
                 session.worldSessionId(),
                 map.dimension(),
                 map.worldRevision(),
@@ -4076,7 +4201,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                 hazards.verticalVelocity(),
                 hazards.descentSinceGround(),
                 landing,
-                player.hurtTime > 0 ? activeTick : -1L,
+                player.hurtTime > 0 ? clientTick : -1L,
                 damageKind,
                 false,
                 current.fluid()
@@ -4952,6 +5077,26 @@ public final class McmcpRuntime implements McpRuntimePort {
                 map,
                 reconciliation.surfaceBarrierWorldRevision(
                         position.x(), position.y(), position.z()));
+    }
+
+    static ToLongFunction<ActionDsl.Position> waitTargetSurfaceRevisionBarrier(
+            KnownTraversabilitySnapshot map,
+            ClientReconciliationSignals.Snapshot reconciliation) {
+        visualBarrierWorldRevision(map, reconciliation);
+        return position -> AgentPrimitivePlanner.requireSurfaceBarrierWorldRevision(
+                map,
+                reconciliation.waitTargetSurfaceBarrierWorldRevision(
+                        position.x(), position.y(), position.z()));
+    }
+
+    static ToLongFunction<ActionDsl.Position> primitiveSurfaceRevisionBarrier(
+            ActionDsl.Node primitive,
+            KnownTraversabilitySnapshot map,
+            ClientReconciliationSignals.Snapshot reconciliation) {
+        Objects.requireNonNull(primitive, "primitive");
+        return primitive instanceof ActionDsl.WaitUntil
+                ? waitTargetSurfaceRevisionBarrier(map, reconciliation)
+                : surfaceRevisionBarrier(map, reconciliation);
     }
 
     private static AgentPrimitivePlanner.Pose playerPose(
@@ -7849,6 +7994,61 @@ public final class McmcpRuntime implements McpRuntimePort {
         return memory;
     }
 
+    enum CropWaitLiveState {
+        PENDING,
+        MATURE,
+        TARGET_CHANGED,
+        UNLOADED,
+        VISIBILITY_INVALIDATED,
+        WORLD_CHANGED
+    }
+
+    enum CropWaitVisibilityState {
+        CURRENT,
+        VISIBILITY_INVALIDATED,
+        WORLD_CHANGED
+    }
+
+    record CropWaitAuthorization(
+            UUID worldSessionId,
+            String dimension,
+            ActionDsl.Position target,
+            long visualBarrierWorldRevision,
+            Vec3 playerPosition,
+            Vec3 observerEye) {
+        CropWaitAuthorization {
+            Objects.requireNonNull(worldSessionId, "worldSessionId");
+            Objects.requireNonNull(dimension, "dimension");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(playerPosition, "playerPosition");
+            Objects.requireNonNull(observerEye, "observerEye");
+            if (!dimension.equals(target.dimension())) {
+                throw new IllegalArgumentException(
+                        "crop wait authorization must stay in one dimension");
+            }
+            if (visualBarrierWorldRevision < 0L
+                    || !finite(playerPosition) || !finite(observerEye)) {
+                throw new IllegalArgumentException(
+                        "crop wait authorization fence must be finite and non-negative");
+            }
+        }
+
+        private static boolean finite(Vec3 value) {
+            return Double.isFinite(value.x)
+                    && Double.isFinite(value.y)
+                    && Double.isFinite(value.z);
+        }
+
+        boolean matches(
+                WorldSessionTracker.Snapshot session,
+                ActionDsl.Position requestedTarget) {
+            return session.worldReady()
+                    && worldSessionId.equals(session.worldSessionId())
+                    && dimension.equals(session.dimension())
+                    && target.equals(requestedTarget);
+        }
+    }
+
     private static final class AgentExecution {
         private final UUID actionId;
         private final UUID worldSessionId;
@@ -7888,6 +8088,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         private AgentPrimitivePlanner.MutationAim mutationBatchTargetAim;
         private boolean mutationBatchTargetBound;
         private long mutationBatchTargetDeadlineTick;
+        private CropWaitAuthorization cropWaitAuthorization;
         private double tillSettlingAllowance;
         private ActionDsl.Position tillSettlingTarget;
         private long tillSettlingDeadlineTick;

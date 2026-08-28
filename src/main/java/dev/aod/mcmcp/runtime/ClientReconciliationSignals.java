@@ -182,6 +182,19 @@ public final class ClientReconciliationSignals {
                     visualBarrierWorldRevision,
                     Math.max(surfaceMutationEvictionFloor, positionRevision));
         }
+
+        /**
+         * Exact-target freshness fence for an already explicit crop wait. When the
+         * target remains in the bounded revision map, unrelated evictions cannot
+         * invalidate that stronger coordinate-specific witness. Absence falls back
+         * to the conservative global eviction floor.
+         */
+        public long waitTargetSurfaceBarrierWorldRevision(int x, int y, int z) {
+            Long positionRevision = surfaceMutationRevisions.get(new BlockPos(x, y, z));
+            long mutationBoundary = positionRevision != null
+                    ? positionRevision : surfaceMutationEvictionFloor;
+            return Math.max(visualBarrierWorldRevision, mutationBoundary);
+        }
     }
 
     public record PositionCorrection(int teleportId, Vec3 appliedPosition) {

@@ -805,6 +805,7 @@
           },
           "waitUntilNode": {
             "type": "object",
+            "description": "At primitive start, target must be a current policy-visible wheat surface under a target-scoped fresh proof: an exact retained target mutation revision is combined with the visual barrier without being invalidated by unrelated mutation evictions; when the exact revision is absent, the global eviction floor applies fail-closed. The adopted visible_surface.eye_origin must match the current JIT observer eye within the fixed epsilon; a stale frame from a previous observer position is rejected. Authorization preserves that witness eye_origin rather than substituting the current eye, and also binds the exact world/session/dimension/target, current visual barrier, and player position. Any visual-barrier advance or observer drift beyond the epsilon terminates before BlockState is read; navigation-neutral wheat AGE updates do not advance that barrier. While the fence remains current, execution reads live BlockState only at that authorized loaded coordinate: immature wheat stays pending, mature wheat completes, and replacement, unload, or world/session change terminates fail-safe without exposing live state.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},

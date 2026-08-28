@@ -34,6 +34,8 @@ import dev.aod.mcmcp.routine.UseItemOnBlockRequest;
 import dev.aod.mcmcp.safety.LocalArmingState;
 import dev.aod.mcmcp.voice.VoiceChatSafetyController;
 import org.junit.jupiter.api.Test;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -159,6 +161,12 @@ class McmcpRuntimeHardeningTest {
                 new ActionDsl.Position("minecraft:overworld", 1, 65, 1))).isEqualTo(1L);
         assertThat(neutralSurfaceBarriers.applyAsLong(
                 new ActionDsl.Position("minecraft:overworld", 9, 65, 9))).isZero();
+        var waitSurfaceBarriers = McmcpRuntime.waitTargetSurfaceRevisionBarrier(
+                map.snapshot().orElseThrow(), signals.snapshot());
+        assertThat(waitSurfaceBarriers.applyAsLong(
+                new ActionDsl.Position("minecraft:overworld", 1, 65, 1))).isEqualTo(1L);
+        assertThat(waitSurfaceBarriers.applyAsLong(
+                new ActionDsl.Position("minecraft:overworld", 9, 65, 9))).isZero();
 
         signals.worldMutation(
                 ClientReconciliationSignals.WorldMutation.Kind.BLOCK,
@@ -171,16 +179,26 @@ class McmcpRuntimeHardeningTest {
                 map.snapshot().orElseThrow(), signals.snapshot()).applyAsLong(
                         new ActionDsl.Position("minecraft:overworld", 9, 65, 9)))
                 .isEqualTo(2L);
+        assertThat(McmcpRuntime.waitTargetSurfaceRevisionBarrier(
+                map.snapshot().orElseThrow(), signals.snapshot()).applyAsLong(
+                        new ActionDsl.Position("minecraft:overworld", 1, 65, 1)))
+                .isEqualTo(2L);
 
         var staleMap = new KnownTraversabilityMap();
         staleMap.startSession(session, "minecraft:overworld", 1L);
         assertThatThrownBy(() -> McmcpRuntime.visualBarrierWorldRevision(
                 staleMap.snapshot().orElseThrow(), signals.snapshot()))
                 .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+        assertThatThrownBy(() -> McmcpRuntime.waitTargetSurfaceRevisionBarrier(
+                staleMap.snapshot().orElseThrow(), signals.snapshot()))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
 
         var otherSessionMap = new KnownTraversabilityMap();
         otherSessionMap.startSession(UUID.randomUUID(), "minecraft:overworld", 2L);
         assertThatThrownBy(() -> McmcpRuntime.visualBarrierWorldRevision(
+                otherSessionMap.snapshot().orElseThrow(), signals.snapshot()))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+        assertThatThrownBy(() -> McmcpRuntime.waitTargetSurfaceRevisionBarrier(
                 otherSessionMap.snapshot().orElseThrow(), signals.snapshot()))
                 .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
     }
@@ -364,75 +382,134 @@ class McmcpRuntimeHardeningTest {
     }
 
     @Test
-    void waitUntilAcceptsOnlyCurrentMatureWheatEvidence() {
+    void cropWaitReadsOnlyTheAuthorizedLiveWheatState() {
         var target = new ActionDsl.Position("minecraft:overworld", 2, 65, 3);
-        var dimension = new dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId(
-                target.dimension());
-        var surface = new dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleSurface(
-                new dev.aod.mcmcp.agent.observation.ObservationValues.BlockPosition(
-                        dimension, target.x(), target.y(), target.z()),
-                dev.aod.mcmcp.agent.observation.ObservationRecord.Face.UP,
-                new dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId("minecraft:wheat"),
-                dev.aod.mcmcp.agent.observation.ObservationRecord.ShapeClass.CUTOUT,
+        var wait = new ActionDsl.WaitUntil(
+                "wait", new ActionDsl.CropMatureCondition(target), 20);
+        var sessions = new WorldSessionTracker();
+        sessions.latchReady(target.dimension());
+        sessions.tick();
+        var playerPosition = new Vec3(1.5D, 64.0D, 1.5D);
+        var observerEye = new Vec3(1.5D, 65.62D, 1.5D);
+        var witnessEye = observerEye.add(
+                McmcpRuntime.CROP_WAIT_OBSERVER_EPSILON_BLOCKS / 2.0D, 0.0D, 0.0D);
+        var analysis = new AgentPrimitivePlanner.Analysis(
+                Map.of("wait", ActionDslCompiler.intrinsicWaitCost(20)),
+                Map.of(),
+                Set.of(),
+                Set.of(new AgentPrimitivePlanner.KnownSurface(
+                        target, ActionDsl.BlockFace.UP, "minecraft:wheat", null, witnessEye)),
+                Map.of(),
+                Map.of());
+        var authorization = McmcpRuntime.requireCropWaitAuthorization(
+                sessions.snapshot(), wait, analysis,
+                4L, playerPosition, observerEye);
+
+        var staleOriginAnalysis = new AgentPrimitivePlanner.Analysis(
+                Map.of("wait", ActionDslCompiler.intrinsicWaitCost(20)),
+                Map.of(),
+                Set.of(),
+                Set.of(new AgentPrimitivePlanner.KnownSurface(
+                        target,
+                        ActionDsl.BlockFace.UP,
+                        "minecraft:wheat",
+                        null,
+                        observerEye.add(1.0D, 0.0D, 0.0D))),
+                Map.of(),
+                Map.of());
+        assertThatThrownBy(() -> McmcpRuntime.requireCropWaitAuthorization(
+                sessions.snapshot(), wait, staleOriginAnalysis,
+                4L, playerPosition, observerEye))
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(authorization.target()).isEqualTo(target);
+        assertThat(authorization.observerEye()).isEqualTo(witnessEye);
+        assertThat(McmcpRuntime.cropWaitVisibilityState(
+                authorization,
+                sessions.snapshot(),
+                target,
+                4L,
+                playerPosition,
+                observerEye)).isEqualTo(McmcpRuntime.CropWaitVisibilityState.CURRENT);
+        assertThat(McmcpRuntime.cropWaitLiveState(
+                true, Blocks.WHEAT.defaultBlockState())).isEqualTo(
+                        McmcpRuntime.CropWaitLiveState.PENDING);
+        assertThat(McmcpRuntime.cropWaitLiveState(
                 true,
-                new dev.aod.mcmcp.agent.observation.ObservationValues.WorldPosition(
-                        dimension, 2.5, 66.62, 3.5),
-                10,
-                7);
-        var frame = new dev.aod.mcmcp.agent.observation.ObservationFrame(
-                "obs-0000000000000001",
-                dimension,
-                10,
-                16,
-                false,
-                List.of(surface));
-        var map = new KnownTraversabilityMap();
-        map.startSession(UUID.randomUUID(), target.dimension(), 7);
+                Blocks.WHEAT.defaultBlockState().setValue(BlockStateProperties.AGE_7, 7)))
+                .isEqualTo(McmcpRuntime.CropWaitLiveState.MATURE);
+        assertThat(McmcpRuntime.cropWaitLiveState(
+                true, Blocks.STONE.defaultBlockState())).isEqualTo(
+                        McmcpRuntime.CropWaitLiveState.TARGET_CHANGED);
+        assertThat(McmcpRuntime.cropWaitLiveState(false, null)).isEqualTo(
+                McmcpRuntime.CropWaitLiveState.UNLOADED);
 
-        assertThat(McmcpRuntime.cropMatureConditionSatisfied(
-                new ActionDsl.CropMatureCondition(target),
-                map.snapshot().orElseThrow(),
-                Optional.of(frame))).isTrue();
+        // A navigation-neutral exact-target wheat AGE update leaves the visual
+        // barrier unchanged, so both pending and mature live reads remain authorized.
+        assertThat(McmcpRuntime.cropWaitVisibilityState(
+                authorization,
+                sessions.snapshot(),
+                target,
+                4L,
+                playerPosition,
+                observerEye)).isEqualTo(McmcpRuntime.CropWaitVisibilityState.CURRENT);
+        assertThat(McmcpRuntime.cropWaitVisibilityState(
+                authorization,
+                sessions.snapshot(),
+                target,
+                5L,
+                playerPosition,
+                observerEye)).isEqualTo(
+                        McmcpRuntime.CropWaitVisibilityState.VISIBILITY_INVALIDATED);
+        assertThat(McmcpRuntime.cropWaitVisibilityState(
+                authorization,
+                sessions.snapshot(),
+                target,
+                4L,
+                playerPosition.add(
+                        McmcpRuntime.CROP_WAIT_OBSERVER_EPSILON_BLOCKS * 2.0D, 0.0D, 0.0D),
+                observerEye)).isEqualTo(
+                        McmcpRuntime.CropWaitVisibilityState.VISIBILITY_INVALIDATED);
+        assertThat(McmcpRuntime.cropWaitVisibilityState(
+                authorization,
+                sessions.snapshot(),
+                target,
+                4L,
+                playerPosition,
+                observerEye.add(
+                        0.0D, McmcpRuntime.CROP_WAIT_OBSERVER_EPSILON_BLOCKS * 2.0D, 0.0D)))
+                .isEqualTo(McmcpRuntime.CropWaitVisibilityState.VISIBILITY_INVALIDATED);
 
-        map.advanceWorldRevision(8, List.of(), List.of());
-        assertThat(McmcpRuntime.cropMatureConditionSatisfied(
-                new ActionDsl.CropMatureCondition(target),
-                map.snapshot().orElseThrow(),
-                Optional.of(frame))).isFalse();
-        assertThat(McmcpRuntime.cropMatureConditionSatisfied(
-                new ActionDsl.CropMatureCondition(target),
-                map.snapshot().orElseThrow(),
-                Optional.of(frame),
-                7L)).isTrue();
-        assertThat(McmcpRuntime.cropMatureConditionSatisfied(
-                new ActionDsl.CropMatureCondition(target),
-                map.snapshot().orElseThrow(),
-                Optional.of(frame),
-                8L)).isFalse();
-        var currentSurface = new dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleSurface(
-                surface.position(),
-                surface.face(),
-                surface.block(),
-                surface.shapeClass(),
-                surface.cropMature(),
-                surface.rayHit(),
-                surface.eyeOrigin(),
-                surface.observedTick(),
-                8L);
-        var currentFrame = new dev.aod.mcmcp.agent.observation.ObservationFrame(
-                "obs-0000000000000002",
-                dimension,
-                10,
-                16,
-                false,
-                List.of(currentSurface));
-        assertThat(McmcpRuntime.cropMatureConditionSatisfied(
-                new ActionDsl.CropMatureCondition(target),
-                map.snapshot().orElseThrow(),
-                Optional.of(currentFrame),
-                8L)).isTrue();
+        var differentSession = new WorldSessionTracker();
+        differentSession.latchReady(target.dimension());
+        assertThat(authorization.matches(differentSession.snapshot(), target)).isFalse();
+        assertThat(authorization.matches(
+                sessions.snapshot(),
+                new ActionDsl.Position(target.dimension(), 3, 65, 3))).isFalse();
+        assertThat(McmcpRuntime.cropWaitVisibilityState(
+                authorization,
+                differentSession.snapshot(),
+                target,
+                4L,
+                playerPosition,
+                observerEye)).isEqualTo(McmcpRuntime.CropWaitVisibilityState.WORLD_CHANGED);
         assertThat(AgentActionStore.FailureCode.CONDITION_TIMEOUT.wireName())
                 .isEqualTo("CONDITION_TIMEOUT");
+    }
+
+    @Test
+    void recoveryEvidenceUsesSessionClockAcrossImmediateCollectNodeCompletion() {
+        var sessions = new WorldSessionTracker();
+        sessions.latchReady("minecraft:overworld");
+        long unchangedActionProgressTick = 3L;
+
+        sessions.tick();
+        long pickupA = McmcpRuntime.recoveryEvidenceClientTick(sessions.snapshot());
+        sessions.tick();
+        long pickupB = McmcpRuntime.recoveryEvidenceClientTick(sessions.snapshot());
+
+        assertThat(unchangedActionProgressTick).isEqualTo(3L);
+        assertThat(pickupB).isEqualTo(pickupA + 1L);
     }
 
     @Test
