@@ -7,10 +7,21 @@ import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.agent.navigation.RoutePlan;
 import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
+import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
+import dev.aod.mcmcp.agent.safety.ObservationRecord;
 import dev.aod.mcmcp.routine.MovementInputLease;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.EmptyBlockGetter;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoorHingeSide;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.phys.AABB;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -231,6 +242,136 @@ class MinecraftActionPrimitiveExecutorTest {
     }
 
     @Test
+    void settlementAcceptsCurrentSafeEvidenceWhileStandingOnAPressurePlate() {
+        long revision = 12L;
+        var plate = Blocks.OAK_PRESSURE_PLATE.defaultBlockState()
+                .setValue(BlockStateProperties.POWERED, true);
+        var plateShape = plate.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+        assertThat(plateShape.isEmpty()).isFalse();
+        assertThat(plate.getCollisionShape(
+                EmptyBlockGetter.INSTANCE, BlockPos.ZERO).isEmpty()).isTrue();
+        double feetY = 64.0D;
+        var destination = cell(0, 64, 0);
+        var playerBox = new AABB(
+                0.2D, feetY, 0.2D,
+                0.8D, feetY + 1.8D, 0.8D);
+        var safety = clearSafetySnapshot(revision, playerBox);
+
+        assertThat(MinecraftActionPrimitiveExecutor.waypointReached(
+                0.5D, feetY, 0.5D, destination, 0.1D)).isTrue();
+        assertThat(MinecraftActionPrimitiveExecutor.settlementSafetyDecision(
+                revision, Optional.of(safety)))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SettlementSafetyDecision.CLEAR);
+        assertThat(MinecraftActionPrimitiveExecutor.settlementCompletion(
+                MinecraftActionPrimitiveExecutor.SettlementSafetyDecision.CLEAR,
+                MinecraftActionPrimitiveExecutor.SETTLE_STABLE_TICKS,
+                MinecraftActionPrimitiveExecutor.SETTLE_SAFETY_TICKS).status())
+                .isEqualTo(MinecraftActionPrimitiveExecutor.Status.SUCCEEDED);
+    }
+
+    @Test
+    void settlementAcceptsTheClearDestinationBeyondAnOpenDoorVanillaShape() {
+        long revision = 15L;
+        BlockPos doorPosition = new BlockPos(0, 64, 0);
+        var openDoor = Blocks.OAK_DOOR.defaultBlockState()
+                .setValue(BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.LOWER)
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.NORTH)
+                .setValue(BlockStateProperties.DOOR_HINGE, DoorHingeSide.LEFT)
+                .setValue(BlockStateProperties.OPEN, true);
+        var playerBox = new AABB(0.2D, 64.0D, 1.2D, 0.8D, 65.8D, 1.8D);
+        assertThat(openDoor.getCollisionShape(EmptyBlockGetter.INSTANCE, doorPosition)
+                .toAabbs().stream()
+                .map(box -> box.move(doorPosition))
+                .noneMatch(box -> box.intersects(playerBox))).isTrue();
+
+        var safety = clearSafetySnapshot(revision, playerBox);
+        assertThat(MinecraftActionPrimitiveExecutor.waypointReached(
+                0.5D, 64.0D, 1.5D, cell(0, 64, 1), 0.1D)).isTrue();
+        assertThat(MinecraftActionPrimitiveExecutor.settlementSafetyDecision(
+                revision, Optional.of(safety)))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SettlementSafetyDecision.CLEAR);
+    }
+
+    @Test
+    void settlementAcceptsFreshSafeEvidenceAfterAnUnrelatedWorldRevisionChange() {
+        long changedRevision = 21L;
+        var safety = clearSafetySnapshot(
+                changedRevision, new AABB(0.2D, 64.0D, 0.2D, 0.8D, 65.8D, 0.8D));
+
+        var decision = MinecraftActionPrimitiveExecutor.settlementSafetyDecision(
+                changedRevision, Optional.of(safety));
+        var completion = MinecraftActionPrimitiveExecutor.settlementCompletion(
+                decision,
+                MinecraftActionPrimitiveExecutor.SETTLE_STABLE_TICKS,
+                MinecraftActionPrimitiveExecutor.SETTLE_SAFETY_TICKS);
+
+        assertThat(decision)
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SettlementSafetyDecision.CLEAR);
+        assertThat(completion).isEqualTo(new MinecraftActionPrimitiveExecutor.TickResult(
+                MinecraftActionPrimitiveExecutor.Status.SUCCEEDED,
+                MinecraftActionPrimitiveExecutor.Reason.NONE));
+    }
+
+    @Test
+    void settlementRequiresThreeConsecutiveCurrentClearSafetyTicks() {
+        assertThat(MinecraftActionPrimitiveExecutor.settlementCompletion(
+                MinecraftActionPrimitiveExecutor.SettlementSafetyDecision.CLEAR,
+                MinecraftActionPrimitiveExecutor.SETTLE_STABLE_TICKS,
+                MinecraftActionPrimitiveExecutor.SETTLE_SAFETY_TICKS - 1))
+                .isEqualTo(new MinecraftActionPrimitiveExecutor.TickResult(
+                        MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED,
+                        MinecraftActionPrimitiveExecutor.Reason.DESTINATION_SAFETY_UNVERIFIED));
+        assertThat(MinecraftActionPrimitiveExecutor.settlementSafetyDecision(
+                7L, Optional.empty()))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SettlementSafetyDecision.MISSING_OR_STALE);
+        assertThat(MinecraftActionPrimitiveExecutor.settlementSafetyDecision(
+                7L,
+                Optional.of(safetySnapshot(
+                        6L,
+                        ObservationRecord.Support.PRESENT,
+                        ObservationRecord.Clearance.CLEAR,
+                        ObservationRecord.Fluid.NONE,
+                        ObservationRecord.Hazard.NONE))))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SettlementSafetyDecision.MISSING_OR_STALE);
+        assertThat(MinecraftActionPrimitiveExecutor.settlementSafetyDecision(
+                7L,
+                Optional.of(safetySnapshot(
+                        7L,
+                        ObservationRecord.Support.PRESENT,
+                        ObservationRecord.Clearance.BLOCKED,
+                        ObservationRecord.Fluid.NONE,
+                        ObservationRecord.Hazard.NONE))))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SettlementSafetyDecision.UNSAFE);
+        assertThat(MinecraftActionPrimitiveExecutor.settlementSafetyDecision(
+                7L,
+                Optional.of(safetySnapshot(
+                        7L,
+                        ObservationRecord.Support.ABSENT,
+                        ObservationRecord.Clearance.CLEAR,
+                        ObservationRecord.Fluid.NONE,
+                        ObservationRecord.Hazard.NONE))))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SettlementSafetyDecision.UNSAFE);
+        assertThat(MinecraftActionPrimitiveExecutor.settlementSafetyDecision(
+                7L,
+                Optional.of(safetySnapshot(
+                        7L,
+                        ObservationRecord.Support.PRESENT,
+                        ObservationRecord.Clearance.CLEAR,
+                        ObservationRecord.Fluid.WATER,
+                        ObservationRecord.Hazard.NONE))))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SettlementSafetyDecision.UNSAFE);
+        assertThat(MinecraftActionPrimitiveExecutor.settlementSafetyDecision(
+                7L,
+                Optional.of(safetySnapshot(
+                        7L,
+                        ObservationRecord.Support.PRESENT,
+                        ObservationRecord.Clearance.CLEAR,
+                        ObservationRecord.Fluid.NONE,
+                        ObservationRecord.Hazard.CONTACT_DAMAGE))))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SettlementSafetyDecision.UNSAFE);
+    }
+
+    @Test
     void steeringQuantizesToTheEightDirectionWithMaximumWorldVectorDot() {
         assertThat(MinecraftActionPrimitiveExecutor.steering(
                 0.0D,
@@ -249,6 +390,61 @@ class MinecraftActionPrimitiveExecutorTest {
 
     private static NavCell cell(int x, int y, int z) {
         return new NavCell(DIMENSION, x, y, z);
+    }
+
+    private static LocalObservationVolume.Snapshot clearSafetySnapshot(
+            long revision, AABB playerBox) {
+        var center = playerBox.getCenter();
+        return safetySnapshot(
+                revision,
+                new ObservationRecord.Point(center.x, center.y, center.z),
+                ObservationRecord.Support.PRESENT,
+                ObservationRecord.Clearance.CLEAR,
+                ObservationRecord.Fluid.NONE,
+                ObservationRecord.Hazard.NONE);
+    }
+
+    private static LocalObservationVolume.Snapshot safetySnapshot(
+            long revision,
+            ObservationRecord.Support support,
+            ObservationRecord.Clearance clearance,
+            ObservationRecord.Fluid fluid,
+            ObservationRecord.Hazard hazard) {
+        return safetySnapshot(
+                revision,
+                new ObservationRecord.Point(0.5D, 64.9D, 0.5D),
+                support,
+                clearance,
+                fluid,
+                hazard);
+    }
+
+    private static LocalObservationVolume.Snapshot safetySnapshot(
+            long revision,
+            ObservationRecord.Point point,
+            ObservationRecord.Support support,
+            ObservationRecord.Clearance clearance,
+            ObservationRecord.Fluid fluid,
+            ObservationRecord.Hazard hazard) {
+        var current = new ObservationRecord(
+                1L,
+                revision,
+                0,
+                point,
+                point,
+                point,
+                support,
+                clearance,
+                ObservationRecord.Transition.STATIONARY,
+                fluid,
+                false,
+                hazard,
+                ObservationRecord.LoadedState.LOADED,
+                support == ObservationRecord.Support.PRESENT
+                        ? ObservationRecord.Drop.SUPPORTED
+                        : ObservationRecord.Drop.AIRBORNE_OR_SWIMMING,
+                false);
+        return new LocalObservationVolume.Snapshot(1L, revision, point, current, List.of());
     }
 
     private static TraversabilityEdge edge(

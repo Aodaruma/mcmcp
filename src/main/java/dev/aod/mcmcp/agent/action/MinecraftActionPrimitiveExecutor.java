@@ -6,6 +6,7 @@ import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.agent.navigation.RoutePlan;
 import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
+import dev.aod.mcmcp.agent.safety.ObservationRecord;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.routine.MovementInputLease;
 import net.minecraft.client.Minecraft;
@@ -31,6 +32,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
     public static final float MAX_ALLOWED_CAMERA_DEGREES_PER_TICK = 18.0F;
     public static final int STALL_TICKS = 20;
     static final int SETTLE_STABLE_TICKS = 10;
+    static final int SETTLE_SAFETY_TICKS = 3;
     private static final float AIM_TOLERANCE_DEGREES = 0.75F;
     private static final double PROGRESS_EPSILON_BLOCKS = 0.03D;
     private static final double STEP_EPSILON = 1.0E-7D;
@@ -157,12 +159,13 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         }
 
         NavCell finalCell = state.route.cells().getLast();
-        if (state.route.edges().isEmpty() && !sameCellRouteCurrent(state.route, snapshot)) {
-            return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
-        }
         if (state.settling) {
             return tickNavigationSettlement(
-                    minecraft, player, snapshot, remainingDistance, clientTick, outputAllowed);
+                    minecraft, player, snapshot, movementSafety,
+                    remainingDistance, clientTick, outputAllowed);
+        }
+        if (state.route.edges().isEmpty() && !sameCellRouteCurrent(state.route, snapshot)) {
+            return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
         }
         if (state.route.edges().isEmpty()) {
             switch (sameCellDecision(
@@ -171,11 +174,12 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                     return finish(Status.REPLAN_REQUIRED, Reason.PLAYER_OFF_ROUTE);
                 }
                 case SETTLE -> {
-                    state.settling = true;
+                    state.beginSettlement();
                     return tickNavigationSettlement(
                             minecraft,
                             player,
                             snapshot,
+                            movementSafety,
                             remainingDistance,
                             clientTick,
                             outputAllowed);
@@ -208,9 +212,10 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             state.edgeIndex++;
             state.resetProgress();
             if (state.edgeIndex == state.route.edges().size()) {
-                state.settling = true;
+                state.beginSettlement();
                 return tickNavigationSettlement(
-                        minecraft, player, snapshot, remainingDistance, clientTick, outputAllowed);
+                        minecraft, player, snapshot, movementSafety,
+                        remainingDistance, clientTick, outputAllowed);
             }
             planned = state.route.edges().get(state.edgeIndex);
             if (!insideRouteCorridor(player, planned.key())) {
@@ -325,10 +330,14 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             Minecraft minecraft,
             LocalPlayer player,
             KnownTraversabilitySnapshot snapshot,
+            LocalObservationVolume movementSafety,
             double remainingDistance,
             long clientTick,
             BooleanSupplier outputAllowed) {
         NavigateState state = navigation;
+        SettlementSafetyDecision safety = settlementSafetyDecision(
+                snapshot.worldRevision(),
+                movementSafety.latestFor(player));
         NavCell destination = state.route.cells().getLast();
         if (!atWaypoint(player, destination, state.tolerance)) {
             return finish(Status.REPLAN_REQUIRED, Reason.PLAYER_OFF_ROUTE);
@@ -337,12 +346,20 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 && player.position().distanceToSqr(state.lastSettlePosition)
                         <= SETTLE_DRIFT_EPSILON_SQUARED) {
             state.stableTicks++;
+            // The final three position-stable ticks must also carry consecutive current safety
+            // evidence. LocalObservationVolume derives this from Vanilla's live player AABB and
+            // collision shapes, so no passage/block-specific geometry is duplicated here.
+            state.safeTicks = safety == SettlementSafetyDecision.CLEAR
+                    ? state.safeTicks + 1 : 0;
         } else {
             state.stableTicks = 0;
+            state.safeTicks = 0;
         }
         state.lastSettlePosition = player.position();
-        if (state.stableTicks >= SETTLE_STABLE_TICKS) {
-            return finish(Status.SUCCEEDED, Reason.NONE);
+        TickResult settlement = settlementCompletion(
+                safety, state.stableTicks, state.safeTicks);
+        if (settlement.terminal()) {
+            return finish(settlement.status(), settlement.reason());
         }
         state.activeTicks++;
         if (!navigationOutputAllowed(state.activeTicks, state.route.tickUpperBound())) {
@@ -372,6 +389,46 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         AgentInputState.global().requireGoalMovementSafety(
                 player, player.level(), snapshot.worldRevision(), remainingDistance);
         return TickResult.running(Reason.NONE);
+    }
+
+    static SettlementSafetyDecision settlementSafetyDecision(
+            long currentWorldRevision,
+            java.util.Optional<LocalObservationVolume.Snapshot> latestSafety) {
+        if (currentWorldRevision < 0L) {
+            throw new IllegalArgumentException("current world revision must be non-negative");
+        }
+        Objects.requireNonNull(latestSafety, "latestSafety");
+        if (latestSafety.isEmpty()) {
+            return SettlementSafetyDecision.MISSING_OR_STALE;
+        }
+        var snapshot = latestSafety.orElseThrow();
+        ObservationRecord current = snapshot.current();
+        if (snapshot.worldRevision() != currentWorldRevision
+                || current.worldRevision() != currentWorldRevision) {
+            return SettlementSafetyDecision.MISSING_OR_STALE;
+        }
+        return current.loaded() == ObservationRecord.LoadedState.LOADED
+                        && current.clearance() == ObservationRecord.Clearance.CLEAR
+                        && current.support() == ObservationRecord.Support.PRESENT
+                        && current.fluid() == ObservationRecord.Fluid.NONE
+                        && !current.suffocation()
+                        && current.hazard() == ObservationRecord.Hazard.NONE
+                ? SettlementSafetyDecision.CLEAR
+                : SettlementSafetyDecision.UNSAFE;
+    }
+
+    static TickResult settlementCompletion(
+            SettlementSafetyDecision safety, int stableTicks, int safeTicks) {
+        Objects.requireNonNull(safety, "safety");
+        if (stableTicks < 0 || safeTicks < 0 || safeTicks > stableTicks) {
+            throw new IllegalArgumentException("settlement tick counts are inconsistent");
+        }
+        if (stableTicks < SETTLE_STABLE_TICKS) {
+            return TickResult.running(Reason.NONE);
+        }
+        return safety == SettlementSafetyDecision.CLEAR && safeTicks >= SETTLE_SAFETY_TICKS
+                ? new TickResult(Status.SUCCEEDED, Reason.NONE)
+                : new TickResult(Status.REPLAN_REQUIRED, Reason.DESTINATION_SAFETY_UNVERIFIED);
     }
 
     private TickResult tickFace(
@@ -839,6 +896,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         MOVEMENT_LEASE_EXPIRED,
         INVALID_FACE_TARGET,
         UNSUPPORTED_LOCOMOTION,
+        DESTINATION_SAFETY_UNVERIFIED,
         HARD_DEADLINE
     }
 
@@ -860,6 +918,12 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         SETTLE
     }
 
+    enum SettlementSafetyDecision {
+        CLEAR,
+        MISSING_OR_STALE,
+        UNSAFE
+    }
+
     private static final class NavigateState extends ProgressState {
         private final RoutePlan route;
         private final double tolerance;
@@ -868,10 +932,18 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         private boolean settling;
         private Vec3 lastSettlePosition;
         private int stableTicks;
+        private int safeTicks;
 
         private NavigateState(RoutePlan route, double tolerance) {
             this.route = route;
             this.tolerance = tolerance;
+        }
+
+        private void beginSettlement() {
+            settling = true;
+            lastSettlePosition = null;
+            stableTicks = 0;
+            safeTicks = 0;
         }
     }
 
