@@ -112,7 +112,7 @@
               "max_duration_ms": {"const": 600000},
               "max_ticks": {"const": 12000},
               "max_distance_blocks": {"const": 32},
-              "max_camera_degrees": {"const": 360},
+              "max_camera_degrees": {"const": 720},
               "max_blocks_broken": {"const": 8},
               "max_interactions": {"const": 8},
               "max_blocks_placed": {"const": 8},
@@ -813,7 +813,7 @@
               "max_duration_ms": {"type": "integer", "minimum": 100, "maximum": 600000},
               "max_ticks": {"type": "integer", "minimum": 2, "maximum": 12000},
               "max_distance_blocks": {"type": "number", "minimum": 0, "maximum": 32},
-              "max_camera_degrees": {"type": "number", "minimum": 0, "maximum": 360},
+              "max_camera_degrees": {"type": "number", "minimum": 0, "maximum": 720},
               "max_interactions": {"type": "integer", "minimum": 0, "maximum": 8},
               "max_blocks_broken": {"type": "integer", "minimum": 0, "maximum": 8},
               "max_blocks_placed": {"type": "integer", "minimum": 0, "maximum": 8}
@@ -1038,7 +1038,7 @@
               "max_duration_ms": 600000,
               "max_ticks": 12000,
               "max_distance_blocks": 0,
-              "max_camera_degrees": 360,
+              "max_camera_degrees": 720,
               "max_interactions": 1,
               "max_blocks_broken": 1,
               "max_blocks_placed": 1
@@ -1186,7 +1186,7 @@
               "executed_nodes": {"type": "integer", "minimum": 0, "maximum": 256},
               "total_node_upper_bound": {"type": "integer", "minimum": 1, "maximum": 256},
               "distance_travelled": {"type": "number", "minimum": 0, "maximum": 48},
-              "camera_degrees": {"type": "number", "minimum": 0, "maximum": 720},
+              "camera_degrees": {"type": "number", "minimum": 0, "maximum": 1080},
               "interactions": {"type": "integer", "minimum": 0, "maximum": 16},
               "blocks_broken": {"type": "integer", "minimum": 0, "maximum": 12},
               "blocks_placed": {"type": "integer", "minimum": 0, "maximum": 16},
@@ -1215,6 +1215,7 @@
                       "CONDITION_TIMEOUT",
                       "PREDICATE_UNAVAILABLE",
                       "CAPABILITY_DENIED",
+                      "DELIVERY_UNCONFIRMED",
                       "INTERNAL_ERROR"
                     ]
                   },

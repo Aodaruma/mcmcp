@@ -24,6 +24,7 @@ public final class ActionDslValidator {
     public static final int MAX_REQUEST_BYTES = 64 * 1024;
     public static final int MAX_ACTION_TICKS = 12_000;
     public static final long MAX_ACTION_DURATION_MILLIS = MAX_ACTION_TICKS * 50L;
+    public static final int MAX_ACTION_CAMERA_DEGREES = 720;
     public static final int MAX_BLOCKS_BROKEN = 8;
     public static final int MAX_INTERACTIONS = 8;
     public static final int MAX_BLOCKS_PLACED = 8;
@@ -117,7 +118,9 @@ public final class ActionDslValidator {
                 "budget.max_duration_ms");
         requireRange(budget.maxTicks(), 2, MAX_ACTION_TICKS, "budget.max_ticks");
         requireFiniteRange(budget.maxDistanceBlocks(), 0, 32, "budget.max_distance_blocks");
-        requireFiniteRange(budget.maxCameraDegrees(), 0, 360, "budget.max_camera_degrees");
+        requireFiniteRange(
+                budget.maxCameraDegrees(), 0, MAX_ACTION_CAMERA_DEGREES,
+                "budget.max_camera_degrees");
         requireRange(budget.maxInteractions(), 0, MAX_INTERACTIONS, "budget.max_interactions");
         requireRange(budget.maxBlocksBroken(), 0, MAX_BLOCKS_BROKEN,
                 "budget.max_blocks_broken");

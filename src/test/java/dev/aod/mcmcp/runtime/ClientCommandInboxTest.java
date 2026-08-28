@@ -33,7 +33,7 @@ class ClientCommandInboxTest {
     }
 
     @Test
-    void nonLocalOrFailedStopLocksInsteadOfRestoringReady() {
+    void emergencyStopRetainsReadyEvenWhenInputReleaseReportsFailure() {
         var arming = new LocalArmingState();
         var session = UUID.randomUUID();
         arming.arm(session, Set.of("navigate_to"));
@@ -41,15 +41,41 @@ class ClientCommandInboxTest {
         var beforeStop = arming.snapshot(session);
 
         assertThat(ClientCommandInbox.settleArmingAfterStop(
-                arming, beforeStop, session, false, true, "operator_stop")).isTrue();
+                arming, beforeStop, session, true, false, "release_failed")).isFalse();
+        assertThat(arming.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.READY);
+        assertThat(arming.snapshot(session).capabilities()).containsExactly("navigate_to");
+    }
+
+    @Test
+    void explicitUiDisableAndWorldMismatchRevokeTheLease() {
+        var arming = new LocalArmingState();
+        var session = UUID.randomUUID();
+        arming.arm(session, Set.of("navigate_to"));
+        assertThat(arming.beginAction(session)).isTrue();
+        var beforeStop = arming.snapshot(session);
+
+        assertThat(ClientCommandInbox.settleArmingAfterStop(
+                arming, beforeStop, session, false, true, "local_ui_disabled")).isTrue();
         assertThat(arming.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.OFF);
 
         arming.arm(session, Set.of("navigate_to"));
         assertThat(arming.beginAction(session)).isTrue();
         beforeStop = arming.snapshot(session);
         assertThat(ClientCommandInbox.settleArmingAfterStop(
-                arming, beforeStop, session, true, false, "release_failed")).isTrue();
+                arming, beforeStop, UUID.randomUUID(), true, true, "world_boundary")).isTrue();
         assertThat(arming.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.OFF);
+    }
+
+    @Test
+    void emergencyStopKeepsAnIdleReadyLeaseReady() {
+        var arming = new LocalArmingState();
+        var session = UUID.randomUUID();
+        arming.arm(session, Set.of("navigate_to"));
+        var beforeStop = arming.snapshot(session);
+
+        assertThat(ClientCommandInbox.settleArmingAfterStop(
+                arming, beforeStop, session, true, true, "operator_stop")).isFalse();
+        assertThat(arming.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.READY);
     }
 
     @Test

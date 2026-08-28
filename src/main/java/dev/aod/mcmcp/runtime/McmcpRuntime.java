@@ -504,7 +504,7 @@ public final class McmcpRuntime implements McpRuntimePort {
     public void disableAutomationFromUi(Minecraft minecraft) {
         assertClientThread(minecraft);
         runPriorityStop(
-                () -> inbox.requestEmergencyStop("local_ui_disabled"),
+                inbox::requestLocalDisable,
                 () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
         goalContinuation.clear();
         overlay(minecraft, "MCMCP: MCP自動操作を無効にしました");
@@ -1150,7 +1150,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             requireLiveCall(context, "agent_start_action");
         } catch (RuntimeException | LinkageError failure) {
             if (accepted == null) {
-                arming.lock("action_admission_failed");
+                returnControlReady();
             } else {
                 rollbackAbandonedAgentAction(
                         Map.of("action_id", accepted.actionId().toString()),
@@ -1260,33 +1260,29 @@ public final class McmcpRuntime implements McpRuntimePort {
                 }
             }
         } finally {
-            closeAgentControl(Minecraft.getInstance(), reason);
+            finishAgentControlReady(Minecraft.getInstance());
         }
     }
 
     private Map<String, Object> confirmAgentActionDelivery(UUID actionId) {
         var pending = pendingAgentAdmission;
-        var minecraft = Minecraft.getInstance();
         if (pending == null
-                || !pending.actionId().equals(actionId)
-                || !admissionFenceCurrent(
-                        minecraft,
-                        sessions.snapshot(),
-                        pending.prepared(),
-                        LocalArmingState.Mode.AGENT,
-                        pending.prepared().snapshot().control().controlEpoch() + 1L)) {
+                || !pending.actionId().equals(actionId)) {
             boolean abandoned;
             try {
                 abandoned = agentActions.abandonUnconfirmed(
-                        actionId, "admission_changed_before_delivery_confirmation");
+                        actionId, "delivery_confirmation_without_pending_admission");
             } catch (AgentActionStore.NotFoundException failure) {
                 abandoned = false;
             }
             if (abandoned) {
-                closeAgentControl(minecraft, "action_admission_changed");
+                finishAgentControlReady(Minecraft.getInstance());
             }
             return Map.of("action_id", actionId.toString(), "confirmed", false);
         }
+        // This step acknowledges that the already-built HTTP response was delivered; it is not a
+        // second admission decision. Volatile pose/observation checks run again immediately before
+        // markRunning(), where a changed fence becomes WORLD_CHANGED without revoking the lease.
         AgentActionStore.Confirmation confirmation;
         try {
             confirmation = agentActions.confirm(actionId, System.nanoTime());
@@ -1294,7 +1290,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             confirmation = AgentActionStore.Confirmation.STALE;
         }
         if (confirmation == AgentActionStore.Confirmation.EXPIRED) {
-            closeAgentControl(Minecraft.getInstance(), "action_delivery_confirmation_failed");
+            finishAgentControlReady(Minecraft.getInstance());
         }
         return Map.of(
                 "action_id", actionId.toString(),
@@ -1310,7 +1306,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             abandoned = false;
         }
         if (abandoned) {
-            closeAgentControl(Minecraft.getInstance(), "action_delivery_abandoned");
+            finishAgentControlReady(Minecraft.getInstance());
         }
         return Map.of("action_id", actionId.toString(), "abandoned", abandoned);
     }
@@ -1347,7 +1343,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             cancelled = agentActions.cancel(requestedId);
         } finally {
             if (activeBeforeRequest) {
-                finishAgentControlReady(minecraft, "action_cancelled");
+                finishAgentControlReady(minecraft);
             }
         }
         return Map.of(
@@ -1519,7 +1515,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                 Map.entry("max_duration_ms", 600_000),
                 Map.entry("max_ticks", 12_000),
                 Map.entry("max_distance_blocks", 32),
-                Map.entry("max_camera_degrees", 360),
+                Map.entry("max_camera_degrees", ActionDslValidator.MAX_ACTION_CAMERA_DEGREES),
                 Map.entry("max_blocks_broken", 8),
                 Map.entry("max_interactions", 8),
                 Map.entry("max_blocks_placed", 8),
@@ -2122,7 +2118,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             receipt = admission.get();
         }
         catch (RuntimeException | LinkageError failure) {
-            arming.lock("action_admission_failed");
+            returnControlReady();
             var voiceEnd = endVoiceSessionFor(null);
             throw withVoiceEndFailureDiagnostics(failure, voiceEnd);
         }
@@ -2310,7 +2306,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         var action = active.orElseThrow();
         if (action.state() == AgentActionStore.State.UNCONFIRMED) {
             if (agentActions.expireUnconfirmed(System.nanoTime())) {
-                closeAgentControl(minecraft, "action_delivery_confirmation_timeout");
+                finishAgentControlReady(minecraft);
             }
             return;
         }
@@ -2687,7 +2683,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             try {
                 agentActions.succeed(agentExecution.actionId);
             } finally {
-                finishAgentControlReady(minecraft, "action_completed");
+                finishAgentControlReady(minecraft);
             }
             return false;
         }
@@ -4665,32 +4661,34 @@ public final class McmcpRuntime implements McpRuntimePort {
             agentActions.terminateActive(new AgentActionStore.Failure(
                     code, recoverable, List.of(evidence)));
         } finally {
-            finishAgentControlReady(
-                    Minecraft.getInstance(), code.wireName().toLowerCase(Locale.ROOT));
+            finishAgentControlReady(Minecraft.getInstance());
         }
     }
 
-    private void finishAgentControlReady(Minecraft minecraft, String fallbackLockReason) {
+    private void finishAgentControlReady(Minecraft minecraft) {
+        releaseAgentControl(minecraft);
+        returnControlReady();
+    }
+
+    private void returnControlReady() {
         var session = sessions.snapshot();
+        if (session.worldSessionId() != null) {
+            arming.completeAction(session.worldSessionId());
+        }
+    }
+
+    private void releaseAgentControl(Minecraft minecraft) {
         closeAgentPrimitiveExecutor();
         closeRecoveryGovernor();
         inputRelease.releaseAll(minecraft);
         restoreAgentSelectedSlot(minecraft);
         agentExecution = null;
         pendingAgentAdmission = null;
-        if (session.worldSessionId() == null || !arming.completeAction(session.worldSessionId())) {
-            arming.lock(fallbackLockReason);
-        }
     }
 
     private void closeAgentControl(Minecraft minecraft, String lockReason) {
-        closeAgentPrimitiveExecutor();
-        closeRecoveryGovernor();
-        inputRelease.releaseAll(minecraft);
+        releaseAgentControl(minecraft);
         arming.lock(lockReason);
-        restoreAgentSelectedSlot(minecraft);
-        agentExecution = null;
-        pendingAgentAdmission = null;
     }
 
     private void restoreAgentSelectedSlot(Minecraft minecraft) {
@@ -4795,7 +4793,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                         "MCMCP retained finalization retry {} in non-terminal state {}",
                         routineId,
                         snapshot.state());
-                arming.lock("routine_finalization_failed");
+                returnControlReady();
             }
         }
     }
@@ -4804,7 +4802,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         var before = routines.getRoutine(routineId, Long.MAX_VALUE, 1);
         var terminal = finalizeTerminalRoutine(minecraft, before).snapshot();
         if (terminal.finalizationFailure() != null) {
-            arming.lock("routine_finalization_failed");
+            returnControlReady();
         }
     }
 
@@ -4823,7 +4821,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             actionStopped = false;
             McmcpMod.LOGGER.error("MCMCP emergency action termination failed", failure);
         } finally {
-            closeAgentControl(Minecraft.getInstance(), sanitizeLocalCode(reason));
+            releaseAgentControl(Minecraft.getInstance());
         }
         var active = routines.activeRoutineId();
         if (active.isEmpty()) {
@@ -4887,7 +4885,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                             : routines.recordTerminalFinalization(
                                     snapshot.routineId(), failure, Long.MAX_VALUE, 1);
                     if (finalized.finalizationFailure() != null) {
-                        arming.lock("routine_finalization_failed");
+                        returnControlReady();
                     }
                     return new TerminalCleanup(
                             finalized, cleanup.inputsReleased(), cleanup.voice());
@@ -4915,7 +4913,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                     attempt.failure());
         }
         goalContinuation.clear();
-        arming.lock("routine_finalization_failed");
+        returnControlReady();
         var emergencyRelease = attempt.emergencyRelease();
         if (!attempt.emergencyReleaseAttempted()) {
             var incident = attempt.incident();
@@ -5039,10 +5037,7 @@ public final class McmcpRuntime implements McpRuntimePort {
     private void applyCompletionIntentAfterTerminal(RoutineSnapshot terminal) {
         goalContinuation.consumeIntent(terminal.routineId());
         goalContinuation.clear();
-        boolean succeeded = terminal.state() == RoutineState.SUCCEEDED
-                && terminal.goalVerified()
-                && terminal.finalizationFailure() == null;
-        arming.lock(succeeded ? "goal_finished" : "goal_aborted");
+        returnControlReady();
     }
 
     static boolean recoverableContinuationFailure(

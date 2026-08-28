@@ -24,7 +24,7 @@ final class McpTestFixtures {
                         Map.entry("max_duration_ms", 600_000),
                         Map.entry("max_ticks", 12_000),
                         Map.entry("max_distance_blocks", 32),
-                        Map.entry("max_camera_degrees", 360),
+                        Map.entry("max_camera_degrees", 720),
                         Map.entry("max_blocks_broken", 8),
                         Map.entry("max_interactions", 8),
                         Map.entry("max_blocks_placed", 8),

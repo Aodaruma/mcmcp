@@ -196,7 +196,7 @@ public final class ClientCommandInbox {
                 action);
     }
 
-    /** Safe to call from any thread; completion occurs only after client-thread release and lock. */
+    /** Safe to call from any thread; stops work while retaining an existing local READY lease. */
     public CompletableFuture<StopReceipt> requestEmergencyStop(String reason) {
         synchronized (admissionGate) {
             if (!accepting) {
@@ -209,7 +209,17 @@ public final class ClientCommandInbox {
                 stopWaiters.add(waiter);
                 return waiter;
             }
-            return requestEmergencyStopLocked(reason, false);
+            return requestEmergencyStopLocked(reason, true);
+        }
+    }
+
+    /** Trusted local UI path: stop work and explicitly revoke the local lease. */
+    CompletableFuture<StopReceipt> requestLocalDisable() {
+        synchronized (admissionGate) {
+            if (!accepting) {
+                return requestEmergencyStop("local_ui_disabled");
+            }
+            return requestEmergencyStopLocked("local_ui_disabled", false);
         }
     }
 
@@ -368,8 +378,7 @@ public final class ClientCommandInbox {
             boolean inputsReleased,
             String reason) {
         if (keepReady
-                && inputsReleased
-                && beforeStop.inputIsolationActive()
+                && !beforeStop.locked()
                 && currentSessionId != null
                 && currentSessionId.equals(beforeStop.worldSessionId())) {
             armingState.arm(currentSessionId, beforeStop.capabilities());

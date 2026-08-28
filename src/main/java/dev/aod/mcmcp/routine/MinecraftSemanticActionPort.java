@@ -599,7 +599,8 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         if (active.prediction != null) {
             var expected = active.expectedServerState;
             var confirmation = active.prediction.confirmation(state -> expected != null
-                    && expected.equals(fingerprint(state)));
+                    && SemanticMutationPostcondition.matches(
+                            active.request, expected, fingerprint(state)));
             Integer required = confirmation.stateRequiredSequence() != null
                     ? confirmation.stateRequiredSequence() : confirmation.issuedSequence();
             acknowledged = required != null && confirmation.acknowledgedSequence() != null
@@ -615,8 +616,10 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                         acknowledged, confirmation.serverConfirmed(), doorCompanion);
             }
             if (confirmation.serverConfirmed() && !active.confirmationHandled) {
+                Optional<BlockStateFingerprint> current = currentBlockState(active.request);
                 if (expected == null
-                        || currentBlockState(active.request).filter(expected::equals).isEmpty()
+                        || current.filter(live -> SemanticMutationPostcondition.matches(
+                                active.request, expected, live)).isEmpty()
                         || doorCompanion == DoorCompanionStatus.MISMATCH) {
                     active.confirmationHandled = true;
                     active.failure = failure("POSTCONDITION_CHANGED", RoutineFailure.Category.DIVERGENCE,
@@ -624,7 +627,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                             stateMap(expected), Map.of());
                 } else if (doorCompanion != DoorCompanionStatus.PENDING) {
                     active.confirmationHandled = true;
-                    rememberConfirmation(active.request, expected, session);
+                    rememberConfirmation(active.request, current.orElse(expected), session);
                 }
             } else if (confirmation.status() == ClientPredictionSignals.ConfirmationStatus.SERVER_STATE_MISMATCH) {
                 active.failure = failure("POSTCONDITION_MISMATCH", RoutineFailure.Category.DIVERGENCE,

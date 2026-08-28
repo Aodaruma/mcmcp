@@ -312,6 +312,21 @@ class ActionDslTest {
     }
 
     @Test
+    void acceptsTwoRevolutionsOfActionCameraButRejectsMore() {
+        var maximum = request(
+                capabilities("camera"), face("look"),
+                budget(30_000, 600, 0, ActionDslValidator.MAX_ACTION_CAMERA_DEGREES));
+        assertThat(ActionDslValidator.validate(ActionDslParser.parse(maximum)))
+                .isNotNull();
+
+        var excessive = request(
+                capabilities("camera"), face("look"),
+                budget(30_000, 600, 0,
+                        ActionDslValidator.MAX_ACTION_CAMERA_DEGREES + 0.01D));
+        assertCode(excessive, ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
     void rejectsUntypedBreakTargetsToolsFacesCapabilitiesAndCosts() {
         JsonObject missingCamera = request(
                 capabilities("block_break"), breakKnownFace("break_log"),

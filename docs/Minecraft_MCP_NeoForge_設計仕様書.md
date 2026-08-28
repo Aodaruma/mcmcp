@@ -759,7 +759,7 @@ chat、scoreboard、看板、本、sound、raw ray、任意block/entity queryを
     "max_duration_ms": 30000,
     "max_ticks": 600,
     "max_distance_blocks": 32,
-    "max_camera_degrees": 360,
+    "max_camera_degrees": 720,
     "max_interactions": 0,
     "max_blocks_broken": 0,
     "max_blocks_placed": 0
@@ -859,7 +859,7 @@ agent_get_action:
 }
 ~~~
 
-`progress`のschema上限は通常Actionと、そのActionをpreemptしたrecoveryの累積上限である。したがってdistanceは32 + 16 = 48 block、cameraは360 + 360 = 720度、tickは12,000 + 200 = 12,200となる。通常Actionはinteraction / break / placeを各最大8、recoveryはinteraction 8 / break 4 / place 8を別枠で持つため、公開counterの上限はinteraction 16 / break 12 / place 16である。同dimension内のserver correction、teleport、knockbackなど外力で実測値がこの固定契約を越えた場合、公開counterはschema上限へ飽和させると同時に内部overflow latchを立て、Actionをbudget超過として終了する。飽和値を「上限内」と誤認したり、契約外の値を返したり、外力を相殺したりはしない。
+`progress`のschema上限は通常Actionと、そのActionをpreemptしたrecoveryの累積上限である。したがってdistanceは32 + 16 = 48 block、cameraは720 + 360 = 1,080度、tickは12,000 + 200 = 12,200となる。通常Actionはinteraction / break / placeを各最大8、recoveryはinteraction 8 / break 4 / place 8を別枠で持つため、公開counterの上限はinteraction 16 / break 12 / place 16である。同dimension内のserver correction、teleport、knockbackなど外力で実測値がこの固定契約を越えた場合、公開counterはschema上限へ飽和させると同時に内部overflow latchを立て、Actionをbudget超過として終了する。飽和値を「上限内」と誤認したり、契約外の値を返したり、外力を相殺したりはしない。
 
 agent_get_stateの返却対象:
 
@@ -1247,7 +1247,7 @@ client config:
 - recovery_max_ticks / distance / camera_degrees / interactions / placements / breaks
 - multiplayer_default
 
-MVPではrecovery各値の設定可能な上限を200 ticks、16 blocks、360 degrees、8 interactions、8 placements、4 breaksとする。Goal上限との合算が`agent_get_action`の固定出力schema（12,200 ticks、48 blocks、720 degrees）を越えないことをconfig境界でも保証する。
+MVPではrecovery各値の設定可能な上限を200 ticks、16 blocks、360 degrees、8 interactions、8 placements、4 breaksとする。Goal上限との合算が`agent_get_action`の固定出力schema（12,200 ticks、48 blocks、1,080 degrees）を越えないことをconfig境界でも保証する。
 
 tokenはconfig screenへ平文表示しない。ローカルclient commandまたはMods画面のbuttonから、MCP接続設定をclipboardへコピーできるようにする。
 

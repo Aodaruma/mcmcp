@@ -11,6 +11,11 @@
 - LLMへraw key、raw mouse、任意packet、任意command、任意コード実行を公開しない。
 - 全周visual、Local Observation Volume、sound clueの許可範囲外にあるhidden world stateをruntimeへ渡さない。
 - Actionは期限・静的budget・停止条件・Esc緊急停止・監査traceを持つ。
+- ユーザーがUIで有効化したMCP操作leaseには自動失効を設けない。通常Actionの成功・失敗・配送未確認・物理Escによる緊急停止では入力を解放して`READY`へ戻し、明示的なUI OFF、world境界、client shutdownだけが`OFF`へ遷移できる。`READY`中のEscはメニューを閉じる通常操作として扱う。
+- 公開Action結果schemaはruntimeが生成し得る全terminal failure codeを列挙し、配送・取消・安全回避を含む正規terminal snapshotを`INTERNAL_ERROR`へ潰さない。
+- 農地の`moisture`や作物の`age`などtickで正当に進行するblock propertyは、完全state一致ではなくblock種別と許容される単調変化を使う意味的postconditionで照合する。
+- 通常Actionの累積camera予算は最大720度、recoveryは別枠最大360度、公開progress/監査上限は合計1,080度とする。角速度、interaction、破壊・設置上限は緩めず、複数nodeの宣言順は意味論なのでruntimeが並べ替えない。
+- ActionのHTTP配送確認はresponse受領のackだけを扱い、変動するpose・観測・経路を再admissionしない。安全preflightは予約直前と実行開始直前に維持し、配送失敗とworld変化を混同しない。
 - test fixtureはdev-onlyの分離JARとし、command実行能力をsingleplayer、integrated server、loopback認証、固定test profileだけへ限定する。release JARへ含めず、MCMCPを自動armしない。
 - fixtureの再準備は冪等にし、前回runのcontainer内容物やworkspace内の落下itemを開始inventoryへ混入させない。block置換は作物等のitem entityを同期生成し得るため、combined wheatはlayout・container設定後にもworkspaceを最終purgeする。評価T0前に空inventory・所定のchest内容・落下itemなしを確認する。
 - 元の「くらふとぶ！-v01.2」instanceを変更せず、NeoForgeを使うPrism Launcher profile `MCMCP-Validation`の1つだけを永続的に使い回す。

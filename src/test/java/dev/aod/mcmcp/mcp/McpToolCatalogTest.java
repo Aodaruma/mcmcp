@@ -273,12 +273,23 @@ class McpToolCatalogTest {
 
         assertThat(progress.getAsJsonObject("ticks").get("maximum").getAsInt())
                 .isEqualTo(AgentActionStore.MAX_RECORDED_TICKS);
+        assertThat(progress.getAsJsonObject("camera_degrees").get("maximum").getAsDouble())
+                .isEqualTo(AgentActionStore.MAX_RECORDED_CAMERA_DEGREES);
         assertThat(progress.getAsJsonObject("interactions").get("maximum").getAsInt())
                 .isEqualTo(AgentActionStore.MAX_RECORDED_INTERACTIONS);
         assertThat(progress.getAsJsonObject("blocks_broken").get("maximum").getAsInt())
                 .isEqualTo(AgentActionStore.MAX_RECORDED_BLOCKS_BROKEN);
         assertThat(progress.getAsJsonObject("blocks_placed").get("maximum").getAsInt())
                 .isEqualTo(AgentActionStore.MAX_RECORDED_BLOCKS_PLACED);
+        var failureCodes = output.getAsJsonObject("properties")
+                .getAsJsonObject("failure")
+                .getAsJsonArray("oneOf")
+                .get(1).getAsJsonObject()
+                .getAsJsonObject("properties")
+                .getAsJsonObject("code")
+                .getAsJsonArray("enum");
+        assertThat(failureCodes).anySatisfy(code -> assertThat(code.getAsString())
+                .isEqualTo(AgentActionStore.FailureCode.DELIVERY_UNCONFIRMED.wireName()));
     }
 
     @Test

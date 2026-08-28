@@ -16,7 +16,7 @@ public final class AgentActionStore {
     public static final int TRACE_LIMIT = 256;
     public static final int MAX_RECORDED_TICKS = 12_200;
     public static final double MAX_RECORDED_DISTANCE = 48.0D;
-    public static final double MAX_RECORDED_CAMERA_DEGREES = 720.0D;
+    public static final double MAX_RECORDED_CAMERA_DEGREES = 1_080.0D;
     public static final int MAX_RECORDED_BLOCKS_BROKEN = 12;
     public static final int MAX_RECORDED_INTERACTIONS = 16;
     public static final int MAX_RECORDED_BLOCKS_PLACED = 16;

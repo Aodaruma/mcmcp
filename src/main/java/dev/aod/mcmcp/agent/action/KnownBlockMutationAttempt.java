@@ -8,6 +8,7 @@ import dev.aod.mcmcp.routine.SemanticActionAttempt;
 import dev.aod.mcmcp.routine.SemanticActionPort;
 import dev.aod.mcmcp.routine.SemanticActionPreparationAttempt;
 import dev.aod.mcmcp.routine.SemanticActionRequest;
+import dev.aod.mcmcp.routine.SemanticMutationPostcondition;
 import dev.aod.mcmcp.routine.UseItemOnBlockRequest;
 
 import java.util.Objects;
@@ -18,7 +19,6 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
     private final SemanticActionPort port;
     private final SemanticActionRequest request;
     private final BlockStateFingerprint expectedBefore;
-    private final BlockStateFingerprint expectedAfter;
     private final long deadlineTick;
     private Phase phase = Phase.PRECHECK;
     private SemanticActionPreparationAttempt preparation;
@@ -38,7 +38,6 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
         }
         this.deadlineTick = deadlineTick;
         expectedBefore = expectedBefore(request);
-        expectedAfter = expectedAfter(request);
     }
 
     public TickResult tick(long clientTick) {
@@ -55,7 +54,9 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
 
     private TickResult precheck(long clientTick) {
         var frame = Objects.requireNonNull(port.observe(request), "adapter returned no frame");
-        if (frame.liveBlockState().filter(expectedAfter::matches).isPresent()) {
+        if (frame.liveBlockState()
+                .filter(live -> SemanticMutationPostcondition.matches(request, live))
+                .isPresent()) {
             close();
             return TickResult.succeeded(false);
         }
@@ -90,7 +91,7 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
             return TickResult.running();
         }
         var live = evidence.liveBlockState().orElseThrow();
-        if (expectedAfter.matches(live)) {
+        if (SemanticMutationPostcondition.matches(request, live)) {
             close();
             return TickResult.succeeded(false);
         }
@@ -117,7 +118,9 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
             return fail(evidence.failure().code().toLowerCase(Locale.ROOT));
         }
         if (evidence.acknowledged()
-                && evidence.serverBlockState().filter(expectedAfter::matches).isPresent()) {
+                && evidence.serverBlockState()
+                        .filter(live -> SemanticMutationPostcondition.matches(request, live))
+                        .isPresent()) {
             port.stopInput(action);
             close();
             return TickResult.succeeded(true);
@@ -156,16 +159,6 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
             case PlaceBlockRequest value -> value.expectedBefore();
             case UseItemOnBlockRequest value -> value.expectedBefore();
             case InteractBlockRequest value -> value.expectedBefore();
-            default -> throw new IllegalArgumentException("request is not a finite block mutation");
-        };
-    }
-
-    private static BlockStateFingerprint expectedAfter(SemanticActionRequest request) {
-        return switch (request) {
-            case BreakBlockRequest value -> value.expectedAfter();
-            case PlaceBlockRequest value -> value.expectedAfter();
-            case UseItemOnBlockRequest value -> value.expectedAfter();
-            case InteractBlockRequest value -> value.expectedAfter();
             default -> throw new IllegalArgumentException("request is not a finite block mutation");
         };
     }
