@@ -1,0 +1,34 @@
+name: mcmcp-wheat-validation
+
+services:
+  client:
+    image: mcmcp-validation-prism:11.0.3
+    build:
+      context: .
+      args:
+        PRISM_VERSION: "11.0.3"
+        PRISM_SHA256: "0823a0e5f53694f0ff65a9523b6f221e6f10565b904941fa9522d89e8e7c69d1"
+    container_name: mcmcp-wheat-validation
+    init: true
+    restart: "no"
+    shm_size: 2gb
+    mem_limit: 24g
+    cpus: 12
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      SCREEN_WIDTH: "1280"
+      SCREEN_HEIGHT: "720"
+    volumes:
+      - type: bind
+        source: ${MCMCP_TESTLAB_ROOT:?set MCMCP_TESTLAB_ROOT to the disposable remote run directory}
+        target: /data
+    ports:
+      - "127.0.0.1:${MCMCP_NOVNC_PORT:-16080}:6080"
+      - "127.0.0.1:${MCMCP_RELAY_PORT:-18765}:28765"
+      - "127.0.0.1:${MCMCP_ADMIN_RELAY_PORT:-18766}:28766"
+    labels:
+      dev.aod.mcmcp.disposable: "true"
+      dev.aod.mcmcp.purpose: "wheat-field-validation"
