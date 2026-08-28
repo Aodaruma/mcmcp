@@ -47,11 +47,61 @@ class CatalogSchemaValidatorDiagnosticTest {
         assertThat(message).doesNotContain("secret", "sensitive");
     }
 
+    @Test
+    void wrongSmallEnumReportsOnlyBoundedCatalogValues() throws Exception {
+        JsonObject request = takeRequest();
+        request.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().addProperty("stack_policy", "private-submitted-policy");
+
+        String message = rejection("agent_start_action", request);
+        assertThat(message).isEqualTo(
+                "program.body[0].stack_policy: expected one of "
+                        + "[\"default_components_only\", \"item_id_any_components\"]");
+        assertThat(message).doesNotContain("private-submitted-policy");
+    }
+
+    @Test
+    void smallOneOfDiscriminatorReportsCatalogValuesButLargeEnumsStayGeneric() {
+        JsonObject discriminatorSchema = JsonParser.parseString("""
+                {"oneOf":[
+                  {"type":"object","properties":{"kind":{"const":"alpha"}},
+                   "required":["kind"]},
+                  {"type":"object","properties":{"kind":{"const":"beta"}},
+                   "required":["kind"]}
+                ]}
+                """).getAsJsonObject();
+        JsonObject submitted = JsonParser.parseString(
+                "{\"kind\":\"private-submitted-kind\"}").getAsJsonObject();
+        assertThat(CatalogSchemaValidator.firstFailure(discriminatorSchema, submitted).summary())
+                .isEqualTo("kind: expected one of [\"alpha\", \"beta\"]")
+                .doesNotContain("private-submitted-kind");
+
+        JsonObject largeEnumSchema = JsonParser.parseString("""
+                {"enum":["a","b","c","d","e","f","g","h","i"]}
+                """).getAsJsonObject();
+        assertThat(CatalogSchemaValidator.firstFailure(
+                largeEnumSchema, JsonParser.parseString("\"private-value\"")).summary())
+                .isEqualTo("$: not in catalog enum")
+                .doesNotContain("private-value");
+    }
+
     private static JsonObject startRequest(java.util.function.Consumer<JsonObject> mutation) {
         JsonObject request = new McpToolCatalog().inputSchema("agent_start_action")
                 .getAsJsonArray("examples").get(0).getAsJsonObject().deepCopy();
         mutation.accept(request);
         return request;
+    }
+
+    private static JsonObject takeRequest() {
+        return new McpToolCatalog().inputSchema("agent_start_action")
+                .getAsJsonArray("examples").asList().stream()
+                .map(example -> example.getAsJsonObject())
+                .filter(example -> example.getAsJsonObject("program").getAsJsonArray("body")
+                        .get(0).getAsJsonObject().get("op").getAsString()
+                        .equals("take_known_container_stack"))
+                .findFirst()
+                .orElseThrow()
+                .deepCopy();
     }
 
     private static void assertRejected(JsonObject request, String expected) throws Exception {

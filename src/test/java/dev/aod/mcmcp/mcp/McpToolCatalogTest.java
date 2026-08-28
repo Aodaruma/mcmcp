@@ -102,6 +102,34 @@ class McpToolCatalogTest {
         var visibleExample = JsonParser.parseString(
                 description.substring(exampleStart, exampleEnd));
         assertThat(CatalogSchemaValidator.matches(schema, visibleExample)).isTrue();
+        assertThat(visibleExample.getAsJsonObject().getAsJsonObject("program")
+                .getAsJsonArray("body").get(0).getAsJsonObject().get("op").getAsString())
+                .isEqualTo("take_known_container_stack");
+
+        assertThat(description)
+                .contains("stack_policy MUST be exactly \"default_components_only\"")
+                .contains("or \"item_id_any_components\"");
+    }
+
+    @Test
+    void readToolDescriptionsExposeFrequentlyMissedBoundsAndFrameRecovery() {
+        var tools = new McpToolCatalog().listResult().getAsJsonArray("tools");
+        String observation = tools.asList().stream()
+                .map(tool -> tool.getAsJsonObject())
+                .filter(tool -> tool.get("name").getAsString().equals("agent_get_observation"))
+                .findFirst().orElseThrow().get("description").getAsString();
+        assertThat(observation)
+                .contains("limit MUST be an integer from 1 through 256")
+                .contains("On FRAME_EXPIRED, call agent_get_state")
+                .contains("observation.latest_frame_id");
+
+        String action = tools.asList().stream()
+                .map(tool -> tool.getAsJsonObject())
+                .filter(tool -> tool.get("name").getAsString().equals("agent_get_action"))
+                .findFirst().orElseThrow().get("description").getAsString();
+        assertThat(action)
+                .contains("wait_timeout_ms is an optional integer from 0 through 25000")
+                .contains("zero or omission returns immediately");
     }
 
     @Test

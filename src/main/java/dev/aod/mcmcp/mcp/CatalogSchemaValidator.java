@@ -15,6 +15,9 @@ import java.util.regex.PatternSyntaxException;
 
 /** The small JSON Schema 2020-12 subset used by the checked-in tool catalog. */
 final class CatalogSchemaValidator {
+    private static final int MAX_ENUM_DIAGNOSTIC_VALUES = 8;
+    private static final int MAX_ENUM_VALUE_CODE_POINTS = 64;
+    private static final int MAX_ENUM_DIAGNOSTIC_CHARACTERS = 320;
     private static final ValidationFailure INVALID =
             new ValidationFailure("$", "does not match catalog schema", 0);
 
@@ -81,7 +84,8 @@ final class CatalogSchemaValidator {
             return failure(path, "not the required catalog value", depth, report);
         }
         if (schema.has("enum") && !contains(schema.getAsJsonArray("enum"), value)) {
-            return failure(path, "not in catalog enum", depth, report);
+            return failure(path, allowedValuesReason(
+                    schema.getAsJsonArray("enum"), "not in catalog enum"), depth, report);
         }
         if (value.isJsonObject()) {
             ValidationFailure objectFailure = validateObject(
@@ -261,16 +265,23 @@ final class CatalogSchemaValidator {
             }
             JsonElement submitted = object.get(property);
             var candidates = new ArrayList<JsonObject>();
+            var allowedValues = new JsonArray();
             for (JsonObject branch : branches) {
                 JsonObject resolved = dereference(root, branch);
                 JsonArray literals = literalValues(
                         root, resolved.getAsJsonObject("properties").getAsJsonObject(property));
+                for (JsonElement literal : literals) {
+                    if (!contains(allowedValues, literal)) {
+                        allowedValues.add(literal);
+                    }
+                }
                 if (contains(literals, submitted)) {
                     candidates.add(branch);
                 }
             }
             if (candidates.isEmpty()) {
-                return failure(discriminatorPath, "unknown catalog value", depth + 1, true);
+                return failure(discriminatorPath, allowedValuesReason(
+                        allowedValues, "unknown catalog value"), depth + 1, true);
             }
             if (candidates.size() == 1) {
                 return validate(root, candidates.get(0), value, path, depth, true);
@@ -339,6 +350,39 @@ final class CatalogSchemaValidator {
             }
         }
         return false;
+    }
+
+    /**
+     * Adds exact recovery guidance only when the trusted catalog enum is small and
+     * each value has a bounded primitive representation. Submitted values never
+     * participate in this message.
+     */
+    private static String allowedValuesReason(JsonArray values, String fallback) {
+        if (values.isEmpty() || values.size() > MAX_ENUM_DIAGNOSTIC_VALUES) {
+            return fallback;
+        }
+        var rendered = new ArrayList<String>(values.size());
+        int characters = "expected one of []".length();
+        for (JsonElement value : values) {
+            if (!value.isJsonPrimitive()) {
+                return fallback;
+            }
+            var primitive = value.getAsJsonPrimitive();
+            if (!primitive.isString() && !primitive.isNumber() && !primitive.isBoolean()) {
+                return fallback;
+            }
+            String raw = primitive.isString() ? primitive.getAsString() : primitive.toString();
+            if (raw.codePointCount(0, raw.length()) > MAX_ENUM_VALUE_CODE_POINTS) {
+                return fallback;
+            }
+            String item = primitive.toString();
+            characters += item.length() + (rendered.isEmpty() ? 0 : 2);
+            if (characters > MAX_ENUM_DIAGNOSTIC_CHARACTERS) {
+                return fallback;
+            }
+            rendered.add(item);
+        }
+        return "expected one of [" + String.join(", ", rendered) + "]";
     }
 
     private static boolean matchesType(JsonElement declared, JsonElement value) {

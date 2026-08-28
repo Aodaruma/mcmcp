@@ -34,8 +34,8 @@ $AuthExpirySafetyMargin = [TimeSpan]::FromMinutes(5)
 $MinimumMcpRequestIntervalMilliseconds = 60
 $ExpectedMcmcpServerName = 'mcmcp'
 $ExpectedMcmcpServerVersion = '0.1.0'
-$ExpectedCatalogFileSha256 = '88201db2eefb720cb4ff5fec39ffa8b837a2ad2fbe091f5f056cf1d2c7f3d20a'
-$ExpectedToolSurfaceSha256 = '71aae0111fd449e6d8dfb0b4fbd362d8591fd4e44c0448186fc4d4ee161409da'
+$ExpectedCatalogFileSha256 = '7fe82b63faa16d98c4735d87fd0c0038fced39cf3196cd4f0809714ab8d0def8'
+$ExpectedToolSurfaceSha256 = '690a685c312e66172345592ce4e9b729f79d151aa7a5fc8406a139e75b5b03a2'
 $AllowedTools = @(
     'agent_get_state',
     'agent_get_observation',
@@ -1872,7 +1872,15 @@ try {
 
     $turnCompleted = $false
     while (-not $turnCompleted) {
-        $message = Read-AppLine -Deadline $deadline
+        try {
+            $message = Read-AppLine -Deadline $deadline
+        } catch {
+            if ($_.Exception.Message -ceq 'app-server response timeout' -and
+                [DateTimeOffset]::UtcNow -ge $deadline) {
+                throw 'evaluation deadline expired before turn/completed'
+            }
+            throw
+        }
         $methodProperty = Get-Property -Object $message -Name 'method'
         $idProperty = Get-Property -Object $message -Name 'id'
         if ($null -ne $methodProperty -and $null -ne $idProperty) {
