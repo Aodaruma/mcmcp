@@ -583,6 +583,24 @@ final class FixtureGameTests {
                 FixturePhase5Scenario.bedState(BedPart.HEAD), pairFlags);
         assertExactState(helper, foot, FixturePhase5Scenario.bedState(BedPart.FOOT));
         assertExactState(helper, head, FixturePhase5Scenario.bedState(BedPart.HEAD));
+
+        var staleHoe = helper.spawnItem(net.minecraft.world.item.Items.IRON_HOE,
+                0.5F, 1.25F, 2.5F);
+        var staleSeeds = helper.spawnItem(net.minecraft.world.item.Items.WHEAT_SEEDS,
+                1.5F, 1.25F, 2.5F);
+        var outsideItem = helper.spawnItem(net.minecraft.world.item.Items.WHEAT,
+                3.5F, 1.25F, 2.5F);
+        AABB cleanupBounds = AABB.encapsulatingFullBlocks(
+                helper.absolutePos(new BlockPos(0, 1, 2)),
+                helper.absolutePos(new BlockPos(1, 1, 2)));
+        int discarded = FixturePhase5Scenario.discardItemEntities(
+                helper.getLevel(), cleanupBounds);
+        if (discarded != 2 || !staleHoe.isRemoved() || !staleSeeds.isRemoved()
+                || outsideItem.isRemoved()) {
+            helper.fail(Component.literal(
+                    "Combined wheat reset must remove only stale item entities inside its bounds"));
+        }
+        outsideItem.discard();
         helper.succeed();
     }
 

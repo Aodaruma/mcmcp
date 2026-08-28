@@ -9,6 +9,8 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -22,6 +24,7 @@ import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.clock.ClockTimeMarkers;
+import net.minecraft.world.phys.AABB;
 
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -123,6 +126,10 @@ final class FixturePhase5Scenario {
         FixturePhase3Scenario.stop(context);
         FixturePhase4RouteBlocker.stop();
         FixtureArena.requireInitialized(context.level());
+        if (mode == FixturePhase5Mode.COMBINED_WHEAT) {
+            discardItemEntities(
+                    context.level(), AABB.encapsulatingFullBlocks(WORKSPACE_MIN, WORKSPACE_MAX));
+        }
         FixtureArena.resetPlayer(context.player());
         if (mode == FixturePhase5Mode.COMBINED_WHEAT) {
             applyCombinedWheatLayout(context.level());
@@ -275,6 +282,12 @@ final class FixturePhase5Scenario {
 
     static ItemStack combinedSupplySeeds() {
         return new ItemStack(Items.WHEAT_SEEDS, COMBINED_SEED_COUNT);
+    }
+
+    static int discardItemEntities(ServerLevel level, AABB bounds) {
+        var staleItems = level.getEntities(EntityTypes.ITEM, bounds, Entity::isAlive);
+        staleItems.forEach(Entity::discard);
+        return staleItems.size();
     }
 
     static void verifyTreeGate(

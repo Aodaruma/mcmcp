@@ -9,6 +9,7 @@
 - 全周visual、Local Observation Volume、sound clueの許可範囲外にあるhidden world stateをruntimeへ渡さない。
 - Actionは期限・静的budget・停止条件・Esc緊急停止・監査traceを持つ。
 - test fixtureはdev-onlyの分離JARとし、command実行能力をsingleplayer、integrated server、loopback認証、固定test profileだけへ限定する。release JARへ含めず、MCMCPを自動armしない。
+- fixtureの再準備は冪等にし、前回runのcontainer内容物やworkspace内の落下itemを開始inventoryへ混入させない。評価T0前に空inventory・所定のchest内容・落下itemなしを確認する。
 - 元の「くらふとぶ！-v01.2」instanceを変更せず、NeoForgeを使うPrism Launcher profile `MCMCP-Validation`の1つだけを永続的に使い回す。
 - 実装phaseごとにbuild/testを通し、独立したcommitとしてmainへpushする。
 - 既存の安全境界、入力検証、エラー処理、fixture isolationを簡略化しない。
