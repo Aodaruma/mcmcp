@@ -57,7 +57,7 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
         var frame = Objects.requireNonNull(port.observe(request), "adapter returned no frame");
         if (frame.liveBlockState().filter(expectedAfter::matches).isPresent()) {
             close();
-            return TickResult.succeeded();
+            return TickResult.succeeded(false);
         }
         if (!frame.universalSafetyClear()
                 || frame.liveBlockState().isPresent()
@@ -92,7 +92,7 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
         var live = evidence.liveBlockState().orElseThrow();
         if (expectedAfter.matches(live)) {
             close();
-            return TickResult.succeeded();
+            return TickResult.succeeded(false);
         }
         if (!expectedBefore.matches(live)) return fail("mutation_precondition_changed");
         action = Objects.requireNonNull(
@@ -120,7 +120,7 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
                 && evidence.serverBlockState().filter(expectedAfter::matches).isPresent()) {
             port.stopInput(action);
             close();
-            return TickResult.succeeded();
+            return TickResult.succeeded(true);
         }
         port.maintain(action);
         return TickResult.running();
@@ -172,11 +172,16 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
 
     private enum Phase { PRECHECK, PREPARING, CONFIRMING }
 
-    public record TickResult(Status status, String evidence) {
-        private static TickResult running() { return new TickResult(Status.RUNNING, null); }
-        private static TickResult succeeded() { return new TickResult(Status.SUCCEEDED, null); }
+    public record TickResult(Status status, String evidence, boolean performed) {
+        private static TickResult running() {
+            return new TickResult(Status.RUNNING, null, false);
+        }
+        private static TickResult succeeded(boolean performed) {
+            return new TickResult(Status.SUCCEEDED, null, performed);
+        }
         private static TickResult failed(String evidence) {
-            return new TickResult(Status.FAILED, Objects.requireNonNull(evidence, "evidence"));
+            return new TickResult(
+                    Status.FAILED, Objects.requireNonNull(evidence, "evidence"), false);
         }
     }
 

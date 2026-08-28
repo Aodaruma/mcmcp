@@ -22,7 +22,7 @@ class ActionDslTest {
     void parsesEveryNormativeCatalogExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
-        assertThat(examples).hasSize(5);
+        assertThat(examples).hasSize(8);
         for (int index = 0; index < examples.size(); index++) {
             ActionDsl.Request parsed = ActionDslParser.parse(examples.get(index).getAsJsonObject());
             assertThat(parsed.schemaVersion()).isEqualTo(1);
@@ -182,6 +182,47 @@ class ActionDslTest {
                         ActionDsl.Capability.BLOCK_BREAK));
         assertThat(compiled.worstCaseCost())
                 .isEqualTo(new ActionDslCompiler.Cost(15_000, 300, 0, 180, 1, 1, 1));
+    }
+
+    @Test
+    void parsesAndCompilesWoodenPassageAndBoundedContainerNodes() {
+        JsonObject open = baseNode("open", "open_known_passage");
+        open.add("target", position());
+        open.addProperty("expected_block", "minecraft:oak_door");
+        JsonObject inspect = baseNode("inspect", "inspect_known_container");
+        inspect.add("target", position());
+        inspect.addProperty("expected_block", "minecraft:chest");
+        JsonObject take = baseNode("take", "take_known_container_stack");
+        take.add("target", position());
+        take.addProperty("expected_block", "minecraft:chest");
+        take.addProperty("item", "minecraft:wheat_seeds");
+        take.addProperty("stack_policy", "default_components_only");
+        take.addProperty("minimum_inventory_count", 64);
+
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "block_interact", "inventory_transfer"),
+                array(open, inspect, take),
+                budget(600_000, 12_000, 0, 360, 5, 0, 0)));
+
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.BLOCK_INTERACT,
+                        ActionDsl.Capability.INVENTORY_TRANSFER);
+        var compiled = ActionDslCompiler.compile(
+                request,
+                node -> Optional.of(new ActionDslCompiler.Cost(
+                        1_000, 20, 0, 30,
+                        node instanceof ActionDsl.TakeKnownContainerStack ? 3 : 1,
+                        0, 0)),
+                request.program().capabilities());
+        assertThat(compiled.worstCaseCost().interactions()).isEqualTo(5);
+
+        open.addProperty("expected_block", "minecraft:iron_door");
+        assertThatThrownBy(() -> ActionDslValidator.validate(ActionDslParser.parse(request(
+                capabilities("camera", "block_interact"), open,
+                budget(1_000, 20, 0, 30, 1, 0, 0)))))
+                .isInstanceOf(ActionDslException.class);
     }
 
     @Test

@@ -130,6 +130,47 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void catalogAdmitsBoundedPassageAndContainerNodesWithoutAddingTools() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var request = schema.getAsJsonArray("examples").get(0).getAsJsonObject().deepCopy();
+        var program = request.getAsJsonObject("program");
+        program.add("capabilities", JsonParser.parseString(
+                "[\"camera\",\"block_interact\",\"inventory_transfer\"]"));
+        program.add("body", JsonParser.parseString("""
+                [
+                  {"id":"open","op":"open_known_passage","target":{
+                    "dimension":"minecraft:overworld","x":1,"y":64,"z":2},
+                   "expected_block":"minecraft:oak_door"},
+                  {"id":"inspect","op":"inspect_known_container","target":{
+                    "dimension":"minecraft:overworld","x":2,"y":64,"z":2},
+                   "expected_block":"minecraft:chest"},
+                  {"id":"take","op":"take_known_container_stack","target":{
+                    "dimension":"minecraft:overworld","x":2,"y":64,"z":2},
+                   "expected_block":"minecraft:chest","item":"minecraft:wheat_seeds",
+                   "stack_policy":"default_components_only","minimum_inventory_count":64}
+                ]
+                """));
+        var budget = request.getAsJsonObject("budget");
+        budget.addProperty("max_duration_ms", 600_000);
+        budget.addProperty("max_ticks", 12_000);
+        budget.addProperty("max_distance_blocks", 0);
+        budget.addProperty("max_camera_degrees", 360);
+        budget.addProperty("max_interactions", 5);
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+
+        var iron = request.deepCopy();
+        iron.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().addProperty("expected_block", "minecraft:iron_door");
+        assertThat(CatalogSchemaValidator.matches(schema, iron)).isFalse();
+
+        var rawSlot = request.deepCopy();
+        rawSlot.getAsJsonObject("program").getAsJsonArray("body").get(2)
+                .getAsJsonObject().addProperty("slot", 0);
+        assertThat(CatalogSchemaValidator.matches(schema, rawSlot)).isFalse();
+        assertThat(new McpToolCatalog().listResult().getAsJsonArray("tools")).hasSize(5);
+    }
+
+    @Test
     void actionProgressSchemaMatchesTheRuntimeRecordingLimits() {
         var output = new McpToolCatalog().outputSchema("agent_get_action");
         var progress = output.getAsJsonObject("properties")

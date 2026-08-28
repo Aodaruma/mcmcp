@@ -7,10 +7,13 @@ import dev.aod.mcmcp.observation.MinecraftObservationService.BlockSample;
 import dev.aod.mcmcp.observation.ObservedBlock;
 import dev.aod.mcmcp.observation.ObservedContext;
 import dev.aod.mcmcp.observation.ObservationProvenance;
+import dev.aod.mcmcp.runtime.ClientReconciliationSignals.WorldMutation;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoorHingeSide;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -108,7 +111,7 @@ class MinecraftSemanticActionPortTest {
     }
 
     @Test
-    void blockInteractionAllowlistExcludesContainersAndTwoBlockDoors() {
+    void blockInteractionAllowlistIncludesOnlyWoodenDoors() {
         assertThat(MinecraftSemanticActionPort.allowedInteractBlock(
                 Blocks.LEVER.defaultBlockState())).isTrue();
         assertThat(MinecraftSemanticActionPort.allowedInteractBlock(
@@ -117,9 +120,12 @@ class MinecraftSemanticActionPortTest {
                 Blocks.OAK_TRAPDOOR.defaultBlockState())).isTrue();
 
         assertThat(MinecraftSemanticActionPort.allowedInteractBlock(
-                Blocks.OAK_DOOR.defaultBlockState())).isFalse();
+                Blocks.OAK_DOOR.defaultBlockState())).isTrue();
         assertThat(MinecraftSemanticActionPort.allowedInteractBlock(
                 Blocks.IRON_DOOR.defaultBlockState())).isFalse();
+        assertThat(Blocks.COPPER_DOOR.asList()).allSatisfy(block ->
+                assertThat(MinecraftSemanticActionPort.allowedInteractBlock(
+                        block.defaultBlockState())).isFalse());
         assertThat(MinecraftSemanticActionPort.allowedInteractBlock(
                 Blocks.CHEST.defaultBlockState())).isFalse();
         assertThat(MinecraftSemanticActionPort.allowedInteractBlock(
@@ -279,6 +285,121 @@ class MinecraftSemanticActionPortTest {
                         beforeState.setValue(BlockStateProperties.OPEN, true),
                         request,
                         Direction.SOUTH));
+    }
+
+    @Test
+    void woodenDoorOpenFreezesAConsistentTwoHalfTransition() {
+        var primaryPosition = new BlockPos(1, 64, 2);
+        var lower = Blocks.OAK_DOOR.defaultBlockState()
+                .setValue(BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.LOWER)
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.WEST)
+                .setValue(BlockStateProperties.DOOR_HINGE, DoorHingeSide.RIGHT)
+                .setValue(BlockStateProperties.OPEN, false)
+                .setValue(BlockStateProperties.POWERED, false);
+        var upper = lower.setValue(
+                BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.UPPER);
+        var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
+        var request = new InteractBlockRequest(
+                target,
+                new BlockStateFingerprint("minecraft:oak_door", Map.of("open", "false")),
+                new BlockStateFingerprint("minecraft:oak_door", Map.of("open", "true")),
+                new ActionBounds(target.dimension(), target, target, 0, 5, false));
+
+        var transition = MinecraftSemanticActionPort.expectedDoorInteractionTransition(
+                primaryPosition, lower, upper, request);
+        var upperTransition = MinecraftSemanticActionPort.expectedDoorInteractionTransition(
+                primaryPosition.above(), upper, lower, request);
+
+        assertThat(transition.companionPosition()).isEqualTo(primaryPosition.above());
+        assertThat(transition.primaryBefore().properties()).containsEntry("open", "false");
+        assertThat(transition.companionBefore().properties()).containsEntry("open", "false");
+        assertThat(transition.expectedPrimaryAfter().properties())
+                .containsEntry("half", "lower")
+                .containsEntry("facing", "west")
+                .containsEntry("hinge", "right")
+                .containsEntry("open", "true")
+                .containsEntry("powered", "false");
+        assertThat(upperTransition.companionPosition()).isEqualTo(primaryPosition);
+        assertThat(upperTransition.expectedPrimaryAfter().properties())
+                .containsEntry("half", "upper")
+                .containsEntry("open", "true");
+        assertThat(transition.expectedCompanionAfter().properties())
+                .containsEntry("half", "upper")
+                .containsEntry("facing", "west")
+                .containsEntry("hinge", "right")
+                .containsEntry("open", "true")
+                .containsEntry("powered", "false");
+    }
+
+    @Test
+    void woodenDoorOpenRejectsInconsistentOrAlreadyOpenHalves() {
+        var primaryPosition = new BlockPos(1, 64, 2);
+        var lower = Blocks.OAK_DOOR.defaultBlockState()
+                .setValue(BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.LOWER)
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.WEST)
+                .setValue(BlockStateProperties.DOOR_HINGE, DoorHingeSide.RIGHT)
+                .setValue(BlockStateProperties.OPEN, false)
+                .setValue(BlockStateProperties.POWERED, false);
+        var upper = lower.setValue(
+                BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.UPPER);
+        var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
+        var request = new InteractBlockRequest(
+                target,
+                new BlockStateFingerprint("minecraft:oak_door", Map.of("open", "false")),
+                new BlockStateFingerprint("minecraft:oak_door", Map.of("open", "true")),
+                new ActionBounds(target.dimension(), target, target, 0, 5, false));
+
+        assertThatIllegalArgumentException().isThrownBy(() ->
+                MinecraftSemanticActionPort.expectedDoorInteractionTransition(
+                        primaryPosition, lower,
+                        upper.setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST),
+                        request));
+        assertThatIllegalArgumentException().isThrownBy(() ->
+                MinecraftSemanticActionPort.expectedDoorInteractionTransition(
+                        primaryPosition, lower,
+                        upper.setValue(BlockStateProperties.OPEN, true),
+                        request));
+        assertThatIllegalArgumentException().isThrownBy(() ->
+                MinecraftSemanticActionPort.expectedDoorInteractionTransition(
+                        primaryPosition, lower.setValue(BlockStateProperties.OPEN, true),
+                        upper.setValue(BlockStateProperties.OPEN, true),
+                        request));
+    }
+
+    @Test
+    void doorCompanionRequiresAnExactPostDispatchServerBlockMutation() {
+        var companion = new BlockPos(1, 65, 2);
+
+        assertThat(MinecraftSemanticActionPort.hasAuthoritativeBlockMutation(
+                10L,
+                List.of(new WorldMutation(11L, WorldMutation.Kind.BLOCK, 1, 65, 2)),
+                companion)).isTrue();
+        assertThat(MinecraftSemanticActionPort.hasAuthoritativeBlockMutation(
+                11L,
+                List.of(new WorldMutation(11L, WorldMutation.Kind.BLOCK, 1, 65, 2)),
+                companion)).isFalse();
+        assertThat(MinecraftSemanticActionPort.hasAuthoritativeBlockMutation(
+                10L,
+                List.of(new WorldMutation(11L, WorldMutation.Kind.BLOCK, 1, 64, 2)),
+                companion)).isFalse();
+        assertThat(MinecraftSemanticActionPort.hasAuthoritativeBlockMutation(
+                10L,
+                List.of(new WorldMutation(11L, WorldMutation.Kind.CHUNK, 0, 0, 0)),
+                companion)).isFalse();
+    }
+
+    @Test
+    void woodenDoorSuccessRequiresPrimaryConfirmationAndConfirmedCompanion() {
+        assertThat(MinecraftSemanticActionPort.doorInteractionAcknowledged(
+                true, true, MinecraftSemanticActionPort.DoorCompanionStatus.CONFIRMED)).isTrue();
+        assertThat(MinecraftSemanticActionPort.doorInteractionAcknowledged(
+                false, true, MinecraftSemanticActionPort.DoorCompanionStatus.CONFIRMED)).isFalse();
+        assertThat(MinecraftSemanticActionPort.doorInteractionAcknowledged(
+                true, false, MinecraftSemanticActionPort.DoorCompanionStatus.CONFIRMED)).isFalse();
+        assertThat(MinecraftSemanticActionPort.doorInteractionAcknowledged(
+                true, true, MinecraftSemanticActionPort.DoorCompanionStatus.PENDING)).isFalse();
+        assertThat(MinecraftSemanticActionPort.doorInteractionAcknowledged(
+                true, true, MinecraftSemanticActionPort.DoorCompanionStatus.MISMATCH)).isFalse();
     }
 
     @Test

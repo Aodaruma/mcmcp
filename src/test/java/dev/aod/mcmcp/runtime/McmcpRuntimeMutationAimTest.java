@@ -55,4 +55,24 @@ class McmcpRuntimeMutationAimTest {
         assertThat(new double[] {witness.x(), witness.y(), witness.z()})
                 .containsExactly(point.x, point.y, point.z);
     }
+
+    @Test
+    void passageRequestPreservesTheSelectedWoodenBlockIdentity() {
+        var target = new ActionDsl.Position("minecraft:overworld", 4, 64, 5);
+        var point = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
+                target, ActionDsl.BlockFace.WEST);
+
+        var request = (InteractBlockRequest) McmcpRuntime.blockMutationRequest(
+                new ActionDsl.OpenKnownPassage("open_door", target, "minecraft:oak_door"),
+                new AgentPrimitivePlanner.MutationAim(
+                        target, ActionDsl.BlockFace.WEST, point));
+
+        assertThat(request.expectedBefore()).isEqualTo(
+                new dev.aod.mcmcp.routine.BlockStateFingerprint(
+                        "minecraft:oak_door", java.util.Map.of("open", "false")));
+        assertThat(request.expectedAfter()).isEqualTo(
+                new dev.aod.mcmcp.routine.BlockStateFingerprint(
+                        "minecraft:oak_door", java.util.Map.of("open", "true")));
+        assertThat(request.plannedAim()).isPresent();
+    }
 }

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "program": {
+    "dsl_version": 1,
+    "name": "take_wheat_seeds_stack",
+    "capabilities": ["camera", "inventory_transfer"],
+    "body": [
+      {
+        "id": "take",
+        "op": "take_known_container_stack",
+        "target": {
+          "dimension": "minecraft:overworld",
+          "x": 100,
+          "y": 64,
+          "z": 120
+        },
+        "expected_block": "minecraft:chest",
+        "item": "minecraft:wheat_seeds",
+        "stack_policy": "default_components_only",
+        "minimum_inventory_count": 64
+      }
+    ]
+  },
+  "budget": {
+    "max_duration_ms": 20000,
+    "max_ticks": 400,
+    "max_distance_blocks": 0,
+    "max_camera_degrees": 180,
+    "max_interactions": 3,
+    "max_blocks_broken": 0,
+    "max_blocks_placed": 0
+  }
+}

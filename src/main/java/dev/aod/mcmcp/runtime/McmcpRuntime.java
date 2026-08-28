@@ -7,6 +7,7 @@ import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.action.ActionProgramCursor;
 import dev.aod.mcmcp.agent.action.KnownBlockBreakAttempt;
 import dev.aod.mcmcp.agent.action.KnownBlockMutationAttempt;
+import dev.aod.mcmcp.agent.action.KnownContainerAttempt;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
@@ -153,7 +154,8 @@ public final class McmcpRuntime implements McpRuntimePort {
     private static final float MIN_SAFE_STAY_HEALTH = 6.0F;
     /** Expanded only when a phase has passed its gate. */
     private static final Set<String> AVAILABLE_CAPABILITIES =
-            Set.of("movement", "camera", "block_break", "block_interact", "block_place");
+            Set.of("movement", "camera", "block_break", "block_interact", "block_place",
+                    "inventory_transfer");
 
     private final String modVersion;
     private final String neoForgeVersion;
@@ -977,6 +979,9 @@ public final class McmcpRuntime implements McpRuntimePort {
         if (snapshot.control().capabilities().contains("block_place")) {
             allowed.add(ActionDsl.Capability.BLOCK_PLACE);
         }
+        if (snapshot.control().capabilities().contains("inventory_transfer")) {
+            allowed.add(ActionDsl.Capability.INVENTORY_TRANSFER);
+        }
         ActionDslCompiler.CompiledProgram program = ActionDslCompiler.compile(
                 request, McmcpRuntime::structuralPrimitiveCost, allowed);
         Optional<ActionDsl.Node> initialPrimitive = firstPrimitive(
@@ -1044,7 +1049,10 @@ public final class McmcpRuntime implements McpRuntimePort {
     static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
         long interactions = node instanceof ActionDsl.TillKnownBlock
                         || node instanceof ActionDsl.OpenKnownFenceGate
-                ? 1L : 0L;
+                        || node instanceof ActionDsl.OpenKnownPassage
+                        || node instanceof ActionDsl.InspectKnownContainer
+                ? 1L
+                : node instanceof ActionDsl.TakeKnownContainerStack ? 3L : 0L;
         long breaks = node instanceof ActionDsl.BreakKnownFace
                         || node instanceof ActionDsl.HarvestKnownWheat
                 ? 1L : 0L;
@@ -2499,8 +2507,15 @@ public final class McmcpRuntime implements McpRuntimePort {
             if (agentExecution.primitive instanceof ActionDsl.TillKnownBlock
                     || agentExecution.primitive instanceof ActionDsl.PlantKnownWheat
                     || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheat
-                    || agentExecution.primitive instanceof ActionDsl.OpenKnownFenceGate) {
+                    || agentExecution.primitive instanceof ActionDsl.OpenKnownFenceGate
+                    || agentExecution.primitive instanceof ActionDsl.OpenKnownPassage) {
                 tickAgentBlockMutation(minecraft, session, action);
+                return;
+            }
+
+            if (agentExecution.primitive instanceof ActionDsl.InspectKnownContainer
+                    || agentExecution.primitive instanceof ActionDsl.TakeKnownContainerStack) {
+                tickAgentContainer(minecraft, session, action);
                 return;
             }
 
@@ -3009,13 +3024,16 @@ public final class McmcpRuntime implements McpRuntimePort {
             }
             case SUCCEEDED -> {
                 agentExecution.blockMutationAttempt = null;
-                if (agentExecution.primitive instanceof ActionDsl.TillKnownBlock
-                        || agentExecution.primitive instanceof ActionDsl.OpenKnownFenceGate) {
-                    agentActions.recordInteraction(action.actionId());
-                } else if (agentExecution.primitive instanceof ActionDsl.PlantKnownWheat) {
-                    agentActions.recordBlockPlace(action.actionId());
-                } else {
-                    agentActions.recordBlockBreak(action.actionId());
+                if (result.performed()) {
+                    if (agentExecution.primitive instanceof ActionDsl.TillKnownBlock
+                            || agentExecution.primitive instanceof ActionDsl.OpenKnownFenceGate
+                            || agentExecution.primitive instanceof ActionDsl.OpenKnownPassage) {
+                        agentActions.recordInteraction(action.actionId());
+                    } else if (agentExecution.primitive instanceof ActionDsl.PlantKnownWheat) {
+                        agentActions.recordBlockPlace(action.actionId());
+                    } else {
+                        agentActions.recordBlockBreak(action.actionId());
+                    }
                 }
                 agentActions.completeNode(action.actionId());
                 agentExecution.primitive = null;
@@ -3026,6 +3044,125 @@ public final class McmcpRuntime implements McpRuntimePort {
                         minecraft, agentActions.get(action.actionId()).progress());
             }
         }
+    }
+
+    private void tickAgentContainer(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action) {
+        if (agentExecution.containerAttempt == null) {
+            PhaseFiveRequest request = containerRequest(
+                    minecraft, session, agentExecution.primitive);
+            long deadline = Math.addExact(
+                    session.clientTick(), AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
+            agentExecution.containerAttempt = new KnownContainerAttempt(
+                    phaseFiveInventoryPort, request, session.clientTick(), deadline);
+        }
+        KnownContainerAttempt.TickResult result =
+                agentExecution.containerAttempt.tick(session.clientTick());
+        for (int count = 0; count < result.interactionDelta(); count++) {
+            agentActions.recordInteraction(action.actionId());
+        }
+        switch (result.status()) {
+            case RUNNING -> { }
+            case FAILED -> failAgentAction(
+                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                    true,
+                    result.evidence());
+            case SUCCEEDED -> {
+                agentExecution.containerAttempt = null;
+                if (agentExecution.primitive instanceof ActionDsl.InspectKnownContainer) {
+                    agentActions.recordNodeEvidence(
+                            action.actionId(), containerItemsTrace(result.items()));
+                } else {
+                    var take = (ActionDsl.TakeKnownContainerStack) agentExecution.primitive;
+                    agentActions.recordNodeEvidence(
+                            action.actionId(), "container_transfer=" + take.item());
+                }
+                agentActions.completeNode(action.actionId());
+                agentExecution.primitive = null;
+                agentExecution.replanning = false;
+                agentExecution.replanNotBeforeTick = 0L;
+                agentExecution.replanDeadlineTick = 0L;
+                advanceAgentProgram(
+                        minecraft, agentActions.get(action.actionId()).progress());
+            }
+        }
+    }
+
+    private static PhaseFiveRequest containerRequest(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            ActionDsl.Node primitive) {
+        ActionDsl.Position position;
+        String expectedBlock;
+        String item;
+        String stackPolicy;
+        int minimumInventoryCount;
+        if (primitive instanceof ActionDsl.InspectKnownContainer inspect) {
+            position = inspect.target();
+            expectedBlock = inspect.expectedBlock();
+            item = "minecraft:air";
+            stackPolicy = "item_id_any_components";
+            minimumInventoryCount = 0;
+        } else if (primitive instanceof ActionDsl.TakeKnownContainerStack take) {
+            position = take.target();
+            expectedBlock = take.expectedBlock();
+            item = take.item();
+            stackPolicy = take.stackPolicy();
+            minimumInventoryCount = take.minimumInventoryCount();
+        } else {
+            throw new IllegalArgumentException("node is not a known container operation");
+        }
+        if (!position.dimension().equals(session.dimension())) {
+            throw new IllegalArgumentException("container target dimension changed");
+        }
+        BlockPos blockPos = new BlockPos(position.x(), position.y(), position.z());
+        var level = Objects.requireNonNull(minecraft.level, "level");
+        BlockStateFingerprint state = MinecraftPhaseFiveInventoryPort.fingerprintLiveState(
+                level.getBlockState(blockPos));
+        if (!expectedBlock.equals(state.blockId())) {
+            throw new IllegalArgumentException("container target block changed");
+        }
+        var target = new BlockTarget(
+                position.dimension(), position.x(), position.y(), position.z());
+        var targetMap = Map.<String, Object>of(
+                "dimension", target.dimension(),
+                "x", target.x(),
+                "y", target.y(),
+                "z", target.z());
+        var stateMap = Map.<String, Object>of(
+                "block", state.blockId(),
+                "properties", state.properties());
+        var parameters = new LinkedHashMap<String, Object>();
+        parameters.put("container", Map.of("target", targetMap, "expected_state", stateMap));
+        parameters.put("direction", "container_to_player");
+        parameters.put("stack", Map.of("item", item, "stack_policy", stackPolicy));
+        parameters.put("goal", Map.of(
+                "minimum_destination_count", minimumInventoryCount));
+        parameters.put("max_transfer_count", 64);
+        parameters.put("max_stack_moves", 1);
+        parameters.put("retain_view_on_release", true);
+        parameters.put("max_camera_degrees_per_tick",
+                McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0D);
+        var bounds = new PhaseFiveBounds(
+                target.dimension(), target, target, 0, 20, false);
+        return new PhaseFiveRequest(
+                "transfer_items", parameters, bounds, minimumInventoryCount, "items");
+    }
+
+    private static String containerItemsTrace(List<KnownContainerAttempt.ItemCount> items) {
+        var output = new StringBuilder("container_items=");
+        for (var item : items) {
+            String entry = (output.length() == "container_items=".length() ? "" : ",")
+                    + item.item() + ":" + item.count();
+            if (output.length() + entry.length() > 252) {
+                output.append(",...");
+                break;
+            }
+            output.append(entry);
+        }
+        return output.toString();
     }
 
     private void retryAgentMutationAim(
@@ -3058,6 +3195,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             case ActionDsl.PlantKnownWheat value -> value.target();
             case ActionDsl.HarvestKnownWheat value -> value.target();
             case ActionDsl.OpenKnownFenceGate value -> value.target();
+            case ActionDsl.OpenKnownPassage value -> value.target();
             default -> throw new IllegalArgumentException("node is not a known block mutation");
         };
         var target = new BlockTarget(
@@ -3093,6 +3231,12 @@ public final class McmcpRuntime implements McpRuntimePort {
                             "minecraft:oak_fence_gate", Map.of("open", "false")),
                     new BlockStateFingerprint(
                             "minecraft:oak_fence_gate", Map.of("open", "true")),
+                    bounds,
+                    aim);
+            case ActionDsl.OpenKnownPassage passage -> new InteractBlockRequest(
+                    target,
+                    new BlockStateFingerprint(passage.expectedBlock(), Map.of("open", "false")),
+                    new BlockStateFingerprint(passage.expectedBlock(), Map.of("open", "true")),
                     bounds,
                     aim);
             default -> throw new IllegalArgumentException("node is not a known block mutation");
@@ -4437,6 +4581,15 @@ public final class McmcpRuntime implements McpRuntimePort {
                 McmcpMod.LOGGER.error("MCMCP known-block mutation release failed", failure);
             } finally {
                 agentExecution.blockMutationAttempt = null;
+            }
+        }
+        if (agentExecution.containerAttempt != null) {
+            try {
+                agentExecution.containerAttempt.close();
+            } catch (RuntimeException | LinkageError failure) {
+                McmcpMod.LOGGER.error("MCMCP known-container release failed", failure);
+            } finally {
+                agentExecution.containerAttempt = null;
             }
         }
         agentExecution.breakAimComplete = false;
@@ -6718,6 +6871,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         private boolean breakAimComplete;
         private KnownBlockBreakAttempt blockBreakAttempt;
         private KnownBlockMutationAttempt blockMutationAttempt;
+        private KnownContainerAttempt containerAttempt;
 
         private AgentExecution(
                 AgentActionStore.Active action,

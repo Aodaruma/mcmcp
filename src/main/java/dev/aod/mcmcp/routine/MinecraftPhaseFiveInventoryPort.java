@@ -53,7 +53,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     static final String SINGLE_CONTAINER_MENU = "minecraft:generic_9x3";
     private static final int OPEN_TIMEOUT_TICKS = 40;
     private static final float MIN_SAFE_HEALTH = 10.0F;
-    private static final float MAX_TURN_PER_TICK = 8.0F;
+    private static final float LEGACY_MAX_TURN_PER_TICK = 8.0F;
     private static final float AIM_EPSILON = 0.75F;
     private static final float ROTATION_EPSILON = 0.1F;
 
@@ -115,7 +115,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return failure("INVENTORY_WORLD_SESSION_CHANGED", RoutineFailure.Category.EXTERNAL,
                     RoutineFailure.Recovery.REPLAN, Map.of("world_ready", true), Map.of());
         }
-        if (!safePlayer(minecraft) || !minecraft.isWindowActive()) {
+        if (!safePlayer(minecraft)) {
             return failure("INVENTORY_PLAYER_UNSAFE", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.USER,
                     Map.of("safe_survival_player", true), Map.of());
@@ -171,7 +171,10 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             state.stage = Stage.TERMINAL;
             return attempt;
         }
-        state.view = ViewLease.acquire(Objects.requireNonNull(minecraft.player));
+        state.view = ViewLease.acquire(
+                Objects.requireNonNull(minecraft.player),
+                state.parameters.restoreViewOnRelease(),
+                state.parameters.maxCameraDegreesPerTick());
         state.stage = Stage.AIMING_INITIAL;
         return attempt;
     }
@@ -221,7 +224,6 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             case AWAITING_CLOSE -> {
                 if (screenState.phase() == ScreenOwnershipSignals.Phase.IDLE
                         && minecraft.gui.screen() == null
-                        && minecraft.mouseHandler.isMouseGrabbed()
                         && minecraft.player != null
                         && minecraft.player.containerMenu == minecraft.player.inventoryMenu) {
                     if (targetReadyForReopen(minecraft, state.parameters)) {
@@ -490,8 +492,18 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             evidence.put("destination_count_after", destination);
             evidence.put("transferred", 0);
             evidence.put("full_readback", true);
-            evidence.putAll(availableItemEvidence(snapshot.slots(), sourceSlots, 16));
+            evidence.putAll(availableItemEvidence(snapshot.slots(), sourceSlots, 27));
             succeed(state, destination, evidence);
+            return;
+        }
+
+        if (state.completedActions >= transfer.maxStackMoves()) {
+            fail(state, "TRANSFER_STACK_LIMIT_EXHAUSTED", RoutineFailure.Category.PRECONDITION,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("maximum_stack_moves", transfer.maxStackMoves(),
+                            "minimum_destination_count", transfer.minimumDestinationCount()),
+                    Map.of("destination_count", destination,
+                            "completed_stack_moves", state.completedActions));
             return;
         }
 
@@ -510,7 +522,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         if (candidate.isEmpty()) {
             var observed = new LinkedHashMap<String, Object>();
             observed.put("source_count", source);
-            observed.putAll(availableItemEvidence(snapshot.slots(), sourceSlots, 16));
+            observed.putAll(availableItemEvidence(snapshot.slots(), sourceSlots, 27));
             fail(state, "TRANSFER_FULL_STACK_UNAVAILABLE", RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
                     Map.of("item", transfer.item(), "maximum_remaining", remaining),
@@ -639,10 +651,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return failure("INVENTORY_PLAYER_UNSAFE", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.USER, Map.of("safe_survival_player", true), Map.of());
         }
-        if (!minecraft.isWindowActive() || minecraft.isPaused()
-                || !minecraft.mouseHandler.isMouseGrabbed()
-                || minecraft.gui.screen() != null || minecraft.gui.overlay() != null
-                || player.containerMenu != player.inventoryMenu
+        if (player.containerMenu != player.inventoryMenu
                 || screens.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE) {
             return failure("INVENTORY_SCREEN_NOT_CLEAR", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.USER,
@@ -801,6 +810,14 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 integer(goal.get("minimum_destination_count"),
                         "goal.minimum_destination_count"),
                 integer(parameters.get("max_transfer_count"), "max_transfer_count"),
+                parameters.containsKey("max_stack_moves")
+                        ? integer(parameters.get("max_stack_moves"), "max_stack_moves")
+                        : integer(parameters.get("max_transfer_count"), "max_transfer_count"),
+                Boolean.TRUE.equals(parameters.get("retain_view_on_release")),
+                parameters.containsKey("max_camera_degrees_per_tick")
+                        ? finiteNumber(parameters.get("max_camera_degrees_per_tick"),
+                                "max_camera_degrees_per_tick")
+                        : LEGACY_MAX_TURN_PER_TICK,
                 target(map(container.get("target"), "container.target")),
                 state(map(container.get("expected_state"), "container.expected_state")));
     }
@@ -862,6 +879,13 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         return (int) longValue;
     }
 
+    private static double finiteNumber(Object value, String name) {
+        if (!(value instanceof Number number) || !Double.isFinite(number.doubleValue())) {
+            throw new IllegalArgumentException(name + " must be a finite number");
+        }
+        return number.doubleValue();
+    }
+
     private static BlockHitResult exactHit(Minecraft minecraft, BlockTarget target) {
         if (!(minecraft.hitResult instanceof BlockHitResult hit)
                 || hit.getType() != HitResult.Type.BLOCK
@@ -910,12 +934,17 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 fingerprint(minecraft.level.getBlockState(position)));
     }
 
-    private static BlockStateFingerprint fingerprint(BlockState state) {
+    /** Exact live state identity used by the Action DSL adapter before opening a container. */
+    public static BlockStateFingerprint fingerprintLiveState(BlockState state) {
         var properties = new LinkedHashMap<String, String>();
         state.getValues().forEach(value ->
                 properties.put(value.property().getName(), value.valueName()));
         return new BlockStateFingerprint(
                 BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString(), properties);
+    }
+
+    private static BlockStateFingerprint fingerprint(BlockState state) {
+        return fingerprintLiveState(state);
     }
 
     private static int defaultStackHash(String itemId) {
@@ -1157,6 +1186,14 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         BlockStateFingerprint expectedState();
 
         String menuTypeId();
+
+        default boolean restoreViewOnRelease() {
+            return true;
+        }
+
+        default float maxCameraDegreesPerTick() {
+            return LEGACY_MAX_TURN_PER_TICK;
+        }
     }
 
     record CraftParameters(
@@ -1191,6 +1228,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             String stackPolicy,
             int minimumDestinationCount,
             int maxTransferCount,
+            int maxStackMoves,
+            boolean retainViewOnRelease,
+            double cameraDegreesPerTick,
             BlockTarget target,
             BlockStateFingerprint expectedState) implements ParsedParameters {
         TransferParameters {
@@ -1203,7 +1243,10 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 throw new IllegalArgumentException("unsupported transfer stack policy");
             }
             if (minimumDestinationCount < 0 || minimumDestinationCount > 2_304
-                    || maxTransferCount < 1 || maxTransferCount > 2_304) {
+                    || maxTransferCount < 1 || maxTransferCount > 2_304
+                    || maxStackMoves < 1 || maxStackMoves > 2_304
+                    || !Double.isFinite(cameraDegreesPerTick)
+                    || cameraDegreesPerTick < 0.1D || cameraDegreesPerTick > 18.0D) {
                 throw new IllegalArgumentException("transfer limits are outside the v1 contract");
             }
         }
@@ -1215,6 +1258,16 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
         boolean defaultComponentsOnly() {
             return "default_components_only".equals(stackPolicy);
+        }
+
+        @Override
+        public boolean restoreViewOnRelease() {
+            return !retainViewOnRelease;
+        }
+
+        @Override
+        public float maxCameraDegreesPerTick() {
+            return (float) cameraDegreesPerTick;
         }
     }
 
@@ -1310,17 +1363,27 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private final float originalPitch;
         private float expectedYaw;
         private float expectedPitch;
+        private final boolean restoreOnClose;
+        private final float maxTurnPerTick;
         private boolean closed;
 
-        private ViewLease(LocalPlayer player) {
+        private ViewLease(
+                LocalPlayer player, boolean restoreOnClose, float maxTurnPerTick) {
             originalYaw = player.getYRot();
             originalPitch = player.getXRot();
             expectedYaw = originalYaw;
             expectedPitch = originalPitch;
+            this.restoreOnClose = restoreOnClose;
+            this.maxTurnPerTick = maxTurnPerTick;
         }
 
-        static ViewLease acquire(LocalPlayer player) {
-            return new ViewLease(Objects.requireNonNull(player, "player"));
+        static ViewLease acquire(
+                LocalPlayer player, boolean restoreOnClose, float maxTurnPerTick) {
+            if (!Float.isFinite(maxTurnPerTick) || maxTurnPerTick <= 0.0F) {
+                throw new IllegalArgumentException("camera limit must be finite and positive");
+            }
+            return new ViewLease(
+                    Objects.requireNonNull(player, "player"), restoreOnClose, maxTurnPerTick);
         }
 
         void turnToward(Minecraft minecraft, Vec3 point) {
@@ -1328,9 +1391,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             LocalPlayer player = Objects.requireNonNull(minecraft.player);
             Rotation target = rotation(player.getEyePosition(), point);
             float yaw = Mth.clamp(Mth.wrapDegrees(target.yaw - player.getYRot()),
-                    -MAX_TURN_PER_TICK, MAX_TURN_PER_TICK);
+                    -maxTurnPerTick, maxTurnPerTick);
             float pitch = Mth.clamp(target.pitch - player.getXRot(),
-                    -MAX_TURN_PER_TICK, MAX_TURN_PER_TICK);
+                    -maxTurnPerTick, maxTurnPerTick);
             player.turn(yaw / 0.15D, pitch / 0.15D);
             expectedYaw = player.getYRot();
             expectedPitch = player.getXRot();
@@ -1348,7 +1411,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 return;
             }
             LocalPlayer player = minecraft.player;
-            if (player != null) {
+            if (player != null && restoreOnClose) {
                 float yaw = Mth.wrapDegrees(originalYaw - player.getYRot());
                 float pitch = originalPitch - player.getXRot();
                 player.turn(yaw / 0.15D, pitch / 0.15D);

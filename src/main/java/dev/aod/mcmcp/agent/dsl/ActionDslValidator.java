@@ -48,6 +48,26 @@ public final class ActionDslValidator {
     private static final Set<String> VANILLA_HOES = Set.of(
             "minecraft:wooden_hoe", "minecraft:stone_hoe", "minecraft:iron_hoe",
             "minecraft:golden_hoe", "minecraft:diamond_hoe", "minecraft:netherite_hoe");
+    private static final Set<String> KNOWN_CONTAINERS = Set.of(
+            "minecraft:chest", "minecraft:barrel");
+    private static final Set<String> STACK_POLICIES = Set.of(
+            "default_components_only", "item_id_any_components");
+    private static final Set<String> WOODEN_OPENABLES = Set.of(
+            "minecraft:oak_door", "minecraft:spruce_door", "minecraft:birch_door",
+            "minecraft:jungle_door", "minecraft:acacia_door", "minecraft:cherry_door",
+            "minecraft:dark_oak_door", "minecraft:pale_oak_door", "minecraft:mangrove_door",
+            "minecraft:bamboo_door", "minecraft:crimson_door", "minecraft:warped_door",
+            "minecraft:oak_trapdoor", "minecraft:spruce_trapdoor", "minecraft:birch_trapdoor",
+            "minecraft:jungle_trapdoor", "minecraft:acacia_trapdoor", "minecraft:cherry_trapdoor",
+            "minecraft:dark_oak_trapdoor", "minecraft:pale_oak_trapdoor",
+            "minecraft:mangrove_trapdoor", "minecraft:bamboo_trapdoor",
+            "minecraft:crimson_trapdoor", "minecraft:warped_trapdoor",
+            "minecraft:oak_fence_gate", "minecraft:spruce_fence_gate",
+            "minecraft:birch_fence_gate", "minecraft:jungle_fence_gate",
+            "minecraft:acacia_fence_gate", "minecraft:cherry_fence_gate",
+            "minecraft:dark_oak_fence_gate", "minecraft:pale_oak_fence_gate",
+            "minecraft:mangrove_fence_gate", "minecraft:bamboo_fence_gate",
+            "minecraft:crimson_fence_gate", "minecraft:warped_fence_gate");
 
     private ActionDslValidator() {
     }
@@ -214,6 +234,39 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_INTERACT);
             return 1;
         }
+        if (node instanceof ActionDsl.OpenKnownPassage passage) {
+            validatePosition(passage.target(), path + ".target");
+            if (!WOODEN_OPENABLES.contains(passage.expectedBlock())) {
+                throw invalid(path + ".expected_block must be an allowlisted wooden openable");
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_INTERACT);
+            return 1;
+        }
+        if (node instanceof ActionDsl.InspectKnownContainer inspect) {
+            validatePosition(inspect.target(), path + ".target");
+            if (!KNOWN_CONTAINERS.contains(inspect.expectedBlock())) {
+                throw invalid(path + ".expected_block must be minecraft:chest or minecraft:barrel");
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
+            return 1;
+        }
+        if (node instanceof ActionDsl.TakeKnownContainerStack take) {
+            validatePosition(take.target(), path + ".target");
+            if (!KNOWN_CONTAINERS.contains(take.expectedBlock())) {
+                throw invalid(path + ".expected_block must be minecraft:chest or minecraft:barrel");
+            }
+            requirePattern(take.item(), RESOURCE_LOCATION, path + ".item");
+            if (!STACK_POLICIES.contains(take.stackPolicy())) {
+                throw invalid(path + ".stack_policy is unsupported");
+            }
+            requireRange(take.minimumInventoryCount(), 1, 2_304,
+                    path + ".minimum_inventory_count");
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
+            return 1;
+        }
         if (node instanceof ActionDsl.WaitTicks wait) {
             requireRange(wait.ticks(), 1, 200, path + ".ticks");
             return 1;
@@ -247,7 +300,10 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.TillKnownBlock
                     || node instanceof ActionDsl.PlantKnownWheat
                     || node instanceof ActionDsl.HarvestKnownWheat
-                    || node instanceof ActionDsl.OpenKnownFenceGate) return true;
+                    || node instanceof ActionDsl.OpenKnownFenceGate
+                    || node instanceof ActionDsl.OpenKnownPassage
+                    || node instanceof ActionDsl.InspectKnownContainer
+                    || node instanceof ActionDsl.TakeKnownContainerStack) return true;
             if (node instanceof ActionDsl.If conditional
                     && (containsWorldMutation(conditional.thenBranch())
                             || containsWorldMutation(conditional.elseBranch()))) return true;

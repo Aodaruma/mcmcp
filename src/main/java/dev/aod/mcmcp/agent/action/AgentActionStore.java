@@ -150,6 +150,15 @@ public final class AgentActionStore {
         action.currentNodeId = null;
     }
 
+    /** Adds one bounded, node-scoped server-derived observation to the existing trace surface. */
+    public synchronized void recordNodeEvidence(UUID actionId, String detail) {
+        Mutable action = running(actionId);
+        if (action.currentNodeId == null) {
+            throw new IllegalStateException("No action node is active");
+        }
+        action.trace(action.ticks, "NODE_EVIDENCE", bounded(detail, 256));
+    }
+
     public synchronized void recordTick(UUID actionId) {
         Mutable action = running(actionId);
         if (action.ticks >= MAX_RECORDED_TICKS) {

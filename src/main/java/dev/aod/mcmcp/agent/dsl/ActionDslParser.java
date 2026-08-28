@@ -123,6 +123,9 @@ public final class ActionDslParser {
             case "plant_known_wheat" -> plantKnownWheat(object, path);
             case "harvest_known_wheat" -> harvestKnownWheat(object, path);
             case "open_known_fence_gate" -> openKnownFenceGate(object, path);
+            case "open_known_passage" -> openKnownPassage(object, path);
+            case "inspect_known_container" -> inspectKnownContainer(object, path);
+            case "take_known_container_stack" -> takeKnownContainerStack(object, path);
             case "wait_ticks" -> waitTicks(object, path);
             case "wait_until" -> waitUntil(object, path);
             case "if" -> conditional(object, path);
@@ -195,6 +198,43 @@ public final class ActionDslParser {
         return new ActionDsl.OpenKnownFenceGate(
                 string(source.get("id"), path + ".id"),
                 position(source.get("target"), path + ".target"));
+    }
+
+    private static ActionDsl.OpenKnownPassage openKnownPassage(
+            JsonObject source, String path) {
+        exactKeys(source, path, Set.of("id", "op", "target", "expected_block"),
+                Set.of("id", "op", "target", "expected_block"));
+        return new ActionDsl.OpenKnownPassage(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                string(source.get("expected_block"), path + ".expected_block"));
+    }
+
+    private static ActionDsl.InspectKnownContainer inspectKnownContainer(
+            JsonObject source, String path) {
+        exactKeys(source, path, Set.of("id", "op", "target", "expected_block"),
+                Set.of("id", "op", "target", "expected_block"));
+        return new ActionDsl.InspectKnownContainer(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                string(source.get("expected_block"), path + ".expected_block"));
+    }
+
+    private static ActionDsl.TakeKnownContainerStack takeKnownContainerStack(
+            JsonObject source, String path) {
+        exactKeys(source, path,
+                Set.of("id", "op", "target", "expected_block", "item",
+                        "stack_policy", "minimum_inventory_count"),
+                Set.of("id", "op", "target", "expected_block", "item",
+                        "stack_policy", "minimum_inventory_count"));
+        return new ActionDsl.TakeKnownContainerStack(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                string(source.get("expected_block"), path + ".expected_block"),
+                string(source.get("item"), path + ".item"),
+                string(source.get("stack_policy"), path + ".stack_policy"),
+                integer(source.get("minimum_inventory_count"),
+                        path + ".minimum_inventory_count"));
     }
 
     private static ActionDsl.WaitTicks waitTicks(JsonObject source, String path) {
@@ -341,6 +381,7 @@ public final class ActionDslParser {
             case "block_break" -> ActionDsl.Capability.BLOCK_BREAK;
             case "block_interact" -> ActionDsl.Capability.BLOCK_INTERACT;
             case "block_place" -> ActionDsl.Capability.BLOCK_PLACE;
+            case "inventory_transfer" -> ActionDsl.Capability.INVENTORY_TRANSFER;
             default -> throw invalid("Unsupported capability at " + path + ": " + value);
         };
     }

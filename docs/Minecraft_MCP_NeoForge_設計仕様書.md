@@ -672,8 +672,15 @@ Action DSL v1の制御構造:
 | plant_known_wheat | camera, block_place | 可視・既知のfarmland直上のairへwheat_seedsを通常useで植え、age=0を確認 |
 | harvest_known_wheat | camera, block_break | 可視・既知かつ実行時age=7のwheat 1個だけを通常破壊し、airを確認 |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
+| open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
+| inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のsingle chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
+| take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemのwhole stackを最大1回quick-moveし、close/reopen full readbackでplayer inventoryの絶対個数を確認 |
 
 `break_known_face`の`tool_item`と`till_known_block`の`hoe_item`はinventory内の該当toolをhotbarへ一時退避して決定論的に選択する契約であり、任意slot操作を公開しない。`plant_known_wheat`も同じ準備経路でwheat_seedsを選ぶ。各変化はclient prediction ACKとauthoritative block stateで確認し、toolや種を生成・補充しない。成熟待ちは`wait_until`内でpolicy-filteredな`crop_mature`だけを再観測し、timeout時は入力を発生させずActionを終了する。raw attack/useや任意座標操作へ一般化しない。
+
+`open_known_passage.expected_block`は12種の木系door / trapdoor / fence gateを明示列挙し、ironとcopperを許可しない。doorはクリック対象のhalfだけでなく、同一block、facing、hinge、powered、openが整合する相方halfをdispatch前に固定する。primary prediction ACK、primaryのauthoritative state、dispatch後のcompanion block mutation、companionの完全stateがすべて一致した場合だけ成功する。pressure plate式自動doorはこのopcodeを使わず、plate上と反対側へ続く`navigate_to_known`を別々のprimitiveとして実行し、world revision更新後のVanilla VoxelShapeから後続経路を再計画する。
+
+container primitiveは別のMCP Toolやlegacy routineを公開せず、同じAction supervisorから既存のscreen ownership / full-content同期adapterを駆動する。`inspect_known_container`はslot番号、NBT/component本文、menu内部状態を返さず、最大27種類の`item=count`だけを`NODE_EVIDENCE` traceへ返す。`take_known_container_stack`はdirectionをcontainer→playerへ固定し、`default_components_only`または耐久済みtoolにも使える`item_id_any_components`だけを許可する。初回open、whole-stack quick-move 1回、同じcontainerのreadback openの最大3 interactionを静的に予約する。複数stackをblind retryせず、目標へ届かなければ確認済みの部分移送を記録した上で失敗し、次のActionへ再計画させる。focus喪失、chat、pause menuの表示自体は停止理由にせず、別container menuの所有中、world/session変化、cursor残留、screen ownership不一致はfail closedとする。
 
 predicateは次のpolicy-filtered snapshot fieldだけを使用できる。
 
@@ -769,6 +776,9 @@ templateは`agent_start_action.inputSchema.examples`に掲載し、実装reposit
 - [`known_route.json`](action-templates/known_route.json): 既知区間を固定回数だけ往復する
 - [`break_known_oak_column.json`](action-templates/break_known_oak_column.json): 地上から届く、現在可視な3段oak幹を下から順に破壊する
 - [`wheat_cycle.json`](action-templates/wheat_cycle.json): 1区画を耕し、植え、有限成熟待機後に収穫する
+- [`open_known_passage.json`](action-templates/open_known_passage.json): 可視な木製通路を開く
+- [`inspect_known_container.json`](action-templates/inspect_known_container.json): single chestのserver同期済み内容を確認する
+- [`take_wheat_seeds_stack.json`](action-templates/take_wheat_seeds_stack.json): wheat seedsをwhole stack 1回だけ取得する
 
 templateもcustom programと同じvalidator、capability、budget、READY許可、安全条件を通る。
 
@@ -843,7 +853,7 @@ agent_get_stateの返却対象:
 - 最新immutable observation frameのID、範囲、鮮度、coverage、kind別件数
 - 現在または直近action_idと終了理由
 
-生chunk、遮蔽されたentity、chat、看板、本、seed、tokenはTool resultへ含めない。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
+生chunk、遮蔽されたentity、chat、看板、本、world seed、tokenはTool resultへ含めない。例外としてautomation-owned single containerを通常useで開いた直後のserver full-content packetから作るbounded item集計だけは、そのActionのtraceへ一時的に返せる。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
 
 ### 8.6 内部Task state
 

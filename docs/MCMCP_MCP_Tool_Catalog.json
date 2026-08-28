@@ -136,7 +136,7 @@
                     "minItems": 5,
                     "maxItems": 5,
                     "uniqueItems": true,
-                    "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place"]}
+                    "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer"]}
                   }
                 },
                 "required": ["version", "max_ast_depth", "max_source_nodes", "max_executed_nodes", "max_repeat_count", "allowed_capabilities"]
@@ -446,6 +446,23 @@
             "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
             "maxLength": 128
           },
+          "woodenOpenable": {
+            "enum": [
+              "minecraft:oak_door", "minecraft:spruce_door", "minecraft:birch_door",
+              "minecraft:jungle_door", "minecraft:acacia_door", "minecraft:cherry_door",
+              "minecraft:dark_oak_door", "minecraft:pale_oak_door", "minecraft:mangrove_door",
+              "minecraft:bamboo_door", "minecraft:crimson_door", "minecraft:warped_door",
+              "minecraft:oak_trapdoor", "minecraft:spruce_trapdoor", "minecraft:birch_trapdoor",
+              "minecraft:jungle_trapdoor", "minecraft:acacia_trapdoor", "minecraft:cherry_trapdoor",
+              "minecraft:dark_oak_trapdoor", "minecraft:pale_oak_trapdoor", "minecraft:mangrove_trapdoor",
+              "minecraft:bamboo_trapdoor", "minecraft:crimson_trapdoor", "minecraft:warped_trapdoor",
+              "minecraft:oak_fence_gate", "minecraft:spruce_fence_gate", "minecraft:birch_fence_gate",
+              "minecraft:jungle_fence_gate", "minecraft:acacia_fence_gate", "minecraft:cherry_fence_gate",
+              "minecraft:dark_oak_fence_gate", "minecraft:pale_oak_fence_gate",
+              "minecraft:mangrove_fence_gate", "minecraft:bamboo_fence_gate",
+              "minecraft:crimson_fence_gate", "minecraft:warped_fence_gate"
+            ]
+          },
           "position": {
             "type": "object",
             "additionalProperties": false,
@@ -634,6 +651,45 @@
             },
             "required": ["id", "op", "target"]
           },
+          "openPassageNode": {
+            "type": "object",
+            "description": "Open one currently visible allowlisted wooden door, trapdoor, or fence gate. A door succeeds only after both halves are authoritatively open.",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "open_known_passage"},
+              "target": {"$ref": "#/$defs/position"},
+              "expected_block": {"$ref": "#/$defs/woodenOpenable"}
+            },
+            "required": ["id", "op", "target", "expected_block"]
+          },
+          "inspectContainerNode": {
+            "type": "object",
+            "description": "Open one visible in-reach single chest/barrel and return up to 27 server-synchronized item counts in NODE_EVIDENCE. Reserve at least 400 ticks, 20000 ms, 180 camera degrees, and 1 interaction.",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "inspect_known_container"},
+              "target": {"$ref": "#/$defs/position"},
+              "expected_block": {"enum": ["minecraft:chest", "minecraft:barrel"]}
+            },
+            "required": ["id", "op", "target", "expected_block"]
+          },
+          "takeContainerStackNode": {
+            "type": "object",
+            "description": "Move at most one whole matching stack from one visible in-reach single chest/barrel, then close/reopen it for full server readback. Reserve at least 400 ticks, 20000 ms, 180 camera degrees, and 3 interactions.",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "take_known_container_stack"},
+              "target": {"$ref": "#/$defs/position"},
+              "expected_block": {"enum": ["minecraft:chest", "minecraft:barrel"]},
+              "item": {"$ref": "#/$defs/resourceLocation"},
+              "stack_policy": {"enum": ["default_components_only", "item_id_any_components"]},
+              "minimum_inventory_count": {"type": "integer", "minimum": 1, "maximum": 2304}
+            },
+            "required": ["id", "op", "target", "expected_block", "item", "stack_policy", "minimum_inventory_count"]
+          },
           "waitNode": {
             "type": "object",
             "additionalProperties": false,
@@ -709,6 +765,9 @@
               {"$ref": "#/$defs/plantWheatNode"},
               {"$ref": "#/$defs/harvestWheatNode"},
               {"$ref": "#/$defs/openFenceGateNode"},
+              {"$ref": "#/$defs/openPassageNode"},
+              {"$ref": "#/$defs/inspectContainerNode"},
+              {"$ref": "#/$defs/takeContainerStackNode"},
               {"$ref": "#/$defs/waitNode"},
               {"$ref": "#/$defs/waitUntilNode"},
               {"$ref": "#/$defs/ifNode"},
@@ -730,9 +789,9 @@
               "capabilities": {
                 "type": "array",
                 "minItems": 0,
-                "maxItems": 5,
+                "maxItems": 6,
                 "uniqueItems": true,
-                "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place"]}
+                "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer"]}
               },
               "body": {
                 "type": "array",
@@ -949,6 +1008,84 @@
               "max_interactions": 1,
               "max_blocks_broken": 1,
               "max_blocks_placed": 1
+            }
+          },
+          {
+            "schema_version": 1,
+            "program": {
+              "dsl_version": 1,
+              "name": "open_known_passage",
+              "capabilities": ["camera", "block_interact"],
+              "body": [
+                {
+                  "id": "open",
+                  "op": "open_known_passage",
+                  "target": {"dimension": "minecraft:overworld", "x": 100, "y": 64, "z": 120},
+                  "expected_block": "minecraft:oak_door"
+                }
+              ]
+            },
+            "budget": {
+              "max_duration_ms": 5000,
+              "max_ticks": 100,
+              "max_distance_blocks": 0,
+              "max_camera_degrees": 180,
+              "max_interactions": 1,
+              "max_blocks_broken": 0,
+              "max_blocks_placed": 0
+            }
+          },
+          {
+            "schema_version": 1,
+            "program": {
+              "dsl_version": 1,
+              "name": "inspect_known_container",
+              "capabilities": ["camera", "inventory_transfer"],
+              "body": [
+                {
+                  "id": "inspect",
+                  "op": "inspect_known_container",
+                  "target": {"dimension": "minecraft:overworld", "x": 100, "y": 64, "z": 120},
+                  "expected_block": "minecraft:chest"
+                }
+              ]
+            },
+            "budget": {
+              "max_duration_ms": 20000,
+              "max_ticks": 400,
+              "max_distance_blocks": 0,
+              "max_camera_degrees": 180,
+              "max_interactions": 1,
+              "max_blocks_broken": 0,
+              "max_blocks_placed": 0
+            }
+          },
+          {
+            "schema_version": 1,
+            "program": {
+              "dsl_version": 1,
+              "name": "take_wheat_seeds_stack",
+              "capabilities": ["camera", "inventory_transfer"],
+              "body": [
+                {
+                  "id": "take",
+                  "op": "take_known_container_stack",
+                  "target": {"dimension": "minecraft:overworld", "x": 100, "y": 64, "z": 120},
+                  "expected_block": "minecraft:chest",
+                  "item": "minecraft:wheat_seeds",
+                  "stack_policy": "default_components_only",
+                  "minimum_inventory_count": 64
+                }
+              ]
+            },
+            "budget": {
+              "max_duration_ms": 20000,
+              "max_ticks": 400,
+              "max_distance_blocks": 0,
+              "max_camera_degrees": 180,
+              "max_interactions": 3,
+              "max_blocks_broken": 0,
+              "max_blocks_placed": 0
             }
           }
         ]

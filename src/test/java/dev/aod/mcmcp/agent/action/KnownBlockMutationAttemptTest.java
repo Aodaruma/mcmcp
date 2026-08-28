@@ -40,10 +40,28 @@ class KnownBlockMutationAttemptTest {
         assertThat(attempt.tick(2).status())
                 .isEqualTo(KnownBlockMutationAttempt.Status.RUNNING);
         port.tick = 3;
-        assertThat(attempt.tick(3).status())
-                .isEqualTo(KnownBlockMutationAttempt.Status.SUCCEEDED);
+        var result = attempt.tick(3);
+        assertThat(result.status()).isEqualTo(KnownBlockMutationAttempt.Status.SUCCEEDED);
+        assertThat(result.performed()).isTrue();
         assertThat(port.dispatched).isTrue();
         assertThat(port.stopped).isTrue();
+        assertThat(port.retired).isTrue();
+    }
+
+    @Test
+    void alreadySatisfiedPostconditionSucceedsWithoutCountingAnInteraction() {
+        var port = new FakePort();
+        port.unpreparedLive = Optional.of(FARMLAND);
+        var target = new BlockTarget("minecraft:overworld", 1, 64, 1);
+        var request = new UseItemOnBlockRequest(
+                target, DIRT, "minecraft:iron_hoe", FARMLAND,
+                new ActionBounds(target.dimension(), target, target, 0, 5, false));
+
+        var result = new KnownBlockMutationAttempt(port, request, 1, 101).tick(1);
+
+        assertThat(result.status()).isEqualTo(KnownBlockMutationAttempt.Status.SUCCEEDED);
+        assertThat(result.performed()).isFalse();
+        assertThat(port.dispatched).isFalse();
         assertThat(port.retired).isTrue();
     }
 
@@ -54,12 +72,13 @@ class KnownBlockMutationAttemptTest {
         private boolean dispatched;
         private boolean stopped;
         private boolean retired;
+        private Optional<BlockStateFingerprint> unpreparedLive = Optional.empty();
 
         @Override
         public SemanticActionFrame observe(SemanticActionRequest request) {
             return new SemanticActionFrame(
                     tick, tick, true, true, true, true, true, true,
-                    preparation == null ? Optional.empty() : Optional.of(DIRT), true, true,
+                    preparation == null ? unpreparedLive : Optional.of(DIRT), true, true,
                     false, Optional.empty(), false, false, false, false,
                     0, true, 0, 64, 0, 0, true, true, "not_applicable", 0, true);
         }

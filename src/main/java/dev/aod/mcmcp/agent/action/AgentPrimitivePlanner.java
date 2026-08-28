@@ -41,6 +41,7 @@ public final class AgentPrimitivePlanner {
     public static final long BREAK_TICK_UPPER_BOUND = 60L;
     public static final long BREAK_REOBSERVATION_TICKS = 40L;
     public static final long BLOCK_MUTATION_TICK_UPPER_BOUND = 100L;
+    public static final long CONTAINER_TICK_UPPER_BOUND = 400L;
 
     private AgentPrimitivePlanner() {
     }
@@ -394,6 +395,31 @@ public final class AgentPrimitivePlanner {
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
                     surface, 1, 0, 0);
         }
+        if (node instanceof ActionDsl.OpenKnownPassage passage) {
+            MutationSurface surface = requireMutationSurface(
+                    map, latestFrame, input, passage.target(), passage.expectedBlock(),
+                    value -> true,
+                    "Passage target requires a current matching visible wooden surface");
+            return analyzeMutation(
+                    node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
+                    surface, 1, 0, 0);
+        }
+        if (node instanceof ActionDsl.InspectKnownContainer inspect) {
+            MutationSurface surface = requireMutationSurface(
+                    map, latestFrame, input, inspect.target(), inspect.expectedBlock(),
+                    value -> true,
+                    "Container target requires a current matching visible surface");
+            return analyzeContainer(
+                    node, input, cameraLimit, costs, knownSurfaces, work, surface, 1);
+        }
+        if (node instanceof ActionDsl.TakeKnownContainerStack take) {
+            MutationSurface surface = requireMutationSurface(
+                    map, latestFrame, input, take.target(), take.expectedBlock(),
+                    value -> true,
+                    "Container target requires a current matching visible surface");
+            return analyzeContainer(
+                    node, input, cameraLimit, costs, knownSurfaces, work, surface, 3);
+        }
         if (node instanceof ActionDsl.If conditional) {
             var output = new ArrayList<Pose>();
             output.addAll(analyzeSequence(
@@ -450,6 +476,40 @@ public final class AgentPrimitivePlanner {
             output.add(pose.aimed(aim, error));
         }
         merge(costs, node.id(), Objects.requireNonNull(worst, "mutation cost"));
+        return distinct(output);
+    }
+
+    private static List<Pose> analyzeContainer(
+            ActionDsl.Node node,
+            List<Pose> input,
+            float cameraLimit,
+            Map<String, ActionDslCompiler.Cost> costs,
+            Set<KnownSurface> knownSurfaces,
+            PlanningWork work,
+            MutationSurface containerSurface,
+            long interactions) {
+        KnownSurface surface = containerSurface.surface();
+        knownSurfaces.add(surface);
+        Vec3 point = containerSurface.point();
+        ActionDslCompiler.Cost worst = null;
+        var output = new ArrayList<Pose>(input.size());
+        for (Pose pose : input) {
+            work.poseTransition();
+            ActionDslCompiler.Cost aim = mutationCost(
+                    pose, point, cameraLimit, interactions, 0, 0);
+            var bounded = new ActionDslCompiler.Cost(
+                    Math.multiplyExact(CONTAINER_TICK_UPPER_BOUND, TICK_MILLIS),
+                    CONTAINER_TICK_UPPER_BOUND,
+                    0.0D,
+                    aim.cameraDegrees(),
+                    interactions,
+                    0,
+                    0);
+            worst = maximum(worst, bounded);
+            Aim target = aim(pose, point);
+            output.add(pose.aimed(target, aimError(pose, point, target)));
+        }
+        merge(costs, node.id(), Objects.requireNonNull(worst, "container cost"));
         return distinct(output);
     }
 

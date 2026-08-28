@@ -97,6 +97,15 @@ class McmcpRuntimeHardeningTest {
         assertThat(McmcpRuntime.structuralPrimitiveCost(
                 new ActionDsl.OpenKnownFenceGate("open_gate", support))).contains(
                         new ActionDslCompiler.Cost(0, 0, 0, 0, 1, 0, 0));
+        assertThat(McmcpRuntime.structuralPrimitiveCost(
+                new ActionDsl.InspectKnownContainer(
+                        "inspect", support, "minecraft:chest"))).contains(
+                        new ActionDslCompiler.Cost(0, 0, 0, 0, 1, 0, 0));
+        assertThat(McmcpRuntime.structuralPrimitiveCost(
+                new ActionDsl.TakeKnownContainerStack(
+                        "take", support, "minecraft:chest", "minecraft:wheat_seeds",
+                        "default_components_only", 64))).contains(
+                        new ActionDslCompiler.Cost(0, 0, 0, 0, 3, 0, 0));
         assertThat(McmcpRuntime.primitiveReobservationTicks(
                 new ActionDsl.OpenKnownFenceGate("open_gate", support)))
                 .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);

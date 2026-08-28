@@ -31,6 +31,7 @@ public final class ActionDsl {
 
     public sealed interface Node permits NavigateToKnown, FaceKnownPosition, BreakKnownFace,
             TillKnownBlock, PlantKnownWheat, HarvestKnownWheat, OpenKnownFenceGate,
+            OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
             WaitTicks, WaitUntil, If, Repeat {
         String id();
     }
@@ -107,6 +108,43 @@ public final class ActionDsl {
         }
     }
 
+    /** Opens one currently closed, visible wooden door, trapdoor, or fence gate. */
+    public record OpenKnownPassage(
+            String id, Position target, String expectedBlock) implements Node {
+        public OpenKnownPassage {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(expectedBlock, "expectedBlock");
+        }
+    }
+
+    /** Opens a visible single chest/barrel and returns its server-synchronized item summary. */
+    public record InspectKnownContainer(
+            String id, Position target, String expectedBlock) implements Node {
+        public InspectKnownContainer {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(expectedBlock, "expectedBlock");
+        }
+    }
+
+    /** Moves at most one whole matching stack from a visible single chest/barrel. */
+    public record TakeKnownContainerStack(
+            String id,
+            Position target,
+            String expectedBlock,
+            String item,
+            String stackPolicy,
+            int minimumInventoryCount) implements Node {
+        public TakeKnownContainerStack {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(expectedBlock, "expectedBlock");
+            Objects.requireNonNull(item, "item");
+            Objects.requireNonNull(stackPolicy, "stackPolicy");
+        }
+    }
+
     public record WaitTicks(String id, int ticks) implements Node {
         public WaitTicks {
             Objects.requireNonNull(id, "id");
@@ -160,7 +198,8 @@ public final class ActionDsl {
         CAMERA("camera"),
         BLOCK_BREAK("block_break"),
         BLOCK_INTERACT("block_interact"),
-        BLOCK_PLACE("block_place");
+        BLOCK_PLACE("block_place"),
+        INVENTORY_TRANSFER("inventory_transfer");
 
         private final String wireName;
 

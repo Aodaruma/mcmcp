@@ -41,6 +41,7 @@ import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.Portal;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
@@ -90,6 +91,12 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             Blocks.DARK_OAK_TRAPDOOR, Blocks.PALE_OAK_TRAPDOOR,
             Blocks.MANGROVE_TRAPDOOR, Blocks.BAMBOO_TRAPDOOR,
             Blocks.CRIMSON_TRAPDOOR, Blocks.WARPED_TRAPDOOR);
+    private static final Set<net.minecraft.world.level.block.Block> WOODEN_DOORS = Set.of(
+            Blocks.OAK_DOOR, Blocks.SPRUCE_DOOR, Blocks.BIRCH_DOOR,
+            Blocks.JUNGLE_DOOR, Blocks.ACACIA_DOOR, Blocks.CHERRY_DOOR,
+            Blocks.DARK_OAK_DOOR, Blocks.PALE_OAK_DOOR,
+            Blocks.MANGROVE_DOOR, Blocks.BAMBOO_DOOR,
+            Blocks.CRIMSON_DOOR, Blocks.WARPED_DOOR);
 
     private final Supplier<Minecraft> minecraftSupplier;
     private final Supplier<WorldSessionTracker.Snapshot> sessionSupplier;
@@ -600,15 +607,24 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             serverState = Optional.ofNullable(confirmation.serverState()).map(
                     MinecraftSemanticActionPort::fingerprint);
             basis.put("prediction_status", confirmation.status().name().toLowerCase());
+            DoorCompanionStatus doorCompanion = doorCompanionStatus(
+                    active, recon, Objects.requireNonNull(minecraft.level));
+            if (active.doorTransition != null) {
+                basis.put("door_companion_status", doorCompanion.name().toLowerCase());
+                acknowledged = doorInteractionAcknowledged(
+                        acknowledged, confirmation.serverConfirmed(), doorCompanion);
+            }
             if (confirmation.serverConfirmed() && !active.confirmationHandled) {
-                active.confirmationHandled = true;
-                if (expected != null
-                        && currentBlockState(active.request).filter(expected::equals).isPresent()) {
-                    rememberConfirmation(active.request, expected, session);
-                } else {
+                if (expected == null
+                        || currentBlockState(active.request).filter(expected::equals).isEmpty()
+                        || doorCompanion == DoorCompanionStatus.MISMATCH) {
+                    active.confirmationHandled = true;
                     active.failure = failure("POSTCONDITION_CHANGED", RoutineFailure.Category.DIVERGENCE,
                             false, RoutineFailure.Recovery.REPLAN,
                             stateMap(expected), Map.of());
+                } else if (doorCompanion != DoorCompanionStatus.PENDING) {
+                    active.confirmationHandled = true;
+                    rememberConfirmation(active.request, expected, session);
                 }
             } else if (confirmation.status() == ClientPredictionSignals.ConfirmationStatus.SERVER_STATE_MISMATCH) {
                 active.failure = failure("POSTCONDITION_MISMATCH", RoutineFailure.Category.DIVERGENCE,
@@ -739,7 +755,8 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             Minecraft minecraft, InteractBlockRequest request, ActiveAttempt active) {
         var hit = actualBlockHit(minecraft);
         var position = blockPos(request.target());
-        var beforeState = minecraft.level.getBlockState(position);
+        var level = Objects.requireNonNull(minecraft.level);
+        var beforeState = level.getBlockState(position);
         if (!matchesPlannedAim(request, hit)
                 || !hit.getBlockPos().equals(position)
                 || !safeBlockInteractionHand(
@@ -750,9 +767,19 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         // Unlike placement, vanilla interactions such as levers need not mutate the local level
         // optimistically. Freeze the exact same-block transition before sending its packet so a
         // fast server-only state update is checked against the requested result, not stale local state.
-        active.expectedServerState = expectedInteractionServerState(
-                beforeState, request, minecraft.player.getDirection());
-        var prediction = predictions.begin(minecraft.level, position, requireSession().clientTick());
+        if (WOODEN_DOORS.contains(beforeState.getBlock())) {
+            BlockPos companionPosition = doorCompanionPosition(position, beforeState);
+            if (!level.isLoaded(companionPosition)) {
+                throw new IllegalArgumentException("wooden door companion half is not loaded");
+            }
+            active.doorTransition = expectedDoorInteractionTransition(
+                    position, beforeState, level.getBlockState(companionPosition), request);
+            active.expectedServerState = active.doorTransition.expectedPrimaryAfter();
+        } else {
+            active.expectedServerState = expectedInteractionServerState(
+                    beforeState, request, minecraft.player.getDirection());
+        }
+        var prediction = predictions.begin(level, position, requireSession().clientTick());
         int before = prediction.sequenceBeforePrediction();
         active.prediction = prediction;
         minecraft.gameMode.useItemOn(minecraft.player, InteractionHand.MAIN_HAND, hit);
@@ -836,6 +863,100 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                     "interact_block expected_after must match the allowlisted toggle state");
         }
         return expected;
+    }
+
+    static DoorInteractionTransition expectedDoorInteractionTransition(
+            BlockPos primaryPosition,
+            BlockState primaryState,
+            BlockState companionState,
+            InteractBlockRequest request) {
+        Objects.requireNonNull(primaryPosition, "primaryPosition");
+        Objects.requireNonNull(primaryState, "primaryState");
+        Objects.requireNonNull(companionState, "companionState");
+        Objects.requireNonNull(request, "request");
+        if (!WOODEN_DOORS.contains(primaryState.getBlock())
+                || companionState.getBlock() != primaryState.getBlock()
+                || primaryState.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF)
+                        == companionState.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF)
+                || primaryState.getValue(BlockStateProperties.HORIZONTAL_FACING)
+                        != companionState.getValue(BlockStateProperties.HORIZONTAL_FACING)
+                || primaryState.getValue(BlockStateProperties.DOOR_HINGE)
+                        != companionState.getValue(BlockStateProperties.DOOR_HINGE)
+                || primaryState.getValue(BlockStateProperties.OPEN)
+                        != companionState.getValue(BlockStateProperties.OPEN)
+                || primaryState.getValue(BlockStateProperties.POWERED)
+                        != companionState.getValue(BlockStateProperties.POWERED)
+                || primaryState.getValue(BlockStateProperties.OPEN)) {
+            throw new IllegalArgumentException("wooden door halves must be a consistent closed pair");
+        }
+        BlockStateFingerprint expectedPrimary = expectedInteractionServerState(
+                primaryState, request,
+                primaryState.getValue(BlockStateProperties.HORIZONTAL_FACING));
+        if (!Boolean.parseBoolean(expectedPrimary.properties().get("open"))) {
+            throw new IllegalArgumentException("wooden door interaction must open the door");
+        }
+        BlockPos companionPosition = doorCompanionPosition(primaryPosition, primaryState);
+        return new DoorInteractionTransition(
+                companionPosition,
+                fingerprint(primaryState),
+                expectedPrimary,
+                fingerprint(companionState),
+                fingerprint(companionState.setValue(BlockStateProperties.OPEN, true)));
+    }
+
+    static BlockPos doorCompanionPosition(BlockPos primaryPosition, BlockState primaryState) {
+        Objects.requireNonNull(primaryPosition, "primaryPosition");
+        Objects.requireNonNull(primaryState, "primaryState");
+        if (!WOODEN_DOORS.contains(primaryState.getBlock())) {
+            throw new IllegalArgumentException("block is not an allowlisted wooden door");
+        }
+        return primaryState.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.LOWER
+                ? primaryPosition.above()
+                : primaryPosition.below();
+    }
+
+    static boolean hasAuthoritativeBlockMutation(
+            long baselineRevision,
+            List<ClientReconciliationSignals.WorldMutation> mutations,
+            BlockPos position) {
+        Objects.requireNonNull(mutations, "mutations");
+        Objects.requireNonNull(position, "position");
+        return mutations.stream().anyMatch(mutation ->
+                mutation.revision() > baselineRevision
+                        && mutation.kind() == ClientReconciliationSignals.WorldMutation.Kind.BLOCK
+                        && mutation.x() == position.getX()
+                        && mutation.y() == position.getY()
+                        && mutation.z() == position.getZ());
+    }
+
+    static boolean doorInteractionAcknowledged(
+            boolean primaryAcknowledged,
+            boolean primaryServerConfirmed,
+            DoorCompanionStatus companionStatus) {
+        return primaryAcknowledged
+                && primaryServerConfirmed
+                && companionStatus == DoorCompanionStatus.CONFIRMED;
+    }
+
+    private static DoorCompanionStatus doorCompanionStatus(
+            ActiveAttempt active,
+            ClientReconciliationSignals.Snapshot reconciliation,
+            ClientLevel level) {
+        var transition = active.doorTransition;
+        if (transition == null) {
+            return DoorCompanionStatus.NOT_REQUIRED;
+        }
+        BlockPos position = transition.companionPosition();
+        if (!hasAuthoritativeBlockMutation(
+                active.reconciliationAtDispatch.worldRevision(),
+                reconciliation.worldMutations(), position)) {
+            return DoorCompanionStatus.PENDING;
+        }
+        return level.isLoaded(position)
+                        && transition.expectedCompanionAfter().equals(
+                                fingerprint(level.getBlockState(position)))
+                ? DoorCompanionStatus.CONFIRMED
+                : DoorCompanionStatus.MISMATCH;
     }
 
     private void dispatchEntityInteraction(
@@ -1139,7 +1260,8 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         var block = state.getBlock();
         return block instanceof LeverBlock
                 || block instanceof FenceGateBlock
-                || WOODEN_TRAPDOORS.contains(block);
+                || WOODEN_TRAPDOORS.contains(block)
+                || WOODEN_DOORS.contains(block);
     }
 
     static boolean allowedUseItemTransition(ClientLevel level, UseItemOnBlockRequest request) {
@@ -1944,6 +2066,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         private NavigationViewLease blockView;
         private UUID blockViewOwner;
         private BlockStateFingerprint expectedServerState;
+        private DoorInteractionTransition doorTransition;
         private RoutineFailure failure;
         private boolean inputStopped;
         private boolean safeToRetry = true;
@@ -1967,6 +2090,23 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             this.expectedServerState = initialExpectedServerState(request);
         }
     }
+
+    record DoorInteractionTransition(
+            BlockPos companionPosition,
+            BlockStateFingerprint primaryBefore,
+            BlockStateFingerprint expectedPrimaryAfter,
+            BlockStateFingerprint companionBefore,
+            BlockStateFingerprint expectedCompanionAfter) {
+        DoorInteractionTransition {
+            Objects.requireNonNull(companionPosition, "companionPosition");
+            Objects.requireNonNull(primaryBefore, "primaryBefore");
+            Objects.requireNonNull(expectedPrimaryAfter, "expectedPrimaryAfter");
+            Objects.requireNonNull(companionBefore, "companionBefore");
+            Objects.requireNonNull(expectedCompanionAfter, "expectedCompanionAfter");
+        }
+    }
+
+    enum DoorCompanionStatus { NOT_REQUIRED, PENDING, CONFIRMED, MISMATCH }
 
     private static final class PreparationState {
         private final SemanticActionPreparationAttempt attempt;
