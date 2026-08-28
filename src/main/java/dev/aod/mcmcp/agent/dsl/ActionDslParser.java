@@ -120,8 +120,11 @@ public final class ActionDslParser {
             case "face_known_position" -> face(object, path);
             case "break_known_face" -> breakKnownFace(object, path);
             case "till_known_block" -> tillKnownBlock(object, path);
+            case "till_known_batch" -> tillKnownBatch(object, path);
             case "plant_known_wheat" -> plantKnownWheat(object, path);
+            case "plant_known_wheat_batch" -> plantKnownWheatBatch(object, path);
             case "harvest_known_wheat" -> harvestKnownWheat(object, path);
+            case "harvest_known_wheat_batch" -> harvestKnownWheatBatch(object, path);
             case "open_known_fence_gate" -> openKnownFenceGate(object, path);
             case "open_known_passage" -> openKnownPassage(object, path);
             case "inspect_known_container" -> inspectKnownContainer(object, path);
@@ -174,6 +177,17 @@ public final class ActionDslParser {
                 string(source.get("hoe_item"), path + ".hoe_item"));
     }
 
+    private static ActionDsl.TillKnownBatch tillKnownBatch(JsonObject source, String path) {
+        exactKeys(source, path,
+                Set.of("id", "op", "targets", "expected_block", "hoe_item"),
+                Set.of("id", "op", "targets", "expected_block", "hoe_item"));
+        return new ActionDsl.TillKnownBatch(
+                string(source.get("id"), path + ".id"),
+                positions(source.get("targets"), path + ".targets"),
+                string(source.get("expected_block"), path + ".expected_block"),
+                string(source.get("hoe_item"), path + ".hoe_item"));
+    }
+
     private static ActionDsl.PlantKnownWheat plantKnownWheat(JsonObject source, String path) {
         exactKeys(source, path,
                 Set.of("id", "op", "target", "support", "seed_item"),
@@ -185,12 +199,41 @@ public final class ActionDslParser {
                 string(source.get("seed_item"), path + ".seed_item"));
     }
 
+    private static ActionDsl.PlantKnownWheatBatch plantKnownWheatBatch(
+            JsonObject source, String path) {
+        exactKeys(source, path, Set.of("id", "op", "targets", "seed_item"),
+                Set.of("id", "op", "targets", "seed_item"));
+        JsonArray values = array(source.get("targets"), path + ".targets");
+        var targets = new ArrayList<ActionDsl.PlantPlot>(values.size());
+        for (int index = 0; index < values.size(); index++) {
+            String targetPath = path + ".targets[" + index + "]";
+            JsonObject target = object(values.get(index), targetPath,
+                    Set.of("target", "support"), Set.of("target", "support"));
+            targets.add(new ActionDsl.PlantPlot(
+                    position(target.get("target"), targetPath + ".target"),
+                    position(target.get("support"), targetPath + ".support")));
+        }
+        return new ActionDsl.PlantKnownWheatBatch(
+                string(source.get("id"), path + ".id"),
+                targets,
+                string(source.get("seed_item"), path + ".seed_item"));
+    }
+
     private static ActionDsl.HarvestKnownWheat harvestKnownWheat(
             JsonObject source, String path) {
         exactKeys(source, path, Set.of("id", "op", "target"), Set.of("id", "op", "target"));
         return new ActionDsl.HarvestKnownWheat(
                 string(source.get("id"), path + ".id"),
                 position(source.get("target"), path + ".target"));
+    }
+
+    private static ActionDsl.HarvestKnownWheatBatch harvestKnownWheatBatch(
+            JsonObject source, String path) {
+        exactKeys(source, path, Set.of("id", "op", "targets"),
+                Set.of("id", "op", "targets"));
+        return new ActionDsl.HarvestKnownWheatBatch(
+                string(source.get("id"), path + ".id"),
+                positions(source.get("targets"), path + ".targets"));
     }
 
     private static ActionDsl.OpenKnownFenceGate openKnownFenceGate(
@@ -303,6 +346,15 @@ public final class ActionDslParser {
                 integer(object.get("x"), path + ".x"),
                 integer(object.get("y"), path + ".y"),
                 integer(object.get("z"), path + ".z"));
+    }
+
+    private static List<ActionDsl.Position> positions(JsonElement value, String path) {
+        JsonArray values = array(value, path);
+        var positions = new ArrayList<ActionDsl.Position>(values.size());
+        for (int index = 0; index < values.size(); index++) {
+            positions.add(position(values.get(index), path + "[" + index + "]"));
+        }
+        return List.copyOf(positions);
     }
 
     private static ActionDsl.WorldPosition worldPosition(JsonElement value, String path) {

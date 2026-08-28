@@ -3,6 +3,7 @@ package dev.aod.mcmcp.agent.action;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.agent.dsl.ActionDslException;
+import dev.aod.mcmcp.agent.dsl.ActionDslValidator;
 import dev.aod.mcmcp.agent.navigation.DeterministicAStar;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.NavCell;
@@ -40,6 +41,8 @@ public final class AgentPrimitivePlanner {
     private static final int MAX_POSE_TRANSITIONS = 16_384;
     private static final double MAX_BREAK_REACH_BLOCKS = 4.5D;
     private static final double MAX_BREAK_EYE_ORIGIN_DRIFT = 0.125D;
+    private static final double BATCH_NEAR_RAY_DEGREES = 2.0D;
+    private static final double FARMLAND_SETTLING_BLOCKS = 1.0D / 16.0D;
     private static final double VISIBLE_ITEM_MATCH_RADIUS = 0.75D;
     // Vanilla scans an item against player.getBoundingBox().inflate(1.0, 0.5, 1.0).
     // A route may finish 0.25 blocks from its cell center, so keep the horizontal
@@ -49,6 +52,7 @@ public final class AgentPrimitivePlanner {
     private static final double MIN_NAVIGATING_PLAYER_HEIGHT = 1.5D;
     public static final long BREAK_TICK_UPPER_BOUND = 60L;
     public static final long BREAK_REOBSERVATION_TICKS = 40L;
+    public static final long MUTATION_BATCH_REPROOF_TICKS = 40L;
     public static final long BLOCK_MUTATION_TICK_UPPER_BOUND = 100L;
     public static final long CONTAINER_TICK_UPPER_BOUND = 400L;
     // Player-thrown item entities can retain a 40-tick pickup delay. Leave a bounded
@@ -150,6 +154,7 @@ public final class AgentPrimitivePlanner {
         var knownTargets = new LinkedHashSet<ActionDsl.Position>();
         var knownSurfaces = new LinkedHashSet<KnownSurface>();
         var mutationAims = new LinkedHashMap<String, MutationAim>();
+        var mutationBatchPlans = new LinkedHashMap<String, MutationBatchPlan>();
         var routeCache = new LinkedHashMap<RouteKey, RoutePlan>();
         var work = new PlanningWork(canContinue);
         analyzeSequence(
@@ -166,9 +171,12 @@ public final class AgentPrimitivePlanner {
                 knownTargets,
                 knownSurfaces,
                 mutationAims,
+                mutationBatchPlans,
                 routeCache,
                 work);
-        return new Analysis(costs, routeDependencies, knownTargets, knownSurfaces, mutationAims);
+        return new Analysis(
+                costs, routeDependencies, knownTargets, knownSurfaces,
+                mutationAims, mutationBatchPlans);
     }
 
     public static RoutePlan requireRoute(
@@ -408,6 +416,7 @@ public final class AgentPrimitivePlanner {
             Set<ActionDsl.Position> knownTargets,
             Set<KnownSurface> knownSurfaces,
             Map<String, MutationAim> mutationAims,
+            Map<String, MutationBatchPlan> mutationBatchPlans,
             Map<RouteKey, RoutePlan> routeCache,
             PlanningWork work) {
         List<Pose> states = input;
@@ -417,7 +426,7 @@ public final class AgentPrimitivePlanner {
                     node, states, map, pathfinder, latestFrame,
                     visualBarrierWorldRevision, surfaceRevisionBarrier, cameraLimit,
                     costs, routeDependencies, knownTargets, knownSurfaces,
-                    mutationAims, routeCache, work);
+                    mutationAims, mutationBatchPlans, routeCache, work);
         }
         return states;
     }
@@ -436,6 +445,7 @@ public final class AgentPrimitivePlanner {
             Set<ActionDsl.Position> knownTargets,
             Set<KnownSurface> knownSurfaces,
             Map<String, MutationAim> mutationAims,
+            Map<String, MutationBatchPlan> mutationBatchPlans,
             Map<RouteKey, RoutePlan> routeCache,
             PlanningWork work) {
         if (node instanceof ActionDsl.WaitTicks || node instanceof ActionDsl.WaitUntil) {
@@ -516,6 +526,13 @@ public final class AgentPrimitivePlanner {
             return analyzeMutation(
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
                     surface, 1, 0, 0);
+        }
+        if (node instanceof ActionDsl.TillKnownBatch
+                || node instanceof ActionDsl.PlantKnownWheatBatch
+                || node instanceof ActionDsl.HarvestKnownWheatBatch) {
+            return analyzeMutationBatch(
+                    node, input, map, latestFrame, surfaceRevisionBarrier,
+                    cameraLimit, costs, knownSurfaces, mutationBatchPlans, work);
         }
         if (node instanceof ActionDsl.PlantKnownWheat plant) {
             if (!directlyAbove(plant.target(), plant.support())) {
@@ -608,13 +625,15 @@ public final class AgentPrimitivePlanner {
                     latestFrame, visualBarrierWorldRevision,
                     surfaceRevisionBarrier, cameraLimit,
                     costs, routeDependencies,
-                    knownTargets, knownSurfaces, mutationAims, routeCache, work));
+                    knownTargets, knownSurfaces, mutationAims,
+                    mutationBatchPlans, routeCache, work));
             output.addAll(analyzeSequence(
                     conditional.elseBranch(), input, map, pathfinder,
                     latestFrame, visualBarrierWorldRevision,
                     surfaceRevisionBarrier, cameraLimit,
                     costs, routeDependencies,
-                    knownTargets, knownSurfaces, mutationAims, routeCache, work));
+                    knownTargets, knownSurfaces, mutationAims,
+                    mutationBatchPlans, routeCache, work));
             return distinct(output);
         }
         var repeat = (ActionDsl.Repeat) node;
@@ -625,9 +644,360 @@ public final class AgentPrimitivePlanner {
                     latestFrame, visualBarrierWorldRevision,
                     surfaceRevisionBarrier, cameraLimit,
                     costs, routeDependencies,
-                    knownTargets, knownSurfaces, mutationAims, routeCache, work);
+                    knownTargets, knownSurfaces, mutationAims,
+                    mutationBatchPlans, routeCache, work);
         }
         return output;
+    }
+
+    private static List<Pose> analyzeMutationBatch(
+            ActionDsl.Node batch,
+            List<Pose> input,
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier,
+            float cameraLimit,
+            Map<String, ActionDslCompiler.Cost> costs,
+            Set<KnownSurface> knownSurfaces,
+            Map<String, MutationBatchPlan> mutationBatchPlans,
+            PlanningWork work) {
+        List<ActionDsl.Node> children = mutationBatchChildren(batch);
+        ActionDslCompiler.Cost worst = null;
+        MutationBatchPlan sharedPlan = null;
+        var output = new ArrayList<Pose>(input.size());
+        for (Pose initial : input) {
+            work.poseTransition();
+            var candidates = new ArrayList<MutationBatchTarget>(children.size());
+            for (ActionDsl.Node child : children) {
+                MutationSurface surface = requireMutationSurfaceForNode(
+                        child, map, latestFrame, List.of(initial), surfaceRevisionBarrier);
+                candidates.add(new MutationBatchTarget(child, surface));
+                knownSurfaces.add(surface.surface());
+            }
+            BatchPath optimized = optimizeMutationBatch(initial, candidates, cameraLimit);
+            var planned = new ArrayList<MutationBatchStep>(candidates.size());
+            Pose plannedPose = initial;
+            for (MutationBatchTarget candidate : optimized.targets()) {
+                MutationSurface surface = candidate.surface();
+                Vec3 point = surface.point();
+                MutationAim aim = new MutationAim(
+                        surface.surface().position(), surface.surface().face(), point);
+                ActionDslCompiler.Cost plannedCost = mutationTargetCost(
+                        plannedPose, candidate, cameraLimit);
+                planned.add(new MutationBatchStep(candidate.node(), aim, plannedCost));
+                Aim nextAim = aim(plannedPose, point);
+                Pose nextPose = plannedPose.aimed(
+                        nextAim, aimError(plannedPose, point, nextAim));
+                if (candidate.node() instanceof ActionDsl.TillKnownBlock till
+                        && mayStandOnTarget(plannedPose, till.target())) {
+                    nextPose = nextPose.withAdditionalYErrorBelow(FARMLAND_SETTLING_BLOCKS);
+                }
+                plannedPose = nextPose;
+            }
+            MutationBatchPlan plan = new MutationBatchPlan(planned);
+            if (sharedPlan != null && !sameMutationOrder(sharedPlan, plan)) {
+                throw new PlanningException(
+                        Code.PROGRAM_BUDGET_UNPROVABLE,
+                        "Mutation batch order depends on an unresolved abstract pose");
+            }
+            sharedPlan = plan;
+            worst = maximum(worst, optimized.cost());
+            output.add(optimized.pose());
+        }
+        MutationBatchPlan plan = Objects.requireNonNull(sharedPlan, "mutation batch plan");
+        MutationBatchPlan previous = mutationBatchPlans.putIfAbsent(batch.id(), plan);
+        if (previous != null && !previous.equals(plan)) {
+            throw new PlanningException(
+                    Code.PROGRAM_BUDGET_UNPROVABLE,
+                    "Mutation batch node resolves to more than one plan");
+        }
+        merge(costs, batch.id(), Objects.requireNonNull(worst, "mutation batch cost"));
+        return distinct(output);
+    }
+
+    /**
+     * Finds the minimum joint camera path over at most eight targets. Targets on the same or a
+     * near-identical eye ray retain a far-before-near precedence so mutating a foreground block
+     * cannot invalidate admission evidence for a background target. Equal-cost paths are ordered
+     * lexicographically by world position, making the result independent of JSON target order.
+     */
+    private static BatchPath optimizeMutationBatch(
+            Pose initial, List<MutationBatchTarget> input, float cameraLimit) {
+        var candidates = new ArrayList<>(input);
+        candidates.sort(java.util.Comparator.comparing(
+                candidate -> mutationPosition(candidate.node()), mutationPositionComparator()));
+        int size = candidates.size();
+        int[] prerequisites = new int[size];
+        for (int farther = 0; farther < size; farther++) {
+            for (int nearer = 0; nearer < size; nearer++) {
+                if (farther == nearer) continue;
+                double farDistance = distanceSquared(initial, candidates.get(farther).surface().point());
+                double nearDistance = distanceSquared(initial, candidates.get(nearer).surface().point());
+                if (farDistance > nearDistance + 1.0e-9D
+                        && nearRay(
+                                initial,
+                                candidates.get(farther).surface().point(),
+                                candidates.get(nearer).surface().point())) {
+                    prerequisites[nearer] |= 1 << farther;
+                }
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        Map<Integer, BatchPath>[] paths = new Map[1 << size];
+        paths[0] = Map.of(-1, new BatchPath(
+                List.of(), initial, new ActionDslCompiler.Cost(0, 0, 0, 0, 0, 0, 0)));
+        for (int mask = 0; mask < paths.length; mask++) {
+            if (paths[mask] == null) continue;
+            for (BatchPath path : paths[mask].values()) {
+                for (int next = 0; next < size; next++) {
+                    int bit = 1 << next;
+                    if ((mask & bit) != 0 || (mask & prerequisites[next]) != prerequisites[next]) {
+                        continue;
+                    }
+                    MutationBatchTarget candidate = candidates.get(next);
+                    ActionDslCompiler.Cost transition = mutationTargetCost(
+                            path.pose(), candidate, cameraLimit);
+                    Aim nextAim = aim(path.pose(), candidate.surface().point());
+                    Pose nextPose = path.pose().aimed(
+                            nextAim, aimError(path.pose(), candidate.surface().point(), nextAim));
+                    if (candidate.node() instanceof ActionDsl.TillKnownBlock till
+                            && mayStandOnTarget(path.pose(), till.target())) {
+                        nextPose = nextPose.withAdditionalYErrorBelow(FARMLAND_SETTLING_BLOCKS);
+                    }
+                    var nextTargets = new ArrayList<>(path.targets());
+                    nextTargets.add(candidate);
+                    BatchPath proposal = new BatchPath(
+                            nextTargets, nextPose, addCosts(path.cost(), transition));
+                    int nextMask = mask | bit;
+                    if (paths[nextMask] == null) paths[nextMask] = new LinkedHashMap<>();
+                    BatchPath current = paths[nextMask].get(next);
+                    if (current == null || betterBatchPath(proposal, current)) {
+                        paths[nextMask].put(next, proposal);
+                    }
+                }
+            }
+        }
+        BatchPath best = null;
+        for (BatchPath candidate : Objects.requireNonNull(paths[(1 << size) - 1]).values()) {
+            if (best == null || betterBatchPath(candidate, best)) best = candidate;
+        }
+        return Objects.requireNonNull(best, "mutation batch ordering");
+    }
+
+    private static ActionDslCompiler.Cost mutationTargetCost(
+            Pose pose, MutationBatchTarget candidate, float cameraLimit) {
+        return mutationNodeCost(
+                pose, candidate.node(), candidate.surface().point(), cameraLimit);
+    }
+
+    private static ActionDslCompiler.Cost mutationNodeCost(
+            Pose pose, ActionDsl.Node node, Vec3 point, float cameraLimit) {
+        long interactions = node instanceof ActionDsl.TillKnownBlock ? 1 : 0;
+        long breaks = node instanceof ActionDsl.HarvestKnownWheat ? 1 : 0;
+        long placements = node instanceof ActionDsl.PlantKnownWheat ? 1 : 0;
+        ActionDslCompiler.Cost mutation = mutationCost(
+                pose, point, cameraLimit,
+                interactions, breaks, placements);
+        return new ActionDslCompiler.Cost(
+                Math.addExact(
+                        mutation.durationMillis(),
+                        Math.multiplyExact(MUTATION_BATCH_REPROOF_TICKS, TICK_MILLIS)),
+                Math.addExact(mutation.ticks(), MUTATION_BATCH_REPROOF_TICKS),
+                mutation.distanceBlocks(),
+                mutation.cameraDegrees(),
+                mutation.interactions(),
+                mutation.blocksBroken(),
+                mutation.blocksPlaced());
+    }
+
+    /**
+     * Reprices the fixed, unstarted suffix from the endpoint of the freshly reproved current aim.
+     * The current reproof wait is already present in consumed progress; each future step retains
+     * its full 40-tick reproof reserve.
+     */
+    public static ActionDslCompiler.Cost recostMutationBatchRemainder(
+            MutationBatchPlan plan,
+            int currentIndex,
+            Pose currentPose,
+            MutationAim freshCurrentAim,
+            ActionDslCompiler.Cost freshCurrentCost,
+            float cameraLimit) {
+        Objects.requireNonNull(plan, "plan");
+        Objects.requireNonNull(currentPose, "currentPose");
+        Objects.requireNonNull(freshCurrentAim, "freshCurrentAim");
+        Objects.requireNonNull(freshCurrentCost, "freshCurrentCost");
+        if (currentIndex < 0 || currentIndex >= plan.steps().size()) {
+            throw new IllegalArgumentException("currentIndex is outside the mutation batch");
+        }
+        ActionDsl.Node current = plan.steps().get(currentIndex).primitive();
+        Aim currentAim = aim(currentPose, freshCurrentAim.point());
+        Pose suffixPose = currentPose.aimed(
+                currentAim, aimError(currentPose, freshCurrentAim.point(), currentAim));
+        if (current instanceof ActionDsl.TillKnownBlock till
+                && mayStandOnTarget(currentPose, till.target())) {
+            suffixPose = suffixPose.withAdditionalYErrorBelow(FARMLAND_SETTLING_BLOCKS);
+        }
+
+        ActionDslCompiler.Cost required = freshCurrentCost;
+        for (int index = currentIndex + 1; index < plan.steps().size(); index++) {
+            MutationBatchStep step = plan.steps().get(index);
+            required = addCosts(
+                    required,
+                    mutationNodeCost(suffixPose, step.primitive(), step.aim().point(), cameraLimit));
+            Aim nextAim = aim(suffixPose, step.aim().point());
+            Pose nextPose = suffixPose.aimed(
+                    nextAim, aimError(suffixPose, step.aim().point(), nextAim));
+            if (step.primitive() instanceof ActionDsl.TillKnownBlock till
+                    && mayStandOnTarget(suffixPose, till.target())) {
+                nextPose = nextPose.withAdditionalYErrorBelow(FARMLAND_SETTLING_BLOCKS);
+            }
+            suffixPose = nextPose;
+        }
+        return required;
+    }
+
+    private static boolean betterBatchPath(BatchPath candidate, BatchPath current) {
+        int camera = Double.compare(candidate.cost().cameraDegrees(), current.cost().cameraDegrees());
+        if (camera != 0) return camera < 0;
+        for (int index = 0; index < candidate.targets().size(); index++) {
+            int position = mutationPositionComparator().compare(
+                    mutationPosition(candidate.targets().get(index).node()),
+                    mutationPosition(current.targets().get(index).node()));
+            if (position != 0) return position < 0;
+        }
+        return false;
+    }
+
+    private static boolean nearRay(Pose pose, Vec3 left, Vec3 right) {
+        double eyeY = pose.y() + pose.eyeHeight();
+        double lx = left.x - pose.x();
+        double ly = left.y - eyeY;
+        double lz = left.z - pose.z();
+        double rx = right.x - pose.x();
+        double ry = right.y - eyeY;
+        double rz = right.z - pose.z();
+        double denominator = Math.sqrt((lx * lx + ly * ly + lz * lz)
+                * (rx * rx + ry * ry + rz * rz));
+        if (denominator <= 1.0e-12D) return false;
+        double cosine = Mth.clamp((lx * rx + ly * ry + lz * rz) / denominator, -1.0D, 1.0D);
+        return Math.toDegrees(Math.acos(cosine)) <= BATCH_NEAR_RAY_DEGREES;
+    }
+
+    private static boolean mayStandOnTarget(Pose pose, ActionDsl.Position target) {
+        if (!pose.cell().dimension().equals(target.dimension())) return false;
+        return intervalsOverlap(
+                        pose.x() - pose.horizontalPositionError(),
+                        pose.x() + pose.horizontalPositionError(),
+                        target.x(), target.x() + 1.0D)
+                && intervalsOverlap(
+                        pose.z() - pose.horizontalPositionError(),
+                        pose.z() + pose.horizontalPositionError(),
+                        target.z(), target.z() + 1.0D)
+                && intervalsOverlap(
+                        pose.y() - pose.yErrorBelow(),
+                        pose.y() + pose.yErrorAbove(),
+                        target.y() + 1.0D, target.y() + 2.0D);
+    }
+
+    private static boolean intervalsOverlap(
+            double leftMinimum, double leftMaximum, double rightMinimum, double rightMaximum) {
+        return leftMaximum >= rightMinimum - 1.0e-9D
+                && leftMinimum < rightMaximum - 1.0e-9D;
+    }
+
+    private static java.util.Comparator<ActionDsl.Position> mutationPositionComparator() {
+        return java.util.Comparator.comparing(ActionDsl.Position::dimension)
+                .thenComparingInt(ActionDsl.Position::x)
+                .thenComparingInt(ActionDsl.Position::y)
+                .thenComparingInt(ActionDsl.Position::z);
+    }
+
+    private static MutationSurface requireMutationSurfaceForNode(
+            ActionDsl.Node node,
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            List<Pose> poses,
+            ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier) {
+        if (node instanceof ActionDsl.TillKnownBlock till) {
+            return requireMutationSurface(
+                    map, latestFrame, poses, till.target(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, till.target()),
+                    till.expectedBlock(), value -> value.face() != ObservationRecord.Face.DOWN,
+                    "Till batch target requires a current non-DOWN visible surface");
+        }
+        if (node instanceof ActionDsl.PlantKnownWheat plant) {
+            return requireMutationSurface(
+                    map, latestFrame, poses, plant.support(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, plant.support()),
+                    "minecraft:farmland", value -> value.face() == ObservationRecord.Face.UP,
+                    "Plant batch support requires its current UP face");
+        }
+        var harvest = (ActionDsl.HarvestKnownWheat) node;
+        return requireMutationSurface(
+                map, latestFrame, poses, harvest.target(),
+                surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, harvest.target()),
+                "minecraft:wheat", value -> Boolean.TRUE.equals(value.cropMature()),
+                "Harvest batch target requires current crop_mature=true evidence");
+    }
+
+    public static List<ActionDsl.Node> mutationBatchChildren(ActionDsl.Node batch) {
+        if (batch instanceof ActionDsl.TillKnownBatch till) {
+            return java.util.stream.IntStream.range(0, till.targets().size())
+                    .mapToObj(index -> (ActionDsl.Node) new ActionDsl.TillKnownBlock(
+                            batchChildId(till.id(), index), till.targets().get(index),
+                            till.expectedBlock(), till.hoeItem()))
+                    .toList();
+        }
+        if (batch instanceof ActionDsl.PlantKnownWheatBatch plant) {
+            return java.util.stream.IntStream.range(0, plant.targets().size())
+                    .mapToObj(index -> {
+                        ActionDsl.PlantPlot plot = plant.targets().get(index);
+                        return (ActionDsl.Node) new ActionDsl.PlantKnownWheat(
+                                batchChildId(plant.id(), index), plot.target(), plot.support(),
+                                plant.seedItem());
+                    })
+                    .toList();
+        }
+        if (batch instanceof ActionDsl.HarvestKnownWheatBatch harvest) {
+            return java.util.stream.IntStream.range(0, harvest.targets().size())
+                    .mapToObj(index -> (ActionDsl.Node) new ActionDsl.HarvestKnownWheat(
+                            batchChildId(harvest.id(), index), harvest.targets().get(index)))
+                    .toList();
+        }
+        throw new IllegalArgumentException("node is not a mutation batch");
+    }
+
+    private static String batchChildId(String batchId, int index) {
+        String suffix = "_" + index;
+        return batchId.substring(0, Math.min(batchId.length(), 32 - suffix.length())) + suffix;
+    }
+
+    private static ActionDsl.Position mutationPosition(ActionDsl.Node node) {
+        return switch (node) {
+            case ActionDsl.TillKnownBlock till -> till.target();
+            case ActionDsl.PlantKnownWheat plant -> plant.target();
+            case ActionDsl.HarvestKnownWheat harvest -> harvest.target();
+            default -> throw new IllegalArgumentException("node is not a batch mutation child");
+        };
+    }
+
+    private static boolean sameMutationOrder(MutationBatchPlan left, MutationBatchPlan right) {
+        return left.steps().stream().map(step -> mutationPosition(step.primitive())).toList()
+                .equals(right.steps().stream()
+                        .map(step -> mutationPosition(step.primitive())).toList());
+    }
+
+    private static ActionDslCompiler.Cost addCosts(
+            ActionDslCompiler.Cost left, ActionDslCompiler.Cost right) {
+        return new ActionDslCompiler.Cost(
+                Math.addExact(left.durationMillis(), right.durationMillis()),
+                Math.addExact(left.ticks(), right.ticks()),
+                left.distanceBlocks() + right.distanceBlocks(),
+                left.cameraDegrees() + right.cameraDegrees(),
+                Math.addExact(left.interactions(), right.interactions()),
+                Math.addExact(left.blocksBroken(), right.blocksBroken()),
+                Math.addExact(left.blocksPlaced(), right.blocksPlaced()));
     }
 
     private static List<Pose> analyzeMutation(
@@ -744,6 +1114,12 @@ public final class AgentPrimitivePlanner {
         return square(point.x() - pose.x())
                 + square(point.y() - (pose.y() + pose.eyeHeight()))
                 + square(point.z() - pose.z());
+    }
+
+    private static double distanceSquared(Pose pose, Vec3 point) {
+        return square(point.x - pose.x())
+                + square(point.y - (pose.y() + pose.eyeHeight()))
+                + square(point.z - pose.z());
     }
 
     private static Vec3 rayHit(ObservationRecord.VisibleSurface surface) {
@@ -1538,6 +1914,18 @@ public final class AgentPrimitivePlanner {
                     Math.min(360.0D,
                             aimError.totalDegrees() + FACE_COMPLETION_ERROR_DEGREES));
         }
+
+        private Pose withAdditionalYErrorBelow(double additional) {
+            if (!Double.isFinite(additional) || additional < 0.0D) {
+                throw new IllegalArgumentException("additional y error must be finite");
+            }
+            return new Pose(
+                    cell, x, y, z, eyeHeight, yaw, pitch,
+                    horizontalPositionError,
+                    yErrorBelow + additional,
+                    yErrorAbove,
+                    orientationErrorDegrees);
+        }
     }
 
     public record Analysis(
@@ -1545,7 +1933,8 @@ public final class AgentPrimitivePlanner {
             Map<TraversabilityEdge.Key, TraversabilityEdge> routeDependencies,
             Set<ActionDsl.Position> knownTargets,
             Set<KnownSurface> knownSurfaces,
-            Map<String, MutationAim> mutationAims) {
+            Map<String, MutationAim> mutationAims,
+            Map<String, MutationBatchPlan> mutationBatchPlans) {
         public Analysis {
             primitiveCosts = Map.copyOf(Objects.requireNonNull(primitiveCosts, "primitiveCosts"));
             routeDependencies = Map.copyOf(
@@ -1553,6 +1942,8 @@ public final class AgentPrimitivePlanner {
             knownTargets = Set.copyOf(Objects.requireNonNull(knownTargets, "knownTargets"));
             knownSurfaces = Set.copyOf(Objects.requireNonNull(knownSurfaces, "knownSurfaces"));
             mutationAims = Map.copyOf(Objects.requireNonNull(mutationAims, "mutationAims"));
+            mutationBatchPlans = Map.copyOf(
+                    Objects.requireNonNull(mutationBatchPlans, "mutationBatchPlans"));
         }
 
         public Optional<ActionDslCompiler.Cost> worstCase(ActionDsl.Node primitive) {
@@ -1585,6 +1976,64 @@ public final class AgentPrimitivePlanner {
             Objects.requireNonNull(block, "block");
             Objects.requireNonNull(face, "face");
             Objects.requireNonNull(point, "point");
+        }
+    }
+
+    public record MutationBatchStep(
+            ActionDsl.Node primitive,
+            MutationAim aim,
+            ActionDslCompiler.Cost plannedCost) {
+        public MutationBatchStep {
+            Objects.requireNonNull(primitive, "primitive");
+            Objects.requireNonNull(aim, "aim");
+            Objects.requireNonNull(plannedCost, "plannedCost");
+            if (!(primitive instanceof ActionDsl.TillKnownBlock)
+                    && !(primitive instanceof ActionDsl.PlantKnownWheat)
+                    && !(primitive instanceof ActionDsl.HarvestKnownWheat)) {
+                throw new IllegalArgumentException("batch step must be a wheat mutation primitive");
+            }
+        }
+    }
+
+    public record MutationBatchPlan(List<MutationBatchStep> steps) {
+        public MutationBatchPlan {
+            steps = List.copyOf(Objects.requireNonNull(steps, "steps"));
+            if (steps.isEmpty()
+                    || steps.size() > ActionDslValidator.MAX_MUTATION_BATCH_TARGETS) {
+                throw new IllegalArgumentException("mutation batch plan size is outside 1..8");
+            }
+        }
+
+        /** Fresh current target plus the originally proved, not-yet-started suffix. */
+        public ActionDslCompiler.Cost requiredRemainder(
+                int currentIndex, ActionDslCompiler.Cost freshCurrent) {
+            Objects.requireNonNull(freshCurrent, "freshCurrent");
+            if (currentIndex < 0 || currentIndex >= steps.size()) {
+                throw new IllegalArgumentException("currentIndex is outside the mutation batch");
+            }
+            ActionDslCompiler.Cost required = freshCurrent;
+            for (int index = currentIndex + 1; index < steps.size(); index++) {
+                required = addCosts(required, steps.get(index).plannedCost());
+            }
+            return required;
+        }
+    }
+
+    private record MutationBatchTarget(ActionDsl.Node node, MutationSurface surface) {
+        private MutationBatchTarget {
+            Objects.requireNonNull(node, "node");
+            Objects.requireNonNull(surface, "surface");
+        }
+    }
+
+    private record BatchPath(
+            List<MutationBatchTarget> targets,
+            Pose pose,
+            ActionDslCompiler.Cost cost) {
+        private BatchPath {
+            targets = List.copyOf(Objects.requireNonNull(targets, "targets"));
+            Objects.requireNonNull(pose, "pose");
+            Objects.requireNonNull(cost, "cost");
         }
     }
 

@@ -234,6 +234,22 @@ public final class AgentActionStore {
                 action.cameraDegrees, cameraDegrees, MAX_RECORDED_CAMERA_DEGREES, "cameraDegrees");
     }
 
+    /** Audits bounded world-physics displacement which is intentionally not input-motion use. */
+    public synchronized void recordPassiveMotion(UUID actionId, double distance, String cause) {
+        Mutable action = running(actionId);
+        if (!Double.isFinite(distance) || distance <= 0.0D || distance > 1.0D / 16.0D + 1.0e-6D) {
+            throw new IllegalArgumentException("passive motion is outside the bounded settling range");
+        }
+        String boundedCause = Objects.requireNonNull(cause, "cause");
+        if (!boundedCause.matches("[a-z0-9_]{1,32}")) {
+            throw new IllegalArgumentException("invalid passive motion cause");
+        }
+        action.trace(
+                action.ticks,
+                "PASSIVE_MOTION",
+                boundedCause + "=" + String.format(java.util.Locale.ROOT, "%.6f", distance));
+    }
+
     /** Records one server-acknowledged authoritative transition to air. */
     public synchronized void recordBlockBreak(UUID actionId) {
         Mutable action = running(actionId);

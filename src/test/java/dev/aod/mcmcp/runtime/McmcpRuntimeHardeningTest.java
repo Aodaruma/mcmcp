@@ -659,6 +659,138 @@ class McmcpRuntimeHardeningTest {
     }
 
     @Test
+    void tillSettlingCreditExcludesOnlyPassiveOneSixteenthDescent() {
+        var previous = new Vec3(0.5D, 65.0D, 0.5D);
+        var oneSixteenthDown = new Vec3(0.5D, 64.9375D, 0.5D);
+
+        assertThat(McmcpRuntime.batchTillSettlingCredit(
+                previous, oneSixteenthDown, 1.0D / 16.0D, true, true))
+                .isEqualTo(1.0D / 16.0D);
+        assertThat(McmcpRuntime.batchTillSettlingCredit(
+                previous, new Vec3(0.50001D, 64.9375D, 0.5D),
+                1.0D / 16.0D, true, true)).isZero();
+        assertThat(McmcpRuntime.batchTillSettlingCredit(
+                previous, new Vec3(0.5D, 64.9374D, 0.5D),
+                1.0D / 16.0D, true, true)).isZero();
+        assertThat(McmcpRuntime.batchTillSettlingCredit(
+                previous, new Vec3(0.5D, 65.0625D, 0.5D),
+                1.0D / 16.0D, true, true)).isZero();
+        assertThat(McmcpRuntime.batchTillSettlingCredit(
+                previous, oneSixteenthDown, 1.0D / 16.0D, false, true)).isZero();
+        assertThat(McmcpRuntime.batchTillSettlingCredit(
+                previous, oneSixteenthDown, Double.NaN, true, true)).isZero();
+        assertThat(McmcpRuntime.batchTillSettlingCredit(
+                previous, oneSixteenthDown, 1.0D / 16.0D, true, false)).isZero();
+    }
+
+    @Test
+    void mutationBatchStopsAfterAnUnconfirmedTargetAndNeverDispatchesTheRemainder() {
+        assertThat(McmcpRuntime.mutationBatchDisposition(0, 3, false))
+                .isEqualTo(McmcpRuntime.BatchTargetDisposition.STOP);
+        assertThat(McmcpRuntime.mutationBatchDisposition(0, 3, true))
+                .isEqualTo(McmcpRuntime.BatchTargetDisposition.CONTINUE);
+        assertThat(McmcpRuntime.mutationBatchDisposition(2, 3, true))
+                .isEqualTo(McmcpRuntime.BatchTargetDisposition.COMPLETE);
+        assertThat(AgentPrimitivePlanner.MUTATION_BATCH_REPROOF_TICKS).isEqualTo(40L);
+        var position = new ActionDsl.Position("minecraft:overworld", 0, 64, 0);
+        assertThat(McmcpRuntime.mutationAimRetriesAllowed(
+                new ActionDsl.TillKnownBatch(
+                        "batch", List.of(position),
+                        "minecraft:dirt", "minecraft:iron_hoe"))).isFalse();
+        assertThat(McmcpRuntime.mutationAimRetriesAllowed(
+                new ActionDsl.TillKnownBlock(
+                        "single", position,
+                        "minecraft:dirt", "minecraft:iron_hoe"))).isTrue();
+    }
+
+    @Test
+    void mutationBatchReservesFreshCurrentAndTheEntireUnstartedSuffix() {
+        var position = new ActionDsl.Position("minecraft:overworld", 0, 64, 0);
+        var oldAim = new AgentPrimitivePlanner.MutationAim(
+                position, ActionDsl.BlockFace.UP, new Vec3(0.5D, 65.0D, 0.5D));
+        var secondAim = new AgentPrimitivePlanner.MutationAim(
+                new ActionDsl.Position("minecraft:overworld", 1, 64, 0),
+                ActionDsl.BlockFace.UP,
+                new Vec3(3.5D, 65.0D, 0.5D));
+        var thirdAim = new AgentPrimitivePlanner.MutationAim(
+                new ActionDsl.Position("minecraft:overworld", 2, 64, 0),
+                ActionDsl.BlockFace.UP,
+                new Vec3(4.5D, 65.0D, 0.5D));
+        var firstPlanned = new ActionDslCompiler.Cost(2_500, 50, 0, 1, 1, 0, 0);
+        var secondPlanned = new ActionDslCompiler.Cost(2_000, 40, 0, 1, 1, 0, 0);
+        var thirdPlanned = new ActionDslCompiler.Cost(1_500, 30, 0, 1, 1, 0, 0);
+        var plan = new AgentPrimitivePlanner.MutationBatchPlan(List.of(
+                new AgentPrimitivePlanner.MutationBatchStep(
+                        new ActionDsl.TillKnownBlock(
+                                "batch_0", position,
+                                "minecraft:dirt", "minecraft:iron_hoe"),
+                        oldAim,
+                        firstPlanned),
+                new AgentPrimitivePlanner.MutationBatchStep(
+                        new ActionDsl.TillKnownBlock(
+                                "batch_1", new ActionDsl.Position(
+                                        "minecraft:overworld", 1, 64, 0),
+                                "minecraft:dirt", "minecraft:iron_hoe"),
+                        secondAim,
+                        secondPlanned),
+                new AgentPrimitivePlanner.MutationBatchStep(
+                        new ActionDsl.TillKnownBlock(
+                                "batch_2", new ActionDsl.Position(
+                                        "minecraft:overworld", 2, 64, 0),
+                                "minecraft:dirt", "minecraft:iron_hoe"),
+                        thirdAim,
+                        thirdPlanned)));
+        var freshCurrent = new ActionDslCompiler.Cost(500, 10, 0, 5, 1, 0, 0);
+        var currentPose = new AgentPrimitivePlanner.Pose(
+                new dev.aod.mcmcp.agent.navigation.NavCell(
+                        "minecraft:overworld", 0, 64, 0),
+                0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+        var freshAim = new AgentPrimitivePlanner.MutationAim(
+                position, ActionDsl.BlockFace.UP, new Vec3(-3.5D, 65.0D, 0.5D));
+        var oldPoseRequired = plan.requiredRemainder(0, freshCurrent);
+        var required = McmcpRuntime.mutationBatchRequiredRemainder(
+                plan, 0, currentPose, freshAim, freshCurrent, 4.5F);
+        assertThat(required.interactions()).isEqualTo(3);
+        assertThat(required.ticks()).isGreaterThanOrEqualTo(
+                freshCurrent.ticks()
+                        + 2L * (AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND
+                                + AgentPrimitivePlanner.MUTATION_BATCH_REPROOF_TICKS));
+        assertThat(required.cameraDegrees()).isGreaterThan(oldPoseRequired.cameraDegrees());
+
+        var baseline = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING, "batch", 0, 1,
+                0, 0, 0, 0, 0, 0, false);
+        var used = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING, "batch", 0, 1,
+                0, 5, 0, 0, 0, 20, false);
+        var occurrenceLimit = new ActionDslCompiler.Cost(
+                required.durationMillis() + 1_000,
+                required.ticks() + 20,
+                0,
+                required.cameraDegrees() + 5,
+                3, 0, 0);
+        var global = new ActionDsl.Budget(
+                occurrenceLimit.durationMillis(),
+                occurrenceLimit.ticks(),
+                0,
+                occurrenceLimit.cameraDegrees(),
+                3, 0, 0);
+
+        assertThat(McmcpRuntime.fitsMutationBatchRemainder(
+                used, baseline, occurrenceLimit, global, required,
+                Duration.ofMillis(1_000).toNanos())).isTrue();
+        var oneTickTooLarge = new ActionDslCompiler.Cost(
+                required.durationMillis() + 50,
+                required.ticks() + 1,
+                0,
+                required.cameraDegrees(),
+                3, 0, 0);
+        assertThat(McmcpRuntime.fitsMutationBatchRemainder(
+                used, baseline, occurrenceLimit, global, oneTickTooLarge,
+                Duration.ofMillis(1_000).toNanos())).isFalse();
+    }
+
+    @Test
     void productionStateAdapterUsesTheNormativeAgentStateShape() {
         var lock = new LocalArmingState.Snapshot(
                 LocalArmingState.Mode.READY,

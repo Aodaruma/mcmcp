@@ -87,8 +87,11 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.FaceKnownPosition
                 || node instanceof ActionDsl.BreakKnownFace
                 || node instanceof ActionDsl.TillKnownBlock
+                || node instanceof ActionDsl.TillKnownBatch
                 || node instanceof ActionDsl.PlantKnownWheat
+                || node instanceof ActionDsl.PlantKnownWheatBatch
                 || node instanceof ActionDsl.HarvestKnownWheat
+                || node instanceof ActionDsl.HarvestKnownWheatBatch
                 || node instanceof ActionDsl.OpenKnownFenceGate
                 || node instanceof ActionDsl.OpenKnownPassage
                 || node instanceof ActionDsl.InspectKnownContainer
@@ -110,10 +113,18 @@ public final class ActionDslCompiler {
                 }
             } else if (node instanceof ActionDsl.TillKnownBlock) {
                 requireMutationCost(cost, 1, 0, 0, "till_known_block");
+            } else if (node instanceof ActionDsl.TillKnownBatch batch) {
+                requireMutationCost(cost, batch.targets().size(), 0, 0, "till_known_batch");
             } else if (node instanceof ActionDsl.PlantKnownWheat) {
                 requireMutationCost(cost, 0, 0, 1, "plant_known_wheat");
+            } else if (node instanceof ActionDsl.PlantKnownWheatBatch batch) {
+                requireMutationCost(cost, 0, 0, batch.targets().size(),
+                        "plant_known_wheat_batch");
             } else if (node instanceof ActionDsl.HarvestKnownWheat) {
                 requireMutationCost(cost, 0, 1, 0, "harvest_known_wheat");
+            } else if (node instanceof ActionDsl.HarvestKnownWheatBatch batch) {
+                requireMutationCost(cost, 0, batch.targets().size(), 0,
+                        "harvest_known_wheat_batch");
             } else if (node instanceof ActionDsl.OpenKnownFenceGate) {
                 requireMutationCost(cost, 1, 0, 0, "open_known_fence_gate");
             } else if (node instanceof ActionDsl.OpenKnownPassage) {

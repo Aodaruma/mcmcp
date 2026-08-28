@@ -38,8 +38,10 @@ class KnownBlockMutationAttemptTest {
         assertThat(attempt.tick(1).status())
                 .isEqualTo(KnownBlockMutationAttempt.Status.RUNNING);
         port.tick = 2;
-        assertThat(attempt.tick(2).status())
+        var dispatch = attempt.tick(2);
+        assertThat(dispatch.status())
                 .isEqualTo(KnownBlockMutationAttempt.Status.RUNNING);
+        assertThat(dispatch.dispatchedThisTick()).isTrue();
         port.tick = 3;
         var result = attempt.tick(3);
         assertThat(result.status()).isEqualTo(KnownBlockMutationAttempt.Status.SUCCEEDED);
@@ -112,6 +114,30 @@ class KnownBlockMutationAttemptTest {
                 .isEqualTo(KnownBlockMutationAttempt.Status.SUCCEEDED);
     }
 
+    @Test
+    void dispatchSignalIsAbsentWhilePreparationWaitsAndFiresOnlyOnActualDispatch() {
+        var port = new FakePort();
+        port.prepared = false;
+        var target = new BlockTarget("minecraft:overworld", 1, 64, 1);
+        var request = new UseItemOnBlockRequest(
+                target, DIRT, "minecraft:iron_hoe", FARMLAND,
+                new ActionBounds(target.dimension(), target, target, 0, 5, false));
+        var attempt = new KnownBlockMutationAttempt(port, request, 1, 101);
+
+        assertThat(attempt.tick(1).dispatchedThisTick()).isFalse();
+        for (int tick = 2; tick <= 5; tick++) {
+            port.tick = tick;
+            assertThat(attempt.tick(tick).dispatchedThisTick()).isFalse();
+            assertThat(port.dispatched).isFalse();
+        }
+        port.prepared = true;
+        port.tick = 6;
+        assertThat(attempt.tick(6).dispatchedThisTick()).isTrue();
+        assertThat(port.dispatched).isTrue();
+        port.tick = 7;
+        assertThat(attempt.tick(7).dispatchedThisTick()).isFalse();
+    }
+
     private static final class FakePort implements SemanticActionPort {
         private long tick = 1;
         private SemanticActionPreparationAttempt preparation;
@@ -119,6 +145,7 @@ class KnownBlockMutationAttemptTest {
         private boolean dispatched;
         private boolean stopped;
         private boolean retired;
+        private boolean prepared = true;
         private Optional<BlockStateFingerprint> unpreparedLive = Optional.empty();
         private BlockStateFingerprint preparedLive = DIRT;
         private BlockStateFingerprint confirmedLive = FARMLAND;
@@ -147,7 +174,7 @@ class KnownBlockMutationAttemptTest {
                 SemanticActionPreparationAttempt attempt) {
             return new SemanticActionPreparationEvidence(
                     attempt.attemptId(), tick, tick, Optional.of(preparedLive),
-                    true, true, true, null);
+                    prepared, true, true, null);
         }
 
         @Override public void releasePreparation(SemanticActionPreparationAttempt attempt) { }

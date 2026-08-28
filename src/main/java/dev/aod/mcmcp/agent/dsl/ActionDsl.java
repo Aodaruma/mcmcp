@@ -30,7 +30,8 @@ public final class ActionDsl {
     }
 
     public sealed interface Node permits NavigateToKnown, FaceKnownPosition, BreakKnownFace,
-            TillKnownBlock, PlantKnownWheat, HarvestKnownWheat, OpenKnownFenceGate,
+            TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
+            HarvestKnownWheat, HarvestKnownWheatBatch, OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
             CollectVisibleItem, WaitTicks, WaitUntil, If, Repeat {
         String id();
@@ -78,6 +79,20 @@ public final class ActionDsl {
         }
     }
 
+    /** Jointly planned, bounded set of independent till operations. */
+    public record TillKnownBatch(
+            String id,
+            List<Position> targets,
+            String expectedBlock,
+            String hoeItem) implements Node {
+        public TillKnownBatch {
+            Objects.requireNonNull(id, "id");
+            targets = List.copyOf(Objects.requireNonNull(targets, "targets"));
+            Objects.requireNonNull(expectedBlock, "expectedBlock");
+            Objects.requireNonNull(hoeItem, "hoeItem");
+        }
+    }
+
     /** Plants wheat into target air using the known farmland block directly below it. */
     public record PlantKnownWheat(
             String id,
@@ -92,11 +107,38 @@ public final class ActionDsl {
         }
     }
 
+    public record PlantPlot(Position target, Position support) {
+        public PlantPlot {
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(support, "support");
+        }
+    }
+
+    /** Jointly planned, bounded set of independent wheat placements. */
+    public record PlantKnownWheatBatch(
+            String id,
+            List<PlantPlot> targets,
+            String seedItem) implements Node {
+        public PlantKnownWheatBatch {
+            Objects.requireNonNull(id, "id");
+            targets = List.copyOf(Objects.requireNonNull(targets, "targets"));
+            Objects.requireNonNull(seedItem, "seedItem");
+        }
+    }
+
     /** Breaks only a currently mature (age=7) wheat block. */
     public record HarvestKnownWheat(String id, Position target) implements Node {
         public HarvestKnownWheat {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
+        }
+    }
+
+    /** Jointly planned, bounded set of independent mature-wheat breaks. */
+    public record HarvestKnownWheatBatch(String id, List<Position> targets) implements Node {
+        public HarvestKnownWheatBatch {
+            Objects.requireNonNull(id, "id");
+            targets = List.copyOf(Objects.requireNonNull(targets, "targets"));
         }
     }
 

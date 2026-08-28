@@ -1108,7 +1108,7 @@ public final class McmcpRuntime implements McpRuntimePort {
 
     private static AgentPrimitivePlanner.Analysis emptyPrimitiveAnalysis() {
         return new AgentPrimitivePlanner.Analysis(
-                Map.of(), Map.of(), Set.of(), Set.of(), Map.of());
+                Map.of(), Map.of(), Set.of(), Set.of(), Map.of(), Map.of());
     }
 
     private static Optional<ActionDsl.Node> firstPrimitive(
@@ -1126,11 +1126,19 @@ public final class McmcpRuntime implements McpRuntimePort {
                         || node instanceof ActionDsl.OpenKnownPassage
                         || node instanceof ActionDsl.InspectKnownContainer
                 ? 1L
+                : node instanceof ActionDsl.TillKnownBatch batch
+                        ? batch.targets().size()
                 : node instanceof ActionDsl.TakeKnownContainerStack ? 3L : 0L;
         long breaks = node instanceof ActionDsl.BreakKnownFace
                         || node instanceof ActionDsl.HarvestKnownWheat
                 ? 1L : 0L;
+        if (node instanceof ActionDsl.HarvestKnownWheatBatch batch) {
+            breaks = batch.targets().size();
+        }
         long placements = node instanceof ActionDsl.PlantKnownWheat ? 1L : 0L;
+        if (node instanceof ActionDsl.PlantKnownWheatBatch batch) {
+            placements = batch.targets().size();
+        }
         return Optional.of(new ActionDslCompiler.Cost(
                 0L, 0L, 0.0D, 0.0D, interactions, breaks, placements));
     }
@@ -2686,11 +2694,14 @@ public final class McmcpRuntime implements McpRuntimePort {
             }
 
             if (agentExecution.primitive instanceof ActionDsl.TillKnownBlock
+                    || agentExecution.primitive instanceof ActionDsl.TillKnownBatch
                     || agentExecution.primitive instanceof ActionDsl.PlantKnownWheat
+                    || agentExecution.primitive instanceof ActionDsl.PlantKnownWheatBatch
                     || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheat
+                    || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheatBatch
                     || agentExecution.primitive instanceof ActionDsl.OpenKnownFenceGate
                     || agentExecution.primitive instanceof ActionDsl.OpenKnownPassage) {
-                tickAgentBlockMutation(minecraft, session, action);
+                tickAgentBlockMutation(minecraft, session, action, actionTick);
                 return;
             }
 
@@ -2886,6 +2897,12 @@ public final class McmcpRuntime implements McpRuntimePort {
         agentExecution.retainOccurrenceBaseline = false;
         agentExecution.primitivePlanning = false;
         agentExecution.mutationAimFailures = 0;
+        agentExecution.mutationBatchPlan = null;
+        agentExecution.mutationBatchIndex = 0;
+        agentExecution.mutationBatchTarget = null;
+        agentExecution.mutationBatchTargetAim = null;
+        agentExecution.mutationBatchTargetBound = false;
+        agentExecution.mutationBatchTargetDeadlineTick = 0L;
         agentExecution.primitivePlanDeadlineTick = Math.addExact(
                 occurrenceBaseline.ticks(), primitiveReobservationTicks(advance.primitive()));
         agentExecution.mutationAims.clear();
@@ -2973,6 +2990,8 @@ public final class McmcpRuntime implements McpRuntimePort {
                 agentExecution.occurrenceLimit = cost;
             }
             agentExecution.mutationAims.putAll(analysis.mutationAims());
+            Optional.ofNullable(analysis.mutationBatchPlans().get(agentExecution.primitive.id()))
+                    .ifPresent(plan -> agentExecution.mutationBatchPlan = plan);
             agentExecution.primitivePlanDeadlineTick = 0L;
             if (agentExecution.primitivePlanning) {
                 agentActions.setPhase(
@@ -3424,11 +3443,21 @@ public final class McmcpRuntime implements McpRuntimePort {
     private void tickAgentBlockMutation(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action) {
+            AgentActionStore.Active action,
+            long actionTick) {
+        ActionDsl.Node mutation = agentExecution.primitive;
+        if (isMutationBatch(mutation)) {
+            if (!bindMutationBatchTarget(minecraft, session, action, actionTick)) {
+                return;
+            }
+            mutation = agentExecution.mutationBatchTarget;
+        }
         if (agentExecution.blockMutationAttempt == null) {
             SemanticActionRequest request = blockMutationRequest(
-                    agentExecution.primitive,
-                    agentExecution.mutationAims.get(agentExecution.primitive.id()));
+                    mutation,
+                    isMutationBatch(agentExecution.primitive)
+                            ? agentExecution.mutationBatchTargetAim
+                            : agentExecution.mutationAims.get(agentExecution.primitive.id()));
             long deadline = Math.addExact(
                     session.clientTick(), AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND);
             agentExecution.blockMutationAttempt = new KnownBlockMutationAttempt(
@@ -3436,11 +3465,28 @@ public final class McmcpRuntime implements McpRuntimePort {
         }
         KnownBlockMutationAttempt.TickResult result =
                 agentExecution.blockMutationAttempt.tick(session.clientTick());
+        if (result.dispatchedThisTick()) {
+            armBatchTillSettlingAllowance(minecraft, mutation);
+        }
         switch (result.status()) {
             case RUNNING -> { }
             case FAILED -> {
+                if (isMutationBatch(agentExecution.primitive)
+                        && mutationBatchDisposition(
+                                agentExecution.mutationBatchIndex,
+                                agentExecution.mutationBatchPlan.steps().size(),
+                                false) != BatchTargetDisposition.STOP) {
+                    throw new IllegalStateException("Failed batch target must stop dispatch");
+                }
                 if (retryableMutationAimFailure(result.evidence())) {
-                    retryAgentMutationAim(minecraft, action, result.evidence());
+                    if (!mutationAimRetriesAllowed(agentExecution.primitive)) {
+                        failAgentAction(
+                                AgentActionStore.FailureCode.PATH_BLOCKED,
+                                true,
+                                "batch_aim_raycast_unavailable");
+                    } else {
+                        retryAgentMutationAim(minecraft, action, result.evidence());
+                    }
                 } else {
                     failAgentAction(
                             AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
@@ -3451,23 +3497,47 @@ public final class McmcpRuntime implements McpRuntimePort {
             case SUCCEEDED -> {
                 agentExecution.blockMutationAttempt = null;
                 if (result.performed()) {
-                    if (agentExecution.primitive instanceof ActionDsl.TillKnownBlock
-                            || agentExecution.primitive instanceof ActionDsl.OpenKnownFenceGate
-                            || agentExecution.primitive instanceof ActionDsl.OpenKnownPassage) {
+                    if (mutation instanceof ActionDsl.TillKnownBlock
+                            || mutation instanceof ActionDsl.OpenKnownFenceGate
+                            || mutation instanceof ActionDsl.OpenKnownPassage) {
                         agentActions.recordInteraction(action.actionId());
-                    } else if (agentExecution.primitive instanceof ActionDsl.PlantKnownWheat) {
+                    } else if (mutation instanceof ActionDsl.PlantKnownWheat) {
                         agentActions.recordBlockPlace(action.actionId());
                     } else {
                         agentActions.recordBlockBreak(action.actionId());
                     }
                 }
-                agentActions.completeNode(action.actionId());
-                agentExecution.primitive = null;
-                agentExecution.replanning = false;
-                agentExecution.replanNotBeforeTick = 0L;
-                agentExecution.replanDeadlineTick = 0L;
-                advanceAgentProgram(
-                        minecraft, agentActions.get(action.actionId()).progress());
+                if (isMutationBatch(agentExecution.primitive)) {
+                    agentActions.recordNodeEvidence(
+                            action.actionId(), batchTargetTrace(mutation));
+                    BatchTargetDisposition disposition = mutationBatchDisposition(
+                            agentExecution.mutationBatchIndex,
+                            agentExecution.mutationBatchPlan.steps().size(),
+                            true);
+                    agentExecution.mutationBatchIndex++;
+                    agentExecution.mutationBatchTarget = null;
+                    agentExecution.mutationBatchTargetAim = null;
+                    agentExecution.mutationBatchTargetBound = false;
+                    agentExecution.mutationBatchTargetDeadlineTick = 0L;
+                    agentExecution.mutationAimFailures = 0;
+                    if (disposition == BatchTargetDisposition.COMPLETE) {
+                        agentActions.completeNode(action.actionId());
+                        agentExecution.primitive = null;
+                        agentExecution.replanning = false;
+                        agentExecution.replanNotBeforeTick = 0L;
+                        agentExecution.replanDeadlineTick = 0L;
+                        advanceAgentProgram(
+                                minecraft, agentActions.get(action.actionId()).progress());
+                    }
+                } else {
+                    agentActions.completeNode(action.actionId());
+                    agentExecution.primitive = null;
+                    agentExecution.replanning = false;
+                    agentExecution.replanNotBeforeTick = 0L;
+                    agentExecution.replanDeadlineTick = 0L;
+                    advanceAgentProgram(
+                            minecraft, agentActions.get(action.actionId()).progress());
+                }
             }
         }
     }
@@ -3514,6 +3584,168 @@ public final class McmcpRuntime implements McpRuntimePort {
                         minecraft, agentActions.get(action.actionId()).progress());
             }
         }
+    }
+
+    private boolean bindMutationBatchTarget(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action,
+            long actionTick) {
+        if (agentExecution.mutationBatchTargetBound) {
+            return true;
+        }
+        AgentPrimitivePlanner.MutationBatchPlan plan = agentExecution.mutationBatchPlan;
+        if (plan == null || agentExecution.mutationBatchIndex >= plan.steps().size()) {
+            failAgentAction(
+                    AgentActionStore.FailureCode.INTERNAL_ERROR, false, "mutation_batch_plan_missing");
+            return false;
+        }
+        AgentPrimitivePlanner.MutationBatchStep step =
+                plan.steps().get(agentExecution.mutationBatchIndex);
+        try {
+            var player = Objects.requireNonNull(minecraft.player, "player");
+            var map = requireAgentMap(session);
+            var reconciliation = reconciliationSignals.bindAndSnapshot(
+                    Objects.requireNonNull(minecraft.level, "level"), session.worldSessionId());
+            AgentPrimitivePlanner.Pose currentPose = playerPose(player, session.dimension());
+            var analysis = analyzePrimitive(
+                    action.program().request().program(),
+                    step.primitive(),
+                    map,
+                    currentPose,
+                    agentObservationFrames.latestFrame(),
+                    McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
+                    visualBarrierWorldRevision(map, reconciliation),
+                    surfaceRevisionBarrier(map, reconciliation),
+                    () -> true);
+            ActionDslCompiler.Cost cost = analysis.worstCase(step.primitive()).orElseThrow();
+            AgentPrimitivePlanner.MutationAim freshAim = analysis.mutationAims()
+                    .get(step.primitive().id());
+            if (freshAim == null) {
+                throw new IllegalStateException("Fresh batch target aim is unavailable");
+            }
+            ActionDslCompiler.Cost requiredRemainder = mutationBatchRequiredRemainder(
+                    plan,
+                    agentExecution.mutationBatchIndex,
+                    currentPose,
+                    freshAim,
+                    cost,
+                    McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
+            AgentActionStore.Progress progress = agentActions.get(action.actionId()).progress();
+            if (!fitsMutationBatchRemainder(
+                    progress,
+                    agentExecution.occurrenceBaseline,
+                    agentExecution.occurrenceLimit,
+                    action.program().effectiveBudget(),
+                    requiredRemainder,
+                    activeElapsedNanos(agentExecution, System.nanoTime()))) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                        false,
+                        "batch_target_budget");
+                return false;
+            }
+            agentExecution.mutationBatchTarget = step.primitive();
+            agentExecution.mutationBatchTargetAim = freshAim;
+            agentExecution.mutationBatchTargetBound = true;
+            agentExecution.mutationBatchTargetDeadlineTick = 0L;
+            agentExecution.replanning = false;
+            agentActions.setPhase(
+                    action.actionId(), AgentActionStore.Phase.EXECUTING,
+                    "batch_target_reproved");
+            return true;
+        } catch (AgentPrimitivePlanner.PlanningException unavailable) {
+            if (!releaseAgentInputsForHold(minecraft, "batch_reproof_input_release_failed")) {
+                return false;
+            }
+            if (agentExecution.mutationBatchTargetDeadlineTick == 0L) {
+                agentExecution.mutationBatchTargetDeadlineTick = Math.addExact(
+                        actionTick, AgentPrimitivePlanner.MUTATION_BATCH_REPROOF_TICKS);
+                agentActions.setPhase(
+                        action.actionId(), AgentActionStore.Phase.REPLANNING,
+                        "batch_" + unavailable.code().name().toLowerCase(Locale.ROOT));
+            }
+            if (replanDeadlineReached(
+                    actionTick, agentExecution.mutationBatchTargetDeadlineTick)) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.PATH_BLOCKED,
+                        true,
+                        "batch_" + unavailable.code().name().toLowerCase(Locale.ROOT));
+            }
+            return false;
+        }
+    }
+
+    private void armBatchTillSettlingAllowance(Minecraft minecraft, ActionDsl.Node mutation) {
+        agentExecution.tillSettlingAllowance = 0.0D;
+        agentExecution.tillSettlingTarget = null;
+        agentExecution.tillSettlingDeadlineTick = 0L;
+        if (!isMutationBatch(agentExecution.primitive)
+                || !(mutation instanceof ActionDsl.TillKnownBlock till)
+                || minecraft.player == null) {
+            return;
+        }
+        var player = minecraft.player;
+        if (Mth.floor(player.getY()) == till.target().y() + 1
+                && Mth.floor(player.getX()) == till.target().x()
+                && Mth.floor(player.getZ()) == till.target().z()) {
+            agentExecution.tillSettlingAllowance = 1.0D / 16.0D;
+            agentExecution.tillSettlingTarget = till.target();
+            agentExecution.tillSettlingDeadlineTick = Math.addExact(
+                    agentActions.get(agentExecution.actionId).progress().ticks(), 2L);
+        }
+    }
+
+    private static boolean isMutationBatch(ActionDsl.Node node) {
+        return node instanceof ActionDsl.TillKnownBatch
+                || node instanceof ActionDsl.PlantKnownWheatBatch
+                || node instanceof ActionDsl.HarvestKnownWheatBatch;
+    }
+
+    static boolean mutationAimRetriesAllowed(ActionDsl.Node node) {
+        return !isMutationBatch(Objects.requireNonNull(node, "node"));
+    }
+
+    static BatchTargetDisposition mutationBatchDisposition(
+            int completedBeforeTarget, int targetCount, boolean serverConfirmed) {
+        if (targetCount < 1
+                || targetCount > ActionDslValidator.MAX_MUTATION_BATCH_TARGETS
+                || completedBeforeTarget < 0
+                || completedBeforeTarget >= targetCount) {
+            throw new IllegalArgumentException("invalid mutation batch progress");
+        }
+        if (!serverConfirmed) return BatchTargetDisposition.STOP;
+        return completedBeforeTarget + 1 == targetCount
+                ? BatchTargetDisposition.COMPLETE
+                : BatchTargetDisposition.CONTINUE;
+    }
+
+    enum BatchTargetDisposition { STOP, CONTINUE, COMPLETE }
+
+    static ActionDslCompiler.Cost mutationBatchRequiredRemainder(
+            AgentPrimitivePlanner.MutationBatchPlan plan,
+            int currentIndex,
+            AgentPrimitivePlanner.Pose currentPose,
+            AgentPrimitivePlanner.MutationAim freshCurrentAim,
+            ActionDslCompiler.Cost freshCurrent,
+            float cameraLimit) {
+        return AgentPrimitivePlanner.recostMutationBatchRemainder(
+                plan,
+                currentIndex,
+                currentPose,
+                freshCurrentAim,
+                freshCurrent,
+                cameraLimit);
+    }
+
+    private static String batchTargetTrace(ActionDsl.Node mutation) {
+        ActionDsl.Position target = switch (mutation) {
+            case ActionDsl.TillKnownBlock till -> till.target();
+            case ActionDsl.PlantKnownWheat plant -> plant.target();
+            case ActionDsl.HarvestKnownWheat harvest -> harvest.target();
+            default -> throw new IllegalArgumentException("node is not a batch target");
+        };
+        return "batch_target=" + target.x() + "," + target.y() + "," + target.z();
     }
 
     private static PhaseFiveRequest containerRequest(
@@ -4823,6 +5055,18 @@ public final class McmcpRuntime implements McpRuntimePort {
             ActionDslCompiler.Cost next) {
         var baseline = Objects.requireNonNull(execution.occurrenceBaseline, "occurrenceBaseline");
         var limit = Objects.requireNonNull(execution.occurrenceLimit, "occurrenceLimit");
+        return fitsOccurrenceBudget(used, baseline, limit, next);
+    }
+
+    private static boolean fitsOccurrenceBudget(
+            AgentActionStore.Progress used,
+            AgentActionStore.Progress baseline,
+            ActionDslCompiler.Cost limit,
+            ActionDslCompiler.Cost next) {
+        Objects.requireNonNull(used, "used");
+        Objects.requireNonNull(baseline, "baseline");
+        Objects.requireNonNull(limit, "limit");
+        Objects.requireNonNull(next, "next");
         return !used.motionOverflowed()
                 && fits(consumedDurationMillis(used, baseline), next.durationMillis(),
                         limit.durationMillis())
@@ -4837,6 +5081,19 @@ public final class McmcpRuntime implements McpRuntimePort {
                         limit.blocksBroken())
                 && fits(consumedPlacements(used, baseline), next.blocksPlaced(),
                         limit.blocksPlaced());
+    }
+
+    static boolean fitsMutationBatchRemainder(
+            AgentActionStore.Progress used,
+            AgentActionStore.Progress occurrenceBaseline,
+            ActionDslCompiler.Cost occurrenceLimit,
+            ActionDsl.Budget globalBudget,
+            ActionDslCompiler.Cost requiredRemainder,
+            long activeElapsedNanos) {
+        return fitsRemainingBudget(
+                        used, globalBudget, requiredRemainder, activeElapsedNanos)
+                && fitsOccurrenceBudget(
+                        used, occurrenceBaseline, occurrenceLimit, requiredRemainder);
     }
 
     static ActionDslCompiler.Cost breakExecutionCost(
@@ -4988,10 +5245,70 @@ public final class McmcpRuntime implements McpRuntimePort {
         double camera = cameraDelta(
                 player.getYRot(), player.getXRot(),
                 agentExecution.lastYaw, agentExecution.lastPitch);
-        agentActions.recordMotion(actionId, distance, camera);
+        var settlingTarget = agentExecution.tillSettlingTarget;
+        long currentTick = agentActions.get(actionId).progress().ticks();
+        var level = Minecraft.getInstance().level;
+        boolean settlingWindow = settlingTarget != null
+                && currentTick <= agentExecution.tillSettlingDeadlineTick
+                && !agentExecution.primitiveExecutor.active()
+                && level != null
+                && "minecraft:farmland".equals(BuiltInRegistries.BLOCK.getKey(
+                                level.getBlockState(new BlockPos(
+                                        settlingTarget.x(),
+                                        settlingTarget.y(),
+                                        settlingTarget.z())).getBlock())
+                        .toString())
+                && Mth.floor(agentExecution.lastPosition.x) == settlingTarget.x()
+                && Mth.floor(agentExecution.lastPosition.z) == settlingTarget.z()
+                && Mth.floor(position.x) == settlingTarget.x()
+                && Mth.floor(position.z) == settlingTarget.z();
+        var movement = AgentInputState.global().movementSnapshot();
+        boolean inputNeutral = !movement.forward()
+                && !movement.backward()
+                && !movement.left()
+                && !movement.right()
+                && !movement.jump();
+        double settlingCredit = batchTillSettlingCredit(
+                agentExecution.lastPosition,
+                position,
+                agentExecution.tillSettlingAllowance,
+                settlingWindow,
+                inputNeutral);
+        if (settlingCredit > 0.0D
+                || distance > 1.0e-9D
+                || currentTick > agentExecution.tillSettlingDeadlineTick) {
+            agentExecution.tillSettlingAllowance = 0.0D;
+            agentExecution.tillSettlingTarget = null;
+            agentExecution.tillSettlingDeadlineTick = 0L;
+        }
+        agentActions.recordMotion(actionId, Math.max(0.0D, distance - settlingCredit), camera);
+        if (settlingCredit > 0.0D) {
+            agentActions.recordPassiveMotion(actionId, settlingCredit, "farmland_settling");
+        }
         agentExecution.lastPosition = position;
         agentExecution.lastYaw = player.getYRot();
         agentExecution.lastPitch = player.getXRot();
+    }
+
+    static double batchTillSettlingCredit(
+            net.minecraft.world.phys.Vec3 previous,
+            net.minecraft.world.phys.Vec3 current,
+            double allowance,
+            boolean qualifiedWindow,
+            boolean inputNeutral) {
+        Objects.requireNonNull(previous, "previous");
+        Objects.requireNonNull(current, "current");
+        if (!qualifiedWindow || !inputNeutral
+                || !Double.isFinite(allowance) || allowance <= 0.0D) return 0.0D;
+        double dx = current.x - previous.x;
+        double dz = current.z - previous.z;
+        double descent = previous.y - current.y;
+        if (Math.hypot(dx, dz) > 1.0e-6D
+                || descent <= 0.0D
+                || descent > allowance + 1.0e-6D) {
+            return 0.0D;
+        }
+        return Math.min(descent, allowance);
     }
 
     static double cameraDelta(
@@ -7565,6 +7882,15 @@ public final class McmcpRuntime implements McpRuntimePort {
         private int mutationAimFailures;
         private KnownBlockBreakAttempt blockBreakAttempt;
         private KnownBlockMutationAttempt blockMutationAttempt;
+        private AgentPrimitivePlanner.MutationBatchPlan mutationBatchPlan;
+        private int mutationBatchIndex;
+        private ActionDsl.Node mutationBatchTarget;
+        private AgentPrimitivePlanner.MutationAim mutationBatchTargetAim;
+        private boolean mutationBatchTargetBound;
+        private long mutationBatchTargetDeadlineTick;
+        private double tillSettlingAllowance;
+        private ActionDsl.Position tillSettlingTarget;
+        private long tillSettlingDeadlineTick;
         private KnownContainerAttempt containerAttempt;
         private int pickupInventoryBefore = -1;
         private long pickupArrivalTick = -1L;

@@ -548,6 +548,177 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void eightTargetMutationBatchHasCanonicalOrderAndOneJointCameraBound() {
+        List<ActionDsl.Position> targets = List.of(
+                new ActionDsl.Position(DIMENSION, -1, 64, -1),
+                new ActionDsl.Position(DIMENSION, 0, 64, -1),
+                new ActionDsl.Position(DIMENSION, 1, 64, -1),
+                new ActionDsl.Position(DIMENSION, 2, 64, -1),
+                new ActionDsl.Position(DIMENSION, -1, 64, 1),
+                new ActionDsl.Position(DIMENSION, 0, 64, 1),
+                new ActionDsl.Position(DIMENSION, 1, 64, 1),
+                new ActionDsl.Position(DIMENSION, 2, 64, 1));
+        var shuffled = new java.util.ArrayList<>(targets);
+        java.util.Collections.shuffle(shuffled, new java.util.Random(0x5EEDL));
+
+        var canonical = analyzeTillBatch(targets);
+        var reverse = analyzeTillBatch(targets.reversed());
+        var random = analyzeTillBatch(shuffled);
+        List<ActionDsl.Position> order = mutationPositions(
+                canonical.mutationBatchPlans().get("batch"));
+
+        assertThat(order).hasSize(8)
+                .isEqualTo(mutationPositions(reverse.mutationBatchPlans().get("batch")))
+                .isEqualTo(mutationPositions(random.mutationBatchPlans().get("batch")));
+        assertThat(canonical.primitiveCosts().get("batch"))
+                .satisfies(cost -> {
+                    assertThat(cost.interactions()).isEqualTo(8);
+                    assertThat(cost.blocksBroken()).isZero();
+                    assertThat(cost.blocksPlaced()).isZero();
+                    assertThat(cost.cameraDegrees()).isLessThanOrEqualTo(720.0D);
+                    assertThat(cost.ticks()).isGreaterThanOrEqualTo(
+                            8L * (AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND
+                                    + AgentPrimitivePlanner.MUTATION_BATCH_REPROOF_TICKS));
+                })
+                .isEqualTo(reverse.primitiveCosts().get("batch"))
+                .isEqualTo(random.primitiveCosts().get("batch"));
+        assertThat(canonical.mutationBatchPlans().get("batch").steps())
+                .allSatisfy(step -> assertThat(step.plannedCost().ticks())
+                        .isGreaterThanOrEqualTo(
+                                AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND
+                                        + AgentPrimitivePlanner.MUTATION_BATCH_REPROOF_TICKS));
+    }
+
+    @Test
+    void tillBatchOccurrenceCostCoversOneSixteenthSettlingBeforeNextReproof() {
+        UUID session = UUID.randomUUID();
+        var underfoot = new ActionDsl.Position(DIMENSION, 0, 64, 0);
+        var nearerRayTarget = new ActionDsl.Position(DIMENSION, 0, 65, 0);
+        var batch = new ActionDsl.TillKnownBatch(
+                "batch", List.of(nearerRayTarget, underfoot),
+                "minecraft:dirt", "minecraft:iron_hoe");
+        var program = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_INTERACT),
+                List.of(batch));
+        var initial = new AgentPrimitivePlanner.Pose(
+                new NavCell(DIMENSION, 0, 65, 0),
+                0.5D, 65.0D, 0.5D, 1.62D, -90.0F, 90.0F);
+        var analysis = AgentPrimitivePlanner.analyze(
+                program,
+                map(session).snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                initial,
+                Optional.of(frame(List.of(
+                        surface(underfoot, ObservationRecord.Face.UP,
+                                "minecraft:dirt", null, 0, 66.62D),
+                        surface(nearerRayTarget, ObservationRecord.Face.UP,
+                                "minecraft:dirt", null, 0, 66.62D)))),
+                4.5F);
+        var plan = analysis.mutationBatchPlans().get("batch");
+        assertThat(mutationPositions(plan)).startsWith(underfoot);
+
+        Vec3 firstPoint = plan.steps().get(0).aim().point();
+        Vec3 secondPoint = plan.steps().get(1).aim().point();
+        ActionDslCompiler.Cost first = AgentPrimitivePlanner.mutationCost(
+                initial, firstPoint, 4.5F, 1, 0, 0);
+        float firstYaw = yawTo(initial.x(), initial.z(), firstPoint);
+        float firstPitch = pitchTo(
+                initial.x(), initial.y() + initial.eyeHeight(), initial.z(), firstPoint);
+        var settled = new AgentPrimitivePlanner.Pose(
+                initial.cell(), initial.x(), initial.y() - 1.0D / 16.0D,
+                initial.z(), initial.eyeHeight(), firstYaw, firstPitch);
+        ActionDslCompiler.Cost freshSecond = AgentPrimitivePlanner.mutationCost(
+                settled, secondPoint, 4.5F, 1, 0, 0);
+        ActionDslCompiler.Cost occurrence = analysis.primitiveCosts().get("batch");
+
+        assertThat(occurrence.cameraDegrees()).isLessThanOrEqualTo(720.0D);
+        assertThat(first.cameraDegrees() + freshSecond.cameraDegrees())
+                .isLessThanOrEqualTo(occurrence.cameraDegrees() + 1.0e-9D);
+        assertThat(first.ticks() + freshSecond.ticks())
+                .isLessThanOrEqualTo(occurrence.ticks());
+        assertThat(first.durationMillis() + freshSecond.durationMillis())
+                .isLessThanOrEqualTo(occurrence.durationMillis());
+    }
+
+    @Test
+    void everyMutationBatchChildRequiresItsOwnFreshCurrentSurfaceProof() {
+        UUID session = UUID.randomUUID();
+        var knownMap = map(session).snapshot().orElseThrow();
+        var support = new ActionDsl.Position(DIMENSION, 1, 64, 0);
+        var crop = new ActionDsl.Position(DIMENSION, 1, 65, 0);
+        List<ActionDsl.Node> batches = List.of(
+                new ActionDsl.TillKnownBatch(
+                        "till_batch", List.of(support),
+                        "minecraft:dirt", "minecraft:iron_hoe"),
+                new ActionDsl.PlantKnownWheatBatch(
+                        "plant_batch", List.of(new ActionDsl.PlantPlot(crop, support)),
+                        "minecraft:wheat_seeds"),
+                new ActionDsl.HarvestKnownWheatBatch(
+                        "harvest_batch", List.of(crop)));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+
+        for (ActionDsl.Node batch : batches) {
+            ActionDsl.Node child = AgentPrimitivePlanner.mutationBatchChildren(batch).getFirst();
+            ObservationRecord.VisibleSurface witness = switch (child) {
+                case ActionDsl.TillKnownBlock till -> surface(
+                        till.target(), ObservationRecord.Face.UP,
+                        till.expectedBlock(), null, 0);
+                case ActionDsl.PlantKnownWheat plant -> surface(
+                        plant.support(), ObservationRecord.Face.UP,
+                        "minecraft:farmland", null, 0);
+                case ActionDsl.HarvestKnownWheat harvest -> surface(
+                        harvest.target(), ObservationRecord.Face.UP,
+                        "minecraft:wheat", true, 0);
+                default -> throw new AssertionError("not a batch child: " + child);
+            };
+            var program = new ActionDsl.Program(
+                    1,
+                    Optional.empty(),
+                    Set.of(
+                            ActionDsl.Capability.CAMERA,
+                            ActionDsl.Capability.BLOCK_INTERACT,
+                            ActionDsl.Capability.BLOCK_PLACE,
+                            ActionDsl.Capability.BLOCK_BREAK),
+                    List.of(child));
+
+            var fresh = AgentPrimitivePlanner.analyze(
+                    program, knownMap, new DeterministicAStar(), pose,
+                    Optional.of(frame(List.of(witness))), 4.5F);
+            assertThat(fresh.primitiveCosts()).containsKey(child.id());
+            assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                    program, knownMap, new DeterministicAStar(), pose,
+                    Optional.empty(), 4.5F))
+                    .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                    .extracting(failure ->
+                            ((AgentPrimitivePlanner.PlanningException) failure).code())
+                    .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+        }
+
+        var incomplete = new ActionDsl.TillKnownBatch(
+                "incomplete",
+                List.of(support, new ActionDsl.Position(DIMENSION, 2, 64, 0)),
+                "minecraft:dirt",
+                "minecraft:iron_hoe");
+        var incompleteProgram = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_INTERACT),
+                List.of(incomplete));
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                incompleteProgram, knownMap, new DeterministicAStar(), pose,
+                Optional.of(frame(List.of(surface(
+                        support, ObservationRecord.Face.UP, "minecraft:dirt", null, 0)))),
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure ->
+                        ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+    }
+
+    @Test
     void openFenceGateBindsOneVisibleOakGateRayWitness() {
         UUID session = UUID.randomUUID();
         var map = map(session).snapshot().orElseThrow();
@@ -795,6 +966,40 @@ class AgentPrimitivePlannerTest {
         return new ActionDsl.FaceKnownPosition(id, position(target));
     }
 
+    private static AgentPrimitivePlanner.Analysis analyzeTillBatch(
+            List<ActionDsl.Position> targets) {
+        UUID session = UUID.randomUUID();
+        var batch = new ActionDsl.TillKnownBatch(
+                "batch", targets, "minecraft:dirt", "minecraft:iron_hoe");
+        var program = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_INTERACT),
+                List.of(batch));
+        List<ObservationRecord.VisibleSurface> surfaces = targets.stream()
+                .map(target -> surface(
+                        target, ObservationRecord.Face.UP, "minecraft:dirt", null, 0))
+                .toList();
+        return AgentPrimitivePlanner.analyze(
+                program,
+                map(session).snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(
+                        cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F),
+                Optional.of(frame(surfaces)),
+                4.5F);
+    }
+
+    private static List<ActionDsl.Position> mutationPositions(
+            AgentPrimitivePlanner.MutationBatchPlan plan) {
+        return plan.steps().stream().map(step -> switch (step.primitive()) {
+            case ActionDsl.TillKnownBlock till -> till.target();
+            case ActionDsl.PlantKnownWheat plant -> plant.target();
+            case ActionDsl.HarvestKnownWheat harvest -> harvest.target();
+            default -> throw new AssertionError("not a mutation child: " + step.primitive());
+        }).toList();
+    }
+
     private static ActionDsl.NavigateToKnown navigate(String id, NavCell target) {
         return new ActionDsl.NavigateToKnown(id, position(target), 0.75D);
     }
@@ -902,8 +1107,18 @@ class AgentPrimitivePlannerTest {
             String block,
             Boolean cropMature,
             long revision) {
+        return surface(target, face, block, cropMature, revision, 65.62D);
+    }
+
+    private static ObservationRecord.VisibleSurface surface(
+            ActionDsl.Position target,
+            ObservationRecord.Face face,
+            String block,
+            Boolean cropMature,
+            long revision,
+            double eyeY) {
         var dimension = new ObservationValues.ResourceId(target.dimension());
-        var eye = new ObservationValues.WorldPosition(dimension, 0.5, 65.62, 0.5);
+        var eye = new ObservationValues.WorldPosition(dimension, 0.5, eyeY, 0.5);
         Vec3 hit = rayHit(target, face, block);
         return new ObservationRecord.VisibleSurface(
                 new ObservationValues.BlockPosition(
@@ -917,6 +1132,15 @@ class AgentPrimitivePlannerTest {
                 eye,
                 1,
                 revision);
+    }
+
+    private static float yawTo(double x, double z, Vec3 target) {
+        return (float) (Math.toDegrees(Math.atan2(target.z - z, target.x - x)) - 90.0D);
+    }
+
+    private static float pitchTo(double x, double eyeY, double z, Vec3 target) {
+        return (float) -Math.toDegrees(Math.atan2(
+                target.y - eyeY, Math.hypot(target.x - x, target.z - z)));
     }
 
     private static Vec3 rayHit(

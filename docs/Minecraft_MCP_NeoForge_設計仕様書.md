@@ -687,15 +687,28 @@ Action DSL v1の制御構造:
 | wait_until | なし | 指定した既知座標の`crop_mature=true`を最大1〜12,000 active tick待機 |
 | break_known_face | camera, block_break | 宣言した可視・既知のoak / birch幹1個を、指定したVanilla axeで通常入力から破壊 |
 | till_known_block | camera, block_interact | 可視・既知のdirt / grass_block / dirt_path 1個を、指定したVanilla hoeの通常useでfarmlandへ変換 |
+| till_known_batch | camera, block_interact | 1〜8個の相異なる可視・既知blockを、共通の`expected_block`とVanilla hoeで決定論的な順に耕す |
 | plant_known_wheat | camera, block_place | 可視・既知のfarmland直上のairへwheat_seedsを通常useで植え、age=0を確認 |
+| plant_known_wheat_batch | camera, block_place | 1〜8組の相異なる`target` / `support`を共同計画し、各farmlandへwheat_seedsを植える |
 | harvest_known_wheat | camera, block_break | 可視・既知かつ実行時age=7のwheat 1個だけを通常破壊し、airを確認 |
+| harvest_known_wheat_batch | camera, block_break | 1〜8個の相異なる可視・既知かつ成熟済みwheatを、決定論的な順に収穫する |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のsingle chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemのwhole stackを最大1回quick-moveし、close/reopen full readbackでplayer inventoryの絶対個数を確認 |
 | collect_visible_item | movement | 最新frameの可視item種別と連続値XYZをwitnessに、既知の安全なpickup cellへ移動し、inventory絶対個数の増加を確認 |
 
-`break_known_face`の`tool_item`と`till_known_block`の`hoe_item`はinventory内の該当toolをhotbarへ一時退避して決定論的に選択する契約であり、任意slot操作を公開しない。`plant_known_wheat`も同じ準備経路でwheat_seedsを選ぶ。各変化はclient prediction ACKとauthoritative block stateで確認し、toolや種を生成・補充しない。成熟待ちは`wait_until`内でpolicy-filteredな`crop_mature`だけを再観測し、timeout時は入力を発生させずActionを終了する。raw attack/useや任意座標操作へ一般化しない。
+`break_known_face`の`tool_item`と`till_known_block` / `till_known_batch`の`hoe_item`はinventory内の該当toolをhotbarへ一時退避して決定論的に選択する契約であり、任意slot操作を公開しない。`plant_known_wheat` / `plant_known_wheat_batch`も同じ準備経路でwheat_seedsを選ぶ。各変化はclient prediction ACKとauthoritative block stateで確認し、toolや種を生成・補充しない。成熟待ちは`wait_until`内でpolicy-filteredな`crop_mature`だけを再観測し、timeout時は入力を発生させずActionを終了する。raw attack/useや任意座標操作へ一般化しない。
+
+3種のmutation batchは`targets`を1〜8件に制限し、重複targetを拒否する。`till_known_batch`は位置配列と共通`expected_block` / `hoe_item`、`plant_known_wheat_batch`は`{target,support}`配列と共通`seed_item=minecraft:wheat_seeds`、`harvest_known_wheat_batch`は位置配列を受け取る。受付時に全対象の現在のsurface、block state、reachを確認し、全対象を通る累積camera回転量が最小となる決定論的順序を共同計画する。ただし、ほぼ同一ray上で手前の対象を先に変更すると奥のwitnessを失う組だけは、far-before-nearを優先する。残る同値解はdimension / XYZの辞書順で一意に決め、累積camera costを既存のAction上限720度以内で事前証明する。順序が未確定poseに依存して一意に証明できない場合は入力前に拒否する。
+
+実行時は固定した順序をblind replayせず、各対象の直前に最新pose、surface、reach、world revision、期待block / 成熟状態、exact targeted raycast、残budgetを再証明する。fresh evidenceがまだ揃わない間は入力をneutralにして最大40 active tickだけ再観測し、それでも証明できない場合、live raycastまたはauthoritative postconditionが不一致の場合、あるいは対象単位の残budgetが不足する場合はAction全体をfail-fastで終了する。失敗対象をskipしたり、後続対象へ進んだり、実行時に別対象へ置換・並べ替えたりしない。完了した前段のworld mutationと消費budgetは巻き戻さずtraceへ残す。`till_known_batch`の実dispatch成立後に足元blockがfarmlandへ変わった際の厳密な垂直1/16 block下降だけは、2 tick以内、同じXZ、live farmland、movement executor非稼働、移動入力neutralの全条件が成立した場合に限り入力distanceへ算入せず、`PASSIVE_MOTION farmland_settling`として別途監査する。水平成分、1/16超の落下、movement入力中の下降は通常どおりdistanceを消費する。
+
+初期joint planは、playerがtill target上に立ち得る場合、そのtarget以後の抽象poseへ最大1/16 blockの`yErrorBelow`を伝播する。したがって後続targetのfresh reproofで実際のeye Yが1/16低下しても、そのcamera tick / duration / degreesはbatchの初期`occurrenceLimit`内に保守的に包含される。settlingをinput distanceから分離しても、720度のglobal camera上限やtarget単位のoccurrence budgetを緩和しない。
+
+さらにjoint worst-caseは各targetへfresh reproof最大40 tick / 2,000 msを加算する。target開始時には、すでに消費したcounterに、当該targetのfresh mutation costと未実行suffix全targetの初期証明済みcost（各40 tick reproofを含む）を加え、global budgetとbatch occurrence limitの双方に収まる場合だけdispatchへ進む。これにより途中までworldを変更した後でsuffix不足が判明することを防ぐ。batch内でsemantic exact aimが失敗した場合は同一targetを再試行せず`PATH_BLOCKED`でfail-fastとし、既存の最大3回aim再試行は単体mutation primitiveだけに維持する。
+
+current targetのfresh reproofでfaceまたはaim pointが受付時から変化した場合は、旧planned pose基準のsuffix costを流用しない。fresh current aimの終端抽象pose（till settling誤差を含む）から固定suffix順序を再走査し、各suffix targetのcamera costと40 tick reproof reserveを再計算した値で上記のglobal / occurrence両判定を行う。再計算後のsuffixが収まらなければcurrent targetをdispatchする前に終了する。
 
 `open_known_passage.expected_block`は12種の木系door / trapdoor / fence gateを明示列挙し、ironとcopperを許可しない。doorはクリック対象のhalfだけでなく、同一block、facing、hinge、powered、openが整合する相方halfをdispatch前に固定する。primary prediction ACK、primaryのauthoritative state、dispatch後のcompanion block mutation、companionの完全stateがすべて一致した場合だけ成功する。pressure plate式自動doorはこのopcodeを使わず、plate上と反対側へ続く`navigate_to_known`を別々のprimitiveとして実行し、world revision更新後のVanilla VoxelShapeから後続経路を再計画する。
 
@@ -784,6 +797,8 @@ compilerはtree全体について、node数、有限制御構造、capability、
 
 world状態、経路、照準に依存するprimitiveは、Action受付時に最初の実行nodeだけを現在snapshotへbindし、以後は各node開始直前にfreshなKnown Traversability Map、Observation Frame、player poseでJIT計画する。前nodeのworld mutation後に次nodeの証拠がまだ更新されていない場合は、入力をneutralに保った最大40 active tickのreobservation window内でだけ再試行する。
 
+mutation batchは例外的に、node受付時に1〜8対象すべてを共同camera計画して全体costと固定順序を証明するが、各targetの操作権限まで先取りしない。個々のtargetは実行直前のfresh reproofに合格した場合だけbindされるため、受付時witnessの失効を後続操作の根拠にしない。
+
 block mutationのaim pointはfull cubeの仮想中心ではなく、360度観測rayが実VoxelShapeに命中したXYZをwire非公開の内部証拠として使う。その観測時eye originが現在poseと許容誤差内で一致し、命中点がinteraction reach内で、world revision、block、face、必要な成熟状態も一致する場合だけbindする。計画時に選んだblock、face、aim pointはそのlogical occurrenceへ固定し、実行層が別faceや別supportを探索し直してはならない。終点でVanilla互換raycastを1回検証し、不一致ならuse / attackを送らずfresh observationへ戻る。同じlogical occurrence内で既に消費したtick / camera予算は戻さない。
 
 実行時はprogram全体とlogical primitive occurrenceの両方について、各node開始前と各ClientTickで実counterを再検証する。repeatで同じnodeを再度実行しても開始counterはoccurrenceごとに一度だけ固定し、replanで予算を補充しない。`max_duration_ms`は`System.nanoTime`基準のhard deadlineとして各出力前に検査し、pause時間だけを除外するため、client stall時も入力を出さず`BUDGET_EXCEEDED`で終了できる。
@@ -795,7 +810,7 @@ templateは`agent_start_action.inputSchema.examples`に掲載し、実装reposit
 - [`approach_and_face.json`](action-templates/approach_and_face.json): 移動、health分岐、視点変更または待機
 - [`known_route.json`](action-templates/known_route.json): 既知区間を固定回数だけ往復する
 - [`break_known_oak_column.json`](action-templates/break_known_oak_column.json): 地上から届く、現在可視な3段oak幹を下から順に破壊する
-- [`wheat_cycle.json`](action-templates/wheat_cycle.json): 1区画を耕し、植え、有限成熟待機後に収穫する
+- [`wheat_cycle.json`](action-templates/wheat_cycle.json): 2区画をmutation batchで耕し、植え、有限成熟待機後に収穫する
 - [`open_known_passage.json`](action-templates/open_known_passage.json): 可視な木製通路を開く
 - [`inspect_known_container.json`](action-templates/inspect_known_container.json): single chestのserver同期済み内容を確認する
 - [`take_wheat_seeds_stack.json`](action-templates/take_wheat_seeds_stack.json): wheat seedsをwhole stack 1回だけ取得する

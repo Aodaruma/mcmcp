@@ -201,6 +201,106 @@ class ActionDslTest {
     }
 
     @Test
+    void mutationBatchesAcceptOneThroughEightTargetsAndCompileTheirJointCost() {
+        for (int count = 1; count <= ActionDslValidator.MAX_MUTATION_BATCH_TARGETS; count++) {
+            for (JsonObject node : new JsonObject[] {
+                    tillKnownBatch("till", count),
+                    plantKnownWheatBatch("plant", count),
+                    harvestKnownWheatBatch("harvest", count)}) {
+                ActionDsl.Request parsed = ActionDslParser.parse(request(
+                        capabilities("camera", "block_interact", "block_place", "block_break"),
+                        node,
+                        budget(30_000, 600, 0, 720, 8, 8, 8)));
+                ActionDsl.Node batch = parsed.program().body().getFirst();
+                int parsedTargets = switch (batch) {
+                    case ActionDsl.TillKnownBatch till -> till.targets().size();
+                    case ActionDsl.PlantKnownWheatBatch plant -> plant.targets().size();
+                    case ActionDsl.HarvestKnownWheatBatch harvest -> harvest.targets().size();
+                    default -> throw new AssertionError("not a mutation batch: " + batch);
+                };
+                assertThat(parsedTargets).isEqualTo(count);
+            }
+        }
+
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "block_interact", "block_place", "block_break"),
+                array(
+                        tillKnownBatch("till", 2),
+                        plantKnownWheatBatch("plant", 2),
+                        harvestKnownWheatBatch("harvest", 2)),
+                budget(30_000, 600, 0, 720, 2, 2, 2)));
+        var compiled = ActionDslCompiler.compile(
+                request,
+                node -> Optional.of(switch (node) {
+                    case ActionDsl.TillKnownBatch ignored ->
+                            new ActionDslCompiler.Cost(100, 2, 0, 10, 2, 0, 0);
+                    case ActionDsl.PlantKnownWheatBatch ignored ->
+                            new ActionDslCompiler.Cost(150, 3, 0, 20, 0, 0, 2);
+                    case ActionDsl.HarvestKnownWheatBatch ignored ->
+                            new ActionDslCompiler.Cost(200, 4, 0, 30, 0, 2, 0);
+                    default -> throw new AssertionError("unexpected primitive: " + node);
+                }),
+                request.program().capabilities());
+
+        assertThat(compiled.worstCaseCost())
+                .isEqualTo(new ActionDslCompiler.Cost(450, 9, 0, 60, 2, 2, 2));
+        assertThat(compiled.primitiveCostBounds()).containsOnlyKeys("till", "plant", "harvest");
+
+        assertThatThrownBy(() -> ActionDslCompiler.compile(
+                request,
+                node -> Optional.of(node instanceof ActionDsl.TillKnownBatch
+                        ? new ActionDslCompiler.Cost(100, 2, 0, 10, 1, 0, 0)
+                        : node instanceof ActionDsl.PlantKnownWheatBatch
+                        ? new ActionDslCompiler.Cost(150, 3, 0, 20, 0, 0, 2)
+                        : new ActionDslCompiler.Cost(200, 4, 0, 30, 0, 2, 0)),
+                request.program().capabilities()))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE);
+    }
+
+    @Test
+    void mutationBatchesRejectEmptyOversizedDuplicateAndMisalignedPlantTargets() {
+        for (int count : new int[] {0, ActionDslValidator.MAX_MUTATION_BATCH_TARGETS + 1}) {
+            for (JsonObject node : new JsonObject[] {
+                    tillKnownBatch("till", count),
+                    plantKnownWheatBatch("plant", count),
+                    harvestKnownWheatBatch("harvest", count)}) {
+                assertCode(request(
+                                capabilities("camera", "block_interact", "block_place", "block_break"),
+                                node,
+                                budget(30_000, 600, 0, 720, 8, 8, 8)),
+                        ActionDslException.Code.INVALID_ARGUMENT);
+            }
+        }
+
+        JsonObject duplicateTill = tillKnownBatch("till", 2);
+        duplicateTill.getAsJsonArray("targets").set(1, position(10, 64, 10));
+        JsonObject duplicateHarvest = harvestKnownWheatBatch("harvest", 2);
+        duplicateHarvest.getAsJsonArray("targets").set(1, position(10, 65, 10));
+        JsonObject duplicatePlant = plantKnownWheatBatch("plant", 2);
+        duplicatePlant.getAsJsonArray("targets").set(
+                1, duplicatePlant.getAsJsonArray("targets").get(0).deepCopy());
+        for (JsonObject duplicate : new JsonObject[] {
+                duplicateTill, duplicatePlant, duplicateHarvest}) {
+            assertCode(request(
+                            capabilities("camera", "block_interact", "block_place", "block_break"),
+                            duplicate,
+                            budget(30_000, 600, 0, 720, 8, 8, 8)),
+                    ActionDslException.Code.INVALID_ARGUMENT);
+        }
+
+        JsonObject misalignedPlant = plantKnownWheatBatch("plant", 1);
+        misalignedPlant.getAsJsonArray("targets").get(0).getAsJsonObject()
+                .add("support", position(11, 64, 10));
+        assertCode(request(
+                        capabilities("camera", "block_place"),
+                        misalignedPlant,
+                        budget(30_000, 600, 0, 720, 0, 0, 1)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
     void parsesAndCompilesWoodenPassageAndBoundedContainerNodes() {
         JsonObject open = baseNode("open", "open_known_passage");
         open.add("target", position());
@@ -708,6 +808,42 @@ class ActionDslTest {
         return node;
     }
 
+    private static JsonObject tillKnownBatch(String id, int count) {
+        JsonObject node = baseNode(id, "till_known_batch");
+        JsonArray targets = new JsonArray();
+        for (int index = 0; index < count; index++) {
+            targets.add(position(10 + index, 64, 10));
+        }
+        node.add("targets", targets);
+        node.addProperty("expected_block", "minecraft:dirt");
+        node.addProperty("hoe_item", "minecraft:iron_hoe");
+        return node;
+    }
+
+    private static JsonObject plantKnownWheatBatch(String id, int count) {
+        JsonObject node = baseNode(id, "plant_known_wheat_batch");
+        JsonArray targets = new JsonArray();
+        for (int index = 0; index < count; index++) {
+            JsonObject plot = new JsonObject();
+            plot.add("target", position(10 + index, 65, 10));
+            plot.add("support", position(10 + index, 64, 10));
+            targets.add(plot);
+        }
+        node.add("targets", targets);
+        node.addProperty("seed_item", "minecraft:wheat_seeds");
+        return node;
+    }
+
+    private static JsonObject harvestKnownWheatBatch(String id, int count) {
+        JsonObject node = baseNode(id, "harvest_known_wheat_batch");
+        JsonArray targets = new JsonArray();
+        for (int index = 0; index < count; index++) {
+            targets.add(position(10 + index, 65, 10));
+        }
+        node.add("targets", targets);
+        return node;
+    }
+
     private static JsonObject openKnownFenceGate(String id) {
         JsonObject node = baseNode(id, "open_known_fence_gate");
         node.add("target", position());
@@ -717,6 +853,14 @@ class ActionDslTest {
     private static JsonObject position(int y) {
         JsonObject value = position();
         value.addProperty("y", y);
+        return value;
+    }
+
+    private static JsonObject position(int x, int y, int z) {
+        JsonObject value = position();
+        value.addProperty("x", x);
+        value.addProperty("y", y);
+        value.addProperty("z", z);
         return value;
     }
 

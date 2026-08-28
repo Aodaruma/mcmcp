@@ -11,32 +11,58 @@
     ],
     "body": [
       {
-        "id": "till",
-        "op": "till_known_block",
-        "target": {
-          "dimension": "minecraft:overworld",
-          "x": 0,
-          "y": 64,
-          "z": 0
-        },
+        "id": "till_batch",
+        "op": "till_known_batch",
+        "targets": [
+          {
+            "dimension": "minecraft:overworld",
+            "x": 0,
+            "y": 64,
+            "z": 0
+          },
+          {
+            "dimension": "minecraft:overworld",
+            "x": 1,
+            "y": 64,
+            "z": 0
+          }
+        ],
         "expected_block": "minecraft:dirt",
         "hoe_item": "minecraft:iron_hoe"
       },
       {
-        "id": "plant",
-        "op": "plant_known_wheat",
-        "target": {
-          "dimension": "minecraft:overworld",
-          "x": 0,
-          "y": 65,
-          "z": 0
-        },
-        "support": {
-          "dimension": "minecraft:overworld",
-          "x": 0,
-          "y": 64,
-          "z": 0
-        },
+        "id": "plant_batch",
+        "op": "plant_known_wheat_batch",
+        "targets": [
+          {
+            "target": {
+              "dimension": "minecraft:overworld",
+              "x": 0,
+              "y": 65,
+              "z": 0
+            },
+            "support": {
+              "dimension": "minecraft:overworld",
+              "x": 0,
+              "y": 64,
+              "z": 0
+            }
+          },
+          {
+            "target": {
+              "dimension": "minecraft:overworld",
+              "x": 1,
+              "y": 65,
+              "z": 0
+            },
+            "support": {
+              "dimension": "minecraft:overworld",
+              "x": 1,
+              "y": 64,
+              "z": 0
+            }
+          }
+        ],
         "seed_item": "minecraft:wheat_seeds"
       },
       {
@@ -54,14 +80,22 @@
         "max_ticks": 11000
       },
       {
-        "id": "harvest",
-        "op": "harvest_known_wheat",
-        "target": {
-          "dimension": "minecraft:overworld",
-          "x": 0,
-          "y": 65,
-          "z": 0
-        }
+        "id": "harvest_batch",
+        "op": "harvest_known_wheat_batch",
+        "targets": [
+          {
+            "dimension": "minecraft:overworld",
+            "x": 0,
+            "y": 65,
+            "z": 0
+          },
+          {
+            "dimension": "minecraft:overworld",
+            "x": 1,
+            "y": 65,
+            "z": 0
+          }
+        ]
       }
     ]
   },
@@ -70,8 +104,8 @@
     "max_ticks": 12000,
     "max_distance_blocks": 0,
     "max_camera_degrees": 720,
-    "max_interactions": 1,
-    "max_blocks_broken": 1,
-    "max_blocks_placed": 1
+    "max_interactions": 2,
+    "max_blocks_broken": 2,
+    "max_blocks_placed": 2
   }
 }

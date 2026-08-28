@@ -28,6 +28,7 @@ public final class ActionDslValidator {
     public static final int MAX_BLOCKS_BROKEN = 8;
     public static final int MAX_INTERACTIONS = 8;
     public static final int MAX_BLOCKS_PLACED = 8;
+    public static final int MAX_MUTATION_BATCH_TARGETS = 8;
 
     private static final Pattern NODE_ID = Pattern.compile("[a-z][a-z0-9_-]{0,31}");
     private static final Pattern PROGRAM_NAME = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
@@ -209,6 +210,23 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_INTERACT);
             return 1;
         }
+        if (node instanceof ActionDsl.TillKnownBatch batch) {
+            requireSequenceSize(
+                    batch.targets(), 1, MAX_MUTATION_BATCH_TARGETS, path + ".targets");
+            validateDistinctPositions(batch.targets(), path + ".targets");
+            for (int index = 0; index < batch.targets().size(); index++) {
+                validatePosition(batch.targets().get(index), path + ".targets[" + index + "]");
+            }
+            if (!TILLABLE_BLOCKS.contains(batch.expectedBlock())) {
+                throw invalid(path + ".expected_block must be dirt, grass_block, or dirt_path");
+            }
+            if (!VANILLA_HOES.contains(batch.hoeItem())) {
+                throw invalid(path + ".hoe_item must be an exact vanilla hoe item id");
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_INTERACT);
+            return 1;
+        }
         if (node instanceof ActionDsl.PlantKnownWheat plant) {
             validatePosition(plant.target(), path + ".target");
             validatePosition(plant.support(), path + ".support");
@@ -225,8 +243,49 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_PLACE);
             return 1;
         }
+        if (node instanceof ActionDsl.PlantKnownWheatBatch batch) {
+            requireSequenceSize(
+                    batch.targets(), 1, MAX_MUTATION_BATCH_TARGETS, path + ".targets");
+            var cropTargets = new HashSet<ActionDsl.Position>();
+            var supports = new HashSet<ActionDsl.Position>();
+            for (int index = 0; index < batch.targets().size(); index++) {
+                ActionDsl.PlantPlot plot = batch.targets().get(index);
+                String targetPath = path + ".targets[" + index + "]";
+                validatePosition(plot.target(), targetPath + ".target");
+                validatePosition(plot.support(), targetPath + ".support");
+                if (!plot.target().dimension().equals(plot.support().dimension())
+                        || plot.target().x() != plot.support().x()
+                        || plot.target().y() != plot.support().y() + 1
+                        || plot.target().z() != plot.support().z()) {
+                    throw invalid(targetPath + ".support must be the block directly below target");
+                }
+                if (!cropTargets.add(plot.target()) || !supports.add(plot.support())) {
+                    throw invalid(path + ".targets must contain distinct target/support positions");
+                }
+            }
+            if (cropTargets.stream().anyMatch(supports::contains)) {
+                throw invalid(path + ".targets crop and support positions must not overlap");
+            }
+            if (!"minecraft:wheat_seeds".equals(batch.seedItem())) {
+                throw invalid(path + ".seed_item must be minecraft:wheat_seeds");
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_PLACE);
+            return 1;
+        }
         if (node instanceof ActionDsl.HarvestKnownWheat harvest) {
             validatePosition(harvest.target(), path + ".target");
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
+            return 1;
+        }
+        if (node instanceof ActionDsl.HarvestKnownWheatBatch batch) {
+            requireSequenceSize(
+                    batch.targets(), 1, MAX_MUTATION_BATCH_TARGETS, path + ".targets");
+            validateDistinctPositions(batch.targets(), path + ".targets");
+            for (int index = 0; index < batch.targets().size(); index++) {
+                validatePosition(batch.targets().get(index), path + ".targets[" + index + "]");
+            }
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
             return 1;
@@ -307,8 +366,11 @@ public final class ActionDslValidator {
         for (var node : nodes) {
             if (node instanceof ActionDsl.BreakKnownFace
                     || node instanceof ActionDsl.TillKnownBlock
+                    || node instanceof ActionDsl.TillKnownBatch
                     || node instanceof ActionDsl.PlantKnownWheat
+                    || node instanceof ActionDsl.PlantKnownWheatBatch
                     || node instanceof ActionDsl.HarvestKnownWheat
+                    || node instanceof ActionDsl.HarvestKnownWheatBatch
                     || node instanceof ActionDsl.OpenKnownFenceGate
                     || node instanceof ActionDsl.OpenKnownPassage
                     || node instanceof ActionDsl.InspectKnownContainer
@@ -365,6 +427,13 @@ public final class ActionDslValidator {
         requireRange(position.x(), -30_000_000, 30_000_000, path + ".x");
         requireRange(position.y(), -2048, 2048, path + ".y");
         requireRange(position.z(), -30_000_000, 30_000_000, path + ".z");
+    }
+
+    private static void validateDistinctPositions(
+            List<ActionDsl.Position> positions, String path) {
+        if (new HashSet<>(positions).size() != positions.size()) {
+            throw invalid(path + " must contain distinct positions");
+        }
     }
 
     private static void validateWorldPosition(ActionDsl.WorldPosition position, String path) {

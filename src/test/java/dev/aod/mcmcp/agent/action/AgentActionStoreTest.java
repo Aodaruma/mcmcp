@@ -104,6 +104,27 @@ class AgentActionStoreTest {
     }
 
     @Test
+    void passiveFarmlandSettlingIsAuditedWithoutInflatingInputDistance() {
+        var store = new AgentActionStore();
+        var accepted = store.start(program(), Instant.EPOCH);
+        store.markRunning(accepted.actionId());
+
+        store.recordMotion(accepted.actionId(), 0.0D, 0.0D);
+        store.recordPassiveMotion(
+                accepted.actionId(), 1.0D / 16.0D, "farmland_settling");
+
+        var snapshot = store.get(accepted.actionId());
+        assertThat(snapshot.progress().distanceTravelled()).isZero();
+        assertThat(snapshot.trace()).anySatisfy(trace -> {
+            assertThat(trace.event()).isEqualTo("PASSIVE_MOTION");
+            assertThat(trace.detail()).isEqualTo("farmland_settling=0.062500");
+        });
+        assertThatThrownBy(() -> store.recordPassiveMotion(
+                accepted.actionId(), 0.125D, "farmland_settling"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void countsOnlyExplicitlyRecordedServerConfirmedBreaks() {
         var store = new AgentActionStore();
         var accepted = store.start(program(), Instant.EPOCH);

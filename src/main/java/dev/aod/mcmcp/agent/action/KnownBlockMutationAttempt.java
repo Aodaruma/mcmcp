@@ -106,7 +106,7 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
         port.releasePreparation(preparation);
         preparation = null;
         phase = Phase.CONFIRMING;
-        return TickResult.running();
+        return TickResult.dispatched();
     }
 
     private TickResult confirm() {
@@ -165,16 +165,20 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
 
     private enum Phase { PRECHECK, PREPARING, CONFIRMING }
 
-    public record TickResult(Status status, String evidence, boolean performed) {
+    public record TickResult(
+            Status status, String evidence, boolean performed, boolean dispatchedThisTick) {
         private static TickResult running() {
-            return new TickResult(Status.RUNNING, null, false);
+            return new TickResult(Status.RUNNING, null, false, false);
+        }
+        private static TickResult dispatched() {
+            return new TickResult(Status.RUNNING, null, false, true);
         }
         private static TickResult succeeded(boolean performed) {
-            return new TickResult(Status.SUCCEEDED, null, performed);
+            return new TickResult(Status.SUCCEEDED, null, performed, false);
         }
         private static TickResult failed(String evidence) {
             return new TickResult(
-                    Status.FAILED, Objects.requireNonNull(evidence, "evidence"), false);
+                    Status.FAILED, Objects.requireNonNull(evidence, "evidence"), false, false);
         }
     }
 
