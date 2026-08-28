@@ -776,12 +776,7 @@ function Invoke-McmcpReadinessCheck {
         $null -eq $actionProperty.Value -or
         (Get-PropertyValue $actionProperty.Value 'state') -cin @(
             'succeeded', 'failed', 'cancelled'))
-    if (-not ($readyModeOk -and $gameUnpaused -and $worldPresent -and
-            $observationPresent -and $inventoryEmpty -and $raysPerTick512 -and
-            $actionIdleOrTerminal)) {
-        throw "agent_get_state readiness contract failed at $Phase"
-    }
-    return [ordered]@{
+    $readiness = [ordered]@{
         get_state_ok = $true
         ready_mode_ok = $readyModeOk
         game_unpaused = $gameUnpaused
@@ -791,6 +786,42 @@ function Invoke-McmcpReadinessCheck {
         rays_per_tick_512 = $raysPerTick512
         action_idle_or_terminal = $actionIdleOrTerminal
     }
+    $failedFlags = @($readiness.Keys | Where-Object {
+            $_ -cne 'get_state_ok' -and -not [bool]$readiness[$_]
+        })
+    if ($failedFlags.Count -gt 0) {
+        # Persist only fixed-name Boolean proofs. Never retain the state snapshot itself.
+        $diagnostic = [ordered]@{
+            phase = $Phase
+            get_state_ok = $readiness.get_state_ok
+            ready_mode_ok = $readiness.ready_mode_ok
+            game_unpaused = $readiness.game_unpaused
+            world_present = $readiness.world_present
+            observation_present = $readiness.observation_present
+            inventory_empty = $readiness.inventory_empty
+            rays_per_tick_512 = $readiness.rays_per_tick_512
+            action_idle_or_terminal = $readiness.action_idle_or_terminal
+            failed_flags = @($failedFlags)
+            raw_state_recorded = $false
+        }
+        $script:ReadinessFailure = $diagnostic
+        Write-BridgeEvent ([ordered]@{
+                event = 'readiness_check_failed'
+                phase = $diagnostic.phase
+                get_state_ok = $diagnostic.get_state_ok
+                ready_mode_ok = $diagnostic.ready_mode_ok
+                game_unpaused = $diagnostic.game_unpaused
+                world_present = $diagnostic.world_present
+                observation_present = $diagnostic.observation_present
+                inventory_empty = $diagnostic.inventory_empty
+                rays_per_tick_512 = $diagnostic.rays_per_tick_512
+                action_idle_or_terminal = $diagnostic.action_idle_or_terminal
+                failed_flags = @($diagnostic.failed_flags)
+                raw_state_recorded = $diagnostic.raw_state_recorded
+            })
+        throw "agent_get_state readiness contract failed at ${Phase}: failed_flags=$($failedFlags -join ',')"
+    }
+    return $readiness
 }
 
 function Invoke-ReadOnlyPreflight {
@@ -1356,6 +1387,7 @@ $script:BridgeSecretDetected = $false
 $script:ActiveThreadId = $null
 $script:ActiveTurnId = $null
 $script:TurnDeadline = [DateTimeOffset]::MinValue
+$script:ReadinessFailure = $null
 $script:SeenAppRequestIds = [Collections.Generic.HashSet[string]]::new(
     [StringComparer]::Ordinal)
 $script:SeenDynamicCallIds = [Collections.Generic.HashSet[string]]::new(
@@ -1908,6 +1940,7 @@ try {
         codex_exit_code = $exitCode
         trace_audit_passed = $auditPassed
         runner_failure = $runFailure
+        readiness_failure = $script:ReadinessFailure
         bridge_secret_blocked = $script:BridgeSecretDetected
         git_commit = $gitCommit
         git_worktree_dirty = ($gitStatus.Count -gt 0)

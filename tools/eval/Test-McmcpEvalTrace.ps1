@@ -415,7 +415,8 @@ function Invoke-TraceAudit {
         if ($event -notin @(
                 'preflight', 'launcher_config', 'app_response_received',
                 'external_auth_login_ok', 'effective_config_checked', 'client_send',
-                't0', 'mcp_forward_started', 'mcp_forward_completed',
+                't0', 'readiness_check_failed',
+                'mcp_forward_started', 'mcp_forward_completed',
                 'mcp_forward_failed', 'dynamic_response_sent')) {
             $violations.Add("bridge line $($record.line): unknown event '$event'")
         }
@@ -447,6 +448,50 @@ function Invoke-TraceAudit {
                     $violations.Add("bridge line $($record.line): dynamic audit record contains '$forbiddenField'")
                 }
             }
+        }
+        if ($event -ceq 'readiness_check_failed') {
+            $readinessNames = @(
+                'ready_mode_ok', 'game_unpaused', 'world_present',
+                'observation_present', 'inventory_empty', 'rays_per_tick_512',
+                'action_idle_or_terminal')
+            Add-ViolationUnless (Test-ExactPropertySet $record.value @(
+                    'sequence', 'utc', 'event', 'phase', 'get_state_ok',
+                    'ready_mode_ok', 'game_unpaused', 'world_present',
+                    'observation_present', 'inventory_empty', 'rays_per_tick_512',
+                    'action_idle_or_terminal', 'failed_flags',
+                    'raw_state_recorded')) `
+                "bridge line $($record.line): readiness failure property set mismatch" $violations
+            $phase = Get-PropertyValue $record.value 'phase'
+            Add-ViolationUnless ($phase -is [string] -and
+                $phase -cin @('preflight', 'T0')) `
+                "bridge line $($record.line): readiness failure phase mismatch" $violations
+            $getStateOk = Get-PropertyValue $record.value 'get_state_ok'
+            Add-ViolationUnless ($getStateOk -is [bool] -and $getStateOk) `
+                "bridge line $($record.line): readiness failure get_state_ok must be true" $violations
+            $expectedFailedFlags = [Collections.Generic.List[string]]::new()
+            foreach ($readinessName in $readinessNames) {
+                $readinessValue = Get-PropertyValue $record.value $readinessName
+                Add-ViolationUnless ($readinessValue -is [bool]) `
+                    "bridge line $($record.line): readiness diagnostic must be Boolean: $readinessName" $violations
+                if ($readinessValue -is [bool] -and -not $readinessValue) {
+                    $expectedFailedFlags.Add($readinessName)
+                }
+            }
+            $failedFlagsProperty = Get-Property $record.value 'failed_flags'
+            $failedFlags = if ($null -ne $failedFlagsProperty -and
+                $failedFlagsProperty.Value -is [Collections.IEnumerable] -and
+                $failedFlagsProperty.Value -isnot [string]) {
+                @($failedFlagsProperty.Value)
+            } else { @() }
+            Add-ViolationUnless ($expectedFailedFlags.Count -gt 0) `
+                "bridge line $($record.line): readiness failure has no false flag" $violations
+            Add-ViolationUnless (Test-StringSetEquals $failedFlags @($expectedFailedFlags)) `
+                "bridge line $($record.line): readiness failed_flags mismatch" $violations
+            $rawStateRecorded = Get-PropertyValue $record.value 'raw_state_recorded'
+            Add-ViolationUnless ($rawStateRecorded -is [bool] -and -not $rawStateRecorded) `
+                "bridge line $($record.line): readiness raw state must not be recorded" $violations
+            $violations.Add(
+                "readiness check failed at ${phase}: $($expectedFailedFlags -join ', ')")
         }
     }
 
@@ -658,7 +703,8 @@ function Invoke-TraceAudit {
     $orderedKinds = @($bridgeRecords | Where-Object {
             (Get-PropertyValue $_.value 'event') -notin @(
                 'mcp_forward_started', 'mcp_forward_completed',
-                'mcp_forward_failed', 'dynamic_response_sent')
+                'mcp_forward_failed', 'dynamic_response_sent',
+                'readiness_check_failed')
         } | ForEach-Object {
             $event = [string](Get-PropertyValue $_.value 'event')
             if ($event -ceq 'client_send') {
@@ -1940,6 +1986,41 @@ function Invoke-AuditSelfTest {
             }
             $copy
         })
+    $readinessFailureBridge = @($bridge | ForEach-Object {
+            ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+        })
+    $readinessFailure = [pscustomobject][ordered]@{
+        sequence = 0
+        utc = ''
+        event = 'readiness_check_failed'
+        phase = 'preflight'
+        get_state_ok = $true
+        ready_mode_ok = $true
+        game_unpaused = $true
+        world_present = $false
+        observation_present = $true
+        inventory_empty = $false
+        rays_per_tick_512 = $true
+        action_idle_or_terminal = $true
+        failed_flags = @('world_present', 'inventory_empty')
+        raw_state_recorded = $false
+    }
+    $readinessFailureBridge = @($readinessFailureBridge[0..6] +
+        $readinessFailure + $readinessFailureBridge[7..($readinessFailureBridge.Count - 1)])
+    for ($index = 0; $index -lt $readinessFailureBridge.Count; $index++) {
+        $readinessFailureBridge[$index].sequence = $index + 1
+        $readinessFailureBridge[$index].utc =
+            $syntheticUtcBase.AddMilliseconds($index).ToString('o')
+    }
+    $unsafeReadinessFailureBridge = @($readinessFailureBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 'readiness_check_failed') {
+                $copy.raw_state_recorded = $true
+                $copy | Add-Member -NotePropertyName snapshot `
+                    -NotePropertyValue ([ordered]@{ forbidden = $true }) -Force
+            }
+            $copy
+        })
 
     $cases = @(
         [ordered]@{
@@ -2033,6 +2114,17 @@ function Invoke-AuditSelfTest {
         [ordered]@{
             name = 'case_mismatch'; trace = $trace; bridge = $caseMismatchBridge
             expected_exit = 1; required = @('initialized message property set mismatch')
+        },
+        [ordered]@{
+            name = 'readiness_failure'; trace = $trace; bridge = $readinessFailureBridge
+            expected_exit = 1
+            required = @('readiness check failed at preflight: world_present, inventory_empty')
+        },
+        [ordered]@{
+            name = 'unsafe_readiness_failure'; trace = $trace
+            bridge = $unsafeReadinessFailureBridge; expected_exit = 1
+            required = @('readiness failure property set mismatch',
+                'readiness raw state must not be recorded')
         },
         [ordered]@{
             name = 'forbidden'
