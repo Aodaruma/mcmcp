@@ -133,8 +133,8 @@
                   "max_repeat_count": {"const": 16},
                   "allowed_capabilities": {
                     "type": "array",
-                    "minItems": 5,
-                    "maxItems": 5,
+                    "minItems": 6,
+                    "maxItems": 6,
                     "uniqueItems": true,
                     "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer"]}
                   }

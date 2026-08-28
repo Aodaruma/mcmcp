@@ -3,6 +3,7 @@ package dev.aod.mcmcp.mcp;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParser;
 import dev.aod.mcmcp.agent.action.AgentActionStore;
+import dev.aod.mcmcp.runtime.McmcpRuntimeContractTestAccess;
 import org.junit.jupiter.api.Test;
 
 import java.io.InputStreamReader;
@@ -78,6 +79,29 @@ class McpToolCatalogTest {
                 .getAsJsonObject().getAsJsonObject("outputSchema");
         var state = new GsonBuilder().serializeNulls().create().toJsonTree(McpTestFixtures.state());
         assertThat(CatalogSchemaValidator.matches(stateSchema, state)).as(state.toString()).isTrue();
+    }
+
+    @Test
+    void productionReadyStatePayloadMatchesTheNormativeOutputSchema() {
+        var catalog = new McpToolCatalog();
+        var state = new GsonBuilder().serializeNulls().create().toJsonTree(
+                McmcpRuntimeContractTestAccess.readyStatePayload());
+
+        assertThat(CatalogSchemaValidator.matches(
+                catalog.outputSchema("agent_get_state"), state))
+                .as(state.toString())
+                .isTrue();
+        assertThat(state.getAsJsonObject()
+                .getAsJsonObject("policy")
+                .getAsJsonObject("action_dsl")
+                .getAsJsonArray("allowed_capabilities"))
+                .containsExactlyInAnyOrder(
+                        JsonParser.parseString("\"movement\""),
+                        JsonParser.parseString("\"camera\""),
+                        JsonParser.parseString("\"block_break\""),
+                        JsonParser.parseString("\"block_interact\""),
+                        JsonParser.parseString("\"block_place\""),
+                        JsonParser.parseString("\"inventory_transfer\""));
     }
 
     @Test

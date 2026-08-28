@@ -28,7 +28,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $ProductionPrompt = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
-$ExpectedCatalogFileSha256 = 'cf33230ad487c8e68590cb26b08849c772270bafe8da444593e20762a84d180f'
+$ExpectedCatalogFileSha256 = 'ba1d263b02395b53d3c3f49232c5174dfa7324bc31678617637654e9abf4a2b9'
 $ExpectedToolSurfaceSha256 = '0fbebd8ac9d19d2b8a7f1a014736eb646db639a48580a4b1c308c480b875c236'
 $AllowedTools = @(
     'agent_get_state',

@@ -41,7 +41,8 @@ final class McpTestFixtures {
                                 "max_executed_nodes", 256,
                                 "max_repeat_count", 16,
                                 "allowed_capabilities", List.of(
-                                        "block_break", "block_interact", "block_place", "camera", "movement")))),
+                                        "block_break", "block_interact", "block_place", "camera",
+                                        "inventory_transfer", "movement")))),
                 "observation", nullValue(),
                 "action", nullValue());
     }
