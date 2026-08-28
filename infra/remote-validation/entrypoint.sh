@@ -4,6 +4,30 @@ set -euo pipefail
 screen_width="${SCREEN_WIDTH:-1280}"
 screen_height="${SCREEN_HEIGHT:-720}"
 
+minecraft_config="/data/prism/instances/MCMCP-Validation/minecraft/config"
+mcp_config="${minecraft_config}/mcmcp"
+admin_config="${minecraft_config}/mcmcp-fixture-admin"
+
+# Docker Desktop's Windows bind mount cannot enforce POSIX owner-only modes.
+# Initialize only the two security-sensitive config directories on disposable
+# named volumes, seed public fixture data, then drop permanently to ubuntu.
+if [[ "$(id -u)" == "0" ]]; then
+  install -d -o ubuntu -g ubuntu "${mcp_config}" "${admin_config}"
+  if [[ -f /seed/mcmcp-fixture-admin/enabled-profile.marker ]]; then
+    install -m 0600 -o ubuntu -g ubuntu \
+      /seed/mcmcp-fixture-admin/enabled-profile.marker \
+      "${admin_config}/enabled-profile.marker"
+  fi
+  if [[ -d /seed/mcmcp-fixture-admin/fixtures ]]; then
+    rm -rf "${admin_config}/fixtures"
+    cp -R /seed/mcmcp-fixture-admin/fixtures "${admin_config}/fixtures"
+    chown -R ubuntu:ubuntu "${admin_config}/fixtures"
+  fi
+  exec setpriv --reuid=1000 --regid=1000 --init-groups \
+    --inh-caps=-all --ambient-caps=-all --no-new-privs \
+    "$0" "$@"
+fi
+
 mkdir -p "${PRISM_DATA}" /data/runtime
 
 Xvfb "${DISPLAY}" -screen 0 "${screen_width}x${screen_height}x24" -nolisten tcp \

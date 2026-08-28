@@ -8,6 +8,7 @@
 - data root: remote hostの`F:\mcmcp-testlab\<run-id>`だけ
 - published ports: remote hostの`127.0.0.1`だけ
 - Minecraft内のMCP/admin endpoints: 引き続きcontainer loopbackだけ
+- token config: POSIX owner-only権限を保証できる削除可能なnamed volume。Windows bind側へtokenを書かない
 
 ローカルDocker CLIからSSH transportを使う。remoteの非対話SSH sessionではWindows Credential Managerを利用できないため、remote側Docker CLIでpull/buildしない。
 
