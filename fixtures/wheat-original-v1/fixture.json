@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "wheat-original-v1",
+  "dimension": "minecraft:overworld",
+  "mutation_bounds": {
+    "min": {"x": -25, "y": 54, "z": -22},
+    "max": {"x": -8, "y": 58, "z": -12}
+  },
+  "player_bounds": {
+    "min": {"x": -11, "y": 55, "z": -20},
+    "max": {"x": -8, "y": 58, "z": -13}
+  },
+  "max_changed_blocks": 256,
+  "containers": [
+    {"x": -10, "y": 56, "z": -14}
+  ],
+  "random_tick_speed": {
+    "target": 3000,
+    "maximum_seconds": 1320
+  }
+}

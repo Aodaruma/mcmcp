@@ -33,11 +33,20 @@ sourceSets {
         java.setSrcDirs(['src/harness/test/java'])
         resources.setSrcDirs([])
     }
+    adminBridge
+    adminBridgeTest {
+        java.setSrcDirs(['src/adminBridge/test/java'])
+        resources.setSrcDirs([])
+    }
 }
 
 configurations {
     harnessImplementation.extendsFrom implementation
     harnessRuntimeOnly.extendsFrom runtimeOnly
+    adminBridgeImplementation.extendsFrom implementation
+    adminBridgeRuntimeOnly.extendsFrom runtimeOnly
+    adminBridgeTestImplementation.extendsFrom adminBridgeImplementation
+    adminBridgeTestRuntimeOnly.extendsFrom adminBridgeRuntimeOnly
     runtimeClasspath.extendsFrom localRuntime
 }
 
@@ -49,6 +58,7 @@ neoForge {
         disableRecompilation = true
     }
     addModdingDependenciesTo sourceSets.harness
+    addModdingDependenciesTo sourceSets.adminBridge
 
     mods {
         "${mod_id}" {
@@ -56,6 +66,9 @@ neoForge {
         }
         "${fixture_mod_id}" {
             sourceSet sourceSets.harness
+        }
+        "${admin_bridge_mod_id}" {
+            sourceSet sourceSets.adminBridge
         }
     }
 
@@ -167,6 +180,7 @@ repositories {
 dependencies {
     harnessImplementation sourceSets.main.output
     harnessTestImplementation sourceSets.harness.output
+    adminBridgeTestImplementation sourceSets.adminBridge.output
 
     // Optional at runtime. The production pack supplies both the API and implementation;
     // MCMCP is still usable without an audio path in single-player test environments.
@@ -181,6 +195,11 @@ dependencies {
     harnessTestImplementation 'org.junit.jupiter:junit-jupiter'
     harnessTestImplementation 'org.assertj:assertj-core:3.27.3'
     harnessTestRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    adminBridgeTestImplementation enforcedPlatform('org.junit:junit-bom:5.14.1')
+    adminBridgeTestImplementation 'org.junit.jupiter:junit-jupiter'
+    adminBridgeTestImplementation 'org.assertj:assertj-core:3.27.3'
+    adminBridgeTestImplementation 'com.google.code.gson:gson:2.14.0'
+    adminBridgeTestRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 def mainMetadata = tasks.register('generateModMetadata', ProcessResources) {
@@ -221,6 +240,25 @@ def harnessMetadata = tasks.register('generateHarnessModMetadata', ProcessResour
 sourceSets.harness.resources.srcDir harnessMetadata
 neoForge.ideSyncTask harnessMetadata
 
+def adminBridgeMetadata = tasks.register('generateAdminBridgeModMetadata', ProcessResources) {
+    def replaceProperties = [
+            minecraft_version            : minecraft_version,
+            minecraft_version_range      : minecraft_version_range,
+            neo_version                  : neo_version,
+            admin_bridge_mod_id           : admin_bridge_mod_id,
+            admin_bridge_mod_name         : admin_bridge_mod_name,
+            admin_bridge_mod_description  : admin_bridge_mod_description,
+            mod_license                  : mod_license,
+            mod_version                  : mod_version,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from 'src/adminBridge/templates'
+    into 'build/generated/sources/adminBridgeModMetadata'
+}
+sourceSets.adminBridge.resources.srcDir adminBridgeMetadata
+neoForge.ideSyncTask adminBridgeMetadata
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.release = 25
@@ -241,6 +279,13 @@ def harnessTest = tasks.register('harnessTest', Test) {
     classpath = sourceSets.harnessTest.runtimeClasspath
 }
 
+def adminBridgeTest = tasks.register('adminBridgeTest', Test) {
+    group = 'verification'
+    description = 'Runs pure unit tests for the external fixture loader and command policy.'
+    testClassesDirs = sourceSets.adminBridgeTest.output.classesDirs
+    classpath = sourceSets.adminBridgeTest.runtimeClasspath
+}
+
 tasks.register('harnessJar', Jar) {
     group = 'verification'
     description = 'Builds the development-only single-player fixture mod.'
@@ -251,14 +296,25 @@ tasks.register('harnessJar', Jar) {
     }
 }
 
+tasks.register('adminBridgeJar', Jar) {
+    group = 'verification'
+    description = 'Builds the development-only authenticated fixture admin bridge mod.'
+    archiveClassifier = 'fixture-admin'
+    from sourceSets.adminBridge.output
+    manifest {
+        attributes('Automatic-Module-Name': 'dev.aod.mcmcp.adminbridge')
+    }
+}
+
 def verifyHarnessIsolation = tasks.register('verifyHarnessIsolation') {
     group = 'verification'
     description = 'Verifies that production and destructive fixture classes remain in separate JARs.'
-    dependsOn tasks.named('jar'), tasks.named('harnessJar')
+    dependsOn tasks.named('jar'), tasks.named('harnessJar'), tasks.named('adminBridgeJar')
 
     def productionJar = tasks.named('jar', Jar).flatMap { it.archiveFile }
     def fixtureJar = tasks.named('harnessJar', Jar).flatMap { it.archiveFile }
-    inputs.files(productionJar, fixtureJar)
+    def adminBridgeJar = tasks.named('adminBridgeJar', Jar).flatMap { it.archiveFile }
+    inputs.files(productionJar, fixtureJar, adminBridgeJar)
 
     doLast {
         def productionEntries = new JarFile(productionJar.get().asFile, false).withCloseable { jar ->
@@ -267,12 +323,21 @@ def verifyHarnessIsolation = tasks.register('verifyHarnessIsolation') {
         def fixtureEntries = new JarFile(fixtureJar.get().asFile, false).withCloseable { jar ->
             jar.entries().collect { it.name }.toSet()
         }
+        def adminBridgeEntries = new JarFile(adminBridgeJar.get().asFile, false).withCloseable { jar ->
+            jar.entries().collect { it.name }.toSet()
+        }
         def fixturePrefix = 'dev/aod/mcmcp/fixture/'
+        def adminBridgePrefix = 'dev/aod/mcmcp/adminbridge/'
 
         def leakedFixtureEntries = productionEntries.findAll { it.startsWith(fixturePrefix) }
         if (!leakedFixtureEntries.isEmpty()) {
             throw new GradleException(
                     "Production JAR contains harness-only entries: ${leakedFixtureEntries.sort()}")
+        }
+        def leakedAdminEntries = productionEntries.findAll { it.startsWith(adminBridgePrefix) }
+        if (!leakedAdminEntries.isEmpty()) {
+            throw new GradleException(
+                    "Production JAR contains admin-bridge-only entries: ${leakedAdminEntries.sort()}")
         }
         if (!fixtureEntries.contains(fixturePrefix + 'FixturePhase3Autorun.class')) {
             throw new GradleException('Harness JAR is missing FixturePhase3Autorun.class')
@@ -280,11 +345,21 @@ def verifyHarnessIsolation = tasks.register('verifyHarnessIsolation') {
         if (fixtureEntries.contains('dev/aod/mcmcp/McmcpMod.class')) {
             throw new GradleException('Harness JAR unexpectedly contains the production mod entrypoint')
         }
+        if (fixtureEntries.any { it.startsWith(adminBridgePrefix) }) {
+            throw new GradleException('Harness JAR unexpectedly contains admin bridge classes')
+        }
+        if (!adminBridgeEntries.contains(adminBridgePrefix + 'McmcpFixtureAdminMod.class')) {
+            throw new GradleException('Admin bridge JAR is missing its mod entrypoint')
+        }
+        if (adminBridgeEntries.any { it.startsWith(fixturePrefix) }
+                || adminBridgeEntries.contains('dev/aod/mcmcp/McmcpMod.class')) {
+            throw new GradleException('Admin bridge JAR unexpectedly contains production or harness classes')
+        }
     }
 }
 
 tasks.named('check').configure {
-    dependsOn verifyHarnessIsolation, harnessTest
+    dependsOn verifyHarnessIsolation, harnessTest, adminBridgeTest
 }
 
 tasks.named('jar', Jar).configure {
