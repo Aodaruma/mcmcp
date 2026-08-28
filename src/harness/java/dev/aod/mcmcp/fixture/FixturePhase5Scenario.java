@@ -132,8 +132,7 @@ final class FixturePhase5Scenario {
         }
         FixtureArena.resetPlayer(context.player());
         if (mode == FixturePhase5Mode.COMBINED_WHEAT) {
-            applyCombinedWheatLayout(context.level());
-            configureCombinedSupplyChest(context.level());
+            resetCombinedWheatWorkspace(context.level());
         } else {
             applyLayout(context.level());
             configureBarrel(context.level());
@@ -288,6 +287,15 @@ final class FixturePhase5Scenario {
         var staleItems = level.getEntities(EntityTypes.ITEM, bounds, Entity::isAlive);
         staleItems.forEach(Entity::discard);
         return staleItems.size();
+    }
+
+    static int resetCombinedWheatWorkspace(ServerLevel level) {
+        applyCombinedWheatLayout(level);
+        configureCombinedSupplyChest(level);
+        // Replacing the previous crop supports can synchronously pop wheat/seeds after the
+        // pre-layout cleanup. The production evaluation starts only after this final pass.
+        return discardItemEntities(
+                level, AABB.encapsulatingFullBlocks(WORKSPACE_MIN, WORKSPACE_MAX));
     }
 
     static void verifyTreeGate(
