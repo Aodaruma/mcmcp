@@ -65,6 +65,46 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void startActionDescriptionExposesTheClosedGrammarAndAValidExample() {
+        var catalog = new McpToolCatalog();
+        var startTool = catalog.listResult().getAsJsonArray("tools").asList().stream()
+                .map(element -> element.getAsJsonObject())
+                .filter(tool -> tool.get("name").getAsString().equals("agent_start_action"))
+                .findFirst()
+                .orElseThrow();
+        var schema = startTool.getAsJsonObject("inputSchema");
+        String description = startTool.get("description").getAsString();
+
+        assertThat(description)
+                .contains("Do not guess or probe the grammar")
+                .contains("Every node, including nested if/repeat nodes, MUST contain a unique id")
+                .contains("Every block position MUST contain exactly dimension,x,y,z")
+                .contains("dimension is the observed resource ID")
+                .contains("x/y/z are integer block coordinates");
+
+        var definitions = schema.getAsJsonObject("$defs");
+        var nodeAlternatives = definitions.getAsJsonObject("node").getAsJsonArray("oneOf");
+        var opcodes = nodeAlternatives.asList().stream()
+                .map(reference -> reference.getAsJsonObject().get("$ref").getAsString())
+                .map(reference -> reference.substring(reference.lastIndexOf('/') + 1))
+                .map(definitions::getAsJsonObject)
+                .map(node -> node.getAsJsonObject("properties")
+                        .getAsJsonObject("op").get("const").getAsString())
+                .toList();
+        assertThat(description).contains(opcodes.toArray(String[]::new));
+
+        String examplePrefix = "A complete valid minimum example is ";
+        String exampleSuffix = ". Use observed coordinates";
+        int exampleStart = description.indexOf(examplePrefix) + examplePrefix.length();
+        int exampleEnd = description.indexOf(exampleSuffix, exampleStart);
+        assertThat(exampleStart).isGreaterThanOrEqualTo(examplePrefix.length());
+        assertThat(exampleEnd).isGreaterThan(exampleStart);
+        var visibleExample = JsonParser.parseString(
+                description.substring(exampleStart, exampleEnd));
+        assertThat(CatalogSchemaValidator.matches(schema, visibleExample)).isTrue();
+    }
+
+    @Test
     void catalogSchemasDriveInputAndOutputValidation() {
         var catalog = new McpToolCatalog();
         var actionSchema = catalog.inputSchema("agent_start_action");

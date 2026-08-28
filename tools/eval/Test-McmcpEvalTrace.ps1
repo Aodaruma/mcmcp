@@ -28,8 +28,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $ProductionPrompt = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
-$ExpectedCatalogFileSha256 = 'ba1d263b02395b53d3c3f49232c5174dfa7324bc31678617637654e9abf4a2b9'
-$ExpectedToolSurfaceSha256 = '0fbebd8ac9d19d2b8a7f1a014736eb646db639a48580a4b1c308c480b875c236'
+$ExpectedCatalogFileSha256 = '88201db2eefb720cb4ff5fec39ffa8b837a2ad2fbe091f5f056cf1d2c7f3d20a'
+$ExpectedToolSurfaceSha256 = '71aae0111fd449e6d8dfb0b4fbd362d8591fd4e44c0448186fc4d4ee161409da'
 $AllowedTools = @(
     'agent_get_state',
     'agent_get_observation',
@@ -83,6 +83,7 @@ $RequiredCliConfigs = @(
     'project_doc_max_bytes=0'
 )
 $Utf8NoBom = [Text.UTF8Encoding]::new($false)
+$MaximumUnixTimeMilliseconds = ([DateTimeOffset]::MaxValue).ToUnixTimeMilliseconds()
 
 function ConvertTo-CompactJson {
     param([AllowNull()][object]$Value)
@@ -248,6 +249,14 @@ function Test-IsJsonNumber {
         'System.Byte', 'System.SByte', 'System.Int16', 'System.UInt16',
         'System.Int32', 'System.UInt32', 'System.Int64', 'System.UInt64',
         'System.Single', 'System.Double', 'System.Decimal')
+}
+
+function Test-IsJsonInteger {
+    param([AllowNull()][object]$Value)
+    if ($null -eq $Value) { return $false }
+    return $Value.GetType().FullName -in @(
+        'System.Byte', 'System.SByte', 'System.Int16', 'System.UInt16',
+        'System.Int32', 'System.UInt32', 'System.Int64', 'System.UInt64')
 }
 
 function Test-DomainErrorText {
@@ -449,16 +458,58 @@ function Invoke-TraceAudit {
                 }
             }
         }
+        if ($event -ceq 'mcp_forward_failed') {
+            Add-ViolationUnless (Test-ExactPropertySet $record.value @(
+                    'sequence', 'utc', 'event', 'app_request_id', 'call_id',
+                    'tool', 'mcp_request_id', 'failure_kind',
+                    'diagnostic_code', 'http_status')) `
+                "bridge line $($record.line): MCP failure property set mismatch" $violations
+            $failureKind = [string](Get-PropertyValue $record.value 'failure_kind')
+            $diagnosticCode = [string](Get-PropertyValue $record.value 'diagnostic_code')
+            $httpStatus = Get-PropertyValue $record.value 'http_status'
+            $diagnosticContractValid = switch ($failureKind) {
+                'http_status' {
+                    (Test-IsJsonInteger $httpStatus) -and
+                    $httpStatus -ge 100 -and $httpStatus -le 599 -and
+                    (($httpStatus -eq 429 -and $diagnosticCode -ceq 'rate_limited') -or
+                    ($httpStatus -ne 429 -and $diagnosticCode -ceq 'http_non_success'))
+                    break
+                }
+                'transport' {
+                    $null -eq $httpStatus -and $diagnosticCode -cin @(
+                        'request_timeout', 'http_request_failed', 'transport_unclassified')
+                    break
+                }
+                'protocol_validation' {
+                    $httpStatus -eq 200 -and $diagnosticCode -cin @(
+                        'invalid_content_type', 'invalid_jsonrpc_envelope')
+                    break
+                }
+                'deadline' {
+                    $null -eq $httpStatus -and
+                    $diagnosticCode -ceq 'turn_deadline_expired'
+                    break
+                }
+                'internal' {
+                    $null -eq $httpStatus -and
+                    $diagnosticCode -ceq 'unclassified_bridge_exception'
+                    break
+                }
+                default { $false }
+            }
+            Add-ViolationUnless $diagnosticContractValid `
+                "bridge line $($record.line): MCP failure diagnostic contract mismatch" $violations
+        }
         if ($event -ceq 'readiness_check_failed') {
             $readinessNames = @(
                 'ready_mode_ok', 'game_unpaused', 'world_present',
                 'observation_present', 'inventory_empty', 'rays_per_tick_512',
-                'action_idle_or_terminal')
+                'visible_entities_zero', 'action_idle_or_terminal')
             Add-ViolationUnless (Test-ExactPropertySet $record.value @(
                     'sequence', 'utc', 'event', 'phase', 'get_state_ok',
                     'ready_mode_ok', 'game_unpaused', 'world_present',
                     'observation_present', 'inventory_empty', 'rays_per_tick_512',
-                    'action_idle_or_terminal', 'failed_flags',
+                    'visible_entities_zero', 'action_idle_or_terminal', 'failed_flags',
                     'raw_state_recorded')) `
                 "bridge line $($record.line): readiness failure property set mismatch" $violations
             $phase = Get-PropertyValue $record.value 'phase'
@@ -594,7 +645,7 @@ function Invoke-TraceAudit {
         foreach ($readinessFlag in @(
                 'ready_mode_ok', 'game_unpaused', 'world_present',
                 'observation_present', 'inventory_empty', 'rays_per_tick_512',
-                'action_idle_or_terminal')) {
+                'visible_entities_zero', 'action_idle_or_terminal')) {
             $value = Get-PropertyValue $preflight $readinessFlag
             Add-ViolationUnless ($value -is [bool] -and $value) `
                 "preflight readiness flag must be true: $readinessFlag" $violations
@@ -693,7 +744,8 @@ function Invoke-TraceAudit {
         foreach ($readinessFlag in @(
                 'readiness_rechecked', 'ready_mode_ok', 'game_unpaused',
                 'world_present', 'observation_present', 'inventory_empty',
-                'rays_per_tick_512', 'action_idle_or_terminal')) {
+                'rays_per_tick_512', 'visible_entities_zero',
+                'action_idle_or_terminal')) {
             $value = Get-PropertyValue $t0 $readinessFlag
             Add-ViolationUnless ($value -is [bool] -and $value) `
                 "T0 readiness flag must be true: $readinessFlag" $violations
@@ -925,6 +977,7 @@ function Invoke-TraceAudit {
     $notifiedThreadId = $null
     $notifiedTurnId = $null
     $completedTurnId = $null
+    $previousEmittedAtMs = $null
 
     foreach ($record in $traceRecords) {
         $message = $record.value
@@ -1059,8 +1112,23 @@ function Invoke-TraceAudit {
             $violations.Add("trace line ${line}: forbidden notification '$method'")
             continue
         }
-        Add-ViolationUnless (Test-ExactPropertySet $message @('method', 'params')) `
+        Add-ViolationUnless (Test-ExactPropertySet $message @(
+                'method', 'params', 'emittedAtMs')) `
             "trace line ${line}: notification property set mismatch '$method'" $violations
+        $emittedAtMs = Get-PropertyValue $message 'emittedAtMs'
+        $emittedAtMsValid = (Test-IsJsonInteger $emittedAtMs) -and
+            $emittedAtMs -ge 0 -and $emittedAtMs -le $MaximumUnixTimeMilliseconds
+        Add-ViolationUnless $emittedAtMsValid `
+            "trace line ${line}: notification emittedAtMs must be an integer Unix-ms value in range" `
+            $violations
+        if ($emittedAtMsValid) {
+            if ($null -ne $previousEmittedAtMs -and
+                $emittedAtMs -lt $previousEmittedAtMs) {
+                $violations.Add(
+                    "trace line ${line}: notification emittedAtMs order mismatch")
+            }
+            $previousEmittedAtMs = [long]$emittedAtMs
+        }
         $params = Get-PropertyValue $message 'params'
         switch ($method) {
             'thread/started' {
@@ -1140,6 +1208,11 @@ function Invoke-TraceAudit {
                 $timestamp = Get-PropertyValue $params $timestampName
                 if (-not (Test-IsJsonNumber $timestamp) -or $timestamp -lt 0) {
                     $violations.Add("trace line ${line}: $method $timestampName must be non-negative numeric")
+                }
+                if ($emittedAtMsValid -and (Test-IsJsonNumber $timestamp) -and
+                    $timestamp -ge 0 -and $emittedAtMs -lt $timestamp) {
+                    $violations.Add(
+                        "trace line ${line}: notification emittedAtMs precedes $timestampName")
                 }
                 $item = Get-PropertyValue $params 'item'
                 $itemId = [string](Get-PropertyValue $item 'id')
@@ -1660,7 +1733,8 @@ function Invoke-AuditSelfTest {
             parent_mcp_redirects_disabled = $true
             ready_mode_ok = $true; game_unpaused = $true; world_present = $true
             observation_present = $true; inventory_empty = $true
-            rays_per_tick_512 = $true; action_idle_or_terminal = $true
+            rays_per_tick_512 = $true; visible_entities_zero = $true
+            action_idle_or_terminal = $true
         },
         [ordered]@{ sequence = 9; event = 'client_send'; kind = 'thread_start'; message = $threadStart },
         [ordered]@{
@@ -1672,7 +1746,8 @@ function Invoke-AuditSelfTest {
             timeout_seconds = 1020; readiness_rechecked = $true
             ready_mode_ok = $true; game_unpaused = $true; world_present = $true
             observation_present = $true; inventory_empty = $true
-            rays_per_tick_512 = $true; action_idle_or_terminal = $true
+            rays_per_tick_512 = $true; visible_entities_zero = $true
+            action_idle_or_terminal = $true
         },
         [ordered]@{ sequence = 12; event = 'client_send'; kind = 'turn_start'; message = $turnStart },
         [ordered]@{
@@ -1769,6 +1844,14 @@ function Invoke-AuditSelfTest {
         },
         [ordered]@{ method = 'turn/completed'; params = [ordered]@{ threadId = 'thread_1'; turn = [ordered]@{ id = 'turn_1'; status = 'completed'; error = $null } } }
     )
+    $syntheticEmittedAtMs = $syntheticUtcBase.ToUnixTimeMilliseconds()
+    foreach ($traceMessage in $trace) {
+        $traceMethod = [string](Get-PropertyValue $traceMessage 'method')
+        if ($traceMethod -cin $AllowedNotifications) {
+            $traceMessage.Add('emittedAtMs', $syntheticEmittedAtMs)
+            $syntheticEmittedAtMs++
+        }
+    }
 
     $domainErrorText = '{"code":"TARGET_UNAVAILABLE","message":"recoverable domain failure","recoverable":true}'
     $domainTrace = @($trace | ForEach-Object {
@@ -1976,6 +2059,34 @@ function Invoke-AuditSelfTest {
             }
             $copy
         })
+    $missingEmittedAtMsTrace = @($trace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'method') -ceq 'thread/started') {
+                $copy.PSObject.Properties.Remove('emittedAtMs')
+            }
+            $copy
+        })
+    $nonIntegerEmittedAtMsTrace = @($trace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'method') -ceq 'thread/started') {
+                $copy.emittedAtMs = 1.5D
+            }
+            $copy
+        })
+    $outOfRangeEmittedAtMsTrace = @($trace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'method') -ceq 'thread/started') {
+                $copy.emittedAtMs = -1L
+            }
+            $copy
+        })
+    $reorderedEmittedAtMsTrace = @($trace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'method') -ceq 'turn/started') {
+                $copy.emittedAtMs = $syntheticUtcBase.ToUnixTimeMilliseconds() - 1
+            }
+            $copy
+        })
     $caseMismatchBridge = @($bridge | ForEach-Object {
             $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
             if ((Get-PropertyValue $copy 'event') -eq 'client_send' -and
@@ -2001,6 +2112,7 @@ function Invoke-AuditSelfTest {
         observation_present = $true
         inventory_empty = $false
         rays_per_tick_512 = $true
+        visible_entities_zero = $true
         action_idle_or_terminal = $true
         failed_flags = @('world_present', 'inventory_empty')
         raw_state_recorded = $false
@@ -2021,6 +2133,22 @@ function Invoke-AuditSelfTest {
             }
             $copy
         })
+    $invalidFailureDiagnosticBridge = @($bridge | ForEach-Object {
+            ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+        })
+    $invalidFailureDiagnosticBridge += [pscustomobject][ordered]@{
+        sequence = $invalidFailureDiagnosticBridge.Count + 1
+        utc = $syntheticUtcBase.AddMilliseconds(
+            $invalidFailureDiagnosticBridge.Count).ToString('o')
+        event = 'mcp_forward_failed'
+        app_request_id = 999
+        call_id = 'orphan_failure'
+        tool = 'agent_get_state'
+        mcp_request_id = 999
+        failure_kind = 'http_status'
+        diagnostic_code = 'http_non_success'
+        http_status = 429
+    }
 
     $cases = @(
         [ordered]@{
@@ -2112,6 +2240,26 @@ function Invoke-AuditSelfTest {
             expected_exit = 1; required = @('item/started startedAtMs must be non-negative numeric')
         },
         [ordered]@{
+            name = 'missing_emitted_at'; trace = $missingEmittedAtMsTrace; bridge = $bridge
+            expected_exit = 1; required = @(
+                "notification property set mismatch 'thread/started'",
+                'notification emittedAtMs must be an integer Unix-ms value in range')
+        },
+        [ordered]@{
+            name = 'non_integer_emitted_at'; trace = $nonIntegerEmittedAtMsTrace; bridge = $bridge
+            expected_exit = 1
+            required = @('notification emittedAtMs must be an integer Unix-ms value in range')
+        },
+        [ordered]@{
+            name = 'out_of_range_emitted_at'; trace = $outOfRangeEmittedAtMsTrace; bridge = $bridge
+            expected_exit = 1
+            required = @('notification emittedAtMs must be an integer Unix-ms value in range')
+        },
+        [ordered]@{
+            name = 'reordered_emitted_at'; trace = $reorderedEmittedAtMsTrace; bridge = $bridge
+            expected_exit = 1; required = @('notification emittedAtMs order mismatch')
+        },
+        [ordered]@{
             name = 'case_mismatch'; trace = $trace; bridge = $caseMismatchBridge
             expected_exit = 1; required = @('initialized message property set mismatch')
         },
@@ -2125,6 +2273,11 @@ function Invoke-AuditSelfTest {
             bridge = $unsafeReadinessFailureBridge; expected_exit = 1
             required = @('readiness failure property set mismatch',
                 'readiness raw state must not be recorded')
+        },
+        [ordered]@{
+            name = 'invalid_failure_diagnostic'; trace = $trace
+            bridge = $invalidFailureDiagnosticBridge; expected_exit = 1
+            required = @('MCP failure diagnostic contract mismatch')
         },
         [ordered]@{
             name = 'forbidden'

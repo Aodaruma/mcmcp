@@ -31,10 +31,11 @@ $RequiredCodexVersion = 'codex-cli 0.146.1'
 $ModernProtocolVersion = '2026-07-28'
 $EvaluatorTimeout = [TimeSpan]::FromMinutes(17)
 $AuthExpirySafetyMargin = [TimeSpan]::FromMinutes(5)
+$MinimumMcpRequestIntervalMilliseconds = 60
 $ExpectedMcmcpServerName = 'mcmcp'
 $ExpectedMcmcpServerVersion = '0.1.0'
-$ExpectedCatalogFileSha256 = 'ba1d263b02395b53d3c3f49232c5174dfa7324bc31678617637654e9abf4a2b9'
-$ExpectedToolSurfaceSha256 = '0fbebd8ac9d19d2b8a7f1a014736eb646db639a48580a4b1c308c480b875c236'
+$ExpectedCatalogFileSha256 = '88201db2eefb720cb4ff5fec39ffa8b837a2ad2fbe091f5f056cf1d2c7f3d20a'
+$ExpectedToolSurfaceSha256 = '71aae0111fd449e6d8dfb0b4fbd362d8591fd4e44c0448186fc4d4ee161409da'
 $AllowedTools = @(
     'agent_get_state',
     'agent_get_observation',
@@ -605,15 +606,79 @@ function Assert-McmcpJsonRpcEnvelope {
     }
 }
 
+function New-McmcpBridgeFailureException {
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('http_status', 'transport', 'protocol_validation', 'deadline', 'internal')]
+        [string]$FailureKind,
+        [Parameter(Mandatory)]
+        [ValidateSet(
+            'rate_limited', 'http_non_success', 'request_timeout',
+            'http_request_failed', 'transport_unclassified',
+            'invalid_content_type', 'invalid_jsonrpc_envelope',
+            'turn_deadline_expired', 'unclassified_bridge_exception')]
+        [string]$DiagnosticCode,
+        [AllowNull()][Nullable[int]]$HttpStatus
+    )
+
+    $failure = [InvalidOperationException]::new('MCMCP bridge request failed')
+    $failure.Data['failure_kind'] = $FailureKind
+    $failure.Data['diagnostic_code'] = $DiagnosticCode
+    if ($null -ne $HttpStatus) {
+        $failure.Data['http_status'] = [int]$HttpStatus
+    }
+    return $failure
+}
+
+function Get-McmcpHttpFailureStatus {
+    param([Parameter(Mandatory)][Management.Automation.ErrorRecord]$Failure)
+
+    $responseProperty = @($Failure.Exception.PSObject.Properties |
+        Where-Object { $_.Name -ceq 'Response' })
+    if ($responseProperty.Count -ne 1 -or $null -eq $responseProperty[0].Value) {
+        return $null
+    }
+    $statusProperty = @($responseProperty[0].Value.PSObject.Properties |
+        Where-Object { $_.Name -ceq 'StatusCode' })
+    if ($statusProperty.Count -ne 1 -or $null -eq $statusProperty[0].Value) {
+        return $null
+    }
+    try {
+        $status = [int]$statusProperty[0].Value
+        if ($status -lt 100 -or $status -gt 599) { return $null }
+        return $status
+    } catch {
+        return $null
+    }
+}
+
+function Wait-McmcpRequestSlot {
+    $now = [Diagnostics.Stopwatch]::GetTimestamp()
+    if ($script:LastMcpRequestTimestamp -gt 0) {
+        $elapsedMilliseconds = (($now - $script:LastMcpRequestTimestamp) * 1000.0D) /
+            [Diagnostics.Stopwatch]::Frequency
+        $remainingMilliseconds =
+            $MinimumMcpRequestIntervalMilliseconds - $elapsedMilliseconds
+        if ($remainingMilliseconds -gt 0) {
+            Start-Sleep -Milliseconds ([int][Math]::Ceiling($remainingMilliseconds))
+        }
+    }
+    $script:LastMcpRequestTimestamp = [Diagnostics.Stopwatch]::GetTimestamp()
+}
+
 function Invoke-McmcpJsonRpc {
     param(
         [Parameter(Mandatory)][ValidateSet('server/discover', 'tools/list', 'tools/call')]
         [string]$Method,
         [Parameter(Mandatory)][object]$Parameters,
         [string]$ToolName,
-        [ValidateRange(1, 35)][int]$TimeoutSeconds = 15
+        [ValidateRange(1, 35)][int]$TimeoutSeconds = 15,
+        [switch]$PacingAlreadyApplied
     )
 
+    if (-not $PacingAlreadyApplied) {
+        Wait-McmcpRequestSlot
+    }
     $script:McpRequestId++
     [long]$requestId = $script:McpRequestId
     $headers = @{
@@ -638,14 +703,40 @@ function Invoke-McmcpJsonRpc {
             -Body (ConvertTo-CompactJson $request) -TimeoutSec $TimeoutSeconds `
             -NoProxy -MaximumRedirection 0 -ResponseHeadersVariable responseHeaders
     } catch {
-        throw "MCMCP transport failed: method=$Method"
+        $httpStatus = Get-McmcpHttpFailureStatus -Failure $_
+        if ($null -ne $httpStatus) {
+            $diagnosticCode = if ($httpStatus -eq 429) {
+                'rate_limited'
+            } else { 'http_non_success' }
+            throw (New-McmcpBridgeFailureException `
+                    -FailureKind 'http_status' -DiagnosticCode $diagnosticCode `
+                    -HttpStatus $httpStatus)
+        }
+        $exceptionType = $_.Exception.GetType().FullName
+        $diagnosticCode = if ($exceptionType -in @(
+                'System.TimeoutException', 'System.Threading.Tasks.TaskCanceledException')) {
+            'request_timeout'
+        } elseif ($exceptionType -eq 'System.Net.Http.HttpRequestException') {
+            'http_request_failed'
+        } else { 'transport_unclassified' }
+        throw (New-McmcpBridgeFailureException `
+                -FailureKind 'transport' -DiagnosticCode $diagnosticCode `
+                -HttpStatus $null)
     }
     $contentType = [string]$responseHeaders['Content-Type']
     if ($contentType -notmatch '(?i)^application/json(?:\s*;\s*charset=(?:utf-8|"utf-8"))?\s*$' -or
         $contentType -notmatch '(?i)charset=(?:utf-8|"utf-8")') {
-        throw "$Method returned an invalid HTTP Content-Type"
+        throw (New-McmcpBridgeFailureException `
+                -FailureKind 'protocol_validation' -DiagnosticCode 'invalid_content_type' `
+                -HttpStatus 200)
     }
-    Assert-McmcpJsonRpcEnvelope -Response $response -ExpectedId $requestId -Operation $Method
+    try {
+        Assert-McmcpJsonRpcEnvelope -Response $response -ExpectedId $requestId -Operation $Method
+    } catch {
+        throw (New-McmcpBridgeFailureException `
+                -FailureKind 'protocol_validation' -DiagnosticCode 'invalid_jsonrpc_envelope' `
+                -HttpStatus 200)
+    }
     return $response
 }
 
@@ -771,6 +862,9 @@ function Invoke-McmcpReadinessCheck {
         $inventoryProperty.Value -isnot [string] -and @($inventoryProperty.Value).Count -eq 0
     $raysPerTick = Get-NestedValue $snapshot 'policy.omnidirectional_rays_per_tick'
     $raysPerTick512 = $raysPerTick -is [long] -and $raysPerTick -eq 512
+    $visibleEntityCount = Get-NestedValue `
+        $snapshot 'observation.record_counts.visible_entity'
+    $visibleEntitiesZero = $visibleEntityCount -is [long] -and $visibleEntityCount -eq 0
     $actionProperty = Get-Property $snapshot 'action'
     $actionIdleOrTerminal = $null -ne $actionProperty -and (
         $null -eq $actionProperty.Value -or
@@ -784,6 +878,7 @@ function Invoke-McmcpReadinessCheck {
         observation_present = $observationPresent
         inventory_empty = $inventoryEmpty
         rays_per_tick_512 = $raysPerTick512
+        visible_entities_zero = $visibleEntitiesZero
         action_idle_or_terminal = $actionIdleOrTerminal
     }
     $failedFlags = @($readiness.Keys | Where-Object {
@@ -800,6 +895,7 @@ function Invoke-McmcpReadinessCheck {
             observation_present = $readiness.observation_present
             inventory_empty = $readiness.inventory_empty
             rays_per_tick_512 = $readiness.rays_per_tick_512
+            visible_entities_zero = $readiness.visible_entities_zero
             action_idle_or_terminal = $readiness.action_idle_or_terminal
             failed_flags = @($failedFlags)
             raw_state_recorded = $false
@@ -815,6 +911,7 @@ function Invoke-McmcpReadinessCheck {
                 observation_present = $diagnostic.observation_present
                 inventory_empty = $diagnostic.inventory_empty
                 rays_per_tick_512 = $diagnostic.rays_per_tick_512
+                visible_entities_zero = $diagnostic.visible_entities_zero
                 action_idle_or_terminal = $diagnostic.action_idle_or_terminal
                 failed_flags = @($diagnostic.failed_flags)
                 raw_state_recorded = $diagnostic.raw_state_recorded
@@ -943,6 +1040,7 @@ function Invoke-ReadOnlyPreflight {
             observation_present = $readiness.observation_present
             inventory_empty = $readiness.inventory_empty
             rays_per_tick_512 = $readiness.rays_per_tick_512
+            visible_entities_zero = $readiness.visible_entities_zero
             action_idle_or_terminal = $readiness.action_idle_or_terminal
             gameplay_calls_made = $false
         }
@@ -1251,6 +1349,7 @@ function Invoke-DynamicBridge {
     $httpTimeoutSeconds = [int][Math]::Min(35, $remainingSeconds)
 
     $argumentsJson = ConvertTo-CompactJson $arguments
+    Wait-McmcpRequestSlot
     $mcpId = $script:McpRequestId + 1
     Write-BridgeEvent ([ordered]@{
             event = 'mcp_forward_started'
@@ -1266,25 +1365,43 @@ function Invoke-DynamicBridge {
 
     try {
         $mcpResponse = Invoke-McmcpJsonRpc -Method 'tools/call' -ToolName $tool `
-            -TimeoutSeconds $httpTimeoutSeconds `
+            -TimeoutSeconds $httpTimeoutSeconds -PacingAlreadyApplied `
             -Parameters ([ordered]@{
                 _meta = Get-McpMeta
                 name = $tool
                 arguments = $arguments
             })
         if ([DateTimeOffset]::UtcNow -ge $script:TurnDeadline) {
-            throw 'evaluation deadline expired during MCP forward'
+            throw (New-McmcpBridgeFailureException `
+                    -FailureKind 'deadline' -DiagnosticCode 'turn_deadline_expired' `
+                    -HttpStatus $null)
         }
     } catch {
+        $failureKind = [string]$_.Exception.Data['failure_kind']
+        $diagnosticCode = [string]$_.Exception.Data['diagnostic_code']
+        $httpStatus = $_.Exception.Data['http_status']
+        if ($failureKind -notin @(
+                'http_status', 'transport', 'protocol_validation', 'deadline', 'internal') -or
+            $diagnosticCode -notin @(
+                'rate_limited', 'http_non_success', 'request_timeout',
+                'http_request_failed', 'transport_unclassified',
+                'invalid_content_type', 'invalid_jsonrpc_envelope',
+                'turn_deadline_expired', 'unclassified_bridge_exception')) {
+            $failureKind = 'internal'
+            $diagnosticCode = 'unclassified_bridge_exception'
+            $httpStatus = $null
+        }
         Write-BridgeEvent ([ordered]@{
                 event = 'mcp_forward_failed'
                 app_request_id = $requestId
                 call_id = $callId
                 tool = $tool
                 mcp_request_id = $mcpId
-                failure_kind = 'transport_or_protocol'
+                failure_kind = $failureKind
+                diagnostic_code = $diagnosticCode
+                http_status = $(if ($null -eq $httpStatus) { $null } else { [int]$httpStatus })
             })
-        throw 'MCMCP dynamic bridge transport/protocol validation failed'
+        throw 'MCMCP dynamic bridge forwarding failed; see safe diagnostic record'
     }
     $formatted = Convert-McpResultToDynamicResponse -McpResponse $mcpResponse
     $outputHash = Get-Sha256 $formatted.text
@@ -1382,6 +1499,7 @@ $tailTask = $null
 $streamCaptureMarkers = [Collections.Generic.List[string]]::new()
 $processExitConfirmed = $true
 $script:McpRequestId = 0
+$script:LastMcpRequestTimestamp = 0L
 $script:BridgeSequence = 0
 $script:BridgeSecretDetected = $false
 $script:ActiveThreadId = $null
@@ -1638,6 +1756,7 @@ try {
             observation_present = $preflightResult.artifact.observation_present
             inventory_empty = $preflightResult.artifact.inventory_empty
             rays_per_tick_512 = $preflightResult.artifact.rays_per_tick_512
+            visible_entities_zero = $preflightResult.artifact.visible_entities_zero
             action_idle_or_terminal = $preflightResult.artifact.action_idle_or_terminal
             gameplay_calls_made = $preflightResult.artifact.gameplay_calls_made
             parent_mcp_no_proxy = $true
@@ -1719,6 +1838,7 @@ try {
             observation_present = $t0Readiness.observation_present
             inventory_empty = $t0Readiness.inventory_empty
             rays_per_tick_512 = $t0Readiness.rays_per_tick_512
+            visible_entities_zero = $t0Readiness.visible_entities_zero
             action_idle_or_terminal = $t0Readiness.action_idle_or_terminal
         })
     $t0Readiness = $null

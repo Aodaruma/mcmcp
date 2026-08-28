@@ -3,130 +3,193 @@ package dev.aod.mcmcp.mcp;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonPrimitive;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 /** The small JSON Schema 2020-12 subset used by the checked-in tool catalog. */
 final class CatalogSchemaValidator {
+    private static final ValidationFailure INVALID =
+            new ValidationFailure("$", "does not match catalog schema", 0);
+
     private CatalogSchemaValidator() {
     }
 
     static boolean matches(JsonObject schema, JsonElement value) {
-        return matches(schema, schema, value);
+        return validate(schema, schema, value, "", 0, false) == null;
     }
 
-    private static boolean matches(JsonObject root, JsonObject schema, JsonElement value) {
+    /**
+     * Returns the first useful schema failure without reflecting submitted values.
+     * Paths and constraints come only from the trusted catalog.
+     */
+    static ValidationFailure firstFailure(JsonObject schema, JsonElement value) {
+        return validate(schema, schema, value, "", 0, true);
+    }
+
+    private static ValidationFailure validate(
+            JsonObject root, JsonObject schema, JsonElement value, String path, int depth,
+            boolean report) {
         if (schema.has("$ref")) {
             JsonObject referenced = resolve(root, schema.get("$ref").getAsString());
-            if (referenced == null || !matches(root, referenced, value)) {
-                return false;
+            if (referenced == null) {
+                return failure(path, "catalog reference unavailable", depth, report);
+            }
+            ValidationFailure referencedFailure = validate(
+                    root, referenced, value, path, depth, report);
+            if (referencedFailure != null) {
+                return referencedFailure;
             }
         }
         if (schema.has("oneOf")) {
+            JsonArray alternatives = schema.getAsJsonArray("oneOf");
+            List<ValidationFailure> branchFailures = report
+                    ? new ArrayList<>(alternatives.size()) : null;
             int matched = 0;
-            for (JsonElement branch : schema.getAsJsonArray("oneOf")) {
-                if (matches(root, branch.getAsJsonObject(), value)) {
+            for (JsonElement branch : alternatives) {
+                ValidationFailure branchFailure = validate(
+                        root, branch.getAsJsonObject(), value, path, depth, report);
+                if (branchFailure == null) {
                     matched++;
+                } else if (report) {
+                    branchFailures.add(branchFailure);
                 }
             }
+            if (matched == 0) {
+                if (!report) {
+                    return INVALID;
+                }
+                ValidationFailure discriminated = discriminateOneOf(
+                        root, alternatives, value, path, depth);
+                return discriminated != null
+                        ? discriminated : deepestFailure(branchFailures, path, depth);
+            }
             if (matched != 1) {
-                return false;
+                return failure(path, "matches multiple catalog variants", depth, report);
             }
         }
         if (schema.has("type") && !matchesType(schema.get("type"), value)) {
-            return false;
+            return failure(path, expectedTypeReason(schema.get("type")), depth, report);
         }
         if (schema.has("const") && !schema.get("const").equals(value)) {
-            return false;
+            return failure(path, "not the required catalog value", depth, report);
         }
-        if (schema.has("enum")) {
-            boolean found = false;
-            for (JsonElement candidate : schema.getAsJsonArray("enum")) {
-                found |= candidate.equals(value);
+        if (schema.has("enum") && !contains(schema.getAsJsonArray("enum"), value)) {
+            return failure(path, "not in catalog enum", depth, report);
+        }
+        if (value.isJsonObject()) {
+            ValidationFailure objectFailure = validateObject(
+                    root, schema, value.getAsJsonObject(), path, depth, report);
+            if (objectFailure != null) {
+                return objectFailure;
             }
-            if (!found) {
-                return false;
+        }
+        if (value.isJsonArray()) {
+            ValidationFailure arrayFailure = validateArray(
+                    root, schema, value.getAsJsonArray(), path, depth, report);
+            if (arrayFailure != null) {
+                return arrayFailure;
             }
         }
-        if (value.isJsonObject() && !matchesObject(root, schema, value.getAsJsonObject())) {
-            return false;
+        if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
+            ValidationFailure stringFailure = validateString(
+                    schema, value.getAsString(), path, depth, report);
+            if (stringFailure != null) {
+                return stringFailure;
+            }
         }
-        if (value.isJsonArray() && !matchesArray(root, schema, value.getAsJsonArray())) {
-            return false;
+        if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()) {
+            return validateNumber(schema, value.getAsBigDecimal(), path, depth, report);
         }
-        if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()
-                && !matchesString(schema, value.getAsString())) {
-            return false;
-        }
-        return !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()
-                || matchesNumber(schema, value.getAsBigDecimal());
+        return null;
     }
 
-    private static boolean matchesObject(JsonObject root, JsonObject schema, JsonObject value) {
+    private static ValidationFailure validateObject(
+            JsonObject root, JsonObject schema, JsonObject value, String path, int depth,
+            boolean report) {
         JsonObject properties = schema.has("properties")
                 ? schema.getAsJsonObject("properties") : new JsonObject();
         if (schema.has("required")) {
             for (JsonElement required : schema.getAsJsonArray("required")) {
-                if (!value.has(required.getAsString())) {
-                    return false;
+                String name = required.getAsString();
+                if (!value.has(name)) {
+                    return failure(report ? propertyPath(path, name) : "",
+                            "required", depth + 1, report);
                 }
             }
         }
         if (schema.has("additionalProperties") && !schema.get("additionalProperties").getAsBoolean()) {
             for (String name : value.keySet()) {
                 if (!properties.has(name)) {
-                    return false;
+                    // Never reflect an untrusted property name into the public error.
+                    return failure(path, "unknown property", depth, report);
                 }
             }
         }
-        for (String name : value.keySet()) {
-            if (properties.has(name)
-                    && !matches(root, properties.getAsJsonObject(name), value.get(name))) {
-                return false;
+        // Catalog order makes the first reported failure stable across JSON member ordering.
+        for (String name : properties.keySet()) {
+            if (value.has(name)) {
+                ValidationFailure propertyFailure = validate(
+                        root, properties.getAsJsonObject(name), value.get(name),
+                        report ? propertyPath(path, name) : "", depth + 1, report);
+                if (propertyFailure != null) {
+                    return propertyFailure;
+                }
             }
         }
-        return true;
+        return null;
     }
 
-    private static boolean matchesArray(JsonObject root, JsonObject schema, JsonArray value) {
-        if (schema.has("minItems") && value.size() < schema.get("minItems").getAsInt()
-                || schema.has("maxItems") && value.size() > schema.get("maxItems").getAsInt()) {
-            return false;
+    private static ValidationFailure validateArray(
+            JsonObject root, JsonObject schema, JsonArray value, String path, int depth,
+            boolean report) {
+        if (schema.has("minItems") && value.size() < schema.get("minItems").getAsInt()) {
+            return failure(path, "too few items", depth, report);
+        }
+        if (schema.has("maxItems") && value.size() > schema.get("maxItems").getAsInt()) {
+            return failure(path, "too many items", depth, report);
         }
         if (schema.has("uniqueItems") && schema.get("uniqueItems").getAsBoolean()) {
             var seen = new HashSet<JsonElement>();
             for (JsonElement element : value) {
                 if (!seen.add(element)) {
-                    return false;
+                    return failure(path, "duplicate items", depth, report);
                 }
             }
         }
         if (schema.has("items")) {
             JsonObject itemSchema = schema.getAsJsonObject("items");
-            for (JsonElement element : value) {
-                if (!matches(root, itemSchema, element)) {
-                    return false;
+            for (int index = 0; index < value.size(); index++) {
+                ValidationFailure itemFailure = validate(
+                        root, itemSchema, value.get(index),
+                        report ? itemPath(path, index) : "", depth + 1, report);
+                if (itemFailure != null) {
+                    return itemFailure;
                 }
             }
         }
-        return true;
+        return null;
     }
 
-    private static boolean matchesString(JsonObject schema, String value) {
-        if (schema.has("minLength") && value.codePointCount(0, value.length()) < schema.get("minLength").getAsInt()
-                || schema.has("maxLength") && value.codePointCount(0, value.length()) > schema.get("maxLength").getAsInt()) {
-            return false;
+    private static ValidationFailure validateString(
+            JsonObject schema, String value, String path, int depth, boolean report) {
+        int length = value.codePointCount(0, value.length());
+        if (schema.has("minLength") && length < schema.get("minLength").getAsInt()) {
+            return failure(path, "too short", depth, report);
+        }
+        if (schema.has("maxLength") && length > schema.get("maxLength").getAsInt()) {
+            return failure(path, "too long", depth, report);
         }
         if (schema.has("pattern")) {
             try {
                 if (!Pattern.compile(schema.get("pattern").getAsString()).matcher(value).find()) {
-                    return false;
+                    return failure(path, "does not match catalog pattern", depth, report);
                 }
             } catch (PatternSyntaxException failure) {
                 throw new IllegalStateException("Invalid trusted catalog pattern", failure);
@@ -136,19 +199,146 @@ final class CatalogSchemaValidator {
             try {
                 OffsetDateTime.parse(value);
             } catch (DateTimeParseException failure) {
-                return false;
+                return failure(path, "invalid date-time", depth, report);
             }
         }
-        return true;
+        return null;
     }
 
-    private static boolean matchesNumber(JsonObject schema, BigDecimal value) {
+    private static ValidationFailure validateNumber(
+            JsonObject schema, BigDecimal value, String path, int depth, boolean report) {
         if (schema.has("type") && containsType(schema.get("type"), "integer")
                 && value.stripTrailingZeros().scale() > 0) {
+            return failure(path, "expected integer", depth, report);
+        }
+        if (schema.has("minimum") && value.compareTo(schema.get("minimum").getAsBigDecimal()) < 0) {
+            return failure(path, "below catalog minimum", depth, report);
+        }
+        if (schema.has("maximum") && value.compareTo(schema.get("maximum").getAsBigDecimal()) > 0) {
+            return failure(path, "above catalog maximum", depth, report);
+        }
+        return null;
+    }
+
+    /**
+     * Selects a oneOf branch through a required literal-valued property such as
+     * {@code op} or {@code field}. Both the discriminator and its values are read
+     * from the catalog; no DSL grammar is duplicated here.
+     */
+    private static ValidationFailure discriminateOneOf(
+            JsonObject root, JsonArray alternatives, JsonElement value, String path, int depth) {
+        if (!value.isJsonObject() || alternatives.isEmpty()) {
+            return null;
+        }
+        JsonObject object = value.getAsJsonObject();
+        JsonObject first = dereference(root, alternatives.get(0).getAsJsonObject());
+        if (first == null || !first.has("properties")) {
+            return null;
+        }
+        for (String property : first.getAsJsonObject("properties").keySet()) {
+            List<JsonObject> branches = new ArrayList<>(alternatives.size());
+            boolean literalDiscriminator = true;
+            for (JsonElement alternative : alternatives) {
+                JsonObject branch = dereference(root, alternative.getAsJsonObject());
+                if (branch == null || !required(branch, property) || !branch.has("properties")) {
+                    literalDiscriminator = false;
+                    break;
+                }
+                JsonObject properties = branch.getAsJsonObject("properties");
+                if (!properties.has(property)
+                        || literalValues(root, properties.getAsJsonObject(property)) == null) {
+                    literalDiscriminator = false;
+                    break;
+                }
+                branches.add(alternative.getAsJsonObject());
+            }
+            if (!literalDiscriminator) {
+                continue;
+            }
+            String discriminatorPath = propertyPath(path, property);
+            if (!object.has(property)) {
+                return failure(discriminatorPath, "required", depth + 1, true);
+            }
+            JsonElement submitted = object.get(property);
+            var candidates = new ArrayList<JsonObject>();
+            for (JsonObject branch : branches) {
+                JsonObject resolved = dereference(root, branch);
+                JsonArray literals = literalValues(
+                        root, resolved.getAsJsonObject("properties").getAsJsonObject(property));
+                if (contains(literals, submitted)) {
+                    candidates.add(branch);
+                }
+            }
+            if (candidates.isEmpty()) {
+                return failure(discriminatorPath, "unknown catalog value", depth + 1, true);
+            }
+            if (candidates.size() == 1) {
+                return validate(root, candidates.get(0), value, path, depth, true);
+            }
+        }
+        return null;
+    }
+
+    private static JsonArray literalValues(JsonObject root, JsonObject schema) {
+        JsonObject resolved = dereference(root, schema);
+        if (resolved == null) {
+            return null;
+        }
+        if (resolved.has("const")) {
+            JsonArray values = new JsonArray();
+            values.add(resolved.get("const"));
+            return values;
+        }
+        return resolved.has("enum") ? resolved.getAsJsonArray("enum") : null;
+    }
+
+    private static JsonObject dereference(JsonObject root, JsonObject schema) {
+        JsonObject current = schema;
+        var visited = new HashSet<String>();
+        while (current.has("$ref")) {
+            String reference = current.get("$ref").getAsString();
+            if (!visited.add(reference)) {
+                return null;
+            }
+            current = resolve(root, reference);
+            if (current == null) {
+                return null;
+            }
+        }
+        return current;
+    }
+
+    private static boolean required(JsonObject schema, String property) {
+        if (!schema.has("required")) {
             return false;
         }
-        return (!schema.has("minimum") || value.compareTo(schema.get("minimum").getAsBigDecimal()) >= 0)
-                && (!schema.has("maximum") || value.compareTo(schema.get("maximum").getAsBigDecimal()) <= 0);
+        for (JsonElement item : schema.getAsJsonArray("required")) {
+            if (property.equals(item.getAsString())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static ValidationFailure deepestFailure(
+            List<ValidationFailure> failures, String path, int depth) {
+        ValidationFailure deepest = null;
+        for (ValidationFailure candidate : failures) {
+            if (deepest == null || candidate.depth() > deepest.depth()) {
+                deepest = candidate;
+            }
+        }
+        return deepest != null
+                ? deepest : failure(path, "does not match catalog schema", depth, true);
+    }
+
+    private static boolean contains(JsonArray values, JsonElement value) {
+        for (JsonElement candidate : values) {
+            if (candidate.equals(value)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean matchesType(JsonElement declared, JsonElement value) {
@@ -175,6 +365,13 @@ final class CatalogSchemaValidator {
                     && value.getAsBigDecimal().stripTrailingZeros().scale() <= 0;
             default -> false;
         };
+    }
+
+    private static String expectedTypeReason(JsonElement declared) {
+        if (declared.isJsonPrimitive()) {
+            return "expected " + declared.getAsString();
+        }
+        return "expected catalog type";
     }
 
     private static boolean containsType(JsonElement declared, String expected) {
@@ -205,5 +402,26 @@ final class CatalogSchemaValidator {
             }
         }
         return current.isJsonObject() ? current.getAsJsonObject() : null;
+    }
+
+    private static String propertyPath(String path, String property) {
+        return path.isEmpty() ? property : path + "." + property;
+    }
+
+    private static String itemPath(String path, int index) {
+        return (path.isEmpty() ? "$" : path) + "[" + index + "]";
+    }
+
+    private static ValidationFailure failure(
+            String path, String reason, int depth, boolean report) {
+        return report
+                ? new ValidationFailure(path.isEmpty() ? "$" : path, reason, depth)
+                : INVALID;
+    }
+
+    record ValidationFailure(String path, String reason, int depth) {
+        String summary() {
+            return path + ": " + reason;
+        }
     }
 }
