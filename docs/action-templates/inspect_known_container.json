@@ -19,7 +19,7 @@
     ]
   },
   "budget": {
-    "max_duration_ms": 20000,
+    "max_duration_ms": 25000,
     "max_ticks": 400,
     "max_distance_blocks": 0,
     "max_camera_degrees": 180,

@@ -33,7 +33,7 @@ class ClientCommandInboxTest {
     }
 
     @Test
-    void emergencyStopRetainsReadyEvenWhenInputReleaseReportsFailure() {
+    void emergencyStopLocksControlWhenInputReleaseReportsFailure() {
         var arming = new LocalArmingState();
         var session = UUID.randomUUID();
         arming.arm(session, Set.of("navigate_to"));
@@ -41,9 +41,9 @@ class ClientCommandInboxTest {
         var beforeStop = arming.snapshot(session);
 
         assertThat(ClientCommandInbox.settleArmingAfterStop(
-                arming, beforeStop, session, true, false, "release_failed")).isFalse();
-        assertThat(arming.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.READY);
-        assertThat(arming.snapshot(session).capabilities()).containsExactly("navigate_to");
+                arming, beforeStop, session, true, false, "release_failed")).isTrue();
+        assertThat(arming.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.OFF);
+        assertThat(arming.snapshot(session).capabilities()).isEmpty();
     }
 
     @Test

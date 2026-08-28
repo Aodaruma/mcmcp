@@ -270,6 +270,12 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
             return 1;
         }
+        if (node instanceof ActionDsl.CollectVisibleItem collect) {
+            validateWorldPosition(collect.target(), path + ".target");
+            requireResourceLocation(collect.displayedItem(), path + ".displayed_item");
+            walk.requiredCapabilities.add(ActionDsl.Capability.MOVEMENT);
+            return 1;
+        }
         if (node instanceof ActionDsl.WaitTicks wait) {
             requireRange(wait.ticks(), 1, 200, path + ".ticks");
             return 1;
@@ -359,6 +365,14 @@ public final class ActionDslValidator {
         requireRange(position.x(), -30_000_000, 30_000_000, path + ".x");
         requireRange(position.y(), -2048, 2048, path + ".y");
         requireRange(position.z(), -30_000_000, 30_000_000, path + ".z");
+    }
+
+    private static void validateWorldPosition(ActionDsl.WorldPosition position, String path) {
+        Objects.requireNonNull(position, path);
+        requireResourceLocation(position.dimension(), path + ".dimension");
+        requireFiniteRange(position.x(), -30_000_000, 30_000_000, path + ".x");
+        requireFiniteRange(position.y(), -2_048, 2_048, path + ".y");
+        requireFiniteRange(position.z(), -30_000_000, 30_000_000, path + ".z");
     }
 
     private static void requireResourceLocation(String value, String path) {

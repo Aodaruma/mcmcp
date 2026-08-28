@@ -14,7 +14,8 @@ import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.PROGRAM_BUDGET_UNP
 public final class ActionDslCompiler {
     public static final ActionDsl.Budget PHASE_ONE_HARD_LIMIT = new ActionDsl.Budget(
             ActionDslValidator.MAX_ACTION_DURATION_MILLIS,
-            ActionDslValidator.MAX_ACTION_TICKS, 32, 360,
+            ActionDslValidator.MAX_ACTION_TICKS, 32,
+            ActionDslValidator.MAX_ACTION_CAMERA_DEGREES,
             ActionDslValidator.MAX_INTERACTIONS,
             ActionDslValidator.MAX_BLOCKS_BROKEN,
             ActionDslValidator.MAX_BLOCKS_PLACED);
@@ -91,7 +92,8 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.OpenKnownFenceGate
                 || node instanceof ActionDsl.OpenKnownPassage
                 || node instanceof ActionDsl.InspectKnownContainer
-                || node instanceof ActionDsl.TakeKnownContainerStack) {
+                || node instanceof ActionDsl.TakeKnownContainerStack
+                || node instanceof ActionDsl.CollectVisibleItem) {
             Optional<Cost> resolved = Objects.requireNonNull(
                     primitiveCosts.worstCase(node), "primitive cost result");
             if (resolved.isEmpty()) {

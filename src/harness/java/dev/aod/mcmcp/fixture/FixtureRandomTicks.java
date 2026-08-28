@@ -12,7 +12,9 @@ import java.util.function.Consumer;
 /** A fixed, reversible random-tick accelerator for private integrated-server fixtures. */
 final class FixtureRandomTicks {
     static final int ACCELERATED_SPEED = 30;
-    static final int COMBINED_WHEAT_ACCELERATED_SPEED = 300;
+    // The production evaluation is about autonomous tool use, not real-time crop waiting. Keep
+    // this acceleration private to the bounded, reversible combined-wheat fixture.
+    static final int COMBINED_WHEAT_ACCELERATED_SPEED = 3_000;
 
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final FixtureRandomTickLease LEASE = new FixtureRandomTickLease();

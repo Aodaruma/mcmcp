@@ -1,12 +1,16 @@
 package dev.aod.mcmcp.agent.observation;
 
+import dev.aod.mcmcp.agent.observation.ObservationRecord.EntityHazardClass;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.Face;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.ShapeClass;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.UnknownBoundary;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.UnknownBoundaryReason;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleEntity;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleSurface;
+import dev.aod.mcmcp.agent.observation.ObservationValues.Aabb;
 import dev.aod.mcmcp.agent.observation.ObservationValues.BlockPosition;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
+import dev.aod.mcmcp.agent.observation.ObservationValues.Vector;
 import dev.aod.mcmcp.agent.observation.ObservationValues.WorldPosition;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -58,7 +62,7 @@ class OmnidirectionalObserverTest {
     }
 
     @Test
-    void worldRevisionChangeDiscardsThePartialFrame() {
+    void visualRevisionChangeDiscardsThePartialFrame() {
         var observer = new OmnidirectionalObserver(
                 8.0D,
                 512,
@@ -85,6 +89,42 @@ class OmnidirectionalObserverTest {
 
         assertThat(completed.orElseThrow().records())
                 .allMatch(record -> record.worldRevision() == 2L);
+    }
+
+    @Test
+    void neutralWorldRevisionsDoNotStarveAFrameAndEntitiesUseCompletionRevision() {
+        var observer = new OmnidirectionalObserver(
+                8.0D,
+                512,
+                () -> "obs-0000000000000003");
+        Optional<ObservationFrame> completed = Optional.empty();
+
+        for (long tick = 1L; tick <= 4L; tick++) {
+            var actualSample = sample(
+                    tick, tick, 0L, UnknownBoundaryReason.RADIUS_LIMIT);
+            completed = observer.collectTick(
+                    actualSample,
+                    (index, direction, actual) -> miss(direction, actual),
+                    () -> new OmnidirectionalObserver.EntityObservation(
+                            List.of(entity(actualSample)), false));
+            if (tick < 4L) {
+                assertThat(completed).isEmpty();
+            }
+        }
+
+        ObservationFrame frame = completed.orElseThrow();
+        assertThat(frame.records())
+                .filteredOn(UnknownBoundary.class::isInstance)
+                .extracting(ObservationRecord::worldRevision)
+                .contains(1L, 2L, 3L, 4L);
+        assertThat(frame.records())
+                .filteredOn(VisibleEntity.class::isInstance)
+                .singleElement()
+                .satisfies(record -> {
+                    var entity = (VisibleEntity) record;
+                    assertThat(entity.observedTick()).isEqualTo(4L);
+                    assertThat(entity.worldRevision()).isEqualTo(4L);
+                });
     }
 
     @Test
@@ -252,13 +292,34 @@ class OmnidirectionalObserverTest {
             long tick,
             long revision,
             UnknownBoundaryReason terminalReason) {
+        return sample(tick, revision, revision, terminalReason);
+    }
+
+    private static OmnidirectionalObserver.TickSample sample(
+            long tick,
+            long worldRevision,
+            long visualRevision,
+            UnknownBoundaryReason terminalReason) {
         return new OmnidirectionalObserver.TickSample(
                 DIMENSION,
                 new WorldPosition(DIMENSION, 0.0D, 65.0D, 0.0D),
                 tick,
-                revision,
+                worldRevision,
+                visualRevision,
                 8.0D,
                 terminalReason);
+    }
+
+    private static VisibleEntity entity(OmnidirectionalObserver.TickSample sample) {
+        return new VisibleEntity(
+                new ResourceId("minecraft:zombie"),
+                new WorldPosition(DIMENSION, 1.0D, 64.0D, 1.0D),
+                new Vector(0.0D, 0.0D, 0.0D),
+                new Aabb(0.7D, 64.0D, 0.7D, 1.3D, 65.8D, 1.3D),
+                EntityHazardClass.HOSTILE,
+                sample.eyeOrigin(),
+                sample.observedTick(),
+                sample.worldRevision());
     }
 
     private static OmnidirectionalObserver.RayTrace miss(

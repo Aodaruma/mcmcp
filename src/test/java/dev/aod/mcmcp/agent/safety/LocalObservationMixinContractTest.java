@@ -249,13 +249,20 @@ class LocalObservationMixinContractTest {
     }
 
     @Test
-    void worldBoundaryCleanupDiscardsEveryRetainedActionRecord() throws Exception {
+    void worldBoundaryCleanupRetainsTheTerminalActionForWaitingClients() throws Exception {
         var clear = method(
                 classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class"),
                 "clearAgentSessionState");
 
         assertThat(invocations(clear))
-                .contains("dev/aod/mcmcp/agent/action/AgentActionStore#clear");
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#closeAgentControl",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#publishAgentTerminal")
+                .doesNotContain("dev/aod/mcmcp/agent/action/AgentActionStore#clear");
+        assertThat(invocations(method(
+                classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class"),
+                "publishAgentTerminal")))
+                .contains("dev/aod/mcmcp/agent/action/AgentActionStore#terminateActive");
     }
 
     @Test

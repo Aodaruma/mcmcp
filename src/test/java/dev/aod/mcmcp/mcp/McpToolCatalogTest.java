@@ -3,6 +3,7 @@ package dev.aod.mcmcp.mcp;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParser;
 import dev.aod.mcmcp.agent.action.AgentActionStore;
+import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.runtime.McmcpRuntimeContractTestAccess;
 import org.junit.jupiter.api.Test;
 
@@ -109,6 +110,80 @@ class McpToolCatalogTest {
         assertThat(description)
                 .contains("stack_policy MUST be exactly \"default_components_only\"")
                 .contains("or \"item_id_any_components\"");
+    }
+
+    @Test
+    void publishedContainerExamplesLeaveDispatchAndJitHeadroom() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var definitions = schema.getAsJsonObject("$defs");
+        assertThat(definitions.getAsJsonObject("inspectContainerNode")
+                .get("description").getAsString()).contains("25000 ms");
+        assertThat(definitions.getAsJsonObject("takeContainerStackNode")
+                .get("description").getAsString()).contains("25000 ms");
+
+        var containerExamples = schema.getAsJsonArray("examples").asList().stream()
+                .map(example -> example.getAsJsonObject())
+                .filter(example -> {
+                    String op = example.getAsJsonObject("program")
+                            .getAsJsonArray("body").get(0).getAsJsonObject()
+                            .get("op").getAsString();
+                    return op.equals("inspect_known_container")
+                            || op.equals("take_known_container_stack");
+                })
+                .toList();
+
+        assertThat(containerExamples).hasSize(2).allSatisfy(example -> {
+            var budget = example.getAsJsonObject("budget");
+            assertThat(budget.get("max_duration_ms").getAsLong()).isEqualTo(25_000L);
+            assertThat(budget.get("max_ticks").getAsLong())
+                    .isEqualTo(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
+            assertThat(budget.get("max_duration_ms").getAsLong())
+                    .isGreaterThan(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND * 50L);
+            assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
+        });
+    }
+
+    @Test
+    void catalogClosesVisibleItemCollectionAroundContinuousObservationEvidence() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var request = schema.getAsJsonArray("examples").get(0).getAsJsonObject().deepCopy();
+        var program = request.getAsJsonObject("program");
+        program.add("capabilities", JsonParser.parseString("[\"movement\"]"));
+        program.add("body", JsonParser.parseString("""
+                [{"id":"collect_drop","op":"collect_visible_item",
+                  "displayed_item":"minecraft:wheat","target":{
+                    "dimension":"minecraft:overworld",
+                    "x":100.375,"y":64.125,"z":120.75}}]
+                """));
+        var budget = request.getAsJsonObject("budget");
+        budget.addProperty("max_duration_ms", 30_000);
+        budget.addProperty("max_ticks", 600);
+        budget.addProperty("max_distance_blocks", 32);
+        budget.addProperty("max_camera_degrees", 0);
+        budget.addProperty("max_interactions", 0);
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+
+        var widened = request.deepCopy();
+        widened.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().addProperty("entity_id", "hidden-identity");
+        assertThat(CatalogSchemaValidator.matches(schema, widened)).isFalse();
+
+        var missingItem = request.deepCopy();
+        missingItem.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().remove("displayed_item");
+        assertThat(CatalogSchemaValidator.matches(schema, missingItem)).isFalse();
+
+        String description = new McpToolCatalog().listResult().getAsJsonArray("tools").asList()
+                .stream()
+                .map(tool -> tool.getAsJsonObject())
+                .filter(tool -> tool.get("name").getAsString().equals("agent_start_action"))
+                .findFirst().orElseThrow().get("description").getAsString();
+        assertThat(description)
+                .contains("fresh visible minecraft:item witness")
+                .contains("relative to this node occurrence's start")
+                .contains("group all plant nodes before one representative wait_until")
+                .contains("collect each visible drop in later Action(s)")
+                .contains("replant cleared farmland before the next cycle");
     }
 
     @Test

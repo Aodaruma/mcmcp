@@ -19,6 +19,23 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ActionDslTest {
     @Test
+    void defaultHardLimitPreservesThePublishedSevenHundredTwentyDegreeCameraBudget() {
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera"),
+                array(face("look")),
+                budget(30_000, 600, 0, 720)));
+
+        var compiled = ActionDslCompiler.compile(
+                request,
+                primitive -> Optional.of(
+                        new ActionDslCompiler.Cost(1_000, 20, 0, 500, 0, 0, 0)),
+                Set.of(ActionDsl.Capability.CAMERA));
+
+        assertThat(compiled.effectiveBudget().maxCameraDegrees()).isEqualTo(720);
+        assertThat(compiled.worstCaseCost().cameraDegrees()).isEqualTo(500);
+    }
+
+    @Test
     void parsesEveryNormativeCatalogExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
@@ -222,6 +239,43 @@ class ActionDslTest {
                 capabilities("camera", "block_interact"), open,
                 budget(1_000, 20, 0, 30, 1, 0, 0)))))
                 .isInstanceOf(ActionDslException.class);
+    }
+
+    @Test
+    void parsesAndCompilesVisibleItemCollectionFromContinuousObservedCoordinates() {
+        JsonObject collect = baseNode("collect", "collect_visible_item");
+        collect.addProperty("displayed_item", "minecraft:oak_log");
+        JsonObject target = new JsonObject();
+        target.addProperty("dimension", "minecraft:overworld");
+        target.addProperty("x", 10.375D);
+        target.addProperty("y", 64.125D);
+        target.addProperty("z", -2.75D);
+        collect.add("target", target);
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("movement"),
+                collect,
+                budget(5_000, 100, 8, 0)));
+
+        assertThat(request.program().body()).singleElement().satisfies(node -> {
+            assertThat(node).isInstanceOf(ActionDsl.CollectVisibleItem.class);
+            var parsed = (ActionDsl.CollectVisibleItem) node;
+            assertThat(parsed.displayedItem()).isEqualTo("minecraft:oak_log");
+            assertThat(parsed.target()).isEqualTo(new ActionDsl.WorldPosition(
+                    "minecraft:overworld", 10.375D, 64.125D, -2.75D));
+        });
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactly(ActionDsl.Capability.MOVEMENT);
+        var cost = new ActionDslCompiler.Cost(2_000, 40, 4, 0, 0, 0, 0);
+        assertThat(ActionDslCompiler.compile(
+                request, ignored -> Optional.of(cost), Set.of(ActionDsl.Capability.MOVEMENT))
+                .worstCaseCost()).isEqualTo(cost);
+
+        collect.addProperty("displayed_item", "not an item id");
+        assertThatThrownBy(() -> ActionDslParser.parse(request(
+                capabilities("movement"), collect, budget(5_000, 100, 8, 0))))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(ActionDslException.Code.INVALID_ARGUMENT);
     }
 
     @Test

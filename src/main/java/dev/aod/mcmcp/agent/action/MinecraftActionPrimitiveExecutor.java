@@ -438,9 +438,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             long clientTick,
             BooleanSupplier outputAllowed) {
         FaceState state = face;
-        BoundaryDecision boundary = boundaryDecision(
-                state.target.worldSessionId(), state.target.target().dimension(),
-                state.target.worldRevision(), snapshot);
+        BoundaryDecision boundary = faceBoundaryDecision(state.target, snapshot);
         if (boundary != BoundaryDecision.CURRENT) {
             return finish(
                     boundary == BoundaryDecision.REVISION_CHANGED
@@ -531,6 +529,22 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         }
         return worldRevision == snapshot.worldRevision()
                 ? BoundaryDecision.CURRENT : BoundaryDecision.REVISION_CHANGED;
+    }
+
+    static BoundaryDecision faceBoundaryDecision(
+            KnownFaceTarget target,
+            KnownTraversabilitySnapshot snapshot) {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(snapshot, "snapshot");
+        BoundaryDecision exact = boundaryDecision(
+                target.worldSessionId(),
+                target.target().dimension(),
+                target.worldRevision(),
+                snapshot);
+        return exact == BoundaryDecision.REVISION_CHANGED
+                        && target.allowNewerWorldRevision()
+                        && snapshot.worldRevision() > target.worldRevision()
+                ? BoundaryDecision.CURRENT : exact;
     }
 
     static EdgeDecision edgeDecision(
@@ -801,16 +815,36 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             ActionDsl.Position target,
             double aimX,
             double aimY,
-            double aimZ) {
+            double aimZ,
+            boolean allowNewerWorldRevision) {
+        public KnownFaceTarget(
+                UUID worldSessionId,
+                long worldRevision,
+                ActionDsl.Position target,
+                double aimX,
+                double aimY,
+                double aimZ) {
+            this(worldSessionId, worldRevision, target, aimX, aimY, aimZ, false);
+        }
+
         public KnownFaceTarget(
                 UUID worldSessionId, long worldRevision, ActionDsl.Position target) {
+            this(worldSessionId, worldRevision, target, false);
+        }
+
+        public KnownFaceTarget(
+                UUID worldSessionId,
+                long worldRevision,
+                ActionDsl.Position target,
+                boolean allowNewerWorldRevision) {
             this(
                     worldSessionId,
                     worldRevision,
                     target,
                     target.x() + 0.5D,
                     target.y() + 0.5D,
-                    target.z() + 0.5D);
+                    target.z() + 0.5D,
+                    allowNewerWorldRevision);
         }
 
         public KnownFaceTarget {
@@ -832,7 +866,19 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 ActionDsl.BlockFace face) {
             Vec3 aim = blockFaceAimPoint(target, face);
             return new KnownFaceTarget(
-                    worldSessionId, worldRevision, target, aim.x, aim.y, aim.z);
+                    worldSessionId, worldRevision, target, aim.x, aim.y, aim.z, false);
+        }
+
+        public static KnownFaceTarget forBlockFaceRevisionWindow(
+                UUID worldSessionId,
+                long worldRevision,
+                ActionDsl.Position target,
+                ActionDsl.BlockFace face) {
+            // Callers must revalidate the target's position-specific surface barrier before
+            // every tick; this flag only prevents unrelated neutral revisions from restarting aim.
+            Vec3 aim = blockFaceAimPoint(target, face);
+            return new KnownFaceTarget(
+                    worldSessionId, worldRevision, target, aim.x, aim.y, aim.z, true);
         }
     }
 

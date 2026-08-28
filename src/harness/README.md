@@ -86,7 +86,7 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
   lease expiry, and normal server shutdown also restore both.
 
 The combined mode saves the world's current `random_tick_speed` and effective observation rate,
-then changes them to the fixed harness values 300 and 512 rays per active client tick only after all
+then changes them to the fixed harness values 3000 and 512 rays per active client tick only after all
 layout, inventory, chest, and pose setup has succeeded. The observation override is process-local
 and is installed through a class packaged only in the fixture JAR. Its production-side bridge also
 requires both `-Dmcmcp.testHarness=true` and the actually loaded `mcmcp_test_fixture` mod, so JVM
@@ -96,9 +96,11 @@ is owner-bound, so the standalone `random_ticks restore` command cannot partiall
 combined scenario. It restores both saved effective values automatically when the player has at
 least 64 wheat and all nine plots are farmland with wheat replanted.
 
-Each combined run has an absolute, non-renewable 15-minute lease measured with monotonic elapsed
-time, so operating-system clock corrections cannot extend it. Once the deadline has passed, the next
-integrated-server pre-tick callback rolls the scenario back before that world tick can run with
+Each combined run has an absolute, non-renewable 20-minute lease measured with monotonic elapsed
+time. This covers the fresh evaluator's 17-minute turn deadline plus setup/preflight margin while
+remaining bounded, and operating-system clock corrections cannot extend it. Once the deadline has
+passed, the next integrated-server pre-tick callback rolls the scenario back before that world tick
+can run with
 accelerated settings; server stopping/stopped hooks are the fallback when a world is closed instead.
 This is deliberately elapsed-time based rather than a game-tick budget, so pausing or lag cannot
 renew the lease (restoration occurs at the next safe server lifecycle callback). The fixture never

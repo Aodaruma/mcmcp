@@ -32,7 +32,7 @@ public final class ActionDsl {
     public sealed interface Node permits NavigateToKnown, FaceKnownPosition, BreakKnownFace,
             TillKnownBlock, PlantKnownWheat, HarvestKnownWheat, OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
-            WaitTicks, WaitUntil, If, Repeat {
+            CollectVisibleItem, WaitTicks, WaitUntil, If, Repeat {
         String id();
     }
 
@@ -145,6 +145,16 @@ public final class ActionDsl {
         }
     }
 
+    /** Collects the visible item entity identified by its rendered item and observed position. */
+    public record CollectVisibleItem(
+            String id, String displayedItem, WorldPosition target) implements Node {
+        public CollectVisibleItem {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(displayedItem, "displayedItem");
+            Objects.requireNonNull(target, "target");
+        }
+    }
+
     public record WaitTicks(String id, int ticks) implements Node {
         public WaitTicks {
             Objects.requireNonNull(id, "id");
@@ -189,6 +199,13 @@ public final class ActionDsl {
 
     public record Position(String dimension, int x, int y, int z) {
         public Position {
+            Objects.requireNonNull(dimension, "dimension");
+        }
+    }
+
+    /** Dimension-qualified continuous coordinate copied from visible_entity.position. */
+    public record WorldPosition(String dimension, double x, double y, double z) {
+        public WorldPosition {
             Objects.requireNonNull(dimension, "dimension");
         }
     }

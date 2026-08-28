@@ -377,7 +377,8 @@ public final class ClientCommandInbox {
             boolean keepReady,
             boolean inputsReleased,
             String reason) {
-        if (keepReady
+        if (inputsReleased
+                && keepReady
                 && !beforeStop.locked()
                 && currentSessionId != null
                 && currentSessionId.equals(beforeStop.worldSessionId())) {

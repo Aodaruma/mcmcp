@@ -10,18 +10,20 @@ import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 
 class FixtureCombinedWheatLeaseTest {
     @Test
-    void expiresAtExactlyFifteenMinutesOfMonotonicElapsedTime() {
+    void coversTheFreshEvaluatorAndExpiresAtExactlyTwentyMinutes() {
         var now = new AtomicLong(1_000L);
         var lease = new FixtureCombinedWheatLease(now::get);
 
         lease.begin();
 
-        assertThat(FixtureCombinedWheatLease.MAX_DURATION).isEqualTo(Duration.ofMinutes(15));
-        assertThat(lease.remainingMillis()).isEqualTo(Duration.ofMinutes(15).toMillis());
-        now.set(1_000L + Duration.ofMinutes(15).toNanos() - 1_000_000L);
+        assertThat(FixtureCombinedWheatLease.MAX_DURATION).isEqualTo(Duration.ofMinutes(20));
+        assertThat(FixtureCombinedWheatLease.MAX_DURATION)
+                .isGreaterThan(Duration.ofMinutes(17));
+        assertThat(lease.remainingMillis()).isEqualTo(Duration.ofMinutes(20).toMillis());
+        now.set(1_000L + Duration.ofMinutes(20).toNanos() - 1_000_000L);
         assertThat(lease.expired()).isFalse();
         assertThat(lease.remainingMillis()).isEqualTo(1L);
-        now.set(1_000L + Duration.ofMinutes(15).toNanos());
+        now.set(1_000L + Duration.ofMinutes(20).toNanos());
         assertThat(lease.expired()).isTrue();
         assertThat(lease.remainingMillis()).isZero();
 

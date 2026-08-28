@@ -6,7 +6,10 @@ import java.util.function.LongSupplier;
 
 /** Non-renewable monotonic elapsed-time deadline for one combined wheat fixture run. */
 final class FixtureCombinedWheatLease {
-    static final Duration MAX_DURATION = Duration.ofMinutes(15);
+    // The fresh evaluator has a 17-minute turn deadline and the fixture is armed before its
+    // preflight/T0. Keep a bounded, non-renewable margin so acceleration cannot expire while the
+    // evaluator is still legitimately running.
+    static final Duration MAX_DURATION = Duration.ofMinutes(20);
 
     private final LongSupplier monotonicNanos;
     private Long expiresAtNanos;

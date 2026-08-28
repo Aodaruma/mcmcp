@@ -386,6 +386,8 @@ Action(t) =
 
 `client_tick`と`world_revision`はworld session内の単調増加longとして`agent_get_state.world`にも公開する。revisionはblock state更新、chunk load/unload、world境界変更の処理後に増やし、entityの通常移動やsound再生だけでは増やさない。world unload、respawn、dimension変更では観測・Mapを消去した上で新sessionを0から開始する。LLMとruntimeはrecordのtick/revisionを現在値と比較して鮮度を判断する。
 
+global `world_revision`とは別に、部分的な全周scanを破棄する`visual_revision`を内部で持つ。全block mutationは前者と監査ledgerを進めるが、後者を進めるのはcollision、遮蔽、support、fluid、hazardへ影響するLOCAL mutationとchunk/all失効だけである。wheat age、air↔wheat、farmland moistureのようなnavigation-neutral更新は部分scanを破棄しない。surface evidenceの鮮度下限は「直近LOCAL mutationのglobal revision」「同じBlockPosの直近mutation revision」「boundedな位置別ledgerからevictした最大revision」の最大値とし、対象と無関係なneutral mutationだけでは既知面を失効させない。recordのrevisionがこの下限未満または現在revisionより未来なら拒否する。
+
 ### 7.3 Omnidirectional Visual Observation
 
 観測原点はthird-person cameraではなくplayer eye positionとし、水平360度・上下180度をworld軸固定のdeterministic equal-area ray集合で観測する。方向集合は2,048方向へ固定し、既定は1 ClientTickあたり256方向、8 active tickで1 frameを更新する。ray/tickは64〜512のlocal performance設定内で調整でき、frame所要tickは`ceil(2048 / rays_per_tick)`となる。半径は`min(configured radius, 32 block, current fog distance, loaded boundary)`で、`sampling_coverage=1.0`は予定した全方向を更新済みという意味であり、連続球面の完全走査を意味しない。
@@ -406,7 +408,7 @@ glassのように視覚を通すが衝突するblock、slab、stairs、fence、t
 
 近傍entityは半径内のbounded query後、eye位置からAABBの複数sample点へのVISUAL line-of-sightでfilterする。1点以上が遮蔽されていなければ正確なEntityType、AABB、XYZ、velocityをvisible recordへ出せる。`minecraft:item`のときだけ、実際に描画されるnon-empty ItemStackのregistry item IDを任意field `displayed_item`として併記する。これは落下物の見た目に対するsemantic labelであり、stack count、data component、UUID、owner、pickup delay、age、NBTは公開しない。emptyまたはregistry不明のdisplay stackはidentityを推測せず、そのentity recordを省略して`visible_entities_truncated=true`とする。非ItemEntityへ`displayed_item`を付けることも拒否する。inventory、AI target、壁裏entityは公開しない。sparse rayが小さいentityを偶然外すことは、このentity専用line-of-sightで補う。
 
-落下物の回収専用opcodeは設けない。LLMは最新frameの`entity_type=minecraft:item`と`displayed_item`を確認し、そのXYZに最も近い、同じ最新観測内の既知かつ安全なTraversability終点NavCellへ既存の`navigate_to_known`で接近して有限`wait_ticks`を行う。落下中のentity XYZからYを機械的にfloorしてNavCellを捏造してはならない。その後の取得成否は`agent_get_state.inventory`の絶対個数で確認し、移動中にitemが移動・merge・消滅した場合は最新frameから再計画する。entityの通常移動は`world_revision`を更新しないため、古いframeをitem追跡の継続証拠にしない。経路は引き続きKnown Traversability Mapと毎tickのswept-AABB safety gateを通り、未知領域や危険領域へ落下物を追ってはならない。
+落下物は`collect_visible_item(displayed_item,target)`で1つずつ回収できる。LLMは最新frameの`entity_type=minecraft:item`、`displayed_item`、連続値XYZを丸めずnodeへコピーする。MODはそのwitnessに近い既知かつ安全なTraversability終点NavCellを解析的に選び、既知経路と毎tickのswept-AABB safety gateを通って接近する。pickup候補はVanillaのplayer AABB拡張判定をNavCell上へ有界に近似して絞り、到達可能な候補のうち実行時間が最小の経路を選ぶ。終点では実player AABBを`inflate(1.0, 0.5, 1.0)`した領域とfreshなitem AABBの交差を改めて必須にするため、抽象cellの高さだけで取得可能と断定しない。落下中のentity XYZからYを機械的にfloorしてNavCellを捏造しない。成功条件は対象item IDのinventory絶対個数が当該node occurrence開始時より増えることで、entityの消失だけでは成功にしない。経路中もfreshなvisible witnessと予定pickup cellの交差を再確認し、witnessが移動・merge・消滅した場合や安全なpickup cellへ到達できない場合は即座に入力を止め、最新frameからLLMへ再計画させる。到着後は手投げitemの40 tick pickup delayも包含する60 tickだけ確認する。entityの通常移動は`world_revision`を更新しないため、1回のvisual scan周期より古いframeをitem追跡の継続証拠にせず、未知領域や危険領域へ落下物を追わない。
 
 ray結果は`HIT / MISS / UNKNOWN`の三値とする。`MISS`が証明するのは検証済み有限segmentだけで、周辺cell、曲がり角、終端の裏側を既知にしない。
 
@@ -691,12 +693,13 @@ Action DSL v1の制御構造:
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のsingle chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemのwhole stackを最大1回quick-moveし、close/reopen full readbackでplayer inventoryの絶対個数を確認 |
+| collect_visible_item | movement | 最新frameの可視item種別と連続値XYZをwitnessに、既知の安全なpickup cellへ移動し、inventory絶対個数の増加を確認 |
 
 `break_known_face`の`tool_item`と`till_known_block`の`hoe_item`はinventory内の該当toolをhotbarへ一時退避して決定論的に選択する契約であり、任意slot操作を公開しない。`plant_known_wheat`も同じ準備経路でwheat_seedsを選ぶ。各変化はclient prediction ACKとauthoritative block stateで確認し、toolや種を生成・補充しない。成熟待ちは`wait_until`内でpolicy-filteredな`crop_mature`だけを再観測し、timeout時は入力を発生させずActionを終了する。raw attack/useや任意座標操作へ一般化しない。
 
 `open_known_passage.expected_block`は12種の木系door / trapdoor / fence gateを明示列挙し、ironとcopperを許可しない。doorはクリック対象のhalfだけでなく、同一block、facing、hinge、powered、openが整合する相方halfをdispatch前に固定する。primary prediction ACK、primaryのauthoritative state、dispatch後のcompanion block mutation、companionの完全stateがすべて一致した場合だけ成功する。pressure plate式自動doorはこのopcodeを使わず、plate上と反対側へ続く`navigate_to_known`を別々のprimitiveとして実行し、world revision更新後のVanilla VoxelShapeから後続経路を再計画する。
 
-container primitiveは別のMCP Toolやlegacy routineを公開せず、同じAction supervisorから既存のscreen ownership / full-content同期adapterを駆動する。`inspect_known_container`はslot番号、NBT/component本文、menu内部状態を返さず、最大27種類の`item=count`だけを`NODE_EVIDENCE` traceへ返す。`take_known_container_stack`はdirectionをcontainer→playerへ固定し、`default_components_only`または耐久済みtoolにも使える`item_id_any_components`だけを許可する。初回open、whole-stack quick-move 1回、同じcontainerのreadback openの最大3 interactionを静的に予約する。複数stackをblind retryせず、目標へ届かなければ確認済みの部分移送を記録した上で失敗し、次のActionへ再計画させる。focus喪失、chat、pause menuの表示自体は停止理由にせず、別container menuの所有中、world/session変化、cursor残留、screen ownership不一致はfail closedとする。
+container primitiveは別のMCP Toolやlegacy routineを公開せず、同じAction supervisorから既存のscreen ownership / full-content同期adapterを駆動する。`inspect_known_container`はslot番号、NBT/component本文、menu内部状態を返さず、最大27種類の`item=count`だけを`NODE_EVIDENCE` traceへ返す。`take_known_container_stack`はdirectionをcontainer→playerへ固定し、`default_components_only`または耐久済みtoolにも使える`item_id_any_components`だけを許可する。初回open、whole-stack quick-move 1回、同じcontainerのreadback openの最大3 interactionを静的に予約する。内部実行上限400 active tickに対しAction全体の`max_duration_ms`は最低25,000 msとし、20,000 ms相当のtick窓とは別にdispatch/JIT用5,000 msのwall-clock余白を確保する。複数stackをblind retryせず、目標へ届かなければ確認済みの部分移送を記録した上で失敗し、次のActionへ再計画させる。focus喪失、chat、pause menuの表示自体は停止理由にせず、別container menuの所有中、world/session変化、cursor残留、screen ownership不一致はfail closedとする。
 
 predicateは次のpolicy-filtered snapshot fieldだけを使用できる。
 
@@ -788,7 +791,7 @@ block mutationのaim pointはfull cubeの仮想中心ではなく、360度観測
 templateは`agent_start_action.inputSchema.examples`に掲載し、実装repositoryにも次のJSONを置く。
 
 - [`navigate_to_known.json`](action-templates/navigate_to_known.json): 1地点への移動
-- [`collect_visible_drop.json`](action-templates/collect_visible_drop.json): 最新frameで識別した落下物のNavCellへ移動して有限時間pickupを待つ
+- [`collect_visible_drop.json`](action-templates/collect_visible_drop.json): 最新frameで識別した落下物を、連続値XYZから選んだ既知の安全なpickup cellで回収する
 - [`approach_and_face.json`](action-templates/approach_and_face.json): 移動、health分岐、視点変更または待機
 - [`known_route.json`](action-templates/known_route.json): 既知区間を固定回数だけ往復する
 - [`break_known_oak_column.json`](action-templates/break_known_oak_column.json): 地上から届く、現在可視な3段oak幹を下から順に破壊する
@@ -964,7 +967,7 @@ Validate JSON AST
 - 最大block設置数
 - 最大interaction数
 
-実行器は指定budgetとローカルhard limitの小さい方を採用する。超過しそうなGoal primitiveは実行しない。能動的危険がなければそのtickで`BUDGET_EXCEEDED`としてOFFへ戻し、危険が進行中ならGoalを破棄して第10章の固定recovery budgetだけを使用する。
+実行器は指定budgetとローカルhard limitの小さい方を採用する。超過しそうなGoal primitiveは実行しない。能動的危険がなければそのtickで`BUDGET_EXCEEDED`として入力を解除し、同じworld・capabilityのREADYへ戻す。危険が進行中ならGoalを破棄して第10章の固定recovery budgetだけを使用する。
 
 program全体のeffective budgetに加え、各logical primitive occurrenceにもcompile済みcost boundを適用する。距離とcameraの実行器へ渡す残量は両者の小さい方とし、tick、duration、interaction、break、placeも各tickで双方を検査する。`wait_ticks`も同じ対象であり、replanやprobeによってoccurrence上限を更新しない。
 
@@ -1008,9 +1011,9 @@ Phase 2時点のmovement gateは、既に選ばれた上下edgeのVanilla resolv
 
 - 宣言した対象幹をすべて処理
 - 各幹はVanilla prediction ACKとauthoritative airの両方で確認
-- 取得item数は観測値として報告できるが、drop由来や回収完了を保証しない
+- 幹破壊template単体は取得item数を観測値として報告できるが、drop由来や回収完了を保証しない。後続の`collect_visible_item` nodeは、freshな可視dropごとにinventory絶対個数増加まで確認できる
 
-初回sliceはAction受付時に全対象面が現在可視である単純な直立幹だけを扱う。同一targetの重複と`repeat`内の破壊を静的拒否し、隠れた幹をchunk走査して探索しない。破壊で新たに露出した面の遅延再観測、drop回収、苗木の植林は後続sliceとする。
+初回sliceはAction受付時に全対象面が現在可視である単純な直立幹だけを扱う。同一targetの重複と`repeat`内の破壊を静的拒否し、隠れた幹をchunk走査して探索しない。破壊で新たに露出した面の遅延再観測と苗木の植林は後続sliceとする。drop回収も幹破壊template内へ暗黙追加せず、最新frameを再取得して明示的な`collect_visible_item` Actionを後続実行する。
 
 ### 9.4 tend_plot — Phase 2
 
@@ -1292,7 +1295,7 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 
 - Esc、ScreenのMCP操作OFF、MCP cancelから次のClientTickまでにTaskを停止
 - 20 TPS時の目標は50 ms以内、負荷試験上限は100 ms
-- terminal state後にsynthetic keyがdownのまま残らない
+- Agent所有input・使用/破壊状態・追跡velocityをすべて解放してからterminal stateを公開し、HTTP waiterがterminalを観測した時点でsynthetic keyがdownのまま残らない。全解放を最大3回試しても成否未確認ならMCP操作をOFFへlockし、最初のterminal intentとREADY未公開状態を保持する。次ClientTick先頭でも再解放し、成功後は同一terminalだけを公開するが、安全fault後の自動再armはせず手動ONまでOFFを保つ
 - exception、disconnect、world変更時はfail-closed
 - RECOVER判定から次のClientTickまでにGoal入力をpreempt
 - focus喪失とScreen表示だけではAction stateを変更しない
@@ -1424,6 +1427,9 @@ GameTest structure`mcmcp:navigation_flat`を各回resetして20/20回成功さ�
 - playerの開始yawに関係なく、同じ露出surface/entityが全周frameへ現れる
 - stone壁裏のsurface/entityは現れず、glass越しのsurface/entityはvisual shape規則に従って現れる
 - frame生成中にplayerとworld revisionが変化しても、各recordのeye/observer origin、tick、revisionが採取時点と一致する
+- wheat age、air↔wheat、farmland moisture等のnavigation-neutral mutationがglobal world revisionを進めても部分frameを破棄せず、combined-wheat fixture overrideの512 rays/tickなら4 ClientTick以内に完成する（製品既定は256 rays/tick・8 active tick）。collision・遮蔽・support・fluid・hazardへ影響するLOCAL mutation、chunk更新、全失効はvisual revisionを進め、部分frameを破棄する
+- surface recordは対象BlockPosの直近mutation、直近LOCAL mutation、位置別ledger eviction floorの最大revision以上かつ現在revision以下だけを採用する。無関係なneutral mutationでは継続利用でき、同じ対象のneutral mutation、任意LOCAL mutation、未来revisionでは拒否する
+- visible item witnessは最後のLOCAL mutationに対応するglobal revision以上、現在revision以下、かつ1 scan周期以内の場合だけneutral mutationを跨いで利用できる。LOCAL mutationより古いentity recordと未来revisionは拒否する
 - 4方向を順に向く明示DSLを受理し、各回を通常camera budgetへ加算する
 - support確認済み・clearance不完全な1 edgeをPROBE_ALLOWEDとして低速通過し、成功後CONFIRMED
 - 未観測supportには踏み出さない

@@ -129,12 +129,87 @@ class InputIsolationContractTest {
     }
 
     @Test
+    void runtimeRetriesAnUnconfirmedReleaseBeforeAnyActionCanTick() throws Exception {
+        var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
+
+        assertThat(invocations(method(runtime, "onPreTick")))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#retryPendingAgentInputRelease",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#tickAgentAction");
+        assertThat(invocations(method(runtime, "retryPendingAgentInputRelease")))
+                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#publishAgentTerminal");
+    }
+
+    @Test
+    void pickupConfirmationRunsAfterHardBudgetsAndBeforeAChangingWitnessCanRejectIt()
+            throws Exception {
+        var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
+
+        assertThat(invocations(method(runtime, "tickAgentAction")))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#activeElapsedNanos",
+                        "dev/aod/mcmcp/agent/dsl/ActionDsl$Budget#maxTicks",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#pickupInventoryIncreased",
+                        "dev/aod/mcmcp/agent/action/AgentActionStore#recordTick",
+                        "dev/aod/mcmcp/agent/action/AgentPrimitivePlanner#visibleItemPickupCellCurrent");
+    }
+
+    @Test
     void terminalActionFailureKeepsLocalAuthorizationIndependentOfRetryability() throws Exception {
         var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
 
         assertThat(invocations(method(runtime, "failAgentAction")))
-                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#finishAgentControlReady")
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#releaseAgentControl",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#publishAgentTerminal",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#returnControlReady")
+                .doesNotContain("dev/aod/mcmcp/runtime/McmcpRuntime#finishAgentControlReady")
                 .doesNotContain("dev/aod/mcmcp/runtime/McmcpRuntime#closeAgentControl");
+    }
+
+    @Test
+    void everyActiveActionTerminalPathReleasesInputBeforePublishingTerminalState()
+            throws Exception {
+        var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
+
+        assertThat(invocations(method(runtime, "cancelAgentAction")))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#releaseAgentControl",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#publishAgentTerminal",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#returnControlReady");
+        assertThat(invocations(method(runtime, "advanceAgentProgram")))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#releaseAgentControl",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#publishAgentTerminal",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#returnControlReady");
+        assertThat(invocations(method(runtime, "stopActiveRoutineForEmergency")))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#releaseAgentControl",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#publishAgentTerminal");
+        assertThat(invocations(method(runtime, "clearAgentSessionState")))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#closeAgentControl",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#publishAgentTerminal")
+                .doesNotContain("dev/aod/mcmcp/agent/action/AgentActionStore#clear");
+        assertThat(invocations(method(runtime, "publishAgentTerminal")))
+                .contains(
+                        "dev/aod/mcmcp/agent/action/AgentActionStore#succeed",
+                        "dev/aod/mcmcp/agent/action/AgentActionStore#terminateActive",
+                        "dev/aod/mcmcp/agent/action/AgentActionStore#cancel");
+    }
+
+    @Test
+    void everyAgentHoldAndReplanBoundaryChecksTheReleaseResult() throws Exception {
+        var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
+        String checkedRelease =
+                "dev/aod/mcmcp/runtime/McmcpRuntime#releaseAgentInputsForHold";
+
+        assertThat(invocations(method(runtime, "onPauseChanged"))).contains(checkedRelease);
+        assertThat(invocations(method(runtime, "tickAgentAction"))).contains(checkedRelease);
+        assertThat(invocations(method(runtime, "bindAgentPrimitive"))).contains(checkedRelease);
+        assertThat(invocations(method(runtime, "retryAgentMutationAim"))).contains(checkedRelease);
+        assertThat(invocations(method(runtime, "requestAgentReplan"))).contains(checkedRelease);
+        assertThat(invocations(method(runtime, "tickActiveRoutine"))).contains(checkedRelease);
     }
 
     @Test

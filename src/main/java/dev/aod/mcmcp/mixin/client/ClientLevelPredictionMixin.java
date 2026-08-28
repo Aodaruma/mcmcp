@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.mixin.client;
 
+import com.llamalad7.mixinextras.sugar.Share;
+import com.llamalad7.mixinextras.sugar.ref.LocalRef;
 import dev.aod.mcmcp.runtime.ClientPredictionSignals;
 import dev.aod.mcmcp.runtime.ClientReconciliationSignals;
 import net.minecraft.SharedConstants;
@@ -30,6 +32,21 @@ public abstract class ClientLevelPredictionMixin {
     @Inject(
             method = "setServerVerifiedBlockState(Lnet/minecraft/core/BlockPos;"
                     + "Lnet/minecraft/world/level/block/state/BlockState;I)V",
+            at = @At("HEAD"),
+            require = 1,
+            expect = 1)
+    private void mcmcp$captureClientStateBeforeServerVerification(
+            BlockPos position,
+            BlockState state,
+            int flags,
+            CallbackInfo callback,
+            @Share("clientStateBeforeServerVerification") LocalRef<BlockState> priorState) {
+        priorState.set(((ClientLevel) (Object) this).getBlockState(position));
+    }
+
+    @Inject(
+            method = "setServerVerifiedBlockState(Lnet/minecraft/core/BlockPos;"
+                    + "Lnet/minecraft/world/level/block/state/BlockState;I)V",
             at = @At("TAIL"),
             require = 1,
             expect = 1)
@@ -37,11 +54,13 @@ public abstract class ClientLevelPredictionMixin {
             BlockPos position,
             BlockState state,
             int flags,
-            CallbackInfo callback) {
+            CallbackInfo callback,
+            @Share("clientStateBeforeServerVerification") LocalRef<BlockState> priorState) {
+        var level = (ClientLevel) (Object) this;
         ClientPredictionSignals.global().onServerVerifiedBlockState(
-                (ClientLevel) (Object) this, position, state);
+                level, position, state);
         ClientReconciliationSignals.global().onBlockMutation(
-                (ClientLevel) (Object) this, position);
+                level, position, priorState.get(), state);
     }
 
     @Inject(

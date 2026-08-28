@@ -23,7 +23,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.BooleanSupplier;
+import java.util.function.ToLongFunction;
 
 /** Pure admission planner for map- and pose-dependent Action DSL primitive costs. */
 public final class AgentPrimitivePlanner {
@@ -38,10 +40,20 @@ public final class AgentPrimitivePlanner {
     private static final int MAX_POSE_TRANSITIONS = 16_384;
     private static final double MAX_BREAK_REACH_BLOCKS = 4.5D;
     private static final double MAX_BREAK_EYE_ORIGIN_DRIFT = 0.125D;
+    private static final double VISIBLE_ITEM_MATCH_RADIUS = 0.75D;
+    // Vanilla scans an item against player.getBoundingBox().inflate(1.0, 0.5, 1.0).
+    // A route may finish 0.25 blocks from its cell center, so keep the horizontal
+    // admission envelope slightly smaller than the nominal 0.3 + 1.0 block reach.
+    private static final double PICKUP_HORIZONTAL_REACH = 1.0D;
+    private static final double PICKUP_VERTICAL_INFLATE = 0.5D;
+    private static final double MIN_NAVIGATING_PLAYER_HEIGHT = 1.5D;
     public static final long BREAK_TICK_UPPER_BOUND = 60L;
     public static final long BREAK_REOBSERVATION_TICKS = 40L;
     public static final long BLOCK_MUTATION_TICK_UPPER_BOUND = 100L;
     public static final long CONTAINER_TICK_UPPER_BOUND = 400L;
+    // Player-thrown item entities can retain a 40-tick pickup delay. Leave a bounded
+    // synchronization margin without exposing hidden pickup-delay state to the model.
+    public static final long PICKUP_CONFIRM_TICKS = 60L;
 
     private AgentPrimitivePlanner() {
     }
@@ -55,7 +67,8 @@ public final class AgentPrimitivePlanner {
             float maxCameraDegreesPerTick) {
         return analyze(
                 program, map, pathfinder, initialPose, latestFrame,
-                maxCameraDegreesPerTick, () -> true);
+                maxCameraDegreesPerTick, map.worldRevision(),
+                ignored -> map.worldRevision(), () -> true);
     }
 
     public static Analysis analyze(
@@ -66,12 +79,62 @@ public final class AgentPrimitivePlanner {
             Optional<ObservationFrame> latestFrame,
             float maxCameraDegreesPerTick,
             BooleanSupplier canContinue) {
+        return analyze(
+                program, map, pathfinder, initialPose, latestFrame,
+                maxCameraDegreesPerTick, map.worldRevision(),
+                ignored -> map.worldRevision(), canContinue);
+    }
+
+    public static Analysis analyze(
+            ActionDsl.Program program,
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            Pose initialPose,
+            Optional<ObservationFrame> latestFrame,
+            float maxCameraDegreesPerTick,
+            long visualBarrierWorldRevision) {
+        return analyze(
+                program, map, pathfinder, initialPose, latestFrame,
+                maxCameraDegreesPerTick, visualBarrierWorldRevision,
+                ignored -> map.worldRevision(), () -> true);
+    }
+
+    /** Admission variant allowing item evidence since the last visual-invalidating mutation. */
+    public static Analysis analyze(
+            ActionDsl.Program program,
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            Pose initialPose,
+            Optional<ObservationFrame> latestFrame,
+            float maxCameraDegreesPerTick,
+            long visualBarrierWorldRevision,
+            BooleanSupplier canContinue) {
+        return analyze(
+                program, map, pathfinder, initialPose, latestFrame,
+                maxCameraDegreesPerTick, visualBarrierWorldRevision,
+                ignored -> map.worldRevision(), canContinue);
+    }
+
+    /** Runtime admission variant with item-global and position-specific surface barriers. */
+    public static Analysis analyze(
+            ActionDsl.Program program,
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            Pose initialPose,
+            Optional<ObservationFrame> latestFrame,
+            float maxCameraDegreesPerTick,
+            long visualBarrierWorldRevision,
+            ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier,
+            BooleanSupplier canContinue) {
         Objects.requireNonNull(program, "program");
         Objects.requireNonNull(map, "map");
         Objects.requireNonNull(pathfinder, "pathfinder");
         Objects.requireNonNull(initialPose, "initialPose");
         Objects.requireNonNull(latestFrame, "latestFrame");
+        Objects.requireNonNull(surfaceRevisionBarrier, "surfaceRevisionBarrier");
         Objects.requireNonNull(canContinue, "canContinue");
+        requireVisualBarrierWorldRevision(
+                map, map.worldRevision(), visualBarrierWorldRevision);
         if (!map.dimension().equals(initialPose.cell().dimension())) {
             throw new PlanningException(Code.NO_KNOWN_PATH, "Player is outside the current map boundary");
         }
@@ -95,6 +158,8 @@ public final class AgentPrimitivePlanner {
                 map,
                 pathfinder,
                 latestFrame,
+                visualBarrierWorldRevision,
+                surfaceRevisionBarrier,
                 maxCameraDegreesPerTick,
                 costs,
                 routeDependencies,
@@ -130,20 +195,48 @@ public final class AgentPrimitivePlanner {
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
             ActionDsl.Position target) {
-        if (!knownTarget(map, latestFrame, target)) {
+        return requireKnownFaceTarget(
+                map, latestFrame, target, map.worldRevision(), false);
+    }
+
+    public static MinecraftActionPrimitiveExecutor.KnownFaceTarget requireKnownFaceTarget(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.Position target,
+            long surfaceBarrierWorldRevision) {
+        return requireKnownFaceTarget(
+                map, latestFrame, target, surfaceBarrierWorldRevision, true);
+    }
+
+    private static MinecraftActionPrimitiveExecutor.KnownFaceTarget requireKnownFaceTarget(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.Position target,
+            long surfaceBarrierWorldRevision,
+            boolean allowNewerWorldRevision) {
+        if (!knownTarget(map, latestFrame, target, surfaceBarrierWorldRevision)) {
             throw new PlanningException(Code.TARGET_UNKNOWN, "Face target is not current known evidence");
         }
         return new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
-                map.worldSessionId(), map.worldRevision(), target);
+                map.worldSessionId(), map.worldRevision(), target, allowNewerWorldRevision);
     }
 
     public static boolean knownTarget(
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
             ActionDsl.Position target) {
+        return knownTarget(map, latestFrame, target, map.worldRevision());
+    }
+
+    public static boolean knownTarget(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.Position target,
+            long surfaceBarrierWorldRevision) {
         Objects.requireNonNull(map, "map");
         Objects.requireNonNull(latestFrame, "latestFrame");
         Objects.requireNonNull(target, "target");
+        requireSurfaceBarrierWorldRevision(map, surfaceBarrierWorldRevision);
         if (!map.dimension().equals(target.dimension())) {
             return false;
         }
@@ -153,7 +246,8 @@ public final class AgentPrimitivePlanner {
         return latestFrame.stream()
                 .filter(frame -> frame.dimension().value().equals(target.dimension()))
                 .flatMap(frame -> frame.records().stream())
-                .filter(record -> record.worldRevision() == map.worldRevision())
+                .filter(record -> record.worldRevision() >= surfaceBarrierWorldRevision
+                        && record.worldRevision() <= map.worldRevision())
                 .anyMatch(record -> matches(record, target));
     }
 
@@ -161,9 +255,19 @@ public final class AgentPrimitivePlanner {
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
             ActionDsl.BreakKnownFace target) {
+        return requireKnownBreakSurface(
+                map, latestFrame, target, map.worldRevision());
+    }
+
+    public static KnownSurface requireKnownBreakSurface(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.BreakKnownFace target,
+            long surfaceBarrierWorldRevision) {
         var required = new KnownSurface(
                 target.target(), target.face(), target.expectedBlock());
-        if (knownSurfaceRecord(map, latestFrame, required).isEmpty()) {
+        if (knownSurfaceRecord(
+                map, latestFrame, required, surfaceBarrierWorldRevision).isEmpty()) {
             throw new PlanningException(
                     Code.TARGET_UNKNOWN,
                     "Break target face is not current matching visible-surface evidence");
@@ -175,7 +279,17 @@ public final class AgentPrimitivePlanner {
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
             KnownSurface required) {
-        return knownSurfaceRecord(map, latestFrame, required).isPresent();
+        return knownSurface(
+                map, latestFrame, required, map.worldRevision());
+    }
+
+    public static boolean knownSurface(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            KnownSurface required,
+            long surfaceBarrierWorldRevision) {
+        return knownSurfaceRecord(
+                map, latestFrame, required, surfaceBarrierWorldRevision).isPresent();
     }
 
     public static KnownSurface requireKnownSurface(
@@ -183,14 +297,26 @@ public final class AgentPrimitivePlanner {
             Optional<ObservationFrame> latestFrame,
             ActionDsl.Position position,
             String block) {
+        return requireKnownSurface(
+                map, latestFrame, position, block, map.worldRevision());
+    }
+
+    public static KnownSurface requireKnownSurface(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.Position position,
+            String block,
+            long surfaceBarrierWorldRevision) {
         Objects.requireNonNull(position, "position");
         Objects.requireNonNull(block, "block");
+        requireSurfaceBarrierWorldRevision(map, surfaceBarrierWorldRevision);
         return latestFrame.stream()
                 .filter(frame -> frame.dimension().value().equals(map.dimension()))
                 .flatMap(frame -> frame.records().stream())
                 .filter(ObservationRecord.VisibleSurface.class::isInstance)
                 .map(ObservationRecord.VisibleSurface.class::cast)
-                .filter(surface -> surface.worldRevision() == map.worldRevision())
+                .filter(surface -> surface.worldRevision() >= surfaceBarrierWorldRevision
+                        && surface.worldRevision() <= map.worldRevision())
                 .filter(surface -> matches(surface, position, block))
                 .map(surface -> new KnownSurface(
                         position,
@@ -207,15 +333,18 @@ public final class AgentPrimitivePlanner {
             Optional<ObservationFrame> latestFrame,
             List<Pose> poses,
             ActionDsl.Position position,
+            long surfaceBarrierWorldRevision,
             String block,
             java.util.function.Predicate<ObservationRecord.VisibleSurface> allowed,
             String failure) {
+        requireSurfaceBarrierWorldRevision(map, surfaceBarrierWorldRevision);
         return latestFrame.stream()
                 .filter(frame -> frame.dimension().value().equals(map.dimension()))
                 .flatMap(frame -> frame.records().stream())
                 .filter(ObservationRecord.VisibleSurface.class::isInstance)
                 .map(ObservationRecord.VisibleSurface.class::cast)
-                .filter(surface -> surface.worldRevision() == map.worldRevision())
+                .filter(surface -> surface.worldRevision() >= surfaceBarrierWorldRevision
+                        && surface.worldRevision() <= map.worldRevision())
                 .filter(surface -> matches(surface, position, block))
                 .filter(allowed)
                 .filter(surface -> surface.rayHit() != null
@@ -240,16 +369,27 @@ public final class AgentPrimitivePlanner {
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
             KnownSurface required) {
+        return knownSurfaceRecord(
+                map, latestFrame, required, map.worldRevision());
+    }
+
+    private static Optional<ObservationRecord.VisibleSurface> knownSurfaceRecord(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            KnownSurface required,
+            long surfaceBarrierWorldRevision) {
         Objects.requireNonNull(map, "map");
         Objects.requireNonNull(latestFrame, "latestFrame");
         Objects.requireNonNull(required, "required");
+        requireSurfaceBarrierWorldRevision(map, surfaceBarrierWorldRevision);
         if (!map.dimension().equals(required.position().dimension())) return Optional.empty();
         return latestFrame.stream()
                 .filter(frame -> frame.dimension().value().equals(map.dimension()))
                 .flatMap(frame -> frame.records().stream())
                 .filter(ObservationRecord.VisibleSurface.class::isInstance)
                 .map(ObservationRecord.VisibleSurface.class::cast)
-                .filter(surface -> surface.worldRevision() == map.worldRevision())
+                .filter(surface -> surface.worldRevision() >= surfaceBarrierWorldRevision
+                        && surface.worldRevision() <= map.worldRevision())
                 .filter(surface -> matches(surface, required))
                 .findFirst();
     }
@@ -260,6 +400,8 @@ public final class AgentPrimitivePlanner {
             KnownTraversabilitySnapshot map,
             DeterministicAStar pathfinder,
             Optional<ObservationFrame> latestFrame,
+            long visualBarrierWorldRevision,
+            ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier,
             float cameraLimit,
             Map<String, ActionDslCompiler.Cost> costs,
             Map<TraversabilityEdge.Key, TraversabilityEdge> routeDependencies,
@@ -272,7 +414,8 @@ public final class AgentPrimitivePlanner {
         for (ActionDsl.Node node : nodes) {
             work.check();
             states = analyzeNode(
-                    node, states, map, pathfinder, latestFrame, cameraLimit,
+                    node, states, map, pathfinder, latestFrame,
+                    visualBarrierWorldRevision, surfaceRevisionBarrier, cameraLimit,
                     costs, routeDependencies, knownTargets, knownSurfaces,
                     mutationAims, routeCache, work);
         }
@@ -285,6 +428,8 @@ public final class AgentPrimitivePlanner {
             KnownTraversabilitySnapshot map,
             DeterministicAStar pathfinder,
             Optional<ObservationFrame> latestFrame,
+            long visualBarrierWorldRevision,
+            ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier,
             float cameraLimit,
             Map<String, ActionDslCompiler.Cost> costs,
             Map<TraversabilityEdge.Key, TraversabilityEdge> routeDependencies,
@@ -322,7 +467,9 @@ public final class AgentPrimitivePlanner {
             return distinct(output);
         }
         if (node instanceof ActionDsl.FaceKnownPosition face) {
-            requireKnownFaceTarget(map, latestFrame, face.target());
+            long surfaceBarrier = surfaceBarrierWorldRevision(
+                    map, surfaceRevisionBarrier, face.target());
+            requireKnownFaceTarget(map, latestFrame, face.target(), surfaceBarrier);
             knownTargets.add(face.target());
             ActionDslCompiler.Cost worst = null;
             var output = new ArrayList<Pose>(input.size());
@@ -337,8 +484,12 @@ public final class AgentPrimitivePlanner {
             return distinct(output);
         }
         if (node instanceof ActionDsl.BreakKnownFace block) {
-            var required = requireKnownBreakSurface(map, latestFrame, block);
-            var surface = knownSurfaceRecord(map, latestFrame, required).orElseThrow();
+            long surfaceBarrier = surfaceBarrierWorldRevision(
+                    map, surfaceRevisionBarrier, block.target());
+            var required = requireKnownBreakSurface(
+                    map, latestFrame, block, surfaceBarrier);
+            var surface = knownSurfaceRecord(
+                    map, latestFrame, required, surfaceBarrier).orElseThrow();
             knownSurfaces.add(required);
             ActionDslCompiler.Cost worst = null;
             var output = new ArrayList<Pose>(input.size());
@@ -357,7 +508,9 @@ public final class AgentPrimitivePlanner {
         }
         if (node instanceof ActionDsl.TillKnownBlock till) {
             MutationSurface surface = requireMutationSurface(
-                    map, latestFrame, input, till.target(), till.expectedBlock(),
+                    map, latestFrame, input, till.target(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, till.target()),
+                    till.expectedBlock(),
                     value -> value.face() != ObservationRecord.Face.DOWN,
                     "Till target requires a current non-DOWN visible surface");
             return analyzeMutation(
@@ -370,7 +523,9 @@ public final class AgentPrimitivePlanner {
                         Code.TARGET_UNKNOWN, "Plant target must be directly above its support");
             }
             MutationSurface surface = requireMutationSurface(
-                    map, latestFrame, input, plant.support(), "minecraft:farmland",
+                    map, latestFrame, input, plant.support(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, plant.support()),
+                    "minecraft:farmland",
                     value -> value.face() == ObservationRecord.Face.UP,
                     "Plant support requires its current UP face");
             return analyzeMutation(
@@ -379,7 +534,9 @@ public final class AgentPrimitivePlanner {
         }
         if (node instanceof ActionDsl.HarvestKnownWheat harvest) {
             MutationSurface surface = requireMutationSurface(
-                    map, latestFrame, input, harvest.target(), "minecraft:wheat",
+                    map, latestFrame, input, harvest.target(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, harvest.target()),
+                    "minecraft:wheat",
                     value -> Boolean.TRUE.equals(value.cropMature()),
                     "Harvest target requires current crop_mature=true evidence");
             return analyzeMutation(
@@ -388,7 +545,9 @@ public final class AgentPrimitivePlanner {
         }
         if (node instanceof ActionDsl.OpenKnownFenceGate gate) {
             MutationSurface surface = requireMutationSurface(
-                    map, latestFrame, input, gate.target(), "minecraft:oak_fence_gate",
+                    map, latestFrame, input, gate.target(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, gate.target()),
+                    "minecraft:oak_fence_gate",
                     value -> true,
                     "Fence gate target requires a current visible oak fence gate surface");
             return analyzeMutation(
@@ -397,7 +556,9 @@ public final class AgentPrimitivePlanner {
         }
         if (node instanceof ActionDsl.OpenKnownPassage passage) {
             MutationSurface surface = requireMutationSurface(
-                    map, latestFrame, input, passage.target(), passage.expectedBlock(),
+                    map, latestFrame, input, passage.target(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, passage.target()),
+                    passage.expectedBlock(),
                     value -> true,
                     "Passage target requires a current matching visible wooden surface");
             return analyzeMutation(
@@ -406,7 +567,9 @@ public final class AgentPrimitivePlanner {
         }
         if (node instanceof ActionDsl.InspectKnownContainer inspect) {
             MutationSurface surface = requireMutationSurface(
-                    map, latestFrame, input, inspect.target(), inspect.expectedBlock(),
+                    map, latestFrame, input, inspect.target(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, inspect.target()),
+                    inspect.expectedBlock(),
                     value -> true,
                     "Container target requires a current matching visible surface");
             return analyzeContainer(
@@ -414,21 +577,43 @@ public final class AgentPrimitivePlanner {
         }
         if (node instanceof ActionDsl.TakeKnownContainerStack take) {
             MutationSurface surface = requireMutationSurface(
-                    map, latestFrame, input, take.target(), take.expectedBlock(),
+                    map, latestFrame, input, take.target(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, take.target()),
+                    take.expectedBlock(),
                     value -> true,
                     "Container target requires a current matching visible surface");
             return analyzeContainer(
                     node, input, cameraLimit, costs, knownSurfaces, work, surface, 3);
         }
+        if (node instanceof ActionDsl.CollectVisibleItem collect) {
+            ObservationRecord.VisibleEntity entity = requireVisibleItem(
+                    map, latestFrame, collect, visualBarrierWorldRevision);
+            ActionDslCompiler.Cost worst = null;
+            var output = new ArrayList<Pose>(input.size());
+            for (Pose pose : input) {
+                work.poseTransition();
+                PickupPlan pickup = requirePickupPlan(
+                        map, pathfinder, pose.cell(), entity, work);
+                addRouteDependencies(map, pickup.route(), routeDependencies);
+                worst = maximum(worst, pickupCost(pickup.route(), pose));
+                output.add(pose.at(pickup.pickupCell(), 0.25D));
+            }
+            merge(costs, node.id(), Objects.requireNonNull(worst, "pickup cost"));
+            return distinct(output);
+        }
         if (node instanceof ActionDsl.If conditional) {
             var output = new ArrayList<Pose>();
             output.addAll(analyzeSequence(
                     conditional.thenBranch(), input, map, pathfinder,
-                    latestFrame, cameraLimit, costs, routeDependencies,
+                    latestFrame, visualBarrierWorldRevision,
+                    surfaceRevisionBarrier, cameraLimit,
+                    costs, routeDependencies,
                     knownTargets, knownSurfaces, mutationAims, routeCache, work));
             output.addAll(analyzeSequence(
                     conditional.elseBranch(), input, map, pathfinder,
-                    latestFrame, cameraLimit, costs, routeDependencies,
+                    latestFrame, visualBarrierWorldRevision,
+                    surfaceRevisionBarrier, cameraLimit,
+                    costs, routeDependencies,
                     knownTargets, knownSurfaces, mutationAims, routeCache, work));
             return distinct(output);
         }
@@ -437,7 +622,9 @@ public final class AgentPrimitivePlanner {
         for (int count = 0; count < repeat.count(); count++) {
             output = analyzeSequence(
                     repeat.body(), output, map, pathfinder,
-                    latestFrame, cameraLimit, costs, routeDependencies,
+                    latestFrame, visualBarrierWorldRevision,
+                    surfaceRevisionBarrier, cameraLimit,
+                    costs, routeDependencies,
                     knownTargets, knownSurfaces, mutationAims, routeCache, work);
         }
         return output;
@@ -490,7 +677,13 @@ public final class AgentPrimitivePlanner {
             long interactions) {
         KnownSurface surface = containerSurface.surface();
         knownSurfaces.add(surface);
-        Vec3 point = containerSurface.point();
+        // The visible ray hit is admission evidence only. The Phase 5 inventory adapter
+        // continuously aims at the block center, so admission must reserve camera travel
+        // to that same point instead of the incidental sampled face hit.
+        Vec3 point = new Vec3(
+                surface.position().x() + 0.5D,
+                surface.position().y() + 0.5D,
+                surface.position().z() + 0.5D);
         ActionDslCompiler.Cost worst = null;
         var output = new ArrayList<Pose>(input.size());
         for (Pose pose : input) {
@@ -706,6 +899,374 @@ public final class AgentPrimitivePlanner {
                 routeCost.interactions(),
                 routeCost.blocksBroken(),
                 routeCost.blocksPlaced());
+    }
+
+    /** Navigation cost plus a bounded post-arrival item pickup confirmation window. */
+    public static ActionDslCompiler.Cost pickupCost(RoutePlan route, Pose pose) {
+        ActionDslCompiler.Cost navigation = navigationCost(route, pose);
+        return new ActionDslCompiler.Cost(
+                Math.addExact(navigation.durationMillis(),
+                        Math.multiplyExact(PICKUP_CONFIRM_TICKS, TICK_MILLIS)),
+                Math.addExact(navigation.ticks(), PICKUP_CONFIRM_TICKS),
+                navigation.distanceBlocks(),
+                navigation.cameraDegrees(),
+                navigation.interactions(),
+                navigation.blocksBroken(),
+                navigation.blocksPlaced());
+    }
+
+    /** Resolves one currently visible item witness to a reachable, known player-feet cell. */
+    public static PickupPlan requirePickupPlan(
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            NavCell start,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target) {
+        ObservationRecord.VisibleEntity entity = requireVisibleItem(map, latestFrame, target);
+        return requirePickupPlan(
+                map, pathfinder, start, entity, new PlanningWork(() -> true));
+    }
+
+    /** Runtime variant that rejects an observation frame older than one visual scan cycle. */
+    public static PickupPlan requirePickupPlan(
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            NavCell start,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target,
+            long currentTick,
+            long maxAgeTicks) {
+        return requirePickupPlan(
+                map, pathfinder, start, latestFrame, target,
+                map.worldRevision(), currentTick, maxAgeTicks);
+    }
+
+    /** Runtime variant accepting evidence no older than the current visual barrier. */
+    public static PickupPlan requirePickupPlan(
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            NavCell start,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target,
+            long visualBarrierWorldRevision,
+            long currentTick,
+            long maxAgeTicks) {
+        ObservationRecord.VisibleEntity entity = requireVisibleItem(
+                map, latestFrame, target,
+                visualBarrierWorldRevision, currentTick, maxAgeTicks);
+        return requirePickupPlan(
+                map, pathfinder, start, entity, new PlanningWork(() -> true));
+    }
+
+    /** True only while the exact policy-visible item/position witness remains current. */
+    public static boolean visibleItemCurrent(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target) {
+        try {
+            requireVisibleItem(map, latestFrame, target);
+            return true;
+        } catch (PlanningException unavailable) {
+            return false;
+        }
+    }
+
+    /** Runtime freshness check for a moving entity witness. */
+    public static boolean visibleItemCurrent(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target,
+            long currentTick,
+            long maxAgeTicks) {
+        return visibleItemCurrent(
+                map, latestFrame, target, map.worldRevision(), currentTick, maxAgeTicks);
+    }
+
+    /** Runtime freshness check bounded by the most recent visual-invalidating mutation. */
+    public static boolean visibleItemCurrent(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target,
+            long visualBarrierWorldRevision,
+            long currentTick,
+            long maxAgeTicks) {
+        try {
+            requireVisibleItem(
+                    map, latestFrame, target,
+                    visualBarrierWorldRevision, currentTick, maxAgeTicks);
+            return true;
+        } catch (PlanningException unavailable) {
+            return false;
+        }
+    }
+
+    /** True only while the planned cell can still contact the freshly observed witness. */
+    public static boolean visibleItemPickupCellCurrent(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target,
+            NavCell pickupCell,
+            long currentTick,
+            long maxAgeTicks) {
+        return visibleItemPickupCellCurrent(
+                map, latestFrame, target, pickupCell,
+                map.worldRevision(), currentTick, maxAgeTicks);
+    }
+
+    /** Runtime pickup-cell check bounded by the most recent visual-invalidating mutation. */
+    public static boolean visibleItemPickupCellCurrent(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target,
+            NavCell pickupCell,
+            long visualBarrierWorldRevision,
+            long currentTick,
+            long maxAgeTicks) {
+        Objects.requireNonNull(pickupCell, "pickupCell");
+        try {
+            ObservationRecord.VisibleEntity entity = requireVisibleItem(
+                    map, latestFrame, target,
+                    visualBarrierWorldRevision, currentTick, maxAgeTicks);
+            return pickupCellCanContact(pickupCell, entity.aabb());
+        } catch (PlanningException unavailable) {
+            return false;
+        }
+    }
+
+    /** Returns the freshly revalidated item AABB for an exact runtime pickup-area check. */
+    public static Optional<ObservationValues.Aabb> visibleItemAabb(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target,
+            long currentTick,
+            long maxAgeTicks) {
+        return visibleItemAabb(
+                map, latestFrame, target,
+                map.worldRevision(), currentTick, maxAgeTicks);
+    }
+
+    /** Runtime item bounds check bounded by the most recent visual-invalidating mutation. */
+    public static Optional<ObservationValues.Aabb> visibleItemAabb(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target,
+            long visualBarrierWorldRevision,
+            long currentTick,
+            long maxAgeTicks) {
+        try {
+            return Optional.of(requireVisibleItem(
+                    map, latestFrame, target,
+                    visualBarrierWorldRevision, currentTick, maxAgeTicks).aabb());
+        } catch (PlanningException unavailable) {
+            return Optional.empty();
+        }
+    }
+
+    private static ObservationRecord.VisibleEntity requireVisibleItem(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target) {
+        return requireVisibleItem(map, latestFrame, target, map.worldRevision());
+    }
+
+    private static ObservationRecord.VisibleEntity requireVisibleItem(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target,
+            long visualBarrierWorldRevision) {
+        long frameTick = latestFrame.map(ObservationFrame::frameCompletedTick).orElse(0L);
+        return requireVisibleItem(
+                map, latestFrame, target,
+                visualBarrierWorldRevision, frameTick, 0L);
+    }
+
+    private static ObservationRecord.VisibleEntity requireVisibleItem(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target,
+            long currentTick,
+            long maxAgeTicks) {
+        return requireVisibleItem(
+                map, latestFrame, target,
+                map.worldRevision(), currentTick, maxAgeTicks);
+    }
+
+    private static ObservationRecord.VisibleEntity requireVisibleItem(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target,
+            long visualBarrierWorldRevision,
+            long currentTick,
+            long maxAgeTicks) {
+        Objects.requireNonNull(map, "map");
+        Objects.requireNonNull(latestFrame, "latestFrame");
+        Objects.requireNonNull(target, "target");
+        if (currentTick < 0L || maxAgeTicks < 0L) {
+            throw new IllegalArgumentException("visible item freshness bounds must be non-negative");
+        }
+        requireVisualBarrierWorldRevision(
+                map, map.worldRevision(), visualBarrierWorldRevision);
+        return latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(map.dimension()))
+                .filter(frame -> frame.frameCompletedTick() <= currentTick
+                        && currentTick - frame.frameCompletedTick() <= maxAgeTicks)
+                .flatMap(frame -> frame.records().stream()
+                        .filter(record -> record.newestObservedTick()
+                                == frame.frameCompletedTick()))
+                .filter(ObservationRecord.VisibleEntity.class::isInstance)
+                .map(ObservationRecord.VisibleEntity.class::cast)
+                .filter(entity -> entity.worldRevision() >= visualBarrierWorldRevision
+                        && entity.worldRevision() <= map.worldRevision())
+                .filter(entity -> "minecraft:item".equals(entity.entityType().value()))
+                .filter(entity -> entity.displayedItem() != null
+                        && target.displayedItem().equals(entity.displayedItem().value()))
+                .filter(entity -> sameVisibleItemPosition(entity.position(), target.target()))
+                .min(java.util.Comparator.comparingDouble(entity ->
+                        visibleItemDistanceSquared(entity.position(), target.target())))
+                .orElseThrow(() -> new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Collect target requires current matching visible item evidence"));
+    }
+
+    /**
+     * Fences a reconciliation-provided visual barrier to the exact traversability revision.
+     */
+    public static long requireVisualBarrierWorldRevision(
+            KnownTraversabilitySnapshot map,
+            long reconciliationWorldRevision,
+            long visualBarrierWorldRevision) {
+        Objects.requireNonNull(map, "map");
+        return requireVisualBarrierWorldRevision(
+                map,
+                map.worldSessionId(),
+                reconciliationWorldRevision,
+                visualBarrierWorldRevision);
+    }
+
+    public static long requireVisualBarrierWorldRevision(
+            KnownTraversabilitySnapshot map,
+            UUID reconciliationWorldSessionId,
+            long reconciliationWorldRevision,
+            long visualBarrierWorldRevision) {
+        Objects.requireNonNull(map, "map");
+        Objects.requireNonNull(reconciliationWorldSessionId, "reconciliationWorldSessionId");
+        if (!map.worldSessionId().equals(reconciliationWorldSessionId)
+                || reconciliationWorldRevision < 0L || visualBarrierWorldRevision < 0L
+                || reconciliationWorldRevision != map.worldRevision()
+                || visualBarrierWorldRevision > reconciliationWorldRevision) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Visual evidence revision window does not match the current map");
+        }
+        return visualBarrierWorldRevision;
+    }
+
+    public static long requireSurfaceBarrierWorldRevision(
+            KnownTraversabilitySnapshot map,
+            long surfaceBarrierWorldRevision) {
+        Objects.requireNonNull(map, "map");
+        if (surfaceBarrierWorldRevision < 0L
+                || surfaceBarrierWorldRevision > map.worldRevision()) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Surface evidence revision window does not match the current map");
+        }
+        return surfaceBarrierWorldRevision;
+    }
+
+    private static long surfaceBarrierWorldRevision(
+            KnownTraversabilitySnapshot map,
+            ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier,
+            ActionDsl.Position position) {
+        Objects.requireNonNull(surfaceRevisionBarrier, "surfaceRevisionBarrier");
+        Objects.requireNonNull(position, "position");
+        return requireSurfaceBarrierWorldRevision(
+                map, surfaceRevisionBarrier.applyAsLong(position));
+    }
+
+    private static PickupPlan requirePickupPlan(
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            NavCell start,
+            ObservationRecord.VisibleEntity entity,
+            PlanningWork work) {
+        var candidates = new java.util.TreeSet<NavCell>();
+        candidates.add(start);
+        for (TraversabilityEdge edge : map.edges().values()) {
+            if (edge.traversable()) {
+                candidates.add(edge.key().from());
+                candidates.add(edge.key().to());
+            }
+        }
+        var pickupCells = candidates.stream()
+                .filter(cell -> pickupCellCanContact(cell, entity.aabb()))
+                .toList();
+        var reachable = new ArrayList<PickupPlan>(pickupCells.size());
+        for (NavCell candidate : pickupCells) {
+            var result = pathfinder.findRoute(
+                    map, start, candidate, work::canContinue, work::routeExpansion);
+            if (result.route().isPresent()) {
+                reachable.add(new PickupPlan(result.route().orElseThrow(), candidate));
+            }
+        }
+        if (!reachable.isEmpty()) {
+            return reachable.stream()
+                    .min(java.util.Comparator
+                            .comparingLong((PickupPlan plan) -> plan.route().tickUpperBound())
+                            .thenComparingDouble(plan -> plan.route().distanceBlocks())
+                            .thenComparingDouble(plan -> pickupDistanceSquared(
+                                    plan.pickupCell(), entity.aabb()))
+                            .thenComparing(PickupPlan::pickupCell))
+                    .orElseThrow();
+        }
+        throw new PlanningException(
+                pickupCells.isEmpty() ? Code.TARGET_UNKNOWN : Code.NO_KNOWN_PATH,
+                pickupCells.isEmpty()
+                        ? "No known safe pickup cell overlaps the visible item"
+                        : "No policy-approved route reaches a known item pickup cell");
+    }
+
+    private static boolean pickupCellCanContact(
+            NavCell cell, ObservationValues.Aabb item) {
+        double centerX = cell.x() + 0.5D;
+        double centerZ = cell.z() + 0.5D;
+        return item.maxX() > centerX - PICKUP_HORIZONTAL_REACH
+                && item.minX() < centerX + PICKUP_HORIZONTAL_REACH
+                && item.maxZ() > centerZ - PICKUP_HORIZONTAL_REACH
+                && item.minZ() < centerZ + PICKUP_HORIZONTAL_REACH
+                && item.maxY() > cell.y() - PICKUP_VERTICAL_INFLATE
+                && item.minY() < cell.y()
+                        + MIN_NAVIGATING_PLAYER_HEIGHT + PICKUP_VERTICAL_INFLATE;
+    }
+
+    private static double pickupDistanceSquared(
+            NavCell cell, ObservationValues.Aabb item) {
+        double x = cell.x() + 0.5D;
+        double z = cell.z() + 0.5D;
+        double dx = x < item.minX() ? item.minX() - x
+                : x > item.maxX() ? x - item.maxX() : 0.0D;
+        double dz = z < item.minZ() ? item.minZ() - z
+                : z > item.maxZ() ? z - item.maxZ() : 0.0D;
+        double pickupMinY = cell.y() - PICKUP_VERTICAL_INFLATE;
+        double pickupMaxY = cell.y()
+                + MIN_NAVIGATING_PLAYER_HEIGHT + PICKUP_VERTICAL_INFLATE;
+        double dy = pickupMinY > item.maxY() ? pickupMinY - item.maxY()
+                : pickupMaxY < item.minY() ? item.minY() - pickupMaxY : 0.0D;
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    private static boolean sameVisibleItemPosition(
+            ObservationValues.WorldPosition observed, ActionDsl.WorldPosition requested) {
+        return observed.dimension().value().equals(requested.dimension())
+                && visibleItemDistanceSquared(observed, requested)
+                        <= VISIBLE_ITEM_MATCH_RADIUS * VISIBLE_ITEM_MATCH_RADIUS;
+    }
+
+    private static double visibleItemDistanceSquared(
+            ObservationValues.WorldPosition observed, ActionDsl.WorldPosition requested) {
+        return square(observed.x() - requested.x())
+                + square(observed.y() - requested.y())
+                + square(observed.z() - requested.z());
     }
 
     /** Removes probe time already reserved by the admitted occurrence before a retry. */
@@ -1024,6 +1585,16 @@ public final class AgentPrimitivePlanner {
             Objects.requireNonNull(block, "block");
             Objects.requireNonNull(face, "face");
             Objects.requireNonNull(point, "point");
+        }
+    }
+
+    public record PickupPlan(RoutePlan route, NavCell pickupCell) {
+        public PickupPlan {
+            Objects.requireNonNull(route, "route");
+            Objects.requireNonNull(pickupCell, "pickupCell");
+            if (!route.cells().getLast().equals(pickupCell)) {
+                throw new IllegalArgumentException("pickup cell must terminate the route");
+            }
         }
     }
 

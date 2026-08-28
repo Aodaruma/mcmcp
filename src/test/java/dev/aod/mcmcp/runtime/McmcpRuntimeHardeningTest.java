@@ -34,6 +34,7 @@ import dev.aod.mcmcp.routine.UseItemOnBlockRequest;
 import dev.aod.mcmcp.safety.LocalArmingState;
 import dev.aod.mcmcp.voice.VoiceChatSafetyController;
 import org.junit.jupiter.api.Test;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 import java.lang.reflect.Proxy;
@@ -54,6 +55,167 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 class McmcpRuntimeHardeningTest {
+    @Test
+    void actionInputReleaseRetriesBoundedlyAndRequiresConfirmedSuccess() {
+        var attempts = new AtomicInteger();
+        assertThat(McmcpRuntime.boundedActionInputRelease(
+                () -> attempts.incrementAndGet() == 3)).isTrue();
+        assertThat(attempts).hasValue(3);
+
+        attempts.set(0);
+        assertThat(McmcpRuntime.boundedActionInputRelease(() -> {
+            attempts.incrementAndGet();
+            throw new IllegalStateException("synthetic release failure");
+        })).isFalse();
+        assertThat(attempts).hasValue(McmcpRuntime.MAX_ACTION_INPUT_RELEASE_ATTEMPTS);
+    }
+
+    @Test
+    void retainedTerminalIntentMustMatchAnAlreadyPublishedActionExactly() {
+        UUID actionId = UUID.randomUUID();
+        var progress = new AgentActionStore.Progress(
+                AgentActionStore.Phase.FINISHED,
+                null,
+                0,
+                0,
+                0.0D,
+                0.0D,
+                0,
+                0,
+                0,
+                0,
+                false);
+        var expectedFailure = new AgentActionStore.Failure(
+                AgentActionStore.FailureCode.PATH_BLOCKED,
+                true,
+                List.of("original_reason"));
+        var replacementFailure = new AgentActionStore.Failure(
+                AgentActionStore.FailureCode.EMERGENCY_STOP,
+                true,
+                List.of("later_reason"));
+
+        assertThat(McmcpRuntime.terminalMatchesSnapshot(
+                new McmcpRuntime.PendingAgentTerminal(
+                        actionId, McmcpRuntime.AgentTerminalKind.SUCCESS, null),
+                new AgentActionStore.Snapshot(
+                        actionId, AgentActionStore.State.SUCCEEDED, progress, null, List.of())))
+                .isTrue();
+        assertThat(McmcpRuntime.terminalMatchesSnapshot(
+                new McmcpRuntime.PendingAgentTerminal(
+                        actionId, McmcpRuntime.AgentTerminalKind.CANCEL, null),
+                new AgentActionStore.Snapshot(
+                        actionId, AgentActionStore.State.CANCELLED, progress,
+                        new AgentActionStore.Failure(
+                                AgentActionStore.FailureCode.CANCELLED_BY_CLIENT,
+                                true,
+                                List.of("client_request")),
+                        List.of())))
+                .isTrue();
+        var failureIntent = new McmcpRuntime.PendingAgentTerminal(
+                actionId, McmcpRuntime.AgentTerminalKind.FAILURE, expectedFailure);
+        var laterIntent = new McmcpRuntime.PendingAgentTerminal(
+                actionId, McmcpRuntime.AgentTerminalKind.FAILURE, replacementFailure);
+        assertThat(McmcpRuntime.firstTerminalIntent(null, failureIntent))
+                .isSameAs(failureIntent);
+        assertThat(McmcpRuntime.firstTerminalIntent(failureIntent, laterIntent))
+                .isSameAs(failureIntent);
+        assertThat(McmcpRuntime.terminalMatchesSnapshot(
+                failureIntent,
+                new AgentActionStore.Snapshot(
+                        actionId, AgentActionStore.State.FAILED, progress,
+                        expectedFailure, List.of())))
+                .isTrue();
+        assertThat(McmcpRuntime.terminalMatchesSnapshot(
+                failureIntent,
+                new AgentActionStore.Snapshot(
+                        actionId, AgentActionStore.State.FAILED, progress,
+                        replacementFailure, List.of())))
+                .isFalse();
+        assertThat(McmcpRuntime.terminalMatchesSnapshot(
+                failureIntent,
+                new AgentActionStore.Snapshot(
+                        actionId, AgentActionStore.State.CANCELLED, progress,
+                        expectedFailure, List.of())))
+                .isFalse();
+    }
+
+    @Test
+    void visualBarrierMustMatchTheExactReconciliationSessionAndMapRevision() {
+        UUID session = UUID.randomUUID();
+        var signals = new ClientReconciliationSignals.SessionChannel();
+        signals.bindAndSnapshot(session);
+        signals.worldMutation(
+                ClientReconciliationSignals.WorldMutation.Kind.BLOCK,
+                1, 65, 1,
+                ClientReconciliationSignals.NavigationImpact.NONE);
+        var map = new KnownTraversabilityMap();
+        map.startSession(session, "minecraft:overworld", 1L);
+
+        assertThat(McmcpRuntime.visualBarrierWorldRevision(
+                map.snapshot().orElseThrow(), signals.snapshot())).isZero();
+        var neutralSurfaceBarriers = McmcpRuntime.surfaceRevisionBarrier(
+                map.snapshot().orElseThrow(), signals.snapshot());
+        assertThat(neutralSurfaceBarriers.applyAsLong(
+                new ActionDsl.Position("minecraft:overworld", 1, 65, 1))).isEqualTo(1L);
+        assertThat(neutralSurfaceBarriers.applyAsLong(
+                new ActionDsl.Position("minecraft:overworld", 9, 65, 9))).isZero();
+
+        signals.worldMutation(
+                ClientReconciliationSignals.WorldMutation.Kind.BLOCK,
+                2, 64, 1,
+                ClientReconciliationSignals.NavigationImpact.LOCAL);
+        map.advanceWorldRevision(2L, List.of(), List.of());
+        assertThat(McmcpRuntime.visualBarrierWorldRevision(
+                map.snapshot().orElseThrow(), signals.snapshot())).isEqualTo(2L);
+        assertThat(McmcpRuntime.surfaceRevisionBarrier(
+                map.snapshot().orElseThrow(), signals.snapshot()).applyAsLong(
+                        new ActionDsl.Position("minecraft:overworld", 9, 65, 9)))
+                .isEqualTo(2L);
+
+        var staleMap = new KnownTraversabilityMap();
+        staleMap.startSession(session, "minecraft:overworld", 1L);
+        assertThatThrownBy(() -> McmcpRuntime.visualBarrierWorldRevision(
+                staleMap.snapshot().orElseThrow(), signals.snapshot()))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+
+        var otherSessionMap = new KnownTraversabilityMap();
+        otherSessionMap.startSession(UUID.randomUUID(), "minecraft:overworld", 2L);
+        assertThatThrownBy(() -> McmcpRuntime.visualBarrierWorldRevision(
+                otherSessionMap.snapshot().orElseThrow(), signals.snapshot()))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+    }
+
+    @Test
+    void visibleItemPickupRequiresAnAbsoluteInventoryIncrease() {
+        assertThat(McmcpRuntime.pickupInventoryIncreased(10, 11)).isTrue();
+        assertThat(McmcpRuntime.pickupInventoryIncreased(10, 10)).isFalse();
+        assertThat(McmcpRuntime.pickupInventoryIncreased(10, 9)).isFalse();
+        assertThatThrownBy(() -> McmcpRuntime.pickupInventoryIncreased(-1, 0))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(McmcpRuntime.pickupOccurrenceBaseline(-1, 10)).isEqualTo(10);
+        assertThat(McmcpRuntime.pickupOccurrenceBaseline(10, 11)).isEqualTo(10);
+        assertThatThrownBy(() -> McmcpRuntime.pickupOccurrenceBaseline(-2, 10))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(McmcpRuntime.visibleItemEvidenceMaxAgeTicks(512)).isEqualTo(4);
+        assertThat(McmcpRuntime.visibleItemEvidenceMaxAgeTicks(64)).isEqualTo(32);
+        assertThatThrownBy(() -> McmcpRuntime.visibleItemEvidenceMaxAgeTicks(63))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        var player = new AABB(0.2D, 64.0D, 0.2D, 0.8D, 65.8D, 0.8D);
+        assertThat(McmcpRuntime.playerPickupAreaIntersects(
+                player,
+                new dev.aod.mcmcp.agent.observation.ObservationValues.Aabb(
+                        1.7D, 64.0D, 0.4D, 1.9D, 64.25D, 0.6D)))
+                .isTrue();
+        assertThat(McmcpRuntime.playerPickupAreaIntersects(
+                player,
+                new dev.aod.mcmcp.agent.observation.ObservationValues.Aabb(
+                        0.4D, 66.4D, 0.4D, 0.6D, 66.65D, 0.6D)))
+                .isFalse();
+    }
+
     @Test
     void staticCompilationCountsFutureMutationsWithoutPlanningFutureWorldStates() {
         var support = new ActionDsl.Position("minecraft:overworld", 1, 64, 1);
@@ -193,6 +355,12 @@ class McmcpRuntimeHardeningTest {
 
         assertThat(McmcpRuntime.occurrenceCostIncludingConsumed(used, baseline, rebound))
                 .isEqualTo(new ActionDslCompiler.Cost(5_300, 106, 0, 20, 0, 0, 1));
+
+        assertThat(McmcpRuntime.mutationAimRetryAllowed(1)).isTrue();
+        assertThat(McmcpRuntime.mutationAimRetryAllowed(2)).isTrue();
+        assertThat(McmcpRuntime.mutationAimRetryAllowed(3)).isFalse();
+        assertThatThrownBy(() -> McmcpRuntime.mutationAimRetryAllowed(0))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -231,6 +399,38 @@ class McmcpRuntimeHardeningTest {
                 new ActionDsl.CropMatureCondition(target),
                 map.snapshot().orElseThrow(),
                 Optional.of(frame))).isFalse();
+        assertThat(McmcpRuntime.cropMatureConditionSatisfied(
+                new ActionDsl.CropMatureCondition(target),
+                map.snapshot().orElseThrow(),
+                Optional.of(frame),
+                7L)).isTrue();
+        assertThat(McmcpRuntime.cropMatureConditionSatisfied(
+                new ActionDsl.CropMatureCondition(target),
+                map.snapshot().orElseThrow(),
+                Optional.of(frame),
+                8L)).isFalse();
+        var currentSurface = new dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleSurface(
+                surface.position(),
+                surface.face(),
+                surface.block(),
+                surface.shapeClass(),
+                surface.cropMature(),
+                surface.rayHit(),
+                surface.eyeOrigin(),
+                surface.observedTick(),
+                8L);
+        var currentFrame = new dev.aod.mcmcp.agent.observation.ObservationFrame(
+                "obs-0000000000000002",
+                dimension,
+                10,
+                16,
+                false,
+                List.of(currentSurface));
+        assertThat(McmcpRuntime.cropMatureConditionSatisfied(
+                new ActionDsl.CropMatureCondition(target),
+                map.snapshot().orElseThrow(),
+                Optional.of(currentFrame),
+                8L)).isTrue();
         assertThat(AgentActionStore.FailureCode.CONDITION_TIMEOUT.wireName())
                 .isEqualTo("CONDITION_TIMEOUT");
     }

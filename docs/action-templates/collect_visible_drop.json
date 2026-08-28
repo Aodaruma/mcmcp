@@ -6,15 +6,10 @@
     "capabilities": ["movement"],
     "body": [
       {
-        "id": "approach_drop",
-        "op": "navigate_to_known",
-        "target": {"dimension": "minecraft:overworld", "x": 100, "y": 64, "z": 120},
-        "tolerance": 1.5
-      },
-      {
-        "id": "pickup_window",
-        "op": "wait_ticks",
-        "ticks": 40
+        "id": "collect_drop",
+        "op": "collect_visible_item",
+        "displayed_item": "minecraft:wheat",
+        "target": {"dimension": "minecraft:overworld", "x": 100.375, "y": 64.125, "z": 120.75}
       }
     ]
   },

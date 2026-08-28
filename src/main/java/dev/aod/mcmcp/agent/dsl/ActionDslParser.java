@@ -126,6 +126,7 @@ public final class ActionDslParser {
             case "open_known_passage" -> openKnownPassage(object, path);
             case "inspect_known_container" -> inspectKnownContainer(object, path);
             case "take_known_container_stack" -> takeKnownContainerStack(object, path);
+            case "collect_visible_item" -> collectVisibleItem(object, path);
             case "wait_ticks" -> waitTicks(object, path);
             case "wait_until" -> waitUntil(object, path);
             case "if" -> conditional(object, path);
@@ -237,6 +238,16 @@ public final class ActionDslParser {
                         path + ".minimum_inventory_count"));
     }
 
+    private static ActionDsl.CollectVisibleItem collectVisibleItem(
+            JsonObject source, String path) {
+        exactKeys(source, path, Set.of("id", "op", "displayed_item", "target"),
+                Set.of("id", "op", "displayed_item", "target"));
+        return new ActionDsl.CollectVisibleItem(
+                string(source.get("id"), path + ".id"),
+                string(source.get("displayed_item"), path + ".displayed_item"),
+                worldPosition(source.get("target"), path + ".target"));
+    }
+
     private static ActionDsl.WaitTicks waitTicks(JsonObject source, String path) {
         exactKeys(source, path, Set.of("id", "op", "ticks"), Set.of("id", "op", "ticks"));
         return new ActionDsl.WaitTicks(
@@ -292,6 +303,16 @@ public final class ActionDslParser {
                 integer(object.get("x"), path + ".x"),
                 integer(object.get("y"), path + ".y"),
                 integer(object.get("z"), path + ".z"));
+    }
+
+    private static ActionDsl.WorldPosition worldPosition(JsonElement value, String path) {
+        JsonObject object = object(value, path, Set.of("dimension", "x", "y", "z"),
+                Set.of("dimension", "x", "y", "z"));
+        return new ActionDsl.WorldPosition(
+                string(object.get("dimension"), path + ".dimension"),
+                number(object.get("x"), path + ".x"),
+                number(object.get("y"), path + ".y"),
+                number(object.get("z"), path + ".z"));
     }
 
     private static ActionDsl.Predicate predicate(JsonElement value, String path) {

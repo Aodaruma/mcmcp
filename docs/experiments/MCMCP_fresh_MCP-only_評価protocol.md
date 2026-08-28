@@ -41,7 +41,7 @@ runnerはclean cwdからfilesystem rootまでの全祖先とisolated `CODEX_HOME
 2. `tools/list`
 3. `tools/call` / `agent_get_state`
 
-`agent_start_action`や`agent_cancel_action`はpreflightで呼ばない。各HTTP requestはliteral `127.0.0.1`だけへ`-NoProxy -MaximumRedirection 0`で送り、UTF-8 JSON Content-Type、JSON-RPC 2.0、request/response IDの型と値、result/errorの排他的存在を検査する。`server/discover`は`resultType=complete`、`supportedVersions=[2026-07-28]`、`capabilities.tools.listChanged=false`、`ttlMs=0`、`cacheScope=private`、serverInfo=`mcmcp/0.1.0`とsemantic exactで一致させる。`tools/list`は`docs/MCMCP_MCP_Tool_Catalog.json`のraw SHA-256 `bf7d5a951ebb75a267cd7bcdce8f6149dfbaa82096ff48f3f9970841e81e3e85`とsemantic tool surface SHA-256 `69eb797df5d8a31388b1156604248c73cd0d9c478be78336f3d1bd2e6766b7cf`をscript内定数へpinし、full resultと固定5件の名前、description、inputSchemaをexact比較してからdynamicToolsへ変換する。
+`agent_start_action`や`agent_cancel_action`はpreflightで呼ばない。各HTTP requestはliteral `127.0.0.1`だけへ`-NoProxy -MaximumRedirection 0`で送り、UTF-8 JSON Content-Type、JSON-RPC 2.0、request/response IDの型と値、result/errorの排他的存在を検査する。`server/discover`は`resultType=complete`、`supportedVersions=[2026-07-28]`、`capabilities.tools.listChanged=false`、`ttlMs=0`、`cacheScope=private`、serverInfo=`mcmcp/0.1.0`とsemantic exactで一致させる。`tools/list`は`docs/MCMCP_MCP_Tool_Catalog.json`のraw SHA-256 `7e937841398c24678f189ebdf5953c619201a4fa3422b74cf84ed210a1b4e9ea`とsemantic tool surface SHA-256 `586818aeaa44a71c1c0aafda223d52a31bcbf4d6f41fe485702d240bd93628aa`をscript内定数へpinし、full resultと固定5件の名前、description、inputSchemaをexact比較してからdynamicToolsへ変換する。
 
 `agent_get_state`は`isError`の存在とBoolean型、`resultType=complete`、serverInfo、TextContent/structuredContent型を検証する。さらに`control.mode=ready`、unpaused、world/observationあり、inventory空、`omnidirectional_rays_per_tick=512`、`observation.record_counts.visible_entity=0`、actionがnullまたはterminalでなければT0へ進まない。このfixtureはmobを生成しないため、visible entityが1件でもあれば作業領域の落下item等による開始条件汚染として扱う。state body、座標、fixture知識はartifactへ保存せず、各判定のBooleanだけを残す。thread作成成功後にも同じreadinessを再取得し、8判定が全てtrueであることをT0 eventへ記録する。
 
@@ -188,6 +188,6 @@ pwsh -NoProfile -File .\tools\eval\Test-McmcpEvalTrace.ps1 -SelfTest
 if ($LASTEXITCODE -ne 0) { throw 'audit self-test failed' }
 ```
 
-self-testはrequest ID `0`を含むsuccess、回復可能domain error、dynamic call 0件、JSON-RPC/protocol failure、route/namespace違反、必須property欠落、禁止item、malformed JSONLに加え、未知client_send、setup順序、terminal後response、domain member欠落/重複/proof不一致、追加instruction/context、無効model/effort、item route/timestamp、property大小文字違反を含む22ケースを検証する。Codex CLIを更新する場合はversion pinを先に緩めず、generated experimental schema、external auth、dynamic lifecycle、hardening key、synthetic auditを再確認する。
+self-testはrequest ID `0`を含むsuccess、回復可能domain error、dynamic call 0件、JSON-RPC/protocol failure、route/namespace違反、必須property欠落、禁止item、malformed JSONLに加え、未知client_send、setup順序、terminal後response、domain member欠落/重複/proof不一致、追加instruction/context、無効model/effort、item route/timestamp、notification `emittedAtMs`の欠落・非整数・範囲外・順序違反、readiness proofの欠落・raw混入、failure diagnostic違反、property大小文字違反を含む29ケースを検証する。Codex CLIを更新する場合はversion pinを先に緩めず、generated experimental schema、external auth、dynamic lifecycle、hardening key、synthetic auditを再確認する。
 
 参考: [Codex app server](https://developers.openai.com/codex/app-server/)、[Codex MCP](https://developers.openai.com/codex/mcp/)

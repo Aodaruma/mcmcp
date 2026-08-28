@@ -124,6 +124,31 @@ class MinecraftActionPrimitiveExecutorTest {
     }
 
     @Test
+    void revisionWindowFaceCanCrossOnlyNewerRevalidatedMapRevisions() {
+        UUID session = UUID.randomUUID();
+        var map = new KnownTraversabilityMap();
+        map.startSession(session, DIMENSION, 9L);
+        var target = new ActionDsl.Position(DIMENSION, 1, 64, 1);
+        var exact = new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
+                session, 8L, target);
+        var window = new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
+                session, 8L, target, true);
+
+        assertThat(MinecraftActionPrimitiveExecutor.faceBoundaryDecision(
+                exact, map.snapshot().orElseThrow()))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.BoundaryDecision.REVISION_CHANGED);
+        assertThat(MinecraftActionPrimitiveExecutor.faceBoundaryDecision(
+                window, map.snapshot().orElseThrow()))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.BoundaryDecision.CURRENT);
+
+        var older = new KnownTraversabilityMap();
+        older.startSession(session, DIMENSION, 7L);
+        assertThat(MinecraftActionPrimitiveExecutor.faceBoundaryDecision(
+                window, older.snapshot().orElseThrow()))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.BoundaryDecision.REVISION_CHANGED);
+    }
+
+    @Test
     void unrelatedWorldRevisionDoesNotInvalidateAnUnchangedRouteEdge() {
         UUID session = UUID.randomUUID();
         NavCell start = cell(0, 64, 0);

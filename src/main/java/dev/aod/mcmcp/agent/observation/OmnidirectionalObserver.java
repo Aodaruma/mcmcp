@@ -103,7 +103,7 @@ public final class OmnidirectionalObserver {
 
     private ResourceId sessionDimension;
     private long lastAcceptedTick = -1L;
-    private long lastWorldRevision = -1L;
+    private long lastVisualRevision = -1L;
     private int nextDirectionIndex;
 
     public OmnidirectionalObserver(double configuredRadiusBlocks, int raysPerTick) {
@@ -127,6 +127,8 @@ public final class OmnidirectionalObserver {
     /**
      * Samples one deterministic batch from the player's actual eye position.
      *
+     * @param worldRevision global mutation revision attached to records sampled on this tick
+     * @param visualRevision epoch advanced only when a mutation invalidates partial visual rays
      * @param fogDistanceBlocks current finite fog boundary, or positive infinity when fog does
      *                          not reduce the configured radius
      */
@@ -135,6 +137,7 @@ public final class OmnidirectionalObserver {
             LocalPlayer player,
             long clientTick,
             long worldRevision,
+            long visualRevision,
             double fogDistanceBlocks) {
         Objects.requireNonNull(level, "level");
         Objects.requireNonNull(player, "player");
@@ -158,6 +161,7 @@ public final class OmnidirectionalObserver {
                 eyeOrigin,
                 clientTick,
                 worldRevision,
+                visualRevision,
                 effectiveRadius,
                 terminalReason);
 
@@ -173,7 +177,7 @@ public final class OmnidirectionalObserver {
         clearAccumulation();
         sessionDimension = null;
         lastAcceptedTick = -1L;
-        lastWorldRevision = -1L;
+        lastVisualRevision = -1L;
     }
 
     public double configuredRadiusBlocks() {
@@ -204,12 +208,13 @@ public final class OmnidirectionalObserver {
         if (sessionDimension == null
                 || !sessionDimension.equals(sample.dimension())
                 || sample.observedTick() < lastAcceptedTick
-                || lastWorldRevision >= 0L && sample.worldRevision() != lastWorldRevision) {
+                || lastVisualRevision >= 0L
+                        && sample.visualRevision() != lastVisualRevision) {
             clearAccumulation();
         }
         sessionDimension = sample.dimension();
         lastAcceptedTick = sample.observedTick();
-        lastWorldRevision = sample.worldRevision();
+        lastVisualRevision = sample.visualRevision();
 
         int endExclusive = Math.min(DIRECTION_COUNT, nextDirectionIndex + raysPerTick);
         List<DirectionVector> directions = OmnidirectionalDirections.all();
@@ -703,6 +708,7 @@ public final class OmnidirectionalObserver {
             WorldPosition eyeOrigin,
             long observedTick,
             long worldRevision,
+            long visualRevision,
             double effectiveRadiusBlocks,
             UnknownBoundaryReason terminalReason) {
         TickSample {
@@ -712,6 +718,7 @@ public final class OmnidirectionalObserver {
             ObservationValues.requireSameDimension(dimension, eyeOrigin.dimension());
             ObservationValues.requireTick(observedTick, "observedTick");
             ObservationValues.requireTick(worldRevision, "worldRevision");
+            ObservationValues.requireTick(visualRevision, "visualRevision");
             if (!Double.isFinite(effectiveRadiusBlocks)
                     || effectiveRadiusBlocks <= 0.0D
                     || effectiveRadiusBlocks > MAX_RADIUS_BLOCKS) {

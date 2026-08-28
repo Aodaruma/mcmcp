@@ -439,7 +439,7 @@
     {
       "name": "agent_start_action",
       "title": "Start MCMCP Action",
-      "description": "Runs one closed, validated Action DSL v1 program after the in-game MCP operation button is enabled. Do not guess or probe the grammar. The exact envelope is {schema_version:1, program:{dsl_version:1, name?:string, capabilities:string[], body:node[]}, budget:{max_duration_ms,max_ticks,max_distance_blocks,max_camera_degrees,max_interactions,max_blocks_broken,max_blocks_placed}}. Every node, including nested if/repeat nodes, MUST contain a unique id matching ^[a-z][a-z0-9_-]{0,31}$ and one exact op. Every block position MUST contain exactly dimension,x,y,z; dimension is the observed resource ID (for example \"minecraft:overworld\"), and x/y/z are integer block coordinates, not player-center decimals. Exact primitive forms after id/op are: navigate_to_known(target,tolerance); face_known_position(target); break_known_face(target,face,expected_block,tool_item); till_known_block(target,expected_block,hoe_item); plant_known_wheat(target,support,seed_item); harvest_known_wheat(target); open_known_fence_gate(target); open_known_passage(target,expected_block); inspect_known_container(target,expected_block); take_known_container_stack(target,expected_block,item,stack_policy,minimum_inventory_count); wait_ticks(ticks); wait_until(condition:{type:\"crop_mature\",target},max_ticks). For take_known_container_stack, stack_policy MUST be exactly \"default_components_only\" (ordinary items with default components, such as seeds) or \"item_id_any_components\" (match the item ID while allowing durability, name, enchantments, or other components). Exact control forms are if(condition,then,else) and repeat(count,body). Do not use noop, move_to, interact_block, look, set_camera, or other aliases. Required capabilities are the union used by nodes: navigate=movement; face=camera; break/harvest=camera+block_break; till/open=camera+block_interact; plant=camera+block_place; inspect/take=camera+inventory_transfer. A complete valid minimum example is {\"schema_version\":1,\"program\":{\"dsl_version\":1,\"name\":\"take_seeds\",\"capabilities\":[\"camera\",\"inventory_transfer\"],\"body\":[{\"id\":\"take\",\"op\":\"take_known_container_stack\",\"target\":{\"dimension\":\"minecraft:overworld\",\"x\":100,\"y\":64,\"z\":120},\"expected_block\":\"minecraft:chest\",\"item\":\"minecraft:wheat_seeds\",\"stack_policy\":\"default_components_only\",\"minimum_inventory_count\":64}]},\"budget\":{\"max_duration_ms\":20000,\"max_ticks\":400,\"max_distance_blocks\":0,\"max_camera_degrees\":180,\"max_interactions\":3,\"max_blocks_broken\":0,\"max_blocks_placed\":0}}. Use observed coordinates and the field constraints in inputSchema; use policy maxima when unsure of an adequate budget.",
+      "description": "Runs one closed, validated Action DSL v1 program after the in-game MCP operation button is enabled. Do not guess or probe the grammar. The exact envelope is {schema_version:1, program:{dsl_version:1, name?:string, capabilities:string[], body:node[]}, budget:{max_duration_ms,max_ticks,max_distance_blocks,max_camera_degrees,max_interactions,max_blocks_broken,max_blocks_placed}}. Every node, including nested if/repeat nodes, MUST contain a unique id matching ^[a-z][a-z0-9_-]{0,31}$ and one exact op. Every block position MUST contain exactly dimension,x,y,z; dimension is the observed resource ID (for example \"minecraft:overworld\"), and x/y/z are integer block coordinates, not player-center decimals. collect_visible_item.target is the only continuous world position: copy dimension,x,y,z from a current visible_entity.position without rounding and copy its displayed_item. Exact primitive forms after id/op are: navigate_to_known(target,tolerance); face_known_position(target); break_known_face(target,face,expected_block,tool_item); till_known_block(target,expected_block,hoe_item); plant_known_wheat(target,support,seed_item); harvest_known_wheat(target); open_known_fence_gate(target); open_known_passage(target,expected_block); inspect_known_container(target,expected_block); take_known_container_stack(target,expected_block,item,stack_policy,minimum_inventory_count); collect_visible_item(displayed_item,target); wait_ticks(ticks); wait_until(condition:{type:\"crop_mature\",target},max_ticks). collect_visible_item accepts only a fresh visible minecraft:item witness, rechecks it while moving to a reachable known safe pickup cell, and succeeds only after that item ID's absolute inventory count increases relative to this node occurrence's start. For take_known_container_stack, stack_policy MUST be exactly \"default_components_only\" (ordinary items with default components, such as seeds) or \"item_id_any_components\" (match the item ID while allowing durability, name, enchantments, or other components). Exact control forms are if(condition,then,else) and repeat(count,body). Do not use noop, move_to, interact_block, look, set_camera, or other aliases. Required capabilities are the union used by nodes: navigate/collect=movement; face=camera; break/harvest=camera+block_break; till/open=camera+block_interact; plant=camera+block_place; inspect/take=camera+inventory_transfer. Reserve at least 25000 ms for each inspect/take node so the 400-tick container execution bound still fits after Action dispatch and JIT admission. For multiple crops, group all plant nodes before one representative wait_until, then group harvest nodes; refresh observation and collect each visible drop in later Action(s), then replant cleared farmland before the next cycle when more wheat is required, instead of waiting and harvesting one plot at a time. A complete valid minimum example is {\"schema_version\":1,\"program\":{\"dsl_version\":1,\"name\":\"take_seeds\",\"capabilities\":[\"camera\",\"inventory_transfer\"],\"body\":[{\"id\":\"take\",\"op\":\"take_known_container_stack\",\"target\":{\"dimension\":\"minecraft:overworld\",\"x\":100,\"y\":64,\"z\":120},\"expected_block\":\"minecraft:chest\",\"item\":\"minecraft:wheat_seeds\",\"stack_policy\":\"default_components_only\",\"minimum_inventory_count\":64}]},\"budget\":{\"max_duration_ms\":25000,\"max_ticks\":400,\"max_distance_blocks\":0,\"max_camera_degrees\":180,\"max_interactions\":3,\"max_blocks_broken\":0,\"max_blocks_placed\":0}}. Use observed coordinates and the field constraints in inputSchema; use policy maxima when unsure of an adequate budget.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -475,6 +475,17 @@
               "x": {"type": "integer", "minimum": -30000000, "maximum": 30000000},
               "y": {"type": "integer", "minimum": -2048, "maximum": 2048},
               "z": {"type": "integer", "minimum": -30000000, "maximum": 30000000}
+            },
+            "required": ["dimension", "x", "y", "z"]
+          },
+          "worldPosition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dimension": {"$ref": "#/$defs/resourceLocation"},
+              "x": {"type": "number", "minimum": -30000000, "maximum": 30000000},
+              "y": {"type": "number", "minimum": -2048, "maximum": 2048},
+              "z": {"type": "number", "minimum": -30000000, "maximum": 30000000}
             },
             "required": ["dimension", "x", "y", "z"]
           },
@@ -669,7 +680,7 @@
           },
           "inspectContainerNode": {
             "type": "object",
-            "description": "Open one visible in-reach single chest/barrel and return up to 27 server-synchronized item counts in NODE_EVIDENCE. Reserve at least 400 ticks, 20000 ms, 180 camera degrees, and 1 interaction.",
+            "description": "Open one visible in-reach single chest/barrel and return up to 27 server-synchronized item counts in NODE_EVIDENCE. Reserve at least 400 ticks, 25000 ms, 180 camera degrees, and 1 interaction; the extra 5000 ms is Action dispatch/JIT headroom outside the bounded 400-tick container attempt.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
@@ -681,7 +692,7 @@
           },
           "takeContainerStackNode": {
             "type": "object",
-            "description": "Move at most one whole matching stack from one visible in-reach single chest/barrel, then close/reopen it for full server readback. Reserve at least 400 ticks, 20000 ms, 180 camera degrees, and 3 interactions.",
+            "description": "Move at most one whole matching stack from one visible in-reach single chest/barrel, then close/reopen it for full server readback. Reserve at least 400 ticks, 25000 ms, 180 camera degrees, and 3 interactions; the extra 5000 ms is Action dispatch/JIT headroom outside the bounded 400-tick container attempt.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
@@ -693,6 +704,18 @@
               "minimum_inventory_count": {"type": "integer", "minimum": 1, "maximum": 2304}
             },
             "required": ["id", "op", "target", "expected_block", "item", "stack_policy", "minimum_inventory_count"]
+          },
+          "collectVisibleItemNode": {
+            "type": "object",
+            "description": "Collect at least one fresh visible minecraft:item matching displayed_item near the copied continuous target position. The runtime rechecks the witness while moving, selects the fastest reachable known safe pickup cell, and requires an absolute inventory-count increase relative to this node occurrence's start.",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "collect_visible_item"},
+              "displayed_item": {"$ref": "#/$defs/resourceLocation"},
+              "target": {"$ref": "#/$defs/worldPosition"}
+            },
+            "required": ["id", "op", "displayed_item", "target"]
           },
           "waitNode": {
             "type": "object",
@@ -772,6 +795,7 @@
               {"$ref": "#/$defs/openPassageNode"},
               {"$ref": "#/$defs/inspectContainerNode"},
               {"$ref": "#/$defs/takeContainerStackNode"},
+              {"$ref": "#/$defs/collectVisibleItemNode"},
               {"$ref": "#/$defs/waitNode"},
               {"$ref": "#/$defs/waitUntilNode"},
               {"$ref": "#/$defs/ifNode"},
@@ -856,15 +880,10 @@
               "capabilities": ["movement"],
               "body": [
                 {
-                  "id": "approach_drop",
-                  "op": "navigate_to_known",
-                  "target": {"dimension": "minecraft:overworld", "x": 100, "y": 64, "z": 120},
-                  "tolerance": 1.5
-                },
-                {
-                  "id": "pickup_window",
-                  "op": "wait_ticks",
-                  "ticks": 40
+                  "id": "collect_drop",
+                  "op": "collect_visible_item",
+                  "displayed_item": "minecraft:wheat",
+                  "target": {"dimension": "minecraft:overworld", "x": 100.375, "y": 64.125, "z": 120.75}
                 }
               ]
             },
@@ -1085,7 +1104,7 @@
               ]
             },
             "budget": {
-              "max_duration_ms": 20000,
+              "max_duration_ms": 25000,
               "max_ticks": 400,
               "max_distance_blocks": 0,
               "max_camera_degrees": 180,
@@ -1113,7 +1132,7 @@
               ]
             },
             "budget": {
-              "max_duration_ms": 20000,
+              "max_duration_ms": 25000,
               "max_ticks": 400,
               "max_distance_blocks": 0,
               "max_camera_degrees": 180,

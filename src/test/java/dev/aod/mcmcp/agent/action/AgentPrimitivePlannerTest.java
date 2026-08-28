@@ -19,6 +19,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AgentPrimitivePlannerTest {
@@ -212,6 +213,265 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void visibleItemCollectionSelectsAReachableKnownPickupCellAndBoundsConfirmation() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        map.observe(confirmed(session, cell(0), cell(1)));
+        map.observe(confirmed(session, cell(1), cell(0)));
+        var target = new ActionDsl.WorldPosition(DIMENSION, 1.8D, 64.1D, 0.5D);
+        var collect = new ActionDsl.CollectVisibleItem(
+                "collect", "minecraft:oak_log", target);
+        var frame = entityFrame(visibleItem("minecraft:oak_log", target, 0L));
+        var program = new ActionDsl.Program(
+                1, Optional.empty(), Set.of(ActionDsl.Capability.MOVEMENT), List.of(collect));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+
+        var analysis = AgentPrimitivePlanner.analyze(
+                program, map.snapshot().orElseThrow(), new DeterministicAStar(),
+                pose, Optional.of(frame), 4.5F);
+        var pickup = AgentPrimitivePlanner.requirePickupPlan(
+                map.snapshot().orElseThrow(), new DeterministicAStar(), cell(0),
+                Optional.of(frame), collect);
+
+        assertThat(pickup.pickupCell()).isEqualTo(cell(1));
+        assertThat(pickup.route().cells().getLast()).isEqualTo(cell(1));
+        assertThat(analysis.primitiveCosts().get("collect").ticks())
+                .isEqualTo(AgentPrimitivePlanner.navigationCost(pickup.route(), pose).ticks()
+                        + AgentPrimitivePlanner.PICKUP_CONFIRM_TICKS);
+        assertThat(analysis.primitiveCosts().get("collect").interactions()).isZero();
+
+        map.advanceWorldRevision(1L, List.of(), List.of());
+        var currentEntity = visibleItem("minecraft:oak_log", target, 1L);
+        var staleOther = visibleItem(
+                "minecraft:wheat_seeds",
+                new ActionDsl.WorldPosition(DIMENSION, 3.0D, 64.1D, 0.5D),
+                0L);
+        var mixedRevisionFrame = new ObservationFrame(
+                "obs-0000000000000002",
+                new ObservationValues.ResourceId(DIMENSION),
+                1,
+                16,
+                false,
+                List.of(currentEntity, staleOther));
+        assertThat(AgentPrimitivePlanner.visibleItemCurrent(
+                map.snapshot().orElseThrow(), Optional.of(mixedRevisionFrame), collect)).isTrue();
+        assertThat(AgentPrimitivePlanner.visibleItemCurrent(
+                map.snapshot().orElseThrow(), Optional.of(mixedRevisionFrame), collect, 5L, 4L))
+                .isTrue();
+        assertThat(AgentPrimitivePlanner.visibleItemCurrent(
+                map.snapshot().orElseThrow(), Optional.of(mixedRevisionFrame), collect, 6L, 4L))
+                .isFalse();
+        assertThat(AgentPrimitivePlanner.visibleItemPickupCellCurrent(
+                map.snapshot().orElseThrow(), Optional.of(mixedRevisionFrame), collect,
+                cell(1), 5L, 4L)).isTrue();
+        assertThat(AgentPrimitivePlanner.visibleItemPickupCellCurrent(
+                map.snapshot().orElseThrow(), Optional.of(mixedRevisionFrame), collect,
+                cell(0), 5L, 4L)).isFalse();
+    }
+
+    @Test
+    void visibleItemCollectionChoosesTheFastestReachablePickupCell() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        NavCell start = cell(0);
+        NavCell shortPickup = cell(1);
+        NavCell longPickup = cell(2);
+        NavCell detour0 = new NavCell(DIMENSION, 0, 64, 1);
+        NavCell detour1 = new NavCell(DIMENSION, 1, 64, 1);
+        NavCell detour2 = new NavCell(DIMENSION, 2, 64, 1);
+        map.observe(confirmed(session, start, shortPickup));
+        map.observe(confirmed(session, start, detour0));
+        map.observe(confirmed(session, detour0, detour1));
+        map.observe(confirmed(session, detour1, detour2));
+        map.observe(confirmed(session, detour2, longPickup));
+        var target = new ActionDsl.WorldPosition(DIMENSION, 2.1D, 64.1D, 0.5D);
+        var collect = new ActionDsl.CollectVisibleItem(
+                "collect", "minecraft:wheat", target);
+
+        var pickup = AgentPrimitivePlanner.requirePickupPlan(
+                map.snapshot().orElseThrow(), new DeterministicAStar(), start,
+                Optional.of(entityFrame(visibleItem("minecraft:wheat", target, 0L))), collect);
+
+        assertThat(pickup.pickupCell()).isEqualTo(shortPickup);
+        assertThat(pickup.route().edges()).hasSize(1);
+    }
+
+    @Test
+    void visibleItemRevisionWindowCrossesOnlyNeutralMutations() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        map.observe(confirmed(session, cell(0), cell(1)));
+        var target = new ActionDsl.WorldPosition(DIMENSION, 1.8D, 64.1D, 0.5D);
+        var collect = new ActionDsl.CollectVisibleItem(
+                "collect", "minecraft:wheat", target);
+        var oldFrame = entityFrame(visibleItem("minecraft:wheat", target, 0L));
+        var currentFrame = entityFrame(visibleItem("minecraft:wheat", target, 1L));
+        var futureFrame = entityFrame(visibleItem("minecraft:wheat", target, 2L));
+        var program = new ActionDsl.Program(
+                1, Optional.empty(), Set.of(ActionDsl.Capability.MOVEMENT), List.of(collect));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+
+        map.advanceWorldRevision(1L, List.of(), List.of());
+        var currentMap = map.snapshot().orElseThrow();
+
+        assertThat(AgentPrimitivePlanner.visibleItemCurrent(
+                currentMap, Optional.of(oldFrame), collect,
+                0L, 5L, 4L)).isTrue();
+        assertThat(AgentPrimitivePlanner.visibleItemCurrent(
+                currentMap, Optional.of(oldFrame), collect,
+                1L, 5L, 4L)).isFalse();
+        assertThat(AgentPrimitivePlanner.visibleItemCurrent(
+                currentMap, Optional.of(currentFrame), collect,
+                1L, 5L, 4L)).isTrue();
+        assertThat(AgentPrimitivePlanner.visibleItemCurrent(
+                currentMap, Optional.of(futureFrame), collect,
+                0L, 5L, 4L)).isFalse();
+
+        assertThatCode(() -> AgentPrimitivePlanner.analyze(
+                program,
+                currentMap,
+                new DeterministicAStar(),
+                pose,
+                Optional.of(oldFrame),
+                4.5F,
+                0L)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program,
+                currentMap,
+                new DeterministicAStar(),
+                pose,
+                Optional.of(oldFrame),
+                4.5F,
+                1L)).isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+        assertThat(AgentPrimitivePlanner.requirePickupPlan(
+                currentMap,
+                new DeterministicAStar(),
+                cell(0),
+                Optional.of(oldFrame),
+                collect,
+                0L,
+                5L,
+                4L).pickupCell()).isEqualTo(cell(1));
+    }
+
+    @Test
+    void surfaceRevisionWindowCrossesOnlyUnrelatedNeutralMutations() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        var target = new ActionDsl.Position(DIMENSION, 3, 65, 0);
+        var oldFrame = frame(target, ObservationRecord.Face.WEST, "minecraft:stone", 0L);
+        var currentFrame = frame(target, ObservationRecord.Face.WEST, "minecraft:stone", 1L);
+        var futureFrame = frame(target, ObservationRecord.Face.WEST, "minecraft:stone", 2L);
+        var required = new AgentPrimitivePlanner.KnownSurface(
+                target, ActionDsl.BlockFace.WEST, "minecraft:stone");
+        map.advanceWorldRevision(1L, List.of(), List.of());
+        var currentMap = map.snapshot().orElseThrow();
+
+        assertThat(AgentPrimitivePlanner.knownSurface(
+                currentMap, Optional.of(oldFrame), required)).isFalse();
+        assertThat(AgentPrimitivePlanner.knownSurface(
+                currentMap, Optional.of(oldFrame), required, 0L)).isTrue();
+        assertThat(AgentPrimitivePlanner.knownSurface(
+                currentMap, Optional.of(oldFrame), required, 1L)).isFalse();
+        assertThat(AgentPrimitivePlanner.knownSurface(
+                currentMap, Optional.of(currentFrame), required, 1L)).isTrue();
+        assertThat(AgentPrimitivePlanner.knownSurface(
+                currentMap, Optional.of(futureFrame), required, 0L)).isFalse();
+
+        var face = new ActionDsl.FaceKnownPosition("face", target);
+        var program = new ActionDsl.Program(
+                1, Optional.empty(), Set.of(ActionDsl.Capability.CAMERA), List.of(face));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+        assertThatCode(() -> AgentPrimitivePlanner.analyze(
+                program,
+                currentMap,
+                new DeterministicAStar(),
+                pose,
+                Optional.of(oldFrame),
+                4.5F,
+                0L,
+                ignored -> 0L,
+                () -> true)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program,
+                currentMap,
+                new DeterministicAStar(),
+                pose,
+                Optional.of(oldFrame),
+                4.5F,
+                0L,
+                ignored -> 1L,
+                () -> true)).isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+    }
+
+    @Test
+    void visibleItemCollectionRejectsWrongOrUnreachableObservationEvidence() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        map.observe(confirmed(session, cell(0), cell(1)));
+        var target = new ActionDsl.WorldPosition(DIMENSION, 1.8D, 64.1D, 0.5D);
+        var collect = new ActionDsl.CollectVisibleItem(
+                "collect", "minecraft:wheat", target);
+        var wrongItem = entityFrame(visibleItem("minecraft:wheat_seeds", target, 0L));
+
+        assertThat(AgentPrimitivePlanner.visibleItemCurrent(
+                map.snapshot().orElseThrow(), Optional.of(wrongItem), collect)).isFalse();
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requirePickupPlan(
+                map.snapshot().orElseThrow(), new DeterministicAStar(), cell(0),
+                Optional.of(wrongItem), collect))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+
+        var movedTarget = new ActionDsl.WorldPosition(DIMENSION, 2.8D, 64.1D, 0.5D);
+        var movedFrame = entityFrame(visibleItem("minecraft:wheat", movedTarget, 0L));
+        assertThat(AgentPrimitivePlanner.visibleItemCurrent(
+                map.snapshot().orElseThrow(), Optional.of(movedFrame), collect)).isFalse();
+
+        var newerRevision = entityFrame(visibleItem("minecraft:wheat", target, 1L));
+        assertThat(AgentPrimitivePlanner.visibleItemCurrent(
+                map.snapshot().orElseThrow(), Optional.of(newerRevision), collect)).isFalse();
+
+        var distantTarget = new ActionDsl.WorldPosition(DIMENSION, 8.5D, 64.1D, 0.5D);
+        var distant = new ActionDsl.CollectVisibleItem(
+                "collect", "minecraft:wheat", distantTarget);
+        var distantFrame = entityFrame(visibleItem("minecraft:wheat", distantTarget, 0L));
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requirePickupPlan(
+                map.snapshot().orElseThrow(), new DeterministicAStar(), cell(0),
+                Optional.of(distantFrame), distant))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+
+        var highTarget = new ActionDsl.WorldPosition(DIMENSION, 0.5D, 66.5D, 0.5D);
+        var highCollect = new ActionDsl.CollectVisibleItem(
+                "collect", "minecraft:wheat", highTarget);
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requirePickupPlan(
+                map.snapshot().orElseThrow(), new DeterministicAStar(), cell(0),
+                Optional.of(entityFrame(visibleItem("minecraft:wheat", highTarget, 0L))),
+                highCollect))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+
+        var blockedMap = map(session);
+        blockedMap.observe(blocked(session, cell(0), cell(1)));
+        var blockedTarget = new ActionDsl.WorldPosition(DIMENSION, 1.9D, 64.1D, 0.5D);
+        var blockedCollect = new ActionDsl.CollectVisibleItem(
+                "collect", "minecraft:wheat", blockedTarget);
+        var blockedFrame = entityFrame(visibleItem("minecraft:wheat", blockedTarget, 0L));
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requirePickupPlan(
+                blockedMap.snapshot().orElseThrow(), new DeterministicAStar(), cell(0),
+                Optional.of(blockedFrame), blockedCollect))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+    }
+
+    @Test
     void breakRequiresTheExactCurrentVisibleFaceAndAccountsForAimAndOneBreak() {
         UUID session = UUID.randomUUID();
         var map = map(session).snapshot().orElseThrow();
@@ -368,6 +628,41 @@ class AgentPrimitivePlannerTest {
                         surface(chest, ObservationRecord.Face.WEST,
                                 "minecraft:chest", null, 0)))),
                 4.5F)).isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+    }
+
+    @Test
+    void containerCostUsesTheAdaptersBlockCenterRatherThanTheAdmissionRayHit() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var chest = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var inspect = new ActionDsl.InspectKnownContainer(
+                "inspect", chest, "minecraft:chest");
+        var program = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.INVENTORY_TRANSFER),
+                List.of(inspect));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+
+        var analysis = AgentPrimitivePlanner.analyze(
+                program,
+                map,
+                new DeterministicAStar(),
+                pose,
+                Optional.of(frame(
+                        chest, ObservationRecord.Face.WEST, "minecraft:chest", 0)),
+                4.5F);
+
+        var actual = analysis.primitiveCosts().get("inspect");
+        var centerCost = AgentPrimitivePlanner.mutationCost(
+                pose, new Vec3(3.5D, 64.5D, 0.5D), 4.5F, 1, 0, 0);
+        var rayHitCost = AgentPrimitivePlanner.mutationCost(
+                pose, new Vec3(3.0D, 64.5D, 0.5D), 4.5F, 1, 0, 0);
+        assertThat(actual.cameraDegrees()).isEqualTo(centerCost.cameraDegrees());
+        assertThat(actual.cameraDegrees()).isNotEqualTo(rayHitCost.cameraDegrees());
+        assertThat(actual.durationMillis()).isEqualTo(20_000L);
+        assertThat(actual.ticks()).isEqualTo(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
     }
 
     @Test
@@ -550,6 +845,22 @@ class AgentPrimitivePlannerTest {
                 0);
     }
 
+    private static TraversabilityEdge blocked(UUID session, NavCell from, NavCell to) {
+        return new TraversabilityEdge(
+                session,
+                new TraversabilityEdge.Key(from, to),
+                TraversabilityEdge.Status.BLOCKED,
+                TraversabilityEdge.TargetSupport.ABSENT,
+                TraversabilityEdge.Clearance.UNKNOWN,
+                TraversabilityEdge.Transition.UNKNOWN,
+                TraversabilityEdge.Fluid.NONE,
+                TraversabilityEdge.Hazard.NONE,
+                TraversabilityEdge.Provenance.LOCAL_VOLUME,
+                from,
+                1,
+                0);
+    }
+
     private static ObservationFrame frame(
             ActionDsl.Position target,
             ObservationRecord.Face face,
@@ -557,6 +868,32 @@ class AgentPrimitivePlannerTest {
             long revision) {
         var dimension = new ObservationValues.ResourceId(target.dimension());
         return frame(List.of(surface(target, face, block, null, revision)));
+    }
+
+    private static ObservationRecord.VisibleEntity visibleItem(
+            String item, ActionDsl.WorldPosition target, long revision) {
+        var dimension = new ObservationValues.ResourceId(target.dimension());
+        var position = new ObservationValues.WorldPosition(
+                dimension, target.x(), target.y(), target.z());
+        return new ObservationRecord.VisibleEntity(
+                new ObservationValues.ResourceId("minecraft:item"),
+                new ObservationValues.ResourceId(item),
+                position,
+                new ObservationValues.Vector(0.0D, 0.0D, 0.0D),
+                new ObservationValues.Aabb(
+                        target.x() - 0.125D, target.y(), target.z() - 0.125D,
+                        target.x() + 0.125D, target.y() + 0.25D, target.z() + 0.125D),
+                ObservationRecord.EntityHazardClass.PASSIVE,
+                new ObservationValues.WorldPosition(dimension, 0.5D, 65.62D, 0.5D),
+                1L,
+                revision);
+    }
+
+    private static ObservationFrame entityFrame(ObservationRecord.VisibleEntity entity) {
+        var dimension = new ObservationValues.ResourceId(DIMENSION);
+        return new ObservationFrame(
+                "obs-0000000000000001", dimension, 1, 16, false,
+                List.of(entity));
     }
 
     private static ObservationRecord.VisibleSurface surface(
