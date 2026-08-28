@@ -1,4 +1,4 @@
-# MCMCP Phase 1–4 test fixture
+# MCMCP Phase 1–5 test fixture
 
 This source set is a destructive development fixture, not part of the production mod. It is
 enabled only by `-Dmcmcp.testHarness=true` (the Gradle `harnessClient` run supplies this).
@@ -70,6 +70,32 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
   route for exactly 20 server ticks, then removes it. This exercises neutral occupant wait and
   recovery; another player uses the same production occupant check but is not covered by this
   private-singleplayer fixture.
+- `/mcmcp_fixture phase5 combined_wheat` — prepares the production-prompt wheat E2E. The player
+  starts in Survival with a completely empty inventory, facing a visible and normally reachable
+  single chest containing one damage-37 vanilla iron hoe and 64 wheat seeds. A closed oak fence
+  gate is the only entrance to a fenced, hazard-free nine-plot farm. Every plot starts as dirt with
+  air above it, so the hoe use, planting, maturation, harvesting, collection, and replanting paths
+  are all required gameplay rather than fixture mutations.
+- `/mcmcp_fixture phase5 combined_wheat_status` — prints the bounded test oracle: wheat count,
+  farmland/replanted counts, remaining chest supplies, gate state, completion, and random-tick
+  lease state.
+- `/mcmcp_fixture phase5 combined_wheat_rollback` — ends only the active combined scenario and
+  restores the saved `random_tick_speed`. `/mcmcp_fixture load`, `phase5 reset`, replacement by
+  another Phase 5 mode, a failed private-singleplayer reauthorization, and normal server shutdown
+  also restore it.
+
+The combined mode saves the world's current `random_tick_speed` once and changes it to the fixed
+harness value 30 only after all layout, inventory, chest, and pose setup has succeeded. It restores
+the saved value automatically when the player has at least 64 wheat and all nine plots are farmland
+with wheat replanted. It never grows, tills, plants, harvests, moves drops, or edits inventory for
+the player.
+
+For the persistent Prism profile `MCMCP-Validation 1` and save `tester (1)`, either run the manual
+command above after `/mcmcp_fixture load`, or temporarily add the JVM argument
+`-Dmcmcp.fixture.phase5.mode=combined_wheat` to reuse the existing one-shot Phase 5 autorun. Remove
+the argument after the run. Autorun rebuilds the bounded arena and prepares the same state but does
+not arm MCMCP; local authorization remains one explicit user UI action before the production
+prompt begins.
 
 The autorun-only `creative_capture` mode keeps the existing gallery layout, changes the owner to
 Creative, and places them more than 32 blocks from the fixed 1,024-cell capture region
@@ -115,6 +141,12 @@ lamp, water, slab, and block-light assumptions against the actual dedicated Game
 For water it checks the exact BlockState plus source/amount FluidState; for the slab it checks every
 named property and exact BlockState equality. It never calls the absolute-coordinate interactive
 arena and does not expose its mutation commands.
+
+The `passage_shapes_fixture` GameTest separately verifies a wooden door and wooden trapdoor change
+from a blocking VoxelShape to a passable open shape. It also verifies that a powered wooden
+pressure plate has no collision, emits a signal, opens both halves of an adjacent wooden door, and
+that releasing it closes both halves again. These passage variants are intentionally not all placed
+on the combined E2E route.
 
 The additional `phase4_block_plan_fixture` GameTest verifies every mode's exact full before-state,
 unique ids/targets, arena bounds, mutation operation ordering, shortage resource count, opaque box,

@@ -8,6 +8,7 @@ enum FixturePhase5Mode {
     CRAFT("craft", 0),
     TRANSFER("transfer", 0),
     CROP("crop", 1),
+    COMBINED_WHEAT("combined_wheat", 0),
     TREE("tree", 0),
     SLEEP("sleep", 0),
     SURVEY("survey", 0),
@@ -29,6 +30,7 @@ enum FixturePhase5Mode {
             case "craft" -> CRAFT;
             case "transfer" -> TRANSFER;
             case "crop" -> CROP;
+            case "combined_wheat" -> COMBINED_WHEAT;
             case "tree" -> TREE;
             case "sleep" -> SLEEP;
             case "survey" -> SURVEY;

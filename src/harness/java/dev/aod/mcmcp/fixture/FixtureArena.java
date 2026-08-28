@@ -59,6 +59,7 @@ final class FixtureArena {
     }
 
     static void load(FixtureSecurity.Context context) {
+        FixtureCombinedWheatScenario.rollbackForArenaReset(context);
         FixturePhase2Scenario.stop();
         FixturePhase3Scenario.stop(context);
         ServerLevel level = context.level();

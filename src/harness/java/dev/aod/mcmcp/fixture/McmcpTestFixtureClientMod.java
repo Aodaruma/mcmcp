@@ -17,6 +17,8 @@ public final class McmcpTestFixtureClientMod {
         NeoForge.EVENT_BUS.addListener(FixturePhase2Scenario::onServerStopped);
         NeoForge.EVENT_BUS.addListener(FixturePhase4RouteBlocker::onServerTick);
         NeoForge.EVENT_BUS.addListener(FixturePhase4RouteBlocker::onServerStopped);
+        NeoForge.EVENT_BUS.addListener(FixtureCombinedWheatScenario::onServerTick);
+        NeoForge.EVENT_BUS.addListener(FixtureCombinedWheatScenario::onServerStopped);
         NeoForge.EVENT_BUS.addListener(FixtureRandomTicks::onServerStopping);
         NeoForge.EVENT_BUS.addListener(FixtureRandomTicks::onServerStopped);
         FixturePhase3Autorun.installIfRequested(NeoForge.EVENT_BUS);

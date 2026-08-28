@@ -113,6 +113,13 @@ final class FixtureCommands {
                         .then(phase5("craft", FixturePhase5Mode.CRAFT))
                         .then(phase5("transfer", FixturePhase5Mode.TRANSFER))
                         .then(phase5("crop", FixturePhase5Mode.CROP))
+                        .then(phase5("combined_wheat", FixturePhase5Mode.COMBINED_WHEAT))
+                        .then(Commands.literal("combined_wheat_status")
+                                .executes(context -> execute(context.getSource(),
+                                        FixtureCombinedWheatScenario::sendStatus)))
+                        .then(Commands.literal("combined_wheat_rollback")
+                                .executes(context -> execute(context.getSource(),
+                                        FixtureCombinedWheatScenario::rollback)))
                         .then(phase5("tree", FixturePhase5Mode.TREE))
                         .then(phase5("sleep", FixturePhase5Mode.SLEEP))
                         .then(phase5("survey", FixturePhase5Mode.SURVEY))

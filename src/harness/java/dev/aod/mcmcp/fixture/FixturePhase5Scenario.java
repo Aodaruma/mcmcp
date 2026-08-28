@@ -15,10 +15,12 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.Recipe;
 import net.minecraft.world.level.block.BarrelBlock;
+import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.clock.ClockTimeMarkers;
 
 import java.util.LinkedHashMap;
@@ -28,13 +30,25 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
-/** One bounded workspace covering all six Phase 5 routine families. */
+/** One bounded workspace covering Phase 5 families and the combined wheat E2E. */
 final class FixturePhase5Scenario {
     static final BlockPos WORKSPACE_MIN = new BlockPos(193, 199, 193);
     static final BlockPos WORKSPACE_MAX = new BlockPos(206, 204, 206);
 
     static final BlockPos CRAFTING_TABLE = new BlockPos(195, 200, 194);
     static final BlockPos TRANSFER_BARREL = new BlockPos(199, 200, 194);
+
+    static final BlockPos COMBINED_SUPPLY_CHEST = new BlockPos(199, 200, 195);
+    static final BlockPos COMBINED_FARM_GATE = new BlockPos(199, 200, 199);
+    static final BlockPos COMBINED_FARM_WATER = new BlockPos(197, 199, 201);
+    static final List<BlockPos> COMBINED_FARM_SUPPORTS = combinedFarmSupports();
+    static final List<BlockPos> COMBINED_FARM_CROPS = COMBINED_FARM_SUPPORTS.stream()
+            .map(BlockPos::above)
+            .toList();
+    static final List<BlockPos> COMBINED_FARM_FENCE = combinedFarmFence();
+    static final int COMBINED_HOE_DAMAGE = 37;
+    static final int COMBINED_SEED_COUNT = 64;
+    static final int COMBINED_WHEAT_GOAL = 64;
 
     static final BlockPos CROP_WATER = new BlockPos(192, 199, 198);
     static final List<BlockPos> CROP_SUPPORTS = List.of(
@@ -87,6 +101,7 @@ final class FixturePhase5Scenario {
             FixturePhase5Mode mode,
             Consumer<Component> output) {
         if (mode == FixturePhase5Mode.IRON_FARM) {
+            FixtureCombinedWheatScenario.rollbackForReplacement(context);
             FixtureIronFarmScenario.prepare(context, output);
             return;
         }
@@ -99,10 +114,16 @@ final class FixturePhase5Scenario {
 
         FixturePhase2Scenario.stop();
         FixturePhase3Scenario.stop(context);
+        FixtureCombinedWheatScenario.rollbackForReplacement(context);
         FixtureArena.requireInitialized(context.level());
         FixtureArena.resetPlayer(context.player());
-        applyLayout(context.level());
-        configureBarrel(context.level());
+        if (mode == FixturePhase5Mode.COMBINED_WHEAT) {
+            applyCombinedWheatLayout(context.level());
+            configureCombinedSupplyChest(context.level());
+        } else {
+            applyLayout(context.level());
+            configureBarrel(context.level());
+        }
         resetKnownRecipes(context);
         if (mode == FixturePhase5Mode.RECIPES || mode == FixturePhase5Mode.CRAFT) {
             context.player().awardRecipesByKey(KNOWN_RECIPE_KEYS);
@@ -112,6 +133,23 @@ final class FixturePhase5Scenario {
             prepareSafeNight(context.level());
         }
         teleport(context, pose(mode));
+
+        if (mode == FixturePhase5Mode.COMBINED_WHEAT) {
+            FixtureRandomTicks.accelerate(context,
+                    component -> output.accept(Component.literal(
+                            "phase5.combined_wheat " + component.getString())));
+            FixtureCombinedWheatScenario.arm(context);
+            output.accept(Component.literal("phase5.mode=combined_wheat"
+                    + " chest=" + position(COMBINED_SUPPLY_CHEST)
+                    + " gate=" + position(COMBINED_FARM_GATE)
+                    + " dirt=" + positions(COMBINED_FARM_SUPPORTS)
+                    + " water=" + position(COMBINED_FARM_WATER)
+                    + " hoe=minecraft:iron_hoe damage=" + COMBINED_HOE_DAMAGE
+                    + " seeds=" + COMBINED_SEED_COUNT
+                    + " wheat_goal=" + COMBINED_WHEAT_GOAL
+                    + " selected_slot=" + mode.selectedSlot()));
+            return;
+        }
 
         output.accept(Component.literal("phase5.mode=" + mode.wireName()
                 + " table=" + position(CRAFTING_TABLE)
@@ -125,17 +163,7 @@ final class FixturePhase5Scenario {
     }
 
     static Map<BlockPos, BlockState> layout() {
-        var result = new LinkedHashMap<BlockPos, BlockState>();
-        for (int x = WORKSPACE_MIN.getX(); x <= WORKSPACE_MAX.getX(); x++) {
-            for (int z = WORKSPACE_MIN.getZ(); z <= WORKSPACE_MAX.getZ(); z++) {
-                result.put(new BlockPos(x, WORKSPACE_MIN.getY(), z),
-                        Blocks.SMOOTH_STONE.defaultBlockState());
-                for (int y = WORKSPACE_MIN.getY() + 1; y <= WORKSPACE_MAX.getY(); y++) {
-                    result.put(new BlockPos(x, y, z), Blocks.AIR.defaultBlockState());
-                }
-            }
-        }
-
+        var result = emptyWorkspace();
         result.put(CROP_WATER, Blocks.WATER.defaultBlockState());
         result.put(CRAFTING_TABLE, Blocks.CRAFTING_TABLE.defaultBlockState());
         result.put(TRANSFER_BARREL, barrelState());
@@ -156,6 +184,51 @@ final class FixturePhase5Scenario {
         result.put(BED_FOOT, bedState(BedPart.FOOT));
         result.put(BED_HEAD, bedState(BedPart.HEAD));
         return Map.copyOf(result);
+    }
+
+    static Map<BlockPos, BlockState> combinedWheatLayout() {
+        var result = emptyWorkspace();
+        result.put(COMBINED_SUPPLY_CHEST, combinedSupplyChestState());
+        result.put(COMBINED_FARM_WATER, Blocks.WATER.defaultBlockState());
+        for (BlockPos support : COMBINED_FARM_SUPPORTS) {
+            result.put(support, Blocks.DIRT.defaultBlockState());
+            result.put(support.above(), Blocks.AIR.defaultBlockState());
+        }
+        for (BlockPos fence : COMBINED_FARM_FENCE) {
+            result.put(fence, fence.equals(COMBINED_FARM_GATE)
+                    ? closedCombinedFarmGate()
+                    : Blocks.OAK_FENCE.defaultBlockState());
+        }
+        return Map.copyOf(result);
+    }
+
+    static BlockState combinedSupplyChestState() {
+        return Blocks.CHEST.defaultBlockState()
+                .setValue(ChestBlock.FACING, Direction.SOUTH)
+                .setValue(ChestBlock.TYPE, ChestType.SINGLE)
+                .setValue(ChestBlock.WATERLOGGED, false);
+    }
+
+    static BlockState closedCombinedFarmGate() {
+        return Blocks.OAK_FENCE_GATE.defaultBlockState()
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.NORTH)
+                .setValue(BlockStateProperties.OPEN, false)
+                .setValue(BlockStateProperties.POWERED, false)
+                .setValue(BlockStateProperties.IN_WALL, false);
+    }
+
+    private static LinkedHashMap<BlockPos, BlockState> emptyWorkspace() {
+        var result = new LinkedHashMap<BlockPos, BlockState>();
+        for (int x = WORKSPACE_MIN.getX(); x <= WORKSPACE_MAX.getX(); x++) {
+            for (int z = WORKSPACE_MIN.getZ(); z <= WORKSPACE_MAX.getZ(); z++) {
+                result.put(new BlockPos(x, WORKSPACE_MIN.getY(), z),
+                        Blocks.SMOOTH_STONE.defaultBlockState());
+                for (int y = WORKSPACE_MIN.getY() + 1; y <= WORKSPACE_MAX.getY(); y++) {
+                    result.put(new BlockPos(x, y, z), Blocks.AIR.defaultBlockState());
+                }
+            }
+        }
+        return result;
     }
 
     static BlockState barrelState() {
@@ -188,6 +261,16 @@ final class FixturePhase5Scenario {
 
     static List<ContainerEntry> transferContents() {
         return TRANSFER_CONTENTS;
+    }
+
+    static ItemStack combinedSupplyHoe() {
+        ItemStack hoe = new ItemStack(Items.IRON_HOE);
+        hoe.setDamageValue(COMBINED_HOE_DAMAGE);
+        return hoe;
+    }
+
+    static ItemStack combinedSupplySeeds() {
+        return new ItemStack(Items.WHEAT_SEEDS, COMBINED_SEED_COUNT);
     }
 
     static void verifyTreeGate(
@@ -229,6 +312,11 @@ final class FixturePhase5Scenario {
                 level, BED_FOOT, bedState(BedPart.FOOT), BED_HEAD, bedState(BedPart.HEAD));
     }
 
+    private static void applyCombinedWheatLayout(ServerLevel level) {
+        combinedWheatLayout().forEach((position, state) ->
+                FixtureArena.setBlock(level, position, state));
+    }
+
     private static List<BlockPos> treeEnclosure() {
         var result = new LinkedHashSet<BlockPos>();
         for (int x = TREE_ENCLOSURE_MIN.getX(); x <= TREE_ENCLOSURE_MAX.getX(); x++) {
@@ -242,6 +330,32 @@ final class FixturePhase5Scenario {
         return List.copyOf(result);
     }
 
+    private static List<BlockPos> combinedFarmSupports() {
+        var result = new java.util.ArrayList<BlockPos>();
+        for (int x = 198; x <= 200; x++) {
+            for (int z = 200; z <= 202; z++) {
+                result.add(new BlockPos(x, 199, z));
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private static List<BlockPos> combinedFarmFence() {
+        var result = new LinkedHashSet<BlockPos>();
+        for (int x = 197; x <= 201; x++) {
+            result.add(new BlockPos(x, 200, 199));
+            result.add(new BlockPos(x, 200, 203));
+        }
+        for (int z = 199; z <= 203; z++) {
+            result.add(new BlockPos(197, 200, z));
+            result.add(new BlockPos(201, 200, z));
+        }
+        result.remove(COMBINED_FARM_GATE);
+        var ordered = new java.util.ArrayList<>(result);
+        ordered.add(COMBINED_FARM_GATE);
+        return List.copyOf(ordered);
+    }
+
     private static void configureBarrel(ServerLevel level) {
         if (!(level.getBlockEntity(TRANSFER_BARREL) instanceof Container container)) {
             throw new IllegalStateException("Phase 5 transfer barrel has no vanilla container");
@@ -250,6 +364,16 @@ final class FixturePhase5Scenario {
         for (ContainerEntry entry : TRANSFER_CONTENTS) {
             container.setItem(entry.slot(), new ItemStack(entry.item(), entry.count()));
         }
+        container.setChanged();
+    }
+
+    private static void configureCombinedSupplyChest(ServerLevel level) {
+        if (!(level.getBlockEntity(COMBINED_SUPPLY_CHEST) instanceof Container container)) {
+            throw new IllegalStateException("Combined wheat supply chest has no vanilla container");
+        }
+        container.clearContent();
+        container.setItem(0, combinedSupplyHoe());
+        container.setItem(8, combinedSupplySeeds());
         container.setChanged();
     }
 
@@ -268,6 +392,9 @@ final class FixturePhase5Scenario {
                 player.getInventory().setItem(0, new ItemStack(Items.IRON_HOE));
                 player.getInventory().setItem(1, new ItemStack(Items.WHEAT_SEEDS, 8));
                 player.getInventory().setItem(4, new ItemStack(Items.BREAD, 4));
+            }
+            case COMBINED_WHEAT -> {
+                // The production-prompt E2E must obtain both supplies through the chest UI.
             }
             case TREE -> {
                 player.getInventory().setItem(0, new ItemStack(Items.IRON_AXE));
@@ -316,6 +443,7 @@ final class FixturePhase5Scenario {
             case RECIPES, CRAFT -> new Pose(195.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case TRANSFER -> new Pose(199.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case CROP -> new Pose(194.5D, 200.0D, 201.5D, 180.0F, 28.0F);
+            case COMBINED_WHEAT -> new Pose(199.5D, 200.0D, 197.0D, 180.0F, 18.0F);
             case TREE -> new Pose(201.5D, 200.0D, 198.5D, -90.0F, 8.0F);
             case SLEEP -> new Pose(193.5D, 200.0D, 204.5D, -90.0F, 18.0F);
             case SURVEY -> new Pose(200.5D, 200.0D, 204.5D, -90.0F, 12.0F);

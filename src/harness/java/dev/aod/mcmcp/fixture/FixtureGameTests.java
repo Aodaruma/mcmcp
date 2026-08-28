@@ -19,6 +19,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.SweetBerryBushBlock;
@@ -31,6 +32,7 @@ import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.block.state.properties.Half;
 import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.level.block.state.properties.StairsShape;
+import net.minecraft.world.phys.AABB;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.event.RegisterGameTestsEvent;
 import net.neoforged.neoforge.registries.DeferredHolder;
@@ -47,6 +49,7 @@ final class FixtureGameTests {
     private static final Identifier PHASE3_TEST_ID = id("phase3_action_fixture");
     private static final Identifier PHASE4_TEST_ID = id("phase4_block_plan_fixture");
     private static final Identifier PHASE5_TEST_ID = id("phase5_workspace_fixture");
+    private static final Identifier PASSAGE_TEST_ID = id("passage_shapes_fixture");
     private static final Identifier IRON_FARM_TEST_ID = id("iron_farm_lab_fixture");
     private static final Identifier ENVIRONMENT_ID = id("fixture_environment");
 
@@ -65,6 +68,9 @@ final class FixtureGameTests {
     private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PHASE5_WORKSPACE_FIXTURE =
             TEST_FUNCTIONS.register(
                     "phase5_workspace_fixture", () -> FixtureGameTests::runPhase5WorkspaceFixture);
+    private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PASSAGE_SHAPES_FIXTURE =
+            TEST_FUNCTIONS.register(
+                    "passage_shapes_fixture", () -> FixtureGameTests::runPassageShapesFixture);
     private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> IRON_FARM_LAB_FIXTURE =
             TEST_FUNCTIONS.register(
                     "iron_farm_lab_fixture", () -> FixtureGameTests::runIronFarmLabFixture);
@@ -94,6 +100,8 @@ final class FixtureGameTests {
                 new FunctionGameTestInstance(PHASE4_BLOCK_PLAN_FIXTURE.getKey(), data));
         event.registerTest(PHASE5_TEST_ID,
                 new FunctionGameTestInstance(PHASE5_WORKSPACE_FIXTURE.getKey(), data));
+        event.registerTest(PASSAGE_TEST_ID,
+                new FunctionGameTestInstance(PASSAGE_SHAPES_FIXTURE.getKey(), data));
         event.registerTest(IRON_FARM_TEST_ID,
                 new FunctionGameTestInstance(IRON_FARM_LAB_FIXTURE.getKey(), data));
     }
@@ -500,6 +508,38 @@ final class FixtureGameTests {
             helper.fail(Component.literal("Phase 5 transfer contents are not deterministic"));
         }
 
+        var combined = FixturePhase5Scenario.combinedWheatLayout();
+        combined.keySet().forEach(position -> assertInsideArena(helper, position));
+        assertLayoutState(helper, combined, FixturePhase5Scenario.COMBINED_SUPPLY_CHEST,
+                FixturePhase5Scenario.combinedSupplyChestState());
+        assertLayoutState(helper, combined, FixturePhase5Scenario.COMBINED_FARM_GATE,
+                FixturePhase5Scenario.closedCombinedFarmGate());
+        assertLayoutState(helper, combined, FixturePhase5Scenario.COMBINED_FARM_WATER,
+                Blocks.WATER.defaultBlockState());
+        if (FixturePhase5Scenario.COMBINED_FARM_SUPPORTS.size() != 9
+                || FixturePhase5Scenario.COMBINED_FARM_FENCE.size() != 16
+                || !FixturePhase5Scenario.COMBINED_FARM_FENCE.contains(
+                        FixturePhase5Scenario.COMBINED_FARM_WATER.above())) {
+            helper.fail(Component.literal(
+                    "Combined wheat fixture must have nine plots and one guarded water source"));
+        }
+        for (int index = 0; index < FixturePhase5Scenario.COMBINED_FARM_SUPPORTS.size(); index++) {
+            assertLayoutState(helper, combined,
+                    FixturePhase5Scenario.COMBINED_FARM_SUPPORTS.get(index),
+                    Blocks.DIRT.defaultBlockState());
+            assertLayoutState(helper, combined,
+                    FixturePhase5Scenario.COMBINED_FARM_CROPS.get(index),
+                    Blocks.AIR.defaultBlockState());
+        }
+        ItemStack supplyHoe = FixturePhase5Scenario.combinedSupplyHoe();
+        ItemStack supplySeeds = FixturePhase5Scenario.combinedSupplySeeds();
+        if (!supplyHoe.is(net.minecraft.world.item.Items.IRON_HOE)
+                || supplyHoe.getDamageValue() != FixturePhase5Scenario.COMBINED_HOE_DAMAGE
+                || !supplySeeds.is(net.minecraft.world.item.Items.WHEAT_SEEDS)
+                || supplySeeds.getCount() != FixturePhase5Scenario.COMBINED_SEED_COUNT) {
+            helper.fail(Component.literal("Combined wheat chest supplies are not deterministic"));
+        }
+
         // Install one representative of every state family against the real GameTest level.
         BlockPos cropSupport = new BlockPos(0, 0, 0);
         BlockPos crop = cropSupport.above();
@@ -544,6 +584,90 @@ final class FixtureGameTests {
         assertExactState(helper, foot, FixturePhase5Scenario.bedState(BedPart.FOOT));
         assertExactState(helper, head, FixturePhase5Scenario.bedState(BedPart.HEAD));
         helper.succeed();
+    }
+
+    private static void runPassageShapesFixture(GameTestHelper helper) {
+        BlockPos shapePosition = new BlockPos(0, 1, 0);
+        AABB horizontalPassage = new AABB(0.25D, 1.0D, -0.25D, 0.75D, 2.8D, 1.25D);
+        BlockState closedDoor = Blocks.OAK_DOOR.defaultBlockState()
+                .setValue(BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.LOWER)
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.NORTH)
+                .setValue(BlockStateProperties.DOOR_HINGE, DoorHingeSide.LEFT)
+                .setValue(BlockStateProperties.OPEN, false)
+                .setValue(BlockStateProperties.POWERED, false);
+        BlockState openDoor = closedDoor.setValue(BlockStateProperties.OPEN, true);
+        assertShapeTransition(helper, "wooden door", shapePosition,
+                horizontalPassage, closedDoor, openDoor, true);
+
+        AABB verticalHatchPassage = new AABB(0.25D, -0.5D, 0.25D, 0.75D, 1.5D, 0.75D);
+        BlockState closedTrapdoor = Blocks.OAK_TRAPDOOR.defaultBlockState()
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.NORTH)
+                .setValue(BlockStateProperties.HALF, Half.BOTTOM)
+                .setValue(BlockStateProperties.OPEN, false)
+                .setValue(BlockStateProperties.POWERED, false)
+                .setValue(BlockStateProperties.WATERLOGGED, false);
+        BlockState openTrapdoor = closedTrapdoor.setValue(BlockStateProperties.OPEN, true);
+        assertShapeTransition(helper, "wooden trapdoor", BlockPos.ZERO,
+                verticalHatchPassage, closedTrapdoor, openTrapdoor, true);
+
+        BlockState poweredPlate = Blocks.OAK_PRESSURE_PLATE.defaultBlockState()
+                .setValue(BlockStateProperties.POWERED, true);
+        if (!poweredPlate.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).isEmpty()
+                || poweredPlate.getSignal(EmptyBlockGetter.INSTANCE, BlockPos.ZERO, Direction.NORTH) <= 0) {
+            helper.fail(Component.literal(
+                    "Powered wooden pressure plate must be passable and emit a redstone signal"));
+        }
+
+        BlockPos doorLower = new BlockPos(4, 1, 1);
+        BlockPos doorUpper = doorLower.above();
+        BlockPos plate = doorLower.relative(Direction.SOUTH);
+        helper.setBlock(doorLower.below(), Blocks.SMOOTH_STONE);
+        helper.setBlock(plate.below(), Blocks.SMOOTH_STONE);
+        helper.setBlock(doorLower, closedDoor);
+        helper.setBlock(doorUpper, closedDoor
+                .setValue(BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.UPPER));
+        helper.setBlock(plate, poweredPlate);
+        helper.getLevel().updateNeighborsAt(helper.absolutePos(plate), Blocks.OAK_PRESSURE_PLATE);
+        helper.runAfterDelay(1L, () -> {
+            if (!helper.getBlockState(doorLower).getValue(BlockStateProperties.OPEN)
+                    || !helper.getBlockState(doorUpper).getValue(BlockStateProperties.OPEN)) {
+                helper.fail(Component.literal(
+                        "Wooden pressure plate did not open both halves of the wooden door"));
+            }
+            helper.setBlock(plate, Blocks.OAK_PRESSURE_PLATE.defaultBlockState()
+                    .setValue(BlockStateProperties.POWERED, false));
+            helper.getLevel().updateNeighborsAt(helper.absolutePos(plate), Blocks.OAK_PRESSURE_PLATE);
+        });
+        helper.runAfterDelay(2L, () -> {
+            if (helper.getBlockState(doorLower).getValue(BlockStateProperties.OPEN)
+                    || helper.getBlockState(doorUpper).getValue(BlockStateProperties.OPEN)) {
+                helper.fail(Component.literal(
+                        "Wooden door did not close after its pressure plate was released"));
+            }
+            helper.succeed();
+        });
+    }
+
+    private static void assertShapeTransition(
+            GameTestHelper helper,
+            String label,
+            BlockPos position,
+            AABB passage,
+            BlockState closed,
+            BlockState open,
+            boolean closedMustBlock) {
+        boolean closedIntersects = closed.getCollisionShape(EmptyBlockGetter.INSTANCE, position)
+                .toAabbs().stream()
+                .map(box -> box.move(position))
+                .anyMatch(box -> box.intersects(passage));
+        boolean openIntersects = open.getCollisionShape(EmptyBlockGetter.INSTANCE, position)
+                .toAabbs().stream()
+                .map(box -> box.move(position))
+                .anyMatch(box -> box.intersects(passage));
+        if (closedIntersects != closedMustBlock || openIntersects) {
+            helper.fail(Component.literal(label
+                    + " collision shape did not change from blocked to passable"));
+        }
     }
 
     private static void runIronFarmLabFixture(GameTestHelper helper) {
