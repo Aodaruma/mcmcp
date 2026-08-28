@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.client;
 
+import net.neoforged.fml.ModList;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
 /** Client-local endpoint and control settings stored in mcmcp-client.toml. */
@@ -9,6 +10,7 @@ public final class McmcpClientConfig {
     public static final int DEFAULT_MAX_REQUEST_BYTES = 65_536;
     public static final int DEFAULT_VISUAL_RADIUS_BLOCKS = 16;
     public static final int DEFAULT_RAYS_PER_TICK = 256;
+    private static final String TEST_FIXTURE_MOD_ID = "mcmcp_test_fixture";
     public static final int DEFAULT_MAX_CAMERA_DEGREES_PER_SECOND = 90;
     public static final int DEFAULT_RECOVERY_MAX_TICKS = 200;
     public static final int DEFAULT_RECOVERY_MAX_DISTANCE = 16;
@@ -48,6 +50,7 @@ public final class McmcpClientConfig {
                     DEFAULT_RAYS_PER_TICK,
                     64,
                     512);
+    private static volatile Integer testHarnessRaysPerTickOverride;
     private static final ModConfigSpec.IntValue MAX_CAMERA_DEGREES_PER_SECOND = BUILDER
             .comment("Maximum synthetic camera rotation speed")
             .defineInRange(
@@ -133,7 +136,60 @@ public final class McmcpClientConfig {
     }
 
     public static int raysPerTick() {
+        Integer fixtureOverride = testHarnessRaysPerTickOverride;
+        if (fixtureOverride != null) {
+            return fixtureOverride;
+        }
         return RAYS_PER_TICK.get();
+    }
+
+    /** Acquires cleanup-capable access for the separately packaged validation fixture. */
+    public static TestHarnessRaysPerTickAccess acquireTestHarnessRaysPerTickAccess() {
+        requireTestHarnessRuntime();
+        return new TestHarnessRaysPerTickAccess();
+    }
+
+    static Integer rawTestHarnessRaysPerTickOverride() {
+        return testHarnessRaysPerTickOverride;
+    }
+
+    static void setRawTestHarnessRaysPerTickOverride(Integer value) {
+        if (value != null && (value < 64 || value > 512)) {
+            throw new IllegalArgumentException("test harness rays per tick must be in 64..512");
+        }
+        testHarnessRaysPerTickOverride = value;
+    }
+
+    private static void requireTestHarnessRuntime() {
+        boolean fixtureLoaded;
+        try {
+            fixtureLoaded = ModList.get().getModContainerById(TEST_FIXTURE_MOD_ID).isPresent();
+        } catch (RuntimeException | LinkageError failure) {
+            fixtureLoaded = false;
+        }
+        if (!testHarnessRuntimeAvailable(
+                Boolean.getBoolean("mcmcp.testHarness"), fixtureLoaded)) {
+            throw new IllegalStateException(
+                    "test harness observation override requires the enabled fixture mod");
+        }
+    }
+
+    static boolean testHarnessRuntimeAvailable(boolean enabled, boolean fixtureLoaded) {
+        return enabled && fixtureLoaded;
+    }
+
+    /** A lease-scoped handle whose cleanup remains available after its admission guard changes. */
+    public static final class TestHarnessRaysPerTickAccess {
+        private TestHarnessRaysPerTickAccess() {
+        }
+
+        public Integer currentOverride() {
+            return rawTestHarnessRaysPerTickOverride();
+        }
+
+        public void setOverride(Integer value) {
+            setRawTestHarnessRaysPerTickOverride(value);
+        }
     }
 
     public static int maxCameraDegreesPerSecond() {

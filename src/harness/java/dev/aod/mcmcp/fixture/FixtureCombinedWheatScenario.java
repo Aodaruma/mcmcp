@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.fixture;
 
 import com.mojang.logging.LogUtils;
+import dev.aod.mcmcp.client.McmcpClientConfig;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.Container;
@@ -8,43 +9,85 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.slf4j.Logger;
 
 import java.util.function.Consumer;
 
-/** Lifecycle and reversible random-tick lease for the combined wheat E2E fixture. */
+/** Lifecycle and reversible acceleration leases for the combined wheat E2E fixture. */
 final class FixtureCombinedWheatScenario {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final FixtureCombinedWheatLease WALL_CLOCK_LEASE =
+            new FixtureCombinedWheatLease();
+    private static final FixtureRaysPerTickLease RAYS_PER_TICK_LEASE =
+            new FixtureRaysPerTickLease();
 
     private static FixtureSecurity.Context context;
     private static Object lastServerIdentity;
     private static Object lastWorldIdentity;
     private static State state = State.OFF;
     private static String stopReason;
+    private static State pendingTerminal;
+    private static String pendingReason;
 
     private FixtureCombinedWheatScenario() {
     }
 
-    static void arm(FixtureSecurity.Context authorized) {
+    static void arm(FixtureSecurity.Context authorized, Consumer<Component> output) {
         if (context != null || state == State.RUNNING || state == State.RESTORE_PENDING) {
             throw new IllegalStateException("combined wheat fixture was already active");
         }
+        FixtureRandomTicks.requireInactiveForCombinedWheat(authorized);
         context = authorized;
         lastServerIdentity = authorized.server();
         lastWorldIdentity = authorized.level();
         state = State.RUNNING;
         stopReason = null;
+        pendingTerminal = null;
+        pendingReason = null;
+        try {
+            WALL_CLOCK_LEASE.begin();
+            RAYS_PER_TICK_LEASE.begin(authorized.server(), authorized.level());
+            FixtureRandomTicks.accelerateCombinedWheat(authorized,
+                    component -> output.accept(Component.literal(
+                            "phase5.combined_wheat " + component.getString())));
+        } catch (RuntimeException exception) {
+            restoreAndFinish(State.ROLLED_BACK, "arm_failed");
+            throw exception;
+        }
     }
 
-    static void onServerTick(ServerTickEvent.Post event) {
+    static void onServerPreTick(ServerTickEvent.Pre event) {
         if (state != State.RUNNING && state != State.RESTORE_PENDING) {
             return;
         }
         if (context == null || event.getServer() != context.server()) {
-            state = State.ROLLED_BACK;
-            stopReason = "server_identity_changed";
-            context = null;
+            abandonAfterServerIdentityChange();
+            return;
+        }
+        if (state == State.RESTORE_PENDING) {
+            restoreAndFinish(
+                    pendingTerminal == null ? State.ROLLED_BACK : pendingTerminal,
+                    pendingReason);
+            return;
+        }
+        if (WALL_CLOCK_LEASE.expired()) {
+            restoreAndFinish(State.ROLLED_BACK, "lease_expired");
+            return;
+        }
+        FixtureSecurity.Decision decision = FixtureSecurity.reauthorize(context);
+        if (!decision.allowed()) {
+            restoreAndFinish(State.ROLLED_BACK, decision.rejection());
+        }
+    }
+
+    static void onServerTick(ServerTickEvent.Post event) {
+        if (state != State.RUNNING) {
+            return;
+        }
+        if (context == null || event.getServer() != context.server()) {
+            abandonAfterServerIdentityChange();
             return;
         }
 
@@ -58,13 +101,40 @@ final class FixtureCombinedWheatScenario {
         }
     }
 
-    static void onServerStopped(ServerStoppedEvent event) {
+    static void onServerStopping(ServerStoppingEvent event) {
         if (context != null && event.getServer() == context.server()) {
-            context = null;
-            state = State.OFF;
-            stopReason = null;
+            restoreAndFinish(State.ROLLED_BACK, "server_stopping");
         }
-        if (event.getServer() == lastServerIdentity) {
+    }
+
+    static void onServerStopped(ServerStoppedEvent event) {
+        if (RAYS_PER_TICK_LEASE.active()
+                && event.getServer() == RAYS_PER_TICK_LEASE.server()) {
+            try {
+                RAYS_PER_TICK_LEASE.restoreOwned();
+            } catch (RuntimeException exception) {
+                LOGGER.error(
+                        "MCMCP combined wheat fixture could not restore rays_per_tick after stop",
+                        exception);
+            }
+        }
+        if (context != null && event.getServer() == context.server()) {
+            WALL_CLOCK_LEASE.clear();
+            if (RAYS_PER_TICK_LEASE.active()
+                    || FixtureRandomTicks.combinedLeaseActiveFor(event.getServer())) {
+                state = State.RESTORE_PENDING;
+                stopReason = "acceleration_restore_failed";
+                pendingTerminal = State.ROLLED_BACK;
+                pendingReason = "server_stopped";
+            } else {
+                context = null;
+                state = State.OFF;
+                stopReason = null;
+                pendingTerminal = null;
+                pendingReason = null;
+            }
+        }
+        if (event.getServer() == lastServerIdentity && context == null) {
             lastServerIdentity = null;
             lastWorldIdentity = null;
         }
@@ -102,8 +172,13 @@ final class FixtureCombinedWheatScenario {
                 + " gate_open=" + (gate.hasProperty(BlockStateProperties.OPEN)
                         ? gate.getValue(BlockStateProperties.OPEN) : "unknown")
                 + " complete=" + progress.complete()
+                + " lease_remaining_seconds=" + remainingLeaseSeconds()
+                + " rays_per_tick=" + McmcpClientConfig.raysPerTick()
+                + " rays_saved=" + (RAYS_PER_TICK_LEASE.originalEffectiveRays() == null
+                        ? "none" : RAYS_PER_TICK_LEASE.originalEffectiveRays())
+                + " rays_target=" + FixtureRaysPerTickLease.ACCELERATED_RAYS_PER_TICK
                 + " stop_reason=" + (stopReason == null ? "none" : stopReason)));
-        FixtureRandomTicks.status(current, output);
+        FixtureRandomTicks.statusCombinedWheat(current, output);
     }
 
     static void rollback(FixtureSecurity.Context current, Consumer<Component> output) {
@@ -129,7 +204,7 @@ final class FixtureCombinedWheatScenario {
             restoreAndFinish(State.ROLLED_BACK, "fixture_replaced");
             if (context != null) {
                 throw new IllegalStateException(
-                        "combined wheat random tick lease could not be restored");
+                        "combined wheat acceleration leases could not be restored");
             }
         }
         if (current.server() == lastServerIdentity && current.level() == lastWorldIdentity) {
@@ -137,6 +212,9 @@ final class FixtureCombinedWheatScenario {
             lastWorldIdentity = null;
             state = State.OFF;
             stopReason = null;
+            pendingTerminal = null;
+            pendingReason = null;
+            WALL_CLOCK_LEASE.clear();
         }
     }
 
@@ -170,21 +248,65 @@ final class FixtureCombinedWheatScenario {
         if (owned == null) {
             return;
         }
+        String sanitizedReason = sanitize(reason);
+        RuntimeException restoreFailure = null;
+        String failureReason = null;
         try {
-            FixtureRandomTicks.restore(owned,
+            FixtureRandomTicks.restoreCombinedWheat(owned,
                     component -> LOGGER.info("MCMCP combined wheat fixture: {}",
                             component.getString()));
         } catch (RuntimeException exception) {
-            state = State.RESTORE_PENDING;
-            stopReason = "random_tick_restore_failed";
+            restoreFailure = exception;
+            failureReason = "random_tick_restore_failed";
             LOGGER.error("MCMCP combined wheat fixture could not restore random_tick_speed", exception);
+        }
+        try {
+            RAYS_PER_TICK_LEASE.restore(owned.server(), owned.level());
+        } catch (RuntimeException exception) {
+            if (restoreFailure == null) {
+                restoreFailure = exception;
+                failureReason = "rays_per_tick_restore_failed";
+            } else {
+                restoreFailure.addSuppressed(exception);
+                failureReason = "acceleration_restore_failed";
+            }
+            LOGGER.error("MCMCP combined wheat fixture could not restore rays_per_tick", exception);
+        }
+        if (restoreFailure != null) {
+            state = State.RESTORE_PENDING;
+            stopReason = failureReason;
+            pendingTerminal = terminal;
+            pendingReason = sanitizedReason;
             return;
         }
+        WALL_CLOCK_LEASE.clear();
         state = terminal;
-        stopReason = sanitize(reason);
+        stopReason = sanitizedReason;
+        pendingTerminal = null;
+        pendingReason = null;
         context = null;
         LOGGER.info("MCMCP combined wheat fixture ended: state={}, reason={}",
                 state.wireName, stopReason == null ? "none" : stopReason);
+    }
+
+    private static void abandonAfterServerIdentityChange() {
+        try {
+            RAYS_PER_TICK_LEASE.restoreOwned();
+        } catch (RuntimeException exception) {
+            LOGGER.error("MCMCP combined wheat fixture could not restore rays_per_tick", exception);
+        }
+        WALL_CLOCK_LEASE.clear();
+        state = State.RESTORE_PENDING;
+        stopReason = "server_identity_changed";
+        pendingTerminal = State.ROLLED_BACK;
+        pendingReason = "server_identity_changed";
+    }
+
+    private static String remainingLeaseSeconds() {
+        if (!WALL_CLOCK_LEASE.active()) {
+            return "none";
+        }
+        return Long.toString(Math.ceilDiv(WALL_CLOCK_LEASE.remainingMillis(), 1_000L));
     }
 
     private static String sanitize(String value) {

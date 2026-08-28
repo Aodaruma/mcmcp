@@ -62,6 +62,7 @@ final class FixtureArena {
         FixtureCombinedWheatScenario.rollbackForArenaReset(context);
         FixturePhase2Scenario.stop();
         FixturePhase3Scenario.stop(context);
+        FixturePhase4RouteBlocker.stop();
         ServerLevel level = context.level();
 
         // Every block write, including clearing, passes through the bounds-checked helper.

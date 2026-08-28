@@ -102,6 +102,9 @@ final class FixturePhase5Scenario {
             Consumer<Component> output) {
         if (mode == FixturePhase5Mode.IRON_FARM) {
             FixtureCombinedWheatScenario.rollbackForReplacement(context);
+            FixturePhase2Scenario.stop();
+            FixturePhase3Scenario.stop(context);
+            FixturePhase4RouteBlocker.stop();
             FixtureIronFarmScenario.prepare(context, output);
             return;
         }
@@ -112,9 +115,13 @@ final class FixturePhase5Scenario {
             return;
         }
 
+        FixtureCombinedWheatScenario.rollbackForReplacement(context);
+        if (mode == FixturePhase5Mode.COMBINED_WHEAT) {
+            FixtureRandomTicks.requireInactiveForCombinedWheat(context);
+        }
         FixturePhase2Scenario.stop();
         FixturePhase3Scenario.stop(context);
-        FixtureCombinedWheatScenario.rollbackForReplacement(context);
+        FixturePhase4RouteBlocker.stop();
         FixtureArena.requireInitialized(context.level());
         FixtureArena.resetPlayer(context.player());
         if (mode == FixturePhase5Mode.COMBINED_WHEAT) {
@@ -135,10 +142,7 @@ final class FixturePhase5Scenario {
         teleport(context, pose(mode));
 
         if (mode == FixturePhase5Mode.COMBINED_WHEAT) {
-            FixtureRandomTicks.accelerate(context,
-                    component -> output.accept(Component.literal(
-                            "phase5.combined_wheat " + component.getString())));
-            FixtureCombinedWheatScenario.arm(context);
+            FixtureCombinedWheatScenario.arm(context, output);
             output.accept(Component.literal("phase5.mode=combined_wheat"
                     + " chest=" + position(COMBINED_SUPPLY_CHEST)
                     + " gate=" + position(COMBINED_FARM_GATE)

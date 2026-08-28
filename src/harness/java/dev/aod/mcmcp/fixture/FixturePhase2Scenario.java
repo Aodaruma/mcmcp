@@ -26,6 +26,8 @@ final class FixturePhase2Scenario {
     }
 
     static void prepare(FixtureSecurity.Context authorized, Mode requestedMode) {
+        FixtureCombinedWheatScenario.rollbackForReplacement(authorized);
+        FixturePhase4RouteBlocker.stop();
         stop();
         FixtureArena.preparePhase2(authorized, requestedMode == Mode.SLOW_TARGET);
         context = authorized;
