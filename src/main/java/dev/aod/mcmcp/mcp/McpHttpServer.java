@@ -46,7 +46,10 @@ public final class McpHttpServer implements AutoCloseable {
     private static final String PROTOCOL_META = "io.modelcontextprotocol/protocolVersion";
     private static final String CLIENT_CAPABILITIES_META = "io.modelcontextprotocol/clientCapabilities";
     private static final String CLIENT_INFO_META = "io.modelcontextprotocol/clientInfo";
-    private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
+    private static final Gson GSON = new GsonBuilder()
+            .disableHtmlEscaping()
+            .serializeNulls()
+            .create();
     private static final int MAX_HEADER_COUNT = 64;
     private static final int MAX_HEADER_CHARS = 16_384;
     private static final Set<String> REQUEST_KEYS = Set.of("jsonrpc", "id", "method", "params");

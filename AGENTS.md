@@ -3,6 +3,7 @@
 - 文書とユーザー向け表示は日本語を基本とする。
 - 対象をMinecraft 26.2、NeoForge 26.2.0.59、Java 25へ固定し、互換性確認なしに更新しない。
 - `docs/Minecraft_MCP_NeoForge_設計仕様書.md`と`docs/MCMCP_MCP_Tool_Catalog.json`を規範とする。Tool catalogを公開surfaceの正本とし、runtime、`tools/list`、schema test、固定hashを常に同期する。
+- Tool catalogでrequiredかつnullableなfieldは、値がない場合もHTTP `structuredContent`へ明示的な`null`として残し、transport serializationで省略しない。
 - MCP serverとgameplay runtimeはMOD内で完結するphysical client専用とし、Minecraft server側MOD、capability handshake、独自payload、server側の許可・capability確認を要求しない。
 - MCPはMinecraft JVM内で127.0.0.1だけにbindし、Origin検証とBearer認証を無効化しない。
 - LLMへraw key、raw mouse、任意packet、任意command、任意コード実行を公開しない。

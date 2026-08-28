@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.mcp;
 
+import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.AfterEach;
@@ -73,6 +74,7 @@ class McpHttpServerTest {
         assertThat(callResult.get("resultType").getAsString()).isEqualTo("complete");
         assertThat(callResult.get("isError").getAsBoolean()).isFalse();
         assertThat(callResult.has("structuredContent")).isTrue();
+        assertRequiredStateNullsOnWire(call, callResult);
         assertThat(callResult.getAsJsonArray("content")).hasSize(1);
         assertThat(call.headers().firstValue("Content-Type").orElseThrow())
                 .startsWith("application/json");
@@ -143,6 +145,7 @@ class McpHttpServerTest {
         assertThat(call.statusCode()).isEqualTo(200);
         assertThat(callResult.get("isError").getAsBoolean()).isFalse();
         assertThat(callResult.has("structuredContent")).isTrue();
+        assertRequiredStateNullsOnWire(call, callResult);
         assertThat(callResult.has("resultType")).isFalse();
         assertThat(callResult.has("_meta")).isFalse();
         assertThat(call.headers().firstValue("Mcp-Session-Id")).isEmpty();
@@ -480,6 +483,17 @@ class McpHttpServerTest {
 
     private static JsonObject json(HttpResponse<String> response) {
         return JsonParser.parseString(response.body()).getAsJsonObject();
+    }
+
+    private static void assertRequiredStateNullsOnWire(
+            HttpResponse<String> response, JsonObject callResult) {
+        JsonObject state = callResult.getAsJsonObject("structuredContent");
+        assertThat(state.getAsJsonObject("control").get("ready_expires_at"))
+                .isEqualTo(JsonNull.INSTANCE);
+        assertThat(state.get("action")).isEqualTo(JsonNull.INSTANCE);
+        assertThat(response.body())
+                .contains("\"ready_expires_at\":null")
+                .contains("\"action\":null");
     }
 
     private String rawRequestWithHost(String host) throws Exception {
