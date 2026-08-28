@@ -20,6 +20,7 @@
 - ActionのHTTP配送確認はresponse受領のackだけを扱い、変動するpose・観測・経路を再admissionしない。安全preflightは予約直前と実行開始直前に維持し、配送失敗とworld変化を混同しない。
 - test fixtureはdev-onlyの分離JARとし、command実行能力をsingleplayer、integrated server、loopback認証、固定test profileだけへ限定する。release JARへ含めず、MCMCPを自動armしない。
 - fixtureの再準備は冪等にし、前回runのcontainer内容物やworkspace内の落下itemを開始inventoryへ混入させない。block置換は作物等のitem entityを同期生成し得るため、combined wheatはlayout・container設定後にもworkspaceを最終purgeする。評価T0前に空inventory・所定のchest内容・落下itemなしを確認する。
+- ユーザーがworld内の検証場所を用意または指定している場合、無関係な固定座標へfixtureを新設・teleportして代替しない。固定arenaを使う回帰試験とユーザー環境での受入試験を明示的に分け、場所・初期化範囲・復旧方法をT0前に確定する。
 - fresh評価fixtureのwall-clock leaseは evaluator timeoutにarmからT0までのpreflight・pause・事後確認余白を加えた時間より長くし、timeout変更時はlease定数・境界test・READMEを同期する。有界・非更新と終了・置換時のrestoreは維持する。
 - block破壊を伴う受入課題は、破壊数ではなく落下物の物理pickupとinventory増加を成功条件に含める。観測済み落下物だけを既知の安全経路で回収し、未知領域や危険領域へ追跡しない。
 - item回収は1 visual scan周期以内のfresh witnessを移動中も再確認し、終点で実player pickup AABBとの交差を必須にする。成功は各node occurrence開始時からの対象item絶対個数増加だけで判定し、replanでbaselineを上書きせず、40 tick pickup delayを包含する有界確認時間を持つ。
@@ -35,6 +36,9 @@
 - 完成目標は、画面・座標・過去の操作contextをLLMへ渡さず、公開MCP Toolだけで課題を完遂するMCP-only運用とする。`computer-use`はT0前のMinecraft起動、対象worldへのlogin、MCPの手動ONだけに使用できる。
 - fresh評価のproduction promptは「チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか」とbyte-for-byte同一にし、prefix、suffix、追加contextを付けない。
 - T0後からrun終了まではoperatorによる画面観測、Minecraft/MCP操作、追加入力を禁止し、モデルのMCMCP Tool callだけを機械的に転送する。
+- production promptそのものの達成と、fixtureの再植付け・原状整理を含む強いcompletion gateは別々に判定し、両方の事後条件を実験ノートへ残す。promptにない後片付けを暗黙の不合格理由にせず、反対にcore task成功だけでfixture全完了を主張しない。
+- fresh評価が1回成功しても、deadline余裕が60秒未満、recoverable failureからの反復回復、または多数の単品Actionに依存したrunは「機能PASS」であってproduction安定性の完了とは扱わない。同一prompt・同一非干渉条件の連続再現と時間余裕を別途確認する。
+- fixture oracle、Minecraft画面、log、artifactの手動事後確認はrunnerがturn terminalを記録した後だけ行い、T0後の評価区間へ遡及する操作と混在させない。
 - direct MCP bridgeは、effective configでMCMCPが未登録（`config.mcp_servers`が0件）と確認できた評価runだけのfallbackとし、production runtimeや通常接続方式にしない。
 - 評価bridgeはMCMCPのrate limit（20 requests/s、burst 40）を越えないよう全requestを単調時計でpacingし、HTTP 429を一般transport障害と混同しない。失敗artifactには固定分類・診断code・HTTP statusだけを残し、response bodyや例外messageを保存しない。
 - fresh評価で同じschema値・入力上限・再取得手順の推測失敗が反復した場合、評価promptへ答えを足さず、公開Tool descriptionとcatalog由来の非反射診断だけで正解を簡潔に発見できるよう改善する。
