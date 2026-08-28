@@ -49,7 +49,7 @@ preflightとapp-server thread作成が成功した後、runnerがT0を記録し�
 
 ## app-server isolation と hardening
 
-runnerはartifactとは別の一時rootへ、credential/config fileを持たない空の`CODEX_HOME`と空のcwdを毎run作る。cwdからfilesystem rootまで`.codex/config.toml`がないこと、isolated pathと祖先にreparse point/junction/symlinkがないことを確認する。削除時もexact一時rootとreparse point不在を再確認し、child終了をbounded waitで確認できた場合だけ削除する。artifact directoryはrepositoryと重ならないrepo外の新規空directoryに限定する。
+runnerはartifactとは別の、ユーザーhome外にある`CommonDocuments/mcmcp-eval-tmp`配下へ、credential/config fileを持たない空の`CODEX_HOME`と空のcwdを毎run作る。cwdからfilesystem rootまで`.codex/config.toml`がないこと、isolated pathと祖先にreparse point/junction/symlinkがないことを確認する。削除時もexact一時rootとreparse point不在を再確認し、child終了をbounded waitで確認できた場合だけ削除する。artifact directoryはrepositoryと重ならないrepo外の新規空directoryに限定する。
 
 app-server childは次で固定する。
 

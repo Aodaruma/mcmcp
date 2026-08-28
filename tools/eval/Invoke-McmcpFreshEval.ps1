@@ -1337,7 +1337,7 @@ $auditStderrPath = Join-Path $artifactPath 'audit-stderr.log'
 $manifestPath = Join-Path $artifactPath 'manifest.json'
 $auditScript = Join-Path $PSScriptRoot 'Test-McmcpEvalTrace.ps1'
 
-$isolatedBase = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'mcmcp-eval-tmp'
+$isolatedBase = Join-Path ([Environment]::GetFolderPath('CommonDocuments')) 'mcmcp-eval-tmp'
 $isolatedRoot = $null
 $codexHome = $null
 $cleanCwd = $null
