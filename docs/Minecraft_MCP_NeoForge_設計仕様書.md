@@ -322,6 +322,8 @@ Alt+TabなどOSが処理する操作や他アプリの入力は対象外であ�
 
 実装はNeoForge 26.2の`InputEvent.MouseButton.Pre`、`MouseScrollingEvent`、`InteractionKeyMappingTriggered`、`ScreenEvent`、`MovementInputUpdateEvent`を優先する。`InputEvent.Key`は26.2でcancellableではないため、Client testで完全隔離できないことを確認した場合は、`KeyboardHandler#keyPress`の入口だけに狭いcancellable Mixinを置く。広範なMixin、Access Transformer、OS global hookは使わない。物理mouse turnはAGENT中だけ感度を0へ置き換え、synthetic camera rotationは別の所有経路から適用する。
 
+入力隔離中はVanillaの物理`KeyMapping`をreleaseする。隔離解除時はAgent所有入力がないことの確認だけで完了とせず、`active -> inactive`のfalling edgeで`KeyMapping#setAll`により現在の物理keyboard状態を1回再同期する。runtime pre-tickの前後で隔離状態を照合し、同じclient tick内でevaluation-turn leaseが取得・終了した場合もreleaseまたは復帰を次のfocus / mouse-grab変化へ持ち越さない。隔離が継続するtickでは物理mappingをreleaseしたまま維持し、EscのVanilla pass-through契約は変更しない。
+
 Agent所有の移動は物理`KeyMapping#setDown`として注入せず、各non-paused ClientTickでVanillaの物理入力収集後に、`MovementInputUpdateEvent`から最終movement inputへ`AgentInputState`を適用する。cameraはgame thread上の専用ownerから角速度制限付きdeltaを適用する。これにより、非pauseのchat、inventory、multiplayer pause menuが物理key stateをreleaseしてもAgent入力は失われない。対象版26.2.0.59でevent後に入力が上書きされる場合に限り、最終input更新点1か所へのcancellable Mixinへ置き換え、両経路を併存させない。
 
 Vanillaがsingleplayerを実際にpauseしている間はActionをcancelせず、synthetic入力をupにして実行tickと`max_duration_ms`の計測を凍結する。simulation再開後、world revisionと安全条件を再検証してから続ける。multiplayerなどsimulationが継続しているScreenでは通常どおりAgentを進める。
