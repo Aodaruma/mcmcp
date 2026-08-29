@@ -17,6 +17,14 @@ public record AutomationUiSnapshot(
             boolean worldReady,
             LocalArmingState.Snapshot control,
             String faultCode) {
+        return resolve(worldReady, control, false, faultCode);
+    }
+
+    public static AutomationUiSnapshot resolve(
+            boolean worldReady,
+            LocalArmingState.Snapshot control,
+            boolean evaluationActive,
+            String faultCode) {
         Objects.requireNonNull(control, "control");
         if (faultCode != null) {
             return new AutomationUiSnapshot(State.FAULT, worldReady, faultCode);
@@ -25,7 +33,9 @@ public record AutomationUiSnapshot(
             case OFF -> new AutomationUiSnapshot(
                     State.OFF, worldReady, control.lastLockReason());
             case READY -> new AutomationUiSnapshot(
-                    State.READY, worldReady, null);
+                    evaluationActive ? State.EVALUATING : State.READY,
+                    worldReady,
+                    null);
             case AGENT -> new AutomationUiSnapshot(State.AGENT, worldReady, null);
             case RECOVERING -> new AutomationUiSnapshot(State.RECOVERING, worldReady, null);
         };
@@ -34,6 +44,7 @@ public record AutomationUiSnapshot(
     public enum State {
         OFF,
         READY,
+        EVALUATING,
         AGENT,
         RECOVERING,
         FAULT

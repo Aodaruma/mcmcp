@@ -43,6 +43,7 @@ import dev.aod.mcmcp.McmcpMod;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.client.McmcpClientConfig;
 import dev.aod.mcmcp.client.MultiplayerAllowlist;
+import dev.aod.mcmcp.mcp.EvaluationTurnControl;
 import dev.aod.mcmcp.mcp.McpRuntimePort;
 import dev.aod.mcmcp.mcp.McpToolSchemas;
 import dev.aod.mcmcp.mcp.RuntimeCallContext;
@@ -54,6 +55,7 @@ import dev.aod.mcmcp.observation.BlockStateView;
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.observation.WorldMemory;
+import dev.aod.mcmcp.safety.EvaluationTurnGuard;
 import dev.aod.mcmcp.safety.InputReleaseController;
 import dev.aod.mcmcp.safety.LocalArmingState;
 import dev.aod.mcmcp.routine.ActionBounds;
@@ -155,12 +157,13 @@ import java.util.function.Supplier;
 import java.util.function.ToLongFunction;
 
 /** Client runtime and the sole implementation of the MCP-to-Minecraft boundary. */
-public final class McmcpRuntime implements McpRuntimePort {
+public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl {
     static final int MAX_MUTATION_AIM_FAILURES = 3;
     static final int MAX_ACTION_INPUT_RELEASE_ATTEMPTS = 3;
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private static final String MCP_PROTOCOL_VERSION = "2026-07-28";
     private static final Duration FINALIZATION_RESERVE = Duration.ofSeconds(5);
+    private static final Duration EVALUATION_CONTROL_DISPATCH_TIMEOUT = Duration.ofSeconds(1);
     private static final long ACTION_DELIVERY_CONFIRM_NANOS = Duration.ofSeconds(5).toNanos();
     private static final double MAX_SAFE_STAY_HORIZONTAL_SPEED_SQUARED = 0.01;
     static final double CROP_WAIT_OBSERVER_EPSILON_BLOCKS =
@@ -189,6 +192,10 @@ public final class McmcpRuntime implements McpRuntimePort {
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
     private final LocalArmingState arming = new LocalArmingState();
     private final InputReleaseController inputRelease = new InputReleaseController();
+    private final EvaluationTurnGuard evaluationTurns = new EvaluationTurnGuard();
+    private final Object evaluationTerminalGate = new Object();
+    /** Guarded by {@link #evaluationTerminalGate}; never reused during this runtime lifetime. */
+    private long evaluationFenceRevision;
     private final MinecraftStationaryBreakPort stationaryBreakPort;
     private final ClientReconciliationSignals reconciliationSignals;
     private final MinecraftSemanticActionPort semanticActionPort;
@@ -205,6 +212,7 @@ public final class McmcpRuntime implements McpRuntimePort {
     private RoutineWallClockDeadline activeRoutineDeadline;
     private AgentExecution agentExecution;
     private boolean pendingAgentInputRelease;
+    private PendingEvaluationTerminal pendingEvaluationTerminal;
     private PendingAgentTerminal pendingAgentTerminal;
     private PendingAgentAdmission pendingAgentAdmission;
     private OmnidirectionalObserver agentObserver;
@@ -294,6 +302,8 @@ public final class McmcpRuntime implements McpRuntimePort {
 
     public void onLoggingIn(Minecraft minecraft) {
         assertClientThread(minecraft);
+        terminateActiveEvaluationOnClient(
+                minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
         stopForLifecycle(minecraft, "world_join");
         routines.clearSession("world_join");
@@ -315,6 +325,8 @@ public final class McmcpRuntime implements McpRuntimePort {
 
     public void onLevelUnload(Minecraft minecraft) {
         assertClientThread(minecraft);
+        terminateActiveEvaluationOnClient(
+                minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
         stopForLifecycle(minecraft, "level_or_dimension_change");
         routines.clearSession("level_or_dimension_change");
@@ -338,6 +350,8 @@ public final class McmcpRuntime implements McpRuntimePort {
 
     public void onLoggingOut(Minecraft minecraft) {
         assertClientThread(minecraft);
+        terminateActiveEvaluationOnClient(
+                minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
         stopForLifecycle(minecraft, "disconnect");
         routines.clearSession("disconnect");
@@ -361,6 +375,8 @@ public final class McmcpRuntime implements McpRuntimePort {
 
     public void onPlayerClone(Minecraft minecraft) {
         assertClientThread(minecraft);
+        terminateActiveEvaluationOnClient(
+                minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
         stopForLifecycle(minecraft, "player_respawn");
         routines.clearSession("player_respawn");
@@ -416,6 +432,15 @@ public final class McmcpRuntime implements McpRuntimePort {
         clientThread = Thread.currentThread();
         if (shutdown) {
             return;
+        }
+        finishPendingEvaluationTerminalOnClient(minecraft);
+        terminateInvalidEvaluationLeaseOnClient(minecraft);
+        var evaluationSession = sessions.snapshot();
+        if (evaluationTurns.snapshot(evaluationSession.worldSessionId()).active()
+                && evaluationSession.worldReady()
+                && !localControlAvailable(minecraft, evaluationSession)) {
+            terminateActiveEvaluationOnClient(
+                    minecraft, EvaluationTurnControl.ReleaseReason.PLAYER_UNAVAILABLE);
         }
         if (!retryPendingAgentInputRelease(minecraft)) {
             publishSession();
@@ -490,9 +515,14 @@ public final class McmcpRuntime implements McpRuntimePort {
 
     public void emergencyStopFromLocalKey(Minecraft minecraft) {
         assertClientThread(minecraft);
-        runPriorityStop(
-                inbox::requestLocalEmergencyStop,
-                () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
+        if (anyActive()) {
+            terminateActiveEvaluationOnClient(
+                    minecraft, EvaluationTurnControl.ReleaseReason.LOCAL_ESCAPE);
+        } else {
+            runPriorityStop(
+                    inbox::requestLocalEmergencyStop,
+                    () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
+        }
         goalContinuation.clear();
         overlay(minecraft, "MCMCP: 現在の操作を緊急停止（MCP操作はON）");
     }
@@ -504,18 +534,23 @@ public final class McmcpRuntime implements McpRuntimePort {
         return AutomationUiSnapshot.resolve(
                 localControlAvailable(Minecraft.getInstance(), session),
                 lock,
+                evaluationTurns.snapshot(session.worldSessionId()).active(),
                 endpointFaultCode);
     }
 
     public boolean inputIsolationActive() {
         var session = sessions.snapshot();
-        return arming.snapshot(session.worldSessionId()).inputIsolationActive();
+        return arming.snapshot(session.worldSessionId()).inputIsolationActive()
+                || evaluationTurns.snapshot(session.worldSessionId()).active();
     }
 
     /** May be called by the endpoint lifecycle worker; client-thread cleanup uses the priority lane. */
     public void reportEndpointFault(String code) {
         endpointFaultCode = sanitizeLocalCode(code);
         inbox.requestEmergencyStop("endpoint_fault");
+        evaluationTurns.snapshot(publishedSession.worldSessionId()).activeLease()
+                .ifPresent(lease -> requestEvaluationReleaseFromAnyThread(
+                        lease.leaseId(), EvaluationTurnControl.ReleaseReason.ENDPOINT_FAULT));
     }
 
     public void clearEndpointFault() {
@@ -525,9 +560,15 @@ public final class McmcpRuntime implements McpRuntimePort {
     /** Uses the same priority lane as Esc so a UI stop releases every owned input inline. */
     public void disableAutomationFromUi(Minecraft minecraft) {
         assertClientThread(minecraft);
-        runPriorityStop(
-                inbox::requestLocalDisable,
-                () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
+        if (anyActive()) {
+            terminateActiveEvaluationOnClient(
+                    minecraft, EvaluationTurnControl.ReleaseReason.LOCAL_UI_DISABLED);
+        } else {
+            runPriorityStop(
+                    inbox::requestLocalDisable,
+                    () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
+        }
+        arming.lock("local_ui_disabled");
         goalContinuation.clear();
         overlay(minecraft, "MCMCP: MCP自動操作を無効にしました");
     }
@@ -686,6 +727,8 @@ public final class McmcpRuntime implements McpRuntimePort {
         if (shutdown) {
             return;
         }
+        terminateActiveEvaluationOnClient(
+                minecraft, EvaluationTurnControl.ReleaseReason.CLIENT_SHUTDOWN);
         shutdown = true;
         clearAgentSessionState();
         sessions.stopping();
@@ -709,16 +752,474 @@ public final class McmcpRuntime implements McpRuntimePort {
     }
 
     @Override
+    public CompletionStage<EvaluationTurnControl.LeaseReceipt> acquire(
+            EvaluationTurnControl.AcquireRequest request) {
+        Objects.requireNonNull(request, "request");
+        if (shutdown) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("runtime is stopping"));
+        }
+        var runner = ProcessHandle.of(request.runnerProcessId())
+                .filter(ProcessHandle::isAlive)
+                .orElse(null);
+        if (runner == null) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("evaluation runner is not alive"));
+        }
+        var started = runner.info().startInstant();
+        if (started.isEmpty()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("evaluation runner start identity is unavailable"));
+        }
+        var identity = new EvaluationTurnGuard.RunnerIdentity(
+                runner.pid(), started);
+        var fence = publishedSession;
+        long deadline = RuntimeCallContext.deadlineAfter(
+                System.nanoTime(), EVALUATION_CONTROL_DISPATCH_TIMEOUT.toNanos());
+        var delivered = new CompletableFuture<EvaluationTurnControl.LeaseReceipt>();
+        java.util.function.Consumer<EvaluationTurnControl.LeaseReceipt> releaseAbandoned =
+                receipt -> {
+                    if (receipt != null
+                            && receipt.state() == EvaluationTurnControl.LeaseState.ACTIVE) {
+                        requestEvaluationReleaseFromAnyThread(
+                                receipt.leaseId(),
+                                EvaluationTurnControl.ReleaseReason.ACQUIRE_ABANDONED);
+                    }
+                };
+        var submitted = inbox.submitControl(
+                "evaluation_turn_acquire",
+                fence.generation(),
+                deadline,
+                () -> acquireEvaluationTurnOnClient(request, runner, identity),
+                delivered::isDone,
+                releaseAbandoned);
+        submitted.whenComplete((receipt, failure) -> {
+            if (failure != null) {
+                delivered.completeExceptionally(failure);
+                return;
+            }
+            if (!delivered.complete(receipt)) {
+                releaseAbandoned.accept(receipt);
+            }
+        });
+        return delivered;
+    }
+
+    private EvaluationTurnControl.LeaseReceipt acquireEvaluationTurnOnClient(
+            EvaluationTurnControl.AcquireRequest request,
+            ProcessHandle runner,
+            EvaluationTurnGuard.RunnerIdentity identity) {
+        var minecraft = Minecraft.getInstance();
+        assertClientThread(minecraft);
+        return withEvaluationTurnGate(
+                evaluationTerminalGate,
+                () -> acquireEvaluationTurnWithGateHeld(
+                        minecraft, request, runner, identity));
+    }
+
+    private EvaluationTurnControl.LeaseReceipt acquireEvaluationTurnWithGateHeld(
+            Minecraft minecraft,
+            EvaluationTurnControl.AcquireRequest request,
+            ProcessHandle runner,
+            EvaluationTurnGuard.RunnerIdentity identity) {
+        // This entire admission is serialized with ABSENT/ACTIVE call commits and terminal
+        // claims. Recheck every mutable condition after waiting for that gate.
+        var session = sessions.snapshot();
+        var control = arming.snapshot(session.worldSessionId());
+        if (shutdown
+                || !runner.isAlive()
+                || !identity.matches(runner)
+                || !localControlAvailable(minecraft, session)
+                || paused
+                || minecraft.isPaused()
+                || endpointFaultCode != null
+                || control.mode() != LocalArmingState.Mode.READY
+                || automationActivityPending()
+                || evaluationTurns.snapshot(session.worldSessionId()).active()) {
+            throw new IllegalStateException("evaluation turn admission is not ready");
+        }
+        if (!boundedActionInputRelease(() -> releaseAllAndConfirmNoInputOwner(minecraft))) {
+            arming.lock("input_release_failed");
+            throw new IllegalStateException("evaluation input preflight release failed");
+        }
+        var lease = evaluationTurns.tryAcquire(
+                        Objects.requireNonNull(session.worldSessionId(), "worldSessionId"),
+                        request.leaseId(),
+                        identity,
+                        request.maximumDuration())
+                .orElseThrow(() -> new IllegalStateException("evaluation lease is already active"));
+        evaluationFenceRevision = Math.incrementExact(evaluationFenceRevision);
+        try {
+            runner.onExit().thenRun(() -> requestEvaluationReleaseFromAnyThread(
+                    lease.leaseId(), EvaluationTurnControl.ReleaseReason.RUNNER_PROCESS_EXITED));
+        } catch (RuntimeException | LinkageError failure) {
+            terminateActiveEvaluationOnClient(
+                    minecraft, EvaluationTurnControl.ReleaseReason.RUNNER_PROCESS_EXITED);
+            throw new IllegalStateException("evaluation runner cannot be monitored", failure);
+        }
+        if (!runner.isAlive() || !identity.matches(runner)) {
+            terminateActiveEvaluationOnClient(
+                    minecraft, EvaluationTurnControl.ReleaseReason.RUNNER_PROCESS_EXITED);
+            throw new IllegalStateException("evaluation runner exited during admission");
+        }
+        return new EvaluationTurnControl.LeaseReceipt(
+                lease.leaseId(),
+                EvaluationTurnControl.LeaseState.ACTIVE,
+                null,
+                false,
+                true,
+                true,
+                true);
+    }
+
+    @Override
+    public CompletionStage<EvaluationTurnControl.LeaseReceipt> await(UUID leaseId) {
+        Objects.requireNonNull(leaseId, "leaseId");
+        var snapshot = evaluationTurns.snapshot(publishedSession.worldSessionId());
+        if (snapshot.activeLease().filter(lease -> lease.leaseId().equals(leaseId)).isPresent()) {
+            return evaluationTurns.awaitTerminal(snapshot.activeLease().orElseThrow())
+                    .thenApply(McmcpRuntime::evaluationReceipt);
+        }
+        if (snapshot.previousTerminal()
+                .filter(terminal -> terminal.lease().leaseId().equals(leaseId)).isPresent()) {
+            return CompletableFuture.completedFuture(evaluationReceipt(
+                    snapshot.previousTerminal().orElseThrow()));
+        }
+        return CompletableFuture.failedFuture(
+                new IllegalArgumentException("unknown evaluation lease"));
+    }
+
+    @Override
+    public CompletionStage<EvaluationTurnControl.LeaseReceipt> release(
+            UUID leaseId,
+            EvaluationTurnControl.ReleaseReason reason) {
+        Objects.requireNonNull(leaseId, "leaseId");
+        Objects.requireNonNull(reason, "reason");
+        final EvaluationTerminalClaim claim;
+        try {
+            claim = claimEvaluationTerminal(leaseId, reason);
+        } catch (RuntimeException failure) {
+            return CompletableFuture.failedFuture(failure);
+        }
+        if (claim.completedReceipt() != null) {
+            return CompletableFuture.completedFuture(claim.completedReceipt());
+        }
+        if (!claim.owner()) {
+            return claim.pending().completion.copy();
+        }
+
+        var fence = publishedSession;
+        long deadline = RuntimeCallContext.deadlineAfter(
+                System.nanoTime(), EVALUATION_CONTROL_DISPATCH_TIMEOUT.toNanos());
+        var submitted = inbox.submitControl(
+                "evaluation_turn_release",
+                fence.generation(),
+                deadline,
+                () -> terminateEvaluationLeaseOnClient(
+                        Minecraft.getInstance(), claim.pending()));
+        submitted.whenComplete((receipt, failure) -> {
+            if (failure != null) {
+                // Claiming the terminal intent is the ownership hand-off. Queue invalidation
+                // cannot publish failure or discard that intent; pre-tick/lifecycle cleanup
+                // keeps retrying while the guard remains physically isolating input.
+                return;
+            } else if (receipt != null) {
+                completePendingEvaluationTerminal(claim.pending(), receipt);
+            }
+        });
+        return claim.pending().completion.copy();
+    }
+
+    @Override
+    public boolean active(UUID leaseId) {
+        return leaseId != null && fenceSnapshot().accepts(leaseId);
+    }
+
+    @Override
+    public boolean anyActive() {
+        return fenceSnapshot().isolationActive();
+    }
+
+    @Override
+    public EvaluationTurnControl.FenceSnapshot fenceSnapshot() {
+        synchronized (evaluationTerminalGate) {
+            var activeLease = evaluationTurns.snapshot(publishedSession.worldSessionId())
+                    .activeLease()
+                    .orElse(null);
+            UUID acceptedLeaseId = activeLease != null && pendingEvaluationTerminal == null
+                    ? activeLease.leaseId() : null;
+            return new EvaluationTurnControl.FenceSnapshot(
+                    evaluationFenceRevision,
+                    activeLease != null,
+                    acceptedLeaseId);
+        }
+    }
+
+    private EvaluationTerminalClaim claimEvaluationTerminal(
+            UUID leaseId,
+            EvaluationTurnControl.ReleaseReason reason) {
+        synchronized (evaluationTerminalGate) {
+            var snapshot = evaluationTurns.snapshot(publishedSession.worldSessionId());
+            var activeLease = snapshot.activeLease().orElse(null);
+            if (activeLease == null) {
+                var terminal = snapshot.previousTerminal()
+                        .filter(value -> value.lease().leaseId().equals(leaseId))
+                        .orElseThrow(() -> new IllegalArgumentException(
+                                "unknown evaluation lease"));
+                return new EvaluationTerminalClaim(
+                        null, false, evaluationReceipt(terminal));
+            }
+            if (!activeLease.leaseId().equals(leaseId)) {
+                throw new IllegalArgumentException("unknown evaluation lease");
+            }
+            if (pendingEvaluationTerminal != null) {
+                if (!pendingEvaluationTerminal.lease.equals(activeLease)) {
+                    throw new IllegalStateException(
+                            "evaluation terminal intent belongs to another lease");
+                }
+                return new EvaluationTerminalClaim(
+                        pendingEvaluationTerminal, false, null);
+            }
+            var pending = new PendingEvaluationTerminal(activeLease, reason);
+            pendingEvaluationTerminal = pending;
+            evaluationFenceRevision = Math.incrementExact(evaluationFenceRevision);
+            return new EvaluationTerminalClaim(pending, true, null);
+        }
+    }
+
+    private void requestEvaluationReleaseFromAnyThread(
+            UUID leaseId,
+            EvaluationTurnControl.ReleaseReason reason) {
+        release(leaseId, reason).whenComplete((ignored, failure) -> {
+            if (failure != null && active(leaseId)) {
+                McmcpMod.LOGGER.warn(
+                        "MCMCP evaluation lease release could not reach the client lane: {}",
+                        reason.wireName());
+            }
+        });
+    }
+
+    private EvaluationTurnControl.LeaseReceipt terminateEvaluationLeaseOnClient(
+            Minecraft minecraft,
+            PendingEvaluationTerminal pending) {
+        assertClientThread(minecraft);
+        if (pending.completion.isDone()) {
+            return pending.completion.join();
+        }
+        CompletableFuture<ClientCommandInbox.StopReceipt> stop = switch (pending.reason) {
+            case LOCAL_ESCAPE -> inbox.requestLocalEmergencyStop();
+            case LOCAL_UI_DISABLED -> inbox.requestLocalDisable();
+            default -> inbox.requestEmergencyStop("evaluation_" + pending.reason.wireName());
+        };
+        inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
+        ClientCommandInbox.StopReceipt stopReceipt;
+        try {
+            stopReceipt = stop.join();
+        } catch (RuntimeException failure) {
+            stopReceipt = null;
+        }
+        boolean inputsReleased = stopReceipt != null && stopReceipt.inputsReleased();
+        boolean inputOwnerNone = stopReceipt != null && stopReceipt.inputOwnerNone();
+        boolean allActionsTerminal = inputsReleased
+                && inputOwnerNone
+                && evaluationActionsTerminal();
+        var releasableReason = evaluationTerminalReasonIfSafe(
+                pending.reason, inputsReleased, inputOwnerNone, allActionsTerminal);
+        if (releasableReason.isEmpty()) {
+            arming.lock(EvaluationTurnControl.ReleaseReason.INPUT_RELEASE_FAILED.wireName());
+            return null;
+        }
+        var terminalReason = releasableReason.orElseThrow();
+        if (locksLocalArming(terminalReason)) {
+            arming.lock(terminalReason.wireName());
+        }
+        boolean terminalized = terminalReason == EvaluationTurnControl.ReleaseReason.TURN_COMPLETED
+                ? evaluationTurns.release(pending.lease, terminalReason.wireName())
+                : evaluationTurns.revoke(pending.lease, terminalReason.wireName());
+        EvaluationTurnControl.LeaseReceipt receipt;
+        if (terminalized) {
+            receipt = new EvaluationTurnControl.LeaseReceipt(
+                    pending.lease.leaseId(),
+                    EvaluationTurnControl.LeaseState.RELEASED,
+                    terminalReason.wireName(),
+                    true,
+                    true,
+                    true,
+                    true);
+        } else {
+            receipt = evaluationTurns.snapshot(publishedSession.worldSessionId())
+                    .previousTerminal()
+                    .filter(terminal -> terminal.lease().leaseId()
+                            .equals(pending.lease.leaseId()))
+                    .map(McmcpRuntime::evaluationReceipt)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "evaluation terminal state was not retained"));
+        }
+        completePendingEvaluationTerminal(pending, receipt);
+        return receipt;
+    }
+
+    private boolean evaluationActionsTerminal() {
+        return agentActions.active().isEmpty()
+                && routines.activeRoutineId().isEmpty()
+                && pendingAgentTerminal == null
+                && !pendingAgentInputRelease
+                && agentExecution == null
+                && pendingAgentAdmission == null
+                && !finalizationRetries.hasPending()
+                && voiceRoutineId == null
+                && !inbox.hasPendingCommand("start_routine")
+                && !inbox.hasPendingCommand("agent_start_action");
+    }
+
+    static Optional<EvaluationTurnControl.ReleaseReason> evaluationTerminalReasonIfSafe(
+            EvaluationTurnControl.ReleaseReason firstIntent,
+            boolean inputsReleased,
+            boolean inputOwnerNone,
+            boolean allActionsTerminal) {
+        Objects.requireNonNull(firstIntent, "firstIntent");
+        return inputsReleased && inputOwnerNone && allActionsTerminal
+                ? Optional.of(firstIntent)
+                : Optional.empty();
+    }
+
+    private void terminateActiveEvaluationOnClient(
+            Minecraft minecraft,
+            EvaluationTurnControl.ReleaseReason reason) {
+        var activeLease = evaluationTurns.snapshot(sessions.snapshot().worldSessionId())
+                .activeLease().orElse(null);
+        if (activeLease == null) {
+            return;
+        }
+        var claim = claimEvaluationTerminal(activeLease.leaseId(), reason);
+        if (claim.completedReceipt() == null) {
+            terminateEvaluationLeaseOnClient(minecraft, claim.pending());
+        }
+    }
+
+    private void terminateInvalidEvaluationLeaseOnClient(Minecraft minecraft) {
+        var session = sessions.snapshot();
+        if (!evaluationTurns.snapshot(session.worldSessionId()).active()) {
+            return;
+        }
+        var control = arming.snapshot(session.worldSessionId());
+        if (control.locked()) {
+            var reason = control.lastLockReason() != null
+                    && control.lastLockReason().contains("input_release_failed")
+                    ? EvaluationTurnControl.ReleaseReason.INPUT_RELEASE_FAILED
+                    : EvaluationTurnControl.ReleaseReason.RUNNER_FAILURE;
+            terminateActiveEvaluationOnClient(minecraft, reason);
+            return;
+        }
+        var invalidation = evaluationTurns
+                .leaseNeedingRevocation(session.worldSessionId())
+                .orElse(null);
+        if (invalidation == null) {
+            return;
+        }
+        var reason = switch (invalidation.reason()) {
+            case LEASE_EXPIRED -> EvaluationTurnControl.ReleaseReason.LEASE_EXPIRED;
+            case WORLD_SESSION_CHANGED -> EvaluationTurnControl.ReleaseReason.WORLD_CHANGED;
+        };
+        terminateActiveEvaluationOnClient(minecraft, reason);
+    }
+
+    private void finishPendingEvaluationTerminalOnClient(Minecraft minecraft) {
+        PendingEvaluationTerminal pending;
+        synchronized (evaluationTerminalGate) {
+            pending = pendingEvaluationTerminal;
+        }
+        if (pending != null && !pending.completion.isDone()) {
+            terminateEvaluationLeaseOnClient(minecraft, pending);
+        }
+    }
+
+    private void completePendingEvaluationTerminal(
+            PendingEvaluationTerminal pending,
+            EvaluationTurnControl.LeaseReceipt receipt) {
+        synchronized (evaluationTerminalGate) {
+            if (pendingEvaluationTerminal == pending) {
+                pendingEvaluationTerminal = null;
+            }
+        }
+        pending.completion.complete(receipt);
+    }
+
+    private static boolean locksLocalArming(
+            EvaluationTurnControl.ReleaseReason reason) {
+        return switch (reason) {
+            case LOCAL_UI_DISABLED, WORLD_CHANGED, PLAYER_UNAVAILABLE, ENDPOINT_FAULT,
+                    CLIENT_SHUTDOWN, INPUT_RELEASE_FAILED -> true;
+            case TURN_COMPLETED, RUNNER_FAILURE, EVALUATION_DEADLINE,
+                    LAUNCHER_TEARDOWN, RUNNER_CONNECTION_CLOSED,
+                    RUNNER_PROCESS_EXITED, LOCAL_ESCAPE, LEASE_EXPIRED,
+                    ACQUIRE_ABANDONED -> false;
+        };
+    }
+
+    private static EvaluationTurnControl.LeaseReceipt evaluationReceipt(
+            EvaluationTurnGuard.Terminal terminal) {
+        return new EvaluationTurnControl.LeaseReceipt(
+                terminal.lease().leaseId(),
+                EvaluationTurnControl.LeaseState.RELEASED,
+                terminal.reason(),
+                true,
+                true,
+                true,
+                true);
+    }
+
+    private static final class PendingEvaluationTerminal {
+        private final EvaluationTurnGuard.Lease lease;
+        private final EvaluationTurnControl.ReleaseReason reason;
+        private final CompletableFuture<EvaluationTurnControl.LeaseReceipt> completion =
+                new CompletableFuture<>();
+
+        private PendingEvaluationTerminal(
+                EvaluationTurnGuard.Lease lease,
+                EvaluationTurnControl.ReleaseReason reason) {
+            this.lease = Objects.requireNonNull(lease, "lease");
+            this.reason = Objects.requireNonNull(reason, "reason");
+        }
+    }
+
+    private record EvaluationTerminalClaim(
+            PendingEvaluationTerminal pending,
+            boolean owner,
+            EvaluationTurnControl.LeaseReceipt completedReceipt) {
+        private EvaluationTerminalClaim {
+            if ((pending == null) == (completedReceipt == null)) {
+                throw new IllegalArgumentException(
+                        "claim must contain either pending or completed terminal state");
+            }
+        }
+    }
+
+    @Override
     public CompletionStage<RuntimeReply> submit(RuntimeCommand command, RuntimeCallContext context) {
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(context, "context");
         if (command instanceof EmergencyStop stop) {
-            return inbox.requestEmergencyStop(stop.reason())
-                    .thenApply(receipt -> RuntimeReply.success(Map.of(
-                            "stop_requested", true,
-                            "locked", receipt.locked(),
-                            "released_inputs", receipt.inputsReleased(),
-                            "discarded_pending_starts", receipt.discardedPendingStarts())));
+            var fence = publishedSession;
+            java.util.concurrent.Callable<RuntimeReply> emergency = () ->
+                    withEvaluationLeaseFence(context, command.toolName(), () -> {
+                        var minecraft = Minecraft.getInstance();
+                        assertClientThread(minecraft);
+                        var stopped = inbox.requestEmergencyStop(stop.reason());
+                        inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
+                        var receipt = stopped.join();
+                        return RuntimeReply.success(Map.of(
+                                "stop_requested", true,
+                                "locked", receipt.locked(),
+                                "released_inputs", receipt.inputsReleased(),
+                                "discarded_pending_starts", receipt.discardedPendingStarts()));
+                    });
+            return inbox.submitControlMapped(
+                    command.toolName(),
+                    fence.generation(),
+                    context.deadlineNanos(),
+                    emergency,
+                    McmcpRuntime::mapFailure);
         }
         if (!context.canBeginWork()) {
             return java.util.concurrent.CompletableFuture.completedFuture(
@@ -732,10 +1233,8 @@ public final class McmcpRuntime implements McpRuntimePort {
         }
 
         var fence = publishedSession;
-        java.util.concurrent.Callable<RuntimeReply> work = () -> {
-            if (!context.canBeginWork()) {
-                throw new ClientCommandInbox.CommandTimeoutException(command.toolName());
-            }
+        java.util.concurrent.Callable<RuntimeReply> work = () ->
+                withEvaluationLeaseFence(context, command.toolName(), () -> {
             if (command instanceof GetObservation observation) {
                 var minecraft = Minecraft.getInstance();
                 assertClientThread(minecraft);
@@ -747,7 +1246,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                         new McpRuntimePort.ObservationDeliveryReceipt(prepared.receiptId()));
             }
             return RuntimeReply.success(executeOnClientThread(command, context));
-        };
+        });
         var submitted = command instanceof CancelRoutine
                 || command instanceof CancelAction
                 || command instanceof ConfirmActionDelivery
@@ -786,7 +1285,11 @@ public final class McmcpRuntime implements McpRuntimePort {
                     requestedWaitMillis, Math.min(Integer.MAX_VALUE, remainingMillis));
             AgentActionStore.Snapshot snapshot = agentActions.awaitTerminal(
                     requestedId, effectiveWaitMillis);
-            return CompletableFuture.completedFuture(RuntimeReply.success(actionPayload(snapshot)));
+            RuntimeReply reply = withEvaluationLeaseFence(
+                    context,
+                    command.toolName(),
+                    () -> RuntimeReply.success(actionPayload(snapshot)));
+            return CompletableFuture.completedFuture(reply);
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
             context.cancel();
@@ -817,8 +1320,13 @@ public final class McmcpRuntime implements McpRuntimePort {
                 command.toolName(),
                 fence.generation(),
                 context.deadlineNanos(),
-                () -> captureAgentAdmission(
-                        Minecraft.getInstance(), sessions.snapshot(), predicateRequirements));
+                () -> withEvaluationLeaseFence(
+                        context,
+                        command.toolName(),
+                        () -> captureAgentAdmission(
+                                Minecraft.getInstance(),
+                                sessions.snapshot(),
+                                predicateRequirements)));
         final AgentAdmissionSnapshot snapshot;
         try {
             snapshot = capture.get(context.remainingNanos(), TimeUnit.NANOSECONDS);
@@ -846,13 +1354,13 @@ public final class McmcpRuntime implements McpRuntimePort {
             return CompletableFuture.completedFuture(mapFailure(failure));
         }
 
-        java.util.concurrent.Callable<RuntimeReply> commit = () -> {
-            if (!context.canBeginWork()) {
-                throw new ClientCommandInbox.CommandTimeoutException(command.toolName());
-            }
-            return RuntimeReply.success(commitAgentAction(
-                    Minecraft.getInstance(), sessions.snapshot(), prepared, context));
-        };
+        java.util.concurrent.Callable<RuntimeReply> commit = () ->
+                withEvaluationLeaseFence(context, command.toolName(), () ->
+                        RuntimeReply.success(commitAgentAction(
+                                Minecraft.getInstance(),
+                                sessions.snapshot(),
+                                prepared,
+                                context)));
         return inbox.submitMapped(
                 command.toolName(),
                 snapshot.session().generation(),
@@ -2462,9 +2970,7 @@ public final class McmcpRuntime implements McpRuntimePort {
     private void tickAgentAction(Minecraft minecraft) {
         var active = agentActions.active();
         if (active.isEmpty()) {
-            closeAgentPrimitiveExecutor();
-            closeRecoveryGovernor();
-            agentExecution = null;
+            releaseAgentControl(minecraft);
             return;
         }
         var action = active.orElseThrow();
@@ -5759,59 +6265,55 @@ public final class McmcpRuntime implements McpRuntimePort {
         return elapsed < 0L ? 0L : elapsed;
     }
 
-    private void closeAgentPrimitiveExecutor() {
-        if (agentExecution == null) return;
-        var player = Minecraft.getInstance().player;
-        if (player != null) {
-            try {
-                AgentInputState.global().neutralizeTrackedAgentVelocity(player);
-            } catch (RuntimeException | LinkageError failure) {
-                McmcpMod.LOGGER.error("MCMCP Agent velocity neutralization failed", failure);
-            }
-        }
+    private boolean closeAgentPrimitiveExecutor() {
+        if (agentExecution == null) return true;
+        boolean closed = true;
         try {
             agentExecution.primitiveExecutor.close();
         } catch (RuntimeException | LinkageError failure) {
+            closed = false;
             McmcpMod.LOGGER.error("MCMCP Action DSL input release failed", failure);
         }
         if (agentExecution.blockBreakAttempt != null) {
             try {
                 agentExecution.blockBreakAttempt.close();
-            } catch (RuntimeException | LinkageError failure) {
-                McmcpMod.LOGGER.error("MCMCP known-face break release failed", failure);
-            } finally {
                 agentExecution.blockBreakAttempt = null;
+            } catch (RuntimeException | LinkageError failure) {
+                closed = false;
+                McmcpMod.LOGGER.error("MCMCP known-face break release failed", failure);
             }
         }
         if (agentExecution.blockMutationAttempt != null) {
             try {
                 agentExecution.blockMutationAttempt.close();
-            } catch (RuntimeException | LinkageError failure) {
-                McmcpMod.LOGGER.error("MCMCP known-block mutation release failed", failure);
-            } finally {
                 agentExecution.blockMutationAttempt = null;
+            } catch (RuntimeException | LinkageError failure) {
+                closed = false;
+                McmcpMod.LOGGER.error("MCMCP known-block mutation release failed", failure);
             }
         }
         if (agentExecution.containerAttempt != null) {
             try {
                 agentExecution.containerAttempt.close();
-            } catch (RuntimeException | LinkageError failure) {
-                McmcpMod.LOGGER.error("MCMCP known-container release failed", failure);
-            } finally {
                 agentExecution.containerAttempt = null;
+            } catch (RuntimeException | LinkageError failure) {
+                closed = false;
+                McmcpMod.LOGGER.error("MCMCP known-container release failed", failure);
             }
         }
         agentExecution.breakAimComplete = false;
+        return closed;
     }
 
-    private void closeRecoveryGovernor() {
-        if (recoveryGovernor == null) return;
+    private boolean closeRecoveryGovernor() {
+        if (recoveryGovernor == null) return true;
         try {
             recoveryGovernor.close();
+            recoveryGovernor = null;
+            return true;
         } catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error("MCMCP recovery input release failed", failure);
-        } finally {
-            recoveryGovernor = null;
+            return false;
         }
     }
 
@@ -5851,9 +6353,21 @@ public final class McmcpRuntime implements McpRuntimePort {
     }
 
     private boolean releaseAgentControl(Minecraft minecraft) {
-        closeAgentPrimitiveExecutor();
-        closeRecoveryGovernor();
-        boolean inputsReleased = releaseOwnedInputsOrLock(minecraft);
+        boolean inputsReleased = boundedActionInputRelease(() -> {
+            boolean primitiveClosed = closeAgentPrimitiveExecutor();
+            boolean recoveryClosed = closeRecoveryGovernor();
+            boolean releaseConfirmed = releaseAllAndConfirmNoInputOwner(minecraft);
+            return primitiveClosed && recoveryClosed && releaseConfirmed;
+        });
+        pendingAgentInputRelease = !inputsReleased;
+        if (!inputsReleased) {
+            arming.lock("agent_input_release_failed");
+            McmcpMod.LOGGER.error(
+                    "MCMCP terminal input cleanup remained unconfirmed after {} attempts; "
+                            + "the owner and local control lock were retained",
+                    MAX_ACTION_INPUT_RELEASE_ATTEMPTS);
+            return false;
+        }
         try {
             restoreAgentSelectedSlot(minecraft);
         } catch (RuntimeException | LinkageError failure) {
@@ -5870,22 +6384,22 @@ public final class McmcpRuntime implements McpRuntimePort {
         if (releaseOwnedInputsOrLock(minecraft)) {
             return true;
         }
-        agentActions.active().ifPresent(action -> rememberPendingAgentTerminal(
-                PendingAgentTerminal.failure(
+        PendingAgentTerminal terminal = agentActions.active()
+                .map(action -> PendingAgentTerminal.failure(
                         action.actionId(),
                         new AgentActionStore.Failure(
                                 AgentActionStore.FailureCode.INTERNAL_ERROR,
                                 true,
-                                List.of(evidence)))));
-        closeAgentPrimitiveExecutor();
-        closeRecoveryGovernor();
-        try {
-            restoreAgentSelectedSlot(minecraft);
-        } catch (RuntimeException | LinkageError failure) {
-            McmcpMod.LOGGER.error("MCMCP selected-slot restoration failed", failure);
-        } finally {
-            agentExecution = null;
-            pendingAgentAdmission = null;
+                                List.of(evidence))))
+                .orElse(null);
+        if (terminal != null) {
+            rememberPendingAgentTerminal(terminal);
+        }
+        // The first global release failure is terminal for this hold boundary. Route the exact
+        // primitive/recovery owners through the shared finite retry fence; releaseAgentControl
+        // deliberately clears their references only after every close and owner-none proof pass.
+        if (releaseAgentControl(minecraft) && terminal != null) {
+            publishAgentTerminal(terminal);
         }
         return false;
     }
@@ -5901,6 +6415,12 @@ public final class McmcpRuntime implements McpRuntimePort {
                     MAX_ACTION_INPUT_RELEASE_ATTEMPTS);
         }
         return released;
+    }
+
+    private boolean releaseAllAndConfirmNoInputOwner(Minecraft minecraft) {
+        boolean released = inputRelease.releaseAll(minecraft);
+        boolean inputOwnerNone = inputRelease.inputOwnerNone(minecraft);
+        return released && inputOwnerNone;
     }
 
     private void rememberPendingAgentTerminal(PendingAgentTerminal terminal) {
@@ -6001,11 +6521,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         if (!pendingAgentInputRelease) {
             return pendingAgentTerminal == null || publishAgentTerminal(pendingAgentTerminal);
         }
-        boolean released = boundedActionInputRelease(() -> inputRelease.releaseAll(minecraft));
-        pendingAgentInputRelease = !released;
-        if (!released) {
-            arming.lock("agent_input_release_failed");
-        }
+        boolean released = releaseAgentControl(minecraft);
         return released
                 && (pendingAgentTerminal == null || publishAgentTerminal(pendingAgentTerminal));
     }
@@ -6418,7 +6934,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         }
         else {
             try {
-                inputsReleased = inputRelease.releaseAll(minecraft);
+                inputsReleased = releaseAllAndConfirmNoInputOwner(minecraft);
             }
             catch (RuntimeException | LinkageError failure) {
                 McmcpMod.LOGGER.error("MCMCP input release failed during finalization", failure);
@@ -6627,9 +7143,31 @@ public final class McmcpRuntime implements McpRuntimePort {
                 () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
     }
 
-    private static void requireLiveCall(RuntimeCallContext context, String command) {
+    private void requireLiveCall(RuntimeCallContext context, String command) {
         if (!context.canBeginWork()) {
             throw new ClientCommandInbox.CommandTimeoutException(command);
+        }
+        if (!context.evaluationLeaseCurrent(this)) {
+            throw new ClientCommandInbox.CommandInvalidatedException(command);
+        }
+    }
+
+    private <T> T withEvaluationLeaseFence(
+            RuntimeCallContext context,
+            String command,
+            Supplier<T> work) {
+        Objects.requireNonNull(work, "work");
+        return withEvaluationTurnGate(evaluationTerminalGate, () -> {
+            requireLiveCall(context, command);
+            return work.get();
+        });
+    }
+
+    static <T> T withEvaluationTurnGate(Object gate, Supplier<T> work) {
+        Objects.requireNonNull(gate, "gate");
+        Objects.requireNonNull(work, "work");
+        synchronized (gate) {
+            return work.get();
         }
     }
 
@@ -7969,6 +8507,8 @@ public final class McmcpRuntime implements McpRuntimePort {
         var after = sessions.snapshot();
         if (changed) {
             if (before.dimension() != null && !before.dimension().equals(dimension)) {
+                terminateActiveEvaluationOnClient(
+                        minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
                 clearAgentSessionState();
                 routines.clearSession("dimension_changed");
                 finalizationRetries.clear();

@@ -25,6 +25,7 @@ class AutomationUiContractTest {
         assertThat(List.of(
                 AutomationUiSnapshot.State.OFF,
                 AutomationUiSnapshot.State.READY,
+                AutomationUiSnapshot.State.EVALUATING,
                 AutomationUiSnapshot.State.FAULT))
                 .allMatch(state -> !AutomationIndicatorController.executionBorderVisible(state));
 
@@ -62,8 +63,51 @@ class AutomationUiContractTest {
                         "dev/aod/mcmcp/client/McmcpClientConfig#hudOffsetX",
                         "dev/aod/mcmcp/client/McmcpClientConfig#hudOffsetY")
                 .containsSubsequence(
-                        "dev/aod/mcmcp/client/AutomationIndicatorController#drawAgentNotice",
+                        "dev/aod/mcmcp/client/AutomationIndicatorController#drawActiveNotice",
                         "net/minecraft/client/gui/Gui#screen");
+    }
+
+    @Test
+    void cyanEvaluationBorderIsDistinctFromYellowActionBorder() throws Exception {
+        assertThat(AutomationIndicatorController.evaluationBorderVisible(
+                AutomationUiSnapshot.State.EVALUATING)).isTrue();
+        assertThat(List.of(
+                AutomationUiSnapshot.State.OFF,
+                AutomationUiSnapshot.State.READY,
+                AutomationUiSnapshot.State.AGENT,
+                AutomationUiSnapshot.State.RECOVERING,
+                AutomationUiSnapshot.State.FAULT))
+                .allMatch(state -> !AutomationIndicatorController
+                        .evaluationBorderVisible(state));
+
+        var controller = classNode(
+                "/dev/aod/mcmcp/client/AutomationIndicatorController.class");
+        assertThat(invocations(method(controller, "renderHud")))
+                .contains(
+                        "dev/aod/mcmcp/client/AutomationIndicatorController"
+                                + "#drawEvaluationBorder",
+                        "dev/aod/mcmcp/client/AutomationIndicatorController"
+                                + "#drawExecutionBorder");
+        assertThat(invocations(method(
+                classNode("/dev/aod/mcmcp/client/AutomationIndicatorController$IndicatorButton.class"),
+                "extractContents")))
+                .contains("dev/aod/mcmcp/client/AutomationIndicatorController"
+                        + "#drawEvaluationBorder");
+    }
+
+    @Test
+    void evaluationTranslationsCoverLabelTooltipAndShortNotice() throws Exception {
+        for (String language : List.of("en_us", "ja_jp")) {
+            try (var stream = getClass().getResourceAsStream(
+                    "/assets/mcmcp/lang/" + language + ".json")) {
+                assertThat(stream).isNotNull();
+                var translations = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+                assertThat(translations)
+                        .contains("gui.mcmcp.automation.evaluating")
+                        .contains("gui.mcmcp.automation.evaluating_notice")
+                        .contains("gui.mcmcp.automation.tooltip.evaluating");
+            }
+        }
     }
 
     @Test

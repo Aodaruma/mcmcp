@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.LongSupplier;
 
 /**
  * Bounded HTTP-to-client-thread bridge. Emergency stop has a dedicated lane,
@@ -37,6 +38,7 @@ public final class ClientCommandInbox {
     private final InputReleaseController inputRelease;
     private final LocalArmingState armingState;
     private final EmergencyStopHandler emergencyStopHandler;
+    private final LongSupplier nanoTime;
     private boolean accepting = true;
     /** Guarded by {@link #admissionGate}; returned idempotently once shutdown has completed. */
     private StopReceipt terminalStopReceipt;
@@ -54,11 +56,21 @@ public final class ClientCommandInbox {
             InputReleaseController inputRelease,
             LocalArmingState armingState,
             EmergencyStopHandler emergencyStopHandler) {
+        this(capacity, inputRelease, armingState, emergencyStopHandler, System::nanoTime);
+    }
+
+    ClientCommandInbox(
+            int capacity,
+            InputReleaseController inputRelease,
+            LocalArmingState armingState,
+            EmergencyStopHandler emergencyStopHandler,
+            LongSupplier nanoTime) {
         normalQueue = new ArrayBlockingQueue<>(capacity);
         controlQueue = new ArrayBlockingQueue<>(Math.max(8, Math.min(capacity, 32)));
         this.inputRelease = Objects.requireNonNull(inputRelease, "inputRelease");
         this.armingState = Objects.requireNonNull(armingState, "armingState");
         this.emergencyStopHandler = Objects.requireNonNull(emergencyStopHandler, "emergencyStopHandler");
+        this.nanoTime = Objects.requireNonNull(nanoTime, "nanoTime");
     }
 
     public <T> CompletableFuture<T> submit(
@@ -119,7 +131,8 @@ public final class ClientCommandInbox {
             }
             var command = new PendingCommand<>(
                     name, expectedWorldGeneration, safetyEpoch.get(), deadlineNanos,
-                    action, result, failureMapper, completionAbandoned, onAbandonedCompletion);
+                    action, result, failureMapper, completionAbandoned,
+                    onAbandonedCompletion, nanoTime);
             if (!normalQueue.offer(command)) {
                 var failure = new RejectedExecutionException("client command inbox is full");
                 return failureMapper == null
@@ -139,8 +152,26 @@ public final class ClientCommandInbox {
             long expectedWorldGeneration,
             long deadlineNanos,
             Callable<T> action) {
+        return submitControl(
+                name,
+                expectedWorldGeneration,
+                deadlineNanos,
+                action,
+                () -> false,
+                ignored -> { });
+    }
+
+    public <T> CompletableFuture<T> submitControl(
+            String name,
+            long expectedWorldGeneration,
+            long deadlineNanos,
+            Callable<T> action,
+            BooleanSupplier completionAbandoned,
+            Consumer<T> onAbandonedCompletion) {
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(action, "action");
+        Objects.requireNonNull(completionAbandoned, "completionAbandoned");
+        Objects.requireNonNull(onAbandonedCompletion, "onAbandonedCompletion");
         var result = new CompletableFuture<T>();
         synchronized (admissionGate) {
             if (!accepting) {
@@ -148,7 +179,8 @@ public final class ClientCommandInbox {
             }
             var command = new PendingCommand<>(
                     name, expectedWorldGeneration, safetyEpoch.get(), deadlineNanos,
-                    action, result, null, () -> false, ignored -> { });
+                    action, result, null, completionAbandoned,
+                    onAbandonedCompletion, nanoTime);
             if (!controlQueue.offer(command)) {
                 return CompletableFuture.failedFuture(new RejectedExecutionException("client control inbox is full"));
             }
@@ -173,7 +205,7 @@ public final class ClientCommandInbox {
             }
             var command = new PendingCommand<>(
                     name, expectedWorldGeneration, safetyEpoch.get(), deadlineNanos,
-                    action, result, failureMapper, () -> false, ignored -> { });
+                    action, result, failureMapper, () -> false, ignored -> { }, nanoTime);
             if (!controlQueue.offer(command)) {
                 return CompletableFuture.completedFuture(
                         failureMapper.apply(new RejectedExecutionException(
@@ -192,7 +224,7 @@ public final class ClientCommandInbox {
         return submit(
                 name,
                 expectedWorldGeneration,
-                RuntimeCallContext.deadlineAfter(System.nanoTime(), timeout.toNanos()),
+                RuntimeCallContext.deadlineAfter(nanoTime.getAsLong(), timeout.toNanos()),
                 action);
     }
 
@@ -243,7 +275,11 @@ public final class ClientCommandInbox {
 
     /** Drains cancellation/control work after emergency stop and before routine input acquisition. */
     public void drainControlsPreTick(WorldSessionTracker.Snapshot session) {
-        drainQueue(controlQueue, MAX_CONTROL_COMMANDS_PER_TICK, session.generation(), System.nanoTime());
+        drainControls(session.generation(), nanoTime.getAsLong());
+    }
+
+    void drainControls(long currentGeneration, long nowNanos) {
+        drainQueue(controlQueue, MAX_CONTROL_COMMANDS_PER_TICK, currentGeneration, nowNanos);
     }
 
     /**
@@ -251,7 +287,11 @@ public final class ClientCommandInbox {
      * Mutating routines use a separate pre-tick lane in later phases.
      */
     public void drainReadsPostTick(WorldSessionTracker.Snapshot session) {
-        drainQueue(normalQueue, MAX_NORMAL_COMMANDS_PER_TICK, session.generation(), System.nanoTime());
+        drainQueue(
+                normalQueue,
+                MAX_NORMAL_COMMANDS_PER_TICK,
+                session.generation(),
+                nanoTime.getAsLong());
     }
 
     void drainNormal(long currentGeneration, long nowNanos) {
@@ -318,23 +358,38 @@ public final class ClientCommandInbox {
             request = request == null ? new StopRequest("operator_stop", false) : request;
             var reason = request.reason();
             var beforeStop = armingState.snapshot(session.worldSessionId());
-            boolean inputsReleased = inputRelease.releaseAll(minecraft);
+            boolean releaseCommandsSucceeded = inputRelease.releaseAll(minecraft);
+            boolean handlerSucceeded;
             try {
-                inputsReleased &= emergencyStopHandler.stop(reason, session);
+                handlerSucceeded = emergencyStopHandler.stop(reason, session);
             }
             catch (RuntimeException | LinkageError failure) {
-                inputsReleased = false;
+                handlerSucceeded = false;
             }
+            boolean inputOwnerNone;
+            try {
+                inputOwnerNone = inputRelease.inputOwnerNone(minecraft);
+            } catch (RuntimeException | LinkageError failure) {
+                inputOwnerNone = false;
+            }
+            StopProof stopProof = stopProof(
+                    releaseCommandsSucceeded, handlerSucceeded, inputOwnerNone);
             boolean locked = settleArmingAfterStop(
                     armingState,
                     beforeStop,
                     session.worldSessionId(),
                     request.keepReady(),
-                    inputsReleased,
+                    stopProof.terminalSafe(),
                     reason);
             int discarded = failPending(new CommandInvalidatedException("invalidated by emergency stop"));
             var receipt = new StopReceipt(
-                    reason, safetyEpoch.get(), session.generation(), inputsReleased, locked, discarded);
+                    reason,
+                    safetyEpoch.get(),
+                    session.generation(),
+                    stopProof.inputsReleased(),
+                    stopProof.inputOwnerNone(),
+                    locked,
+                    discarded);
             if (!accepting) {
                 terminalStopReceipt = receipt;
             }
@@ -389,6 +444,16 @@ public final class ClientCommandInbox {
         return true;
     }
 
+    /** Keeps release execution and measured ownership as independent terminal proofs. */
+    static StopProof stopProof(
+            boolean releaseCommandsSucceeded,
+            boolean handlerSucceeded,
+            boolean inputOwnerNone) {
+        return new StopProof(
+                releaseCommandsSucceeded && handlerSucceeded,
+                inputOwnerNone);
+    }
+
     private static String sanitizeReason(String reason) {
         if (reason == null || reason.isBlank()) {
             return "operator_stop";
@@ -400,6 +465,12 @@ public final class ClientCommandInbox {
     private record StopRequest(String reason, boolean keepReady) {
     }
 
+    record StopProof(boolean inputsReleased, boolean inputOwnerNone) {
+        boolean terminalSafe() {
+            return inputsReleased && inputOwnerNone;
+        }
+    }
+
     private record PendingCommand<T>(
             String name,
             long worldGeneration,
@@ -409,7 +480,8 @@ public final class ClientCommandInbox {
             CompletableFuture<T> result,
             Function<Throwable, T> failureMapper,
             BooleanSupplier completionAbandoned,
-            Consumer<T> onAbandonedCompletion) {
+            Consumer<T> onAbandonedCompletion,
+            LongSupplier nanoTime) {
         private boolean claimIfCurrent(long currentGeneration, long currentSafetyEpoch, long nowNanos) {
             if (result.isDone()) {
                 return false;
@@ -428,14 +500,15 @@ public final class ClientCommandInbox {
         private void runClaimed() {
             try {
                 // Deadline remains an execution fence after the command has been claimed.
-                if (RuntimeCallContext.deadlineReached(deadlineNanos, System.nanoTime())) {
+                if (RuntimeCallContext.deadlineReached(
+                        deadlineNanos, nanoTime.getAsLong())) {
                     completeFailure(new CommandTimeoutException(name));
                     return;
                 }
                 T value = action.call();
                 if (completionAbandoned.getAsBoolean()
                         || RuntimeCallContext.deadlineReached(
-                                deadlineNanos, System.nanoTime())) {
+                                deadlineNanos, nanoTime.getAsLong())) {
                     onAbandonedCompletion.accept(value);
                     completeFailure(new CommandTimeoutException(name));
                 } else if (!result.complete(value)) {
@@ -464,6 +537,7 @@ public final class ClientCommandInbox {
             long safetyEpoch,
             long worldGeneration,
             boolean inputsReleased,
+            boolean inputOwnerNone,
             boolean locked,
             int discardedPendingStarts) {
     }

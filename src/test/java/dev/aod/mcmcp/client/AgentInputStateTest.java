@@ -140,4 +140,35 @@ class AgentInputStateTest {
         state.releaseAttack();
         assertThat(state.attackActive()).isFalse();
     }
+
+    @Test
+    void terminalOwnerNoneIsMeasuredAcrossMovementAttackProofAndTrackedVelocity() {
+        var state = new AgentInputState();
+        assertThat(state.inputOwnershipSnapshot().ownerNone()).isTrue();
+
+        state.publishMovement(true, false, false, false, false);
+        assertThat(state.inputOwnerNone()).isFalse();
+        state.releaseMovement();
+        assertThat(state.inputOwnerNone()).isTrue();
+
+        state.publishAttack();
+        assertThat(state.inputOwnershipSnapshot().attackOwned()).isTrue();
+        state.releaseAttack();
+        assertThat(state.inputOwnerNone()).isTrue();
+
+        var player = new Object();
+        var level = new Object();
+        state.publishMovement(true, false, false, false, false);
+        state.requireGoalMovementSafety(player, level, 1L, 1.0D);
+        state.beginPlayerMovementTick(player, level);
+        state.addAgentMoveContribution(new Vec3(0.25D, 0.0D, 0.0D));
+        state.endPlayerMovementTick(player, level);
+        state.suppressAllRetainingTrackedVelocity();
+        state.releaseMovement();
+
+        assertThat(state.inputOwnershipSnapshot().velocityTracked()).isTrue();
+        assertThat(state.inputOwnerNone()).isFalse();
+        state.discardTrackedAgentVelocity();
+        assertThat(state.inputOwnerNone()).isTrue();
+    }
 }

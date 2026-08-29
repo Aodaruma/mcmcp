@@ -36,6 +36,7 @@ class AutomationIndicatorControllerTest {
     void everyEnabledStatePressChoosesTheSafetyStop() {
         for (var state : new AutomationUiSnapshot.State[] {
                 AutomationUiSnapshot.State.READY,
+                AutomationUiSnapshot.State.EVALUATING,
                 AutomationUiSnapshot.State.AGENT,
                 AutomationUiSnapshot.State.RECOVERING
         }) {

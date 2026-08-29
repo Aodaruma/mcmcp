@@ -17,11 +17,13 @@ public final class InputReleaseController {
         try {
             if (player != null) {
                 agentInput.neutralizeTrackedAgentVelocity(player);
+            } else {
+                agentInput.discardTrackedAgentVelocity();
             }
         } catch (RuntimeException | LinkageError failure) {
             released = false;
         } finally {
-            agentInput.suppressAll();
+            agentInput.suppressAllRetainingTrackedVelocity();
         }
         try {
             KeyMapping.releaseAll();
@@ -58,5 +60,13 @@ public final class InputReleaseController {
             }
         }
         return released;
+    }
+
+    /** Verifies that no Agent channel or tracked Agent velocity still has an owner. */
+    public boolean inputOwnerNone(Minecraft minecraft) {
+        if (!minecraft.isSameThread()) {
+            throw new IllegalStateException("input ownership must be checked on the Minecraft client thread");
+        }
+        return AgentInputState.global().inputOwnerNone();
     }
 }

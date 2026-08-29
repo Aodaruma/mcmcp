@@ -23,11 +23,14 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * JDK-only MCP Streamable HTTP endpoint. The normative stateless 2026-07-28
@@ -40,6 +43,8 @@ public final class McpHttpServer implements AutoCloseable {
     static final String PROTOCOL_HEADER = "MCP-Protocol-Version";
     static final String METHOD_HEADER = "Mcp-Method";
     static final String NAME_HEADER = "Mcp-Name";
+    static final String EVALUATION_LEASE_HEADER = "Mcmcp-Evaluation-Lease";
+    static final String EVALUATION_TURN_PATH = "/mcp/internal/evaluation-turn";
     private static final String SESSION_HEADER = "Mcp-Session-Id";
     static final int HEADER_MISMATCH = -32_020;
     static final int UNSUPPORTED_PROTOCOL_VERSION = -32_022;
@@ -52,11 +57,17 @@ public final class McpHttpServer implements AutoCloseable {
             .create();
     private static final int MAX_HEADER_COUNT = 64;
     private static final int MAX_HEADER_CHARS = 16_384;
+    private static final int MAX_EVALUATION_CONTROL_BODY_BYTES = 512;
+    private static final long MIN_EVALUATION_DURATION_MILLIS = 1_000L;
+    private static final long MAX_EVALUATION_DURATION_MILLIS = 20L * 60L * 1_000L;
+    private static final long EVALUATION_STREAM_HEARTBEAT_SECONDS = 2L;
     private static final Set<String> REQUEST_KEYS = Set.of("jsonrpc", "id", "method", "params");
 
     private final McpHttpServerConfig config;
     private final McmcpToolRegistry tools;
+    private final EvaluationTurnControl evaluationTurns;
     private final TokenBucketRateLimiter rateLimiter;
+    private final TokenBucketRateLimiter evaluationControlRateLimiter;
     private final Semaphore admission;
     private final boolean conformanceAuthenticationBypass;
     private volatile State state = State.NEW;
@@ -75,7 +86,9 @@ public final class McpHttpServer implements AutoCloseable {
             boolean conformanceAuthenticationBypass) {
         this.config = java.util.Objects.requireNonNull(config, "config");
         tools = new McmcpToolRegistry(runtimePort, config.runtimeDispatchTimeout());
+        evaluationTurns = runtimePort instanceof EvaluationTurnControl control ? control : null;
         rateLimiter = new TokenBucketRateLimiter(config.rateLimitBurst(), config.rateLimitPerSecond());
+        evaluationControlRateLimiter = new TokenBucketRateLimiter(8, 4.0D);
         admission = new Semaphore(config.maxConcurrentRequests());
         this.conformanceAuthenticationBypass = conformanceAuthenticationBypass;
     }
@@ -93,6 +106,9 @@ public final class McpHttpServer implements AutoCloseable {
             timeoutExecutor = Executors.newSingleThreadScheduledExecutor(command ->
                     Thread.ofPlatform().daemon(true).name("mcmcp-mcp-timeout").unstarted(command));
             server.createContext("/mcp", this::handle);
+            if (evaluationTurns != null) {
+                server.createContext(EVALUATION_TURN_PATH, this::handleEvaluationTurn);
+            }
             server.setExecutor(requestExecutor);
             server.start();
             state = State.RUNNING;
@@ -119,6 +135,305 @@ public final class McpHttpServer implements AutoCloseable {
         } finally {
             timeout.cancel(false);
             exchange.close();
+        }
+    }
+
+    /**
+     * Trusted evaluator lifecycle channel. It is not an MCP method and is never advertised to
+     * the model. Bearer authentication and loopback/Origin guards are always enforced, including
+     * development conformance runs.
+     */
+    private void handleEvaluationTurn(HttpExchange exchange) {
+        try {
+            handleEvaluationTurnRequest(exchange);
+        } catch (IOException ignored) {
+            // A closed runner console/process is itself a release signal for a streaming lease.
+        } catch (RuntimeException failure) {
+            try {
+                sendHttpError(exchange, 500, "EvaluationControlInternalError");
+            } catch (IOException ignored) {
+                // The response may already be committed.
+            }
+        } finally {
+            exchange.close();
+        }
+    }
+
+    private void handleEvaluationTurnRequest(HttpExchange exchange) throws IOException {
+        if (!EVALUATION_TURN_PATH.equals(exchange.getRequestURI().getRawPath())) {
+            sendHttpError(exchange, 404, "NotFound");
+            return;
+        }
+        String method = exchange.getRequestMethod();
+        if (!Set.of("POST", "DELETE").contains(method)) {
+            exchange.getResponseHeaders().set("Allow", "POST, DELETE");
+            sendHttpError(exchange, 405, "MethodNotAllowed");
+            return;
+        }
+        Headers headers = exchange.getRequestHeaders();
+        if (!headersWithinLimits(headers)) {
+            sendHttpError(exchange, 431, "HeadersTooLarge");
+            return;
+        }
+        if (!validHost(singleHeader(headers, "Host"))) {
+            sendHttpError(exchange, 421, "InvalidHost");
+            return;
+        }
+        if (headers.get("Origin") != null) {
+            sendHttpError(exchange, 403, "OriginForbidden");
+            return;
+        }
+        if (!validAuthorization(singleHeader(headers, "Authorization"))) {
+            exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer");
+            sendHttpError(exchange, 401, "Unauthorized");
+            return;
+        }
+        if (!validJsonContentType(singleHeader(headers, "Content-Type"))) {
+            sendHttpError(exchange, 415, "UnsupportedMediaType");
+            return;
+        }
+        if (("POST".equals(method)
+                && !acceptsMediaType(singleHeader(headers, "Accept"), "application/x-ndjson"))
+                || ("DELETE".equals(method)
+                && !acceptsMediaType(singleHeader(headers, "Accept"), "application/json"))) {
+            sendHttpError(exchange, 406, "NotAcceptable");
+            return;
+        }
+        if (headers.get(PROTOCOL_HEADER) != null
+                || headers.get(METHOD_HEADER) != null
+                || headers.get(NAME_HEADER) != null
+                || headers.get(SESSION_HEADER) != null) {
+            sendHttpError(exchange, 400, "EvaluationControlHeaderMismatch");
+            return;
+        }
+        if (!evaluationControlRateLimiter.tryAcquire()) {
+            rejectBusy(exchange, "EvaluationControlRateLimitExceeded");
+            return;
+        }
+
+        final JsonObject body;
+        try {
+            body = McpJson.parse(
+                    readBody(exchange, MAX_EVALUATION_CONTROL_BODY_BYTES), config)
+                    .getAsJsonObject();
+        } catch (BodyTooLargeException failure) {
+            sendHttpError(exchange, 413, "RequestBodyTooLarge");
+            return;
+        } catch (McpJson.LimitException failure) {
+            sendHttpError(exchange, 400, "MalformedEvaluationControlRequest");
+            return;
+        } catch (IOException | IllegalStateException failure) {
+            sendHttpError(exchange, 400, "MalformedEvaluationControlRequest");
+            return;
+        }
+
+        if ("POST".equals(method)) {
+            final EvaluationTurnControl.AcquireRequest request;
+            try {
+                request = parseEvaluationAcquire(body);
+            } catch (IOException failure) {
+                sendHttpError(exchange, 400, "MalformedEvaluationControlRequest");
+                return;
+            }
+            streamEvaluationTurn(exchange, request);
+        } else {
+            releaseEvaluationTurn(exchange, body);
+        }
+    }
+
+    private EvaluationTurnControl.AcquireRequest parseEvaluationAcquire(JsonObject body)
+            throws IOException {
+        if (!body.keySet().equals(Set.of("lease_id", "runner_pid", "max_duration_ms"))) {
+            throw new IOException("invalid evaluation acquire shape");
+        }
+        UUID leaseId = boundedUuid(body.get("lease_id"));
+        Long runnerPid = exactPositiveLong(body.get("runner_pid"));
+        Long maximumMillis = exactPositiveLong(body.get("max_duration_ms"));
+        if (leaseId == null || runnerPid == null || maximumMillis == null
+                || maximumMillis < MIN_EVALUATION_DURATION_MILLIS
+                || maximumMillis > MAX_EVALUATION_DURATION_MILLIS) {
+            throw new IOException("invalid evaluation acquire value");
+        }
+        return new EvaluationTurnControl.AcquireRequest(
+                leaseId, runnerPid, Duration.ofMillis(maximumMillis));
+    }
+
+    private void streamEvaluationTurn(
+            HttpExchange exchange,
+            EvaluationTurnControl.AcquireRequest request) throws IOException {
+        EvaluationTurnControl.LeaseReceipt acquired;
+        try {
+            acquired = awaitEvaluationControl(evaluationTurns.acquire(request));
+        } catch (EvaluationControlException failure) {
+            sendHttpError(exchange, failure.status(), failure.code());
+            return;
+        }
+        if (acquired.state() != EvaluationTurnControl.LeaseState.ACTIVE) {
+            sendHttpError(exchange, 409, "EvaluationLeaseRejected");
+            return;
+        }
+
+        boolean terminalObserved = false;
+        try {
+            exchange.getResponseHeaders().set(
+                    "Content-Type", "application/x-ndjson; charset=utf-8");
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+            exchange.getResponseHeaders().set(EVALUATION_LEASE_HEADER, "active");
+            exchange.sendResponseHeaders(200, 0);
+
+            try (var output = exchange.getResponseBody()) {
+                writeEvaluationStreamRecord(output, acquired);
+                var terminal = evaluationTurns.await(request.leaseId()).toCompletableFuture();
+                while (true) {
+                    try {
+                        var receipt = terminal.get(
+                                EVALUATION_STREAM_HEARTBEAT_SECONDS, TimeUnit.SECONDS);
+                        terminalObserved = true;
+                        writeEvaluationStreamRecord(output, receipt);
+                        return;
+                    } catch (TimeoutException waiting) {
+                        writeEvaluationHeartbeat(output);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    } catch (java.util.concurrent.ExecutionException failure) {
+                        return;
+                    }
+                }
+            }
+        } finally {
+            if (!terminalObserved) {
+                try {
+                    awaitEvaluationControl(evaluationTurns.release(
+                            request.leaseId(),
+                            EvaluationTurnControl.ReleaseReason.RUNNER_CONNECTION_CLOSED));
+                } catch (EvaluationControlException ignored) {
+                    // ProcessHandle/deadline release remains the final independent fence.
+                }
+            }
+        }
+    }
+
+    private void releaseEvaluationTurn(HttpExchange exchange, JsonObject body) throws IOException {
+        if (!body.keySet().equals(Set.of("lease_id", "reason"))) {
+            sendHttpError(exchange, 400, "MalformedEvaluationControlRequest");
+            return;
+        }
+        UUID leaseId = boundedUuid(body.get("lease_id"));
+        String reasonValue = stringValue(body.get("reason"));
+        if (leaseId == null || reasonValue == null) {
+            sendHttpError(exchange, 400, "MalformedEvaluationControlRequest");
+            return;
+        }
+        final EvaluationTurnControl.ReleaseReason reason;
+        try {
+            reason = EvaluationTurnControl.ReleaseReason.runnerValue(reasonValue);
+        } catch (IllegalArgumentException failure) {
+            sendHttpError(exchange, 400, "MalformedEvaluationControlRequest");
+            return;
+        }
+        try {
+            var receipt = awaitEvaluationControl(evaluationTurns.release(leaseId, reason));
+            sendJson(exchange, 200, evaluationReceiptJson(receipt));
+        } catch (EvaluationControlException failure) {
+            sendHttpError(exchange, failure.status(), failure.code());
+        }
+    }
+
+    private EvaluationTurnControl.LeaseReceipt awaitEvaluationControl(
+            java.util.concurrent.CompletionStage<EvaluationTurnControl.LeaseReceipt> stage)
+            throws EvaluationControlException {
+        var future = stage.toCompletableFuture();
+        try {
+            return future.get(
+                    config.runtimeDispatchTimeout().toNanos(), TimeUnit.NANOSECONDS);
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            future.cancel(false);
+            throw new EvaluationControlException(503, "EvaluationControlInterrupted");
+        } catch (TimeoutException failure) {
+            future.cancel(false);
+            throw new EvaluationControlException(503, "EvaluationControlTimeout");
+        } catch (java.util.concurrent.ExecutionException | CompletionException failure) {
+            throw new EvaluationControlException(409, "EvaluationLeaseRejected");
+        }
+    }
+
+    private static void writeEvaluationHeartbeat(java.io.OutputStream output) throws IOException {
+        output.write("{\"state\":\"active\"}\n".getBytes(StandardCharsets.UTF_8));
+        output.flush();
+    }
+
+    private static void writeEvaluationStreamRecord(
+            java.io.OutputStream output,
+            EvaluationTurnControl.LeaseReceipt receipt) throws IOException {
+        output.write((GSON.toJson(evaluationReceiptJson(receipt)) + "\n")
+                .getBytes(StandardCharsets.UTF_8));
+        output.flush();
+    }
+
+    private static JsonObject evaluationReceiptJson(EvaluationTurnControl.LeaseReceipt receipt) {
+        JsonObject body = new JsonObject();
+        body.addProperty("state", receipt.state().name().toLowerCase(Locale.ROOT));
+        if (receipt.reason() == null) {
+            body.add("reason", JsonNull.INSTANCE);
+        } else {
+            body.addProperty("reason", receipt.reason());
+        }
+        body.addProperty("inputs_released", receipt.inputsReleased());
+        body.addProperty("input_owner_none", receipt.inputOwnerNone());
+        body.addProperty("all_actions_terminal", receipt.allActionsTerminal());
+        body.addProperty("process_identity_bound", receipt.processIdentityBound());
+        return body;
+    }
+
+    private static UUID boundedUuid(JsonElement element) {
+        String value = stringValue(element);
+        return boundedUuidString(value);
+    }
+
+    private static UUID boundedUuidString(String value) {
+        if (value == null || value.length() != 36 || !value.equals(value.toLowerCase(Locale.ROOT))) {
+            return null;
+        }
+        try {
+            UUID parsed = UUID.fromString(value);
+            return parsed.toString().equals(value) ? parsed : null;
+        } catch (IllegalArgumentException failure) {
+            return null;
+        }
+    }
+
+    private static Long exactPositiveLong(JsonElement element) {
+        if (element == null || !element.isJsonPrimitive()
+                || !element.getAsJsonPrimitive().isNumber()) {
+            return null;
+        }
+        try {
+            var decimal = element.getAsBigDecimal();
+            long value = decimal.longValueExact();
+            return value > 0L ? value : null;
+        } catch (ArithmeticException | NumberFormatException failure) {
+            return null;
+        }
+    }
+
+    private static final class EvaluationControlException extends Exception {
+        private final int status;
+        private final String code;
+
+        private EvaluationControlException(int status, String code) {
+            this.status = status;
+            this.code = code;
+        }
+
+        private int status() {
+            return status;
+        }
+
+        private String code() {
+            return code;
         }
     }
 
@@ -150,6 +465,29 @@ public final class McpHttpServer implements AutoCloseable {
             exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer");
             sendHttpError(exchange, 401, "Unauthorized");
             return;
+        }
+        List<String> evaluationLeaseHeaders = headers.get(EVALUATION_LEASE_HEADER);
+        EvaluationTurnControl.FenceSnapshot evaluationFence = evaluationTurns == null
+                ? null : evaluationTurns.fenceSnapshot();
+        boolean evaluationLeaseRequired = evaluationFence != null
+                && evaluationFence.isolationActive();
+        RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation =
+                evaluationFence == null
+                        ? RuntimeCallContext.EvaluationLeaseExpectation.unmanaged()
+                        : RuntimeCallContext.EvaluationLeaseExpectation.absent(
+                                evaluationFence.revision());
+        if (evaluationLeaseRequired || evaluationLeaseHeaders != null) {
+            UUID evaluationLeaseId = evaluationLeaseHeaders != null
+                    && evaluationLeaseHeaders.size() == 1
+                    ? boundedUuidString(evaluationLeaseHeaders.getFirst()) : null;
+            if (!evaluationLeaseRequired || evaluationLeaseId == null
+                    || !evaluationFence.accepts(evaluationLeaseId)) {
+                sendHttpError(exchange, 409, "EvaluationLeaseInactive");
+                return;
+            }
+            evaluationLeaseExpectation =
+                    RuntimeCallContext.EvaluationLeaseExpectation.active(
+                            evaluationLeaseId, evaluationFence.revision());
         }
         if (!validJsonContentType(singleHeader(headers, "Content-Type"))) {
             sendHttpError(exchange, 415, "UnsupportedMediaType");
@@ -188,13 +526,18 @@ public final class McpHttpServer implements AutoCloseable {
                         "Parse error", "MalformedJson"));
                 return;
             }
-            dispatch(exchange, headers, parsed);
+            dispatch(exchange, headers, parsed, evaluationLeaseExpectation);
         } finally {
             admission.release();
         }
     }
 
-    private void dispatch(HttpExchange exchange, Headers headers, JsonElement parsed) throws IOException {
+    private void dispatch(
+            HttpExchange exchange,
+            Headers headers,
+            JsonElement parsed,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation)
+            throws IOException {
         if (!parsed.isJsonObject()) {
             sendJson(exchange, 400, jsonRpcError(JsonNull.INSTANCE, -32600,
                     "Invalid Request", parsed.isJsonArray() ? "BatchNotSupported" : "InvalidRequest"));
@@ -203,7 +546,7 @@ public final class McpHttpServer implements AutoCloseable {
         JsonObject request = parsed.getAsJsonObject();
         String candidateMethod = stringValue(request.get("method"));
         if (isCodexLegacyCandidate(headers, candidateMethod)) {
-            dispatchCodexLegacy(exchange, headers, request);
+            dispatchCodexLegacy(exchange, headers, request, evaluationLeaseExpectation);
             return;
         }
         JsonElement id = validRequestId(request.get("id")) ? request.get("id").deepCopy() : JsonNull.INSTANCE;
@@ -243,13 +586,18 @@ public final class McpHttpServer implements AutoCloseable {
         switch (method) {
             case "server/discover" -> discover(exchange, id, params, headers);
             case "tools/list" -> listTools(exchange, id, params, headers);
-            case "tools/call" -> callTool(exchange, id, params, headers);
+            case "tools/call" -> callTool(
+                    exchange, id, params, headers, evaluationLeaseExpectation);
             default -> sendJson(exchange, 404, jsonRpcError(id, -32601,
                     "Method not found", "MethodNotFound"));
         }
     }
 
-    private void dispatchCodexLegacy(HttpExchange exchange, Headers headers, JsonObject request)
+    private void dispatchCodexLegacy(
+            HttpExchange exchange,
+            Headers headers,
+            JsonObject request,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation)
             throws IOException {
         JsonElement id = validRequestId(request.get("id")) ? request.get("id").deepCopy() : JsonNull.INSTANCE;
         String method = stringValue(request.get("method"));
@@ -262,7 +610,8 @@ public final class McpHttpServer implements AutoCloseable {
             case "initialize" -> initializeCodexLegacy(exchange, id, request, headers);
             case "notifications/initialized" -> initializedCodexLegacy(exchange, request, headers);
             case "tools/list" -> listToolsCodexLegacy(exchange, id, request, headers);
-            case "tools/call" -> callToolCodexLegacy(exchange, id, request, headers);
+            case "tools/call" -> callToolCodexLegacy(
+                    exchange, id, request, headers, evaluationLeaseExpectation);
             default -> sendJson(exchange, 404, jsonRpcError(id, -32601,
                     "Method not found", "MethodNotFound"));
         }
@@ -338,7 +687,12 @@ public final class McpHttpServer implements AutoCloseable {
     }
 
     private void callToolCodexLegacy(
-            HttpExchange exchange, JsonElement id, JsonObject request, Headers headers) throws IOException {
+            HttpExchange exchange,
+            JsonElement id,
+            JsonObject request,
+            Headers headers,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation)
+            throws IOException {
         if (!REQUEST_KEYS.equals(request.keySet()) || !validRequestId(request.get("id"))
                 || !request.get("params").isJsonObject()) {
             sendJson(exchange, 400, jsonRpcError(id, -32600, "Invalid Request", "InvalidRequest"));
@@ -357,7 +711,8 @@ public final class McpHttpServer implements AutoCloseable {
         try {
             JsonObject arguments = params.has("arguments")
                     ? params.getAsJsonObject("arguments") : new JsonObject();
-            var prepared = tools.prepareCall(name, arguments);
+            var prepared = tools.prepareCall(
+                    name, arguments, evaluationLeaseExpectation);
             JsonObject result = legacyToolResult(prepared.response());
             try {
                 sendJson(exchange, 200, jsonRpcResult(id, result));
@@ -412,7 +767,12 @@ public final class McpHttpServer implements AutoCloseable {
         sendJson(exchange, 200, jsonRpcResult(id, tools.listResult()));
     }
 
-    private void callTool(HttpExchange exchange, JsonElement id, JsonObject params, Headers headers)
+    private void callTool(
+            HttpExchange exchange,
+            JsonElement id,
+            JsonObject params,
+            Headers headers,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation)
             throws IOException {
         if (!params.keySet().equals(Set.of("_meta", "name", "arguments"))
                 || !params.has("name") || !params.get("name").isJsonPrimitive()
@@ -433,7 +793,10 @@ public final class McpHttpServer implements AutoCloseable {
             return;
         }
         try {
-            var prepared = tools.prepareCall(name, params.getAsJsonObject("arguments"));
+            var prepared = tools.prepareCall(
+                    name,
+                    params.getAsJsonObject("arguments"),
+                    evaluationLeaseExpectation);
             try {
                 sendJson(exchange, 200, jsonRpcResult(id, prepared.response()));
             } catch (IOException failure) {
@@ -626,6 +989,32 @@ public final class McpHttpServer implements AutoCloseable {
             eventStream |= "text/event-stream".equals(type) || "*/*".equals(type);
         }
         return json && eventStream;
+    }
+
+    private static boolean acceptsMediaType(String accept, String requiredType) {
+        if (accept == null) {
+            return false;
+        }
+        for (String entry : accept.split(",")) {
+            String[] parts = entry.split(";");
+            boolean accepted = true;
+            for (int index = 1; index < parts.length; index++) {
+                String parameter = parts[index].strip();
+                if (parameter.regionMatches(true, 0, "q=", 0, 2)) {
+                    try {
+                        double quality = Double.parseDouble(parameter.substring(2).strip());
+                        accepted = Double.isFinite(quality) && quality > 0 && quality <= 1;
+                    } catch (NumberFormatException failure) {
+                        accepted = false;
+                    }
+                }
+            }
+            String type = parts[0].strip().toLowerCase(Locale.ROOT);
+            if (accepted && (requiredType.equals(type) || "*/*".equals(type))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean validClientMetadata(JsonObject meta) {

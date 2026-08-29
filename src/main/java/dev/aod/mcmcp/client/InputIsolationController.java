@@ -13,7 +13,7 @@ import java.util.BitSet;
 import java.util.Objects;
 
 /**
- * Keeps physical input out of vanilla while AGENT/RECOVERING owns control.
+ * Keeps physical input out of vanilla while EVALUATING/AGENT/RECOVERING owns control.
  * Mouse movement itself remains available so the Screen status button is reachable.
  */
 public final class InputIsolationController {
@@ -33,7 +33,7 @@ public final class InputIsolationController {
 
     /** Clears stale physical mappings; agent movement is applied later to final ClientInput. */
     public void onClientPreTick() {
-        if (runtime.inputIsolationActive()) {
+        if (inputIsolationActive()) {
             KeyMapping.releaseAll();
         }
     }
@@ -45,7 +45,7 @@ public final class InputIsolationController {
             event.setCanceled(true);
             return;
         }
-        if (!runtime.inputIsolationActive()) {
+        if (!inputIsolationActive()) {
             return;
         }
 
@@ -60,19 +60,19 @@ public final class InputIsolationController {
     }
 
     public void onMouseScroll(InputEvent.MouseScrollingEvent event) {
-        if (runtime.inputIsolationActive()) {
+        if (inputIsolationActive()) {
             event.setCanceled(true);
         }
     }
 
     public void onScreenMouseDragged(ScreenEvent.MouseDragged.Pre event) {
-        if (runtime.inputIsolationActive() || blocked(event.getMouseButton())) {
+        if (inputIsolationActive() || blocked(event.getMouseButton())) {
             event.setCanceled(true);
         }
     }
 
     public void onScreenMouseScrolled(ScreenEvent.MouseScrolled.Pre event) {
-        if (runtime.inputIsolationActive()) {
+        if (inputIsolationActive()) {
             event.setCanceled(true);
         }
     }
@@ -86,7 +86,7 @@ public final class InputIsolationController {
         }
         var decision = keyDecision(
                 current.runtime.automationUiSnapshot().state(),
-                current.runtime.inputIsolationActive(),
+                current.inputIsolationActive(),
                 event.key(),
                 action);
         return switch (decision) {
@@ -101,13 +101,13 @@ public final class InputIsolationController {
     /** Called by the CharacterEvent and IME pre-edit mixin entry points. */
     public static boolean interceptTextInput() {
         var current = installed;
-        return current != null && current.runtime.inputIsolationActive();
+        return current != null && current.inputIsolationActive();
     }
 
     /** Called by MouseHandler#turnPlayer; raw mouse movement is otherwise untouched. */
     public static boolean interceptMouseTurn() {
         var current = installed;
-        return current != null && current.runtime.inputIsolationActive();
+        return current != null && current.inputIsolationActive();
     }
 
     static KeyDecision keyDecision(
@@ -117,12 +117,23 @@ public final class InputIsolationController {
             int action) {
         Objects.requireNonNull(state, "state");
         if (key == InputConstants.KEY_ESCAPE && action == InputConstants.PRESS) {
+            if (isolationActive) {
+                return KeyDecision.EMERGENCY_STOP;
+            }
             return switch (state) {
-                case AGENT, RECOVERING -> KeyDecision.EMERGENCY_STOP;
+                case EVALUATING, AGENT, RECOVERING -> KeyDecision.EMERGENCY_STOP;
                 case OFF, READY, FAULT -> KeyDecision.PASS;
             };
         }
-        return isolationActive ? KeyDecision.BLOCK : KeyDecision.PASS;
+        return isolationActive || state == AutomationUiSnapshot.State.EVALUATING
+                ? KeyDecision.BLOCK
+                : KeyDecision.PASS;
+    }
+
+    private boolean inputIsolationActive() {
+        return runtime.inputIsolationActive()
+                || runtime.automationUiSnapshot().state()
+                        == AutomationUiSnapshot.State.EVALUATING;
     }
 
     private boolean blocked(int button) {

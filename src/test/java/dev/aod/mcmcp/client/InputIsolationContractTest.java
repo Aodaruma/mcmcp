@@ -9,8 +9,10 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.PreeditEvent;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 import org.lwjgl.glfw.GLFW;
@@ -54,7 +56,43 @@ class InputIsolationContractTest {
                 GLFW.GLFW_KEY_W,
                 InputConstants.PRESS))
                 .isEqualTo(InputIsolationController.KeyDecision.BLOCK);
+        assertThat(InputIsolationController.keyDecision(
+                AutomationUiSnapshot.State.EVALUATING,
+                false,
+                GLFW.GLFW_KEY_W,
+                InputConstants.PRESS))
+                .isEqualTo(InputIsolationController.KeyDecision.BLOCK);
         assertThat(InputIsolationController.KeyDecision.BLOCK.cancelsVanilla()).isTrue();
+    }
+
+    @Test
+    void evaluatingEscStopsTheTurnAndStillPassesToVanilla() {
+        var decision = InputIsolationController.keyDecision(
+                AutomationUiSnapshot.State.EVALUATING,
+                true,
+                InputConstants.KEY_ESCAPE,
+                InputConstants.PRESS);
+
+        assertThat(decision)
+                .isEqualTo(InputIsolationController.KeyDecision.EMERGENCY_STOP);
+        assertThat(decision.cancelsVanilla()).isFalse();
+    }
+
+    @Test
+    void isolationStateMakesEscFailSafeEvenIfPresentationLagsToOffOrFault() {
+        for (var state : List.of(
+                AutomationUiSnapshot.State.OFF,
+                AutomationUiSnapshot.State.FAULT,
+                AutomationUiSnapshot.State.READY)) {
+            var decision = InputIsolationController.keyDecision(
+                    state,
+                    true,
+                    InputConstants.KEY_ESCAPE,
+                    InputConstants.PRESS);
+            assertThat(decision)
+                    .isEqualTo(InputIsolationController.KeyDecision.EMERGENCY_STOP);
+            assertThat(decision.cancelsVanilla()).isFalse();
+        }
     }
 
     @Test
@@ -213,6 +251,38 @@ class InputIsolationContractTest {
     }
 
     @Test
+    void failedHoldKeepsExactOwnersForTheSharedFiniteReleaseRetry() throws Exception {
+        var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
+        var holdRelease = method(runtime, "releaseAgentInputsForHold");
+
+        assertThat(invocations(holdRelease))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#releaseOwnedInputsOrLock",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#rememberPendingAgentTerminal",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#releaseAgentControl",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#publishAgentTerminal")
+                .doesNotContain(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#closeAgentPrimitiveExecutor",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#closeRecoveryGovernor",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#restoreAgentSelectedSlot");
+        assertThat(fieldWrites(holdRelease))
+                .doesNotContain(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#agentExecution",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentAdmission");
+        assertThat(invocations(method(runtime, "releaseAgentControl")))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#boundedActionInputRelease",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#restoreAgentSelectedSlot");
+        var terminalRelease = method(runtime, "releaseAgentControl");
+        int failedReturn = firstOpcode(terminalRelease, Opcodes.IRETURN);
+        assertThat(failedReturn).isGreaterThanOrEqualTo(0);
+        assertThat(firstFieldWrite(terminalRelease, "agentExecution"))
+                .isGreaterThan(failedReturn);
+        assertThat(firstFieldWrite(terminalRelease, "pendingAgentAdmission"))
+                .isGreaterThan(failedReturn);
+    }
+
+    @Test
     void legacyFunctionKeyControlsAreAbsent() throws Exception {
         var mod = classNode("/dev/aod/mcmcp/McmcpMod.class");
         assertThat(mod.methods.stream().flatMap(method -> invocations(method).stream()).toList())
@@ -285,6 +355,42 @@ class InputIsolationContractTest {
             }
         }
         return List.copyOf(calls);
+    }
+
+    private static List<String> fieldWrites(MethodNode method) {
+        var fields = new ArrayList<String>();
+        for (var instruction : method.instructions) {
+            if (instruction instanceof FieldInsnNode field
+                    && field.getOpcode() == Opcodes.PUTFIELD) {
+                fields.add(field.owner + "#" + field.name);
+            }
+        }
+        return List.copyOf(fields);
+    }
+
+    private static int firstOpcode(MethodNode method, int opcode) {
+        int index = 0;
+        for (var instruction : method.instructions) {
+            if (instruction.getOpcode() == opcode) {
+                return index;
+            }
+            index++;
+        }
+        return -1;
+    }
+
+    private static int firstFieldWrite(MethodNode method, String name) {
+        int index = 0;
+        for (var instruction : method.instructions) {
+            if (instruction instanceof FieldInsnNode field
+                    && field.getOpcode() == Opcodes.PUTFIELD
+                    && field.owner.equals("dev/aod/mcmcp/runtime/McmcpRuntime")
+                    && field.name.equals(name)) {
+                return index;
+            }
+            index++;
+        }
+        return -1;
     }
 
     private static String atValues(AnnotationNode inject) {

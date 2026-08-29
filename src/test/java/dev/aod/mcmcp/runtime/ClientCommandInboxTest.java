@@ -11,6 +11,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -44,6 +46,19 @@ class ClientCommandInboxTest {
                 arming, beforeStop, session, true, false, "release_failed")).isTrue();
         assertThat(arming.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.OFF);
         assertThat(arming.snapshot(session).capabilities()).isEmpty();
+    }
+
+    @Test
+    void stopReceiptKeepsReleaseExecutionAndMeasuredOwnerNoneIndependent() {
+        var ownerRetained = ClientCommandInbox.stopProof(true, true, false);
+        assertThat(ownerRetained.inputsReleased()).isTrue();
+        assertThat(ownerRetained.inputOwnerNone()).isFalse();
+        assertThat(ownerRetained.terminalSafe()).isFalse();
+
+        var releaseFailed = ClientCommandInbox.stopProof(false, true, true);
+        assertThat(releaseFailed.inputsReleased()).isFalse();
+        assertThat(releaseFailed.inputOwnerNone()).isTrue();
+        assertThat(releaseFailed.terminalSafe()).isFalse();
     }
 
     @Test
@@ -174,6 +189,73 @@ class ClientCommandInboxTest {
     }
 
     @Test
+    void abandonedControlCompletionRunsItsExactLeaseCleanup() throws Exception {
+        var inbox = new ClientCommandInbox(4, new InputReleaseController(), new LocalArmingState());
+        var actionStarted = new CountDownLatch(1);
+        var allowActionToFinish = new CountDownLatch(1);
+        var abandoned = new AtomicBoolean();
+        var cleanedReceipt = new AtomicReference<String>();
+        var queued = inbox.submitControl(
+                "evaluation_turn_acquire",
+                1,
+                Long.MAX_VALUE,
+                () -> {
+                    actionStarted.countDown();
+                    assertThat(allowActionToFinish.await(2, TimeUnit.SECONDS)).isTrue();
+                    return "exact-evaluation-lease";
+                },
+                abandoned::get,
+                cleanedReceipt::set);
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var draining = executor.submit(() -> inbox.drainControlsPreTick(
+                    new WorldSessionTracker.Snapshot(
+                            WorldSessionTracker.Readiness.WORLD_READY,
+                            1,
+                            0,
+                            UUID.randomUUID(),
+                            "minecraft:overworld")));
+            assertThat(actionStarted.await(1, TimeUnit.SECONDS)).isTrue();
+            abandoned.set(true);
+            allowActionToFinish.countDown();
+            draining.get(1, TimeUnit.SECONDS);
+        }
+
+        assertThat(cleanedReceipt).hasValue("exact-evaluation-lease");
+        assertThatThrownBy(() -> queued.get(1, TimeUnit.SECONDS))
+                .hasCauseInstanceOf(ClientCommandInbox.CommandTimeoutException.class);
+    }
+
+    @Test
+    void controlCrossingDeadlineAfterAcquireRunsItsExactLeaseCleanup() {
+        var clock = new AtomicLong(100L);
+        var inbox = new ClientCommandInbox(
+                4,
+                new InputReleaseController(),
+                new LocalArmingState(),
+                (reason, session) -> true,
+                clock::get);
+        var cleanedReceipt = new AtomicReference<String>();
+        long deadline = 101L;
+        var queued = inbox.submitControl(
+                "evaluation_turn_acquire",
+                1,
+                deadline,
+                () -> {
+                    clock.set(102L);
+                    return "exact-evaluation-lease";
+                },
+                () -> false,
+                cleanedReceipt::set);
+
+        inbox.drainControls(1, 100L);
+
+        assertThat(cleanedReceipt).hasValue("exact-evaluation-lease");
+        assertThatThrownBy(queued::join)
+                .hasCauseInstanceOf(ClientCommandInbox.CommandTimeoutException.class);
+    }
+
+    @Test
     void cancellingTheReturnedMappedFutureWinsBeforeAClaimedStartCanRemain() throws Exception {
         var inbox = new ClientCommandInbox(4, new InputReleaseController(), new LocalArmingState());
         var actionStarted = new CountDownLatch(1);
@@ -208,7 +290,7 @@ class ClientCommandInboxTest {
     void emergencyStopAfterShutdownReturnsTheTerminalReceiptInsteadOfTimingOut() throws Exception {
         var inbox = new ClientCommandInbox(4, new InputReleaseController(), new LocalArmingState());
         var terminal = new ClientCommandInbox.StopReceipt(
-                "client_shutdown", 4, 9, true, true, 0);
+                "client_shutdown", 4, 9, true, true, true, 0);
         var accepting = ClientCommandInbox.class.getDeclaredField("accepting");
         var terminalReceipt = ClientCommandInbox.class.getDeclaredField("terminalStopReceipt");
         accepting.setAccessible(true);

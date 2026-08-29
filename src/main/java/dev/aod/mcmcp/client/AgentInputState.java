@@ -349,6 +349,42 @@ public final class AgentInputState {
         }
     }
 
+    /**
+     * Neutralizes output without discarding the velocity attribution needed by terminal cleanup.
+     * The attribution is cleared only after it has been removed from the matching player, or when
+     * the player is no longer available and the boundary explicitly discards it.
+     */
+    public synchronized void suppressAllRetainingTrackedVelocity() {
+        if (movement.owned()) {
+            movementSuppressed = true;
+        }
+        invalidateGoalMovementCycle();
+        if (attackOwned) {
+            attackSuppressed = true;
+        }
+    }
+
+    /** A measured snapshot used before publishing any terminal input-release receipt. */
+    public synchronized InputOwnershipSnapshot inputOwnershipSnapshot() {
+        boolean goalProofRetained = goalMovementCycleActive
+                || goalMovementPlayerIdentity != null
+                || goalMovementLevelIdentity != null
+                || goalMovementWorldRevision >= 0L
+                || goalRecoveryIntent != null
+                || goalNavigationIntent != null;
+        boolean velocityTracked = agentVelocityPlayerIdentity != null
+                || agentVelocityLevelIdentity != null
+                || agentVelocityContribution.lengthSqr() > 0.0D
+                || agentMoveContribution.lengthSqr() > 0.0D
+                || agentVelocityReset;
+        return new InputOwnershipSnapshot(
+                movement.owned(), attackOwned, goalProofRetained, velocityTracked);
+    }
+
+    public synchronized boolean inputOwnerNone() {
+        return inputOwnershipSnapshot().ownerNone();
+    }
+
     public synchronized boolean attackActive() {
         return attackOwned && !attackSuppressed && !paused;
     }
@@ -592,6 +628,16 @@ public final class AgentInputState {
             if (active && expired || !expired && contribution.lengthSqr() > 0.0D) {
                 throw new IllegalArgumentException("invalid movement boundary state");
             }
+        }
+    }
+
+    public record InputOwnershipSnapshot(
+            boolean movementOwned,
+            boolean attackOwned,
+            boolean goalProofRetained,
+            boolean velocityTracked) {
+        public boolean ownerNone() {
+            return !movementOwned && !attackOwned && !goalProofRetained && !velocityTracked;
         }
     }
 }

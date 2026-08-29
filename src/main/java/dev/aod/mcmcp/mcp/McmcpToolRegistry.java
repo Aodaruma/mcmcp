@@ -56,6 +56,16 @@ public final class McmcpToolRegistry {
     }
 
     PreparedCall prepareCall(String name, JsonObject arguments) throws UnknownToolException {
+        return prepareCall(
+                name, arguments, RuntimeCallContext.EvaluationLeaseExpectation.unmanaged());
+    }
+
+    PreparedCall prepareCall(
+            String name,
+            JsonObject arguments,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation)
+            throws UnknownToolException {
+        Objects.requireNonNull(evaluationLeaseExpectation, "evaluationLeaseExpectation");
         if (!catalog.contains(name)) {
             throw new UnknownToolException();
         }
@@ -65,19 +75,24 @@ public final class McmcpToolRegistry {
             return new PreparedCall(domainFailure(
                     "INVALID_ARGUMENT",
                     schemaFailures.summary(),
-                    true), null);
+                    true), null, evaluationLeaseExpectation);
         }
 
-        return dispatch(name, command(name, arguments));
+        return dispatch(name, command(name, arguments), evaluationLeaseExpectation);
     }
 
-    private PreparedCall dispatch(String toolName, McpRuntimePort.RuntimeCommand command) {
+    private PreparedCall dispatch(
+            String toolName,
+            McpRuntimePort.RuntimeCommand command,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation) {
         boolean terminalWait = isTerminalWait(command);
         if (terminalWait && !terminalWaitAdmission.tryAcquire()) {
-            return serverBusyCall("Another action terminal wait is already active.");
+            return serverBusyCall(
+                    "Another action terminal wait is already active.",
+                    evaluationLeaseExpectation);
         }
         try {
-            return dispatchAdmitted(toolName, command);
+            return dispatchAdmitted(toolName, command, evaluationLeaseExpectation);
         } finally {
             if (terminalWait) {
                 terminalWaitAdmission.release();
@@ -86,9 +101,11 @@ public final class McmcpToolRegistry {
     }
 
     private PreparedCall dispatchAdmitted(
-            String toolName, McpRuntimePort.RuntimeCommand command) {
+            String toolName,
+            McpRuntimePort.RuntimeCommand command,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation) {
         RuntimeCallContext context = RuntimeCallContext.withTimeout(
-                effectiveDispatchTimeout(command));
+                effectiveDispatchTimeout(command), evaluationLeaseExpectation);
         var future = runtimePort.submit(command, context).toCompletableFuture();
         McpRuntimePort.RuntimeReply reply;
         try {
@@ -96,38 +113,46 @@ public final class McmcpToolRegistry {
         } catch (TimeoutException failure) {
             if (future.cancel(true)) {
                 context.cancel();
-                return serverBusyCall("Minecraft client dispatch timed out.");
+                return serverBusyCall(
+                        "Minecraft client dispatch timed out.", evaluationLeaseExpectation);
             }
             try {
                 reply = future.join();
             } catch (RuntimeException completionFailure) {
                 context.cancel();
-                return serverBusyCall("Minecraft client dispatch timed out.");
+                return serverBusyCall(
+                        "Minecraft client dispatch timed out.", evaluationLeaseExpectation);
             }
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
             if (future.cancel(true)) {
                 context.cancel();
-                return failedCall("Minecraft client dispatch was interrupted.");
+                return failedCall(
+                        "Minecraft client dispatch was interrupted.", evaluationLeaseExpectation);
             }
             try {
                 reply = future.join();
             } catch (RuntimeException completionFailure) {
                 context.cancel();
-                return failedCall("Minecraft client dispatch was interrupted.");
+                return failedCall(
+                        "Minecraft client dispatch was interrupted.", evaluationLeaseExpectation);
             }
         } catch (CancellationException failure) {
             context.cancel();
-            return failedCall("Minecraft client dispatch was cancelled.");
+            return failedCall(
+                    "Minecraft client dispatch was cancelled.", evaluationLeaseExpectation);
         } catch (ExecutionException | RuntimeException failure) {
             context.cancel();
-            return failedCall("Minecraft client dispatch failed.");
+            return failedCall(
+                    "Minecraft client dispatch failed.", evaluationLeaseExpectation);
         }
 
         if (!reply.successful()) {
             McpRuntimePort.RuntimeFailure failure = reply.failure();
             return new PreparedCall(domainFailure(
-                    publicCode(failure.code()), failure.message(), failure.retryable()), null);
+                    publicCode(failure.code()), failure.message(), failure.retryable()),
+                    null,
+                    evaluationLeaseExpectation);
         }
         McpRuntimePort.DeliveryReceipt deliveryReceipt = reply.deliveryReceipt();
         if (deliveryReceipt == null) {
@@ -139,13 +164,16 @@ public final class McmcpToolRegistry {
         JsonElement output = GSON.toJsonTree(reply.data());
         JsonObject schema = catalog.outputSchema(toolName);
         if (!output.isJsonObject() || !CatalogSchemaValidator.matches(schema, output)) {
-            abandonDelivery(deliveryReceipt);
+            abandonDelivery(deliveryReceipt, evaluationLeaseExpectation);
             return new PreparedCall(domainFailure(
                     "INTERNAL_ERROR",
                     "The Minecraft client returned an invalid tool result.",
-                    true), null);
+                    true), null, evaluationLeaseExpectation);
         }
-        return new PreparedCall(success(output.getAsJsonObject()), deliveryReceipt);
+        return new PreparedCall(
+                success(output.getAsJsonObject()),
+                deliveryReceipt,
+                evaluationLeaseExpectation);
     }
 
     private static boolean isTerminalWait(McpRuntimePort.RuntimeCommand command) {
@@ -173,12 +201,22 @@ public final class McmcpToolRegistry {
                 ? required : runtimeDispatchTimeout;
     }
 
-    private PreparedCall failedCall(String message) {
-        return new PreparedCall(domainFailure("INTERNAL_ERROR", message, true), null);
+    private PreparedCall failedCall(
+            String message,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation) {
+        return new PreparedCall(
+                domainFailure("INTERNAL_ERROR", message, true),
+                null,
+                evaluationLeaseExpectation);
     }
 
-    private PreparedCall serverBusyCall(String message) {
-        return new PreparedCall(domainFailure("SERVER_BUSY", message, true), null);
+    private PreparedCall serverBusyCall(
+            String message,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation) {
+        return new PreparedCall(
+                domainFailure("SERVER_BUSY", message, true),
+                null,
+                evaluationLeaseExpectation);
     }
 
     void confirmDelivery(PreparedCall prepared) {
@@ -186,31 +224,45 @@ public final class McmcpToolRegistry {
         switch (prepared.deliveryReceipt()) {
             case null -> { }
             case McpRuntimePort.ActionDeliveryReceipt action ->
-                    submitDelivery(new McpRuntimePort.ConfirmActionDelivery(action.actionId()));
+                    submitDelivery(
+                            new McpRuntimePort.ConfirmActionDelivery(action.actionId()),
+                            prepared.evaluationLeaseExpectation());
             case McpRuntimePort.ObservationDeliveryReceipt observation ->
-                    submitDelivery(new McpRuntimePort.ConfirmObservationDelivery(
-                            observation.receiptId()));
+                    submitDelivery(
+                            new McpRuntimePort.ConfirmObservationDelivery(
+                                    observation.receiptId()),
+                            prepared.evaluationLeaseExpectation());
         }
     }
 
     void abandonDelivery(PreparedCall prepared) {
         Objects.requireNonNull(prepared, "prepared");
-        abandonDelivery(prepared.deliveryReceipt());
+        abandonDelivery(
+                prepared.deliveryReceipt(), prepared.evaluationLeaseExpectation());
     }
 
-    private void abandonDelivery(McpRuntimePort.DeliveryReceipt receipt) {
+    private void abandonDelivery(
+            McpRuntimePort.DeliveryReceipt receipt,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation) {
         switch (receipt) {
             case null -> { }
             case McpRuntimePort.ActionDeliveryReceipt action ->
-                    submitDelivery(new McpRuntimePort.AbandonActionDelivery(action.actionId()));
+                    submitDelivery(
+                            new McpRuntimePort.AbandonActionDelivery(action.actionId()),
+                            evaluationLeaseExpectation);
             case McpRuntimePort.ObservationDeliveryReceipt observation ->
-                    submitDelivery(new McpRuntimePort.AbandonObservationDelivery(
-                            observation.receiptId()));
+                    submitDelivery(
+                            new McpRuntimePort.AbandonObservationDelivery(
+                                    observation.receiptId()),
+                            evaluationLeaseExpectation);
         }
     }
 
-    private void submitDelivery(McpRuntimePort.RuntimeCommand command) {
-        RuntimeCallContext context = RuntimeCallContext.withTimeout(runtimeDispatchTimeout);
+    private void submitDelivery(
+            McpRuntimePort.RuntimeCommand command,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation) {
+        RuntimeCallContext context = RuntimeCallContext.withTimeout(
+                runtimeDispatchTimeout, evaluationLeaseExpectation);
         try {
             runtimePort.submit(command, context);
         } catch (RuntimeException failure) {
@@ -314,9 +366,12 @@ public final class McmcpToolRegistry {
     }
 
     record PreparedCall(
-            JsonObject response, McpRuntimePort.DeliveryReceipt deliveryReceipt) {
+            JsonObject response,
+            McpRuntimePort.DeliveryReceipt deliveryReceipt,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation) {
         PreparedCall {
             Objects.requireNonNull(response, "response");
+            Objects.requireNonNull(evaluationLeaseExpectation, "evaluationLeaseExpectation");
         }
     }
 }

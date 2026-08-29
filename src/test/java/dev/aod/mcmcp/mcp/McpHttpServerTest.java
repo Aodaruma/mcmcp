@@ -18,9 +18,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -379,6 +382,109 @@ class McpHttpServerTest {
         assertThat(first.get(2, TimeUnit.SECONDS).statusCode()).isEqualTo(200);
     }
 
+    @Test
+    void evaluationTurnControlIsAuthenticatedUnadvertisedAndStreamsUntilRelease() throws Exception {
+        var runtime = new EvaluationRuntime();
+        start(runtime, config("evaluation-control").rateLimit(100, 100).build());
+
+        UUID leaseId = UUID.randomUUID();
+        JsonObject acquireBody = new JsonObject();
+        acquireBody.addProperty("lease_id", leaseId.toString());
+        acquireBody.addProperty("runner_pid", ProcessHandle.current().pid());
+        acquireBody.addProperty("max_duration_ms", 60_000);
+        HttpRequest acquire = evaluationRequest("POST", acquireBody, McpTestFixtures.TOKEN, null);
+        HttpResponse<java.io.InputStream> stream = client.send(
+                acquire, HttpResponse.BodyHandlers.ofInputStream());
+
+        assertThat(stream.statusCode()).isEqualTo(200);
+        assertThat(stream.headers().firstValue("Mcmcp-Evaluation-Lease")).contains("active");
+        var reader = new BufferedReader(new InputStreamReader(
+                stream.body(), StandardCharsets.UTF_8));
+        assertThat(reader.readLine()).isEqualTo(
+                "{\"state\":\"active\",\"reason\":null,\"inputs_released\":false,"
+                        + "\"input_owner_none\":true,\"all_actions_terminal\":true,"
+                        + "\"process_identity_bound\":true}");
+
+        assertThat(send(request(
+                "server/discover", null, metaParams(), McpTestFixtures.TOKEN)).statusCode())
+                .isEqualTo(409);
+        assertThat(send(evaluationBoundRequest(
+                "server/discover", null, metaParams(), UUID.randomUUID())).statusCode())
+                .isEqualTo(409);
+        assertThat(send(evaluationBoundRequest(
+                "server/discover", null, metaParams(), leaseId)).statusCode())
+                .isEqualTo(200);
+        HttpResponse<String> activeToolCall = send(toolStateRequest(leaseId));
+        assertThat(activeToolCall.statusCode()).isEqualTo(200);
+        assertThat(json(activeToolCall).getAsJsonObject("result")
+                .get("isError").getAsBoolean()).isFalse();
+
+        JsonObject releaseBody = new JsonObject();
+        releaseBody.addProperty("lease_id", leaseId.toString());
+        releaseBody.addProperty("reason", "turn_completed");
+        HttpResponse<String> released = send(evaluationRequest(
+                "DELETE", releaseBody, McpTestFixtures.TOKEN, null));
+        assertThat(released.statusCode()).isEqualTo(200);
+        assertThat(released.body())
+                .contains("\"state\":\"released\"")
+                .contains("\"reason\":\"turn_completed\"")
+                .contains("\"inputs_released\":true");
+
+        String terminalLine;
+        do {
+            terminalLine = reader.readLine();
+        } while (terminalLine != null && !terminalLine.contains("\"state\":\"released\""));
+        assertThat(terminalLine).contains("turn_completed", "inputs_released");
+        reader.close();
+
+        HttpResponse<String> preflightToolCall = send(toolStateRequest(null));
+        assertThat(preflightToolCall.statusCode()).isEqualTo(200);
+        assertThat(json(preflightToolCall).getAsJsonObject("result")
+                .get("isError").getAsBoolean()).isFalse();
+
+        assertThat(send(evaluationRequest("DELETE", releaseBody, "wrong-token", null)).statusCode())
+                .isEqualTo(401);
+        assertThat(send(evaluationRequest(
+                "DELETE", releaseBody, McpTestFixtures.TOKEN, "http://localhost")).statusCode())
+                .isEqualTo(403);
+
+        HttpResponse<String> list = send(request(
+                "tools/list", null, metaParams(), McpTestFixtures.TOKEN));
+        assertThat(json(list).getAsJsonObject("result").getAsJsonArray("tools")).hasSize(5);
+        assertThat(list.body()).doesNotContain(
+                "evaluation_turn", "evaluation_lease", McpHttpServer.EVALUATION_TURN_PATH);
+    }
+
+    @Test
+    void evaluationAdmissionRaceIsRecheckedBeforeRuntimeSideEffects() throws Exception {
+        var absenceRuntime = new EvaluationRuntime();
+        start(absenceRuntime, config("evaluation-absence-race").rateLimit(100, 100).build());
+        UUID acquiredDuringRequest = UUID.randomUUID();
+        absenceRuntime.afterFenceSnapshot.set(() ->
+                absenceRuntime.forceLease(acquiredDuringRequest));
+
+        HttpResponse<String> absentRace = send(toolStateRequest(null));
+        assertThat(absentRace.statusCode()).isEqualTo(200);
+        assertThat(json(absentRace).getAsJsonObject("result")
+                .get("isError").getAsBoolean()).isTrue();
+        assertThat(absenceRuntime.sideEffects).hasValue(0);
+
+        server.close();
+        var activeRuntime = new EvaluationRuntime();
+        UUID admittedLease = UUID.randomUUID();
+        UUID replacementLease = UUID.randomUUID();
+        activeRuntime.forceLease(admittedLease);
+        activeRuntime.afterFenceSnapshot.set(() ->
+                activeRuntime.forceLease(replacementLease));
+        start(activeRuntime, config("evaluation-active-race").rateLimit(100, 100).build());
+
+        HttpResponse<String> activeRace = send(toolStateRequest(admittedLease));
+        assertThat(activeRace.statusCode()).isEqualTo(200);
+        assertThat(json(activeRace).getAsJsonObject("result")
+                .get("isError").getAsBoolean()).isTrue();
+        assertThat(activeRuntime.sideEffects).hasValue(0);
+    }
+
     private void start(McpRuntimePort runtime, McpHttpServerConfig config) throws Exception {
         if (server != null && server.state() != McpHttpServer.State.STOPPED) {
             server.close();
@@ -399,6 +505,11 @@ class McpHttpServerTest {
 
     private URI endpoint() {
         return URI.create("http://127.0.0.1:" + server.localPort() + "/mcp");
+    }
+
+    private URI evaluationEndpoint() {
+        return URI.create("http://127.0.0.1:" + server.localPort()
+                + McpHttpServer.EVALUATION_TURN_PATH);
     }
 
     private HttpResponse<String> send(HttpRequest request) throws Exception {
@@ -429,6 +540,38 @@ class McpHttpServerTest {
         return request.build();
     }
 
+    private HttpRequest evaluationBoundRequest(
+            String method, String name, JsonObject params, UUID leaseId) {
+        String body = requestBody(method, params);
+        HttpRequest.Builder request = HttpRequest.newBuilder(endpoint())
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Bearer " + McpTestFixtures.TOKEN)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header(McpHttpServer.PROTOCOL_HEADER, McpHttpServer.PROTOCOL_VERSION)
+                .header(McpHttpServer.METHOD_HEADER, method)
+                .header(McpHttpServer.EVALUATION_LEASE_HEADER, leaseId.toString())
+                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
+        if (name != null) {
+            request.header(McpHttpServer.NAME_HEADER, name);
+        }
+        return request.build();
+    }
+
+    private HttpRequest toolStateRequest(UUID leaseId) {
+        JsonObject params = metaParams();
+        params.addProperty("name", "agent_get_state");
+        params.add("arguments", new JsonObject());
+        return leaseId == null
+                ? request(
+                        "tools/call",
+                        "agent_get_state",
+                        params,
+                        McpTestFixtures.TOKEN)
+                : evaluationBoundRequest(
+                        "tools/call", "agent_get_state", params, leaseId);
+    }
+
     private HttpRequest codexLegacyPost(
             String body, String protocolVersion, String method, String name, String sessionId) {
         HttpRequest.Builder request = HttpRequest.newBuilder(endpoint())
@@ -450,6 +593,28 @@ class McpHttpServerTest {
             request.header("Mcp-Session-Id", sessionId);
         }
         return request.build();
+    }
+
+    private HttpRequest evaluationRequest(
+            String method, JsonObject body, String token, String origin) {
+        HttpRequest.Builder request = HttpRequest.newBuilder(evaluationEndpoint())
+                .timeout(Duration.ofSeconds(5))
+                .header("Content-Type", "application/json; charset=utf-8")
+                .header("Accept", "POST".equals(method)
+                        ? "application/x-ndjson" : "application/json");
+        if (token != null) {
+            request.header("Authorization", "Bearer " + token);
+        }
+        if (origin != null) {
+            request.header("Origin", origin);
+        }
+        var publisher = HttpRequest.BodyPublishers.ofString(
+                body.toString(), StandardCharsets.UTF_8);
+        return switch (method) {
+            case "POST" -> request.POST(publisher).build();
+            case "DELETE" -> request.method("DELETE", publisher).build();
+            default -> throw new IllegalArgumentException("unsupported test method");
+        };
     }
 
     private static String requestBody(String method, JsonObject params) {
@@ -514,6 +679,93 @@ class McpHttpServerTest {
             socket.getOutputStream().flush();
             return new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII))
                     .readLine();
+        }
+    }
+
+    private static final class EvaluationRuntime
+            implements McpRuntimePort, EvaluationTurnControl {
+        private final AtomicReference<UUID> active = new AtomicReference<>();
+        private final AtomicReference<CompletableFuture<LeaseReceipt>> terminal =
+                new AtomicReference<>();
+        private final AtomicReference<Runnable> afterFenceSnapshot = new AtomicReference<>();
+        private final AtomicInteger fenceRevision = new AtomicInteger();
+        private final AtomicInteger sideEffects = new AtomicInteger();
+
+        @Override
+        public CompletableFuture<RuntimeReply> submit(
+                RuntimeCommand command, RuntimeCallContext context) {
+            if (!context.evaluationLeaseCurrent(this)) {
+                return CompletableFuture.completedFuture(RuntimeReply.failure(
+                        "unsafe_state", "evaluation lease changed", true));
+            }
+            sideEffects.incrementAndGet();
+            return CompletableFuture.completedFuture(
+                    RuntimeReply.success(McpTestFixtures.state()));
+        }
+
+        @Override
+        public synchronized CompletableFuture<LeaseReceipt> acquire(AcquireRequest request) {
+            if (!active.compareAndSet(null, request.leaseId())) {
+                return CompletableFuture.failedFuture(
+                        new IllegalStateException("evaluation lease busy"));
+            }
+            fenceRevision.incrementAndGet();
+            terminal.set(new CompletableFuture<>());
+            return CompletableFuture.completedFuture(new LeaseReceipt(
+                    request.leaseId(), LeaseState.ACTIVE, null,
+                    false, true, true, true));
+        }
+
+        @Override
+        public CompletableFuture<LeaseReceipt> await(UUID leaseId) {
+            if (!leaseId.equals(active.get()) || terminal.get() == null) {
+                return CompletableFuture.failedFuture(
+                        new IllegalArgumentException("unknown evaluation lease"));
+            }
+            return terminal.get();
+        }
+
+        @Override
+        public synchronized CompletableFuture<LeaseReceipt> release(UUID leaseId, ReleaseReason reason) {
+            UUID retained = active.get();
+            if (!leaseId.equals(retained) || !active.compareAndSet(retained, null)) {
+                return CompletableFuture.failedFuture(
+                        new IllegalArgumentException("unknown evaluation lease"));
+            }
+            fenceRevision.incrementAndGet();
+            var receipt = new LeaseReceipt(
+                    leaseId, LeaseState.RELEASED, reason.wireName(),
+                    true, true, true, true);
+            terminal.getAndSet(null).complete(receipt);
+            return CompletableFuture.completedFuture(receipt);
+        }
+
+        @Override
+        public synchronized FenceSnapshot fenceSnapshot() {
+            UUID accepted = active.get();
+            var snapshot = new FenceSnapshot(
+                    fenceRevision.get(), accepted != null, accepted);
+            var hook = afterFenceSnapshot.getAndSet(null);
+            if (hook != null) {
+                hook.run();
+            }
+            return snapshot;
+        }
+
+        @Override
+        public synchronized boolean active(UUID leaseId) {
+            return leaseId != null && leaseId.equals(active.get());
+        }
+
+        @Override
+        public synchronized boolean anyActive() {
+            return active.get() != null;
+        }
+
+        private synchronized void forceLease(UUID leaseId) {
+            active.set(leaseId);
+            fenceRevision.incrementAndGet();
+            terminal.set(new CompletableFuture<>());
         }
     }
 }

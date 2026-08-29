@@ -34,10 +34,12 @@ public final class AutomationIndicatorController {
     private static final int BUTTON_PADDING = 8;
     private static final int BACKGROUND = 0xD0101010;
     private static final int EXECUTION_BORDER_COLOR = 0xFFFFFF00;
+    private static final int EVALUATION_BORDER_COLOR = 0xFF42D9F5;
     private static final int EXECUTION_BORDER_WIDTH = 2;
 
     private static final int OFF_COLOR = 0xFFB8B8B8;
     private static final int READY_COLOR = 0xFFFFA928;
+    private static final int EVALUATING_COLOR = 0xFF42D9F5;
     private static final int AGENT_COLOR = 0xFF45A7FF;
     private static final int RECOVERING_COLOR = 0xFFC17AFF;
     private static final int FAULT_COLOR = 0xFFFF5555;
@@ -101,11 +103,14 @@ public final class AutomationIndicatorController {
 
         if (executionBorderVisible(snapshot.state())) {
             drawExecutionBorder(graphics);
+        } else if (evaluationBorderVisible(snapshot.state())) {
+            drawEvaluationBorder(graphics);
         }
 
-        if (snapshot.state() == AutomationUiSnapshot.State.AGENT
+        if ((snapshot.state() == AutomationUiSnapshot.State.AGENT
+                || snapshot.state() == AutomationUiSnapshot.State.EVALUATING)
                 && System.nanoTime() < agentNoticeDeadlineNanos) {
-            drawAgentNotice(graphics, minecraft);
+            drawActiveNotice(graphics, minecraft, snapshot.state());
         }
         if (minecraft.gui.screen() != null) {
             return;
@@ -138,8 +143,9 @@ public final class AutomationIndicatorController {
     }
 
     private void observeState(AutomationUiSnapshot.State state, long nowNanos) {
-        if (state == AutomationUiSnapshot.State.AGENT
-                && lastObservedState != AutomationUiSnapshot.State.AGENT) {
+        if ((state == AutomationUiSnapshot.State.AGENT
+                || state == AutomationUiSnapshot.State.EVALUATING)
+                && lastObservedState != state) {
             agentNoticeDeadlineNanos = nowNanos + AGENT_NOTICE_NANOS;
         }
         lastObservedState = state;
@@ -149,7 +155,7 @@ public final class AutomationIndicatorController {
         Objects.requireNonNull(state, "state");
         return switch (state) {
             case OFF -> canEnable ? PressAction.ENABLE : PressAction.NONE;
-            case READY, AGENT, RECOVERING -> PressAction.DISABLE;
+            case READY, EVALUATING, AGENT, RECOVERING -> PressAction.DISABLE;
             case FAULT -> PressAction.NONE;
         };
     }
@@ -181,6 +187,7 @@ public final class AutomationIndicatorController {
                     ? Component.translatable("gui.mcmcp.automation.off")
                     : Component.translatable("gui.mcmcp.automation.off_unavailable");
             case READY -> Component.translatable("gui.mcmcp.automation.ready");
+            case EVALUATING -> Component.translatable("gui.mcmcp.automation.evaluating");
             case AGENT -> Component.translatable("gui.mcmcp.automation.agent");
             case RECOVERING -> Component.translatable("gui.mcmcp.automation.recovering");
             case FAULT -> Component.translatable("gui.mcmcp.automation.fault");
@@ -194,6 +201,8 @@ public final class AutomationIndicatorController {
                     : Component.translatable("gui.mcmcp.automation.tooltip.unavailable");
             case READY, AGENT, RECOVERING ->
                     Component.translatable("gui.mcmcp.automation.tooltip.disable");
+            case EVALUATING ->
+                    Component.translatable("gui.mcmcp.automation.tooltip.evaluating");
             case FAULT -> Component.translatable(
                     "gui.mcmcp.automation.tooltip.fault",
                     snapshot.detail() == null ? "internal_error" : snapshot.detail());
@@ -205,27 +214,43 @@ public final class AutomationIndicatorController {
                 || state == AutomationUiSnapshot.State.RECOVERING;
     }
 
+    static boolean evaluationBorderVisible(AutomationUiSnapshot.State state) {
+        return state == AutomationUiSnapshot.State.EVALUATING;
+    }
+
     private static void drawExecutionBorder(GuiGraphicsExtractor graphics) {
+        drawBorder(graphics, EXECUTION_BORDER_COLOR);
+    }
+
+    private static void drawEvaluationBorder(GuiGraphicsExtractor graphics) {
+        drawBorder(graphics, EVALUATION_BORDER_COLOR);
+    }
+
+    private static void drawBorder(GuiGraphicsExtractor graphics, int color) {
         int width = graphics.guiWidth();
         int height = graphics.guiHeight();
-        graphics.fill(0, 0, width, EXECUTION_BORDER_WIDTH, EXECUTION_BORDER_COLOR);
+        graphics.fill(0, 0, width, EXECUTION_BORDER_WIDTH, color);
         graphics.fill(
                 0, height - EXECUTION_BORDER_WIDTH,
                 width, height,
-                EXECUTION_BORDER_COLOR);
+                color);
         graphics.fill(
                 0, EXECUTION_BORDER_WIDTH,
                 EXECUTION_BORDER_WIDTH, height - EXECUTION_BORDER_WIDTH,
-                EXECUTION_BORDER_COLOR);
+                color);
         graphics.fill(
                 width - EXECUTION_BORDER_WIDTH, EXECUTION_BORDER_WIDTH,
                 width, height - EXECUTION_BORDER_WIDTH,
-                EXECUTION_BORDER_COLOR);
+                color);
     }
 
-    private static void drawAgentNotice(
-            GuiGraphicsExtractor graphics, Minecraft minecraft) {
-        var notice = Component.translatable("gui.mcmcp.automation.agent_notice");
+    private static void drawActiveNotice(
+            GuiGraphicsExtractor graphics,
+            Minecraft minecraft,
+            AutomationUiSnapshot.State state) {
+        var notice = Component.translatable(state == AutomationUiSnapshot.State.EVALUATING
+                ? "gui.mcmcp.automation.evaluating_notice"
+                : "gui.mcmcp.automation.agent_notice");
         int textWidth = minecraft.font.width(notice);
         int x = Math.max(2, (graphics.guiWidth() - textWidth) / 2);
         int y = Math.max(2, graphics.guiHeight() - 58);
@@ -246,6 +271,13 @@ public final class AutomationIndicatorController {
                 drawRing(graphics, x, y, color);
                 graphics.fill(x + 7, y + 4, x + 9, y + 9, color);
                 graphics.fill(x + 8, y + 8, x + 12, y + 10, color);
+            }
+            case EVALUATING -> {
+                graphics.fill(x + 3, y + 4, x + 13, y + 6, color);
+                graphics.fill(x + 5, y + 6, x + 11, y + 8, color);
+                graphics.fill(x + 7, y + 8, x + 9, y + 11, color);
+                graphics.fill(x + 6, y + 12, x + 8, y + 14, color);
+                graphics.fill(x + 9, y + 12, x + 11, y + 14, color);
             }
             case AGENT -> {
                 graphics.fill(x + 3, y + 7, x + 11, y + 10, color);
@@ -279,6 +311,7 @@ public final class AutomationIndicatorController {
         return switch (state) {
             case OFF -> OFF_COLOR;
             case READY -> READY_COLOR;
+            case EVALUATING -> EVALUATING_COLOR;
             case AGENT -> AGENT_COLOR;
             case RECOVERING -> RECOVERING_COLOR;
             case FAULT -> FAULT_COLOR;
@@ -293,6 +326,7 @@ public final class AutomationIndicatorController {
                 font.width(Component.translatable("gui.mcmcp.automation.off")),
                 font.width(Component.translatable("gui.mcmcp.automation.off_unavailable")),
                 font.width(Component.translatable("gui.mcmcp.automation.ready")),
+                font.width(Component.translatable("gui.mcmcp.automation.evaluating")),
                 font.width(Component.translatable("gui.mcmcp.automation.agent")),
                 font.width(Component.translatable("gui.mcmcp.automation.recovering")),
                 font.width(Component.translatable("gui.mcmcp.automation.fault")));
@@ -395,6 +429,8 @@ public final class AutomationIndicatorController {
                             getBottom());
             if (executionBorderVisible(state)) {
                 drawExecutionBorder(graphics);
+            } else if (evaluationBorderVisible(state)) {
+                drawEvaluationBorder(graphics);
             }
         }
     }

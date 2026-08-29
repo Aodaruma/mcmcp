@@ -50,6 +50,34 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void deliveryConfirmationAndAbandonmentRetainTheOriginalEvaluationFence()
+            throws Exception {
+        var contexts = new ArrayList<RuntimeCallContext>();
+        var registry = new McmcpToolRegistry((command, context) -> {
+            contexts.add(context);
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(
+                    toolResult(command)));
+        }, Duration.ofSeconds(1));
+        var expectation = RuntimeCallContext.EvaluationLeaseExpectation.active(
+                UUID.randomUUID(), 7L);
+        var start = new McpToolCatalog().inputSchema("agent_start_action")
+                .getAsJsonArray("examples").get(0).getAsJsonObject();
+
+        var delivered = registry.prepareCall("agent_start_action", start, expectation);
+        registry.confirmDelivery(delivered);
+        assertThat(contexts)
+                .extracting(RuntimeCallContext::evaluationLeaseExpectation)
+                .containsExactly(expectation, expectation);
+
+        contexts.clear();
+        var lost = registry.prepareCall("agent_start_action", start, expectation);
+        registry.abandonDelivery(lost);
+        assertThat(contexts)
+                .extracting(RuntimeCallContext::evaluationLeaseExpectation)
+                .containsExactly(expectation, expectation);
+    }
+
+    @Test
     void observationReceiptIsConfirmedOnlyAfterDeliveryOrAbandonedOnWriteFailure()
             throws Exception {
         var commands = new ArrayList<McpRuntimePort.RuntimeCommand>();

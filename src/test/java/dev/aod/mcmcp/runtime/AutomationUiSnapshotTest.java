@@ -22,15 +22,27 @@ class AutomationUiSnapshotTest {
         var ready = AutomationUiSnapshot.resolve(
                 true, control.snapshot(session), null);
         assertThat(ready.state()).isEqualTo(AutomationUiSnapshot.State.READY);
+        assertThat(AutomationUiSnapshot.resolve(
+                true, control.snapshot(session), true, null).state())
+                .isEqualTo(AutomationUiSnapshot.State.EVALUATING);
 
         assertThat(control.beginAction(session)).isTrue();
         assertThat(AutomationUiSnapshot.resolve(
-                true, control.snapshot(session), null).state())
+                true, control.snapshot(session), true, null).state())
                 .isEqualTo(AutomationUiSnapshot.State.AGENT);
         assertThat(control.beginRecovery(session)).isTrue();
         assertThat(AutomationUiSnapshot.resolve(
-                true, control.snapshot(session), null).state())
+                true, control.snapshot(session), true, null).state())
                 .isEqualTo(AutomationUiSnapshot.State.RECOVERING);
+    }
+
+    @Test
+    void anEvaluationGuardCannotOverrideOffControl() {
+        var control = new LocalArmingState();
+
+        assertThat(AutomationUiSnapshot.resolve(
+                true, control.snapshot(null), true, null).state())
+                .isEqualTo(AutomationUiSnapshot.State.OFF);
     }
 
     @Test
