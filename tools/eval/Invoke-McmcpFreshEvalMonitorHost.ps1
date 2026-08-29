@@ -7,6 +7,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$Utf8NoBom = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $Utf8NoBom
 
 $monitorPrefix = 'MCMCP_MONITOR:'
 $runnerProcess = $null
@@ -44,8 +46,8 @@ try {
     $processStart.CreateNoWindow = $true
     $processStart.RedirectStandardOutput = $true
     $processStart.RedirectStandardError = $true
-    $processStart.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
-    $processStart.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+    $processStart.StandardOutputEncoding = $Utf8NoBom
+    $processStart.StandardErrorEncoding = $Utf8NoBom
     foreach ($argument in @(
             '-NoLogo', '-NoProfile', '-NonInteractive', '-File', $runnerPath,
             '-Model', [string]$parameters.Model,

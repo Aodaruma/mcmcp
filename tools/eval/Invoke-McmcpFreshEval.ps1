@@ -31,6 +31,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$Utf8NoBom = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $Utf8NoBom
 
 $monitorModulePath = Join-Path $PSScriptRoot 'McmcpLiveMonitor.psm1'
 $monitorTestPath = Join-Path $PSScriptRoot 'Test-McmcpLiveMonitor.ps1'
@@ -160,8 +162,6 @@ $OptOutNotifications = @(
     'windows/worldWritableWarning',
     'windowsSandbox/setupCompleted'
 )
-$Utf8NoBom = [Text.UTF8Encoding]::new($false)
-
 function ConvertTo-CompactJson {
     param([AllowNull()][object]$Value)
     return (ConvertTo-Json -InputObject $Value -Depth 100 -Compress)

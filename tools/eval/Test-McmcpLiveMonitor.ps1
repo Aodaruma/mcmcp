@@ -4,7 +4,8 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-Import-Module (Join-Path $PSScriptRoot 'McmcpLiveMonitor.psm1') -Force
+$monitorModulePath = Join-Path $PSScriptRoot 'McmcpLiveMonitor.psm1'
+Import-Module $monitorModulePath -Force
 
 $safe = ConvertTo-McmcpPublicMonitorText `
     -Text '畑の状態を確認し、次に安全な操作へ進みます。'
@@ -174,6 +175,58 @@ $runnerText = [IO.File]::ReadAllText($runnerPath).Replace("`r`n", "`n")
 $hostText = [IO.File]::ReadAllText($hostPath).Replace("`r`n", "`n")
 $launcherText = [IO.File]::ReadAllText($launcherPath).Replace("`r`n", "`n")
 
+# RedirectされたWindows child pwshは既定でCP932になり得る。runnerと同じ初期化を
+# byte境界で通し、hostがstrict UTF-8として日本語を完全復元できることを固定する。
+$escapedMonitorModulePath = $monitorModulePath.Replace("'", "''")
+$encodingChildScript = @'
+[Console]::OutputEncoding = [Text.Encoding]::GetEncoding(932)
+$Utf8NoBom = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $Utf8NoBom
+Import-Module '__MONITOR_MODULE__' -Force
+$state = New-McmcpLiveMonitorState -Enabled
+Write-McmcpLiveMonitorText -State $state -Kind 'Commentary' `
+    -Text '日本語のmonitor表示を確認します。'
+'@.Replace('__MONITOR_MODULE__', $escapedMonitorModulePath)
+$encodingStart = [Diagnostics.ProcessStartInfo]::new()
+$encodingStart.FileName = (Get-Process -Id $PID).Path
+$encodingStart.UseShellExecute = $false
+$encodingStart.CreateNoWindow = $true
+$encodingStart.RedirectStandardOutput = $true
+$encodingStart.RedirectStandardError = $true
+$encodingStart.ArgumentList.Add('-NoLogo')
+$encodingStart.ArgumentList.Add('-NoProfile')
+$encodingStart.ArgumentList.Add('-NonInteractive')
+$encodingStart.ArgumentList.Add('-EncodedCommand')
+$encodingStart.ArgumentList.Add([Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes($encodingChildScript)))
+$encodingProcess = [Diagnostics.Process]::new()
+$encodingProcess.StartInfo = $encodingStart
+$encodingBytes = [IO.MemoryStream]::new()
+try {
+    if (-not $encodingProcess.Start()) { throw 'UTF-8 child start failed' }
+    $encodingStderr = $encodingProcess.StandardError.ReadToEndAsync()
+    $encodingProcess.StandardOutput.BaseStream.CopyTo($encodingBytes)
+    $encodingProcess.WaitForExit()
+    if (-not $encodingStderr.Wait(5000)) { throw 'UTF-8 child stderr drain timeout' }
+    $encodingErrorText = $encodingStderr.GetAwaiter().GetResult()
+    if ($encodingProcess.ExitCode -ne 0 -or -not [string]::IsNullOrEmpty($encodingErrorText)) {
+        throw 'UTF-8 child failed'
+    }
+    $strictUtf8 = [Text.UTF8Encoding]::new($false, $true)
+    $decodedMonitor = $strictUtf8.GetString($encodingBytes.ToArray())
+    if (-not $decodedMonitor.StartsWith(
+            'MCMCP_MONITOR:', [StringComparison]::Ordinal) -or
+        -not $decodedMonitor.Contains(
+            'コメント・日本語のmonitor表示を確認します。',
+            [StringComparison]::Ordinal) -or
+        $decodedMonitor.Contains([char]0xFFFD)) {
+        throw 'redirect childの日本語monitor出力がstrict UTF-8で一致しません。'
+    }
+} finally {
+    $encodingBytes.Dispose()
+    $encodingProcess.Dispose()
+}
+
 $requiredRunnerContracts = @(
         "summary = 'detailed'",
         "'item/reasoning/summaryPartAdded'",
@@ -205,6 +258,18 @@ foreach ($required in $requiredRunnerContracts) {
     if (-not $runnerText.Contains($required, [StringComparison]::Ordinal)) {
         throw "評価runnerの公開monitor/input lease契約が欠落しています: $required"
     }
+}
+$runnerEncoding = $runnerText.IndexOf(
+    '[Console]::OutputEncoding = $Utf8NoBom', [StringComparison]::Ordinal)
+$runnerMonitorImport = $runnerText.IndexOf(
+    'Import-Module $monitorModulePath -Force', [StringComparison]::Ordinal)
+$runnerFirstMonitor = $runnerText.IndexOf(
+    "Write-McmcpLiveMonitorFixed -State `$script:LiveMonitorState -Event 'runner_started'",
+    [StringComparison]::Ordinal)
+if ($runnerEncoding -lt 0 -or $runnerMonitorImport -lt 0 -or
+    $runnerFirstMonitor -lt 0 -or $runnerEncoding -ge $runnerMonitorImport -or
+    $runnerEncoding -ge $runnerFirstMonitor) {
+    throw 'runner stdoutのUTF-8初期化が最初のmonitor出力より前に固定されていません。'
 }
 $reasoningPrewriteGuard = $runnerText.IndexOf(
     'if ($method -cin $script:PrivateReasoningNotificationMethods)',
@@ -262,6 +327,19 @@ if (-not $hostText.Contains('.StandardOutput.ReadLine()', [StringComparison]::Or
     $hostText.Contains('Start-Sleep', [StringComparison]::Ordinal)) {
     throw 'monitor hostがevent/process wait契約を満たしていません。'
 }
+$hostEncoding = $hostText.IndexOf(
+    '[Console]::OutputEncoding = $Utf8NoBom', [StringComparison]::Ordinal)
+$hostOutput = $hostText.IndexOf(
+    '[Console]::Out.WriteLine($publicLine)', [StringComparison]::Ordinal)
+if ($hostEncoding -lt 0 -or $hostOutput -lt 0 -or $hostEncoding -ge $hostOutput -or
+    -not $hostText.Contains(
+        '$processStart.StandardOutputEncoding = $Utf8NoBom',
+        [StringComparison]::Ordinal) -or
+    -not $hostText.Contains(
+        '$processStart.StandardErrorEncoding = $Utf8NoBom',
+        [StringComparison]::Ordinal)) {
+    throw 'monitor hostのUTF-8入出力境界が固定されていません。'
+}
 $hostOwnedOutputTokens = @(
     '[Console]::Error.WriteLine', 'Write-Host', 'Write-Output', 'Write-Error', 'Out-Host')
 if (@($hostOwnedOutputTokens | Where-Object {
@@ -290,6 +368,6 @@ if (-not $launcherText.Contains('.WaitForExit()', [StringComparison]::Ordinal) -
     throw 'visible launcherがchild終了連動契約を満たしていません。'
 }
 
-$passed = 12 + $publicCases.Count + $unsafeCases.Count + $expectedAliases.Count + `
+$passed = 15 + $publicCases.Count + $unsafeCases.Count + $expectedAliases.Count + `
     $requiredRunnerContracts.Count + $removedSemanticFilters.Count + 7
 Write-Host "公開monitor/評価lease self-test: $passed/$passed passed"
