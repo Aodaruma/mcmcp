@@ -17,6 +17,10 @@ import java.util.UUID;
 
 /** Converts Local Observation Volume classifications into the public frame and route graph. */
 public final class LocalObservationProjector {
+    /** One current hazard plus, conservatively, one hazard and traversal per local record. */
+    public static final int MAX_PUBLIC_RECORDS =
+            1 + (LocalObservationVolume.MAX_OBSERVATIONS * 2);
+
     private LocalObservationProjector() {
     }
 

@@ -129,17 +129,23 @@ public final class McmcpToolRegistry {
             return new PreparedCall(domainFailure(
                     publicCode(failure.code()), failure.message(), failure.retryable()), null);
         }
-        UUID deliveryActionId = deliveryActionId(toolName, reply.data());
+        McpRuntimePort.DeliveryReceipt deliveryReceipt = reply.deliveryReceipt();
+        if (deliveryReceipt == null) {
+            UUID deliveryActionId = deliveryActionId(toolName, reply.data());
+            if (deliveryActionId != null) {
+                deliveryReceipt = new McpRuntimePort.ActionDeliveryReceipt(deliveryActionId);
+            }
+        }
         JsonElement output = GSON.toJsonTree(reply.data());
         JsonObject schema = catalog.outputSchema(toolName);
         if (!output.isJsonObject() || !CatalogSchemaValidator.matches(schema, output)) {
-            abandonDelivery(deliveryActionId);
+            abandonDelivery(deliveryReceipt);
             return new PreparedCall(domainFailure(
                     "INTERNAL_ERROR",
                     "The Minecraft client returned an invalid tool result.",
                     true), null);
         }
-        return new PreparedCall(success(output.getAsJsonObject()), deliveryActionId);
+        return new PreparedCall(success(output.getAsJsonObject()), deliveryReceipt);
     }
 
     private static boolean isTerminalWait(McpRuntimePort.RuntimeCommand command) {
@@ -177,19 +183,29 @@ public final class McmcpToolRegistry {
 
     void confirmDelivery(PreparedCall prepared) {
         Objects.requireNonNull(prepared, "prepared");
-        if (prepared.actionId() != null) {
-            submitDelivery(new McpRuntimePort.ConfirmActionDelivery(prepared.actionId()));
+        switch (prepared.deliveryReceipt()) {
+            case null -> { }
+            case McpRuntimePort.ActionDeliveryReceipt action ->
+                    submitDelivery(new McpRuntimePort.ConfirmActionDelivery(action.actionId()));
+            case McpRuntimePort.ObservationDeliveryReceipt observation ->
+                    submitDelivery(new McpRuntimePort.ConfirmObservationDelivery(
+                            observation.receiptId()));
         }
     }
 
     void abandonDelivery(PreparedCall prepared) {
         Objects.requireNonNull(prepared, "prepared");
-        abandonDelivery(prepared.actionId());
+        abandonDelivery(prepared.deliveryReceipt());
     }
 
-    private void abandonDelivery(UUID actionId) {
-        if (actionId != null) {
-            submitDelivery(new McpRuntimePort.AbandonActionDelivery(actionId));
+    private void abandonDelivery(McpRuntimePort.DeliveryReceipt receipt) {
+        switch (receipt) {
+            case null -> { }
+            case McpRuntimePort.ActionDeliveryReceipt action ->
+                    submitDelivery(new McpRuntimePort.AbandonActionDelivery(action.actionId()));
+            case McpRuntimePort.ObservationDeliveryReceipt observation ->
+                    submitDelivery(new McpRuntimePort.AbandonObservationDelivery(
+                            observation.receiptId()));
         }
     }
 
@@ -297,7 +313,8 @@ public final class McmcpToolRegistry {
     static final class UnknownToolException extends Exception {
     }
 
-    record PreparedCall(JsonObject response, UUID actionId) {
+    record PreparedCall(
+            JsonObject response, McpRuntimePort.DeliveryReceipt deliveryReceipt) {
         PreparedCall {
             Objects.requireNonNull(response, "response");
         }

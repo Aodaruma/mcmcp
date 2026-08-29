@@ -286,6 +286,23 @@ public final class AgentPrimitivePlanner {
         return required;
     }
 
+    public static MutationAim requireKnownBreakAim(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.BreakKnownFace target,
+            long surfaceBarrierWorldRevision) {
+        KnownSurface required = requireKnownBreakSurface(
+                map, latestFrame, target, surfaceBarrierWorldRevision);
+        ObservationRecord.VisibleSurface surface = knownSurfaceRecord(
+                map, latestFrame, required, surfaceBarrierWorldRevision).orElseThrow();
+        if (surface.rayHit() == null) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Break target face lacks an exact visible ray witness");
+        }
+        return new MutationAim(target.target(), target.face(), rayHit(surface));
+    }
+
     public static boolean knownSurface(
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
@@ -612,16 +629,22 @@ public final class AgentPrimitivePlanner {
             var surface = knownSurfaceRecord(
                     map, latestFrame, required, surfaceBarrier).orElseThrow();
             knownSurfaces.add(required);
+            Vec3 point = rayHit(surface);
+            MutationAim candidate = new MutationAim(block.target(), block.face(), point);
+            MutationAim previous = mutationAims.putIfAbsent(node.id(), candidate);
+            if (previous != null && !previous.equals(candidate)) {
+                throw new PlanningException(
+                        Code.PROGRAM_BUDGET_UNPROVABLE,
+                        "Break node resolves to more than one aim witness");
+            }
             ActionDslCompiler.Cost worst = null;
             var output = new ArrayList<Pose>(input.size());
             for (Pose pose : input) {
                 work.poseTransition();
-                requireBreakPose(pose, surface, block);
-                Vec3 point = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
-                        block.target(), block.face());
+                requireBreakPose(pose, surface, point);
                 Aim aim = aim(pose, point);
                 AimError aimError = aimError(pose, point, aim);
-                worst = maximum(worst, breakCost(pose, block, cameraLimit));
+                worst = maximum(worst, breakCost(pose, block, point, cameraLimit));
                 output.add(pose.aimed(aim, aimError));
             }
             merge(costs, node.id(), Objects.requireNonNull(worst, "break cost"));
@@ -782,11 +805,22 @@ public final class AgentPrimitivePlanner {
         for (Pose initial : input) {
             work.poseTransition();
             var candidates = new ArrayList<MutationBatchTarget>(children.size());
-            for (ActionDsl.Node child : children) {
-                MutationSurface surface = requireMutationSurfaceForNode(
-                        child, map, latestFrame, List.of(initial), surfaceRevisionBarrier);
-                candidates.add(new MutationBatchTarget(child, surface));
-                knownSurfaces.add(surface.surface());
+            for (int targetIndex = 0; targetIndex < children.size(); targetIndex++) {
+                ActionDsl.Node child = children.get(targetIndex);
+                try {
+                    MutationSurface surface = requireMutationSurfaceForNode(
+                            child, map, latestFrame, List.of(initial), surfaceRevisionBarrier);
+                    candidates.add(new MutationBatchTarget(child, surface));
+                    knownSurfaces.add(surface.surface());
+                } catch (PlanningException failure) {
+                    if (failure.code() != Code.TARGET_UNKNOWN) {
+                        throw failure;
+                    }
+                    throw new PlanningException(
+                            failure.code(),
+                            "Mutation batch target[" + targetIndex + "] lacks required current evidence: "
+                                    + failure.getMessage());
+                }
             }
             BatchPath optimized = optimizeMutationBatch(initial, candidates, cameraLimit);
             var planned = new ArrayList<MutationBatchStep>(candidates.size());
@@ -1313,6 +1347,16 @@ public final class AgentPrimitivePlanner {
         Objects.requireNonNull(target, "target");
         Vec3 point = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
                 target.target(), target.face());
+        return breakCost(pose, target, point, maxCameraDegreesPerTick);
+    }
+
+    public static ActionDslCompiler.Cost breakCost(
+            Pose pose,
+            ActionDsl.BreakKnownFace target,
+            Vec3 point,
+            float maxCameraDegreesPerTick) {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(point, "point");
         var aim = aim(pose, point);
         var error = aimError(pose, point, aim);
         double camera = Math.min(360.0D,
@@ -1864,7 +1908,7 @@ public final class AgentPrimitivePlanner {
     private static void requireBreakPose(
             Pose pose,
             ObservationRecord.VisibleSurface surface,
-            ActionDsl.BreakKnownFace target) {
+            Vec3 point) {
         var observedEye = surface.eyeOrigin();
         double poseEyeY = pose.y() + pose.eyeHeight();
         double horizontalDrift = Math.hypot(
@@ -1879,8 +1923,6 @@ public final class AgentPrimitivePlanner {
                     Code.TARGET_UNKNOWN,
                     "Visible break face was not observed from the planned interaction pose");
         }
-        Vec3 point = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
-                target.target(), target.face());
         double nominalDistance = Math.sqrt(
                 square(point.x - pose.x())
                         + square(point.y - poseEyeY)

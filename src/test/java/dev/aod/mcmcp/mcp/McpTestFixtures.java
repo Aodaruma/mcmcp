@@ -29,7 +29,7 @@ final class McpTestFixtures {
                         Map.entry("max_interactions", 8),
                         Map.entry("max_blocks_placed", 8),
                         Map.entry("omnidirectional_visual_radius_blocks", 16),
-                        Map.entry("local_observation_radius_blocks", 4),
+                        Map.entry("local_observation_radius_blocks", 6),
                         Map.entry("omnidirectional_direction_count", 2_048),
                         Map.entry("omnidirectional_rays_per_tick", 256),
                         Map.entry("max_recent_sound_clues", 32),

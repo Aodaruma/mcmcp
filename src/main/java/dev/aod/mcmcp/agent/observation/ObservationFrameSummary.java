@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.agent.observation;
 
+import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
+
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.Map;
@@ -16,7 +18,8 @@ public record ObservationFrameSummary(
         boolean recentSoundCluesTruncated) {
 
     public static final String MODE = "omnidirectional_local";
-    public static final int NEAR_VOLUME_RADIUS_BLOCKS = 4;
+    public static final int NEAR_VOLUME_RADIUS_BLOCKS =
+            (int) LocalObservationVolume.RADIUS_BLOCKS;
 
     public ObservationFrameSummary {
         ObservationFrame.requireFrameId(latestFrameId);

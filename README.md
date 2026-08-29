@@ -26,6 +26,13 @@ Phase 1のControl / Navigation MVPを終え、Phase 2の最初のsliceである�
 - 2026-08-27、Prismの単一検証profileでAction `32a87494-4768-445a-a142-3b688566bbbb`が`SUCCEEDED`（3 blocks、73 ticks、camera 59.63°）。fixtureも`phase5.tree.gate=PASS`（柵・支持面・player位置を保持、axe damage 3）を確認しました。
 - full-block 1段分の上下移動edge自動生成は未実装です。該当経路は推測せず`TARGET_UNKNOWN`または`NO_KNOWN_PATH`でfail-closedにします。
 
+## MCP利用の要点
+
+- `agent_get_state`の`observation.latest_frame_id`を`agent_get_observation`へ渡します。告知済みframe IDはidle 60秒、最大16件まで保持されます。
+- `visible_surface`はblockごとの代表面に圧縮され、成熟作物、未成熟作物、その他の順で返ります。複数kindを同時指定しても公平にinterleaveされます。
+- `navigate_to_known.target`には床や土の座標ではなく、`traversability.from / to`のplayer feet-spaceを使います。支持面がY=55ならfeet-spaceはY=56です。
+- 関連する有限手順は1つの`program.body`へ接続し、2〜8対象の農作業はbatchを優先します。plant node群と代表`wait_until`は同じActionへ置きます。
+
 ## Documents
 
 - [設計・仕様書](docs/Minecraft_MCP_NeoForge_設計仕様書.md)

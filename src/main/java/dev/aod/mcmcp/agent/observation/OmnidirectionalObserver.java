@@ -74,7 +74,9 @@ public final class OmnidirectionalObserver {
     public static final double MAX_RADIUS_BLOCKS = 32.0D;
 
     private static final int MAX_VISITED_CELLS_PER_RAY = 128;
-    private static final int MAX_NEARBY_ENTITIES = 128;
+    public static final int MAX_NEARBY_ENTITIES = 128;
+    public static final int MAX_VISIBLE_SURFACES = 8_192;
+    public static final int MAX_UNKNOWN_BOUNDARIES = 4_096;
     private static final SecureRandom FRAME_ID_RANDOM = new SecureRandom();
 
     private static final Comparator<VisibleEntity> ENTITY_ORDER = Comparator
@@ -222,15 +224,36 @@ public final class OmnidirectionalObserver {
             RayTrace trace = Objects.requireNonNull(
                     raySampler.trace(index, directions.get(index), sample), "ray trace");
             requireTraceMetadata(trace, sample);
+            VisibleSurface firstDropped = null;
             for (VisibleSurface surface : trace.surfaces()) {
-                surfaces.putIfAbsent(
-                        new SurfaceKey(surface.position(), surface.face()),
-                        surface);
+                SurfaceKey key = new SurfaceKey(surface.position(), surface.face());
+                if (surfaces.containsKey(key)) {
+                    continue;
+                }
+                if (surfaces.size() < MAX_VISIBLE_SURFACES) {
+                    surfaces.put(key, surface);
+                } else if (firstDropped == null) {
+                    firstDropped = surface;
+                }
+            }
+            if (firstDropped != null && boundaries.size() < MAX_UNKNOWN_BOUNDARIES) {
+                WorldPosition position = firstDropped.rayHit() == null
+                        ? firstDropped.eyeOrigin() : firstDropped.rayHit();
+                UnknownBoundary truncated = new UnknownBoundary(
+                        position,
+                        UnknownBoundaryReason.AMBIGUOUS_RENDER,
+                        sample.eyeOrigin(),
+                        sample.observedTick(),
+                        sample.worldRevision());
+                boundaries.putIfAbsent(
+                        new BoundaryKey(truncated.position(), truncated.reason()), truncated);
             }
             UnknownBoundary boundary = trace.boundary();
-            boundaries.putIfAbsent(
-                    new BoundaryKey(boundary.position(), boundary.reason()),
-                    boundary);
+            if (boundaries.size() < MAX_UNKNOWN_BOUNDARIES) {
+                boundaries.putIfAbsent(
+                        new BoundaryKey(boundary.position(), boundary.reason()),
+                        boundary);
+            }
         }
         nextDirectionIndex = endExclusive;
         if (nextDirectionIndex < DIRECTION_COUNT) {

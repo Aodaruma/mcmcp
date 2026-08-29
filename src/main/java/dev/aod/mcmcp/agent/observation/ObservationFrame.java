@@ -4,6 +4,7 @@ import dev.aod.mcmcp.agent.observation.ObservationRecord.SoundClue;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
 
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
@@ -18,6 +19,7 @@ public record ObservationFrame(
         boolean recentSoundCluesTruncated,
         List<ObservationRecord> records) {
 
+    public static final int MAX_RECORDS = 16_384;
     private static final Pattern FRAME_ID = Pattern.compile("^obs-[0-9a-f]{16}$");
 
     public ObservationFrame {
@@ -27,6 +29,9 @@ public record ObservationFrame(
         ObservationValues.requireFiniteRange(
                 configuredVisualRadiusBlocks, 1.0, 32.0, "configuredVisualRadiusBlocks");
         records = List.copyOf(Objects.requireNonNull(records, "records"));
+        if (records.size() > MAX_RECORDS) {
+            throw new IllegalArgumentException("Observation frame exceeds the fixed record limit");
+        }
 
         int soundClues = 0;
         for (ObservationRecord record : records) {
@@ -67,10 +72,17 @@ public record ObservationFrame(
         long oldest = frameCompletedTick;
         long newest = frameCompletedTick;
         if (!records.isEmpty()) {
+            var visibleBlocks = new HashSet<ObservationValues.BlockPosition>();
             oldest = Long.MAX_VALUE;
             newest = 0L;
             for (ObservationRecord record : records) {
-                counts.merge(record.kind(), 1, Integer::sum);
+                if (record instanceof ObservationRecord.VisibleSurface surface) {
+                    if (visibleBlocks.add(surface.position())) {
+                        counts.merge(record.kind(), 1, Integer::sum);
+                    }
+                } else {
+                    counts.merge(record.kind(), 1, Integer::sum);
+                }
                 oldest = Math.min(oldest, record.oldestObservedTick());
                 newest = Math.max(newest, record.newestObservedTick());
             }

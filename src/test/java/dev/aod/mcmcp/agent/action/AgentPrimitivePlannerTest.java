@@ -643,6 +643,10 @@ class AgentPrimitivePlannerTest {
 
         assertThat(analysis.knownSurfaces()).containsExactly(new AgentPrimitivePlanner.KnownSurface(
                 target, ActionDsl.BlockFace.WEST, "minecraft:oak_log"));
+        assertThat(analysis.mutationAims().get("chop"))
+                .isEqualTo(new AgentPrimitivePlanner.MutationAim(
+                        target, ActionDsl.BlockFace.WEST,
+                        rayHit(target, ObservationRecord.Face.WEST, "minecraft:oak_log")));
         assertThat(analysis.primitiveCosts().get("chop").blocksBroken()).isOne();
         assertThat(analysis.primitiveCosts().get("chop").ticks())
                 .isGreaterThan(AgentPrimitivePlanner.BREAK_TICK_UPPER_BOUND
@@ -864,9 +868,12 @@ class AgentPrimitivePlannerTest {
                         support, ObservationRecord.Face.UP, "minecraft:dirt", null, 0)))),
                 4.5F))
                 .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
-                .extracting(failure ->
-                        ((AgentPrimitivePlanner.PlanningException) failure).code())
-                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+                .satisfies(failure -> {
+                    var planningFailure = (AgentPrimitivePlanner.PlanningException) failure;
+                    assertThat(planningFailure.code())
+                            .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+                    assertThat(planningFailure.getMessage()).contains("target[1]");
+                });
     }
 
     @Test

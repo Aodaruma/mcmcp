@@ -110,7 +110,7 @@ NeoForge公式の26.2 MDKもJava 25を対象としている。開発は公式の
 - 1件だけのtask state machine
 - Action DSL v1 validator/compiler（有限if、固定回数repeat、MVP primitiveのみ）
 - survival_omnidirectional全周visual observation
-- 半径4 blockのLocal Observation VolumeとVanilla一致の斜めswept-AABB判定
+- 半径6 blockのLocal Observation VolumeとVanilla一致の斜めswept-AABB判定
 - LLMへ公開するposition sound / entity hint
 - セッション内Known Traversability Map
 - 観測済み地点への32 block以内の移動
@@ -204,7 +204,7 @@ Local MCP Host / LLM
 | ObservationFrameStore | 安定frame、件数上限、opaque cursor、短期pagination |
 | SoundClueStore | 実再生position soundの集約、entity hint、TTL管理 |
 | ActionCompiler | JSON AST、権限、静的budgetを検証しprimitive列へ変換 |
-| LocalObservationVolume | 半径4 blockの通過可能volumeとVanilla一致の斜め移動安全判定 |
+| LocalObservationVolume | 半径6 blockの通過可能volumeとVanilla一致の斜め移動安全判定 |
 | KnownTraversabilityMap | 出典と鮮度を持つ観測済み通行空間・支持面・遷移 |
 | Navigator | KnownTraversabilityMap上の保守的A*と局所再計画 |
 | InputArbiter | synthetic入力と物理入力の調停 |
@@ -404,7 +404,7 @@ rayは次を別channelで評価する。
 | VISUAL | 視覚遮蔽、visible surface、透過後の有限segment |
 | COLLIDER | Local Observation Volumeの衝突形状。visual判定の代用にはしない |
 
-glassのように視覚を通すが衝突するblock、slab、stairs、fence、trapdoor、snow、waterlogged blockを`air/solid`二値へ潰さない。visible surfaceには視覚で判別可能なblock ID、位置、面、shape classを記録する。透過面はその面を記録してrayを継続するが、custom renderer、alpha semantics、未ロード境界、shape内部開始、例外は`UNKNOWN`とする。
+glassのように視覚を通すが衝突するblock、slab、stairs、fence、trapdoor、snow、waterlogged blockを`air/solid`二値へ潰さない。visible surfaceには視覚で判別可能なblock ID、位置、面、shape classを記録する。透過面はその面を記録してrayを継続するが、1 frameのvisual surfaceは最大8,192件、unknown boundaryは最大4,096件、全recordは最大16,384件に固定する。surface上限へ達したrayは最初の未収録位置を`AMBIGUOUS_RENDER`境界に落とし、既知として続行しない。custom renderer、alpha semantics、未ロード境界、shape内部開始、例外も`UNKNOWN`とする。
 
 近傍entityは半径内のbounded query後、eye位置からAABBの複数sample点へのVISUAL line-of-sightでfilterする。1点以上が遮蔽されていなければ正確なEntityType、AABB、XYZ、velocityをvisible recordへ出せる。`minecraft:item`のときだけ、実際に描画されるnon-empty ItemStackのregistry item IDを任意field `displayed_item`として併記する。これは落下物の見た目に対するsemantic labelであり、stack count、data component、UUID、owner、pickup delay、age、NBTは公開しない。emptyまたはregistry不明のdisplay stackはidentityを推測せず、そのentity recordを省略して`visible_entities_truncated=true`とする。非ItemEntityへ`displayed_item`を付けることも拒否する。inventory、AI target、壁裏entityは公開しない。sparse rayが小さいentityを偶然外すことは、このentity専用line-of-sightで補う。
 
@@ -414,7 +414,7 @@ ray結果は`HIT / MISS / UNKNOWN`の三値とする。`MISS`が証明するの�
 
 ### 7.4 Local Observation Volumeと斜めswept-AABB
 
-全周visualとは別に、運動安全用としてcurrent player AABBを中心とするEuclidean半径4 block、最大6 transitionのLocal Observation Volumeを毎tick維持する。player AABBが実際に通過可能な隣接transitionだけを展開し、solid、閉じたdoor、通れない隙間、unloaded、`UNKNOWN`で展開を止める。広域air flood-fillにはしない。
+全周visualとは別に、運動安全用としてcurrent player AABBを中心とするEuclidean半径6 block、最大128 transitionのLocal Observation Volumeを毎tick維持する。同期するgame thread上の仮想transition評価は近傍優先BFSで最大512件へ固定し、予算外のcellは推測せず未知のまま残す。player AABBが実際に通過可能な隣接transitionだけを展開し、solid、閉じたdoor、通れない隙間、unloaded、`UNKNOWN`で展開を止める。広域air flood-fillにはしない。
 
 斜め移動では、current AABBと`AABB.move(intendedDelta)`を包む直方体に触れたblockをすべて衝突扱いしてはいけない。その包絡AABBは候補VoxelShapeを集めるbroad phaseだけに使い、矩形の角にあるが実際の移動軌跡と交差しないblockは除外する。
 
@@ -494,7 +494,7 @@ Phase 1で許可するのは`navigate_to_known(location)`だけである。`expl
 各cell/edgeへsupport、clearance、transition、fluid/hazard、semantic face、provenance、observed tick、world revisionを別々に保持する。provenanceは次を区別する。
 
 - `OMNIDIRECTIONAL_VISUAL`: rayが通過した有限segmentとvisible face
-- `LOCAL_VOLUME`: 半径4 block内で検証したsupport、clearance、transition、fluid
+- `LOCAL_VOLUME`: 半径6 block内で検証したsupport、clearance、transition、fluid
 - `CONTACT`: 実衝突、実移動、成功したinteraction
 - `SOUND`: Map更新禁止
 
@@ -643,9 +643,11 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 
 #### 8.5.1 Observation frame
 
-`agent_get_state.observation`は、大量の観測recordそのものではなく、`latest_frame_id`、設定観測半径、全方位対応、oldest/newest tick、`sampling_coverage=1`、kind別件数、sound切り捨て有無だけを返す。方向ごとの実効終端は`unknown_boundary`で示し、単一の実効半径へ丸めない。world未参加時と最初の完成frame生成前はnullとする。
+`agent_get_state.observation`は、大量の観測recordそのものではなく、`latest_frame_id`、設定観測半径、全方位対応、oldest/newest tick、`sampling_coverage=1`、返却可能なkind別件数、sound切り捨て有無だけを返す。`record_counts.visible_surface`はray face総数ではなく、後述の代表面圧縮後に返却できるunique block position数である。方向ごとの実効終端は`unknown_boundary`で示し、単一の実効半径へ丸めない。world未参加時と最初の完成frame生成前はnullとする。
 
-全周visualは既定8 active ClientTick、設定変更時は`ceil(2048 / rays_per_tick)` tickで1 immutable frameを完成させる。完成前のframeを公開せず、rolling保持は最新2 frameとする。`cursor=null`の初回pageが続きpageを必要とする場合だけ、そのframeをpagination leaseへpinする。leaseは同時最大2件、最終accessから60秒、初回accessから最大5分で失効し、時間は`System.nanoTime`で測る。これによりrolling更新中もLLMが同じframeを最後まで読め、保持量は最新2件とpin 2件までに限定される。上限中の3件目は`SERVER_BUSY`、pinされていない保持外IDは`FRAME_EXPIRED`を返す。world unload、respawn、dimension変更で全frame、lease、cursorを破棄する。
+全周visualは既定8 active ClientTick、設定変更時は`ceil(2048 / rays_per_tick)` tickで1 immutable frameを完成させる。完成前のframeを公開せず、内部rolling保持は最新2 frameとする。これとは別に、`agent_get_state`がLLMへ告知した`latest_frame_id`を最大16件、合計65,536 record以下のLRU handleとして保持する。同じIDの再告知またはそのIDによる初回page取得でidle期限を更新し、最終accessから60秒、handle件数またはrecord予算超過時のLRU evictionで失効する。
+
+`cursor=null`の初回pageが続きpageを必要とする場合だけ、そのframeを別のpagination leaseへpinする。leaseは同時最大2件、最終accessから60秒、初回accessから最大5分で失効し、時間は`System.nanoTime`で測る。これによりframe生成速度とLLMの推論待ちを分離しつつ、同じframeを最後まで読める。上限中の3件目は`SERVER_BUSY`、announced handle、rolling frame、pagination leaseのいずれにも保持されないIDは`FRAME_EXPIRED`を返す。world unload、respawn、dimension変更で全frame、announced handle、lease、cursorを破棄する。
 
 `agent_get_observation`入力:
 
@@ -654,7 +656,11 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 - `cursor`: 初回null、続きは直前の`next_cursor`
 - `limit`: 1〜256件
 
-返却recordは第7章の許可条件に従い、responseには`frame_completed_tick`を含める。CropBlockの`visible_surface`だけは、成長段階の数値列挙を増やさず、収穫判断に必要な`crop_mature: boolean`を追加する。非作物surfaceではこのfield自体を返さない。traversabilityは単一cell座標でなく`from / to` edge、target support、transition clearance、fluidとして返し、斜めtransitionも曖昧にしない。cursorは`SecureRandom`で生成した128 bit以上のopaqueなBase64URL tokenとし、server-side lease内のframe、kind集合、offsetへ束縛する。任意center、任意radius、任意chunk、任意entity IDをqueryする入力は設けない。壊れた・未知・期限切れcursor、別frame/kindへの使い回しは`INVALID_CURSOR`とする。同じ有効cursorの再送は同じpageを返し、失われたHTTP responseを再試行できる。`next_cursor=null`でpage終了である。
+返却recordは第7章の許可条件に従い、responseには`frame_completed_tick`を含める。`visible_surface`はblock positionごとに1件へ圧縮する。植付けsupportとなるfarmlandはUPを優先し、それ以外は実ray hitが近い面を代表にする。surfaceの返却順は`crop_mature=true`、`crop_mature=false`、非作物の3群とし、各群では観測距離が近いものを先にする。複数kindを同時要求した場合は、`visible_entity / traversability / hazard / visible_surface / sound_clue / unknown_boundary`の固定順で各kindから1件ずつround-robinし、1種類がpageを占有しないよう公平にinterleaveする。
+
+CropBlockの`visible_surface`だけは、成長段階の数値列挙を増やさず、収穫判断に必要な`crop_mature: boolean`を追加する。非作物surfaceではこのfield自体を返さない。生成したpageは内部pending receipt（最大16件、60秒）へ一旦置き、HTTP response write成功後のdelivery confirmで初めて、そのpageに実際に含まれた静的`visible_surface`だけを最大2,048件、最大60秒のbounded storeへ昇格する。write失敗、dispatch取消、timeout、world境界ではpendingをabandonする。entity、item、traversability、hazard、sound、unknown boundary、未返却pageは延長しない。保持surfaceを使う場合も、通常のworld/session/dimension、visual / target revision、observer pose、reach、commit、JIT、targeted raycast、server acknowledgementをすべて再検証し、world境界ではstoreを全消去する。
+
+traversabilityは単一cell座標でなく`from / to` edge、target support、transition clearance、fluidとして返し、斜めtransitionも曖昧にしない。cursorは`SecureRandom`で生成した128 bit以上のopaqueなBase64URL tokenとし、server-side lease内のframe、kind集合、offsetへ束縛する。任意center、任意radius、任意chunk、任意entity IDをqueryする入力は設けない。壊れた・未知・期限切れcursor、別frame/kindへの使い回しは`INVALID_CURSOR`とする。同じ有効cursorの再送は同じpageを返し、失われたHTTP responseを再試行できる。`next_cursor=null`でpage終了である。
 
 全周観測はcamera yaw/pitch、入力、Action camera budgetを変更しない。LLMが明示的に`face_known_position`を使うことは妨げず、その回数は通常のAST、実行node、時間、camera累積budgetだけで制限する。
 
@@ -666,6 +672,8 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 - template: 同じDSLで記述した検証済みprogram例。特権や別実行器を持たない
 
 固定の高位Actionだけを選ぶ方式にはしない。LLMは許可済みprimitive、有限`if`、固定回数`repeat`を組み合わせられる。ただし、LLMが未知のopcodeを発明して実行することはできない。新しいMinecraft能力は、MOD側にprimitive、結果検証、安全試験を追加し、catalogのopcode allowlistへ載せたreleaseから使用可能になる。
+
+LLMは関連する有限手順をprimitiveごとの別Actionへ分断せず、budget内の1 programへ順次記述する。現在証拠が揃う作物を2〜8件処理する場合は単体nodeの反復よりmutation batchを優先し、plant node群の直後に代表1座標の`wait_until`を同じprogramへ置く。`navigate_to_known.target`は支持block座標ではなく、current `traversability.from / to`からコピーしたplayer feet-spaceである。例えば土の支持面がY=55なら、その上に立つfeet-spaceはY=56であり、土の座標をnavigation targetへ流用しない。
 
 Action DSL v1の制御構造:
 
@@ -681,7 +689,7 @@ Action DSL v1の制御構造:
 
 | opcode | capability | 内容 |
 |---|---|---|
-| navigate_to_known | movement | Known Traversability Map上の地点へ移動 |
+| navigate_to_known | movement | Known Traversability Mapで現在証明されたplayer feet-spaceへ移動 |
 | face_known_position | camera | 既知座標へ角速度制限付きで向く |
 | wait_ticks | なし | 1〜200 active tick待機 |
 | wait_until | なし | 開始時にpolicy-visibleなwheat surfaceだった明示座標を認可し、その座標のlive成熟を最大1〜12,000 active tick待機 |
@@ -698,11 +706,13 @@ Action DSL v1の制御構造:
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemのwhole stackを最大1回quick-moveし、close/reopen full readbackでplayer inventoryの絶対個数を確認 |
 | collect_visible_item | movement | 最新frameの可視item種別と連続値XYZをwitnessに、既知の安全なpickup cellへ移動し、inventory絶対個数の増加を確認 |
 
+`break_known_face`は指定faceのblock中央へ固定照準せず、そのfaceを実際に観測したray hitへ解析的に照準し、開始直前にも同じfaceのtargeted raycastを要求する。
+
 `break_known_face`の`tool_item`と`till_known_block` / `till_known_batch`の`hoe_item`はinventory内の該当toolをhotbarへ一時退避して決定論的に選択する契約であり、任意slot操作を公開しない。`plant_known_wheat` / `plant_known_wheat_batch`も同じ準備経路でwheat_seedsを選ぶ。各変化はclient prediction ACKとauthoritative block stateで確認し、toolや種を生成・補充しない。成熟待ちは、primitive開始時にtarget-scoped fresh barrier以後のpolicy-visibleなwheat surfaceを明示座標へ束縛する。targetのmutation revisionがbounded reconciliation mapに残っている場合は`max(visualBarrier, exactTargetRevision)`を使い、他座標の大量更新によるeviction floorを混ぜない。exact target revisionが既にevictされている場合だけ`max(visualBarrier, surfaceMutationEvictionFloor)`へfail-closed fallbackする。一般primitiveのsurface barrier契約は変更しない。JIT認可にはworld/session/dimension/exact targetに加え、その時点の`visualBarrierWorldRevision`、player位置、observer eyeを固定する。待機中にvisual barrierが変化した場合、またはplayer位置/eyeが固定epsilon（1/1024 block）を超えて変化した場合は、live BlockStateを読む前に`PATH_BLOCKED`で終了する。wheat AGE更新などnavigation-neutralなexact-target mutationはvisual barrierを上げないため待機を継続できる。束縛がcurrentな間だけ、その認可済みでload済みの1座標をlive BlockStateで確認し、wheat age=7なら観測frameの更新を待たず完了、age<7ならpendingとする。非wheatへの置換、unload、session / dimension / target変更は早期terminalとし、live stateの値や近傍情報はresponseへ公開しない。単独`wait_until`の初期admissionにも同じvisible wheatを要求する。先行する認可済みplantが全control pathで同じtargetを生成すると静的証明できる閉じたprogramだけは初期解析で未生成cropを許すが、wait開始時の1-node JIT bindでは例外なく新しいvisible wheatを再認可する。timeout時は入力を発生させずActionを終了する。raw attack/useや任意座標操作へ一般化しない。
 
 `wait_until`が採用する`visible_surface`はrecordの`eye_origin`を保持し、initial admission、commit fence、JIT bindのすべてでcurrent observer eyeとの差を1/1024 block以内に制限する。以前のobserver位置から得たstale frameは、target record自体がfresh revisionでも認可しない。`CropWaitAuthorization`のobserver eyeにはcurrent値を代入せず、採用witnessの`eye_origin`そのものを保存するため、待機中の比較元をすり替えられない。先行plantにより初期未生成cropを許す静的dependency proofはこの例外を弱めず、wait開始時のJITでは必ず同じorigin契約を再証明する。
 
-3種のmutation batchは`targets`を1〜8件に制限し、重複targetを拒否する。`till_known_batch`は位置配列と共通`expected_block` / `hoe_item`、`plant_known_wheat_batch`は`{target,support}`配列と共通`seed_item=minecraft:wheat_seeds`、`harvest_known_wheat_batch`は位置配列を受け取る。受付時に全対象の現在のsurface、block state、reachを確認し、全対象を通る累積camera回転量が最小となる決定論的順序を共同計画する。ただし、ほぼ同一ray上で手前の対象を先に変更すると奥のwitnessを失う組だけは、far-before-nearを優先する。残る同値解はdimension / XYZの辞書順で一意に決め、累積camera costを既存のAction上限720度以内で事前証明する。順序が未確定poseに依存して一意に証明できない場合は入力前に拒否する。
+3種のmutation batchは`targets`を1〜8件に制限し、重複targetを拒否する。`till_known_batch`は位置配列と共通`expected_block` / `hoe_item`、`plant_known_wheat_batch`は`{target,support}`配列と共通`seed_item=minecraft:wheat_seeds`、`harvest_known_wheat_batch`は位置配列を受け取る。受付時に全対象の現在のsurface、block state、reachを確認し、`TARGET_UNKNOWN`なら最初に不足した入力順indexをmessageの`target[index]`として返す。これは提出済み配列のindexだけであり、hidden座標や未公開stateを追加開示しない。全対象を通る累積camera回転量が最小となる決定論的順序を共同計画する。ただし、ほぼ同一ray上で手前の対象を先に変更すると奥のwitnessを失う組だけは、far-before-nearを優先する。残る同値解はdimension / XYZの辞書順で一意に決め、累積camera costを既存のAction上限720度以内で事前証明する。順序が未確定poseに依存して一意に証明できない場合は入力前に拒否する。
 
 実行時は固定した順序をblind replayせず、各対象の直前に最新pose、surface、reach、world revision、期待block / 成熟状態、exact targeted raycast、残budgetを再証明する。fresh evidenceがまだ揃わない間は入力をneutralにして最大40 active tickだけ再観測し、それでも証明できない場合、live raycastまたはauthoritative postconditionが不一致の場合、あるいは対象単位の残budgetが不足する場合はAction全体をfail-fastで終了する。失敗対象をskipしたり、後続対象へ進んだり、実行時に別対象へ置換・並べ替えたりしない。完了した前段のworld mutationと消費budgetは巻き戻さずtraceへ残す。`till_known_batch`の実dispatch成立後に足元blockがfarmlandへ変わった際の厳密な垂直1/16 block下降だけは、2 tick以内、同じXZ、live farmland、movement executor非稼働、移動入力neutralの全条件が成立した場合に限り入力distanceへ算入せず、`PASSIVE_MOTION farmland_settling`として別途監査する。水平成分、1/16超の落下、movement入力中の下降は通常どおりdistanceを消費する。
 
@@ -989,6 +999,8 @@ Validate JSON AST
 program全体のeffective budgetに加え、各logical primitive occurrenceにもcompile済みcost boundを適用する。距離とcameraの実行器へ渡す残量は両者の小さい方とし、tick、duration、interaction、break、placeも各tickで双方を検査する。`wait_ticks`も同じ対象であり、replanやprobeによってoccurrence上限を更新しない。
 
 ### 9.2 navigate_to_known — MVP
+
+`target`はKnown Traversability Mapのcurrent edgeに現れるplayer feet-spaceであり、床や土などの支持blockではない。LLMは`agent_get_observation`の`traversability.from / to`を整数cellへ正確にコピーし、visible surfaceの座標から立ち位置を推測しない。
 
 対応:
 
@@ -1306,7 +1318,7 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - memory内trace: Taskあたり最大256 event
 - command queue: 32件
 
-性能値は対象Prismプロファイル上で測定し、全周visualの半径・ray/tick、path expansion上限をhard range内で調整可能にする。Local Observation Volumeは安全契約を一定にするため半径4 block、最大6 transitionへ固定する。
+性能値は対象Prismプロファイル上で測定し、全周visualの半径・ray/tick、path expansion上限をhard range内で調整可能にする。Local Observation Volumeは安全契約を一定にするため半径6 block、最大128 transition、毎tick最大512仮想評価へ固定する。構成上の合法な最大record数がframe上限16,384以下であることをcontract testで固定する。
 
 ### 13.2 停止・回避応答
 
@@ -1415,9 +1427,13 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - HTTP handlerがMinecraft APIを直接呼ばない
 - agent_start_actionはAction完了を待たずaction_idを返す
 - agent_get_stateが最新immutable observation frameのIDと概要を返す
+- agent_get_stateで告知したframe IDはidle 60秒、最大16件のLRU上限内で保持され、上限超過とworld境界で確実に失効する
 - agent_get_observationは任意center/radiusを受け付けず、同じframe_idのpage内容がframe保持中に変わらない
 - 最大256件でpage分割し、壊れたcursorはINVALID_CURSOR、保持外frameはFRAME_EXPIRED
 - page継続中のframeはleaseでpinされ、rolling frame更新後も同じcursor再送が同じpageを返す
+- visible_surfaceはunique block positionごとの代表面へ圧縮され、mature crop、immature crop、その他の順、各群内は近距離順となる。複数kindはround-robinで公平に混在する
+- summaryのvisible_surface件数は代表面圧縮後の返却可能件数と一致する
+- 返却済み静的surfaceだけが最大60秒再利用され、未返却pageとentity / item / hazard / traversability / soundは延長されない。再利用時もrevision、pose、reach、commit/JIT、ray fenceをすべて通る
 - 完成frameのsampling_coverageは1で、各recordのorigin、observed tick、world revisionとframe_completed_tickから鮮度を再現できる
 - 斜めtraversability recordがfrom/to edgeを保持し、単一cellへ潰れない
 - DSLのunknown opcode、重複node id、深さ5、source node 65、展開node 257、repeat 17を入力前に拒否
@@ -1425,6 +1441,7 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - `if`はpolicy-filtered snapshotだけを評価し、欠損fieldはPREDICATE_UNAVAILABLE
 - 任意式、while、until、再帰呼出し、chat/text predicateを拒否
 - 静的costが証明不能ならPROGRAM_BUDGET_UNPROVABLE
+- mutation batchのTARGET_UNKNOWNは最初に不足した提出配列indexをtarget[index]で返し、hidden座標やstateを追加しない
 - 通常Actionはeffective budgetを超えず、RECOVERはDSLから独立したlocal recovery budgetだけを使う
 - templateとcustom programが同じvalidator、capability、budgetを通る
 

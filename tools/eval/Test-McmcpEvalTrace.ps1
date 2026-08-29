@@ -28,8 +28,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $ProductionPrompt = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
-$ExpectedCatalogFileSha256 = 'ba091fba2b87a17ffd33753b2c1da544f7aa0412ed814619d59332f2c6655d4e'
-$ExpectedToolSurfaceSha256 = '926f0cf8251bbd599645bd4491cebe4a8e32293a7cd6c219edc8a2f9eb7fe855'
+$ExpectedCatalogFileSha256 = '6046a8437fc7e13823271c3c4f122911e67ffab26f6c824d6848682da313c75b'
+$ExpectedToolSurfaceSha256 = 'aacf81d5e47082ddfc2090c1bc65ad44883a51c44fdabcc2a3253fbb71320db7'
 $TurnCompletionReserveSeconds = 15
 $MaximumMcpForwardSeconds = 35
 $AgentGetActionTransportMarginSeconds = 2

@@ -12,7 +12,7 @@
     {
       "name": "agent_get_state",
       "title": "Get MCMCP State",
-      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. It never scans hidden world data.",
+      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. It never scans hidden world data.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -117,7 +117,7 @@
               "max_interactions": {"const": 8},
               "max_blocks_placed": {"const": 8},
               "omnidirectional_visual_radius_blocks": {"type": "number", "minimum": 1, "maximum": 32},
-              "local_observation_radius_blocks": {"const": 4},
+              "local_observation_radius_blocks": {"const": 6},
               "omnidirectional_direction_count": {"const": 2048},
               "omnidirectional_rays_per_tick": {"type": "integer", "minimum": 64, "maximum": 512},
               "max_recent_sound_clues": {"const": 32},
@@ -154,10 +154,11 @@
                   "mode": {"const": "omnidirectional_local"},
                   "latest_frame_id": {
                     "type": "string",
-                    "pattern": "^obs-[0-9a-f]{16}$"
+                    "pattern": "^obs-[0-9a-f]{16}$",
+                    "description": "Handle announced by agent_get_state; retained for up to 60 idle seconds subject to the 16-handle cap"
                   },
                   "configured_visual_radius_blocks": {"type": "number", "minimum": 1, "maximum": 32},
-                  "near_volume_radius_blocks": {"const": 4},
+                  "near_volume_radius_blocks": {"const": 6},
                   "full_azimuth": {"const": true},
                   "full_elevation": {"const": true},
                   "sampling_coverage": {"const": 1},
@@ -168,7 +169,11 @@
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
-                      "visible_surface": {"type": "integer", "minimum": 0},
+                      "visible_surface": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Number of deliverable unique visible block positions after representative-face compaction"
+                      },
                       "visible_entity": {"type": "integer", "minimum": 0},
                       "traversability": {"type": "integer", "minimum": 0},
                       "hazard": {"type": "integer", "minimum": 0},
@@ -212,7 +217,7 @@
     {
       "name": "agent_get_observation",
       "title": "Get MCMCP Observation",
-      "description": "Returns a stable, paged view of one policy-filtered omnidirectional observation frame. It accepts no arbitrary center or radius. limit MUST be an integer from 1 through 256. On FRAME_EXPIRED, call agent_get_state and retry with observation.latest_frame_id.",
+      "description": "Returns a stable, paged view of one policy-filtered omnidirectional observation frame. visible_surface is compacted to one deterministic representative face per block position (UP preferred) and ordered crop_mature=true, crop_mature=false, then other surfaces, near-first within each group; requested kinds are fairly interleaved. Only static visible_surface records actually returned to the client may remain planner-usable for at most 60 seconds; normal revision, pose, reach, commit/JIT, and ray fences still apply, and dynamic records are never extended. It accepts no arbitrary center or radius. limit MUST be an integer from 1 through 256. On FRAME_EXPIRED, call agent_get_state and retry with observation.latest_frame_id.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -302,6 +307,7 @@
           },
           "visibleSurface": {
             "type": "object",
+            "description": "One deterministic representative visible face for this block position; UP is preferred over horizontal faces, which are preferred over DOWN",
             "additionalProperties": false,
             "properties": {
               "kind": {"const": "visible_surface"},
@@ -439,7 +445,7 @@
     {
       "name": "agent_start_action",
       "title": "Start MCMCP Action",
-      "description": "Runs one closed, validated Action DSL v1 program after the in-game MCP operation button is enabled. Do not guess or probe the grammar. The exact envelope is {schema_version:1, program:{dsl_version:1, name?:string, capabilities:string[], body:node[]}, budget:{max_duration_ms,max_ticks,max_distance_blocks,max_camera_degrees,max_interactions,max_blocks_broken,max_blocks_placed}}. Every node, including nested if/repeat nodes, MUST contain a unique id matching ^[a-z][a-z0-9_-]{0,31}$ and one exact op. Every block position MUST contain exactly dimension,x,y,z; dimension is the observed resource ID (for example \"minecraft:overworld\"), and x/y/z are integer block coordinates, not player-center decimals. collect_visible_item.target is the only continuous world position: copy dimension,x,y,z from a current visible_entity.position without rounding and copy its displayed_item. Exact primitive forms after id/op are: navigate_to_known(target,tolerance); face_known_position(target); break_known_face(target,face,expected_block,tool_item); till_known_block(target,expected_block,hoe_item); till_known_batch(targets[1..8],expected_block,hoe_item); plant_known_wheat(target,support,seed_item); plant_known_wheat_batch(targets[1..8] of {target,support},seed_item); harvest_known_wheat(target); harvest_known_wheat_batch(targets[1..8]); open_known_fence_gate(target); open_known_passage(target,expected_block); inspect_known_container(target,expected_block); take_known_container_stack(target,expected_block,item,stack_policy,minimum_inventory_count); collect_visible_item(displayed_item,target); wait_ticks(ticks); wait_until(condition:{type:\"crop_mature\",target},max_ticks). Mutation batch targets MUST be distinct. A batch validates every target at admission, chooses the deterministic order that minimizes joint cumulative camera travel, applies far-before-near precedence only to targets on a near-identical ray, and breaks remaining ties by coordinates. It charges that joint camera cost against the unchanged 720-degree Action maximum. Immediately before each target it performs a fresh pose, surface, reach, revision, block-state, and budget reproof; it may hold neutral input for at most the bounded reobservation window. If any target cannot be reproved or completed, the whole Action fails without skipping it or executing later targets. collect_visible_item accepts only a fresh visible minecraft:item witness, rechecks it while moving to a reachable known safe pickup cell, and succeeds only after that item ID's absolute inventory count increases relative to this node occurrence's start. For take_known_container_stack, stack_policy MUST be exactly \"default_components_only\" (ordinary items with default components, such as seeds) or \"item_id_any_components\" (match the item ID while allowing durability, name, enchantments, or other components). Exact control forms are if(condition,then,else) and repeat(count,body). Do not use noop, move_to, interact_block, look, set_camera, or other aliases. Required capabilities are the union used by nodes: navigate/collect=movement; face=camera; break/harvest/harvest batch=camera+block_break; till/till batch/open=camera+block_interact; plant/plant batch=camera+block_place; inspect/take=camera+inventory_transfer. Reserve at least 25000 ms for each inspect/take node so the 400-tick container execution bound still fits after Action dispatch and JIT admission. For multiple crops, prefer one bounded batch per mutation stage; when using single-target nodes, group all plant nodes before one representative wait_until, then group harvest nodes. Refresh observation and collect each visible drop in later Action(s), then replant cleared farmland before the next cycle when more wheat is required. A complete valid minimum example is {\"schema_version\":1,\"program\":{\"dsl_version\":1,\"name\":\"take_seeds\",\"capabilities\":[\"camera\",\"inventory_transfer\"],\"body\":[{\"id\":\"take\",\"op\":\"take_known_container_stack\",\"target\":{\"dimension\":\"minecraft:overworld\",\"x\":100,\"y\":64,\"z\":120},\"expected_block\":\"minecraft:chest\",\"item\":\"minecraft:wheat_seeds\",\"stack_policy\":\"default_components_only\",\"minimum_inventory_count\":64}]},\"budget\":{\"max_duration_ms\":25000,\"max_ticks\":400,\"max_distance_blocks\":0,\"max_camera_degrees\":180,\"max_interactions\":3,\"max_blocks_broken\":0,\"max_blocks_placed\":0}}. Use observed coordinates and the field constraints in inputSchema; use policy maxima when unsure of an adequate budget.",
+      "description": "Runs one closed, validated Action DSL v1 program after the in-game MCP operation button is enabled. Prefer one bounded sequential program over one Action per primitive: for 2..8 current crop targets use mutation batch nodes, and put plant node(s) immediately before one representative wait_until in that same program. navigate_to_known.target is player feet-space copied from current traversability.from/to, never its supporting block (for soil y=55, feet-space y=56). Do not guess or probe the grammar. The exact envelope is {schema_version:1, program:{dsl_version:1, name?:string, capabilities:string[], body:node[]}, budget:{max_duration_ms,max_ticks,max_distance_blocks,max_camera_degrees,max_interactions,max_blocks_broken,max_blocks_placed}}. Every node, including nested if/repeat nodes, MUST contain a unique id matching ^[a-z][a-z0-9_-]{0,31}$ and one exact op. Every block position MUST contain exactly dimension,x,y,z; dimension is the observed resource ID (for example \"minecraft:overworld\"), and x/y/z are integer block coordinates, not player-center decimals. collect_visible_item.target is the only continuous world position: copy dimension,x,y,z from a current visible_entity.position without rounding and copy its displayed_item. Exact primitive forms after id/op are: navigate_to_known(target,tolerance); face_known_position(target); break_known_face(target,face,expected_block,tool_item); till_known_block(target,expected_block,hoe_item); till_known_batch(targets[1..8],expected_block,hoe_item); plant_known_wheat(target,support,seed_item); plant_known_wheat_batch(targets[1..8] of {target,support},seed_item); harvest_known_wheat(target); harvest_known_wheat_batch(targets[1..8]); open_known_fence_gate(target); open_known_passage(target,expected_block); inspect_known_container(target,expected_block); take_known_container_stack(target,expected_block,item,stack_policy,minimum_inventory_count); collect_visible_item(displayed_item,target); wait_ticks(ticks); wait_until(condition:{type:\"crop_mature\",target},max_ticks). Mutation batch targets MUST be distinct. A batch validates every target at admission, chooses the deterministic order that minimizes joint cumulative camera travel, applies far-before-near precedence only to targets on a near-identical ray, and breaks remaining ties by coordinates. It charges that joint camera cost against the unchanged 720-degree Action maximum. Immediately before each target it performs a fresh pose, surface, reach, revision, block-state, and budget reproof; it may hold neutral input for at most the bounded reobservation window. If any target cannot be reproved or completed, the whole Action fails without skipping it or executing later targets. collect_visible_item accepts only a fresh visible minecraft:item witness, rechecks it while moving to a reachable known safe pickup cell, and succeeds only after that item ID's absolute inventory count increases relative to this node occurrence's start. For take_known_container_stack, stack_policy MUST be exactly \"default_components_only\" (ordinary items with default components, such as seeds) or \"item_id_any_components\" (match the item ID while allowing durability, name, enchantments, or other components). Exact control forms are if(condition,then,else) and repeat(count,body). Do not use noop, move_to, interact_block, look, set_camera, or other aliases. Required capabilities are the union used by nodes: navigate/collect=movement; face=camera; break/harvest/harvest batch=camera+block_break; till/till batch/open=camera+block_interact; plant/plant batch=camera+block_place; inspect/take=camera+inventory_transfer. Reserve at least 25000 ms for each inspect/take node so the 400-tick container execution bound still fits after Action dispatch and JIT admission. Refresh observation and collect each visible drop in later Action(s), then replant cleared farmland before the next cycle when more wheat is required. A complete valid minimum example is {\"schema_version\":1,\"program\":{\"dsl_version\":1,\"name\":\"take_seeds\",\"capabilities\":[\"camera\",\"inventory_transfer\"],\"body\":[{\"id\":\"take\",\"op\":\"take_known_container_stack\",\"target\":{\"dimension\":\"minecraft:overworld\",\"x\":100,\"y\":64,\"z\":120},\"expected_block\":\"minecraft:chest\",\"item\":\"minecraft:wheat_seeds\",\"stack_policy\":\"default_components_only\",\"minimum_inventory_count\":64}]},\"budget\":{\"max_duration_ms\":25000,\"max_ticks\":400,\"max_distance_blocks\":0,\"max_camera_degrees\":180,\"max_interactions\":3,\"max_blocks_broken\":0,\"max_blocks_placed\":0}}. Use observed coordinates and the field constraints in inputSchema; use policy maxima when unsure of an adequate budget.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -579,6 +585,7 @@
           },
           "navigateNode": {
             "type": "object",
+            "description": "target is a current player feet-space copied from traversability.from or traversability.to, not the supporting block below it; for soil y=55 use feet-space y=56",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
@@ -636,13 +643,14 @@
           },
           "tillBatchNode": {
             "type": "object",
-            "description": "Till 1..8 distinct currently visible blocks in one deterministic joint camera plan. Every target uses the same expected_block and hoe_item. Each target reserves and performs at most 40 active ticks of fresh reproof immediately before use; current plus the complete unstarted suffix must still fit before dispatch. The batch fails without retrying, skipping, or continuing if any target cannot be exactly aimed, reproved, or server-confirmed. Passive, input-neutral 1/16-block farmland settling is audited separately from input distance.",
+            "description": "Till 1..8 distinct currently visible blocks in one deterministic joint camera plan. Every target uses the same expected_block and hoe_item. Each target reserves and performs at most 40 active ticks of fresh reproof immediately before use; current plus the complete unstarted suffix must still fit before dispatch. The batch fails without retrying, skipping, or continuing if any target cannot be exactly aimed, reproved, or server-confirmed; admission TARGET_UNKNOWN identifies the first failing entry as target[index]. Passive, input-neutral 1/16-block farmland settling is audited separately from input distance.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
               "op": {"const": "till_known_batch"},
               "targets": {
                 "type": "array",
+                "description": "Admission TARGET_UNKNOWN identifies the first failing entry as target[index]",
                 "minItems": 1,
                 "maxItems": 8,
                 "uniqueItems": true,
@@ -679,6 +687,7 @@
               "op": {"const": "plant_known_wheat_batch"},
               "targets": {
                 "type": "array",
+                "description": "Admission TARGET_UNKNOWN identifies the first failing entry as target[index]",
                 "minItems": 1,
                 "maxItems": 8,
                 "uniqueItems": true,
@@ -715,6 +724,7 @@
               "op": {"const": "harvest_known_wheat_batch"},
               "targets": {
                 "type": "array",
+                "description": "Admission TARGET_UNKNOWN identifies the first failing entry as target[index]",
                 "minItems": 1,
                 "maxItems": 8,
                 "uniqueItems": true,

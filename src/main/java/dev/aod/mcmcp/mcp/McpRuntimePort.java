@@ -20,7 +20,8 @@ public interface McpRuntimePort {
     CompletionStage<RuntimeReply> submit(RuntimeCommand command, RuntimeCallContext context);
 
     sealed interface RuntimeCommand permits GetState, GetObservation, StartAction, GetAction,
-            CancelAction, ConfirmActionDelivery, AbandonActionDelivery, GetSnapshot, CompareBlockPlan,
+            CancelAction, ConfirmActionDelivery, AbandonActionDelivery,
+            ConfirmObservationDelivery, AbandonObservationDelivery, GetSnapshot, CompareBlockPlan,
             GetRecipes, ListRoutines, GetRoutine, StartRoutine, CancelRoutine, EmergencyStop {
         String toolName();
     }
@@ -95,6 +96,28 @@ public interface McpRuntimePort {
         @Override
         public String toolName() {
             return "abandon_action_delivery";
+        }
+    }
+
+    record ConfirmObservationDelivery(UUID receiptId) implements RuntimeCommand {
+        public ConfirmObservationDelivery {
+            Objects.requireNonNull(receiptId, "receiptId");
+        }
+
+        @Override
+        public String toolName() {
+            return "confirm_observation_delivery";
+        }
+    }
+
+    record AbandonObservationDelivery(UUID receiptId) implements RuntimeCommand {
+        public AbandonObservationDelivery {
+            Objects.requireNonNull(receiptId, "receiptId");
+        }
+
+        @Override
+        public String toolName() {
+            return "abandon_observation_delivery";
         }
     }
 
@@ -186,10 +209,31 @@ public interface McpRuntimePort {
         }
     }
 
-    record RuntimeReply(Map<String, Object> data, RuntimeFailure failure) {
+    sealed interface DeliveryReceipt permits ActionDeliveryReceipt, ObservationDeliveryReceipt {
+    }
+
+    record ActionDeliveryReceipt(UUID actionId) implements DeliveryReceipt {
+        public ActionDeliveryReceipt {
+            Objects.requireNonNull(actionId, "actionId");
+        }
+    }
+
+    record ObservationDeliveryReceipt(UUID receiptId) implements DeliveryReceipt {
+        public ObservationDeliveryReceipt {
+            Objects.requireNonNull(receiptId, "receiptId");
+        }
+    }
+
+    record RuntimeReply(
+            Map<String, Object> data,
+            RuntimeFailure failure,
+            DeliveryReceipt deliveryReceipt) {
         public RuntimeReply {
             if ((data == null) == (failure == null)) {
                 throw new IllegalArgumentException("Exactly one of data or failure must be supplied");
+            }
+            if (failure != null && deliveryReceipt != null) {
+                throw new IllegalArgumentException("Failed replies cannot carry a delivery receipt");
             }
             if (data != null) {
                 data = immutableCopy(data);
@@ -197,7 +241,14 @@ public interface McpRuntimePort {
         }
 
         public static RuntimeReply success(Map<String, Object> data) {
-            return new RuntimeReply(Objects.requireNonNull(data, "data"), null);
+            return new RuntimeReply(Objects.requireNonNull(data, "data"), null, null);
+        }
+
+        public static RuntimeReply success(
+                Map<String, Object> data, DeliveryReceipt deliveryReceipt) {
+            return new RuntimeReply(
+                    Objects.requireNonNull(data, "data"), null,
+                    Objects.requireNonNull(deliveryReceipt, "deliveryReceipt"));
         }
 
         public static RuntimeReply failure(String code, String message, boolean retryable) {
@@ -206,7 +257,8 @@ public interface McpRuntimePort {
 
         public static RuntimeReply failure(
                 String code, String message, boolean retryable, Map<String, Object> details) {
-            return new RuntimeReply(null, new RuntimeFailure(code, message, retryable, details));
+            return new RuntimeReply(
+                    null, new RuntimeFailure(code, message, retryable, details), null);
         }
 
         public boolean successful() {

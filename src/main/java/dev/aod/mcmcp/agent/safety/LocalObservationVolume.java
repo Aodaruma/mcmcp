@@ -36,15 +36,22 @@ import static dev.aod.mcmcp.agent.safety.ObservationRecord.Transition;
  */
 public final class LocalObservationVolume {
     public static final long UNKNOWN_WORLD_REVISION = -1L;
-    public static final double RADIUS_BLOCKS = 4.0D;
-    public static final int MAX_TRANSITIONS = 6;
+    public static final double RADIUS_BLOCKS = 6.0D;
+    /* A radius-six horizontal disk contains at most 113 feet cells. */
+    public static final int MAX_TRANSITIONS = 128;
 
     private static final double RADIUS_SQUARED = RADIUS_BLOCKS * RADIUS_BLOCKS;
     private static final double SUPPORT_EPSILON = 1.0E-6D;
     private static final double MOVEMENT_EPSILON = 1.0E-7D;
     private static final double MAX_WALKING_DROP = 1.0D;
     private static final double DROP_PROBE = 4.0D;
-    private static final int MAX_OBSERVATIONS = 256;
+    /*
+     * Radius stays large enough to reconnect a just-opened gate, but the
+     * synchronous game-thread search has a strict work budget.  Breadth-first
+     * order keeps the closest safety cells when the bounded volume is larger
+     * than this budget; omitted cells remain unknown rather than inferred.
+     */
+    public static final int MAX_OBSERVATIONS = 512;
     private static final LocalObservationVolume GLOBAL =
             new LocalObservationVolume(AgentMovementTrace.global());
     private static final List<HorizontalDirection> DIRECTIONS = List.of(
@@ -791,12 +798,16 @@ public final class LocalObservationVolume {
         var queue = new ArrayDeque<Node>();
         var reached = new HashSet<NodeKey>();
         var attempted = new HashSet<Edge>();
+        int evaluations = 0;
         var rootOffset = new GridOffset(0, 0);
         var rootKey = NodeKey.at(rootOffset, originBox);
         reached.add(rootKey);
         queue.addLast(new Node(rootKey, originBox, 0));
 
-        while (!queue.isEmpty() && records.size() < MAX_OBSERVATIONS) {
+        search:
+        while (!queue.isEmpty()
+                && records.size() < MAX_OBSERVATIONS
+                && evaluations < MAX_OBSERVATIONS) {
             var node = queue.removeFirst();
             if (node.depth() >= MAX_TRANSITIONS) {
                 continue;
@@ -813,8 +824,12 @@ public final class LocalObservationVolume {
                 if (origin.distanceSquared(targetCenter) > RADIUS_SQUARED) {
                     continue;
                 }
+                if (evaluations == MAX_OBSERVATIONS) {
+                    break search;
+                }
 
                 // Candidate graph only: exact runtime guards keep using the resolved tick path.
+                evaluations++;
                 var evaluation = evaluateHypothetical(
                         player,
                         level,

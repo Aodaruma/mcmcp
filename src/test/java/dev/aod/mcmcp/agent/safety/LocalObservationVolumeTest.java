@@ -25,8 +25,8 @@ class LocalObservationVolumeTest {
 
     @Test
     void publicationUsesEuclideanRadiusRatherThanAnAxisAlignedCube() {
-        var inside = probe(1, new Point(4.0D, 64.0D, 0.0D));
-        var outsideDiagonal = probe(1, new Point(3.0D, 64.0D, 3.0D));
+        var inside = probe(1, new Point(6.0D, 64.0D, 0.0D));
+        var outsideDiagonal = probe(1, new Point(5.0D, 64.0D, 5.0D));
 
         assertThat(LocalObservationVolume.boundedTransitions(
                 ORIGIN,
@@ -123,11 +123,45 @@ class LocalObservationVolumeTest {
     }
 
     @Test
-    void transitionDepthCannotExceedTheFixedSixHopBound() {
+    void transitionDepthCannotExceedTheConfiguredHopBound() {
         assertThatThrownBy(() -> probe(
                 LocalObservationVolume.MAX_TRANSITIONS + 1,
                 new Point(1.0D, 64.0D, 0.0D)))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void radiusSixConnectedFeetSpaceFitsInsideTheBoundedPublicationBudget() {
+        int feetCells = 0;
+        int directedAttempts = 0;
+        int radius = (int) LocalObservationVolume.RADIUS_BLOCKS;
+        for (int x = -radius; x <= radius; x++) {
+            for (int z = -radius; z <= radius; z++) {
+                if (x * x + z * z > radius * radius) {
+                    continue;
+                }
+                feetCells++;
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        if (dx == 0 && dz == 0) {
+                            continue;
+                        }
+                        int targetX = x + dx;
+                        int targetZ = z + dz;
+                        if (targetX * targetX + targetZ * targetZ <= radius * radius) {
+                            directedAttempts++;
+                        }
+                    }
+                }
+            }
+        }
+
+        assertThat(LocalObservationVolume.RADIUS_BLOCKS).isEqualTo(6.0D);
+        assertThat(LocalObservationVolume.MAX_TRANSITIONS)
+                .isGreaterThanOrEqualTo(feetCells - 1);
+        assertThat(LocalObservationVolume.MAX_OBSERVATIONS)
+                .isLessThan(directedAttempts)
+                .isGreaterThanOrEqualTo(512);
     }
 
     @Test

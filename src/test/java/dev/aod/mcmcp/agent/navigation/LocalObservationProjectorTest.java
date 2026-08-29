@@ -10,6 +10,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class LocalObservationProjectorTest {
+    private static final String OVERWORLD = "minecraft:overworld";
+
     @Test
     void keepsRequestedEdgeWhenVanillaResolvedOnlyAMicroStep() {
         var center = new ObservationRecord.Point(0.5, 64.9, 0.5);
@@ -100,6 +102,102 @@ class LocalObservationProjectorTest {
                 assertThat(edge.targetSupport()).isEqualTo(
                         TraversabilityEdge.TargetSupport.CONFIRMED);
             });
+        }
+    }
+
+    @Test
+    void postMutationDerivedPassageReconnectsAFiveBlockExitForEveryPassageKind() {
+        for (String passageKind : List.of("gate", "door", "trapdoor")) {
+            UUID session = UUID.randomUUID();
+            var center = new ObservationRecord.Point(0.5D, 64.9D, 0.5D);
+            var currentAtRevisionZero = record(
+                    10, 0, 0, center, center, center,
+                    ObservationRecord.Transition.STATIONARY,
+                    ObservationRecord.Clearance.CLEAR,
+                    ObservationRecord.Hazard.NONE);
+            var closedPassage = record(
+                    10,
+                    0,
+                    1,
+                    center,
+                    new ObservationRecord.Point(1.5D, 64.9D, 0.5D),
+                    center,
+                    ObservationRecord.Transition.BLOCKED,
+                    ObservationRecord.Clearance.BLOCKED,
+                    ObservationRecord.Hazard.COLLISION);
+            var closedProjection = LocalObservationProjector.project(
+                    new LocalObservationVolume.Snapshot(
+                            10, 0, center, currentAtRevisionZero, List.of(closedPassage)),
+                    session,
+                    OVERWORLD,
+                    0,
+                    64.0D);
+            var map = new KnownTraversabilityMap();
+            map.startSession(session, OVERWORLD, 0);
+            closedProjection.edges().forEach(map::observe);
+
+            var start = new NavCell(OVERWORLD, 0, 64, 0);
+            var exit = new NavCell(OVERWORLD, 5, 64, 0);
+            assertThat(new DeterministicAStar()
+                    .findRoute(map.snapshot().orElseThrow(), start, exit).route())
+                    .as("closed %s", passageKind)
+                    .isEmpty();
+
+            map.advanceWorldRevision(
+                    1,
+                    List.of(start, new NavCell(OVERWORLD, 1, 64, 0)),
+                    List.of());
+            var currentAtRevisionOne = record(
+                    20, 1, 0, center, center, center,
+                    ObservationRecord.Transition.STATIONARY,
+                    ObservationRecord.Clearance.CLEAR,
+                    ObservationRecord.Hazard.NONE);
+            var passageChain = new java.util.ArrayList<ObservationRecord>();
+            for (int step = 1; step <= 5; step++) {
+                passageChain.add(record(
+                        20,
+                        1,
+                        step,
+                        new ObservationRecord.Point(step - 0.5D, 64.9D, 0.5D),
+                        new ObservationRecord.Point(step + 0.5D, 64.9D, 0.5D),
+                        new ObservationRecord.Point(step + 0.5D, 64.9D, 0.5D),
+                        ObservationRecord.Transition.PROBE_ALLOWED,
+                        ObservationRecord.Clearance.CLEAR,
+                        ObservationRecord.Hazard.NONE));
+            }
+            var reopenedProjection = LocalObservationProjector.project(
+                    new LocalObservationVolume.Snapshot(
+                            20, 1, center, currentAtRevisionOne, passageChain),
+                    session,
+                    OVERWORLD,
+                    1,
+                    64.0D);
+
+            assertThat(reopenedProjection.records())
+                    .as("derived-only public records for %s", passageKind)
+                    .hasSize(5)
+                    .allMatch(record -> record instanceof
+                            dev.aod.mcmcp.agent.observation.ObservationRecord.Traversability);
+            assertThat(reopenedProjection.edges())
+                    .as("five-block connected feet-space for %s", passageKind)
+                    .hasSize(5)
+                    .allMatch(edge -> edge.provenance()
+                            == TraversabilityEdge.Provenance.LOCAL_VOLUME);
+            reopenedProjection.edges().forEach(edge -> assertThat(map.observe(edge)).isTrue());
+
+            var route = new DeterministicAStar()
+                    .findRoute(map.snapshot().orElseThrow(), start, exit)
+                    .route()
+                    .orElseThrow();
+            assertThat(route.cells())
+                    .as("reconnected route through open %s", passageKind)
+                    .containsExactly(
+                            new NavCell(OVERWORLD, 0, 64, 0),
+                            new NavCell(OVERWORLD, 1, 64, 0),
+                            new NavCell(OVERWORLD, 2, 64, 0),
+                            new NavCell(OVERWORLD, 3, 64, 0),
+                            new NavCell(OVERWORLD, 4, 64, 0),
+                            new NavCell(OVERWORLD, 5, 64, 0));
         }
     }
 

@@ -20,6 +20,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -46,6 +47,40 @@ class McpToolCatalogTest {
         assertThat(commands).extracting(Object::getClass).containsExactly(
                 McpRuntimePort.StartAction.class,
                 McpRuntimePort.AbandonActionDelivery.class);
+    }
+
+    @Test
+    void observationReceiptIsConfirmedOnlyAfterDeliveryOrAbandonedOnWriteFailure()
+            throws Exception {
+        var commands = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        UUID receiptId = UUID.fromString("550e8400-e29b-41d4-a716-446655440001");
+        var registry = new McmcpToolRegistry((command, context) -> {
+            commands.add(command);
+            var result = toolResult(command);
+            return CompletableFuture.completedFuture(
+                    command instanceof McpRuntimePort.GetObservation
+                            ? McpRuntimePort.RuntimeReply.success(
+                                    result,
+                                    new McpRuntimePort.ObservationDeliveryReceipt(receiptId))
+                            : McpRuntimePort.RuntimeReply.success(result));
+        }, Duration.ofSeconds(1));
+        var observation = JsonParser.parseString("""
+                {"schema_version":1,"frame_id":"obs-0000000000000000",
+                 "kinds":["visible_surface"],"cursor":null,"limit":1}
+                """).getAsJsonObject();
+
+        var delivered = registry.prepareCall("agent_get_observation", observation);
+        registry.confirmDelivery(delivered);
+        assertThat(commands).extracting(Object::getClass).containsExactly(
+                McpRuntimePort.GetObservation.class,
+                McpRuntimePort.ConfirmObservationDelivery.class);
+
+        commands.clear();
+        var lost = registry.prepareCall("agent_get_observation", observation);
+        registry.abandonDelivery(lost);
+        assertThat(commands).extracting(Object::getClass).containsExactly(
+                McpRuntimePort.GetObservation.class,
+                McpRuntimePort.AbandonObservationDelivery.class);
     }
 
     @Test
@@ -218,7 +253,7 @@ class McpToolCatalogTest {
         assertThat(description)
                 .contains("fresh visible minecraft:item witness")
                 .contains("relative to this node occurrence's start")
-                .contains("group all plant nodes before one representative wait_until")
+                .contains("put plant node(s) immediately before one representative wait_until")
                 .contains("collect each visible drop in later Action(s)")
                 .contains("replant cleared farmland before the next cycle");
     }
@@ -554,6 +589,12 @@ class McpToolCatalogTest {
                     "confirmed", true);
             case McpRuntimePort.AbandonActionDelivery delivery -> Map.of(
                     "action_id", delivery.actionId().toString(),
+                    "abandoned", true);
+            case McpRuntimePort.ConfirmObservationDelivery delivery -> Map.of(
+                    "receipt_id", delivery.receiptId().toString(),
+                    "confirmed", true);
+            case McpRuntimePort.AbandonObservationDelivery delivery -> Map.of(
+                    "receipt_id", delivery.receiptId().toString(),
                     "abandoned", true);
             default -> throw new AssertionError("Legacy runtime command escaped the five-tool registry");
         };

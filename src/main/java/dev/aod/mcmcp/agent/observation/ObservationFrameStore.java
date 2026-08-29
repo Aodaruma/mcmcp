@@ -6,9 +6,12 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -17,11 +20,15 @@ import java.util.Set;
 import java.util.function.LongSupplier;
 
 /**
- * Thread-safe rolling frame store with at most two independently expiring pagination leases.
+ * Thread-safe rolling frame store with bounded announced-frame handles and at most two
+ * independently expiring pagination leases.
  * Minecraft objects never enter this boundary.
  */
 public final class ObservationFrameStore {
     public static final int ROLLING_FRAME_LIMIT = 2;
+    public static final int ANNOUNCED_FRAME_LIMIT = 16;
+    public static final int ANNOUNCED_RECORD_LIMIT = 65_536;
+    public static final Duration ANNOUNCED_FRAME_IDLE_TIMEOUT = Duration.ofSeconds(60);
     public static final int PAGINATION_LEASE_LIMIT = 2;
     public static final Duration LEASE_IDLE_TIMEOUT = Duration.ofSeconds(60);
     public static final Duration LEASE_ABSOLUTE_TIMEOUT = Duration.ofMinutes(5);
@@ -31,6 +38,7 @@ public final class ObservationFrameStore {
     private final LongSupplier nanoTime;
     private final SecureRandom secureRandom;
     private final ArrayDeque<ObservationFrame> rollingFrames = new ArrayDeque<>(ROLLING_FRAME_LIMIT);
+    private final LinkedHashMap<String, AnnouncedFrame> announcedFrames = new LinkedHashMap<>();
     private final Set<Lease> leases = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Map<String, CursorState> cursors = new HashMap<>();
 
@@ -64,6 +72,36 @@ public final class ObservationFrameStore {
         return latestFrame().map(ObservationFrame::summary);
     }
 
+    /**
+     * Returns and pins the latest summary as an externally announced frame handle.
+     *
+     * <p>The handle is independent of pagination leases. Re-announcement and an initial page
+     * read refresh its monotonic idle deadline. The least-recently used handle is evicted when
+     * the fixed cap is exceeded.</p>
+     */
+    public synchronized Optional<ObservationFrameSummary> announceLatestSummary() {
+        long now = nanoTime.getAsLong();
+        purgeExpired(now);
+        ObservationFrame frame = rollingFrames.peekLast();
+        if (frame == null) {
+            return Optional.empty();
+        }
+        touchAnnounced(frame, now);
+        return Optional.of(frame.summary());
+    }
+
+    synchronized int announcedFrameCount() {
+        purgeExpired(nanoTime.getAsLong());
+        return announcedFrames.size();
+    }
+
+    synchronized int announcedRecordCount() {
+        purgeExpired(nanoTime.getAsLong());
+        return announcedFrames.values().stream()
+                .mapToInt(frame -> frame.frame.records().size())
+                .sum();
+    }
+
     public synchronized int activePaginationLeases() {
         purgeExpired(nanoTime.getAsLong());
         return leases.size();
@@ -91,6 +129,7 @@ public final class ObservationFrameStore {
     /** Invalidates every frame, pagination lease, and cursor at a world-session boundary. */
     public synchronized void clear() {
         rollingFrames.clear();
+        announcedFrames.clear();
         leases.clear();
         cursors.clear();
     }
@@ -100,14 +139,12 @@ public final class ObservationFrameStore {
             Set<ObservationKind> kinds,
             int limit,
             long now) throws ObservationStoreException {
-        ObservationFrame frame = findRetainedFrame(frameId);
+        ObservationFrame frame = findRetainedFrame(frameId, now, true);
         if (frame == null) {
             throw failure(ObservationStoreException.Code.FRAME_EXPIRED,
                     "The requested observation frame is no longer retained");
         }
-        List<ObservationRecord> selected = frame.records().stream()
-                .filter(record -> kinds.contains(record.kind()))
-                .toList();
+        List<ObservationRecord> selected = selectForDelivery(frame.records(), kinds);
         int end = Math.min(limit, selected.size());
         if (end == selected.size()) {
             return page(frame, selected.subList(0, end), null);
@@ -172,6 +209,19 @@ public final class ObservationFrameStore {
     }
 
     private ObservationFrame findRetainedFrame(String frameId) {
+        return findRetainedFrame(frameId, nanoTime.getAsLong(), false);
+    }
+
+    private ObservationFrame findRetainedFrame(String frameId, long now, boolean touchAnnounced) {
+        AnnouncedFrame announced = announcedFrames.get(frameId);
+        if (announced != null) {
+            if (touchAnnounced) {
+                announcedFrames.remove(frameId);
+                announced.lastAccessNanos = now;
+                announcedFrames.put(frameId, announced);
+            }
+            return announced.frame;
+        }
         for (ObservationFrame frame : rollingFrames) {
             if (frame.frameId().equals(frameId)) {
                 return frame;
@@ -185,7 +235,29 @@ public final class ObservationFrameStore {
         return null;
     }
 
+    private void touchAnnounced(ObservationFrame frame, long now) {
+        AnnouncedFrame announced = announcedFrames.remove(frame.frameId());
+        if (announced == null) {
+            announced = new AnnouncedFrame(frame, now);
+        } else {
+            announced.lastAccessNanos = now;
+        }
+        announcedFrames.put(frame.frameId(), announced);
+        while (announcedFrames.size() > ANNOUNCED_FRAME_LIMIT
+                || announcedRecordCount() > ANNOUNCED_RECORD_LIMIT) {
+            announcedFrames.remove(announcedFrames.keySet().iterator().next());
+        }
+    }
+
     private void purgeExpired(long now) {
+        var announcedIterator = announcedFrames.entrySet().iterator();
+        while (announcedIterator.hasNext()) {
+            AnnouncedFrame announced = announcedIterator.next().getValue();
+            if (elapsed(now, announced.lastAccessNanos)
+                    >= ANNOUNCED_FRAME_IDLE_TIMEOUT.toNanos()) {
+                announcedIterator.remove();
+            }
+        }
         var iterator = leases.iterator();
         while (iterator.hasNext()) {
             Lease lease = iterator.next();
@@ -216,6 +288,119 @@ public final class ObservationFrameStore {
         return Collections.unmodifiableSet(copied);
     }
 
+    /**
+     * Compacts duplicate visual faces to one deterministic record per block and fairly
+     * interleaves requested kinds. The complete internal frame remains unchanged for safety
+     * planning; this projection only prevents actionable evidence from being buried in the MCP
+     * response by hundreds of duplicate faces or unknown-boundary records.
+     */
+    static List<ObservationRecord> selectForDelivery(
+            List<ObservationRecord> records, Set<ObservationKind> kinds) {
+        Objects.requireNonNull(records, "records");
+        Objects.requireNonNull(kinds, "kinds");
+        var buckets = new EnumMap<ObservationKind, List<ObservationRecord>>(
+                ObservationKind.class);
+        for (ObservationKind kind : ObservationKind.values()) {
+            buckets.put(kind, new ArrayList<>());
+        }
+        var surfaces = new LinkedHashMap<ObservationValues.BlockPosition,
+                ObservationRecord.VisibleSurface>();
+        for (ObservationRecord record : records) {
+            Objects.requireNonNull(record, "record");
+            if (!kinds.contains(record.kind())) {
+                continue;
+            }
+            if (record instanceof ObservationRecord.VisibleSurface surface) {
+                surfaces.merge(surface.position(), surface,
+                        ObservationFrameStore::preferredSurface);
+            } else {
+                buckets.get(record.kind()).add(record);
+            }
+        }
+        buckets.get(ObservationKind.VISIBLE_SURFACE).addAll(surfaces.values().stream()
+                .sorted(Comparator
+                        .comparingInt(ObservationFrameStore::cropDeliveryRank)
+                        .thenComparingDouble(ObservationFrameStore::observationDistanceSquared)
+                        .thenComparingInt(surface -> surface.position().x())
+                        .thenComparingInt(surface -> surface.position().y())
+                        .thenComparingInt(surface -> surface.position().z())
+                        .thenComparingInt(surface -> surface.face().ordinal()))
+                .toList());
+
+        List<ObservationKind> priority = List.of(
+                ObservationKind.VISIBLE_ENTITY,
+                ObservationKind.TRAVERSABILITY,
+                ObservationKind.HAZARD,
+                ObservationKind.VISIBLE_SURFACE,
+                ObservationKind.SOUND_CLUE,
+                ObservationKind.UNKNOWN_BOUNDARY);
+        int maximum = buckets.values().stream().mapToInt(List::size).max().orElse(0);
+        var selected = new ArrayList<ObservationRecord>();
+        for (int index = 0; index < maximum; index++) {
+            for (ObservationKind kind : priority) {
+                List<ObservationRecord> bucket = buckets.get(kind);
+                if (index < bucket.size()) {
+                    selected.add(bucket.get(index));
+                }
+            }
+        }
+        return List.copyOf(selected);
+    }
+
+    private static ObservationRecord.VisibleSurface preferredSurface(
+            ObservationRecord.VisibleSurface retained,
+            ObservationRecord.VisibleSurface candidate) {
+        if (candidate.worldRevision() != retained.worldRevision()) {
+            return candidate.worldRevision() > retained.worldRevision() ? candidate : retained;
+        }
+        if (candidate.observedTick() != retained.observedTick()) {
+            return candidate.observedTick() > retained.observedTick() ? candidate : retained;
+        }
+        if (!Objects.equals(candidate.cropMature(), retained.cropMature())) {
+            return Boolean.TRUE.equals(candidate.cropMature()) ? candidate : retained;
+        }
+        if ("minecraft:farmland".equals(retained.block().value())) {
+            int candidateRank = faceRank(candidate.face());
+            int retainedRank = faceRank(retained.face());
+            if (candidateRank != retainedRank) {
+                return candidateRank < retainedRank ? candidate : retained;
+            }
+        } else {
+            double candidateDistance = observationDistanceSquared(candidate);
+            double retainedDistance = observationDistanceSquared(retained);
+            if (candidateDistance != retainedDistance) {
+                return candidateDistance < retainedDistance ? candidate : retained;
+            }
+        }
+        return candidate.face().ordinal() < retained.face().ordinal() ? candidate : retained;
+    }
+
+    private static int faceRank(ObservationRecord.Face face) {
+        return switch (face) {
+            case UP -> 0;
+            case NORTH, SOUTH, WEST, EAST -> 1;
+            case DOWN -> 2;
+        };
+    }
+
+    private static int cropDeliveryRank(ObservationRecord.VisibleSurface surface) {
+        if (Boolean.TRUE.equals(surface.cropMature())) {
+            return 0;
+        }
+        return surface.cropMature() != null ? 1 : 2;
+    }
+
+    private static double observationDistanceSquared(
+            ObservationRecord.VisibleSurface surface) {
+        if (surface.rayHit() == null) {
+            return Double.POSITIVE_INFINITY;
+        }
+        double dx = surface.rayHit().x() - surface.eyeOrigin().x();
+        double dy = surface.rayHit().y() - surface.eyeOrigin().y();
+        double dz = surface.rayHit().z() - surface.eyeOrigin().z();
+        return dx * dx + dy * dy + dz * dz;
+    }
+
     private static ObservationStoreException failure(
             ObservationStoreException.Code code, String message) {
         return new ObservationStoreException(code, message);
@@ -238,6 +423,16 @@ public final class ObservationFrameStore {
             this.kinds = kinds;
             this.selectedRecords = List.copyOf(selectedRecords);
             createdNanos = now;
+            lastAccessNanos = now;
+        }
+    }
+
+    private static final class AnnouncedFrame {
+        private final ObservationFrame frame;
+        private long lastAccessNanos;
+
+        private AnnouncedFrame(ObservationFrame frame, long now) {
+            this.frame = Objects.requireNonNull(frame, "frame");
             lastAccessNanos = now;
         }
     }

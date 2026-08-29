@@ -27,6 +27,7 @@ import dev.aod.mcmcp.agent.observation.ObservationValues.BlockPosition;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
 import dev.aod.mcmcp.agent.observation.ObservationValues.Vector;
 import dev.aod.mcmcp.agent.observation.ObservationValues.WorldPosition;
+import dev.aod.mcmcp.agent.navigation.LocalObservationProjector;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
@@ -43,6 +44,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ObservationModelContractTest {
     private static final ResourceId DIMENSION = new ResourceId("minecraft:overworld");
     private static final ResourceId OTHER_DIMENSION = new ResourceId("minecraft:the_nether");
+
+    @Test
+    void legalCollectorMaximaFitInsideThePublishedFrameBudget() {
+        int legalMaximum = OmnidirectionalObserver.MAX_VISIBLE_SURFACES
+                + OmnidirectionalObserver.MAX_UNKNOWN_BOUNDARIES
+                + OmnidirectionalObserver.MAX_NEARBY_ENTITIES
+                + LocalObservationProjector.MAX_PUBLIC_RECORDS
+                + 32;
+
+        assertThat(legalMaximum).isLessThanOrEqualTo(ObservationFrame.MAX_RECORDS);
+    }
 
     @Test
     void allRecordKindsAndSummaryMatchTheNormativeCatalogSchemas() throws Exception {
@@ -104,6 +116,33 @@ class ObservationModelContractTest {
                 .containsEntry("camera_motion_generated", false)
                 .containsEntry("full_azimuth", true)
                 .containsEntry("full_elevation", true);
+    }
+
+    @Test
+    void frameRejectsAnUnboundedRecordCollection() {
+        ObservationRecord repeated = surface(95, 0);
+
+        assertThatThrownBy(() -> new ObservationFrame(
+                "obs-0000000000000003", DIMENSION, 100, 8.0, false,
+                java.util.Collections.nCopies(
+                        ObservationFrame.MAX_RECORDS + 1, repeated)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("record limit");
+    }
+
+    @Test
+    void summaryCountsDeliverableVisibleBlocksRatherThanDuplicateFaces() {
+        var north = surface(95, 0);
+        var up = new VisibleSurface(
+                north.position(), Face.UP, north.block(), north.shapeClass(),
+                north.cropMature(), north.rayHit(), north.eyeOrigin(),
+                north.observedTick(), north.worldRevision());
+        var frame = new ObservationFrame(
+                "obs-0000000000000002", DIMENSION, 100, 8.0, false,
+                List.of(north, up));
+
+        assertThat(frame.summary().recordCounts().get(ObservationKind.VISIBLE_SURFACE))
+                .isOne();
     }
 
     @Test

@@ -40,6 +40,114 @@ class ObservationFrameStoreTest {
     }
 
     @Test
+    void announcedLatestFrameSurvivesRollingEvictionAndIdleAccessRefreshesIt()
+            throws Exception {
+        var clock = new FakeClock();
+        var store = store(clock);
+        store.publish(frame(1, 1));
+
+        assertThat(store.announceLatestSummary()).get()
+                .extracting(ObservationFrameSummary::latestFrameId)
+                .isEqualTo(id(1));
+        store.publish(frame(2, 1));
+        store.publish(frame(3, 1));
+        clock.advance(Duration.ofSeconds(59));
+
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 256).records())
+                .hasSize(1);
+        clock.advance(Duration.ofSeconds(59));
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 256).records())
+                .hasSize(1);
+
+        clock.advance(ObservationFrameStore.ANNOUNCED_FRAME_IDLE_TIMEOUT);
+        assertFailure(
+                () -> store.page(id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 256),
+                ObservationStoreException.Code.FRAME_EXPIRED);
+    }
+
+    @Test
+    void announcedFrameCapEvictsTheLeastRecentlyUsedHandleDeterministically()
+            throws Exception {
+        var clock = new FakeClock();
+        var store = store(clock);
+        for (int number = 1; number <= ObservationFrameStore.ANNOUNCED_FRAME_LIMIT; number++) {
+            store.publish(frame(number, 1));
+            store.announceLatestSummary().orElseThrow();
+        }
+        assertThat(store.announcedFrameCount())
+                .isEqualTo(ObservationFrameStore.ANNOUNCED_FRAME_LIMIT);
+
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 256).records())
+                .hasSize(1);
+        store.publish(frame(ObservationFrameStore.ANNOUNCED_FRAME_LIMIT + 1L, 1));
+        store.announceLatestSummary().orElseThrow();
+
+        assertThat(store.announcedFrameCount())
+                .isEqualTo(ObservationFrameStore.ANNOUNCED_FRAME_LIMIT);
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 256).records())
+                .hasSize(1);
+        assertFailure(
+                () -> store.page(id(2), Set.of(ObservationKind.VISIBLE_SURFACE), null, 256),
+                ObservationStoreException.Code.FRAME_EXPIRED);
+    }
+
+    @Test
+    void announcedFramesAlsoStayInsideTheGlobalRecordBudget() {
+        var store = new ObservationFrameStore();
+        ObservationRecord repeated = ObservationModelContractTest.surface(99, 0);
+        for (int number = 1; number <= 14; number++) {
+            store.publish(new ObservationFrame(
+                    id(number), DIMENSION, 100, 16, false,
+                    java.util.Collections.nCopies(5_000, repeated)));
+            store.announceLatestSummary().orElseThrow();
+        }
+
+        assertThat(store.announcedRecordCount())
+                .isLessThanOrEqualTo(ObservationFrameStore.ANNOUNCED_RECORD_LIMIT);
+        assertThat(store.announcedFrameCount()).isLessThan(14);
+    }
+
+    @Test
+    void announcedHandlesAreIndependentFromPaginationLeasesAndClearRemovesBoth()
+            throws Exception {
+        var clock = new FakeClock();
+        var store = store(clock);
+        store.publish(frame(1, 3));
+        store.announceLatestSummary().orElseThrow();
+        String cursor = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1).nextCursor();
+
+        assertThat(store.announcedFrameCount()).isOne();
+        assertThat(store.activePaginationLeases()).isOne();
+
+        clock.advance(Duration.ofSeconds(59));
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), cursor, 1).records())
+                .hasSize(1);
+        clock.advance(Duration.ofSeconds(2));
+        assertThat(store.announcedFrameCount()).isZero();
+        assertThat(store.activePaginationLeases()).isOne();
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), cursor, 1).records())
+                .hasSize(1);
+
+        store.clear();
+
+        assertThat(store.announcedFrameCount()).isZero();
+        assertThat(store.activePaginationLeases()).isZero();
+        assertFailure(
+                () -> store.page(id(1), Set.of(ObservationKind.VISIBLE_SURFACE), cursor, 1),
+                ObservationStoreException.Code.INVALID_CURSOR);
+        assertFailure(
+                () -> store.page(id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1),
+                ObservationStoreException.Code.FRAME_EXPIRED);
+    }
+
+    @Test
     void pinSurvivesRollingEvictionAndEveryCursorReplayReturnsTheExactSamePage() throws Exception {
         var clock = new FakeClock();
         var store = store(clock);
@@ -178,6 +286,78 @@ class ObservationFrameStoreTest {
     }
 
     @Test
+    void deliveryCompactsDuplicateFacesToThePreferredUpSurface() throws Exception {
+        var store = new ObservationFrameStore();
+        VisibleSurface up = ObservationModelContractTest.surface(99, 1);
+        VisibleSurface north = new VisibleSurface(
+                up.position(),
+                ObservationRecord.Face.NORTH,
+                up.block(),
+                up.shapeClass(),
+                up.cropMature(),
+                up.eyeOrigin(),
+                up.observedTick(),
+                up.worldRevision());
+        ObservationRecord.Hazard hazard = hazard(99);
+        store.publish(new ObservationFrame(
+                id(1), DIMENSION, 100, 16, false, List.of(north, up, hazard)));
+
+        ObservationPage page = store.page(id(1), Set.of(
+                ObservationKind.VISIBLE_SURFACE, ObservationKind.HAZARD), null, 256);
+
+        assertThat(page.records()).hasSize(2);
+        assertThat(page.records()).filteredOn(VisibleSurface.class::isInstance)
+                .singleElement()
+                .extracting(record -> ((VisibleSurface) record).face())
+                .isEqualTo(ObservationRecord.Face.UP);
+    }
+
+    @Test
+    void deliveryFairlyIncludesSparseKindsBeforeLargeSurfaceSets() throws Exception {
+        var store = new ObservationFrameStore();
+        var records = new java.util.ArrayList<ObservationRecord>();
+        IntStream.range(0, 300)
+                .mapToObj(index -> ObservationModelContractTest.surface(99, index))
+                .forEach(records::add);
+        records.add(hazard(99));
+        store.publish(new ObservationFrame(id(1), DIMENSION, 100, 16, false, records));
+
+        ObservationPage page = store.page(id(1), Set.of(
+                ObservationKind.VISIBLE_SURFACE, ObservationKind.HAZARD), null, 10);
+
+        assertThat(page.records()).hasSize(10);
+        assertThat(page.records()).anyMatch(ObservationRecord.Hazard.class::isInstance);
+        assertThat(page.nextCursor()).isNotNull();
+    }
+
+    @Test
+    void matureAndImmatureCropsLeadTheSurfaceBucket() throws Exception {
+        var store = new ObservationFrameStore();
+        var records = new java.util.ArrayList<ObservationRecord>();
+        IntStream.range(0, 300)
+                .mapToObj(index -> ObservationModelContractTest.surface(99, index))
+                .forEach(records::add);
+        var base = ObservationModelContractTest.surface(99, 301);
+        var immature = new VisibleSurface(
+                base.position(), base.face(),
+                new ObservationValues.ResourceId("minecraft:wheat"), base.shapeClass(),
+                false, base.rayHit(), base.eyeOrigin(), base.observedTick(),
+                base.worldRevision());
+        var mature = new VisibleSurface(
+                new ObservationValues.BlockPosition(DIMENSION, 302, 64, 0), base.face(),
+                new ObservationValues.ResourceId("minecraft:wheat"), base.shapeClass(),
+                true, null, base.eyeOrigin(), base.observedTick(), base.worldRevision());
+        records.add(immature);
+        records.add(mature);
+        store.publish(new ObservationFrame(id(1), DIMENSION, 100, 16, false, records));
+
+        ObservationPage page = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 2);
+
+        assertThat(page.records()).containsExactly(mature, immature);
+    }
+
+    @Test
     void validatesTheBoundedQuerySurfaceBeforeStoreLookup() {
         var store = new ObservationFrameStore();
         assertThatThrownBy(() -> store.page(id(1), Set.of(), null, 1))
@@ -198,6 +378,18 @@ class ObservationFrameStoreTest {
                 .map(ObservationRecord.class::cast)
                 .toList();
         return new ObservationFrame(id(number), DIMENSION, 100, 16, false, records);
+    }
+
+    private static ObservationRecord.Hazard hazard(long tick) {
+        var position = ObservationModelContractTest.world(0, 64, 0);
+        return new ObservationRecord.Hazard(
+                ObservationRecord.HazardType.FALL,
+                position,
+                ObservationRecord.HazardSeverity.CAUTION,
+                position,
+                tick,
+                7,
+                ObservationRecord.EvidenceProvenance.LOCAL_VOLUME);
     }
 
     private static String id(long number) {

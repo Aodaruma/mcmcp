@@ -22,10 +22,12 @@ import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.LocalObservationProjector;
 import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.agent.navigation.RoutePlan;
+import dev.aod.mcmcp.agent.observation.DeliveredPolicyEvidenceStore;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ClientFogDistanceSignals;
 import dev.aod.mcmcp.agent.observation.ObservationFrameStore;
 import dev.aod.mcmcp.agent.observation.ObservationKind;
+import dev.aod.mcmcp.agent.observation.ObservationPage;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.OmnidirectionalObserver;
 import dev.aod.mcmcp.agent.observation.ObservationStoreException;
@@ -171,6 +173,8 @@ public final class McmcpRuntime implements McpRuntimePort {
     private final String neoForgeVersion;
     private final WorldSessionTracker sessions = new WorldSessionTracker();
     private final ObservationFrameStore agentObservationFrames = new ObservationFrameStore();
+    private final DeliveredPolicyEvidenceStore deliveredAgentEvidence =
+            new DeliveredPolicyEvidenceStore();
     private final SoundClueStore soundClues = new SoundClueStore();
     private final SoundPlaybackQueue soundPlaybacks = new SoundPlaybackQueue();
     private final KnownTraversabilityMap knownTraversability = new KnownTraversabilityMap();
@@ -628,6 +632,7 @@ public final class McmcpRuntime implements McpRuntimePort {
     private void clearAgentSessionState() {
         recoveryDescent.reset();
         agentObservationFrames.clear();
+        deliveredAgentEvidence.clear();
         soundClues.clear();
         soundPlaybacks.clear();
         soundPlaybackTruncated = false;
@@ -729,18 +734,31 @@ public final class McmcpRuntime implements McpRuntimePort {
             if (!context.canBeginWork()) {
                 throw new ClientCommandInbox.CommandTimeoutException(command.toolName());
             }
+            if (command instanceof GetObservation observation) {
+                var minecraft = Minecraft.getInstance();
+                assertClientThread(minecraft);
+                var session = sessions.snapshot();
+                requireReady(session);
+                PreparedObservationPage prepared = getAgentObservation(observation.arguments());
+                return RuntimeReply.success(
+                        prepared.wirePage(),
+                        new McpRuntimePort.ObservationDeliveryReceipt(prepared.receiptId()));
+            }
             return RuntimeReply.success(executeOnClientThread(command, context));
         };
         var submitted = command instanceof CancelRoutine
                 || command instanceof CancelAction
                 || command instanceof ConfirmActionDelivery
                 || command instanceof AbandonActionDelivery
+                || command instanceof ConfirmObservationDelivery
+                || command instanceof AbandonObservationDelivery
                 ? inbox.submitControlMapped(
                         command.toolName(), fence.generation(), context.deadlineNanos(),
                         work, McmcpRuntime::mapFailure)
                 : inbox.submitMapped(
                         command.toolName(), fence.generation(), context.deadlineNanos(),
-                        work, McmcpRuntime::mapFailure, () -> false, ignored -> { });
+                        work, McmcpRuntime::mapFailure, () -> false,
+                        this::abandonUnconfirmedDelivery);
         return submitted;
     }
 
@@ -856,10 +874,8 @@ public final class McmcpRuntime implements McpRuntimePort {
         var session = sessions.snapshot();
         return switch (command) {
             case GetState ignored -> status(minecraft, session);
-            case GetObservation observation -> {
-                requireReady(session);
-                yield getAgentObservation(observation.arguments());
-            }
+            case GetObservation ignored ->
+                    throw new AssertionError("agent_get_observation must stage delivery metadata");
             case StartAction action -> {
                 throw new AssertionError("agent_start_action must use worker preflight");
             }
@@ -867,6 +883,10 @@ public final class McmcpRuntime implements McpRuntimePort {
             case CancelAction action -> cancelAgentAction(minecraft, action.arguments());
             case ConfirmActionDelivery delivery -> confirmAgentActionDelivery(delivery.actionId());
             case AbandonActionDelivery delivery -> abandonAgentActionDelivery(delivery.actionId());
+            case ConfirmObservationDelivery delivery -> Map.of(
+                    "confirmed", deliveredAgentEvidence.confirmDelivery(delivery.receiptId()));
+            case AbandonObservationDelivery delivery -> Map.of(
+                    "abandoned", deliveredAgentEvidence.abandonDelivery(delivery.receiptId()));
             case GetSnapshot snapshot -> {
                 requireReady(session);
                 yield observations.getSnapshot(minecraft, session.clientTick(), snapshot.arguments());
@@ -921,7 +941,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         return recipeCatalog.query(session.worldSessionId(), query, maxResults).toMap();
     }
 
-    private Map<String, Object> getAgentObservation(Map<String, Object> arguments) {
+    private PreparedObservationPage getAgentObservation(Map<String, Object> arguments) {
         requireExactKeys(arguments, "agent_get_observation",
                 Set.of("schema_version", "frame_id", "kinds", "cursor", "limit"));
         if (intArgument(arguments, "schema_version") != 1) {
@@ -940,11 +960,14 @@ public final class McmcpRuntime implements McpRuntimePort {
         Object rawCursor = arguments.get("cursor");
         String cursor = rawCursor == null ? null : (String) rawCursor;
         try {
-            return ObservationWireMapper.page(agentObservationFrames.page(
+            ObservationPage page = agentObservationFrames.page(
                     stringArgument(arguments, "frame_id"),
                     kinds,
                     cursor,
-                    intArgument(arguments, "limit")));
+                    intArgument(arguments, "limit"));
+            Map<String, Object> wirePage = ObservationWireMapper.page(page);
+            UUID receiptId = deliveredAgentEvidence.prepareDelivery(page);
+            return new PreparedObservationPage(wirePage, receiptId);
         } catch (ObservationStoreException failure) {
             throw new RuntimeInvocationException(
                     failure.code().name().toLowerCase(Locale.ROOT),
@@ -952,6 +975,32 @@ public final class McmcpRuntime implements McpRuntimePort {
                     failure.code() != ObservationStoreException.Code.INVALID_CURSOR,
                     Map.of());
         }
+    }
+
+    private void abandonUnconfirmedDelivery(RuntimeReply reply) {
+        if (reply != null
+                && reply.deliveryReceipt()
+                        instanceof McpRuntimePort.ObservationDeliveryReceipt observation) {
+            deliveredAgentEvidence.abandonDelivery(observation.receiptId());
+        }
+    }
+
+    private record PreparedObservationPage(Map<String, Object> wirePage, UUID receiptId) {
+        private PreparedObservationPage {
+            wirePage = java.util.Collections.unmodifiableMap(
+                    new java.util.LinkedHashMap<>(
+                            Objects.requireNonNull(wirePage, "wirePage")));
+            Objects.requireNonNull(receiptId, "receiptId");
+        }
+    }
+
+    /**
+     * Planner view containing the current frame plus only static surfaces that were actually
+     * returned to the MCP client. Every consumer still applies its ordinary revision, pose,
+     * reach, age, commit, and JIT fences; dynamic evidence is never extended by this view.
+     */
+    private Optional<ObservationFrame> agentPlanningFrame() {
+        return deliveredAgentEvidence.augment(agentObservationFrames.latestFrame());
     }
 
     private AgentAdmissionSnapshot captureAgentAdmission(
@@ -1007,7 +1056,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                 lock,
                 map,
                 playerPose(player, session.dimension()),
-                agentObservationFrames.latestFrame(),
+                agentPlanningFrame(),
                 localSafety,
                 predicateRequirements,
                 predicateSnapshot,
@@ -1277,19 +1326,20 @@ public final class McmcpRuntime implements McpRuntimePort {
         } catch (RuntimeException | LinkageError changed) {
             return false;
         }
+        Optional<ObservationFrame> currentPlanningFrame = agentPlanningFrame();
         return firstPrimitive(prepared.program().request().program(), currentPredicates)
                         .equals(prepared.initialPrimitive())
                 && routeDependenciesCurrent(currentMap, prepared.analysis().routeDependencies())
                 && prepared.analysis().knownTargets().stream().allMatch(target ->
                         AgentPrimitivePlanner.knownTarget(
                                 currentMap,
-                                agentObservationFrames.latestFrame(),
+                                currentPlanningFrame,
                                 target,
                                 currentSurfaceRevisionBarrier.applyAsLong(target)))
                 && prepared.analysis().knownSurfaces().stream().allMatch(surface ->
                         AgentPrimitivePlanner.knownSurface(
                                 currentMap,
-                                agentObservationFrames.latestFrame(),
+                                currentPlanningFrame,
                                 surface,
                                 currentSurfaceRevisionBarrier.applyAsLong(surface.position())))
                 && prepared.initialPrimitive()
@@ -1297,7 +1347,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                         .map(ActionDsl.CollectVisibleItem.class::cast)
                         .map(target -> AgentPrimitivePlanner.visibleItemCurrent(
                                 currentMap,
-                                agentObservationFrames.latestFrame(),
+                                currentPlanningFrame,
                                 target,
                                 currentVisualBarrierWorldRevision,
                                 session.clientTick(),
@@ -1557,7 +1607,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                         minecraft.isMultiplayerServer() && multiplayerPolicyAllows(minecraft),
                         McmcpClientConfig.visualRadiusBlocks(),
                         McmcpClientConfig.raysPerTick()));
-        result.put("observation", agentObservationFrames.latestSummary()
+        result.put("observation", agentObservationFrames.announceLatestSummary()
                 .map(ObservationWireMapper::summary)
                 .orElse(null));
         result.put("action", agentActions.latestSummary()
@@ -1619,7 +1669,9 @@ public final class McmcpRuntime implements McpRuntimePort {
                 Map.entry("max_interactions", 8),
                 Map.entry("max_blocks_placed", 8),
                 Map.entry("omnidirectional_visual_radius_blocks", visualRadiusBlocks),
-                Map.entry("local_observation_radius_blocks", 4),
+                Map.entry(
+                        "local_observation_radius_blocks",
+                        (int) LocalObservationVolume.RADIUS_BLOCKS),
                 Map.entry("omnidirectional_direction_count", 2_048),
                 Map.entry("omnidirectional_rays_per_tick", raysPerTick),
                 Map.entry("max_recent_sound_clues", 32),
@@ -2710,7 +2762,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                                     session.worldSessionId()));
                     if (!AgentPrimitivePlanner.visibleItemPickupCellCurrent(
                             pickupMap,
-                            agentObservationFrames.latestFrame(),
+                            agentPlanningFrame(),
                             collect,
                             agentExecution.pickupCell,
                             visualBarrierWorldRevision,
@@ -2756,14 +2808,14 @@ public final class McmcpRuntime implements McpRuntimePort {
                 if (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition face) {
                     faceEvidenceCurrent = AgentPrimitivePlanner.knownTarget(
                             map,
-                            agentObservationFrames.latestFrame(),
+                            agentPlanningFrame(),
                             face.target(),
                             faceSurfaceBarrier.applyAsLong(face.target()));
                 } else {
                     var block = (ActionDsl.BreakKnownFace) agentExecution.primitive;
                     faceEvidenceCurrent = AgentPrimitivePlanner.knownSurface(
                             map,
-                            agentObservationFrames.latestFrame(),
+                            agentPlanningFrame(),
                             new AgentPrimitivePlanner.KnownSurface(
                                     block.target(), block.face(), block.expectedBlock()),
                             faceSurfaceBarrier.applyAsLong(block.target()));
@@ -2849,7 +2901,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                                         session.worldSessionId()));
                         var itemBounds = AgentPrimitivePlanner.visibleItemAabb(
                                 map,
-                                agentObservationFrames.latestFrame(),
+                                agentPlanningFrame(),
                                 collect,
                                 visualBarrierWorldRevision,
                                 session.clientTick(),
@@ -2995,7 +3047,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                     agentExecution.primitive,
                     map,
                     playerPose(player, session.dimension()),
-                    agentObservationFrames.latestFrame(),
+                    agentPlanningFrame(),
                     McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
                     visualBarrierWorldRevision,
                     primitiveSurfaceRevisionBarrier(
@@ -3233,7 +3285,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             } else if (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition face) {
                 var target = AgentPrimitivePlanner.requireKnownFaceTarget(
                         map,
-                        agentObservationFrames.latestFrame(),
+                        agentPlanningFrame(),
                         face.target(),
                         surfaceRevisionBarrier.applyAsLong(face.target()));
                 cost = AgentPrimitivePlanner.faceCost(
@@ -3259,14 +3311,16 @@ public final class McmcpRuntime implements McpRuntimePort {
                 }
                 agentExecution.primitiveExecutor.beginFace(target, cost.ticks());
             } else if (agentExecution.primitive instanceof ActionDsl.BreakKnownFace block) {
-                AgentPrimitivePlanner.requireKnownBreakSurface(
+                AgentPrimitivePlanner.MutationAim breakAim =
+                        AgentPrimitivePlanner.requireKnownBreakAim(
                         map,
-                        agentObservationFrames.latestFrame(),
+                        agentPlanningFrame(),
                         block,
                         surfaceRevisionBarrier.applyAsLong(block.target()));
                 cost = AgentPrimitivePlanner.breakCost(
                         playerPose(player, map.dimension()),
                         block,
+                        breakAim.point(),
                         McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
                 long aimTicks = breakAimTicks(cost);
                 cost = breakExecutionCost(cost, agentExecution.replanning);
@@ -3300,17 +3354,17 @@ public final class McmcpRuntime implements McpRuntimePort {
                 player.getInventory().setSelectedSlot(toolSlot);
                 agentExecution.agentSelectedSlot = toolSlot;
                 agentExecution.primitiveExecutor.beginFace(
-                        MinecraftActionPrimitiveExecutor.KnownFaceTarget
-                                .forBlockFaceRevisionWindow(
+                        new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
                                 map.worldSessionId(), map.worldRevision(),
-                                block.target(), block.face()),
+                                block.target(), breakAim.point().x,
+                                breakAim.point().y, breakAim.point().z, true),
                         aimTicks);
             } else if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem collect) {
                 AgentPrimitivePlanner.PickupPlan pickup = AgentPrimitivePlanner.requirePickupPlan(
                         map,
                         agentPathfinder,
                         playerCell(player, map.dimension()),
-                        agentObservationFrames.latestFrame(),
+                        agentPlanningFrame(),
                         collect,
                         visualBarrierWorldRevision,
                         currentTick,
@@ -3482,7 +3536,7 @@ public final class McmcpRuntime implements McpRuntimePort {
             }
             if (!AgentPrimitivePlanner.knownSurface(
                             map,
-                            agentObservationFrames.latestFrame(),
+                            agentPlanningFrame(),
                             new AgentPrimitivePlanner.KnownSurface(
                                     block.target(), block.face(), block.expectedBlock()),
                             surfaceBarrierWorldRevision)
@@ -3730,7 +3784,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                     step.primitive(),
                     map,
                     currentPose,
-                    agentObservationFrames.latestFrame(),
+                    agentPlanningFrame(),
                     McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
                     visualBarrierWorldRevision(map, reconciliation),
                     surfaceRevisionBarrier(map, reconciliation),

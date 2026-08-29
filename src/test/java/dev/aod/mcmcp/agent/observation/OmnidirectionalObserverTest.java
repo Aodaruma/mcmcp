@@ -277,6 +277,49 @@ class OmnidirectionalObserverTest {
     }
 
     @Test
+    void transparentSurfaceAccumulationIsBoundedAndPublishesUnknownTruncation() {
+        var observer = new OmnidirectionalObserver(
+                8.0D, 512, () -> "obs-000000000000cafe");
+        Optional<ObservationFrame> completed = Optional.empty();
+        for (long tick = 1L; tick <= 4L; tick++) {
+            completed = observer.collectTick(
+                    sample(tick, 7L, UnknownBoundaryReason.RADIUS_LIMIT),
+                    (index, direction, actual) -> {
+                        var raySurfaces = new java.util.ArrayList<VisibleSurface>();
+                        for (int offset = 0; offset < 5; offset++) {
+                            int x = index * 5 + offset;
+                            raySurfaces.add(new VisibleSurface(
+                                    new BlockPosition(DIMENSION, x, 64, 0),
+                                    Face.WEST,
+                                    new ResourceId("minecraft:glass"),
+                                    ShapeClass.TRANSPARENT,
+                                    actual.eyeOrigin(),
+                                    actual.observedTick(),
+                                    actual.worldRevision()));
+                        }
+                        return new OmnidirectionalObserver.RayTrace(
+                                OmnidirectionalObserver.RayOutcome.UNKNOWN,
+                                raySurfaces,
+                                boundary(actual, UnknownBoundaryReason.AMBIGUOUS_RENDER,
+                                        8, 65, 0));
+                    },
+                    OmnidirectionalObserver.EntityObservation::empty);
+        }
+
+        ObservationFrame frame = completed.orElseThrow();
+        assertThat(frame.records())
+                .filteredOn(VisibleSurface.class::isInstance)
+                .hasSize(OmnidirectionalObserver.MAX_VISIBLE_SURFACES);
+        assertThat(frame.records())
+                .filteredOn(UnknownBoundary.class::isInstance)
+                .anyMatch(record -> ((UnknownBoundary) record).reason()
+                        == UnknownBoundaryReason.AMBIGUOUS_RENDER);
+        assertThat(frame.records()).hasSizeLessThanOrEqualTo(
+                OmnidirectionalObserver.MAX_VISIBLE_SURFACES
+                        + OmnidirectionalObserver.MAX_UNKNOWN_BOUNDARIES);
+    }
+
+    @Test
     void rejectsOutOfPolicyConfiguration() {
         assertThatThrownBy(() -> new OmnidirectionalObserver(0.99D, 256))
                 .isInstanceOf(IllegalArgumentException.class);
