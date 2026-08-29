@@ -8,7 +8,7 @@ public record SemanticActionFrame(
         long clientTick,
         long observationRevision,
         boolean worldReady,
-        boolean clientFocused,
+        boolean controlContextClear,
         boolean playerAlive,
         boolean healthSafe,
         boolean visibleThreatClear,
@@ -60,7 +60,7 @@ public record SemanticActionFrame(
     }
 
     public boolean universalSafetyClear() {
-        return worldReady && clientFocused && playerAlive && healthSafe
+        return worldReady && controlContextClear && playerAlive && healthSafe
                 && visibleThreatClear && screenClear;
     }
 

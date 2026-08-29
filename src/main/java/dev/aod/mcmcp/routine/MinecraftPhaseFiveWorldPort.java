@@ -228,7 +228,11 @@ public final class MinecraftPhaseFiveWorldPort implements PhaseFivePort {
     @Override
     public void release(PhaseFiveAttempt attempt) {
         assertClientThread();
-        Active active = requireActive(attempt);
+        Objects.requireNonNull(attempt, "attempt");
+        Active active = attempts.get(attempt);
+        if (active == null) {
+            return;
+        }
         releaseActive(active, false);
     }
 
@@ -241,18 +245,14 @@ public final class MinecraftPhaseFiveWorldPort implements PhaseFivePort {
             if (entry.getValue().request != request) {
                 return false;
             }
-            releaseActive(entry.getValue(), true);
-            return true;
+            return releaseActive(entry.getValue(), true);
         });
     }
 
     /** Idempotent world-session fence used by logout, respawn, and client shutdown. */
     public void clearSession() {
         assertClientThread();
-        for (Active active : List.copyOf(attempts.values())) {
-            releaseActive(active, true);
-        }
-        attempts.clear();
+        attempts.entrySet().removeIf(entry -> releaseActive(entry.getValue(), true));
         prepared.clear();
     }
 
@@ -443,7 +443,7 @@ public final class MinecraftPhaseFiveWorldPort implements PhaseFivePort {
                     return;
                 }
                 observeSurveySamples(minecraft, session, active, spec);
-                closeView(active, false);
+                closeView(active);
                 active.primaryIndex++;
                 active.stage = Stage.SELECT;
             }
@@ -515,7 +515,7 @@ public final class MinecraftPhaseFiveWorldPort implements PhaseFivePort {
                 }
                 if (player.isSleeping()) {
                     active.sleepObserved = true;
-                    closeView(active, false);
+                    closeView(active);
                     active.stage = Stage.SLEEP_WAKE;
                 } else if (session.clientTick() - active.sleepUseTick >= SLEEP_ENTER_WAIT_TICKS) {
                     active.fail(failure(RoutineFailure.Category.PRECONDITION,
@@ -600,7 +600,7 @@ public final class MinecraftPhaseFiveWorldPort implements PhaseFivePort {
                         == active.child.positionCorrectionRevisionAtDispatch();
         active.settleTicks = settled ? active.settleTicks + 1 : 0;
         if (active.settleTicks >= REQUIRED_SETTLE_TICKS) {
-            finishChild(active, false);
+            finishChild(active);
             active.stage = active.afterNavigation;
         }
     }
@@ -689,8 +689,8 @@ public final class MinecraftPhaseFiveWorldPort implements PhaseFivePort {
         if (!confirmed) {
             return false;
         }
-        finishChild(active, false);
-        closeView(active, false);
+        finishChild(active);
+        closeView(active);
         active.stage = successStage;
         return true;
     }
@@ -836,8 +836,7 @@ public final class MinecraftPhaseFiveWorldPort implements PhaseFivePort {
                     RoutineFailure.Recovery.REPLAN, Map.of("world_ready", true),
                     Map.of("world_ready", false), 0);
         }
-        if (!minecraft.isWindowActive() || !minecraft.mouseHandler.isMouseGrabbed()
-                || minecraft.isPaused() || minecraft.gui.screen() != null
+        if (minecraft.isPaused() || minecraft.gui.screen() != null
                 || minecraft.gui.overlay() != null || player.isUsingItem()
                 || gameMode.getPlayerMode() != GameType.SURVIVAL
                 || !player.isAlive() || player.isDeadOrDying()
@@ -859,7 +858,7 @@ public final class MinecraftPhaseFiveWorldPort implements PhaseFivePort {
         boolean sleepingStage = active.stage == Stage.SLEEP_ENTER || active.stage == Stage.SLEEP_WAKE;
         boolean safe = session != null && active.sameSession(session)
                 && level != null && player != null && gameMode != null
-                && minecraft.getConnection() != null && minecraft.isWindowActive()
+                && minecraft.getConnection() != null
                 && !minecraft.isPaused() && minecraft.gui.screen() == null
                 && minecraft.gui.overlay() == null && gameMode.getPlayerMode() == GameType.SURVIVAL
                 && player.isAlive() && !player.isDeadOrDying()
@@ -983,14 +982,12 @@ public final class MinecraftPhaseFiveWorldPort implements PhaseFivePort {
         return Optional.empty();
     }
 
-    private void finishChild(Active active, boolean bestEffort) {
+    private void finishChild(Active active) {
         if (active.child == null) {
             return;
         }
         var child = active.child;
         var request = active.childRequest;
-        active.child = null;
-        active.childRequest = null;
         Throwable failure = null;
         try {
             semanticActions.release(child);
@@ -1002,45 +999,45 @@ public final class MinecraftPhaseFiveWorldPort implements PhaseFivePort {
         } catch (RuntimeException | LinkageError retireFailure) {
             failure = combine(failure, retireFailure);
         }
-        if (!bestEffort && failure != null) {
+        if (failure != null) {
             rethrow(failure);
         }
+        active.child = null;
+        active.childRequest = null;
     }
 
-    private void closeView(Active active, boolean bestEffort) {
+    private void closeView(Active active) {
         if (active.view == null) {
             return;
         }
         var view = active.view;
+        view.close(requireMinecraft());
         active.view = null;
-        try {
-            view.close(requireMinecraft());
-        } catch (RuntimeException | LinkageError failure) {
-            if (!bestEffort) {
-                throw failure;
-            }
-        }
     }
 
-    private void releaseActive(Active active, boolean bestEffort) {
+    private boolean releaseActive(Active active, boolean bestEffort) {
         if (active.released) {
-            return;
+            return true;
         }
-        active.released = true;
         Throwable failure = null;
         try {
-            finishChild(active, false);
+            finishChild(active);
         } catch (RuntimeException | LinkageError childFailure) {
             failure = childFailure;
         }
         try {
-            closeView(active, false);
+            closeView(active);
         } catch (RuntimeException | LinkageError viewFailure) {
             failure = combine(failure, viewFailure);
         }
-        if (!bestEffort && failure != null) {
-            rethrow(failure);
+        if (failure != null) {
+            if (!bestEffort) {
+                rethrow(failure);
+            }
+            return false;
         }
+        active.released = true;
+        return true;
     }
 
     private static Throwable combine(Throwable first, Throwable next) {

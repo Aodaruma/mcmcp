@@ -11,7 +11,7 @@ public record ApplyBlockPlanFrame(
         long clientTick,
         long observationRevision,
         boolean worldReady,
-        boolean clientFocused,
+        boolean controlContextClear,
         boolean playerAlive,
         boolean healthSafe,
         boolean visibleThreatClear,
@@ -52,7 +52,7 @@ public record ApplyBlockPlanFrame(
     }
 
     public boolean universalSafetyClear() {
-        return worldReady && clientFocused && playerAlive && healthSafe
+        return worldReady && controlContextClear && playerAlive && healthSafe
                 && visibleThreatClear && screenClear;
     }
 }

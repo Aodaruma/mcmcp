@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownBlockBreakAttemptTest {
     @Test
@@ -32,6 +33,21 @@ class KnownBlockBreakAttemptTest {
         assertThat(attempt.tick(13, false)).isEqualTo(KnownBlockBreakAttempt.TickResult.SUCCEEDED);
         assertThat(port.released).isTrue();
         assertThat(port.retired).isTrue();
+    }
+
+    @Test
+    void closeRetriesTheSameAttackAttemptAfterATransientReleaseFailure() {
+        var port = new FakePort();
+        port.releaseFailuresRemaining = 1;
+        var attempt = new KnownBlockBreakAttempt(port, request(), 10);
+
+        assertThatThrownBy(attempt::close).hasMessage("release failed once");
+        assertThat(attempt.active()).isTrue();
+
+        attempt.close();
+        assertThat(attempt.active()).isFalse();
+        assertThat(port.releaseCalls).isEqualTo(2);
+        assertThat(port.retireCalls).isEqualTo(2);
     }
 
     private static StationaryBreakRequest request() {
@@ -54,6 +70,9 @@ class KnownBlockBreakAttemptTest {
         private boolean stopped;
         private boolean released;
         private boolean retired;
+        private int releaseCalls;
+        private int retireCalls;
+        private int releaseFailuresRemaining;
 
         @Override public StationaryBreakFrame observe(StationaryBreakRequest request) {
             throw new UnsupportedOperationException();
@@ -69,7 +88,16 @@ class KnownBlockBreakAttemptTest {
         @Override public PredictionEvidence predictionEvidence(AttackAttempt attempt) {
             return evidence;
         }
-        @Override public void releaseAttack(AttackAttempt attempt) { released = true; }
-        @Override public void retire(StationaryBreakRequest request) { retired = true; }
+        @Override public void releaseAttack(AttackAttempt attempt) {
+            releaseCalls++;
+            if (releaseFailuresRemaining-- > 0) {
+                throw new IllegalStateException("release failed once");
+            }
+            released = true;
+        }
+        @Override public void retire(StationaryBreakRequest request) {
+            retireCalls++;
+            retired = true;
+        }
     }
 }

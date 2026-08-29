@@ -102,9 +102,7 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
                 player.getInventory().getSelectedSlot(), player.getHealth()));
         boolean stable = baseline.matches(player.getX(), player.getY(), player.getZ(),
                 player.getYRot(), player.getXRot(), player.getInventory().getSelectedSlot());
-        boolean focused = minecraft.isWindowActive()
-                && minecraft.mouseHandler.isMouseGrabbed()
-                && !minecraft.isPaused()
+        boolean controlContextClear = !minecraft.isPaused()
                 && minecraft.gui.screen() == null
                 && minecraft.gui.overlay() == null
                 && stable
@@ -143,7 +141,7 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
                 inventoryCount(request.goal().itemId()),
                 inventorySynchronized,
                 true,
-                focused,
+                controlContextClear,
                 alive,
                 healthSafe,
                 threatClear,
@@ -170,7 +168,7 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
         var frame = observe(request);
         if (!frame.worldReady() || !frame.playerAlive()
                 || !frame.targetInReach() || !frame.crosshairOnTarget()
-                || requireLegacyRoutineSafety && (!frame.clientFocused() || !frame.healthSafe()
+                || requireLegacyRoutineSafety && (!frame.controlContextClear() || !frame.healthSafe()
                         || !frame.visibleThreatClear())) {
             throw new IllegalStateException("stationary_break preconditions changed before attack");
         }
@@ -323,7 +321,7 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
     @Override
     public void releaseAttack(AttackAttempt attempt) {
         assertClientThread();
-        var active = activeAttempts.remove(attempt);
+        var active = activeAttempts.get(attempt);
         if (active == null) {
             return;
         }
@@ -366,6 +364,8 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
         if (linkageFailure != null) {
             throw linkageFailure;
         }
+        // Only forget the exact lease after both input and prediction release have succeeded.
+        activeAttempts.remove(attempt, active);
     }
 
     public void clearSession() {

@@ -552,12 +552,12 @@ final class StationaryBreakRoutine implements ManagedRoutine {
                     false,
                     true);
         }
-        if (!frame.clientFocused()) {
+        if (!frame.controlContextClear()) {
             return simpleFailure(
                     RoutineFailure.Category.SAFETY,
-                    "CLIENT_NOT_FOCUSED",
+                    "CONTROL_CONTEXT_CHANGED",
                     RoutineFailure.Recovery.USER,
-                    "client_focused",
+                    "control_context_clear",
                     false,
                     true);
         }

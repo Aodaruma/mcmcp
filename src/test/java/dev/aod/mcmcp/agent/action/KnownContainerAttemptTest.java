@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownContainerAttemptTest {
     @Test
@@ -40,6 +41,21 @@ class KnownContainerAttemptTest {
         assertThat(port.retires).isOne();
     }
 
+    @Test
+    void closeRetriesTheSameRoutedAttemptAfterATransientReleaseFailure() {
+        var port = new FakePort();
+        var operation = new KnownContainerAttempt(port, request(), 1, 101);
+        port.tick = 1;
+        assertThat(operation.tick(1).status()).isEqualTo(KnownContainerAttempt.Status.RUNNING);
+        port.releaseFailuresRemaining = 1;
+
+        assertThatThrownBy(operation::close).hasMessage("container release failed once");
+        operation.close();
+
+        assertThat(port.releases).isEqualTo(2);
+        assertThat(port.retires).isEqualTo(2);
+    }
+
     private static PhaseFiveRequest request() {
         var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
         return new PhaseFiveRequest(
@@ -56,6 +72,7 @@ class KnownContainerAttemptTest {
         private boolean maintained;
         private int releases;
         private int retires;
+        private int releaseFailuresRemaining;
 
         @Override
         public PhaseFiveFrame observe(PhaseFiveRequest request) {
@@ -95,6 +112,9 @@ class KnownContainerAttemptTest {
         @Override
         public void release(PhaseFiveAttempt attempt) {
             releases++;
+            if (releaseFailuresRemaining-- > 0) {
+                throw new IllegalStateException("container release failed once");
+            }
         }
 
         @Override

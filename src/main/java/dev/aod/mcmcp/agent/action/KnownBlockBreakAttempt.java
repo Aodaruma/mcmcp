@@ -79,12 +79,14 @@ public final class KnownBlockBreakAttempt implements AutoCloseable {
     @Override
     public void close() {
         if (closed) return;
-        closed = true;
         try {
             port.releaseAttack(attack);
         } finally {
             port.retire(request);
         }
+        // Commit the wrapper terminal state only after every owning adapter confirmed release.
+        // A transient close failure must leave the exact AttackAttempt reachable for retry.
+        closed = true;
     }
 
     private void requireOpen() {

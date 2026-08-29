@@ -60,9 +60,11 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
             close();
             return TickResult.succeeded(false);
         }
-        if (!frame.universalSafetyClear()
-                || frame.liveBlockState().isPresent()
-                        && frame.liveBlockState().filter(expectedBefore::matches).isEmpty()) {
+        if (!frame.universalSafetyClear()) {
+            return fail("mutation_safety_changed");
+        }
+        if (frame.liveBlockState().isPresent()
+                && frame.liveBlockState().filter(expectedBefore::matches).isEmpty()) {
             return fail("mutation_precondition_changed");
         }
         preparation = Objects.requireNonNull(
@@ -137,7 +139,6 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
     @Override
     public void close() {
         if (closed) return;
-        closed = true;
         try {
             if (action != null) port.release(action);
         } finally {
@@ -147,6 +148,8 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
                 port.retire(request);
             }
         }
+        // Do not make an input-owning action unreachable until every adapter release succeeds.
+        closed = true;
     }
 
     private void requireOpen() {

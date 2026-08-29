@@ -126,9 +126,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         refreshInventorySynchronization(plan, recon, player);
 
         boolean positionHeld = plan.positionMatches(player);
-        boolean focused = minecraft.isWindowActive()
-                && minecraft.mouseHandler.isMouseGrabbed()
-                && !minecraft.isPaused()
+        boolean controlContextClear = !minecraft.isPaused()
                 && minecraft.gui.screen() == null
                 && minecraft.gui.overlay() == null
                 && !player.isUsingItem()
@@ -215,7 +213,8 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         plan.lastFrameTick = session.clientTick();
         plan.lastObservationRevision = memory.revision();
         return new ApplyBlockPlanFrame(
-                session.clientTick(), memory.revision(), true, focused, alive, healthSafe,
+                session.clientTick(), memory.revision(), true, controlContextClear,
+                alive, healthSafe,
                 threatClear, screenClear, !plan.inventoryPending,
                 cells, inventory.counts(), inventory.hotbarItems());
     }

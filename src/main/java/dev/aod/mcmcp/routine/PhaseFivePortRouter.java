@@ -42,9 +42,12 @@ public final class PhaseFivePortRouter implements PhaseFivePort {
 
     @Override
     public void release(PhaseFiveAttempt attempt) {
-        var delegate = attempts.remove(Objects.requireNonNull(attempt, "attempt"));
+        Objects.requireNonNull(attempt, "attempt");
+        var delegate = attempts.get(attempt);
         if (delegate != null) {
             delegate.release(attempt);
+            // Preserve the exact delegate route when release throws so cleanup can retry it.
+            attempts.remove(attempt, delegate);
         }
     }
 

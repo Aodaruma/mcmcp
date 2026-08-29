@@ -117,12 +117,13 @@ public final class KnownContainerAttempt implements AutoCloseable {
     @Override
     public void close() {
         if (closed) return;
-        closed = true;
         try {
             if (attempt != null) port.release(attempt);
         } finally {
             port.retire(request);
         }
+        // Router/delegate ownership stays retryable until both release and retirement succeed.
+        closed = true;
     }
 
     private void requireOpen() {

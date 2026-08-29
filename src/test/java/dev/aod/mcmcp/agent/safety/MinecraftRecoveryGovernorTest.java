@@ -24,10 +24,33 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class MinecraftRecoveryGovernorTest {
     private static final UUID SESSION = UUID.randomUUID();
     private static final String DIMENSION = "minecraft:overworld";
+
+    @Test
+    void closeFailureRetainsRecoveryMovementOwnerForTheNextBoundedRetry() {
+        var fixture = fixture(defaultLimits());
+        var lava = sample(1, 20, 300, false, false, 0, true, false,
+                true, 0, 0, Landing.KNOWN_SAFE, -1, DamageKind.NONE);
+        var exit = candidate("exit", CandidateKind.EXIT_HAZARDOUS_FLUID,
+                Set.of(MovementKey.FORWARD), true, true, true, 1);
+        assertThat(fixture.governor.tick(
+                lava, List.of(exit), StopSignal.NONE, () -> { }, 1).state())
+                .isEqualTo(State.RECOVERING);
+
+        fixture.control.failRelease = true;
+        assertThatThrownBy(fixture.governor::close)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("recovery input release was not confirmed");
+        assertThat(fixture.control.releases).isOne();
+
+        fixture.control.failRelease = false;
+        fixture.governor.close();
+        assertThat(fixture.control.releases).isEqualTo(2);
+    }
 
     @Test
     void consecutiveCollectNodesUseWorldTicksEvenWhenActionProgressDoesNotAdvance() {
@@ -501,6 +524,7 @@ class MinecraftRecoveryGovernorTest {
         private final List<Set<MovementKey>> applied = new ArrayList<>();
         private List<String> events = List.of();
         private int releases;
+        private boolean failRelease;
 
         @Override
         public void apply(Set<MovementKey> keys) {
@@ -512,6 +536,9 @@ class MinecraftRecoveryGovernorTest {
         public void release() {
             releases++;
             events.add("movement-release");
+            if (failRelease) {
+                throw new IllegalStateException("movement release failed");
+            }
         }
     }
 }

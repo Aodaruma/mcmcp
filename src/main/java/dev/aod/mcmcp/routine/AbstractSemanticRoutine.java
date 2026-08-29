@@ -364,7 +364,7 @@ abstract class AbstractSemanticRoutine implements ManagedRoutine {
 
     private RoutineFailure safetyFailure(SemanticActionFrame frame) {
         String code = !frame.worldReady() ? "WORLD_UNAVAILABLE"
-                : !frame.clientFocused() ? "CLIENT_NOT_FOCUSED"
+                : !frame.controlContextClear() ? "CONTROL_CONTEXT_CHANGED"
                 : !frame.playerAlive() ? "PLAYER_NOT_ALIVE"
                 : !frame.healthSafe() ? "HEALTH_UNSAFE"
                 : !frame.visibleThreatClear() ? "VISIBLE_THREAT"

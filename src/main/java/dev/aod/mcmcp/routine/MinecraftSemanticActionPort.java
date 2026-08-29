@@ -192,9 +192,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                         ? baseline.positionMatches(player)
                                 && activeBlock.blockView.matches(activeBlock.blockViewOwner)
                 : baseline.matches(player);
-        boolean focused = minecraft.isWindowActive()
-                && minecraft.mouseHandler.isMouseGrabbed()
-                && !minecraft.isPaused()
+        boolean controlContextClear = !minecraft.isPaused()
                 && minecraft.gui.screen() == null
                 && minecraft.gui.overlay() == null
                 && !player.isUsingItem()
@@ -297,11 +295,12 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             }
         }
 
-        boolean safeToRetry = worldReady && focused && alive && healthSafe
+        boolean safeToRetry = worldReady && controlContextClear && alive && healthSafe
                 && threatClear && screenClear;
         Vec3 velocity = player.getDeltaMovement();
         return new SemanticActionFrame(
-                session.clientTick(), memory.revision(), worldReady, focused, alive, healthSafe,
+                session.clientTick(), memory.revision(), worldReady, controlContextClear,
+                alive, healthSafe,
                 threatClear, screenClear, liveBlock, blockReach, crosshairBlock,
                 entityResolved, entityType, entityVisible, entityLos, entityReach,
                 crosshairEntity, goalCount, inventorySynchronized,

@@ -552,19 +552,19 @@ public final class MinecraftRecoveryGovernor implements AutoCloseable {
 
     private boolean releaseInputs() {
         boolean released = true;
-        try {
-            if (movement != null) {
-                movement.close(ownerId);
-            }
-        } catch (RuntimeException | LinkageError failure) {
-            released = false;
-        } finally {
-            movement = null;
+        if (movement != null) {
             try {
-                released &= releaseAll.getAsBoolean();
+                movement.close(ownerId);
+                movement = null;
             } catch (RuntimeException | LinkageError failure) {
+                // Keep the exact failed lease for the next bounded cleanup attempt.
                 released = false;
             }
+        }
+        try {
+            released &= releaseAll.getAsBoolean();
+        } catch (RuntimeException | LinkageError failure) {
+            released = false;
         }
         return released;
     }
@@ -584,8 +584,11 @@ public final class MinecraftRecoveryGovernor implements AutoCloseable {
 
     @Override
     public void close() {
-        releaseInputs();
+        boolean released = releaseInputs();
         clearRecovery();
+        if (!released) {
+            throw new IllegalStateException("recovery input release was not confirmed");
+        }
     }
 
     private TickResult result(

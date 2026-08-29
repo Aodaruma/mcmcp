@@ -137,7 +137,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
     }
 
     public boolean active() {
-        return navigation != null || face != null;
+        return navigation != null || face != null || movement != null;
     }
 
     private TickResult tickNavigation(
@@ -483,29 +483,27 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
     }
 
     private TickResult finish(Status status, Reason reason) {
-        try {
-            if (movement != null) {
-                movement.close(ownerId);
-            }
-        } finally {
-            movement = null;
-            navigation = null;
-            face = null;
-        }
+        releaseMovement();
+        navigation = null;
+        face = null;
         return new TickResult(status, reason);
     }
 
     @Override
     public void close() {
-        try {
-            if (movement != null) {
-                movement.close(ownerId);
-            }
-        } finally {
-            movement = null;
-            navigation = null;
-            face = null;
+        releaseMovement();
+        navigation = null;
+        face = null;
+    }
+
+    private void releaseMovement() {
+        if (movement == null) {
+            return;
         }
+        // MovementInputLease keeps its release incomplete when close throws. Retain the exact
+        // lease so the terminal cleanup lane can retry it instead of losing its owner token.
+        movement.close(ownerId);
+        movement = null;
     }
 
     private void requireIdle() {

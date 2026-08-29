@@ -11,7 +11,7 @@ public record StationaryBreakFrame(
         int goalItemCount,
         boolean inventoryServerSynchronized,
         boolean worldReady,
-        boolean clientFocused,
+        boolean controlContextClear,
         boolean playerAlive,
         boolean healthSafe,
         boolean visibleThreatClear,

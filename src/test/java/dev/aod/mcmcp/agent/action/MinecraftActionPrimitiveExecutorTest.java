@@ -31,6 +31,43 @@ class MinecraftActionPrimitiveExecutorTest {
     private static final String DIMENSION = "minecraft:overworld";
 
     @Test
+    void closeRetainsTheExactMovementLeaseUntilARetryConfirmsRelease() throws Exception {
+        var releases = new java.util.concurrent.atomic.AtomicInteger();
+        var failFirstRelease = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var control = new MovementInputLease.MovementControl() {
+            @Override
+            public void apply(java.util.Set<MovementInputLease.MovementKey> keys) {
+            }
+
+            @Override
+            public void release() {
+                releases.incrementAndGet();
+                if (failFirstRelease.getAndSet(false)) {
+                    throw new IllegalStateException("release failed once");
+                }
+            }
+        };
+        var executor = new MinecraftActionPrimitiveExecutor(4.0F);
+        var ownerField = MinecraftActionPrimitiveExecutor.class.getDeclaredField("ownerId");
+        ownerField.setAccessible(true);
+        var owner = (UUID) ownerField.get(executor);
+        var movement = MovementInputLease.acquire(
+                control, owner, 0L, java.time.Duration.ofSeconds(1));
+        var field = MinecraftActionPrimitiveExecutor.class.getDeclaredField("movement");
+        field.setAccessible(true);
+        field.set(executor, movement);
+
+        assertThatThrownBy(executor::close)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("release failed once");
+        assertThat(executor.active()).isTrue();
+
+        executor.close();
+        assertThat(executor.active()).isFalse();
+        assertThat(releases).hasValue(2);
+    }
+
+    @Test
     void aimsInsideTheDeclaredBlockFaceRatherThanAtTheBlockCenter() {
         var target = new ActionDsl.Position(DIMENSION, 10, 64, 20);
 

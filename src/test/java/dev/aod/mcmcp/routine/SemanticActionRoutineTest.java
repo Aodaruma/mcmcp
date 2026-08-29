@@ -174,6 +174,24 @@ class SemanticActionRoutineTest {
     }
 
     @Test
+    void reportsChangedControlContextWithoutDispatchingAgentInput() {
+        var port = new FakePort();
+        port.controlContextClear = false;
+        var manager = manager(port);
+        var id = manager.startSemanticAction(
+                UUID.randomUUID().toString(), breakRequest(), 10).routineId();
+
+        advance(manager, port); // queued -> precheck
+        advance(manager, port); // precheck -> failed
+
+        var failed = manager.getRoutine(id, 0, 32);
+        assertThat(failed.state()).isEqualTo(RoutineState.FAILED);
+        assertThat(failed.failure().code()).isEqualTo("CONTROL_CONTEXT_CHANGED");
+        assertThat(failed.failure().category()).isEqualTo(RoutineFailure.Category.SAFETY);
+        assertThat(port.dispatchCount).isZero();
+    }
+
+    @Test
     void resolvedEntityTypeAndAdultAllowlistProduceExactFailuresBeforeDispatch() {
         var wrongType = new FakePort();
         wrongType.entityType = Optional.of("minecraft:pig");
@@ -875,6 +893,7 @@ class SemanticActionRoutineTest {
         private double playerY = 64.0D;
         private double playerZ = 0.5D;
         private double horizontalVelocitySquared;
+        private boolean controlContextClear = true;
         private boolean healthSafe = true;
         private boolean visibleThreatClear = true;
         private boolean routeSafe = true;
@@ -903,7 +922,7 @@ class SemanticActionRoutineTest {
             return new SemanticActionFrame(
                     clientTick,
                     observationRevision,
-                    true, true, true, healthSafe, visibleThreatClear, true,
+                    true, controlContextClear, true, healthSafe, visibleThreatClear, true,
                     blockState,
                     blockInReach,
                     crosshairOnBlock,

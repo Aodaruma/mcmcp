@@ -19,6 +19,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownBlockMutationAttemptTest {
     private static final BlockStateFingerprint DIRT =
@@ -138,6 +139,59 @@ class KnownBlockMutationAttemptTest {
         assertThat(attempt.tick(7).dispatchedThisTick()).isFalse();
     }
 
+    @Test
+    void reportsSafetyChangeSeparatelyFromMutationPreconditionChange() {
+        var port = new FakePort();
+        port.controlContextClear = false;
+        var target = new BlockTarget("minecraft:overworld", 1, 64, 1);
+        var request = new UseItemOnBlockRequest(
+                target, DIRT, "minecraft:iron_hoe", FARMLAND,
+                new ActionBounds(target.dimension(), target, target, 0, 5, false));
+
+        var result = new KnownBlockMutationAttempt(port, request, 1, 101).tick(1);
+
+        assertThat(result.status()).isEqualTo(KnownBlockMutationAttempt.Status.FAILED);
+        assertThat(result.evidence()).isEqualTo("mutation_safety_changed");
+        assertThat(port.preparation).isNull();
+        assertThat(port.retired).isTrue();
+    }
+
+    @Test
+    void keepsLiveBlockMismatchAsMutationPreconditionChange() {
+        var port = new FakePort();
+        port.unpreparedLive = Optional.of(new BlockStateFingerprint(
+                "minecraft:coarse_dirt", Map.of()));
+        var target = new BlockTarget("minecraft:overworld", 1, 64, 1);
+        var request = new UseItemOnBlockRequest(
+                target, DIRT, "minecraft:iron_hoe", FARMLAND,
+                new ActionBounds(target.dimension(), target, target, 0, 5, false));
+
+        var result = new KnownBlockMutationAttempt(port, request, 1, 101).tick(1);
+
+        assertThat(result.status()).isEqualTo(KnownBlockMutationAttempt.Status.FAILED);
+        assertThat(result.evidence()).isEqualTo("mutation_precondition_changed");
+        assertThat(port.preparation).isNull();
+        assertThat(port.retired).isTrue();
+    }
+
+    @Test
+    void closeRetriesTheSamePreparationAfterATransientReleaseFailure() {
+        var port = new FakePort();
+        port.releasePreparationFailuresRemaining = 1;
+        var target = new BlockTarget("minecraft:overworld", 1, 64, 1);
+        var request = new UseItemOnBlockRequest(
+                target, DIRT, "minecraft:iron_hoe", FARMLAND,
+                new ActionBounds(target.dimension(), target, target, 0, 5, false));
+        var attempt = new KnownBlockMutationAttempt(port, request, 1, 101);
+        assertThat(attempt.tick(1).status()).isEqualTo(KnownBlockMutationAttempt.Status.RUNNING);
+
+        assertThatThrownBy(attempt::close).hasMessage("preparation release failed once");
+        attempt.close();
+
+        assertThat(port.releasePreparationCalls).isEqualTo(2);
+        assertThat(port.retireCalls).isEqualTo(2);
+    }
+
     private static final class FakePort implements SemanticActionPort {
         private long tick = 1;
         private SemanticActionPreparationAttempt preparation;
@@ -146,6 +200,10 @@ class KnownBlockMutationAttemptTest {
         private boolean stopped;
         private boolean retired;
         private boolean prepared = true;
+        private boolean controlContextClear = true;
+        private int releasePreparationCalls;
+        private int releasePreparationFailuresRemaining;
+        private int retireCalls;
         private Optional<BlockStateFingerprint> unpreparedLive = Optional.empty();
         private BlockStateFingerprint preparedLive = DIRT;
         private BlockStateFingerprint confirmedLive = FARMLAND;
@@ -153,7 +211,7 @@ class KnownBlockMutationAttemptTest {
         @Override
         public SemanticActionFrame observe(SemanticActionRequest request) {
             return new SemanticActionFrame(
-                    tick, tick, true, true, true, true, true, true,
+                    tick, tick, true, controlContextClear, true, true, true, true,
                     preparation == null ? unpreparedLive : Optional.of(preparedLive), true, true,
                     false, Optional.empty(), false, false, false, false,
                     0, true, 0, 64, 0, 0, true, true, "not_applicable", 0, true);
@@ -177,7 +235,12 @@ class KnownBlockMutationAttemptTest {
                     prepared, true, true, null);
         }
 
-        @Override public void releasePreparation(SemanticActionPreparationAttempt attempt) { }
+        @Override public void releasePreparation(SemanticActionPreparationAttempt attempt) {
+            releasePreparationCalls++;
+            if (releasePreparationFailuresRemaining-- > 0) {
+                throw new IllegalStateException("preparation release failed once");
+            }
+        }
 
         @Override
         public SemanticActionAttempt dispatchPrepared(
@@ -206,6 +269,9 @@ class KnownBlockMutationAttemptTest {
         }
 
         @Override public void release(SemanticActionAttempt attempt) { }
-        @Override public void retire(SemanticActionRequest request) { retired = true; }
+        @Override public void retire(SemanticActionRequest request) {
+            retireCalls++;
+            retired = true;
+        }
     }
 }
