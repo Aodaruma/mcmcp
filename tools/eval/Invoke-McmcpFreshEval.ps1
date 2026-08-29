@@ -24,11 +24,21 @@ param(
     [ValidateSet('short-regression', 'full-cycle')]
     [string]$PromptProfile,
 
-    [string]$Endpoint = 'http://127.0.0.1:8765/mcp'
+    [string]$Endpoint = 'http://127.0.0.1:8765/mcp',
+
+    [switch]$LiveMonitor
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+$monitorModulePath = Join-Path $PSScriptRoot 'McmcpLiveMonitor.psm1'
+$monitorTestPath = Join-Path $PSScriptRoot 'Test-McmcpLiveMonitor.ps1'
+$monitorLauncherPath = Join-Path $PSScriptRoot 'Start-McmcpFreshEvalMonitor.ps1'
+$monitorHostPath = Join-Path $PSScriptRoot 'Invoke-McmcpFreshEvalMonitorHost.ps1'
+Import-Module $monitorModulePath -Force
+$script:LiveMonitorState = New-McmcpLiveMonitorState -Enabled:$LiveMonitor
+Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'runner_started'
 
 $ProductionPrompts = [ordered]@{
     'short-regression' = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
@@ -39,6 +49,8 @@ $RequiredCodexVersion = 'codex-cli 0.146.1'
 $ModernProtocolVersion = '2026-07-28'
 $EvaluatorTimeout = [TimeSpan]::FromMinutes(17)
 $TurnCompletionReserveSeconds = 15
+$EvaluationLeaseMaximumDuration = $EvaluatorTimeout.Add([TimeSpan]::FromSeconds(45))
+$EvaluationControlTimeoutSeconds = 10
 $MaximumMcpForwardSeconds = 35
 $AgentGetActionTransportMarginSeconds = 2
 $DeadlineCleanupCancelTimeoutSeconds = 5
@@ -55,6 +67,11 @@ $AllowedTools = @(
     'agent_start_action',
     'agent_get_action',
     'agent_cancel_action'
+)
+$script:PrivateReasoningNotificationMethods = @(
+    'item/reasoning/summaryPartAdded',
+    'item/reasoning/summaryTextDelta',
+    'item/reasoning/textDelta'
 )
 $DisabledFeatures = @(
     'shell_tool',
@@ -527,13 +544,22 @@ function Test-ContainsEvaluationSecret {
     foreach ($secret in @(
             $script:Bearer,
             $script:AccessToken,
-            $script:ChatgptAccountId)) {
+            $script:ChatgptAccountId,
+            $script:EvaluationLeaseId)) {
         if (-not [string]::IsNullOrEmpty([string]$secret) -and
             $Text.Contains([string]$secret, [StringComparison]::Ordinal)) {
             return $true
         }
     }
     return $false
+}
+
+function Assert-NoEvaluationSecretForArtifactText {
+    param([AllowNull()][string]$Text)
+    if (Test-ContainsEvaluationSecret $Text) {
+        $script:BridgeSecretDetected = $true
+        throw 'artifact boundary rejected exact evaluation secret'
+    }
 }
 
 function Remove-IsolatedRoot {
@@ -746,6 +772,10 @@ function Invoke-McmcpJsonRpc {
         'MCP-Protocol-Version' = $ModernProtocolVersion
         'Mcp-Method' = $Method
     }
+    if ($script:EvaluationLeaseAcquired -and
+        -not [string]::IsNullOrWhiteSpace($script:EvaluationLeaseId)) {
+        $headers['Mcmcp-Evaluation-Lease'] = $script:EvaluationLeaseId
+    }
     if (-not [string]::IsNullOrWhiteSpace($ToolName)) {
         $headers['Mcp-Name'] = $ToolName
     }
@@ -894,7 +924,11 @@ function Assert-McmcpToolResult {
 }
 
 function Invoke-McmcpReadinessCheck {
-    param([Parameter(Mandatory)][ValidateSet('preflight', 'T0')][string]$Phase)
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('preflight', 'preliminary', 'T0')]
+        [string]$Phase
+    )
     $operation = "tools/call(agent_get_state:$Phase)"
     $state = Invoke-McmcpJsonRpc -Method 'tools/call' -ToolName 'agent_get_state' `
         -Parameters ([ordered]@{
@@ -1150,8 +1184,407 @@ function Write-BridgeEvent {
         utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
     foreach ($key in $Fields.Keys) { $record[$key] = $Fields[$key] }
-    $script:BridgeWriter.WriteLine((ConvertTo-CompactJson $record))
+    $recordJson = ConvertTo-CompactJson $record
+    Assert-NoEvaluationSecretForArtifactText -Text $recordJson
+    $script:BridgeWriter.WriteLine($recordJson)
     $script:BridgeWriter.Flush()
+}
+
+function Test-ExactEvaluationPropertySet {
+    param(
+        [AllowNull()][object]$Object,
+        [Parameter(Mandatory)][string[]]$Expected
+    )
+    if (-not (Test-IsObjectValue $Object)) { return $false }
+    $actual = @($Object.PSObject.Properties.Name)
+    if ($actual.Count -ne $Expected.Count) { return $false }
+    foreach ($name in $Expected) {
+        if (@($actual | Where-Object { $_ -ceq $name }).Count -ne 1) { return $false }
+    }
+    return $true
+}
+
+function Assert-SafeReasoningArtifactMessage {
+    param([Parameter(Mandatory)][object]$Message)
+
+    $method = Get-PropertyValue -Object $Message -Name 'method'
+    # Opt-out is only the first boundary. If a pinned or damaged app-server emits
+    # a private reasoning notification anyway, reject it before RawWriter sees it.
+    if ($method -cin $script:PrivateReasoningNotificationMethods) {
+        throw 'private reasoning notification reached artifact boundary'
+    }
+    if ($method -cnotin @('item/started', 'item/completed')) { return }
+    $params = Get-PropertyValue -Object $Message -Name 'params'
+    $item = Get-PropertyValue -Object $params -Name 'item'
+    if ((Get-PropertyValue -Object $item -Name 'type') -cne 'reasoning') { return }
+
+    $timestampName = if ($method -ceq 'item/started') {
+        'startedAtMs'
+    } else { 'completedAtMs' }
+    $summaryProperty = Get-Property -Object $item -Name 'summary'
+    $contentProperty = Get-Property -Object $item -Name 'content'
+    $id = Get-PropertyValue -Object $item -Name 'id'
+    $safe = Test-ExactEvaluationPropertySet -Object $Message `
+        -Expected @('method', 'params', 'emittedAtMs')
+    $safe = $safe -and (Test-ExactEvaluationPropertySet -Object $params `
+            -Expected @('threadId', 'turnId', $timestampName, 'item'))
+    $safe = $safe -and (Test-ExactEvaluationPropertySet -Object $item `
+            -Expected @('id', 'type', 'summary', 'content'))
+    $safe = $safe -and $id -is [string] -and
+        -not [string]::IsNullOrWhiteSpace([string]$id) -and
+        ([string]$id).Length -le 256 -and ([string]$id) -cnotmatch '[\p{Cc}\p{Cf}]'
+    $safe = $safe -and $null -ne $summaryProperty -and
+        (Test-IsArrayValue $summaryProperty.Value) -and
+        @($summaryProperty.Value | Where-Object { $_ -isnot [string] }).Count -eq 0
+    $safe = $safe -and ($method -cne 'item/started' -or
+        @($summaryProperty.Value).Count -eq 0)
+    # `content` is the private-readable reasoning channel in the pinned app-server
+    # schema. Only completed public summary strings may be retained.
+    $safe = $safe -and $null -ne $contentProperty -and
+        (Test-IsArrayValue $contentProperty.Value) -and
+        @($contentProperty.Value).Count -eq 0
+    if (-not $safe) {
+        throw 'reasoning item failed safe artifact schema validation'
+    }
+}
+
+function Write-ValidatedAppServerTail {
+    param([AllowNull()][string]$Tail)
+    if ([string]::IsNullOrEmpty($Tail)) { return }
+
+    $reader = [IO.StringReader]::new($Tail)
+    try {
+        while ($null -ne ($tailLine = $reader.ReadLine())) {
+            if ([string]::IsNullOrWhiteSpace($tailLine)) {
+                throw 'app-server tail contained a non-JSONL line'
+            }
+            try {
+                $tailMessage = $tailLine | ConvertFrom-Json -Depth 100
+            } catch {
+                throw 'app-server tail emitted malformed JSONL'
+            }
+            Assert-SafeReasoningArtifactMessage -Message $tailMessage
+            Assert-NoEvaluationSecretForArtifactText -Text $tailLine
+            $script:RawWriter.WriteLine($tailLine)
+        }
+        $script:RawWriter.Flush()
+    } finally {
+        $reader.Dispose()
+    }
+}
+
+function Wait-EvaluationTask {
+    param(
+        [Parameter(Mandatory)][object]$Task,
+        [Parameter(Mandatory)][ValidateRange(1, 600000)][int]$TimeoutMilliseconds,
+        [Parameter(Mandatory)][string]$FailureMessage
+    )
+    try {
+        if (-not $Task.Wait($TimeoutMilliseconds)) { throw $FailureMessage }
+        return $Task.GetAwaiter().GetResult()
+    } catch {
+        throw $FailureMessage
+    }
+}
+
+function Read-CompletedEvaluationLeaseEvent {
+    if ($null -eq $script:EvaluationLeaseReadTask -or
+        -not $script:EvaluationLeaseReadTask.IsCompleted) {
+        throw 'evaluation lease event was consumed before completion'
+    }
+    try {
+        $line = $script:EvaluationLeaseReadTask.GetAwaiter().GetResult()
+    } catch {
+        throw 'evaluation lease stream read failed'
+    }
+    if ($null -eq $line) { throw 'evaluation lease stream ended without terminal receipt' }
+    try {
+        $event = $line | ConvertFrom-Json -Depth 10
+    } catch {
+        throw 'evaluation lease stream emitted malformed JSON'
+    }
+
+    if (Test-ExactEvaluationPropertySet -Object $event -Expected @('state')) {
+        if ((Get-PropertyValue $event 'state') -cne 'active') {
+            throw 'evaluation lease heartbeat state mismatch'
+        }
+        $script:EvaluationLeaseReadTask = $script:EvaluationLeaseReader.ReadLineAsync()
+        return 'active'
+    }
+
+    if (-not (Test-ExactEvaluationPropertySet -Object $event `
+                -Expected @(
+                    'state', 'reason', 'inputs_released', 'input_owner_none',
+                    'all_actions_terminal', 'process_identity_bound')) -or
+        (Get-PropertyValue $event 'state') -cne 'released' -or
+        (Get-PropertyValue $event 'reason') -isnot [string] -or
+        (Get-PropertyValue $event 'reason') -cnotin @(
+            'turn_completed', 'runner_failure', 'evaluation_deadline',
+            'launcher_teardown', 'runner_connection_closed', 'runner_process_exited',
+            'local_escape', 'local_ui_disabled', 'world_changed',
+            'player_unavailable', 'endpoint_fault', 'client_shutdown',
+            'lease_expired', 'acquire_abandoned', 'input_release_failed') -or
+        (Get-PropertyValue $event 'inputs_released') -isnot [bool] -or
+        -not [bool](Get-PropertyValue $event 'inputs_released') -or
+        (Get-PropertyValue $event 'input_owner_none') -isnot [bool] -or
+        -not [bool](Get-PropertyValue $event 'input_owner_none') -or
+        (Get-PropertyValue $event 'all_actions_terminal') -isnot [bool] -or
+        -not [bool](Get-PropertyValue $event 'all_actions_terminal') -or
+        (Get-PropertyValue $event 'process_identity_bound') -isnot [bool] -or
+        -not [bool](Get-PropertyValue $event 'process_identity_bound')) {
+        throw 'evaluation lease terminal receipt mismatch'
+    }
+    $script:EvaluationLeaseTerminalObserved = $true
+    $script:EvaluationLeaseTerminalReason = [string](Get-PropertyValue $event 'reason')
+    $script:EvaluationLeaseInputsReleased = [bool](Get-PropertyValue $event 'inputs_released')
+    $script:EvaluationLeaseInputOwnerNone = [bool](
+        Get-PropertyValue $event 'input_owner_none')
+    $script:EvaluationLeaseAllActionsTerminal = [bool](
+        Get-PropertyValue $event 'all_actions_terminal')
+    $script:EvaluationLeaseProcessIdentityBound = [bool](
+        Get-PropertyValue $event 'process_identity_bound')
+    $script:EvaluationLeaseReadTask = $null
+    $script:EvaluationLeaseReleasedAt = [DateTimeOffset]::UtcNow
+    return 'released'
+}
+
+function Assert-EvaluationLeaseActiveBeforeT0 {
+    if (-not $script:EvaluationLeaseAcquired -or
+        $script:EvaluationLeaseTerminalObserved -or
+        $null -eq $script:EvaluationLeaseReadTask) {
+        throw 'evaluation lease is not active before T0'
+    }
+    for ($index = 0; $index -lt 64; $index++) {
+        if (-not $script:EvaluationLeaseReadTask.IsCompleted) { return }
+        if ((Read-CompletedEvaluationLeaseEvent) -ceq 'released') {
+            throw 'evaluation input lease ended before T0'
+        }
+    }
+    throw 'evaluation lease heartbeat backlog exceeded bound before T0'
+}
+
+function Start-EvaluationTurnLease {
+    if ($script:EvaluationLeaseAcquired) {
+        throw 'evaluation lease is already acquired'
+    }
+    $script:EvaluationLeaseId = [Guid]::NewGuid().ToString('D').ToLowerInvariant()
+    $script:EvaluationLeaseIdSha256 = Get-Sha256 $script:EvaluationLeaseId
+    $handler = [Net.Http.HttpClientHandler]::new()
+    $handler.UseProxy = $false
+    $handler.AllowAutoRedirect = $false
+    $script:EvaluationLeaseClient = [Net.Http.HttpClient]::new($handler, $true)
+    $script:EvaluationLeaseClient.Timeout = [Threading.Timeout]::InfiniteTimeSpan
+    $request = $null
+    try {
+        $request = [Net.Http.HttpRequestMessage]::new(
+            [Net.Http.HttpMethod]::Post, $script:EvaluationControlEndpoint)
+        $request.Headers.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new(
+            'Bearer', $script:Bearer)
+        $request.Headers.Accept.ParseAdd('application/x-ndjson')
+        $maximumDurationMilliseconds = [long][Math]::Ceiling(
+            $EvaluationLeaseMaximumDuration.TotalMilliseconds)
+        $body = [ordered]@{
+            lease_id = $script:EvaluationLeaseId
+            runner_pid = [long]$PID
+            max_duration_ms = $maximumDurationMilliseconds
+        }
+        $request.Content = [Net.Http.StringContent]::new(
+            (ConvertTo-CompactJson $body), [Text.Encoding]::UTF8, 'application/json')
+        $sendTask = $script:EvaluationLeaseClient.SendAsync(
+            $request,
+            [Net.Http.HttpCompletionOption]::ResponseHeadersRead,
+            [Threading.CancellationToken]::None)
+        $script:EvaluationLeaseResponse = Wait-EvaluationTask -Task $sendTask `
+            -TimeoutMilliseconds ($EvaluationControlTimeoutSeconds * 1000) `
+            -FailureMessage 'evaluation lease acquire response timeout'
+        if ([int]$script:EvaluationLeaseResponse.StatusCode -ne 200) {
+            throw 'evaluation lease acquire was rejected'
+        }
+        $contentType = $script:EvaluationLeaseResponse.Content.Headers.ContentType
+        if ($null -eq $contentType -or
+            $contentType.MediaType -cne 'application/x-ndjson' -or
+            ([string]$contentType.CharSet).Trim('"') -cne 'utf-8') {
+            throw 'evaluation lease stream content type mismatch'
+        }
+        try {
+            $leaseHeaders = @($script:EvaluationLeaseResponse.Headers.GetValues(
+                    'Mcmcp-Evaluation-Lease'))
+        } catch {
+            throw 'evaluation lease response header missing'
+        }
+        if ($leaseHeaders.Count -ne 1 -or $leaseHeaders[0] -cne 'active') {
+            throw 'evaluation lease response header mismatch'
+        }
+        $streamTask = $script:EvaluationLeaseResponse.Content.ReadAsStreamAsync()
+        $stream = Wait-EvaluationTask -Task $streamTask `
+            -TimeoutMilliseconds ($EvaluationControlTimeoutSeconds * 1000) `
+            -FailureMessage 'evaluation lease stream open timeout'
+        $script:EvaluationLeaseReader = [IO.StreamReader]::new(
+            $stream, [Text.UTF8Encoding]::new($false, $true), $true, 1024, $false)
+        $initialTask = $script:EvaluationLeaseReader.ReadLineAsync()
+        $initialLine = Wait-EvaluationTask -Task $initialTask `
+            -TimeoutMilliseconds ($EvaluationControlTimeoutSeconds * 1000) `
+            -FailureMessage 'evaluation lease active receipt timeout'
+        if ($null -eq $initialLine) { throw 'evaluation lease stream ended before activation' }
+        try { $initial = $initialLine | ConvertFrom-Json -Depth 10 } catch {
+            throw 'evaluation lease active receipt was malformed'
+        }
+        if (-not (Test-ExactEvaluationPropertySet -Object $initial `
+                    -Expected @(
+                        'state', 'reason', 'inputs_released', 'input_owner_none',
+                        'all_actions_terminal', 'process_identity_bound')) -or
+            (Get-PropertyValue $initial 'state') -cne 'active' -or
+            $null -ne (Get-PropertyValue $initial 'reason') -or
+            (Get-PropertyValue $initial 'inputs_released') -isnot [bool] -or
+            [bool](Get-PropertyValue $initial 'inputs_released') -or
+            (Get-PropertyValue $initial 'input_owner_none') -isnot [bool] -or
+            -not [bool](Get-PropertyValue $initial 'input_owner_none') -or
+            (Get-PropertyValue $initial 'all_actions_terminal') -isnot [bool] -or
+            -not [bool](Get-PropertyValue $initial 'all_actions_terminal') -or
+            (Get-PropertyValue $initial 'process_identity_bound') -isnot [bool] -or
+            -not [bool](Get-PropertyValue $initial 'process_identity_bound')) {
+            throw 'evaluation lease active receipt mismatch'
+        }
+        $script:EvaluationLeaseAcquired = $true
+        $script:EvaluationLeaseInputOwnerNone = [bool](
+            Get-PropertyValue $initial 'input_owner_none')
+        $script:EvaluationLeaseAllActionsTerminal = [bool](
+            Get-PropertyValue $initial 'all_actions_terminal')
+        $script:EvaluationLeaseProcessIdentityBound = [bool](
+            Get-PropertyValue $initial 'process_identity_bound')
+        $script:EvaluationLeaseReadTask = $script:EvaluationLeaseReader.ReadLineAsync()
+        $script:EvaluationLeaseAcquiredAt = [DateTimeOffset]::UtcNow
+        Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState `
+            -Event 'evaluation_lease_acquired'
+    } catch {
+        try { if ($null -ne $script:EvaluationLeaseReader) { $script:EvaluationLeaseReader.Dispose() } } catch { }
+        try { if ($null -ne $script:EvaluationLeaseResponse) { $script:EvaluationLeaseResponse.Dispose() } } catch { }
+        try { if ($null -ne $script:EvaluationLeaseClient) { $script:EvaluationLeaseClient.Dispose() } } catch { }
+        $script:EvaluationLeaseReader = $null
+        $script:EvaluationLeaseResponse = $null
+        $script:EvaluationLeaseClient = $null
+        $script:EvaluationLeaseReadTask = $null
+        $script:EvaluationLeaseId = $null
+        $script:EvaluationLeaseIdSha256 = $null
+        throw
+    } finally {
+        if ($null -ne $request) { $request.Dispose() }
+    }
+}
+
+function Stop-EvaluationTurnLease {
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('turn_completed', 'runner_failure', 'evaluation_deadline', 'launcher_teardown')]
+        [string]$Reason
+    )
+    if (-not $script:EvaluationLeaseAcquired) { return }
+    if (-not $script:EvaluationLeaseReleaseHttpConfirmed) {
+        $request = $null
+        $response = $null
+        $script:EvaluationLeaseReleaseInProgress = $true
+        try {
+            $request = [Net.Http.HttpRequestMessage]::new(
+                [Net.Http.HttpMethod]::Delete, $script:EvaluationControlEndpoint)
+            $request.Headers.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new(
+                'Bearer', $script:Bearer)
+            $request.Headers.Accept.ParseAdd('application/json')
+            $request.Content = [Net.Http.StringContent]::new(
+                (ConvertTo-CompactJson ([ordered]@{
+                        lease_id = $script:EvaluationLeaseId
+                        reason = $Reason
+                    })),
+                [Text.Encoding]::UTF8,
+                'application/json')
+            $sendTask = $script:EvaluationLeaseClient.SendAsync($request)
+            $response = Wait-EvaluationTask -Task $sendTask `
+                -TimeoutMilliseconds ($EvaluationControlTimeoutSeconds * 1000) `
+                -FailureMessage 'evaluation lease release response timeout'
+            if ([int]$response.StatusCode -ne 200) {
+                throw 'evaluation lease release was rejected'
+            }
+            $contentType = $response.Content.Headers.ContentType
+            if ($null -eq $contentType -or $contentType.MediaType -cne 'application/json' -or
+                ([string]$contentType.CharSet).Trim('"') -cne 'utf-8') {
+                throw 'evaluation lease release content type mismatch'
+            }
+            $bodyTask = $response.Content.ReadAsStringAsync()
+            $bodyText = Wait-EvaluationTask -Task $bodyTask `
+                -TimeoutMilliseconds ($EvaluationControlTimeoutSeconds * 1000) `
+                -FailureMessage 'evaluation lease release body timeout'
+            try { $receipt = $bodyText | ConvertFrom-Json -Depth 10 } catch {
+                throw 'evaluation lease release response was malformed'
+            }
+            if (-not (Test-ExactEvaluationPropertySet -Object $receipt `
+                        -Expected @(
+                            'state', 'reason', 'inputs_released', 'input_owner_none',
+                            'all_actions_terminal', 'process_identity_bound')) -or
+                (Get-PropertyValue $receipt 'state') -cne 'released' -or
+                (Get-PropertyValue $receipt 'reason') -isnot [string] -or
+                (Get-PropertyValue $receipt 'inputs_released') -isnot [bool] -or
+                -not [bool](Get-PropertyValue $receipt 'inputs_released') -or
+                (Get-PropertyValue $receipt 'input_owner_none') -isnot [bool] -or
+                -not [bool](Get-PropertyValue $receipt 'input_owner_none') -or
+                (Get-PropertyValue $receipt 'all_actions_terminal') -isnot [bool] -or
+                -not [bool](Get-PropertyValue $receipt 'all_actions_terminal') -or
+                (Get-PropertyValue $receipt 'process_identity_bound') -isnot [bool] -or
+                -not [bool](Get-PropertyValue $receipt 'process_identity_bound')) {
+                throw 'evaluation lease release receipt mismatch'
+            }
+            $responseReason = [string](Get-PropertyValue $receipt 'reason')
+            $responseInputOwnerNone = [bool](Get-PropertyValue $receipt 'input_owner_none')
+            $responseAllActionsTerminal = [bool](
+                Get-PropertyValue $receipt 'all_actions_terminal')
+            $responseProcessIdentityBound = [bool](
+                Get-PropertyValue $receipt 'process_identity_bound')
+            while (-not $script:EvaluationLeaseTerminalObserved) {
+                if ($null -eq $script:EvaluationLeaseReadTask) {
+                    throw 'evaluation lease terminal stream task missing'
+                }
+                Wait-EvaluationTask -Task $script:EvaluationLeaseReadTask `
+                    -TimeoutMilliseconds ($EvaluationControlTimeoutSeconds * 1000) `
+                    -FailureMessage 'evaluation lease terminal stream timeout' | Out-Null
+                Read-CompletedEvaluationLeaseEvent | Out-Null
+            }
+            if (-not $script:EvaluationLeaseInputsReleased -or
+                $script:EvaluationLeaseTerminalReason -cne $responseReason -or
+                $script:EvaluationLeaseInputOwnerNone -ne $responseInputOwnerNone -or
+                $script:EvaluationLeaseAllActionsTerminal -ne $responseAllActionsTerminal -or
+                $script:EvaluationLeaseProcessIdentityBound -ne
+                    $responseProcessIdentityBound) {
+                throw 'evaluation lease HTTP and stream terminals disagree'
+            }
+            $script:EvaluationLeaseReleaseHttpConfirmed = $true
+        } finally {
+            $script:EvaluationLeaseReleaseInProgress = $false
+            if ($null -ne $response) { $response.Dispose() }
+            if ($null -ne $request) { $request.Dispose() }
+        }
+    }
+    if (-not $script:EvaluationLeaseReleaseEventWritten) {
+        $script:EvaluationLeaseReleaseEventWritten = $true
+        Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState `
+            -Event 'evaluation_lease_released'
+    }
+    if ($Reason -ceq 'turn_completed' -and (
+            -not $script:EvaluationLeaseTerminalObserved -or
+            -not $script:EvaluationLeaseInputsReleased -or
+            -not $script:EvaluationLeaseInputOwnerNone -or
+            -not $script:EvaluationLeaseAllActionsTerminal -or
+            -not $script:EvaluationLeaseProcessIdentityBound -or
+            $script:EvaluationLeaseTerminalReason -cne 'turn_completed')) {
+        throw 'evaluation lease normal terminal reason mismatch'
+    }
+}
+
+function Close-EvaluationLeaseTransport {
+    try { if ($null -ne $script:EvaluationLeaseReader) { $script:EvaluationLeaseReader.Dispose() } } catch { }
+    try { if ($null -ne $script:EvaluationLeaseResponse) { $script:EvaluationLeaseResponse.Dispose() } } catch { }
+    try { if ($null -ne $script:EvaluationLeaseClient) { $script:EvaluationLeaseClient.Dispose() } } catch { }
+    $script:EvaluationLeaseReader = $null
+    $script:EvaluationLeaseResponse = $null
+    $script:EvaluationLeaseClient = $null
+    $script:EvaluationLeaseReadTask = $null
 }
 
 function Send-AppMessage {
@@ -1175,11 +1608,42 @@ function Read-AppLine {
         [Parameter(Mandatory)][DateTimeOffset]$Deadline,
         [AllowNull()][object]$SuppressResponseId
     )
-    $remaining = $Deadline - [DateTimeOffset]::UtcNow
-    if ($remaining.TotalMilliseconds -le 0) { throw 'app-server response timeout' }
     $lineTask = $script:CodexProcess.StandardOutput.ReadLineAsync()
-    if (-not $lineTask.Wait([int][Math]::Ceiling($remaining.TotalMilliseconds))) {
-        throw 'app-server response timeout'
+    while ($true) {
+        $remaining = $Deadline - [DateTimeOffset]::UtcNow
+        if ($remaining.TotalMilliseconds -le 0) { throw 'app-server response timeout' }
+        $waitMilliseconds = [int][Math]::Min(
+            [int]::MaxValue,
+            [Math]::Ceiling($remaining.TotalMilliseconds))
+        if ($script:EvaluationLeaseAcquired -and
+            -not $script:EvaluationLeaseTerminalObserved -and
+            $null -ne $script:EvaluationLeaseReadTask) {
+            $leaseTask = $script:EvaluationLeaseReadTask
+            $leaseReady = $leaseTask.IsCompleted
+            if (-not $leaseReady) {
+                $whenAny = [Threading.Tasks.Task]::WhenAny(
+                    [Threading.Tasks.Task[]]@($lineTask, $leaseTask))
+                if (-not $whenAny.Wait($waitMilliseconds)) {
+                    throw 'app-server response timeout'
+                }
+                $whenAny.GetAwaiter().GetResult() | Out-Null
+                # If stdout and the control stream complete together, the lease
+                # terminal always wins. This prevents an abnormal terminal from
+                # being hidden by a simultaneous turn/completed notification.
+                $leaseReady = $leaseTask.IsCompleted
+            }
+            if ($leaseReady) {
+                $leaseState = Read-CompletedEvaluationLeaseEvent
+                if ($leaseState -ceq 'released' -and
+                    -not $script:EvaluationLeaseReleaseInProgress) {
+                    throw 'evaluation input lease ended before turn completion'
+                }
+                continue
+            }
+        } elseif (-not $lineTask.Wait($waitMilliseconds)) {
+            throw 'app-server response timeout'
+        }
+        break
     }
     $line = $lineTask.GetAwaiter().GetResult()
     if ($null -eq $line) { throw 'app-server stdout ended before completion' }
@@ -1187,12 +1651,9 @@ function Read-AppLine {
     try {
         $message = $line | ConvertFrom-Json -Depth 100
     } catch {
-        if (-not $suppressNonMethodMessages) {
-            $script:RawWriter.WriteLine($line)
-            $script:RawWriter.Flush()
-        }
         throw 'app-server emitted malformed JSONL'
     }
+    Assert-SafeReasoningArtifactMessage -Message $message
     $methodProperty = Get-Property -Object $message -Name 'method'
     $isMethodMessage = $null -ne $methodProperty -and
         $methodProperty.Value -is [string] -and
@@ -1202,6 +1663,7 @@ function Read-AppLine {
     # remains memory-only until Wait-AppResponse validates its exact id/shape.
     $suppressRaw = $suppressNonMethodMessages -and -not $isMethodMessage
     if (-not $suppressRaw) {
+        Assert-NoEvaluationSecretForArtifactText -Text $line
         $script:RawWriter.WriteLine($line)
         $script:RawWriter.Flush()
     }
@@ -1399,6 +1861,8 @@ function Invoke-DynamicBridge {
     if (-not $script:SeenDynamicCallIds.Add($callId)) {
         throw 'duplicate dynamic callId'
     }
+    Write-McmcpLiveMonitorTool -State $script:LiveMonitorState `
+        -ToolName $tool -Status 'Started'
 
     $argumentsJson = ConvertTo-CompactJson $arguments
     $normalHttpTimeoutSeconds = Get-DynamicForwardTimeoutSeconds `
@@ -1463,6 +1927,8 @@ function Invoke-DynamicBridge {
                 success = $false
                 output_sha256 = $outputHash
             })
+        Write-McmcpLiveMonitorTool -State $script:LiveMonitorState `
+            -ToolName $tool -Status 'Rejected'
         return
     }
 
@@ -1525,6 +1991,8 @@ function Invoke-DynamicBridge {
                 diagnostic_code = $diagnosticCode
                 http_status = $(if ($null -eq $httpStatus) { $null } else { [int]$httpStatus })
             })
+        Write-McmcpLiveMonitorTool -State $script:LiveMonitorState `
+            -ToolName $tool -Status 'Failed'
         throw 'MCMCP dynamic bridge forwarding failed; see safe diagnostic record'
     }
     $formatted = Convert-McpResultToDynamicResponse -McpResponse $mcpResponse
@@ -1562,6 +2030,8 @@ function Invoke-DynamicBridge {
             success = [bool]$formatted.success
             output_sha256 = $outputHash
         })
+    Write-McmcpLiveMonitorTool -State $script:LiveMonitorState `
+        -ToolName $tool -Status 'Completed'
 }
 
 $sourceAuth = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex\auth.json'
@@ -1574,6 +2044,9 @@ Assert-ExternalAuthLifetime -ExpiresAt $script:AccessTokenExpiresAt -Phase 'star
 $originalAuthSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $sourceAuth).Hash.ToLowerInvariant()
 
 Assert-RunParameters
+$validatedEndpointUri = [Uri]$Endpoint
+$script:EvaluationControlEndpoint = 'http://127.0.0.1:{0}/mcp/internal/evaluation-turn' -f `
+    $validatedEndpointUri.Port
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\', '/')
 $catalogPath = Join-Path $repoRoot 'docs\MCMCP_MCP_Tool_Catalog.json'
@@ -1607,7 +2080,28 @@ $finalMessagePath = Join-Path $artifactPath 'final-message.txt'
 $auditPath = Join-Path $artifactPath 'audit.json'
 $auditStderrPath = Join-Path $artifactPath 'audit-stderr.log'
 $manifestPath = Join-Path $artifactPath 'manifest.json'
+$liveMonitorLogPath = Join-Path $artifactPath 'live-monitor.log'
 $auditScript = Join-Path $PSScriptRoot 'Test-McmcpEvalTrace.ps1'
+
+$script:RunnerFailureEventWritten = $false
+function Write-McmcpRunnerFailureEvent {
+    if ($script:RunnerFailureEventWritten) { return }
+    $reopened = $false
+    if ([bool]$script:LiveMonitorState.Enabled -and
+        $null -eq $script:LiveMonitorState.LogWriter) {
+        Start-McmcpLiveMonitorLog -State $script:LiveMonitorState `
+            -Path $liveMonitorLogPath -Append
+        $reopened = $true
+    }
+    try {
+        Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'runner_failed'
+        $script:RunnerFailureEventWritten = $true
+    } finally {
+        if ($reopened) {
+            Stop-McmcpLiveMonitorLog -State $script:LiveMonitorState
+        }
+    }
+}
 
 $isolatedBase = Join-Path ([Environment]::GetFolderPath('CommonDocuments')) 'mcmcp-eval-tmp'
 $isolatedRoot = $null
@@ -1633,6 +2127,24 @@ $script:Terminalizing = $false
 $script:DeadlineRejectionCount = 0
 $script:DeadlineCleanupCancelForwardCount = 0
 $script:ReadinessFailure = $null
+$script:EvaluationLeaseId = $null
+$script:EvaluationLeaseIdSha256 = $null
+$script:EvaluationLeaseAcquired = $false
+$script:EvaluationLeaseTerminalObserved = $false
+$script:EvaluationLeaseInputsReleased = $false
+$script:EvaluationLeaseInputOwnerNone = $false
+$script:EvaluationLeaseAllActionsTerminal = $false
+$script:EvaluationLeaseProcessIdentityBound = $false
+$script:EvaluationLeaseTerminalReason = $null
+$script:EvaluationLeaseReleaseHttpConfirmed = $false
+$script:EvaluationLeaseReleaseEventWritten = $false
+$script:EvaluationLeaseReleaseInProgress = $false
+$script:EvaluationLeaseClient = $null
+$script:EvaluationLeaseResponse = $null
+$script:EvaluationLeaseReader = $null
+$script:EvaluationLeaseReadTask = $null
+$script:EvaluationLeaseAcquiredAt = $null
+$script:EvaluationLeaseReleasedAt = $null
 $script:SeenAppRequestIds = [Collections.Generic.HashSet[string]]::new(
     [StringComparer]::Ordinal)
 $script:SeenDynamicCallIds = [Collections.Generic.HashSet[string]]::new(
@@ -1643,6 +2155,7 @@ $threadId = $null
 $turnId = $null
 $exitCode = $null
 $runFailure = $null
+$evaluationLeaseReleaseReason = 'runner_failure'
 $auditPassed = $false
 $secretLeakArtifacts = @()
 $preflightResult = $null
@@ -1650,6 +2163,7 @@ $dynamicTools = @()
 $finalMessages = [Collections.Generic.List[string]]::new()
 
 try {
+    Start-McmcpLiveMonitorLog -State $script:LiveMonitorState -Path $liveMonitorLogPath
     [IO.Directory]::CreateDirectory($isolatedBase) | Out-Null
     Assert-NoReparsePointInPath -Path $isolatedBase
     $isolatedRoot = Join-Path $isolatedBase ('mcmcp-eval-' + [Guid]::NewGuid().ToString('N'))
@@ -1728,6 +2242,7 @@ try {
     $script:CodexProcess = [Diagnostics.Process]::new()
     $script:CodexProcess.StartInfo = $processStart
     if (-not $script:CodexProcess.Start()) { throw 'Codex app-server processを開始できませんでした。' }
+    Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'app_server_started'
     $processExitConfirmed = $false
     $stderrTask = $script:CodexProcess.StandardError.ReadToEndAsync()
     Write-BridgeEvent ([ordered]@{
@@ -1778,6 +2293,7 @@ try {
             contract_valid = $true
             raw_artifact_recorded = $true
         })
+    Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'initialized'
     $initResponse = $null
     Send-AppMessage -Message ([ordered]@{ method = 'initialized'; params = [ordered]@{} }) `
         -AuditKind 'initialized'
@@ -1816,6 +2332,7 @@ try {
             credential_file_created = $false
             jwt_lifetime_guard_ok = $true
         })
+    Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'login_ok'
     $loginResponse = $null
     $loginResult = $null
 
@@ -1843,6 +2360,7 @@ try {
             mcp_server_count = $effectiveConfigProof.mcp_server_count
             raw_artifact_recorded = $effectiveConfigProof.raw_artifact_recorded
         })
+    Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'config_ok'
     $configResponse = $null
 
     $preflightResult = Invoke-ReadOnlyPreflight
@@ -1850,10 +2368,9 @@ try {
     $preflightResult.artifact['effective_mcp_servers_object'] = $true
     $preflightResult.artifact['effective_mcp_server_count'] = 0
     $dynamicTools = @($preflightResult.dynamic_tools)
-    [IO.File]::WriteAllText(
-        $preflightPath,
-        ($preflightResult.artifact | ConvertTo-Json -Depth 20),
-        $Utf8NoBom)
+    $preflightArtifactJson = $preflightResult.artifact | ConvertTo-Json -Depth 20
+    Assert-NoEvaluationSecretForArtifactText -Text $preflightArtifactJson
+    [IO.File]::WriteAllText($preflightPath, $preflightArtifactJson, $Utf8NoBom)
     Write-BridgeEvent ([ordered]@{
             event = 'preflight'
             protocol_version = $preflightResult.artifact.protocol_version
@@ -1889,6 +2406,7 @@ try {
             parent_mcp_no_proxy = $true
             parent_mcp_redirects_disabled = $true
         })
+    Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'preflight_ok'
     $effectiveConfigProof = $null
     $setupDeadline = [DateTimeOffset]::UtcNow.AddSeconds(60)
 
@@ -1949,8 +2467,15 @@ try {
             contract_valid = $true
             raw_artifact_recorded = $true
         })
-    $t0Readiness = Invoke-McmcpReadinessCheck -Phase 'T0'
+    Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'thread_ready'
+    $preliminaryT0Readiness = Invoke-McmcpReadinessCheck -Phase 'preliminary'
     Assert-ExternalAuthLifetime -ExpiresAt $script:AccessTokenExpiresAt -Phase 'T0'
+    Start-EvaluationTurnLease
+    # This is the authoritative readiness proof. Invoke-McmcpJsonRpc adds the
+    # acquired lease id header; the earlier preflight/preliminary calls remain
+    # intentionally headerless.
+    $t0Readiness = Invoke-McmcpReadinessCheck -Phase 'T0'
+    Assert-EvaluationLeaseActiveBeforeT0
     $startedAt = [DateTimeOffset]::UtcNow
     $deadline = $startedAt.Add($EvaluatorTimeout)
     $script:TurnDeadline = $deadline
@@ -1960,6 +2485,8 @@ try {
             prompt_profile = $PromptProfile
             prompt_sha256 = Get-Sha256 $ProductionPrompt
             timeout_seconds = [int]$EvaluatorTimeout.TotalSeconds
+            preliminary_readiness_passed = $null -ne $preliminaryT0Readiness
+            evaluation_lease_header_bound = $script:EvaluationLeaseAcquired
             readiness_rechecked = $true
             ready_mode_ok = $t0Readiness.ready_mode_ok
             game_unpaused = $t0Readiness.game_unpaused
@@ -1970,6 +2497,8 @@ try {
             visible_entities_zero = $t0Readiness.visible_entities_zero
             action_idle_or_terminal = $t0Readiness.action_idle_or_terminal
         })
+    Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 't0'
+    $preliminaryT0Readiness = $null
     $t0Readiness = $null
     $turnStart = [ordered]@{
         method = 'turn/start'
@@ -1979,6 +2508,7 @@ try {
             input = @([ordered]@{ type = 'text'; text = $ProductionPrompt })
             model = $Model
             effort = $ReasoningEffort
+            summary = 'detailed'
             cwd = $cleanCwd
             environments = @()
         }
@@ -1998,6 +2528,7 @@ try {
         })
     $script:ActiveThreadId = $threadId
     $script:ActiveTurnId = $turnId
+    Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'turn_started'
 
     $turnCompleted = $false
     while (-not $turnCompleted) {
@@ -2026,6 +2557,23 @@ try {
                     Get-PropertyValue -Object $message -Name 'params') -Name 'item'
                 if ((Get-PropertyValue -Object $item -Name 'type') -eq 'agentMessage') {
                     $finalMessages.Add([string](Get-PropertyValue -Object $item -Name 'text'))
+                    if ((Get-PropertyValue -Object $item -Name 'phase') -ceq 'commentary') {
+                        $commentaryText = [string](Get-PropertyValue -Object $item -Name 'text')
+                        if (-not (Test-ContainsEvaluationSecret $commentaryText)) {
+                            Write-McmcpLiveMonitorText -State $script:LiveMonitorState `
+                                -Kind 'Commentary' -Text $commentaryText
+                        }
+                    }
+                } elseif ((Get-PropertyValue -Object $item -Name 'type') -eq 'reasoning') {
+                    $summaryParts = @(
+                        @(Get-PropertyValue -Object $item -Name 'summary') |
+                        Where-Object { $_ -is [string] }
+                    )
+                    $summaryText = $summaryParts -join "`n"
+                    if (-not (Test-ContainsEvaluationSecret $summaryText)) {
+                        Write-McmcpLiveMonitorText -State $script:LiveMonitorState `
+                            -Kind 'ReasoningSummary' -Text $summaryText
+                    }
                 }
             } elseif ($method -eq 'turn/completed') {
                 $completedTurn = Get-PropertyValue -Object (
@@ -2038,6 +2586,8 @@ try {
                     throw "turn terminal mismatch: id=$completedId status=$completedStatus"
                 }
                 $turnCompleted = $true
+                Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState `
+                    -Event 'turn_completed'
             }
             continue
         }
@@ -2047,6 +2597,17 @@ try {
         throw 'unclassified app-server message'
     }
 
+    $evaluationLeaseReleaseReason = 'turn_completed'
+    Stop-EvaluationTurnLease -Reason $evaluationLeaseReleaseReason
+    if (-not $script:EvaluationLeaseReleaseHttpConfirmed -or
+        -not $script:EvaluationLeaseTerminalObserved -or
+        -not $script:EvaluationLeaseInputsReleased -or
+        -not $script:EvaluationLeaseInputOwnerNone -or
+        -not $script:EvaluationLeaseAllActionsTerminal -or
+        -not $script:EvaluationLeaseProcessIdentityBound -or
+        $script:EvaluationLeaseTerminalReason -cne 'turn_completed') {
+        throw 'evaluation lease normal terminal proof mismatch'
+    }
     $script:CodexProcess.StandardInput.Close()
     $tailTask = $script:CodexProcess.StandardOutput.ReadToEndAsync()
     if (-not $script:CodexProcess.WaitForExit(15000)) {
@@ -2057,25 +2618,40 @@ try {
         }
     }
     $processExitConfirmed = $true
+    Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'process_exited'
     if (-not $tailTask.Wait(5000)) {
         $streamCaptureMarkers.Add('[stdout tail capture timed out]')
         throw 'Codex app-server stdout tail did not complete in bounded wait'
     }
     $tail = $tailTask.GetAwaiter().GetResult()
-    if (-not [string]::IsNullOrEmpty($tail)) {
-        $script:RawWriter.Write($tail)
-        $script:RawWriter.Flush()
-    }
+    Write-ValidatedAppServerTail -Tail $tail
     $exitCode = $script:CodexProcess.ExitCode
     $finishedAt = [DateTimeOffset]::UtcNow
     $finalText = if ($finalMessages.Count -gt 0) {
         $finalMessages[$finalMessages.Count - 1]
     } else { '' }
+    Assert-NoEvaluationSecretForArtifactText -Text $finalText
     [IO.File]::WriteAllText($finalMessagePath, $finalText, $Utf8NoBom)
 } catch {
     $runFailure = $_.Exception.Message
+    if ($runFailure -match '(?i)evaluation deadline|deadline expired') {
+        $evaluationLeaseReleaseReason = 'evaluation_deadline'
+    }
     $finishedAt = [DateTimeOffset]::UtcNow
+    Write-McmcpRunnerFailureEvent
 } finally {
+    if ($script:EvaluationLeaseAcquired -and
+        -not $script:EvaluationLeaseReleaseHttpConfirmed) {
+        try {
+            Stop-EvaluationTurnLease -Reason $evaluationLeaseReleaseReason
+        } catch {
+            $leaseFailure = 'evaluation input lease release was not confirmed'
+            $runFailure = if ($runFailure) {
+                "$runFailure; $leaseFailure"
+            } else { $leaseFailure }
+        }
+    }
+    Close-EvaluationLeaseTransport
     if ($null -ne $script:CodexProcess) {
         try {
             if (-not $script:CodexProcess.HasExited) {
@@ -2127,6 +2703,7 @@ try {
             $stderrText += $markerText
         }
         try {
+            Assert-NoEvaluationSecretForArtifactText -Text $stderrText
             [IO.File]::WriteAllText($stderrPath, $stderrText, $Utf8NoBom)
         } catch {
             if (-not $runFailure) { $runFailure = 'stderr artifact write failed' }
@@ -2169,18 +2746,22 @@ try {
 try {
     if ((Test-Path -LiteralPath $tracePath -PathType Leaf) -and
         (Test-Path -LiteralPath $bridgePath -PathType Leaf)) {
+        Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'audit_started'
         $powerShellExecutable = (Get-Process -Id $PID).Path
         & $powerShellExecutable -NoProfile -File $auditScript `
             -TracePath $tracePath -BridgeLogPath $bridgePath -OutputPath $auditPath `
             -ExpectedModel $Model -ExpectedEffort $ReasoningEffort `
             -ExpectedPromptProfile $PromptProfile 2> $auditStderrPath
         $auditPassed = ($LASTEXITCODE -eq 0)
+        Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState `
+            -Event $(if ($auditPassed) { 'audit_passed' } else { 'audit_failed' })
     }
+    Stop-McmcpLiveMonitorLog -State $script:LiveMonitorState
 
     $gitCommit = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1)
     $gitStatus = @(& git -C $repoRoot status --porcelain=v1 2>$null)
     $manifest = [ordered]@{
-        schema_version = 6
+        schema_version = 8
         baseline_id = $BaselineId
         model = $Model
         reasoning_effort = $ReasoningEffort
@@ -2192,6 +2773,30 @@ try {
         deadline_rejection_count = $script:DeadlineRejectionCount
         deadline_cleanup_cancel_forward_count = $script:DeadlineCleanupCancelForwardCount
         terminalizing_entered = $script:Terminalizing
+        evaluation_lease = [ordered]@{
+            acquired = $script:EvaluationLeaseAcquired
+            lease_id_sha256 = $script:EvaluationLeaseIdSha256
+            maximum_duration_ms = [long][Math]::Ceiling(
+                $EvaluationLeaseMaximumDuration.TotalMilliseconds)
+            acquired_utc = $(if ($script:EvaluationLeaseAcquiredAt) {
+                    $script:EvaluationLeaseAcquiredAt.ToString('o')
+                } else { $null })
+            released_utc = $(if ($script:EvaluationLeaseReleasedAt) {
+                    $script:EvaluationLeaseReleasedAt.ToString('o')
+                } else { $null })
+            terminal_reason = $script:EvaluationLeaseTerminalReason
+            requested_release_reason = $evaluationLeaseReleaseReason
+            inputs_released = $script:EvaluationLeaseInputsReleased
+            input_owner_none = $script:EvaluationLeaseInputOwnerNone
+            all_actions_terminal = $script:EvaluationLeaseAllActionsTerminal
+            release_http_confirmed = $script:EvaluationLeaseReleaseHttpConfirmed
+            process_identity_bound = $script:EvaluationLeaseProcessIdentityBound
+        }
+        reasoning_summary = 'detailed_completed_items_only'
+        raw_reasoning_delta = 'opted_out_and_forbidden_by_audit'
+        live_monitor_persistence = $(if ($LiveMonitor) {
+                'artifact_live-monitor.log_exact_display'
+            } else { 'disabled' })
         mcp_protocol_version = $ModernProtocolVersion
         bridge = 'codex_app_server_dynamic_tools_direct_mcp'
         model_visible_tools = @($AllowedTools)
@@ -2209,6 +2814,10 @@ try {
         git_worktree_dirty = ($gitStatus.Count -gt 0)
         runner_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
         audit_script_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $auditScript).Hash.ToLowerInvariant()
+        monitor_module_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $monitorModulePath).Hash.ToLowerInvariant()
+        monitor_test_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $monitorTestPath).Hash.ToLowerInvariant()
+        monitor_launcher_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $monitorLauncherPath).Hash.ToLowerInvariant()
+        monitor_host_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $monitorHostPath).Hash.ToLowerInvariant()
         codex_version = $script:ValidatedCodexVersion
         isolated_codex_home_cleaned = -not [IO.Directory]::Exists([string]$isolatedRoot)
         original_auth_unchanged = $originalAuthUnchanged
@@ -2217,11 +2826,11 @@ try {
         bearer_child_environment = 'absent'
         secret_persisted = $false
     }
-    [IO.File]::WriteAllText(
-        $manifestPath,
-        ($manifest | ConvertTo-Json -Depth 20),
-        $Utf8NoBom)
+    $manifestJson = $manifest | ConvertTo-Json -Depth 20
+    Assert-NoEvaluationSecretForArtifactText -Text $manifestJson
+    [IO.File]::WriteAllText($manifestPath, $manifestJson, $Utf8NoBom)
 } catch {
+    Stop-McmcpLiveMonitorLog -State $script:LiveMonitorState
     if (-not $runFailure) { $runFailure = "artifact post-processing failed: $($_.Exception.Message)" }
 }
 
@@ -2231,6 +2840,7 @@ try {
                 MCMCP_BEARER = $script:Bearer
                 CODEX_ACCESS_TOKEN = $script:AccessToken
                 CHATGPT_ACCOUNT_ID = $script:ChatgptAccountId
+                EVALUATION_LEASE = $script:EvaluationLeaseId
             }) -Root $artifactPath)
 } catch {
     $secretScanFailure = 'artifact secret scan did not complete'
@@ -2239,8 +2849,10 @@ try {
     $script:AccessToken = $null
     $script:ChatgptAccountId = $null
     $script:AccessTokenExpiresAt = $null
+    $script:EvaluationLeaseId = $null
 }
 if ($secretScanFailure) {
+    Write-McmcpRunnerFailureEvent
     [Console]::Error.WriteLine($secretScanFailure)
     exit 3
 }
@@ -2257,25 +2869,49 @@ if ($secretLeakArtifacts.Count -gt 0) {
             ($manifestObject | ConvertTo-Json -Depth 20),
             $Utf8NoBom)
     }
+    Write-McmcpRunnerFailureEvent
     [Console]::Error.WriteLine('Evaluation secret artifact leak was detected and redacted; run is invalid.')
     exit 3
 }
 if ($script:BridgeSecretDetected) {
+    Write-McmcpRunnerFailureEvent
     [Console]::Error.WriteLine('MCMCP result secret filter fired; run is invalid.')
     exit 3
 }
 if ($runFailure) {
+    Write-McmcpRunnerFailureEvent
     [Console]::Error.WriteLine("評価 runner が失敗しました: $runFailure")
     exit 3
 }
 if ($exitCode -ne 0) {
+    Write-McmcpRunnerFailureEvent
     [Console]::Error.WriteLine("Codex app-server exited with code $exitCode")
     exit 3
 }
 if (-not $auditPassed) {
+    Write-McmcpRunnerFailureEvent
     [Console]::Error.WriteLine('strict trace audit failed; run is invalid.')
     exit 2
 }
+if (-not $script:EvaluationLeaseAcquired -or
+    -not $script:EvaluationLeaseReleaseHttpConfirmed -or
+    -not $script:EvaluationLeaseTerminalObserved -or
+    -not $script:EvaluationLeaseInputsReleased -or
+    -not $script:EvaluationLeaseInputOwnerNone -or
+    -not $script:EvaluationLeaseAllActionsTerminal -or
+    -not $script:EvaluationLeaseProcessIdentityBound -or
+    $script:EvaluationLeaseTerminalReason -cne 'turn_completed' -or
+    $evaluationLeaseReleaseReason -cne 'turn_completed') {
+    Write-McmcpRunnerFailureEvent
+    [Console]::Error.WriteLine('evaluation lease normal terminal proof failed; run is invalid.')
+    exit 3
+}
 
-Write-Host "評価終了: $artifactPath"
+Start-McmcpLiveMonitorLog -State $script:LiveMonitorState `
+    -Path $liveMonitorLogPath -Append
+Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'runner_completed'
+Stop-McmcpLiveMonitorLog -State $script:LiveMonitorState
+if (-not $LiveMonitor) {
+    Write-Host "評価終了: $artifactPath"
+}
 exit 0

@@ -64,6 +64,11 @@ $AllowedNotifications = @(
     'turn/completed'
 )
 $AllowedItemTypes = @('userMessage', 'reasoning', 'agentMessage', 'dynamicToolCall')
+$RequiredReasoningDeltaOptOuts = @(
+    'item/reasoning/summaryPartAdded',
+    'item/reasoning/summaryTextDelta',
+    'item/reasoning/textDelta'
+)
 $RequiredClientSendKinds = @('initialize', 'initialized', 'thread_start', 'turn_start')
 $RequiredFalseFeatures = @(
     'multi_agent',
@@ -223,6 +228,18 @@ function Test-StringSetEquals {
     return $true
 }
 
+function Test-StringSetContainsAll {
+    param([object[]]$Actual, [string[]]$Required)
+    foreach ($requiredValue in $Required) {
+        if (@($Actual | Where-Object {
+                    $_ -is [string] -and [string]$_ -ceq $requiredValue
+                }).Count -ne 1) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function Test-IsObjectValue {
     param([AllowNull()][object]$Value)
     return $null -ne $Value -and (
@@ -258,6 +275,35 @@ function Test-ExactPropertySet {
         if (@($actualNames | Where-Object { $_ -ceq $name }).Count -ne 1) { return $false }
     }
     return $true
+}
+
+function Test-IsSafeReasoningItem {
+    param(
+        [AllowNull()][object]$Item,
+        [Parameter(Mandatory)]
+        [ValidateSet('item/started', 'item/completed')]
+        [string]$Method
+    )
+    if (-not (Test-ExactPropertySet $Item @('id', 'type', 'summary', 'content'))) {
+        return $false
+    }
+    $id = Get-PropertyValue $Item 'id'
+    $summaryProperty = Get-Property $Item 'summary'
+    if ($id -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$id) -or
+        ([string]$id).Length -gt 256 -or ([string]$id) -cmatch '[\p{Cc}\p{Cf}]' -or
+        (Get-PropertyValue $Item 'type') -cne 'reasoning' -or
+        $null -eq $summaryProperty -or $null -eq $summaryProperty.Value -or
+        $summaryProperty.Value -is [string] -or
+        $summaryProperty.Value -isnot [Collections.IEnumerable] -or
+        @($summaryProperty.Value | Where-Object { $_ -isnot [string] }).Count -ne 0) {
+        return $false
+    }
+    if ($Method -ceq 'item/started' -and @($summaryProperty.Value).Count -ne 0) {
+        return $false
+    }
+    # Public completed summaries are the only readable reasoning payload. The
+    # private `content` channel must stay explicit and empty in every lifecycle item.
+    return Test-IsExplicitEmptyArray $Item 'content'
 }
 
 function Test-IsJsonNumber {
@@ -611,7 +657,7 @@ function Invoke-TraceAudit {
                 "bridge line $($record.line): readiness failure property set mismatch" $violations
             $phase = Get-PropertyValue $record.value 'phase'
             Add-ViolationUnless ($phase -is [string] -and
-                $phase -cin @('preflight', 'T0')) `
+                $phase -cin @('preflight', 'preliminary', 'T0')) `
                 "bridge line $($record.line): readiness failure phase mismatch" $violations
             $getStateOk = Get-PropertyValue $record.value 'get_state_ok'
             Add-ViolationUnless ($getStateOk -is [bool] -and $getStateOk) `
@@ -850,6 +896,7 @@ function Invoke-TraceAudit {
         Add-ViolationUnless ((Get-PropertyValue $t0 'timeout_seconds') -eq 1020) `
             'T0 timeout must be 1020 seconds' $violations
         foreach ($readinessFlag in @(
+                'preliminary_readiness_passed', 'evaluation_lease_header_bound',
                 'readiness_rechecked', 'ready_mode_ok', 'game_unpaused',
                 'world_present', 'observation_present', 'inventory_empty',
                 'rays_per_tick_512', 'visible_entities_zero',
@@ -919,6 +966,14 @@ function Invoke-TraceAudit {
             $optOutProperty.Value -isnot [string] -and
             @($optOutProperty.Value | Where-Object { $_ -isnot [string] }).Count -eq 0) `
             'initialize optOutNotificationMethods string array が必須です' $violations
+        if ($null -ne $optOutProperty -and
+            $optOutProperty.Value -is [Collections.IEnumerable] -and
+            $optOutProperty.Value -isnot [string]) {
+            $optOutMethods = @($optOutProperty.Value)
+            Add-ViolationUnless (Test-StringSetContainsAll `
+                    -Actual $optOutMethods -Required $RequiredReasoningDeltaOptOuts) `
+                'reasoning raw/summary delta notification opt-out が必須です' $violations
+        }
     }
     if ($null -ne $initialized) {
         Add-ViolationUnless (Test-ExactPropertySet $initialized @('method', 'params')) `
@@ -1030,7 +1085,7 @@ function Invoke-TraceAudit {
     }
     if ($null -ne $turnParams) {
         Add-ViolationUnless (Test-ExactPropertySet $turnParams @(
-                'threadId', 'input', 'model', 'effort', 'cwd', 'environments')) `
+                'threadId', 'input', 'model', 'effort', 'summary', 'cwd', 'environments')) `
             'turn/start params に追加instruction/context fieldがあります' $violations
         Add-ViolationUnless ((Get-PropertyValue $turnStart 'method') -eq 'turn/start') `
             'turn/start method mismatch' $violations
@@ -1040,6 +1095,8 @@ function Invoke-TraceAudit {
             'turn/start model mismatch' $violations
         Add-ViolationUnless ((Get-PropertyValue $turnParams 'effort') -eq $Effort) `
             'turn/start effort mismatch' $violations
+        Add-ViolationUnless ((Get-PropertyValue $turnParams 'summary') -ceq 'detailed') `
+            'turn/start summary=detailed が必須です' $violations
         Add-ViolationUnless ((Get-PropertyValue $turnParams 'cwd') -ceq $cleanCwd) `
             'thread/turn cwd mismatch' $violations
         Add-ViolationUnless (Test-IsExplicitEmptyArray $turnParams 'environments') `
@@ -1328,6 +1385,11 @@ function Invoke-TraceAudit {
                 $itemType = [string](Get-PropertyValue $item 'type')
                 if ($itemType -cnotin $AllowedItemTypes) {
                     $violations.Add("trace line ${line}: MCP-only評価で許可されない item type '$itemType'")
+                }
+                if ($itemType -ceq 'reasoning') {
+                    Add-ViolationUnless (Test-IsSafeReasoningItem -Item $item -Method $method) `
+                        "trace line ${line}: reasoning item exact safe schema mismatch" `
+                        $violations
                 }
                 if ([string]::IsNullOrWhiteSpace($itemId)) {
                     $violations.Add("trace line ${line}: item id missing")
@@ -2012,7 +2074,7 @@ function Invoke-AuditSelfTest {
             clientInfo = [ordered]@{ name = 'mcmcp-fresh-eval'; version = '1' }
             capabilities = [ordered]@{
                 experimentalApi = $true
-                optOutNotificationMethods = @()
+                optOutNotificationMethods = $RequiredReasoningDeltaOptOuts
             }
         }
     }
@@ -2030,7 +2092,8 @@ function Invoke-AuditSelfTest {
         method = 'turn/start'; id = 'turn'
         params = [ordered]@{
             threadId = 'thread_1'; input = @([ordered]@{ type = 'text'; text = $ProductionPrompt })
-            model = 'gpt-5.6-sol'; effort = 'high'; cwd = $cwd; environments = @()
+            model = 'gpt-5.6-sol'; effort = 'high'; summary = 'detailed'
+            cwd = $cwd; environments = @()
         }
     }
     $bridge = @(
@@ -2098,7 +2161,8 @@ function Invoke-AuditSelfTest {
         [ordered]@{
             sequence = 11; event = 't0'; prompt_profile = 'short-regression'
             prompt_sha256 = Get-Sha256 $ProductionPrompt
-            timeout_seconds = 1020; readiness_rechecked = $true
+            timeout_seconds = 1020; preliminary_readiness_passed = $true
+            evaluation_lease_header_bound = $true; readiness_rechecked = $true
             ready_mode_ok = $true; game_unpaused = $true; world_present = $true
             observation_present = $true; inventory_empty = $true
             rays_per_tick_512 = $true; visible_entities_zero = $true
@@ -2208,6 +2272,55 @@ function Invoke-AuditSelfTest {
             $syntheticEmittedAtMs++
         }
     }
+
+    $validReasoningTraceList = [Collections.Generic.List[object]]::new()
+    foreach ($sourceMessage in $trace) {
+        $copy = ConvertTo-CompactJson $sourceMessage | ConvertFrom-Json -Depth 100
+        if ((Get-PropertyValue $copy 'method') -ceq 'item/started' -and
+            (Get-NestedValue $copy 'params.item.id') -ceq 'agent_1') {
+            $validReasoningTraceList.Add([pscustomobject][ordered]@{
+                    method = 'item/started'
+                    params = [ordered]@{
+                        threadId = 'thread_1'; turnId = 'turn_1'; startedAtMs = 5
+                        item = [ordered]@{
+                            id = 'reasoning_1'; type = 'reasoning'
+                            summary = @(); content = @()
+                        }
+                    }
+                })
+            $validReasoningTraceList.Add([pscustomobject][ordered]@{
+                    method = 'item/completed'
+                    params = [ordered]@{
+                        threadId = 'thread_1'; turnId = 'turn_1'; completedAtMs = 6
+                        item = [ordered]@{
+                            id = 'reasoning_1'; type = 'reasoning'
+                            summary = @('公開された推論要約'); content = @()
+                        }
+                    }
+                })
+        }
+        $validReasoningTraceList.Add($copy)
+    }
+    $validReasoningTrace = @($validReasoningTraceList)
+    $reasoningEmittedAtMs = $syntheticUtcBase.ToUnixTimeMilliseconds()
+    foreach ($reasoningTraceMessage in $validReasoningTrace) {
+        $reasoningTraceMethod = [string](Get-PropertyValue $reasoningTraceMessage 'method')
+        if ($reasoningTraceMethod -cin $AllowedNotifications) {
+            $reasoningTraceMessage | Add-Member -NotePropertyName emittedAtMs `
+                -NotePropertyValue $reasoningEmittedAtMs -Force
+            $reasoningEmittedAtMs++
+        }
+    }
+    $rawReasoningContentTrace = @($validReasoningTrace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'method') -ceq 'item/completed' -and
+                (Get-NestedValue $copy 'params.item.id') -ceq 'reasoning_1') {
+                $copy.params.item.content = @('private readable reasoning')
+                $copy.params.item | Add-Member -NotePropertyName privateReasoning `
+                    -NotePropertyValue 'must not be persisted' -Force
+            }
+            $copy
+        })
 
     $domainErrorText = '{"code":"TARGET_UNAVAILABLE","message":"recoverable domain failure","recoverable":true}'
     $domainTrace = @($trace | ForEach-Object {
@@ -2745,6 +2858,41 @@ function Invoke-AuditSelfTest {
             }
             $copy
         })
+    $wrongReasoningSummaryBridge = @($bridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -eq 'client_send' -and
+                (Get-PropertyValue $copy 'kind') -eq 'turn_start') {
+                $copy.message.params.summary = 'concise'
+            }
+            $copy
+        })
+    $missingReasoningDeltaOptOutBridge = @($bridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -eq 'client_send' -and
+                (Get-PropertyValue $copy 'kind') -eq 'initialize') {
+                $copy.message.params.capabilities.optOutNotificationMethods = @(
+                    $RequiredReasoningDeltaOptOuts | Where-Object {
+                        $_ -cne 'item/reasoning/textDelta'
+                    })
+            }
+            $copy
+        })
+    $rawReasoningDeltaTrace = @($trace | ForEach-Object {
+            ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+        })
+    $rawReasoningDeltaNotification = [pscustomobject][ordered]@{
+        method = 'item/reasoning/textDelta'
+        params = [ordered]@{
+            threadId = 'thread_1'; turnId = 'turn_1'; itemId = 'reasoning_1'
+            contentIndex = 0; delta = 'raw reasoning must never be emitted'
+        }
+        emittedAtMs = $syntheticUtcBase.ToUnixTimeMilliseconds() + 6
+    }
+    $rawReasoningDeltaTrace = @(
+        $rawReasoningDeltaTrace[0..($rawReasoningDeltaTrace.Count - 2)] +
+        $rawReasoningDeltaNotification +
+        $rawReasoningDeltaTrace[($rawReasoningDeltaTrace.Count - 1)]
+    )
     $missingPropertiesBridge = @($bridge | ForEach-Object {
             $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
             if ((Get-PropertyValue $copy 'event') -eq 'client_send') {
@@ -2990,6 +3138,16 @@ function Invoke-AuditSelfTest {
             required = @()
         },
         [ordered]@{
+            name = 'valid_public_reasoning_summary'; trace = $validReasoningTrace
+            bridge = $bridge; expected_exit = 0
+            expected_success = 1; expected_failure = 0; required = @()
+        },
+        [ordered]@{
+            name = 'raw_reasoning_content'; trace = $rawReasoningContentTrace
+            bridge = $bridge; expected_exit = 1
+            required = @('reasoning item exact safe schema mismatch')
+        },
+        [ordered]@{
             name = 'full_profile_valid'; trace = $fullProfileTrace
             bridge = $fullProfileBridge; expected_profile = 'full-cycle'
             expected_exit = 0; expected_success = 1; expected_failure = 0
@@ -3156,6 +3314,21 @@ function Invoke-AuditSelfTest {
         [ordered]@{
             name = 'missing_environments'; trace = $trace; bridge = $missingEnvironmentBridge
             expected_exit = 1; required = @('turn/start environments')
+        },
+        [ordered]@{
+            name = 'reasoning_summary_not_detailed'; trace = $trace
+            bridge = $wrongReasoningSummaryBridge; expected_exit = 1
+            required = @('turn/start summary=detailed')
+        },
+        [ordered]@{
+            name = 'missing_reasoning_delta_opt_out'; trace = $trace
+            bridge = $missingReasoningDeltaOptOutBridge; expected_exit = 1
+            required = @('reasoning raw/summary delta notification opt-out')
+        },
+        [ordered]@{
+            name = 'raw_reasoning_text_delta'; trace = $rawReasoningDeltaTrace
+            bridge = $bridge; expected_exit = 1
+            required = @("forbidden notification 'item/reasoning/textDelta'")
         },
         [ordered]@{
             name = 'missing_properties'; trace = $trace; bridge = $missingPropertiesBridge

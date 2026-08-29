@@ -22,7 +22,7 @@
 - `face_known_position`の観測目的回数制限は設けず、一般のnode・時間・角速度・累積camera budgetだけを適用する
 - Esc、Screen上のMCP操作OFF、world離脱を常にAgentより優先する
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
-- Agent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
+- fresh評価turnまたはAgent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
 最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。Phase 1の操作・回避・観測境界が成立したため、Phase 2の最初のprimitiveとして、宣言済みの可視面を持つoak / birch幹だけを通常attack入力で破壊する`break_known_face`を追加する。農業、建築、資源入手、レッドストーン用primitiveは引き続き1種類ずつ追加する。
 
@@ -209,6 +209,7 @@ Local MCP Host / LLM
 | Navigator | KnownTraversabilityMap上の保守的A*と局所再計画 |
 | InputArbiter | synthetic入力と物理入力の調停 |
 | AgentOverlay | 右下icon、Screen状態button、短いEsc案内の表示 |
+| EvaluationTurnGuard | fresh評価のrunner / stream / deadlineへ束縛した入力隔離leaseとterminal解放gate |
 
 一実装しかないinterface、factory、plugin systemは作らない。NeoForge APIは対象版へ直接実装する。
 
@@ -262,7 +263,7 @@ commit時は同時Task、world/session、control epoch、READY、pose、predicat
 
 ### 6.2 状態
 
-公開lease APIは作らない。Screen buttonのON操作を、同一world session内で明示OFFまで維持される内部許可として扱う。MCP操作ON/OFFはAgentの変更操作を許可するgateであり、内蔵HTTP endpoint自体の起動・停止ではない。OFF中も`agent_get_state`と終了済みActionの参照は可能で、`agent_start_action`だけを拒否する。
+公開lease APIは作らない。Screen buttonのON操作を、同一world session内で明示OFFまで維持される内部許可として扱う。MCP操作ON/OFFはAgentの変更操作を許可するgateであり、内蔵HTTP endpoint自体の起動・停止ではない。OFF中も`agent_get_state`と終了済みActionの参照は可能で、`agent_start_action`だけを拒否する。fresh評価でだけ使う6.6のevaluation-turn leaseは、この公開control stateと直交する非公開control planeであり、MCP操作ONの代わりにはならない。
 
 ~~~text
 OFF
@@ -270,7 +271,7 @@ OFF
        v
 READY（ON、時間制限なし、明示OFFまで維持）
   ├─ valid agent_start_action → AGENT
-  ├─ Esc → READYのまま、VanillaのEsc動作だけ実行
+  ├─ Esc → READYのまま、VanillaのEsc動作だけ実行（evaluation-turn中を除く）
   └─ OFF / world変更 → OFF
 
 AGENT
@@ -297,7 +298,7 @@ Action成功、明示cancel、recoverable / unrecoverableを問わないAction f
 - player、levelまたは入力所有権の不変条件消失
 - 未処理例外、内部状態破損
 
-停止時は同じClientTickまでにAgent所有のsynthetic入力をすべて解除し、pending commandを破棄し、control epochを進めて古いqueue entryを無効化する。実行中EscはActionを`EMERGENCY_STOP`で終了してREADYへ戻し、その後にVanillaのEsc動作も通すため、ゲーム中ならpause menuを開き、Screen上なら通常どおり閉じられる。READY中のEscはMCMCPの停止処理を起こさず、Vanillaへそのまま渡す。
+停止時は同じClientTickまでにAgent所有のsynthetic入力をすべて解除し、pending commandを破棄し、control epochを進めて古いqueue entryを無効化する。実行中EscはActionを`EMERGENCY_STOP`で終了してREADYへ戻し、その後にVanillaのEsc動作も通すため、ゲーム中ならpause menuを開き、Screen上なら通常どおり閉じられる。通常のREADY中のEscはMCMCPの停止処理を起こさずVanillaへそのまま渡すが、evaluation-turn leaseがactiveな間は6.6に従って評価を中断し、入力解放後にVanillaへ渡す。
 
 次は、それ自体では停止条件にしない。
 
@@ -308,11 +309,11 @@ Action成功、明示cancel、recoverable / unrecoverableを問わないAction f
 - 経路上の支持面または地形が変わったことだけ
 - 通常Actionのbudget超過時に、現在進行中の危険が存在する場合
 
-health、支持面、流体、被攻撃などは第10章の危険度判定へ渡し、継続、再計画、緊急回避、停止を分ける。通常Actionのbudgetが尽きても既知の能動的危険が続く場合は、Goal実行だけを止め、固定のrecovery budget内で安全化を優先する。
+health、支持面、流体、被攻撃などは第10章の危険度判定へ渡し、継続、再計画、緊急回避、停止を分ける。通常Actionのbudgetが尽きても既知の能動的危険が続く場合は、Goal実行だけを止め、固定のrecovery budget内で安全化を優先する。Screen表示を入力隔離やcontrolのglobal STOP条件にはしないが、個別primitiveが操作直前に要求するscreen-clear preconditionは8.5.2に従い、満たさない間は新しいattack / useをdispatchしない。
 
 ### 6.4 物理入力の隔離
 
-OFFとREADYではMinecraft本来の入力を変更しない。AGENTとRECOVERINGでは、Minecraftウィンドウへ届いた物理キーボード・マウス入力を次の2種類だけ例外として受理し、それ以外はVanillaのgameplay、camera、Screen widgetへ渡さない。
+evaluation-turn leaseがないOFFとREADYではMinecraft本来の入力を変更しない。AGENTとRECOVERING、およびevaluation-turn leaseがactiveなREADYでは、Minecraftウィンドウへ届いた物理キーボード・マウス入力を次の2種類だけ例外として受理し、それ以外はVanillaのgameplay、camera、Screen widgetへ渡さない。
 
 1. Esc
 2. MCMCP状態ボタンのhit box内に対する左クリック
@@ -333,20 +334,22 @@ Vanillaがsingleplayerを実際にpauseしている間はActionをcancelせず�
 |---|---|---|
 | OFF | 灰色の空円 | MCP変更操作を拒否 |
 | READY | 橙色の時計 | ON、Action待機中 |
+| EVALUATING | cyanの砂時計 | ON、evaluation-turnの推論中・入力隔離中 |
 | AGENT | 青色の矢印 | DSL実行中 |
 | RECOVERING | 紫色の盾 | 緊急回避中 |
 | FAULT | 赤色の感嘆符 | endpointまたは内部異常 |
 
-`FAULT`は6.2のcontrol stateではなく、`OFF`へ重ねて表示するUI専用presentation stateである。endpoint bind、token初期化、または内部不変条件の異常時に優先表示し、実行中Actionがあれば`INTERNAL_ERROR`で終了して入力を解除する。Screen buttonは`MCP操作: FAULT`とし、local error codeはtooltipへ表示する。world参加やONクリックだけでは解除せず、安全なendpoint再初期化に成功するかclientを再起動した場合だけ通常のOFF表示へ戻す。endpointが応答可能なら`agent_get_state.control.mode`は`off`、直前Actionの`end_reason`は`INTERNAL_ERROR`を返す。
+`EVALUATING`と`FAULT`は6.2のcontrol stateではなく、前者は`READY`へ、後者は`OFF`へ重ねて表示するUI専用presentation stateである。endpoint bind、token初期化、または内部不変条件の異常時はFAULTを優先表示し、実行中Actionがあれば`INTERNAL_ERROR`で終了して入力を解除する。Screen buttonは`MCP操作: FAULT`とし、local error codeはtooltipへ表示する。world参加やONクリックだけでは解除せず、安全なendpoint再初期化に成功するかclientを再起動した場合だけ通常のOFF表示へ戻す。endpointが応答可能なら`agent_get_state.control.mode`は`off`、直前Actionの`end_reason`は`INTERNAL_ERROR`を返す。
 
-AGENT開始時だけ3秒間、「自動操作中 — Escで緊急停止」という短いoverlay noticeを出し、その後はiconだけに戻す。
+evaluation-turn acquire時は「推論中・入力ロック中 — Escで緊急停止」、AGENT開始時は「自動操作中 — Escで緊急停止」という短いoverlay noticeを3秒間だけ出し、その後はiconと外縁だけに戻す。
 
-AGENTまたはRECOVERING中は、gameplayとScreenの双方でゲーム画面の外縁へ2 pxの黄色枠を常時表示する。READY、OFF、FAULTでは表示しない。
+AGENTまたはRECOVERING中は、gameplayとScreenの双方でゲーム画面の外縁へ2 pxの黄色枠を常時表示する。evaluation-turn leaseがactiveでActionを実行していない推論区間は2 pxのcyan枠を表示し、Action開始と同じframeでyellowへ切り替え、Action terminal後もleaseがactiveならcyanへ戻す。通常のREADY、OFF、FAULTでは表示しない。evaluation-turnの色は公開control stateや`agent_get_state.control.mode`を増やさないUI専用presentationである。
 
 chat、inventory、pause menuを含む任意の`Screen`表示中は、「icon + 状態文 + MCP操作 ON/OFF」の1 buttonを追加する。原則は右下だが、chatでは入力欄と候補一覧を塞がないよう右上へ配置する。
 
 - OFFでworldとplayerが有効: `MCP操作: OFF`
 - READY: `MCP操作: ON / 待機中`
+- EVALUATING: `MCP操作: ON / 推論中`
 - AGENT: `MCP操作: ON / 実行中`
 - RECOVERING: `MCP操作: ON / 緊急回避中`
 - FAULT: `MCP操作: FAULT`
@@ -355,6 +358,24 @@ chat、inventory、pause menuを含む任意の`Screen`表示中は、「icon + 
 クリック時の操作説明とFAULTのlocal error codeはtooltipへ置き、button本文を状態だけにする。button幅は全状態の最長文ではなく、現在の状態文にiconとpaddingを加えた幅へ毎frame追従して画面占有を抑える。OFFクリックはActionを`USER_DISABLED`で終了し、入力を解除してOFFへ戻す。ボタン自身のclickだけは6.4の入力隔離を通過する。buttonはnarration textとkeyboard focusを持つが、AGENT中のkeyboard activationはEsc以外を遮断するためmouse click専用である。
 
 ゲームHUDは`RegisterGuiLayersEvent`、Screen buttonは`ScreenEvent.Init.Post`で追加し、既存Screen classを置換しない。`Minecraft.screen == null`のframeだけgameplay iconを描画し、Screen表示中はHUD側iconを描かず、button内のiconと状態文へ置き換える。右marginと下margin（chatでは上margin）は既定8 px、既存MODと重なる場合のためoffsetだけをclient configで変更可能にする。
+
+### 6.6 評価中のevaluation-turn lease
+
+fresh MCP-only評価runnerは、read-only preflightとthread作成後にpreliminary readinessを確認し、T0を記録する前にBearer認証済みloopbackの内部control planeからevaluation-turn leaseを1件だけ獲得する。leaseはUUID、現在のworld session、runner process IDとprocess start、接続中のcontrol stream、有限のhard deadlineへ束縛する。獲得にはMCP操作が`READY`、world / playerが有効、Actionなし、入力ownerなしを要求し、解放済み入力を確認してからactiveを公開する。active公開後、runnerはlease header付き`agent_get_state`でauthoritative T0 readinessを再確認し、preliminary checkとの間に起きた物理入力変化をT0へ持ち越さない。評価中の公開5 Tool requestには内部lease headerを付け、activeな同一leaseでなければforwardを拒否する。
+
+leaseがactiveな間は、モデルが推論していてActionがない区間も6.4の物理入力隔離を維持する。表示は6.5のcyan / yellowで区別する。別Windows TerminalのmonitorはMinecraft入力所有権を持たず、control streamを読み取るだけとする。
+
+次のいずれかを検出した場合は、現在Actionをpriority stopし、pending commandを無効化し、Agent所有input・使用/破壊状態・追跡velocityと評価用物理入力隔離を解放する。入力ownerがないことを確認した後でだけlease terminalをcontrol streamへ公開する。
+
+- 物理Esc
+- Screen上のMCP操作OFF
+- world unload、dimension変更、respawn、死亡、server disconnect
+- client shutdown
+- runner process終了
+- control stream切断
+- lease hard deadline
+
+物理Escで終わった評価runは失敗とする。ただし入力解放に成功し、同じworldでMCP操作ONが有効なら、Actionを`EMERGENCY_STOP`として通常どおり`READY`へ戻し、UIのON leaseは維持する。UI OFF、world境界、shutdownは従来どおり`OFF`、入力解放を確認できない場合は安全faultとして`OFF`へlockする。runner process終了、stream切断、deadlineも評価を失敗させるが、同じworldと有効なUI許可が残り、入力解放を確認できた場合は`READY`を維持する。正常なturn completionでも、runnerは同じ停止・解放確認gateを明示的に通してからleaseをreleaseし、visible child processを終了する。
 
 ## 7. 観測境界
 
@@ -519,14 +540,14 @@ Local Observation Volume外の未知危険、opaque wall裏、未ロード領域
 
 ### 8.1 transport
 
-- Endpoint: http://127.0.0.1:8765/mcp
+- 公開Endpoint: http://127.0.0.1:8765/mcp
 - Transport: Streamable HTTP
 - 製品基準: MCP 2026-07-28
 - Codex互換: MCP 2025-06-18形式の`initialize`、`notifications/initialized`、`tools/list`、`tools/call`のみ
 - 通信形式: stateless / POST-only / JSON response（`notifications/initialized`のみ202 empty）
 - 同時に実行できるTask: 1件
 - stdio: 非対応
-- GET、protocol session、長時間SSE: 非対応
+- 公開EndpointのGET / DELETE、protocol session、長時間SSE: 非対応
 - LAN bind、0.0.0.0: 非対応
 
 Minecraftはすでに起動しているプロセスなので、MCP clientがsubprocessを起動するstdioは適さない。Streamable HTTPを使う。
@@ -623,6 +644,12 @@ discover resultのcapabilitiesはToolsだけとする。
 
 Resources、Prompts、Tasks extension、Subscriptions、Sampling、Elicitation、SSEは実装しない。Codexが`tools/list`へ付けるprogress tokenは受理するが、progress notificationは送信しない。
 
+#### 8.4.1 fresh評価専用の内部control plane
+
+`/mcp/internal/evaluation-turn`はfresh MCP-only評価にだけ使う非公開endpointである。公開MCP endpointと同じ`127.0.0.1` bind、Host / Origin検証、Bearer認証、body / JSON上限を適用し、認証迂回、proxy、redirectを許可しない。POSTはrunner process ID、lease UUID、有限の最大時間を検証して6.6のleaseを獲得し、connection closeを検出できるevent-driven control streamを返す。DELETEは同じleaseを明示終了する。未知method、別lease、過大deadline、dead process、同時2件目はfail closedにする。
+
+評価中に公開`/mcp`へforwardするrequestには`Mcmcp-Evaluation-Lease` headerを1件だけ付ける。HTTP受付時のactive lease IDまたはlease不在をcall contextへ束縛し、Minecraft client threadのwork開始直前とdelivery confirm / abandonでもlive guardへ再照合する。これにより、header検証後のacquire / Esc / releaseと遅延requestの競合をfail closedにする。header値はresponse、log、monitor、artifactへ生で残さない。このendpointとheaderはMCP method / Tool / resourceではなく、`server/discover`、`initialize`、固定5 Toolのcatalog、`tools/list`、dynamic Tool schemaへ追加しない。公開endpointのPOST-only契約と、内部control planeのPOST / DELETE / stream契約を混同しない。
+
 ### 8.5 Tools
 
 | Tool | 変更 | 内容 |
@@ -710,6 +737,8 @@ Action DSL v1の制御構造:
 | collect_visible_item_batch | movement | 2〜8件の可視item witnessをlisted orderで同じ安全検証経路へ展開し、失敗時は未開始suffixを実行しない |
 
 `break_known_face`は指定faceのblock中央へ固定照準せず、そのfaceを実際に観測したray hitへ解析的に照準し、開始直前にも同じfaceのtargeted raycastを要求する。
+
+semantic action、stationary break、block plan、Phase 5 world adapterで共有するuniversal safety gateは、OS window focusとVanillaのmouse grabを許可条件へ含めない。評価中に別terminalへfocusを移した場合やmouse captureが一時的に外れた場合でも、それだけでpreflight / JITを失敗させない。一方、Minecraftの実pause、予期しないScreen / overlay、Survival mode、生存とhealth・被弾・炎上、policy-visibleな近傍threat、primitiveごとの位置・向き・slot・使用状態を含むstationary条件、serverのposition / rotation / motion / inventory / block mutation reconciliationは従来どおり検証し、操作直前の再検証を省略しない。Screenの不一致はこのmutation dispatchを許可しない条件であり、それだけでcontrolをOFFにするglobal stopとは区別する。universal safetyの変化は`CONTROL_CONTEXT_CHANGED`または`mutation_safety_changed`、対象block自体の不一致は`mutation_precondition_changed`として分離し、入力値を診断へ反射しない。
 
 `break_known_face`の`tool_item`と`till_known_block` / `till_known_batch`の`hoe_item`はinventory内の該当toolをhotbarへ一時退避して決定論的に選択する契約であり、任意slot操作を公開しない。`plant_known_wheat` / `plant_known_wheat_batch`も同じ準備経路でwheat_seedsを選ぶ。各変化はclient prediction ACKとauthoritative block stateで確認し、toolや種を生成・補充しない。成熟待ちは、primitive開始時にtarget-scoped fresh barrier以後のpolicy-visibleなwheat surfaceを明示座標へ束縛する。targetのmutation revisionがbounded reconciliation mapに残っている場合は`max(visualBarrier, exactTargetRevision)`を使い、他座標の大量更新によるeviction floorを混ぜない。exact target revisionが既にevictされている場合だけ`max(visualBarrier, surfaceMutationEvictionFloor)`へfail-closed fallbackする。一般primitiveのsurface barrier契約は変更しない。JIT認可にはworld/session/dimension/exact targetに加え、その時点の`visualBarrierWorldRevision`、player位置、observer eyeを固定する。待機中にvisual barrierが変化した場合、またはplayer位置/eyeが固定epsilon（1/1024 block）を超えて変化した場合は、live BlockStateを読む前に`PATH_BLOCKED`で終了する。wheat AGE更新などnavigation-neutralなexact-target mutationはvisual barrierを上げないため待機を継続できる。束縛がcurrentな間だけ、その認可済みでload済みの1座標をlive BlockStateで確認し、wheat age=7なら観測frameの更新を待たず完了、age<7ならpendingとする。非wheatへの置換、unload、session / dimension / target変更は早期terminalとし、live stateの値や近傍情報はresponseへ公開しない。単独`wait_until`の初期admissionにも同じvisible wheatを要求する。先行する認可済みplantが全control pathで同じtargetを生成すると静的証明できる閉じたprogramだけは初期解析で未生成cropを許すが、wait開始時の1-node JIT bindでは例外なく新しいvisible wheatを再認可する。timeout時は入力を発生させずActionを終了する。raw attack/useや任意座標操作へ一般化しない。
 
@@ -1336,13 +1365,14 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - Agent所有input・使用/破壊状態・追跡velocityをすべて解放してからterminal stateを公開し、HTTP waiterがterminalを観測した時点でsynthetic keyがdownのまま残らない。全解放を最大3回試しても成否未確認ならMCP操作をOFFへlockし、最初のterminal intentとREADY未公開状態を保持する。次ClientTick先頭でも再解放し、成功後は同一terminalだけを公開するが、安全fault後の自動再armはせず手動ONまでOFFを保つ
 - exception、disconnect、world変更時はfail-closed
 - RECOVER判定から次のClientTickまでにGoal入力をpreempt
-- focus喪失とScreen表示だけではAction stateを変更しない
+- focus喪失だけではAction stateを変更しない。Screen表示はglobal STOP / OFF条件にせず、個別primitiveのscreen-clear gateとして扱う
 
 ### 13.3 audit
 
 - Taskごとのメモリ内ring buffer
 - 主要eventだけをSLF4Jへ構造化出力
 - token、chat、看板、本、全chunk情報をlogしない
+- evaluation lease UUID、runnerへ渡すheader、raw private chain-of-thought、reasoning delta、raw Tool引数・結果をlogしない。評価artifactにはlease IDのhash、acquire / terminal時刻、固定reason、`inputs_released`、`input_owner_none`、`all_actions_terminal`、`process_identity_bound`の独立Boolean proofだけを残す
 - 永続telemetryを送信しない
 
 主要event:
@@ -1358,6 +1388,8 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - TASK_SUCCEEDED
 - TASK_FAILED
 - INPUT_RELEASED
+- EVALUATION_TURN_ACQUIRED
+- EVALUATION_TURN_TERMINATED
 
 ## 14. 受入条件
 
@@ -1384,7 +1416,7 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - malformed JSONはゲームへ影響せずJSON-RPC error
 - application/json以外のrequestは415
 - JSON-RPC batchは拒否
-- GETとDELETEは405、POSTだけを受理
+- 公開`/mcp`のGETとDELETEは405、POSTだけを受理
 - 2026経路の`MCP-Protocol-Version`欠落・不一致を拒否
 - 2026経路の`Mcp-Method`とJSON-RPC methodの不一致を拒否
 - clientInfoを省略した適合requestを受理
@@ -1396,6 +1428,8 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - 2026経路の成功responseがresult._metaのserverInfoを含み、両経路のJSON responseがContent-Type application/jsonを含む
 - `@modelcontextprotocol/conformance@0.2.0-alpha.11`の固定Tools-only scenarioが全件成功
 - tokenがlog、URI、Tool resultに含まれない
+- 内部evaluation-turn endpointもloopback / Host / Origin / Bearer / body上限を維持し、未認証、dead runner、別lease、同時2件目を拒否する
+- evaluation-turn endpoint / headerが`server/discover`、`tools/list`、catalog、dynamic Tool schemaへ現れず、公開Toolが固定5件のままである
 
 ### 14.3 操作権
 
@@ -1406,6 +1440,7 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - enqueue後、ClientTick前にworld、READY、control epochが変わった場合は入力せず失敗
 - READY中のEscは通常どおりchat/menuを閉じ、READYを維持
 - AGENT/RECOVERING中のEscは1 ClientTick以内にEMERGENCY_STOP、queue破棄、入力解除、READY
+- evaluation-turn中はActionがない推論区間でも物理入力を隔離し、Escでrun失敗、入力解除、lease terminal、READY復帰となる
 - Screen buttonのOFFは1 ClientTick以内にUSER_DISABLED、queue破棄、OFF
 - Esc以外の物理key、mouse button、scroll、mouse turnはActionを止めず、Minecraftへ影響しない
 - MCMCP button hit box内の左clickだけが入力隔離を通過
@@ -1418,9 +1453,12 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - world離脱、dimension変更、respawn、死亡は1 ClientTick以内に解除してOFF
 - terminal state後、Agent所有keyがすべてup
 - gameplay中は右下に状態iconだけを表示し、常設文字panelを出さない
+- evaluation-turn acquire時の推論・入力lock案内は3秒で消える
 - AGENT開始時のEsc案内は3秒で消える
 - Screen表示中は右下にicon、状態文、ON/OFF buttonを表示
 - AGENT/RECOVERING中はgameplay、chat、inventory、menuの外縁に2 pxの黄色枠を表示し、停止後は同じframeで消える
+- evaluation-turnの推論区間は2 pxのcyan枠、Action / recovery中はyellow枠となり、正常release、Esc、UI OFF、world境界、shutdown、runner終了、stream切断、deadlineの入力解放後に枠が消える
+- evaluation-turn terminalを公開した時点でinput ownerがなく全Actionがterminalであり、通常完了とEscではMCP操作ONのREADYを維持する
 - iconはOFF、READY、AGENT、RECOVERING、FAULTで色と輪郭が異なる
 - gameplay HUD iconとScreen buttonが対象24 MODの主要Screenでcrashせず、offset設定が反映される
 
@@ -1591,7 +1629,9 @@ runnerがAuthorization headerを設定できないため、NeoForge development 
 - READYのEsc透過、実行中EscのREADY復帰、Screen OFF、MCP cancel
 - AGENT中の物理keyboard/mouse隔離
 - focus喪失、non-paused chat、inventory、multiplayer pause menuを表示したままnavigation/camera/waitを完了
-- gameplay icon、実行中の黄色外縁、全主要Screenへの省スペース状態button
+- semantic / block mutationのuniversal safetyがwindow focus / mouse grabを参照せず、pause / Screen / Survival / health / threat / stationary / reconciliationを維持するcontract test
+- evaluation-turnのacquire / normal release / Esc / UI OFF / world境界 / shutdown / runner終了 / stream切断 / deadline、推論中の物理入力隔離、cyan↔yellow外縁をclient testする
+- gameplay icon、推論中のcyan外縁、実行中の黄色外縁、全主要Screenへの省スペース状態button
 - world unload
 - dynamic obstacle
 - 10.3の危険分類とrecovery
@@ -1665,6 +1705,8 @@ world、mmc-pack.json、instance.cfg、既存jarは変更しない。
 fresh MCP-only実験は製品runtimeと分け、script内定数へpinした`codex-cli 0.146.1 app-server --stdio --strict-config`のexperimental `dynamicTools`へ、MCP 2026-07-28 `tools/list`から得た固定5 Tool schemaだけを渡す。canonical catalogのfile/surface hashとlive resultをexact比較した後、評価runnerは`item/tool/call`をliteral `127.0.0.1` endpointへ1対1 forwardする。Bearerはrunner内だけでAuthorization headerへ使い、proxy/redirectを禁止してCodex childへ渡さない。この評価専用bridgeは、MOD内MCP serverだけで完結する製品要件を変更せず、永続MCP config未登録時にユーザーが許可したdirect fallbackとして、モデルへ余分なbuilt-in/MCP Toolを見せないための隔離hostである。
 
 評価threadは毎回credential/config fileを持たないclean isolated `CODEX_HOME` / cwd、ephemeral、read-only、approval never、environmentなしで開始する。親runnerはcanonical `~/.codex/auth.json`からaccess token/account IDだけをメモリへ取り込み、JWT lifetimeをstartup/login/T0で検査して、artifactへ記録しない`account/login/start`から`cli_auth_credentials_store=ephemeral`へ注入する。元authは複製・hardlink・更新しない。production promptは厳格allowlistの`full-cycle`（全区画を耕す・播種する・全収穫と再播種を反復して小麦64個以上）または`short-regression`（短い依頼からの文脈推定）の一方を選び、`turn/start`のtext input 1件だけとする。主受入は`full-cycle`であり、shortの成功だけでcompletionを代替しない。MCMCP以外のshell、computer-use、browser/web、sub-agent、skill、app/plugin等をCLI featureとthread configの両方で無効化する。正当な`isError=true` domain resultはモデルへ保持して返し、transport/protocol/secret failureと区別する。詳細な固定値、T0、17分上限、両token scan、raw JSONL/bridge相互監査は`docs/experiments/MCMCP_fresh_MCP-only_評価protocol.md`を規範とする。
+
+fresh評価はT0前に6.6のevaluation-turn leaseを獲得し、turn中の全forwardをそのleaseへ束縛する。別Windows Terminalの読み取り専用monitorは`Start-McmcpFreshEvalMonitor.ps1`から起動し、public commentary / preamble、completed reasoning summary、固定Tool / Action進行だけを表示する。Codexが公開した本文は座標等を含め意味的に加工せず転送し、raw private chain-of-thought、reasoning delta、raw Tool引数・結果はevent選択しない。実credential完全一致とTerminal制御文字だけを遮断する。画面へ表示したprefix除去後の安全な各行は、時刻・種別labelを含む同じ本文・同じ順序の`live-monitor.log`としてartifactへ保存する。このlogはMinecraft、MCP、runnerへの入力には使わず、既存trace / bridge auditによる`summary=detailed`、raw / summary deltaのopt-outと不在、monitor prefix / event allowlist / 制御文字guard、表示とlogの完全一致self-testで境界を証明する。runner / monitorは周期pollingせず、control stream、app-server JSONL、child process終了をevent-drivenに待ち、runner終了時は`-NoExit`なしのvisible childも終了する。
 
 Codex CLIのversionを更新する場合は、先にlegacy wire handshake、app-server UNSTABLE APIのgenerated schema、external token login、dynamic Tool lifecycle、hardening config、固定5 Toolの呼出しを再取得し、compatibility contractとfresh MCP-only評価を更新する。再検証なしに別versionを合格扱いしない。
 
