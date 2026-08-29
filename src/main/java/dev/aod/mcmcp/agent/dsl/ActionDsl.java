@@ -29,7 +29,8 @@ public final class ActionDsl {
         }
     }
 
-    public sealed interface Node permits NavigateToKnown, FaceKnownPosition, BreakKnownFace,
+    public sealed interface Node permits NavigateToKnown, ApproachKnownSurface,
+            FaceKnownPosition, BreakKnownFace,
             TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
             HarvestKnownWheat, HarvestKnownWheatBatch, OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
@@ -41,6 +42,20 @@ public final class ActionDsl {
         public NavigateToKnown {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
+        }
+    }
+
+    /**
+     * Moves to a policy-known safe feet cell from which the observed block is geometrically
+     * within normal interaction reach. The caller supplies a block position, never a derived
+     * navigation coordinate; a fresh observation is still required before a later mutation.
+     */
+    public record ApproachKnownSurface(
+            String id, Position target, String expectedBlock) implements Node {
+        public ApproachKnownSurface {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(expectedBlock, "expectedBlock");
         }
     }
 

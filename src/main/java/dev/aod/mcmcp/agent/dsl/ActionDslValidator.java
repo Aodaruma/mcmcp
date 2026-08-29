@@ -178,6 +178,12 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.MOVEMENT);
             return 1;
         }
+        if (node instanceof ActionDsl.ApproachKnownSurface approach) {
+            validatePosition(approach.target(), path + ".target");
+            requireResourceLocation(approach.expectedBlock(), path + ".expected_block");
+            walk.requiredCapabilities.add(ActionDsl.Capability.MOVEMENT);
+            return 1;
+        }
         if (node instanceof ActionDsl.FaceKnownPosition face) {
             validatePosition(face.target(), path + ".target");
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);

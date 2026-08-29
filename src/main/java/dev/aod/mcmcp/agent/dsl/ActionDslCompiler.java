@@ -85,6 +85,7 @@ public final class ActionDslCompiler {
             return compileWait(node, wait.maxTicks(), primitiveCostBounds);
         }
         if (node instanceof ActionDsl.NavigateToKnown
+                || node instanceof ActionDsl.ApproachKnownSurface
                 || node instanceof ActionDsl.FaceKnownPosition
                 || node instanceof ActionDsl.BreakKnownFace
                 || node instanceof ActionDsl.TillKnownBlock

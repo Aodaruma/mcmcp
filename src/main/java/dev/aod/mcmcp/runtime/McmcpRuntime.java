@@ -3827,6 +3827,48 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     return false;
                 }
                 agentExecution.primitiveExecutor.beginNavigate(route, navigate.tolerance());
+            } else if (agentExecution.primitive instanceof ActionDsl.ApproachKnownSurface approach) {
+                AgentPrimitivePlanner.requireKnownSurface(
+                        map,
+                        agentPlanningFrame(),
+                        approach.target(),
+                        approach.expectedBlock(),
+                        surfaceRevisionBarrier.applyAsLong(approach.target()));
+                AgentPrimitivePlanner.ApproachPlan plan =
+                        AgentPrimitivePlanner.requireApproachPlan(
+                                map,
+                                agentPathfinder,
+                                playerCell(player, map.dimension()),
+                                approach.target());
+                cost = AgentPrimitivePlanner.navigationCost(
+                        plan.route(), playerPose(player, map.dimension()));
+                if (agentExecution.replanning) {
+                    if (!fits(0L, cost.durationMillis(),
+                                    agentExecution.occurrenceLimit.durationMillis())
+                            || !fits(0L, cost.ticks(),
+                                    agentExecution.occurrenceLimit.ticks())) {
+                        failAgentAction(
+                                AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                                false,
+                                "approach_replanned_route");
+                        return false;
+                    }
+                    cost = AgentPrimitivePlanner.navigationReplanCost(plan.route(), cost);
+                }
+                if (!fitsRemainingBudget(
+                        progressBeforeTick,
+                        action.program().effectiveBudget(),
+                        cost,
+                        activeElapsedNanos(agentExecution, System.nanoTime()))
+                        || !fitsOccurrenceRemaining(
+                                progressBeforeTick, agentExecution, cost)) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                            false,
+                            "approach_known_surface");
+                    return false;
+                }
+                agentExecution.primitiveExecutor.beginNavigate(plan.route(), 0.25D);
             } else if (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition face) {
                 var target = AgentPrimitivePlanner.requireKnownFaceTarget(
                         map,

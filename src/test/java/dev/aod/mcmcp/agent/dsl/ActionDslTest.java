@@ -104,6 +104,27 @@ class ActionDslTest {
     }
 
     @Test
+    void parsesSurfaceApproachWithoutAcceptingDerivedNavigationFields() {
+        JsonObject node = approachKnownSurface("approach");
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("movement"), node, budget(30_000, 600, 32, 0)));
+
+        assertThat(request.program().body()).singleElement().satisfies(value -> {
+            var approach = (ActionDsl.ApproachKnownSurface) value;
+            assertThat(approach.target()).isEqualTo(new ActionDsl.Position(
+                    "minecraft:overworld", 10, 64, 10));
+            assertThat(approach.expectedBlock()).isEqualTo("minecraft:dirt");
+        });
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactly(ActionDsl.Capability.MOVEMENT);
+
+        node.addProperty("navigation_target", "forbidden");
+        assertCode(request(
+                        capabilities("movement"), node, budget(30_000, 600, 32, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
     void repeatMultipliesTheComponentWiseBranchCost() {
         JsonObject request = request(
                 capabilities("movement", "camera"),
@@ -893,6 +914,13 @@ class ActionDslTest {
         JsonObject node = baseNode(id, "navigate_to_known");
         node.add("target", position());
         node.addProperty("tolerance", 0.75);
+        return node;
+    }
+
+    private static JsonObject approachKnownSurface(String id) {
+        JsonObject node = baseNode(id, "approach_known_surface");
+        node.add("target", position());
+        node.addProperty("expected_block", "minecraft:dirt");
         return node;
     }
 

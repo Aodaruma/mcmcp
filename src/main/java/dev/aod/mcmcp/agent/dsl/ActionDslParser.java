@@ -117,6 +117,7 @@ public final class ActionDslParser {
         String operation = string(required(object, "op", path), path + ".op");
         return switch (operation) {
             case "navigate_to_known" -> navigate(object, path);
+            case "approach_known_surface" -> approachKnownSurface(object, path);
             case "face_known_position" -> face(object, path);
             case "break_known_face" -> breakKnownFace(object, path);
             case "till_known_block" -> tillKnownBlock(object, path);
@@ -146,6 +147,16 @@ public final class ActionDslParser {
                 string(source.get("id"), path + ".id"),
                 position(source.get("target"), path + ".target"),
                 number(source.get("tolerance"), path + ".tolerance"));
+    }
+
+    private static ActionDsl.ApproachKnownSurface approachKnownSurface(
+            JsonObject source, String path) {
+        exactKeys(source, path, Set.of("id", "op", "target", "expected_block"),
+                Set.of("id", "op", "target", "expected_block"));
+        return new ActionDsl.ApproachKnownSurface(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                string(source.get("expected_block"), path + ".expected_block"));
     }
 
     private static ActionDsl.FaceKnownPosition face(JsonObject source, String path) {

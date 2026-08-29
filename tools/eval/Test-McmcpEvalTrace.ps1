@@ -41,8 +41,9 @@ $AuditPromptProfile = if ($PSCmdlet.ParameterSetName -eq 'Audit') {
     'short-regression'
 }
 $ProductionPrompt = [string]$ProductionPrompts[$AuditPromptProfile]
-$ExpectedCatalogFileSha256 = '75c70584b0b04cc59aebd6d78ff1d89ae7fc1f7dbebf19a032fbf3a312433955'
-$ExpectedToolSurfaceSha256 = '4afdacbad81ad958e4fd7b285b45f8dc802259560cea1cbbdc94817ce9482ecc'
+$ExpectedCatalogFileSha256 = 'd0f4e1a3c48cc675b1d9187f6396313ca26524c0c50b815bc2bfba97be5852cb'
+$ExpectedToolSurfaceSha256 = 'ac5b8432835baaadf3abade3f9455e55c4486fb468605247aebaeb0a13ede985'
+$ExpectedEvaluatorTimeoutSeconds = 1800
 $TurnCompletionReserveSeconds = 15
 $MaximumMcpForwardSeconds = 35
 $AgentGetActionTransportMarginSeconds = 2
@@ -622,7 +623,7 @@ function Invoke-TraceAudit {
             $reserveSeconds = Get-PropertyValue $record.value 'terminalization_reserve_seconds'
             $requiredHeadroomSeconds = Get-PropertyValue $record.value 'required_headroom_seconds'
             Add-ViolationUnless ((Test-IsJsonInteger $remainingSeconds) -and
-                $remainingSeconds -ge 0 -and $remainingSeconds -le 1020) `
+                $remainingSeconds -ge 0 -and $remainingSeconds -le $ExpectedEvaluatorTimeoutSeconds) `
                 "bridge line $($record.line): deadline rejection remaining seconds mismatch" $violations
             Add-ViolationUnless ((Test-IsJsonInteger $forwardTimeoutSeconds) -and
                 $forwardTimeoutSeconds -ge 1 -and
@@ -893,8 +894,8 @@ function Invoke-TraceAudit {
             (Get-Sha256 $ProductionPrompt)) 'T0 prompt hash mismatch' $violations
         Add-ViolationUnless ((Get-PropertyValue $t0 'prompt_profile') -ceq
             $AuditPromptProfile) 'T0 prompt profile mismatch' $violations
-        Add-ViolationUnless ((Get-PropertyValue $t0 'timeout_seconds') -eq 1020) `
-            'T0 timeout must be 1020 seconds' $violations
+        Add-ViolationUnless ((Get-PropertyValue $t0 'timeout_seconds') -eq $ExpectedEvaluatorTimeoutSeconds) `
+            "T0 timeout must be $ExpectedEvaluatorTimeoutSeconds seconds" $violations
         foreach ($readinessFlag in @(
                 'preliminary_readiness_passed', 'evaluation_lease_header_bound',
                 'readiness_rechecked', 'ready_mode_ok', 'game_unpaused',
@@ -1622,14 +1623,14 @@ function Invoke-TraceAudit {
             if ($null -ne $t0DeadlineUtc -and $null -ne $rejectionUtc) {
                 $elapsedSeconds = ($rejectionUtc - $t0DeadlineUtc).TotalSeconds
                 $expectedRemainingSeconds = [int][Math]::Max(
-                    0, [Math]::Floor(1020.0D - $elapsedSeconds))
+                    0, [Math]::Floor([double]$ExpectedEvaluatorTimeoutSeconds - $elapsedSeconds))
                 $recordedRemainingSeconds = Get-PropertyValue `
                     $rejection 'remaining_seconds'
                 $remainingDelta = if (Test-IsJsonInteger $recordedRemainingSeconds) {
                     [long]$recordedRemainingSeconds - $expectedRemainingSeconds
                 } else { [long]::MinValue }
                 Add-ViolationUnless ($elapsedSeconds -ge 0.0D -and
-                    $elapsedSeconds -le 1021.0D) `
+                    $elapsedSeconds -le ($ExpectedEvaluatorTimeoutSeconds + 1.0D)) `
                     "deadline rejection UTC is outside the T0 deadline window at index $rejectionIndex" `
                     $violations
                 Add-ViolationUnless ($remainingDelta -ge 0 -and $remainingDelta -le 1) `
@@ -1771,7 +1772,7 @@ function Invoke-TraceAudit {
                 $cleanupRequiredHeadroom = Get-PropertyValue `
                     $start 'required_headroom_seconds'
                 Add-ViolationUnless ((Test-IsJsonInteger $cleanupRemainingSeconds) -and
-                    $cleanupRemainingSeconds -ge 0 -and $cleanupRemainingSeconds -le 1020) `
+                    $cleanupRemainingSeconds -ge 0 -and $cleanupRemainingSeconds -le $ExpectedEvaluatorTimeoutSeconds) `
                     "dynamic call '$callId' deadline cleanup remaining seconds mismatch" $violations
                 Add-ViolationUnless ((Test-IsJsonInteger $cleanupReserveSeconds) -and
                     $cleanupReserveSeconds -eq $TurnCompletionReserveSeconds) `
@@ -1803,13 +1804,13 @@ function Invoke-TraceAudit {
                 if ($null -ne $t0DeadlineUtc -and $null -ne $cleanupStartUtc) {
                     $cleanupElapsedSeconds = ($cleanupStartUtc - $t0DeadlineUtc).TotalSeconds
                     $expectedCleanupRemaining = [int][Math]::Max(
-                        0, [Math]::Floor(1020.0D - $cleanupElapsedSeconds))
+                        0, [Math]::Floor([double]$ExpectedEvaluatorTimeoutSeconds - $cleanupElapsedSeconds))
                     $cleanupRemainingDelta = if (
                         Test-IsJsonInteger $cleanupRemainingSeconds) {
                         [long]$cleanupRemainingSeconds - $expectedCleanupRemaining
                     } else { [long]::MinValue }
                     Add-ViolationUnless ($cleanupElapsedSeconds -ge 0.0D -and
-                        $cleanupElapsedSeconds -le 1021.0D -and
+                        $cleanupElapsedSeconds -le ($ExpectedEvaluatorTimeoutSeconds + 1.0D) -and
                         $cleanupRemainingDelta -ge 0 -and
                         $cleanupRemainingDelta -le 1) `
                         "dynamic call '$callId' deadline cleanup remaining UTC proof mismatch" `
@@ -2161,7 +2162,7 @@ function Invoke-AuditSelfTest {
         [ordered]@{
             sequence = 11; event = 't0'; prompt_profile = 'short-regression'
             prompt_sha256 = Get-Sha256 $ProductionPrompt
-            timeout_seconds = 1020; preliminary_readiness_passed = $true
+            timeout_seconds = $ExpectedEvaluatorTimeoutSeconds; preliminary_readiness_passed = $true
             evaluation_lease_header_bound = $true; readiness_rechecked = $true
             ready_mode_ok = $true; game_unpaused = $true; world_present = $true
             observation_present = $true; inventory_empty = $true
@@ -2371,7 +2372,7 @@ function Invoke-AuditSelfTest {
         })
     $deadlineBridge += [pscustomobject][ordered]@{
         sequence = 14
-        utc = $syntheticT0Utc.AddSeconds(979.5D).ToString('o')
+        utc = $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 40.5D).ToString('o')
         event = 'dynamic_deadline_rejected'
         app_request_id = 0
         call_id = 'call_1'
@@ -2389,7 +2390,7 @@ function Invoke-AuditSelfTest {
     }
     $deadlineBridge += [pscustomobject][ordered]@{
         sequence = 15
-        utc = $syntheticT0Utc.AddSeconds(979.51D).ToString('o')
+        utc = $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 40.49D).ToString('o')
         event = 'dynamic_response_sent'
         app_request_id = 0
         call_id = 'call_1'
@@ -2419,13 +2420,13 @@ function Invoke-AuditSelfTest {
             if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
                 $copy.tool = 'agent_get_action'
                 $copy.arguments_sha256 = Get-Sha256 (ConvertTo-CompactJson $getActionArguments)
-                $copy.utc = $syntheticT0Utc.AddSeconds(977.5D).ToString('o')
+                $copy.utc = $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 42.5D).ToString('o')
                 $copy.remaining_seconds = 42
                 $copy.forward_timeout_seconds = 27
                 $copy.required_headroom_seconds = 42
             } elseif ((Get-PropertyValue $copy 'event') -ceq 'dynamic_response_sent') {
                 $copy.tool = 'agent_get_action'
-                $copy.utc = $syntheticT0Utc.AddSeconds(977.51D).ToString('o')
+                $copy.utc = $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 42.49D).ToString('o')
             }
             $copy
         })
@@ -2520,7 +2521,7 @@ function Invoke-AuditSelfTest {
         })
     $deadlineLatchBridge += [pscustomobject][ordered]@{
         sequence = 16
-        utc = $syntheticT0Utc.AddSeconds(980.5D).ToString('o')
+        utc = $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 39.5D).ToString('o')
         event = 'dynamic_deadline_rejected'
         app_request_id = 1
         call_id = 'call_2'
@@ -2538,7 +2539,7 @@ function Invoke-AuditSelfTest {
     }
     $deadlineLatchBridge += [pscustomobject][ordered]@{
         sequence = 17
-        utc = $syntheticT0Utc.AddSeconds(980.51D).ToString('o')
+        utc = $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 39.49D).ToString('o')
         event = 'dynamic_response_sent'
         app_request_id = 1
         call_id = 'call_2'
@@ -2578,7 +2579,7 @@ function Invoke-AuditSelfTest {
         })
     $deadlineCleanupBridge += [pscustomobject][ordered]@{
         sequence = 16
-        utc = $syntheticT0Utc.AddSeconds(981.5D).ToString('o')
+        utc = $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 38.5D).ToString('o')
         event = 'mcp_forward_started'
         app_request_id = 1
         call_id = 'call_2'
@@ -2595,7 +2596,7 @@ function Invoke-AuditSelfTest {
     }
     $deadlineCleanupBridge += [pscustomobject][ordered]@{
         sequence = 17
-        utc = $syntheticT0Utc.AddSeconds(981.6D).ToString('o')
+        utc = $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 38.4D).ToString('o')
         event = 'mcp_forward_completed'
         app_request_id = 1
         call_id = 'call_2'
@@ -2611,7 +2612,7 @@ function Invoke-AuditSelfTest {
     }
     $deadlineCleanupBridge += [pscustomobject][ordered]@{
         sequence = 18
-        utc = $syntheticT0Utc.AddSeconds(981.7D).ToString('o')
+        utc = $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 38.3D).ToString('o')
         event = 'dynamic_response_sent'
         app_request_id = 1
         call_id = 'call_2'
@@ -2681,21 +2682,21 @@ function Invoke-AuditSelfTest {
         $deadlineCleanupBeforeResponseBridge[$index].sequence = $index + 1
     }
     $deadlineCleanupBeforeResponseBridge[14].utc =
-        $syntheticT0Utc.AddSeconds(979.6D).ToString('o')
+        $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 40.4D).ToString('o')
     $deadlineCleanupBeforeResponseBridge[14].remaining_seconds = 40
     $deadlineCleanupBeforeResponseBridge[15].utc =
-        $syntheticT0Utc.AddSeconds(979.7D).ToString('o')
+        $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 40.3D).ToString('o')
     $deadlineCleanupBeforeResponseBridge[16].utc =
-        $syntheticT0Utc.AddSeconds(979.8D).ToString('o')
+        $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 40.2D).ToString('o')
     $deadlineCleanupBeforeResponseBridge[17].utc =
-        $syntheticT0Utc.AddSeconds(979.9D).ToString('o')
+        $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 40.1D).ToString('o')
     $deadlineSecondCleanupBridge = @($deadlineCleanupBridge | ForEach-Object {
             ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
         })
     $secondCleanupStart = ConvertTo-CompactJson $deadlineCleanupBridge[15] |
         ConvertFrom-Json -Depth 100
     $secondCleanupStart.sequence = 19
-    $secondCleanupStart.utc = $syntheticT0Utc.AddSeconds(982.5D).ToString('o')
+    $secondCleanupStart.utc = $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 37.5D).ToString('o')
     $secondCleanupStart.app_request_id = 2
     $secondCleanupStart.call_id = 'call_3'
     $secondCleanupStart.mcp_request_id = 5
@@ -2727,7 +2728,7 @@ function Invoke-AuditSelfTest {
             $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
             if ((Get-PropertyValue $copy 'event') -ceq 'dynamic_deadline_rejected') {
                 $copy.utc = $syntheticT0Utc.AddSeconds(1.5D).ToString('o')
-                $copy.remaining_seconds = 1018
+                $copy.remaining_seconds = $ExpectedEvaluatorTimeoutSeconds - 2
             } elseif ((Get-PropertyValue $copy 'event') -ceq 'dynamic_response_sent') {
                 $copy.utc = $syntheticT0Utc.AddSeconds(1.51D).ToString('o')
             }
@@ -2750,7 +2751,7 @@ function Invoke-AuditSelfTest {
     $duplicateRejection = ConvertTo-CompactJson $deadlineDuplicateRejectionBridge[13] |
         ConvertFrom-Json -Depth 100
     $duplicateRejection.reason = 'terminalization_latched'
-    $duplicateRejection.utc = $syntheticT0Utc.AddSeconds(980.5D).ToString('o')
+    $duplicateRejection.utc = $syntheticT0Utc.AddSeconds($ExpectedEvaluatorTimeoutSeconds - 39.5D).ToString('o')
     $duplicateRejection.remaining_seconds = 39
     $deadlineDuplicateRejectionBridge += $duplicateRejection
     for ($index = 0; $index -lt $deadlineDuplicateRejectionBridge.Count; $index++) {

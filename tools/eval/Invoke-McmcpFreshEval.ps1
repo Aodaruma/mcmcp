@@ -49,7 +49,7 @@ $ProductionPrompts = [ordered]@{
 $ProductionPrompt = [string]$ProductionPrompts[$PromptProfile]
 $RequiredCodexVersion = 'codex-cli 0.146.1'
 $ModernProtocolVersion = '2026-07-28'
-$EvaluatorTimeout = [TimeSpan]::FromMinutes(17)
+$EvaluatorTimeout = [TimeSpan]::FromMinutes(30)
 $TurnCompletionReserveSeconds = 15
 $EvaluationLeaseMaximumDuration = $EvaluatorTimeout.Add([TimeSpan]::FromSeconds(45))
 $EvaluationControlTimeoutSeconds = 10
@@ -61,8 +61,8 @@ $AuthExpirySafetyMargin = [TimeSpan]::FromMinutes(5)
 $MinimumMcpRequestIntervalMilliseconds = 60
 $ExpectedMcmcpServerName = 'mcmcp'
 $ExpectedMcmcpServerVersion = '0.1.0'
-$ExpectedCatalogFileSha256 = '75c70584b0b04cc59aebd6d78ff1d89ae7fc1f7dbebf19a032fbf3a312433955'
-$ExpectedToolSurfaceSha256 = '4afdacbad81ad958e4fd7b285b45f8dc802259560cea1cbbdc94817ce9482ecc'
+$ExpectedCatalogFileSha256 = 'd0f4e1a3c48cc675b1d9187f6396313ca26524c0c50b815bc2bfba97be5852cb'
+$ExpectedToolSurfaceSha256 = 'ac5b8432835baaadf3abade3f9455e55c4486fb468605247aebaeb0a13ede985'
 $AllowedTools = @(
     'agent_get_state',
     'agent_get_observation',

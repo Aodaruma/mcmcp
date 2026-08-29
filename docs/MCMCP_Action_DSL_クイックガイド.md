@@ -33,6 +33,7 @@
 | 用途 | コピー元 | Action側 | 禁止事項 |
 |---|---|---|---|
 | 移動 | `traversability.navigation_target` | `navigate_to_known.target` | `from` / `to`のfloor・round、surfaceから立ち位置を推測 |
+| visible blockへの接近 | `visible_surface.position`と`block` | `approach_known_surface.target`と`expected_block` | block座標からfeet-spaceを推測、接近後の再観測を省略 |
 | block操作 | `visible_surface.position` | 各block nodeの`target` / `support` | block座標を中心座標へ変換 |
 | drop回収 | `visible_entity.position`と`displayed_item` | collect nodeの連続値`target` | XYZのround、非公開entity IDの追加 |
 
@@ -41,6 +42,7 @@
 ## 頻出nodeの必須field
 
 - `navigate_to_known`: `{id,op,target,tolerance}`
+- `approach_known_surface`: `{id,op,target,expected_block}`
 - `inspect_known_container`: `{id,op,target,expected_block}`
 - `take_known_container_stack`: `{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}`
 - `till_known_batch`: `{id,op,targets:[position],expected_block,hoe_item}`

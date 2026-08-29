@@ -227,6 +227,41 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void surfaceApproachChoosesTheShortestKnownInteractionRangeCell() {
+        UUID session = UUID.randomUUID();
+        NavCell start = cell(0);
+        var map = map(session);
+        for (int x = 0; x < 4; x++) {
+            map.observe(confirmed(session, cell(x), cell(x + 1)));
+        }
+        var target = new ActionDsl.Position(DIMENSION, 8, 64, 0);
+        var approach = new ActionDsl.ApproachKnownSurface(
+                "approach", target, "minecraft:dirt");
+        var program = new ActionDsl.Program(
+                1, Optional.empty(), Set.of(ActionDsl.Capability.MOVEMENT), List.of(approach));
+
+        var analysis = AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(
+                        start, 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F),
+                Optional.of(frame(target, ObservationRecord.Face.WEST, "minecraft:dirt", 0L)),
+                4.5F);
+
+        assertThat(analysis.worstCase(approach)
+                .map(ActionDslCompiler.Cost::distanceBlocks)).contains(6.0D);
+        assertThat(analysis.knownSurfaces())
+                .extracting(AgentPrimitivePlanner.KnownSurface::position)
+                .containsExactly(target);
+        AgentPrimitivePlanner.ApproachPlan plan = AgentPrimitivePlanner.requireApproachPlan(
+                map.snapshot().orElseThrow(), new DeterministicAStar(), start, target);
+        assertThat(plan.anchor()).isEqualTo(cell(4));
+        assertThat(plan.route().cells()).containsExactly(
+                cell(0), cell(1), cell(2), cell(3), cell(4));
+    }
+
+    @Test
     void admitsFourExplicitCardinalLooksUsingTheirCumulativeCameraCost() {
         UUID session = UUID.randomUUID();
         NavCell center = cell(0);

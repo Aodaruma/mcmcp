@@ -46,6 +46,9 @@ public final class AgentPrimitivePlanner {
     private static final int MAX_TOTAL_ROUTE_EXPANSIONS = 32_768;
     private static final int MAX_POSE_TRANSITIONS = 16_384;
     private static final double MAX_BREAK_REACH_BLOCKS = 4.5D;
+    private static final double APPROACH_REACH_BLOCKS = 4.25D;
+    private static final double APPROACH_EYE_HEIGHT = 1.62D;
+    private static final double APPROACH_TOLERANCE = 0.25D;
     private static final double MAX_BREAK_EYE_ORIGIN_DRIFT = 0.125D;
     public static final double WAIT_WITNESS_EYE_EPSILON_BLOCKS = 1.0D / 1024.0D;
     private static final double FARMLAND_SETTLING_BLOCKS = 1.0D / 16.0D;
@@ -607,6 +610,25 @@ public final class AgentPrimitivePlanner {
                 output.add(pose.at(navCell(navigate.target()), navigate.tolerance()));
             }
             merge(costs, node.id(), Objects.requireNonNull(worst, "navigation cost"));
+            return distinct(output);
+        }
+        if (node instanceof ActionDsl.ApproachKnownSurface approach) {
+            long surfaceBarrier = surfaceBarrierWorldRevision(
+                    map, surfaceRevisionBarrier, approach.target());
+            KnownSurface surface = requireKnownSurface(
+                    map, latestFrame, approach.target(), approach.expectedBlock(), surfaceBarrier);
+            knownSurfaces.add(surface);
+            ActionDslCompiler.Cost worst = null;
+            var output = new ArrayList<Pose>(input.size());
+            for (Pose pose : input) {
+                work.poseTransition();
+                ApproachPlan plan = requireApproachPlan(
+                        map, pathfinder, pose.cell(), approach.target(), work);
+                addRouteDependencies(map, plan.route(), routeDependencies);
+                worst = maximum(worst, navigationCost(plan.route(), pose));
+                output.add(pose.at(plan.anchor(), APPROACH_TOLERANCE));
+            }
+            merge(costs, node.id(), Objects.requireNonNull(worst, "approach cost"));
             return distinct(output);
         }
         if (node instanceof ActionDsl.FaceKnownPosition face) {
@@ -1301,6 +1323,89 @@ public final class AgentPrimitivePlanner {
                                 "A diagonal route lost its corner-clear evidence")));
             }
         }
+    }
+
+    /** Selects a deterministic policy-known navigation cell near an observed block. */
+    public static ApproachPlan requireApproachPlan(
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            NavCell start,
+            ActionDsl.Position target) {
+        return requireApproachPlan(map, pathfinder, start, target, null);
+    }
+
+    private static ApproachPlan requireApproachPlan(
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            NavCell start,
+            ActionDsl.Position target,
+            PlanningWork work) {
+        Objects.requireNonNull(map, "map");
+        Objects.requireNonNull(pathfinder, "pathfinder");
+        Objects.requireNonNull(start, "start");
+        Objects.requireNonNull(target, "target");
+        if (!map.dimension().equals(target.dimension())
+                || !map.dimension().equals(start.dimension())) {
+            throw new PlanningException(
+                    Code.NO_KNOWN_PATH, "Approach target is outside the current map boundary");
+        }
+
+        var cells = new java.util.TreeSet<NavCell>();
+        cells.add(start);
+        for (TraversabilityEdge edge : map.edges().values()) {
+            if (edge.traversable()) {
+                cells.add(edge.key().from());
+                cells.add(edge.key().to());
+            }
+        }
+
+        ApproachPlan best = null;
+        double bestDistance = Double.POSITIVE_INFINITY;
+        double bestReach = Double.POSITIVE_INFINITY;
+        for (NavCell candidate : cells) {
+            double reach = approachReachSquared(candidate, target);
+            if (reach > APPROACH_REACH_BLOCKS * APPROACH_REACH_BLOCKS) {
+                continue;
+            }
+            DeterministicAStar.SearchResult result = work == null
+                    ? pathfinder.findRoute(map, start, candidate)
+                    : pathfinder.findRoute(
+                            map, start, candidate, work::canContinue, work::routeExpansion);
+            if (result.route().isEmpty()) {
+                continue;
+            }
+            RoutePlan route = result.route().orElseThrow();
+            boolean better = route.distanceBlocks() < bestDistance - 1.0e-9D
+                    || Math.abs(route.distanceBlocks() - bestDistance) <= 1.0e-9D
+                            && (reach < bestReach - 1.0e-9D
+                                    || Math.abs(reach - bestReach) <= 1.0e-9D
+                                            && (best == null
+                                                    || candidate.compareTo(best.anchor()) < 0));
+            if (better) {
+                best = new ApproachPlan(route, candidate);
+                bestDistance = route.distanceBlocks();
+                bestReach = reach;
+            }
+        }
+        if (best == null) {
+            throw new PlanningException(
+                    Code.NO_KNOWN_PATH,
+                    "No policy-approved interaction-range approach cell is available");
+        }
+        return best;
+    }
+
+    private static double approachReachSquared(
+            NavCell cell, ActionDsl.Position target) {
+        double eyeX = cell.x() + 0.5D;
+        double eyeY = cell.y() + APPROACH_EYE_HEIGHT;
+        double eyeZ = cell.z() + 0.5D;
+        double closestX = Mth.clamp(eyeX, target.x(), target.x() + 1.0D);
+        double closestY = Mth.clamp(eyeY, target.y(), target.y() + 1.0D);
+        double closestZ = Mth.clamp(eyeZ, target.z(), target.z() + 1.0D);
+        return square(eyeX - closestX)
+                + square(eyeY - closestY)
+                + square(eyeZ - closestZ);
     }
 
     public static ActionDslCompiler.Cost faceCost(
@@ -2200,6 +2305,16 @@ public final class AgentPrimitivePlanner {
             Objects.requireNonNull(block, "block");
             Objects.requireNonNull(face, "face");
             Objects.requireNonNull(point, "point");
+        }
+    }
+
+    public record ApproachPlan(RoutePlan route, NavCell anchor) {
+        public ApproachPlan {
+            Objects.requireNonNull(route, "route");
+            Objects.requireNonNull(anchor, "anchor");
+            if (!route.cells().getLast().equals(anchor)) {
+                throw new IllegalArgumentException("approach anchor must terminate the route");
+            }
         }
     }
 
