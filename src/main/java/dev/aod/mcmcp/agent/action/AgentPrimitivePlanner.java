@@ -35,6 +35,12 @@ public final class AgentPrimitivePlanner {
     private static final double MAX_CELL_HORIZONTAL_ERROR = Math.sqrt(0.5D);
     private static final double NAVIGATION_VERTICAL_ERROR_ABOVE = 1.0D;
     private static final double FACE_COMPLETION_ERROR_DEGREES = 1.5D;
+    /**
+     * Vanilla's {@code player.turn} path converts the requested delta through a 0.15 scale and
+     * float player rotations. Reserve one bounded sub-degree step so a geometrically zero or
+     * near-zero aim cannot consume more camera budget than admission proved.
+     */
+    public static final double CAMERA_QUANTIZATION_RESERVE_DEGREES = 0.25D;
     private static final double NAVIGATION_TRAJECTORY_FACTOR = 1.5D;
     private static final double VERTICAL_ARC_ALLOWANCE = 1.5D;
     private static final int MAX_TOTAL_ROUTE_EXPANSIONS = 32_768;
@@ -1327,7 +1333,7 @@ public final class AgentPrimitivePlanner {
         }
         Aim aim = aim(pose, Objects.requireNonNull(target, "target"));
         AimError aimError = aimError(pose, target, aim);
-        double camera = Math.min(360.0D,
+        double camera = withCameraQuantizationReserve(
                 angularError(pose.yaw(), pose.pitch(), aim.yaw(), aim.pitch())
                         + pose.orientationErrorDegrees()
                         + aimError.totalDegrees());
@@ -1359,7 +1365,7 @@ public final class AgentPrimitivePlanner {
         Objects.requireNonNull(point, "point");
         var aim = aim(pose, point);
         var error = aimError(pose, point, aim);
-        double camera = Math.min(360.0D,
+        double camera = withCameraQuantizationReserve(
                 angularError(pose.yaw(), pose.pitch(), aim.yaw(), aim.pitch())
                         + pose.orientationErrorDegrees() + error.totalDegrees());
         long aimTicks = Math.max(
@@ -1391,7 +1397,7 @@ public final class AgentPrimitivePlanner {
         }
         Aim aim = aim(pose, aimPoint);
         AimError error = aimError(pose, aimPoint, aim);
-        double camera = Math.min(360.0D,
+        double camera = withCameraQuantizationReserve(
                 NavigationViewLease.cameraTravelUpperBound(
                         pose.yaw(), pose.pitch(), aim.yaw(), aim.pitch(),
                         Math.toIntExact(BLOCK_MUTATION_TICK_UPPER_BOUND))
@@ -2000,6 +2006,14 @@ public final class AgentPrimitivePlanner {
             float yaw, float pitch, float desiredYaw, float desiredPitch) {
         return Math.abs(Mth.wrapDegrees((double) desiredYaw - yaw))
                 + Math.abs((double) Mth.clamp(desiredPitch, -90.0F, 90.0F) - pitch);
+    }
+
+    private static double withCameraQuantizationReserve(double geometricDegrees) {
+        if (!Double.isFinite(geometricDegrees) || geometricDegrees < 0.0D) {
+            throw new IllegalArgumentException("camera travel must be finite and non-negative");
+        }
+        return Math.min(360.0D,
+                geometricDegrees + CAMERA_QUANTIZATION_RESERVE_DEGREES);
     }
 
     private static NavCell navCell(ActionDsl.Position position) {

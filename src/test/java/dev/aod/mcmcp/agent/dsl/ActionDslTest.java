@@ -39,7 +39,7 @@ class ActionDslTest {
     void parsesEveryNormativeCatalogExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
-        assertThat(examples).hasSize(9);
+        assertThat(examples).hasSize(10);
         for (int index = 0; index < examples.size(); index++) {
             ActionDsl.Request parsed = ActionDslParser.parse(examples.get(index).getAsJsonObject());
             assertThat(parsed.schemaVersion()).isEqualTo(1);
@@ -376,6 +376,54 @@ class ActionDslTest {
                 .isInstanceOf(ActionDslException.class)
                 .extracting(failure -> ((ActionDslException) failure).code())
                 .isEqualTo(ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
+    void collectBatchDesugarsToOneFailFastSequentialProgram() {
+        JsonObject batch = baseNode("drops", "collect_visible_item_batch");
+        JsonArray targets = new JsonArray();
+        for (int index = 0; index < 2; index++) {
+            JsonObject entry = new JsonObject();
+            entry.addProperty("displayed_item", "minecraft:wheat");
+            JsonObject target = new JsonObject();
+            target.addProperty("dimension", "minecraft:overworld");
+            target.addProperty("x", 10.25D + index);
+            target.addProperty("y", 64.125D);
+            target.addProperty("z", -2.75D);
+            entry.add("target", target);
+            targets.add(entry);
+        }
+        batch.add("targets", targets);
+
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("movement"), batch, budget(10_000, 200, 16, 0)));
+
+        assertThat(request.program().body()).singleElement().satisfies(node -> {
+            assertThat(node).isInstanceOf(ActionDsl.Repeat.class);
+            var desugared = (ActionDsl.Repeat) node;
+            assertThat(desugared.id()).isEqualTo("drops");
+            assertThat(desugared.count()).isOne();
+            assertThat(desugared.body()).extracting(ActionDsl.Node::id)
+                    .containsExactly("drops_c1", "drops_c2");
+            assertThat(desugared.body()).allMatch(ActionDsl.CollectVisibleItem.class::isInstance);
+        });
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactly(ActionDsl.Capability.MOVEMENT);
+        var each = new ActionDslCompiler.Cost(2_000, 40, 4, 0, 0, 0, 0);
+        assertThat(ActionDslCompiler.compile(
+                request, ignored -> Optional.of(each), Set.of(ActionDsl.Capability.MOVEMENT))
+                .worstCaseCost())
+                .isEqualTo(new ActionDslCompiler.Cost(4_000, 80, 8, 0, 0, 0, 0));
+
+        targets.add(targets.get(0).deepCopy());
+        targets.add(targets.get(0).deepCopy());
+        targets.add(targets.get(0).deepCopy());
+        targets.add(targets.get(0).deepCopy());
+        targets.add(targets.get(0).deepCopy());
+        targets.add(targets.get(0).deepCopy());
+        targets.add(targets.get(0).deepCopy());
+        assertCode(request(capabilities("movement"), batch, budget(10_000, 200, 16, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
     }
 
     @Test

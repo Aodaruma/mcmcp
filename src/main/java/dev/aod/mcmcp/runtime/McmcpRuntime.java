@@ -26,6 +26,7 @@ import dev.aod.mcmcp.agent.observation.DeliveredPolicyEvidenceStore;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ClientFogDistanceSignals;
 import dev.aod.mcmcp.agent.observation.ObservationFrameStore;
+import dev.aod.mcmcp.agent.observation.ObservationFilter;
 import dev.aod.mcmcp.agent.observation.ObservationKind;
 import dev.aod.mcmcp.agent.observation.ObservationPage;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
@@ -942,8 +943,16 @@ public final class McmcpRuntime implements McpRuntimePort {
     }
 
     private PreparedObservationPage getAgentObservation(Map<String, Object> arguments) {
-        requireExactKeys(arguments, "agent_get_observation",
-                Set.of("schema_version", "frame_id", "kinds", "cursor", "limit"));
+        Set<String> required = Set.of("schema_version", "frame_id", "kinds", "cursor", "limit");
+        requireAllowedKeys(arguments, "agent_get_observation",
+                Set.of("schema_version", "frame_id", "kinds", "filter", "cursor", "limit"));
+        if (!arguments.keySet().containsAll(required)
+                || arguments.size() < required.size()
+                || arguments.size() > required.size() + 1) {
+            throw new IllegalArgumentException(
+                    "agent_get_observation must contain schema_version, frame_id, kinds, cursor, "
+                            + "and limit; filter is optional");
+        }
         if (intArgument(arguments, "schema_version") != 1) {
             throw new IllegalArgumentException("schema_version must be 1");
         }
@@ -959,10 +968,12 @@ public final class McmcpRuntime implements McpRuntimePort {
         }
         Object rawCursor = arguments.get("cursor");
         String cursor = rawCursor == null ? null : (String) rawCursor;
+        ObservationFilter filter = observationFilterArgument(arguments);
         try {
             ObservationPage page = agentObservationFrames.page(
                     stringArgument(arguments, "frame_id"),
                     kinds,
+                    filter,
                     cursor,
                     intArgument(arguments, "limit"));
             Map<String, Object> wirePage = ObservationWireMapper.page(page);
@@ -975,6 +986,45 @@ public final class McmcpRuntime implements McpRuntimePort {
                     failure.code() != ObservationStoreException.Code.INVALID_CURSOR,
                     Map.of());
         }
+    }
+
+    private static ObservationFilter observationFilterArgument(Map<String, Object> arguments) {
+        if (!arguments.containsKey("filter")) {
+            return ObservationFilter.NONE;
+        }
+        Map<String, Object> input = objectArgument(arguments, "filter");
+        requireAllowedKeys(input, "agent_get_observation filter",
+                Set.of("block_ids", "entity_types", "displayed_items", "crop_mature"));
+        if (input.isEmpty()) {
+            throw new IllegalArgumentException("agent_get_observation filter must not be empty");
+        }
+        return new ObservationFilter(
+                resourceIdSetArgument(input, "block_ids", 32),
+                resourceIdSetArgument(input, "entity_types", 32),
+                resourceIdSetArgument(input, "displayed_items", 32),
+                input.containsKey("crop_mature")
+                        ? Optional.of(booleanArgument(input, "crop_mature"))
+                        : Optional.empty());
+    }
+
+    private static Set<ResourceId> resourceIdSetArgument(
+            Map<String, Object> source, String name, int maximum) {
+        if (!source.containsKey(name)) {
+            return Set.of();
+        }
+        Object raw = source.get(name);
+        if (!(raw instanceof List<?> values)
+                || values.isEmpty()
+                || values.size() > maximum) {
+            throw new IllegalArgumentException(name + " must contain 1.." + maximum + " values");
+        }
+        var result = new LinkedHashSet<ResourceId>();
+        for (Object value : values) {
+            if (!(value instanceof String id) || id.isBlank() || !result.add(new ResourceId(id))) {
+                throw new IllegalArgumentException(name + " must contain unique resource IDs");
+            }
+        }
+        return Set.copyOf(result);
     }
 
     private void abandonUnconfirmedDelivery(RuntimeReply reply) {

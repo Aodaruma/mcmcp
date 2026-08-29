@@ -653,14 +653,15 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 
 - `frame_id`: `agent_get_state`が返したID
 - `kinds`: `visible_surface / visible_entity / traversability / hazard / unknown_boundary / sound_clue`の1〜6種
+- `filter`（任意）: `block_ids / entity_types / displayed_items / crop_mature`のうち1項目以上。すでにpolicy許可されたrecordを除外するdelivery projectionであり、観測範囲や認可範囲は拡張しない
 - `cursor`: 初回null、続きは直前の`next_cursor`
 - `limit`: 1〜256件
 
-返却recordは第7章の許可条件に従い、responseには`frame_completed_tick`を含める。`visible_surface`はblock positionごとに1件へ圧縮する。植付けsupportとなるfarmlandはUPを優先し、それ以外は実ray hitが近い面を代表にする。surfaceの返却順は`crop_mature=true`、`crop_mature=false`、非作物の3群とし、各群では観測距離が近いものを先にする。複数kindを同時要求した場合は、`visible_entity / traversability / hazard / visible_surface / sound_clue / unknown_boundary`の固定順で各kindから1件ずつround-robinし、1種類がpageを占有しないよう公平にinterleaveする。
+返却recordは第7章の許可条件に従い、responseには`frame_completed_tick`を含める。1回のroot queryは1目的を原則とし、作物・container・gateは`visible_surface`、落下物は`visible_entity`、移動は`traversability`を要求する。作物収穫は`block_ids=[minecraft:wheat], crop_mature=true`、小麦drop回収は`entity_types=[minecraft:item], displayed_items=[minecraft:wheat,minecraft:wheat_seeds]`のprojectionを利用できる。`visible_surface`はblock positionごとに1件へ圧縮する。植付けsupportとなるfarmlandはUPを優先し、それ以外は実ray hitが近い面を代表にする。surfaceの返却順は`crop_mature=true`、`crop_mature=false`、非作物の3群とし、各群では観測距離が近いものを先にする。複数kindを同時要求した場合は、`visible_entity / traversability / hazard / visible_surface / sound_clue / unknown_boundary`の固定順で各kindから1件ずつround-robinし、1種類がpageを占有しないよう公平にinterleaveする。
 
 CropBlockの`visible_surface`だけは、成長段階の数値列挙を増やさず、収穫判断に必要な`crop_mature: boolean`を追加する。非作物surfaceではこのfield自体を返さない。生成したpageは内部pending receipt（最大16件、60秒）へ一旦置き、HTTP response write成功後のdelivery confirmで初めて、そのpageに実際に含まれた静的`visible_surface`だけを最大2,048件、最大60秒のbounded storeへ昇格する。write失敗、dispatch取消、timeout、world境界ではpendingをabandonする。entity、item、traversability、hazard、sound、unknown boundary、未返却pageは延長しない。保持surfaceを使う場合も、通常のworld/session/dimension、visual / target revision、observer pose、reach、commit、JIT、targeted raycast、server acknowledgementをすべて再検証し、world境界ではstoreを全消去する。
 
-traversabilityは単一cell座標でなく`from / to` edge、target support、transition clearance、fluidとして返し、斜めtransitionも曖昧にしない。cursorは`SecureRandom`で生成した128 bit以上のopaqueなBase64URL tokenとし、server-side lease内のframe、kind集合、offsetへ束縛する。任意center、任意radius、任意chunk、任意entity IDをqueryする入力は設けない。壊れた・未知・期限切れcursor、別frame/kindへの使い回しは`INVALID_CURSOR`とする。同じ有効cursorの再送は同じpageを返し、失われたHTTP responseを再試行できる。`next_cursor=null`でpage終了である。
+traversabilityは連続値の`from / to` edge、target support、transition clearance、fluidに加え、`to`が属する整数feet-spaceを`navigation_target`として返し、斜めtransitionも曖昧にしない。LLMはnavigationに`navigation_target`だけを無変換コピーし、連続値`from / to`を丸めない。cursorは`SecureRandom`で生成した128 bit以上のopaqueなBase64URL tokenとし、server-side lease内のframe、kind集合、filter、offsetへ束縛する。任意center、任意radius、任意chunk、任意entity IDをqueryする入力は設けない。壊れた・未知・期限切れcursor、別frame/kind/filterへの使い回しは`INVALID_CURSOR`とする。同じ有効cursorの再送は同じpageを返し、失われたHTTP responseを再試行できる。`next_cursor=null`でpage終了である。
 
 全周観測はcamera yaw/pitch、入力、Action camera budgetを変更しない。LLMが明示的に`face_known_position`を使うことは妨げず、その回数は通常のAST、実行node、時間、camera累積budgetだけで制限する。
 
@@ -673,7 +674,7 @@ traversabilityは単一cell座標でなく`from / to` edge、target support、tr
 
 固定の高位Actionだけを選ぶ方式にはしない。LLMは許可済みprimitive、有限`if`、固定回数`repeat`を組み合わせられる。ただし、LLMが未知のopcodeを発明して実行することはできない。新しいMinecraft能力は、MOD側にprimitive、結果検証、安全試験を追加し、catalogのopcode allowlistへ載せたreleaseから使用可能になる。
 
-LLMは関連する有限手順をprimitiveごとの別Actionへ分断せず、budget内の1 programへ順次記述する。現在証拠が揃う作物を2〜8件処理する場合は単体nodeの反復よりmutation batchを優先し、plant node群の直後に代表1座標の`wait_until`を同じprogramへ置く。`navigate_to_known.target`は支持block座標ではなく、current `traversability.from / to`からコピーしたplayer feet-spaceである。例えば土の支持面がY=55なら、その上に立つfeet-spaceはY=56であり、土の座標をnavigation targetへ流用しない。
+LLMは、後続nodeが現在の証拠または明示対応するdependency proofですべて受付可能な範囲を1 Actionへまとめる。現在証拠が揃う作物を2〜8件処理する場合は単体nodeの反復よりmutation batchを優先し、成長待機が必要ならplant node群の直後に代表1座標の`wait_until`を同じprogramへ置く。mutationがdropや露出surfaceなど新しい証拠を作る場合は一旦Actionを終え、再観測後に次のActionを開始する。`navigate_to_known.target`は支持blockや連続値`from / to`ではなく、current `traversability.navigation_target`を無変換コピーする。
 
 Action DSL v1の制御構造:
 
@@ -705,12 +706,15 @@ Action DSL v1の制御構造:
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のsingle chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemのwhole stackを最大1回quick-moveし、close/reopen full readbackでplayer inventoryの絶対個数を確認 |
 | collect_visible_item | movement | 最新frameの可視item種別と連続値XYZをwitnessに、既知の安全なpickup cellへ移動し、inventory絶対個数の増加を確認 |
+| collect_visible_item_batch | movement | 1〜8件の可視item witnessをlisted orderで同じ安全検証経路へ展開し、失敗時は未開始suffixを実行しない |
 
 `break_known_face`は指定faceのblock中央へ固定照準せず、そのfaceを実際に観測したray hitへ解析的に照準し、開始直前にも同じfaceのtargeted raycastを要求する。
 
 `break_known_face`の`tool_item`と`till_known_block` / `till_known_batch`の`hoe_item`はinventory内の該当toolをhotbarへ一時退避して決定論的に選択する契約であり、任意slot操作を公開しない。`plant_known_wheat` / `plant_known_wheat_batch`も同じ準備経路でwheat_seedsを選ぶ。各変化はclient prediction ACKとauthoritative block stateで確認し、toolや種を生成・補充しない。成熟待ちは、primitive開始時にtarget-scoped fresh barrier以後のpolicy-visibleなwheat surfaceを明示座標へ束縛する。targetのmutation revisionがbounded reconciliation mapに残っている場合は`max(visualBarrier, exactTargetRevision)`を使い、他座標の大量更新によるeviction floorを混ぜない。exact target revisionが既にevictされている場合だけ`max(visualBarrier, surfaceMutationEvictionFloor)`へfail-closed fallbackする。一般primitiveのsurface barrier契約は変更しない。JIT認可にはworld/session/dimension/exact targetに加え、その時点の`visualBarrierWorldRevision`、player位置、observer eyeを固定する。待機中にvisual barrierが変化した場合、またはplayer位置/eyeが固定epsilon（1/1024 block）を超えて変化した場合は、live BlockStateを読む前に`PATH_BLOCKED`で終了する。wheat AGE更新などnavigation-neutralなexact-target mutationはvisual barrierを上げないため待機を継続できる。束縛がcurrentな間だけ、その認可済みでload済みの1座標をlive BlockStateで確認し、wheat age=7なら観測frameの更新を待たず完了、age<7ならpendingとする。非wheatへの置換、unload、session / dimension / target変更は早期terminalとし、live stateの値や近傍情報はresponseへ公開しない。単独`wait_until`の初期admissionにも同じvisible wheatを要求する。先行する認可済みplantが全control pathで同じtargetを生成すると静的証明できる閉じたprogramだけは初期解析で未生成cropを許すが、wait開始時の1-node JIT bindでは例外なく新しいvisible wheatを再認可する。timeout時は入力を発生させずActionを終了する。raw attack/useや任意座標操作へ一般化しない。
 
 `wait_until`が採用する`visible_surface`はrecordの`eye_origin`を保持し、initial admission、commit fence、JIT bindのすべてでcurrent observer eyeとの差を1/1024 block以内に制限する。以前のobserver位置から得たstale frameは、target record自体がfresh revisionでも認可しない。`CropWaitAuthorization`のobserver eyeにはcurrent値を代入せず、採用witnessの`eye_origin`そのものを保存するため、待機中の比較元をすり替えられない。先行plantにより初期未生成cropを許す静的dependency proofはこの例外を弱めず、wait開始時のJITでは必ず同じorigin契約を再証明する。
+
+`collect_visible_item_batch`は新しい高位実行器を持つ固定routineではなく、parserが1回だけ実行する有限sequenceへ展開するDSL macroである。各entryは通常の`collect_visible_item`と同じfresh visible entity、連続値XYZ、既知安全pickup cell、移動中再検証、inventory絶対差分を個別に要求する。listed orderの途中でwitness消失、経路不成立、budget不足、pickup未確認が起きた場合はAction全体をfail-fastで終了し、未開始entryをskip・置換・再順序化しない。
 
 3種のmutation batchは`targets`を1〜8件に制限し、重複targetを拒否する。`till_known_batch`は位置配列と共通`expected_block` / `hoe_item`、`plant_known_wheat_batch`は`{target,support}`配列と共通`seed_item=minecraft:wheat_seeds`、`harvest_known_wheat_batch`は位置配列を受け取る。受付時に全対象の現在のsurface、block state、reachを確認し、`TARGET_UNKNOWN`なら最初に不足した入力順indexをmessageの`target[index]`として返す。これは提出済み配列のindexだけであり、hidden座標や未公開stateを追加開示しない。全対象を通る累積camera回転量が最小となる決定論的順序を共同計画する。ただし、ほぼ同一ray上で手前の対象を先に変更すると奥のwitnessを失う組だけは、far-before-nearを優先する。残る同値解はdimension / XYZの辞書順で一意に決め、累積camera costを既存のAction上限720度以内で事前証明する。順序が未確定poseに依存して一意に証明できない場合は入力前に拒否する。
 
@@ -998,9 +1002,11 @@ Validate JSON AST
 
 program全体のeffective budgetに加え、各logical primitive occurrenceにもcompile済みcost boundを適用する。距離とcameraの実行器へ渡す残量は両者の小さい方とし、tick、duration、interaction、break、placeも各tickで双方を検査する。`wait_ticks`も同じ対象であり、replanやprobeによってoccurrence上限を更新しない。
 
+camera costは解析的なyaw/pitch誤差に加え、Vanillaの`player.turn`が0.15 scaleとfloat回転へ量子化する際の上限0.25度をcamera primitiveごとに事前予約する。幾何学上0度に近いcontainer照準やbatch suffixでも、このreserveをglobal / occurrence双方へ同じ値で含め、実行後に初めて予算不足となることを防ぐ。
+
 ### 9.2 navigate_to_known — MVP
 
-`target`はKnown Traversability Mapのcurrent edgeに現れるplayer feet-spaceであり、床や土などの支持blockではない。LLMは`agent_get_observation`の`traversability.from / to`を整数cellへ正確にコピーし、visible surfaceの座標から立ち位置を推測しない。
+`target`はKnown Traversability Mapのcurrent edgeに現れるplayer feet-spaceであり、床や土などの支持blockではない。LLMは`agent_get_observation`の`traversability.navigation_target`を無変換コピーし、連続値`from / to`をfloor / roundしたり、visible surfaceの座標から立ち位置を推測したりしない。
 
 対応:
 

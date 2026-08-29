@@ -1,9 +1,9 @@
 # MCMCP 実ワールド検証記録
 
-- 更新日: 2026-08-28
+- 更新日: 2026-08-29
 - 対象: Prism Launcherの単一検証profile、Minecraft 26.2 / NeoForge 26.2.0.59
-- 状態: 木こりの最小gateは合格。畑の栽培・収穫ループはMCP操作だけでwheat 64個へ到達。chest取得からのend-to-endは未合格
-- 詳細実験ノート: [`experiments/02_wheet/2026-08-28_wheat-1-stack.md`](experiments/02_wheet/2026-08-28_wheat-1-stack.md)
+- 状態: 木こりの最小gateは合格。畑の栽培・収穫ループはMCP操作だけでwheat 64個へ到達。fresh LLMによるchest取得からのend-to-endはR10で39 / 64まで進み、最終合格は未達
+- 最新実験ノート: [`experiments/02_wheet/2026-08-29_fresh-sol-high-mcp-only-r10-original-field.md`](experiments/02_wheet/2026-08-29_fresh-sol-high-mcp-only-r10-original-field.md)
 
 ## 完成目標と判定原則
 
@@ -51,6 +51,12 @@
 ### 対象
 
 chest内のhoeとwheat seedsを取得し、fence gateを通って畑へ入り、耕す、植える、成熟を待つ、収穫する、植え直す、を反復してwheatを1 stack集める。
+
+### 2026-08-29 fresh MCP-only R10
+
+production prompt一文だけを渡したfresh `gpt-5.6-sol high`が、元の畑でchest確認、hoe / seeds取得、gate通過、14区画の耕作・植付け、41株の収穫、drop回収までをT0後のoperator介入なしで実行した。最終inventoryはwheat 39、wheat seeds 115、netherite hoe 1で、64個には25個不足した。
+
+accepted Action 38件は全件terminal（成功36、fail-safe失敗2）で、trace auditは違反0だった。Minecraft内実行は合計約55秒だがwall timeは約990秒で、37回のobservationが約1.98MB、単品drop回収が14 ActionとなったLLM↔MCP往復が未達の主因である。R11向けに、delivery-only observation filter、整数`traversability.navigation_target`、1〜8件の`collect_visible_item_batch` DSL macro、camera量子化reserveを実装した。
 
 ### 2026-08-27時点の結果
 

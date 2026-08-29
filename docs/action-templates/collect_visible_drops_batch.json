@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "program": {
+    "dsl_version": 1,
+    "name": "collect_visible_drops_batch",
+    "capabilities": ["movement"],
+    "body": [
+      {
+        "id": "drops",
+        "op": "collect_visible_item_batch",
+        "targets": [
+          {
+            "displayed_item": "minecraft:wheat",
+            "target": {
+              "dimension": "minecraft:overworld",
+              "x": 100.375,
+              "y": 64.125,
+              "z": 120.75
+            }
+          },
+          {
+            "displayed_item": "minecraft:wheat_seeds",
+            "target": {
+              "dimension": "minecraft:overworld",
+              "x": 101.125,
+              "y": 64.125,
+              "z": 120.25
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "budget": {
+    "max_duration_ms": 60000,
+    "max_ticks": 1200,
+    "max_distance_blocks": 32,
+    "max_camera_degrees": 0,
+    "max_interactions": 0,
+    "max_blocks_broken": 0,
+    "max_blocks_placed": 0
+  }
+}

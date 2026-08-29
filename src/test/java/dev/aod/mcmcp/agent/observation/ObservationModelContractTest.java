@@ -94,7 +94,9 @@ class ObservationModelContractTest {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> traversability = (Map<String, Object>) ObservationWireMapper.record(records.get(2));
-        assertThat(traversability).containsKeys("from", "to", "target_support", "transition_clearance", "fluid");
+        assertThat(traversability).containsEntry("navigation_target", Map.of(
+                        "dimension", "minecraft:overworld", "x", 1, "y", 64, "z", 1))
+                .containsKeys("from", "to", "target_support", "transition_clearance", "fluid");
         assertThat(traversability).doesNotContainKey("cell");
     }
 
@@ -116,6 +118,27 @@ class ObservationModelContractTest {
                 .containsEntry("camera_motion_generated", false)
                 .containsEntry("full_azimuth", true)
                 .containsEntry("full_elevation", true);
+    }
+
+    @Test
+    void traversabilityPublishesAnExactIntegerNavigationTargetForNegativeCells() {
+        var edge = new Traversability(
+                world(-9.318, 56.9, -18.126),
+                world(-12.5, 56.899999976, -15.5),
+                TraversabilityStatus.CONFIRMED,
+                TargetSupport.CONFIRMED,
+                TransitionClearance.CONFIRMED,
+                Fluid.NONE,
+                world(-9.318, 56.9, -18.126),
+                97,
+                7,
+                EvidenceProvenance.LOCAL_VOLUME);
+
+        assertThat(edge.navigationTarget()).isEqualTo(
+                new BlockPosition(DIMENSION, -13, 56, -16));
+        assertThat(ObservationWireMapper.record(edge).get("navigation_target"))
+                .isEqualTo(Map.of(
+                        "dimension", "minecraft:overworld", "x", -13, "y", 56, "z", -16));
     }
 
     @Test

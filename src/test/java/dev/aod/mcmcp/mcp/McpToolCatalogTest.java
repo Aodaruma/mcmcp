@@ -112,11 +112,11 @@ class McpToolCatalogTest {
         String description = startTool.get("description").getAsString();
 
         assertThat(description)
-                .contains("Do not guess or probe the grammar")
-                .contains("Every node, including nested if/repeat nodes, MUST contain a unique id")
-                .contains("Every block position MUST contain exactly dimension,x,y,z")
-                .contains("dimension is the observed resource ID")
-                .contains("x/y/z are integer block coordinates");
+                .contains("Every node needs a unique id")
+                .contains("Copy traversability.navigation_target verbatim")
+                .contains("never derive, floor, round")
+                .contains("collect_visible_item_batch for 2..8 current drops")
+                .contains("use the exact inputSchema fields and no aliases");
 
         var definitions = schema.getAsJsonObject("$defs");
         var nodeAlternatives = definitions.getAsJsonObject("node").getAsJsonArray("oneOf");
@@ -129,22 +129,18 @@ class McpToolCatalogTest {
                 .toList();
         assertThat(description).contains(opcodes.toArray(String[]::new));
 
-        String examplePrefix = "A complete valid minimum example is ";
-        String exampleSuffix = ". Use observed coordinates";
-        int exampleStart = description.indexOf(examplePrefix) + examplePrefix.length();
-        int exampleEnd = description.indexOf(exampleSuffix, exampleStart);
-        assertThat(exampleStart).isGreaterThanOrEqualTo(examplePrefix.length());
-        assertThat(exampleEnd).isGreaterThan(exampleStart);
-        var visibleExample = JsonParser.parseString(
-                description.substring(exampleStart, exampleEnd));
-        assertThat(CatalogSchemaValidator.matches(schema, visibleExample)).isTrue();
-        assertThat(visibleExample.getAsJsonObject().getAsJsonObject("program")
-                .getAsJsonArray("body").get(0).getAsJsonObject().get("op").getAsString())
-                .isEqualTo("take_known_container_stack");
+        assertThat(schema.getAsJsonArray("examples").asList())
+                .allSatisfy(example -> assertThat(CatalogSchemaValidator.matches(schema, example))
+                        .isTrue());
+        assertThat(schema.getAsJsonArray("examples").asList().stream()
+                .map(element -> element.getAsJsonObject())
+                .map(example -> example.getAsJsonObject("program").getAsJsonArray("body")
+                        .get(0).getAsJsonObject().get("op").getAsString()))
+                .contains("take_known_container_stack");
 
         assertThat(description)
-                .contains("stack_policy MUST be exactly \"default_components_only\"")
-                .contains("or \"item_id_any_components\"");
+                .contains("take stack_policy is exactly default_components_only")
+                .contains("or item_id_any_components");
     }
 
     @Test
@@ -245,17 +241,25 @@ class McpToolCatalogTest {
                 .getAsJsonObject().remove("displayed_item");
         assertThat(CatalogSchemaValidator.matches(schema, missingItem)).isFalse();
 
-        String description = new McpToolCatalog().listResult().getAsJsonArray("tools").asList()
+        var startToolContract = new McpToolCatalog().listResult().getAsJsonArray("tools").asList()
                 .stream()
-                .map(tool -> tool.getAsJsonObject())
-                .filter(tool -> tool.get("name").getAsString().equals("agent_start_action"))
-                .findFirst().orElseThrow().get("description").getAsString();
+                .map(element -> element.getAsJsonObject())
+                .filter(element -> element.get("name").getAsString().equals("agent_start_action"))
+                .findFirst().orElseThrow();
+        String description = startToolContract.get("description").getAsString();
+        String collectContract = schema.getAsJsonObject("$defs")
+                .getAsJsonObject("collectVisibleItemNode").get("description").getAsString();
+        String batchContract = schema.getAsJsonObject("$defs")
+                .getAsJsonObject("collectVisibleItemBatchNode").get("description").getAsString();
+        assertThat(collectContract)
+                .contains("fresh visible minecraft:item")
+                .contains("absolute inventory-count increase");
+        assertThat(batchContract)
+                .contains("1..8 currently visible item witnesses")
+                .contains("any failure stops the unstarted suffix");
         assertThat(description)
-                .contains("fresh visible minecraft:item witness")
-                .contains("relative to this node occurrence's start")
-                .contains("put plant node(s) immediately before one representative wait_until")
-                .contains("collect each visible drop in later Action(s)")
-                .contains("replant cleared farmland before the next cycle");
+                .contains("when a mutation creates new drops or newly exposed surfaces, finish, reobserve")
+                .contains("Put wait_until immediately after its plant node");
     }
 
     @Test
@@ -266,7 +270,10 @@ class McpToolCatalogTest {
                 .filter(tool -> tool.get("name").getAsString().equals("agent_get_observation"))
                 .findFirst().orElseThrow().get("description").getAsString();
         assertThat(observation)
-                .contains("limit MUST be an integer from 1 through 256")
+                .contains("Use the smallest useful limit")
+                .contains("Use optional filter")
+                .contains("displayed_items")
+                .contains("two paged queries")
                 .contains("On FRAME_EXPIRED, call agent_get_state")
                 .contains("observation.latest_frame_id");
 

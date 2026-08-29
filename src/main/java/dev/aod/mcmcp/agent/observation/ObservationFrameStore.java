@@ -112,8 +112,18 @@ public final class ObservationFrameStore {
             Set<ObservationKind> requestedKinds,
             String cursor,
             int limit) throws ObservationStoreException {
+        return page(frameId, requestedKinds, ObservationFilter.NONE, cursor, limit);
+    }
+
+    public synchronized ObservationPage page(
+            String frameId,
+            Set<ObservationKind> requestedKinds,
+            ObservationFilter filter,
+            String cursor,
+            int limit) throws ObservationStoreException {
         ObservationFrame.requireFrameId(frameId);
         Set<ObservationKind> kinds = canonicalKinds(requestedKinds);
+        Objects.requireNonNull(filter, "filter");
         if (limit < 1 || limit > 256) {
             throw new IllegalArgumentException("limit must be in 1..256");
         }
@@ -121,9 +131,9 @@ public final class ObservationFrameStore {
         long now = nanoTime.getAsLong();
         purgeExpired(now);
         if (cursor != null) {
-            return continuePage(frameId, kinds, cursor, limit, now);
+            return continuePage(frameId, kinds, filter, cursor, limit, now);
         }
-        return firstPage(frameId, kinds, limit, now);
+        return firstPage(frameId, kinds, filter, limit, now);
     }
 
     /** Invalidates every frame, pagination lease, and cursor at a world-session boundary. */
@@ -137,6 +147,7 @@ public final class ObservationFrameStore {
     private ObservationPage firstPage(
             String frameId,
             Set<ObservationKind> kinds,
+            ObservationFilter filter,
             int limit,
             long now) throws ObservationStoreException {
         ObservationFrame frame = findRetainedFrame(frameId, now, true);
@@ -144,7 +155,7 @@ public final class ObservationFrameStore {
             throw failure(ObservationStoreException.Code.FRAME_EXPIRED,
                     "The requested observation frame is no longer retained");
         }
-        List<ObservationRecord> selected = selectForDelivery(frame.records(), kinds);
+        List<ObservationRecord> selected = selectForDelivery(frame.records(), kinds, filter);
         int end = Math.min(limit, selected.size());
         if (end == selected.size()) {
             return page(frame, selected.subList(0, end), null);
@@ -154,7 +165,7 @@ public final class ObservationFrameStore {
                     "All observation pagination leases are in use");
         }
 
-        Lease lease = new Lease(frame, kinds, selected, now);
+        Lease lease = new Lease(frame, kinds, filter, selected, now);
         leases.add(lease);
         String nextCursor = createCursor(lease, end);
         return page(frame, selected.subList(0, end), nextCursor);
@@ -163,13 +174,15 @@ public final class ObservationFrameStore {
     private ObservationPage continuePage(
             String frameId,
             Set<ObservationKind> kinds,
+            ObservationFilter filter,
             String cursor,
             int limit,
             long now) throws ObservationStoreException {
         CursorState state = cursors.get(cursor);
         if (state == null
                 || !state.lease.frame.frameId().equals(frameId)
-                || !state.lease.kinds.equals(kinds)) {
+                || !state.lease.kinds.equals(kinds)
+                || !state.lease.filter.equals(filter)) {
             throw failure(ObservationStoreException.Code.INVALID_CURSOR,
                     "The observation cursor is invalid, expired, or belongs to another query");
         }
@@ -296,8 +309,16 @@ public final class ObservationFrameStore {
      */
     static List<ObservationRecord> selectForDelivery(
             List<ObservationRecord> records, Set<ObservationKind> kinds) {
+        return selectForDelivery(records, kinds, ObservationFilter.NONE);
+    }
+
+    static List<ObservationRecord> selectForDelivery(
+            List<ObservationRecord> records,
+            Set<ObservationKind> kinds,
+            ObservationFilter filter) {
         Objects.requireNonNull(records, "records");
         Objects.requireNonNull(kinds, "kinds");
+        Objects.requireNonNull(filter, "filter");
         var buckets = new EnumMap<ObservationKind, List<ObservationRecord>>(
                 ObservationKind.class);
         for (ObservationKind kind : ObservationKind.values()) {
@@ -307,7 +328,7 @@ public final class ObservationFrameStore {
                 ObservationRecord.VisibleSurface>();
         for (ObservationRecord record : records) {
             Objects.requireNonNull(record, "record");
-            if (!kinds.contains(record.kind())) {
+            if (!kinds.contains(record.kind()) || !filter.matches(record)) {
                 continue;
             }
             if (record instanceof ObservationRecord.VisibleSurface surface) {
@@ -409,6 +430,7 @@ public final class ObservationFrameStore {
     private static final class Lease {
         private final ObservationFrame frame;
         private final Set<ObservationKind> kinds;
+        private final ObservationFilter filter;
         private final List<ObservationRecord> selectedRecords;
         private final long createdNanos;
         private long lastAccessNanos;
@@ -417,10 +439,12 @@ public final class ObservationFrameStore {
         private Lease(
                 ObservationFrame frame,
                 Set<ObservationKind> kinds,
+                ObservationFilter filter,
                 List<ObservationRecord> selectedRecords,
                 long now) {
             this.frame = frame;
             this.kinds = kinds;
+            this.filter = filter;
             this.selectedRecords = List.copyOf(selectedRecords);
             createdNanos = now;
             lastAccessNanos = now;

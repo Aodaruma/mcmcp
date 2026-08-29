@@ -64,6 +64,7 @@ public final class ObservationWireMapper {
                     "kind", edge.kind().wireName(),
                     "from", worldPosition(edge.from()),
                     "to", worldPosition(edge.to()),
+                    "navigation_target", blockPosition(edge.navigationTarget()),
                     "status", edge.status().name(),
                     "target_support", edge.targetSupport().wireName(),
                     "transition_clearance", edge.transitionClearance().wireName(),

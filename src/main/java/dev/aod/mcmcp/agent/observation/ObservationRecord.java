@@ -166,6 +166,21 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
         @Override public ResourceId dimension() { return from.dimension(); }
         @Override public long oldestObservedTick() { return observedTick; }
         @Override public long newestObservedTick() { return observedTick; }
+
+        /** Exact integer feet-space cell accepted by Action DSL navigate_to_known. */
+        public BlockPosition navigationTarget() {
+            return new BlockPosition(
+                    to.dimension(), floorCoordinate(to.x()), floorCoordinate(to.y()),
+                    floorCoordinate(to.z()));
+        }
+
+        private static int floorCoordinate(double value) {
+            double floored = Math.floor(value);
+            if (floored < Integer.MIN_VALUE || floored > Integer.MAX_VALUE) {
+                throw new IllegalStateException("traversability coordinate is outside integer range");
+            }
+            return (int) floored;
+        }
     }
 
     record Hazard(

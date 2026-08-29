@@ -257,7 +257,7 @@ class AgentPrimitivePlannerTest {
         var compiled = ActionDslCompiler.compile(
                 request, analysis::worstCase, Set.of(ActionDsl.Capability.CAMERA));
 
-        assertThat(compiled.worstCaseCost().cameraDegrees()).isEqualTo(274.5D);
+        assertThat(compiled.worstCaseCost().cameraDegrees()).isEqualTo(275.5D);
         assertThat(compiled.worstCaseCost().ticks()).isEqualTo(64L);
     }
 
@@ -271,7 +271,8 @@ class AgentPrimitivePlannerTest {
                 pose, new ActionDsl.Position(DIMENSION, 1, 1, 1), 4.5F);
 
         assertThat(cost.cameraDegrees())
-                .isEqualTo(Math.abs(-45.0D - (double) pose.yaw()));
+                .isEqualTo(Math.abs(-45.0D - (double) pose.yaw())
+                        + AgentPrimitivePlanner.CAMERA_QUANTIZATION_RESERVE_DEGREES);
     }
 
     @Test

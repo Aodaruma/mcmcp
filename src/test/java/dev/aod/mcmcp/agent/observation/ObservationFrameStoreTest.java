@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.LongSupplier;
 import java.util.stream.IntStream;
@@ -355,6 +356,54 @@ class ObservationFrameStoreTest {
                 id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 2);
 
         assertThat(page.records()).containsExactly(mature, immature);
+    }
+
+    @Test
+    void deliveryFilterProjectsOnlyRequestedBlocksAndMaturityWithoutChangingFrame()
+            throws Exception {
+        var store = new ObservationFrameStore();
+        var stone = ObservationModelContractTest.surface(99, 0);
+        var matureWheat = new VisibleSurface(
+                new ObservationValues.BlockPosition(DIMENSION, 1, 64, 0), stone.face(),
+                new ResourceId("minecraft:wheat"), stone.shapeClass(), true,
+                stone.rayHit(), stone.eyeOrigin(), stone.observedTick(), stone.worldRevision());
+        var immatureWheat = new VisibleSurface(
+                new ObservationValues.BlockPosition(DIMENSION, 2, 64, 0), stone.face(),
+                new ResourceId("minecraft:wheat"), stone.shapeClass(), false,
+                stone.rayHit(), stone.eyeOrigin(), stone.observedTick(), stone.worldRevision());
+        store.publish(new ObservationFrame(
+                id(1), DIMENSION, 100, 16, false,
+                List.of(stone, matureWheat, immatureWheat, hazard(99))));
+
+        var filter = new ObservationFilter(
+                Set.of(new ResourceId("minecraft:wheat")), Set.of(), Set.of(),
+                Optional.of(true));
+        ObservationPage page = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE, ObservationKind.HAZARD),
+                filter, null, 256);
+
+        assertThat(page.records()).containsExactly(hazard(99), matureWheat);
+        assertThat(store.latestFrame()).get().extracting(frame -> frame.records().size())
+                .isEqualTo(4);
+    }
+
+    @Test
+    void paginationCursorIsBoundToTheExactDeliveryFilter() throws Exception {
+        var store = new ObservationFrameStore();
+        store.publish(frame(1, 3));
+        var stone = new ObservationFilter(
+                Set.of(new ResourceId("minecraft:stone")), Set.of(), Set.of(), Optional.empty());
+        String cursor = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), stone, null, 1).nextCursor();
+
+        assertFailure(
+                () -> store.page(
+                        id(1), Set.of(ObservationKind.VISIBLE_SURFACE),
+                        ObservationFilter.NONE, cursor, 1),
+                ObservationStoreException.Code.INVALID_CURSOR);
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), stone, cursor, 1).records())
+                .hasSize(1);
     }
 
     @Test
