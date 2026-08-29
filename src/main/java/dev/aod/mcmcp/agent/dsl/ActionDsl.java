@@ -1,6 +1,9 @@
 package dev.aod.mcmcp.agent.dsl;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -32,7 +35,8 @@ public final class ActionDsl {
     public sealed interface Node permits NavigateToKnown, ApproachKnownSurface,
             FaceKnownPosition, BreakKnownFace,
             TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
-            HarvestKnownWheat, HarvestKnownWheatBatch, OpenKnownFenceGate,
+            HarvestKnownWheat, HarvestKnownWheatBatch, ApplyKnownBlockPlan,
+            OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
             CollectVisibleItem, CollectVisibleItemBatch, WaitTicks, WaitUntil, If, Repeat {
         String id();
@@ -154,6 +158,118 @@ public final class ActionDsl {
         public HarvestKnownWheatBatch {
             Objects.requireNonNull(id, "id");
             targets = List.copyOf(Objects.requireNonNull(targets, "targets"));
+        }
+    }
+
+    /**
+     * Places a bounded, ordered projection of complete observed block states. Offsets and
+     * directional state are transformed by the runtime, never by the policy.
+     */
+    public record ApplyKnownBlockPlan(
+            String id,
+            Position anchor,
+            BlockPlanTransform transform,
+            List<BlockPlanEntry> entries) implements Node {
+        public ApplyKnownBlockPlan {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(anchor, "anchor");
+            Objects.requireNonNull(transform, "transform");
+            entries = List.copyOf(Objects.requireNonNull(entries, "entries"));
+        }
+    }
+
+    public record BlockPlanEntry(
+            String id,
+            Offset offset,
+            BlockStateSpec sourceState,
+            String item,
+            PlacementSupport support) {
+        public BlockPlanEntry {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(offset, "offset");
+            Objects.requireNonNull(sourceState, "sourceState");
+            Objects.requireNonNull(item, "item");
+            Objects.requireNonNull(support, "support");
+        }
+    }
+
+    /** A complete wire-level BlockState copied from visible_surface.state. */
+    public record BlockStateSpec(String block, Map<String, String> properties) {
+        public BlockStateSpec {
+            Objects.requireNonNull(block, "block");
+            properties = Collections.unmodifiableMap(new LinkedHashMap<>(
+                    Objects.requireNonNull(properties, "properties")));
+        }
+    }
+
+    /** Exactly one of expectedState and dependencyEntryId is present. */
+    public record PlacementSupport(
+            Position position,
+            BlockFace face,
+            Optional<BlockStateSpec> expectedState,
+            Optional<String> dependencyEntryId) {
+        public PlacementSupport {
+            Objects.requireNonNull(position, "position");
+            Objects.requireNonNull(face, "face");
+            Objects.requireNonNull(expectedState, "expectedState");
+            Objects.requireNonNull(dependencyEntryId, "dependencyEntryId");
+        }
+    }
+
+    public record Offset(int x, int y, int z) {
+    }
+
+    /** Wire-level mirror followed by clockwise Y-axis rotation. */
+    public record BlockPlanTransform(BlockPlanRotation rotation, BlockPlanMirror mirror) {
+        public BlockPlanTransform {
+            Objects.requireNonNull(rotation, "rotation");
+            Objects.requireNonNull(mirror, "mirror");
+        }
+
+        public Offset apply(Offset input) {
+            Objects.requireNonNull(input, "input");
+            int x = mirror == BlockPlanMirror.X ? -input.x() : input.x();
+            int z = mirror == BlockPlanMirror.Z ? -input.z() : input.z();
+            return switch (rotation) {
+                case DEGREES_0 -> new Offset(x, input.y(), z);
+                case DEGREES_90 -> new Offset(-z, input.y(), x);
+                case DEGREES_180 -> new Offset(-x, input.y(), -z);
+                case DEGREES_270 -> new Offset(z, input.y(), -x);
+            };
+        }
+    }
+
+    public enum BlockPlanRotation {
+        DEGREES_0(0),
+        DEGREES_90(90),
+        DEGREES_180(180),
+        DEGREES_270(270);
+
+        private final int degrees;
+
+        BlockPlanRotation(int degrees) {
+            this.degrees = degrees;
+        }
+
+        public int degrees() {
+            return degrees;
+        }
+    }
+
+    /** x is Minecraft FRONT_BACK; z is Minecraft LEFT_RIGHT. */
+    public enum BlockPlanMirror {
+        NONE("none"),
+        X("x"),
+        Z("z");
+
+        private final String wireName;
+
+        BlockPlanMirror(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
         }
     }
 

@@ -164,6 +164,43 @@ class CatalogSchemaValidatorDiagnosticTest {
                 .doesNotContain("private-value");
     }
 
+    @Test
+    void validatesSchemaValuedAdditionalPropertiesWithoutReflectingMapEntries() {
+        JsonObject schema = JsonParser.parseString("""
+                {"type":"object","maxProperties":2,
+                 "propertyNames":{"pattern":"^[a-z_]+$"},
+                 "additionalProperties":{"type":"string","pattern":"^[a-z]+$"}}
+                """).getAsJsonObject();
+        JsonObject valid = JsonParser.parseString(
+                "{\"axis\":\"x\",\"facing\":\"north\"}").getAsJsonObject();
+        assertThat(CatalogSchemaValidator.matches(schema, valid)).isTrue();
+
+        JsonObject invalidValue = JsonParser.parseString(
+                "{\"private_key\":\"PRIVATE-SUBMITTED-VALUE\"}").getAsJsonObject();
+        String valueFailure = CatalogSchemaValidator.firstFailure(schema, invalidValue).summary();
+        assertThat(valueFailure).isEqualTo("$: invalid additional property")
+                .doesNotContain("private", "PRIVATE", "SUBMITTED");
+
+        JsonObject invalidName = JsonParser.parseString(
+                "{\"secret-token\":\"value\"}").getAsJsonObject();
+        assertThat(CatalogSchemaValidator.firstFailure(schema, invalidName).summary())
+                .isEqualTo("$: invalid property name")
+                .doesNotContain("secret-token");
+
+        JsonObject tooMany = JsonParser.parseString(
+                "{\"a\":\"x\",\"b\":\"y\",\"c\":\"z\"}").getAsJsonObject();
+        assertThat(CatalogSchemaValidator.firstFailure(schema, tooMany).summary())
+                .isEqualTo("$: above catalog maximum properties");
+
+        assertThat(CatalogSchemaValidator.failures(schema, valid).failures()).isEmpty();
+        assertThat(CatalogSchemaValidator.failures(schema, invalidValue).summary())
+                .isEqualTo("$: invalid additional property")
+                .doesNotContain("private", "PRIVATE", "SUBMITTED");
+        assertThat(CatalogSchemaValidator.failures(schema, invalidName).summary())
+                .isEqualTo("$: invalid property name")
+                .doesNotContain("secret-token");
+    }
+
     private static JsonObject startRequest(java.util.function.Consumer<JsonObject> mutation) {
         JsonObject request = new McpToolCatalog().inputSchema("agent_start_action")
                 .getAsJsonArray("examples").get(0).getAsJsonObject().deepCopy();

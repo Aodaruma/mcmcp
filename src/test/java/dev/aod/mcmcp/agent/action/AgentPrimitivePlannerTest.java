@@ -14,6 +14,7 @@ import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -197,6 +198,113 @@ class AgentPrimitivePlannerTest {
                         "minecraft:farmland", null, 0)))),
                 4.5F))
                 .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+    }
+
+    @Test
+    void knownBlockPlanRequiresDeliveredExactSupportState() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        var support = new ActionDsl.Position(DIMENSION, 0, 64, 2);
+        var target = new ActionDsl.Position(DIMENSION, 0, 65, 2);
+        var expectedSupport = new ActionDsl.BlockStateSpec(
+                "minecraft:oak_log", Map.of("axis", "x"));
+        var plan = new ActionDsl.ApplyKnownBlockPlan(
+                "copy",
+                target,
+                new ActionDsl.BlockPlanTransform(
+                        ActionDsl.BlockPlanRotation.DEGREES_0,
+                        ActionDsl.BlockPlanMirror.NONE),
+                List.of(new ActionDsl.BlockPlanEntry(
+                        "cell",
+                        new ActionDsl.Offset(0, 0, 0),
+                        expectedSupport,
+                        "minecraft:oak_log",
+                        new ActionDsl.PlacementSupport(
+                                support,
+                                ActionDsl.BlockFace.UP,
+                                Optional.of(expectedSupport),
+                                Optional.empty()))));
+        var program = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_PLACE),
+                List.of(plan));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+
+        var accepted = AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                pose,
+                Optional.of(frame(List.of(surfaceWithState(
+                        support,
+                        ObservationRecord.Face.UP,
+                        "minecraft:oak_log",
+                        Map.of("axis", "x"),
+                        0L)))),
+                4.5F);
+
+        assertThat(accepted.worstCase(plan)).contains(
+                ActionDslCompiler.intrinsicKnownBlockPlanCost(1));
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(
+                        cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 180.0F, 0.0F),
+                Optional.of(frame(List.of(surfaceWithState(
+                        support,
+                        ObservationRecord.Face.UP,
+                        "minecraft:oak_log",
+                        Map.of("axis", "x"),
+                        0L)))),
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                pose,
+                Optional.of(frame(List.of(new ObservationRecord.VisibleSurface(
+                        new ObservationValues.BlockPosition(
+                                new ObservationValues.ResourceId(DIMENSION),
+                                support.x(), support.y(), support.z()),
+                        ObservationRecord.Face.UP,
+                        new ObservationValues.ResourceId("minecraft:oak_log"),
+                        null,
+                        null,
+                        ObservationRecord.ShapeClass.OPAQUE,
+                        null,
+                        new ObservationValues.WorldPosition(
+                                new ObservationValues.ResourceId(DIMENSION),
+                                support.x() + 0.5D, support.y() + 1.0D, support.z() + 0.5D),
+                        new ObservationValues.WorldPosition(
+                                new ObservationValues.ResourceId(DIMENSION),
+                                0.5D, 65.62D, 0.5D),
+                        1L,
+                        0L)))),
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                pose,
+                Optional.of(frame(List.of(surfaceWithState(
+                        support,
+                        ObservationRecord.Face.UP,
+                        "minecraft:oak_log",
+                        Map.of("axis", "y"),
+                        0L)))),
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
     }
 
     @Test
@@ -1429,6 +1537,30 @@ class AgentPrimitivePlannerTest {
                         dimension, hit.x, hit.y, hit.z),
                 eye,
                 1,
+                revision);
+    }
+
+    private static ObservationRecord.VisibleSurface surfaceWithState(
+            ActionDsl.Position target,
+            ObservationRecord.Face face,
+            String block,
+            Map<String, String> properties,
+            long revision) {
+        var dimension = new ObservationValues.ResourceId(target.dimension());
+        Vec3 hit = rayHit(target, face, block);
+        return new ObservationRecord.VisibleSurface(
+                new ObservationValues.BlockPosition(
+                        dimension, target.x(), target.y(), target.z()),
+                face,
+                new ObservationValues.ResourceId(block),
+                new ObservationRecord.BlockStateView(
+                        new ObservationValues.ResourceId(block), properties),
+                new ObservationValues.ResourceId(block),
+                ObservationRecord.ShapeClass.OPAQUE,
+                null,
+                new ObservationValues.WorldPosition(dimension, hit.x, hit.y, hit.z),
+                new ObservationValues.WorldPosition(dimension, 0.5D, 65.62D, 0.5D),
+                1L,
                 revision);
     }
 

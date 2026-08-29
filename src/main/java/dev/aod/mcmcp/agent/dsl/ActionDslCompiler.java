@@ -21,6 +21,8 @@ public final class ActionDslCompiler {
             ActionDslValidator.MAX_BLOCKS_BROKEN,
             ActionDslValidator.MAX_BLOCKS_PLACED);
     private static final long NOMINAL_TICK_MILLIS = 50;
+    private static final long BLOCK_PLAN_TICKS_PER_ENTRY = 300;
+    private static final double BLOCK_PLAN_CAMERA_DEGREES_PER_ENTRY = 80;
 
     private ActionDslCompiler() {
     }
@@ -83,6 +85,11 @@ public final class ActionDslCompiler {
         }
         if (node instanceof ActionDsl.WaitUntil wait) {
             return compileWait(node, wait.maxTicks(), primitiveCostBounds);
+        }
+        if (node instanceof ActionDsl.ApplyKnownBlockPlan plan) {
+            Cost cost = intrinsicKnownBlockPlanCost(plan.entries().size());
+            primitiveCostBounds.put(node.id(), cost);
+            return cost;
         }
         if (node instanceof ActionDsl.NavigateToKnown
                 || node instanceof ActionDsl.ApproachKnownSurface
@@ -175,6 +182,22 @@ public final class ActionDslCompiler {
         return new Cost(
                 multiplyExact(ticks, NOMINAL_TICK_MILLIS),
                 ticks, 0, 0, 0, 0, 0);
+    }
+
+    /** Structural bound for the stationary place-only block-plan adapter. */
+    public static Cost intrinsicKnownBlockPlanCost(int entries) {
+        if (entries < 1 || entries > ActionDslValidator.MAX_BLOCK_PLAN_ENTRIES) {
+            throw new IllegalArgumentException("block plan entry count is outside the closed bound");
+        }
+        long ticks = Math.multiplyExact(BLOCK_PLAN_TICKS_PER_ENTRY, entries);
+        return new Cost(
+                multiplyExact(ticks, NOMINAL_TICK_MILLIS),
+                ticks,
+                0,
+                BLOCK_PLAN_CAMERA_DEGREES_PER_ENTRY * entries,
+                0,
+                0,
+                entries);
     }
 
     private static void requireMutationCost(

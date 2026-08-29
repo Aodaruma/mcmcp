@@ -15,6 +15,8 @@ import dev.aod.mcmcp.agent.observation.ObservationValues.WorldPosition;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
@@ -22,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -220,6 +223,54 @@ class OmnidirectionalObserverTest {
         assertThatThrownBy(() -> OmnidirectionalObserver.displayedItem(ItemStack.EMPTY))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("empty");
+    }
+
+    @Test
+    void completeStateIsLimitedToAuditedCopyAndSupportBlocks() {
+        var xAxisLog = Blocks.OAK_LOG.defaultBlockState()
+                .setValue(BlockStateProperties.AXIS, Direction.Axis.X);
+
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(xAxisLog).block().value())
+                .isEqualTo("minecraft:oak_log");
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(xAxisLog).properties())
+                .containsExactly(Map.entry("axis", "x"));
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.DIRT.defaultBlockState())).isNotNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.GRASS_BLOCK.defaultBlockState())).isNotNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.OBSIDIAN.defaultBlockState())).isNotNull();
+
+        // These blocks carry runtime properties which are not fully distinguishable from their
+        // rendered surface. Their block ids remain visible, but complete state stays hidden.
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.OAK_LEAVES.defaultBlockState())).isNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.BEEHIVE.defaultBlockState())).isNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.REDSTONE_BLOCK.defaultBlockState())).isNull();
+
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(xAxisLog).value())
+                .isEqualTo("minecraft:oak_log");
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.CHEST.defaultBlockState())).isNull();
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.SAND.defaultBlockState())).isNull();
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.OAK_DOOR.defaultBlockState())).isNull();
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.TNT.defaultBlockState())).isNull();
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.OAK_STAIRS.defaultBlockState())).isNull();
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.OAK_SLAB.defaultBlockState())).isNull();
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.DIRT.defaultBlockState())).isNull();
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.REDSTONE_BLOCK.defaultBlockState())).isNull();
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.OAK_SLAB.defaultBlockState().setValue(
+                        BlockStateProperties.WATERLOGGED, true))).isNull();
     }
 
     @Test

@@ -26,6 +26,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McpToolCatalogTest {
     @Test
+    void validConstructionExamplePassesAggregateSchemaAndReachesDispatch() throws Exception {
+        var example = new McpToolCatalog().inputSchema("agent_start_action")
+                .getAsJsonArray("examples").asList().stream()
+                .map(value -> value.getAsJsonObject())
+                .filter(value -> value.getAsJsonObject("program").get("name").getAsString()
+                        .equals("copy_known_oak_beam"))
+                .findFirst().orElseThrow();
+        var commands = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        var registry = new McmcpToolRegistry((command, context) -> {
+            commands.add(command);
+            return CompletableFuture.completedFuture(
+                    McpRuntimePort.RuntimeReply.success(toolResult(command)));
+        }, Duration.ofSeconds(1));
+
+        var prepared = registry.prepareCall("agent_start_action", example);
+
+        assertThat(commands).singleElement().isInstanceOf(McpRuntimePort.StartAction.class);
+        registry.abandonDelivery(prepared);
+        assertThat(commands.getLast()).isInstanceOf(McpRuntimePort.AbandonActionDelivery.class);
+    }
+
+    @Test
     void startReceiptIsConfirmedOnlyAfterDeliveryOrAbandonedOnWriteFailure() throws Exception {
         var commands = new ArrayList<McpRuntimePort.RuntimeCommand>();
         var registry = new McmcpToolRegistry((command, context) -> {

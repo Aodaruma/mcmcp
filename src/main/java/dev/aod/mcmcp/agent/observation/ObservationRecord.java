@@ -1,7 +1,10 @@
 package dev.aod.mcmcp.agent.observation;
 
+import java.util.Collections;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 
 import static dev.aod.mcmcp.agent.observation.ObservationValues.Aabb;
 import static dev.aod.mcmcp.agent.observation.ObservationValues.BlockPosition;
@@ -29,6 +32,8 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
             BlockPosition position,
             Face face,
             ResourceId block,
+            BlockStateView state,
+            ResourceId placementItem,
             ShapeClass shapeClass,
             Boolean cropMature,
             WorldPosition rayHit,
@@ -39,6 +44,18 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
             Objects.requireNonNull(position, "position");
             Objects.requireNonNull(face, "face");
             Objects.requireNonNull(block, "block");
+            if (state != null && !block.equals(state.block())) {
+                throw new IllegalArgumentException(
+                        "Visible surface block must equal state.block");
+            }
+            if (placementItem != null && state == null) {
+                throw new IllegalArgumentException(
+                        "Visible surface placement item requires a complete state");
+            }
+            if (placementItem != null && "minecraft:air".equals(placementItem.value())) {
+                throw new IllegalArgumentException(
+                        "Visible surface placement item must not be air");
+            }
             Objects.requireNonNull(shapeClass, "shapeClass");
             Objects.requireNonNull(eyeOrigin, "eyeOrigin");
             if (rayHit != null) {
@@ -58,15 +75,49 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
                 BlockPosition position,
                 Face face,
                 ResourceId block,
+                BlockStateView state,
+                ResourceId placementItem,
                 ShapeClass shapeClass,
                 Boolean cropMature,
                 WorldPosition eyeOrigin,
                 long observedTick,
                 long worldRevision) {
-            this(position, face, block, shapeClass, cropMature, null,
+            this(position, face, block, state, placementItem, shapeClass, cropMature, null,
                     eyeOrigin, observedTick, worldRevision);
         }
 
+        /**
+         * Compatibility constructor for a surface without policy-visible complete state.
+         */
+        public VisibleSurface(
+                BlockPosition position,
+                Face face,
+                ResourceId block,
+                ShapeClass shapeClass,
+                Boolean cropMature,
+                WorldPosition rayHit,
+                WorldPosition eyeOrigin,
+                long observedTick,
+                long worldRevision) {
+            this(position, face, block, null, null,
+                    shapeClass, cropMature, rayHit, eyeOrigin, observedTick, worldRevision);
+        }
+
+        /** Compatibility constructor; see the overload retaining an explicit ray hit. */
+        public VisibleSurface(
+                BlockPosition position,
+                Face face,
+                ResourceId block,
+                ShapeClass shapeClass,
+                Boolean cropMature,
+                WorldPosition eyeOrigin,
+                long observedTick,
+                long worldRevision) {
+            this(position, face, block, null, null,
+                    shapeClass, cropMature, null, eyeOrigin, observedTick, worldRevision);
+        }
+
+        /** Compatibility constructor; see the overload retaining an explicit ray hit. */
         public VisibleSurface(
                 BlockPosition position,
                 Face face,
@@ -75,7 +126,8 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
                 WorldPosition eyeOrigin,
                 long observedTick,
                 long worldRevision) {
-            this(position, face, block, shapeClass, null, null,
+            this(position, face, block, null, null,
+                    shapeClass, null, null,
                     eyeOrigin, observedTick, worldRevision);
         }
 
@@ -84,6 +136,25 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
         @Override public long oldestObservedTick() { return observedTick; }
         @Override public long newestObservedTick() { return observedTick; }
         public EvidenceProvenance provenance() { return EvidenceProvenance.OMNIDIRECTIONAL_VISUAL; }
+    }
+
+    /** Complete, canonical BlockState identity for an audited construction copy/support surface. */
+    record BlockStateView(ResourceId block, Map<String, String> properties) {
+        public BlockStateView {
+            Objects.requireNonNull(block, "block");
+            Objects.requireNonNull(properties, "properties");
+            var ordered = new TreeMap<String, String>();
+            for (var entry : properties.entrySet()) {
+                String name = Objects.requireNonNull(entry.getKey(), "property name");
+                String value = Objects.requireNonNull(entry.getValue(), "property value");
+                if (!name.matches("[a-z0-9_]{1,64}")
+                        || value.isBlank() || value.length() > 96) {
+                    throw new IllegalArgumentException("invalid block state property");
+                }
+                ordered.put(name, value);
+            }
+            properties = Collections.unmodifiableMap(ordered);
+        }
     }
 
     record VisibleEntity(

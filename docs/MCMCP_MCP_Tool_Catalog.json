@@ -217,7 +217,7 @@
     {
       "name": "agent_get_observation",
       "title": "Get MCMCP Observation",
-      "description": "Returns a stable, paged projection of one policy-filtered omnidirectional frame; it accepts no arbitrary center or radius. Ask for one purpose at a time: crop/chest/gate=visible_surface, drops=visible_entity, route=traversability. Use optional filter to return only relevant block_ids, entity_types, displayed_items, crop_mature, or one inclusive position_bounds; filters applicable to a record kind are ANDed and only remove already-policy-visible records, so they cannot weaken safety evidence or expose hidden state. position_bounds anchors visible_surface at position, visible_entity/hazard/unknown_boundary/sound_clue at floor(position), and traversability at navigation_target. For harvest use {block_ids:[\"minecraft:wheat\"],crop_mature:true}; for drops use {entity_types:[\"minecraft:item\"],displayed_items:[\"minecraft:wheat\",\"minecraft:wheat_seeds\"]}. visible_surface is one representative face per block position and is ordered mature crop, immature crop, then other surfaces, near-first. Use the smallest useful limit. If next_cursor is non-null, either continue that exact frame/kinds/filter query immediately or allow its bounded 60-second lease to expire; abandoning two paged queries makes a third root query SERVER_BUSY. Only static visible_surface records actually returned may remain planner-usable for at most 60 seconds; dynamic records are never extended. On FRAME_EXPIRED, call agent_get_state and retry with observation.latest_frame_id.",
+      "description": "Returns a stable, paged projection of one policy-filtered omnidirectional frame; it accepts no arbitrary center or radius. Ask for one purpose at a time: crop/chest/gate=visible_surface, drops=visible_entity, route=traversability. Use optional filter to return only relevant block_ids, entity_types, displayed_items, crop_mature, or one inclusive position_bounds; filters applicable to a record kind are ANDed and only remove already-policy-visible records, so they cannot weaken safety evidence or expose hidden state. position_bounds anchors visible_surface at position, visible_entity/hazard/unknown_boundary/sound_clue at floor(position), and traversability at navigation_target. For harvest use {block_ids:[\"minecraft:wheat\"],crop_mature:true}; for drops use {entity_types:[\"minecraft:item\"],displayed_items:[\"minecraft:wheat\",\"minecraft:wheat_seeds\"]}. visible_surface is one representative face per block position and is ordered mature crop, immature crop, then other surfaces, near-first. Every visible_surface includes required nullable state and placement_item fields. state is complete only for the closed construction copy/support allowlist and is null for all other blocks so non-rendered properties never cross the visual boundary. A non-null placement_item always has a non-null state and marks an apply_known_block_plan copy source. Use the smallest useful limit. If next_cursor is non-null, either continue that exact frame/kinds/filter query immediately or allow its bounded 60-second lease to expire; abandoning two paged queries makes a third root query SERVER_BUSY. Only static visible_surface records actually returned may remain planner-usable for at most 60 seconds; dynamic records are never extended. On FRAME_EXPIRED, call agent_get_state and retry with observation.latest_frame_id.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -298,6 +298,24 @@
             "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
             "maxLength": 128
           },
+          "completeBlockState": {
+            "type": "object",
+            "description": "Complete registered runtime BlockState. properties contains every property defined by block; property-free blocks use an empty object.",
+            "additionalProperties": false,
+            "properties": {
+              "block": {"$ref": "#/$defs/resourceLocation"},
+              "properties": {
+                "type": "object",
+                "maxProperties": 32,
+                "propertyNames": {"pattern": "^[a-z0-9_]{1,64}$"},
+                "additionalProperties": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9_.-]{1,64}$"
+                }
+              }
+            },
+            "required": ["block", "properties"]
+          },
           "worldPosition": {
             "type": "object",
             "additionalProperties": false,
@@ -350,13 +368,25 @@
           },
           "visibleSurface": {
             "type": "object",
-            "description": "One deterministic representative visible face for this block position; UP is preferred over horizontal faces, which are preferred over DOWN",
+            "description": "One deterministic representative visible face for this block position; UP is preferred over horizontal faces, which are preferred over DOWN. state is the complete runtime BlockState only for the closed construction copy/support allowlist (copyable blocks plus minecraft:dirt, minecraft:grass_block, and minecraft:obsidian), and null otherwise so hidden properties are not disclosed. placement_item is the ordinary inventory item that may reproduce a non-null state through the closed placement adapter, or null when this surface is not eligible for safe copy placement.",
             "additionalProperties": false,
             "properties": {
               "kind": {"const": "visible_surface"},
               "position": {"$ref": "#/$defs/blockPosition"},
               "face": {"enum": ["down", "up", "north", "south", "west", "east"]},
               "block": {"$ref": "#/$defs/resourceLocation"},
+              "state": {
+                "oneOf": [
+                  {"type": "null"},
+                  {"$ref": "#/$defs/completeBlockState"}
+                ]
+              },
+              "placement_item": {
+                "oneOf": [
+                  {"type": "null"},
+                  {"$ref": "#/$defs/resourceLocation"}
+                ]
+              },
               "shape_class": {"enum": ["opaque", "transparent", "cutout", "partial", "fluid", "unknown"]},
               "crop_mature": {"type": "boolean"},
               "eye_origin": {"$ref": "#/$defs/worldPosition"},
@@ -364,7 +394,26 @@
               "world_revision": {"$ref": "#/$defs/worldRevision"},
               "provenance": {"const": "OMNIDIRECTIONAL_VISUAL"}
             },
-            "required": ["kind", "position", "face", "block", "shape_class", "eye_origin", "observed_tick", "world_revision", "provenance"]
+            "required": ["kind", "position", "face", "block", "state", "placement_item", "shape_class", "eye_origin", "observed_tick", "world_revision", "provenance"],
+            "oneOf": [
+              {
+                "properties": {
+                  "state": {"$ref": "#/$defs/completeBlockState"},
+                  "placement_item": {"$ref": "#/$defs/resourceLocation"}
+                }
+              },
+              {
+                "properties": {
+                  "state": {
+                    "oneOf": [
+                      {"type": "null"},
+                      {"$ref": "#/$defs/completeBlockState"}
+                    ]
+                  },
+                  "placement_item": {"type": "null"}
+                }
+              }
+            ]
           },
           "visibleEntity": {
             "type": "object",
@@ -492,7 +541,7 @@
     {
       "name": "agent_start_action",
       "title": "Start MCMCP Action",
-      "description": "Runs one validated Action DSL v1 program while in-game MCP operation is enabled. Choose Action boundaries from current evidence: combine nodes only when every later node is admissible now or has an explicitly supported dependency proof. Batch 2..8 targets within one crop stage; when a mutation creates new drops or newly exposed surfaces, finish, reobserve, then start the next Action. Put wait_until immediately after its plant node when growth must be awaited. Copy traversability.navigation_target verbatim into navigate_to_known.target; never derive, floor, round, or copy continuous traversability.from/to coordinates. When you have a visible block but no safe feet coordinate, copy visible_surface.position and block verbatim into approach_known_surface; the runtime selects a known interaction-range navigation cell, then finish the Action and reobserve before mutation. collect_visible_item and collect_visible_item_batch targets are the only continuous positions: copy visible_entity.position and displayed_item without rounding. Use collect_visible_item_batch for 2..8 current drops instead of one Action per item. The envelope is {schema_version:1,program:{dsl_version:1,name?:string,capabilities:string[],body:node[]},budget:{max_duration_ms,max_ticks,max_distance_blocks,max_camera_degrees,max_interactions,max_blocks_broken,max_blocks_placed}}. Every node needs a unique id matching ^[a-z][a-z0-9_-]{0,31}$ and one exact op. Frequent exact signatures are navigate_to_known:{id,op,target,tolerance}; approach_known_surface:{id,op,target,expected_block}; open_known_passage/inspect_known_container:{id,op,target,expected_block}; take_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}; till_known_batch:{id,op,targets:[position],expected_block,hoe_item}; plant_known_wheat_batch:{id,op,targets:[{target,support}],seed_item}; harvest_known_wheat_batch:{id,op,targets:[position]}; collect_visible_item_batch:{id,op,targets:[{displayed_item,target}]}. Exact ops are navigate_to_known, approach_known_surface, face_known_position, break_known_face, till_known_block, till_known_batch, plant_known_wheat, plant_known_wheat_batch, harvest_known_wheat, harvest_known_wheat_batch, open_known_fence_gate, open_known_passage, inspect_known_container, take_known_container_stack, collect_visible_item, collect_visible_item_batch, wait_ticks, wait_until, if, and repeat; use the exact inputSchema fields and no aliases. Required capabilities are navigate/approach/collect=movement; face=camera; break/harvest=camera+block_break; till/open=camera+block_interact; plant=camera+block_place; inspect/take=camera+inventory_transfer. For each inspect/take reserve at least 30000 ms, 600 ticks, 360 camera degrees, and its schema-stated interactions. For an 8-target mutation batch, reserve 120000 ms, 2400 ticks, up to the 720 camera-degree policy maximum, and 8 interactions/breaks/placements as applicable. Targets always execute in submitted order; if that order costs more than 720 camera degrees, split it into smaller batches instead of reordering at runtime. take stack_policy is exactly default_components_only or item_id_any_components. Use observed coordinates and policy maxima when unsure of an adequate budget. PROGRAM_BUDGET_UNPROVABLE reports all insufficient budget component names without echoing submitted values.",
+      "description": "Runs one validated Action DSL v1 program while in-game MCP operation is enabled. Choose Action boundaries from current evidence: combine nodes only when every later node is admissible now or has an explicitly supported dependency proof. Batch 2..8 targets within one crop stage; when a mutation creates new drops or newly exposed surfaces, finish, reobserve, then start the next Action. apply_known_block_plan is the bounded exception for explicitly declared earlier-entry placement dependencies. Put wait_until immediately after its plant node when growth must be awaited. Copy traversability.navigation_target verbatim into navigate_to_known.target; never derive, floor, round, or copy continuous traversability.from/to coordinates. When you have a visible block but no safe feet coordinate, copy visible_surface.position and block verbatim into approach_known_surface; the runtime selects a known interaction-range navigation cell, then finish the Action and reobserve before mutation. collect_visible_item and collect_visible_item_batch targets are the only continuous positions: copy visible_entity.position and displayed_item without rounding. Use collect_visible_item_batch for 2..8 current drops instead of one Action per item. For building copy, use only visible_surface records whose placement_item is non-null: copy state verbatim into source_state and placement_item into item. Never convert state properties yourself. Construction requires every support to be within 40 total yaw+pitch degrees of the admitted heading; when it is not, put face_known_position for a visible support immediately before the plan or split the plan. The envelope is {schema_version:1,program:{dsl_version:1,name?:string,capabilities:string[],body:node[]},budget:{max_duration_ms,max_ticks,max_distance_blocks,max_camera_degrees,max_interactions,max_blocks_broken,max_blocks_placed}}. Every node needs a unique id matching ^[a-z][a-z0-9_-]{0,31}$ and one exact op. Frequent exact signatures are navigate_to_known:{id,op,target,tolerance}; approach_known_surface:{id,op,target,expected_block}; open_known_passage/inspect_known_container:{id,op,target,expected_block}; take_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}; till_known_batch:{id,op,targets:[position],expected_block,hoe_item}; plant_known_wheat_batch:{id,op,targets:[{target,support}],seed_item}; harvest_known_wheat_batch:{id,op,targets:[position]}; apply_known_block_plan:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,source_state,item,support:{position,face,expected_state,dependency_entry_id}}]}; collect_visible_item_batch:{id,op,targets:[{displayed_item,target}]}. Both support.expected_state and support.dependency_entry_id are required nullable fields and exactly one must be non-null. Exact ops are navigate_to_known, approach_known_surface, face_known_position, break_known_face, till_known_block, till_known_batch, plant_known_wheat, plant_known_wheat_batch, harvest_known_wheat, harvest_known_wheat_batch, apply_known_block_plan, open_known_fence_gate, open_known_passage, inspect_known_container, take_known_container_stack, collect_visible_item, collect_visible_item_batch, wait_ticks, wait_until, if, and repeat; use the exact inputSchema fields and no aliases. Required capabilities are navigate/approach/collect=movement; face=camera; break/harvest=camera+block_break; till/open=camera+block_interact; plant/apply_known_block_plan=camera+block_place; inspect/take=camera+inventory_transfer. For each inspect/take reserve at least 30000 ms, 600 ticks, 360 camera degrees, and its schema-stated interactions. For each apply_known_block_plan entry reserve 15000 ms, 300 ticks, 80 camera degrees, and one placement; an 8-entry plan therefore needs 120000 ms, 2400 ticks, 640 camera degrees, and 8 placements with zero movement, interactions, and breaks. For another 8-target mutation batch, reserve 120000 ms, 2400 ticks, up to the 720 camera-degree policy maximum, and 8 interactions/breaks/placements as applicable. Targets always execute in submitted order; if that order costs more than 720 camera degrees, split it into smaller batches instead of reordering at runtime. take stack_policy is exactly default_components_only or item_id_any_components. Use observed coordinates and policy maxima when unsure of an adequate budget. PROGRAM_BUDGET_UNPROVABLE reports all insufficient budget component names without echoing submitted values.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -502,6 +551,24 @@
             "type": "string",
             "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
             "maxLength": 128
+          },
+          "completeBlockState": {
+            "type": "object",
+            "description": "Complete registered runtime BlockState copied without omission from visible_surface.state. Unknown, missing, duplicate, or invalid properties fail before input.",
+            "additionalProperties": false,
+            "properties": {
+              "block": {"$ref": "#/$defs/resourceLocation"},
+              "properties": {
+                "type": "object",
+                "maxProperties": 32,
+                "propertyNames": {"pattern": "^[a-z0-9_]{1,64}$"},
+                "additionalProperties": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9_.-]{1,64}$"
+                }
+              }
+            },
+            "required": ["block", "properties"]
           },
           "woodenOpenable": {
             "enum": [
@@ -792,6 +859,97 @@
             },
             "required": ["id", "op", "targets"]
           },
+          "blockPlanOffset": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {"type": "integer", "minimum": -8, "maximum": 8},
+              "y": {"type": "integer", "minimum": -8, "maximum": 8},
+              "z": {"type": "integer", "minimum": -8, "maximum": 8}
+            },
+            "required": ["x", "y", "z"]
+          },
+          "blockPlanSupport": {
+            "type": "object",
+            "description": "The target must be exactly one block beyond position in face direction. Select exactly one witness: copy a current visible_surface.state into expected_state and set dependency_entry_id to null, or set expected_state to null and name an earlier entry whose transformed target exactly equals position. Existing supports are accepted only when placement_item is non-null or block is minecraft:dirt, minecraft:grass_block, or minecraft:obsidian.",
+            "additionalProperties": false,
+            "properties": {
+              "position": {"$ref": "#/$defs/position"},
+              "face": {"enum": ["down", "up", "north", "south", "west", "east"]},
+              "expected_state": {
+                "oneOf": [
+                  {"type": "null"},
+                  {"$ref": "#/$defs/completeBlockState"}
+                ]
+              },
+              "dependency_entry_id": {
+                "oneOf": [
+                  {"type": "null"},
+                  {"$ref": "#/$defs/nodeId"}
+                ]
+              }
+            },
+            "required": ["position", "face", "expected_state", "dependency_entry_id"],
+            "oneOf": [
+              {
+                "properties": {
+                  "expected_state": {"$ref": "#/$defs/completeBlockState"},
+                  "dependency_entry_id": {"type": "null"}
+                }
+              },
+              {
+                "properties": {
+                  "expected_state": {"type": "null"},
+                  "dependency_entry_id": {"$ref": "#/$defs/nodeId"}
+                }
+              }
+            ]
+          },
+          "blockPlanEntry": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "offset": {"$ref": "#/$defs/blockPlanOffset"},
+              "source_state": {
+                "description": "Copy one eligible source visible_surface.state verbatim. The runtime transforms this complete state with Minecraft mirror/rotation rules; do not rewrite facing, axis, rotation, shape, or other properties.",
+                "$ref": "#/$defs/completeBlockState"
+              },
+              "item": {
+                "description": "Copy the same source visible_surface.placement_item; null sources are not eligible entries.",
+                "$ref": "#/$defs/resourceLocation"
+              },
+              "support": {"$ref": "#/$defs/blockPlanSupport"}
+            },
+            "required": ["id", "offset", "source_state", "item", "support"]
+          },
+          "applyKnownBlockPlanNode": {
+            "type": "object",
+            "description": "Stationary place-only Phase 3 vertical slice for 1..8 ordered entries. Each transformed target is anchor plus offset after mirror (none/x/z) then clockwise Y rotation (0/90/180/270); transformed targets and entry ids must be unique. source_state and item come verbatim from one eligible visible_surface. The runtime applies Minecraft's BlockState mirror/rotation rules, so the policy never converts directional properties. Each entry uses either a current complete support-state witness or an explicit earlier-entry dependency. Every support aim must be within 40 total yaw+pitch degrees of the admitted heading; use a preceding face_known_position or a smaller plan when necessary. No movement, breaking, replacement, skip, hidden scan, NBT, fluid, gravity block, container, portal, or command block is admitted. Execution is fail-fast, never reorders entries, and requires authoritative placement postconditions. Reserve 15000 ms, 300 ticks, 80 camera degrees, and one max_blocks_placed per entry; distance, interactions, and breaks are zero.",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "apply_known_block_plan"},
+              "anchor": {"$ref": "#/$defs/position"},
+              "transform": {
+                "type": "object",
+                "description": "Mirror is applied first (x=FRONT_BACK/east-west reversal; z=LEFT_RIGHT/north-south reversal), then clockwise Y rotation.",
+                "additionalProperties": false,
+                "properties": {
+                  "rotation": {"enum": [0, 90, 180, 270]},
+                  "mirror": {"enum": ["none", "x", "z"]}
+                },
+                "required": ["rotation", "mirror"]
+              },
+              "entries": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {"$ref": "#/$defs/blockPlanEntry"}
+              }
+            },
+            "required": ["id", "op", "anchor", "transform", "entries"]
+          },
           "openFenceGateNode": {
             "type": "object",
             "additionalProperties": false,
@@ -953,6 +1111,7 @@
               {"$ref": "#/$defs/plantWheatBatchNode"},
               {"$ref": "#/$defs/harvestWheatNode"},
               {"$ref": "#/$defs/harvestWheatBatchNode"},
+              {"$ref": "#/$defs/applyKnownBlockPlanNode"},
               {"$ref": "#/$defs/openFenceGateNode"},
               {"$ref": "#/$defs/openPassageNode"},
               {"$ref": "#/$defs/inspectContainerNode"},
@@ -1321,6 +1480,57 @@
               "max_interactions": 1,
               "max_blocks_broken": 0,
               "max_blocks_placed": 0
+            }
+          },
+          {
+            "schema_version": 1,
+            "program": {
+              "dsl_version": 1,
+              "name": "copy_known_oak_beam",
+              "capabilities": ["camera", "block_place"],
+              "body": [
+                {
+                  "id": "copy",
+                  "op": "apply_known_block_plan",
+                  "anchor": {"dimension": "minecraft:overworld", "x": 102, "y": 65, "z": 120},
+                  "transform": {"rotation": 90, "mirror": "none"},
+                  "entries": [
+                    {
+                      "id": "base",
+                      "offset": {"x": 0, "y": 0, "z": 0},
+                      "source_state": {"block": "minecraft:oak_log", "properties": {"axis": "x"}},
+                      "item": "minecraft:oak_log",
+                      "support": {
+                        "position": {"dimension": "minecraft:overworld", "x": 102, "y": 65, "z": 121},
+                        "face": "north",
+                        "expected_state": {"block": "minecraft:stone", "properties": {}},
+                        "dependency_entry_id": null
+                      }
+                    },
+                    {
+                      "id": "next",
+                      "offset": {"x": -1, "y": 0, "z": 0},
+                      "source_state": {"block": "minecraft:oak_log", "properties": {"axis": "x"}},
+                      "item": "minecraft:oak_log",
+                      "support": {
+                        "position": {"dimension": "minecraft:overworld", "x": 102, "y": 65, "z": 120},
+                        "face": "north",
+                        "expected_state": null,
+                        "dependency_entry_id": "base"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "budget": {
+              "max_duration_ms": 30000,
+              "max_ticks": 600,
+              "max_distance_blocks": 0,
+              "max_camera_degrees": 160,
+              "max_interactions": 0,
+              "max_blocks_broken": 0,
+              "max_blocks_placed": 2
             }
           },
           {

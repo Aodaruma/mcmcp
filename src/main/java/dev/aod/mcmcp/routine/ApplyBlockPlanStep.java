@@ -10,7 +10,8 @@ public record ApplyBlockPlanStep(
         BlockTarget target,
         BlockStateFingerprint expectedBefore,
         BlockStateFingerprint expectedAfter,
-        Optional<String> requiredItemId) {
+        Optional<String> requiredItemId,
+        Optional<PlacementSupportWitness> supportWitness) {
     public ApplyBlockPlanStep {
         Objects.requireNonNull(id, "id");
         if (!id.matches("[a-z][a-z0-9_.-]{0,63}")) {
@@ -21,6 +22,7 @@ public record ApplyBlockPlanStep(
         Objects.requireNonNull(expectedBefore, "expectedBefore");
         Objects.requireNonNull(expectedAfter, "expectedAfter");
         Objects.requireNonNull(requiredItemId, "requiredItemId");
+        Objects.requireNonNull(supportWitness, "supportWitness");
         requiredItemId = requiredItemId.map(ApplyBlockPlanStep::validateRegistryId);
 
         boolean itemRequired = operation == ApplyBlockPlanOperation.PLACE
@@ -52,6 +54,24 @@ public record ApplyBlockPlanStep(
                 && "minecraft:air".equals(expectedBefore.blockId())) {
             throw new IllegalArgumentException("replace must require a non-air source state");
         }
+        if (supportWitness.isPresent()
+                && operation != ApplyBlockPlanOperation.PLACE
+                && operation != ApplyBlockPlanOperation.REPLACE) {
+            throw new IllegalArgumentException(
+                    "placement support witness is valid only for place and replace");
+        }
+    }
+
+    /** Backward-compatible constructor for the legacy bounded plan surface. */
+    public ApplyBlockPlanStep(
+            String id,
+            ApplyBlockPlanOperation operation,
+            BlockTarget target,
+            BlockStateFingerprint expectedBefore,
+            BlockStateFingerprint expectedAfter,
+            Optional<String> requiredItemId) {
+        this(id, operation, target, expectedBefore, expectedAfter,
+                requiredItemId, Optional.empty());
     }
 
     private static String validateRegistryId(String value) {

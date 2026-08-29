@@ -143,6 +143,14 @@ final class CatalogSchemaValidator {
             List<ValidationFailure> failures) {
         JsonObject properties = schema.has("properties")
                 ? schema.getAsJsonObject("properties") : new JsonObject();
+        if (schema.has("minProperties")
+                && value.size() < schema.get("minProperties").getAsInt()) {
+            addFailure(failures, path, "below catalog minimum properties", depth);
+        }
+        if (schema.has("maxProperties")
+                && value.size() > schema.get("maxProperties").getAsInt()) {
+            addFailure(failures, path, "above catalog maximum properties", depth);
+        }
         if (schema.has("required")) {
             for (JsonElement required : schema.getAsJsonArray("required")) {
                 String name = required.getAsString();
@@ -154,13 +162,36 @@ final class CatalogSchemaValidator {
                 }
             }
         }
-        if (schema.has("additionalProperties")
-                && !schema.get("additionalProperties").getAsBoolean()) {
+        if (schema.has("propertyNames")) {
+            JsonObject nameSchema = schema.getAsJsonObject("propertyNames");
+            for (String name : value.keySet()) {
+                if (validate(root, nameSchema, new com.google.gson.JsonPrimitive(name),
+                        path, depth, false) != null) {
+                    // Property names are submitted data. Never include them in the path/reason.
+                    addFailure(failures, path, "invalid property name", depth);
+                    return;
+                }
+            }
+        }
+        JsonElement additional = schema.get("additionalProperties");
+        if (additional != null && additional.isJsonPrimitive()
+                && !additional.getAsBoolean()) {
             for (String name : value.keySet()) {
                 if (!properties.has(name)) {
                     // Report at most one generic failure and never reflect the submitted name.
                     addFailure(failures, path, "unknown property", depth);
                     break;
+                }
+            }
+        } else if (additional != null && additional.isJsonObject()) {
+            JsonObject additionalSchema = additional.getAsJsonObject();
+            for (String name : value.keySet()) {
+                if (!properties.has(name)
+                        && validate(root, additionalSchema, value.get(name),
+                                path, depth, false) != null) {
+                    // Map keys and values are both untrusted. Keep the aggregate diagnostic fixed.
+                    addFailure(failures, path, "invalid additional property", depth);
+                    return;
                 }
             }
         }
@@ -294,6 +325,30 @@ final class CatalogSchemaValidator {
             boolean report) {
         JsonObject properties = schema.has("properties")
                 ? schema.getAsJsonObject("properties") : new JsonObject();
+        if (schema.has("minProperties")
+                && value.size() < schema.get("minProperties").getAsInt()) {
+            return failure(path, "below catalog minimum properties", depth, report);
+        }
+        if (schema.has("maxProperties")
+                && value.size() > schema.get("maxProperties").getAsInt()) {
+            return failure(path, "above catalog maximum properties", depth, report);
+        }
+        if (schema.has("propertyNames")) {
+            JsonObject propertyNameSchema = schema.getAsJsonObject("propertyNames");
+            for (String name : value.keySet()) {
+                ValidationFailure nameFailure = validate(
+                        root,
+                        propertyNameSchema,
+                        new com.google.gson.JsonPrimitive(name),
+                        path,
+                        depth + 1,
+                        false);
+                if (nameFailure != null) {
+                    // Never reflect an untrusted property name into the public error.
+                    return failure(path, "invalid property name", depth, report);
+                }
+            }
+        }
         if (schema.has("required")) {
             for (JsonElement required : schema.getAsJsonArray("required")) {
                 String name = required.getAsString();
@@ -303,11 +358,33 @@ final class CatalogSchemaValidator {
                 }
             }
         }
-        if (schema.has("additionalProperties") && !schema.get("additionalProperties").getAsBoolean()) {
-            for (String name : value.keySet()) {
-                if (!properties.has(name)) {
-                    // Never reflect an untrusted property name into the public error.
-                    return failure(path, "unknown property", depth, report);
+        if (schema.has("additionalProperties")) {
+            JsonElement additional = schema.get("additionalProperties");
+            if (additional.isJsonPrimitive()
+                    && additional.getAsJsonPrimitive().isBoolean()) {
+                if (!additional.getAsBoolean()) {
+                    for (String name : value.keySet()) {
+                        if (!properties.has(name)) {
+                            // Never reflect an untrusted property name into the public error.
+                            return failure(path, "unknown property", depth, report);
+                        }
+                    }
+                }
+            } else if (additional.isJsonObject()) {
+                JsonObject additionalSchema = additional.getAsJsonObject();
+                for (String name : value.keySet()) {
+                    if (properties.has(name)) continue;
+                    ValidationFailure additionalFailure = validate(
+                            root,
+                            additionalSchema,
+                            value.get(name),
+                            path,
+                            depth + 1,
+                            false);
+                    if (additionalFailure != null) {
+                        // Validate the value without exposing its untrusted map key or value.
+                        return failure(path, "invalid additional property", depth, report);
+                    }
                 }
             }
         }

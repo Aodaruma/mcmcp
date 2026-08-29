@@ -1583,6 +1583,18 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
             LocalPlayer player,
             int sourceInventorySlot,
             SemanticActionRequest request) {
+        return stageInventorySlotIntoSelectedHotbar(
+                minecraft, player, sourceInventorySlot,
+                stack -> slotPrepares(stack, request));
+    }
+
+    /** Shared bounded SWAP primitive for semantic and construction preparation. */
+    static boolean stageInventorySlotIntoSelectedHotbar(
+            Minecraft minecraft,
+            LocalPlayer player,
+            int sourceInventorySlot,
+            java.util.function.Predicate<ItemStack> stagedStackMatches) {
+        Objects.requireNonNull(stagedStackMatches, "stagedStackMatches");
         var inventory = player.getInventory();
         int selectedSlot = inventory.getSelectedSlot();
         if (sourceInventorySlot < Inventory.getSelectionSize()
@@ -1614,7 +1626,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
         } catch (RuntimeException | LinkageError failure) {
             return false;
         }
-        return slotPrepares(inventory.getItem(selectedSlot), request);
+        return stagedStackMatches.test(inventory.getItem(selectedSlot));
     }
 
     private static boolean slotPrepares(

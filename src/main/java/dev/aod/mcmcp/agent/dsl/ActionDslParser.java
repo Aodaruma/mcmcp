@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -126,6 +127,7 @@ public final class ActionDslParser {
             case "plant_known_wheat_batch" -> plantKnownWheatBatch(object, path);
             case "harvest_known_wheat" -> harvestKnownWheat(object, path);
             case "harvest_known_wheat_batch" -> harvestKnownWheatBatch(object, path);
+            case "apply_known_block_plan" -> applyKnownBlockPlan(object, path);
             case "open_known_fence_gate" -> openKnownFenceGate(object, path);
             case "open_known_passage" -> openKnownPassage(object, path);
             case "inspect_known_container" -> inspectKnownContainer(object, path);
@@ -246,6 +248,95 @@ public final class ActionDslParser {
         return new ActionDsl.HarvestKnownWheatBatch(
                 string(source.get("id"), path + ".id"),
                 positions(source.get("targets"), path + ".targets"));
+    }
+
+    private static ActionDsl.ApplyKnownBlockPlan applyKnownBlockPlan(
+            JsonObject source, String path) {
+        exactKeys(source, path, Set.of("id", "op", "anchor", "transform", "entries"),
+                Set.of("id", "op", "anchor", "transform", "entries"));
+        JsonArray values = array(source.get("entries"), path + ".entries");
+        var entries = new ArrayList<ActionDsl.BlockPlanEntry>(values.size());
+        for (int index = 0; index < values.size(); index++) {
+            entries.add(blockPlanEntry(values.get(index), path + ".entries[" + index + "]"));
+        }
+        return new ActionDsl.ApplyKnownBlockPlan(
+                string(source.get("id"), path + ".id"),
+                position(source.get("anchor"), path + ".anchor"),
+                blockPlanTransform(source.get("transform"), path + ".transform"),
+                entries);
+    }
+
+    private static ActionDsl.BlockPlanTransform blockPlanTransform(
+            JsonElement value, String path) {
+        JsonObject object = object(value, path, Set.of("rotation", "mirror"),
+                Set.of("rotation", "mirror"));
+        return new ActionDsl.BlockPlanTransform(
+                blockPlanRotation(integer(object.get("rotation"), path + ".rotation"),
+                        path + ".rotation"),
+                blockPlanMirror(string(object.get("mirror"), path + ".mirror"),
+                        path + ".mirror"));
+    }
+
+    private static ActionDsl.BlockPlanEntry blockPlanEntry(JsonElement value, String path) {
+        JsonObject object = object(value, path,
+                Set.of("id", "offset", "source_state", "item", "support"),
+                Set.of("id", "offset", "source_state", "item", "support"));
+        return new ActionDsl.BlockPlanEntry(
+                string(object.get("id"), path + ".id"),
+                offset(object.get("offset"), path + ".offset"),
+                blockStateSpec(object.get("source_state"), path + ".source_state"),
+                string(object.get("item"), path + ".item"),
+                placementSupport(object.get("support"), path + ".support"));
+    }
+
+    private static ActionDsl.Offset offset(JsonElement value, String path) {
+        JsonObject object = object(value, path, Set.of("x", "y", "z"),
+                Set.of("x", "y", "z"));
+        return new ActionDsl.Offset(
+                integer(object.get("x"), path + ".x"),
+                integer(object.get("y"), path + ".y"),
+                integer(object.get("z"), path + ".z"));
+    }
+
+    private static ActionDsl.BlockStateSpec blockStateSpec(JsonElement value, String path) {
+        JsonObject object = object(value, path, Set.of("block", "properties"),
+                Set.of("block", "properties"));
+        JsonObject properties = rawObject(object.get("properties"), path + ".properties");
+        var parsed = new LinkedHashMap<String, String>();
+        for (var property : properties.entrySet()) {
+            JsonElement propertyValue = property.getValue();
+            if (propertyValue == null || !propertyValue.isJsonPrimitive()
+                    || !propertyValue.getAsJsonPrimitive().isString()) {
+                throw invalid(path + ".properties must contain only string values");
+            }
+            parsed.put(property.getKey(), propertyValue.getAsString());
+        }
+        return new ActionDsl.BlockStateSpec(
+                string(object.get("block"), path + ".block"), parsed);
+    }
+
+    private static ActionDsl.PlacementSupport placementSupport(
+            JsonElement value, String path) {
+        JsonObject object = object(value, path,
+                Set.of("position", "face", "expected_state", "dependency_entry_id"),
+                Set.of("position", "face", "expected_state", "dependency_entry_id"));
+        return new ActionDsl.PlacementSupport(
+                position(object.get("position"), path + ".position"),
+                blockFace(string(object.get("face"), path + ".face"), path + ".face"),
+                nullableBlockStateSpec(object.get("expected_state"), path + ".expected_state"),
+                nullableString(object.get("dependency_entry_id"),
+                        path + ".dependency_entry_id"));
+    }
+
+    private static Optional<ActionDsl.BlockStateSpec> nullableBlockStateSpec(
+            JsonElement value, String path) {
+        if (value == null || value.isJsonNull()) return Optional.empty();
+        return Optional.of(blockStateSpec(value, path));
+    }
+
+    private static Optional<String> nullableString(JsonElement value, String path) {
+        if (value == null || value.isJsonNull()) return Optional.empty();
+        return Optional.of(string(value, path));
     }
 
     private static ActionDsl.OpenKnownFenceGate openKnownFenceGate(
@@ -499,6 +590,25 @@ public final class ActionDslParser {
             case "west" -> ActionDsl.BlockFace.WEST;
             case "east" -> ActionDsl.BlockFace.EAST;
             default -> throw invalid("Unsupported block face at " + path + ": " + value);
+        };
+    }
+
+    private static ActionDsl.BlockPlanRotation blockPlanRotation(int value, String path) {
+        return switch (value) {
+            case 0 -> ActionDsl.BlockPlanRotation.DEGREES_0;
+            case 90 -> ActionDsl.BlockPlanRotation.DEGREES_90;
+            case 180 -> ActionDsl.BlockPlanRotation.DEGREES_180;
+            case 270 -> ActionDsl.BlockPlanRotation.DEGREES_270;
+            default -> throw invalid(path + " must be 0, 90, 180, or 270");
+        };
+    }
+
+    private static ActionDsl.BlockPlanMirror blockPlanMirror(String value, String path) {
+        return switch (value) {
+            case "none" -> ActionDsl.BlockPlanMirror.NONE;
+            case "x" -> ActionDsl.BlockPlanMirror.X;
+            case "z" -> ActionDsl.BlockPlanMirror.Z;
+            default -> throw invalid(path + " must be none, x, or z");
         };
     }
 

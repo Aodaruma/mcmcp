@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.EvidenceProvenance;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.BlockStateView;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.EntityHazardClass;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.Face;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.Fluid;
@@ -186,6 +187,72 @@ class ObservationModelContractTest {
                 .doesNotContainKey("ray_hit");
         assertThat(ObservationWireMapper.record(surface(10, 0)))
                 .doesNotContainKey("crop_mature");
+    }
+
+    @Test
+    void visibleSurfacePublishesNullableAuditedStateAndNullablePlacementItem() throws Exception {
+        var block = new ResourceId("minecraft:oak_log");
+        var mutableProperties = new java.util.LinkedHashMap<String, String>();
+        mutableProperties.put("axis", "x");
+        var state = new BlockStateView(block, mutableProperties);
+        mutableProperties.put("axis", "z");
+        var surface = new VisibleSurface(
+                new BlockPosition(DIMENSION, 1, 65, 1),
+                Face.UP,
+                block,
+                state,
+                new ResourceId("minecraft:oak_log"),
+                ShapeClass.OPAQUE,
+                null,
+                world(1.5, 66, 1.5),
+                world(0, 65.62, 0),
+                10,
+                7);
+
+        assertThat(state.properties()).containsExactly(Map.entry("axis", "x"));
+        assertThatThrownBy(() -> state.properties().put("axis", "y"))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThat(ObservationWireMapper.record(surface))
+                .containsEntry("block", "minecraft:oak_log")
+                .containsEntry("state", Map.of(
+                        "block", "minecraft:oak_log",
+                        "properties", Map.of("axis", "x")))
+                .containsEntry("placement_item", "minecraft:oak_log")
+                .doesNotContainKey("ray_hit");
+
+        assertThat(ObservationWireMapper.record(surface(10, 0)))
+                .containsEntry("state", null)
+                .containsEntry("placement_item", null);
+        assertThatThrownBy(() -> new VisibleSurface(
+                surface.position(), surface.face(), surface.block(), null,
+                new ResourceId("minecraft:stone"), surface.shapeClass(),
+                surface.cropMature(), surface.rayHit(), surface.eyeOrigin(),
+                surface.observedTick(), surface.worldRevision()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("requires a complete state");
+        assertThatThrownBy(() -> new VisibleSurface(
+                surface.position(), surface.face(), new ResourceId("minecraft:stone"),
+                state, surface.placementItem(), surface.shapeClass(), surface.cropMature(),
+                surface.rayHit(), surface.eyeOrigin(), surface.observedTick(),
+                surface.worldRevision()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("state.block");
+
+        JsonObject catalog = JsonParser.parseString(Files.readString(catalogPath())).getAsJsonObject();
+        JsonObject observationSchema = tool(catalog, "agent_get_observation")
+                .getAsJsonObject("outputSchema");
+        var gson = new GsonBuilder().serializeNulls().create();
+        var page = new ObservationPage(
+                "obs-0000000000000001", 10, false, List.of(surface), null);
+        assertThat(matches(observationSchema, gson.toJsonTree(
+                ObservationWireMapper.page(page)))).isTrue();
+        var hiddenPage = new ObservationPage(
+                "obs-0000000000000002", 10, false, List.of(surface(10, 0)), null);
+        JsonObject invalidWire = gson.toJsonTree(
+                ObservationWireMapper.page(hiddenPage)).getAsJsonObject();
+        invalidWire.getAsJsonArray("records").get(0).getAsJsonObject()
+                .addProperty("placement_item", "minecraft:stone");
+        assertThat(matches(observationSchema, invalidWire)).isFalse();
     }
 
     @Test

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.UUID;
@@ -94,6 +95,36 @@ class DeliveredPolicyEvidenceStoreTest {
                 "obs-0000000000000002", 20, List.of(current)))).orElseThrow();
 
         assertThat(augmented.records()).containsExactly(current);
+    }
+
+    @Test
+    void undisclosedCurrentPropertiesDoNotReplaceDeliveredStateButCropSignalStaysLive() {
+        var clock = new AtomicLong();
+        var store = new DeliveredPolicyEvidenceStore(clock::get);
+        var delivered = surfaceWithState(
+                "minecraft:wheat", Map.of("age", "0"), false, 10, 3);
+        store.recordDelivered(new ObservationPage(
+                "obs-0000000000000001", 10, List.of(delivered), null));
+        var undisclosedCurrent = surfaceWithState(
+                "minecraft:wheat", Map.of("age", "7"), true, 20, 4);
+
+        ObservationRecord.VisibleSurface composite = (ObservationRecord.VisibleSurface)
+                store.augment(Optional.of(frame(
+                        "obs-0000000000000002", 20, List.of(undisclosedCurrent))))
+                        .orElseThrow().records().getFirst();
+
+        assertThat(composite.state()).isEqualTo(delivered.state());
+        assertThat(composite.cropMature()).isTrue();
+        assertThat(composite.observedTick()).isEqualTo(20);
+        assertThat(composite.worldRevision()).isEqualTo(4);
+
+        store.recordDelivered(new ObservationPage(
+                "obs-0000000000000002", 20, List.of(undisclosedCurrent), null));
+        ObservationFrame afterDelivery = store.augment(Optional.of(frame(
+                "obs-0000000000000003", 21, List.of(undisclosedCurrent))))
+                .orElseThrow();
+        assertThat(((ObservationRecord.VisibleSurface) afterDelivery.records().getFirst()).state())
+                .isEqualTo(undisclosedCurrent.state());
     }
 
     @Test
@@ -210,6 +241,27 @@ class DeliveredPolicyEvidenceStoreTest {
                 new ObservationValues.Aabb(x, y, z, x + 0.6, y + 1.8, z + 0.6),
                 ObservationRecord.EntityHazardClass.HOSTILE,
                 new ObservationValues.WorldPosition(DIMENSION, 0.5, 65.62, 0.5),
+                tick,
+                revision);
+    }
+
+    private static ObservationRecord.VisibleSurface surfaceWithState(
+            String block, Map<String, String> properties, Boolean mature,
+            long tick, long revision) {
+        var position = new ObservationValues.BlockPosition(DIMENSION, 1, 64, 1);
+        var eye = new ObservationValues.WorldPosition(DIMENSION, 0.5, 65.62, 0.5);
+        var hit = new ObservationValues.WorldPosition(DIMENSION, 1.5, 65.0, 1.5);
+        var blockId = new ObservationValues.ResourceId(block);
+        return new ObservationRecord.VisibleSurface(
+                position,
+                ObservationRecord.Face.UP,
+                blockId,
+                new ObservationRecord.BlockStateView(blockId, properties),
+                null,
+                ObservationRecord.ShapeClass.CUTOUT,
+                mature,
+                hit,
+                eye,
                 tick,
                 revision);
     }

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "program": {
+    "dsl_version": 1,
+    "name": "copy_known_oak_beam",
+    "capabilities": ["camera", "block_place"],
+    "body": [
+      {
+        "id": "copy",
+        "op": "apply_known_block_plan",
+        "anchor": {"dimension": "minecraft:overworld", "x": 102, "y": 65, "z": 120},
+        "transform": {"rotation": 90, "mirror": "none"},
+        "entries": [
+          {
+            "id": "base",
+            "offset": {"x": 0, "y": 0, "z": 0},
+            "source_state": {"block": "minecraft:oak_log", "properties": {"axis": "x"}},
+            "item": "minecraft:oak_log",
+            "support": {
+              "position": {"dimension": "minecraft:overworld", "x": 102, "y": 65, "z": 121},
+              "face": "north",
+              "expected_state": {"block": "minecraft:stone", "properties": {}},
+              "dependency_entry_id": null
+            }
+          },
+          {
+            "id": "next",
+            "offset": {"x": -1, "y": 0, "z": 0},
+            "source_state": {"block": "minecraft:oak_log", "properties": {"axis": "x"}},
+            "item": "minecraft:oak_log",
+            "support": {
+              "position": {"dimension": "minecraft:overworld", "x": 102, "y": 65, "z": 120},
+              "face": "north",
+              "expected_state": null,
+              "dependency_entry_id": "base"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "budget": {
+    "max_duration_ms": 30000,
+    "max_ticks": 600,
+    "max_distance_blocks": 0,
+    "max_camera_degrees": 160,
+    "max_interactions": 0,
+    "max_blocks_broken": 0,
+    "max_blocks_placed": 2
+  }
+}

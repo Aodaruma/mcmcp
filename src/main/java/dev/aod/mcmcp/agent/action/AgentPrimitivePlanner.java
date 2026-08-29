@@ -12,6 +12,7 @@ import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.ObservationValues;
+import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 import dev.aod.mcmcp.routine.NavigationViewLease;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
@@ -721,6 +722,56 @@ public final class AgentPrimitivePlanner {
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
                     surface, 0, 1, 0);
         }
+        if (node instanceof ActionDsl.ApplyKnownBlockPlan plan) {
+            for (ActionDsl.BlockPlanEntry entry : plan.entries()) {
+                ObservationRecord.VisibleSurface source = requireConstructionSource(
+                        map, latestFrame, entry.sourceState(), entry.item());
+                knownSurfaces.add(new KnownSurface(
+                        new ActionDsl.Position(
+                                source.position().dimension().value(),
+                                source.position().x(),
+                                source.position().y(),
+                                source.position().z()),
+                        ActionDsl.BlockFace.valueOf(source.face().name()),
+                        source.block().value(),
+                        null));
+                ActionDsl.PlacementSupport support = entry.support();
+                if (support.expectedState().isPresent()) {
+                    ActionDsl.BlockStateSpec expected = support.expectedState().orElseThrow();
+                    MutationSurface surface = requireMutationSurface(
+                            map,
+                            latestFrame,
+                            input,
+                            support.position(),
+                            surfaceBarrierWorldRevision(
+                                    map, surfaceRevisionBarrier, support.position()),
+                            expected.block(),
+                            value -> value.face().name().equals(support.face().name())
+                                    && exactObservedState(value, expected),
+                            "Construction support requires the delivered exact face and block state");
+                    knownSurfaces.add(surface.surface());
+                    for (Pose pose : input) {
+                        work.poseTransition();
+                        requireConstructionAim(pose, surface.point());
+                    }
+                } else {
+                    Vec3 supportPoint = supportFaceCenter(support.position(), support.face());
+                    for (Pose pose : input) {
+                        work.poseTransition();
+                        if (!interactionPointReachable(pose, supportPoint)) {
+                            throw new PlanningException(
+                                    Code.TARGET_UNKNOWN,
+                                    "Construction dependency support is outside interaction reach");
+                        }
+                        requireConstructionAim(pose, supportPoint);
+                    }
+                }
+            }
+            merge(costs, node.id(),
+                    ActionDslCompiler.intrinsicKnownBlockPlanCost(plan.entries().size()));
+            // The construction adapter restores the admitted camera pose and owns no movement.
+            return input;
+        }
         if (node instanceof ActionDsl.OpenKnownFenceGate gate) {
             MutationSurface surface = requireMutationSurface(
                     map, latestFrame, input, gate.target(),
@@ -1267,6 +1318,76 @@ public final class AgentPrimitivePlanner {
                 pose.horizontalPositionError(),
                 Math.max(pose.yErrorBelow(), pose.yErrorAbove()));
         return distance + poseError <= MAX_BREAK_REACH_BLOCKS;
+    }
+
+    private static boolean exactObservedState(
+            ObservationRecord.VisibleSurface surface,
+            ActionDsl.BlockStateSpec expected) {
+        return surface.state() != null
+                && expected.block().equals(surface.state().block().value())
+                && expected.properties().equals(surface.state().properties());
+    }
+
+    private static ObservationRecord.VisibleSurface requireConstructionSource(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.BlockStateSpec expected,
+            String item) {
+        return latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(map.dimension()))
+                .flatMap(frame -> frame.records().stream())
+                .filter(ObservationRecord.VisibleSurface.class::isInstance)
+                .map(ObservationRecord.VisibleSurface.class::cast)
+                .filter(surface -> surface.worldRevision() <= map.worldRevision())
+                .filter(surface -> exactObservedState(surface, expected))
+                .filter(surface -> surface.placementItem() != null
+                        && item.equals(surface.placementItem().value()))
+                .findFirst()
+                .orElseThrow(() -> new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Construction source requires a delivered exact state and placement item"));
+    }
+
+    private static Vec3 supportFaceCenter(
+            ActionDsl.Position position, ActionDsl.BlockFace face) {
+        double x = position.x() + 0.5D;
+        double y = position.y() + 0.5D;
+        double z = position.z() + 0.5D;
+        return switch (face) {
+            case DOWN -> new Vec3(x, position.y(), z);
+            case UP -> new Vec3(x, position.y() + 1.0D, z);
+            case NORTH -> new Vec3(x, y, position.z());
+            case SOUTH -> new Vec3(x, y, position.z() + 1.0D);
+            case WEST -> new Vec3(position.x(), y, z);
+            case EAST -> new Vec3(position.x() + 1.0D, y, z);
+        };
+    }
+
+    private static boolean interactionPointReachable(Pose pose, Vec3 point) {
+        double eyeY = pose.y() + pose.eyeHeight();
+        double distance = Math.sqrt(
+                square(point.x - pose.x())
+                        + square(point.y - eyeY)
+                        + square(point.z - pose.z()));
+        double poseError = Math.hypot(
+                pose.horizontalPositionError(),
+                Math.max(pose.yErrorBelow(), pose.yErrorAbove()));
+        return distance + poseError <= MAX_BREAK_REACH_BLOCKS;
+    }
+
+    private static void requireConstructionAim(Pose pose, Vec3 point) {
+        Aim desired = aim(pose, point);
+        AimError uncertainty = aimError(pose, point, desired);
+        double oneWay = withCameraQuantizationReserve(
+                angularError(
+                        pose.yaw(), pose.pitch(), desired.yaw(), desired.pitch())
+                        + pose.orientationErrorDegrees()
+                        + uncertainty.totalDegrees());
+        if (oneWay > SafeConstructionBlocks.MAX_ONE_WAY_CAMERA_DEGREES) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Construction support requires a nearer admitted camera heading");
+        }
     }
 
     private static boolean waitWitnessOriginMatches(

@@ -24,7 +24,7 @@
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
 - fresh評価turnまたはAgent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
-最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。Phase 1の操作・回避・観測境界が成立したため、Phase 2の最初のprimitiveとして、宣言済みの可視面を持つoak / birch幹だけを通常attack入力で破壊する`break_known_face`を追加する。農業、建築、資源入手、レッドストーン用primitiveは引き続き1種類ずつ追加する。
+最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batchに加え、Phase 3の最初のvertical sliceとして、監査済みcopy対象の可視surfaceだけが返す完全BlockStateを1〜8件のplace-only planへ無変換コピーする`apply_known_block_plan`までを公開する。Phase 3の破壊・置換・256 block化、資源入手、レッドストーン用primitiveは、同じ安全境界を維持して段階的に追加する。
 
 ## 1. 対象環境
 
@@ -126,6 +126,9 @@ NeoForge公式の26.2 MDKもJava 25を対象としている。開発は公式の
 
 ### Phase 3: 小規模建築
 
+- 初回vertical slice: 閉じたcopy/support allowlistだけが返すpolicy-visibleな完全BlockStateと設置itemを使う、stationary・place-only・1〜8 blockの`apply_known_block_plan`
+- offsetとBlockStateのmirror / rotationはruntimeが同じMinecraft規則で変換し、LLMへ向き変換させない
+- 現在surfaceまたは明示した先行entryだけをsupport proofとし、入力順のfail-fast実行とauthoritative postconditionを要求
 - ローカルに登録した許可box
 - 最大256変更のBlueprint
 - Vanillaの移動・設置・破壊だけを使用
@@ -687,9 +690,9 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 - `cursor`: 初回null、続きは直前の`next_cursor`
 - `limit`: 1〜256件
 
-返却recordは第7章の許可条件に従い、responseには`frame_completed_tick`を含める。1回のroot queryは1目的を原則とし、作物・container・gateは`visible_surface`、落下物は`visible_entity`、移動は`traversability`を要求する。作物収穫は`block_ids=[minecraft:wheat], crop_mature=true`、小麦drop回収は`entity_types=[minecraft:item], displayed_items=[minecraft:wheat,minecraft:wheat_seeds]`のprojectionを利用できる。`visible_surface`はblock positionごとに1件へ圧縮する。植付けsupportとなるfarmlandはUPを優先し、それ以外は実ray hitが近い面を代表にする。surfaceの返却順は`crop_mature=true`、`crop_mature=false`、非作物の3群とし、各群では観測距離が近いものを先にする。複数kindを同時要求した場合は、`visible_entity / traversability / hazard / visible_surface / sound_clue / unknown_boundary`の固定順で各kindから1件ずつround-robinし、1種類がpageを占有しないよう公平にinterleaveする。
+返却recordは第7章の許可条件に従い、responseには`frame_completed_tick`を含める。1回のroot queryは1目的を原則とし、作物・container・gate・建築copy sourceは`visible_surface`、落下物は`visible_entity`、移動は`traversability`を要求する。作物収穫は`block_ids=[minecraft:wheat], crop_mature=true`、小麦drop回収は`entity_types=[minecraft:item], displayed_items=[minecraft:wheat,minecraft:wheat_seeds]`のprojectionを利用できる。`visible_surface`はblock positionごとに1件へ圧縮する。植付けsupportとなるfarmlandはUPを優先し、それ以外は実ray hitが近い面を代表にする。surfaceの返却順は`crop_mature=true`、`crop_mature=false`、非作物の3群とし、各群では観測距離が近いものを先にする。複数kindを同時要求した場合は、`visible_entity / traversability / hazard / visible_surface / sound_clue / unknown_boundary`の固定順で各kindから1件ずつround-robinし、1種類がpageを占有しないよう公平にinterleaveする。
 
-CropBlockの`visible_surface`だけは、成長段階の数値列挙を増やさず、収穫判断に必要な`crop_mature: boolean`を追加する。非作物surfaceではこのfield自体を返さない。生成したpageは内部pending receipt（最大16件、60秒）へ一旦置き、HTTP response write成功後のdelivery confirmで初めて、そのpageに実際に含まれた静的`visible_surface`だけを最大2,048件、最大60秒のbounded storeへ昇格する。write失敗、dispatch取消、timeout、world境界ではpendingをabandonする。entity、item、traversability、hazard、sound、unknown boundary、未返却pageは延長しない。保持surfaceを使う場合も、通常のworld/session/dimension、visual / target revision、observer pose、reach、commit、JIT、targeted raycast、server acknowledgementをすべて再検証し、world境界ではstoreを全消去する。
+すべての`visible_surface`は、従来の`block`に加えてrequired nullableな`state`と`placement_item`を返す。`state={block,properties}`を公開するのは、閉じた建築copy allowlistと既存support用の`minecraft:dirt` / `minecraft:grass_block` / `minecraft:obsidian`だけとし、それ以外は、見た目から判別できないleavesの`distance / persistent`やbeehiveの中間`honey_level`等を渡さないため`state=null`とする。非nullの`state.properties`は当該registered blockが定義するpropertyを省略しない完全表現とし、propertyなしblockは空object、`block == state.block`とする。`placement_item`は、NBTなし・通常BlockItem設置・閉じた安全allowlist・完全state再現を満たすcopy sourceだけitem resource locationを返し、それ以外は`null`とし、`placement_item != null`なら必ず`state != null`とする。CropBlockの`visible_surface`だけは、成長段階の数値列挙を増やさず、収穫判断に必要な`crop_mature: boolean`を追加する。非作物surfaceではこのfield自体を返さない。生成したpageは内部pending receipt（最大16件、60秒）へ一旦置き、HTTP response write成功後のdelivery confirmで初めて、そのpageに実際に含まれた静的`visible_surface`だけを最大2,048件、最大60秒のbounded storeへ昇格する。write失敗、dispatch取消、timeout、world境界ではpendingをabandonする。entity、item、traversability、hazard、sound、unknown boundary、未返却pageは延長しない。保持surfaceを使う場合も、通常のworld/session/dimension、visual / target revision、observer pose、reach、commit、JIT、targeted raycast、server acknowledgementをすべて再検証し、world境界ではstoreを全消去する。
 
 traversabilityは連続値の`from / to` edge、target support、transition clearance、fluidに加え、`to`が属する整数feet-spaceを`navigation_target`として返し、斜めtransitionも曖昧にしない。LLMはnavigationに`navigation_target`だけを無変換コピーし、連続値`from / to`を丸めない。cursorは`SecureRandom`で生成した128 bit以上のopaqueなBase64URL tokenとし、server-side lease内のframe、kind集合、filter、offsetへ束縛する。任意center、任意radius、任意chunk、任意entity IDをqueryする入力は設けない。壊れた・未知・期限切れcursor、別frame/kind/filterへの使い回しは`INVALID_CURSOR`とする。同じ有効cursorの再送は同じpageを返し、失われたHTTP responseを再試行できる。`next_cursor=null`でpage終了である。
 
@@ -704,7 +707,7 @@ traversabilityは連続値の`from / to` edge、target support、transition clea
 
 固定の高位Actionだけを選ぶ方式にはしない。LLMは許可済みprimitive、有限`if`、固定回数`repeat`を組み合わせられる。ただし、LLMが未知のopcodeを発明して実行することはできない。新しいMinecraft能力は、MOD側にprimitive、結果検証、安全試験を追加し、catalogのopcode allowlistへ載せたreleaseから使用可能になる。
 
-LLMは、後続nodeが現在の証拠または明示対応するdependency proofですべて受付可能な範囲を1 Actionへまとめる。現在証拠が揃う作物を2〜8件処理する場合は単体nodeの反復よりmutation batchを優先し、成長待機が必要ならplant node群の直後に代表1座標の`wait_until`を同じprogramへ置く。mutationがdropや露出surfaceなど新しい証拠を作る場合は一旦Actionを終え、再観測後に次のActionを開始する。`navigate_to_known.target`は支持blockや連続値`from / to`ではなく、current `traversability.navigation_target`を無変換コピーする。visible blockへ接近したいが安全なfeet-spaceを特定できない場合は、`approach_known_surface`へ`visible_surface.position / block`を無変換コピーする。runtimeはKnown Traversability Map上で通常interaction reach内の最短候補を選ぶが、接近後の可視性やmutationを先取りして保証しないため、同Actionを終えて新しいeye originから再観測する。
+LLMは、後続nodeが現在の証拠または明示対応するdependency proofですべて受付可能な範囲を1 Actionへまとめる。現在証拠が揃う作物を2〜8件処理する場合は単体nodeの反復よりmutation batchを優先し、成長待機が必要ならplant node群の直後に代表1座標の`wait_until`を同じprogramへ置く。mutationがdropや露出surfaceなど新しい証拠を作る場合は一旦Actionを終え、再観測後に次のActionを開始する。`apply_known_block_plan`だけは、同じnode内の先行entryの変換後targetを明示IDでsupportに指定でき、その閉じた依存以外の新規surfaceを推定しない。`navigate_to_known.target`は支持blockや連続値`from / to`ではなく、current `traversability.navigation_target`を無変換コピーする。visible blockへ接近したいが安全なfeet-spaceを特定できない場合は、`approach_known_surface`へ`visible_surface.position / block`を無変換コピーする。runtimeはKnown Traversability Map上で通常interaction reach内の最短候補を選ぶが、接近後の可視性やmutationを先取りして保証しないため、同Actionを終えて新しいeye originから再観測する。
 
 Action DSL v1の制御構造:
 
@@ -731,6 +734,7 @@ Action DSL v1の制御構造:
 | plant_known_wheat_batch | camera, block_place | 1〜8組の相異なる`target` / `support`を入力順に検証し、各farmlandへwheat_seedsを植える |
 | harvest_known_wheat | camera, block_break | 可視・既知かつ実行時age=7のwheat 1個だけを通常破壊し、airを確認 |
 | harvest_known_wheat_batch | camera, block_break | 1〜8個の相異なる可視・既知かつ成熟済みwheatを入力順に収穫する |
+| apply_known_block_plan | camera, block_place | 完全な可視source stateをruntimeでmirror / rotationし、現在supportまたは明示先行dependency上へ1〜8 blockを入力順に通常設置する |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のsingle chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
@@ -747,6 +751,14 @@ semantic action、stationary break、block plan、Phase 5 world adapterで共有
 `wait_until`が採用する`visible_surface`はrecordの`eye_origin`を保持し、initial admission、commit fence、JIT bindのすべてでcurrent observer eyeとの差を1/1024 block以内に制限する。以前のobserver位置から得たstale frameは、target record自体がfresh revisionでも認可しない。`CropWaitAuthorization`のobserver eyeにはcurrent値を代入せず、採用witnessの`eye_origin`そのものを保存するため、待機中の比較元をすり替えられない。先行plantにより初期未生成cropを許す静的dependency proofはこの例外を弱めず、wait開始時のJITでは必ず同じorigin契約を再証明する。
 
 `collect_visible_item_batch`は2〜8件をlisted orderのまま保持する第一級の有限batch nodeである。batch開始時にitem種別ごとのplayer inventory絶対個数baselineを1回だけ固定する。各entryは通常の`collect_visible_item`と同じfresh visible entity、連続値XYZ、既知安全pickup cell、移動中再検証を要求する。先行entryへの移動中に後続entryのfresh policy-visible AABBとplayer pickup areaの実接触を確認し、その後に対応itemのinventory絶対個数増加を確認できた場合だけ、当該後続entryを`incidentally_collected`としてcreditできる。単なるwitness消失、merge、移動、近接や推定では成功にしない。listed orderの途中で接触・差分proof、経路、budgetのいずれかが不足した場合はAction全体をfail-fastで終了し、未開始entryをskip・置換・再順序化しない。
+
+`apply_known_block_plan`はPhase 3の初回vertical sliceであり、wire shapeを`{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,source_state,item,support:{position,face,expected_state,dependency_entry_id}}]}`へ閉じる。entryは1〜8件、offset各軸は-8〜8、entry IDと変換後targetはnode内で一意とする。`anchor`とsupportはdimension-qualified block座標で、変換後targetは`anchor + transform(offset)`だけから決定する。`mirror=none|x|z`を先に適用し、`x`はMinecraft `FRONT_BACK`と同じeast/west反転、`z`は`LEFT_RIGHT`と同じnorth/south反転とする。その後`rotation=0|90|180|270`のY軸時計回り回転を適用する。offsetと`source_state`は同じtransformを通し、方向propertyをLLMへ変換させない。
+
+各`source_state`は`placement_item != null`だった可視sourceの完全`visible_surface.state`を無変換コピーし、`item`も同じrecordの`placement_item`をコピーする。runtimeはregistered BlockState定義に対してpropertyの欠落・余分・不正値を入力前に拒否し、MinecraftのBlockState mirror / rotation実装で完全stateを一意に変換する。入力値、未知property名、欠落property名は公開診断へ反射しない。BlockEntity / NBT、fluid、gravity block、container、portal、command block、通常BlockItem設置で完全stateを再現できないblockは`placement_item=null`とし、このnodeへ入れられない。
+
+`support.expected_state`と`support.dependency_entry_id`は両方をfieldとして必須にし、exactly-oneだけ非nullとする。現在blockをsupportにするentryは、`state != null`である最新policy-visible surfaceの完全stateを`expected_state`へコピーし、dependencyをnullにする。先行設置をsupportにするentryはexpected stateをnullにし、入力順で先行するentry IDだけをdependencyへ指定する。この場合`support.position`はその先行entryの変換後targetと完全一致しなければならない。どちらも`support.position`から`face`方向へ1 block隣が当該entry targetであることを静的検証する。未開始・後続・外部ID、暗黙の近傍探索、未観測supportは認めない。
+
+このsliceはAction開始から終了までstationaryで、移動、既存blockの破壊・置換、順序変更、skip、rollbackを行わない。未実行entryが既にexpected-after stateでも成功扱いせず、air precondition不一致として入力前に終了する。全entryのtarget air、support proof、可視性、reach、targeted raycast、inventory絶対個数、universal safety、world/session/revisionを受付時と各dispatch直前に再検証し、通常use ACKとauthoritativeな変換後完全BlockState一致を成功条件にする。packet準備でmain inventoryからselected hotbarへSWAPした場合は、そのserver同期と総数不変readbackを待ってから設置消費のrevision / count baselineを取り直す。消費待機中に総数が不変の同期だけを受けてもmismatchへ固定せず、正確な-1を期限まで待つ。途中失敗では未開始suffixを実行せず、完了済みmutationと使用itemをtraceへ残す。各support aimは受付headingからyaw絶対差とpitch絶対差の合計40度以内に制限し、plannerも同じ上限を証明する。adapterはentryごとに受付headingへ戻すため、worst-caseは1 entryあたり15,000 ms、300 active tick、camera 80度、1 placement、distance / interaction / breakは0と固定し、8 entryで120,000 ms、2,400 tick、camera 640度、8 placementsとする。world mutationであるため`repeat`内には置けない。
 
 3種のmutation batchは`targets`を1〜8件に制限し、重複targetを拒否する。`till_known_batch`は位置配列と共通`expected_block` / `hoe_item`、`plant_known_wheat_batch`は`{target,support}`配列と共通`seed_item=minecraft:wheat_seeds`、`harvest_known_wheat_batch`は位置配列を受け取る。受付時に全対象の現在のsurface、block state、reachを入力順に確認し、`TARGET_UNKNOWN`なら最初に不足した入力順indexをmessageの`target[index]`として返す。これは提出済み配列のindexだけであり、hidden座標や未公開stateを追加開示しない。plannerとruntimeはcamera cost最小化やray関係を理由に入力順を変更しない。入力順の累積camera costと各primitive costを既存のAction上限内で事前証明できない場合は、入力発生前に拒否する。
 
@@ -862,6 +874,7 @@ templateは`agent_start_action.inputSchema.examples`に掲載し、実装reposit
 - [`open_known_passage.json`](action-templates/open_known_passage.json): 可視な木製通路を開く
 - [`inspect_known_container.json`](action-templates/inspect_known_container.json): single chestのserver同期済み内容を確認する
 - [`take_wheat_seeds_stack.json`](action-templates/take_wheat_seeds_stack.json): wheat seedsをwhole stack 1回だけ取得する
+- [`copy_known_oak_beam.json`](action-templates/copy_known_oak_beam.json): 完全なoak log stateを90度回転し、現在supportと先行entry dependencyで2 blockの水平梁を設置する
 
 templateもcustom programと同じvalidator、capability、budget、READY許可、安全条件を通る。
 
@@ -1098,7 +1111,45 @@ Phase 2時点のmovement gateは、既に選ばれた上下edgeのVanilla resolv
 
 ### 9.5 build_blueprint — Phase 3
 
-初期限界:
+現在公開するvertical slice:
+
+- `visible_surface.state / placement_item`はrequired nullable field。完全stateは閉じたcopy/support allowlistだけに公開し、`placement_item != null`なら`state != null`
+- `apply_known_block_plan`はstationary・place-onlyの1〜8 entry
+- source相対offsetと方向stateを同じmirror / rotationでruntime変換
+- 現在policy-visibleなsupport、または入力順で先行するentryだけへ依存可能
+- NBTなしで通常設置できるallowlisted blockだけ
+- survivalではinventory内のitemだけ
+- fill / setblockを使わず、通常設置操作とauthoritative postconditionだけを使用
+
+~~~json
+{
+  "id": "copy_slice",
+  "op": "apply_known_block_plan",
+  "anchor": {"dimension": "minecraft:overworld", "x": 20, "y": 65, "z": 20},
+  "transform": {"rotation": 0, "mirror": "none"},
+  "entries": [
+    {
+      "id": "entry_0",
+      "offset": {"x": 0, "y": 0, "z": 0},
+      "source_state": {
+        "block": "minecraft:oak_log",
+        "properties": {"axis": "y"}
+      },
+      "item": "minecraft:oak_log",
+      "support": {
+        "position": {"dimension": "minecraft:overworld", "x": 20, "y": 64, "z": 20},
+        "face": "up",
+        "expected_state": {"block": "minecraft:stone", "properties": {}},
+        "dependency_entry_id": null
+      }
+    }
+  ]
+}
+~~~
+
+これは固定建築macroではない。LLMが可視sourceからstateとitemをコピーし、任意の有限entry列を公開DSLで構成する一方、target座標と向きstateのtransform、support dependency、設置入力、ACK / postconditionはruntimeが決定論的に処理する。自動rollbackは保証せず、失敗時は入力を止め、変更済みentryをtraceとして返す。
+
+Phase 3完成時に追加する上限:
 
 - 最大box: 9 × 9 × 9
 - 最大変更: 256 block
@@ -1107,21 +1158,6 @@ Phase 2時点のmovement gateは、既に選ばれた上下edgeのVanilla resolv
 - 許可box内だけ
 - survivalではinventory内のitemだけ
 - creativeでもfill/setblockを使わず、通常設置操作だけ
-
-Blueprint:
-
-~~~json
-{
-  "origin": {"x": 0, "y": 64, "z": 0},
-  "size": {"x": 5, "y": 4, "z": 5},
-  "palette": ["minecraft:oak_planks"],
-  "blocks": [
-    {"dx": 0, "dy": 0, "dz": 0, "palette": 0}
-  ]
-}
-~~~
-
-自動rollbackは保証しない。失敗時は入力を止め、変更済み位置をtraceとして返す。
 
 ### 9.6 RedstoneSpec — Phase 5
 
@@ -1481,6 +1517,7 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - 最大256件でpage分割し、壊れたcursorはINVALID_CURSOR、保持外frameはFRAME_EXPIRED
 - page継続中のframeはleaseでpinされ、rolling frame更新後も同じcursor再送が同じpageを返す
 - visible_surfaceはunique block positionごとの代表面へ圧縮され、mature crop、immature crop、その他の順、各群内は近距離順となる。複数kindはround-robinで公平に混在する
+- visible_surfaceはrequired nullableな`state / placement_item`を常に返し、完全stateは閉じたcopy/support allowlistだけ、対象外はnull、非null stateでは`block == state.block`、`placement_item != null`では`state != null`となる
 - summaryのvisible_surface件数は代表面圧縮後の返却可能件数と一致する
 - 返却済み静的surfaceだけが最大60秒再利用され、未返却pageとentity / item / hazard / traversability / soundは延長されない。再利用時もrevision、pose、reach、commit/JIT、ray fenceをすべて通る
 - 完成frameのsampling_coverageは1で、各recordのorigin、observed tick、world revisionとframe_completed_tickから鮮度を再現できる
@@ -1491,6 +1528,9 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - 任意式、while、until、再帰呼出し、chat/text predicateを拒否
 - 静的costが証明不能ならPROGRAM_BUDGET_UNPROVABLE
 - mutation batchのTARGET_UNKNOWNは最初に不足した提出配列indexをtarget[index]で返し、hidden座標やstateを追加しない
+- `apply_known_block_plan`は1〜8 entry、offset各軸±8、entry ID / 変換後target一意、support unionの両nullable field明示、先行dependency一致を入力前に検証する
+- block planの`none/x/z` mirror後CW rotationが既存BlockPlan変換と一致し、offsetと完全BlockStateへ同じtransformを適用する
+- block planは入力順を維持し、1 entryあたり15,000 ms / 300 ticks / camera 80度 / 1 placement、distance / interaction / break 0の静的costから逸脱しない
 - 通常Actionはeffective budgetを超えず、RECOVERはDSLから独立したlocal recovery budgetだけを使う
 - templateとcustom programが同じvalidator、capability、budgetを通る
 

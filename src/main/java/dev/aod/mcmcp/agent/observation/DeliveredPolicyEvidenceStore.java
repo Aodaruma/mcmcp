@@ -128,9 +128,10 @@ public final class DeliveredPolicyEvidenceStore {
         for (ObservationRecord record : latest.records()) {
             if (record instanceof ObservationRecord.VisibleSurface surface) {
                 SurfaceKey key = SurfaceKey.of(surface);
-                if (surfaces.containsKey(key)) {
+                Entry delivered = surfaces.get(key);
+                if (delivered != null) {
                     current.add(key);
-                    records.add(surface);
+                    records.add(dynamicView(delivered.surface(), surface));
                 }
             } else {
                 records.add(record);
@@ -150,6 +151,29 @@ public final class DeliveredPolicyEvidenceStore {
                 latest.visibleEntitiesTruncated(),
                 latest.recentSoundCluesTruncated(),
                 records));
+    }
+
+    /**
+     * Preserves the exact state/item identity which crossed the delivery boundary while adopting
+     * only the current ray witness and compact crop-maturity signal. The latter is deliberately a
+     * second view: wait_until may follow natural crop growth without turning an undisclosed latest
+     * BlockState property change into mutation authority.
+     */
+    private static ObservationRecord.VisibleSurface dynamicView(
+            ObservationRecord.VisibleSurface delivered,
+            ObservationRecord.VisibleSurface current) {
+        return new ObservationRecord.VisibleSurface(
+                delivered.position(),
+                delivered.face(),
+                delivered.block(),
+                delivered.state(),
+                delivered.placementItem(),
+                delivered.shapeClass(),
+                current.cropMature(),
+                current.rayHit(),
+                current.eyeOrigin(),
+                current.observedTick(),
+                current.worldRevision());
     }
 
     /** Clears the complete evidence boundary at a world-session transition. */

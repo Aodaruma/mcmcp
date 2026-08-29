@@ -131,6 +131,17 @@ class BlockItemPlacementInvokerContractTest {
                 .isEqualTo(128);
         assertThat(MinecraftApplyBlockPlanPort.saturatedInventoryCount(
                 Integer.MAX_VALUE - 4, 8)).isEqualTo(Integer.MAX_VALUE);
+
+        assertThat(MinecraftApplyBlockPlanPort.exactInventoryConsumption(64, 63)).isTrue();
+        assertThat(MinecraftApplyBlockPlanPort.exactInventoryConsumption(1, 0)).isTrue();
+        assertThat(MinecraftApplyBlockPlanPort.exactInventoryConsumption(64, 64)).isFalse();
+        assertThat(MinecraftApplyBlockPlanPort.exactInventoryConsumption(64, 62)).isFalse();
+        assertThat(MinecraftApplyBlockPlanPort.inventoryConsumption(64, 64))
+                .isEqualTo(MinecraftApplyBlockPlanPort.InventoryConsumption.PENDING);
+        assertThat(MinecraftApplyBlockPlanPort.inventoryConsumption(64, 63))
+                .isEqualTo(MinecraftApplyBlockPlanPort.InventoryConsumption.CONFIRMED);
+        assertThat(MinecraftApplyBlockPlanPort.inventoryConsumption(64, 62))
+                .isEqualTo(MinecraftApplyBlockPlanPort.InventoryConsumption.MISMATCH);
     }
 
     @Test
@@ -278,6 +289,32 @@ class BlockItemPlacementInvokerContractTest {
         assertThat(MinecraftApplyBlockPlanPort.planObservationPositions(
                 request, ApplyBlockPlanChildAction.first(1, breakStep)))
                 .containsExactly(secondTargetPosition());
+    }
+
+    @Test
+    void constructionObservationUsesOnlyItsExplicitSupportWitness() {
+        var air = new BlockStateFingerprint("minecraft:air", Map.of());
+        var stone = new BlockStateFingerprint("minecraft:stone", Map.of());
+        var target = new BlockTarget("minecraft:overworld", 0, 65, 0);
+        var support = new BlockTarget("minecraft:overworld", 0, 64, 0);
+        var place = new ApplyBlockPlanStep(
+                "place", ApplyBlockPlanOperation.PLACE, target, air, stone,
+                Optional.of("minecraft:stone"),
+                Optional.of(PlacementSupportWitness.visible(support, "up", stone)));
+        var bounds = new ActionBounds(
+                target.dimension(), target, target, 0, 15, false);
+        var request = new ApplyBlockPlanRequest(
+                "construction", 1, 1, List.of(place), bounds);
+
+        assertThat(MinecraftApplyBlockPlanPort.planObservationPositions(request, null))
+                .containsExactlyInAnyOrder(
+                        new net.minecraft.core.BlockPos(0, 65, 0),
+                        new net.minecraft.core.BlockPos(0, 64, 0));
+        assertThat(MinecraftApplyBlockPlanPort.planObservationPositions(
+                request, ApplyBlockPlanChildAction.first(0, place)))
+                .containsExactlyInAnyOrder(
+                        new net.minecraft.core.BlockPos(0, 65, 0),
+                        new net.minecraft.core.BlockPos(0, 64, 0));
     }
 
     private static net.minecraft.core.BlockPos firstTargetPosition() {

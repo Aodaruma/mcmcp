@@ -29,12 +29,17 @@ public final class ActionDslValidator {
     public static final int MAX_INTERACTIONS = 8;
     public static final int MAX_BLOCKS_PLACED = 8;
     public static final int MAX_MUTATION_BATCH_TARGETS = 8;
+    public static final int MAX_BLOCK_PLAN_ENTRIES = 8;
+    public static final int MAX_BLOCK_STATE_PROPERTIES = 32;
+    public static final int MAX_BLOCK_PLAN_OFFSET = 8;
     public static final int MIN_COLLECT_BATCH_TARGETS = 2;
 
     private static final Pattern NODE_ID = Pattern.compile("[a-z][a-z0-9_-]{0,31}");
     private static final Pattern PROGRAM_NAME = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
     private static final Pattern RESOURCE_LOCATION =
             Pattern.compile("[a-z0-9_.-]+:[a-z0-9_./-]+");
+    private static final Pattern BLOCK_PROPERTY_NAME = Pattern.compile("[a-z0-9_]{1,64}");
+    private static final Pattern BLOCK_PROPERTY_VALUE = Pattern.compile("[a-z0-9_.-]{1,64}");
     private static final Set<String> BREAKABLE_LOGS = Set.of(
             "minecraft:oak_log",
             "minecraft:birch_log");
@@ -297,6 +302,68 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
             return 1;
         }
+        if (node instanceof ActionDsl.ApplyKnownBlockPlan plan) {
+            validatePosition(plan.anchor(), path + ".anchor");
+            requireSequenceSize(plan.entries(), 1, MAX_BLOCK_PLAN_ENTRIES, path + ".entries");
+            var entryIds = new HashSet<String>();
+            var entryTargets = new java.util.LinkedHashMap<String, ActionDsl.Position>();
+            var distinctTargets = new HashSet<ActionDsl.Position>();
+            for (int index = 0; index < plan.entries().size(); index++) {
+                ActionDsl.BlockPlanEntry entry = plan.entries().get(index);
+                String entryPath = path + ".entries[" + index + "]";
+                Objects.requireNonNull(entry, entryPath);
+                requirePattern(entry.id(), NODE_ID, entryPath + ".id");
+                if (!entryIds.add(entry.id())) {
+                    throw invalid(path + ".entries must contain unique ids");
+                }
+                validateOffset(entry.offset(), entryPath + ".offset");
+                ActionDsl.Position target = transformedTarget(
+                        plan.anchor(), plan.transform(), entry.offset());
+                validatePosition(target, entryPath + ".offset");
+                if (!distinctTargets.add(target)) {
+                    throw invalid(path + ".entries must produce distinct transformed targets");
+                }
+                validateBlockState(entry.sourceState(), entryPath + ".source_state");
+                requireResourceLocation(entry.item(), entryPath + ".item");
+
+                ActionDsl.PlacementSupport support = entry.support();
+                validatePosition(support.position(), entryPath + ".support.position");
+                if (!plan.anchor().dimension().equals(support.position().dimension())) {
+                    throw invalid(entryPath + ".support.position must use the anchor dimension");
+                }
+                boolean hasExpectedState = support.expectedState().isPresent();
+                boolean hasDependency = support.dependencyEntryId().isPresent();
+                if (hasExpectedState == hasDependency) {
+                    throw invalid(entryPath
+                            + ".support must select exactly one support witness");
+                }
+                if (hasExpectedState) {
+                    validateBlockState(support.expectedState().orElseThrow(),
+                            entryPath + ".support.expected_state");
+                } else {
+                    String dependencyId = support.dependencyEntryId().orElseThrow();
+                    requirePattern(dependencyId, NODE_ID,
+                            entryPath + ".support.dependency_entry_id");
+                    ActionDsl.Position dependencyTarget = entryTargets.get(dependencyId);
+                    if (dependencyTarget == null) {
+                        throw invalid(entryPath
+                                + ".support dependency must reference an earlier entry");
+                    }
+                    if (!dependencyTarget.equals(support.position())) {
+                        throw invalid(entryPath
+                                + ".support dependency position must match its earlier target");
+                    }
+                }
+                if (!relative(support.position(), support.face()).equals(target)) {
+                    throw invalid(entryPath
+                            + ".support face must point from support position to target");
+                }
+                entryTargets.put(entry.id(), target);
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_PLACE);
+            return 1;
+        }
         if (node instanceof ActionDsl.OpenKnownFenceGate gate) {
             validatePosition(gate.target(), path + ".target");
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
@@ -395,6 +462,7 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.PlantKnownWheatBatch
                     || node instanceof ActionDsl.HarvestKnownWheat
                     || node instanceof ActionDsl.HarvestKnownWheatBatch
+                    || node instanceof ActionDsl.ApplyKnownBlockPlan
                     || node instanceof ActionDsl.OpenKnownFenceGate
                     || node instanceof ActionDsl.OpenKnownPassage
                     || node instanceof ActionDsl.InspectKnownContainer
@@ -451,6 +519,53 @@ public final class ActionDslValidator {
         requireRange(position.x(), -30_000_000, 30_000_000, path + ".x");
         requireRange(position.y(), -2048, 2048, path + ".y");
         requireRange(position.z(), -30_000_000, 30_000_000, path + ".z");
+    }
+
+    private static void validateOffset(ActionDsl.Offset offset, String path) {
+        Objects.requireNonNull(offset, path);
+        requireRange(offset.x(), -MAX_BLOCK_PLAN_OFFSET, MAX_BLOCK_PLAN_OFFSET, path + ".x");
+        requireRange(offset.y(), -MAX_BLOCK_PLAN_OFFSET, MAX_BLOCK_PLAN_OFFSET, path + ".y");
+        requireRange(offset.z(), -MAX_BLOCK_PLAN_OFFSET, MAX_BLOCK_PLAN_OFFSET, path + ".z");
+    }
+
+    private static void validateBlockState(ActionDsl.BlockStateSpec state, String path) {
+        Objects.requireNonNull(state, path);
+        requireResourceLocation(state.block(), path + ".block");
+        if (state.properties().size() > MAX_BLOCK_STATE_PROPERTIES) {
+            throw invalid(path + ".properties contains too many values");
+        }
+        for (var property : state.properties().entrySet()) {
+            if (!BLOCK_PROPERTY_NAME.matcher(property.getKey()).matches()) {
+                throw invalid(path + ".properties contains an invalid property name");
+            }
+            if (!BLOCK_PROPERTY_VALUE.matcher(property.getValue()).matches()) {
+                throw invalid(path + ".properties contains an invalid property value");
+            }
+        }
+    }
+
+    private static ActionDsl.Position transformedTarget(
+            ActionDsl.Position anchor,
+            ActionDsl.BlockPlanTransform transform,
+            ActionDsl.Offset rawOffset) {
+        ActionDsl.Offset offset = transform.apply(rawOffset);
+        return new ActionDsl.Position(
+                anchor.dimension(),
+                Math.toIntExact((long) anchor.x() + offset.x()),
+                Math.toIntExact((long) anchor.y() + offset.y()),
+                Math.toIntExact((long) anchor.z() + offset.z()));
+    }
+
+    private static ActionDsl.Position relative(
+            ActionDsl.Position position, ActionDsl.BlockFace face) {
+        int dx = face == ActionDsl.BlockFace.EAST ? 1
+                : face == ActionDsl.BlockFace.WEST ? -1 : 0;
+        int dy = face == ActionDsl.BlockFace.UP ? 1
+                : face == ActionDsl.BlockFace.DOWN ? -1 : 0;
+        int dz = face == ActionDsl.BlockFace.SOUTH ? 1
+                : face == ActionDsl.BlockFace.NORTH ? -1 : 0;
+        return new ActionDsl.Position(
+                position.dimension(), position.x() + dx, position.y() + dy, position.z() + dz);
     }
 
     private static void validateDistinctPositions(

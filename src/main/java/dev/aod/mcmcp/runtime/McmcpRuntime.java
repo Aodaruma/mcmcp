@@ -9,6 +9,7 @@ import dev.aod.mcmcp.agent.action.CollectBatchEvidence;
 import dev.aod.mcmcp.agent.action.KnownBlockBreakAttempt;
 import dev.aod.mcmcp.agent.action.KnownBlockMutationAttempt;
 import dev.aod.mcmcp.agent.action.KnownContainerAttempt;
+import dev.aod.mcmcp.agent.action.KnownConstructionAttempt;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
@@ -69,6 +70,7 @@ import dev.aod.mcmcp.routine.BreakBlockRequest;
 import dev.aod.mcmcp.routine.FinitePlanRequest;
 import dev.aod.mcmcp.routine.InteractBlockRequest;
 import dev.aod.mcmcp.routine.InteractEntityRequest;
+import dev.aod.mcmcp.routine.KnownConstructionRequest;
 import dev.aod.mcmcp.routine.MinecraftApplyBlockPlanPort;
 import dev.aod.mcmcp.routine.MinecraftPhaseFiveInventoryPort;
 import dev.aod.mcmcp.routine.MinecraftPhaseFiveWorldPort;
@@ -79,6 +81,7 @@ import dev.aod.mcmcp.routine.PlaceBlockRequest;
 import dev.aod.mcmcp.routine.PhaseFiveBounds;
 import dev.aod.mcmcp.routine.PhaseFivePortRouter;
 import dev.aod.mcmcp.routine.PhaseFiveRequest;
+import dev.aod.mcmcp.routine.PlacementSupportWitness;
 import dev.aod.mcmcp.routine.RoutineManager;
 import dev.aod.mcmcp.routine.SafeBreakSourcePolicy;
 import dev.aod.mcmcp.routine.SafePlacementSupportPolicy;
@@ -3321,6 +3324,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 return;
             }
 
+            if (agentExecution.primitive instanceof ActionDsl.ApplyKnownBlockPlan) {
+                tickAgentConstruction(minecraft, session, action);
+                return;
+            }
+
             KnownTraversabilitySnapshot map = requireAgentMap(session);
             if (agentExecution.primitiveExecutor.active()
                     && (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition
@@ -4478,6 +4486,58 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
+    private void tickAgentConstruction(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action) {
+        if (agentExecution.constructionAttempt == null) {
+            final KnownConstructionRequest request;
+            try {
+                request = constructionRequest(
+                        (ActionDsl.ApplyKnownBlockPlan) agentExecution.primitive);
+            } catch (RuntimeException rejected) {
+                // Registry/state diagnostics may contain submitted property names or values.
+                // Keep the public trace fixed and non-reflective.
+                failAgentAction(
+                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                        false,
+                        "construction_request_rejected");
+                return;
+            }
+            long ticks = Math.multiplyExact(
+                    request.entries().size(), (long) KnownConstructionAttempt.TICKS_PER_ENTRY);
+            long deadline = Math.addExact(session.clientTick(), ticks);
+            agentExecution.constructionAttempt = new KnownConstructionAttempt(
+                    applyBlockPlanPort, request, session.clientTick(), deadline);
+        }
+        KnownConstructionAttempt.TickResult result =
+                agentExecution.constructionAttempt.tick(session.clientTick());
+        for (int count = 0; count < result.placedDelta(); count++) {
+            agentActions.recordBlockPlace(action.actionId());
+        }
+        switch (result.status()) {
+            case RUNNING -> { }
+            case FAILED -> failAgentAction(
+                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                    true,
+                    result.evidence());
+            case SUCCEEDED -> {
+                agentExecution.constructionAttempt = null;
+                agentActions.recordNodeEvidence(
+                        action.actionId(),
+                        "construction_complete=" + result.completedEntries()
+                                + ",server_confirmed=" + result.confirmedEntries());
+                agentActions.completeNode(action.actionId());
+                agentExecution.primitive = null;
+                agentExecution.replanning = false;
+                agentExecution.replanNotBeforeTick = 0L;
+                agentExecution.replanDeadlineTick = 0L;
+                advanceAgentProgram(
+                        minecraft, agentActions.get(action.actionId()).progress());
+            }
+        }
+    }
+
     private boolean bindMutationBatchTarget(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
@@ -4638,6 +4698,94 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             default -> throw new IllegalArgumentException("node is not a batch target");
         };
         return "batch_target=" + target.x() + "," + target.y() + "," + target.z();
+    }
+
+    static KnownConstructionRequest constructionRequest(
+            ActionDsl.ApplyKnownBlockPlan plan) {
+        Objects.requireNonNull(plan, "plan");
+        var transform = new BlockPlan.Transform(
+                plan.transform().rotation().degrees(),
+                plan.transform().mirror().wireName());
+        var entries = new ArrayList<ApplyBlockPlanStep>(plan.entries().size());
+        var prior = new LinkedHashMap<String, ApplyBlockPlanStep>();
+        BlockTarget minimum = null;
+        BlockTarget maximum = null;
+        for (ActionDsl.BlockPlanEntry entry : plan.entries()) {
+            ActionDsl.Offset offset = plan.transform().apply(entry.offset());
+            var target = new BlockTarget(
+                    plan.anchor().dimension(),
+                    Math.addExact(plan.anchor().x(), offset.x()),
+                    Math.addExact(plan.anchor().y(), offset.y()),
+                    Math.addExact(plan.anchor().z(), offset.z()));
+            BlockStateView transformed = BlockPlanStateTransformer.transformFull(
+                    new BlockStateView(
+                            entry.sourceState().block(), entry.sourceState().properties()),
+                    transform,
+                    "construction.entry.source_state");
+            var expectedAfter = new BlockStateFingerprint(
+                    transformed.block(), transformed.properties());
+            ActionDsl.PlacementSupport support = entry.support();
+            var supportTarget = new BlockTarget(
+                    support.position().dimension(),
+                    support.position().x(),
+                    support.position().y(),
+                    support.position().z());
+            String face = support.face().name().toLowerCase(Locale.ROOT);
+            PlacementSupportWitness witness;
+            if (support.expectedState().isPresent()) {
+                ActionDsl.BlockStateSpec state = support.expectedState().orElseThrow();
+                witness = PlacementSupportWitness.visible(
+                        supportTarget,
+                        face,
+                        new BlockStateFingerprint(state.block(), state.properties()));
+            } else {
+                String dependencyId = support.dependencyEntryId().orElseThrow();
+                ApplyBlockPlanStep dependency = prior.get(dependencyId);
+                if (dependency == null) {
+                    throw new IllegalArgumentException(
+                            "construction dependency is not an earlier entry");
+                }
+                witness = PlacementSupportWitness.confirmedDependency(
+                        supportTarget,
+                        face,
+                        dependency.expectedAfter(),
+                        dependencyId);
+            }
+            var step = new ApplyBlockPlanStep(
+                    entry.id(),
+                    ApplyBlockPlanOperation.PLACE,
+                    target,
+                    new BlockStateFingerprint("minecraft:air", Map.of()),
+                    expectedAfter,
+                    Optional.of(entry.item()),
+                    Optional.of(witness));
+            entries.add(step);
+            prior.put(entry.id(), step);
+            minimum = minimum == null ? target : new BlockTarget(
+                    target.dimension(),
+                    Math.min(minimum.x(), target.x()),
+                    Math.min(minimum.y(), target.y()),
+                    Math.min(minimum.z(), target.z()));
+            maximum = maximum == null ? target : new BlockTarget(
+                    target.dimension(),
+                    Math.max(maximum.x(), target.x()),
+                    Math.max(maximum.y(), target.y()),
+                    Math.max(maximum.z(), target.z()));
+        }
+        if (entries.isEmpty()) {
+            throw new IllegalArgumentException("construction plan is empty");
+        }
+        int maxDurationSeconds = Math.multiplyExact(entries.size(), 15);
+        return new KnownConstructionRequest(
+                "construction",
+                entries,
+                new ActionBounds(
+                        plan.anchor().dimension(),
+                        Objects.requireNonNull(minimum, "minimum"),
+                        Objects.requireNonNull(maximum, "maximum"),
+                        0,
+                        maxDurationSeconds,
+                        false));
     }
 
     private static PhaseFiveRequest containerRequest(
@@ -6341,6 +6489,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             } catch (RuntimeException | LinkageError failure) {
                 closed = false;
                 McmcpMod.LOGGER.error("MCMCP known-container release failed", failure);
+            }
+        }
+        if (agentExecution.constructionAttempt != null) {
+            try {
+                agentExecution.constructionAttempt.close();
+                agentExecution.constructionAttempt = null;
+            } catch (RuntimeException | LinkageError failure) {
+                closed = false;
+                McmcpMod.LOGGER.error("MCMCP known-construction release failed", failure);
             }
         }
         agentExecution.breakAimComplete = false;
@@ -8906,6 +9063,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private ActionDsl.Position tillSettlingTarget;
         private long tillSettlingDeadlineTick;
         private KnownContainerAttempt containerAttempt;
+        private KnownConstructionAttempt constructionAttempt;
         private int pickupInventoryBefore = -1;
         private long pickupArrivalTick = -1L;
         private NavCell pickupCell;

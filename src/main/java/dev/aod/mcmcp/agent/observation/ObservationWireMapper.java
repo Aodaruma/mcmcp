@@ -118,6 +118,11 @@ public final class ObservationWireMapper {
         result.put("position", blockPosition(surface.position()));
         result.put("face", surface.face().wireName());
         result.put("block", surface.block().value());
+        result.put("state", surface.state() == null ? null : map(
+                "block", surface.state().block().value(),
+                "properties", surface.state().properties()));
+        result.put("placement_item", surface.placementItem() == null
+                ? null : surface.placementItem().value());
         result.put("shape_class", surface.shapeClass().wireName());
         if (surface.cropMature() != null) result.put("crop_mature", surface.cropMature());
         result.put("eye_origin", worldPosition(surface.eyeOrigin()));

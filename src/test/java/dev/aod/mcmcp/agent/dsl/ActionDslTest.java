@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.agent.dsl;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
@@ -39,7 +40,7 @@ class ActionDslTest {
     void parsesEveryNormativeCatalogExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
-        assertThat(examples).hasSize(10);
+        assertThat(examples).hasSize(11);
         for (int index = 0; index < examples.size(); index++) {
             ActionDsl.Request parsed = ActionDslParser.parse(examples.get(index).getAsJsonObject());
             assertThat(parsed.schemaVersion()).isEqualTo(1);
@@ -121,6 +122,148 @@ class ActionDslTest {
         node.addProperty("navigation_target", "forbidden");
         assertCode(request(
                         capabilities("movement"), node, budget(30_000, 600, 32, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
+    void parsesAndIntrinsicallyCompilesOrderedPlaceOnlyBlockPlan() {
+        JsonObject node = applyKnownBlockPlan("copy", 2);
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "block_place"),
+                node,
+                budget(30_000, 600, 0, 160, 0, 0, 2)));
+
+        var plan = (ActionDsl.ApplyKnownBlockPlan) request.program().body().getFirst();
+        assertThat(plan.entries()).extracting(ActionDsl.BlockPlanEntry::id)
+                .containsExactly("entry_0", "entry_1");
+        assertThat(plan.entries().getFirst().sourceState())
+                .isEqualTo(new ActionDsl.BlockStateSpec(
+                        "minecraft:oak_log", Map.of("axis", "y")));
+        assertThat(plan.entries().get(1).support().dependencyEntryId())
+                .contains("entry_0");
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.BLOCK_PLACE);
+
+        var compiled = ActionDslCompiler.compile(
+                request,
+                ignored -> Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_PLACE));
+        assertThat(compiled.worstCaseCost()).isEqualTo(
+                new ActionDslCompiler.Cost(30_000, 600, 0, 160, 0, 0, 2));
+        assertThat(compiled.primitiveCostBounds()).containsEntry(
+                "copy", new ActionDslCompiler.Cost(30_000, 600, 0, 160, 0, 0, 2));
+    }
+
+    @Test
+    void blockPlanTransformMatchesExistingMirrorThenClockwiseRotationContract() {
+        var transform = new ActionDsl.BlockPlanTransform(
+                ActionDsl.BlockPlanRotation.DEGREES_270,
+                ActionDsl.BlockPlanMirror.Z);
+
+        assertThat(transform.apply(new ActionDsl.Offset(1, 0, 2)))
+                .isEqualTo(new ActionDsl.Offset(-2, 0, -1));
+    }
+
+    @Test
+    void blockPlanClosesShapeBoundsIdentityTargetsCapabilitiesAndBudget() {
+        JsonObject extraNode = applyKnownBlockPlan("copy", 1);
+        extraNode.addProperty("derived_target", "forbidden");
+        assertCode(request(capabilities("camera", "block_place"), extraNode,
+                        budget(15_000, 300, 0, 80, 0, 0, 1)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject nestedExtra = applyKnownBlockPlan("copy", 1);
+        nestedExtra.getAsJsonArray("entries").get(0).getAsJsonObject()
+                .addProperty("operation", "replace");
+        assertCode(request(capabilities("camera", "block_place"), nestedExtra,
+                        budget(15_000, 300, 0, 80, 0, 0, 1)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        ActionDsl.Request maximum = ActionDslParser.parse(request(
+                capabilities("camera", "block_place"),
+                applyKnownBlockPlan("copy", 8),
+                budget(120_000, 2_400, 0, 640, 0, 0, 8)));
+        assertThat(((ActionDsl.ApplyKnownBlockPlan) maximum.program().body().getFirst()).entries())
+                .hasSize(8);
+        assertThat(ActionDslCompiler.compile(
+                maximum,
+                ignored -> Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_PLACE))
+                .worstCaseCost().blocksPlaced()).isEqualTo(8);
+
+        assertCode(request(
+                        capabilities("camera", "block_place"),
+                        applyKnownBlockPlan("copy", 9),
+                        budget(135_000, 2_700, 0, 720, 0, 0, 8)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject duplicateId = applyKnownBlockPlan("copy", 2);
+        duplicateId.getAsJsonArray("entries").get(1).getAsJsonObject()
+                .addProperty("id", "entry_0");
+        assertCode(request(capabilities("camera", "block_place"), duplicateId,
+                        budget(30_000, 600, 0, 160, 0, 0, 2)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject duplicateTarget = applyKnownBlockPlan("copy", 2);
+        duplicateTarget.getAsJsonArray("entries").get(1).getAsJsonObject()
+                .add("offset", offset(0, 0, 0));
+        assertCode(request(capabilities("camera", "block_place"), duplicateTarget,
+                        budget(30_000, 600, 0, 160, 0, 0, 2)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        assertCode(request(
+                        capabilities("camera"),
+                        applyKnownBlockPlan("copy", 1),
+                        budget(15_000, 300, 0, 80, 0, 0, 1)),
+                ActionDslException.Code.CAPABILITY_DENIED);
+
+        ActionDsl.Request cameraShort = ActionDslParser.parse(request(
+                capabilities("camera", "block_place"),
+                applyKnownBlockPlan("copy", 2),
+                budget(30_000, 600, 0, 159, 0, 0, 2)));
+        assertThatThrownBy(() -> ActionDslCompiler.compile(
+                cameraShort,
+                ignored -> Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_PLACE)))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE);
+    }
+
+    @Test
+    void blockPlanRequiresOneSupportWitnessAndAnEarlierMatchingDependency() {
+        JsonObject neither = applyKnownBlockPlan("copy", 1);
+        JsonObject support = neither.getAsJsonArray("entries").get(0).getAsJsonObject()
+                .getAsJsonObject("support");
+        support.add("expected_state", JsonNull.INSTANCE);
+        assertCode(request(capabilities("camera", "block_place"), neither,
+                        budget(15_000, 300, 0, 80, 0, 0, 1)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject both = applyKnownBlockPlan("copy", 2);
+        JsonObject secondSupport = both.getAsJsonArray("entries").get(1).getAsJsonObject()
+                .getAsJsonObject("support");
+        secondSupport.add("expected_state", blockState("minecraft:stone"));
+        assertCode(request(capabilities("camera", "block_place"), both,
+                        budget(30_000, 600, 0, 160, 0, 0, 2)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject futureDependency = applyKnownBlockPlan("copy", 2);
+        JsonObject firstSupport = futureDependency.getAsJsonArray("entries").get(0)
+                .getAsJsonObject().getAsJsonObject("support");
+        firstSupport.add("expected_state", JsonNull.INSTANCE);
+        firstSupport.addProperty("dependency_entry_id", "entry_1");
+        assertCode(request(capabilities("camera", "block_place"), futureDependency,
+                        budget(30_000, 600, 0, 160, 0, 0, 2)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject mismatchedPosition = applyKnownBlockPlan("copy", 2);
+        mismatchedPosition.getAsJsonArray("entries").get(1).getAsJsonObject()
+                .getAsJsonObject("support").add("position", position(10, 64, 11));
+        assertCode(request(capabilities("camera", "block_place"), mismatchedPosition,
+                        budget(30_000, 600, 0, 160, 0, 0, 2)),
                 ActionDslException.Code.INVALID_ARGUMENT);
     }
 
@@ -995,6 +1138,54 @@ class ActionDslTest {
         }
         node.add("targets", targets);
         return node;
+    }
+
+    private static JsonObject applyKnownBlockPlan(String id, int count) {
+        JsonObject node = baseNode(id, "apply_known_block_plan");
+        node.add("anchor", position(10, 64, 10));
+        JsonObject transform = new JsonObject();
+        transform.addProperty("rotation", 0);
+        transform.addProperty("mirror", "none");
+        node.add("transform", transform);
+        JsonArray entries = new JsonArray();
+        for (int index = 0; index < count; index++) {
+            JsonObject entry = new JsonObject();
+            entry.addProperty("id", "entry_" + index);
+            entry.add("offset", offset(0, index, 0));
+            JsonObject source = blockState("minecraft:oak_log");
+            source.getAsJsonObject("properties").addProperty("axis", "y");
+            entry.add("source_state", source);
+            entry.addProperty("item", "minecraft:oak_log");
+            JsonObject support = new JsonObject();
+            support.add("position", position(10, 63 + index, 10));
+            support.addProperty("face", "up");
+            if (index == 0) {
+                support.add("expected_state", blockState("minecraft:stone"));
+                support.add("dependency_entry_id", JsonNull.INSTANCE);
+            } else {
+                support.add("expected_state", JsonNull.INSTANCE);
+                support.addProperty("dependency_entry_id", "entry_" + (index - 1));
+            }
+            entry.add("support", support);
+            entries.add(entry);
+        }
+        node.add("entries", entries);
+        return node;
+    }
+
+    private static JsonObject offset(int x, int y, int z) {
+        JsonObject offset = new JsonObject();
+        offset.addProperty("x", x);
+        offset.addProperty("y", y);
+        offset.addProperty("z", z);
+        return offset;
+    }
+
+    private static JsonObject blockState(String block) {
+        JsonObject state = new JsonObject();
+        state.addProperty("block", block);
+        state.add("properties", new JsonObject());
+        return state;
     }
 
     private static JsonObject openKnownFenceGate(String id) {

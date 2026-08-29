@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.routine;
 
 import dev.aod.mcmcp.mixin.client.BlockItemPlacementInvoker;
+import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.observation.MinecraftObservationService.BlockOutcome;
 import dev.aod.mcmcp.observation.MinecraftObservationService.BlockSample;
@@ -64,7 +65,6 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
     private static final double MAX_POSITION_DRIFT_SQUARED = 0.01D * 0.01D;
     private static final float ROTATION_DRIFT_EPSILON = 0.25F;
     private static final float MAX_AIM_TURN_DEGREES_PER_TICK = 8.0F;
-    private static final float MAX_AIM_DISPLACEMENT_DEGREES = 40.0F;
     private static final float AIM_EPSILON_DEGREES = 0.20F;
     private static final int MAX_SHAPE_BOXES = 16;
     private static final double ROUTE_SURFACE_EPSILON = 1.0e-4D;
@@ -180,7 +180,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             List<AimCandidate> breakCandidates = supportedMutation
                     ? breakCandidates(level, player, step.target(), byPosition) : List.of();
             List<AimCandidate> placeCandidates = supportedMutation
-                    ? placeCandidates(level, player, step.target(), byPosition) : List.of();
+                    ? placeCandidates(level, player, step, byPosition, plan) : List.of();
             if (step.operation() == ApplyBlockPlanOperation.BREAK_TO_AIR
                     || step.operation() == ApplyBlockPlanOperation.REPLACE) {
                 plan.candidates.put(
@@ -235,6 +235,9 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         if (plan.inventoryPending) {
             throw new IllegalStateException("inventory reconciliation is still pending");
         }
+        if (!universalSafetyClear(minecraft, plan)) {
+            throw new ConstructionSafetyChangedException();
+        }
         if (!withinWorldBorder(Objects.requireNonNull(minecraft.level), blockPos(child.target()))) {
             throw new IllegalStateException("child target is outside the current world border");
         }
@@ -243,11 +246,49 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         if (candidates.isEmpty()) {
             throw new IllegalStateException("child has no current reachable aim candidate");
         }
+        if (child.stage() == ApplyBlockPlanChildStage.PLACE) {
+            String required = child.requiredItemId().orElseThrow();
+            int sourceSlot = findEligibleInventorySlot(
+                    Objects.requireNonNull(minecraft.player), required);
+            if (sourceSlot < 0) {
+                throw new IllegalStateException("required eligible block item is not in inventory");
+            }
+            boolean staged = sourceSlot >= Inventory.getSelectionSize();
+            long stagingRevision = -1L;
+            int stagingCount = -1;
+            if (staged) {
+                var before = reconciliations.bindAndSnapshot(
+                        Objects.requireNonNull(minecraft.level), session.worldSessionId());
+                stagingRevision = before.selectedSlotInventoryRevision();
+                stagingCount = eligibleInventoryCount(
+                        Objects.requireNonNull(minecraft.player), required);
+                if (!stageIntoSelectedHotbar(minecraft,
+                        Objects.requireNonNull(minecraft.player), sourceSlot, required)) {
+                    throw new IllegalStateException("required block item could not be staged");
+                }
+            }
+            plan.pendingStaging = staged
+                    ? new PendingStaging(required, stagingCount, stagingRevision)
+                    : null;
+        }
         var attempt = new ApplyBlockPlanPreparationAttempt(
                 UUID.randomUUID(), child.stepIndex(), session.clientTick(),
                 memory.revision(), leaseExpiresAtClientTick);
         var ownership = ControlOwnership.acquire(
                 minecraft, child.requiredItemId(), attempt.attemptId());
+        try {
+            ownership.selectOwnedSlot(minecraft);
+            if (child.stage() == ApplyBlockPlanChildStage.PLACE) {
+                candidates = exactPlacementCandidates(minecraft, child, candidates);
+                if (candidates.isEmpty()) {
+                    throw new IllegalStateException(
+                            "no placement candidate produces the exact requested state");
+                }
+            }
+        } catch (RuntimeException | LinkageError failure) {
+            ownership.close(minecraft);
+            throw failure;
+        }
         preparations.put(attempt, new PreparationState(
                 request, child, plan, ownership, candidates));
         return attempt;
@@ -267,6 +308,13 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             return;
         }
         try {
+            if (!universalSafetyClear(requireMinecraft(), active.plan)) {
+                active.failure = safetyFailure();
+                return;
+            }
+            if (!refreshStagingSynchronization(active)) {
+                return;
+            }
             if (!candidateWithinWorldBorder(
                     Objects.requireNonNull(requireMinecraft().level),
                     active.candidates.get(active.candidateIndex))) {
@@ -302,11 +350,16 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         var session = requireSession();
         Optional<BlockStateFingerprint> live = currentLiveState(
                 active.child.target(), session.clientTick());
+        if (active.failure == null && !universalSafetyClear(minecraft, active.plan)) {
+            active.failure = safetyFailure();
+        }
+        boolean stagingSynchronized = active.failure == null
+                && refreshStagingSynchronization(active);
         boolean stand = active.plan.standBaseline != null
                 && active.plan.standBaseline.matches(
                         Objects.requireNonNull(minecraft.player));
-        boolean selected = active.child.requiredItemId().isEmpty()
-                || active.ownership.ownedSlotSelected(minecraft);
+        boolean selected = stagingSynchronized && (active.child.requiredItemId().isEmpty()
+                || active.ownership.ownedSlotSelected(minecraft));
         boolean aligned = false;
         boolean replaceable = false;
         if (active.failure == null && active.candidateIndex < active.candidates.size()) {
@@ -365,6 +418,15 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 || leaseExpiresAtClientTick <= session.clientTick()) {
             throw new IllegalStateException("preparation cannot be transferred to this action");
         }
+        if (!universalSafetyClear(minecraft, prepared.plan)) {
+            throw new ConstructionSafetyChangedException();
+        }
+        if (!refreshStagingSynchronization(prepared)) {
+            if (prepared.failure != null) {
+                throw new IllegalStateException("construction staging synchronization failed");
+            }
+            throw new IllegalStateException("construction staging synchronization is pending");
+        }
         prepared.ownership.requireUndisturbed(minecraft);
         var candidate = prepared.candidates.get(prepared.candidateIndex);
         if (!candidateWithinWorldBorder(
@@ -382,8 +444,12 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         } else {
             var level = Objects.requireNonNull(minecraft.level);
             var support = candidate.hitBlock();
-            SafePlacementSupportPolicy.requireLiveState(
-                    level.getBlockState(support), level.getBlockEntity(support) != null);
+            if (child.supportWitness().isPresent()) {
+                requireCurrentSupportWitness(level, prepared.plan, child, candidate);
+            } else {
+                SafePlacementSupportPolicy.requireLiveState(
+                        level.getBlockState(support), level.getBlockEntity(support) != null);
+            }
         }
         var live = currentLiveState(child.target(), session.clientTick());
         if (live.filter(child.expectedBefore()::equals).isEmpty()) {
@@ -424,6 +490,11 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         if (session.clientTick() >= attempt.leaseExpiresAtClientTick()) {
             active.failure = failure("ACTION_LEASE_EXPIRED", RoutineFailure.Category.TRANSIENT,
                     RoutineFailure.Recovery.REPLAN, Map.of(), Map.of());
+            stopAttack(active);
+            return;
+        }
+        detectActionSafetyFailure(active);
+        if (active.failure != null) {
             stopAttack(active);
             return;
         }
@@ -487,6 +558,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         var minecraft = assertClientThread();
         var active = requireAction(attempt);
         var session = requireSession();
+        detectActionSafetyFailure(active);
         detectReconciliationFailure(active, session);
         detectWorldBorderFailure(active);
         detectStandFailure(active);
@@ -555,6 +627,10 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         }
         if (serverStateExact) {
             stopAttack(active);
+        }
+        if (serverStateExact && inventoryConfirmed
+                && active.child.stage() == ApplyBlockPlanChildStage.PLACE) {
+            active.plan.confirmedEntries.add(active.child.entryId());
         }
         var basis = new LinkedHashMap<String, Object>();
         basis.put("server_block_state_exact", serverStateExact);
@@ -674,10 +750,17 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             throw new IllegalStateException("exact placement state does not match the plan");
         }
         var support = hit.getBlockPos();
-        SafePlacementSupportPolicy.requireLiveState(
-                level.getBlockState(support), level.getBlockEntity(support) != null);
+        boolean constructionWitness = active.child.supportWitness().isPresent();
+        if (constructionWitness) {
+            SafeConstructionBlockPolicy.requireLiveState(
+                    predicted, level.getBlockEntity(context.getClickedPos()) != null);
+            requireCurrentSupportWitness(level, active.plan, active.child, active.candidate);
+        } else {
+            SafePlacementSupportPolicy.requireLiveState(
+                    level.getBlockState(support), level.getBlockEntity(support) != null);
+        }
 
-        active.inventoryCountBefore = stack.getCount();
+        active.inventoryCountBefore = eligibleInventoryCount(player, required);
         active.inventoryItemId = required;
         active.plan.beginInventoryWait(
                 active.reconciliationAtDispatch.selectedSlotInventoryRevision(),
@@ -687,10 +770,15 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 level, context.getClickedPos(), requireSession().clientTick());
         int before = prediction.sequenceBeforePrediction();
         active.prediction = prediction;
-        var result = SafePlacementSupportPolicy.dispatchUseIfAllowed(
-                level.getBlockState(support), level.getBlockEntity(support) != null,
-                () -> Objects.requireNonNull(minecraft.gameMode)
-                        .useItemOn(player, InteractionHand.MAIN_HAND, hit));
+        var result = constructionWitness
+                ? dispatchConstructionUseIfAllowed(
+                        level, support,
+                        () -> Objects.requireNonNull(minecraft.gameMode)
+                                .useItemOn(player, InteractionHand.MAIN_HAND, hit))
+                : SafePlacementSupportPolicy.dispatchUseIfAllowed(
+                        level.getBlockState(support), level.getBlockEntity(support) != null,
+                        () -> Objects.requireNonNull(minecraft.gameMode)
+                                .useItemOn(player, InteractionHand.MAIN_HAND, hit));
         int after = prediction.captureIssuedPredictions();
         if (after != before + 1) {
             throw new ClientPredictionSignals.PredictionBridgeException(
@@ -722,8 +810,12 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             BlockPos target = blockPos(ownedChild.target());
             positions.add(target);
             if (ownedChild.stage() == ApplyBlockPlanChildStage.PLACE) {
-                for (Direction face : Direction.values()) {
-                    positions.add(target.relative(face.getOpposite()));
+                if (ownedChild.supportWitness().isPresent()) {
+                    positions.add(blockPos(ownedChild.supportWitness().orElseThrow().support()));
+                } else {
+                    for (Direction face : Direction.values()) {
+                        positions.add(target.relative(face.getOpposite()));
+                    }
                 }
             }
             return Set.copyOf(positions);
@@ -733,8 +825,12 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             positions.add(target);
             if (step.operation() == ApplyBlockPlanOperation.PLACE
                     || step.operation() == ApplyBlockPlanOperation.REPLACE) {
-                for (Direction face : Direction.values()) {
-                    positions.add(target.relative(face.getOpposite()));
+                if (step.supportWitness().isPresent()) {
+                    positions.add(blockPos(step.supportWitness().orElseThrow().support()));
+                } else {
+                    for (Direction face : Direction.values()) {
+                        positions.add(target.relative(face.getOpposite()));
+                    }
                 }
             }
         }
@@ -754,11 +850,27 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
     }
 
     private List<AimCandidate> placeCandidates(
-            ClientLevel level, LocalPlayer player, BlockTarget blockTarget,
-            Map<BlockPos, BlockSample> samples) {
-        BlockPos target = blockPos(blockTarget);
+            ClientLevel level,
+            LocalPlayer player,
+            ApplyBlockPlanStep step,
+            Map<BlockPos, BlockSample> samples,
+            PlanState plan) {
+        BlockPos target = blockPos(step.target());
         if (!withinWorldBorder(level, target) || !currentReachable(samples.get(target))) {
             return List.of();
+        }
+        if (step.supportWitness().isPresent()) {
+            PlacementSupportWitness witness = step.supportWitness().orElseThrow();
+            Direction clickedFace = Direction.byName(witness.clickedFace());
+            BlockPos support = blockPos(witness.support());
+            if (clickedFace == null
+                    || !support.relative(clickedFace).equals(target)
+                    || !supportWitnessCurrent(
+                            level, samples.get(support), witness, plan, clickedFace)) {
+                return List.of();
+            }
+            return List.copyOf(candidatesForFace(
+                    level, player, support, target, clickedFace));
         }
         var result = new ArrayList<AimCandidate>();
         for (Direction clickedFace : Direction.values()) {
@@ -774,6 +886,108 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             result.addAll(candidatesForFace(level, player, support, target, clickedFace));
         }
         return List.copyOf(result);
+    }
+
+    private boolean supportWitnessCurrent(
+            ClientLevel level,
+            BlockSample sample,
+            PlacementSupportWitness witness,
+            PlanState plan,
+            Direction clickedFace) {
+        if (!currentReachable(sample)
+                || currentFingerprint(sample).filter(witness.expectedState()::equals).isEmpty()) {
+            return false;
+        }
+        if (witness.confirmedDependencyEntryId().isPresent()) {
+            String dependency = witness.confirmedDependencyEntryId().orElseThrow();
+            if (!plan.confirmedEntries.contains(dependency)) {
+                return false;
+            }
+        } else if (!sample.visibleFaces().contains(clickedFace.getSerializedName())) {
+            return false;
+        }
+        BlockPos support = blockPos(witness.support());
+        BlockState live = level.getBlockState(support);
+        return witness.expectedState().equals(fingerprint(live))
+                && allowsSafePlacementSupport(live, level.getBlockEntity(support) != null);
+    }
+
+    private void requireCurrentSupportWitness(
+            ClientLevel level,
+            PlanState plan,
+            ApplyBlockPlanChildAction child,
+            AimCandidate candidate) {
+        PlacementSupportWitness witness = child.supportWitness().orElseThrow();
+        Direction clickedFace = Direction.byName(witness.clickedFace());
+        BlockPos support = blockPos(witness.support());
+        if (clickedFace == null
+                || !candidate.hitBlock().equals(support)
+                || candidate.face() != clickedFace
+                || !support.relative(clickedFace).equals(candidate.target())
+                || witness.confirmedDependencyEntryId().isPresent()
+                        && !plan.confirmedEntries.contains(
+                                witness.confirmedDependencyEntryId().orElseThrow())) {
+            throw new SafeConstructionBlockPolicy.UnsafeConstructionBlockException();
+        }
+        BlockState live = level.getBlockState(support);
+        if (!witness.expectedState().equals(fingerprint(live))
+                || !allowsSafePlacementSupport(
+                        live, level.getBlockEntity(support) != null)) {
+            throw new SafeConstructionBlockPolicy.UnsafeConstructionBlockException();
+        }
+    }
+
+    private List<AimCandidate> exactPlacementCandidates(
+            Minecraft minecraft,
+            ApplyBlockPlanChildAction child,
+            List<AimCandidate> candidates) {
+        var player = Objects.requireNonNull(minecraft.player);
+        ItemStack stack = player.getMainHandItem();
+        String required = child.requiredItemId().orElseThrow();
+        if (!required.equals(registryItemId(stack)) || !eligibleBlockStack(stack)) {
+            return List.of();
+        }
+        var item = (BlockItem) stack.getItem();
+        var exact = new ArrayList<AimCandidate>();
+        for (AimCandidate candidate : candidates) {
+            var hit = new BlockHitResult(
+                    candidate.point(), candidate.face(), candidate.hitBlock(), false);
+            var context = item.updatePlacementContext(new BlockPlaceContext(
+                    new UseOnContext(player, InteractionHand.MAIN_HAND, hit)));
+            if (context == null || !context.canPlace()
+                    || !context.getClickedPos().equals(blockPos(child.target()))) {
+                continue;
+            }
+            BlockState predicted = ((BlockItemPlacementInvoker) (Object) item)
+                    .mcmcp$invokeGetPlacementState(context);
+            if (predicted == null || multiCellBlock(predicted)
+                    || !child.expectedAfter().equals(fingerprint(predicted))) {
+                continue;
+            }
+            if (child.supportWitness().isPresent()
+                    && !SafeConstructionBlockPolicy.allowsLiveState(predicted, false)) {
+                continue;
+            }
+            exact.add(candidate);
+        }
+        return List.copyOf(exact);
+    }
+
+    private static boolean allowsSafePlacementSupport(
+            BlockState state, boolean liveBlockEntityPresent) {
+        return SafePlacementSupportPolicy.allowsLiveState(state, liveBlockEntityPresent)
+                || SafeConstructionBlockPolicy.allowsLiveState(
+                        state, liveBlockEntityPresent);
+    }
+
+    private static <T> T dispatchConstructionUseIfAllowed(
+            ClientLevel level, BlockPos support, java.util.function.Supplier<T> dispatch) {
+        Objects.requireNonNull(dispatch, "dispatch");
+        BlockState state = level.getBlockState(support);
+        if (!allowsSafePlacementSupport(state, level.getBlockEntity(support) != null)) {
+            throw new SafeConstructionBlockPolicy.UnsafeConstructionBlockException();
+        }
+        return dispatch.get();
     }
 
     private List<AimCandidate> candidatesForVisibleFaces(
@@ -806,10 +1020,10 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 continue;
             }
             Rotation desired = rotationTo(player.getEyePosition(), point);
-            if (Math.abs(Mth.wrapDegrees(desired.yaw() - player.getYRot()))
-                            <= MAX_AIM_DISPLACEMENT_DEGREES
-                    && Math.abs(desired.pitch() - player.getXRot())
-                            <= MAX_AIM_DISPLACEMENT_DEGREES) {
+            double displacement = Math.abs(Mth.wrapDegrees(
+                    desired.yaw() - player.getYRot()))
+                    + Math.abs(desired.pitch() - player.getXRot());
+            if (displacement <= SafeConstructionBlocks.MAX_ONE_WAY_CAMERA_DEGREES) {
                 result.add(new AimCandidate(hitBlock, face, point, target));
             }
         }
@@ -822,24 +1036,63 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         return Set.of(feet, feet.above(), feet.below());
     }
 
+    private static int findEligibleInventorySlot(LocalPlayer player, String item) {
+        var inventory = player.getInventory();
+        return MinecraftSemanticActionPort.firstPreparingSlot(
+                inventory.getSelectedSlot(),
+                slot -> {
+                    ItemStack stack = inventory.getItem(slot);
+                    return !stack.isEmpty()
+                            && item.equals(registryItemId(stack))
+                            && eligibleBlockStack(stack);
+                });
+    }
+
+    private static boolean stageIntoSelectedHotbar(
+            Minecraft minecraft,
+            LocalPlayer player,
+            int sourceInventorySlot,
+            String item) {
+        return MinecraftSemanticActionPort.stageInventorySlotIntoSelectedHotbar(
+                minecraft,
+                player,
+                sourceInventorySlot,
+                stack -> !stack.isEmpty()
+                        && item.equals(registryItemId(stack))
+                        && eligibleBlockStack(stack));
+    }
+
+    private static int eligibleInventoryCount(LocalPlayer player, String item) {
+        var inventory = player.getInventory();
+        int limit = Math.min(Inventory.INVENTORY_SIZE, inventory.getContainerSize());
+        int count = 0;
+        for (int slot = 0; slot < limit; slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (!stack.isEmpty()
+                    && item.equals(registryItemId(stack))
+                    && eligibleBlockStack(stack)) {
+                count = saturatedInventoryCount(count, stack.getCount());
+            }
+        }
+        return count;
+    }
+
     private InventoryFacts inventoryFacts(LocalPlayer player, ApplyBlockPlanRequest request) {
         var required = new LinkedHashSet<String>();
         request.steps().forEach(step -> step.requiredItemId().ifPresent(required::add));
         var counts = new LinkedHashMap<String, Integer>();
         var hotbar = new LinkedHashSet<String>();
         var inventory = player.getInventory();
-        for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
-            // Phase 4 owns only hotbar selection; it does not move stacks from the main
-            // inventory.  Count only resources the bounded executor can actually select, or a
-            // plan could mutate partially and discover after the first placement that the rest
-            // of its advertised inventory was unreachable.
-            if (!Inventory.isHotbarSlot(slot)) continue;
+        int limit = Math.min(Inventory.INVENTORY_SIZE, inventory.getContainerSize());
+        for (int slot = 0; slot < limit; slot++) {
             ItemStack stack = inventory.getItem(slot);
             if (stack.isEmpty()) continue;
             String item = registryItemId(stack);
             if (required.contains(item) && eligibleBlockStack(stack)) {
                 counts.merge(item, stack.getCount(),
                         MinecraftApplyBlockPlanPort::saturatedInventoryCount);
+                // The legacy frame name is retained, but the set now means "selectable or safely
+                // stageable by this adapter".  Shortage is therefore discovered before any SWAP.
                 hotbar.add(item);
             }
         }
@@ -860,27 +1113,63 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         if (recon.selectedSlotInventoryRevision() <= plan.inventoryRevisionBefore) {
             return false;
         }
-        int expectedCount = plan.inventoryCountBefore - 1;
         var inventory = player.getInventory();
         boolean ownedSlotHeld = inventory.getSelectedSlot() == plan.inventoryOwnedSlot;
         ItemStack selected = inventory.getItem(plan.inventoryOwnedSlot);
-        boolean countMatches = (selected.isEmpty() ? 0 : selected.getCount()) == expectedCount;
-        boolean itemMatches = expectedCount == 0
-                ? selected.isEmpty()
-                : !selected.isEmpty() && plan.inventoryItemId.equals(registryItemId(selected));
+        boolean selectedStackCurrent = selected.isEmpty()
+                || plan.inventoryItemId.equals(registryItemId(selected));
+        InventoryConsumption consumption = inventoryConsumption(
+                plan.inventoryCountBefore,
+                eligibleInventoryCount(player, plan.inventoryItemId));
         // selectedSlotInventoryRevision is incremented only by an inbound packet which the
         // packet mixin mapped to the then-selected player slot. Read back that still-owned slot
         // instead of lastInventorySync, which later unrelated packets are allowed to overwrite.
-        if (ownedSlotHeld && countMatches && itemMatches) {
+        if (ownedSlotHeld && selectedStackCurrent
+                && consumption == InventoryConsumption.CONFIRMED) {
             plan.inventoryPending = false;
             return true;
+        }
+        if (ownedSlotHeld && selectedStackCurrent
+                && consumption == InventoryConsumption.PENDING) {
+            // A delayed SWAP/container response may advance the same selected-slot revision
+            // before the placement consumption response. Keep waiting for the exact -1 total.
+            return false;
         }
         plan.inventoryMismatch = true;
         return false;
     }
 
+    private boolean refreshStagingSynchronization(PreparationState active) {
+        PendingStaging pending = active.plan.pendingStaging;
+        if (pending == null) return true;
+        var session = requireSession();
+        var minecraft = requireMinecraft();
+        var recon = reconciliations.bindAndSnapshot(
+                Objects.requireNonNull(minecraft.level), session.worldSessionId());
+        if (recon.selectedSlotInventoryRevision() <= pending.revisionBefore()) {
+            return false;
+        }
+        var player = Objects.requireNonNull(minecraft.player);
+        ItemStack selected = player.getInventory().getSelectedItem();
+        boolean selectedExact = !selected.isEmpty()
+                && pending.item().equals(registryItemId(selected))
+                && eligibleBlockStack(selected);
+        boolean totalUnchanged = eligibleInventoryCount(player, pending.item())
+                == pending.countBefore();
+        if (selectedExact && totalUnchanged) {
+            active.plan.pendingStaging = null;
+            return true;
+        }
+        active.failure = failure("INVENTORY_STAGING_MISMATCH",
+                RoutineFailure.Category.DIVERGENCE, RoutineFailure.Recovery.REPLAN,
+                Map.of("server_inventory_sync", true),
+                Map.of("server_inventory_sync", false));
+        return false;
+    }
+
     private void detectReconciliationFailure(
             ActionState active, WorldSessionTracker.Snapshot session) {
+        if (active.failure != null) return;
         var level = requireMinecraft().level;
         if (level == null || !active.plan.sameSession(session)) {
             active.failure = failure("WORLD_SESSION_CHANGED", RoutineFailure.Category.EXTERNAL,
@@ -983,6 +1272,56 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                         minecraft, entity, THREAT_RADIUS));
     }
 
+    /** Universal semantic/block-mutation gate; deliberately independent of OS focus/mouse grab. */
+    private boolean universalSafetyClear(Minecraft minecraft, PlanState plan) {
+        var session = sessionSupplier.get();
+        var level = minecraft.level;
+        var player = minecraft.player;
+        var gameMode = minecraft.gameMode;
+        if (session == null || !session.worldReady()
+                || level == null || player == null || gameMode == null
+                || minecraft.getConnection() == null
+                || !plan.sameSession(session)
+                || !plan.dimension.equals(level.dimension().identifier().toString())) {
+            return false;
+        }
+        boolean controlContextClear = !minecraft.isPaused()
+                && minecraft.gui.screen() == null
+                && minecraft.gui.overlay() == null
+                && !player.isUsingItem()
+                && plan.positionMatches(player)
+                && gameMode.getPlayerMode() == GameType.SURVIVAL;
+        boolean alive = player.isAlive() && !player.isDeadOrDying();
+        boolean healthSafe = alive && player.getHealth() >= MIN_SAFE_HEALTH
+                && player.getHealth() + 0.001F >= plan.initialHealth
+                && player.hurtTime == 0 && player.getRemainingFireTicks() <= 0;
+        boolean screenClear = minecraft.gui.screen() == null
+                && player.containerMenu == player.inventoryMenu;
+        return controlContextClear && healthSafe && screenClear
+                && visibleThreatClear(minecraft, player, level);
+    }
+
+    private void detectActionSafetyFailure(ActionState active) {
+        if (active.failure != null) return;
+        var minecraft = requireMinecraft();
+        if (!universalSafetyClear(minecraft, active.plan)) {
+            active.failure = safetyFailure();
+            return;
+        }
+        try {
+            active.ownership.requireUndisturbed(minecraft);
+        } catch (RuntimeException | LinkageError drift) {
+            active.failure = safetyFailure();
+        }
+    }
+
+    private static RoutineFailure safetyFailure() {
+        return failure("ACTION_SAFETY_CHANGED", RoutineFailure.Category.SAFETY,
+                RoutineFailure.Recovery.USER,
+                Map.of("universal_safety", true),
+                Map.of("universal_safety", false));
+    }
+
     private boolean rememberConfirmation(
             ActionState active, WorldSessionTracker.Snapshot session) {
         var minecraft = requireMinecraft();
@@ -1083,6 +1422,21 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             throw new IllegalArgumentException("inventory counts must be non-negative");
         }
         return left > Integer.MAX_VALUE - right ? Integer.MAX_VALUE : left + right;
+    }
+
+    static boolean exactInventoryConsumption(int before, int after) {
+        return inventoryConsumption(before, after) == InventoryConsumption.CONFIRMED;
+    }
+
+    static InventoryConsumption inventoryConsumption(int before, int after) {
+        if (before < 0 || after < 0) {
+            throw new IllegalArgumentException("inventory counts must be non-negative");
+        }
+        if (before > 0 && after == before - 1) {
+            return InventoryConsumption.CONFIRMED;
+        }
+        return after == before
+                ? InventoryConsumption.PENDING : InventoryConsumption.MISMATCH;
     }
 
     /** Pure stationary-support policy; deliberately accepts no world/block state. */
@@ -1313,6 +1667,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         private final double initialZ;
         private final float initialHealth;
         private final Map<CandidateKey, List<AimCandidate>> candidates = new LinkedHashMap<>();
+        private final Set<String> confirmedEntries = new LinkedHashSet<>();
         private StandBaseline standBaseline;
         private long lastFrameTick;
         private long lastObservationRevision;
@@ -1322,6 +1677,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         private String inventoryItemId;
         private int inventoryCountBefore;
         private int inventoryOwnedSlot;
+        private PendingStaging pendingStaging;
 
         private PlanState(
                 UUID sessionId, String dimension,
@@ -1573,6 +1929,17 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
 
     private record InventoryFacts(Map<String, Integer> counts, Set<String> hotbarItems) {
     }
+
+    private record PendingStaging(String item, int countBefore, long revisionBefore) {
+        private PendingStaging {
+            Objects.requireNonNull(item, "item");
+            if (countBefore < 1 || revisionBefore < 0L) {
+                throw new IllegalArgumentException("invalid staging synchronization baseline");
+            }
+        }
+    }
+
+    enum InventoryConsumption { PENDING, CONFIRMED, MISMATCH }
 
     /** Independent, retryable restoration state for slot and camera ownership. */
     static final class ControlRestoration {

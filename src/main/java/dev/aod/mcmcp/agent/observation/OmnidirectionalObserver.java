@@ -1,6 +1,8 @@
 package dev.aod.mcmcp.agent.observation;
 
+import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.EntityHazardClass;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.BlockStateView;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.Face;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.ShapeClass;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.UnknownBoundary;
@@ -27,11 +29,16 @@ import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.BushBlock;
 import net.minecraft.world.level.block.CropBlock;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.HalfTransparentBlock;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.LiquidBlock;
@@ -39,6 +46,7 @@ import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.StainedGlassPaneBlock;
 import net.minecraft.world.level.block.WebBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.entity.EntityTypeTest;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
@@ -369,6 +377,8 @@ public final class OmnidirectionalObserver {
                             face(hit.getDirection()),
                             new ResourceId(
                                     BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString()),
+                            policyVisibleBlockState(state),
+                            safeDirectPlacementItem(state),
                             shapeClass,
                             state.getBlock() instanceof CropBlock crop
                                     ? crop.isMaxAge(state) : null,
@@ -457,6 +467,65 @@ public final class OmnidirectionalObserver {
         return entity instanceof ItemEntity itemEntity
                 ? displayedItem(itemEntity.getItem())
                 : null;
+    }
+
+    /**
+     * Canonical complete state only for the audited construction copy/support allowlist.
+     * Returning null for every other visible block prevents non-rendered properties from crossing
+     * the visual policy boundary.
+     */
+    static BlockStateView policyVisibleBlockState(BlockState state) {
+        Objects.requireNonNull(state, "state");
+        String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+        return SafeConstructionBlocks.allowsVisibleState(blockId)
+                ? blockStateView(state) : null;
+    }
+
+    /** Canonical complete state encoder used only after the policy allowlist check. */
+    static BlockStateView blockStateView(BlockState state) {
+        Objects.requireNonNull(state, "state");
+        var properties = new LinkedHashMap<String, String>();
+        state.getValues().forEach(value ->
+                properties.put(value.property().getName(), value.valueName()));
+        return new BlockStateView(
+                new ResourceId(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString()),
+                properties);
+    }
+
+    /**
+     * Returns the audited vanilla one-cell BlockItem which directly owns this block, or null.
+     * This is an item identity hint, not an authorization to place it; runtime prediction and
+     * exact-state validation remain mandatory.
+     */
+    static ResourceId safeDirectPlacementItem(BlockState state) {
+        Objects.requireNonNull(state, "state");
+        Block block = state.getBlock();
+        if (state.isAir()
+                || state.hasBlockEntity()
+                || block instanceof EntityBlock
+                || block instanceof FallingBlock
+                || block instanceof DoorBlock
+                || block instanceof BedBlock
+                || block == Blocks.TNT
+                || !state.getFluidState().isEmpty()
+                || state.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)
+                || state.hasProperty(BlockStateProperties.BED_PART)
+                || !(block.asItem() instanceof BlockItem item)
+                || item.getBlock() != block) {
+            return null;
+        }
+        var identifier = BuiltInRegistries.ITEM.getKey(item);
+        var registered = BuiltInRegistries.ITEM.get(identifier);
+        Class<?> implementation = item.getClass();
+        if (!"minecraft".equals(identifier.getNamespace())
+                || !SafeConstructionBlocks.allows(
+                        BuiltInRegistries.BLOCK.getKey(block).toString())
+                || registered.isEmpty()
+                || registered.orElseThrow().value() != item
+                || implementation != BlockItem.class) {
+            return null;
+        }
+        return new ResourceId(identifier.toString());
     }
 
     /** Extracts only the registry identity used to render an item entity, never stack metadata. */
