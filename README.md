@@ -29,13 +29,14 @@ Phase 1のControl / Navigation MVPを終え、Phase 2の最初のsliceである�
 ## MCP利用の要点
 
 - `agent_get_state`の`observation.latest_frame_id`を`agent_get_observation`へ渡します。告知済みframe IDはidle 60秒、最大16件まで保持されます。
-- `visible_surface`はblockごとの代表面に圧縮されます。`filter`で小麦、成熟作物、落下itemなど必要なrecordだけへ絞れます。
+- `visible_surface`はblockごとの代表面に圧縮されます。`filter`で小麦、成熟作物、落下item、単一の整数座標範囲など必要なrecordだけへ絞れます。
 - `navigate_to_known.target`には、連続値`from / to`を丸めず`traversability.navigation_target`をそのまま使います。
 - 2〜8対象の農作業はmutation batch、2〜8件の現在可視dropは`collect_visible_item_batch`を優先します。新しい証拠が必要になった時点でActionを区切り、再観測します。
 
 ## Documents
 
 - [設計・仕様書](docs/Minecraft_MCP_NeoForge_設計仕様書.md)
+- [Action DSLクイックガイド](docs/MCMCP_Action_DSL_クイックガイド.md)
 - [MCP Tool Catalog](docs/MCMCP_MCP_Tool_Catalog.json)
 - [Prism互換試験ベースライン](docs/MCMCP_Prism_互換試験ベースライン.json)
 - [実ワールド検証記録](docs/MCMCP_実ワールド検証記録.md)

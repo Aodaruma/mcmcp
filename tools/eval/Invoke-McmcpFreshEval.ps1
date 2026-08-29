@@ -20,13 +20,21 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$TokenPath,
 
+    [Parameter(Mandatory)]
+    [ValidateSet('short-regression', 'full-cycle')]
+    [string]$PromptProfile,
+
     [string]$Endpoint = 'http://127.0.0.1:8765/mcp'
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$ProductionPrompt = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
+$ProductionPrompts = [ordered]@{
+    'short-regression' = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
+    'full-cycle' = 'チェストに小麦の種と鍬が入っています。これを取り出し、この畑の区画にある耕作可能な土をすべて耕して、すべてに小麦の種を植えてください。成熟後はすべて収穫して植え直す工程を、小麦を1スタック（64個）以上所持するまで繰り返してください。'
+}
+$ProductionPrompt = [string]$ProductionPrompts[$PromptProfile]
 $RequiredCodexVersion = 'codex-cli 0.146.1'
 $ModernProtocolVersion = '2026-07-28'
 $EvaluatorTimeout = [TimeSpan]::FromMinutes(17)
@@ -39,8 +47,8 @@ $AuthExpirySafetyMargin = [TimeSpan]::FromMinutes(5)
 $MinimumMcpRequestIntervalMilliseconds = 60
 $ExpectedMcmcpServerName = 'mcmcp'
 $ExpectedMcmcpServerVersion = '0.1.0'
-$ExpectedCatalogFileSha256 = '0b183a2776c635a0b9ad562ae8330a57ab3d23ad93c35a3498015188a4f3ca3c'
-$ExpectedToolSurfaceSha256 = 'f8c0adebe85aa41d151455be833c169dd5ad4b2e57c388cfc3c8a5830c4ec7b4'
+$ExpectedCatalogFileSha256 = '75c70584b0b04cc59aebd6d78ff1d89ae7fc1f7dbebf19a032fbf3a312433955'
+$ExpectedToolSurfaceSha256 = '4afdacbad81ad958e4fd7b285b45f8dc802259560cea1cbbdc94817ce9482ecc'
 $AllowedTools = @(
     'agent_get_state',
     'agent_get_observation',
@@ -1949,6 +1957,7 @@ try {
     Write-BridgeEvent ([ordered]@{
             event = 't0'
             utc = $startedAt.ToString('o')
+            prompt_profile = $PromptProfile
             prompt_sha256 = Get-Sha256 $ProductionPrompt
             timeout_seconds = [int]$EvaluatorTimeout.TotalSeconds
             readiness_rechecked = $true
@@ -2163,17 +2172,19 @@ try {
         $powerShellExecutable = (Get-Process -Id $PID).Path
         & $powerShellExecutable -NoProfile -File $auditScript `
             -TracePath $tracePath -BridgeLogPath $bridgePath -OutputPath $auditPath `
-            -ExpectedModel $Model -ExpectedEffort $ReasoningEffort 2> $auditStderrPath
+            -ExpectedModel $Model -ExpectedEffort $ReasoningEffort `
+            -ExpectedPromptProfile $PromptProfile 2> $auditStderrPath
         $auditPassed = ($LASTEXITCODE -eq 0)
     }
 
     $gitCommit = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1)
     $gitStatus = @(& git -C $repoRoot status --porcelain=v1 2>$null)
     $manifest = [ordered]@{
-        schema_version = 5
+        schema_version = 6
         baseline_id = $BaselineId
         model = $Model
         reasoning_effort = $ReasoningEffort
+        prompt_profile = $PromptProfile
         prompt_sha256 = Get-Sha256 $ProductionPrompt
         prompt_delivery = 'app_server_stdio_jsonl_turn_start_exact_text'
         evaluator_timeout_seconds = [int]$EvaluatorTimeout.TotalSeconds

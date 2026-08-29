@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.action.ActionProgramCursor;
+import dev.aod.mcmcp.agent.action.CollectBatchEvidence;
 import dev.aod.mcmcp.agent.action.KnownBlockBreakAttempt;
 import dev.aod.mcmcp.agent.action.KnownBlockMutationAttempt;
 import dev.aod.mcmcp.agent.action.KnownContainerAttempt;
@@ -989,42 +990,7 @@ public final class McmcpRuntime implements McpRuntimePort {
     }
 
     private static ObservationFilter observationFilterArgument(Map<String, Object> arguments) {
-        if (!arguments.containsKey("filter")) {
-            return ObservationFilter.NONE;
-        }
-        Map<String, Object> input = objectArgument(arguments, "filter");
-        requireAllowedKeys(input, "agent_get_observation filter",
-                Set.of("block_ids", "entity_types", "displayed_items", "crop_mature"));
-        if (input.isEmpty()) {
-            throw new IllegalArgumentException("agent_get_observation filter must not be empty");
-        }
-        return new ObservationFilter(
-                resourceIdSetArgument(input, "block_ids", 32),
-                resourceIdSetArgument(input, "entity_types", 32),
-                resourceIdSetArgument(input, "displayed_items", 32),
-                input.containsKey("crop_mature")
-                        ? Optional.of(booleanArgument(input, "crop_mature"))
-                        : Optional.empty());
-    }
-
-    private static Set<ResourceId> resourceIdSetArgument(
-            Map<String, Object> source, String name, int maximum) {
-        if (!source.containsKey(name)) {
-            return Set.of();
-        }
-        Object raw = source.get(name);
-        if (!(raw instanceof List<?> values)
-                || values.isEmpty()
-                || values.size() > maximum) {
-            throw new IllegalArgumentException(name + " must contain 1.." + maximum + " values");
-        }
-        var result = new LinkedHashSet<ResourceId>();
-        for (Object value : values) {
-            if (!(value instanceof String id) || id.isBlank() || !result.add(new ResourceId(id))) {
-                throw new IllegalArgumentException(name + " must contain unique resource IDs");
-            }
-        }
-        return Set.copyOf(result);
+        return ObservationFilterArguments.parse(arguments);
     }
 
     private void abandonUnconfirmedDelivery(RuntimeReply reply) {
@@ -1175,13 +1141,8 @@ public final class McmcpRuntime implements McpRuntimePort {
                                     snapshot.reconciliation()),
                             context::canBeginWork))
                     .orElseGet(McmcpRuntime::emptyPrimitiveAnalysis);
-            initialPrimitive.flatMap(analysis::worstCase).ifPresent(cost -> {
-                if (!costWithinBudget(cost, program.effectiveBudget())) {
-                    throw new ActionDslException(
-                            ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE,
-                            "The initial primitive exceeds the effective action budget");
-                }
-            });
+            initialPrimitive.flatMap(analysis::worstCase).ifPresent(cost ->
+                    ActionDslCompiler.requireWithinBudget(cost, program.effectiveBudget()));
         } catch (AgentPrimitivePlanner.PlanningException failure) {
             throw planningFailure(failure);
         }
@@ -1247,17 +1208,6 @@ public final class McmcpRuntime implements McpRuntimePort {
         }
         return Optional.of(new ActionDslCompiler.Cost(
                 0L, 0L, 0.0D, 0.0D, interactions, breaks, placements));
-    }
-
-    private static boolean costWithinBudget(
-            ActionDslCompiler.Cost cost, ActionDsl.Budget budget) {
-        return cost.durationMillis() <= budget.maxDurationMillis()
-                && cost.ticks() <= budget.maxTicks()
-                && cost.distanceBlocks() <= budget.maxDistanceBlocks()
-                && cost.cameraDegrees() <= budget.maxCameraDegrees()
-                && cost.interactions() <= budget.maxInteractions()
-                && cost.blocksBroken() <= budget.maxBlocksBroken()
-                && cost.blocksPlaced() <= budget.maxBlocksPlaced();
     }
 
     private Map<String, Object> commitAgentAction(
@@ -1403,6 +1353,19 @@ public final class McmcpRuntime implements McpRuntimePort {
                                 session.clientTick(),
                                 visibleItemEvidenceMaxAgeTicks(
                                         McmcpClientConfig.raysPerTick())))
+                        .orElse(true)
+                && prepared.initialPrimitive()
+                        .filter(ActionDsl.CollectVisibleItemBatch.class::isInstance)
+                        .map(ActionDsl.CollectVisibleItemBatch.class::cast)
+                        .map(batch -> AgentPrimitivePlanner.visibleBatchItemAabbs(
+                                        currentMap,
+                                        currentPlanningFrame,
+                                        batch,
+                                        currentVisualBarrierWorldRevision,
+                                        session.clientTick(),
+                                        visibleItemEvidenceMaxAgeTicks(
+                                                McmcpClientConfig.raysPerTick()))
+                                .stream().allMatch(Optional::isPresent))
                         .orElse(true)
                 && breakProgramPreconditionsCurrent(
                         minecraft, prepared.program(), prepared.initialPrimitive());
@@ -2662,6 +2625,10 @@ public final class McmcpRuntime implements McpRuntimePort {
             // Vanilla can collect the witnessed item while the navigator is still reporting
             // RUNNING. Honor that server-confirmed inventory delta only after the hard action
             // gates, and before a vanished witness can be mistaken for a path failure.
+            if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItemBatch
+                    && !reconcileCollectBatchEvidence(minecraft, session, action)) {
+                return;
+            }
             if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem collect
                     && agentExecution.pickupInventoryBefore >= 0
                     && pickupInventoryIncreased(
@@ -2797,10 +2764,12 @@ public final class McmcpRuntime implements McpRuntimePort {
                 return;
             }
 
-            if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem collect
-                    && agentExecution.pickupInventoryBefore >= 0) {
+            ActionDsl.CollectVisibleItem activeCollect = activeCollectTarget();
+            if (activeCollect != null
+                    && (agentExecution.pickupInventoryBefore >= 0
+                            || agentExecution.collectBatchEvidence != null)) {
                 if (agentExecution.pickupArrivalTick >= 0L) {
-                    tickAgentPickupConfirmation(minecraft, session, action, collect);
+                    tickAgentPickupConfirmation(minecraft, session, action, activeCollect);
                     return;
                 }
                 if (agentExecution.pickupCell != null) {
@@ -2813,7 +2782,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                     if (!AgentPrimitivePlanner.visibleItemPickupCellCurrent(
                             pickupMap,
                             agentPlanningFrame(),
-                            collect,
+                            activeCollect,
                             agentExecution.pickupCell,
                             visualBarrierWorldRevision,
                             session.clientTick(),
@@ -2928,6 +2897,13 @@ public final class McmcpRuntime implements McpRuntimePort {
                 failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "motion");
                 return;
             }
+            // The movement tick itself can enter the pickup area and let vanilla collect the
+            // witnessed item before the next observation frame. Bind contact against the still
+            // fresh policy-visible AABB and reconcile the post-move absolute inventory now.
+            if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItemBatch
+                    && !reconcileCollectBatchEvidence(minecraft, session, action)) {
+                return;
+            }
             switch (result.status()) {
                 case RUNNING -> {
                     if (shouldVerifyReplanHeartbeat(agentExecution.replanning, result)) {
@@ -2942,8 +2918,8 @@ public final class McmcpRuntime implements McpRuntimePort {
                         agentExecution.replanDeadlineTick = 0L;
                         return;
                     }
-                    if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem) {
-                        var collect = (ActionDsl.CollectVisibleItem) agentExecution.primitive;
+                    ActionDsl.CollectVisibleItem completedCollect = activeCollectTarget();
+                    if (completedCollect != null) {
                         long visualBarrierWorldRevision = visualBarrierWorldRevision(
                                 map,
                                 reconciliationSignals.bindAndSnapshot(
@@ -2952,7 +2928,7 @@ public final class McmcpRuntime implements McpRuntimePort {
                         var itemBounds = AgentPrimitivePlanner.visibleItemAabb(
                                 map,
                                 agentPlanningFrame(),
-                                collect,
+                                completedCollect,
                                 visualBarrierWorldRevision,
                                 session.clientTick(),
                                 visibleItemEvidenceMaxAgeTicks(McmcpClientConfig.raysPerTick()));
@@ -2964,6 +2940,11 @@ public final class McmcpRuntime implements McpRuntimePort {
                                     true,
                                     "pickup_area_unreached");
                             return;
+                        }
+                        if (agentExecution.primitive
+                                instanceof ActionDsl.CollectVisibleItemBatch) {
+                            agentExecution.collectBatchEvidence.recordContact(
+                                    agentExecution.collectBatchIndex, session.clientTick());
                         }
                         closeAgentPrimitiveExecutor();
                         agentExecution.pickupArrivalTick = session.clientTick();
@@ -3038,6 +3019,8 @@ public final class McmcpRuntime implements McpRuntimePort {
         agentExecution.mutationBatchTargetAim = null;
         agentExecution.mutationBatchTargetBound = false;
         agentExecution.mutationBatchTargetDeadlineTick = 0L;
+        agentExecution.collectBatchIndex = 0;
+        agentExecution.collectBatchEvidence = null;
         agentExecution.cropWaitAuthorization = null;
         agentExecution.primitivePlanDeadlineTick = Math.addExact(
                 occurrenceBaseline.ticks(), primitiveReobservationTicks(advance.primitive()));
@@ -3052,6 +3035,12 @@ public final class McmcpRuntime implements McpRuntimePort {
                 : -1;
         agentExecution.pickupArrivalTick = -1L;
         agentExecution.pickupCell = null;
+        if (advance.primitive() instanceof ActionDsl.CollectVisibleItemBatch batch) {
+            agentExecution.collectBatchEvidence = new CollectBatchEvidence(
+                    batch.targets(),
+                    collectBatchInventoryCounts(
+                            Objects.requireNonNull(minecraft.player, "player"), batch));
+        }
         agentActions.beginNode(agentExecution.actionId, advance.primitive().id());
         if (advance.primitive() instanceof ActionDsl.WaitTicks wait) {
             agentExecution.waitTicksRemaining = wait.ticks();
@@ -3409,7 +3398,9 @@ public final class McmcpRuntime implements McpRuntimePort {
                                 block.target(), breakAim.point().x,
                                 breakAim.point().y, breakAim.point().z, true),
                         aimTicks);
-            } else if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem collect) {
+            } else if (isCollectPrimitive(agentExecution.primitive)) {
+                ActionDsl.CollectVisibleItem collect = Objects.requireNonNull(
+                        activeCollectTarget(), "active collect target");
                 AgentPrimitivePlanner.PickupPlan pickup = AgentPrimitivePlanner.requirePickupPlan(
                         map,
                         agentPathfinder,
@@ -3447,7 +3438,8 @@ public final class McmcpRuntime implements McpRuntimePort {
                             "collect_visible_item");
                     return false;
                 }
-                if (agentExecution.pickupInventoryBefore < 0) {
+                if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem
+                        && agentExecution.pickupInventoryBefore < 0) {
                     throw new IllegalStateException(
                             "collect occurrence inventory baseline was not captured");
                 }
@@ -3479,7 +3471,8 @@ public final class McmcpRuntime implements McpRuntimePort {
             AgentActionStore.Active action,
             ActionDsl.CollectVisibleItem collect) {
         var player = Objects.requireNonNull(minecraft.player, "player");
-        if (pickupInventoryIncreased(
+        if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem
+                && pickupInventoryIncreased(
                 agentExecution.pickupInventoryBefore,
                 inventoryItemCount(player, collect.displayedItem()))) {
             completeAgentPrimitive(minecraft, action);
@@ -3517,6 +3510,123 @@ public final class McmcpRuntime implements McpRuntimePort {
         advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
     }
 
+    private ActionDsl.CollectVisibleItem activeCollectTarget() {
+        if (agentExecution == null) return null;
+        if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem collect) {
+            return collect;
+        }
+        if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItemBatch batch
+                && agentExecution.collectBatchIndex >= 0
+                && agentExecution.collectBatchIndex < batch.targets().size()) {
+            return AgentPrimitivePlanner.collectBatchChild(
+                    batch, agentExecution.collectBatchIndex);
+        }
+        return null;
+    }
+
+    private static boolean isCollectPrimitive(ActionDsl.Node primitive) {
+        return primitive instanceof ActionDsl.CollectVisibleItem
+                || primitive instanceof ActionDsl.CollectVisibleItemBatch;
+    }
+
+    /** Returns false after completing a target or making the action terminal this tick. */
+    private boolean reconcileCollectBatchEvidence(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action) {
+        var batch = (ActionDsl.CollectVisibleItemBatch) agentExecution.primitive;
+        CollectBatchEvidence evidence = agentExecution.collectBatchEvidence;
+        if (evidence == null
+                || agentExecution.collectBatchIndex < 0
+                || agentExecution.collectBatchIndex >= batch.targets().size()) {
+            failAgentAction(
+                    AgentActionStore.FailureCode.INTERNAL_ERROR,
+                    false,
+                    "collect_batch_state_missing");
+            return false;
+        }
+        var player = Objects.requireNonNull(minecraft.player, "player");
+        KnownTraversabilitySnapshot map = requireAgentMap(session);
+        long visualBarrierWorldRevision = visualBarrierWorldRevision(
+                map,
+                reconciliationSignals.bindAndSnapshot(
+                        Objects.requireNonNull(minecraft.level, "level"),
+                        session.worldSessionId()));
+        List<Optional<dev.aod.mcmcp.agent.observation.ObservationValues.Aabb>> bounds =
+                AgentPrimitivePlanner.visibleBatchItemAabbs(
+                        map,
+                        agentPlanningFrame(),
+                        batch,
+                        visualBarrierWorldRevision,
+                        session.clientTick(),
+                        visibleItemEvidenceMaxAgeTicks(McmcpClientConfig.raysPerTick()));
+        boolean currentTargetContact = false;
+        for (int index = agentExecution.collectBatchIndex;
+                index < batch.targets().size(); index++) {
+            if (!evidence.credited(index)
+                    && bounds.get(index).filter(aabb -> playerPickupAreaIntersects(
+                            player.getBoundingBox(), aabb)).isPresent()) {
+                evidence.recordContact(index, session.clientTick());
+                currentTargetContact |= index == agentExecution.collectBatchIndex;
+            }
+        }
+        if (currentTargetContact && agentExecution.pickupArrivalTick < 0L) {
+            // Contact can happen one navigator tick before it reports SUCCEEDED. Stop owned
+            // movement immediately and retain the contact lease while inventory sync catches up.
+            closeAgentPrimitiveExecutor();
+            agentExecution.pickupArrivalTick = session.clientTick();
+        }
+
+        final List<CollectBatchEvidence.Credit> credits;
+        try {
+            credits = evidence.reconcile(
+                    collectBatchInventoryCounts(player, batch),
+                    session.clientTick(),
+                    AgentPrimitivePlanner.PICKUP_CONFIRM_TICKS,
+                    agentExecution.collectBatchIndex);
+        } catch (CollectBatchEvidence.InventoryDecreasedException decreased) {
+            failAgentAction(
+                    AgentActionStore.FailureCode.WORLD_CHANGED,
+                    true,
+                    "collect_batch_inventory_decreased");
+            return false;
+        }
+        for (CollectBatchEvidence.Credit credit : credits) {
+            agentActions.recordNodeEvidence(
+                    action.actionId(),
+                    "batch_target[" + credit.targetIndex() + "]="
+                            + (credit.incidental() ? "incidentally_collected" : "collected")
+                            + ",inventory_before=" + credit.inventoryBefore()
+                            + ",inventory_after=" + credit.inventoryAfter());
+        }
+        if (!evidence.credited(agentExecution.collectBatchIndex)) {
+            return true;
+        }
+        completeCollectBatchTarget(minecraft, action, batch);
+        return false;
+    }
+
+    private void completeCollectBatchTarget(
+            Minecraft minecraft,
+            AgentActionStore.Active action,
+            ActionDsl.CollectVisibleItemBatch batch) {
+        closeAgentPrimitiveExecutor();
+        agentExecution.collectBatchIndex++;
+        agentExecution.pickupArrivalTick = -1L;
+        agentExecution.pickupCell = null;
+        agentExecution.replanning = false;
+        agentExecution.replanHeartbeatPending = false;
+        agentExecution.replanNotBeforeTick = 0L;
+        agentExecution.replanDeadlineTick = 0L;
+        if (agentExecution.collectBatchIndex < batch.targets().size()) {
+            return;
+        }
+        agentActions.completeNode(action.actionId());
+        agentExecution.primitive = null;
+        agentExecution.collectBatchEvidence = null;
+        advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
+    }
+
     private static int inventoryItemCount(
             net.minecraft.client.player.LocalPlayer player, String item) {
         int count = 0;
@@ -3529,6 +3639,19 @@ public final class McmcpRuntime implements McpRuntimePort {
             }
         }
         return count;
+    }
+
+    private static Map<String, Integer> collectBatchInventoryCounts(
+            net.minecraft.client.player.LocalPlayer player,
+            ActionDsl.CollectVisibleItemBatch batch) {
+        Objects.requireNonNull(player, "player");
+        Objects.requireNonNull(batch, "batch");
+        var counts = new LinkedHashMap<String, Integer>();
+        for (ActionDsl.CollectTarget target : batch.targets()) {
+            counts.computeIfAbsent(
+                    target.displayedItem(), item -> inventoryItemCount(player, item));
+        }
+        return counts;
     }
 
     static boolean pickupInventoryIncreased(int before, int current) {
@@ -4158,7 +4281,7 @@ public final class McmcpRuntime implements McpRuntimePort {
         agentExecution.breakAimComplete = false;
         agentExecution.replanHeartbeatPending = false;
         agentExecution.replanNotBeforeTick = actionTick + 1L;
-        if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem) {
+        if (isCollectPrimitive(agentExecution.primitive)) {
             // Arrival is evidence about the old pose only. Preserve the occurrence inventory
             // baseline, but force a fresh witness/route bind after any correction or safety replan.
             agentExecution.pickupArrivalTick = -1L;
@@ -5271,6 +5394,8 @@ public final class McmcpRuntime implements McpRuntimePort {
                 || primitive instanceof ActionDsl.NavigateToKnown
                         && used.distanceTravelled() >= budget.maxDistanceBlocks()
                 || primitive instanceof ActionDsl.CollectVisibleItem
+                        && used.distanceTravelled() >= budget.maxDistanceBlocks()
+                || primitive instanceof ActionDsl.CollectVisibleItemBatch
                         && used.distanceTravelled() >= budget.maxDistanceBlocks()
                 || primitive instanceof ActionDsl.FaceKnownPosition
                         && used.cameraDegrees() >= budget.maxCameraDegrees()
@@ -8192,6 +8317,8 @@ public final class McmcpRuntime implements McpRuntimePort {
         private AgentPrimitivePlanner.MutationAim mutationBatchTargetAim;
         private boolean mutationBatchTargetBound;
         private long mutationBatchTargetDeadlineTick;
+        private int collectBatchIndex;
+        private CollectBatchEvidence collectBatchEvidence;
         private CropWaitAuthorization cropWaitAuthorization;
         private double tillSettlingAllowance;
         private ActionDsl.Position tillSettlingTarget;

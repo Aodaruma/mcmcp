@@ -20,6 +20,10 @@ param(
     [ValidateSet('high', 'xhigh')]
     [string]$ExpectedEffort,
 
+    [Parameter(Mandatory, ParameterSetName = 'Audit')]
+    [ValidateSet('short-regression', 'full-cycle')]
+    [string]$ExpectedPromptProfile,
+
     [Parameter(Mandatory, ParameterSetName = 'SelfTest')]
     [switch]$SelfTest
 )
@@ -27,9 +31,18 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$ProductionPrompt = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
-$ExpectedCatalogFileSha256 = '0b183a2776c635a0b9ad562ae8330a57ab3d23ad93c35a3498015188a4f3ca3c'
-$ExpectedToolSurfaceSha256 = 'f8c0adebe85aa41d151455be833c169dd5ad4b2e57c388cfc3c8a5830c4ec7b4'
+$ProductionPrompts = [ordered]@{
+    'short-regression' = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
+    'full-cycle' = 'チェストに小麦の種と鍬が入っています。これを取り出し、この畑の区画にある耕作可能な土をすべて耕して、すべてに小麦の種を植えてください。成熟後はすべて収穫して植え直す工程を、小麦を1スタック（64個）以上所持するまで繰り返してください。'
+}
+$AuditPromptProfile = if ($PSCmdlet.ParameterSetName -eq 'Audit') {
+    $ExpectedPromptProfile
+} else {
+    'short-regression'
+}
+$ProductionPrompt = [string]$ProductionPrompts[$AuditPromptProfile]
+$ExpectedCatalogFileSha256 = '75c70584b0b04cc59aebd6d78ff1d89ae7fc1f7dbebf19a032fbf3a312433955'
+$ExpectedToolSurfaceSha256 = '4afdacbad81ad958e4fd7b285b45f8dc802259560cea1cbbdc94817ce9482ecc'
 $TurnCompletionReserveSeconds = 15
 $MaximumMcpForwardSeconds = 35
 $AgentGetActionTransportMarginSeconds = 2
@@ -832,6 +845,8 @@ function Invoke-TraceAudit {
         }
         Add-ViolationUnless ((Get-PropertyValue $t0 'prompt_sha256') -eq
             (Get-Sha256 $ProductionPrompt)) 'T0 prompt hash mismatch' $violations
+        Add-ViolationUnless ((Get-PropertyValue $t0 'prompt_profile') -ceq
+            $AuditPromptProfile) 'T0 prompt profile mismatch' $violations
         Add-ViolationUnless ((Get-PropertyValue $t0 'timeout_seconds') -eq 1020) `
             'T0 timeout must be 1020 seconds' $violations
         foreach ($readinessFlag in @(
@@ -1920,8 +1935,9 @@ function Invoke-TraceAudit {
             'deadline-rejected run: Minecraft内の全Actionがterminalであることを別artifactで確認すること')
     }
     $report = [ordered]@{
-        schema_version = 5
+        schema_version = 6
         passed = ($violations.Count -eq 0)
+        prompt_profile = $AuditPromptProfile
         trace_message_count = $traceRecords.Count
         bridge_record_count = $bridgeRecords.Count
         dynamic_request_count = $dynamicRequests.Count
@@ -2080,7 +2096,8 @@ function Invoke-AuditSelfTest {
             response_ok = $true; contract_valid = $true; raw_artifact_recorded = $true
         },
         [ordered]@{
-            sequence = 11; event = 't0'; prompt_sha256 = Get-Sha256 $ProductionPrompt
+            sequence = 11; event = 't0'; prompt_profile = 'short-regression'
+            prompt_sha256 = Get-Sha256 $ProductionPrompt
             timeout_seconds = 1020; readiness_rechecked = $true
             ready_mode_ok = $true; game_unpaused = $true; world_present = $true
             observation_present = $true; inventory_empty = $true
@@ -2945,9 +2962,36 @@ function Invoke-AuditSelfTest {
         http_status = 429
     }
 
+    $fullCyclePrompt = [string]$ProductionPrompts['full-cycle']
+    $fullProfileTrace = @($trace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            $item = Get-NestedValue $copy 'params.item'
+            if ($null -ne $item -and (Get-PropertyValue $item 'type') -ceq 'userMessage') {
+                $item.content[0].text = $fullCyclePrompt
+            }
+            $copy
+        })
+    $fullProfileBridge = @($bridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 't0') {
+                $copy.prompt_profile = 'full-cycle'
+                $copy.prompt_sha256 = Get-Sha256 $fullCyclePrompt
+            } elseif ((Get-PropertyValue $copy 'event') -ceq 'client_send' -and
+                (Get-PropertyValue $copy 'kind') -ceq 'turn_start') {
+                $copy.message.params.input[0].text = $fullCyclePrompt
+            }
+            $copy
+        })
+
     $cases = @(
         [ordered]@{
             name = 'valid'; trace = $trace; bridge = $bridge
+            expected_exit = 0; expected_success = 1; expected_failure = 0
+            required = @()
+        },
+        [ordered]@{
+            name = 'full_profile_valid'; trace = $fullProfileTrace
+            bridge = $fullProfileBridge; expected_profile = 'full-cycle'
             expected_exit = 0; expected_success = 1; expected_failure = 0
             required = @()
         },
@@ -3252,9 +3296,13 @@ function Invoke-AuditSelfTest {
             $caseEffort = if ($case.Contains('expected_effort')) {
                 [string]$case.expected_effort
             } else { 'high' }
+            $casePromptProfile = if ($case.Contains('expected_profile')) {
+                [string]$case.expected_profile
+            } else { 'short-regression' }
             & $powerShellExecutable -NoProfile -File $PSCommandPath `
                 -TracePath $tracePath -BridgeLogPath $bridgePath -OutputPath $reportPath `
-                -ExpectedModel gpt-5.6-sol -ExpectedEffort $caseEffort
+                -ExpectedModel gpt-5.6-sol -ExpectedEffort $caseEffort `
+                -ExpectedPromptProfile $casePromptProfile
             if ($LASTEXITCODE -ne $case.expected_exit) {
                 $failureDetail = if (Test-Path -LiteralPath $reportPath) {
                     (Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json).violations -join '; '

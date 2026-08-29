@@ -658,10 +658,23 @@ class McmcpRuntimeHardeningTest {
         var target = new ActionDsl.Position("minecraft:overworld", 1, 64, 1);
         var navigate = new ActionDsl.NavigateToKnown("move", target, 0.75D);
         var face = new ActionDsl.FaceKnownPosition("face", target);
+        var collectBatch = new ActionDsl.CollectVisibleItemBatch(
+                "drops",
+                List.of(
+                        new ActionDsl.CollectTarget(
+                                "minecraft:wheat",
+                                new ActionDsl.WorldPosition(
+                                        "minecraft:overworld", 1.5D, 64.1D, 1.5D)),
+                        new ActionDsl.CollectTarget(
+                                "minecraft:wheat",
+                                new ActionDsl.WorldPosition(
+                                        "minecraft:overworld", 2.5D, 64.1D, 1.5D))));
 
         assertThat(McmcpRuntime.agentReplanDeadlineTick(navigate, 2, 0, 38))
                 .isEqualTo(39);
         assertThat(McmcpRuntime.agentReplanDeadlineTick(face, 2, 0, 38))
+                .isEqualTo(22);
+        assertThat(McmcpRuntime.agentReplanDeadlineTick(collectBatch, 2, 0, 38))
                 .isEqualTo(22);
     }
 

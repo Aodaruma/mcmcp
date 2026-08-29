@@ -29,6 +29,7 @@ public final class ActionDslValidator {
     public static final int MAX_INTERACTIONS = 8;
     public static final int MAX_BLOCKS_PLACED = 8;
     public static final int MAX_MUTATION_BATCH_TARGETS = 8;
+    public static final int MIN_COLLECT_BATCH_TARGETS = 2;
 
     private static final Pattern NODE_ID = Pattern.compile("[a-z][a-z0-9_-]{0,31}");
     private static final Pattern PROGRAM_NAME = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
@@ -168,7 +169,7 @@ public final class ActionDslValidator {
         }
         requirePattern(node.id(), NODE_ID, path + ".id");
         if (!walk.ids.add(node.id())) {
-            throw invalid("Duplicate node id: " + node.id());
+            throw invalid("Program contains duplicate node ids");
         }
 
         if (node instanceof ActionDsl.NavigateToKnown navigate) {
@@ -332,6 +333,23 @@ public final class ActionDslValidator {
         if (node instanceof ActionDsl.CollectVisibleItem collect) {
             validateWorldPosition(collect.target(), path + ".target");
             requireResourceLocation(collect.displayedItem(), path + ".displayed_item");
+            walk.requiredCapabilities.add(ActionDsl.Capability.MOVEMENT);
+            return 1;
+        }
+        if (node instanceof ActionDsl.CollectVisibleItemBatch batch) {
+            requireSequenceSize(
+                    batch.targets(), MIN_COLLECT_BATCH_TARGETS,
+                    MAX_MUTATION_BATCH_TARGETS, path + ".targets");
+            var distinct = new HashSet<ActionDsl.CollectTarget>();
+            for (int index = 0; index < batch.targets().size(); index++) {
+                ActionDsl.CollectTarget target = batch.targets().get(index);
+                String targetPath = path + ".targets[" + index + "]";
+                validateWorldPosition(target.target(), targetPath + ".target");
+                requireResourceLocation(target.displayedItem(), targetPath + ".displayed_item");
+                if (!distinct.add(target)) {
+                    throw invalid(path + ".targets must contain distinct item witnesses");
+                }
+            }
             walk.requiredCapabilities.add(ActionDsl.Capability.MOVEMENT);
             return 1;
         }

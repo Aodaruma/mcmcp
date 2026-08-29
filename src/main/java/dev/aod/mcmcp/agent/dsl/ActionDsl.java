@@ -33,7 +33,7 @@ public final class ActionDsl {
             TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
             HarvestKnownWheat, HarvestKnownWheatBatch, OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
-            CollectVisibleItem, WaitTicks, WaitUntil, If, Repeat {
+            CollectVisibleItem, CollectVisibleItemBatch, WaitTicks, WaitUntil, If, Repeat {
         String id();
     }
 
@@ -194,6 +194,22 @@ public final class ActionDsl {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(displayedItem, "displayedItem");
             Objects.requireNonNull(target, "target");
+        }
+    }
+
+    public record CollectTarget(String displayedItem, WorldPosition target) {
+        public CollectTarget {
+            Objects.requireNonNull(displayedItem, "displayedItem");
+            Objects.requireNonNull(target, "target");
+        }
+    }
+
+    /** Collects a bounded listed sequence while retaining batch-wide pickup evidence. */
+    public record CollectVisibleItemBatch(
+            String id, List<CollectTarget> targets) implements Node {
+        public CollectVisibleItemBatch {
+            Objects.requireNonNull(id, "id");
+            targets = List.copyOf(Objects.requireNonNull(targets, "targets"));
         }
     }
 

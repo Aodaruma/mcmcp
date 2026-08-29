@@ -48,7 +48,6 @@ public final class AgentPrimitivePlanner {
     private static final double MAX_BREAK_REACH_BLOCKS = 4.5D;
     private static final double MAX_BREAK_EYE_ORIGIN_DRIFT = 0.125D;
     public static final double WAIT_WITNESS_EYE_EPSILON_BLOCKS = 1.0D / 1024.0D;
-    private static final double BATCH_NEAR_RAY_DEGREES = 2.0D;
     private static final double FARMLAND_SETTLING_BLOCKS = 1.0D / 16.0D;
     private static final double VISIBLE_ITEM_MATCH_RADIUS = 0.75D;
     // Vanilla scans an item against player.getBoundingBox().inflate(1.0, 0.5, 1.0).
@@ -758,6 +757,11 @@ public final class AgentPrimitivePlanner {
             merge(costs, node.id(), Objects.requireNonNull(worst, "pickup cost"));
             return distinct(output);
         }
+        if (node instanceof ActionDsl.CollectVisibleItemBatch batch) {
+            return analyzeCollectBatch(
+                    batch, input, map, pathfinder, latestFrame,
+                    visualBarrierWorldRevision, costs, routeDependencies, work);
+        }
         if (node instanceof ActionDsl.If conditional) {
             var output = new ArrayList<Pose>();
             output.addAll(analyzeSequence(
@@ -828,10 +832,10 @@ public final class AgentPrimitivePlanner {
                                     + failure.getMessage());
                 }
             }
-            BatchPath optimized = optimizeMutationBatch(initial, candidates, cameraLimit);
+            BatchPath ordered = listedMutationBatch(initial, candidates, cameraLimit);
             var planned = new ArrayList<MutationBatchStep>(candidates.size());
             Pose plannedPose = initial;
-            for (MutationBatchTarget candidate : optimized.targets()) {
+            for (MutationBatchTarget candidate : ordered.targets()) {
                 MutationSurface surface = candidate.surface();
                 Vec3 point = surface.point();
                 MutationAim aim = new MutationAim(
@@ -855,8 +859,8 @@ public final class AgentPrimitivePlanner {
                         "Mutation batch order depends on an unresolved abstract pose");
             }
             sharedPlan = plan;
-            worst = maximum(worst, optimized.cost());
-            output.add(optimized.pose());
+            worst = maximum(worst, ordered.cost());
+            output.add(ordered.pose());
         }
         MutationBatchPlan plan = Objects.requireNonNull(sharedPlan, "mutation batch plan");
         MutationBatchPlan previous = mutationBatchPlans.putIfAbsent(batch.id(), plan);
@@ -869,74 +873,88 @@ public final class AgentPrimitivePlanner {
         return distinct(output);
     }
 
-    /**
-     * Finds the minimum joint camera path over at most eight targets. Targets on the same or a
-     * near-identical eye ray retain a far-before-near precedence so mutating a foreground block
-     * cannot invalidate admission evidence for a background target. Equal-cost paths are ordered
-     * lexicographically by world position, making the result independent of JSON target order.
-     */
-    private static BatchPath optimizeMutationBatch(
-            Pose initial, List<MutationBatchTarget> input, float cameraLimit) {
-        var candidates = new ArrayList<>(input);
-        candidates.sort(java.util.Comparator.comparing(
-                candidate -> mutationPosition(candidate.node()), mutationPositionComparator()));
-        int size = candidates.size();
-        int[] prerequisites = new int[size];
-        for (int farther = 0; farther < size; farther++) {
-            for (int nearer = 0; nearer < size; nearer++) {
-                if (farther == nearer) continue;
-                double farDistance = distanceSquared(initial, candidates.get(farther).surface().point());
-                double nearDistance = distanceSquared(initial, candidates.get(nearer).surface().point());
-                if (farDistance > nearDistance + 1.0e-9D
-                        && nearRay(
-                                initial,
-                                candidates.get(farther).surface().point(),
-                                candidates.get(nearer).surface().point())) {
-                    prerequisites[nearer] |= 1 << farther;
+    private static List<Pose> analyzeCollectBatch(
+            ActionDsl.CollectVisibleItemBatch batch,
+            List<Pose> input,
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            Optional<ObservationFrame> latestFrame,
+            long visualBarrierWorldRevision,
+            Map<String, ActionDslCompiler.Cost> costs,
+            Map<TraversabilityEdge.Key, TraversabilityEdge> routeDependencies,
+            PlanningWork work) {
+        ActionDslCompiler.Cost worst = null;
+        var output = new ArrayList<Pose>(input.size());
+        for (Pose initial : input) {
+            Pose pose = initial;
+            ActionDslCompiler.Cost cost = new ActionDslCompiler.Cost(0, 0, 0, 0, 0, 0, 0);
+            var boundEntities = new LinkedHashSet<ObservationRecord.VisibleEntity>();
+            for (int index = 0; index < batch.targets().size(); index++) {
+                work.poseTransition();
+                ActionDsl.CollectVisibleItem child = collectBatchChild(batch, index);
+                ObservationRecord.VisibleEntity entity;
+                try {
+                    long frameTick = latestFrame.map(
+                            ObservationFrame::frameCompletedTick).orElse(0L);
+                    entity = matchingVisibleItems(
+                                    map, latestFrame, child,
+                                    visualBarrierWorldRevision, frameTick, 0L)
+                            .stream()
+                            .filter(boundEntities::add)
+                            .findFirst()
+                            .orElseThrow(() -> new PlanningException(
+                                    Code.TARGET_UNKNOWN,
+                                    "Collect target requires current matching visible item evidence"));
+                } catch (PlanningException failure) {
+                    throw new PlanningException(
+                            failure.code(),
+                            "Collect batch target[" + index
+                                    + "] lacks required current evidence: "
+                                    + failure.getMessage());
                 }
+                PickupPlan pickup = requirePickupPlan(
+                        map, pathfinder, pose.cell(), entity, work);
+                addRouteDependencies(map, pickup.route(), routeDependencies);
+                cost = addCosts(cost, pickupCost(pickup.route(), pose));
+                pose = pose.at(pickup.pickupCell(), 0.25D);
             }
+            worst = maximum(worst, cost);
+            output.add(pose);
         }
+        merge(costs, batch.id(), Objects.requireNonNull(worst, "collect batch cost"));
+        return distinct(output);
+    }
 
-        @SuppressWarnings("unchecked")
-        Map<Integer, BatchPath>[] paths = new Map[1 << size];
-        paths[0] = Map.of(-1, new BatchPath(
-                List.of(), initial, new ActionDslCompiler.Cost(0, 0, 0, 0, 0, 0, 0)));
-        for (int mask = 0; mask < paths.length; mask++) {
-            if (paths[mask] == null) continue;
-            for (BatchPath path : paths[mask].values()) {
-                for (int next = 0; next < size; next++) {
-                    int bit = 1 << next;
-                    if ((mask & bit) != 0 || (mask & prerequisites[next]) != prerequisites[next]) {
-                        continue;
-                    }
-                    MutationBatchTarget candidate = candidates.get(next);
-                    ActionDslCompiler.Cost transition = mutationTargetCost(
-                            path.pose(), candidate, cameraLimit);
-                    Aim nextAim = aim(path.pose(), candidate.surface().point());
-                    Pose nextPose = path.pose().aimed(
-                            nextAim, aimError(path.pose(), candidate.surface().point(), nextAim));
-                    if (candidate.node() instanceof ActionDsl.TillKnownBlock till
-                            && mayStandOnTarget(path.pose(), till.target())) {
-                        nextPose = nextPose.withAdditionalYErrorBelow(FARMLAND_SETTLING_BLOCKS);
-                    }
-                    var nextTargets = new ArrayList<>(path.targets());
-                    nextTargets.add(candidate);
-                    BatchPath proposal = new BatchPath(
-                            nextTargets, nextPose, addCosts(path.cost(), transition));
-                    int nextMask = mask | bit;
-                    if (paths[nextMask] == null) paths[nextMask] = new LinkedHashMap<>();
-                    BatchPath current = paths[nextMask].get(next);
-                    if (current == null || betterBatchPath(proposal, current)) {
-                        paths[nextMask].put(next, proposal);
-                    }
-                }
+    public static ActionDsl.CollectVisibleItem collectBatchChild(
+            ActionDsl.CollectVisibleItemBatch batch, int index) {
+        Objects.requireNonNull(batch, "batch");
+        if (index < 0 || index >= batch.targets().size()) {
+            throw new IllegalArgumentException("collect batch index is outside the target list");
+        }
+        ActionDsl.CollectTarget target = batch.targets().get(index);
+        String suffix = "_c" + (index + 1);
+        String id = batch.id().substring(
+                0, Math.min(batch.id().length(), 32 - suffix.length())) + suffix;
+        return new ActionDsl.CollectVisibleItem(id, target.displayedItem(), target.target());
+    }
+
+    /** Preserves the submitted target order while proving one bounded joint camera path. */
+    private static BatchPath listedMutationBatch(
+            Pose initial, List<MutationBatchTarget> input, float cameraLimit) {
+        Pose pose = initial;
+        ActionDslCompiler.Cost cost = new ActionDslCompiler.Cost(0, 0, 0, 0, 0, 0, 0);
+        for (MutationBatchTarget candidate : input) {
+            cost = addCosts(cost, mutationTargetCost(pose, candidate, cameraLimit));
+            Aim nextAim = aim(pose, candidate.surface().point());
+            Pose nextPose = pose.aimed(
+                    nextAim, aimError(pose, candidate.surface().point(), nextAim));
+            if (candidate.node() instanceof ActionDsl.TillKnownBlock till
+                    && mayStandOnTarget(pose, till.target())) {
+                nextPose = nextPose.withAdditionalYErrorBelow(FARMLAND_SETTLING_BLOCKS);
             }
+            pose = nextPose;
         }
-        BatchPath best = null;
-        for (BatchPath candidate : Objects.requireNonNull(paths[(1 << size) - 1]).values()) {
-            if (best == null || betterBatchPath(candidate, best)) best = candidate;
-        }
-        return Objects.requireNonNull(best, "mutation batch ordering");
+        return new BatchPath(List.copyOf(input), pose, cost);
     }
 
     private static ActionDslCompiler.Cost mutationTargetCost(
@@ -1011,33 +1029,6 @@ public final class AgentPrimitivePlanner {
         return required;
     }
 
-    private static boolean betterBatchPath(BatchPath candidate, BatchPath current) {
-        int camera = Double.compare(candidate.cost().cameraDegrees(), current.cost().cameraDegrees());
-        if (camera != 0) return camera < 0;
-        for (int index = 0; index < candidate.targets().size(); index++) {
-            int position = mutationPositionComparator().compare(
-                    mutationPosition(candidate.targets().get(index).node()),
-                    mutationPosition(current.targets().get(index).node()));
-            if (position != 0) return position < 0;
-        }
-        return false;
-    }
-
-    private static boolean nearRay(Pose pose, Vec3 left, Vec3 right) {
-        double eyeY = pose.y() + pose.eyeHeight();
-        double lx = left.x - pose.x();
-        double ly = left.y - eyeY;
-        double lz = left.z - pose.z();
-        double rx = right.x - pose.x();
-        double ry = right.y - eyeY;
-        double rz = right.z - pose.z();
-        double denominator = Math.sqrt((lx * lx + ly * ly + lz * lz)
-                * (rx * rx + ry * ry + rz * rz));
-        if (denominator <= 1.0e-12D) return false;
-        double cosine = Mth.clamp((lx * rx + ly * ry + lz * rz) / denominator, -1.0D, 1.0D);
-        return Math.toDegrees(Math.acos(cosine)) <= BATCH_NEAR_RAY_DEGREES;
-    }
-
     private static boolean mayStandOnTarget(Pose pose, ActionDsl.Position target) {
         if (!pose.cell().dimension().equals(target.dimension())) return false;
         return intervalsOverlap(
@@ -1058,13 +1049,6 @@ public final class AgentPrimitivePlanner {
             double leftMinimum, double leftMaximum, double rightMinimum, double rightMaximum) {
         return leftMaximum >= rightMinimum - 1.0e-9D
                 && leftMinimum < rightMaximum - 1.0e-9D;
-    }
-
-    private static java.util.Comparator<ActionDsl.Position> mutationPositionComparator() {
-        return java.util.Comparator.comparing(ActionDsl.Position::dimension)
-                .thenComparingInt(ActionDsl.Position::x)
-                .thenComparingInt(ActionDsl.Position::y)
-                .thenComparingInt(ActionDsl.Position::z);
     }
 
     private static MutationSurface requireMutationSurfaceForNode(
@@ -1280,12 +1264,6 @@ public final class AgentPrimitivePlanner {
         return square(point.x() - pose.x())
                 + square(point.y() - (pose.y() + pose.eyeHeight()))
                 + square(point.z() - pose.z());
-    }
-
-    private static double distanceSquared(Pose pose, Vec3 point) {
-        return square(point.x - pose.x())
-                + square(point.y - (pose.y() + pose.eyeHeight()))
-                + square(point.z - pose.z());
     }
 
     private static Vec3 rayHit(ObservationRecord.VisibleSurface surface) {
@@ -1614,6 +1592,34 @@ public final class AgentPrimitivePlanner {
         }
     }
 
+    /**
+     * Resolves only submitted batch witnesses against one fresh delivered frame. One visible
+     * record can satisfy at most one listed target; missing or ambiguous suffix entries remain
+     * empty and are never discovered from live entities.
+     */
+    public static List<Optional<ObservationValues.Aabb>> visibleBatchItemAabbs(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItemBatch batch,
+            long visualBarrierWorldRevision,
+            long currentTick,
+            long maxAgeTicks) {
+        Objects.requireNonNull(batch, "batch");
+        var used = new LinkedHashSet<ObservationRecord.VisibleEntity>();
+        var result = new ArrayList<Optional<ObservationValues.Aabb>>(batch.targets().size());
+        for (int index = 0; index < batch.targets().size(); index++) {
+            ActionDsl.CollectVisibleItem child = collectBatchChild(batch, index);
+            Optional<ObservationRecord.VisibleEntity> matched = matchingVisibleItems(
+                            map, latestFrame, child,
+                            visualBarrierWorldRevision, currentTick, maxAgeTicks)
+                    .stream()
+                    .filter(used::add)
+                    .findFirst();
+            result.add(matched.map(ObservationRecord.VisibleEntity::aabb));
+        }
+        return List.copyOf(result);
+    }
+
     private static ObservationRecord.VisibleEntity requireVisibleItem(
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
@@ -1650,6 +1656,23 @@ public final class AgentPrimitivePlanner {
             long visualBarrierWorldRevision,
             long currentTick,
             long maxAgeTicks) {
+        return matchingVisibleItems(
+                        map, latestFrame, target,
+                        visualBarrierWorldRevision, currentTick, maxAgeTicks)
+                .stream()
+                .findFirst()
+                .orElseThrow(() -> new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Collect target requires current matching visible item evidence"));
+    }
+
+    private static List<ObservationRecord.VisibleEntity> matchingVisibleItems(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.CollectVisibleItem target,
+            long visualBarrierWorldRevision,
+            long currentTick,
+            long maxAgeTicks) {
         Objects.requireNonNull(map, "map");
         Objects.requireNonNull(latestFrame, "latestFrame");
         Objects.requireNonNull(target, "target");
@@ -1673,11 +1696,9 @@ public final class AgentPrimitivePlanner {
                 .filter(entity -> entity.displayedItem() != null
                         && target.displayedItem().equals(entity.displayedItem().value()))
                 .filter(entity -> sameVisibleItemPosition(entity.position(), target.target()))
-                .min(java.util.Comparator.comparingDouble(entity ->
+                .sorted(java.util.Comparator.comparingDouble(entity ->
                         visibleItemDistanceSquared(entity.position(), target.target())))
-                .orElseThrow(() -> new PlanningException(
-                        Code.TARGET_UNKNOWN,
-                        "Collect target requires current matching visible item evidence"));
+                .toList();
     }
 
     /**

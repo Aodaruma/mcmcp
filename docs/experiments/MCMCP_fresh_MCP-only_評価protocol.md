@@ -2,9 +2,17 @@
 
 ## 目的
 
-次の production prompt **だけ**を新規の ephemeral Codex thread に渡し、MCMCP の公開5 toolsだけで遂行できるかを比較する。
+選択したprompt profileのproduction prompt **だけ**を新規のephemeral Codex threadへ渡し、MCMCPの公開5 toolsだけで遂行できるかを比較する。runnerは任意文字列を受け取らず、次の厳格な2 profileだけを許可する。
+
+`full-cycle`は製品受入の主profileである。
+
+> チェストに小麦の種と鍬が入っています。これを取り出し、この畑の区画にある耕作可能な土をすべて耕して、すべてに小麦の種を植えてください。成熟後はすべて収穫して植え直す工程を、小麦を1スタック（64個）以上所持するまで繰り返してください。
+
+`short-regression`は、将来この程度に短い依頼が実際に来る可能性を残す文脈推定の回帰profileである。
 
 > チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか
+
+`full-cycle`のproduction goalは、T0前にユーザーまたは評価計画が指定した畑区画について、耕作可能な全土blockの耕耘、全区画への播種、成熟後の全区画収穫、収穫区画への再播種を反復し、player inventoryの小麦絶対個数が64以上になることである。64個へ到達した最後の収穫cycleでも、対象区画の再播種を終えてからproduction goalを完了とする。固定arenaや無関係な座標へのteleport/buildはこの意味を置き換えない。`short-regression`の成功だけを、この明示的completionの代替合格にしてはならない。
 
 対象は `gpt-5.6-sol/high` を先行し、必要に応じて同じ golden baseline を復元して `gpt-5.6-luna/xhigh`、`gpt-5.6-luna/high` を別runで評価する。session、観測、action historyをモデル間で共有しない。
 
@@ -41,7 +49,7 @@ runnerはclean cwdからfilesystem rootまでの全祖先とisolated `CODEX_HOME
 2. `tools/list`
 3. `tools/call` / `agent_get_state`
 
-`agent_start_action`や`agent_cancel_action`はpreflightで呼ばない。各HTTP requestはliteral `127.0.0.1`だけへ`-NoProxy -MaximumRedirection 0`で送り、UTF-8 JSON Content-Type、JSON-RPC 2.0、request/response IDの型と値、result/errorの排他的存在を検査する。`server/discover`は`resultType=complete`、`supportedVersions=[2026-07-28]`、`capabilities.tools.listChanged=false`、`ttlMs=0`、`cacheScope=private`、serverInfo=`mcmcp/0.1.0`とsemantic exactで一致させる。`tools/list`は`docs/MCMCP_MCP_Tool_Catalog.json`のraw SHA-256 `0b183a2776c635a0b9ad562ae8330a57ab3d23ad93c35a3498015188a4f3ca3c`とsemantic tool surface SHA-256 `f8c0adebe85aa41d151455be833c169dd5ad4b2e57c388cfc3c8a5830c4ec7b4`をscript内定数へpinし、full resultと固定5件の名前、description、inputSchemaをexact比較してからdynamicToolsへ変換する。
+`agent_start_action`や`agent_cancel_action`はpreflightで呼ばない。各HTTP requestはliteral `127.0.0.1`だけへ`-NoProxy -MaximumRedirection 0`で送り、UTF-8 JSON Content-Type、JSON-RPC 2.0、request/response IDの型と値、result/errorの排他的存在を検査する。`server/discover`は`resultType=complete`、`supportedVersions=[2026-07-28]`、`capabilities.tools.listChanged=false`、`ttlMs=0`、`cacheScope=private`、serverInfo=`mcmcp/0.1.0`とsemantic exactで一致させる。`tools/list`は`docs/MCMCP_MCP_Tool_Catalog.json`のraw SHA-256 `75c70584b0b04cc59aebd6d78ff1d89ae7fc1f7dbebf19a032fbf3a312433955`とsemantic tool surface SHA-256 `4afdacbad81ad958e4fd7b285b45f8dc802259560cea1cbbdc94817ce9482ecc`をscript内定数へpinし、full resultと固定5件の名前、description、inputSchemaをexact比較してからdynamicToolsへ変換する。
 
 `agent_get_state`は`isError`の存在とBoolean型、`resultType=complete`、serverInfo、TextContent/structuredContent型を検証する。さらに`control.mode=ready`、unpaused、world/observationあり、inventory空、`omnidirectional_rays_per_tick=512`、`observation.record_counts.visible_entity=0`、actionがnullまたはterminalでなければT0へ進まない。このfixtureはmobを生成しないため、visible entityが1件でもあれば作業領域の落下item等による開始条件汚染として扱う。state body、座標、fixture知識はartifactへ保存せず、各判定のBooleanだけを残す。thread作成成功後にも同じreadinessを再取得し、8判定が全てtrueであることをT0 eventへ記録する。
 
@@ -84,7 +92,7 @@ standalone_web_search,code_mode,code_mode_only,request_permissions_tool,
 deferred_executor,token_budget,current_time_reminder
 ```
 
-`turn/start`のparamsは`threadId,input,model,effort,cwd,environments`だけを許可し、model、effort、同じclean cwd、`environments: []`を明示する。inputは`type: "text"`の1件だけで、production promptとbyte-for-byte同じ文字列にする。prefix、suffix、`additionalContext`を含む追加入力、resumeは禁止する。model/effortは`sol/high`または`luna/high|xhigh`の有効pairだけを許可する。
+`turn/start`のparamsは`threadId,input,model,effort,cwd,environments`だけを許可し、model、effort、同じclean cwd、`environments: []`を明示する。inputは`type: "text"`の1件だけで、選択したprofileのproduction promptとbyte-for-byte同じ文字列にする。prefix、suffix、`additionalContext`を含む追加入力、resumeは禁止する。model/effortは`sol/high`または`luna/high|xhigh`の有効pairだけを許可する。T0、audit、manifestにはprompt本文でなく`prompt_profile`とSHA-256を記録する。
 
 ## 認証境界
 
@@ -120,17 +128,19 @@ MCP成功結果をmodelへ返す`inputText`はtoken節約のため次の優先�
 pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
   -Model gpt-5.6-sol `
   -ReasoningEffort high `
+  -PromptProfile full-cycle `
   -BaselineId '<復元したbaselineの識別子>' `
   -ArtifactDirectory '<repo外の空directory>\sol-high' `
   -TokenPath '<MCMCP tokenの絶対path>'
 ```
 
-Luna runはbaselineを毎回復元してからmodel/effortと空artifact directoryだけを変える。
+短い依頼の回帰runは同じbaselineを復元して`-PromptProfile short-regression`を明示する。Luna runはbaselineを毎回復元してからmodel/effort、profile、空artifact directoryだけを変える。
 
 ```powershell
 # baseline復元後
 pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
   -Model gpt-5.6-luna -ReasoningEffort xhigh `
+  -PromptProfile full-cycle `
   -BaselineId '<baseline ID>' `
   -ArtifactDirectory '<repo外>\luna-xhigh' `
   -TokenPath '<token path>'
@@ -138,6 +148,7 @@ pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
 # 再びbaseline復元後
 pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
   -Model gpt-5.6-luna -ReasoningEffort high `
+  -PromptProfile full-cycle `
   -BaselineId '<baseline ID>' `
   -ArtifactDirectory '<repo外>\luna-high' `
   -TokenPath '<token path>'

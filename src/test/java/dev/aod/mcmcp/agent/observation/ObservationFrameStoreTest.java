@@ -407,6 +407,111 @@ class ObservationFrameStoreTest {
     }
 
     @Test
+    void positionBoundsUseTheDocumentedAnchorForEveryRecordKindAndInclusiveEdges()
+            throws Exception {
+        var eye = ObservationModelContractTest.world(0.5D, 65.62D, 0.5D);
+        var surface = ObservationModelContractTest.surface(99, 1);
+        var item = new ObservationRecord.VisibleEntity(
+                new ResourceId("minecraft:item"),
+                new ResourceId("minecraft:wheat"),
+                ObservationModelContractTest.world(2.999D, 64.999D, 2.999D),
+                new ObservationValues.Vector(0, 0, 0),
+                new ObservationValues.Aabb(2.8D, 64.8D, 2.8D, 3.1D, 65.1D, 3.1D),
+                ObservationRecord.EntityHazardClass.UNKNOWN,
+                eye,
+                99,
+                7);
+        var edge = new ObservationRecord.Traversability(
+                ObservationModelContractTest.world(20.5D, 64.0D, 20.5D),
+                ObservationModelContractTest.world(2.75D, 64.1D, 1.75D),
+                ObservationRecord.TraversabilityStatus.CONFIRMED,
+                ObservationRecord.TargetSupport.CONFIRMED,
+                ObservationRecord.TransitionClearance.CONFIRMED,
+                ObservationRecord.Fluid.NONE,
+                eye,
+                99,
+                7,
+                ObservationRecord.EvidenceProvenance.LOCAL_VOLUME);
+        var hazard = new ObservationRecord.Hazard(
+                ObservationRecord.HazardType.FALL,
+                ObservationModelContractTest.world(1.2D, 64.9D, 1.2D),
+                ObservationRecord.HazardSeverity.CAUTION,
+                eye,
+                99,
+                7,
+                ObservationRecord.EvidenceProvenance.LOCAL_VOLUME);
+        var outsideBoundary = new ObservationRecord.UnknownBoundary(
+                ObservationModelContractTest.world(3.0D, 64.0D, 2.0D),
+                ObservationRecord.UnknownBoundaryReason.RADIUS_LIMIT,
+                eye,
+                99,
+                7);
+        var outsideSound = new ObservationRecord.SoundClue(
+                new ResourceId("minecraft:entity.zombie.ambient"),
+                ObservationRecord.SoundCategory.HOSTILE,
+                ObservationModelContractTest.world(0.999D, 64.0D, 1.0D),
+                90,
+                99,
+                1,
+                1,
+                new ResourceId("minecraft:zombie"),
+                7);
+        var store = new ObservationFrameStore();
+        store.publish(new ObservationFrame(
+                id(1), DIMENSION, 100, 16, false,
+                List.of(surface, item, edge, hazard, outsideBoundary, outsideSound)));
+        var bounds = new ObservationFilter.PositionBounds(
+                DIMENSION, 1, 64, 0, 2, 64, 2);
+        var filter = new ObservationFilter(
+                Set.of(), Set.of(), Set.of(), Optional.empty(), Optional.of(bounds));
+
+        ObservationPage page = store.page(
+                id(1), java.util.EnumSet.allOf(ObservationKind.class), filter, null, 256);
+
+        assertThat(page.records()).containsExactlyInAnyOrder(surface, item, edge, hazard);
+        assertThat(store.latestFrame()).get()
+                .extracting(frame -> frame.records().size()).isEqualTo(6);
+    }
+
+    @Test
+    void positionBoundsRejectReversedAxesExcludeOtherDimensionsAndBindTheCursor()
+            throws Exception {
+        assertThatThrownBy(() -> new ObservationFilter.PositionBounds(
+                DIMENSION, 2, 64, 0, 1, 64, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("minimum");
+
+        var bounds = new ObservationFilter.PositionBounds(
+                DIMENSION, 0, 64, 0, 2, 64, 0);
+        var filter = new ObservationFilter(
+                Set.of(), Set.of(), Set.of(), Optional.empty(), Optional.of(bounds));
+        var nether = new ResourceId("minecraft:the_nether");
+        var otherDimension = new VisibleSurface(
+                new ObservationValues.BlockPosition(nether, 1, 64, 0),
+                ObservationRecord.Face.UP,
+                new ResourceId("minecraft:stone"),
+                ObservationRecord.ShapeClass.OPAQUE,
+                new ObservationValues.WorldPosition(nether, 1.5D, 65.62D, 0.5D),
+                99,
+                7);
+        assertThat(filter.matches(otherDimension)).isFalse();
+
+        var store = new ObservationFrameStore();
+        store.publish(frame(1, 3));
+        String cursor = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), filter, null, 1).nextCursor();
+        var narrower = new ObservationFilter(
+                Set.of(), Set.of(), Set.of(), Optional.empty(),
+                Optional.of(new ObservationFilter.PositionBounds(
+                        DIMENSION, 0, 64, 0, 1, 64, 0)));
+
+        assertFailure(
+                () -> store.page(
+                        id(1), Set.of(ObservationKind.VISIBLE_SURFACE), narrower, cursor, 1),
+                ObservationStoreException.Code.INVALID_CURSOR);
+    }
+
+    @Test
     void validatesTheBoundedQuerySurfaceBeforeStoreLookup() {
         var store = new ObservationFrameStore();
         assertThatThrownBy(() -> store.page(id(1), Set.of(), null, 1))

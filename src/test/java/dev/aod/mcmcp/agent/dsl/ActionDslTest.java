@@ -379,7 +379,7 @@ class ActionDslTest {
     }
 
     @Test
-    void collectBatchDesugarsToOneFailFastSequentialProgram() {
+    void collectBatchRemainsOneFirstClassListedOrderPrimitive() {
         JsonObject batch = baseNode("drops", "collect_visible_item_batch");
         JsonArray targets = new JsonArray();
         for (int index = 0; index < 2; index++) {
@@ -399,21 +399,39 @@ class ActionDslTest {
                 capabilities("movement"), batch, budget(10_000, 200, 16, 0)));
 
         assertThat(request.program().body()).singleElement().satisfies(node -> {
-            assertThat(node).isInstanceOf(ActionDsl.Repeat.class);
-            var desugared = (ActionDsl.Repeat) node;
-            assertThat(desugared.id()).isEqualTo("drops");
-            assertThat(desugared.count()).isOne();
-            assertThat(desugared.body()).extracting(ActionDsl.Node::id)
-                    .containsExactly("drops_c1", "drops_c2");
-            assertThat(desugared.body()).allMatch(ActionDsl.CollectVisibleItem.class::isInstance);
+            assertThat(node).isInstanceOf(ActionDsl.CollectVisibleItemBatch.class);
+            var parsed = (ActionDsl.CollectVisibleItemBatch) node;
+            assertThat(parsed.id()).isEqualTo("drops");
+            assertThat(parsed.targets()).extracting(ActionDsl.CollectTarget::target)
+                    .containsExactly(
+                            new ActionDsl.WorldPosition(
+                                    "minecraft:overworld", 10.25D, 64.125D, -2.75D),
+                            new ActionDsl.WorldPosition(
+                                    "minecraft:overworld", 11.25D, 64.125D, -2.75D));
+            assertThat(parsed.targets()).extracting(ActionDsl.CollectTarget::displayedItem)
+                    .containsExactly("minecraft:wheat", "minecraft:wheat");
         });
         assertThat(ActionDslValidator.validate(request).requiredCapabilities())
                 .containsExactly(ActionDsl.Capability.MOVEMENT);
-        var each = new ActionDslCompiler.Cost(2_000, 40, 4, 0, 0, 0, 0);
+        var batchCost = new ActionDslCompiler.Cost(4_000, 80, 8, 0, 0, 0, 0);
         assertThat(ActionDslCompiler.compile(
-                request, ignored -> Optional.of(each), Set.of(ActionDsl.Capability.MOVEMENT))
-                .worstCaseCost())
-                .isEqualTo(new ActionDslCompiler.Cost(4_000, 80, 8, 0, 0, 0, 0));
+                request, ignored -> Optional.of(batchCost),
+                Set.of(ActionDsl.Capability.MOVEMENT)).worstCaseCost())
+                .isEqualTo(batchCost);
+
+        JsonObject oneTargetBatch = batch.deepCopy();
+        oneTargetBatch.getAsJsonArray("targets").remove(1);
+        assertCode(request(
+                        capabilities("movement"), oneTargetBatch,
+                        budget(10_000, 200, 16, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject duplicateBatch = batch.deepCopy();
+        duplicateBatch.getAsJsonArray("targets").add(targets.get(0).deepCopy());
+        assertCode(request(
+                        capabilities("movement"), duplicateBatch,
+                        budget(10_000, 200, 16, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
 
         targets.add(targets.get(0).deepCopy());
         targets.add(targets.get(0).deepCopy());
@@ -666,6 +684,38 @@ class ActionDslTest {
     }
 
     @Test
+    void validatorAndCompilerDiagnosticsDoNotReflectSubmittedNodeIds() {
+        String submittedId = "private_probe_7f31";
+        JsonObject duplicate = request(
+                capabilities(),
+                array(waitNode(submittedId, 1), waitNode(submittedId, 1)),
+                budget(1_000, 20, 0, 0));
+
+        assertThatThrownBy(() -> ActionDslParser.parse(duplicate))
+                .isInstanceOf(ActionDslException.class)
+                .satisfies(failure -> {
+                    assertThat(failure.getMessage())
+                            .isEqualTo("Program contains duplicate node ids")
+                            .doesNotContain(submittedId);
+                });
+
+        ActionDsl.Request parsed = ActionDslParser.parse(request(
+                capabilities("movement"),
+                navigate(submittedId),
+                budget(1_000, 20, 1, 0)));
+        assertThatThrownBy(() -> ActionDslCompiler.compile(
+                parsed,
+                ignored -> Optional.empty(),
+                Set.of(ActionDsl.Capability.MOVEMENT)))
+                .isInstanceOf(ActionDslException.class)
+                .satisfies(failure -> {
+                    assertThat(failure.getMessage())
+                            .isEqualTo("A primitive worst-case cost is unavailable")
+                            .doesNotContain(submittedId);
+                });
+    }
+
+    @Test
     void enforcesDeclaredLocalCapabilitiesAndEffectiveBudget() {
         assertCode(request(capabilities(), navigate("go"), budget(30_000, 600, 32, 0)),
                 ActionDslException.Code.CAPABILITY_DENIED);
@@ -695,6 +745,33 @@ class ActionDslTest {
         assertCode(request(capabilities(), waitNode("wait", 1),
                         budget(1_000, 20, 0, 0, 9, 0, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
+    void budgetFailureListsEveryExceededCatalogComponentWithoutValues() {
+        var cost = new ActionDslCompiler.Cost(101, 3, 1, 1, 1, 1, 1);
+        var budget = new ActionDsl.Budget(100, 2, 0, 0, 0, 0, 0);
+
+        assertThatThrownBy(() -> ActionDslCompiler.requireWithinBudget(cost, budget))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(
+                        failure -> ((ActionDslException) failure).code(),
+                        Throwable::getMessage)
+                .containsExactly(
+                        ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE,
+                        "Worst-case cost exceeds effective budget components: "
+                                + "budget.max_duration_ms, budget.max_ticks, "
+                                + "budget.max_distance_blocks, budget.max_camera_degrees, "
+                                + "budget.max_interactions, budget.max_blocks_broken, "
+                                + "budget.max_blocks_placed");
+
+        assertThatThrownBy(() -> ActionDslCompiler.requireWithinBudget(
+                        new ActionDslCompiler.Cost(0, 0, 0, 1, 0, 0, 0), budget))
+                .hasMessage("Worst-case cost exceeds effective budget components: "
+                        + "budget.max_camera_degrees")
+                .hasMessageNotContaining("1.0")
+                .hasMessageNotContaining("target")
+                .hasMessageNotContaining("node");
     }
 
     @Test

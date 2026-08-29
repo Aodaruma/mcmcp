@@ -653,7 +653,8 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 
 - `frame_id`: `agent_get_state`が返したID
 - `kinds`: `visible_surface / visible_entity / traversability / hazard / unknown_boundary / sound_clue`の1〜6種
-- `filter`（任意）: `block_ids / entity_types / displayed_items / crop_mature`のうち1項目以上。すでにpolicy許可されたrecordを除外するdelivery projectionであり、観測範囲や認可範囲は拡張しない
+- `filter`（任意）: `block_ids / entity_types / displayed_items / crop_mature / position_bounds`のうち1項目以上。すでにpolicy許可されたrecordを除外するdelivery projectionであり、観測範囲や認可範囲は拡張しない。record kindに適用可能な条件同士はANDとする
+- `position_bounds`: `{dimension,min_x,min_y,min_z,max_x,max_y,max_z}`の単一inclusive整数block-coordinate box。各軸で`min <= max`を要求し、任意center/radiusや複数領域は受け付けない。anchorは`visible_surface.position`、`visible_entity / hazard / unknown_boundary / sound_clue`の`floor(position)`、`traversability.navigation_target`とする
 - `cursor`: 初回null、続きは直前の`next_cursor`
 - `limit`: 1〜256件
 
@@ -696,17 +697,17 @@ Action DSL v1の制御構造:
 | wait_until | なし | 開始時にpolicy-visibleなwheat surfaceだった明示座標を認可し、その座標のlive成熟を最大1〜12,000 active tick待機 |
 | break_known_face | camera, block_break | 宣言した可視・既知のoak / birch幹1個を、指定したVanilla axeで通常入力から破壊 |
 | till_known_block | camera, block_interact | 可視・既知のdirt / grass_block / dirt_path 1個を、指定したVanilla hoeの通常useでfarmlandへ変換 |
-| till_known_batch | camera, block_interact | 1〜8個の相異なる可視・既知blockを、共通の`expected_block`とVanilla hoeで決定論的な順に耕す |
+| till_known_batch | camera, block_interact | 1〜8個の相異なる可視・既知blockを、共通の`expected_block`とVanilla hoeで入力順に耕す |
 | plant_known_wheat | camera, block_place | 可視・既知のfarmland直上のairへwheat_seedsを通常useで植え、age=0を確認 |
-| plant_known_wheat_batch | camera, block_place | 1〜8組の相異なる`target` / `support`を共同計画し、各farmlandへwheat_seedsを植える |
+| plant_known_wheat_batch | camera, block_place | 1〜8組の相異なる`target` / `support`を入力順に検証し、各farmlandへwheat_seedsを植える |
 | harvest_known_wheat | camera, block_break | 可視・既知かつ実行時age=7のwheat 1個だけを通常破壊し、airを確認 |
-| harvest_known_wheat_batch | camera, block_break | 1〜8個の相異なる可視・既知かつ成熟済みwheatを、決定論的な順に収穫する |
+| harvest_known_wheat_batch | camera, block_break | 1〜8個の相異なる可視・既知かつ成熟済みwheatを入力順に収穫する |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のsingle chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemのwhole stackを最大1回quick-moveし、close/reopen full readbackでplayer inventoryの絶対個数を確認 |
 | collect_visible_item | movement | 最新frameの可視item種別と連続値XYZをwitnessに、既知の安全なpickup cellへ移動し、inventory絶対個数の増加を確認 |
-| collect_visible_item_batch | movement | 1〜8件の可視item witnessをlisted orderで同じ安全検証経路へ展開し、失敗時は未開始suffixを実行しない |
+| collect_visible_item_batch | movement | 2〜8件の可視item witnessをlisted orderで同じ安全検証経路へ展開し、失敗時は未開始suffixを実行しない |
 
 `break_known_face`は指定faceのblock中央へ固定照準せず、そのfaceを実際に観測したray hitへ解析的に照準し、開始直前にも同じfaceのtargeted raycastを要求する。
 
@@ -714,9 +715,9 @@ Action DSL v1の制御構造:
 
 `wait_until`が採用する`visible_surface`はrecordの`eye_origin`を保持し、initial admission、commit fence、JIT bindのすべてでcurrent observer eyeとの差を1/1024 block以内に制限する。以前のobserver位置から得たstale frameは、target record自体がfresh revisionでも認可しない。`CropWaitAuthorization`のobserver eyeにはcurrent値を代入せず、採用witnessの`eye_origin`そのものを保存するため、待機中の比較元をすり替えられない。先行plantにより初期未生成cropを許す静的dependency proofはこの例外を弱めず、wait開始時のJITでは必ず同じorigin契約を再証明する。
 
-`collect_visible_item_batch`は新しい高位実行器を持つ固定routineではなく、parserが1回だけ実行する有限sequenceへ展開するDSL macroである。各entryは通常の`collect_visible_item`と同じfresh visible entity、連続値XYZ、既知安全pickup cell、移動中再検証、inventory絶対差分を個別に要求する。listed orderの途中でwitness消失、経路不成立、budget不足、pickup未確認が起きた場合はAction全体をfail-fastで終了し、未開始entryをskip・置換・再順序化しない。
+`collect_visible_item_batch`は2〜8件をlisted orderのまま保持する第一級の有限batch nodeである。batch開始時にitem種別ごとのplayer inventory絶対個数baselineを1回だけ固定する。各entryは通常の`collect_visible_item`と同じfresh visible entity、連続値XYZ、既知安全pickup cell、移動中再検証を要求する。先行entryへの移動中に後続entryのfresh policy-visible AABBとplayer pickup areaの実接触を確認し、その後に対応itemのinventory絶対個数増加を確認できた場合だけ、当該後続entryを`incidentally_collected`としてcreditできる。単なるwitness消失、merge、移動、近接や推定では成功にしない。listed orderの途中で接触・差分proof、経路、budgetのいずれかが不足した場合はAction全体をfail-fastで終了し、未開始entryをskip・置換・再順序化しない。
 
-3種のmutation batchは`targets`を1〜8件に制限し、重複targetを拒否する。`till_known_batch`は位置配列と共通`expected_block` / `hoe_item`、`plant_known_wheat_batch`は`{target,support}`配列と共通`seed_item=minecraft:wheat_seeds`、`harvest_known_wheat_batch`は位置配列を受け取る。受付時に全対象の現在のsurface、block state、reachを確認し、`TARGET_UNKNOWN`なら最初に不足した入力順indexをmessageの`target[index]`として返す。これは提出済み配列のindexだけであり、hidden座標や未公開stateを追加開示しない。全対象を通る累積camera回転量が最小となる決定論的順序を共同計画する。ただし、ほぼ同一ray上で手前の対象を先に変更すると奥のwitnessを失う組だけは、far-before-nearを優先する。残る同値解はdimension / XYZの辞書順で一意に決め、累積camera costを既存のAction上限720度以内で事前証明する。順序が未確定poseに依存して一意に証明できない場合は入力前に拒否する。
+3種のmutation batchは`targets`を1〜8件に制限し、重複targetを拒否する。`till_known_batch`は位置配列と共通`expected_block` / `hoe_item`、`plant_known_wheat_batch`は`{target,support}`配列と共通`seed_item=minecraft:wheat_seeds`、`harvest_known_wheat_batch`は位置配列を受け取る。受付時に全対象の現在のsurface、block state、reachを入力順に確認し、`TARGET_UNKNOWN`なら最初に不足した入力順indexをmessageの`target[index]`として返す。これは提出済み配列のindexだけであり、hidden座標や未公開stateを追加開示しない。plannerとruntimeはcamera cost最小化やray関係を理由に入力順を変更しない。入力順の累積camera costと各primitive costを既存のAction上限内で事前証明できない場合は、入力発生前に拒否する。
 
 実行時は固定した順序をblind replayせず、各対象の直前に最新pose、surface、reach、world revision、期待block / 成熟状態、exact targeted raycast、残budgetを再証明する。fresh evidenceがまだ揃わない間は入力をneutralにして最大40 active tickだけ再観測し、それでも証明できない場合、live raycastまたはauthoritative postconditionが不一致の場合、あるいは対象単位の残budgetが不足する場合はAction全体をfail-fastで終了する。失敗対象をskipしたり、後続対象へ進んだり、実行時に別対象へ置換・並べ替えたりしない。完了した前段のworld mutationと消費budgetは巻き戻さずtraceへ残す。`till_known_batch`の実dispatch成立後に足元blockがfarmlandへ変わった際の厳密な垂直1/16 block下降だけは、2 tick以内、同じXZ、live farmland、movement executor非稼働、移動入力neutralの全条件が成立した場合に限り入力distanceへ算入せず、`PASSIVE_MOTION farmland_settling`として別途監査する。水平成分、1/16超の落下、movement入力中の下降は通常どおりdistanceを消費する。
 
@@ -957,6 +958,8 @@ domain errorのTextContentは次のJSON objectを1件だけ直列化する。sch
 - INVALID_CURSOR
 
 `FRAME_EXPIRED`と`INVALID_CURSOR`は`agent_get_observation`、`ACTION_NOT_FOUND`はAction参照Toolに用いる。残る受付条件は`agent_start_action`の完全preflightで検出できれば、action_idを割り当てず同期的なTool errorとして返す。合格後からClientTick直前までにsnapshot/policyが変わった場合は、同じ入力を再検証し、既に返したaction_idを`failed`へ遷移させる。この再検証では`PREDICATE_UNAVAILABLE`または`CAPABILITY_DENIED`が起こり得るため別紙`agent_get_action.failure`にも含めるが、構造だけで確定する`PROGRAM_TOO_COMPLEX`と`PROGRAM_BUDGET_UNPROVABLE`は含めない。world、経路、安全性の失効は`WORLD_CHANGED`または`PATH_BLOCKED`へ正規化する。どの場合もMinecraft入力は発生させない。
+
+catalog schema違反はcatalog順に最大4件を1つのbounded messageへ集約し、1回の修正で回復できるようにする。path、required/type/enum等の診断材料はcatalogからだけ導出し、未知property名、提出値、秘密は反射しない。`PROGRAM_BUDGET_UNPROVABLE`も不足した`budget.max_*` component名をすべて固定順で返すが、提出値やworld座標は返さない。Tool errorの公開shapeは引き続きexact `{code,message,recoverable}`とする。
 
 実行後の終了理由:
 
@@ -1661,7 +1664,7 @@ world、mmc-pack.json、instance.cfg、既存jarは変更しない。
 
 fresh MCP-only実験は製品runtimeと分け、script内定数へpinした`codex-cli 0.146.1 app-server --stdio --strict-config`のexperimental `dynamicTools`へ、MCP 2026-07-28 `tools/list`から得た固定5 Tool schemaだけを渡す。canonical catalogのfile/surface hashとlive resultをexact比較した後、評価runnerは`item/tool/call`をliteral `127.0.0.1` endpointへ1対1 forwardする。Bearerはrunner内だけでAuthorization headerへ使い、proxy/redirectを禁止してCodex childへ渡さない。この評価専用bridgeは、MOD内MCP serverだけで完結する製品要件を変更せず、永続MCP config未登録時にユーザーが許可したdirect fallbackとして、モデルへ余分なbuilt-in/MCP Toolを見せないための隔離hostである。
 
-評価threadは毎回credential/config fileを持たないclean isolated `CODEX_HOME` / cwd、ephemeral、read-only、approval never、environmentなしで開始する。親runnerはcanonical `~/.codex/auth.json`からaccess token/account IDだけをメモリへ取り込み、JWT lifetimeをstartup/login/T0で検査して、artifactへ記録しない`account/login/start`から`cli_auth_credentials_store=ephemeral`へ注入する。元authは複製・hardlink・更新しない。production promptは`turn/start`のtext input 1件だけとし、MCMCP以外のshell、computer-use、browser/web、sub-agent、skill、app/plugin等をCLI featureとthread configの両方で無効化する。正当な`isError=true` domain resultはモデルへ保持して返し、transport/protocol/secret failureと区別する。詳細な固定値、T0、17分上限、両token scan、raw JSONL/bridge相互監査は`docs/experiments/MCMCP_fresh_MCP-only_評価protocol.md`を規範とする。
+評価threadは毎回credential/config fileを持たないclean isolated `CODEX_HOME` / cwd、ephemeral、read-only、approval never、environmentなしで開始する。親runnerはcanonical `~/.codex/auth.json`からaccess token/account IDだけをメモリへ取り込み、JWT lifetimeをstartup/login/T0で検査して、artifactへ記録しない`account/login/start`から`cli_auth_credentials_store=ephemeral`へ注入する。元authは複製・hardlink・更新しない。production promptは厳格allowlistの`full-cycle`（全区画を耕す・播種する・全収穫と再播種を反復して小麦64個以上）または`short-regression`（短い依頼からの文脈推定）の一方を選び、`turn/start`のtext input 1件だけとする。主受入は`full-cycle`であり、shortの成功だけでcompletionを代替しない。MCMCP以外のshell、computer-use、browser/web、sub-agent、skill、app/plugin等をCLI featureとthread configの両方で無効化する。正当な`isError=true` domain resultはモデルへ保持して返し、transport/protocol/secret failureと区別する。詳細な固定値、T0、17分上限、両token scan、raw JSONL/bridge相互監査は`docs/experiments/MCMCP_fresh_MCP-only_評価protocol.md`を規範とする。
 
 Codex CLIのversionを更新する場合は、先にlegacy wire handshake、app-server UNSTABLE APIのgenerated schema、external token login、dynamic Tool lifecycle、hardening config、固定5 Toolの呼出しを再取得し、compatibility contractとfresh MCP-only評価を更新する。再検証なしに別versionを合格扱いしない。
 

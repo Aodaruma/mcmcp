@@ -59,12 +59,12 @@ public final class McmcpToolRegistry {
         if (!catalog.contains(name)) {
             throw new UnknownToolException();
         }
-        var schemaFailure = CatalogSchemaValidator.firstFailure(
+        var schemaFailures = CatalogSchemaValidator.failures(
                 catalog.inputSchema(name), arguments);
-        if (schemaFailure != null) {
+        if (!schemaFailures.isEmpty()) {
             return new PreparedCall(domainFailure(
                     "INVALID_ARGUMENT",
-                    schemaFailure.summary(),
+                    schemaFailures.summary(),
                     true), null);
         }
 

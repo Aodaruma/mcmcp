@@ -15,6 +15,8 @@ import java.util.regex.PatternSyntaxException;
 
 /** The small JSON Schema 2020-12 subset used by the checked-in tool catalog. */
 final class CatalogSchemaValidator {
+    static final int MAX_REPORTED_FAILURES = 4;
+    static final int MAX_FAILURE_SUMMARY_CHARACTERS = 512;
     private static final int MAX_ENUM_DIAGNOSTIC_VALUES = 8;
     private static final int MAX_ENUM_VALUE_CODE_POINTS = 64;
     private static final int MAX_ENUM_DIAGNOSTIC_CHARACTERS = 320;
@@ -34,6 +36,179 @@ final class CatalogSchemaValidator {
      */
     static ValidationFailure firstFailure(JsonObject schema, JsonElement value) {
         return validate(schema, schema, value, "", 0, true);
+    }
+
+    /**
+     * Returns a bounded catalog-ordered report without reflecting submitted values or unknown
+     * property names. A discriminated {@code oneOf} is traversed only through the catalog branch
+     * selected by its required literal property (for example {@code op}).
+     */
+    static ValidationReport failures(JsonObject schema, JsonElement value) {
+        var failures = new ArrayList<ValidationFailure>(MAX_REPORTED_FAILURES);
+        collectFailures(schema, schema, value, "", 0, failures);
+        return new ValidationReport(failures);
+    }
+
+    private static void collectFailures(
+            JsonObject root,
+            JsonObject schema,
+            JsonElement value,
+            String path,
+            int depth,
+            List<ValidationFailure> failures) {
+        if (failures.size() >= MAX_REPORTED_FAILURES) {
+            return;
+        }
+        if (schema.has("$ref")) {
+            JsonObject referenced = resolve(root, schema.get("$ref").getAsString());
+            if (referenced == null) {
+                addFailure(failures, path, "catalog reference unavailable", depth);
+                return;
+            }
+            int before = failures.size();
+            collectFailures(root, referenced, value, path, depth, failures);
+            if (failures.size() != before) {
+                return;
+            }
+        }
+        if (schema.has("oneOf")) {
+            JsonArray alternatives = schema.getAsJsonArray("oneOf");
+            DiscriminatorSelection selected = selectDiscriminatedBranch(
+                    root, alternatives, value, path, depth);
+            if (selected.applicable()) {
+                if (selected.failure() != null) {
+                    addFailure(failures, selected.failure());
+                    return;
+                }
+                int before = failures.size();
+                collectFailures(root, selected.branch(), value, path, depth, failures);
+                if (failures.size() != before) {
+                    return;
+                }
+            } else {
+                var branchFailures = new ArrayList<ValidationFailure>(alternatives.size());
+                int matched = 0;
+                for (JsonElement branch : alternatives) {
+                    ValidationFailure branchFailure = validate(
+                            root, branch.getAsJsonObject(), value, path, depth, true);
+                    if (branchFailure == null) {
+                        matched++;
+                    } else {
+                        branchFailures.add(branchFailure);
+                    }
+                }
+                if (matched == 0) {
+                    addFailure(failures, deepestFailure(branchFailures, path, depth));
+                    return;
+                }
+                if (matched != 1) {
+                    addFailure(failures, path, "matches multiple catalog variants", depth);
+                    return;
+                }
+            }
+        }
+        if (schema.has("type") && !matchesType(schema.get("type"), value)) {
+            addFailure(failures, path, expectedTypeReason(schema.get("type")), depth);
+            return;
+        }
+        if (schema.has("const") && !schema.get("const").equals(value)) {
+            addFailure(failures, path, "not the required catalog value", depth);
+            return;
+        }
+        if (schema.has("enum") && !contains(schema.getAsJsonArray("enum"), value)) {
+            addFailure(failures, path, allowedValuesReason(
+                    schema.getAsJsonArray("enum"), "not in catalog enum"), depth);
+            return;
+        }
+        if (value.isJsonObject()) {
+            collectObjectFailures(
+                    root, schema, value.getAsJsonObject(), path, depth, failures);
+        } else if (value.isJsonArray()) {
+            collectArrayFailures(root, schema, value.getAsJsonArray(), path, depth, failures);
+        } else if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
+            addFailure(failures, validateString(
+                    schema, value.getAsString(), path, depth, true));
+        } else if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()) {
+            addFailure(failures, validateNumber(
+                    schema, value.getAsBigDecimal(), path, depth, true));
+        }
+    }
+
+    private static void collectObjectFailures(
+            JsonObject root,
+            JsonObject schema,
+            JsonObject value,
+            String path,
+            int depth,
+            List<ValidationFailure> failures) {
+        JsonObject properties = schema.has("properties")
+                ? schema.getAsJsonObject("properties") : new JsonObject();
+        if (schema.has("required")) {
+            for (JsonElement required : schema.getAsJsonArray("required")) {
+                String name = required.getAsString();
+                if (!value.has(name)) {
+                    addFailure(failures, propertyPath(path, name), "required", depth + 1);
+                    if (failures.size() >= MAX_REPORTED_FAILURES) {
+                        return;
+                    }
+                }
+            }
+        }
+        if (schema.has("additionalProperties")
+                && !schema.get("additionalProperties").getAsBoolean()) {
+            for (String name : value.keySet()) {
+                if (!properties.has(name)) {
+                    // Report at most one generic failure and never reflect the submitted name.
+                    addFailure(failures, path, "unknown property", depth);
+                    break;
+                }
+            }
+        }
+        for (String name : properties.keySet()) {
+            if (failures.size() >= MAX_REPORTED_FAILURES) {
+                return;
+            }
+            if (value.has(name)) {
+                collectFailures(
+                        root, properties.getAsJsonObject(name), value.get(name),
+                        propertyPath(path, name), depth + 1, failures);
+            }
+        }
+    }
+
+    private static void collectArrayFailures(
+            JsonObject root,
+            JsonObject schema,
+            JsonArray value,
+            String path,
+            int depth,
+            List<ValidationFailure> failures) {
+        if (schema.has("minItems") && value.size() < schema.get("minItems").getAsInt()) {
+            addFailure(failures, path, "too few items", depth);
+        }
+        if (schema.has("maxItems") && value.size() > schema.get("maxItems").getAsInt()) {
+            addFailure(failures, path, "too many items", depth);
+        }
+        if (schema.has("uniqueItems") && schema.get("uniqueItems").getAsBoolean()
+                && failures.size() < MAX_REPORTED_FAILURES) {
+            var seen = new HashSet<JsonElement>();
+            for (JsonElement element : value) {
+                if (!seen.add(element)) {
+                    addFailure(failures, path, "duplicate items", depth);
+                    break;
+                }
+            }
+        }
+        if (schema.has("items")) {
+            JsonObject itemSchema = schema.getAsJsonObject("items");
+            for (int index = 0;
+                    index < value.size() && failures.size() < MAX_REPORTED_FAILURES;
+                    index++) {
+                collectFailures(
+                        root, itemSchema, value.get(index), itemPath(path, index),
+                        depth + 1, failures);
+            }
+        }
     }
 
     private static ValidationFailure validate(
@@ -231,13 +406,26 @@ final class CatalogSchemaValidator {
      */
     private static ValidationFailure discriminateOneOf(
             JsonObject root, JsonArray alternatives, JsonElement value, String path, int depth) {
-        if (!value.isJsonObject() || alternatives.isEmpty()) {
+        DiscriminatorSelection selected = selectDiscriminatedBranch(
+                root, alternatives, value, path, depth);
+        if (!selected.applicable()) {
             return null;
+        }
+        if (selected.failure() != null) {
+            return selected.failure();
+        }
+        return validate(root, selected.branch(), value, path, depth, true);
+    }
+
+    private static DiscriminatorSelection selectDiscriminatedBranch(
+            JsonObject root, JsonArray alternatives, JsonElement value, String path, int depth) {
+        if (!value.isJsonObject() || alternatives.isEmpty()) {
+            return DiscriminatorSelection.notApplicable();
         }
         JsonObject object = value.getAsJsonObject();
         JsonObject first = dereference(root, alternatives.get(0).getAsJsonObject());
         if (first == null || !first.has("properties")) {
-            return null;
+            return DiscriminatorSelection.notApplicable();
         }
         for (String property : first.getAsJsonObject("properties").keySet()) {
             List<JsonObject> branches = new ArrayList<>(alternatives.size());
@@ -261,7 +449,8 @@ final class CatalogSchemaValidator {
             }
             String discriminatorPath = propertyPath(path, property);
             if (!object.has(property)) {
-                return failure(discriminatorPath, "required", depth + 1, true);
+                return DiscriminatorSelection.failed(
+                        new ValidationFailure(discriminatorPath, "required", depth + 1));
             }
             JsonElement submitted = object.get(property);
             var candidates = new ArrayList<JsonObject>();
@@ -280,14 +469,16 @@ final class CatalogSchemaValidator {
                 }
             }
             if (candidates.isEmpty()) {
-                return failure(discriminatorPath, allowedValuesReason(
-                        allowedValues, "unknown catalog value"), depth + 1, true);
+                return DiscriminatorSelection.failed(new ValidationFailure(
+                        discriminatorPath,
+                        allowedValuesReason(allowedValues, "unknown catalog value"),
+                        depth + 1));
             }
             if (candidates.size() == 1) {
-                return validate(root, candidates.get(0), value, path, depth, true);
+                return DiscriminatorSelection.selected(candidates.get(0));
             }
         }
-        return null;
+        return DiscriminatorSelection.notApplicable();
     }
 
     private static JsonArray literalValues(JsonObject root, JsonObject schema) {
@@ -461,6 +652,68 @@ final class CatalogSchemaValidator {
         return report
                 ? new ValidationFailure(path.isEmpty() ? "$" : path, reason, depth)
                 : INVALID;
+    }
+
+    private static void addFailure(
+            List<ValidationFailure> failures, String path, String reason, int depth) {
+        addFailure(failures, new ValidationFailure(
+                path.isEmpty() ? "$" : path, reason, depth));
+    }
+
+    private static void addFailure(
+            List<ValidationFailure> failures, ValidationFailure failure) {
+        if (failure != null && failures.size() < MAX_REPORTED_FAILURES) {
+            failures.add(failure);
+        }
+    }
+
+    private record DiscriminatorSelection(
+            boolean applicable, JsonObject branch, ValidationFailure failure) {
+        private static DiscriminatorSelection notApplicable() {
+            return new DiscriminatorSelection(false, null, null);
+        }
+
+        private static DiscriminatorSelection selected(JsonObject branch) {
+            return new DiscriminatorSelection(true, branch, null);
+        }
+
+        private static DiscriminatorSelection failed(ValidationFailure failure) {
+            return new DiscriminatorSelection(true, null, failure);
+        }
+    }
+
+    record ValidationReport(List<ValidationFailure> failures) {
+        ValidationReport {
+            failures = List.copyOf(failures);
+            if (failures.size() > MAX_REPORTED_FAILURES) {
+                throw new IllegalArgumentException("too many validation failures");
+            }
+        }
+
+        boolean isEmpty() {
+            return failures.isEmpty();
+        }
+
+        String summary() {
+            var summary = new StringBuilder();
+            for (ValidationFailure failure : failures) {
+                String item = failure.summary();
+                String separator = summary.isEmpty() ? "" : "; ";
+                int remaining = MAX_FAILURE_SUMMARY_CHARACTERS
+                        - summary.length() - separator.length();
+                if (remaining <= 0) {
+                    break;
+                }
+                summary.append(separator);
+                if (item.length() <= remaining) {
+                    summary.append(item);
+                } else {
+                    summary.append(item, 0, remaining);
+                    break;
+                }
+            }
+            return summary.toString();
+        }
     }
 
     record ValidationFailure(String path, String reason, int depth) {

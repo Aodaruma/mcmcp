@@ -61,6 +61,85 @@ class CatalogSchemaValidatorDiagnosticTest {
     }
 
     @Test
+    void reportsMultipleMissingFieldsInStableCatalogOrder() throws Exception {
+        JsonObject request = takeRequest();
+        JsonObject node = takeNode(request);
+        node.remove("target");
+        node.remove("expected_block");
+        node.remove("item");
+
+        String expected = "program.body[0].target: required; "
+                + "program.body[0].expected_block: required; "
+                + "program.body[0].item: required";
+        assertThat(rejection("agent_start_action", request)).isEqualTo(expected);
+
+        JsonObject reorderedRequest = request.deepCopy();
+        JsonObject reordered = new JsonObject();
+        reordered.addProperty("minimum_inventory_count", 64);
+        reordered.addProperty("stack_policy", "default_components_only");
+        reordered.addProperty("op", "take_known_container_stack");
+        reordered.addProperty("id", "take");
+        reorderedRequest.getAsJsonObject("program").getAsJsonArray("body").set(0, reordered);
+        assertThat(rejection("agent_start_action", reorderedRequest)).isEqualTo(expected);
+    }
+
+    @Test
+    void capsAggregatedFailuresAtFourAndFiveHundredTwelveCharacters() throws Exception {
+        JsonObject request = takeRequest();
+        JsonObject node = takeNode(request);
+        node.remove("target");
+        node.remove("expected_block");
+        node.remove("item");
+        node.remove("stack_policy");
+        node.remove("minimum_inventory_count");
+
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var report = CatalogSchemaValidator.failures(schema, request);
+        assertThat(report.failures()).hasSize(CatalogSchemaValidator.MAX_REPORTED_FAILURES);
+        assertThat(report.summary())
+                .hasSizeLessThanOrEqualTo(
+                        CatalogSchemaValidator.MAX_FAILURE_SUMMARY_CHARACTERS)
+                .isEqualTo("program.body[0].target: required; "
+                        + "program.body[0].expected_block: required; "
+                        + "program.body[0].item: required; "
+                        + "program.body[0].stack_policy: required");
+        assertThat(rejection("agent_start_action", request)).isEqualTo(report.summary());
+    }
+
+    @Test
+    void truncatesOnlyCatalogDerivedSummaryTextAtTheCharacterLimit() {
+        String first = "a".repeat(300);
+        String second = "b".repeat(300);
+        JsonObject schema = JsonParser.parseString("""
+                {"type":"object","required":[]}
+                """).getAsJsonObject();
+        schema.getAsJsonArray("required").add(first);
+        schema.getAsJsonArray("required").add(second);
+
+        String summary = CatalogSchemaValidator.failures(schema, new JsonObject()).summary();
+        assertThat(summary)
+                .hasSize(CatalogSchemaValidator.MAX_FAILURE_SUMMARY_CHARACTERS)
+                .startsWith(first + ": required; ")
+                .doesNotContain("submitted");
+    }
+
+    @Test
+    void aggregatesUnknownPropertiesWithoutReflectingNamesOrValues() throws Exception {
+        JsonObject request = takeRequest();
+        JsonObject node = takeNode(request);
+        node.remove("expected_block");
+        node.remove("item");
+        node.addProperty("secret-token-should-not-echo", "sensitive-value");
+
+        String message = rejection("agent_start_action", request);
+        assertThat(message).isEqualTo(
+                "program.body[0].expected_block: required; "
+                        + "program.body[0].item: required; "
+                        + "program.body[0]: unknown property");
+        assertThat(message).doesNotContain("secret", "sensitive");
+    }
+
+    @Test
     void smallOneOfDiscriminatorReportsCatalogValuesButLargeEnumsStayGeneric() {
         JsonObject discriminatorSchema = JsonParser.parseString("""
                 {"oneOf":[
@@ -104,6 +183,11 @@ class CatalogSchemaValidatorDiagnosticTest {
                 .deepCopy();
     }
 
+    private static JsonObject takeNode(JsonObject request) {
+        return request.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject();
+    }
+
     private static void assertRejected(JsonObject request, String expected) throws Exception {
         assertRejected("agent_start_action", request, expected);
     }
@@ -126,6 +210,8 @@ class CatalogSchemaValidatorDiagnosticTest {
         assertThat(dispatches).hasValue(0);
         JsonObject error = JsonParser.parseString(response.getAsJsonArray("content").get(0)
                 .getAsJsonObject().get("text").getAsString()).getAsJsonObject();
+        assertThat(error.keySet()).containsExactlyInAnyOrder(
+                "code", "message", "recoverable");
         assertThat(error.get("code").getAsString()).isEqualTo("INVALID_ARGUMENT");
         assertThat(error.get("recoverable").getAsBoolean()).isTrue();
         return error.get("message").getAsString();

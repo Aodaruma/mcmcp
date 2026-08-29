@@ -423,6 +423,83 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void visibleItemBatchBindsDistinctFreshWitnessesAndChargesListedRouteOrder() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        for (int x = 0; x < 5; x++) {
+            map.observe(confirmed(session, cell(x), cell(x + 1)));
+            map.observe(confirmed(session, cell(x + 1), cell(x)));
+        }
+        var near = new ActionDsl.CollectTarget(
+                "minecraft:wheat",
+                new ActionDsl.WorldPosition(DIMENSION, 1.8D, 64.1D, 0.5D));
+        var far = new ActionDsl.CollectTarget(
+                "minecraft:wheat",
+                new ActionDsl.WorldPosition(DIMENSION, 4.8D, 64.1D, 0.5D));
+        var frame = entityFrame(List.of(
+                visibleItem(near.displayedItem(), near.target(), 0L),
+                visibleItem(far.displayedItem(), far.target(), 0L)));
+        var forward = new ActionDsl.CollectVisibleItemBatch("drops", List.of(near, far));
+        var reverse = new ActionDsl.CollectVisibleItemBatch("drops", List.of(far, near));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+
+        var forwardAnalysis = AgentPrimitivePlanner.analyze(
+                new ActionDsl.Program(
+                        1, Optional.empty(), Set.of(ActionDsl.Capability.MOVEMENT),
+                        List.of(forward)),
+                map.snapshot().orElseThrow(), new DeterministicAStar(), pose,
+                Optional.of(frame), 4.5F);
+        var reverseAnalysis = AgentPrimitivePlanner.analyze(
+                new ActionDsl.Program(
+                        1, Optional.empty(), Set.of(ActionDsl.Capability.MOVEMENT),
+                        List.of(reverse)),
+                map.snapshot().orElseThrow(), new DeterministicAStar(), pose,
+                Optional.of(frame), 4.5F);
+
+        assertThat(AgentPrimitivePlanner.collectBatchChild(forward, 0))
+                .extracting(ActionDsl.CollectVisibleItem::target)
+                .isEqualTo(near.target());
+        assertThat(AgentPrimitivePlanner.collectBatchChild(forward, 1))
+                .extracting(ActionDsl.CollectVisibleItem::target)
+                .isEqualTo(far.target());
+        assertThat(forwardAnalysis.primitiveCosts().get("drops").distanceBlocks())
+                .isLessThan(reverseAnalysis.primitiveCosts().get("drops").distanceBlocks());
+        assertThat(forwardAnalysis.primitiveCosts().get("drops").ticks())
+                .isGreaterThanOrEqualTo(2L * AgentPrimitivePlanner.PICKUP_CONFIRM_TICKS);
+
+        List<Optional<ObservationValues.Aabb>> bounds =
+                AgentPrimitivePlanner.visibleBatchItemAabbs(
+                        map.snapshot().orElseThrow(), Optional.of(frame), forward,
+                        0L, frame.frameCompletedTick(), 0L);
+        assertThat(bounds).allMatch(Optional::isPresent);
+        assertThat(bounds.get(0).orElseThrow().minX())
+                .isLessThan(bounds.get(1).orElseThrow().minX());
+
+        var overlappingFirst = new ActionDsl.CollectTarget(
+                "minecraft:wheat",
+                new ActionDsl.WorldPosition(DIMENSION, 1.9D, 64.1D, 0.5D));
+        var overlappingSecond = new ActionDsl.CollectTarget(
+                "minecraft:wheat",
+                new ActionDsl.WorldPosition(DIMENSION, 2.1D, 64.1D, 0.5D));
+        var oneWitnessBatch = new ActionDsl.CollectVisibleItemBatch(
+                "ambiguous", List.of(overlappingFirst, overlappingSecond));
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                new ActionDsl.Program(
+                        1, Optional.empty(), Set.of(ActionDsl.Capability.MOVEMENT),
+                        List.of(oneWitnessBatch)),
+                map.snapshot().orElseThrow(), new DeterministicAStar(), pose,
+                Optional.of(entityFrame(visibleItem(
+                        "minecraft:wheat",
+                        new ActionDsl.WorldPosition(DIMENSION, 2.0D, 64.1D, 0.5D),
+                        0L))),
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+    }
+
+    @Test
     void visibleItemCollectionChoosesTheFastestReachablePickupCell() {
         UUID session = UUID.randomUUID();
         var map = map(session);
@@ -704,7 +781,7 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
-    void eightTargetMutationBatchHasCanonicalOrderAndOneJointCameraBound() {
+    void eightTargetMutationBatchPreservesSubmittedOrderAndChargesOneJointCameraPath() {
         List<ActionDsl.Position> targets = List.of(
                 new ActionDsl.Position(DIMENSION, -1, 64, -1),
                 new ActionDsl.Position(DIMENSION, 0, 64, -1),
@@ -720,24 +797,46 @@ class AgentPrimitivePlannerTest {
         var canonical = analyzeTillBatch(targets);
         var reverse = analyzeTillBatch(targets.reversed());
         var random = analyzeTillBatch(shuffled);
-        List<ActionDsl.Position> order = mutationPositions(
-                canonical.mutationBatchPlans().get("batch"));
-
-        assertThat(order).hasSize(8)
-                .isEqualTo(mutationPositions(reverse.mutationBatchPlans().get("batch")))
-                .isEqualTo(mutationPositions(random.mutationBatchPlans().get("batch")));
-        assertThat(canonical.primitiveCosts().get("batch"))
-                .satisfies(cost -> {
+        assertThat(mutationPositions(canonical.mutationBatchPlans().get("batch")))
+                .containsExactlyElementsOf(targets);
+        assertThat(mutationPositions(reverse.mutationBatchPlans().get("batch")))
+                .containsExactlyElementsOf(targets.reversed());
+        assertThat(mutationPositions(random.mutationBatchPlans().get("batch")))
+                .containsExactlyElementsOf(shuffled);
+        assertThat(List.of(canonical, reverse, random)).allSatisfy(analysis ->
+                assertThat(analysis.primitiveCosts().get("batch")).satisfies(cost -> {
                     assertThat(cost.interactions()).isEqualTo(8);
                     assertThat(cost.blocksBroken()).isZero();
                     assertThat(cost.blocksPlaced()).isZero();
-                    assertThat(cost.cameraDegrees()).isLessThanOrEqualTo(720.0D);
+                    assertThat(cost.cameraDegrees()).isFinite()
+                            .isLessThanOrEqualTo(8.0D * 360.0D);
                     assertThat(cost.ticks()).isGreaterThanOrEqualTo(
                             8L * (AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND
                                     + AgentPrimitivePlanner.MUTATION_BATCH_REPROOF_TICKS));
-                })
-                .isEqualTo(reverse.primitiveCosts().get("batch"))
-                .isEqualTo(random.primitiveCosts().get("batch"));
+                }));
+        var randomBatch = new ActionDsl.TillKnownBatch(
+                "batch", shuffled, "minecraft:dirt", "minecraft:iron_hoe");
+        var randomRequest = new ActionDsl.Request(
+                1,
+                new ActionDsl.Program(
+                        1,
+                        Optional.empty(),
+                        Set.of(
+                                ActionDsl.Capability.CAMERA,
+                                ActionDsl.Capability.BLOCK_INTERACT),
+                        List.of(randomBatch)),
+                new ActionDsl.Budget(600_000, 12_000, 0, 720, 8, 0, 0));
+        assertThat(random.primitiveCosts().get("batch").cameraDegrees())
+                .isGreaterThan(720.0D);
+        assertThatThrownBy(() -> ActionDslCompiler.compile(
+                randomRequest,
+                random::worstCase,
+                randomRequest.program().capabilities()))
+                .isInstanceOf(dev.aod.mcmcp.agent.dsl.ActionDslException.class)
+                .extracting(failure -> ((dev.aod.mcmcp.agent.dsl.ActionDslException) failure)
+                        .code())
+                .isEqualTo(dev.aod.mcmcp.agent.dsl.ActionDslException.Code
+                        .PROGRAM_BUDGET_UNPROVABLE);
         assertThat(canonical.mutationBatchPlans().get("batch").steps())
                 .allSatisfy(step -> assertThat(step.plannedCost().ticks())
                         .isGreaterThanOrEqualTo(
@@ -751,7 +850,7 @@ class AgentPrimitivePlannerTest {
         var underfoot = new ActionDsl.Position(DIMENSION, 0, 64, 0);
         var nearerRayTarget = new ActionDsl.Position(DIMENSION, 0, 65, 0);
         var batch = new ActionDsl.TillKnownBatch(
-                "batch", List.of(nearerRayTarget, underfoot),
+                "batch", List.of(underfoot, nearerRayTarget),
                 "minecraft:dirt", "minecraft:iron_hoe");
         var program = new ActionDsl.Program(
                 1,
@@ -773,7 +872,7 @@ class AgentPrimitivePlannerTest {
                                 "minecraft:dirt", null, 0, 66.62D)))),
                 4.5F);
         var plan = analysis.mutationBatchPlans().get("batch");
-        assertThat(mutationPositions(plan)).startsWith(underfoot);
+        assertThat(mutationPositions(plan)).containsExactly(underfoot, nearerRayTarget);
 
         Vec3 firstPoint = plan.steps().get(0).aim().point();
         Vec3 secondPoint = plan.steps().get(1).aim().point();
@@ -1254,10 +1353,15 @@ class AgentPrimitivePlannerTest {
     }
 
     private static ObservationFrame entityFrame(ObservationRecord.VisibleEntity entity) {
+        return entityFrame(List.of(entity));
+    }
+
+    private static ObservationFrame entityFrame(
+            List<ObservationRecord.VisibleEntity> entities) {
         var dimension = new ObservationValues.ResourceId(DIMENSION);
         return new ObservationFrame(
                 "obs-0000000000000001", dimension, 1, 16, false,
-                List.of(entity));
+                List.copyOf(entities));
     }
 
     private static ObservationRecord.VisibleSurface surface(

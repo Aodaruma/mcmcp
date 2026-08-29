@@ -292,38 +292,23 @@ public final class ActionDslParser {
                 worldPosition(source.get("target"), path + ".target"));
     }
 
-    /**
-     * Parses the public batch form into one fail-fast sequential control node. Every child still
-     * goes through the ordinary collect planner, JIT witness check, safe navigation, and absolute
-     * inventory-delta acknowledgement; the macro only removes MCP round trips.
-     */
-    private static ActionDsl.Repeat collectVisibleItemBatch(
+    private static ActionDsl.CollectVisibleItemBatch collectVisibleItemBatch(
             JsonObject source, String path) {
         exactKeys(source, path, Set.of("id", "op", "targets"),
                 Set.of("id", "op", "targets"));
         String batchId = string(source.get("id"), path + ".id");
         JsonArray values = array(source.get("targets"), path + ".targets");
-        if (values.isEmpty() || values.size() > ActionDslValidator.MAX_MUTATION_BATCH_TARGETS) {
-            throw invalid(path + ".targets must contain 1..8 entries");
-        }
-        var targets = new ArrayList<ActionDsl.Node>(values.size());
+        var targets = new ArrayList<ActionDsl.CollectTarget>(values.size());
         for (int index = 0; index < values.size(); index++) {
             String targetPath = path + ".targets[" + index + "]";
             JsonObject target = object(values.get(index), targetPath,
                     Set.of("displayed_item", "target"),
                     Set.of("displayed_item", "target"));
-            targets.add(new ActionDsl.CollectVisibleItem(
-                    derivedBatchNodeId(batchId, index),
+            targets.add(new ActionDsl.CollectTarget(
                     string(target.get("displayed_item"), targetPath + ".displayed_item"),
                     worldPosition(target.get("target"), targetPath + ".target")));
         }
-        return new ActionDsl.Repeat(batchId, 1, targets);
-    }
-
-    private static String derivedBatchNodeId(String batchId, int index) {
-        String suffix = "_c" + (index + 1);
-        int prefixLength = Math.min(batchId.length(), 32 - suffix.length());
-        return batchId.substring(0, prefixLength) + suffix;
+        return new ActionDsl.CollectVisibleItemBatch(batchId, targets);
     }
 
     private static ActionDsl.WaitTicks waitTicks(JsonObject source, String path) {

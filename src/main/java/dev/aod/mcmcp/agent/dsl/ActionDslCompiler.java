@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.agent.dsl;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -51,7 +52,7 @@ public final class ActionDslCompiler {
         Cost cost = compileSequence(
                 request.program().body(), primitiveCosts, primitiveCostBounds);
         ActionDsl.Budget effectiveBudget = minimum(request.budget(), localHardLimit);
-        requireWithin(cost, effectiveBudget);
+        requireWithinBudget(cost, effectiveBudget);
         return new CompiledProgram(
                 request,
                 validation.sourceNodes(),
@@ -96,11 +97,12 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.OpenKnownPassage
                 || node instanceof ActionDsl.InspectKnownContainer
                 || node instanceof ActionDsl.TakeKnownContainerStack
-                || node instanceof ActionDsl.CollectVisibleItem) {
+                || node instanceof ActionDsl.CollectVisibleItem
+                || node instanceof ActionDsl.CollectVisibleItemBatch) {
             Optional<Cost> resolved = Objects.requireNonNull(
                     primitiveCosts.worstCase(node), "primitive cost result");
             if (resolved.isEmpty()) {
-                throw unprovable("No worst-case cost is available for node " + node.id());
+                throw unprovable("A primitive worst-case cost is unavailable");
             }
             Cost cost = resolved.get();
             if (node instanceof ActionDsl.BreakKnownFace) {
@@ -195,15 +197,38 @@ public final class ActionDslCompiler {
                 Math.min(request.maxBlocksPlaced(), local.maxBlocksPlaced()));
     }
 
-    private static void requireWithin(Cost cost, ActionDsl.Budget budget) {
-        if (cost.durationMillis() > budget.maxDurationMillis()
-                || cost.ticks() > budget.maxTicks()
-                || cost.distanceBlocks() > budget.maxDistanceBlocks()
-                || cost.cameraDegrees() > budget.maxCameraDegrees()
-                || cost.interactions() > budget.maxInteractions()
-                || cost.blocksBroken() > budget.maxBlocksBroken()
-                || cost.blocksPlaced() > budget.maxBlocksPlaced()) {
-            throw unprovable("Worst-case cost exceeds the effective request/local budget");
+    /**
+     * Applies the effective request/local ceiling and reports only trusted catalog component
+     * names. Submitted values, node identifiers, and coordinates are deliberately omitted.
+     */
+    public static void requireWithinBudget(Cost cost, ActionDsl.Budget budget) {
+        Objects.requireNonNull(cost, "cost");
+        Objects.requireNonNull(budget, "budget");
+        var exceeded = new ArrayList<String>(7);
+        if (cost.durationMillis() > budget.maxDurationMillis()) {
+            exceeded.add("budget.max_duration_ms");
+        }
+        if (cost.ticks() > budget.maxTicks()) {
+            exceeded.add("budget.max_ticks");
+        }
+        if (cost.distanceBlocks() > budget.maxDistanceBlocks()) {
+            exceeded.add("budget.max_distance_blocks");
+        }
+        if (cost.cameraDegrees() > budget.maxCameraDegrees()) {
+            exceeded.add("budget.max_camera_degrees");
+        }
+        if (cost.interactions() > budget.maxInteractions()) {
+            exceeded.add("budget.max_interactions");
+        }
+        if (cost.blocksBroken() > budget.maxBlocksBroken()) {
+            exceeded.add("budget.max_blocks_broken");
+        }
+        if (cost.blocksPlaced() > budget.maxBlocksPlaced()) {
+            exceeded.add("budget.max_blocks_placed");
+        }
+        if (!exceeded.isEmpty()) {
+            throw unprovable("Worst-case cost exceeds effective budget components: "
+                    + String.join(", ", exceeded));
         }
     }
 

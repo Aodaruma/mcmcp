@@ -19,10 +19,10 @@
     ]
   },
   "budget": {
-    "max_duration_ms": 25000,
-    "max_ticks": 400,
+    "max_duration_ms": 30000,
+    "max_ticks": 600,
     "max_distance_blocks": 0,
-    "max_camera_degrees": 180,
+    "max_camera_degrees": 360,
     "max_interactions": 1,
     "max_blocks_broken": 0,
     "max_blocks_placed": 0

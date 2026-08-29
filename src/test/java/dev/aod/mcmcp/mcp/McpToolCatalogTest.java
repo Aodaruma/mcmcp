@@ -116,6 +116,14 @@ class McpToolCatalogTest {
                 .contains("Copy traversability.navigation_target verbatim")
                 .contains("never derive, floor, round")
                 .contains("collect_visible_item_batch for 2..8 current drops")
+                .contains("navigate_to_known:{id,op,target,tolerance}")
+                .contains("take_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}")
+                .contains("till_known_batch:{id,op,targets:[position],expected_block,hoe_item}")
+                .contains("plant_known_wheat_batch:{id,op,targets:[{target,support}],seed_item}")
+                .contains("harvest_known_wheat_batch:{id,op,targets:[position]}")
+                .contains("collect_visible_item_batch:{id,op,targets:[{displayed_item,target}]}")
+                .contains("up to the 720 camera-degree policy maximum")
+                .contains("split it into smaller batches instead of reordering at runtime")
                 .contains("use the exact inputSchema fields and no aliases");
 
         var definitions = schema.getAsJsonObject("$defs");
@@ -148,9 +156,9 @@ class McpToolCatalogTest {
         var schema = new McpToolCatalog().inputSchema("agent_start_action");
         var definitions = schema.getAsJsonObject("$defs");
         assertThat(definitions.getAsJsonObject("inspectContainerNode")
-                .get("description").getAsString()).contains("25000 ms");
+                .get("description").getAsString()).contains("30000 ms", "600 ticks", "360 camera");
         assertThat(definitions.getAsJsonObject("takeContainerStackNode")
-                .get("description").getAsString()).contains("25000 ms");
+                .get("description").getAsString()).contains("30000 ms", "600 ticks", "360 camera");
 
         var containerExamples = schema.getAsJsonArray("examples").asList().stream()
                 .map(example -> example.getAsJsonObject())
@@ -165,9 +173,10 @@ class McpToolCatalogTest {
 
         assertThat(containerExamples).hasSize(2).allSatisfy(example -> {
             var budget = example.getAsJsonObject("budget");
-            assertThat(budget.get("max_duration_ms").getAsLong()).isEqualTo(25_000L);
-            assertThat(budget.get("max_ticks").getAsLong())
-                    .isEqualTo(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
+            assertThat(budget.get("max_duration_ms").getAsLong()).isEqualTo(30_000L);
+            assertThat(budget.get("max_ticks").getAsLong()).isEqualTo(600L)
+                    .isGreaterThan(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
+            assertThat(budget.get("max_camera_degrees").getAsDouble()).isEqualTo(360.0D);
             assertThat(budget.get("max_duration_ms").getAsLong())
                     .isGreaterThan(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND * 50L);
             assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
@@ -255,8 +264,11 @@ class McpToolCatalogTest {
                 .contains("fresh visible minecraft:item")
                 .contains("absolute inventory-count increase");
         assertThat(batchContract)
-                .contains("1..8 currently visible item witnesses")
-                .contains("any failure stops the unstarted suffix");
+                .contains("2..8 currently visible item witnesses")
+                .contains("preserve listed order")
+                .contains("fresh policy-visible item AABB actually intersects")
+                .contains("witness disappearance, movement, or merge alone never succeeds")
+                .contains("Any failure stops the unstarted suffix");
         assertThat(description)
                 .contains("when a mutation creates new drops or newly exposed surfaces, finish, reobserve")
                 .contains("Put wait_until immediately after its plant node");
@@ -273,9 +285,22 @@ class McpToolCatalogTest {
                 .contains("Use the smallest useful limit")
                 .contains("Use optional filter")
                 .contains("displayed_items")
+                .contains("position_bounds")
+                .contains("traversability at navigation_target")
                 .contains("two paged queries")
                 .contains("On FRAME_EXPIRED, call agent_get_state")
                 .contains("observation.latest_frame_id");
+
+        var observationSchema = new McpToolCatalog().inputSchema("agent_get_observation");
+        var filteredObservation = JsonParser.parseString("""
+                {"schema_version":1,"frame_id":"obs-0000000000000000",
+                 "kinds":["visible_surface","visible_entity","traversability"],
+                 "filter":{"displayed_items":["minecraft:wheat"],
+                   "position_bounds":{"dimension":"minecraft:overworld",
+                     "min_x":0,"min_y":60,"min_z":0,"max_x":7,"max_y":70,"max_z":7}},
+                 "cursor":null,"limit":64}
+                """).getAsJsonObject();
+        assertThat(CatalogSchemaValidator.matches(observationSchema, filteredObservation)).isTrue();
 
         String action = tools.asList().stream()
                 .map(tool -> tool.getAsJsonObject())
