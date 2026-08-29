@@ -99,8 +99,9 @@ public final class McmcpMod {
     private void onPreTick(ClientTickEvent.Pre event) {
         var minecraft = Minecraft.getInstance();
         screenOwnership.onClientTick();
-        inputIsolation.onClientPreTick();
+        inputIsolation.reconcilePhysicalKeyMappings();
         runtime.onPreTick(minecraft);
+        inputIsolation.reconcilePhysicalKeyMappings();
     }
 
     private void onPostTick(ClientTickEvent.Post event) {

@@ -27,6 +27,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class InputIsolationContractTest {
     @Test
+    void physicalMappingsReleaseWhileActiveAndRestoreOnceOnTheFallingEdge() {
+        assertThat(InputIsolationController.physicalKeyMappingAction(false, false))
+                .isEqualTo(InputIsolationController.PhysicalKeyMappingAction.NONE);
+        assertThat(InputIsolationController.physicalKeyMappingAction(false, true))
+                .isEqualTo(InputIsolationController.PhysicalKeyMappingAction.RELEASE);
+        assertThat(InputIsolationController.physicalKeyMappingAction(true, true))
+                .isEqualTo(InputIsolationController.PhysicalKeyMappingAction.RELEASE);
+        assertThat(InputIsolationController.physicalKeyMappingAction(true, false))
+                .isEqualTo(InputIsolationController.PhysicalKeyMappingAction.RESTORE);
+    }
+
+    @Test
     void onlyActiveEscPressStopsAndStillPassesToVanilla() {
         assertThat(InputIsolationController.keyDecision(
                 AutomationUiSnapshot.State.OFF,
@@ -158,12 +170,20 @@ class InputIsolationContractTest {
     }
 
     @Test
-    void preTickReleasesPhysicalMappingsBeforeRuntimeReassertsOwnedInput() throws Exception {
+    void preTickReconcilesPhysicalMappingsAroundRuntimeStateChanges() throws Exception {
         var node = classNode("/dev/aod/mcmcp/McmcpMod.class");
         assertThat(invocations(method(node, "onPreTick")))
                 .containsSubsequence(
-                        "dev/aod/mcmcp/client/InputIsolationController#onClientPreTick",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#onPreTick");
+                        "dev/aod/mcmcp/client/InputIsolationController#reconcilePhysicalKeyMappings",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#onPreTick",
+                        "dev/aod/mcmcp/client/InputIsolationController#reconcilePhysicalKeyMappings");
+
+        var isolation = classNode(
+                "/dev/aod/mcmcp/client/InputIsolationController.class");
+        assertThat(invocations(method(isolation, "reconcilePhysicalKeyMappings")))
+                .contains(
+                        "net/minecraft/client/KeyMapping#releaseAll",
+                        "net/minecraft/client/KeyMapping#setAll");
     }
 
     @Test

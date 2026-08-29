@@ -22,6 +22,7 @@ public final class InputIsolationController {
     private final McmcpRuntime runtime;
     private final AutomationIndicatorController indicator;
     private final BitSet swallowedMouseButtons = new BitSet();
+    private boolean previousIsolationActive;
 
     public InputIsolationController(
             McmcpRuntime runtime,
@@ -31,11 +32,24 @@ public final class InputIsolationController {
         installed = this;
     }
 
-    /** Clears stale physical mappings; agent movement is applied later to final ClientInput. */
-    public void onClientPreTick() {
-        if (inputIsolationActive()) {
-            KeyMapping.releaseAll();
+    /**
+     * Reconciles vanilla key mappings with the current isolation edge.
+     *
+     * <p>This is called immediately before and after the runtime pre-tick. While isolation is
+     * active, stale physical mappings are cleared; on the falling edge, vanilla re-reads the
+     * currently held keyboard keys exactly once. The second call closes an acquire/release that
+     * happens inside the same runtime tick instead of leaving mappings released until another
+     * focus or mouse-grab transition.</p>
+     */
+    public void reconcilePhysicalKeyMappings() {
+        boolean isolationActive = inputIsolationActive();
+        var action = physicalKeyMappingAction(previousIsolationActive, isolationActive);
+        switch (action) {
+            case RELEASE -> KeyMapping.releaseAll();
+            case RESTORE -> KeyMapping.setAll();
+            case NONE -> { }
         }
+        previousIsolationActive = isolationActive;
     }
 
     public void onMouseButton(InputEvent.MouseButton.Pre event) {
@@ -138,6 +152,23 @@ public final class InputIsolationController {
 
     private boolean blocked(int button) {
         return button >= 0 && swallowedMouseButtons.get(button);
+    }
+
+    static PhysicalKeyMappingAction physicalKeyMappingAction(
+            boolean previousIsolationActive,
+            boolean isolationActive) {
+        if (isolationActive) {
+            return PhysicalKeyMappingAction.RELEASE;
+        }
+        return previousIsolationActive
+                ? PhysicalKeyMappingAction.RESTORE
+                : PhysicalKeyMappingAction.NONE;
+    }
+
+    enum PhysicalKeyMappingAction {
+        NONE,
+        RELEASE,
+        RESTORE
     }
 
     enum KeyDecision {
