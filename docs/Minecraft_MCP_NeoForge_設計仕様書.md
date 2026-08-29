@@ -24,7 +24,7 @@
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
 - fresh評価turnまたはAgent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
-最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batchに加え、Phase 3の最初のvertical sliceとして、監査済みcopy対象の可視surfaceだけが返す完全BlockStateを1〜8件のplace-only planへ無変換コピーする`apply_known_block_plan`までを公開する。Phase 3の破壊・置換・256 block化、資源入手、レッドストーン用primitiveは、同じ安全境界を維持して段階的に追加する。
+最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件のplace-only planへ無変換コピーする`apply_known_block_plan`に加え、Phase 4の最初のvertical sliceとして空の既知醸造台で標準Vanilla Potionの既知の1段recipeを1〜3本まとめて醸造する`brew_known_potion_batch`までを公開する。Phase 3の破壊・置換・256 block化、一般資源入手、レッドストーン用primitiveは、同じ安全境界を維持して段階的に追加する。
 
 ## 1. 対象環境
 
@@ -136,6 +136,8 @@ NeoForge公式の26.2 MDKもJava 25を対象としている。開発は公式の
 
 ### Phase 4: 探索・資源・クラフト
 
+- 初回vertical slice: 空の可視・既知brewing standと自inventoryの標準Potion集計だけを使う、有限・1段の`brew_known_potion_batch`
+- Minecraft 26.2の現行`PotionBrewing` tableと完全一致する入出力だけを通常menu操作で醸造
 - frontier探索
 - acquire_itemのGoal分解
 - 採掘、クラフト、精錬、保管
@@ -739,6 +741,7 @@ Action DSL v1の制御構造:
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のsingle chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemのwhole stackを最大1回quick-moveし、close/reopen full readbackでplayer inventoryの絶対個数を確認 |
+| brew_known_potion_batch | camera, inventory_transfer | 空の可視・既知brewing standで、宣言した標準Vanilla Potion 1〜3本を現行recipe tableの既知の1段変換だけ醸造 |
 | collect_visible_item | movement | 最新frameの可視item種別と連続値XYZをwitnessに、既知の安全なpickup cellへ移動し、inventory絶対個数の増加を確認 |
 | collect_visible_item_batch | movement | 2〜8件の可視item witnessをlisted orderで同じ安全検証経路へ展開し、失敗時は未開始suffixを実行しない |
 
@@ -773,6 +776,18 @@ current targetのfresh reproofでfaceまたはaim pointが受付時から変化�
 `open_known_passage.expected_block`は12種の木系door / trapdoor / fence gateを明示列挙し、ironとcopperを許可しない。doorはクリック対象のhalfだけでなく、同一block、facing、hinge、powered、openが整合する相方halfをdispatch前に固定する。primary prediction ACK、primaryのauthoritative state、dispatch後のcompanion block mutation、companionの完全stateがすべて一致した場合だけ成功する。pressure plate式自動doorはこのopcodeを使わず、plate上と反対側へ続く`navigate_to_known`を別々のprimitiveとして実行し、world revision更新後のVanilla VoxelShapeから後続経路を再計画する。
 
 container primitiveは別のMCP Toolやlegacy routineを公開せず、同じAction supervisorから既存のscreen ownership / full-content同期adapterを駆動する。`inspect_known_container`はslot番号、NBT/component本文、menu内部状態を返さず、最大27種類の`item=count`だけを`NODE_EVIDENCE` traceへ返す。`take_known_container_stack`はdirectionをcontainer→playerへ固定し、`default_components_only`または耐久済みtoolにも使える`item_id_any_components`だけを許可する。初回open、whole-stack quick-move 1回、同じcontainerのreadback openの最大3 interactionを静的に予約する。内部実行上限400 active tickに対しAction全体の`max_duration_ms`は最低25,000 msとし、20,000 ms相当のtick窓とは別にdispatch/JIT用5,000 msのwall-clock余白を確保する。複数stackをblind retryせず、目標へ届かなければ確認済みの部分移送を記録した上で失敗し、次のActionへ再計画させる。focus喪失、chat、pause menuの表示自体は停止理由にせず、別container menuの所有中、world/session変化、cursor残留、screen ownership不一致はfail closedとする。
+
+`brew_known_potion_batch`はwire shapeを`{id,op,target,expected_block,input:{item,potion,count},ingredient_item,fuel_item,expected_output:{item,potion,count}}`へ閉じる。`expected_block`は`minecraft:brewing_stand`、`fuel_item`は`minecraft:blaze_powder`に固定し、入力と出力は同じ`count` 1〜3を要求する。itemは標準3形式の`minecraft:potion / splash_potion / lingering_potion`、potionとingredientはcatalogの閉じたenumだけを受理する。入出力はcustom name / color / effects等の追加componentのない標準stackと完全一致し、その宣言遷移がMinecraft 26.2の現行`PotionBrewing.mix`と完全一致する場合だけ実行する。
+
+醸造adapterのcamera leaseはAction入場時に確定した`max_camera_degrees_per_second / 20`を保持し、初回照準、readback照準、醸造node受付時viewへの復帰へ同じ0.75〜18度/client tick上限を適用する。plannerは醸造台中央までのworst-case片道`|yaw|+|pitch|`が270度を超える抽象poseをmutation前に拒否し、必要なら同じ可視targetへの`face_known_position`を直前へ要求する。adapterもbegin時のlive poseから同じ片道上限を再検証し、不一致なら通常use前に固定diagnosticでreplanする。最低速度での最大270度復帰とmenu/cursor ACKを含む有限release期限を確保する。元のLocalPlayerとlevel identityもleaseへ固定し、respawn / level replacement後の別playerへ旧yaw、pitch、selected slotを書き込まない。
+
+全allowlisted遷移はcatalogの`$defs.brewingIngredient.description`へ明記し、schemaを推測で反復失敗させない。Minecraft 26.2の`Builder.addStartMix`は各材料に対し、water→mundaneとawkward→対応効果の2遷移を登録する。例えばbreeze rodは`awkward -> wind_charged`だけでなく`water -> mundane`も許可し、現行`PotionBrewing.mix`との全件unit testで固定する。
+
+Action開始時にbrewing standの5 item slotすべてが空であり、internal brew timeが0、fuel counterがVanilla範囲の0〜20であることをserver full-content/dataで確認する。値そのものは公開せず、不一致は固定diagnosticでreplanする。途中状態のresume、Action replay、既存stand内itemの利用は公開しない。fuel counterが1以上なら既存の1 useを使い、0なら通常menu操作でblaze powderを1個搬入する。宣言したPotionとingredientも有界操作で搬入し、`ingredient_item`もblaze powderのrecipeではprecharged時に1個、未充填時に別途fuel 1個を足した合計2個を必要とする。完了後は宣言outputの完全component一致、ingredientとちょうど1 fuel useの消費、必要時だけinventory fuel 1個の消費、player inventoryへの出力回収、standの5 item slot再空状態をclose/reopenを含むauthoritative readbackで確認する。slot番号、stand内容、brew progress、fuel dataはTool resultへ出力しない。失敗時は入力を解放して未開始suffixを実行せず、自動resumeやblind retryをしない。
+
+成功、失敗、inconclusiveの最初のterminal intentは、Agent-owned screen、server cursor、view、selected slotの解放確認までadapter内部に保持する。tick駆動の正常なrelease進行を同tickのrelease faultとして扱わず、物理入力隔離とAction所有を維持したまま次client tickで再試行し、通常Action終端とEscでは公開terminal後に`READY`へ戻す。normal use送信後かつownership確定前のcancelはexpected-open authorityを即時IDLEへ落とさず、open予約期限までcancel tombstoneとして保持する。一致する遅延OpenScreenは通常のfull-content証拠まで拘束してから閉じ、未到着なら期限後にauthorityを退役させる。Agent-owned screenが一度もmaterializeしていない段階の無関係なpause / inventory screenは閉じず、screen不一致によるmutation拒否とglobal input-release faultを区別する。
+
+このnodeはtop-level bodyの最終nodeだけに置き、`if` / `repeat`内とその後ろのsuffixを静的に拒否する。worst-caseは70,000 ms、1,400 active tick、270度以下の片道照準と醸造node受付時view復元を合わせたcamera最大540度、interaction 16回、distance / break / place 0に固定する。直前の`face_known_position`が必要なActionでは、そのnode自身のcostを別途加算する。menu所有中はrecoveryのgameplay interactionをdispatchせず、現行recovery primitiveはmovement / jumpだけでinteraction usageが0のため、公開`progress.interactions`とActionの`max_interactions`はともに16で閉じる。
 
 predicateは次のpolicy-filtered snapshot fieldだけを使用できる。
 
@@ -867,6 +882,7 @@ templateは`agent_start_action.inputSchema.examples`に掲載し、実装reposit
 
 - [`navigate_to_known.json`](action-templates/navigate_to_known.json): 1地点への移動
 - [`collect_visible_drop.json`](action-templates/collect_visible_drop.json): 最新frameで識別した落下物を、連続値XYZから選んだ既知の安全なpickup cellで回収する
+- [`collect_visible_drops_batch.json`](action-templates/collect_visible_drops_batch.json): 2〜8件の最新可視落下物を提出順のまま回収する
 - [`approach_and_face.json`](action-templates/approach_and_face.json): 移動、health分岐、視点変更または待機
 - [`known_route.json`](action-templates/known_route.json): 既知区間を固定回数だけ往復する
 - [`break_known_oak_column.json`](action-templates/break_known_oak_column.json): 地上から届く、現在可視な3段oak幹を下から順に破壊する
@@ -875,6 +891,7 @@ templateは`agent_start_action.inputSchema.examples`に掲載し、実装reposit
 - [`inspect_known_container.json`](action-templates/inspect_known_container.json): single chestのserver同期済み内容を確認する
 - [`take_wheat_seeds_stack.json`](action-templates/take_wheat_seeds_stack.json): wheat seedsをwhole stack 1回だけ取得する
 - [`copy_known_oak_beam.json`](action-templates/copy_known_oak_beam.json): 完全なoak log stateを90度回転し、現在supportと先行entry dependencyで2 blockの水平梁を設置する
+- [`brew_awkward_potions.json`](action-templates/brew_awkward_potions.json): 片道cameraが270度以内のheadingから、空の既知brewing standでwater potion 3本をawkward potionへ1段醸造する。超える場合は直前に`face_known_position`とその追加budgetを置く
 
 templateもcustom programと同じvalidator、capability、budget、READY許可、安全条件を通る。
 
@@ -938,13 +955,14 @@ agent_get_action:
 }
 ~~~
 
-`progress`のschema上限は通常Actionと、そのActionをpreemptしたrecoveryの累積上限である。したがってdistanceは32 + 16 = 48 block、cameraは720 + 360 = 1,080度、tickは12,000 + 200 = 12,200となる。通常Actionはinteraction / break / placeを各最大8、recoveryはinteraction 8 / break 4 / place 8を別枠で持つため、公開counterの上限はinteraction 16 / break 12 / place 16である。同dimension内のserver correction、teleport、knockbackなど外力で実測値がこの固定契約を越えた場合、公開counterはschema上限へ飽和させると同時に内部overflow latchを立て、Actionをbudget超過として終了する。飽和値を「上限内」と誤認したり、契約外の値を返したり、外力を相殺したりはしない。
+`progress`のschema上限は通常Actionと、そのActionをpreemptしたrecoveryの累積上限である。したがってdistanceは32 + 16 = 48 block、cameraは720 + 360 = 1,080度、tickは12,000 + 200 = 12,200となる。break / placeは通常Action最大8とrecoveryの4 / 8を合算して、公開counterの上限をbreak 12 / place 16とする。interactionは`brew_known_potion_batch`がActionの16全枚を使うが、このnodeはAction末尾でmenuを所有し、その間はrecovery gameplay interactionをdispatchしない。現行recoveryはmovement / jumpだけでinteraction usage 0であるため、Action budgetと公開counterのinteraction上限をともに16に固定する。この排他条件を崩すrecovery interactionを将来追加する場合は、先にcatalog、DSL hard limit、progress schemaを再設計する。同dimension内のserver correction、teleport、knockbackなど外力で実測値がこの固定契約を越えた場合、公開counterはschema上限へ飽和させると同時に内部overflow latchを立て、Actionをbudget超過として終了する。飽和値を「上限内」と誤認したり、契約外の値を返したり、外力を相殺したりはしない。
 
 agent_get_stateの返却対象:
 
 - health、absorption、hunger、air、fire、submerged、位置、向き、dimension
 - current client tickとworld revision
 - 自inventoryのitem別集計
+- 自inventoryの標準Potionを`item + potion`で集計したtop-level `standard_potions`。標準componentと完全一致する1本stackだけを数え、custom stackと不可能な複数本stackは除外
 - OFF / READY / AGENT / RECOVERING状態、game pause
 - 有効policyとhard limit
 - DSL version、構造上限、現在許可されたcapability
@@ -1044,6 +1062,8 @@ Validate JSON AST
 - 最大block破壊数
 - 最大block設置数
 - 最大interaction数
+
+Action DSLが宣言できる`max_interactions`のhard upper boundは16とする。通常nodeは各自のより小さい静的costに従い、`brew_known_potion_batch`だけが閉じたmenu protocolのため16を予約する。
 
 実行器は指定budgetとローカルhard limitの小さい方を採用する。超過しそうなGoal primitiveは実行しない。能動的危険がなければそのtickで`BUDGET_EXCEEDED`として入力を解除し、同じworld・capabilityのREADYへ戻す。危険が進行中ならGoalを破棄して第10章の固定recovery budgetだけを使用する。
 
@@ -1159,7 +1179,13 @@ Phase 3完成時に追加する上限:
 - survivalではinventory内のitemだけ
 - creativeでもfill/setblockを使わず、通常設置操作だけ
 
-### 9.6 RedstoneSpec — Phase 5
+### 9.6 brew_known_potion_batch — Phase 4
+
+対象は現在のpolicy-visible surfaceで確認した、通常interaction reach内の`minecraft:brewing_stand`に限る。自inventoryの`standard_potions` recordからinputを選び、そのitem+potion集計count以下の1〜3本を宣言し、catalogが列挙する既知の1段recipeと完全一致するoutputを宣言する。必要なPotion、ingredient、blaze powderは自inventory内の実itemだけを使い、生成や補充はしない。
+
+受付時と通常use直前に対象、pose、reach、surface revision、universal safety、menu非所有を再検証する。planner受付時とadapter begin時には、醸造台中央への片道`|yaw|+|pitch|`が270度以下であることも独立に証明し、超える場合はmutationを始めず、同じ可視targetへの`face_known_position`を直前に置くようreplanする。open後はserver full-contentで5 item slot空、brew time 0、fuel counter 0〜20を確認し、同期済みmenu dataに対して有界でPotion、ingredient、および未充填時だけfuelを移送する。brew progressは外部へ公開せず、serverが送ったcontent / dataの変化を最大1,400 active tickの内部state machineで待つ。完了後の回収とreadbackで宣言output、消費、fuel counterの1 use減少、余剩を確認し、menuを閉じてscreen ownershipとsynthetic inputの解放が確認できてからterminal resultを公開する。中断時はその時点のauthoritative inventoryを維持し、空でないstandを別Actionで再開して自動続行しない。
+
+### 9.7 RedstoneSpec — Phase 5
 
 LLMへblockを1個ずつ操作させず、次を入力とする。
 
@@ -1355,7 +1381,7 @@ client config:
 - recovery_max_ticks / distance / camera_degrees / interactions / placements / breaks
 - multiplayer_default
 
-MVPではrecovery各値の設定可能な上限を200 ticks、16 blocks、360 degrees、8 interactions、8 placements、4 breaksとする。Goal上限との合算が`agent_get_action`の固定出力schema（12,200 ticks、48 blocks、1,080 degrees）を越えないことをconfig境界でも保証する。
+MVPではrecovery各値の設定可能な上限を200 ticks、16 blocks、360 degrees、8 interactions、8 placements、4 breaksとする。Goal上限との合算が`agent_get_action`の固定出力schema（12,200 ticks、48 blocks、1,080 degrees、12 breaks、16 placements）を越えないことをconfig境界で保証する。interactionはAction上限16に対し、現行recovery executorがinteractionをdispatchせず使用量0である不変条件を別途検査し、公開counterも16へ閉じる。
 
 tokenはconfig screenへ平文表示しない。ローカルclient commandまたはMods画面のbuttonから、MCP接続設定をclipboardへコピーできるようにする。
 
@@ -1512,6 +1538,7 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - HTTP handlerがMinecraft APIを直接呼ばない
 - agent_start_actionはAction完了を待たずaction_idを返す
 - agent_get_stateが最新immutable observation frameのIDと概要を返す
+- agent_get_stateがtop-level `standard_potions` を`[{item,potion,count}]`で返し、自inventoryの標準component完全一致の1本stackだけをitem+potionで集計し、custom Potion、不可能な複数本stack、stand内容を含めない
 - agent_get_stateで告知したframe IDはidle 60秒、最大16件のLRU上限内で保持され、上限超過とworld境界で確実に失効する
 - agent_get_observationは任意center/radiusを受け付けず、同じframe_idのpage内容がframe保持中に変わらない
 - 最大256件でpage分割し、壊れたcursorはINVALID_CURSOR、保持外frameはFRAME_EXPIRED
@@ -1531,6 +1558,9 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - `apply_known_block_plan`は1〜8 entry、offset各軸±8、entry ID / 変換後target一意、support unionの両nullable field明示、先行dependency一致を入力前に検証する
 - block planの`none/x/z` mirror後CW rotationが既存BlockPlan変換と一致し、offsetと完全BlockStateへ同じtransformを適用する
 - block planは入力順を維持し、1 entryあたり15,000 ms / 300 ticks / camera 80度 / 1 placement、distance / interaction / break 0の静的costから逸脱しない
+- `brew_known_potion_batch`は標準Potionの既知の1段recipe、1〜3本同数、blaze powder固定、開始時5 stand item slot空、internal brew time 0、fuel counter 0〜20を入力前に検証し、prechargedならinventory fuel投入を省略する
+- 醸造nodeはtop-level末尾のみで`if` / `repeat`内とsuffixを拒否し、plannerとbegin直前preflightで片道camera 270度以下を証明し、70,000 ms / 1,400 ticks / camera最大540度（照準＋醸造node受付時view復元）/ 16 interactionsを静的に予約し、resume / replay / blind retryを行わない
+- 公開`progress.interactions`の上限16は、醸造中のrecovery interaction非dispatchと現行recovery usage 0の不変条件を含めて検証される
 - 通常Actionはeffective budgetを超えず、RECOVERはDSLから独立したlocal recovery budgetだけを使う
 - templateとcustom programが同じvalidator、capability、budgetを通る
 
@@ -1634,6 +1664,8 @@ if ($LASTEXITCODE -gt 1) { throw 'Dependency scan failed' }
 
 - Action DSL JSON Schema、semantic validation、cost vector
 - bounded if/repeat、predicate availability、capability validation
+- 閉じた標準Potion同定、custom component除外、catalogのPotion / ingredient enumとpolicyの一致
+- Minecraft 26.2の実`PotionBrewing.mix`に対する全allowlisted 1段recipe、container変換、breeze rodの回帰照合
 - Task state machine
 - A*
 - token比較

@@ -12,7 +12,7 @@
     {
       "name": "agent_get_state",
       "title": "Get MCMCP State",
-      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. It never scans hidden world data.",
+      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. inventory keeps item-ID totals; standard_potions separately validates component-exact unmodified Vanilla singleton potion stacks and groups them by item+potion across inventory slots, so brewing inputs and outputs are distinguishable without exposing custom components or impossible overstacks. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. It never scans hidden world data.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -103,6 +103,41 @@
               "required": ["item", "count"]
             }
           },
+          "standard_potions": {
+            "type": "array",
+            "description": "Own-inventory projection only. Validates component-exact unmodified Vanilla singleton potion stacks, then groups them by item+potion across slots; impossible overstacks, custom color/effects/name/lore, or any other nonstandard component are omitted rather than exposed.",
+            "maxItems": 256,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "item": {"enum": ["minecraft:potion", "minecraft:splash_potion", "minecraft:lingering_potion"]},
+                "potion": {
+                  "enum": [
+                    "minecraft:water", "minecraft:mundane", "minecraft:thick", "minecraft:awkward",
+                    "minecraft:night_vision", "minecraft:long_night_vision",
+                    "minecraft:invisibility", "minecraft:long_invisibility",
+                    "minecraft:fire_resistance", "minecraft:long_fire_resistance",
+                    "minecraft:leaping", "minecraft:long_leaping", "minecraft:strong_leaping",
+                    "minecraft:slowness", "minecraft:long_slowness", "minecraft:strong_slowness",
+                    "minecraft:turtle_master", "minecraft:long_turtle_master", "minecraft:strong_turtle_master",
+                    "minecraft:swiftness", "minecraft:long_swiftness", "minecraft:strong_swiftness",
+                    "minecraft:water_breathing", "minecraft:long_water_breathing",
+                    "minecraft:healing", "minecraft:strong_healing",
+                    "minecraft:harming", "minecraft:strong_harming",
+                    "minecraft:poison", "minecraft:long_poison", "minecraft:strong_poison",
+                    "minecraft:regeneration", "minecraft:long_regeneration", "minecraft:strong_regeneration",
+                    "minecraft:strength", "minecraft:long_strength", "minecraft:strong_strength",
+                    "minecraft:weakness", "minecraft:long_weakness",
+                    "minecraft:slow_falling", "minecraft:long_slow_falling",
+                    "minecraft:wind_charged", "minecraft:oozing", "minecraft:infested", "minecraft:weaving"
+                  ]
+                },
+                "count": {"type": "integer", "minimum": 1, "maximum": 2147483647}
+              },
+              "required": ["item", "potion", "count"]
+            }
+          },
           "policy": {
             "type": "object",
             "additionalProperties": false,
@@ -114,7 +149,7 @@
               "max_distance_blocks": {"const": 32},
               "max_camera_degrees": {"const": 720},
               "max_blocks_broken": {"const": 8},
-              "max_interactions": {"const": 8},
+              "max_interactions": {"const": 16},
               "max_blocks_placed": {"const": 8},
               "omnidirectional_visual_radius_blocks": {"type": "number", "minimum": 1, "maximum": 32},
               "local_observation_radius_blocks": {"const": 6},
@@ -211,7 +246,7 @@
             ]
           }
         },
-        "required": ["schema_version", "control", "world", "inventory", "policy", "observation", "action"]
+        "required": ["schema_version", "control", "world", "inventory", "standard_potions", "policy", "observation", "action"]
       }
     },
     {
@@ -541,7 +576,7 @@
     {
       "name": "agent_start_action",
       "title": "Start MCMCP Action",
-      "description": "Runs one validated Action DSL v1 program while in-game MCP operation is enabled. Choose Action boundaries from current evidence: combine nodes only when every later node is admissible now or has an explicitly supported dependency proof. Batch 2..8 targets within one crop stage; when a mutation creates new drops or newly exposed surfaces, finish, reobserve, then start the next Action. apply_known_block_plan is the bounded exception for explicitly declared earlier-entry placement dependencies. Put wait_until immediately after its plant node when growth must be awaited. Copy traversability.navigation_target verbatim into navigate_to_known.target; never derive, floor, round, or copy continuous traversability.from/to coordinates. When you have a visible block but no safe feet coordinate, copy visible_surface.position and block verbatim into approach_known_surface; the runtime selects a known interaction-range navigation cell, then finish the Action and reobserve before mutation. collect_visible_item and collect_visible_item_batch targets are the only continuous positions: copy visible_entity.position and displayed_item without rounding. Use collect_visible_item_batch for 2..8 current drops instead of one Action per item. For building copy, use only visible_surface records whose placement_item is non-null: copy state verbatim into source_state and placement_item into item. Never convert state properties yourself. Construction requires every support to be within 40 total yaw+pitch degrees of the admitted heading; when it is not, put face_known_position for a visible support immediately before the plan or split the plan. The envelope is {schema_version:1,program:{dsl_version:1,name?:string,capabilities:string[],body:node[]},budget:{max_duration_ms,max_ticks,max_distance_blocks,max_camera_degrees,max_interactions,max_blocks_broken,max_blocks_placed}}. Every node needs a unique id matching ^[a-z][a-z0-9_-]{0,31}$ and one exact op. Frequent exact signatures are navigate_to_known:{id,op,target,tolerance}; approach_known_surface:{id,op,target,expected_block}; open_known_passage/inspect_known_container:{id,op,target,expected_block}; take_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}; till_known_batch:{id,op,targets:[position],expected_block,hoe_item}; plant_known_wheat_batch:{id,op,targets:[{target,support}],seed_item}; harvest_known_wheat_batch:{id,op,targets:[position]}; apply_known_block_plan:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,source_state,item,support:{position,face,expected_state,dependency_entry_id}}]}; collect_visible_item_batch:{id,op,targets:[{displayed_item,target}]}. Both support.expected_state and support.dependency_entry_id are required nullable fields and exactly one must be non-null. Exact ops are navigate_to_known, approach_known_surface, face_known_position, break_known_face, till_known_block, till_known_batch, plant_known_wheat, plant_known_wheat_batch, harvest_known_wheat, harvest_known_wheat_batch, apply_known_block_plan, open_known_fence_gate, open_known_passage, inspect_known_container, take_known_container_stack, collect_visible_item, collect_visible_item_batch, wait_ticks, wait_until, if, and repeat; use the exact inputSchema fields and no aliases. Required capabilities are navigate/approach/collect=movement; face=camera; break/harvest=camera+block_break; till/open=camera+block_interact; plant/apply_known_block_plan=camera+block_place; inspect/take=camera+inventory_transfer. For each inspect/take reserve at least 30000 ms, 600 ticks, 360 camera degrees, and its schema-stated interactions. For each apply_known_block_plan entry reserve 15000 ms, 300 ticks, 80 camera degrees, and one placement; an 8-entry plan therefore needs 120000 ms, 2400 ticks, 640 camera degrees, and 8 placements with zero movement, interactions, and breaks. For another 8-target mutation batch, reserve 120000 ms, 2400 ticks, up to the 720 camera-degree policy maximum, and 8 interactions/breaks/placements as applicable. Targets always execute in submitted order; if that order costs more than 720 camera degrees, split it into smaller batches instead of reordering at runtime. take stack_policy is exactly default_components_only or item_id_any_components. Use observed coordinates and policy maxima when unsure of an adequate budget. PROGRAM_BUDGET_UNPROVABLE reports all insufficient budget component names without echoing submitted values.",
+"description": "Runs one validated Action DSL v1 program while in-game MCP operation is enabled. Choose Action boundaries from current evidence: combine nodes only when every later node is admissible now or has an explicitly supported dependency proof. Batch 2..8 targets within one crop stage; when a mutation creates new drops or newly exposed surfaces, finish, reobserve, then start the next Action. apply_known_block_plan is the bounded exception for explicitly declared earlier-entry placement dependencies. Put wait_until immediately after its plant node when growth must be awaited. Copy traversability.navigation_target verbatim into navigate_to_known.target; never derive, floor, round, or copy continuous traversability.from/to coordinates. When you have a visible block but no safe feet coordinate, copy visible_surface.position and block verbatim into approach_known_surface; the runtime selects a known interaction-range navigation cell, then finish the Action and reobserve before mutation. collect_visible_item and collect_visible_item_batch targets are the only continuous positions: copy visible_entity.position and displayed_item without rounding. Use collect_visible_item_batch for 2..8 current drops instead of one Action per item. For building copy, use only visible_surface records whose placement_item is non-null: copy state verbatim into source_state and placement_item into item. Never convert state properties yourself. Construction requires every support to be within 40 total yaw+pitch degrees of the admitted heading; when it is not, put face_known_position for a visible support immediately before the plan or split the plan. For brewing, use own-inventory standard_potions evidence and one current visible minecraft:brewing_stand; brew_known_potion_batch accepts one catalog-fixed standard Vanilla one-step recipe for 1..3 bottles and must be the final top-level node outside if/repeat. The envelope is {schema_version:1,program:{dsl_version:1,name?:string,capabilities:string[],body:node[]},budget:{max_duration_ms,max_ticks,max_distance_blocks,max_camera_degrees,max_interactions,max_blocks_broken,max_blocks_placed}}. Every node needs a unique id matching ^[a-z][a-z0-9_-]{0,31}$ and one exact op. Frequent exact signatures are navigate_to_known:{id,op,target,tolerance}; approach_known_surface:{id,op,target,expected_block}; open_known_passage/inspect_known_container:{id,op,target,expected_block}; take_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}; brew_known_potion_batch:{id,op,target,expected_block,input:{item,potion,count},ingredient_item,fuel_item,expected_output:{item,potion,count}}; till_known_batch:{id,op,targets:[position],expected_block,hoe_item}; plant_known_wheat_batch:{id,op,targets:[{target,support}],seed_item}; harvest_known_wheat_batch:{id,op,targets:[position]}; apply_known_block_plan:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,source_state,item,support:{position,face,expected_state,dependency_entry_id}}]}; collect_visible_item_batch:{id,op,targets:[{displayed_item,target}]}. Both support.expected_state and support.dependency_entry_id are required nullable fields and exactly one must be non-null. Exact ops are navigate_to_known, approach_known_surface, face_known_position, break_known_face, till_known_block, till_known_batch, plant_known_wheat, plant_known_wheat_batch, harvest_known_wheat, harvest_known_wheat_batch, apply_known_block_plan, open_known_fence_gate, open_known_passage, inspect_known_container, take_known_container_stack, brew_known_potion_batch, collect_visible_item, collect_visible_item_batch, wait_ticks, wait_until, if, and repeat; use the exact inputSchema fields and no aliases. Required capabilities are navigate/approach/collect=movement; face=camera; break/harvest=camera+block_break; till/open=camera+block_interact; plant/apply_known_block_plan=camera+block_place; inspect/take/brew=camera+inventory_transfer. For each inspect/take reserve at least 30000 ms, 600 ticks, 360 camera degrees, and its schema-stated interactions. For brew reserve at least 70000 ms, 1400 ticks, up to 540 camera degrees for aim plus view restoration, and 16 interactions; distance, breaks, and placements are zero. For each apply_known_block_plan entry reserve 15000 ms, 300 ticks, 80 camera degrees, and one placement; an 8-entry plan therefore needs 120000 ms, 2400 ticks, 640 camera degrees, and 8 placements with zero movement, interactions, and breaks. For another 8-target mutation batch, reserve 120000 ms, 2400 ticks, up to the 720 camera-degree policy maximum, and 8 interactions/breaks/placements as applicable. Targets always execute in submitted order; if that order costs more than 720 camera degrees, split it into smaller batches instead of reordering at runtime. take stack_policy is exactly default_components_only or item_id_any_components. Use observed coordinates and policy maxima when unsure of an adequate budget. PROGRAM_BUDGET_UNPROVABLE reports all insufficient budget component names without echoing submitted values.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -999,6 +1034,71 @@
             },
             "required": ["id", "op", "target", "expected_block", "item", "stack_policy", "minimum_inventory_count"]
           },
+          "standardPotionItem": {
+            "enum": ["minecraft:potion", "minecraft:splash_potion", "minecraft:lingering_potion"]
+          },
+          "standardPotionId": {
+            "enum": [
+              "minecraft:water", "minecraft:mundane", "minecraft:thick", "minecraft:awkward",
+              "minecraft:night_vision", "minecraft:long_night_vision",
+              "minecraft:invisibility", "minecraft:long_invisibility",
+              "minecraft:fire_resistance", "minecraft:long_fire_resistance",
+              "minecraft:leaping", "minecraft:long_leaping", "minecraft:strong_leaping",
+              "minecraft:slowness", "minecraft:long_slowness", "minecraft:strong_slowness",
+              "minecraft:turtle_master", "minecraft:long_turtle_master", "minecraft:strong_turtle_master",
+              "minecraft:swiftness", "minecraft:long_swiftness", "minecraft:strong_swiftness",
+              "minecraft:water_breathing", "minecraft:long_water_breathing",
+              "minecraft:healing", "minecraft:strong_healing",
+              "minecraft:harming", "minecraft:strong_harming",
+              "minecraft:poison", "minecraft:long_poison", "minecraft:strong_poison",
+              "minecraft:regeneration", "minecraft:long_regeneration", "minecraft:strong_regeneration",
+              "minecraft:strength", "minecraft:long_strength", "minecraft:strong_strength",
+              "minecraft:weakness", "minecraft:long_weakness",
+              "minecraft:slow_falling", "minecraft:long_slow_falling",
+              "minecraft:wind_charged", "minecraft:oozing", "minecraft:infested", "minecraft:weaving"
+            ]
+          },
+          "standardPotionBatch": {
+            "type": "object",
+            "description": "A component-exact unmodified Vanilla potion identity. When used as input, item+potion must match one own-inventory standard_potions entry whose aggregated count is at least this declared 1..3 count. expected_output instead declares the closed recipe result and need not already exist in inventory. Custom components are never accepted.",
+            "additionalProperties": false,
+            "properties": {
+              "item": {"$ref": "#/$defs/standardPotionItem"},
+              "potion": {"$ref": "#/$defs/standardPotionId"},
+              "count": {"type": "integer", "minimum": 1, "maximum": 3}
+            },
+            "required": ["item", "potion", "count"]
+          },
+          "brewingIngredient": {
+            "description": "Closed 26.2 one-step table. Container conversions preserve potion: potion+gunpowder->splash_potion; splash_potion+dragon_breath->lingering_potion. Same-container potion transitions are water+glowstone_dust->thick, water+redstone->mundane, water+nether_wart->awkward. Each start mix has both water+ingredient->mundane and awkward+ingredient->effect: breeze_rod->wind_charged, slime_block->oozing, stone->infested, cobweb->weaving, magma_cream->fire_resistance, rabbit_foot->leaping, sugar->swiftness, glistering_melon_slice->healing, spider_eye->poison, ghast_tear->regeneration, blaze_powder->strength. Other transitions: awkward+golden_carrot->night_vision; night_vision+redstone->long_night_vision; night_vision+fermented_spider_eye->invisibility; long_night_vision+fermented_spider_eye->long_invisibility; invisibility+redstone->long_invisibility; fire_resistance+redstone->long_fire_resistance; leaping+redstone->long_leaping; leaping+glowstone_dust->strong_leaping; leaping+fermented_spider_eye->slowness; long_leaping+fermented_spider_eye->long_slowness; slowness+redstone->long_slowness; slowness+glowstone_dust->strong_slowness; awkward+turtle_helmet->turtle_master; turtle_master+redstone->long_turtle_master; turtle_master+glowstone_dust->strong_turtle_master; swiftness+fermented_spider_eye->slowness; long_swiftness+fermented_spider_eye->long_slowness; swiftness+redstone->long_swiftness; swiftness+glowstone_dust->strong_swiftness; awkward+pufferfish->water_breathing; water_breathing+redstone->long_water_breathing; healing+glowstone_dust->strong_healing; healing+fermented_spider_eye->harming; strong_healing+fermented_spider_eye->strong_harming; harming+glowstone_dust->strong_harming; poison+fermented_spider_eye->harming; long_poison+fermented_spider_eye->harming; strong_poison+fermented_spider_eye->strong_harming; poison+redstone->long_poison; poison+glowstone_dust->strong_poison; regeneration+redstone->long_regeneration; regeneration+glowstone_dust->strong_regeneration; strength+redstone->long_strength; strength+glowstone_dust->strong_strength; water+fermented_spider_eye->weakness; weakness+redstone->long_weakness; awkward+phantom_membrane->slow_falling; slow_falling+redstone->long_slow_falling. Any other tuple is rejected before input.",
+            "enum": [
+              "minecraft:gunpowder", "minecraft:dragon_breath",
+              "minecraft:glowstone_dust", "minecraft:redstone", "minecraft:nether_wart",
+              "minecraft:breeze_rod", "minecraft:slime_block", "minecraft:stone",
+              "minecraft:cobweb", "minecraft:golden_carrot",
+              "minecraft:fermented_spider_eye", "minecraft:magma_cream",
+              "minecraft:rabbit_foot", "minecraft:turtle_helmet", "minecraft:sugar",
+              "minecraft:pufferfish", "minecraft:glistering_melon_slice",
+              "minecraft:spider_eye", "minecraft:ghast_tear", "minecraft:blaze_powder",
+              "minecraft:phantom_membrane"
+            ]
+          },
+          "brewKnownPotionBatchNode": {
+            "type": "object",
+            "description": "Brew exactly one catalog-fixed standard Vanilla one-step recipe for 1..3 equal-count potions at one current visible in-reach brewing stand. input must match a component-exact own-inventory standard_potions entry with sufficient aggregated singleton count. expected_output declares the component-exact closed recipe result and need not already exist in inventory; custom color/effects/name/lore, impossible overstacks, and arbitrary recipes are rejected. The declared transition is checked both against the closed 26.2 recipe table and the current connection's PotionBrewing.mix result. fuel_item is always blaze powder. All five stand item slots must be empty, internal brew-time must be zero, and the hidden Vanilla fuel counter must be within 0..20 at Action start. When it is already 1..20 the runtime consumes one existing fuel use and skips inventory fuel insertion; when it is zero the runtime inserts exactly one blaze powder. Therefore a blaze-powder ingredient needs one inventory powder when precharged and two when uncharged. These conditions are checked only after a normal menu open; no stand-slot or data value is exposed, and a mismatch returns a fixed replan diagnostic. Interrupted brewing cannot be resumed or replayed by this opcode, and every failure stops the unstarted suffix. This node is allowed only once as the final top-level Action node, never inside if/repeat and never with a following node. Planner admission and the execution-start preflight both reject a one-way stand-center |yaw|+|pitch| aim above 270 degrees before normal use. When needed, put face_known_position for the same visible stand immediately before this node and add that face node's own cost to the Action budget. Reserve at least 70000 ms, 1400 ticks, up to 540 camera degrees for this node's aim plus admitted-view restoration, and 16 interactions; distance, breaks, and placements are zero. While this terminal menu node owns the screen, recovery dispatches no gameplay interaction, so the published Action interaction ceiling remains 16. Execution uses normal use/menu clicks, fixed submitted intent, authoritative full-content/data progress and close/reopen readback that returns all five item slots empty and proves exactly one fuel use was consumed, then releases the screen/cursor/input owner before terminal publication.",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "brew_known_potion_batch"},
+              "target": {"$ref": "#/$defs/position"},
+              "expected_block": {"const": "minecraft:brewing_stand"},
+              "input": {"$ref": "#/$defs/standardPotionBatch"},
+              "ingredient_item": {"$ref": "#/$defs/brewingIngredient"},
+              "fuel_item": {"const": "minecraft:blaze_powder"},
+              "expected_output": {"$ref": "#/$defs/standardPotionBatch"}
+            },
+            "required": ["id", "op", "target", "expected_block", "input", "ingredient_item", "fuel_item", "expected_output"]
+          },
           "collectVisibleItemNode": {
             "type": "object",
             "description": "Collect at least one fresh visible minecraft:item matching displayed_item near the copied continuous target position. The runtime rechecks the witness while moving, selects the fastest reachable known safe pickup cell, and requires an absolute inventory-count increase relative to this node occurrence's start.",
@@ -1116,6 +1216,7 @@
               {"$ref": "#/$defs/openPassageNode"},
               {"$ref": "#/$defs/inspectContainerNode"},
               {"$ref": "#/$defs/takeContainerStackNode"},
+              {"$ref": "#/$defs/brewKnownPotionBatchNode"},
               {"$ref": "#/$defs/collectVisibleItemNode"},
               {"$ref": "#/$defs/collectVisibleItemBatchNode"},
               {"$ref": "#/$defs/waitNode"},
@@ -1160,7 +1261,7 @@
               "max_ticks": {"type": "integer", "minimum": 2, "maximum": 12000},
               "max_distance_blocks": {"type": "number", "minimum": 0, "maximum": 32},
               "max_camera_degrees": {"type": "number", "minimum": 0, "maximum": 720},
-              "max_interactions": {"type": "integer", "minimum": 0, "maximum": 8},
+              "max_interactions": {"type": "integer", "minimum": 0, "maximum": 16},
               "max_blocks_broken": {"type": "integer", "minimum": 0, "maximum": 8},
               "max_blocks_placed": {"type": "integer", "minimum": 0, "maximum": 8}
             },
@@ -1557,6 +1658,35 @@
               "max_distance_blocks": 0,
               "max_camera_degrees": 360,
               "max_interactions": 3,
+              "max_blocks_broken": 0,
+              "max_blocks_placed": 0
+            }
+          },
+          {
+            "schema_version": 1,
+            "program": {
+              "dsl_version": 1,
+              "name": "brew_awkward_potions",
+              "capabilities": ["camera", "inventory_transfer"],
+              "body": [
+                {
+                  "id": "brew",
+                  "op": "brew_known_potion_batch",
+                  "target": {"dimension": "minecraft:overworld", "x": 100, "y": 64, "z": 120},
+                  "expected_block": "minecraft:brewing_stand",
+                  "input": {"item": "minecraft:potion", "potion": "minecraft:water", "count": 3},
+                  "ingredient_item": "minecraft:nether_wart",
+                  "fuel_item": "minecraft:blaze_powder",
+                  "expected_output": {"item": "minecraft:potion", "potion": "minecraft:awkward", "count": 3}
+                }
+              ]
+            },
+            "budget": {
+              "max_duration_ms": 70000,
+              "max_ticks": 1400,
+              "max_distance_blocks": 0,
+              "max_camera_degrees": 540,
+              "max_interactions": 16,
               "max_blocks_broken": 0,
               "max_blocks_placed": 0
             }

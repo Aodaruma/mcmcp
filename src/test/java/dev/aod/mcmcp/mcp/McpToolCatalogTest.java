@@ -4,6 +4,8 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParser;
 import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
+import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
+import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.runtime.McmcpRuntimeContractTestAccess;
 import org.junit.jupiter.api.Test;
 
@@ -231,6 +233,89 @@ class McpToolCatalogTest {
                     .isGreaterThan(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND * 50L);
             assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
         });
+    }
+
+    @Test
+    void brewingContractIsClosedTerminalAndSynchronizedWithStandardPotionPolicy() {
+        var catalog = new McpToolCatalog();
+        var schema = catalog.inputSchema("agent_start_action");
+        var definitions = schema.getAsJsonObject("$defs");
+        var brew = definitions.getAsJsonObject("brewKnownPotionBatchNode");
+        String contract = brew.get("description").getAsString();
+
+        assertThat(contract)
+                .contains("catalog-fixed standard Vanilla one-step recipe")
+                .contains("1..3 equal-count potions")
+                .contains("component-exact")
+                .contains("aggregated singleton count")
+                .contains("All five stand item slots must be empty")
+                .contains("hidden Vanilla fuel counter must be within 0..20")
+                .contains("skips inventory fuel insertion")
+                .contains("one inventory powder when precharged and two when uncharged")
+                .contains("fixed replan diagnostic")
+                .contains("cannot be resumed or replayed")
+                .contains("final top-level Action node")
+                .contains("never inside if/repeat")
+                .contains("execution-start preflight", "one-way stand-center",
+                        "270 degrees", "face_known_position")
+                .contains("70000 ms", "1400 ticks", "540 camera degrees", "16 interactions")
+                .contains("recovery dispatches no gameplay interaction")
+                .contains("interaction ceiling remains 16")
+                .contains("returns all five item slots empty")
+                .contains("exactly one fuel use was consumed")
+                .contains("releases the screen/cursor/input owner");
+        assertThat(definitions.getAsJsonObject("standardPotionBatch")
+                .get("description").getAsString())
+                .contains("aggregated count is at least this declared 1..3 count")
+                .contains("expected_output instead declares the closed recipe result")
+                .contains("need not already exist in inventory");
+
+        assertThat(enumValues(definitions, "standardPotionItem"))
+                .containsExactlyInAnyOrderElementsOf(StandardPotionPolicy.potionItems());
+        assertThat(enumValues(definitions, "standardPotionId"))
+                .containsExactlyInAnyOrderElementsOf(StandardPotionPolicy.potionIds());
+        assertThat(enumValues(definitions, "brewingIngredient"))
+                .containsExactlyInAnyOrderElementsOf(StandardPotionPolicy.ingredientItems());
+        assertThat(definitions.getAsJsonObject("brewingIngredient")
+                .get("description").getAsString())
+                .contains("water+ingredient->mundane")
+                .contains("awkward+ingredient->effect")
+                .contains("breeze_rod->wind_charged")
+                .contains("water+fermented_spider_eye->weakness")
+                .contains("potion+gunpowder->splash_potion")
+                .contains("Any other tuple is rejected before input");
+
+        var example = schema.getAsJsonArray("examples").asList().stream()
+                .map(value -> value.getAsJsonObject())
+                .filter(value -> value.getAsJsonObject("program").get("name").getAsString()
+                        .equals("brew_awkward_potions"))
+                .findFirst().orElseThrow();
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
+        var budget = example.getAsJsonObject("budget");
+        assertThat(budget.get("max_duration_ms").getAsLong())
+                .isEqualTo(ActionDslCompiler.KNOWN_BREWING_DURATION_MILLIS);
+        assertThat(budget.get("max_ticks").getAsLong())
+                .isEqualTo(ActionDslCompiler.KNOWN_BREWING_TICKS);
+        assertThat(budget.get("max_camera_degrees").getAsLong()).isEqualTo(540);
+        assertThat(budget.get("max_interactions").getAsLong())
+                .isEqualTo(ActionDslCompiler.KNOWN_BREWING_INTERACTIONS);
+
+        assertThat(schema.getAsJsonObject("properties").getAsJsonObject("budget")
+                .getAsJsonObject("properties").getAsJsonObject("max_interactions")
+                .get("maximum").getAsInt()).isEqualTo(16);
+        var state = catalog.outputSchema("agent_get_state");
+        assertThat(state.getAsJsonObject("properties").getAsJsonObject("policy")
+                .getAsJsonObject("properties").getAsJsonObject("max_interactions")
+                .get("const").getAsInt()).isEqualTo(16);
+        assertThat(state.getAsJsonObject("properties").has("standard_potions")).isTrue();
+        assertThat(enumValues(state.getAsJsonObject("properties")
+                        .getAsJsonObject("standard_potions").getAsJsonObject("items")
+                        .getAsJsonObject("properties"), "potion"))
+                .containsExactlyInAnyOrderElementsOf(StandardPotionPolicy.potionIds());
+        assertThat(catalog.outputSchema("agent_get_action")
+                .getAsJsonObject("properties").getAsJsonObject("progress")
+                .getAsJsonObject("properties").getAsJsonObject("interactions")
+                .get("maximum").getAsInt()).isEqualTo(16);
     }
 
     @Test
@@ -631,6 +716,13 @@ class McpToolCatalogTest {
         assertThat(registry.call("agent_cancel_action", action).get("isError").getAsBoolean())
                 .isFalse();
         assertThat(calls).hasValue(6);
+    }
+
+    private static List<String> enumValues(
+            com.google.gson.JsonObject parent, String property) {
+        return parent.getAsJsonObject(property).getAsJsonArray("enum").asList().stream()
+                .map(value -> value.getAsString())
+                .toList();
     }
 
     private static Map<String, Object> toolResult(McpRuntimePort.RuntimeCommand command) {

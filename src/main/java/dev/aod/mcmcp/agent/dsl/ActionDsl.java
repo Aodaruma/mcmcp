@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.agent.dsl;
 
+import dev.aod.mcmcp.brewing.StandardPotionStackSpec;
+
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -38,6 +40,7 @@ public final class ActionDsl {
             HarvestKnownWheat, HarvestKnownWheatBatch, ApplyKnownBlockPlan,
             OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
+            BrewKnownPotionBatch,
             CollectVisibleItem, CollectVisibleItemBatch, WaitTicks, WaitUntil, If, Repeat {
         String id();
     }
@@ -315,6 +318,26 @@ public final class ActionDsl {
             Objects.requireNonNull(expectedBlock, "expectedBlock");
             Objects.requireNonNull(item, "item");
             Objects.requireNonNull(stackPolicy, "stackPolicy");
+        }
+    }
+
+    /** Brews one declared batch of 1..3 component-exact standard Vanilla potions. */
+    public record BrewKnownPotionBatch(
+            String id,
+            Position target,
+            String expectedBlock,
+            StandardPotionStackSpec input,
+            String ingredientItem,
+            String fuelItem,
+            StandardPotionStackSpec expectedOutput) implements Node {
+        public BrewKnownPotionBatch {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(expectedBlock, "expectedBlock");
+            Objects.requireNonNull(input, "input");
+            Objects.requireNonNull(ingredientItem, "ingredientItem");
+            Objects.requireNonNull(fuelItem, "fuelItem");
+            Objects.requireNonNull(expectedOutput, "expectedOutput");
         }
     }
 

@@ -121,6 +121,55 @@ class McmcpRuntimeEvaluationTurnContractTest {
     }
 
     @Test
+    void evaluationTerminalRetainsTheStopFutureWithoutBlockingTheClientThread()
+            throws Exception {
+        var runtime = classNode();
+        var terminal = invocations(method(runtime, "terminateEvaluationLeaseOnClient"));
+        var pending = classNode(
+                "/dev/aod/mcmcp/runtime/McmcpRuntime$PendingEvaluationTerminal.class");
+
+        assertThat(terminal)
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime$PendingEvaluationTerminal#stopCompletion",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime$PendingEvaluationTerminal#retainStopCompletion",
+                        "dev/aod/mcmcp/runtime/ClientCommandInbox#drainEmergencyStopPreTick",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime$PendingEvaluationTerminal#stopOutcome")
+                .doesNotContain(
+                        "java/util/concurrent/CompletableFuture#join",
+                        "java/util/concurrent/Future#get");
+        assertThat(fieldAccesses(pending.methods.stream()
+                .filter(candidate -> candidate.name.equals("retainStopCompletion"))
+                .findFirst().orElseThrow()))
+                .contains("dev/aod/mcmcp/runtime/McmcpRuntime$PendingEvaluationTerminal#stopCompletion");
+        assertThat(invocations(pending.methods.stream()
+                .filter(candidate -> candidate.name.equals("retainStopCompletion"))
+                .findFirst().orElseThrow()))
+                .contains("java/util/concurrent/CompletableFuture#whenComplete");
+    }
+
+    @Test
+    void runtimeEmergencyStopFlattensItsFutureWithoutWaitingOnTheClientThread()
+            throws Exception {
+        var runtime = classNode();
+        var emergencyLambdas = runtime.methods.stream()
+                .filter(candidate -> candidate.name.startsWith("lambda$submit$"))
+                .filter(candidate -> invocations(candidate).contains(
+                        "dev/aod/mcmcp/runtime/ClientCommandInbox#requestEmergencyStop"))
+                .toList();
+
+        assertThat(emergencyLambdas).hasSize(1);
+        assertThat(invocations(emergencyLambdas.getFirst()))
+                .contains(
+                        "dev/aod/mcmcp/runtime/ClientCommandInbox#drainEmergencyStopPreTick",
+                        "java/util/concurrent/CompletableFuture#handle")
+                .doesNotContain(
+                        "java/util/concurrent/CompletableFuture#join",
+                        "java/util/concurrent/Future#get");
+        assertThat(invocations(method(runtime, "submit")))
+                .contains("java/util/concurrent/CompletableFuture#thenCompose");
+    }
+
+    @Test
     void localAndLifecycleStopsRevokeTheEvaluationGuardInline() throws Exception {
         var runtime = classNode();
         String terminate =

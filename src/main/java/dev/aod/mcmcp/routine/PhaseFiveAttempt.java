@@ -17,7 +17,7 @@ public record PhaseFiveAttempt(
     public PhaseFiveAttempt {
         Objects.requireNonNull(attemptId, "attemptId");
         Objects.requireNonNull(kind, "kind");
-        if (!PhaseFiveRequest.KINDS.contains(kind)) {
+        if (!PhaseFiveRequest.supportsAdapterKind(kind)) {
             throw new IllegalArgumentException("invalid Phase 5 attempt kind");
         }
         if (issuedClientTick < 0

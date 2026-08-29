@@ -894,10 +894,11 @@ class McmcpRuntimeHardeningTest {
 
         assertThat(state.keySet()).containsExactly(
                 "schema_version", "control", "world", "inventory",
-                "policy", "observation", "action");
+                "standard_potions", "policy", "observation", "action");
         assertThat(state).containsEntry("schema_version", 1)
                 .containsEntry("world", null)
                 .containsEntry("inventory", List.of())
+                .containsEntry("standard_potions", List.of())
                 .containsEntry("observation", null)
                 .containsEntry("action", null);
         var control = (Map<?, ?>) state.get("control");
@@ -910,6 +911,7 @@ class McmcpRuntimeHardeningTest {
         assertThat(policy.get("max_ticks")).isEqualTo(12_000);
         assertThat(policy.get("max_distance_blocks")).isEqualTo(32);
         assertThat(policy.get("max_blocks_broken")).isEqualTo(8);
+        assertThat(policy.get("max_interactions")).isEqualTo(16);
     }
 
     @Test

@@ -23,6 +23,9 @@ public final class ActionDslCompiler {
     private static final long NOMINAL_TICK_MILLIS = 50;
     private static final long BLOCK_PLAN_TICKS_PER_ENTRY = 300;
     private static final double BLOCK_PLAN_CAMERA_DEGREES_PER_ENTRY = 80;
+    public static final long KNOWN_BREWING_TICKS = 1_400L;
+    public static final long KNOWN_BREWING_DURATION_MILLIS = 70_000L;
+    public static final long KNOWN_BREWING_INTERACTIONS = 16L;
 
     private ActionDslCompiler() {
     }
@@ -105,6 +108,7 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.OpenKnownPassage
                 || node instanceof ActionDsl.InspectKnownContainer
                 || node instanceof ActionDsl.TakeKnownContainerStack
+                || node instanceof ActionDsl.BrewKnownPotionBatch
                 || node instanceof ActionDsl.CollectVisibleItem
                 || node instanceof ActionDsl.CollectVisibleItemBatch) {
             Optional<Cost> resolved = Objects.requireNonNull(
@@ -143,6 +147,15 @@ public final class ActionDslCompiler {
                 requireMutationCost(cost, 1, 0, 0, "inspect_known_container");
             } else if (node instanceof ActionDsl.TakeKnownContainerStack) {
                 requireMutationCost(cost, 3, 0, 0, "take_known_container_stack");
+            } else if (node instanceof ActionDsl.BrewKnownPotionBatch) {
+                requireMutationCost(
+                        cost, KNOWN_BREWING_INTERACTIONS, 0, 0,
+                        "brew_known_potion_batch");
+                if (cost.durationMillis() != KNOWN_BREWING_DURATION_MILLIS
+                        || cost.ticks() != KNOWN_BREWING_TICKS) {
+                    throw unprovable(
+                            "brew_known_potion_batch has an invalid primitive time bound");
+                }
             } else if (cost.interactions() != 0
                     || cost.blocksBroken() != 0
                     || cost.blocksPlaced() != 0) {

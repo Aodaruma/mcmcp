@@ -10,6 +10,7 @@ import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.ObservationValues;
+import dev.aod.mcmcp.brewing.StandardPotionStackSpec;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
@@ -1235,6 +1236,113 @@ class AgentPrimitivePlannerTest {
         assertThat(actual.cameraDegrees()).isNotEqualTo(rayHitCost.cameraDegrees());
         assertThat(actual.durationMillis()).isEqualTo(20_000L);
         assertThat(actual.ticks()).isEqualTo(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
+    }
+
+    @Test
+    void brewingRequiresTheVisibleStandAndReservesItsFullTerminalBound() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var stand = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var brew = new ActionDsl.BrewKnownPotionBatch(
+                "brew",
+                stand,
+                "minecraft:brewing_stand",
+                new StandardPotionStackSpec("minecraft:potion", "minecraft:water", 3),
+                "minecraft:nether_wart",
+                "minecraft:blaze_powder",
+                new StandardPotionStackSpec("minecraft:potion", "minecraft:awkward", 3));
+        var program = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.INVENTORY_TRANSFER),
+                List.of(brew));
+
+        var analysis = AgentPrimitivePlanner.analyze(
+                program,
+                map,
+                new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(
+                        cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F),
+                Optional.of(frame(
+                        stand, ObservationRecord.Face.WEST, "minecraft:brewing_stand", 0)),
+                4.5F);
+
+        var cost = analysis.primitiveCosts().get("brew");
+        assertThat(cost.durationMillis()).isEqualTo(70_000L);
+        assertThat(cost.ticks()).isEqualTo(AgentPrimitivePlanner.BREWING_TICK_UPPER_BOUND);
+        assertThat(cost.interactions()).isEqualTo(16L);
+        var admittedPose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+        var centerCost = AgentPrimitivePlanner.mutationCost(
+                admittedPose, new Vec3(3.5D, 64.5D, 0.5D), 4.5F, 16, 0, 0);
+        assertThat(cost.cameraDegrees()).isEqualTo(centerCost.cameraDegrees() * 2.0D);
+        assertThat(cost.distanceBlocks()).isZero();
+        assertThat(cost.blocksBroken()).isZero();
+        assertThat(cost.blocksPlaced()).isZero();
+        assertThat(analysis.knownSurfaces()).contains(
+                new AgentPrimitivePlanner.KnownSurface(
+                        stand, ActionDsl.BlockFace.WEST, "minecraft:brewing_stand"));
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program,
+                map,
+                new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(
+                        cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F),
+                Optional.of(frame(
+                        stand, ObservationRecord.Face.WEST, "minecraft:stone", 0)),
+                4.5F)).isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+    }
+
+    @Test
+    void brewingRejectsMoreThanOneWayCameraBoundUnlessPrecededByFace() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var stand = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var brew = new ActionDsl.BrewKnownPotionBatch(
+                "brew",
+                stand,
+                "minecraft:brewing_stand",
+                new StandardPotionStackSpec("minecraft:potion", "minecraft:water", 3),
+                "minecraft:nether_wart",
+                "minecraft:blaze_powder",
+                new StandardPotionStackSpec("minecraft:potion", "minecraft:awkward", 3));
+        var initial = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 90.0F, -90.0F);
+        var evidence = Optional.of(frame(
+                stand, ObservationRecord.Face.WEST, "minecraft:brewing_stand", 0));
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                new ActionDsl.Program(
+                        1,
+                        Optional.empty(),
+                        Set.of(
+                                ActionDsl.Capability.CAMERA,
+                                ActionDsl.Capability.INVENTORY_TRANSFER),
+                        List.of(brew)),
+                map,
+                new DeterministicAStar(),
+                initial,
+                evidence,
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .hasMessageContaining("face_known_position");
+
+        var admitted = AgentPrimitivePlanner.analyze(
+                new ActionDsl.Program(
+                        1,
+                        Optional.empty(),
+                        Set.of(
+                                ActionDsl.Capability.CAMERA,
+                                ActionDsl.Capability.INVENTORY_TRANSFER),
+                        List.of(new ActionDsl.FaceKnownPosition("face", stand), brew)),
+                map,
+                new DeterministicAStar(),
+                initial,
+                evidence,
+                4.5F);
+        assertThat(admitted.primitiveCosts().get("brew").cameraDegrees())
+                .isLessThanOrEqualTo(540.0D);
     }
 
     @Test

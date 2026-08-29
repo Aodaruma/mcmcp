@@ -101,6 +101,18 @@ public final class ContainerSyncSignals {
                 containerId, menuTypeId, carried, receivedTick));
     }
 
+    /** Records one server-authored menu data value such as brewing time or fuel. */
+    public Optional<RecordResult> onData(
+            ClientLevel level,
+            int containerId,
+            String menuTypeId,
+            int dataId,
+            int value,
+            long receivedTick) {
+        return record(level, channel -> channel.data(
+                containerId, menuTypeId, dataId, value, receivedTick));
+    }
+
     public Optional<RecordResult> onClose(
             ClientLevel level, int containerId, long receivedTick) {
         return record(level, channel -> channel.close(containerId, receivedTick));
@@ -231,14 +243,42 @@ public final class ContainerSyncSignals {
         }
     }
 
+    /** One exact value from a ClientboundContainerSetData packet. */
+    public record ContainerDataEvidence(
+            UUID worldSessionId,
+            int containerId,
+            String menuTypeId,
+            int dataId,
+            int value,
+            long receivedTick,
+            long packetLedgerRevision) {
+        public ContainerDataEvidence {
+            Objects.requireNonNull(worldSessionId, "worldSessionId");
+            requireContainerId(containerId);
+            requireMenuType(menuTypeId);
+            if (dataId < 0) {
+                throw new IllegalArgumentException("dataId must be non-negative");
+            }
+            requireTick(receivedTick);
+        }
+    }
+
     public record Snapshot(
             UUID worldSessionId,
             long packetLedgerRevision,
             OpenScreenEvidence lastOpenScreen,
             ContainerSnapshot container,
+            Map<Integer, ContainerDataEvidence> data,
             CloseEvidence lastClose) {
         public Snapshot {
             Objects.requireNonNull(worldSessionId, "worldSessionId");
+            Objects.requireNonNull(data, "data");
+            data = Map.copyOf(data);
+            if (data.entrySet().stream().anyMatch(entry -> entry.getKey() == null
+                    || entry.getValue() == null
+                    || entry.getKey() != entry.getValue().dataId())) {
+                throw new IllegalArgumentException("container data map is invalid");
+            }
         }
 
         public boolean sameSession(UUID sessionId) {
@@ -269,6 +309,7 @@ public final class ContainerSyncSignals {
         private long packetLedgerRevision;
         private OpenScreenEvidence lastOpenScreen;
         private ContainerSnapshot container;
+        private Map<Integer, ContainerDataEvidence> data = Map.of();
         private CloseEvidence lastClose;
 
         boolean bound() {
@@ -282,6 +323,7 @@ public final class ContainerSyncSignals {
                 packetLedgerRevision = 0;
                 lastOpenScreen = null;
                 container = null;
+                data = Map.of();
                 lastClose = null;
             }
             return snapshot();
@@ -294,6 +336,9 @@ public final class ContainerSyncSignals {
             long revision = nextRevision();
             lastOpenScreen = new OpenScreenEvidence(
                     worldSessionId, containerId, menuTypeId, tick, revision);
+            // A newly negotiated menu must never inherit data from an older container id.
+            container = null;
+            data = Map.of();
             return RecordResult.applied(snapshot());
         }
 
@@ -367,6 +412,27 @@ public final class ContainerSyncSignals {
             return RecordResult.applied(snapshot());
         }
 
+        RecordResult data(
+                int containerId,
+                String menuTypeId,
+                int dataId,
+                int value,
+                long tick) {
+            if (dataId < 0) {
+                throw new IllegalArgumentException("dataId must be non-negative");
+            }
+            requireTick(tick);
+            long revision = nextRevision();
+            if (!matchesCurrent(containerId, menuTypeId)) {
+                return RecordResult.rejected(snapshot(), "container_identity_mismatch");
+            }
+            var updated = new java.util.LinkedHashMap<>(data);
+            updated.put(dataId, new ContainerDataEvidence(
+                    worldSessionId, containerId, menuTypeId, dataId, value, tick, revision));
+            data = Map.copyOf(updated);
+            return RecordResult.applied(snapshot());
+        }
+
         RecordResult close(int containerId, long tick) {
             requireContainerId(containerId);
             requireTick(tick);
@@ -380,7 +446,7 @@ public final class ContainerSyncSignals {
                 throw new IllegalStateException("container channel is not session-bound");
             }
             return new Snapshot(worldSessionId, packetLedgerRevision,
-                    lastOpenScreen, container, lastClose);
+                    lastOpenScreen, container, data, lastClose);
         }
 
         private boolean matchesCurrent(int containerId, String menuTypeId) {

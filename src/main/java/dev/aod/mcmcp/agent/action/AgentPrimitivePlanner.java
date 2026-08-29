@@ -13,6 +13,7 @@ import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.ObservationValues;
 import dev.aod.mcmcp.construction.SafeConstructionBlocks;
+import dev.aod.mcmcp.routine.KnownBrewingRequest;
 import dev.aod.mcmcp.routine.NavigationViewLease;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
@@ -65,6 +66,8 @@ public final class AgentPrimitivePlanner {
     public static final long MUTATION_BATCH_REPROOF_TICKS = 40L;
     public static final long BLOCK_MUTATION_TICK_UPPER_BOUND = 100L;
     public static final long CONTAINER_TICK_UPPER_BOUND = 400L;
+    public static final long BREWING_TICK_UPPER_BOUND =
+            ActionDslCompiler.KNOWN_BREWING_TICKS;
     // Player-thrown item entities can retain a 40-tick pickup delay. Leave a bounded
     // synchronization margin without exposing hidden pickup-delay state to the model.
     public static final long PICKUP_CONFIRM_TICKS = 60L;
@@ -814,6 +817,21 @@ public final class AgentPrimitivePlanner {
             return analyzeContainer(
                     node, input, cameraLimit, costs, knownSurfaces, work, surface, 3);
         }
+        if (node instanceof ActionDsl.BrewKnownPotionBatch brew) {
+            MutationSurface surface = requireMutationSurface(
+                    map, latestFrame, input, brew.target(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, brew.target()),
+                    brew.expectedBlock(),
+                    value -> true,
+                    "Brewing target requires a current matching visible surface");
+            return analyzeOwnedMenu(
+                    node, input, cameraLimit, costs, knownSurfaces, work, surface,
+                    ActionDslCompiler.KNOWN_BREWING_INTERACTIONS,
+                    BREWING_TICK_UPPER_BOUND,
+                    "brewing",
+                    true,
+                    KnownBrewingRequest.MAX_ONE_WAY_CAMERA_DEGREES);
+        }
         if (node instanceof ActionDsl.CollectVisibleItem collect) {
             ObservationRecord.VisibleEntity entity = requireVisibleItem(
                     map, latestFrame, collect, visualBarrierWorldRevision);
@@ -1256,9 +1274,28 @@ public final class AgentPrimitivePlanner {
             PlanningWork work,
             MutationSurface containerSurface,
             long interactions) {
-        KnownSurface surface = containerSurface.surface();
+        return analyzeOwnedMenu(
+                node, input, cameraLimit, costs, knownSurfaces, work,
+                containerSurface, interactions, CONTAINER_TICK_UPPER_BOUND, "container", false,
+                Double.POSITIVE_INFINITY);
+    }
+
+    private static List<Pose> analyzeOwnedMenu(
+            ActionDsl.Node node,
+            List<Pose> input,
+            float cameraLimit,
+            Map<String, ActionDslCompiler.Cost> costs,
+            Set<KnownSurface> knownSurfaces,
+            PlanningWork work,
+            MutationSurface menuSurface,
+            long interactions,
+            long tickUpperBound,
+            String costLabel,
+            boolean restoreAdmittedPose,
+            double maxOneWayCameraDegrees) {
+        KnownSurface surface = menuSurface.surface();
         knownSurfaces.add(surface);
-        // The visible ray hit is admission evidence only. The Phase 5 inventory adapter
+        // The visible ray hit is admission evidence only. The owned-menu inventory adapter
         // continuously aims at the block center, so admission must reserve camera travel
         // to that same point instead of the incidental sampled face hit.
         Vec3 point = new Vec3(
@@ -1271,19 +1308,28 @@ public final class AgentPrimitivePlanner {
             work.poseTransition();
             ActionDslCompiler.Cost aim = mutationCost(
                     pose, point, cameraLimit, interactions, 0, 0);
+            if (aim.cameraDegrees() > maxOneWayCameraDegrees) {
+                throw new PlanningException(
+                        Code.PROGRAM_BUDGET_UNPROVABLE,
+                        "Brewing stand exceeds the 270-degree one-way camera limit; "
+                                + "put face_known_position immediately before "
+                                + "brew_known_potion_batch");
+            }
             var bounded = new ActionDslCompiler.Cost(
-                    Math.multiplyExact(CONTAINER_TICK_UPPER_BOUND, TICK_MILLIS),
-                    CONTAINER_TICK_UPPER_BOUND,
+                    Math.multiplyExact(tickUpperBound, TICK_MILLIS),
+                    tickUpperBound,
                     0.0D,
-                    aim.cameraDegrees(),
+                    restoreAdmittedPose
+                            ? aim.cameraDegrees() * 2.0D : aim.cameraDegrees(),
                     interactions,
                     0,
                     0);
             worst = maximum(worst, bounded);
             Aim target = aim(pose, point);
-            output.add(pose.aimed(target, aimError(pose, point, target)));
+            output.add(restoreAdmittedPose
+                    ? pose : pose.aimed(target, aimError(pose, point, target)));
         }
-        merge(costs, node.id(), Objects.requireNonNull(worst, "container cost"));
+        merge(costs, node.id(), Objects.requireNonNull(worst, costLabel + " cost"));
         return distinct(output);
     }
 

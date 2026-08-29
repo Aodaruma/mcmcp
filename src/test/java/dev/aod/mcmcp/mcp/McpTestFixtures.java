@@ -18,6 +18,7 @@ final class McpTestFixtures {
                         "game_paused", false),
                 "world", nullValue(),
                 "inventory", List.of(),
+                "standard_potions", List.of(),
                 "policy", Map.ofEntries(
                         Map.entry("profile", "survival_omnidirectional"),
                         Map.entry("multiplayer_enabled", false),
@@ -26,7 +27,7 @@ final class McpTestFixtures {
                         Map.entry("max_distance_blocks", 32),
                         Map.entry("max_camera_degrees", 720),
                         Map.entry("max_blocks_broken", 8),
-                        Map.entry("max_interactions", 8),
+                        Map.entry("max_interactions", 16),
                         Map.entry("max_blocks_placed", 8),
                         Map.entry("omnidirectional_visual_radius_blocks", 16),
                         Map.entry("local_observation_radius_blocks", 6),

@@ -49,6 +49,31 @@ class ClientCommandInboxTest {
     }
 
     @Test
+    void everyPendingStopRetainsItsWaiterUntilPhysicalCleanupCompletes() {
+        assertThat(ClientCommandInbox.retainPendingStop(
+                ClientCommandInbox.StopProgress.PENDING, true)).isTrue();
+        assertThat(ClientCommandInbox.retainPendingStop(
+                ClientCommandInbox.StopProgress.PENDING, false)).isTrue();
+        assertThat(ClientCommandInbox.retainPendingStop(
+                ClientCommandInbox.StopProgress.FAILED, true)).isFalse();
+    }
+
+    @Test
+    void offStopLocksAuthorizationAtAdmissionWithoutCompletingItsWaiter() {
+        var arming = new LocalArmingState();
+        var session = UUID.randomUUID();
+        arming.arm(session, Set.of("navigate_to"));
+        assertThat(arming.beginAction(session)).isTrue();
+        var inbox = new ClientCommandInbox(4, new InputReleaseController(), arming);
+
+        var pending = inbox.requestLocalDisable();
+
+        assertThat(pending).isNotDone();
+        assertThat(arming.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.OFF);
+        assertThat(arming.snapshot(session).lastLockReason()).isEqualTo("local_ui_disabled");
+    }
+
+    @Test
     void stopReceiptKeepsReleaseExecutionAndMeasuredOwnerNoneIndependent() {
         var ownerRetained = ClientCommandInbox.stopProof(true, true, false);
         assertThat(ownerRetained.inputsReleased()).isTrue();
@@ -233,7 +258,7 @@ class ClientCommandInboxTest {
                 4,
                 new InputReleaseController(),
                 new LocalArmingState(),
-                (reason, session) -> true,
+                (reason, session) -> ClientCommandInbox.StopProgress.COMPLETE,
                 clock::get);
         var cleanedReceipt = new AtomicReference<String>();
         long deadline = 101L;

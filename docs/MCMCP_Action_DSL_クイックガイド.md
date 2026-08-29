@@ -30,6 +30,8 @@
 
 各`visible_surface`はrequired nullableな`state`と`placement_item`を返します。`state={block,properties}`が非nullなのは、閉じた建築copy allowlistと既存support用の`minecraft:dirt` / `minecraft:grass_block` / `minecraft:obsidian`だけで、その場合は登録propertyを省略しない完全なBlockStateです。それ以外は見た目から判別不能なpropertyを渡さないため`state=null`です。`placement_item`が非nullなら`state`も必ず非nullで、建築コピーではそのsurfaceの`state`を`source_state`へ、`placement_item`を`item`へそのままコピーします。
 
+`agent_get_state.standard_potions`は、自分のinventory内で標準Vanilla potionとcomponentが完全一致する1本stackだけを検証し、複数slot分を`{item,potion,count}`で集計します。従来の`inventory` item-ID集計も維持されますが、water / awkward / strength等は同じitem IDなので、醸造の宣言には`standard_potions`を使います。custom color / effect / name / lore等を持つstackや不可能な複数本stackは詳細を公開せず、この一覧から除外します。
+
 ## 座標を変換しない
 
 | 用途 | コピー元 | Action側 | 禁止事項 |
@@ -48,6 +50,7 @@
 - `approach_known_surface`: `{id,op,target,expected_block}`
 - `inspect_known_container`: `{id,op,target,expected_block}`
 - `take_known_container_stack`: `{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}`
+- `brew_known_potion_batch`: `{id,op,target,expected_block,input:{item,potion,count},ingredient_item,fuel_item,expected_output:{item,potion,count}}`
 - `till_known_batch`: `{id,op,targets:[position],expected_block,hoe_item}`
 - `plant_known_wheat_batch`: `{id,op,targets:[{target,support}],seed_item}`
 - `harvest_known_wheat_batch`: `{id,op,targets:[position]}`
@@ -69,9 +72,23 @@
 
 entry IDと変換後targetはplan内で一意、処理順は`entries`の入力順です。開始時点で既にtargetが完成stateでもskipせず失敗します。その場合は未設置suffixだけで新しいplanを作り、既設blockを最新観測済み`expected_state` supportとして扱います。NBT、fluid、gravity block、container、portal、command block、既存blockの破壊・置換はこのsliceでは扱いません。途中失敗時は未開始suffixを実行せず、完了済み設置だけをtraceに残します。
 
+## 標準Potion醸造の最小slice
+
+`brew_known_potion_batch`は、現在可視で通常reach内にある`minecraft:brewing_stand`を通常useし、catalogに列挙されたVanillaの一段recipeを1回だけ実行します。`target`は最新`visible_surface.position`、`expected_block`は`minecraft:brewing_stand`、`input`は自分の`standard_potions`証拠から、`expected_output`は目的recipeが定める標準identityから指定します。出力Potionを事前に所持している必要はありません。`standard_potions.count`はitem+potionごとの集計値なので、同数の丸写しではなく、宣言する1〜3本以上あることを確認します。`item`は`minecraft:potion | splash_potion | lingering_potion`、`count`は1〜3で入出力同数、`fuel_item`は常に`minecraft:blaze_powder`です。たとえばwater potion 3本とnether wartからawkward potion 3本を宣言します。通常potion→splashはgunpowder、splash→lingeringはdragon breathというcontainer変換も、catalogにある一段recipeとしてだけ利用できます。
+
+醸造台中央までの片道`|yaw|+|pitch|`は、planner受付時と実行開始直前の両方で270度以下でなければなりません。270度を超えるheadingでは、同じ可視醸造台をtargetにした`face_known_position`を`brew_known_potion_batch`の直前へ置き、そのface node自身の時間・tick・camera costを70秒 / 1,400 tickの醸造node costへ加えてAction budgetを宣言します。醸造node自体は、受付済みheadingからの照準とそのheadingへの復元を合わせて最大540度のままです。
+
+レシピ対応表の正本はcatalogの`$defs.brewingIngredient.description`です。特にVanilla 26.2の`addStartMix`系材料（breeze rod、slime block、stone、cobweb、magma cream、rabbit foot、sugar、glistering melon slice、spider eye、ghast tear、blaze powder）は、`water + 材料 -> mundane`と`awkward + 材料 -> 対応効果`の両方を持ちます。たとえば`awkward + breeze_rod -> wind_charged`であり、waterに対する同材料の結果はwind chargedではなくmundaneです。
+
+Action開始時には醸造台menuの5 item slotがすべて空で、内部のbrew timeが0、fuel counterがVanilla範囲の0〜20でなければなりません。この値は通常menuを開いた後にruntimeだけが検証し、MCPには公開しません。fuel counterが1以上なら既存の1 useを使ってfuel item投入を省略し、0ならinventoryからblaze powderを1個だけ投入します。不一致時は入力値を反射しない固定diagnosticでreplanします。途中状態の再開、失敗したActionのreplay、任意slot操作、任意recipeは扱いません。`ingredient_item=minecraft:blaze_powder`のstrength recipeでは、precharged時はingredient 1個、fuel counterが0ならingredient 1個とfuel 1個の合計2個をinventoryに必要とします。slot内容やmenu dataをMCPへ公開せず、runtime内でserverのfull-content / data更新、材料の正確な差分、brew開始→完了、close/reopen readbackを確認します。成功時は出力を回収し、5 item slotが再びすべて空で、fuel counterが初期値に応じてちょうど1 use減ったことまで確認します。custom potion stackや宣言と異なる内容があれば、クリックを続けずfail closedにします。
+
+照準と開始時viewへの復帰は、Action入場時のlocal camera速度設定を同じ上限として使います。失敗、期限超過、Escでも、Agentが開いたmenu、server cursor、selected slot、viewの解放が確認されるまではterminal結果を返さず、物理入力隔離を維持したままclient tickごとに有限cleanupを進めます。通常のEscはcleanup後にMCP ONの`READY`へ戻り、実際の解放faultだけがOFFになります。normal use送信後にcancelされた場合も、予約したopen期限まではscreen authorityを保持し、遅れて届いた一致OpenScreenをfull-contentで拘束してから閉じます。まだAgent-owned screenを一度も生成していない段階のpause画面やユーザーinventoryは閉じません。
+
+このnodeはAction内で1回だけ、top-level bodyの最後に置きます。`if` / `repeat`内や後続nodeは不許可です。失敗時は未開始suffixを止め、brew開始後にEsc等で中断した場合も成功やrollbackとみなしません。screen / cursor / input ownerの解放を確認してからterminal結果を返します。terminal menu所有中のrecoveryはgameplay interactionを送らないため、Action全体のinteraction上限は16のままです。
+
 ## budgetと失敗時の直し方
 
-budgetは成功予想ではなく、worst-caseを収める停止上限です。container操作には少なくとも30秒、600 ticks、camera 360度とschema記載のinteraction数を確保します。`apply_known_block_plan`は1 entryごとに15秒、300 ticks、camera 80度、1 placementを確保し、8 entryなら120秒、2400 ticks、camera 640度、8 placementsとします。移動距離、interaction、breakは0です。他の8-target mutation batchには目安として120秒、2400 ticks、最大720 camera度と、処理に応じた8 interactions / breaks / placementsを確保します。targetは入力順に実行するため、その順序のworst-caseが720 camera度を超える場合はruntimeに並べ替えさせず、小さいbatchへ分割します。
+budgetは成功予想ではなく、worst-caseを収める停止上限です。container操作には少なくとも30秒、600 ticks、camera 360度とschema記載のinteraction数を確保します。醸造node 1回には70秒、1400 ticks、照準と受付済みheadingへの復元を合わせて最大camera 540度、16 interactionsを確保し、distance / break / placementは0とします。直前に`face_known_position`が必要なら、そのnodeのcostは別途加算します。`apply_known_block_plan`は1 entryごとに15秒、300 ticks、camera 80度、1 placementを確保し、8 entryなら120秒、2400 ticks、camera 640度、8 placementsとします。移動距離、interaction、breakは0です。他の8-target mutation batchには目安として120秒、2400 ticks、最大720 camera度と、処理に応じた8 interactions / breaks / placementsを確保します。targetは入力順に実行するため、その順序のworst-caseが720 camera度を超える場合はruntimeに並べ替えさせず、小さいbatchへ分割します。
 
 schema違反はcatalog順に最大4件、budget不足は不足component名をまとめて返します。提出値や未知property名は診断へ反射されません。mutationやdrop生成後の`TARGET_UNKNOWN`をfield推測で直すのではなく、Actionを区切って新しいframeを観測してください。
 

@@ -20,10 +20,18 @@ public record PhaseFiveRequest(
             "harvest_tree_area",
             "sleep_at_bed",
             "survey_area");
+    private static final Set<String> ADAPTER_KINDS = Set.of(
+            "craft_items",
+            "transfer_items",
+            "brew_known_potion_batch",
+            "tend_crop_area",
+            "harvest_tree_area",
+            "sleep_at_bed",
+            "survey_area");
 
     public PhaseFiveRequest {
         Objects.requireNonNull(kind, "kind");
-        if (!KINDS.contains(kind)) {
+        if (!supportsAdapterKind(kind)) {
             throw new IllegalArgumentException("unsupported Phase 5 routine kind");
         }
         parameters = Collections.unmodifiableMap(new LinkedHashMap<>(
@@ -57,7 +65,14 @@ public record PhaseFiveRequest(
         bounds.hardDeadlineClientTick(admittedClientTick);
     }
 
+    /** Includes internal Action adapters without widening the legacy public routine catalog. */
+    public static boolean supportsAdapterKind(String kind) {
+        return ADAPTER_KINDS.contains(kind);
+    }
+
     private static boolean shortOperation(String kind) {
-        return kind.equals("craft_items") || kind.equals("transfer_items");
+        return kind.equals("craft_items")
+                || kind.equals("transfer_items")
+                || kind.equals("brew_known_potion_batch");
     }
 }

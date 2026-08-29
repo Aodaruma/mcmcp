@@ -33,6 +33,7 @@ public final class ClientCommandInbox {
     private final ArrayBlockingQueue<PendingCommand<?>> controlQueue;
     private final ConcurrentLinkedQueue<CompletableFuture<StopReceipt>> stopWaiters = new ConcurrentLinkedQueue<>();
     private StopRequest pendingStop;
+    private int pendingStopDiscardedStarts;
     private final AtomicLong safetyEpoch = new AtomicLong();
     private final Object admissionGate = new Object();
     private final InputReleaseController inputRelease;
@@ -44,11 +45,13 @@ public final class ClientCommandInbox {
     private StopReceipt terminalStopReceipt;
 
     public ClientCommandInbox(InputReleaseController inputRelease, LocalArmingState armingState) {
-        this(DEFAULT_CAPACITY, inputRelease, armingState, (reason, session) -> true);
+        this(DEFAULT_CAPACITY, inputRelease, armingState,
+                (reason, session) -> StopProgress.COMPLETE);
     }
 
     public ClientCommandInbox(int capacity, InputReleaseController inputRelease, LocalArmingState armingState) {
-        this(capacity, inputRelease, armingState, (reason, session) -> true);
+        this(capacity, inputRelease, armingState,
+                (reason, session) -> StopProgress.COMPLETE);
     }
 
     public ClientCommandInbox(
@@ -359,12 +362,25 @@ public final class ClientCommandInbox {
             var reason = request.reason();
             var beforeStop = armingState.snapshot(session.worldSessionId());
             boolean releaseCommandsSucceeded = inputRelease.releaseAll(minecraft);
-            boolean handlerSucceeded;
+            StopProgress handlerProgress;
             try {
-                handlerSucceeded = emergencyStopHandler.stop(reason, session);
+                handlerProgress = Objects.requireNonNull(
+                        emergencyStopHandler.stop(reason, session),
+                        "emergency stop handler returned no progress");
             }
             catch (RuntimeException | LinkageError failure) {
-                handlerSucceeded = false;
+                handlerProgress = StopProgress.FAILED;
+            }
+            int discarded = failPending(
+                    new CommandInvalidatedException("invalidated by emergency stop"));
+            pendingStopDiscardedStarts = Math.addExact(
+                    pendingStopDiscardedStarts, discarded);
+            if (retainPendingStop(handlerProgress, request.keepReady())) {
+                // Keep the original waiters until a later client tick confirms
+                // menu/cursor/view/slot cleanup. OFF intent was already applied at admission;
+                // a later OFF request can still replace a retained keep-ready request.
+                pendingStop = request;
+                return;
             }
             boolean inputOwnerNone;
             try {
@@ -373,7 +389,9 @@ public final class ClientCommandInbox {
                 inputOwnerNone = false;
             }
             StopProof stopProof = stopProof(
-                    releaseCommandsSucceeded, handlerSucceeded, inputOwnerNone);
+                    releaseCommandsSucceeded,
+                    handlerProgress == StopProgress.COMPLETE,
+                    inputOwnerNone);
             boolean locked = settleArmingAfterStop(
                     armingState,
                     beforeStop,
@@ -381,7 +399,6 @@ public final class ClientCommandInbox {
                     request.keepReady(),
                     stopProof.terminalSafe(),
                     reason);
-            int discarded = failPending(new CommandInvalidatedException("invalidated by emergency stop"));
             var receipt = new StopReceipt(
                     reason,
                     safetyEpoch.get(),
@@ -389,7 +406,8 @@ public final class ClientCommandInbox {
                     stopProof.inputsReleased(),
                     stopProof.inputOwnerNone(),
                     locked,
-                    discarded);
+                    pendingStopDiscardedStarts);
+            pendingStopDiscardedStarts = 0;
             if (!accepting) {
                 terminalStopReceipt = receipt;
             }
@@ -419,6 +437,11 @@ public final class ClientCommandInbox {
         stopWaiters.add(future);
         safetyEpoch.incrementAndGet();
         var request = new StopRequest(sanitizeReason(reason), keepReady);
+        if (!keepReady) {
+            // OFF is the caller's final authorization intent, independent of the bounded
+            // physical cleanup that the client lane must still finish before its waiter resolves.
+            armingState.lock(request.reason());
+        }
         if (pendingStop == null || pendingStop.keepReady()) {
             pendingStop = request;
         }
@@ -452,6 +475,11 @@ public final class ClientCommandInbox {
         return new StopProof(
                 releaseCommandsSucceeded && handlerSucceeded,
                 inputOwnerNone);
+    }
+
+    static boolean retainPendingStop(StopProgress progress, boolean keepReady) {
+        Objects.requireNonNull(progress, "progress");
+        return progress == StopProgress.PENDING;
     }
 
     private static String sanitizeReason(String reason) {
@@ -545,8 +573,10 @@ public final class ClientCommandInbox {
     @FunctionalInterface
     public interface EmergencyStopHandler {
         /** Runs on the Minecraft client thread before stop waiters are completed. */
-        boolean stop(String reason, WorldSessionTracker.Snapshot session);
+        StopProgress stop(String reason, WorldSessionTracker.Snapshot session);
     }
+
+    public enum StopProgress { COMPLETE, PENDING, FAILED }
 
     public static final class CommandTimeoutException extends RuntimeException {
         public CommandTimeoutException(String command) {

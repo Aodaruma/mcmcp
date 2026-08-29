@@ -89,6 +89,30 @@ class ContainerSyncSignalsTest {
         assertThat(rebound.packetLedgerRevision()).isZero();
         assertThat(rebound.lastOpenScreen()).isNull();
         assertThat(rebound.container()).isNull();
+        assertThat(rebound.data()).isEmpty();
         assertThat(rebound.lastClose()).isNull();
+    }
+
+    @Test
+    void menuDataIsSessionAndContainerBoundAndOpenClearsOlderValues() {
+        var channel = new ContainerSyncSignals.SessionChannel();
+        UUID session = UUID.randomUUID();
+        channel.bindAndSnapshot(session);
+        channel.openScreen(4, "minecraft:brewing_stand", 1);
+        channel.fullContent(4, "minecraft:brewing_stand", 7,
+                List.of(STONE), ContainerSyncSignals.StackFingerprint.EMPTY, 2);
+
+        var applied = channel.data(4, "minecraft:brewing_stand", 0, 400, 3);
+        assertThat(applied.applied()).isTrue();
+        assertThat(applied.snapshot().data().get(0).value()).isEqualTo(400);
+        assertThat(applied.snapshot().data().get(0).worldSessionId()).isEqualTo(session);
+
+        var wrong = channel.data(5, "minecraft:brewing_stand", 1, 20, 4);
+        assertThat(wrong.applied()).isFalse();
+        assertThat(wrong.rejectionReason()).isEqualTo("container_identity_mismatch");
+
+        var reopened = channel.openScreen(6, "minecraft:brewing_stand", 5);
+        assertThat(reopened.snapshot().container()).isNull();
+        assertThat(reopened.snapshot().data()).isEmpty();
     }
 }

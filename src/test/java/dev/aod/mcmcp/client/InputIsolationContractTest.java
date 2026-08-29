@@ -193,9 +193,19 @@ class InputIsolationContractTest {
         assertThat(invocations(method(runtime, "onPreTick")))
                 .containsSubsequence(
                         "dev/aod/mcmcp/runtime/McmcpRuntime#retryPendingAgentInputRelease",
+                        "dev/aod/mcmcp/runtime/ClientCommandInbox#drainEmergencyStopPreTick",
                         "dev/aod/mcmcp/runtime/McmcpRuntime#tickAgentAction");
         assertThat(invocations(method(runtime, "retryPendingAgentInputRelease")))
                 .contains("dev/aod/mcmcp/runtime/McmcpRuntime#publishAgentTerminal");
+    }
+
+    @Test
+    void aPendingReleaseKeepsPhysicalInputIsolatedEvenAfterAnOffIntent()
+            throws Exception {
+        var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
+
+        assertThat(fieldAccesses(method(runtime, "inputIsolationActive")))
+                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentInputRelease");
     }
 
     @Test
@@ -289,11 +299,30 @@ class InputIsolationContractTest {
                 .doesNotContain(
                         "dev/aod/mcmcp/runtime/McmcpRuntime#agentExecution",
                         "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentAdmission");
-        assertThat(invocations(method(runtime, "releaseAgentControl")))
-                .containsSubsequence(
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#boundedActionInputRelease",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#restoreAgentSelectedSlot");
         var terminalRelease = method(runtime, "releaseAgentControl");
+        assertThat(invocations(terminalRelease))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#advanceStatefulAgentCleanupOncePerClientTick",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime$AgentCleanupProgress#primitiveClosed",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime$AgentCleanupProgress#recoveryClosed",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#boundedActionInputRelease",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#brewingReleaseProgressing",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#restoreAgentSelectedSlot");
+        var statefulCleanup = method(
+                runtime, "advanceStatefulAgentCleanupOncePerClientTick");
+        assertThat(invocations(statefulCleanup))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#closeAgentPrimitiveExecutor",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#recordPendingAgentMotion",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#closeRecoveryGovernor");
+        assertThat(invocations(statefulCleanup).stream()
+                .filter(call -> call.equals(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#closeAgentPrimitiveExecutor")))
+                .hasSize(1);
+        assertThat(fieldAccesses(statefulCleanup))
+                .contains(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#lastStatefulAgentCleanupClientTick",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#lastStatefulAgentCleanupOwnershipEpoch");
         int failedReturn = firstOpcode(terminalRelease, Opcodes.IRETURN);
         assertThat(failedReturn).isGreaterThanOrEqualTo(0);
         assertThat(firstFieldWrite(terminalRelease, "agentExecution"))
@@ -382,6 +411,16 @@ class InputIsolationContractTest {
         for (var instruction : method.instructions) {
             if (instruction instanceof FieldInsnNode field
                     && field.getOpcode() == Opcodes.PUTFIELD) {
+                fields.add(field.owner + "#" + field.name);
+            }
+        }
+        return List.copyOf(fields);
+    }
+
+    private static List<String> fieldAccesses(MethodNode method) {
+        var fields = new ArrayList<String>();
+        for (var instruction : method.instructions) {
+            if (instruction instanceof FieldInsnNode field) {
                 fields.add(field.owner + "#" + field.name);
             }
         }

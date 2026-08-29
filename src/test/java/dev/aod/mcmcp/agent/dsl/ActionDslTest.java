@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import dev.aod.mcmcp.brewing.StandardPotionStackSpec;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -40,7 +41,7 @@ class ActionDslTest {
     void parsesEveryNormativeCatalogExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
-        assertThat(examples).hasSize(11);
+        assertThat(examples).hasSize(12);
         for (int index = 0; index < examples.size(); index++) {
             ActionDsl.Request parsed = ActionDslParser.parse(examples.get(index).getAsJsonObject());
             assertThat(parsed.schemaVersion()).isEqualTo(1);
@@ -506,6 +507,81 @@ class ActionDslTest {
     }
 
     @Test
+    void parsesValidatesAndCompilesOneTerminalKnownPotionBatch() {
+        JsonObject brew = brewKnownPotionBatch("brew", 3);
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "inventory_transfer"),
+                brew,
+                budget(70_000, 1_400, 0, 360, 16, 0, 0)));
+
+        assertThat(request.program().body()).singleElement().satisfies(node -> {
+            var parsed = (ActionDsl.BrewKnownPotionBatch) node;
+            assertThat(parsed.target()).isEqualTo(new ActionDsl.Position(
+                    "minecraft:overworld", 10, 64, 10));
+            assertThat(parsed.expectedBlock()).isEqualTo("minecraft:brewing_stand");
+            assertThat(parsed.input()).isEqualTo(new StandardPotionStackSpec(
+                    "minecraft:potion", "minecraft:water", 3));
+            assertThat(parsed.ingredientItem()).isEqualTo("minecraft:nether_wart");
+            assertThat(parsed.fuelItem()).isEqualTo("minecraft:blaze_powder");
+            assertThat(parsed.expectedOutput()).isEqualTo(new StandardPotionStackSpec(
+                    "minecraft:potion", "minecraft:awkward", 3));
+        });
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.INVENTORY_TRANSFER);
+
+        var cost = new ActionDslCompiler.Cost(
+                70_000, 1_400, 0, 120, 16, 0, 0);
+        assertThat(ActionDslCompiler.compile(
+                request, ignored -> Optional.of(cost), request.program().capabilities())
+                .worstCaseCost()).isEqualTo(cost);
+
+        var wrongTime = new ActionDslCompiler.Cost(
+                69_950, 1_399, 0, 120, 16, 0, 0);
+        assertThatThrownBy(() -> ActionDslCompiler.compile(
+                request, ignored -> Optional.of(wrongTime), request.program().capabilities()))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE);
+    }
+
+    @Test
+    void brewingIsTopLevelTerminalNonRepeatableAndRecipeClosed() {
+        JsonObject brew = brewKnownPotionBatch("brew", 3);
+        assertCode(request(
+                        capabilities("camera", "inventory_transfer"),
+                        array(brew, waitNode("after", 1)),
+                        budget(70_050, 1_401, 0, 360, 16, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        assertCode(request(
+                        capabilities("camera", "inventory_transfer"),
+                        repeat("repeat_brew", 2, array(brew)),
+                        budget(140_000, 2_800, 0, 720, 16, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject wrongOutput = brewKnownPotionBatch("brew", 3);
+        wrongOutput.getAsJsonObject("expected_output")
+                .addProperty("potion", "minecraft:strength");
+        assertCode(request(
+                        capabilities("camera", "inventory_transfer"), wrongOutput,
+                        budget(70_000, 1_400, 0, 360, 16, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject mismatchedCount = brewKnownPotionBatch("brew", 3);
+        mismatchedCount.getAsJsonObject("expected_output").addProperty("count", 2);
+        assertCode(request(
+                        capabilities("camera", "inventory_transfer"), mismatchedCount,
+                        budget(70_000, 1_400, 0, 360, 16, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        assertCode(request(
+                        capabilities("camera"), brewKnownPotionBatch("brew", 3),
+                        budget(70_000, 1_400, 0, 360, 16, 0, 0)),
+                ActionDslException.Code.CAPABILITY_DENIED);
+    }
+
+    @Test
     void parsesAndCompilesVisibleItemCollectionFromContinuousObservedCoordinates() {
         JsonObject collect = baseNode("collect", "collect_visible_item");
         collect.addProperty("displayed_item", "minecraft:oak_log");
@@ -907,7 +983,7 @@ class ActionDslTest {
                         budget(1_000, 20, 0, 0, 0, 9, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
         assertCode(request(capabilities(), waitNode("wait", 1),
-                        budget(1_000, 20, 0, 0, 9, 0, 0)),
+                        budget(1_000, 20, 0, 0, 17, 0, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
     }
 
@@ -1170,6 +1246,25 @@ class ActionDslTest {
             entries.add(entry);
         }
         node.add("entries", entries);
+        return node;
+    }
+
+    private static JsonObject brewKnownPotionBatch(String id, int count) {
+        JsonObject node = baseNode(id, "brew_known_potion_batch");
+        node.add("target", position());
+        node.addProperty("expected_block", "minecraft:brewing_stand");
+        JsonObject input = new JsonObject();
+        input.addProperty("item", "minecraft:potion");
+        input.addProperty("potion", "minecraft:water");
+        input.addProperty("count", count);
+        node.add("input", input);
+        node.addProperty("ingredient_item", "minecraft:nether_wart");
+        node.addProperty("fuel_item", "minecraft:blaze_powder");
+        JsonObject output = new JsonObject();
+        output.addProperty("item", "minecraft:potion");
+        output.addProperty("potion", "minecraft:awkward");
+        output.addProperty("count", count);
+        node.add("expected_output", output);
         return node;
     }
 

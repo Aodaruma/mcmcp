@@ -196,6 +196,17 @@ public final class ClientPredictionSignals {
         }
     }
 
+    private PredictionAcknowledgement acknowledgement(
+            LevelChannel expectedChannel,
+            AttemptState state) {
+        synchronized (gate) {
+            if (!expectedChannel.compatible) {
+                return state.latch.incompatibleAcknowledgement();
+            }
+            return state.latch.acknowledgement();
+        }
+    }
+
     private void close(LevelChannel expectedChannel, AttemptState state) {
         synchronized (gate) {
             expectedChannel.attempts.remove(state);
@@ -243,6 +254,29 @@ public final class ClientPredictionSignals {
         CONFIRMED,
         INCOMPATIBLE,
         CLOSED
+    }
+
+    /** ACK-only causal barrier used when the server action need not mutate a block state. */
+    public enum AcknowledgementStatus {
+        NO_PREDICTION,
+        WAITING_ACK,
+        ACKNOWLEDGED,
+        IDENTITY_RELEASED,
+        INCOMPATIBLE,
+        CLOSED
+    }
+
+    public record PredictionAcknowledgement(
+            AcknowledgementStatus status,
+            Integer issuedSequence,
+            Integer acknowledgedSequence) {
+        public PredictionAcknowledgement {
+            Objects.requireNonNull(status, "status");
+        }
+
+        public boolean acknowledged() {
+            return status == AcknowledgementStatus.ACKNOWLEDGED;
+        }
     }
 
     public record Confirmation<S>(
@@ -301,6 +335,15 @@ public final class ClientPredictionSignals {
             return owner.confirmation(channel, state, postcondition);
         }
 
+        /**
+         * Reports whether a server ACK has crossed this exact prediction sequence. This is a
+         * causal packet-order barrier only; it does not assert a block-state postcondition.
+         */
+        public PredictionAcknowledgement acknowledgement() {
+            requireOpenOrIdentityReleased();
+            return owner.acknowledgement(channel, state);
+        }
+
         public BlockPos target() {
             return state.target;
         }
@@ -328,6 +371,13 @@ public final class ClientPredictionSignals {
                 throw new PredictionBridgeException("prediction attempt is closed");
             }
         }
+
+
+        private void requireOpenOrIdentityReleased() {
+            if (closed && !state.latch.identityReleased) {
+                throw new PredictionBridgeException("prediction attempt is closed");
+            }
+        }
     }
 
     /** Package-private pure state machine to keep acknowledgement semantics unit-testable. */
@@ -343,6 +393,7 @@ public final class ClientPredictionSignals {
         private Integer expectedBeforeSequence;
         private boolean incompatible;
         private boolean closed;
+        private boolean identityReleased;
 
         ConfirmationLatch(long startedClientTick) {
             this(startedClientTick, null);
@@ -499,12 +550,47 @@ public final class ClientPredictionSignals {
             return snapshot(ConfirmationStatus.INCOMPATIBLE);
         }
 
+        PredictionAcknowledgement acknowledgement() {
+            if (identityReleased) {
+                return acknowledgementSnapshot(AcknowledgementStatus.IDENTITY_RELEASED);
+            }
+            if (incompatible) {
+                return incompatibleAcknowledgement();
+            }
+            if (closed) {
+                return acknowledgementSnapshot(AcknowledgementStatus.CLOSED);
+            }
+            if (issuedSequence == null) {
+                return acknowledgementSnapshot(AcknowledgementStatus.NO_PREDICTION);
+            }
+            if (acknowledgedSequence == null
+                    || Integer.compareUnsigned(acknowledgedSequence, issuedSequence) < 0) {
+                return acknowledgementSnapshot(AcknowledgementStatus.WAITING_ACK);
+            }
+            return acknowledgementSnapshot(AcknowledgementStatus.ACKNOWLEDGED);
+        }
+
+        PredictionAcknowledgement incompatibleAcknowledgement() {
+            return acknowledgementSnapshot(AcknowledgementStatus.INCOMPATIBLE);
+        }
+
         void incompatible() {
             incompatible = true;
         }
 
         void close() {
             closed = true;
+        }
+
+        void releaseIdentity() {
+            identityReleased = true;
+            closed = true;
+        }
+
+        private PredictionAcknowledgement acknowledgementSnapshot(
+                AcknowledgementStatus status) {
+            return new PredictionAcknowledgement(
+                    status, issuedSequence, acknowledgedSequence);
         }
 
         private Confirmation<S> snapshot(ConfirmationStatus status) {
@@ -544,7 +630,7 @@ public final class ClientPredictionSignals {
 
         private void closeAll() {
             for (var attempt : new ArrayList<>(attempts)) {
-                attempt.latch.close();
+                attempt.latch.releaseIdentity();
             }
             attempts.clear();
         }

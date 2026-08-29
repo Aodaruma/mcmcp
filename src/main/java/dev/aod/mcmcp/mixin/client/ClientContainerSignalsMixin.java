@@ -7,6 +7,7 @@ import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.network.protocol.game.ClientboundContainerClosePacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetContentPacket;
+import net.minecraft.network.protocol.game.ClientboundContainerSetDataPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
 import net.minecraft.network.protocol.game.ClientboundOpenScreenPacket;
 import net.minecraft.network.protocol.game.ClientboundSetCursorItemPacket;
@@ -90,6 +91,22 @@ public abstract class ClientContainerSignalsMixin {
                 packet.getStateId(), packet.getSlot(),
                 ContainerSyncSignals.StackFingerprint.fromServerPacket(packet.getItem()),
                 context.screenMatches(), signals.currentTick());
+    }
+
+    @Inject(method = "handleContainerSetData", at = @At("TAIL"), require = 1, expect = 1)
+    private void mcmcp$serverContainerData(
+            ClientboundContainerSetDataPacket packet, CallbackInfo callback) {
+        if (!acceptsContainerEvidence()) {
+            return;
+        }
+        var context = currentMenuContext();
+        if (context == null) {
+            return;
+        }
+        var signals = ScreenOwnershipSignals.global();
+        signals.onData(context.level(), packet.getContainerId(), context.menuTypeId(),
+                packet.getId(), packet.getValue(), context.screenMatches(),
+                signals.currentTick());
     }
 
     @Inject(method = "handleSetCursorItem", at = @At("TAIL"), require = 1, expect = 1)

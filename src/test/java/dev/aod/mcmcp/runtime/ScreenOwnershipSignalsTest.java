@@ -230,6 +230,143 @@ class ScreenOwnershipSignalsTest {
                 .isEqualTo(ScreenOwnershipSignals.Phase.IDLE);
     }
 
+    @Test
+    void legacyCancellationBeforeOwnershipResetsImmediately() {
+        var fixture = new Fixture(20);
+
+        var canceled = fixture.core.cancelRoutine(fixture.routine, null);
+
+        assertThat(canceled.authorityMatched()).isTrue();
+        assertThat(canceled.closeMenuBestEffort()).isFalse();
+        assertThat(canceled.reason()).isEqualTo(
+                "screen_authority_canceled_before_ownership");
+        assertThat(fixture.core.snapshot().phase())
+                .isEqualTo(ScreenOwnershipSignals.Phase.IDLE);
+        assertThat(fixture.core.snapshot().cancelBeforeOwnership()).isFalse();
+        assertThat(fixture.core.expire(21).relevant()).isFalse();
+
+        var afterOpenPacket = new Fixture(20);
+        afterOpenPacket.open(7, MENU, 2);
+        assertThat(afterOpenPacket.core.cancelRoutine(afterOpenPacket.routine, null)
+                .reason()).isEqualTo("screen_authority_canceled_before_ownership");
+        assertThat(afterOpenPacket.core.snapshot().phase())
+                .isEqualTo(ScreenOwnershipSignals.Phase.IDLE);
+
+        var afterMaterialization = new Fixture(20);
+        afterMaterialization.open(7, MENU, 2);
+        afterMaterialization.core.allowScreenOpening(7, MENU, 2);
+        var materializedCancel = afterMaterialization.core.cancelRoutine(
+                afterMaterialization.routine,
+                new ScreenOwnershipSignals.MenuView(7, MENU));
+        assertThat(materializedCancel.closeMenuBestEffort()).isFalse();
+        assertThat(afterMaterialization.core.snapshot().phase())
+                .isEqualTo(ScreenOwnershipSignals.Phase.IDLE);
+    }
+
+    @Test
+    void predictedUseCancellationRetiresOnlyAfterItsCausalAck() {
+        var fixture = new Fixture(2);
+
+        fixture.core.cancelRoutine(fixture.routine, null,
+                ScreenOwnershipSignals.CausalBarrierStatus.WAITING_ACK);
+        assertThat(fixture.core.expire(3).allowed()).isFalse();
+        assertThat(fixture.core.snapshot().phase())
+                .isEqualTo(ScreenOwnershipSignals.Phase.EXPECTING_OPEN_PACKET);
+        assertThat(fixture.core.snapshot().causalCancelRequired()).isTrue();
+
+        var retired = fixture.core.cancelRoutine(fixture.routine, null,
+                ScreenOwnershipSignals.CausalBarrierStatus.ACKNOWLEDGED);
+        assertThat(retired.authorityMatched()).isTrue();
+        assertThat(retired.reason()).isEqualTo(
+                "predicted_open_retired_after_causal_barrier");
+        assertThat(fixture.core.snapshot().phase())
+                .isEqualTo(ScreenOwnershipSignals.Phase.IDLE);
+    }
+
+    @Test
+    void canceledPredictedUseAcceptsLateExactScreenAndClosesBeforeFullContent() {
+        var fixture = new Fixture(2);
+        fixture.core.cancelRoutine(fixture.routine, null,
+                ScreenOwnershipSignals.CausalBarrierStatus.WAITING_ACK);
+        fixture.core.expire(3);
+
+        assertThat(fixture.open(7, MENU, 3).allowed()).isTrue();
+        assertThat(fixture.core.allowScreenOpening(7, MENU, 3).allowed()).isTrue();
+        var close = fixture.core.cancelRoutine(
+                fixture.routine, new ScreenOwnershipSignals.MenuView(7, MENU),
+                ScreenOwnershipSignals.CausalBarrierStatus.WAITING_ACK);
+
+        assertThat(close.closeMenuBestEffort()).isTrue();
+        assertThat(close.serverCursorEmpty()).isFalse();
+        assertThat(close.reason()).isEqualTo(
+                "close_materialized_menu_before_agent_click");
+        assertThat(fixture.core.onScreenClosing(7, MENU).allowed()).isTrue();
+        assertThat(fixture.core.snapshot().phase())
+                .isEqualTo(ScreenOwnershipSignals.Phase.IDLE);
+    }
+
+    @Test
+    void ownershipAndLastServerCursorProofSurviveFailureUntilSafeRelease() {
+        var fixture = ownedFixture(STONE);
+
+        fixture.core.failIfActive("test_failure");
+
+        assertThat(fixture.core.snapshot().everOwned()).isTrue();
+        assertThat(fixture.core.snapshot().lastServerCursorProven()).isTrue();
+        assertThat(fixture.core.snapshot().lastServerCursorEmpty()).isFalse();
+        assertThat(fixture.core.cancelRoutine(fixture.routine, null).reason())
+                .isEqualTo("failed_screen_close_pending");
+        assertThat(fixture.core.snapshot().phase())
+                .isEqualTo(ScreenOwnershipSignals.Phase.FAILED);
+        assertThat(fixture.core.releaseRoutineOnIdentityLoss(fixture.routine)).isTrue();
+        assertThat(fixture.core.snapshot().phase())
+                .isEqualTo(ScreenOwnershipSignals.Phase.IDLE);
+    }
+
+    @Test
+    void agentClickInvalidatesOldCursorProofUntilANewerCursorPacketArrives() {
+        var fixture = ownedFixture(EMPTY);
+        long dispatchRevision = fixture.core.snapshot().packetLedgerRevision();
+
+        assertThat(fixture.core.invalidateServerCursorProof(
+                fixture.routine, dispatchRevision)).isTrue();
+        assertThat(fixture.core.snapshot().lastServerCursorProven()).isFalse();
+        assertThat(fixture.core.snapshot().cursorProofRequiredAfterRevision())
+                .isEqualTo(dispatchRevision);
+        assertThat(fixture.core.cancelRoutine(
+                fixture.routine, new ScreenOwnershipSignals.MenuView(7, MENU)).reason())
+                .isEqualTo("owned_server_cursor_proof_pending");
+
+        var slotOnly = fixture.channel.slot(7, MENU, 2, 0, STONE, 4);
+        assertThat(fixture.core.onIncrementalContent(slotOnly, true, false).allowed())
+                .isTrue();
+        assertThat(fixture.core.snapshot().lastServerCursorProven()).isFalse();
+
+        var freshCursor = fixture.channel.carried(7, MENU, EMPTY, 5);
+        assertThat(fixture.core.onIncrementalContent(freshCursor, true, true).allowed())
+                .isTrue();
+        assertThat(fixture.core.snapshot().lastServerCursorProven()).isTrue();
+        assertThat(fixture.core.snapshot().lastServerCursorEmpty()).isTrue();
+        assertThat(fixture.core.snapshot().lastServerCursorProofRevision())
+                .isGreaterThan(dispatchRevision);
+    }
+
+    @Test
+    void unexpectedCloseCannotReuseCursorProofFromBeforeAgentClick() {
+        var fixture = ownedFixture(EMPTY);
+        long dispatchRevision = fixture.core.snapshot().packetLedgerRevision();
+        fixture.core.invalidateServerCursorProof(fixture.routine, dispatchRevision);
+
+        fixture.core.failIfActive("unexpected_screen_closed");
+
+        assertThat(fixture.core.snapshot().everOwned()).isTrue();
+        assertThat(fixture.core.snapshot().lastServerCursorProven()).isFalse();
+        assertThat(fixture.core.cancelRoutine(fixture.routine, null).reason())
+                .isEqualTo("failed_screen_close_pending");
+        assertThat(fixture.core.snapshot().phase())
+                .isEqualTo(ScreenOwnershipSignals.Phase.FAILED);
+    }
+
     private static Fixture ownedFixture(ContainerSyncSignals.StackFingerprint cursor) {
         return ownedFixture(cursor, 1);
     }

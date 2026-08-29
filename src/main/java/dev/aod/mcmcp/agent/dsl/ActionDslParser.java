@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
+import dev.aod.mcmcp.brewing.StandardPotionStackSpec;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -132,6 +133,7 @@ public final class ActionDslParser {
             case "open_known_passage" -> openKnownPassage(object, path);
             case "inspect_known_container" -> inspectKnownContainer(object, path);
             case "take_known_container_stack" -> takeKnownContainerStack(object, path);
+            case "brew_known_potion_batch" -> brewKnownPotionBatch(object, path);
             case "collect_visible_item" -> collectVisibleItem(object, path);
             case "collect_visible_item_batch" -> collectVisibleItemBatch(object, path);
             case "wait_ticks" -> waitTicks(object, path);
@@ -382,6 +384,39 @@ public final class ActionDslParser {
                 string(source.get("stack_policy"), path + ".stack_policy"),
                 integer(source.get("minimum_inventory_count"),
                         path + ".minimum_inventory_count"));
+    }
+
+    private static ActionDsl.BrewKnownPotionBatch brewKnownPotionBatch(
+            JsonObject source, String path) {
+        exactKeys(source, path,
+                Set.of("id", "op", "target", "expected_block", "input",
+                        "ingredient_item", "fuel_item", "expected_output"),
+                Set.of("id", "op", "target", "expected_block", "input",
+                        "ingredient_item", "fuel_item", "expected_output"));
+        return new ActionDsl.BrewKnownPotionBatch(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                string(source.get("expected_block"), path + ".expected_block"),
+                standardPotionStack(source.get("input"), path + ".input"),
+                string(source.get("ingredient_item"), path + ".ingredient_item"),
+                string(source.get("fuel_item"), path + ".fuel_item"),
+                standardPotionStack(
+                        source.get("expected_output"), path + ".expected_output"));
+    }
+
+    private static StandardPotionStackSpec standardPotionStack(
+            JsonElement value, String path) {
+        JsonObject object = object(value, path, Set.of("item", "potion", "count"),
+                Set.of("item", "potion", "count"));
+        try {
+            return new StandardPotionStackSpec(
+                    string(object.get("item"), path + ".item"),
+                    string(object.get("potion"), path + ".potion"),
+                    integer(object.get("count"), path + ".count"));
+        } catch (IllegalArgumentException failure) {
+            throw new ActionDslException(
+                    INVALID_ARGUMENT, path + " is not a standard potion batch", failure);
+        }
     }
 
     private static ActionDsl.CollectVisibleItem collectVisibleItem(

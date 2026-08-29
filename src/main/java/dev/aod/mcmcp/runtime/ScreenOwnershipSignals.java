@@ -206,7 +206,8 @@ public final class ScreenOwnershipSignals {
                         stateId, slot, stack, receivedTick);
                 transition = result.isEmpty()
                         ? core.failIfActive("screen_world_session_unbound")
-                        : core.onIncrementalContent(result.orElseThrow(), liveScreenMatches);
+                        : core.onIncrementalContent(
+                                result.orElseThrow(), liveScreenMatches, false);
             }
         }
         notifyPacketFailure(transition);
@@ -230,7 +231,8 @@ public final class ScreenOwnershipSignals {
                         observedMenuTypeId, menuSlots, stack, receivedTick);
                 transition = result.isEmpty()
                         ? core.failIfActive("screen_world_session_unbound")
-                        : core.onIncrementalContent(result.orElseThrow(), liveScreenMatches);
+                        : core.onIncrementalContent(
+                                result.orElseThrow(), liveScreenMatches, false);
             }
         }
         notifyPacketFailure(transition);
@@ -253,7 +255,34 @@ public final class ScreenOwnershipSignals {
                         observedMenuTypeId, carried, receivedTick);
                 transition = result.isEmpty()
                         ? core.failIfActive("screen_world_session_unbound")
-                        : core.onIncrementalContent(result.orElseThrow(), liveScreenMatches);
+                        : core.onIncrementalContent(
+                                result.orElseThrow(), liveScreenMatches, true);
+            }
+        }
+        notifyPacketFailure(transition);
+        return transition;
+    }
+
+    /** Packet bridge for server-authored menu data such as brewing time and fuel. */
+    public Transition onData(
+            ClientLevel level,
+            int containerId,
+            String observedMenuTypeId,
+            int dataId,
+            int value,
+            boolean liveScreenMatches,
+            long receivedTick) {
+        Transition transition;
+        synchronized (gate) {
+            if (level != boundLevel) {
+                transition = core.failIfActive("screen_world_identity_mismatch");
+            } else {
+                var result = containerSignals.onData(level, containerId,
+                        observedMenuTypeId, dataId, value, receivedTick);
+                transition = result.isEmpty()
+                        ? core.failIfActive("screen_world_session_unbound")
+                        : core.onIncrementalContent(
+                                result.orElseThrow(), liveScreenMatches, false);
             }
         }
         notifyPacketFailure(transition);
@@ -314,6 +343,41 @@ public final class ScreenOwnershipSignals {
         var live = liveMenuView();
         synchronized (gate) {
             return core.cancelRoutine(routineId, live.orElse(null));
+        }
+    }
+
+    /**
+     * Cancels authority after a normal block-use prediction crossed the network boundary. The
+     * exact expected-open tombstone cannot be retired by a wall-clock deadline: only an ACK which
+     * is causally after the server's use handling, or loss of the old connection context, proves
+     * that no matching OpenScreen remains in flight.
+     */
+    public CleanupDecision cancelRoutineAfterPredictedUse(
+            UUID routineId, CausalBarrierStatus barrierStatus) {
+        Objects.requireNonNull(routineId, "routineId");
+        Objects.requireNonNull(barrierStatus, "barrierStatus");
+        var live = liveMenuView();
+        synchronized (gate) {
+            return core.cancelRoutine(routineId, live.orElse(null), barrierStatus);
+        }
+    }
+
+    /** Releases only the named routine's old screen context after identity replacement. */
+    public boolean releaseRoutineOnIdentityLoss(UUID routineId) {
+        Objects.requireNonNull(routineId, "routineId");
+        synchronized (gate) {
+            return core.releaseRoutineOnIdentityLoss(routineId);
+        }
+    }
+
+    /** Invalidates cursor evidence immediately before one Agent-owned container click. */
+    public boolean invalidateServerCursorProof(UUID routineId, long dispatchRevision) {
+        Objects.requireNonNull(routineId, "routineId");
+        if (dispatchRevision < 0L) {
+            throw new IllegalArgumentException("negative dispatch revision");
+        }
+        synchronized (gate) {
+            return core.invalidateServerCursorProof(routineId, dispatchRevision);
         }
     }
 
@@ -410,6 +474,14 @@ public final class ScreenOwnershipSignals {
         FAILED
     }
 
+    public enum CausalBarrierStatus {
+        NOT_REQUIRED,
+        WAITING_ACK,
+        ACKNOWLEDGED,
+        IDENTITY_RELEASED,
+        INCOMPATIBLE
+    }
+
     public record OwnedScreenSession(
             ExpectedOpenToken token,
             ContainerSyncSignals.ContainerSnapshot serverSnapshot,
@@ -450,7 +522,15 @@ public final class ScreenOwnershipSignals {
             ExpectedOpenToken expectedOpen,
             OwnedScreenSession ownedSession,
             long packetLedgerRevision,
-            String failureReason) {
+            String failureReason,
+            boolean cancelBeforeOwnership,
+            boolean screenMaterialized,
+            boolean causalCancelRequired,
+            boolean everOwned,
+            boolean lastServerCursorProven,
+            boolean lastServerCursorEmpty,
+            long lastServerCursorProofRevision,
+            long cursorProofRequiredAfterRevision) {
         public Snapshot {
             Objects.requireNonNull(phase, "phase");
         }
@@ -499,6 +579,14 @@ public final class ScreenOwnershipSignals {
         private long latestLedgerRevision;
         private OwnedScreenSession ownedSession;
         private String failureReason;
+        private boolean cancelBeforeOwnership;
+        private boolean screenMaterialized;
+        private boolean causalCancelRequired;
+        private boolean everOwned;
+        private boolean lastServerCursorProven;
+        private boolean lastServerCursorEmpty;
+        private long lastServerCursorProofRevision = -1L;
+        private long cursorProofRequiredAfterRevision = -1L;
 
         Transition bindSession(UUID worldSessionId, long ledgerRevision) {
             Objects.requireNonNull(worldSessionId, "worldSessionId");
@@ -532,6 +620,14 @@ public final class ScreenOwnershipSignals {
             menuTypeId = null;
             ownedSession = null;
             failureReason = null;
+            cancelBeforeOwnership = false;
+            screenMaterialized = false;
+            causalCancelRequired = false;
+            everOwned = false;
+            lastServerCursorProven = false;
+            lastServerCursorEmpty = false;
+            lastServerCursorProofRevision = -1L;
+            cursorProofRequiredAfterRevision = -1L;
             phase = Phase.EXPECTING_OPEN_PACKET;
             return true;
         }
@@ -548,7 +644,8 @@ public final class ScreenOwnershipSignals {
             if (!evidence.worldSessionId().equals(expectedOpen.worldSessionId())) {
                 return fail("open_screen_world_session_mismatch");
             }
-            if (evidence.receivedTick() > expectedOpen.deadlineTick()) {
+            if (!cancelBeforeOwnership
+                    && evidence.receivedTick() > expectedOpen.deadlineTick()) {
                 return fail("expected_open_deadline_exceeded");
             }
             if (evidence.packetLedgerRevision() <= baselineLedgerRevision) {
@@ -570,12 +667,13 @@ public final class ScreenOwnershipSignals {
                 return Transition.irrelevant();
             }
             if (phase != Phase.EXPECTING_SCREEN
-                    || tick > expectedOpen.deadlineTick()
+                    || (!cancelBeforeOwnership && tick > expectedOpen.deadlineTick())
                     || observedContainerId != containerId
                     || !Objects.equals(observedMenuTypeId, menuTypeId)) {
                 return fail("unexpected_screen_opened");
             }
             phase = Phase.EXPECTING_FULL_CONTENT;
+            screenMaterialized = true;
             return Transition.accepted();
         }
 
@@ -599,18 +697,28 @@ public final class ScreenOwnershipSignals {
                     || !content.worldSessionId().equals(expectedOpen.worldSessionId())
                     || content.containerId() != containerId
                     || !content.menuTypeId().equals(menuTypeId)
-                    || content.receivedTick() > expectedOpen.deadlineTick()
+                    || (!cancelBeforeOwnership
+                            && content.receivedTick() > expectedOpen.deadlineTick())
                     || (phase == Phase.EXPECTING_FULL_CONTENT
                             && content.packetLedgerRevision() <= openLedgerRevision)) {
                 return fail("full_content_identity_or_freshness_mismatch");
             }
             ownedSession = new OwnedScreenSession(expectedOpen, content, content.receivedTick());
+            everOwned = true;
+            recordServerCursorProof(content);
             phase = Phase.OWNED;
             return Transition.accepted();
         }
 
         Transition onIncrementalContent(
                 ContainerSyncSignals.RecordResult result, boolean liveScreenMatches) {
+            return onIncrementalContent(result, liveScreenMatches, false);
+        }
+
+        Transition onIncrementalContent(
+                ContainerSyncSignals.RecordResult result,
+                boolean liveScreenMatches,
+                boolean cursorAuthored) {
             Objects.requireNonNull(result, "result");
             latestLedgerRevision = result.snapshot().packetLedgerRevision();
             if (!active()) {
@@ -627,11 +735,16 @@ public final class ScreenOwnershipSignals {
                     || content.containerId() != containerId
                     || !content.menuTypeId().equals(menuTypeId)
                     || !content.worldSessionId().equals(expectedOpen.worldSessionId())
-                    || content.receivedTick() > expectedOpen.deadlineTick()) {
+                    || (!cancelBeforeOwnership
+                            && content.receivedTick() > expectedOpen.deadlineTick())) {
                 return fail("container_incremental_sync_mismatch");
             }
             ownedSession = new OwnedScreenSession(
                     expectedOpen, content, ownedSession.ownedAtTick());
+            everOwned = true;
+            if (cursorAuthored) {
+                recordServerCursorProof(content);
+            }
             return Transition.accepted();
         }
 
@@ -665,9 +778,22 @@ public final class ScreenOwnershipSignals {
         }
 
         Transition expire(long tick) {
-            return active() && tick > expectedOpen.deadlineTick()
-                    ? fail("expected_screen_deadline_exceeded")
-                    : Transition.irrelevant();
+            if (!active() || tick <= expectedOpen.deadlineTick()) {
+                return Transition.irrelevant();
+            }
+            if (cancelBeforeOwnership && phase == Phase.EXPECTING_OPEN_PACKET
+                    && !causalCancelRequired) {
+                // No server open packet arrived inside its reserved window. Retiring the
+                // legacy non-predicted tombstone here preserves existing container behavior.
+                resetActive();
+                return Transition.accepted();
+            }
+            if (cancelBeforeOwnership) {
+                // A predicted-use tombstone is packet-causal, not time-causal. Past the action
+                // deadline it remains passive and can only be retired by its ACK or identity loss.
+                return Transition.waiting();
+            }
+            return fail("expected_screen_deadline_exceeded");
         }
 
         Transition failIfActive(String reason) {
@@ -675,9 +801,20 @@ public final class ScreenOwnershipSignals {
         }
 
         CleanupDecision cancelRoutine(UUID routineId, MenuView liveMenu) {
+            return cancelRoutine(routineId, liveMenu, CausalBarrierStatus.NOT_REQUIRED);
+        }
+
+        CleanupDecision cancelRoutine(
+                UUID routineId,
+                MenuView liveMenu,
+                CausalBarrierStatus barrierStatus) {
             Objects.requireNonNull(routineId, "routineId");
+            Objects.requireNonNull(barrierStatus, "barrierStatus");
             if (expectedOpen == null || !routineId.equals(expectedOpen.routineId())) {
                 return CleanupDecision.none(false, "routine_does_not_own_screen_authority");
+            }
+            if (barrierStatus != CausalBarrierStatus.NOT_REQUIRED) {
+                causalCancelRequired = true;
             }
             if (phase == Phase.CLOSING) {
                 return CleanupDecision.none(true, "owned_screen_close_pending");
@@ -690,7 +827,12 @@ public final class ScreenOwnershipSignals {
                     fail("owned_screen_missing_during_cleanup");
                     return CleanupDecision.none(true, "owned_screen_identity_ambiguous");
                 }
-                boolean cursorEmpty = ownedSession.serverSnapshot().carried().empty();
+                if (!lastServerCursorProven) {
+                    return CleanupDecision.none(true,
+                            "owned_server_cursor_proof_pending");
+                }
+                boolean cursorEmpty = lastServerCursorEmpty;
+                everOwned = true;
                 phase = Phase.CLOSING;
                 return new CleanupDecision(true, true, containerId, menuTypeId,
                         cursorEmpty, false,
@@ -698,8 +840,96 @@ public final class ScreenOwnershipSignals {
                                 ? "close_owned_menu_best_effort"
                                 : "close_owned_menu_without_cursor_rescue_click");
             }
+            if (phase == Phase.EXPECTING_OPEN_PACKET
+                    || phase == Phase.EXPECTING_SCREEN
+                    || phase == Phase.EXPECTING_FULL_CONTENT) {
+                if (!causalCancelRequired
+                        && barrierStatus == CausalBarrierStatus.NOT_REQUIRED) {
+                    // Legacy container callers do not expose a prediction sequence and discard
+                    // their owner immediately after cancelRoutine returns. Preserve that contract:
+                    // only the explicit predicted-use API may create a deferred tombstone.
+                    resetActive();
+                    return CleanupDecision.none(true,
+                            "screen_authority_canceled_before_ownership");
+                }
+                // A normal-use packet may already have crossed the gameplay boundary. A
+                // predicted use retains authority until its causally-later ACK proves that no
+                // matching OpenScreen remains in flight. If the screen exists, cleanup closes the
+                // exact menu; full content is not required because no Agent click has happened.
+                cancelBeforeOwnership = true;
+                if (phase == Phase.EXPECTING_OPEN_PACKET
+                        && causalCancelRequired
+                        && (barrierStatus == CausalBarrierStatus.ACKNOWLEDGED
+                                || barrierStatus == CausalBarrierStatus.IDENTITY_RELEASED)) {
+                    resetActive();
+                    return CleanupDecision.none(true,
+                            "predicted_open_retired_after_causal_barrier");
+                }
+                if (phase == Phase.EXPECTING_FULL_CONTENT && screenMaterialized) {
+                    boolean exactLiveMenu = liveMenu != null
+                            && liveMenu.containerId() == containerId
+                            && liveMenu.menuTypeId().equals(menuTypeId);
+                    if (exactLiveMenu) {
+                        phase = Phase.CLOSING;
+                        return new CleanupDecision(true, true, containerId, menuTypeId,
+                                lastServerCursorProven && lastServerCursorEmpty, false,
+                                "close_materialized_menu_before_agent_click");
+                    }
+                }
+                return CleanupDecision.none(true, "screen_authority_cancel_pending");
+            }
+            if (phase == Phase.FAILED) {
+                boolean causalBarrierSettled = !causalCancelRequired
+                        || barrierStatus == CausalBarrierStatus.ACKNOWLEDGED
+                        || barrierStatus == CausalBarrierStatus.IDENTITY_RELEASED;
+                boolean exactLiveMenu = liveMenu != null
+                        && containerId != -1
+                        && liveMenu.containerId() == containerId
+                        && liveMenu.menuTypeId().equals(menuTypeId);
+                if (exactLiveMenu
+                        && (!everOwned
+                                || lastServerCursorProven && lastServerCursorEmpty)) {
+                    phase = Phase.CLOSING;
+                    return new CleanupDecision(true, true, containerId, menuTypeId,
+                            lastServerCursorProven && lastServerCursorEmpty, false,
+                            "close_failed_exact_menu_best_effort");
+                }
+                if ((!screenMaterialized || liveMenu == null)
+                        && causalBarrierSettled
+                        && (!everOwned
+                                || lastServerCursorProven && lastServerCursorEmpty)) {
+                    resetActive();
+                    return CleanupDecision.none(true, "failed_screen_authority_released");
+                }
+                return CleanupDecision.none(true, "failed_screen_close_pending");
+            }
             resetActive();
             return CleanupDecision.none(true, "screen_authority_canceled_before_ownership");
+        }
+
+        boolean releaseRoutineOnIdentityLoss(UUID routineId) {
+            Objects.requireNonNull(routineId, "routineId");
+            if (expectedOpen == null || !routineId.equals(expectedOpen.routineId())) {
+                return false;
+            }
+            resetActive();
+            return true;
+        }
+
+        boolean invalidateServerCursorProof(UUID routineId, long dispatchRevision) {
+            Objects.requireNonNull(routineId, "routineId");
+            if (expectedOpen == null
+                    || !routineId.equals(expectedOpen.routineId())
+                    || phase != Phase.OWNED
+                    || dispatchRevision < latestLedgerRevision) {
+                return false;
+            }
+            cursorProofRequiredAfterRevision = Math.max(
+                    cursorProofRequiredAfterRevision, dispatchRevision);
+            lastServerCursorProven = false;
+            lastServerCursorEmpty = false;
+            lastServerCursorProofRevision = -1L;
+            return true;
         }
 
         Transition clearLevel() {
@@ -710,7 +940,10 @@ public final class ScreenOwnershipSignals {
 
         Snapshot snapshot() {
             return new Snapshot(phase, boundWorldSessionId, expectedOpen,
-                    ownedSession, latestLedgerRevision, failureReason);
+                    ownedSession, latestLedgerRevision, failureReason,
+                    cancelBeforeOwnership, screenMaterialized, causalCancelRequired,
+                    everOwned, lastServerCursorProven, lastServerCursorEmpty,
+                    lastServerCursorProofRevision, cursorProofRequiredAfterRevision);
         }
 
         private boolean active() {
@@ -737,6 +970,24 @@ public final class ScreenOwnershipSignals {
             openLedgerRevision = 0;
             ownedSession = null;
             failureReason = null;
+            cancelBeforeOwnership = false;
+            screenMaterialized = false;
+            causalCancelRequired = false;
+            everOwned = false;
+            lastServerCursorProven = false;
+            lastServerCursorEmpty = false;
+            lastServerCursorProofRevision = -1L;
+            cursorProofRequiredAfterRevision = -1L;
+        }
+
+        private void recordServerCursorProof(
+                ContainerSyncSignals.ContainerSnapshot content) {
+            if (content.packetLedgerRevision() <= cursorProofRequiredAfterRevision) {
+                return;
+            }
+            lastServerCursorProven = true;
+            lastServerCursorEmpty = content.carried().empty();
+            lastServerCursorProofRevision = content.packetLedgerRevision();
         }
     }
 }

@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.agent.dsl;
 
+import dev.aod.mcmcp.brewing.StandardPotionPolicy;
+
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
@@ -26,7 +28,7 @@ public final class ActionDslValidator {
     public static final long MAX_ACTION_DURATION_MILLIS = MAX_ACTION_TICKS * 50L;
     public static final int MAX_ACTION_CAMERA_DEGREES = 720;
     public static final int MAX_BLOCKS_BROKEN = 8;
-    public static final int MAX_INTERACTIONS = 8;
+    public static final int MAX_INTERACTIONS = 16;
     public static final int MAX_BLOCKS_PLACED = 8;
     public static final int MAX_MUTATION_BATCH_TARGETS = 8;
     public static final int MAX_BLOCK_PLAN_ENTRIES = 8;
@@ -98,6 +100,7 @@ public final class ActionDslValidator {
         if (program.body().isEmpty() || program.body().size() > MAX_TOP_LEVEL_NODES) {
             throw invalid("program.body must contain 1.." + MAX_TOP_LEVEL_NODES + " nodes");
         }
+        validateBrewingPlacement(program.body());
         var walk = new Walk();
         int executed = walkSequence(program.body(), 1, walk, "program.body");
         if (walk.sourceNodes > MAX_SOURCE_NODES) {
@@ -403,6 +406,22 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
             return 1;
         }
+        if (node instanceof ActionDsl.BrewKnownPotionBatch brew) {
+            validatePosition(brew.target(), path + ".target");
+            if (!StandardPotionPolicy.BREWING_STAND.equals(brew.expectedBlock())) {
+                throw invalid(path + ".expected_block must be minecraft:brewing_stand");
+            }
+            if (!StandardPotionPolicy.FUEL_ITEM.equals(brew.fuelItem())) {
+                throw invalid(path + ".fuel_item must be minecraft:blaze_powder");
+            }
+            if (!StandardPotionPolicy.isKnownOneStepRecipe(
+                    brew.input(), brew.ingredientItem(), brew.expectedOutput())) {
+                throw invalid(path + " must declare one catalog-fixed standard potion recipe");
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
+            return 1;
+        }
         if (node instanceof ActionDsl.CollectVisibleItem collect) {
             validateWorldPosition(collect.target(), path + ".target");
             requireResourceLocation(collect.displayedItem(), path + ".displayed_item");
@@ -466,7 +485,8 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.OpenKnownFenceGate
                     || node instanceof ActionDsl.OpenKnownPassage
                     || node instanceof ActionDsl.InspectKnownContainer
-                    || node instanceof ActionDsl.TakeKnownContainerStack) return true;
+                    || node instanceof ActionDsl.TakeKnownContainerStack
+                    || node instanceof ActionDsl.BrewKnownPotionBatch) return true;
             if (node instanceof ActionDsl.If conditional
                     && (containsWorldMutation(conditional.thenBranch())
                             || containsWorldMutation(conditional.elseBranch()))) return true;
@@ -474,6 +494,30 @@ public final class ActionDslValidator {
                     && containsWorldMutation(repeat.body())) return true;
         }
         return false;
+    }
+
+    private static void validateBrewingPlacement(List<ActionDsl.Node> body) {
+        for (int index = 0; index < body.size(); index++) {
+            ActionDsl.Node node = body.get(index);
+            if (node instanceof ActionDsl.BrewKnownPotionBatch) {
+                if (index != body.size() - 1) {
+                    throw invalid("brew_known_potion_batch must be the final Action node");
+                }
+            } else if (containsBrewing(node)) {
+                throw invalid("brew_known_potion_batch must be a top-level Action node");
+            }
+        }
+    }
+
+    private static boolean containsBrewing(ActionDsl.Node node) {
+        if (node instanceof ActionDsl.BrewKnownPotionBatch) return true;
+        if (node instanceof ActionDsl.If conditional) {
+            return conditional.thenBranch().stream().anyMatch(ActionDslValidator::containsBrewing)
+                    || conditional.elseBranch().stream()
+                            .anyMatch(ActionDslValidator::containsBrewing);
+        }
+        return node instanceof ActionDsl.Repeat repeat
+                && repeat.body().stream().anyMatch(ActionDslValidator::containsBrewing);
     }
 
     private static void validatePredicate(ActionDsl.Predicate predicate, String path) {

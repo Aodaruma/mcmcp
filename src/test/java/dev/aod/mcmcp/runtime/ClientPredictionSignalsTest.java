@@ -251,4 +251,31 @@ class ClientPredictionSignalsTest {
         assertThat(latch.confirmation("air"::equals).status())
                 .isEqualTo(ClientPredictionSignals.ConfirmationStatus.INCOMPATIBLE);
     }
+
+    @Test
+    void ackOnlyBarrierRequiresTheIssuedUseSequenceToBeCovered() {
+        var latch = new ClientPredictionSignals.ConfirmationLatch<String>(12, 6);
+        latch.beforePrediction(6);
+        latch.predictionIssued(6, 7);
+
+        assertThat(latch.acknowledgement().status())
+                .isEqualTo(ClientPredictionSignals.AcknowledgementStatus.WAITING_ACK);
+        latch.acknowledge(6);
+        assertThat(latch.acknowledgement().status())
+                .isEqualTo(ClientPredictionSignals.AcknowledgementStatus.WAITING_ACK);
+        latch.acknowledge(7);
+        assertThat(latch.acknowledgement().status())
+                .isEqualTo(ClientPredictionSignals.AcknowledgementStatus.ACKNOWLEDGED);
+    }
+
+    @Test
+    void ackOnlyBarrierTreatsLevelIdentityLossAsReleaseProof() {
+        var latch = new ClientPredictionSignals.ConfirmationLatch<String>(12, 6);
+        latch.predictionIssued(6, 7);
+
+        latch.releaseIdentity();
+
+        assertThat(latch.acknowledgement().status())
+                .isEqualTo(ClientPredictionSignals.AcknowledgementStatus.IDENTITY_RELEASED);
+    }
 }

@@ -8,6 +8,7 @@ import dev.aod.mcmcp.agent.action.ActionProgramCursor;
 import dev.aod.mcmcp.agent.action.CollectBatchEvidence;
 import dev.aod.mcmcp.agent.action.KnownBlockBreakAttempt;
 import dev.aod.mcmcp.agent.action.KnownBlockMutationAttempt;
+import dev.aod.mcmcp.agent.action.KnownBrewingAttempt;
 import dev.aod.mcmcp.agent.action.KnownContainerAttempt;
 import dev.aod.mcmcp.agent.action.KnownConstructionAttempt;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
@@ -39,6 +40,7 @@ import dev.aod.mcmcp.agent.observation.SoundClueStore;
 import dev.aod.mcmcp.agent.observation.SoundPlaybackQueue;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
 import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
+import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.agent.safety.MinecraftRecoveryGovernor;
 import dev.aod.mcmcp.McmcpMod;
 import dev.aod.mcmcp.client.AgentInputState;
@@ -70,8 +72,10 @@ import dev.aod.mcmcp.routine.BreakBlockRequest;
 import dev.aod.mcmcp.routine.FinitePlanRequest;
 import dev.aod.mcmcp.routine.InteractBlockRequest;
 import dev.aod.mcmcp.routine.InteractEntityRequest;
+import dev.aod.mcmcp.routine.KnownBrewingRequest;
 import dev.aod.mcmcp.routine.KnownConstructionRequest;
 import dev.aod.mcmcp.routine.MinecraftApplyBlockPlanPort;
+import dev.aod.mcmcp.routine.MinecraftKnownBrewingPort;
 import dev.aod.mcmcp.routine.MinecraftPhaseFiveInventoryPort;
 import dev.aod.mcmcp.routine.MinecraftPhaseFiveWorldPort;
 import dev.aod.mcmcp.routine.MinecraftSemanticActionPort;
@@ -203,6 +207,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final ClientReconciliationSignals reconciliationSignals;
     private final MinecraftSemanticActionPort semanticActionPort;
     private final MinecraftApplyBlockPlanPort applyBlockPlanPort;
+    private final MinecraftKnownBrewingPort knownBrewingPort;
     private final MinecraftPhaseFiveInventoryPort phaseFiveInventoryPort;
     private final MinecraftPhaseFiveWorldPort phaseFiveWorldPort;
     private final PhaseFivePortRouter phaseFivePort;
@@ -215,6 +220,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private RoutineWallClockDeadline activeRoutineDeadline;
     private AgentExecution agentExecution;
     private boolean pendingAgentInputRelease;
+    private boolean pendingAgentReturnReady;
+    private long agentControlOwnershipEpoch;
+    private long lastStatefulAgentCleanupClientTick = Long.MIN_VALUE;
+    private long lastStatefulAgentCleanupOwnershipEpoch = Long.MIN_VALUE;
+    private AgentCleanupProgress lastStatefulAgentCleanup =
+            new AgentCleanupProgress(true, true);
     private PendingEvaluationTerminal pendingEvaluationTerminal;
     private PendingAgentTerminal pendingAgentTerminal;
     private PendingAgentAdmission pendingAgentAdmission;
@@ -260,6 +271,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 observations,
                 ClientPredictionSignals.global(),
                 reconciliationSignals);
+        knownBrewingPort = new MinecraftKnownBrewingPort(
+                Minecraft::getInstance,
+                sessions::snapshot,
+                observations,
+                screenOwnership,
+                ContainerSyncSignals.global());
         phaseFiveInventoryPort = new MinecraftPhaseFiveInventoryPort(
                 Minecraft::getInstance,
                 sessions::snapshot,
@@ -436,6 +453,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (shutdown) {
             return;
         }
+        boolean pendingReleaseClockAdvanced = advancePendingAgentReleaseClock();
+        try {
+            // Account the final movement sample before any control-lane stop can terminalize the
+            // Action. Stateful cleanup may sample again after restoring camera ownership, but
+            // the updated baseline makes that same-tick sample exactly zero.
+            recordPendingAgentMotion(minecraft);
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error(
+                    "MCMCP pre-tick motion accounting failed; stopping automation before input reuse",
+                    failure);
+            inbox.requestEmergencyStop("observation_pipeline_failed");
+            inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
+            publishSession();
+            return;
+        }
         finishPendingEvaluationTerminalOnClient(minecraft);
         terminateInvalidEvaluationLeaseOnClient(minecraft);
         var evaluationSession = sessions.snapshot();
@@ -445,15 +477,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             terminateActiveEvaluationOnClient(
                     minecraft, EvaluationTurnControl.ReleaseReason.PLAYER_UNAVAILABLE);
         }
-        if (!retryPendingAgentInputRelease(minecraft)) {
+        boolean pendingReleaseCompleted = retryPendingAgentInputRelease(minecraft);
+        // A retained stop waiter owns the priority lane even when the shared release retry
+        // remains pending or fails closed. Drain it before any ordinary world/action work.
+        inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
+        if (!pendingReleaseCompleted || pendingAgentInputRelease) {
             publishSession();
             return;
         }
         try {
-            recordPendingAgentMotion(minecraft);
             synchronizeWorld(minecraft);
             trackRecoveryDescent(minecraft);
-            sessions.tick();
+            if (!pendingReleaseClockAdvanced) {
+                sessions.tick();
+            }
             synchronizeKnownTraversability(minecraft);
             collectAgentObservation(minecraft);
         } catch (RuntimeException | LinkageError failure) {
@@ -544,7 +581,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     public boolean inputIsolationActive() {
         var session = sessions.snapshot();
         return arming.snapshot(session.worldSessionId()).inputIsolationActive()
-                || evaluationTurns.snapshot(session.worldSessionId()).active();
+                || evaluationTurns.snapshot(session.worldSessionId()).active()
+                || pendingAgentInputRelease;
     }
 
     /** May be called by the endpoint lifecycle worker; client-thread cleanup uses the priority lane. */
@@ -670,6 +708,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private void clearPhaseFivePortSessions() {
         clearAutomationPortSession("finite_plan", finitePlanPort::clearSession);
+        clearAutomationPortSession("known_brewing", knownBrewingPort::clearSession);
         clearAutomationPortSession("phase_five_inventory", phaseFiveInventoryPort::clearSession);
         clearAutomationPortSession("phase_five_world", phaseFiveWorldPort::clearSession);
         clearAutomationPortSession("phase_five_router", phaseFivePort::clearSession);
@@ -1007,22 +1046,32 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             PendingEvaluationTerminal pending) {
         assertClientThread(minecraft);
         if (pending.completion.isDone()) {
-            return pending.completion.join();
+            return pending.completedReceipt();
         }
-        CompletableFuture<ClientCommandInbox.StopReceipt> stop = switch (pending.reason) {
-            case LOCAL_ESCAPE -> inbox.requestLocalEmergencyStop();
-            case LOCAL_UI_DISABLED -> inbox.requestLocalDisable();
-            default -> inbox.requestEmergencyStop("evaluation_" + pending.reason.wireName());
-        };
+        CompletableFuture<ClientCommandInbox.StopReceipt> stop = pending.stopCompletion();
+        if (stop == null) {
+            stop = switch (pending.reason) {
+                case LOCAL_ESCAPE -> inbox.requestLocalEmergencyStop();
+                case LOCAL_UI_DISABLED -> inbox.requestLocalDisable();
+                default -> inbox.requestEmergencyStop(
+                        "evaluation_" + pending.reason.wireName());
+            };
+            pending.retainStopCompletion(stop);
+        }
         inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
-        ClientCommandInbox.StopReceipt stopReceipt;
-        try {
-            stopReceipt = stop.join();
-        } catch (RuntimeException failure) {
-            stopReceipt = null;
+        PendingEvaluationStopOutcome stopOutcome = pending.stopOutcome();
+        if (stopOutcome == null) {
+            return null;
         }
-        boolean inputsReleased = stopReceipt != null && stopReceipt.inputsReleased();
-        boolean inputOwnerNone = stopReceipt != null && stopReceipt.inputOwnerNone();
+        ClientCommandInbox.StopReceipt stopReceipt = stopOutcome.failure() == null
+                ? stopOutcome.receipt() : null;
+        if (stopReceipt == null) {
+            pending.retryStopAfter(stop);
+            arming.lock(EvaluationTurnControl.ReleaseReason.INPUT_RELEASE_FAILED.wireName());
+            return null;
+        }
+        boolean inputsReleased = stopReceipt.inputsReleased();
+        boolean inputOwnerNone = stopReceipt.inputOwnerNone();
         boolean allActionsTerminal = inputsReleased
                 && inputOwnerNone
                 && evaluationActionsTerminal();
@@ -1030,6 +1079,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 pending.reason, inputsReleased, inputOwnerNone, allActionsTerminal);
         if (releasableReason.isEmpty()) {
             arming.lock(EvaluationTurnControl.ReleaseReason.INPUT_RELEASE_FAILED.wireName());
+            if (!inputsReleased || !inputOwnerNone) {
+                // A terminally unsafe receipt does not prove that later idempotent release
+                // attempts will fail. Retain the lease/fence and retry through the same lane.
+                pending.retryStopAfter(stop);
+            }
             return null;
         }
         var terminalReason = releasableReason.orElseThrow();
@@ -1145,6 +1199,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 pendingEvaluationTerminal = null;
             }
         }
+        pending.rememberCompletedReceipt(receipt);
         pending.completion.complete(receipt);
     }
 
@@ -1177,6 +1232,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private final EvaluationTurnControl.ReleaseReason reason;
         private final CompletableFuture<EvaluationTurnControl.LeaseReceipt> completion =
                 new CompletableFuture<>();
+        private CompletableFuture<ClientCommandInbox.StopReceipt> stopCompletion;
+        private ClientCommandInbox.StopReceipt stopReceipt;
+        private Throwable stopFailure;
+        private boolean stopSettled;
+        private EvaluationTurnControl.LeaseReceipt completedReceipt;
 
         private PendingEvaluationTerminal(
                 EvaluationTurnGuard.Lease lease,
@@ -1184,6 +1244,59 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             this.lease = Objects.requireNonNull(lease, "lease");
             this.reason = Objects.requireNonNull(reason, "reason");
         }
+
+        private synchronized CompletableFuture<ClientCommandInbox.StopReceipt> stopCompletion() {
+            return stopCompletion;
+        }
+
+        private synchronized void retainStopCompletion(
+                CompletableFuture<ClientCommandInbox.StopReceipt> stop) {
+            Objects.requireNonNull(stop, "stop");
+            if (stopCompletion != null) {
+                return;
+            }
+            stopCompletion = stop;
+            stop.whenComplete((receipt, failure) -> {
+                synchronized (this) {
+                    if (stopCompletion == stop) {
+                        stopReceipt = receipt;
+                        stopFailure = failure;
+                        stopSettled = true;
+                    }
+                }
+            });
+        }
+
+        private synchronized PendingEvaluationStopOutcome stopOutcome() {
+            return stopSettled
+                    ? new PendingEvaluationStopOutcome(stopReceipt, stopFailure)
+                    : null;
+        }
+
+        private synchronized void retryStopAfter(
+                CompletableFuture<ClientCommandInbox.StopReceipt> completedStop) {
+            if (stopCompletion != completedStop || !stopSettled) {
+                return;
+            }
+            stopCompletion = null;
+            stopReceipt = null;
+            stopFailure = null;
+            stopSettled = false;
+        }
+
+        private synchronized void rememberCompletedReceipt(
+                EvaluationTurnControl.LeaseReceipt receipt) {
+            completedReceipt = Objects.requireNonNull(receipt, "receipt");
+        }
+
+        private synchronized EvaluationTurnControl.LeaseReceipt completedReceipt() {
+            return completedReceipt;
+        }
+    }
+
+    private record PendingEvaluationStopOutcome(
+            ClientCommandInbox.StopReceipt receipt,
+            Throwable failure) {
     }
 
     private record EvaluationTerminalClaim(
@@ -1204,25 +1317,28 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         Objects.requireNonNull(context, "context");
         if (command instanceof EmergencyStop stop) {
             var fence = publishedSession;
-            java.util.concurrent.Callable<RuntimeReply> emergency = () ->
+            java.util.concurrent.Callable<CompletionStage<RuntimeReply>> emergency = () ->
                     withEvaluationLeaseFence(context, command.toolName(), () -> {
                         var minecraft = Minecraft.getInstance();
                         assertClientThread(minecraft);
                         var stopped = inbox.requestEmergencyStop(stop.reason());
                         inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
-                        var receipt = stopped.join();
-                        return RuntimeReply.success(Map.of(
-                                "stop_requested", true,
-                                "locked", receipt.locked(),
-                                "released_inputs", receipt.inputsReleased(),
-                                "discarded_pending_starts", receipt.discardedPendingStarts()));
+                        return stopped.handle((receipt, failure) -> failure == null
+                                ? RuntimeReply.success(Map.of(
+                                        "stop_requested", true,
+                                        "locked", receipt.locked(),
+                                        "released_inputs", receipt.inputsReleased(),
+                                        "discarded_pending_starts",
+                                        receipt.discardedPendingStarts()))
+                                : mapFailure(failure));
                     });
             return inbox.submitControlMapped(
                     command.toolName(),
                     fence.generation(),
                     context.deadlineNanos(),
                     emergency,
-                    McmcpRuntime::mapFailure);
+                    failure -> CompletableFuture.completedFuture(mapFailure(failure)))
+                    .thenCompose(stage -> stage);
         }
         if (!context.canBeginWork()) {
             return java.util.concurrent.CompletableFuture.completedFuture(
@@ -1706,7 +1822,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 ? 1L
                 : node instanceof ActionDsl.TillKnownBatch batch
                         ? batch.targets().size()
-                : node instanceof ActionDsl.TakeKnownContainerStack ? 3L : 0L;
+                : node instanceof ActionDsl.TakeKnownContainerStack ? 3L
+                : node instanceof ActionDsl.BrewKnownPotionBatch
+                        ? ActionDslCompiler.KNOWN_BREWING_INTERACTIONS : 0L;
         long breaks = node instanceof ActionDsl.BreakKnownFace
                         || node instanceof ActionDsl.HarvestKnownWheat
                 ? 1L : 0L;
@@ -1999,9 +2117,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var terminal = PendingAgentTerminal.cancel(requestedId);
         if (activeBeforeRequest && !releaseAgentControl(minecraft)) {
             rememberPendingAgentTerminal(terminal);
+            retainReadyAfterDeferredAgentRelease();
             throw new RuntimeInvocationException(
-                    "input_release_failed",
-                    "Agent input could not be confirmed released; MCP operation was disabled.",
+                    "unsafe_state",
+                    "Agent cancellation is retained while bounded input cleanup completes.",
                     true,
                     Map.of());
         }
@@ -2076,6 +2195,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private Map<String, Object> status(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
         var lock = arming.snapshot(session.worldSessionId());
         var inventory = new LinkedHashMap<String, Integer>();
+        var standardPotions = new LinkedHashMap<StandardPotionKey, Integer>();
         Map<String, Object> world = null;
 
         if (session.worldReady() && minecraft.player != null && minecraft.level != null) {
@@ -2112,6 +2232,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 if (!stack.isEmpty()) {
                     String item = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
                     inventory.merge(item, stack.getCount(), Integer::sum);
+                    StandardPotionPolicy.identify(stack).ifPresent(identity ->
+                            standardPotions.merge(
+                                    new StandardPotionKey(identity.item(), identity.potion()),
+                                    identity.count(),
+                                    Integer::sum));
                 }
             }
         }
@@ -2122,12 +2247,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         "item", entry.getKey(),
                         "count", entry.getValue()))
                 .toList();
+        var standardPotionPayload = standardPotions.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(entry -> Map.<String, Object>of(
+                        "item", entry.getKey().item(),
+                        "potion", entry.getKey().potion(),
+                        "count", entry.getValue()))
+                .toList();
         var result = new LinkedHashMap<>(
                 statePayload(
                         lock,
                         paused,
                         world,
                         inventoryPayload,
+                        standardPotionPayload,
                         minecraft.isMultiplayerServer() && multiplayerPolicyAllows(minecraft),
                         McmcpClientConfig.visualRadiusBlocks(),
                         McmcpClientConfig.raysPerTick()));
@@ -2152,7 +2285,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             Map<String, Object> world,
             List<Map<String, Object>> inventory) {
         return statePayload(
-                lock, paused, world, inventory,
+                lock, paused, world, inventory, List.of(),
                 false,
                 McmcpClientConfig.DEFAULT_VISUAL_RADIUS_BLOCKS,
                 McmcpClientConfig.DEFAULT_RAYS_PER_TICK);
@@ -2166,8 +2299,23 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             boolean multiplayerEnabled,
             int visualRadiusBlocks,
             int raysPerTick) {
+        return statePayload(
+                lock, paused, world, inventory, List.of(), multiplayerEnabled,
+                visualRadiusBlocks, raysPerTick);
+    }
+
+    static Map<String, Object> statePayload(
+            LocalArmingState.Snapshot lock,
+            boolean paused,
+            Map<String, Object> world,
+            List<Map<String, Object>> inventory,
+            List<Map<String, Object>> standardPotions,
+            boolean multiplayerEnabled,
+            int visualRadiusBlocks,
+            int raysPerTick) {
         Objects.requireNonNull(lock, "lock");
         Objects.requireNonNull(inventory, "inventory");
+        Objects.requireNonNull(standardPotions, "standardPotions");
 
         var control = new LinkedHashMap<String, Object>();
         control.put("mode", lock.mode().name().toLowerCase(Locale.ROOT));
@@ -2190,7 +2338,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 Map.entry("max_distance_blocks", 32),
                 Map.entry("max_camera_degrees", ActionDslValidator.MAX_ACTION_CAMERA_DEGREES),
                 Map.entry("max_blocks_broken", 8),
-                Map.entry("max_interactions", 8),
+                Map.entry("max_interactions", ActionDslValidator.MAX_INTERACTIONS),
                 Map.entry("max_blocks_placed", 8),
                 Map.entry("omnidirectional_visual_radius_blocks", visualRadiusBlocks),
                 Map.entry(
@@ -2207,10 +2355,25 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         result.put("control", control);
         result.put("world", world);
         result.put("inventory", List.copyOf(inventory));
+        result.put("standard_potions", List.copyOf(standardPotions));
         result.put("policy", policy);
         result.put("observation", null);
         result.put("action", null);
         return result;
+    }
+
+    private record StandardPotionKey(String item, String potion)
+            implements Comparable<StandardPotionKey> {
+        private StandardPotionKey {
+            Objects.requireNonNull(item, "item");
+            Objects.requireNonNull(potion, "potion");
+        }
+
+        @Override
+        public int compareTo(StandardPotionKey other) {
+            int itemOrder = item.compareTo(other.item);
+            return itemOrder != 0 ? itemOrder : potion.compareTo(other.potion);
+        }
     }
 
     private Map<String, Object> listRoutines(Map<String, Object> arguments) {
@@ -3021,6 +3184,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 .positionCorrectionRevision());
                 agentActions.markRunning(action.actionId());
                 agentExecution = nextExecution;
+                agentControlOwnershipEpoch = Math.incrementExact(agentControlOwnershipEpoch);
                 pendingAgentAdmission = null;
                 if (paused) {
                     pauseStartedAtNanos = startedAtNanos;
@@ -3324,6 +3488,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 return;
             }
 
+            if (agentExecution.primitive instanceof ActionDsl.BrewKnownPotionBatch) {
+                tickAgentBrewing(minecraft, session, action);
+                return;
+            }
+
             if (agentExecution.primitive instanceof ActionDsl.ApplyKnownBlockPlan) {
                 tickAgentConstruction(minecraft, session, action);
                 return;
@@ -3513,6 +3682,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             var terminal = PendingAgentTerminal.success(completedActionId);
             if (!releaseAgentControl(minecraft)) {
                 rememberPendingAgentTerminal(terminal);
+                retainReadyAfterDeferredAgentRelease();
                 return false;
             }
             if (publishAgentTerminal(terminal)) {
@@ -4486,6 +4656,55 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
+    private void tickAgentBrewing(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action) {
+        if (agentExecution.brewingAttempt == null) {
+            final KnownBrewingRequest request;
+            try {
+                request = brewingRequest(
+                        (ActionDsl.BrewKnownPotionBatch) agentExecution.primitive,
+                        agentExecution.maxCameraDegreesPerTick);
+            } catch (RuntimeException rejected) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                        false,
+                        "brewing_request_rejected");
+                return;
+            }
+            long deadline = Math.addExact(
+                    session.clientTick(), KnownBrewingRequest.MAX_TICKS);
+            agentExecution.brewingAttempt = new KnownBrewingAttempt(
+                    knownBrewingPort, request, session.clientTick(), deadline);
+        }
+        KnownBrewingAttempt.TickResult result =
+                agentExecution.brewingAttempt.tick(session.clientTick());
+        for (int count = 0; count < result.interactionDelta(); count++) {
+            agentActions.recordInteraction(action.actionId());
+        }
+        switch (result.status()) {
+            case RUNNING -> { }
+            case FAILED -> failAgentAction(
+                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                    true,
+                    result.evidence());
+            case SUCCEEDED -> {
+                agentExecution.brewingAttempt = null;
+                agentActions.recordNodeEvidence(
+                        action.actionId(),
+                        "brewing_complete=" + result.verifiedPotions());
+                agentActions.completeNode(action.actionId());
+                agentExecution.primitive = null;
+                agentExecution.replanning = false;
+                agentExecution.replanNotBeforeTick = 0L;
+                agentExecution.replanDeadlineTick = 0L;
+                advanceAgentProgram(
+                        minecraft, agentActions.get(action.actionId()).progress());
+            }
+        }
+    }
+
     private void tickAgentConstruction(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
@@ -4786,6 +5005,26 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         0,
                         maxDurationSeconds,
                         false));
+    }
+
+    static KnownBrewingRequest brewingRequest(
+            ActionDsl.BrewKnownPotionBatch brew, float maxCameraDegreesPerTick) {
+        Objects.requireNonNull(brew, "brew");
+        if (!StandardPotionPolicy.BREWING_STAND.equals(brew.expectedBlock())) {
+            throw new IllegalArgumentException("brewing target must be a brewing stand");
+        }
+        var target = new BlockTarget(
+                brew.target().dimension(),
+                brew.target().x(),
+                brew.target().y(),
+                brew.target().z());
+        return new KnownBrewingRequest(
+                target,
+                brew.input(),
+                brew.ingredientItem(),
+                brew.fuelItem(),
+                brew.expectedOutput(),
+                maxCameraDegreesPerTick);
     }
 
     private static PhaseFiveRequest containerRequest(
@@ -6491,6 +6730,29 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 McmcpMod.LOGGER.error("MCMCP known-container release failed", failure);
             }
         }
+        if (agentExecution.brewingAttempt != null) {
+            KnownBrewingAttempt brewing = agentExecution.brewingAttempt;
+            try {
+                brewing.close();
+                agentExecution.brewingAttempt = null;
+            } catch (RuntimeException | LinkageError failure) {
+                closed = false;
+                if (brewing.releaseStatus() != KnownBrewingAttempt.ReleaseStatus.PROGRESSING) {
+                    McmcpMod.LOGGER.error("MCMCP known-brewing release failed", failure);
+                }
+            } finally {
+                try {
+                    int releasedInteractions = brewing.drainReleaseInteractionDelta();
+                    for (int count = 0; count < releasedInteractions; count++) {
+                        agentActions.recordInteraction(agentExecution.actionId);
+                    }
+                } catch (RuntimeException | LinkageError failure) {
+                    closed = false;
+                    McmcpMod.LOGGER.error(
+                            "MCMCP known-brewing release usage capture failed", failure);
+                }
+            }
+        }
         if (agentExecution.constructionAttempt != null) {
             try {
                 agentExecution.constructionAttempt.close();
@@ -6531,6 +6793,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 new AgentActionStore.Failure(code, recoverable, List.of(evidence)));
         if (!releaseAgentControl(Minecraft.getInstance())) {
             rememberPendingAgentTerminal(terminal);
+            retainReadyAfterDeferredAgentRelease();
             return;
         }
         if (publishAgentTerminal(terminal)) {
@@ -6541,6 +6804,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private void finishAgentControlReady(Minecraft minecraft) {
         if (releaseAgentControl(minecraft)) {
             returnControlReady();
+        } else {
+            retainReadyAfterDeferredAgentRelease();
         }
     }
 
@@ -6551,15 +6816,28 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
+    private void retainReadyAfterDeferredAgentRelease() {
+        WorldSessionTracker.Snapshot session = sessions.snapshot();
+        pendingAgentReturnReady = session.worldSessionId() != null
+                && !arming.snapshot(session.worldSessionId()).locked();
+    }
+
     private boolean releaseAgentControl(Minecraft minecraft) {
-        boolean inputsReleased = boundedActionInputRelease(() -> {
-            boolean primitiveClosed = closeAgentPrimitiveExecutor();
-            boolean recoveryClosed = closeRecoveryGovernor();
-            boolean releaseConfirmed = releaseAllAndConfirmNoInputOwner(minecraft);
-            return primitiveClosed && recoveryClosed && releaseConfirmed;
-        });
-        pendingAgentInputRelease = !inputsReleased;
-        if (!inputsReleased) {
+        // Stateful menu/view cleanup advances at most once per client tick. Do not mistake that
+        // bounded asynchronous progress for a failed same-tick input-release command.
+        AgentCleanupProgress stateful = advanceStatefulAgentCleanupOncePerClientTick(minecraft);
+        boolean primitiveClosed = stateful.primitiveClosed();
+        boolean recoveryClosed = stateful.recoveryClosed();
+        boolean ownersReleased = boundedActionInputRelease(
+                () -> releaseAllAndConfirmNoInputOwner(minecraft));
+        boolean cleanupConfirmed = primitiveClosed && recoveryClosed && ownersReleased;
+        pendingAgentInputRelease = !cleanupConfirmed;
+        if (!cleanupConfirmed) {
+            if (!primitiveClosed && recoveryClosed && ownersReleased
+                    && brewingReleaseProgressing()) {
+                return false;
+            }
+            pendingAgentReturnReady = false;
             arming.lock("agent_input_release_failed");
             McmcpMod.LOGGER.error(
                     "MCMCP terminal input cleanup remained unconfirmed after {} attempts; "
@@ -6575,7 +6853,41 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             agentExecution = null;
             pendingAgentAdmission = null;
         }
-        return inputsReleased;
+        return true;
+    }
+
+    private AgentCleanupProgress advanceStatefulAgentCleanupOncePerClientTick(
+            Minecraft minecraft) {
+        long clientTick = sessions.snapshot().clientTick();
+        if (lastStatefulAgentCleanupClientTick == clientTick
+                && lastStatefulAgentCleanupOwnershipEpoch == agentControlOwnershipEpoch) {
+            return lastStatefulAgentCleanup;
+        }
+        lastStatefulAgentCleanupClientTick = clientTick;
+        lastStatefulAgentCleanupOwnershipEpoch = agentControlOwnershipEpoch;
+        boolean primitiveClosed = closeAgentPrimitiveExecutor();
+        // A primitive close may advance bounded camera/slot restoration. Sample ownership
+        // while AgentExecution and the first terminal intent are still retained.
+        recordPendingAgentMotion(minecraft);
+        boolean recoveryClosed = closeRecoveryGovernor();
+        lastStatefulAgentCleanup = new AgentCleanupProgress(
+                primitiveClosed, recoveryClosed);
+        return lastStatefulAgentCleanup;
+    }
+
+    private boolean brewingReleaseProgressing() {
+        return agentExecution != null
+                && agentExecution.brewingAttempt != null
+                && agentExecution.brewingAttempt.releaseStatus()
+                        == KnownBrewingAttempt.ReleaseStatus.PROGRESSING;
+    }
+
+    private boolean advancePendingAgentReleaseClock() {
+        if (!pendingAgentInputRelease) return false;
+        WorldSessionTracker.Snapshot session = sessions.snapshot();
+        if (!session.worldReady()) return false;
+        sessions.tick();
+        return true;
     }
 
     /** Releases a non-terminal hold/replan boundary, failing the active Action closed if needed. */
@@ -6607,6 +6919,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         boolean released = boundedActionInputRelease(() -> inputRelease.releaseAll(minecraft));
         pendingAgentInputRelease = !released;
         if (!released) {
+            pendingAgentReturnReady = false;
             arming.lock("agent_input_release_failed");
             McmcpMod.LOGGER.error(
                     "MCMCP input release remained unconfirmed after {} attempts; "
@@ -6671,6 +6984,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return true;
         } catch (RuntimeException | LinkageError failure) {
             rememberPendingAgentTerminal(terminal);
+            pendingAgentReturnReady = false;
             arming.lock("agent_terminal_publication_failed");
             McmcpMod.LOGGER.error(
                     "MCMCP Agent terminal publication failed; local control remains locked",
@@ -6697,6 +7011,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private boolean closeAgentControl(Minecraft minecraft, String lockReason) {
+        pendingAgentReturnReady = false;
         boolean inputsReleased = releaseAgentControl(minecraft);
         arming.lock(lockReason);
         return inputsReleased;
@@ -6717,12 +7032,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private boolean retryPendingAgentInputRelease(Minecraft minecraft) {
-        if (!pendingAgentInputRelease) {
-            return pendingAgentTerminal == null || publishAgentTerminal(pendingAgentTerminal);
-        }
-        boolean released = releaseAgentControl(minecraft);
-        return released
+        boolean released = !pendingAgentInputRelease || releaseAgentControl(minecraft);
+        boolean published = released
                 && (pendingAgentTerminal == null || publishAgentTerminal(pendingAgentTerminal));
+        if (published && pendingAgentReturnReady) {
+            pendingAgentReturnReady = false;
+            returnControlReady();
+        }
+        return published;
     }
 
     private void restoreAgentSelectedSlot(Minecraft minecraft) {
@@ -6840,7 +7157,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
-    private boolean stopActiveRoutineForEmergency(
+    private ClientCommandInbox.StopProgress stopActiveRoutineForEmergency(
             String reason,
             WorldSessionTracker.Snapshot session) {
         goalContinuation.clear();
@@ -6854,36 +7171,43 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         new AgentActionStore.Failure(
                                 actionCode, true, List.of(sanitizeLocalCode(reason)))))
                 .orElse(null);
-        boolean actionStopped = true;
+        ClientCommandInbox.StopProgress actionProgress = ClientCommandInbox.StopProgress.COMPLETE;
         try {
             if (releaseAgentControl(Minecraft.getInstance())) {
                 if (actionTerminal != null) {
-                    actionStopped = publishAgentTerminal(actionTerminal);
+                    actionProgress = publishAgentTerminal(actionTerminal)
+                            ? ClientCommandInbox.StopProgress.COMPLETE
+                            : ClientCommandInbox.StopProgress.FAILED;
                 }
             } else {
                 if (actionTerminal != null) {
                     rememberPendingAgentTerminal(actionTerminal);
                 }
-                actionStopped = false;
+                actionProgress = brewingReleaseProgressing()
+                        ? ClientCommandInbox.StopProgress.PENDING
+                        : ClientCommandInbox.StopProgress.FAILED;
             }
         } catch (RuntimeException | LinkageError failure) {
-            actionStopped = false;
+            actionProgress = ClientCommandInbox.StopProgress.FAILED;
             McmcpMod.LOGGER.error("MCMCP emergency action termination failed", failure);
         }
         var active = routines.activeRoutineId();
         if (active.isEmpty()) {
             boolean voiceEnded = endVoiceFor(voiceRoutineId);
-            return actionStopped && voiceEnded;
+            return voiceEnded ? actionProgress : ClientCommandInbox.StopProgress.FAILED;
         }
         try {
             var cancelled = routines.cancelRoutine(active.orElseThrow(), reason, Long.MAX_VALUE, 1);
             var cleanup = finalizeTerminalRoutine(Minecraft.getInstance(), cancelled);
-            return actionStopped && cleanup.inputsReleased() && cleanup.voice().success();
+            if (!cleanup.inputsReleased() || !cleanup.voice().success()) {
+                return ClientCommandInbox.StopProgress.FAILED;
+            }
+            return actionProgress;
         }
         catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error("MCMCP routine cancellation failed during emergency stop", failure);
             endVoiceFor(active.orElseThrow());
-            return false;
+            return ClientCommandInbox.StopProgress.FAILED;
         }
     }
 
@@ -7451,6 +7775,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private record CleanupOutcome(boolean inputsReleased, VoiceEndOutcome voice) {
+    }
+
+    private record AgentCleanupProgress(boolean primitiveClosed, boolean recoveryClosed) {
     }
 
     record ParsedApplyBlockPlan(
@@ -9045,6 +9372,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private ActionDslCompiler.Cost occurrenceLimit;
         private final Object playerIdentity;
         private final int originalSelectedSlot;
+        private final float maxCameraDegreesPerTick;
         private int agentSelectedSlot = -1;
         private boolean breakAimComplete;
         private int mutationAimFailures;
@@ -9063,6 +9391,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private ActionDsl.Position tillSettlingTarget;
         private long tillSettlingDeadlineTick;
         private KnownContainerAttempt containerAttempt;
+        private KnownBrewingAttempt brewingAttempt;
         private KnownConstructionAttempt constructionAttempt;
         private int pickupInventoryBefore = -1;
         private long pickupArrivalTick = -1L;
@@ -9084,6 +9413,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             program = action.program();
             cursor = new ActionProgramCursor(action.program().request().program());
             primitiveExecutor = new MinecraftActionPrimitiveExecutor(maxCameraDegreesPerTick);
+            this.maxCameraDegreesPerTick = maxCameraDegreesPerTick;
             this.mutationAims = new LinkedHashMap<>(
                     Objects.requireNonNull(mutationAims, "mutationAims"));
             this.startedAtNanos = startedAtNanos;
