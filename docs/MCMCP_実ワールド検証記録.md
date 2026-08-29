@@ -2,8 +2,8 @@
 
 - 更新日: 2026-08-29
 - 対象: Prism Launcherの単一検証profile、Minecraft 26.2 / NeoForge 26.2.0.59
-- 状態: 木こりの最小gateは合格。畑の栽培・収穫ループはMCP操作だけでwheat 64個へ到達。fresh LLMによるchest取得からのend-to-endはR10で39 / 64まで進み、最終合格は未達
-- 最新実験ノート: [`experiments/02_wheet/2026-08-29_fresh-sol-high-mcp-only-r10-original-field.md`](experiments/02_wheet/2026-08-29_fresh-sol-high-mcp-only-r10-original-field.md)
+- 状態: 木こりの最小gateは合格。畑の栽培・収穫ループはMCP操作だけでwheat 64個へ到達。fresh LLMによるchest取得からのend-to-endはR10で39 / 64、R11で26 / 64となり、最終合格は未達
+- 最新実験ノート: [`experiments/02_wheet/2026-08-29_fresh-sol-high-mcp-only-r11-original-field.md`](experiments/02_wheet/2026-08-29_fresh-sol-high-mcp-only-r11-original-field.md)
 
 ## 完成目標と判定原則
 
@@ -51,6 +51,14 @@
 ### 対象
 
 chest内のhoeとwheat seedsを取得し、fence gateを通って畑へ入り、耕す、植える、成熟を待つ、収穫する、植え直す、を反復してwheatを1 stack集める。
+
+### 2026-08-29 fresh MCP-only R11
+
+R10後に追加したobservation filter、整数`navigation_target`、`collect_visible_item_batch`、camera量子化reserveを含む環境で、同じproduction prompt一文によるfresh `gpt-5.6-sol high`評価を行った。T0後のoperator介入はなく、trace auditは違反0だった。chest確認、hoe / seeds取得、gate通過、耕作、播種、収穫、drop回収、再播種まで実行したが、最終inventoryはwheat 26、wheat seeds 74、netherite hoe 1で未達となった。
+
+dynamic callは224件、`agent_start_action`は73件中39件受理、34件成功、5件fail-safe失敗だった。Minecraft内のAction実行は合計約64秒に対しwall timeは約989秒で、最初の収穫開始が約576秒後になった。受付拒否34件の内訳は`INVALID_ARGUMENT` 15、`TARGET_UNKNOWN` 10、`NO_KNOWN_PATH` 4、`PROGRAM_BUDGET_UNPROVABLE` 4、deadline拒否1である。
+
+新filterはobservation 58回中50回で使用されたが、正しいDSL signatureとbudget条件の発見に多数の再送を要した。また、`collect_visible_item_batch`は内部で単品collect列へ展開されるため、処理中に後続dropの座標witnessが失効し、4 Action中3件が途中でfail-safe停止した。したがってR11の改善候補は、strict schemaを維持した正確なsignature提示、複数validation errorの一括返却、budgetの安全な自動導出または必要量の構造化返却、collect batchの第一級実行単位化である。これらは**未実装**であり、feedbackを受けるまで修正・再実験を保留する。
 
 ### 2026-08-29 fresh MCP-only R10
 
