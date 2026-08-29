@@ -209,6 +209,27 @@ class ScreenOwnershipSignalsTest {
                 .isEqualTo(ScreenOwnershipSignals.Phase.FAILED);
     }
 
+    @Test
+    void repeatedCleanupCannotAcknowledgeAStillOpenOwnedScreen() {
+        var fixture = ownedFixture(EMPTY);
+
+        var first = fixture.core.cancelRoutine(
+                fixture.routine, new ScreenOwnershipSignals.MenuView(7, MENU));
+        var repeated = fixture.core.cancelRoutine(
+                fixture.routine, new ScreenOwnershipSignals.MenuView(7, MENU));
+
+        assertThat(first.closeMenuBestEffort()).isTrue();
+        assertThat(repeated.authorityMatched()).isTrue();
+        assertThat(repeated.closeMenuBestEffort()).isFalse();
+        assertThat(repeated.reason()).isEqualTo("owned_screen_close_pending");
+        assertThat(fixture.core.snapshot().phase())
+                .isEqualTo(ScreenOwnershipSignals.Phase.CLOSING);
+
+        assertThat(fixture.core.onScreenClosing(7, MENU).allowed()).isTrue();
+        assertThat(fixture.core.snapshot().phase())
+                .isEqualTo(ScreenOwnershipSignals.Phase.IDLE);
+    }
+
     private static Fixture ownedFixture(ContainerSyncSignals.StackFingerprint cursor) {
         return ownedFixture(cursor, 1);
     }

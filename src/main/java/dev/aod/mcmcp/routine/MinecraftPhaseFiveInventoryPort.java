@@ -6,6 +6,7 @@ import dev.aod.mcmcp.runtime.ExpectedOpenToken;
 import dev.aod.mcmcp.runtime.ScreenOwnershipSignals;
 import dev.aod.mcmcp.runtime.WorldSessionTracker;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -551,10 +552,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             fail(state, "OWNED_SCREEN_CURSOR_NOT_EMPTY", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.USER, Map.of("cursor", "empty"), Map.of());
         }
-        var player = requireMinecraft().player;
-        if (player != null) {
-            player.closeContainer();
-        }
+        closeOwnedMenuClient(requireMinecraft(), decision);
         if (!state.terminal()) {
             long tick = currentTick();
             state.closeDeadlineClientTick = tick > Long.MAX_VALUE - OPEN_TIMEOUT_TICKS
@@ -713,11 +711,24 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     private void cleanupOwnedScreen(UUID authority) {
         var decision = screens.cancelRoutine(authority);
         if (decision.closeMenuBestEffort()) {
-            var minecraft = requireMinecraft();
-            if (minecraft.player != null) {
-                minecraft.player.closeContainer();
-            }
+            closeOwnedMenuClient(requireMinecraft(), decision);
         }
+    }
+
+    /**
+     * Closes an exact automation-owned container through the canonical screen lifecycle. Calling
+     * only LocalPlayer.closeContainer closes the negotiated menu but can leave the visual container
+     * screen installed, causing the next bounded DSL node to fail its clear-screen preflight.
+     */
+    private static void closeOwnedMenuClient(
+            Minecraft minecraft, ScreenOwnershipSignals.CleanupDecision decision) {
+        if (!(minecraft.gui.screen() instanceof AbstractContainerScreen<?> containerScreen)
+                || containerScreen.getMenu().containerId != decision.containerId()
+                || !ScreenOwnershipSignals.menuTypeId(containerScreen.getMenu().getType())
+                        .equals(decision.menuTypeId())) {
+            throw new IllegalStateException("owned container screen changed before close");
+        }
+        containerScreen.onClose();
     }
 
     private AttemptState requireAttempt(PhaseFiveAttempt attempt) {

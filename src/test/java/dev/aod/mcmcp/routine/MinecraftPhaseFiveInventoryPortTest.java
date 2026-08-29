@@ -122,6 +122,27 @@ class MinecraftPhaseFiveInventoryPortTest {
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#exactHit");
     }
 
+    @Test
+    void ownedContainerCleanupUsesTheCanonicalScreenCloseLifecycle() throws Exception {
+        var node = new ClassNode();
+        try (var stream = getClass().getResourceAsStream(
+                "/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort.class")) {
+            assertThat(stream).isNotNull();
+            new ClassReader(stream).accept(node, 0);
+        }
+
+        assertThat(invocations(node, "closeOwnedMenuClient"))
+                .contains("net/minecraft/client/gui/screens/inventory/AbstractContainerScreen"
+                        + "#onClose")
+                .doesNotContain("net/minecraft/client/player/LocalPlayer#closeContainer");
+        assertThat(invocations(node, "closeForReadback"))
+                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        + "#closeOwnedMenuClient");
+        assertThat(invocations(node, "cleanupOwnedScreen"))
+                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        + "#closeOwnedMenuClient");
+    }
+
     private static List<String> invocations(ClassNode node, String methodName) {
         var calls = new ArrayList<String>();
         node.methods.stream()

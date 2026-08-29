@@ -679,6 +679,9 @@ public final class ScreenOwnershipSignals {
             if (expectedOpen == null || !routineId.equals(expectedOpen.routineId())) {
                 return CleanupDecision.none(false, "routine_does_not_own_screen_authority");
             }
+            if (phase == Phase.CLOSING) {
+                return CleanupDecision.none(true, "owned_screen_close_pending");
+            }
             if (phase == Phase.OWNED) {
                 boolean exactLiveMenu = liveMenu != null
                         && liveMenu.containerId() == containerId
