@@ -11,6 +11,7 @@ import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -177,13 +178,26 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
+    void craftingRetainsTheStationHeadingAndUsesTheRuntimeCameraLimit() throws Exception {
+        var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
+        var parameters = new MinecraftPhaseFiveInventoryPort.CraftParameters(
+                "recipe-ref", "fingerprint", "minecraft:stick", 1, 1, target,
+                new BlockStateFingerprint("minecraft:crafting_table", Map.of()));
+        assertThat(parameters.restoreViewOnRelease()).isFalse();
+
+        var node = classNode();
+        assertThat(invocations(node, "begin"))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#configuredCameraDegreesPerTick",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$ViewLease#acquire");
+        assertThat(invocations(node, "configuredCameraDegreesPerTick"))
+                .contains("java/util/function/DoubleSupplier#getAsDouble");
+    }
+
+    @Test
     void aimingChecksSafetyBeforeTurningAndReadbackCanRecoverAStaleCrosshair() throws Exception {
-        var node = new ClassNode();
-        try (var stream = getClass().getResourceAsStream(
-                "/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort.class")) {
-            assertThat(stream).isNotNull();
-            new ClassReader(stream).accept(node, 0);
-        }
+        var node = classNode();
 
         assertThat(invocations(node, "maintainAim"))
                 .containsSubsequence(
@@ -197,12 +211,7 @@ class MinecraftPhaseFiveInventoryPortTest {
 
     @Test
     void ownedContainerCleanupUsesTheCanonicalScreenCloseLifecycle() throws Exception {
-        var node = new ClassNode();
-        try (var stream = getClass().getResourceAsStream(
-                "/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort.class")) {
-            assertThat(stream).isNotNull();
-            new ClassReader(stream).accept(node, 0);
-        }
+        var node = classNode();
 
         assertThat(invocations(node, "closeOwnedMenuClient"))
                 .contains("net/minecraft/client/gui/screens/inventory/AbstractContainerScreen"
@@ -219,12 +228,7 @@ class MinecraftPhaseFiveInventoryPortTest {
     @Test
     void everyAgentContainerClickInvalidatesCursorProofAndWaitsForFreshProofBeforeClose()
             throws Exception {
-        var node = new ClassNode();
-        try (var stream = getClass().getResourceAsStream(
-                "/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort.class")) {
-            assertThat(stream).isNotNull();
-            new ClassReader(stream).accept(node, 0);
-        }
+        var node = classNode();
 
         assertThat(invocations(node, "prepareOwnedDispatch"))
                 .containsSubsequence(
@@ -237,6 +241,12 @@ class MinecraftPhaseFiveInventoryPortTest {
                                 + "#prepareOwnedDispatch",
                         "net/minecraft/client/multiplayer/MultiPlayerGameMode"
                                 + "#handleContainerInput");
+        assertThat(invocations(node, "dispatchRecipePlacement"))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#prepareOwnedDispatch",
+                        "net/minecraft/client/multiplayer/MultiPlayerGameMode"
+                                + "#handlePlaceRecipe");
         assertThat(invocations(node, "maintainCraftResult"))
                 .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                         + "#dispatchContainerClick")
@@ -256,8 +266,14 @@ class MinecraftPhaseFiveInventoryPortTest {
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#closeForReadback");
         assertThat(invocations(node, "acceptCraftSnapshot"))
+                .contains(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#craftingGridAndResultEmpty",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#dispatchRecipePlacement");
+        assertThat(invocations(node, "maintainCraftResult"))
                 .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
-                        + "#craftingGridAndResultEmpty");
+                        + "#freshServerCursorSnapshot");
         assertThat(invocations(node, "acceptTransferSnapshot"))
                 .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                         + "#dispatchContainerClick")
@@ -268,6 +284,12 @@ class MinecraftPhaseFiveInventoryPortTest {
                         .anyMatch(call -> call.endsWith("#handleContainerInput")))
                 .map(method -> method.name))
                 .containsExactly("dispatchContainerClick");
+        assertThat(node.methods.stream()
+                .filter(method -> method.instructions.iterator().hasNext())
+                .filter(method -> invocations(node, method.name).stream()
+                        .anyMatch(call -> call.endsWith("#handlePlaceRecipe")))
+                .map(method -> method.name))
+                .containsExactly("dispatchRecipePlacement");
         assertThat(invocations(node, "closeForReadback"))
                 .containsSubsequence(
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
@@ -293,6 +315,16 @@ class MinecraftPhaseFiveInventoryPortTest {
                     }
                 });
         return inputs;
+    }
+
+    private ClassNode classNode() throws Exception {
+        var node = new ClassNode();
+        try (var stream = getClass().getResourceAsStream(
+                "/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort.class")) {
+            assertThat(stream).isNotNull();
+            new ClassReader(stream).accept(node, 0);
+        }
+        return node;
     }
 
     private static List<String> invocations(ClassNode node, String methodName) {

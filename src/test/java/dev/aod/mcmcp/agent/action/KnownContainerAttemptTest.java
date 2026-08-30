@@ -121,6 +121,7 @@ class KnownContainerAttemptTest {
             Map<String, Object> basis = Map.of(
                     "open_count", Math.min(interactions, 1),
                     "container_clicks", Math.max(0, interactions - 1),
+                    "recipe_placements", 0,
                     "release_pending", releasePending,
                     "release_confirmed", releaseConfirmed,
                     "release_fault", false);

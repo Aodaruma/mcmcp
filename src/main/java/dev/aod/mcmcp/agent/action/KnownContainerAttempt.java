@@ -176,8 +176,10 @@ public final class KnownContainerAttempt implements AutoCloseable {
     }
 
     private static int interactionCount(Map<String, Object> basis) {
-        return Math.addExact(nonNegativeInt(basis.get("open_count")),
-                nonNegativeInt(basis.get("container_clicks")));
+        return Math.addExact(
+                Math.addExact(nonNegativeInt(basis.get("open_count")),
+                        nonNegativeInt(basis.get("container_clicks"))),
+                nonNegativeInt(basis.get("recipe_placements")));
     }
 
     private static int nonNegativeInt(Object value) {

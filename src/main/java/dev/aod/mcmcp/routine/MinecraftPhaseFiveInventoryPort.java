@@ -37,6 +37,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -64,17 +65,21 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     private final Supplier<WorldSessionTracker.Snapshot> sessionSupplier;
     private final ClientRecipeCatalog recipes;
     private final ScreenOwnershipSignals screens;
+    private final DoubleSupplier runtimeCameraDegreesPerTick;
     private final Map<PhaseFiveAttempt, AttemptState> attempts = new IdentityHashMap<>();
 
     public MinecraftPhaseFiveInventoryPort(
             Supplier<Minecraft> minecraftSupplier,
             Supplier<WorldSessionTracker.Snapshot> sessionSupplier,
             ClientRecipeCatalog recipes,
-            ScreenOwnershipSignals screens) {
+            ScreenOwnershipSignals screens,
+            DoubleSupplier runtimeCameraDegreesPerTick) {
         this.minecraftSupplier = Objects.requireNonNull(minecraftSupplier, "minecraftSupplier");
         this.sessionSupplier = Objects.requireNonNull(sessionSupplier, "sessionSupplier");
         this.recipes = Objects.requireNonNull(recipes, "recipes");
         this.screens = Objects.requireNonNull(screens, "screens");
+        this.runtimeCameraDegreesPerTick = Objects.requireNonNull(
+                runtimeCameraDegreesPerTick, "runtimeCameraDegreesPerTick");
     }
 
     @Override
@@ -168,10 +173,13 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             state.stage = Stage.TERMINAL;
             return attempt;
         }
+        float cameraDegreesPerTick = state.parameters instanceof CraftParameters
+                ? configuredCameraDegreesPerTick()
+                : state.parameters.maxCameraDegreesPerTick();
         state.view = ViewLease.acquire(
                 Objects.requireNonNull(minecraft.player),
                 state.parameters.restoreViewOnRelease(),
-                state.parameters.maxCameraDegreesPerTick());
+                cameraDegreesPerTick);
         state.stage = Stage.AIMING_INITIAL;
         return attempt;
     }
@@ -434,20 +442,17 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         var result = state.recipe.view().result().alternatives().getFirst();
         state.beforeDestinationCount = current;
         state.expectedCraftOutputCount = result.count();
-        state.lastPacketRevision = snapshot.packetLedgerRevision();
-        Objects.requireNonNull(requireMinecraft().gameMode).handlePlaceRecipe(
-                craftingMenu.containerId, state.recipe.displayId(), false);
-        state.stage = Stage.CRAFT_WAIT_RESULT;
+        dispatchRecipePlacement(attempt, state, craftingMenu, snapshot.packetLedgerRevision());
     }
 
     private void maintainCraftResult(
             PhaseFiveAttempt attempt, AttemptState state, Minecraft minecraft) {
-        var owned = screens.ownedSession();
-        if (owned.isEmpty() || minecraft.player == null
+        var proof = freshServerCursorSnapshot(attempt, state);
+        if (proof.isEmpty() || minecraft.player == null
                 || !(minecraft.player.containerMenu instanceof CraftingMenu menu)) {
             return;
         }
-        var snapshot = owned.orElseThrow().serverSnapshot();
+        var snapshot = proof.orElseThrow();
         if (snapshot.packetLedgerRevision() <= state.lastPacketRevision
                 || snapshot.slots().isEmpty()) {
             return;
@@ -613,6 +618,21 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         dispatchContainerClick(
                 attempt, state, menu, slot, ContainerInput.QUICK_MOVE,
                 Stage.AWAITING_CLICK_ACK);
+    }
+
+    private void dispatchRecipePlacement(
+            PhaseFiveAttempt attempt,
+            AttemptState state,
+            CraftingMenu menu,
+            long snapshotRevision) {
+        long before = prepareOwnedDispatch(attempt, state, menu);
+        if (before < 0L) return;
+        state.lastPacketRevision = Math.max(snapshotRevision, before);
+        // Count before dispatch so a rejected or throwing call cannot disappear from usage.
+        state.recipePlacements++;
+        Objects.requireNonNull(requireMinecraft().gameMode).handlePlaceRecipe(
+                menu.containerId, state.recipe.displayId(), false);
+        state.stage = Stage.CRAFT_WAIT_RESULT;
     }
 
     private boolean dispatchContainerClick(
@@ -983,6 +1003,14 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         state.releaseConfirmed = true;
         state.releasePending = false;
         state.stage = Stage.TERMINAL;
+    }
+
+    private float configuredCameraDegreesPerTick() {
+        double value = runtimeCameraDegreesPerTick.getAsDouble();
+        if (!Double.isFinite(value) || value < 0.1D || value > 18.0D) {
+            throw new IllegalStateException("runtime camera limit is outside the safe range");
+        }
+        return (float) value;
     }
 
     private static long boundedDeadline(long tick, int durationTicks) {
@@ -1575,7 +1603,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         String menuTypeId();
 
         default boolean restoreViewOnRelease() {
-            return true;
+            return false;
         }
 
         default float maxCameraDegreesPerTick() {
@@ -1685,6 +1713,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private PhaseFiveResult result;
         private int openCount;
         private int dispatchedContainerClicks;
+        private int recipePlacements;
         private int completedActions;
         private int completedUnits;
         private int beforeSourceCount;
@@ -1733,6 +1762,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             basis.put("target", targetIdentity());
             basis.put("open_count", openCount);
             basis.put("container_clicks", dispatchedContainerClicks);
+            basis.put("recipe_placements", recipePlacements);
             basis.put("completed_actions", completedActions);
             basis.put("completed_units", completedUnits);
             basis.put("full_readback_required", true);

@@ -285,7 +285,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 Minecraft::getInstance,
                 sessions::snapshot,
                 recipeCatalog,
-                screenOwnership);
+                screenOwnership,
+                () -> McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0D);
         phaseFiveWorldPort = new MinecraftPhaseFiveWorldPort(
                 Minecraft::getInstance,
                 sessions::snapshot,
