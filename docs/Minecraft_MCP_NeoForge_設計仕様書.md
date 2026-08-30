@@ -24,7 +24,7 @@
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
 - fresh評価turnまたはAgent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
-最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件のplace-only planへ無変換コピーする`apply_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`と可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`に加え、Phase 5の最初のvertical sliceとしてlever 1入力とredstone lamp 1出力の固定identity回路を配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4では、player 2×2 crafting、精錬、Vanillaのworkstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の破壊・置換・256 block化、一般資源入手、一般回路合成は、同じ安全境界を維持して追加する。
+最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件のplace-only planへ無変換コピーする`apply_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`に加え、Phase 5の最初のvertical sliceとしてlever 1入力とredstone lamp 1出力の固定identity回路を配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の破壊・置換・256 block化、一般資源入手、一般回路合成は、同じ安全境界を維持して追加する。
 
 ## 1. 対象環境
 
@@ -747,6 +747,7 @@ Action DSL v1の制御構造:
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のsingle chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemのwhole stackを最大1回quick-moveし、close/reopen full readbackでplayer inventoryの絶対個数を確認 |
 | craft_known_recipe | camera, inventory_transfer | recipe queryの短寿命opaque参照を再検証し、可視・既知crafting tableで1〜3回、完成品を1回分ずつ回収して絶対inventory目標を確認 |
+| smelt_known_recipe | camera, inventory_transfer | recipe queryの短寿命opaque参照を再検証し、可視・既知のfurnace / blast furnace / smokerで1個だけ精錬して絶対inventory目標を確認 |
 | brew_known_potion_batch | camera, inventory_transfer | 空の可視・既知brewing standで、宣言した標準Vanilla Potion 1〜3本を現行recipe tableの既知の1段変換だけ醸造 |
 | collect_visible_item | movement | 最新frameの可視item種別と連続値XYZをwitnessに、既知の安全なpickup cellへ移動し、inventory絶対個数の増加を確認 |
 | collect_visible_item_batch | movement | 2〜8件の可視item witnessをlisted orderで同じ安全検証経路へ展開し、失敗時は未開始suffixを実行しない |
@@ -784,6 +785,8 @@ current targetのfresh reproofでfaceまたはaim pointが受付時から変化�
 container primitiveは別のMCP Toolやlegacy routineを公開せず、同じAction supervisorから既存のscreen ownership / full-content同期adapterを駆動する。`inspect_known_container`はslot番号、NBT/component本文、menu内部状態を返さず、最大27種類の`item=count`だけを`NODE_EVIDENCE` traceへ返す。`take_known_container_stack`はdirectionをcontainer→playerへ固定し、`default_components_only`または耐久済みtoolにも使える`item_id_any_components`だけを許可する。初回open、whole-stack quick-move 1回、同じcontainerのreadback openの最大3 interactionを静的に予約する。内部実行上限400 active tickに対しAction全体の`max_duration_ms`は最低30,000 ms、`max_ticks`は最低600とし、残る200 active tickをdispatch、JIT再検証、readback、releaseの余白として確保する。複数stackをblind retryせず、目標へ届かなければ確認済みの部分移送を記録した上で失敗し、次のActionへ再計画させる。OS focusとmouse grabは要求しないが、pause、overlay、予期しないScreen、world/session変化、可視threat、cursor残留、screen ownership不一致はfail closedとする。Agent所有の正規container Screenだけは処理stageに応じて許可する。
 
 `craft_known_recipe`はwire shapeを`{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},max_crafts}`へ閉じる。`recipe_ref`と`recipe_fingerprint`は同じ最新`agent_get_state` recipe query結果からコピーし、world sessionとcatalog revisionへ束縛したままAction開始時と各craft前に再解決する。`station.kind`は`crafting_table`、stateは`minecraft:crafting_table`かつ空properties、goal policyは`default_components_only`、絶対個数は1〜2,304、`max_crafts`は1〜3に固定する。実行は初回open 1回と各craftのrecipe placement・cursor-invariantなresult QUICK_MOVE・readback openで進める。静的budgetは互換性と安全余裕のため従来どおり`1 + 4 * max_crafts` interaction、最大400 active tickを予約し、Action budgetには最低30,000 ms、600 tick、camera 360度を要求する。完成品は1回分ずつ回収し、click前のserver-confirmed empty cursorを維持したまま、空grid/result、close/reopen full-content、絶対inventoryのexact deltaを確認する。slot番号やmenu内部状態は公開せず、曖昧な更新をblind retryしない。
+
+`smelt_known_recipe`はwire shapeを`{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},fuel:{item,stack_policy},max_smelts}`へ閉じる。stationは`furnace | blast_furnace | smoker`、goalとfuelのpolicyは`default_components_only`、`max_smelts`は1固定とする。recipe display kind / required screen / station family、完全BlockState、空menu、singleton材料・燃料、QUICK_MOVE経路を再検証し、load後とresult回収後のclose/reopen full-content/data readbackで確定する。raw slot / GUI座標は公開せず、top-level最終nodeだけに許可する。worst-caseは120,000 ms、2,400 active tick、camera 540度、interaction 6回、distance / break / place 0に固定する。
 
 `brew_known_potion_batch`はwire shapeを`{id,op,target,expected_block,input:{item,potion,count},ingredient_item,fuel_item,expected_output:{item,potion,count}}`へ閉じる。`expected_block`は`minecraft:brewing_stand`、`fuel_item`は`minecraft:blaze_powder`に固定し、入力と出力は同じ`count` 1〜3を要求する。itemは標準3形式の`minecraft:potion / splash_potion / lingering_potion`、potionとingredientはcatalogの閉じたenumだけを受理する。入出力はcustom name / color / effects等の追加componentのない標準stackと完全一致し、その宣言遷移がMinecraft 26.2の現行`PotionBrewing.mix`と完全一致する場合だけ実行する。
 
@@ -1195,12 +1198,12 @@ Phase 3完成時に追加する上限:
 
 ### 9.7 crafting・精錬・workstation・MOD互換 — Phase 4
 
-現在の公開Action DSLは、既存のrecipe / container / screen同期基盤を直接再利用したcrafting-table限定の`craft_known_recipe` vertical sliceまでを含む。player 2×2、精錬と専用workstationの実行adapterは未実装であり、製品機能として利用可能とは扱わない。
+現在の公開Action DSLは、既存のrecipe / container / screen同期基盤を直接再利用したcrafting-table限定の`craft_known_recipe`と、furnace familyで1個だけ処理する`smelt_known_recipe` vertical sliceを含む。player 2×2と専用workstationの実行adapterは未実装であり、製品機能として利用可能とは扱わない。
 
 公開Toolは5件のままとし、クラフトやworkstationごとのMCP Tool、raw slot番号・画面座標・key/mouse・packetを追加しない。recipe検索は既存のquery / output / resolve契約を固定5 Toolのread pathへ委譲し、第二の検索文法を作らない。`recipe_ref`とfingerprintはworld sessionとrecipe catalog revisionへ束縛し、`craft_known_recipe`開始時と各craft前に再解決する。実行は`agent_start_action`の閉じたsemantic opcodeだけを使う。
 
 - 公開済み`craft_known_recipe` / 既存`craft_items`: 現在は`crafting_table`だけ。次に`player_2x2`へ拡張
-- `smelt_items`: `furnace | blast_furnace | smoker`
+- 公開済み`smelt_known_recipe` / 内部`smelt_items`: `furnace | blast_furnace | smoker`、1 Action 1個だけ
 
 司書厳選のread-only first sliceでは、ユーザーまたは既存経路が現在開いているVanilla `MerchantScreen`だけを対象にする。world session開始時からmerchant-offers packetをimmutableに記録し、`agent_get_state`時点のScreen instance、player menu、world session、container ID、直近OpenScreen packet revisionがlatest merchant packetと完全一致する場合だけ、optional `merchant_offers`を返す。公開内容はitem ID / count、uses / max uses / out-of-stock、merchant level / XP、エンチャント本の登録済みstored enchantment ID / levelに閉じる。raw slot、Data Component / NBT、lore、表示文字列、未解決enchantment IDは返さない。画面を開く、任意click、取引実行、職業ブロックの破壊・再設置、reroll反復はこのsliceに含めない。
 

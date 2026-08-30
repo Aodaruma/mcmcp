@@ -63,6 +63,8 @@ public final class ActionDslValidator {
             "minecraft:golden_hoe", "minecraft:diamond_hoe", "minecraft:netherite_hoe");
     private static final Set<String> KNOWN_CONTAINERS = Set.of(
             "minecraft:chest", "minecraft:barrel");
+    private static final Set<String> FURNACE_STATIONS = Set.of(
+            "furnace", "blast_furnace", "smoker");
     private static final Set<String> STACK_POLICIES = Set.of(
             "default_components_only", "item_id_any_components");
     private static final Set<String> WOODEN_OPENABLES = Set.of(
@@ -103,7 +105,7 @@ public final class ActionDslValidator {
         if (program.body().isEmpty() || program.body().size() > MAX_TOP_LEVEL_NODES) {
             throw invalid("program.body must contain 1.." + MAX_TOP_LEVEL_NODES + " nodes");
         }
-        validateBrewingPlacement(program.body());
+        validateTerminalOwnedMenuPlacement(program.body());
         var walk = new Walk();
         int executed = walkSequence(program.body(), 1, walk, "program.body");
         if (walk.sourceNodes > MAX_SOURCE_NODES) {
@@ -454,6 +456,35 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
             return 1;
         }
+        if (node instanceof ActionDsl.SmeltKnownRecipe smelt) {
+            requirePattern(smelt.recipeRef(), OPAQUE_REFERENCE, path + ".recipe_ref");
+            requirePattern(smelt.recipeFingerprint(), SHA256_FINGERPRINT,
+                    path + ".recipe_fingerprint");
+            requirePattern(smelt.goalItem(), RESOURCE_LOCATION, path + ".goal.item");
+            if (!"default_components_only".equals(smelt.stackPolicy())) {
+                throw invalid(path + ".goal.stack_policy must be default_components_only");
+            }
+            requireRange(smelt.minimumInventoryCount(), 1, 2_304,
+                    path + ".goal.minimum_inventory_count");
+            if (!FURNACE_STATIONS.contains(smelt.stationKind())) {
+                throw invalid(path + ".station.kind is unsupported");
+            }
+            validatePosition(smelt.target(), path + ".station.target");
+            validateBlockState(smelt.expectedState(), path + ".station.expected_state");
+            if (!("minecraft:" + smelt.stationKind()).equals(smelt.expectedState().block())) {
+                throw invalid(path + ".station.expected_state must match station.kind");
+            }
+            requirePattern(smelt.fuelItem(), RESOURCE_LOCATION, path + ".fuel.item");
+            if (!"default_components_only".equals(smelt.fuelStackPolicy())) {
+                throw invalid(path + ".fuel.stack_policy must be default_components_only");
+            }
+            if (smelt.maxSmelts() != 1) {
+                throw invalid(path + ".max_smelts must be 1");
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
+            return 1;
+        }
         if (node instanceof ActionDsl.BrewKnownPotionBatch brew) {
             validatePosition(brew.target(), path + ".target");
             if (!StandardPotionPolicy.BREWING_STAND.equals(brew.expectedBlock())) {
@@ -536,6 +567,7 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.InspectKnownContainer
                     || node instanceof ActionDsl.TakeKnownContainerStack
                     || node instanceof ActionDsl.CraftKnownRecipe
+                    || node instanceof ActionDsl.SmeltKnownRecipe
                     || node instanceof ActionDsl.BrewKnownPotionBatch) return true;
             if (node instanceof ActionDsl.If conditional
                     && (containsWorldMutation(conditional.thenBranch())
@@ -546,28 +578,32 @@ public final class ActionDslValidator {
         return false;
     }
 
-    private static void validateBrewingPlacement(List<ActionDsl.Node> body) {
+    private static void validateTerminalOwnedMenuPlacement(List<ActionDsl.Node> body) {
         for (int index = 0; index < body.size(); index++) {
             ActionDsl.Node node = body.get(index);
-            if (node instanceof ActionDsl.BrewKnownPotionBatch) {
+            if (node instanceof ActionDsl.BrewKnownPotionBatch
+                    || node instanceof ActionDsl.SmeltKnownRecipe) {
                 if (index != body.size() - 1) {
-                    throw invalid("brew_known_potion_batch must be the final Action node");
+                    throw invalid("long-running owned-menu operation must be the final Action node");
                 }
-            } else if (containsBrewing(node)) {
-                throw invalid("brew_known_potion_batch must be a top-level Action node");
+            } else if (containsTerminalOwnedMenu(node)) {
+                throw invalid("long-running owned-menu operation must be a top-level Action node");
             }
         }
     }
 
-    private static boolean containsBrewing(ActionDsl.Node node) {
-        if (node instanceof ActionDsl.BrewKnownPotionBatch) return true;
+    private static boolean containsTerminalOwnedMenu(ActionDsl.Node node) {
+        if (node instanceof ActionDsl.BrewKnownPotionBatch
+                || node instanceof ActionDsl.SmeltKnownRecipe) return true;
         if (node instanceof ActionDsl.If conditional) {
-            return conditional.thenBranch().stream().anyMatch(ActionDslValidator::containsBrewing)
+            return conditional.thenBranch().stream()
+                    .anyMatch(ActionDslValidator::containsTerminalOwnedMenu)
                     || conditional.elseBranch().stream()
-                            .anyMatch(ActionDslValidator::containsBrewing);
+                            .anyMatch(ActionDslValidator::containsTerminalOwnedMenu);
         }
         return node instanceof ActionDsl.Repeat repeat
-                && repeat.body().stream().anyMatch(ActionDslValidator::containsBrewing);
+                && repeat.body().stream()
+                        .anyMatch(ActionDslValidator::containsTerminalOwnedMenu);
     }
 
     private static void validatePredicate(ActionDsl.Predicate predicate, String path) {

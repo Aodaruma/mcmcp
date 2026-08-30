@@ -136,6 +136,7 @@ public final class ActionDslParser {
             case "inspect_known_container" -> inspectKnownContainer(object, path);
             case "take_known_container_stack" -> takeKnownContainerStack(object, path);
             case "craft_known_recipe" -> craftKnownRecipe(object, path);
+            case "smelt_known_recipe" -> smeltKnownRecipe(object, path);
             case "brew_known_potion_batch" -> brewKnownPotionBatch(object, path);
             case "collect_visible_item" -> collectVisibleItem(object, path);
             case "collect_visible_item_batch" -> collectVisibleItemBatch(object, path);
@@ -484,6 +485,37 @@ public final class ActionDslParser {
                 blockStateSpec(station.get("expected_state"),
                         path + ".station.expected_state"),
                 integer(source.get("max_crafts"), path + ".max_crafts"));
+    }
+
+    private static ActionDsl.SmeltKnownRecipe smeltKnownRecipe(
+            JsonObject source, String path) {
+        Set<String> fields = Set.of(
+                "id", "op", "recipe_ref", "recipe_fingerprint",
+                "goal", "station", "fuel", "max_smelts");
+        exactKeys(source, path, fields, fields);
+        JsonObject goal = object(source.get("goal"), path + ".goal",
+                Set.of("item", "stack_policy", "minimum_inventory_count"),
+                Set.of("item", "stack_policy", "minimum_inventory_count"));
+        JsonObject station = object(source.get("station"), path + ".station",
+                Set.of("kind", "target", "expected_state"),
+                Set.of("kind", "target", "expected_state"));
+        JsonObject fuel = object(source.get("fuel"), path + ".fuel",
+                Set.of("item", "stack_policy"), Set.of("item", "stack_policy"));
+        return new ActionDsl.SmeltKnownRecipe(
+                string(source.get("id"), path + ".id"),
+                string(source.get("recipe_ref"), path + ".recipe_ref"),
+                string(source.get("recipe_fingerprint"), path + ".recipe_fingerprint"),
+                string(goal.get("item"), path + ".goal.item"),
+                string(goal.get("stack_policy"), path + ".goal.stack_policy"),
+                integer(goal.get("minimum_inventory_count"),
+                        path + ".goal.minimum_inventory_count"),
+                string(station.get("kind"), path + ".station.kind"),
+                position(station.get("target"), path + ".station.target"),
+                blockStateSpec(station.get("expected_state"),
+                        path + ".station.expected_state"),
+                string(fuel.get("item"), path + ".fuel.item"),
+                string(fuel.get("stack_policy"), path + ".fuel.stack_policy"),
+                integer(source.get("max_smelts"), path + ".max_smelts"));
     }
 
     private static ActionDsl.BrewKnownPotionBatch brewKnownPotionBatch(

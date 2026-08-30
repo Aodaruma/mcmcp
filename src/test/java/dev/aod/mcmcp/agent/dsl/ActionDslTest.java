@@ -44,7 +44,7 @@ class ActionDslTest {
     void parsesEveryNormativeCatalogExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
-        assertThat(examples).hasSize(13);
+        assertThat(examples).hasSize(14);
         for (int index = 0; index < examples.size(); index++) {
             ActionDsl.Request parsed = ActionDslParser.parse(examples.get(index).getAsJsonObject());
             assertThat(parsed.schemaVersion()).isEqualTo(1);
@@ -632,6 +632,51 @@ class ActionDslTest {
         assertCode(request(
                         capabilities("camera", "inventory_transfer"), craft,
                         budget(30_000, 600, 0, 360, 13, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
+    void parsesValidatesAndCompilesOneTerminalKnownSmelt() {
+        JsonObject smelt = smeltKnownRecipe("smelt");
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "inventory_transfer"),
+                smelt,
+                budget(120_000, 2_400, 0, 540, 6, 0, 0)));
+
+        assertThat(request.program().body()).singleElement().satisfies(node -> {
+            var parsed = (ActionDsl.SmeltKnownRecipe) node;
+            assertThat(parsed.recipeRef()).isEqualTo("abcdefghijklmnopqrstuvwx");
+            assertThat(parsed.goalItem()).isEqualTo("minecraft:iron_ingot");
+            assertThat(parsed.stationKind()).isEqualTo("furnace");
+            assertThat(parsed.expectedState().block()).isEqualTo("minecraft:furnace");
+            assertThat(parsed.fuelItem()).isEqualTo("minecraft:coal");
+            assertThat(parsed.maxSmelts()).isOne();
+        });
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.INVENTORY_TRANSFER);
+
+        var cost = new ActionDslCompiler.Cost(120_000, 2_400, 0, 120, 6, 0, 0);
+        assertThat(ActionDslCompiler.compile(
+                request, ignored -> Optional.of(cost), request.program().capabilities())
+                .worstCaseCost()).isEqualTo(cost);
+
+        smelt.addProperty("max_smelts", 2);
+        assertCode(request(
+                        capabilities("camera", "inventory_transfer"), smelt,
+                        budget(120_000, 2_400, 0, 540, 6, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        smelt = smeltKnownRecipe("smelt");
+        smelt.getAsJsonObject("station").addProperty("kind", "smoker");
+        assertCode(request(
+                        capabilities("camera", "inventory_transfer"), smelt,
+                        budget(120_000, 2_400, 0, 540, 6, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        assertCode(request(
+                        capabilities("camera", "inventory_transfer"),
+                        array(smeltKnownRecipe("smelt"), waitNode("after", 1)),
+                        budget(120_050, 2_401, 0, 540, 6, 0, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
     }
 
@@ -1458,6 +1503,31 @@ class ActionDslTest {
         station.add("expected_state", blockState("minecraft:crafting_table"));
         node.add("station", station);
         node.addProperty("max_crafts", maxCrafts);
+        return node;
+    }
+
+    private static JsonObject smeltKnownRecipe(String id) {
+        JsonObject node = baseNode(id, "smelt_known_recipe");
+        node.addProperty("recipe_ref", "abcdefghijklmnopqrstuvwx");
+        node.addProperty("recipe_fingerprint", "sha256:" + "a".repeat(64));
+        JsonObject goal = new JsonObject();
+        goal.addProperty("item", "minecraft:iron_ingot");
+        goal.addProperty("stack_policy", "default_components_only");
+        goal.addProperty("minimum_inventory_count", 1);
+        node.add("goal", goal);
+        JsonObject station = new JsonObject();
+        station.addProperty("kind", "furnace");
+        station.add("target", position());
+        JsonObject expectedState = blockState("minecraft:furnace");
+        expectedState.getAsJsonObject("properties").addProperty("facing", "north");
+        expectedState.getAsJsonObject("properties").addProperty("lit", "false");
+        station.add("expected_state", expectedState);
+        node.add("station", station);
+        JsonObject fuel = new JsonObject();
+        fuel.addProperty("item", "minecraft:coal");
+        fuel.addProperty("stack_policy", "default_components_only");
+        node.add("fuel", fuel);
+        node.addProperty("max_smelts", 1);
         return node;
     }
 

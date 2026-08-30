@@ -176,6 +176,7 @@ class McpToolCatalogTest {
                 .contains("navigate_to_known:{id,op,target,tolerance}")
                 .contains("take_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}")
                 .contains("craft_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:")
+                .contains("smelt_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:")
                 .contains("till_known_batch:{id,op,targets:[position],expected_block,hoe_item}")
                 .contains("plant_known_wheat_batch:{id,op,targets:[{target,support}],seed_item}")
                 .contains("harvest_known_wheat_batch:{id,op,targets:[position]}")
@@ -209,7 +210,8 @@ class McpToolCatalogTest {
         assertThat(description)
                 .contains("take stack_policy is exactly default_components_only")
                 .contains("or item_id_any_components")
-                .contains("craft goal.stack_policy is exactly default_components_only");
+                .contains("craft/smelt goal.stack_policy")
+                .contains("smelt fuel.stack_policy are exactly default_components_only");
     }
 
     @Test
@@ -329,6 +331,42 @@ class McpToolCatalogTest {
                 .getAsJsonObject("expected_state").getAsJsonObject("properties")
                 .addProperty("invented", "true");
         assertThat(CatalogSchemaValidator.matches(schema, inventedState)).isFalse();
+    }
+
+    @Test
+    void knownSmeltContractIsClosedDiscoverableAndBounded() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var definition = schema.getAsJsonObject("$defs")
+                .getAsJsonObject("smeltKnownRecipeNode");
+        assertThat(definition.get("description").getAsString())
+                .contains("exactly one item")
+                .contains("furnace, blast furnace, or smoker")
+                .contains("never exposes raw slots or GUI coordinates")
+                .contains("120000 ms", "2400 ticks", "540 camera degrees", "6 interactions");
+
+        var example = schema.getAsJsonArray("examples").asList().stream()
+                .map(value -> value.getAsJsonObject())
+                .filter(value -> value.getAsJsonObject("program").get("name").getAsString()
+                        .equals("smelt_known_iron_ingot"))
+                .findFirst().orElseThrow();
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
+
+        var twoSmelts = example.deepCopy();
+        twoSmelts.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().addProperty("max_smelts", 2);
+        assertThat(CatalogSchemaValidator.matches(schema, twoSmelts)).isFalse();
+
+        var arbitraryFuelPolicy = example.deepCopy();
+        arbitraryFuelPolicy.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().getAsJsonObject("fuel")
+                .addProperty("stack_policy", "item_id_any_components");
+        assertThat(CatalogSchemaValidator.matches(schema, arbitraryFuelPolicy)).isFalse();
+
+        var mismatchedStation = example.deepCopy();
+        mismatchedStation.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().getAsJsonObject("station")
+                .addProperty("kind", "smoker");
+        assertThat(CatalogSchemaValidator.matches(schema, mismatchedStation)).isFalse();
     }
 
     @Test

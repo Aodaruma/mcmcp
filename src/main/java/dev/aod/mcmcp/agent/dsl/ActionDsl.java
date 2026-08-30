@@ -43,6 +43,7 @@ public final class ActionDsl {
             OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
             CraftKnownRecipe,
+            SmeltKnownRecipe,
             BrewKnownPotionBatch,
             CollectVisibleItem, CollectVisibleItemBatch, WaitTicks, WaitUntil, If, Repeat {
         String id();
@@ -367,6 +368,34 @@ public final class ActionDsl {
             Objects.requireNonNull(stationKind, "stationKind");
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(expectedState, "expectedState");
+        }
+    }
+
+    /** Smelts exactly one item from one current recipe at a visible furnace-family station. */
+    public record SmeltKnownRecipe(
+            String id,
+            String recipeRef,
+            String recipeFingerprint,
+            String goalItem,
+            String stackPolicy,
+            int minimumInventoryCount,
+            String stationKind,
+            Position target,
+            BlockStateSpec expectedState,
+            String fuelItem,
+            String fuelStackPolicy,
+            int maxSmelts) implements Node {
+        public SmeltKnownRecipe {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(recipeRef, "recipeRef");
+            Objects.requireNonNull(recipeFingerprint, "recipeFingerprint");
+            Objects.requireNonNull(goalItem, "goalItem");
+            Objects.requireNonNull(stackPolicy, "stackPolicy");
+            Objects.requireNonNull(stationKind, "stationKind");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(expectedState, "expectedState");
+            Objects.requireNonNull(fuelItem, "fuelItem");
+            Objects.requireNonNull(fuelStackPolicy, "fuelStackPolicy");
         }
     }
 

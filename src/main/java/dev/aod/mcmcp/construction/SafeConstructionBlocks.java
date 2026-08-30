@@ -7,10 +7,13 @@ import java.util.Set;
 public final class SafeConstructionBlocks {
     /** One-way yaw+pitch displacement; the adapter restores the same admitted pose. */
     public static final double MAX_ONE_WAY_CAMERA_DEGREES = 40.0D;
-    private static final Set<String> SUPPORT_ONLY_STATE_IDS = Set.of(
+    private static final Set<String> NON_COPY_VISIBLE_STATE_IDS = Set.of(
             "minecraft:dirt",
             "minecraft:grass_block",
-            "minecraft:obsidian");
+            "minecraft:obsidian",
+            "minecraft:furnace",
+            "minecraft:blast_furnace",
+            "minecraft:smoker");
     private static final Set<String> IDS = ids();
 
     private SafeConstructionBlocks() {
@@ -21,12 +24,11 @@ public final class SafeConstructionBlocks {
     }
 
     /**
-     * Complete BlockState properties may cross the policy boundary only when they are needed by
-     * the closed construction copy or external-support contracts. Other visible blocks retain
-     * their visual block identity but do not expose non-rendered runtime properties.
+     * Complete BlockState properties may cross the policy boundary only for audited construction,
+     * support, or owned-menu target contracts. Other visible blocks retain only visual identity.
      */
     public static boolean allowsVisibleState(String blockId) {
-        return allows(blockId) || SUPPORT_ONLY_STATE_IDS.contains(blockId);
+        return allows(blockId) || NON_COPY_VISIBLE_STATE_IDS.contains(blockId);
     }
 
     private static Set<String> ids() {

@@ -28,6 +28,10 @@ public final class ActionDslCompiler {
     public static final long KNOWN_BREWING_TICKS = 1_400L;
     public static final long KNOWN_BREWING_DURATION_MILLIS = 70_000L;
     public static final long KNOWN_BREWING_INTERACTIONS = 16L;
+    public static final long KNOWN_SMELTING_TICKS = 2_400L;
+    public static final long KNOWN_SMELTING_DURATION_MILLIS =
+            KNOWN_SMELTING_TICKS * NOMINAL_TICK_MILLIS;
+    public static final long KNOWN_SMELTING_INTERACTIONS = 6L;
     public static final long KNOWN_CRAFTING_TICKS =
             AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND;
     public static final long KNOWN_CRAFTING_DURATION_MILLIS =
@@ -120,6 +124,7 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.InspectKnownContainer
                 || node instanceof ActionDsl.TakeKnownContainerStack
                 || node instanceof ActionDsl.CraftKnownRecipe
+                || node instanceof ActionDsl.SmeltKnownRecipe
                 || node instanceof ActionDsl.BrewKnownPotionBatch
                 || node instanceof ActionDsl.CollectVisibleItem
                 || node instanceof ActionDsl.CollectVisibleItemBatch) {
@@ -166,6 +171,14 @@ public final class ActionDslCompiler {
                 if (cost.durationMillis() != KNOWN_CRAFTING_DURATION_MILLIS
                         || cost.ticks() != KNOWN_CRAFTING_TICKS) {
                     throw unprovable("craft_known_recipe has an invalid primitive time bound");
+                }
+            } else if (node instanceof ActionDsl.SmeltKnownRecipe) {
+                requireMutationCost(
+                        cost, KNOWN_SMELTING_INTERACTIONS, 0, 0,
+                        "smelt_known_recipe");
+                if (cost.durationMillis() != KNOWN_SMELTING_DURATION_MILLIS
+                        || cost.ticks() != KNOWN_SMELTING_TICKS) {
+                    throw unprovable("smelt_known_recipe has an invalid primitive time bound");
                 }
             } else if (node instanceof ActionDsl.BrewKnownPotionBatch) {
                 requireMutationCost(

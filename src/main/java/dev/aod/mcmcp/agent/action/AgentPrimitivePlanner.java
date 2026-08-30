@@ -70,6 +70,8 @@ public final class AgentPrimitivePlanner {
     public static final long CONTAINER_TICK_UPPER_BOUND = 600L;
     public static final long BREWING_TICK_UPPER_BOUND =
             ActionDslCompiler.KNOWN_BREWING_TICKS;
+    public static final long SMELTING_TICK_UPPER_BOUND =
+            ActionDslCompiler.KNOWN_SMELTING_TICKS;
     // Player-thrown item entities can retain a 40-tick pickup delay. Leave a bounded
     // synchronization margin without exposing hidden pickup-delay state to the model.
     public static final long PICKUP_CONFIRM_TICKS = 60L;
@@ -905,6 +907,21 @@ public final class AgentPrimitivePlanner {
                     node, input, cameraLimit, costs, knownSurfaces, work, surface,
                     ActionDslCompiler.knownCraftInteractions(craft.maxCrafts()));
         }
+        if (node instanceof ActionDsl.SmeltKnownRecipe smelt) {
+            MutationSurface surface = requireMutationSurface(
+                    map, latestFrame, input, smelt.target(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, smelt.target()),
+                    smelt.expectedState().block(),
+                    value -> true,
+                    "Smelting target requires a current matching visible surface");
+            return analyzeOwnedMenu(
+                    node, input, cameraLimit, costs, knownSurfaces, work, surface,
+                    ActionDslCompiler.KNOWN_SMELTING_INTERACTIONS,
+                    SMELTING_TICK_UPPER_BOUND,
+                    "smelting",
+                    true,
+                    KnownBrewingRequest.MAX_ONE_WAY_CAMERA_DEGREES);
+        }
         if (node instanceof ActionDsl.BrewKnownPotionBatch brew) {
             MutationSurface surface = requireMutationSurface(
                     map, latestFrame, input, brew.target(),
@@ -1399,9 +1416,8 @@ public final class AgentPrimitivePlanner {
             if (aim.cameraDegrees() > maxOneWayCameraDegrees) {
                 throw new PlanningException(
                         Code.PROGRAM_BUDGET_UNPROVABLE,
-                        "Brewing stand exceeds the 270-degree one-way camera limit; "
-                                + "put face_known_position immediately before "
-                                + "brew_known_potion_batch");
+                        costLabel + " target exceeds the 270-degree one-way camera limit; "
+                                + "put face_known_position immediately before this node");
             }
             var bounded = new ActionDslCompiler.Cost(
                     Math.multiplyExact(tickUpperBound, TICK_MILLIS),

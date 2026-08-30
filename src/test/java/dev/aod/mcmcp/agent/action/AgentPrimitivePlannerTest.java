@@ -1329,6 +1329,44 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void knownSmeltUsesTheOwnedMenuPlanAndRestoresTheAdmittedPose() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var furnace = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var smelt = new ActionDsl.SmeltKnownRecipe(
+                "smelt", "abcdefghijklmnopqrstuvwx", "sha256:" + "a".repeat(64),
+                "minecraft:iron_ingot", "default_components_only", 1,
+                "furnace", furnace,
+                new ActionDsl.BlockStateSpec(
+                        "minecraft:furnace", Map.of("facing", "north", "lit", "false")),
+                "minecraft:coal", "default_components_only", 1);
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+
+        var analysis = AgentPrimitivePlanner.analyze(
+                new ActionDsl.Program(
+                        1, Optional.empty(),
+                        Set.of(ActionDsl.Capability.CAMERA,
+                                ActionDsl.Capability.INVENTORY_TRANSFER),
+                        List.of(smelt)),
+                map, new DeterministicAStar(), pose,
+                Optional.of(frame(
+                        furnace, ObservationRecord.Face.WEST, "minecraft:furnace", 0)),
+                4.5F);
+
+        var cost = analysis.primitiveCosts().get("smelt");
+        assertThat(cost.durationMillis()).isEqualTo(120_000L);
+        assertThat(cost.ticks()).isEqualTo(AgentPrimitivePlanner.SMELTING_TICK_UPPER_BOUND);
+        assertThat(cost.interactions()).isEqualTo(6L);
+        var centerCost = AgentPrimitivePlanner.mutationCost(
+                pose, new Vec3(3.5D, 64.5D, 0.5D), 4.5F, 6, 0, 0);
+        assertThat(cost.cameraDegrees()).isEqualTo(centerCost.cameraDegrees() * 2.0D);
+        assertThat(analysis.knownSurfaces()).contains(
+                new AgentPrimitivePlanner.KnownSurface(
+                        furnace, ActionDsl.BlockFace.WEST, "minecraft:furnace"));
+    }
+
+    @Test
     void containerCostUsesTheAdaptersBlockCenterRatherThanTheAdmissionRayHit() {
         UUID session = UUID.randomUUID();
         var map = map(session).snapshot().orElseThrow();

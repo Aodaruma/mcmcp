@@ -78,6 +78,7 @@ import dev.aod.mcmcp.routine.KnownBrewingRequest;
 import dev.aod.mcmcp.routine.KnownConstructionRequest;
 import dev.aod.mcmcp.routine.MinecraftApplyBlockPlanPort;
 import dev.aod.mcmcp.routine.MinecraftKnownBrewingPort;
+import dev.aod.mcmcp.routine.MinecraftKnownFurnacePort;
 import dev.aod.mcmcp.routine.MinecraftPhaseFiveInventoryPort;
 import dev.aod.mcmcp.routine.MinecraftPhaseFiveWorldPort;
 import dev.aod.mcmcp.routine.MinecraftSemanticActionPort;
@@ -213,6 +214,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final MinecraftSemanticActionPort semanticActionPort;
     private final MinecraftApplyBlockPlanPort applyBlockPlanPort;
     private final MinecraftKnownBrewingPort knownBrewingPort;
+    private final MinecraftKnownFurnacePort knownFurnacePort;
     private final MinecraftPhaseFiveInventoryPort phaseFiveInventoryPort;
     private final MinecraftPhaseFiveWorldPort phaseFiveWorldPort;
     private final PhaseFivePortRouter phaseFivePort;
@@ -282,6 +284,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 observations,
                 screenOwnership,
                 ContainerSyncSignals.global());
+        knownFurnacePort = new MinecraftKnownFurnacePort(
+                Minecraft::getInstance,
+                sessions::snapshot,
+                observations,
+                screenOwnership,
+                ContainerSyncSignals.global(),
+                ClientPredictionSignals.global(),
+                recipeCatalog);
         phaseFiveInventoryPort = new MinecraftPhaseFiveInventoryPort(
                 Minecraft::getInstance,
                 sessions::snapshot,
@@ -717,6 +727,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private void clearPhaseFivePortSessions() {
         clearAutomationPortSession("finite_plan", finitePlanPort::clearSession);
         clearAutomationPortSession("known_brewing", knownBrewingPort::clearSession);
+        clearAutomationPortSession("known_furnace", knownFurnacePort::clearSession);
         clearAutomationPortSession("phase_five_inventory", phaseFiveInventoryPort::clearSession);
         clearAutomationPortSession("phase_five_world", phaseFiveWorldPort::clearSession);
         clearAutomationPortSession("phase_five_router", phaseFivePort::clearSession);
@@ -1825,10 +1836,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
         long durationMillis = node instanceof ActionDsl.CraftKnownRecipe
                 ? ActionDslCompiler.KNOWN_CRAFTING_DURATION_MILLIS
+                : node instanceof ActionDsl.SmeltKnownRecipe
+                        ? ActionDslCompiler.KNOWN_SMELTING_DURATION_MILLIS
                 : node instanceof ActionDsl.BrewKnownPotionBatch
                         ? ActionDslCompiler.KNOWN_BREWING_DURATION_MILLIS : 0L;
         long ticks = node instanceof ActionDsl.CraftKnownRecipe
                 ? ActionDslCompiler.KNOWN_CRAFTING_TICKS
+                : node instanceof ActionDsl.SmeltKnownRecipe
+                        ? ActionDslCompiler.KNOWN_SMELTING_TICKS
                 : node instanceof ActionDsl.BrewKnownPotionBatch
                         ? ActionDslCompiler.KNOWN_BREWING_TICKS : 0L;
         long interactions = node instanceof ActionDsl.TillKnownBlock
@@ -1841,6 +1856,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 : node instanceof ActionDsl.TakeKnownContainerStack ? 3L
                 : node instanceof ActionDsl.CraftKnownRecipe craft
                         ? ActionDslCompiler.knownCraftInteractions(craft.maxCrafts())
+                : node instanceof ActionDsl.SmeltKnownRecipe
+                        ? ActionDslCompiler.KNOWN_SMELTING_INTERACTIONS
                 : node instanceof ActionDsl.BrewKnownPotionBatch
                         ? ActionDslCompiler.KNOWN_BREWING_INTERACTIONS : 0L;
         long breaks = node instanceof ActionDsl.BreakKnownFace
@@ -3554,7 +3571,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
             if (agentExecution.primitive instanceof ActionDsl.InspectKnownContainer
                     || agentExecution.primitive instanceof ActionDsl.TakeKnownContainerStack
-                    || agentExecution.primitive instanceof ActionDsl.CraftKnownRecipe) {
+                    || agentExecution.primitive instanceof ActionDsl.CraftKnownRecipe
+                    || agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe) {
                 tickAgentContainer(minecraft, session, action);
                 return;
             }
@@ -4699,9 +4717,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     minecraft, session, agentExecution.primitive);
             long deadline = Math.addExact(
                     session.clientTick(),
-                    AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND);
+                    agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe
+                            ? ActionDslCompiler.KNOWN_SMELTING_TICKS
+                            : AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND);
             agentExecution.containerAttempt = new KnownContainerAttempt(
-                    phaseFiveInventoryPort, request, session.clientTick(), deadline);
+                    agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe
+                            ? knownFurnacePort : phaseFiveInventoryPort,
+                    request, session.clientTick(), deadline);
         }
         KnownContainerAttempt.TickResult result =
                 agentExecution.containerAttempt.tick(session.clientTick());
@@ -4723,10 +4745,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     var take = (ActionDsl.TakeKnownContainerStack) agentExecution.primitive;
                     agentActions.recordNodeEvidence(
                             action.actionId(), "container_transfer=" + take.item());
-                } else {
-                    var craft = (ActionDsl.CraftKnownRecipe) agentExecution.primitive;
+                } else if (agentExecution.primitive instanceof ActionDsl.CraftKnownRecipe craft) {
                     agentActions.recordNodeEvidence(
                             action.actionId(), "craft_complete=" + craft.goalItem());
+                } else {
+                    var smelt = (ActionDsl.SmeltKnownRecipe) agentExecution.primitive;
+                    agentActions.recordNodeEvidence(
+                            action.actionId(), "smelt_complete=" + smelt.goalItem());
                 }
                 agentActions.completeNode(action.actionId());
                 agentExecution.primitive = null;
@@ -5265,6 +5290,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (primitive instanceof ActionDsl.CraftKnownRecipe craft) {
             return craftRequest(craft);
         }
+        if (primitive instanceof ActionDsl.SmeltKnownRecipe smelt) {
+            return smeltRequest(smelt);
+        }
         ActionDsl.Position position;
         String expectedBlock;
         String item;
@@ -5352,6 +5380,34 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 target.dimension(), target, target, 0, 20, false);
         return new PhaseFiveRequest(
                 "craft_items", parameters, bounds, craft.minimumInventoryCount(), "items");
+    }
+
+    static PhaseFiveRequest smeltRequest(ActionDsl.SmeltKnownRecipe smelt) {
+        ActionDsl.Position position = smelt.target();
+        var target = new BlockTarget(
+                position.dimension(), position.x(), position.y(), position.z());
+        var parameters = new LinkedHashMap<String, Object>();
+        parameters.put("recipe_ref", smelt.recipeRef());
+        parameters.put("recipe_fingerprint", smelt.recipeFingerprint());
+        parameters.put("goal", Map.of(
+                "item", smelt.goalItem(),
+                "stack_policy", smelt.stackPolicy(),
+                "minimum_inventory_count", smelt.minimumInventoryCount()));
+        parameters.put("station", Map.of(
+                "kind", smelt.stationKind(),
+                "target", Map.of(
+                        "dimension", target.dimension(),
+                        "x", target.x(), "y", target.y(), "z", target.z()),
+                "expected_state", Map.of(
+                        "block", smelt.expectedState().block(),
+                        "properties", smelt.expectedState().properties())));
+        parameters.put("fuel", Map.of(
+                "item", smelt.fuelItem(),
+                "stack_policy", smelt.fuelStackPolicy()));
+        parameters.put("max_smelts", smelt.maxSmelts());
+        var bounds = new PhaseFiveBounds(
+                target.dimension(), target, target, 0, 120, false);
+        return new PhaseFiveRequest("smelt_items", parameters, bounds, 1, "items");
     }
 
     private static String containerItemsTrace(List<KnownContainerAttempt.ItemCount> items) {

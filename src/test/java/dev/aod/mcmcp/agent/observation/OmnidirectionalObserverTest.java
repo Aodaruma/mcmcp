@@ -226,7 +226,7 @@ class OmnidirectionalObserverTest {
     }
 
     @Test
-    void completeStateIsLimitedToAuditedCopyAndSupportBlocks() {
+    void completeStateIsLimitedToAuditedActionBlocks() {
         var xAxisLog = Blocks.OAK_LOG.defaultBlockState()
                 .setValue(BlockStateProperties.AXIS, Direction.Axis.X);
 
@@ -240,6 +240,14 @@ class OmnidirectionalObserverTest {
                 Blocks.GRASS_BLOCK.defaultBlockState())).isNotNull();
         assertThat(OmnidirectionalObserver.policyVisibleBlockState(
                 Blocks.OBSIDIAN.defaultBlockState())).isNotNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.FURNACE.defaultBlockState()).properties())
+                .containsEntry("facing", "north")
+                .containsEntry("lit", "false");
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.BLAST_FURNACE.defaultBlockState())).isNotNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.SMOKER.defaultBlockState())).isNotNull();
 
         // These blocks carry runtime properties which are not fully distinguishable from their
         // rendered surface. Their block ids remain visible, but complete state stays hidden.

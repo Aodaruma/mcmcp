@@ -138,7 +138,7 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
         public EvidenceProvenance provenance() { return EvidenceProvenance.OMNIDIRECTIONAL_VISUAL; }
     }
 
-    /** Complete, canonical BlockState identity for an audited construction copy/support surface. */
+    /** Complete, canonical BlockState identity for an audited action surface. */
     record BlockStateView(ResourceId block, Map<String, String> properties) {
         public BlockStateView {
             Objects.requireNonNull(block, "block");

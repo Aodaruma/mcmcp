@@ -470,7 +470,7 @@ public final class OmnidirectionalObserver {
     }
 
     /**
-     * Canonical complete state only for the audited construction copy/support allowlist.
+     * Canonical complete state only for audited construction, support, and owned-menu targets.
      * Returning null for every other visible block prevents non-rendered properties from crossing
      * the visual policy boundary.
      */
