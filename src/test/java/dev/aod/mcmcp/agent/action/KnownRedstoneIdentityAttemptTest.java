@@ -91,7 +91,7 @@ class KnownRedstoneIdentityAttemptTest {
                 "lever:false");
         assertThat(port.releaseCalls).isEqualTo(4);
         assertThat(port.retireCalls).isEqualTo(4);
-        assertThat(haloChecks[0]).isEqualTo(4);
+        assertThat(haloChecks[0]).isOne();
     }
 
     @Test
@@ -148,7 +148,7 @@ class KnownRedstoneIdentityAttemptTest {
     }
 
     @Test
-    void stopsBeforeTheFirstToggleWhenTheLeverHaloIsNoLongerClear() {
+    void stopsBeforeTheFirstPlacementWhenTheLeverHaloIsNotClear() {
         RedstoneIdentityRequest request = request();
         var port = new FakePort(request);
         BlockTarget blocked = request.leverSafetyHalo().stream()
@@ -160,8 +160,7 @@ class KnownRedstoneIdentityAttemptTest {
                 request,
                 tick -> currentLamp(request, tick, port.lampLit),
                 tick -> currentLever(request, tick, port.leverPowered),
-                tick -> currentHalo(
-                        request, tick, port.dispatches.size() >= 2 ? blocked : null),
+                tick -> currentHalo(request, tick, blocked),
                 1,
                 100);
 
@@ -174,9 +173,9 @@ class KnownRedstoneIdentityAttemptTest {
 
         assertThat(result.status()).isEqualTo(KnownRedstoneIdentityAttempt.Status.FAILED);
         assertThat(result.evidence()).isEqualTo("redstone_clearance_changed");
+        assertThat(result.placed()).isZero();
         assertThat(result.interactions()).isZero();
-        assertThat(port.dispatches).containsExactly(
-                "place:minecraft:redstone_lamp", "place:minecraft:lever");
+        assertThat(port.dispatches).isEmpty();
     }
 
     @Test

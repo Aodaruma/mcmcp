@@ -76,7 +76,10 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
 
     private TickResult tickMutation(long clientTick) {
         if (mutation == null) {
-            if (!haloClear(haloObserver.apply(clientTick), clientTick)) {
+            // This closed action never mutates the lever halo; prove it once before input lock
+            // starts the first placement, then let each child verify its own exact target.
+            if (phase == Phase.PLACE_LAMP
+                    && !haloClear(haloObserver.apply(clientTick), clientTick)) {
                 return fail("redstone_clearance_changed", 0, 0);
             }
             long childDeadline = Math.min(
