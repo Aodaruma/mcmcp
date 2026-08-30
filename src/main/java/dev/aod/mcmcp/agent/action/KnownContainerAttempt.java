@@ -22,6 +22,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
     private PhaseFiveAttempt attempt;
     private long lastObservationRevision;
     private int recordedInteractions;
+    private List<ItemCount> pendingSuccessItems;
     private boolean closed;
 
     public KnownContainerAttempt(
@@ -43,6 +44,9 @@ public final class KnownContainerAttempt implements AutoCloseable {
         requireOpen();
         if (clientTick < admittedClientTick) {
             throw new IllegalArgumentException("client tick moved before admission");
+        }
+        if (pendingSuccessItems != null) {
+            return releasePendingSuccess(captureInteractionDeltaStrict(clientTick));
         }
         if (clientTick >= deadlineClientTick) {
             return fail("container_deadline", captureInteractionDelta(clientTick));
@@ -98,9 +102,8 @@ public final class KnownContainerAttempt implements AutoCloseable {
                         || confirmed.result().verifiedUnits() < request.expectedUnits()) {
                     yield fail("container_postcondition_unconfirmed", delta);
                 }
-                List<ItemCount> items = itemCounts(confirmed.result().basis());
-                close();
-                yield TickResult.succeeded(delta, items);
+                pendingSuccessItems = itemCounts(confirmed.result().basis());
+                yield releasePendingSuccess(delta);
             }
             case PhaseFiveEvidence.Inconclusive inconclusive ->
                     fail("container_" + inconclusive.certainty().name()
@@ -108,6 +111,23 @@ public final class KnownContainerAttempt implements AutoCloseable {
             case PhaseFiveEvidence.Failed failed ->
                     fail(failed.failure().code().toLowerCase(Locale.ROOT), delta);
         };
+    }
+
+    private TickResult releasePendingSuccess(int interactionDelta) {
+        List<ItemCount> items = pendingSuccessItems;
+        try {
+            if (attempt != null) port.release(attempt);
+            int releaseDelta = attempt == null
+                    ? 0 : captureInteractionDeltaStrict(Long.MAX_VALUE);
+            port.retire(request);
+            closed = true;
+            return TickResult.succeeded(Math.addExact(interactionDelta, releaseDelta), items);
+        } catch (RuntimeException | LinkageError releaseFailure) {
+            if (releaseStatus() == ReleaseStatus.PROGRESSING) {
+                return TickResult.running(interactionDelta);
+            }
+            throw releaseFailure;
+        }
     }
 
     private TickResult fail(String evidence, int interactionDelta) {
@@ -128,18 +148,24 @@ public final class KnownContainerAttempt implements AutoCloseable {
     private int captureInteractionDelta(long maximumClientTick) {
         if (attempt == null) return 0;
         try {
-            PhaseFiveEvidence evidence = port.evidence(attempt);
-            if (!attemptId.equals(evidence.attemptId())
-                    || evidence.clientTick() < attempt.issuedClientTick()
-                    || evidence.clientTick() > maximumClientTick
-                    || evidence.observationRevision() < lastObservationRevision) {
-                return 0;
-            }
-            lastObservationRevision = evidence.observationRevision();
-            return recordInteractions(evidence.basis());
+            return captureInteractionDeltaStrict(maximumClientTick);
         } catch (RuntimeException | LinkageError invalidEvidence) {
             return 0;
         }
+    }
+
+    private int captureInteractionDeltaStrict(long maximumClientTick) {
+        if (attempt == null) return 0;
+        PhaseFiveEvidence evidence = Objects.requireNonNull(
+                port.evidence(attempt), "adapter returned no evidence");
+        if (!attemptId.equals(evidence.attemptId())
+                || evidence.clientTick() < attempt.issuedClientTick()
+                || evidence.clientTick() > maximumClientTick
+                || evidence.observationRevision() < lastObservationRevision) {
+            throw new IllegalStateException("container release evidence contract changed");
+        }
+        lastObservationRevision = evidence.observationRevision();
+        return recordInteractions(evidence.basis());
     }
 
     /** Drains recipe/cursor cleanup usage while the first terminal intent remains retained. */

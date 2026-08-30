@@ -75,6 +75,37 @@ class KnownContainerAttemptTest {
         assertThat(port.retires).isOne();
     }
 
+    @Test
+    void successfulEvidenceStaysPrivateWhileReleaseProgressesAcrossTicks() {
+        var port = new FakePort();
+        var operation = new KnownContainerAttempt(port, request(), 1, 4);
+        port.tick = 1;
+        operation.tick(1);
+        port.tick = 2;
+        operation.tick(2);
+        port.releaseFailuresRemaining = 1;
+        port.releaseAddsInteraction = true;
+
+        port.tick = 3;
+        var releasing = operation.tick(3);
+        assertThat(releasing.status()).isEqualTo(KnownContainerAttempt.Status.RUNNING);
+        assertThat(releasing.items()).isEmpty();
+        assertThat(operation.releaseStatus())
+                .isEqualTo(KnownContainerAttempt.ReleaseStatus.PROGRESSING);
+        assertThat(port.releases).isOne();
+        assertThat(port.retires).isZero();
+
+        port.tick = 4;
+        var released = operation.tick(4);
+        assertThat(released.status()).isEqualTo(KnownContainerAttempt.Status.SUCCEEDED);
+        assertThat(released.interactionDelta()).isOne();
+        assertThat(released.items()).containsExactly(
+                new KnownContainerAttempt.ItemCount("minecraft:iron_hoe", 1),
+                new KnownContainerAttempt.ItemCount("minecraft:wheat_seeds", 64));
+        assertThat(port.releases).isEqualTo(2);
+        assertThat(port.retires).isOne();
+    }
+
     private static PhaseFiveRequest request() {
         var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
         return new PhaseFiveRequest(

@@ -231,7 +231,7 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
-    void everyAgentContainerClickInvalidatesCursorProofAndWaitsForFreshProofBeforeClose()
+    void recipePlacementReusesEmptyProofButBothCraftPickupsRequireFreshCursorProof()
             throws Exception {
         var node = classNode();
 
@@ -247,11 +247,15 @@ class MinecraftPhaseFiveInventoryPortTest {
                         "net/minecraft/client/multiplayer/MultiPlayerGameMode"
                                 + "#handleContainerInput");
         assertThat(invocations(node, "dispatchRecipePlacement"))
-                .containsSubsequence(
+                .contains(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#packetRevision",
+                        "net/minecraft/client/multiplayer/MultiPlayerGameMode"
+                                + "#handlePlaceRecipe")
+                .doesNotContain(
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#prepareOwnedDispatch",
-                        "net/minecraft/client/multiplayer/MultiPlayerGameMode"
-                                + "#handlePlaceRecipe");
+                        "dev/aod/mcmcp/runtime/ScreenOwnershipSignals"
+                                + "#invalidateServerCursorProof");
         assertThat(invocations(node, "maintainCraftResult"))
                 .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                         + "#dispatchContainerClick")
@@ -306,6 +310,32 @@ class MinecraftPhaseFiveInventoryPortTest {
                 .containsExactly("PICKUP");
         assertThat(containerInputs(node, "maintainCraftResultPickupAck"))
                 .containsExactly("PICKUP");
+    }
+
+    @Test
+    void expectedOpenRetainsCausalAuthorityUntilPredictionAckOrOwnedCleanup()
+            throws Exception {
+        var node = classNode();
+
+        assertThat(invocations(node, "dispatchExpectedOpen"))
+                .contains(
+                        "dev/aod/mcmcp/runtime/ClientPredictionSignals#begin",
+                        "dev/aod/mcmcp/runtime/ClientPredictionSignals$PredictionAttempt"
+                                + "#sequenceBeforePrediction",
+                        "net/minecraft/client/multiplayer/MultiPlayerGameMode#useItemOn",
+                        "dev/aod/mcmcp/runtime/ClientPredictionSignals$PredictionAttempt"
+                                + "#captureIssuedPredictions",
+                        "dev/aod/mcmcp/runtime/ScreenOwnershipSignals"
+                                + "#cancelRoutineAfterPredictedUse");
+        assertThat(invocations(node, "cancelScreenAuthority"))
+                .contains("dev/aod/mcmcp/runtime/ScreenOwnershipSignals"
+                        + "#cancelRoutineAfterPredictedUse");
+        assertThat(invocations(node, "maintainTerminalRelease"))
+                .contains(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#cancelScreenAuthority",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#closeOpenPrediction");
     }
 
     private static List<String> containerInputs(ClassNode node, String methodName) {

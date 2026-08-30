@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.routine;
 
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
+import dev.aod.mcmcp.runtime.ClientPredictionSignals;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals;
 import dev.aod.mcmcp.runtime.ExpectedOpenToken;
 import dev.aod.mcmcp.runtime.ScreenOwnershipSignals;
@@ -66,6 +67,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     private final ClientRecipeCatalog recipes;
     private final ScreenOwnershipSignals screens;
     private final DoubleSupplier runtimeCameraDegreesPerTick;
+    private final ClientPredictionSignals predictions;
     private final Map<PhaseFiveAttempt, AttemptState> attempts = new IdentityHashMap<>();
 
     public MinecraftPhaseFiveInventoryPort(
@@ -73,13 +75,15 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             Supplier<WorldSessionTracker.Snapshot> sessionSupplier,
             ClientRecipeCatalog recipes,
             ScreenOwnershipSignals screens,
-            DoubleSupplier runtimeCameraDegreesPerTick) {
+            DoubleSupplier runtimeCameraDegreesPerTick,
+            ClientPredictionSignals predictions) {
         this.minecraftSupplier = Objects.requireNonNull(minecraftSupplier, "minecraftSupplier");
         this.sessionSupplier = Objects.requireNonNull(sessionSupplier, "sessionSupplier");
         this.recipes = Objects.requireNonNull(recipes, "recipes");
         this.screens = Objects.requireNonNull(screens, "screens");
         this.runtimeCameraDegreesPerTick = Objects.requireNonNull(
                 runtimeCameraDegreesPerTick, "runtimeCameraDegreesPerTick");
+        this.predictions = Objects.requireNonNull(predictions, "predictions");
     }
 
     @Override
@@ -313,6 +317,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         for (var attempt : List.copyOf(attempts.keySet())) {
             screens.releaseRoutineOnIdentityLoss(attempt.attemptId());
             var state = attempts.get(attempt);
+            closeOpenPrediction(state);
             state.closeView(requireMinecraft());
             state.releaseConfirmed = true;
         }
@@ -333,6 +338,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     RoutineFailure.Recovery.NONE, Map.of(), Map.of());
             return;
         }
+        closeOpenPrediction(state);
         var player = minecraft.player;
         if (player == null || !session.serverSnapshot().carried().empty()) {
             fail(state, "OWNED_SCREEN_CURSOR_NOT_EMPTY", RoutineFailure.Category.SAFETY,
@@ -625,12 +631,21 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             AttemptState state,
             CraftingMenu menu,
             long snapshotRevision) {
-        long before = prepareOwnedDispatch(attempt, state, menu);
-        if (before < 0L) return;
+        Minecraft minecraft = requireMinecraft();
+        Optional<ScreenOwnershipSignals.OwnedScreenSession> owned = screens.ownedSession();
+        if (owned.isEmpty()
+                || !attempt.attemptId().equals(owned.orElseThrow().token().routineId())
+                || minecraft.player == null
+                || minecraft.player.containerMenu != menu) {
+            fail(state, "OWNED_SCREEN_CLICK_AUTHORITY_LOST", RoutineFailure.Category.SAFETY,
+                    RoutineFailure.Recovery.REPLAN, Map.of(), Map.of());
+            return;
+        }
+        long before = packetRevision();
         state.lastPacketRevision = Math.max(snapshotRevision, before);
         // Count before dispatch so a rejected or throwing call cannot disappear from usage.
         state.recipePlacements++;
-        Objects.requireNonNull(requireMinecraft().gameMode).handlePlaceRecipe(
+        Objects.requireNonNull(minecraft.gameMode).handlePlaceRecipe(
                 menu.containerId, state.recipe.displayId(), false);
         state.stage = Stage.CRAFT_WAIT_RESULT;
     }
@@ -653,7 +668,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         return true;
     }
 
-    /** Shared ownership/cursor barrier for every Agent-authored menu mutation. */
+    /** Shared ownership/cursor barrier for every Agent-authored container click. */
     private long prepareOwnedDispatch(
             PhaseFiveAttempt attempt, AttemptState state, AbstractContainerMenu menu) {
         Minecraft minecraft = requireMinecraft();
@@ -770,16 +785,48 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return;
         }
         var hit = exactHit(minecraft, parameters.target());
-        if (!Objects.requireNonNull(minecraft.gameMode)
-                .useItemOn(minecraft.player, InteractionHand.MAIN_HAND, hit)
-                .consumesAction()) {
+        ClientPredictionSignals.PredictionAttempt prediction;
+        int sequenceBefore;
+        try {
+            prediction = predictions.begin(
+                    Objects.requireNonNull(minecraft.level),
+                    blockPos(parameters.target()), session.clientTick());
+            sequenceBefore = prediction.sequenceBeforePrediction();
+            state.openPrediction = prediction;
+        } catch (ClientPredictionSignals.PredictionBridgeException predictionFailure) {
             screens.cancelRoutine(attempt.attemptId());
+            fail(state, "CONTAINER_OPEN_PREDICTION_UNAVAILABLE",
+                    RoutineFailure.Category.SAFETY, RoutineFailure.Recovery.REPLAN,
+                    Map.of(), Map.of());
+            return;
+        }
+        state.openCount++;
+        final boolean consumed;
+        try {
+            consumed = Objects.requireNonNull(minecraft.gameMode)
+                    .useItemOn(minecraft.player, InteractionHand.MAIN_HAND, hit)
+                    .consumesAction();
+            int sequenceAfter = prediction.captureIssuedPredictions();
+            if (sequenceAfter != sequenceBefore + 1) {
+                throw new ClientPredictionSignals.PredictionBridgeException(
+                        "block-use prediction sequence did not advance exactly once");
+            }
+        } catch (RuntimeException | LinkageError dispatchFailure) {
+            screens.cancelRoutineAfterPredictedUse(
+                    attempt.attemptId(), causalBarrierStatus(state));
+            fail(state, "CONTAINER_OPEN_PREDICTION_INCOMPATIBLE",
+                    RoutineFailure.Category.SAFETY, RoutineFailure.Recovery.USER,
+                    Map.of(), Map.of());
+            return;
+        }
+        if (!consumed) {
+            screens.cancelRoutineAfterPredictedUse(
+                    attempt.attemptId(), causalBarrierStatus(state));
             fail(state, "CONTAINER_NORMAL_USE_REJECTED", RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
                     Map.of("target", parameters.target().toString()), Map.of());
             return;
         }
-        state.openCount++;
         state.stage = readback ? Stage.OPENING_READBACK : Stage.OPENING_INITIAL;
     }
 
@@ -925,9 +972,12 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             ScreenOwnershipSignals.Snapshot screen = screens.snapshot();
             state.screenOwnedObserved |= screen.everOwned();
             switch (screen.phase()) {
-                case OWNED -> releaseOwnedMenu(attempt, state, minecraft);
+                case OWNED -> {
+                    closeOpenPrediction(state);
+                    releaseOwnedMenu(attempt, state, minecraft);
+                }
                 case EXPECTING_OPEN_PACKET, EXPECTING_SCREEN, EXPECTING_FULL_CONTENT, FAILED -> {
-                    var decision = screens.cancelRoutine(attempt.attemptId());
+                    var decision = cancelScreenAuthority(attempt, state);
                     if (!decision.authorityMatched()) {
                         state.releaseFault = true;
                         return;
@@ -942,11 +992,41 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     confirmReleaseIfClear(state, minecraft);
                 }
                 case CLOSING -> { }
-                case IDLE -> confirmReleaseIfClear(state, minecraft);
+                case IDLE -> {
+                    closeOpenPrediction(state);
+                    confirmReleaseIfClear(state, minecraft);
+                }
             }
         } catch (RuntimeException | LinkageError releaseFailure) {
             state.releaseFault = true;
         }
+    }
+
+    private ScreenOwnershipSignals.CleanupDecision cancelScreenAuthority(
+            PhaseFiveAttempt attempt, AttemptState state) {
+        return state.openPrediction == null
+                ? screens.cancelRoutine(attempt.attemptId())
+                : screens.cancelRoutineAfterPredictedUse(
+                        attempt.attemptId(), causalBarrierStatus(state));
+    }
+
+    private static ScreenOwnershipSignals.CausalBarrierStatus causalBarrierStatus(
+            AttemptState state) {
+        if (state.openPrediction == null) {
+            return ScreenOwnershipSignals.CausalBarrierStatus.NOT_REQUIRED;
+        }
+        return switch (state.openPrediction.acknowledgement().status()) {
+            case ACKNOWLEDGED -> ScreenOwnershipSignals.CausalBarrierStatus.ACKNOWLEDGED;
+            case IDENTITY_RELEASED -> ScreenOwnershipSignals.CausalBarrierStatus.IDENTITY_RELEASED;
+            case NO_PREDICTION, WAITING_ACK -> ScreenOwnershipSignals.CausalBarrierStatus.WAITING_ACK;
+            case INCOMPATIBLE, CLOSED -> ScreenOwnershipSignals.CausalBarrierStatus.INCOMPATIBLE;
+        };
+    }
+
+    private static void closeOpenPrediction(AttemptState state) {
+        if (state.openPrediction == null) return;
+        state.openPrediction.close();
+        state.openPrediction = null;
     }
 
     private void releaseOwnedMenu(
@@ -1741,6 +1821,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private boolean releasePending;
         private boolean releaseConfirmed;
         private boolean releaseFault;
+        private ClientPredictionSignals.PredictionAttempt openPrediction;
         private ViewLease view;
 
         private AttemptState(PhaseFiveRequest request, ParsedParameters parameters) {
