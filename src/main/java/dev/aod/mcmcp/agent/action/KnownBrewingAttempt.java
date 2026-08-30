@@ -73,8 +73,7 @@ public final class KnownBrewingAttempt implements AutoCloseable {
                 return fail(inconclusiveEvidence(inconclusive), delta);
             }
             if (edge instanceof PhaseFiveEvidence.Failed failed) {
-                return fail("brewing_" + failed.failure().category().name()
-                        .toLowerCase(Locale.ROOT), delta);
+                return fail(failedEvidence(failed), delta);
             }
             if (releaseFault(edge.basis())) {
                 return fail("brewing_release_fault", delta);
@@ -143,9 +142,12 @@ public final class KnownBrewingAttempt implements AutoCloseable {
             case PhaseFiveEvidence.Inconclusive inconclusive ->
                     fail(inconclusiveEvidence(inconclusive), delta);
             case PhaseFiveEvidence.Failed failed ->
-                    fail("brewing_" + failed.failure().category().name()
-                            .toLowerCase(Locale.ROOT), delta);
+                    fail(failedEvidence(failed), delta);
         };
+    }
+
+    private static String failedEvidence(PhaseFiveEvidence.Failed failed) {
+        return failed.failure().code().toLowerCase(Locale.ROOT);
     }
 
     private String inconclusiveEvidence(PhaseFiveEvidence.Inconclusive inconclusive) {

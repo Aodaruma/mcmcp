@@ -9,6 +9,7 @@ import dev.aod.mcmcp.routine.PhaseFiveFrame;
 import dev.aod.mcmcp.routine.PhaseFivePort;
 import dev.aod.mcmcp.routine.PhaseFiveRequest;
 import dev.aod.mcmcp.routine.PhaseFiveResult;
+import dev.aod.mcmcp.routine.RoutineFailure;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -67,6 +68,26 @@ class KnownBrewingAttemptTest {
         operation.close();
         assertThat(port.releases).isOne();
         assertThat(port.retires).isOne();
+    }
+
+    @Test
+    void retainsTheFixedAdapterFailureCodeForDiagnosis() {
+        var port = new FakePort();
+        var operation = new KnownBrewingAttempt(port, request(), 10, 1_410);
+        port.tick = 10;
+        operation.tick(10);
+        port.tick = 11;
+        port.failure = new RoutineFailure(
+                "BREWING_READBACK_DELTA_MISMATCH",
+                RoutineFailure.Category.DIVERGENCE,
+                RoutineFailure.Recovery.REPLAN,
+                Map.of(), Map.of());
+
+        var result = operation.tick(11);
+
+        assertThat(result.status()).isEqualTo(KnownBrewingAttempt.Status.FAILED);
+        assertThat(result.evidence())
+                .isEqualTo("brewing_readback_delta_mismatch");
     }
 
     @Test
@@ -184,6 +205,7 @@ class KnownBrewingAttemptTest {
         private int releases;
         private int retires;
         private int releaseFailures;
+        private RoutineFailure failure;
 
         @Override
         public PhaseFiveFrame observe(PhaseFiveRequest request) {
@@ -219,6 +241,10 @@ class KnownBrewingAttemptTest {
                         attempt.attemptId(), tick, tick,
                         PhaseFiveEvidence.Certainty.UNKNOWN,
                         "brewing_action_hard_deadline_exceeded", basis);
+            }
+            if (failure != null) {
+                return new PhaseFiveEvidence.Failed(
+                        attempt.attemptId(), tick, tick, failure, basis);
             }
             if (!confirmed) {
                 return new PhaseFiveEvidence.Pending(
