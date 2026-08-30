@@ -6878,12 +6878,27 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
         }
         if (agentExecution.containerAttempt != null) {
+            KnownContainerAttempt container = agentExecution.containerAttempt;
             try {
-                agentExecution.containerAttempt.close();
+                container.close();
                 agentExecution.containerAttempt = null;
             } catch (RuntimeException | LinkageError failure) {
                 closed = false;
-                McmcpMod.LOGGER.error("MCMCP known-container release failed", failure);
+                if (container.releaseStatus()
+                        != KnownContainerAttempt.ReleaseStatus.PROGRESSING) {
+                    McmcpMod.LOGGER.error("MCMCP known-container release failed", failure);
+                }
+            } finally {
+                try {
+                    int releasedInteractions = container.drainReleaseInteractionDelta();
+                    for (int count = 0; count < releasedInteractions; count++) {
+                        agentActions.recordInteraction(agentExecution.actionId);
+                    }
+                } catch (RuntimeException | LinkageError failure) {
+                    closed = false;
+                    McmcpMod.LOGGER.error(
+                            "MCMCP known-container release usage capture failed", failure);
+                }
             }
         }
         if (agentExecution.brewingAttempt != null) {
@@ -6999,7 +7014,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         pendingAgentInputRelease = !cleanupConfirmed;
         if (!cleanupConfirmed) {
             if (!primitiveClosed && recoveryClosed && ownersReleased
-                    && brewingReleaseProgressing()) {
+                    && statefulMenuReleaseProgressing()) {
                 return false;
             }
             pendingAgentReturnReady = false;
@@ -7040,11 +7055,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return lastStatefulAgentCleanup;
     }
 
-    private boolean brewingReleaseProgressing() {
-        return agentExecution != null
-                && agentExecution.brewingAttempt != null
-                && agentExecution.brewingAttempt.releaseStatus()
-                        == KnownBrewingAttempt.ReleaseStatus.PROGRESSING;
+    private boolean statefulMenuReleaseProgressing() {
+        return agentExecution != null && (
+                agentExecution.containerAttempt != null
+                        && agentExecution.containerAttempt.releaseStatus()
+                                == KnownContainerAttempt.ReleaseStatus.PROGRESSING
+                || agentExecution.brewingAttempt != null
+                        && agentExecution.brewingAttempt.releaseStatus()
+                                == KnownBrewingAttempt.ReleaseStatus.PROGRESSING);
     }
 
     private boolean advancePendingAgentReleaseClock() {
@@ -7348,7 +7366,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 if (actionTerminal != null) {
                     rememberPendingAgentTerminal(actionTerminal);
                 }
-                actionProgress = brewingReleaseProgressing()
+                actionProgress = statefulMenuReleaseProgressing()
                         ? ClientCommandInbox.StopProgress.PENDING
                         : ClientCommandInbox.StopProgress.FAILED;
             }

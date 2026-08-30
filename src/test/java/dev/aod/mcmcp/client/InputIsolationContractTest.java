@@ -306,7 +306,7 @@ class InputIsolationContractTest {
                         "dev/aod/mcmcp/runtime/McmcpRuntime$AgentCleanupProgress#primitiveClosed",
                         "dev/aod/mcmcp/runtime/McmcpRuntime$AgentCleanupProgress#recoveryClosed",
                         "dev/aod/mcmcp/runtime/McmcpRuntime#boundedActionInputRelease",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#brewingReleaseProgressing",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#statefulMenuReleaseProgressing",
                         "dev/aod/mcmcp/runtime/McmcpRuntime#restoreAgentSelectedSlot");
         var statefulCleanup = method(
                 runtime, "advanceStatefulAgentCleanupOncePerClientTick");

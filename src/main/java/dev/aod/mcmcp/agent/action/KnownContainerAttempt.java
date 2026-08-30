@@ -45,7 +45,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
             throw new IllegalArgumentException("client tick moved before admission");
         }
         if (clientTick >= deadlineClientTick) {
-            return fail("container_deadline", 0);
+            return fail("container_deadline", captureInteractionDelta(clientTick));
         }
         var frame = Objects.requireNonNull(port.observe(request), "adapter returned no frame");
         if (frame.clientTick() != clientTick
@@ -54,7 +54,8 @@ public final class KnownContainerAttempt implements AutoCloseable {
         }
         lastObservationRevision = frame.observationRevision();
         if (frame.failure() != null) {
-            return fail(frame.failure().code().toLowerCase(Locale.ROOT), 0);
+            return fail(frame.failure().code().toLowerCase(Locale.ROOT),
+                    captureInteractionDelta(clientTick));
         }
 
         if (attempt == null) {
@@ -80,12 +81,12 @@ public final class KnownContainerAttempt implements AutoCloseable {
             return fail("container_evidence_contract", 0);
         }
         lastObservationRevision = evidence.observationRevision();
-        int interactions = interactionCount(evidence.basis());
-        if (interactions < recordedInteractions) {
+        final int delta;
+        try {
+            delta = recordInteractions(evidence.basis());
+        } catch (IllegalStateException invalidUsage) {
             return fail("container_interaction_contract", 0);
         }
-        int delta = interactions - recordedInteractions;
-        recordedInteractions = interactions;
 
         return switch (evidence) {
             case PhaseFiveEvidence.Pending ignored -> {
@@ -110,19 +111,63 @@ public final class KnownContainerAttempt implements AutoCloseable {
     }
 
     private TickResult fail(String evidence, int interactionDelta) {
-        close();
+        // The runtime retains this terminal intent until its shared release fence confirms cleanup.
         return TickResult.failed(evidence, interactionDelta);
+    }
+
+    private int recordInteractions(Map<String, Object> basis) {
+        int interactions = interactionCount(basis);
+        if (interactions < recordedInteractions) {
+            throw new IllegalStateException("container interaction contract changed");
+        }
+        int delta = interactions - recordedInteractions;
+        recordedInteractions = interactions;
+        return delta;
+    }
+
+    private int captureInteractionDelta(long maximumClientTick) {
+        if (attempt == null) return 0;
+        try {
+            PhaseFiveEvidence evidence = port.evidence(attempt);
+            if (!attemptId.equals(evidence.attemptId())
+                    || evidence.clientTick() < attempt.issuedClientTick()
+                    || evidence.clientTick() > maximumClientTick
+                    || evidence.observationRevision() < lastObservationRevision) {
+                return 0;
+            }
+            lastObservationRevision = evidence.observationRevision();
+            return recordInteractions(evidence.basis());
+        } catch (RuntimeException | LinkageError invalidEvidence) {
+            return 0;
+        }
+    }
+
+    /** Drains recipe/cursor cleanup usage while the first terminal intent remains retained. */
+    public int drainReleaseInteractionDelta() {
+        return closed ? 0 : captureInteractionDelta(Long.MAX_VALUE);
+    }
+
+    public ReleaseStatus releaseStatus() {
+        if (closed) return ReleaseStatus.CONFIRMED;
+        if (attempt == null) return ReleaseStatus.ACTIVE;
+        try {
+            Map<String, Object> basis = port.evidence(attempt).basis();
+            if (Boolean.TRUE.equals(basis.get("release_fault"))) return ReleaseStatus.FAULT;
+            if (Boolean.TRUE.equals(basis.get("release_confirmed"))) {
+                return ReleaseStatus.CONFIRMED;
+            }
+            return Boolean.TRUE.equals(basis.get("release_pending"))
+                    ? ReleaseStatus.PROGRESSING : ReleaseStatus.ACTIVE;
+        } catch (RuntimeException | LinkageError invalidEvidence) {
+            return ReleaseStatus.FAULT;
+        }
     }
 
     @Override
     public void close() {
         if (closed) return;
-        try {
-            if (attempt != null) port.release(attempt);
-        } finally {
-            port.retire(request);
-        }
-        // Router/delegate ownership stays retryable until both release and retirement succeed.
+        if (attempt != null) port.release(attempt);
+        port.retire(request);
         closed = true;
     }
 
@@ -161,6 +206,8 @@ public final class KnownContainerAttempt implements AutoCloseable {
     }
 
     public enum Status { RUNNING, SUCCEEDED, FAILED }
+
+    public enum ReleaseStatus { ACTIVE, PROGRESSING, CONFIRMED, FAULT }
 
     public record ItemCount(String item, int count) {
         public ItemCount {

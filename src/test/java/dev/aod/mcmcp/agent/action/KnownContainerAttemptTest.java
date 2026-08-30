@@ -53,7 +53,26 @@ class KnownContainerAttemptTest {
         operation.close();
 
         assertThat(port.releases).isEqualTo(2);
-        assertThat(port.retires).isEqualTo(2);
+        assertThat(port.retires).isOne();
+    }
+
+    @Test
+    void cleanupUsageRemainsDrainableWhileReleaseIsRetried() {
+        var port = new FakePort();
+        var operation = new KnownContainerAttempt(port, request(), 1, 101);
+        port.tick = 1;
+        operation.tick(1);
+        port.releaseFailuresRemaining = 1;
+        port.releaseAddsInteraction = true;
+
+        assertThatThrownBy(operation::close).hasMessage("container release failed once");
+        assertThat(operation.releaseStatus())
+                .isEqualTo(KnownContainerAttempt.ReleaseStatus.PROGRESSING);
+        assertThat(operation.drainReleaseInteractionDelta()).isOne();
+        assertThat(port.retires).isZero();
+
+        operation.close();
+        assertThat(port.retires).isOne();
     }
 
     private static PhaseFiveRequest request() {
@@ -73,6 +92,10 @@ class KnownContainerAttemptTest {
         private int releases;
         private int retires;
         private int releaseFailuresRemaining;
+        private int interactions;
+        private boolean releaseAddsInteraction;
+        private boolean releasePending;
+        private boolean releaseConfirmed;
 
         @Override
         public PhaseFiveFrame observe(PhaseFiveRequest request) {
@@ -90,13 +113,17 @@ class KnownContainerAttemptTest {
         @Override
         public void maintain(PhaseFiveAttempt attempt) {
             maintained = true;
+            interactions = Math.max(interactions, 1);
         }
 
         @Override
         public PhaseFiveEvidence evidence(PhaseFiveAttempt attempt) {
             Map<String, Object> basis = Map.of(
-                    "open_count", maintained ? 1 : 0,
-                    "container_clicks", 0);
+                    "open_count", Math.min(interactions, 1),
+                    "container_clicks", Math.max(0, interactions - 1),
+                    "release_pending", releasePending,
+                    "release_confirmed", releaseConfirmed,
+                    "release_fault", false);
             if (!maintained) {
                 return new PhaseFiveEvidence.Pending(attempt.attemptId(), tick, 1, basis);
             }
@@ -112,9 +139,16 @@ class KnownContainerAttemptTest {
         @Override
         public void release(PhaseFiveAttempt attempt) {
             releases++;
+            releasePending = true;
+            if (releaseAddsInteraction) {
+                interactions++;
+                releaseAddsInteraction = false;
+            }
             if (releaseFailuresRemaining-- > 0) {
                 throw new IllegalStateException("container release failed once");
             }
+            releasePending = false;
+            releaseConfirmed = true;
         }
 
         @Override

@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.routine;
 
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
+import dev.aod.mcmcp.runtime.ContainerSyncSignals.ContainerSnapshot;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
@@ -10,6 +11,7 @@ import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -156,6 +158,25 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
+    void interruptedCraftCanReturnOnlyTheExactCursorStackToTheUnchangedDestination() {
+        var slots = emptySlots(46);
+        var before = stack("minecraft:stick", 60, DEFAULT_HASH);
+        slots.set(10, before);
+        var safe = new ContainerSnapshot(
+                UUID.randomUUID(), 1, "minecraft:crafting", 1, slots,
+                stack("minecraft:stick", 4, DEFAULT_HASH), 2, 3);
+
+        assertThat(MinecraftPhaseFiveInventoryPort.craftCursorReturnSafe(
+                safe, 10, before, "minecraft:stick", DEFAULT_HASH, 4)).isTrue();
+        slots.set(10, stack("minecraft:stick", 61, DEFAULT_HASH));
+        var changed = new ContainerSnapshot(
+                safe.worldSessionId(), 1, "minecraft:crafting", 2, slots,
+                safe.carried(), 3, 4);
+        assertThat(MinecraftPhaseFiveInventoryPort.craftCursorReturnSafe(
+                changed, 10, before, "minecraft:stick", DEFAULT_HASH, 4)).isFalse();
+    }
+
+    @Test
     void aimingChecksSafetyBeforeTurningAndReadbackCanRecoverAStaleCrosshair() throws Exception {
         var node = new ClassNode();
         try (var stream = getClass().getResourceAsStream(
@@ -190,7 +211,7 @@ class MinecraftPhaseFiveInventoryPortTest {
         assertThat(invocations(node, "closeForReadback"))
                 .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                         + "#closeOwnedMenuClient");
-        assertThat(invocations(node, "cleanupOwnedScreen"))
+        assertThat(invocations(node, "releaseOwnedMenu"))
                 .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                         + "#closeOwnedMenuClient");
     }
@@ -205,11 +226,15 @@ class MinecraftPhaseFiveInventoryPortTest {
             new ClassReader(stream).accept(node, 0);
         }
 
-        assertThat(invocations(node, "dispatchContainerClick"))
+        assertThat(invocations(node, "prepareOwnedDispatch"))
                 .containsSubsequence(
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#packetRevision",
                         "dev/aod/mcmcp/runtime/ScreenOwnershipSignals"
-                                + "#invalidateServerCursorProof",
+                                + "#invalidateServerCursorProof");
+        assertThat(invocations(node, "dispatchContainerClick"))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#prepareOwnedDispatch",
                         "net/minecraft/client/multiplayer/MultiPlayerGameMode"
                                 + "#handleContainerInput");
         assertThat(invocations(node, "maintainCraftResult"))
