@@ -1566,13 +1566,13 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         return count;
     }
 
-    private static boolean matches(
+    static boolean matches(
             ContainerSyncSignals.StackFingerprint stack,
             StackKey key,
             int count) {
         Objects.requireNonNull(stack, "stack");
         Objects.requireNonNull(key, "key");
-        if (count == 0) return stack.empty();
+        if (count <= 0) return false;
         return !stack.empty()
                 && stack.count() == count
                 && stack.itemId().equals(key.itemId())

@@ -184,6 +184,13 @@ class MinecraftKnownBrewingPortTest {
     }
 
     @Test
+    void emptyStackNeverMatchesAConcreteStackKey() {
+        assertThat(MinecraftKnownBrewingPort.matches(
+                StackFingerprint.EMPTY, key("minecraft:potion", OUTPUT_HASH), 0))
+                .isFalse();
+    }
+
+    @Test
     void strengthBrewingConsumesTwoBlazePowderAndFitsInteractionCap() {
         var input = key("minecraft:potion", INPUT_HASH);
         var output = key("minecraft:potion", OUTPUT_HASH);
