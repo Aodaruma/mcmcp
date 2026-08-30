@@ -144,18 +144,8 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
             if (server == null
                     || server.packetLedgerRevision() <= state.initialPacketRevision) return;
             KnownMenuProfileSupport.Context context = currentContext(session).orElse(null);
-            if (context == null) {
-                state.latchFailure(failure(
-                        "KNOWN_MENU_TRANSFER_MISMATCH", RoutineFailure.Category.DIVERGENCE,
-                        RoutineFailure.Recovery.REPLAN));
-                return;
-            }
-            if (!exactTransferConfirmed(state.operation, context)) {
-                state.latchFailure(failure(
-                        "KNOWN_MENU_TRANSFER_MISMATCH", RoutineFailure.Category.DIVERGENCE,
-                        RoutineFailure.Recovery.REPLAN));
-                return;
-            }
+            // A server QUICK_MOVE can arrive as several SetSlot packets.
+            if (context == null || !exactTransferConfirmed(state.operation, context)) return;
             context.screen().onClose();
             state.stage = Stage.AWAIT_CLOSE;
             state.stageDeadline = boundedDeadline(tick, CLOSE_TIMEOUT_TICKS);
