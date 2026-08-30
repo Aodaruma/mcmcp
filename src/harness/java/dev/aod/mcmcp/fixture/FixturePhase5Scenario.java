@@ -151,6 +151,9 @@ final class FixturePhase5Scenario {
         resetKnownRecipes(context);
         if (mode == FixturePhase5Mode.RECIPES || mode == FixturePhase5Mode.CRAFT) {
             context.player().awardRecipesByKey(KNOWN_RECIPE_KEYS);
+        } else if (mode == FixturePhase5Mode.SMELT) {
+            context.player().awardRecipesByKey(List.of(
+                    recipeKey("iron_ingot_from_smelting_raw_iron")));
         }
         configureInventory(context.player(), mode);
         if (mode == FixturePhase5Mode.SLEEP) {
