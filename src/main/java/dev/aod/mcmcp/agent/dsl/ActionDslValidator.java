@@ -41,6 +41,8 @@ public final class ActionDslValidator {
     private static final Pattern PROGRAM_NAME = Pattern.compile("[a-z][a-z0-9_-]{0,63}");
     private static final Pattern RESOURCE_LOCATION =
             Pattern.compile("[a-z0-9_.-]+:[a-z0-9_./-]+");
+    private static final Pattern OPAQUE_REFERENCE = Pattern.compile("[A-Za-z0-9_-]{24}");
+    private static final Pattern SHA256_FINGERPRINT = Pattern.compile("sha256:[0-9a-f]{64}");
     private static final Pattern BLOCK_PROPERTY_NAME = Pattern.compile("[a-z0-9_]{1,64}");
     private static final Pattern BLOCK_PROPERTY_VALUE = Pattern.compile("[a-z0-9_.-]{1,64}");
     private static final Set<String> BREAKABLE_LOGS = Set.of(
@@ -428,6 +430,30 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
             return 1;
         }
+        if (node instanceof ActionDsl.CraftKnownRecipe craft) {
+            requirePattern(craft.recipeRef(), OPAQUE_REFERENCE, path + ".recipe_ref");
+            requirePattern(craft.recipeFingerprint(), SHA256_FINGERPRINT,
+                    path + ".recipe_fingerprint");
+            requirePattern(craft.goalItem(), RESOURCE_LOCATION, path + ".goal.item");
+            if (!"default_components_only".equals(craft.stackPolicy())) {
+                throw invalid(path + ".goal.stack_policy must be default_components_only");
+            }
+            requireRange(craft.minimumInventoryCount(), 1, 2_304,
+                    path + ".goal.minimum_inventory_count");
+            if (!"crafting_table".equals(craft.stationKind())) {
+                throw invalid(path + ".station.kind must be crafting_table");
+            }
+            validatePosition(craft.target(), path + ".station.target");
+            validateBlockState(craft.expectedState(), path + ".station.expected_state");
+            if (!"minecraft:crafting_table".equals(craft.expectedState().block())
+                    || !craft.expectedState().properties().isEmpty()) {
+                throw invalid(path + ".station.expected_state must be an exact crafting table state");
+            }
+            requireRange(craft.maxCrafts(), 1, 3, path + ".max_crafts");
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
+            return 1;
+        }
         if (node instanceof ActionDsl.BrewKnownPotionBatch brew) {
             validatePosition(brew.target(), path + ".target");
             if (!StandardPotionPolicy.BREWING_STAND.equals(brew.expectedBlock())) {
@@ -509,6 +535,7 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.OpenKnownPassage
                     || node instanceof ActionDsl.InspectKnownContainer
                     || node instanceof ActionDsl.TakeKnownContainerStack
+                    || node instanceof ActionDsl.CraftKnownRecipe
                     || node instanceof ActionDsl.BrewKnownPotionBatch) return true;
             if (node instanceof ActionDsl.If conditional
                     && (containsWorldMutation(conditional.thenBranch())

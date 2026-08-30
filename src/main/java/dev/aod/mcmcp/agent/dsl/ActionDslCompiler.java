@@ -28,6 +28,10 @@ public final class ActionDslCompiler {
     public static final long KNOWN_BREWING_TICKS = 1_400L;
     public static final long KNOWN_BREWING_DURATION_MILLIS = 70_000L;
     public static final long KNOWN_BREWING_INTERACTIONS = 16L;
+    public static final long KNOWN_CRAFTING_TICKS =
+            AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND;
+    public static final long KNOWN_CRAFTING_DURATION_MILLIS =
+            KNOWN_CRAFTING_TICKS * NOMINAL_TICK_MILLIS;
 
     private ActionDslCompiler() {
     }
@@ -115,6 +119,7 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.OpenKnownPassage
                 || node instanceof ActionDsl.InspectKnownContainer
                 || node instanceof ActionDsl.TakeKnownContainerStack
+                || node instanceof ActionDsl.CraftKnownRecipe
                 || node instanceof ActionDsl.BrewKnownPotionBatch
                 || node instanceof ActionDsl.CollectVisibleItem
                 || node instanceof ActionDsl.CollectVisibleItemBatch) {
@@ -154,6 +159,14 @@ public final class ActionDslCompiler {
                 requireMutationCost(cost, 1, 0, 0, "inspect_known_container");
             } else if (node instanceof ActionDsl.TakeKnownContainerStack) {
                 requireMutationCost(cost, 3, 0, 0, "take_known_container_stack");
+            } else if (node instanceof ActionDsl.CraftKnownRecipe craft) {
+                requireMutationCost(
+                        cost, knownCraftInteractions(craft.maxCrafts()), 0, 0,
+                        "craft_known_recipe");
+                if (cost.durationMillis() != KNOWN_CRAFTING_DURATION_MILLIS
+                        || cost.ticks() != KNOWN_CRAFTING_TICKS) {
+                    throw unprovable("craft_known_recipe has an invalid primitive time bound");
+                }
             } else if (node instanceof ActionDsl.BrewKnownPotionBatch) {
                 requireMutationCost(
                         cost, KNOWN_BREWING_INTERACTIONS, 0, 0,
@@ -237,6 +250,14 @@ public final class ActionDslCompiler {
                 2,
                 0,
                 2);
+    }
+
+    /** One initial open plus placement, two cursor-safe clicks, and readback per craft. */
+    public static long knownCraftInteractions(int maxCrafts) {
+        if (maxCrafts < 1 || maxCrafts > 3) {
+            throw new IllegalArgumentException("max crafts is outside the closed Action bound");
+        }
+        return 1L + Math.multiplyExact(4L, maxCrafts);
     }
 
     private static void requireMutationCost(

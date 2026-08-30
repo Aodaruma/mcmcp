@@ -135,6 +135,7 @@ public final class ActionDslParser {
             case "open_known_passage" -> openKnownPassage(object, path);
             case "inspect_known_container" -> inspectKnownContainer(object, path);
             case "take_known_container_stack" -> takeKnownContainerStack(object, path);
+            case "craft_known_recipe" -> craftKnownRecipe(object, path);
             case "brew_known_potion_batch" -> brewKnownPotionBatch(object, path);
             case "collect_visible_item" -> collectVisibleItem(object, path);
             case "collect_visible_item_batch" -> collectVisibleItemBatch(object, path);
@@ -456,6 +457,33 @@ public final class ActionDslParser {
                 string(source.get("stack_policy"), path + ".stack_policy"),
                 integer(source.get("minimum_inventory_count"),
                         path + ".minimum_inventory_count"));
+    }
+
+    private static ActionDsl.CraftKnownRecipe craftKnownRecipe(
+            JsonObject source, String path) {
+        Set<String> fields = Set.of(
+                "id", "op", "recipe_ref", "recipe_fingerprint",
+                "goal", "station", "max_crafts");
+        exactKeys(source, path, fields, fields);
+        JsonObject goal = object(source.get("goal"), path + ".goal",
+                Set.of("item", "stack_policy", "minimum_inventory_count"),
+                Set.of("item", "stack_policy", "minimum_inventory_count"));
+        JsonObject station = object(source.get("station"), path + ".station",
+                Set.of("kind", "target", "expected_state"),
+                Set.of("kind", "target", "expected_state"));
+        return new ActionDsl.CraftKnownRecipe(
+                string(source.get("id"), path + ".id"),
+                string(source.get("recipe_ref"), path + ".recipe_ref"),
+                string(source.get("recipe_fingerprint"), path + ".recipe_fingerprint"),
+                string(goal.get("item"), path + ".goal.item"),
+                string(goal.get("stack_policy"), path + ".goal.stack_policy"),
+                integer(goal.get("minimum_inventory_count"),
+                        path + ".goal.minimum_inventory_count"),
+                string(station.get("kind"), path + ".station.kind"),
+                position(station.get("target"), path + ".station.target"),
+                blockStateSpec(station.get("expected_state"),
+                        path + ".station.expected_state"),
+                integer(source.get("max_crafts"), path + ".max_crafts"));
     }
 
     private static ActionDsl.BrewKnownPotionBatch brewKnownPotionBatch(

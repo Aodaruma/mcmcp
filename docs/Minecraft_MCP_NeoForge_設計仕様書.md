@@ -24,7 +24,7 @@
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
 - fresh評価turnまたはAgent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
-最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件のplace-only planへ無変換コピーする`apply_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`に加え、Phase 5の最初のvertical sliceとしてlever 1入力とredstone lamp 1出力の固定identity回路を配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4では、既存のclient recipe / container同期実装を現在のAction DSLへ接続し、2×2 crafting、Vanillaのworkstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の破壊・置換・256 block化、一般資源入手、一般回路合成は、同じ安全境界を維持して追加する。
+最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件のplace-only planへ無変換コピーする`apply_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`と可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`に加え、Phase 5の最初のvertical sliceとしてlever 1入力とredstone lamp 1出力の固定identity回路を配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4では、player 2×2 crafting、精錬、Vanillaのworkstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の破壊・置換・256 block化、一般資源入手、一般回路合成は、同じ安全境界を維持して追加する。
 
 ## 1. 対象環境
 
@@ -746,6 +746,7 @@ Action DSL v1の制御構造:
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のsingle chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemのwhole stackを最大1回quick-moveし、close/reopen full readbackでplayer inventoryの絶対個数を確認 |
+| craft_known_recipe | camera, inventory_transfer | recipe queryの短寿命opaque参照を再検証し、可視・既知crafting tableで1〜3回、完成品を1回分ずつ回収して絶対inventory目標を確認 |
 | brew_known_potion_batch | camera, inventory_transfer | 空の可視・既知brewing standで、宣言した標準Vanilla Potion 1〜3本を現行recipe tableの既知の1段変換だけ醸造 |
 | collect_visible_item | movement | 最新frameの可視item種別と連続値XYZをwitnessに、既知の安全なpickup cellへ移動し、inventory絶対個数の増加を確認 |
 | collect_visible_item_batch | movement | 2〜8件の可視item witnessをlisted orderで同じ安全検証経路へ展開し、失敗時は未開始suffixを実行しない |
@@ -781,6 +782,8 @@ current targetのfresh reproofでfaceまたはaim pointが受付時から変化�
 `open_known_passage.expected_block`は12種の木系door / trapdoor / fence gateを明示列挙し、ironとcopperを許可しない。doorはクリック対象のhalfだけでなく、同一block、facing、hinge、powered、openが整合する相方halfをdispatch前に固定する。primary prediction ACK、primaryのauthoritative state、dispatch後のcompanion block mutation、companionの完全stateがすべて一致した場合だけ成功する。pressure plate式自動doorはこのopcodeを使わず、plate上と反対側へ続く`navigate_to_known`を別々のprimitiveとして実行し、world revision更新後のVanilla VoxelShapeから後続経路を再計画する。
 
 container primitiveは別のMCP Toolやlegacy routineを公開せず、同じAction supervisorから既存のscreen ownership / full-content同期adapterを駆動する。`inspect_known_container`はslot番号、NBT/component本文、menu内部状態を返さず、最大27種類の`item=count`だけを`NODE_EVIDENCE` traceへ返す。`take_known_container_stack`はdirectionをcontainer→playerへ固定し、`default_components_only`または耐久済みtoolにも使える`item_id_any_components`だけを許可する。初回open、whole-stack quick-move 1回、同じcontainerのreadback openの最大3 interactionを静的に予約する。内部実行上限400 active tickに対しAction全体の`max_duration_ms`は最低25,000 msとし、20,000 ms相当のtick窓とは別にdispatch/JIT用5,000 msのwall-clock余白を確保する。複数stackをblind retryせず、目標へ届かなければ確認済みの部分移送を記録した上で失敗し、次のActionへ再計画させる。focus喪失、chat、pause menuの表示自体は停止理由にせず、別container menuの所有中、world/session変化、cursor残留、screen ownership不一致はfail closedとする。
+
+`craft_known_recipe`はwire shapeを`{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},max_crafts}`へ閉じる。`recipe_ref`と`recipe_fingerprint`は同じ最新`agent_get_state` recipe query結果からコピーし、world sessionとcatalog revisionへ束縛したままAction開始時と各craft前に再解決する。`station.kind`は`crafting_table`、stateは`minecraft:crafting_table`かつ空properties、goal policyは`default_components_only`、絶対個数は1〜2,304、`max_crafts`は1〜3に固定する。初回open 1回と、各craftのrecipe placement・result PICKUP・player slot PICKUP・readback openの計`1 + 4 * max_crafts` interaction、最大400 active tickを静的に予約し、Action budgetには最低30,000 ms、600 tick、camera 360度を要求する。完成品は1回分ずつ回収し、server-confirmed cursor、空grid/result、互換または空player slot、close/reopen full-content、絶対inventoryのexact deltaを確認する。slot番号やmenu内部状態は公開せず、曖昧な更新をblind retryしない。
 
 `brew_known_potion_batch`はwire shapeを`{id,op,target,expected_block,input:{item,potion,count},ingredient_item,fuel_item,expected_output:{item,potion,count}}`へ閉じる。`expected_block`は`minecraft:brewing_stand`、`fuel_item`は`minecraft:blaze_powder`に固定し、入力と出力は同じ`count` 1〜3を要求する。itemは標準3形式の`minecraft:potion / splash_potion / lingering_potion`、potionとingredientはcatalogの閉じたenumだけを受理する。入出力はcustom name / color / effects等の追加componentのない標準stackと完全一致し、その宣言遷移がMinecraft 26.2の現行`PotionBrewing.mix`と完全一致する場合だけ実行する。
 
@@ -1192,11 +1195,11 @@ Phase 3完成時に追加する上限:
 
 ### 9.7 crafting・精錬・workstation・MOD互換 — Phase 4
 
-現在の公開Action DSLは`brew_known_potion_batch`までであり、`craft_items` / recipe照会の旧Phase 5内部実装は固定5 Toolのcatalogと現行opcodeへ接続されていない。これは製品機能として利用可能とは扱わない。既存のrecipe / container / screen同期基盤を安全契約だけ現在水準へ更新して再利用する。精錬と専用workstationの実行adapterは未実装である。
+現在の公開Action DSLは、既存のrecipe / container / screen同期基盤を直接再利用したcrafting-table限定の`craft_known_recipe` vertical sliceまでを含む。player 2×2、精錬と専用workstationの実行adapterは未実装であり、製品機能として利用可能とは扱わない。
 
-公開Toolは5件のままとし、クラフトやworkstationごとのMCP Tool、raw slot番号・画面座標・key/mouse・packetを追加しない。recipe検索は既存のquery / output / resolve契約を固定5 Toolのread pathへ委譲し、第二の検索文法を作らない。`recipe_ref`とfingerprintはworld sessionとrecipe catalog revisionへ束縛し、Action開始時に再解決する。実行は`agent_start_action`の閉じたsemantic opcodeだけを使う。
+公開Toolは5件のままとし、クラフトやworkstationごとのMCP Tool、raw slot番号・画面座標・key/mouse・packetを追加しない。recipe検索は既存のquery / output / resolve契約を固定5 Toolのread pathへ委譲し、第二の検索文法を作らない。`recipe_ref`とfingerprintはworld sessionとrecipe catalog revisionへ束縛し、`craft_known_recipe`開始時と各craft前に再解決する。実行は`agent_start_action`の閉じたsemantic opcodeだけを使う。
 
-- 既存`craft_items`: `player_2x2 | crafting_table`へ拡張
+- 公開済み`craft_known_recipe` / 既存`craft_items`: 現在は`crafting_table`だけ。次に`player_2x2`へ拡張
 - `smelt_items`: `furnace | blast_furnace | smoker`
 
 Vanilla inventory文法だけでは、独自widget、ghost slot、fluid / energy表示、canvas内control、MOD固有のclient callbackを持つ画面を扱えない。このため、screen ownership、同期、参照解決、操作配送、postcondition、cleanupを一元化する共通Menu interaction engineをPhase 4の基盤として実装する。ただし、LLMが`click_slot(17)`や`click_at(142, 38)`を渡す万能remote-controlにはしない。既存read pathは、現在所有する画面から次の短寿命opaque参照を返す。
@@ -1611,6 +1614,8 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - Redstone plannerはlamp直下のcurrent visible inert UP supportとlever直下のcurrent visible glass UP supportを要求し、stationary requestのtarget・aim・boundsへ同じrotationを変換する
 - Redstone実行は各配置・toggle直前にlever周囲のglass 1 / air 4をLIVE再確認し、lamp / lever設置、入出力対のOFF / ON / OFF確認を入力順に行い、`400 + 3 * settle_ticks` tick / 2 interaction / 2 placementから逸脱しない
 - `brew_known_potion_batch`は標準Potionの既知の1段recipe、1〜3本同数、blaze powder固定、開始時5 stand item slot空、internal brew time 0、fuel counter 0〜20を入力前に検証し、prechargedならinventory fuel投入を省略する
+- `craft_known_recipe`は同じrecipe query結果の24文字opaque refとSHA-256 fingerprint、crafting tableのexact state、component-exact絶対inventory目標1〜2,304、`max_crafts` 1〜3だけをschema / validator / runtimeで一致して受理する
+- crafting nodeは最大400 active tick、最低30,000 ms / 600 ticks / camera 360度 / `1 + 4 * max_crafts` interactionsを予約し、各完成品を1回分ずつcursor-safeに回収してclose/reopen full-contentのexact deltaで確定する
 - 醸造nodeはtop-level末尾のみで`if` / `repeat`内とsuffixを拒否し、plannerとbegin直前preflightで片道camera 270度以下を証明し、70,000 ms / 1,400 ticks / camera最大540度（照準＋醸造node受付時view復元）/ 16 interactionsを静的に予約し、resume / replay / blind retryを行わない
 - 公開`progress.interactions`の上限16は、醸造中のrecovery interaction非dispatchと現行recovery usage 0の不変条件を含めて検証される
 - 通常Actionはeffective budgetを超えず、RECOVERはDSLから独立したlocal recovery budgetだけを使う

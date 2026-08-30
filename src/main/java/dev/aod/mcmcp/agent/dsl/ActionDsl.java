@@ -42,6 +42,7 @@ public final class ActionDsl {
             ApplyKnownRedstoneSpec,
             OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
+            CraftKnownRecipe,
             BrewKnownPotionBatch,
             CollectVisibleItem, CollectVisibleItemBatch, WaitTicks, WaitUntil, If, Repeat {
         String id();
@@ -342,6 +343,30 @@ public final class ActionDsl {
             Objects.requireNonNull(expectedBlock, "expectedBlock");
             Objects.requireNonNull(item, "item");
             Objects.requireNonNull(stackPolicy, "stackPolicy");
+        }
+    }
+
+    /** Crafts a bounded current recipe at one visible crafting table to an absolute item goal. */
+    public record CraftKnownRecipe(
+            String id,
+            String recipeRef,
+            String recipeFingerprint,
+            String goalItem,
+            String stackPolicy,
+            int minimumInventoryCount,
+            String stationKind,
+            Position target,
+            BlockStateSpec expectedState,
+            int maxCrafts) implements Node {
+        public CraftKnownRecipe {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(recipeRef, "recipeRef");
+            Objects.requireNonNull(recipeFingerprint, "recipeFingerprint");
+            Objects.requireNonNull(goalItem, "goalItem");
+            Objects.requireNonNull(stackPolicy, "stackPolicy");
+            Objects.requireNonNull(stationKind, "stationKind");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(expectedState, "expectedState");
         }
     }
 

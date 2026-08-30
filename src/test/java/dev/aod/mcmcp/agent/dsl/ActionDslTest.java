@@ -44,7 +44,7 @@ class ActionDslTest {
     void parsesEveryNormativeCatalogExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
-        assertThat(examples).hasSize(12);
+        assertThat(examples).hasSize(13);
         for (int index = 0; index < examples.size(); index++) {
             ActionDsl.Request parsed = ActionDslParser.parse(examples.get(index).getAsJsonObject());
             assertThat(parsed.schemaVersion()).isEqualTo(1);
@@ -581,6 +581,56 @@ class ActionDslTest {
                 capabilities("camera", "block_interact"), open,
                 budget(1_000, 20, 0, 30, 1, 0, 0)))))
                 .isInstanceOf(ActionDslException.class);
+    }
+
+    @Test
+    void parsesValidatesAndCompilesBoundedKnownRecipeCraft() {
+        JsonObject craft = craftKnownRecipe("craft", 3);
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "inventory_transfer"),
+                craft,
+                budget(30_000, 600, 0, 360, 13, 0, 0)));
+
+        assertThat(request.program().body()).singleElement().satisfies(node -> {
+            var parsed = (ActionDsl.CraftKnownRecipe) node;
+            assertThat(parsed.recipeRef()).isEqualTo("abcdefghijklmnopqrstuvwx");
+            assertThat(parsed.recipeFingerprint()).isEqualTo("sha256:" + "a".repeat(64));
+            assertThat(parsed.goalItem()).isEqualTo("minecraft:oak_planks");
+            assertThat(parsed.minimumInventoryCount()).isEqualTo(64);
+            assertThat(parsed.target()).isEqualTo(new ActionDsl.Position(
+                    "minecraft:overworld", 10, 64, 10));
+            assertThat(parsed.expectedState()).isEqualTo(
+                    new ActionDsl.BlockStateSpec("minecraft:crafting_table", Map.of()));
+            assertThat(parsed.maxCrafts()).isEqualTo(3);
+        });
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.INVENTORY_TRANSFER);
+
+        var cost = new ActionDslCompiler.Cost(20_000, 400, 0, 120, 13, 0, 0);
+        assertThat(ActionDslCompiler.compile(
+                request, ignored -> Optional.of(cost), request.program().capabilities())
+                .worstCaseCost()).isEqualTo(cost);
+
+        craft.addProperty("max_crafts", 4);
+        assertCode(request(
+                        capabilities("camera", "inventory_transfer"), craft,
+                        budget(30_000, 600, 0, 360, 16, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        craft = craftKnownRecipe("craft", 3);
+        craft.addProperty("recipe_ref", "not-an-opaque-reference");
+        assertCode(request(
+                        capabilities("camera", "inventory_transfer"), craft,
+                        budget(30_000, 600, 0, 360, 13, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        craft = craftKnownRecipe("craft", 3);
+        craft.getAsJsonObject("station").getAsJsonObject("expected_state")
+                .getAsJsonObject("properties").addProperty("invented", "true");
+        assertCode(request(
+                        capabilities("camera", "inventory_transfer"), craft,
+                        budget(30_000, 600, 0, 360, 13, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
     }
 
     @Test
@@ -1388,6 +1438,24 @@ class ActionDslTest {
         output.addProperty("potion", "minecraft:awkward");
         output.addProperty("count", count);
         node.add("expected_output", output);
+        return node;
+    }
+
+    private static JsonObject craftKnownRecipe(String id, int maxCrafts) {
+        JsonObject node = baseNode(id, "craft_known_recipe");
+        node.addProperty("recipe_ref", "abcdefghijklmnopqrstuvwx");
+        node.addProperty("recipe_fingerprint", "sha256:" + "a".repeat(64));
+        JsonObject goal = new JsonObject();
+        goal.addProperty("item", "minecraft:oak_planks");
+        goal.addProperty("stack_policy", "default_components_only");
+        goal.addProperty("minimum_inventory_count", 64);
+        node.add("goal", goal);
+        JsonObject station = new JsonObject();
+        station.addProperty("kind", "crafting_table");
+        station.add("target", position());
+        station.add("expected_state", blockState("minecraft:crafting_table"));
+        node.add("station", station);
+        node.addProperty("max_crafts", maxCrafts);
         return node;
     }
 

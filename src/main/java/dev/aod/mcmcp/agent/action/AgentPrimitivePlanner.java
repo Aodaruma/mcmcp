@@ -893,6 +893,17 @@ public final class AgentPrimitivePlanner {
             return analyzeContainer(
                     node, input, cameraLimit, costs, knownSurfaces, work, surface, 3);
         }
+        if (node instanceof ActionDsl.CraftKnownRecipe craft) {
+            MutationSurface surface = requireMutationSurface(
+                    map, latestFrame, input, craft.target(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, craft.target()),
+                    craft.expectedState().block(),
+                    value -> true,
+                    "Crafting target requires a current visible crafting table surface");
+            return analyzeContainer(
+                    node, input, cameraLimit, costs, knownSurfaces, work, surface,
+                    ActionDslCompiler.knownCraftInteractions(craft.maxCrafts()));
+        }
         if (node instanceof ActionDsl.BrewKnownPotionBatch brew) {
             MutationSurface surface = requireMutationSurface(
                     map, latestFrame, input, brew.target(),

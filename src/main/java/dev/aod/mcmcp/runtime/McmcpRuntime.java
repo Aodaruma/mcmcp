@@ -1829,6 +1829,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 : node instanceof ActionDsl.TillKnownBatch batch
                         ? batch.targets().size()
                 : node instanceof ActionDsl.TakeKnownContainerStack ? 3L
+                : node instanceof ActionDsl.CraftKnownRecipe craft
+                        ? ActionDslCompiler.knownCraftInteractions(craft.maxCrafts())
                 : node instanceof ActionDsl.BrewKnownPotionBatch
                         ? ActionDslCompiler.KNOWN_BREWING_INTERACTIONS : 0L;
         long breaks = node instanceof ActionDsl.BreakKnownFace
@@ -3497,7 +3499,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
 
             if (agentExecution.primitive instanceof ActionDsl.InspectKnownContainer
-                    || agentExecution.primitive instanceof ActionDsl.TakeKnownContainerStack) {
+                    || agentExecution.primitive instanceof ActionDsl.TakeKnownContainerStack
+                    || agentExecution.primitive instanceof ActionDsl.CraftKnownRecipe) {
                 tickAgentContainer(minecraft, session, action);
                 return;
             }
@@ -4659,10 +4662,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 if (agentExecution.primitive instanceof ActionDsl.InspectKnownContainer) {
                     agentActions.recordNodeEvidence(
                             action.actionId(), containerItemsTrace(result.items()));
-                } else {
+                } else if (agentExecution.primitive instanceof ActionDsl.TakeKnownContainerStack) {
                     var take = (ActionDsl.TakeKnownContainerStack) agentExecution.primitive;
                     agentActions.recordNodeEvidence(
                             action.actionId(), "container_transfer=" + take.item());
+                } else {
+                    var craft = (ActionDsl.CraftKnownRecipe) agentExecution.primitive;
+                    agentActions.recordNodeEvidence(
+                            action.actionId(), "craft_complete=" + craft.goalItem());
                 }
                 agentActions.completeNode(action.actionId());
                 agentExecution.primitive = null;
@@ -5198,6 +5205,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             ActionDsl.Node primitive) {
+        if (primitive instanceof ActionDsl.CraftKnownRecipe craft) {
+            return craftRequest(minecraft, session, craft);
+        }
         ActionDsl.Position position;
         String expectedBlock;
         String item;
@@ -5253,6 +5263,51 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 target.dimension(), target, target, 0, 20, false);
         return new PhaseFiveRequest(
                 "transfer_items", parameters, bounds, minimumInventoryCount, "items");
+    }
+
+    private static PhaseFiveRequest craftRequest(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            ActionDsl.CraftKnownRecipe craft) {
+        ActionDsl.Position position = craft.target();
+        if (!position.dimension().equals(session.dimension())) {
+            throw new IllegalArgumentException("crafting target dimension changed");
+        }
+        var expected = new BlockStateFingerprint(
+                craft.expectedState().block(), craft.expectedState().properties());
+        BlockPos blockPos = new BlockPos(position.x(), position.y(), position.z());
+        var level = Objects.requireNonNull(minecraft.level, "level");
+        BlockStateFingerprint actual = MinecraftPhaseFiveInventoryPort.fingerprintLiveState(
+                level.getBlockState(blockPos));
+        if (!expected.equals(actual)) {
+            throw new IllegalArgumentException("crafting target state changed");
+        }
+        var target = new BlockTarget(
+                position.dimension(), position.x(), position.y(), position.z());
+        var targetMap = Map.<String, Object>of(
+                "dimension", target.dimension(),
+                "x", target.x(),
+                "y", target.y(),
+                "z", target.z());
+        var stateMap = Map.<String, Object>of(
+                "block", expected.blockId(),
+                "properties", expected.properties());
+        var parameters = new LinkedHashMap<String, Object>();
+        parameters.put("recipe_ref", craft.recipeRef());
+        parameters.put("recipe_fingerprint", craft.recipeFingerprint());
+        parameters.put("goal", Map.of(
+                "item", craft.goalItem(),
+                "stack_policy", craft.stackPolicy(),
+                "minimum_inventory_count", craft.minimumInventoryCount()));
+        parameters.put("station", Map.of(
+                "kind", craft.stationKind(),
+                "target", targetMap,
+                "expected_state", stateMap));
+        parameters.put("max_crafts", craft.maxCrafts());
+        var bounds = new PhaseFiveBounds(
+                target.dimension(), target, target, 0, 20, false);
+        return new PhaseFiveRequest(
+                "craft_items", parameters, bounds, craft.minimumInventoryCount(), "items");
     }
 
     private static String containerItemsTrace(List<KnownContainerAttempt.ItemCount> items) {

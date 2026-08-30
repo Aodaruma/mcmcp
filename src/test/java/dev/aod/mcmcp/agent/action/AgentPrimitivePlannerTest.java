@@ -1300,6 +1300,35 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void knownRecipeCraftUsesTheExistingBoundedContainerPlan() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var table = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var craft = new ActionDsl.CraftKnownRecipe(
+                "craft", "abcdefghijklmnopqrstuvwx", "sha256:" + "a".repeat(64),
+                "minecraft:oak_planks", "default_components_only", 64,
+                "crafting_table", table,
+                new ActionDsl.BlockStateSpec("minecraft:crafting_table", Map.of()), 3);
+        var program = new ActionDsl.Program(
+                1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.INVENTORY_TRANSFER),
+                List.of(craft));
+
+        var analysis = AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                Optional.of(frame(
+                        table, ObservationRecord.Face.WEST, "minecraft:crafting_table", 0)),
+                4.5F);
+
+        assertThat(analysis.primitiveCosts().get("craft")).isEqualTo(
+                new ActionDslCompiler.Cost(20_000, 400, 0,
+                        analysis.primitiveCosts().get("craft").cameraDegrees(), 13, 0, 0));
+        assertThat(analysis.knownSurfaces()).singleElement().satisfies(surface ->
+                assertThat(surface.block()).isEqualTo("minecraft:crafting_table"));
+    }
+
+    @Test
     void containerCostUsesTheAdaptersBlockCenterRatherThanTheAdmissionRayHit() {
         UUID session = UUID.randomUUID();
         var map = map(session).snapshot().orElseThrow();

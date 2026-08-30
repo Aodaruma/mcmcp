@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "program": {
+    "dsl_version": 1,
+    "name": "craft_known_oak_planks",
+    "capabilities": ["camera", "inventory_transfer"],
+    "body": [
+      {
+        "id": "craft",
+        "op": "craft_known_recipe",
+        "recipe_ref": "abcdefghijklmnopqrstuvwx",
+        "recipe_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "goal": {
+          "item": "minecraft:oak_planks",
+          "stack_policy": "default_components_only",
+          "minimum_inventory_count": 64
+        },
+        "station": {
+          "kind": "crafting_table",
+          "target": {"dimension": "minecraft:overworld", "x": 100, "y": 64, "z": 120},
+          "expected_state": {"block": "minecraft:crafting_table", "properties": {}}
+        },
+        "max_crafts": 3
+      }
+    ]
+  },
+  "budget": {
+    "max_duration_ms": 30000,
+    "max_ticks": 600,
+    "max_distance_blocks": 0,
+    "max_camera_degrees": 360,
+    "max_interactions": 13,
+    "max_blocks_broken": 0,
+    "max_blocks_placed": 0
+  }
+}

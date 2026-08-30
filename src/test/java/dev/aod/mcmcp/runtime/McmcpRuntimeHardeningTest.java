@@ -286,6 +286,13 @@ class McmcpRuntimeHardeningTest {
                         "take", support, "minecraft:chest", "minecraft:wheat_seeds",
                         "default_components_only", 64))).contains(
                         new ActionDslCompiler.Cost(0, 0, 0, 0, 3, 0, 0));
+        assertThat(McmcpRuntime.structuralPrimitiveCost(
+                new ActionDsl.CraftKnownRecipe(
+                        "craft", "abcdefghijklmnopqrstuvwx", "sha256:" + "a".repeat(64),
+                        "minecraft:oak_planks", "default_components_only", 64,
+                        "crafting_table", support,
+                        new ActionDsl.BlockStateSpec("minecraft:crafting_table", Map.of()), 3)))
+                .contains(new ActionDslCompiler.Cost(0, 0, 0, 0, 13, 0, 0));
         assertThat(McmcpRuntime.primitiveReobservationTicks(
                 new ActionDsl.OpenKnownFenceGate("open_gate", support)))
                 .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);

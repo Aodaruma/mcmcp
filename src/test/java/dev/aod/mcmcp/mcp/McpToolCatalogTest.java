@@ -175,6 +175,7 @@ class McpToolCatalogTest {
                 .contains("collect_visible_item_batch for 2..8 current drops")
                 .contains("navigate_to_known:{id,op,target,tolerance}")
                 .contains("take_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}")
+                .contains("craft_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:")
                 .contains("till_known_batch:{id,op,targets:[position],expected_block,hoe_item}")
                 .contains("plant_known_wheat_batch:{id,op,targets:[{target,support}],seed_item}")
                 .contains("harvest_known_wheat_batch:{id,op,targets:[position]}")
@@ -207,7 +208,8 @@ class McpToolCatalogTest {
 
         assertThat(description)
                 .contains("take stack_policy is exactly default_components_only")
-                .contains("or item_id_any_components");
+                .contains("or item_id_any_components")
+                .contains("craft goal.stack_policy is exactly default_components_only");
     }
 
     @Test
@@ -291,6 +293,42 @@ class McpToolCatalogTest {
                     .isGreaterThan(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND * 50L);
             assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
         });
+    }
+
+    @Test
+    void knownRecipeCraftContractIsClosedDiscoverableAndBounded() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var definition = schema.getAsJsonObject("$defs")
+                .getAsJsonObject("craftKnownRecipeNode");
+        assertThat(definition.get("description").getAsString())
+                .contains("latest agent_get_state recipe result")
+                .contains("1..3 times")
+                .contains("absolute inventory goal")
+                .contains("1+4*max_crafts interactions");
+
+        var example = schema.getAsJsonArray("examples").asList().stream()
+                .map(value -> value.getAsJsonObject())
+                .filter(value -> value.getAsJsonObject("program").get("name").getAsString()
+                        .equals("craft_known_oak_planks"))
+                .findFirst().orElseThrow();
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
+
+        var tooManyCrafts = example.deepCopy();
+        tooManyCrafts.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().addProperty("max_crafts", 4);
+        assertThat(CatalogSchemaValidator.matches(schema, tooManyCrafts)).isFalse();
+
+        var wrongRef = example.deepCopy();
+        wrongRef.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().addProperty("recipe_ref", "not-opaque");
+        assertThat(CatalogSchemaValidator.matches(schema, wrongRef)).isFalse();
+
+        var inventedState = example.deepCopy();
+        inventedState.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().getAsJsonObject("station")
+                .getAsJsonObject("expected_state").getAsJsonObject("properties")
+                .addProperty("invented", "true");
+        assertThat(CatalogSchemaValidator.matches(schema, inventedState)).isFalse();
     }
 
     @Test
