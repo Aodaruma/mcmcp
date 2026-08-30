@@ -15,6 +15,7 @@ import dev.aod.mcmcp.agent.observation.ObservationValues;
 import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 import dev.aod.mcmcp.routine.KnownBrewingRequest;
 import dev.aod.mcmcp.routine.NavigationViewLease;
+import dev.aod.mcmcp.routine.SafePlacementSupportPolicy;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 
@@ -448,6 +449,39 @@ public final class AgentPrimitivePlanner {
                 .orElseThrow(() -> new PlanningException(Code.TARGET_UNKNOWN, failure));
     }
 
+    private static MutationSurface requireRedstoneSupport(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            List<Pose> poses,
+            ActionDsl.Position position,
+            long surfaceBarrierWorldRevision) {
+        requireSurfaceBarrierWorldRevision(map, surfaceBarrierWorldRevision);
+        return latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(map.dimension()))
+                .flatMap(frame -> frame.records().stream())
+                .filter(ObservationRecord.VisibleSurface.class::isInstance)
+                .map(ObservationRecord.VisibleSurface.class::cast)
+                .filter(surface -> surface.worldRevision() >= surfaceBarrierWorldRevision
+                        && surface.worldRevision() <= map.worldRevision())
+                .filter(surface -> matches(surface, position)
+                        && surface.face() == ObservationRecord.Face.UP
+                        && SafePlacementSupportPolicy.allowsRegisteredBlockId(
+                                surface.block().value()))
+                .filter(surface -> surface.rayHit() != null
+                        && poses.stream().allMatch(pose -> mutationSurfaceValid(pose, surface)))
+                .map(surface -> new MutationSurface(
+                        new KnownSurface(
+                                position,
+                                ActionDsl.BlockFace.UP,
+                                surface.block().value(),
+                                null),
+                        rayHit(surface)))
+                .findFirst()
+                .orElseThrow(() -> new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Redstone placement requires a current visible inert UP support"));
+    }
+
     private static Optional<ObservationRecord.VisibleSurface> knownSurfaceRecord(
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
@@ -773,6 +807,43 @@ public final class AgentPrimitivePlanner {
             merge(costs, node.id(),
                     ActionDslCompiler.intrinsicKnownBlockPlanCost(plan.entries().size()));
             // The construction adapter restores the admitted camera pose and owns no movement.
+            return input;
+        }
+        if (node instanceof ActionDsl.ApplyKnownRedstoneSpec redstone) {
+            ActionDsl.Position lampSupport = offset(redstone.anchor(), 0, -1, 0);
+            ActionDsl.Position leverTarget = switch (redstone.rotation()) {
+                case 0 -> offset(redstone.anchor(), 1, 0, 0);
+                case 90 -> offset(redstone.anchor(), 0, 0, 1);
+                case 180 -> offset(redstone.anchor(), -1, 0, 0);
+                case 270 -> offset(redstone.anchor(), 0, 0, -1);
+                default -> throw new PlanningException(
+                        Code.TARGET_UNKNOWN, "Redstone rotation is outside the identity slice");
+            };
+            ActionDsl.Position leverSupport = offset(leverTarget, 0, -1, 0);
+            MutationSurface lamp = requireRedstoneSupport(
+                    map,
+                    latestFrame,
+                    input,
+                    lampSupport,
+                    surfaceBarrierWorldRevision(
+                            map, surfaceRevisionBarrier, lampSupport));
+            MutationSurface lever = requireRedstoneSupport(
+                    map,
+                    latestFrame,
+                    input,
+                    leverSupport,
+                    surfaceBarrierWorldRevision(
+                            map, surfaceRevisionBarrier, leverSupport));
+            knownSurfaces.add(lamp.surface());
+            knownSurfaces.add(lever.surface());
+            mutationAims.put(
+                    redstone.id() + "/lamp",
+                    new MutationAim(lampSupport, ActionDsl.BlockFace.UP, lamp.point()));
+            mutationAims.put(
+                    redstone.id() + "/lever",
+                    new MutationAim(leverSupport, ActionDsl.BlockFace.UP, lever.point()));
+            merge(costs, node.id(), ActionDslCompiler.intrinsicKnownRedstoneCost(
+                    redstone.timing().settleTicks()));
             return input;
         }
         if (node instanceof ActionDsl.OpenKnownFenceGate gate) {
@@ -1339,6 +1410,15 @@ public final class AgentPrimitivePlanner {
                 && target.x() == support.x()
                 && target.y() == support.y() + 1
                 && target.z() == support.z();
+    }
+
+    private static ActionDsl.Position offset(
+            ActionDsl.Position origin, int x, int y, int z) {
+        return new ActionDsl.Position(
+                origin.dimension(),
+                Math.addExact(origin.x(), x),
+                Math.addExact(origin.y(), y),
+                Math.addExact(origin.z(), z));
     }
 
     private static boolean mutationSurfaceValid(

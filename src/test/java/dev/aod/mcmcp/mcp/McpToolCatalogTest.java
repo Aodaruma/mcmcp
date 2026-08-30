@@ -178,7 +178,9 @@ class McpToolCatalogTest {
                 .contains("till_known_batch:{id,op,targets:[position],expected_block,hoe_item}")
                 .contains("plant_known_wheat_batch:{id,op,targets:[{target,support}],seed_item}")
                 .contains("harvest_known_wheat_batch:{id,op,targets:[position]}")
+                .contains("apply_known_redstone_spec:{id,op,anchor,rotation,components:")
                 .contains("collect_visible_item_batch:{id,op,targets:[{displayed_item,target}]}")
+                .contains("(400 + 3*settle_ticks) ticks")
                 .contains("up to the 720 camera-degree policy maximum")
                 .contains("split it into smaller batches instead of reordering at runtime")
                 .contains("use the exact inputSchema fields and no aliases");
@@ -206,6 +208,52 @@ class McpToolCatalogTest {
         assertThat(description)
                 .contains("take stack_policy is exactly default_components_only")
                 .contains("or item_id_any_components");
+    }
+
+    @Test
+    void redstoneIdentityCatalogSchemaIsClosedAndDiscoverable() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var request = JsonParser.parseString("""
+                {
+                  "schema_version":1,
+                  "program":{
+                    "dsl_version":1,
+                    "capabilities":["camera","block_interact","block_place"],
+                    "body":[{
+                      "id":"identity","op":"apply_known_redstone_spec",
+                      "anchor":{"dimension":"minecraft:overworld","x":2,"y":65,"z":3},
+                      "rotation":90,
+                      "components":[
+                        {"id":"input","role":"input","block":"minecraft:lever"},
+                        {"id":"output","role":"output","block":"minecraft:redstone_lamp"}
+                      ],
+                      "truth_table":[
+                        {"inputs":{"input":false},"outputs":{"output":false}},
+                        {"inputs":{"input":true},"outputs":{"output":true}}
+                      ],
+                      "footprint":{"x":2,"y":1,"z":1},
+                      "timing":{"settle_ticks":20}
+                    }]
+                  },
+                  "budget":{
+                    "max_duration_ms":23000,"max_ticks":460,
+                    "max_distance_blocks":0,"max_camera_degrees":720,
+                    "max_interactions":2,"max_blocks_broken":0,"max_blocks_placed":2
+                  }
+                }
+                """).getAsJsonObject();
+
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+        assertThat(schema.getAsJsonObject("$defs")
+                .getAsJsonObject("applyKnownRedstoneSpecNode")
+                .get("description").getAsString())
+                .contains("identity slice only", "live visual observation", "never moves");
+
+        var unsupported = request.deepCopy();
+        unsupported.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().getAsJsonArray("components").get(0)
+                .getAsJsonObject().addProperty("block", "minecraft:redstone_wire");
+        assertThat(CatalogSchemaValidator.matches(schema, unsupported)).isFalse();
     }
 
     @Test

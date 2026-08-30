@@ -11,6 +11,7 @@ import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.ObservationValues;
 import dev.aod.mcmcp.brewing.StandardPotionStackSpec;
+import dev.aod.mcmcp.redstone.RedstoneSpec;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
@@ -302,6 +303,86 @@ class AgentPrimitivePlannerTest {
                         "minecraft:oak_log",
                         Map.of("axis", "y"),
                         0L)))),
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+    }
+
+    @Test
+    void redstoneIdentityRequiresTwoCurrentInertTopSupports() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var anchor = new ActionDsl.Position(DIMENSION, 2, 65, 0);
+        var lampSupport = new ActionDsl.Position(DIMENSION, 2, 64, 0);
+        var leverSupport = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var redstone = new ActionDsl.ApplyKnownRedstoneSpec(
+                "identity",
+                anchor,
+                0,
+                List.of(
+                        new RedstoneSpec.Component(
+                                "input", RedstoneSpec.Role.INPUT, "minecraft:lever"),
+                        new RedstoneSpec.Component(
+                                "output", RedstoneSpec.Role.OUTPUT,
+                                "minecraft:redstone_lamp")),
+                List.of(
+                        new RedstoneSpec.TruthRow(
+                                Map.of("input", false), Map.of("output", false)),
+                        new RedstoneSpec.TruthRow(
+                                Map.of("input", true), Map.of("output", true))),
+                new RedstoneSpec.Footprint(2, 1, 1),
+                new ActionDsl.RedstoneTiming(5));
+        var program = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.BLOCK_INTERACT,
+                        ActionDsl.Capability.BLOCK_PLACE),
+                List.of(redstone));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+
+        var accepted = AgentPrimitivePlanner.analyze(
+                program,
+                map,
+                new DeterministicAStar(),
+                pose,
+                Optional.of(frame(List.of(
+                        surface(lampSupport, ObservationRecord.Face.UP,
+                                "minecraft:stone", null, 0L),
+                        surface(leverSupport, ObservationRecord.Face.UP,
+                                "minecraft:stone", null, 0L)))),
+                4.5F);
+
+        assertThat(accepted.worstCase(redstone)).contains(
+                ActionDslCompiler.intrinsicKnownRedstoneCost(5));
+        assertThat(accepted.mutationAims())
+                .containsEntry(
+                        "identity/lamp",
+                        new AgentPrimitivePlanner.MutationAim(
+                                lampSupport,
+                                ActionDsl.BlockFace.UP,
+                                new Vec3(2.5D, 65.0D, 0.5D)))
+                .containsEntry(
+                        "identity/lever",
+                        new AgentPrimitivePlanner.MutationAim(
+                                leverSupport,
+                                ActionDsl.BlockFace.UP,
+                                new Vec3(3.5D, 65.0D, 0.5D)));
+        assertThat(accepted.knownSurfaces()).hasSize(2);
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program,
+                map,
+                new DeterministicAStar(),
+                pose,
+                Optional.of(frame(List.of(
+                        surface(lampSupport, ObservationRecord.Face.UP,
+                                "minecraft:farmland", null, 0L),
+                        surface(leverSupport, ObservationRecord.Face.UP,
+                                "minecraft:stone", null, 0L)))),
                 4.5F))
                 .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
                 .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())

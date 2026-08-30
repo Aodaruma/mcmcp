@@ -11,6 +11,7 @@ import dev.aod.mcmcp.agent.action.KnownBlockMutationAttempt;
 import dev.aod.mcmcp.agent.action.KnownBrewingAttempt;
 import dev.aod.mcmcp.agent.action.KnownContainerAttempt;
 import dev.aod.mcmcp.agent.action.KnownConstructionAttempt;
+import dev.aod.mcmcp.agent.action.KnownRedstoneIdentityAttempt;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
@@ -55,6 +56,7 @@ import dev.aod.mcmcp.observation.BlockPlan;
 import dev.aod.mcmcp.observation.BlockPlanStateTransformer;
 import dev.aod.mcmcp.observation.BlockPlanValidationException;
 import dev.aod.mcmcp.observation.BlockStateView;
+import dev.aod.mcmcp.observation.BlockPosition;
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.observation.WorldMemory;
@@ -96,6 +98,8 @@ import dev.aod.mcmcp.routine.SemanticActionRequest;
 import dev.aod.mcmcp.routine.StationaryBreakGoal;
 import dev.aod.mcmcp.routine.StationaryBreakRequest;
 import dev.aod.mcmcp.routine.UseItemOnBlockRequest;
+import dev.aod.mcmcp.redstone.RedstoneIdentityRequest;
+import dev.aod.mcmcp.redstone.RedstoneSpec;
 import dev.aod.mcmcp.voice.SimpleVoiceChat2622Adapter;
 import dev.aod.mcmcp.voice.VoiceChatAdapter;
 import dev.aod.mcmcp.voice.VoiceChatEventBridge;
@@ -3506,6 +3510,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 return;
             }
 
+            if (agentExecution.primitive instanceof ActionDsl.ApplyKnownRedstoneSpec) {
+                tickAgentRedstone(minecraft, session, action);
+                return;
+            }
+
             KnownTraversabilitySnapshot map = requireAgentMap(session);
             if (agentExecution.primitiveExecutor.active()
                     && (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition
@@ -4765,6 +4774,86 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
+    private void tickAgentRedstone(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action) {
+        if (agentExecution.redstoneAttempt == null) {
+            var player = Objects.requireNonNull(minecraft.player, "player");
+            if (inventoryItemCount(player, "minecraft:redstone_lamp") < 1
+                    || inventoryItemCount(player, "minecraft:lever") < 1) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                        true,
+                        "redstone_items_unavailable");
+                return;
+            }
+            var redstone = (ActionDsl.ApplyKnownRedstoneSpec) agentExecution.primitive;
+            final RedstoneIdentityRequest request;
+            try {
+                request = redstoneIdentityRequest(
+                        redstone,
+                        session.worldSessionId(),
+                        Objects.requireNonNull(
+                                agentExecution.mutationAims.get(redstone.id() + "/lamp"),
+                                "lamp aim"),
+                        Objects.requireNonNull(
+                                agentExecution.mutationAims.get(redstone.id() + "/lever"),
+                                "lever aim"));
+            } catch (RuntimeException rejected) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                        false,
+                        "redstone_request_rejected");
+                return;
+            }
+            long deadline = Math.addExact(
+                    session.clientTick(),
+                    ActionDslCompiler.intrinsicKnownRedstoneCost(
+                            redstone.timing().settleTicks()).ticks());
+            BlockTarget lamp = request.lampTarget();
+            agentExecution.redstoneAttempt = new KnownRedstoneIdentityAttempt(
+                    semanticActionPort,
+                    request,
+                    tick -> observations.observeBlock(
+                            minecraft,
+                            tick,
+                            new BlockPosition(
+                                    lamp.dimension(), lamp.x(), lamp.y(), lamp.z()),
+                            MinecraftObservationService.BlockSource.LIVE),
+                    session.clientTick(),
+                    deadline);
+        }
+        KnownRedstoneIdentityAttempt.TickResult result =
+                agentExecution.redstoneAttempt.tick(session.clientTick());
+        for (int count = 0; count < result.placedDelta(); count++) {
+            agentActions.recordBlockPlace(action.actionId());
+        }
+        for (int count = 0; count < result.interactionDelta(); count++) {
+            agentActions.recordInteraction(action.actionId());
+        }
+        switch (result.status()) {
+            case RUNNING -> { }
+            case FAILED -> failAgentAction(
+                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                    true,
+                    result.evidence());
+            case SUCCEEDED -> {
+                agentExecution.redstoneAttempt = null;
+                agentActions.recordNodeEvidence(
+                        action.actionId(),
+                        "redstone_identity_observations=" + result.outputObservations());
+                agentActions.completeNode(action.actionId());
+                agentExecution.primitive = null;
+                agentExecution.replanning = false;
+                agentExecution.replanNotBeforeTick = 0L;
+                agentExecution.replanDeadlineTick = 0L;
+                advanceAgentProgram(
+                        minecraft, agentActions.get(action.actionId()).progress());
+            }
+        }
+    }
+
     private boolean bindMutationBatchTarget(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
@@ -5013,6 +5102,58 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         0,
                         maxDurationSeconds,
                         false));
+    }
+
+    static RedstoneIdentityRequest redstoneIdentityRequest(
+            ActionDsl.ApplyKnownRedstoneSpec redstone,
+            UUID worldSessionId,
+            AgentPrimitivePlanner.MutationAim lampAim,
+            AgentPrimitivePlanner.MutationAim leverAim) {
+        Objects.requireNonNull(redstone, "redstone");
+        Objects.requireNonNull(worldSessionId, "worldSessionId");
+        Objects.requireNonNull(lampAim, "lampAim");
+        Objects.requireNonNull(leverAim, "leverAim");
+        var spec = new RedstoneSpec(
+                redstone.components(),
+                redstone.truthTable(),
+                redstone.footprint(),
+                redstone.rotation(),
+                new RedstoneSpec.ExecutionBounds(
+                        true, redstone.timing().settleTicks()));
+        ActionDsl.Position anchor = redstone.anchor();
+        var lampTarget = new BlockTarget(
+                anchor.dimension(), anchor.x(), anchor.y(), anchor.z());
+        var leverTarget = switch (redstone.rotation()) {
+            case 0 -> new BlockTarget(
+                    anchor.dimension(), anchor.x() + 1, anchor.y(), anchor.z());
+            case 90 -> new BlockTarget(
+                    anchor.dimension(), anchor.x(), anchor.y(), anchor.z() + 1);
+            case 180 -> new BlockTarget(
+                    anchor.dimension(), anchor.x() - 1, anchor.y(), anchor.z());
+            case 270 -> new BlockTarget(
+                    anchor.dimension(), anchor.x(), anchor.y(), anchor.z() - 1);
+            default -> throw new IllegalArgumentException("unsupported redstone rotation");
+        };
+        var minimum = new BlockTarget(
+                anchor.dimension(),
+                Math.min(lampTarget.x(), leverTarget.x()),
+                anchor.y() - 1,
+                Math.min(lampTarget.z(), leverTarget.z()));
+        var maximum = new BlockTarget(
+                anchor.dimension(),
+                Math.max(lampTarget.x(), leverTarget.x()),
+                anchor.y(),
+                Math.max(lampTarget.z(), leverTarget.z()));
+        var bounds = new ActionBounds(
+                anchor.dimension(), minimum, maximum, 0, 30, false);
+        return new RedstoneIdentityRequest(
+                spec,
+                worldSessionId,
+                lampTarget,
+                leverTarget,
+                blockAimWitness(lampAim),
+                blockAimWitness(leverAim),
+                bounds);
     }
 
     static KnownBrewingRequest brewingRequest(
@@ -6768,6 +6909,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             } catch (RuntimeException | LinkageError failure) {
                 closed = false;
                 McmcpMod.LOGGER.error("MCMCP known-construction release failed", failure);
+            }
+        }
+        if (agentExecution.redstoneAttempt != null) {
+            try {
+                agentExecution.redstoneAttempt.close();
+                agentExecution.redstoneAttempt = null;
+            } catch (RuntimeException | LinkageError failure) {
+                closed = false;
+                McmcpMod.LOGGER.error("MCMCP known-redstone release failed", failure);
             }
         }
         agentExecution.breakAimComplete = false;
@@ -9401,6 +9551,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private KnownContainerAttempt containerAttempt;
         private KnownBrewingAttempt brewingAttempt;
         private KnownConstructionAttempt constructionAttempt;
+        private KnownRedstoneIdentityAttempt redstoneAttempt;
         private int pickupInventoryBefore = -1;
         private long pickupArrivalTick = -1L;
         private NavCell pickupCell;
