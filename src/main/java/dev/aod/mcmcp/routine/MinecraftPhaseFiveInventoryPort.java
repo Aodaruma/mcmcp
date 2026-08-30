@@ -53,6 +53,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     static final String CRAFTING_MENU = "minecraft:crafting";
     static final String SINGLE_CONTAINER_MENU = "minecraft:generic_9x3";
     private static final int OPEN_TIMEOUT_TICKS = 40;
+    private static final int CRAFTING_GRID_LAST_SLOT = 9;
     private static final float MIN_SAFE_HEALTH = 10.0F;
     private static final float LEGACY_MAX_TURN_PER_TICK = 8.0F;
     private static final float AIM_EPSILON = 0.75F;
@@ -152,13 +153,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         try {
             preflight = preflight(minecraft, session, request);
             if (preflight == null && state.parameters instanceof CraftParameters craft) {
-                recipes.refreshFromClient(minecraft, session.worldSessionId(), tick);
-                var resolved = recipes.resolve(session.worldSessionId(),
-                                craft.recipeRef(), craft.recipeFingerprint())
-                        .orElseThrow(() -> new IllegalArgumentException(
-                                "recipe ref/fingerprint is stale for this client recipe book"));
-                validateResolvedRecipe(craft, resolved);
-                state.recipe = resolved;
+                state.recipe = resolveCraftRecipe(minecraft, session, tick, craft);
             }
         } catch (IllegalArgumentException | IllegalStateException failureException) {
             preflight = failure("INVENTORY_REQUEST_INVALID",
@@ -222,6 +217,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             case AIMING_READBACK -> maintainAim(attempt, state, true);
             case OPENING_INITIAL, OPENING_READBACK -> acceptOwnedSnapshot(attempt, state, minecraft);
             case CRAFT_WAIT_RESULT -> maintainCraftResult(attempt, state, minecraft);
+            case CRAFT_RESULT_PICKUP_ACK ->
+                    maintainCraftResultPickupAck(attempt, state, minecraft);
             case AWAITING_CLICK_ACK -> maintainClickAck(attempt, state);
             case AWAITING_CLOSE -> {
                 if (screenState.phase() == ScreenOwnershipSignals.Phase.IDLE
@@ -349,6 +346,20 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     Map.of("menu_type", snapshot.menuTypeId()));
             return;
         }
+        if (!craftingGridAndResultEmpty(snapshot.slots())) {
+            if (state.stage == Stage.OPENING_READBACK) {
+                state.inconclusive = new InconclusiveState(
+                        PhaseFiveEvidence.Certainty.AMBIGUOUS,
+                        "craft_readback_grid_or_result_not_empty");
+                state.stage = Stage.TERMINAL;
+            } else {
+                fail(state, "CRAFTING_GRID_OR_RESULT_NOT_EMPTY",
+                        RoutineFailure.Category.PRECONDITION,
+                        RoutineFailure.Recovery.REPLAN,
+                        Map.of("crafting_grid_and_result", "empty"), Map.of());
+            }
+            return;
+        }
         int current = countPlayerItem(
                 snapshot.slots(), menu, player.getInventory(), craft.goalItem(),
                 defaultStackHash(craft.goalItem()));
@@ -393,6 +404,16 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return;
         }
 
+        try {
+            state.recipe = resolveCraftRecipe(
+                    requireMinecraft(), requireSession(), currentTick(), craft);
+        } catch (IllegalArgumentException | IllegalStateException invalidRecipe) {
+            fail(state, "CRAFT_RECIPE_NOT_CURRENT",
+                    RoutineFailure.Category.PRECONDITION,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("recipe_supported_at_station", true), Map.of());
+            return;
+        }
         var result = state.recipe.view().result().alternatives().getFirst();
         state.beforeDestinationCount = current;
         state.expectedCraftOutputCount = result.count();
@@ -418,11 +439,51 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         var resultStack = snapshot.slots().get(CraftingMenu.RESULT_SLOT);
         if (!matchesDefaultStack(resultStack, expected.item(), defaultStackHash(expected.item()))
                 || resultStack.count() != expected.count()
-                || !snapshot.carried().empty()) {
+                || !snapshot.carried().empty()
+                || !exactlyOneCraftPrepared(
+                        snapshot.slots(), state.recipe.view().ingredients())) {
+            return;
+        }
+        var destination = chooseCraftDestinationSlot(
+                snapshot.slots(), layout(menu, minecraft.player.getInventory()).playerSlots(),
+                expected.item(), defaultStackHash(expected.item()), expected.count(),
+                defaultStackMaxCount(expected.item()));
+        if (destination.isEmpty()) {
+            fail(state, "CRAFT_OUTPUT_DESTINATION_UNAVAILABLE",
+                    RoutineFailure.Category.PRECONDITION,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("compatible_or_empty_player_slot", true), Map.of());
+            return;
+        }
+        state.craftDestinationSlot = destination.orElseThrow();
+        state.craftDestinationBefore = snapshot.slots().get(state.craftDestinationSlot);
+        dispatchContainerClick(
+                attempt, state, menu, CraftingMenu.RESULT_SLOT, ContainerInput.PICKUP,
+                Stage.CRAFT_RESULT_PICKUP_ACK);
+    }
+
+    private void maintainCraftResultPickupAck(
+            PhaseFiveAttempt attempt, AttemptState state, Minecraft minecraft) {
+        var proof = freshServerCursorSnapshot(attempt, state);
+        if (proof.isEmpty() || minecraft.player == null
+                || !(minecraft.player.containerMenu instanceof CraftingMenu menu)) {
+            return;
+        }
+        var snapshot = proof.orElseThrow();
+        var expected = state.recipe.view().result().alternatives().getFirst();
+        if (!matchesDefaultStack(
+                        snapshot.carried(), expected.item(), defaultStackHash(expected.item()))
+                || snapshot.carried().count() != expected.count()
+                || !craftingGridAndResultEmpty(snapshot.slots())
+                || state.craftDestinationSlot < 0
+                || state.craftDestinationSlot >= snapshot.slots().size()
+                || !state.craftDestinationBefore.equals(
+                        snapshot.slots().get(state.craftDestinationSlot))) {
             return;
         }
         dispatchContainerClick(
-                attempt, state, menu, CraftingMenu.RESULT_SLOT, ContainerInput.QUICK_MOVE);
+                attempt, state, menu, state.craftDestinationSlot, ContainerInput.PICKUP,
+                Stage.AWAITING_CLICK_ACK);
     }
 
     private void acceptTransferSnapshot(
@@ -532,7 +593,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         state.beforeSourceCount = source;
         state.beforeDestinationCount = destination;
         state.dispatchedStackCount = snapshot.slots().get(slot).count();
-        dispatchContainerClick(attempt, state, menu, slot, ContainerInput.QUICK_MOVE);
+        dispatchContainerClick(
+                attempt, state, menu, slot, ContainerInput.QUICK_MOVE,
+                Stage.AWAITING_CLICK_ACK);
     }
 
     private void dispatchContainerClick(
@@ -540,7 +603,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             AttemptState state,
             AbstractContainerMenu menu,
             int slot,
-            ContainerInput input) {
+            ContainerInput input,
+            Stage nextStage) {
         Minecraft minecraft = requireMinecraft();
         if (screens.ownedSession().isEmpty()
                 || minecraft.player == null
@@ -561,13 +625,25 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         state.dispatchedContainerClicks++;
         Objects.requireNonNull(minecraft.gameMode).handleContainerInput(
                 menu.containerId, slot, 0, input, minecraft.player);
-        state.stage = Stage.AWAITING_CLICK_ACK;
+        state.stage = nextStage;
     }
 
     private void maintainClickAck(PhaseFiveAttempt attempt, AttemptState state) {
-        if (freshEmptyServerCursorProof(attempt, state)) {
-            closeForReadback(attempt, state);
+        var proof = freshServerCursorSnapshot(attempt, state);
+        if (proof.isEmpty() || !proof.orElseThrow().carried().empty()) {
+            return;
         }
+        if (state.parameters instanceof CraftParameters) {
+            var expected = state.recipe.view().result().alternatives().getFirst();
+            if (!craftingGridAndResultEmpty(proof.orElseThrow().slots())
+                    || !craftDestinationConfirmed(
+                            proof.orElseThrow().slots(), state.craftDestinationSlot,
+                            state.craftDestinationBefore, expected.item(),
+                            defaultStackHash(expected.item()), expected.count())) {
+                return;
+            }
+        }
+        closeForReadback(attempt, state);
     }
 
     private void closeForReadback(PhaseFiveAttempt attempt, AttemptState state) {
@@ -596,14 +672,26 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
     private boolean freshEmptyServerCursorProof(
             PhaseFiveAttempt attempt, AttemptState state) {
+        return freshServerCursorSnapshot(attempt, state)
+                .filter(snapshot -> snapshot.carried().empty())
+                .isPresent();
+    }
+
+    private Optional<ContainerSyncSignals.ContainerSnapshot> freshServerCursorSnapshot(
+            PhaseFiveAttempt attempt, AttemptState state) {
         ScreenOwnershipSignals.Snapshot snapshot = screens.snapshot();
-        return snapshot.phase() == ScreenOwnershipSignals.Phase.OWNED
-                && snapshot.expectedOpen() != null
-                && attempt.attemptId().equals(snapshot.expectedOpen().routineId())
-                && snapshot.lastServerCursorProven()
-                && snapshot.lastServerCursorEmpty()
-                && snapshot.lastServerCursorProofRevision()
-                        > state.cursorProofRequiredAfterRevision;
+        if (snapshot.phase() != ScreenOwnershipSignals.Phase.OWNED
+                || snapshot.expectedOpen() == null
+                || !attempt.attemptId().equals(snapshot.expectedOpen().routineId())
+                || !snapshot.lastServerCursorProven()
+                || snapshot.lastServerCursorProofRevision()
+                        <= state.cursorProofRequiredAfterRevision
+                || snapshot.ownedSession() == null
+                || snapshot.ownedSession().serverSnapshot().packetLedgerRevision()
+                        < snapshot.lastServerCursorProofRevision()) {
+            return Optional.empty();
+        }
+        return Optional.of(snapshot.ownedSession().serverSnapshot());
     }
 
     private void dispatchExpectedOpen(
@@ -739,18 +827,36 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     private static void validateResolvedRecipe(
             CraftParameters parameters, ClientRecipeCatalog.ResolvedRecipe recipe) {
         var view = recipe.view();
-        if (!view.supported() || view.result().alternatives().size() != 1
-                || !view.result().deterministic()) {
-            throw new IllegalArgumentException("recipe display is not supported for execution");
+        if (!craftingTableRecipeSupported(view)) {
+            throw new IllegalArgumentException(
+                    "recipe display is not supported by the declared crafting table");
         }
         var result = view.result().alternatives().getFirst();
         if (!parameters.goalItem().equals(result.item())) {
             throw new IllegalArgumentException("recipe result does not match the absolute goal item");
         }
-        if (!"inventory_2x2".equals(view.requiredScreen())
-                && !"crafting_table".equals(view.requiredScreen())) {
-            throw new IllegalArgumentException("recipe does not use a supported crafting grid");
-        }
+    }
+
+    static boolean craftingTableRecipeSupported(ClientRecipeCatalog.RecipeView view) {
+        return view.supported()
+                && view.result().deterministic()
+                && view.result().alternatives().size() == 1
+                && ("inventory_2x2".equals(view.requiredScreen())
+                        || "crafting_table".equals(view.requiredScreen()));
+    }
+
+    private ClientRecipeCatalog.ResolvedRecipe resolveCraftRecipe(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            long tick,
+            CraftParameters craft) {
+        recipes.refreshFromClient(minecraft, session.worldSessionId(), tick);
+        var resolved = recipes.resolve(
+                        session.worldSessionId(), craft.recipeRef(), craft.recipeFingerprint())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "recipe ref/fingerprint is stale for this client recipe book"));
+        validateResolvedRecipe(craft, resolved);
+        return resolved;
     }
 
     private void cleanupOwnedScreen(UUID authority) {
@@ -1003,7 +1109,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         return fingerprintLiveState(state);
     }
 
-    private static int defaultStackHash(String itemId) {
+    private static ItemStack defaultStack(String itemId) {
         Identifier identifier = Identifier.tryParse(itemId);
         var holder = identifier == null
                 ? Optional.<net.minecraft.core.Holder.Reference<net.minecraft.world.item.Item>>empty()
@@ -1011,7 +1117,15 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         if (holder.isEmpty() || holder.orElseThrow().value() == Items.AIR) {
             throw new IllegalArgumentException("item is not registered");
         }
-        return ItemStack.hashItemAndComponents(new ItemStack(holder.orElseThrow().value()));
+        return new ItemStack(holder.orElseThrow().value());
+    }
+
+    private static int defaultStackHash(String itemId) {
+        return ItemStack.hashItemAndComponents(defaultStack(itemId));
+    }
+
+    private static int defaultStackMaxCount(String itemId) {
+        return defaultStack(itemId).getMaxStackSize();
     }
 
     private static MenuLayout layout(AbstractContainerMenu menu, Inventory inventory) {
@@ -1034,6 +1148,79 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             String item,
             int defaultHash) {
         return countExact(stacks, layout(menu, inventory).playerSlots(), item, defaultHash);
+    }
+
+    static boolean craftingGridAndResultEmpty(
+            List<ContainerSyncSignals.StackFingerprint> stacks) {
+        if (stacks.size() <= CRAFTING_GRID_LAST_SLOT) {
+            return false;
+        }
+        for (int slot = CraftingMenu.RESULT_SLOT; slot <= CRAFTING_GRID_LAST_SLOT; slot++) {
+            if (!stacks.get(slot).empty()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static boolean exactlyOneCraftPrepared(
+            List<ContainerSyncSignals.StackFingerprint> stacks,
+            List<ClientRecipeCatalog.IngredientView> ingredients) {
+        if (stacks.size() <= CRAFTING_GRID_LAST_SLOT || ingredients.isEmpty()) {
+            return false;
+        }
+        long expectedUnits = ingredients.stream()
+                .mapToLong(ClientRecipeCatalog.IngredientView::countPerCraft)
+                .sum();
+        long gridUnits = 0L;
+        for (int slot = 1; slot <= CRAFTING_GRID_LAST_SLOT; slot++) {
+            gridUnits += stacks.get(slot).count();
+        }
+        return gridUnits == expectedUnits;
+    }
+
+    static Optional<Integer> chooseCraftDestinationSlot(
+            List<ContainerSyncSignals.StackFingerprint> stacks,
+            List<Integer> playerSlots,
+            String item,
+            int defaultHash,
+            int outputCount,
+            int maximumStackCount) {
+        if (outputCount < 1 || outputCount > maximumStackCount) {
+            return Optional.empty();
+        }
+        Integer empty = null;
+        for (int slot : playerSlots) {
+            if (slot < 0 || slot >= stacks.size()) {
+                throw new IllegalArgumentException("slot is outside the full snapshot");
+            }
+            var stack = stacks.get(slot);
+            if (matchesDefaultStack(stack, item, defaultHash)
+                    && stack.count() <= maximumStackCount - outputCount) {
+                return Optional.of(slot);
+            }
+            if (stack.empty() && empty == null) {
+                empty = slot;
+            }
+        }
+        return Optional.ofNullable(empty);
+    }
+
+    static boolean craftDestinationConfirmed(
+            List<ContainerSyncSignals.StackFingerprint> stacks,
+            int destinationSlot,
+            ContainerSyncSignals.StackFingerprint before,
+            String item,
+            int defaultHash,
+            int outputCount) {
+        if (destinationSlot < 0 || destinationSlot >= stacks.size()
+                || before == null || outputCount < 1
+                || !before.empty() && !matchesDefaultStack(before, item, defaultHash)) {
+            return false;
+        }
+        var after = stacks.get(destinationSlot);
+        return matchesDefaultStack(after, item, defaultHash)
+                && after.count() == (long) before.count() + outputCount;
     }
 
     static int countExact(
@@ -1230,6 +1417,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         AIMING_INITIAL,
         OPENING_INITIAL,
         CRAFT_WAIT_RESULT,
+        CRAFT_RESULT_PICKUP_ACK,
         AWAITING_CLICK_ACK,
         AWAITING_CLOSE,
         AIMING_READBACK,
@@ -1363,6 +1551,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private int afterDestinationCount;
         private int dispatchedStackCount;
         private int expectedCraftOutputCount;
+        private int craftDestinationSlot = -1;
+        private ContainerSyncSignals.StackFingerprint craftDestinationBefore =
+                ContainerSyncSignals.StackFingerprint.EMPTY;
         private long lastPacketRevision;
         private long closeDeadlineClientTick;
         private long cursorProofRequiredAfterRevision = -1L;

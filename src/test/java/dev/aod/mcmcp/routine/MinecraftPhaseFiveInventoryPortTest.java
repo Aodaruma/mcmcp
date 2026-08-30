@@ -1,9 +1,11 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.observation.ClientRecipeCatalog;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.util.ArrayList;
@@ -104,6 +106,56 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
+    void craftingTableAcceptsSmallerGridRecipesButRejectsIncompatibleDisplays() {
+        assertThat(MinecraftPhaseFiveInventoryPort.craftingTableRecipeSupported(
+                recipe("crafting_table", true))).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.craftingTableRecipeSupported(
+                recipe("inventory_2x2", true))).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.craftingTableRecipeSupported(
+                recipe("unsupported", true))).isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.craftingTableRecipeSupported(
+                recipe("crafting_table", false))).isFalse();
+    }
+
+    @Test
+    void craftPreparationAndReadbackRequireConservedEmptyGridAndOneIngredientSet() {
+        var slots = emptySlots(46);
+        assertThat(MinecraftPhaseFiveInventoryPort.craftingGridAndResultEmpty(slots)).isTrue();
+
+        slots.set(0, stack("minecraft:stick", 4, DEFAULT_HASH));
+        slots.set(1, stack("minecraft:oak_planks", 1, DEFAULT_HASH));
+        slots.set(2, stack("minecraft:oak_planks", 1, DEFAULT_HASH));
+        assertThat(MinecraftPhaseFiveInventoryPort.exactlyOneCraftPrepared(
+                slots, recipe("crafting_table", true).ingredients())).isTrue();
+
+        slots.set(1, stack("minecraft:oak_planks", 2, DEFAULT_HASH));
+        assertThat(MinecraftPhaseFiveInventoryPort.exactlyOneCraftPrepared(
+                slots, recipe("crafting_table", true).ingredients())).isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.craftingGridAndResultEmpty(slots)).isFalse();
+    }
+
+    @Test
+    void craftOutputUsesOnlyCompatibleCapacityOrAnEmptyPlayerSlot() {
+        var slots = emptySlots(46);
+        slots.set(10, stack("minecraft:stick", 60, DEFAULT_HASH));
+
+        assertThat(MinecraftPhaseFiveInventoryPort.chooseCraftDestinationSlot(
+                slots, List.of(10, 11), "minecraft:stick", DEFAULT_HASH, 4, 64))
+                .contains(10);
+        assertThat(MinecraftPhaseFiveInventoryPort.chooseCraftDestinationSlot(
+                slots, List.of(10, 11), "minecraft:stick", DEFAULT_HASH, 5, 64))
+                .contains(11);
+
+        var before = slots.get(10);
+        slots.set(10, stack("minecraft:stick", 64, DEFAULT_HASH));
+        assertThat(MinecraftPhaseFiveInventoryPort.craftDestinationConfirmed(
+                slots, 10, before, "minecraft:stick", DEFAULT_HASH, 4)).isTrue();
+        slots.set(10, stack("minecraft:stick", 63, DEFAULT_HASH));
+        assertThat(MinecraftPhaseFiveInventoryPort.craftDestinationConfirmed(
+                slots, 10, before, "minecraft:stick", DEFAULT_HASH, 4)).isFalse();
+    }
+
+    @Test
     void aimingChecksSafetyBeforeTurningAndReadbackCanRecoverAStaleCrosshair() throws Exception {
         var node = new ClassNode();
         try (var stream = getClass().getResourceAsStream(
@@ -164,6 +216,23 @@ class MinecraftPhaseFiveInventoryPortTest {
                 .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                         + "#dispatchContainerClick")
                 .noneMatch(call -> call.endsWith("#handleContainerInput"));
+        assertThat(invocations(node, "maintainCraftResultPickupAck"))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#freshServerCursorSnapshot",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#dispatchContainerClick");
+        assertThat(invocations(node, "maintainClickAck"))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#freshServerCursorSnapshot",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#craftDestinationConfirmed",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#closeForReadback");
+        assertThat(invocations(node, "acceptCraftSnapshot"))
+                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        + "#craftingGridAndResultEmpty");
         assertThat(invocations(node, "acceptTransferSnapshot"))
                 .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                         + "#dispatchContainerClick")
@@ -181,6 +250,24 @@ class MinecraftPhaseFiveInventoryPortTest {
                         "dev/aod/mcmcp/runtime/ScreenOwnershipSignals#cancelRoutine",
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#closeOwnedMenuClient");
+        assertThat(containerInputs(node, "maintainCraftResult"))
+                .containsExactly("PICKUP");
+        assertThat(containerInputs(node, "maintainCraftResultPickupAck"))
+                .containsExactly("PICKUP");
+    }
+
+    private static List<String> containerInputs(ClassNode node, String methodName) {
+        var inputs = new ArrayList<String>();
+        node.methods.stream()
+                .filter(method -> method.name.equals(methodName))
+                .findFirst().orElseThrow()
+                .instructions.forEach(instruction -> {
+                    if (instruction instanceof FieldInsnNode field
+                            && field.owner.equals("net/minecraft/world/inventory/ContainerInput")) {
+                        inputs.add(field.name);
+                    }
+                });
+        return inputs;
     }
 
     private static List<String> invocations(ClassNode node, String methodName) {
@@ -198,5 +285,25 @@ class MinecraftPhaseFiveInventoryPortTest {
 
     private static StackFingerprint stack(String item, int count, int hash) {
         return new StackFingerprint(item, count, hash);
+    }
+
+    private static ArrayList<StackFingerprint> emptySlots(int size) {
+        return new ArrayList<>(java.util.Collections.nCopies(size, StackFingerprint.EMPTY));
+    }
+
+    private static ClientRecipeCatalog.RecipeView recipe(
+            String requiredScreen, boolean supported) {
+        return new ClientRecipeCatalog.RecipeView(
+                "recipe-ref", "fingerprint", "shaped", requiredScreen, supported,
+                supported ? null : "unsupported",
+                new ClientRecipeCatalog.Result(true, List.of(
+                        new ClientRecipeCatalog.ResultAlternative(
+                                "minecraft:stick", 4, "stack-fingerprint"))),
+                List.of(
+                        new ClientRecipeCatalog.IngredientView(
+                                0, 1, List.of("minecraft:oak_planks")),
+                        new ClientRecipeCatalog.IngredientView(
+                                1, 1, List.of("minecraft:oak_planks"))),
+                new ClientRecipeCatalog.Shape(1, 2));
     }
 }
