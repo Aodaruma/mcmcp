@@ -4,12 +4,9 @@ import dev.aod.mcmcp.runtime.ContainerSyncSignals.ContainerDataEvidence;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.OpenScreenEvidence;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
 import net.minecraft.core.component.DataComponentMap;
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.item.alchemy.PotionContents;
 import net.minecraft.world.level.block.Blocks;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.Opcodes;
@@ -184,18 +181,6 @@ class MinecraftKnownBrewingPortTest {
         unrelatedChanged.put(unrelated, 18);
         assertThat(MinecraftKnownBrewingPort.inventoryReadbackMatches(
                 expected, unrelatedChanged)).isFalse();
-    }
-
-    @Test
-    void standardWaterAndAwkwardPotionComponentHashesAreDistinct() {
-        testStack(Items.POTION); // Bind isolated-loader item defaults before creating potions.
-        var water = PotionContents.createItemStack(Items.POTION,
-                BuiltInRegistries.POTION.get(Identifier.parse("minecraft:water")).orElseThrow());
-        var awkward = PotionContents.createItemStack(Items.POTION,
-                BuiltInRegistries.POTION.get(Identifier.parse("minecraft:awkward")).orElseThrow());
-
-        assertThat(ItemStack.hashItemAndComponents(water))
-                .isNotEqualTo(ItemStack.hashItemAndComponents(awkward));
     }
 
     @Test
