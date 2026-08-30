@@ -12,16 +12,191 @@
     {
       "name": "agent_get_state",
       "title": "Get MCMCP State",
-      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. inventory keeps item-ID totals; standard_potions separately validates component-exact unmodified Vanilla singleton potion stacks and groups them by item+potion across inventory slots, so brewing inputs and outputs are distinguishable without exposing custom components or impossible overstacks. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. It never scans hidden world data.",
+      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. Pass no arguments for state only. To search client-known recipe displays, use {\"query\":{\"kind\":\"result_item\",\"item\":\"minecraft:stick\"},\"max_results\":16} or {\"query\":{\"kind\":\"result_tag\",\"tag\":\"minecraft:planks\"},\"max_results\":16}; the bounded result appears in recipe_query. inventory keeps item-ID totals; standard_potions separately validates component-exact unmodified Vanilla singleton potion stacks and groups them by item+potion across inventory slots, so brewing inputs and outputs are distinguishable without exposing custom components or impossible overstacks. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. Recipe data comes only from displays synchronized into the current client recipe book. It never scans hidden world data.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
-        "additionalProperties": false
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {"const": "result_item"},
+                  "item": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                    "minLength": 3,
+                    "maxLength": 256
+                  }
+                },
+                "required": ["kind", "item"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {"const": "result_tag"},
+                  "tag": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                    "minLength": 3,
+                    "maxLength": 256
+                  }
+                },
+                "required": ["kind", "tag"]
+              }
+            ]
+          },
+          "max_results": {"type": "integer", "minimum": 1, "maximum": 64}
+        },
+        "oneOf": [
+          {"properties": {"query": {"type": "null"}, "max_results": {"type": "null"}}},
+          {"required": ["query", "max_results"], "minProperties": 2, "maxProperties": 2}
+        ]
       },
       "outputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "additionalProperties": false,
+        "$defs": {
+          "recipe_query": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "basis": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "world_session_id": {"type": "string", "minLength": 1, "maxLength": 96},
+                  "client_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+                  "recipe_book_revision": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807}
+                },
+                "required": ["world_session_id", "client_tick", "recipe_book_revision"]
+              },
+              "coverage": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "source": {"const": "client_known_recipe_displays"},
+                  "complete": {"const": false},
+                  "known": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+                  "matched": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+                  "returned": {"type": "integer", "minimum": 0, "maximum": 64},
+                  "truncated": {"type": "boolean"}
+                },
+                "required": ["source", "complete", "known", "matched", "returned", "truncated"]
+              },
+              "recipes": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "recipe_ref": {
+                      "type": "string",
+                      "minLength": 24,
+                      "maxLength": 24,
+                      "pattern": "^[A-Za-z0-9_-]{24}$"
+                    },
+                    "fingerprint": {
+                      "type": "string",
+                      "minLength": 71,
+                      "maxLength": 71,
+                      "pattern": "^sha256:[0-9a-f]{64}$"
+                    },
+                    "display_kind": {"enum": ["shaped", "shapeless", "other"]},
+                    "required_screen": {"enum": ["inventory_2x2", "crafting_table", "unsupported"]},
+                    "supported": {"type": "boolean"},
+                    "unsupported_reason": {"type": ["string", "null"], "maxLength": 160},
+                    "result": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "deterministic": {"type": "boolean"},
+                        "alternatives": {
+                          "type": "array",
+                          "maxItems": 16,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "item": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 256,
+                                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                              },
+                              "count": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+                              "stack_fingerprint": {
+                                "type": "string",
+                                "minLength": 71,
+                                "maxLength": 71,
+                                "pattern": "^sha256:[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": ["item", "count", "stack_fingerprint"]
+                          }
+                        }
+                      },
+                      "required": ["deterministic", "alternatives"]
+                    },
+                    "ingredients": {
+                      "type": "array",
+                      "maxItems": 9,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "index": {"type": "integer", "minimum": 0, "maximum": 8},
+                          "count_per_craft": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+                          "alternatives": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 128,
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "item": {
+                                  "type": "string",
+                                  "minLength": 3,
+                                  "maxLength": 256,
+                                  "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                                }
+                              },
+                              "required": ["item"]
+                            }
+                          }
+                        },
+                        "required": ["index", "count_per_craft", "alternatives"]
+                      }
+                    },
+                    "shape": {
+                      "oneOf": [
+                        {"type": "null"},
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "width": {"type": "integer", "minimum": 1, "maximum": 3},
+                            "height": {"type": "integer", "minimum": 1, "maximum": 3}
+                          },
+                          "required": ["width", "height"]
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["recipe_ref", "fingerprint", "display_kind", "required_screen", "supported", "unsupported_reason", "result", "ingredients", "shape"]
+                }
+              }
+            },
+            "required": ["basis", "coverage", "recipes"]
+          }
+        },
         "properties": {
           "schema_version": {"const": 1},
           "control": {
@@ -138,6 +313,12 @@
               "required": ["item", "potion", "count"]
             }
           },
+          "recipe_query": {
+            "oneOf": [
+              {"type": "null"},
+              {"$ref": "#/$defs/recipe_query"}
+            ]
+          },
           "policy": {
             "type": "object",
             "additionalProperties": false,
@@ -246,7 +427,7 @@
             ]
           }
         },
-        "required": ["schema_version", "control", "world", "inventory", "standard_potions", "policy", "observation", "action"]
+        "required": ["schema_version", "control", "world", "inventory", "standard_potions", "recipe_query", "policy", "observation", "action"]
       }
     },
     {

@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.mcp;
 
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 final class McpTestFixtures {
@@ -19,6 +20,7 @@ final class McpTestFixtures {
                 "world", nullValue(),
                 "inventory", List.of(),
                 "standard_potions", List.of(),
+                "recipe_query", nullValue(),
                 "policy", Map.ofEntries(
                         Map.entry("profile", "survival_omnidirectional"),
                         Map.entry("multiplayer_enabled", false),
@@ -46,6 +48,24 @@ final class McpTestFixtures {
                                         "inventory_transfer", "movement")))),
                 "observation", nullValue(),
                 "action", nullValue());
+    }
+
+    static Map<String, Object> stateWithEmptyRecipeQuery() {
+        var result = new LinkedHashMap<>(state());
+        result.put("recipe_query", Map.of(
+                "basis", Map.of(
+                        "world_session_id", "550e8400-e29b-41d4-a716-446655440000",
+                        "client_tick", 0,
+                        "recipe_book_revision", 1),
+                "coverage", Map.of(
+                        "source", "client_known_recipe_displays",
+                        "complete", false,
+                        "known", 0,
+                        "matched", 0,
+                        "returned", 0,
+                        "truncated", false),
+                "recipes", List.of()));
+        return result;
     }
 
     /** Map.of rejects null; this marker is replaced by Gson as JsonNull through a mutable map helper. */

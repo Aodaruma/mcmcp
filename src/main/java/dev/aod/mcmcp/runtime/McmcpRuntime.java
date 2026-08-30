@@ -1502,7 +1502,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         assertClientThread(minecraft);
         var session = sessions.snapshot();
         return switch (command) {
-            case GetState ignored -> status(minecraft, session);
+            case GetState state -> status(minecraft, session, state.arguments());
             case GetObservation ignored ->
                     throw new AssertionError("agent_get_observation must stage delivery metadata");
             case StartAction action -> {
@@ -2192,7 +2192,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return AVAILABLE_CAPABILITIES;
     }
 
-    private Map<String, Object> status(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
+    private Map<String, Object> status(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            Map<String, Object> arguments) {
         var lock = arming.snapshot(session.worldSessionId());
         var inventory = new LinkedHashMap<String, Integer>();
         var standardPotions = new LinkedHashMap<StandardPotionKey, Integer>();
@@ -2264,6 +2267,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         minecraft.isMultiplayerServer() && multiplayerPolicyAllows(minecraft),
                         McmcpClientConfig.visualRadiusBlocks(),
                         McmcpClientConfig.raysPerTick()));
+        if (!arguments.isEmpty()) {
+            requireReady(session);
+            result.put("recipe_query", getRecipes(minecraft, session, arguments));
+        }
         result.put("observation", agentObservationFrames.announceLatestSummary()
                 .map(ObservationWireMapper::summary)
                 .orElse(null));
@@ -2356,6 +2363,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         result.put("world", world);
         result.put("inventory", List.copyOf(inventory));
         result.put("standard_potions", List.copyOf(standardPotions));
+        result.put("recipe_query", null);
         result.put("policy", policy);
         result.put("observation", null);
         result.put("action", null);

@@ -26,7 +26,15 @@ public interface McpRuntimePort {
         String toolName();
     }
 
-    record GetState() implements RuntimeCommand {
+    record GetState(Map<String, Object> arguments) implements RuntimeCommand {
+        public GetState {
+            arguments = immutableCopy(arguments);
+        }
+
+        public GetState() {
+            this(Map.of());
+        }
+
         @Override
         public String toolName() {
             return "agent_get_state";

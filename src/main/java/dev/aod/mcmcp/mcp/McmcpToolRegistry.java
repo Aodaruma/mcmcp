@@ -284,7 +284,7 @@ public final class McmcpToolRegistry {
     private static McpRuntimePort.RuntimeCommand command(String name, JsonObject arguments) {
         Map<String, Object> values = jsonMap(arguments);
         return switch (name) {
-            case "agent_get_state" -> new McpRuntimePort.GetState();
+            case "agent_get_state" -> new McpRuntimePort.GetState(values);
             case "agent_get_observation" -> new McpRuntimePort.GetObservation(values);
             case "agent_start_action" -> new McpRuntimePort.StartAction(values);
             case "agent_get_action" -> new McpRuntimePort.GetAction(values);

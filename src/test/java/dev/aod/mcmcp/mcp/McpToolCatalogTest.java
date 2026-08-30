@@ -723,6 +723,49 @@ class McpToolCatalogTest {
         assertThat(calls).hasValue(6);
     }
 
+    @Test
+    void stateRecipeQueryReusesTheClosedRecipeGrammarWithoutReflectingRejectedInput()
+            throws Exception {
+        var schema = new McpToolCatalog().inputSchema("agent_get_state");
+        var itemQuery = JsonParser.parseString("""
+                {"query":{"kind":"result_item","item":"minecraft:stick"},"max_results":4}
+                """).getAsJsonObject();
+        var tagQuery = JsonParser.parseString("""
+                {"query":{"kind":"result_tag","tag":"minecraft:planks"},"max_results":64}
+                """).getAsJsonObject();
+        assertThat(CatalogSchemaValidator.matches(schema, new com.google.gson.JsonObject())).isTrue();
+        assertThat(CatalogSchemaValidator.matches(schema, itemQuery)).isTrue();
+        assertThat(CatalogSchemaValidator.matches(schema, tagQuery)).isTrue();
+
+        var commands = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        var registry = new McmcpToolRegistry((command, context) -> {
+            commands.add(command);
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(
+                    command instanceof McpRuntimePort.GetState state
+                                    && !state.arguments().isEmpty()
+                            ? McpTestFixtures.stateWithEmptyRecipeQuery()
+                            : toolResult(command)));
+        }, Duration.ofSeconds(1));
+
+        var response = registry.call("agent_get_state", itemQuery);
+
+        assertThat(response.get("isError").getAsBoolean()).isFalse();
+        assertThat(commands).singleElement().isInstanceOfSatisfying(
+                McpRuntimePort.GetState.class,
+                state -> assertThat(new GsonBuilder().create().toJsonTree(state.arguments()))
+                        .isEqualTo(itemQuery));
+
+        var rejectedQuery = JsonParser.parseString("""
+                {"query":{"kind":"result_item","item":"minecraft:stick",
+                 "private_token":"do-not-reflect"},"max_results":4}
+                """).getAsJsonObject();
+        var rejected = registry.call("agent_get_state", rejectedQuery).toString();
+        assertThat(rejected).contains("INVALID_ARGUMENT")
+                .doesNotContain("private_token")
+                .doesNotContain("do-not-reflect");
+        assertThat(commands).hasSize(1);
+    }
+
     private static List<String> enumValues(
             com.google.gson.JsonObject parent, String property) {
         return parent.getAsJsonObject(property).getAsJsonArray("enum").asList().stream()
@@ -732,7 +775,9 @@ class McpToolCatalogTest {
 
     private static Map<String, Object> toolResult(McpRuntimePort.RuntimeCommand command) {
         return switch (command) {
-            case McpRuntimePort.GetState ignored -> McpTestFixtures.state();
+            case McpRuntimePort.GetState state -> state.arguments().isEmpty()
+                    ? McpTestFixtures.state()
+                    : McpTestFixtures.stateWithEmptyRecipeQuery();
             case McpRuntimePort.GetObservation ignored -> nullableMap(
                     "schema_version", 1,
                     "frame_id", "obs-0000000000000000",

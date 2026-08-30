@@ -22,7 +22,7 @@ public final class McpToolSchemas {
     }
 
     static Map<String, Object> statusInput() {
-        return closedObject(fields());
+        return schema("oneOf", List.of(closedObject(fields()), getRecipesInput()));
     }
 
     static Map<String, Object> snapshotInput() {
