@@ -62,9 +62,6 @@ public abstract class ClientContainerSignalsMixin {
     @Inject(method = "handleContainerContent", at = @At("TAIL"), require = 1, expect = 1)
     private void mcmcp$fullContainerContent(
             ClientboundContainerSetContentPacket packet, CallbackInfo callback) {
-        if (!acceptsContainerEvidence()) {
-            return;
-        }
         var context = currentMenuContext();
         if (context == null) {
             return;
@@ -82,9 +79,6 @@ public abstract class ClientContainerSignalsMixin {
     @Inject(method = "handleContainerSetSlot", at = @At("TAIL"), require = 1, expect = 1)
     private void mcmcp$incrementalContainerSlot(
             ClientboundContainerSetSlotPacket packet, CallbackInfo callback) {
-        if (!acceptsContainerEvidence()) {
-            return;
-        }
         var context = currentMenuContext();
         if (context == null) {
             return;
@@ -99,9 +93,6 @@ public abstract class ClientContainerSignalsMixin {
     @Inject(method = "handleContainerSetData", at = @At("TAIL"), require = 1, expect = 1)
     private void mcmcp$serverContainerData(
             ClientboundContainerSetDataPacket packet, CallbackInfo callback) {
-        if (!acceptsContainerEvidence()) {
-            return;
-        }
         var context = currentMenuContext();
         if (context == null) {
             return;
@@ -115,9 +106,6 @@ public abstract class ClientContainerSignalsMixin {
     @Inject(method = "handleSetCursorItem", at = @At("TAIL"), require = 1, expect = 1)
     private void mcmcp$serverCursorItem(
             ClientboundSetCursorItemPacket packet, CallbackInfo callback) {
-        if (!acceptsContainerEvidence()) {
-            return;
-        }
         var context = currentMenuContext();
         if (context == null) {
             return;
@@ -131,9 +119,6 @@ public abstract class ClientContainerSignalsMixin {
     @Inject(method = "handleSetPlayerInventory", at = @At("TAIL"), require = 1, expect = 1)
     private void mcmcp$serverPlayerInventorySlot(
             ClientboundSetPlayerInventoryPacket packet, CallbackInfo callback) {
-        if (!acceptsContainerEvidence()) {
-            return;
-        }
         var minecraft = Minecraft.getInstance();
         var context = currentMenuContext();
         if (context == null || minecraft.player == null) {
@@ -197,7 +182,10 @@ public abstract class ClientContainerSignalsMixin {
             return null;
         }
         AbstractContainerMenu menu = minecraft.player.containerMenu;
-        String menuTypeId = ScreenOwnershipSignals.menuTypeId(menu.getType());
+        String menuTypeId = ScreenOwnershipSignals.registeredMenuTypeId(menu).orElse(null);
+        if (menuTypeId == null) {
+            return null;
+        }
         boolean screenMatches = minecraft.gui.screen()
                 instanceof AbstractContainerScreen<?> containerScreen
                 && containerScreen.getMenu() == menu
@@ -205,11 +193,6 @@ public abstract class ClientContainerSignalsMixin {
                 && ScreenOwnershipSignals.menuTypeId(containerScreen.getMenu().getType())
                         .equals(menuTypeId);
         return new MenuContext(minecraft.level, menu, menuTypeId, screenMatches);
-    }
-
-    private static boolean acceptsContainerEvidence() {
-        var signals = ScreenOwnershipSignals.global();
-        return ScreenOwnershipSignals.acceptsContainerEvidence(signals.snapshot().phase());
     }
 
     private record MenuContext(

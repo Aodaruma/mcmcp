@@ -37,15 +37,22 @@ class ScreenOwnershipSignalsTest {
     }
 
     @Test
-    void ordinaryPlayerInventoryPacketsAreIgnoredWithoutOwnedScreenAuthority() {
-        assertThat(ScreenOwnershipSignals.acceptsContainerEvidence(
-                ScreenOwnershipSignals.Phase.IDLE)).isFalse();
-        assertThat(ScreenOwnershipSignals.acceptsContainerEvidence(
-                ScreenOwnershipSignals.Phase.EXPECTING_OPEN_PACKET)).isFalse();
-        assertThat(ScreenOwnershipSignals.acceptsContainerEvidence(
-                ScreenOwnershipSignals.Phase.EXPECTING_FULL_CONTENT)).isTrue();
-        assertThat(ScreenOwnershipSignals.acceptsContainerEvidence(
-                ScreenOwnershipSignals.Phase.OWNED)).isTrue();
+    void userOpenedMenuPacketsPopulateTheLedgerWithoutGrantingOwnership() {
+        var session = UUID.randomUUID();
+        var channel = new ContainerSyncSignals.SessionChannel();
+        var core = new ScreenOwnershipSignals.Core();
+        channel.bindAndSnapshot(session);
+        core.bindSession(session, 0);
+
+        var open = channel.openScreen(7, MENU, 1);
+        var content = channel.fullContent(7, MENU, 1, List.of(STONE), EMPTY, 2);
+
+        assertThat(core.onOpenScreen(open.snapshot().lastOpenScreen()).relevant()).isFalse();
+        assertThat(core.onFullContent(content, true).relevant()).isFalse();
+        assertThat(content.applied()).isTrue();
+        assertThat(content.snapshot().container()).isNotNull();
+        assertThat(core.snapshot().phase()).isEqualTo(ScreenOwnershipSignals.Phase.IDLE);
+        assertThat(core.snapshot().owned()).isFalse();
     }
 
     @Test

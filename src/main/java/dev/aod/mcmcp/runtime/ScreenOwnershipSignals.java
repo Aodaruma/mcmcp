@@ -393,12 +393,6 @@ public final class ScreenOwnershipSignals {
         }
     }
 
-    /** Container packets are relevant only after the expected screen exists. */
-    public static boolean acceptsContainerEvidence(Phase phase) {
-        Objects.requireNonNull(phase, "phase");
-        return phase == Phase.EXPECTING_FULL_CONTENT || phase == Phase.OWNED;
-    }
-
     /** Lifecycle fence for disconnect, respawn level replacement, and clearLevel. */
     public void clearLevel(ClientLevel level) {
         Transition transition;
@@ -440,7 +434,7 @@ public final class ScreenOwnershipSignals {
                 .map(menuTypeId -> new MenuView(menu.containerId, menuTypeId));
     }
 
-    static Optional<String> registeredMenuTypeId(AbstractContainerMenu menu) {
+    public static Optional<String> registeredMenuTypeId(AbstractContainerMenu menu) {
         Objects.requireNonNull(menu, "menu");
         try {
             return Optional.of(menuTypeId(menu.getType()));
