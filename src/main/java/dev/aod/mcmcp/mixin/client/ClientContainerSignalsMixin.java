@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.mixin.client;
 
 import dev.aod.mcmcp.runtime.ContainerSyncSignals;
+import dev.aod.mcmcp.runtime.MerchantOfferSignals;
 import dev.aod.mcmcp.runtime.ScreenOwnershipSignals;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
@@ -9,6 +10,7 @@ import net.minecraft.network.protocol.game.ClientboundContainerClosePacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetContentPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetDataPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
+import net.minecraft.network.protocol.game.ClientboundMerchantOffersPacket;
 import net.minecraft.network.protocol.game.ClientboundOpenScreenPacket;
 import net.minecraft.network.protocol.game.ClientboundSetCursorItemPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPlayerInventoryPacket;
@@ -27,6 +29,7 @@ public abstract class ClientContainerSignalsMixin {
     private void mcmcp$clearOwnedContainerLevel(CallbackInfo callback) {
         var minecraft = Minecraft.getInstance();
         ScreenOwnershipSignals.global().clearLevel(minecraft.level);
+        MerchantOfferSignals.global().clearSession(minecraft.level);
     }
 
     /*
@@ -169,6 +172,16 @@ public abstract class ClientContainerSignalsMixin {
         var signals = ScreenOwnershipSignals.global();
         signals.onContainerClose(
                 minecraft.level, packet.getContainerId(), signals.currentTick());
+    }
+
+    @Inject(method = "handleMerchantOffers", at = @At("TAIL"), require = 1, expect = 1)
+    private void mcmcp$merchantOffers(
+            ClientboundMerchantOffersPacket packet, CallbackInfo callback) {
+        var minecraft = Minecraft.getInstance();
+        if (minecraft.level != null) {
+            MerchantOfferSignals.global().onOffers(
+                    minecraft.level, packet, ScreenOwnershipSignals.global().currentTick());
+        }
     }
 
     private static MenuContext currentMenuContext() {

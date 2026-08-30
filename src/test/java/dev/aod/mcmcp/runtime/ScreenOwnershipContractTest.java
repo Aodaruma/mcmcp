@@ -35,6 +35,14 @@ class ScreenOwnershipContractTest {
                 .contains("expect, 1");
         assertThat(atValues(full)).contains("TAIL");
 
+        var merchant = annotation("Lorg/spongepowered/asm/mixin/injection/Inject;",
+                method(node, "mcmcp$merchantOffers"));
+        assertThat(merchant.values.toString())
+                .contains("handleMerchantOffers")
+                .contains("require, 1")
+                .contains("expect, 1");
+        assertThat(atValues(merchant)).contains("TAIL");
+
         var close = annotation("Lorg/spongepowered/asm/mixin/injection/Inject;",
                 method(node, "mcmcp$serverContainerClose"));
         assertThat(close.values.toString())
