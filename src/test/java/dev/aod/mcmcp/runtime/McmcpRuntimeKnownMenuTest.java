@@ -5,6 +5,10 @@ import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.routine.BlockTarget;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class McmcpRuntimeKnownMenuTest {
@@ -29,5 +33,24 @@ class McmcpRuntimeKnownMenuTest {
                         0, 0,
                         ActionDslCompiler.KNOWN_MENU_OPERATION_INTERACTIONS,
                         0, 0));
+    }
+
+    @Test
+    void onlyTheSingleOpaqueMenuOperationBypassesMovementSafetyAdmission() {
+        var operation = new ActionDsl.OperateKnownMenu(
+                "transfer", "abcdefghijklmnopqrstuvwx");
+        var menuOnly = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(ActionDsl.Capability.INVENTORY_TRANSFER),
+                List.of(operation));
+        var delayed = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(ActionDsl.Capability.INVENTORY_TRANSFER),
+                List.of(new ActionDsl.WaitTicks("wait", 1), operation));
+
+        assertThat(McmcpRuntime.actionAdmissionRequiresLocalSafety(menuOnly)).isFalse();
+        assertThat(McmcpRuntime.actionAdmissionRequiresLocalSafety(delayed)).isTrue();
     }
 }

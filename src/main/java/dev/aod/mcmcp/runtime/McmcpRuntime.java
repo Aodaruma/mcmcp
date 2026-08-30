@@ -1458,10 +1458,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         final ActionDsl.Request request;
         final PredicateRequirements predicateRequirements;
+        final boolean localSafetyRequired;
         try {
             request = ActionDslParser.parse(GSON.toJsonTree(command.arguments()).getAsJsonObject());
             ActionDslValidator.validate(request);
             predicateRequirements = predicateRequirements(request.program());
+            localSafetyRequired = actionAdmissionRequiresLocalSafety(request.program());
         } catch (RuntimeException | LinkageError failure) {
             return CompletableFuture.completedFuture(mapFailure(failure));
         }
@@ -1476,7 +1478,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         () -> captureAgentAdmission(
                                 Minecraft.getInstance(),
                                 sessions.snapshot(),
-                                predicateRequirements)));
+                                predicateRequirements,
+                                localSafetyRequired)));
         final AgentAdmissionSnapshot snapshot;
         try {
             snapshot = capture.get(context.remainingNanos(), TimeUnit.NANOSECONDS);
@@ -1680,7 +1683,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private AgentAdmissionSnapshot captureAgentAdmission(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
-            PredicateRequirements predicateRequirements) {
+            PredicateRequirements predicateRequirements,
+            boolean localSafetyRequired) {
         assertClientThread(minecraft);
         requireReady(session);
         if (agentActions.active().isPresent() || routines.activeRoutineId().isPresent()) {
@@ -1702,7 +1706,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     true,
                     Map.of());
         }
-        if (localSafety != LocalObservationProjector.CurrentSafety.CONTINUE) {
+        if (localSafetyRequired
+                && localSafety != LocalObservationProjector.CurrentSafety.CONTINUE) {
             throw new RuntimeInvocationException(
                     "unsafe_state",
                     "The Local Observation Volume does not permit action admission.",
@@ -1732,6 +1737,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 playerPose(player, session.dimension()),
                 agentPlanningFrame(),
                 localSafety,
+                localSafetyRequired,
                 predicateRequirements,
                 predicateSnapshot,
                 McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
@@ -1844,6 +1850,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private static boolean requiresWorldPlanning(ActionDsl.Node node) {
         return !(node instanceof ActionDsl.WaitTicks
                 || node instanceof ActionDsl.OperateKnownMenu);
+    }
+
+    static boolean actionAdmissionRequiresLocalSafety(ActionDsl.Program program) {
+        Objects.requireNonNull(program, "program");
+        return program.body().size() != 1
+                || !(program.body().getFirst() instanceof ActionDsl.OperateKnownMenu);
     }
 
     static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
@@ -1974,8 +1986,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || lock.controlEpoch() != expectedControlEpoch
                 || !lock.capabilities().equals(captured.control().capabilities())
                 || !playerPose(player, session.dimension()).equals(captured.pose())
-                || captured.localSafety() != LocalObservationProjector.CurrentSafety.CONTINUE
-                || localSafety != LocalObservationProjector.CurrentSafety.CONTINUE
+                || captured.localSafetyRequired()
+                        && (captured.localSafety()
+                                != LocalObservationProjector.CurrentSafety.CONTINUE
+                                || localSafety
+                                != LocalObservationProjector.CurrentSafety.CONTINUE)
                 || McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F
                         != captured.cameraDegreesPerTick()
                 || minecraft.isMultiplayerServer() != captured.multiplayerServer()
@@ -3536,8 +3551,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             actionTick)) {
                 return;
             }
-            if (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
-                    || localSafety == LocalObservationProjector.CurrentSafety.REPLAN) {
+            if (!(agentExecution.primitive instanceof ActionDsl.OperateKnownMenu)
+                    && (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
+                            || localSafety == LocalObservationProjector.CurrentSafety.REPLAN)) {
                 if (isAgentWait(agentExecution.primitive)) {
                     failAgentAction(
                             AgentActionStore.FailureCode.PATH_BLOCKED,
@@ -6025,6 +6041,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             AgentPrimitivePlanner.Pose pose,
             Optional<ObservationFrame> frame,
             LocalObservationProjector.CurrentSafety localSafety,
+            boolean localSafetyRequired,
             PredicateRequirements predicateRequirements,
             AdmissionPolicySnapshot predicateSnapshot,
             float cameraDegreesPerTick,
