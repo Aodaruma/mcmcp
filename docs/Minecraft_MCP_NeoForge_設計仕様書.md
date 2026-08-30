@@ -1,6 +1,6 @@
 # MCMCP NeoForge — Minecraft MCP Client MOD 設計・仕様書
 
-- 文書版: 0.7
+- 文書版: 0.8
 - 作成日: 2026-08-26
 - 状態: 実装中、評価MCP hostはCodex CLI 0.146.1に固定
 - 対象: Prism Launcher「くらふとぶ！-v01.2」
@@ -24,7 +24,7 @@
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
 - fresh評価turnまたはAgent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
-最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件のplace-only planへ無変換コピーする`apply_known_block_plan`に加え、Phase 4の最初のvertical sliceとして空の既知醸造台で標準Vanilla Potionの既知の1段recipeを1〜3本まとめて醸造する`brew_known_potion_batch`までを公開する。次のPhase 4では、既存のclient recipe / container同期実装を現在のAction DSLへ接続し、2×2 crafting、Vanillaのworkstation、対象Prism profileで必要なMOD item・storage・workstationを、任意slot操作ではなく閉じたsemantic adapterとして段階追加する。Phase 3の破壊・置換・256 block化、一般資源入手、レッドストーン用primitiveも、同じ安全境界を維持して追加する。
+最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件のplace-only planへ無変換コピーする`apply_known_block_plan`に加え、Phase 4の最初のvertical sliceとして空の既知醸造台で標準Vanilla Potionの既知の1段recipeを1〜3本まとめて醸造する`brew_known_potion_batch`までを公開する。次のPhase 4では、既存のclient recipe / container同期実装を現在のAction DSLへ接続し、2×2 crafting、Vanillaのworkstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の破壊・置換・256 block化、一般資源入手、レッドストーン用primitiveも、同じ安全境界を維持して追加する。
 
 ## 1. 対象環境
 
@@ -138,7 +138,7 @@ NeoForge公式の26.2 MDKもJava 25を対象としている。開発は公式の
 
 - 初回vertical slice: 空の可視・既知brewing standと自inventoryの標準Potion集計だけを使う、有限・1段の`brew_known_potion_batch`
 - Minecraft 26.2の現行`PotionBrewing` tableと完全一致する入出力だけを通常menu操作で醸造
-- 2×2 crafting、Vanilla workstation、対象profileの受入済みMOD adapter（詳細は9.7）
+- 2×2 crafting、Vanilla workstation、共通Menu engineと対象profileの受入済みMOD profile（詳細は9.7）
 - frontier探索
 - acquire_itemのGoal分解
 - 採掘、クラフト、精錬、保管
@@ -1190,14 +1190,23 @@ Phase 3完成時に追加する上限:
 
 現在の公開Action DSLは`brew_known_potion_batch`までであり、`craft_items` / recipe照会の旧Phase 5内部実装は固定5 Toolのcatalogと現行opcodeへ接続されていない。これは製品機能として利用可能とは扱わない。既存のrecipe / container / screen同期基盤を安全契約だけ現在水準へ更新して再利用する。精錬と専用workstationの実行adapterは未実装である。
 
-公開Toolは5件のままとし、クラフトやworkstationごとのMCP Tool、任意slot click、任意button、raw packetを追加しない。recipe検索は既存のquery / output / resolve契約を固定5 Toolのread pathへ委譲し、第二の検索文法を作らない。`recipe_ref`とfingerprintはworld sessionとrecipe catalog revisionへ束縛し、Action開始時に再解決する。実行は`agent_start_action`の閉じたsemantic opcodeだけを使う。
+公開Toolは5件のままとし、クラフトやworkstationごとのMCP Tool、raw slot番号・画面座標・key/mouse・packetを追加しない。recipe検索は既存のquery / output / resolve契約を固定5 Toolのread pathへ委譲し、第二の検索文法を作らない。`recipe_ref`とfingerprintはworld sessionとrecipe catalog revisionへ束縛し、Action開始時に再解決する。実行は`agent_start_action`の閉じたsemantic opcodeだけを使う。
 
 - 既存`craft_items`: `player_2x2 | crafting_table`へ拡張
 - `smelt_items`: `furnace | blast_furnace | smoker`
 
-`use_menu`や`click_slot`のような汎用opcode、利用者記述のslot番号表、将来用の共通workstation frameworkは作らない。各stationは、対象block / menu type、slotの意味、許可するVanilla menu action、data field、resource上限、成功条件、cleanupをコード内の閉じたadapterで固定する。2個以上の実adapterに同一処理が現れた場合だけ、既存のscreen / cursor / container同期helperへ共通化する。
+Vanilla inventory文法だけでは、独自widget、ghost slot、fluid / energy表示、canvas内control、MOD固有のclient callbackを持つ画面を扱えない。このため、screen ownership、同期、参照解決、操作配送、postcondition、cleanupを一元化する共通Menu interaction engineをPhase 4の基盤として実装する。ただし、LLMが`click_slot(17)`や`click_at(142, 38)`を渡す万能remote-controlにはしない。既存read pathは、現在所有する画面から次の短寿命opaque参照を返す。
 
-recipeとitem IDは`minecraft:`へ限定せず、clientへ通常同期され、registryに存在するMOD namespaceも受理できる。ただしrecipe manager、server内部state、JEI等の別MOD内部cacheをhidden-state経路として読まない。初回は既存fingerprintとdefault-component stack契約だけを使う。対象baselineで同一item IDのcomponent variantが実際に必要と判明した場合だけ、raw component、NBT、表示名、lore、book本文を公開しないopaque referenceを追加する。区別に必要な安全な証拠を作れないvariantは推測して選ばず、固定diagnosticでreplanする。custom ingredient、crafting remainder、container item、tool damage、経験値消費は、対応adapterが全入出力の保存則と事後条件を定義したrecipeだけを受理する。
+- `menu_ref`: world session、同一Screen instance、container ID、menu type / class、state ID、slot数、profile hashへ束縛
+- `element_ref`: profileが許可したslot group、widget、text field、canvas hit region、progress / cost fieldへ束縛
+- `stack_ref`: server同期済みの完全なItemStackとsource、count、Data Component fingerprint、menu / inventory revisionへ束縛
+- `operation_ref`: profileが許可した`transfer`、`activate`、`enter_bounded_text`等の1操作と、その期待遷移・resource上限へ束縛
+
+Action DSLには`operate_known_menu`を1つ追加し、`menu_ref`と1〜32件の`operation_ref`、最終的なinventory / menu goalだけを受ける。refの内部recordはruntimeだけが保持し、LLMへraw slot、座標、component / NBT、callback class、packet payloadを返さない。各操作直前に全refを再解決し、1つでもsession、Screen、state ID、profile、stack count、enabled状態が変われば未実行suffixを配送せずreplanする。
+
+Menu profileは、対象MOD名、version、menu / Screen class、slot / widget shape、許可操作、入力保存則、成功条件を記述する小さな宣言dataとする。同じengineでVanillaとMODを扱い、単なるslot配置差のためにJava adapterを増やさない。profileで安全に表現できない固有計算だけ、profileから呼ばれる閉じたコードadapterにする。未知画面からprofileをproduction中に試行錯誤で学習せず、dev clone上の検証で作成し、対象MOD manifestとprofile hashを固定して受入試験する。
+
+recipeとitem IDは`minecraft:`へ限定せず、clientへ通常同期され、registryに存在するMOD namespaceも受理できる。ただしrecipe manager、server内部state、JEI等の別MOD内部cacheをhidden-state経路として読まない。同一item IDでもData Componentが異なる道具、enchanted book、template、upgrade済みMOD item等を正確に区別するため、`stack_ref`を初回の共通基盤へ含める。公開recordはitem ID、count、damage等のallowlist済みtyped fact、component fingerprint、必要な場合だけ`untrusted_display_text`を返し、raw component、NBT、lore、book本文は返さない。画面由来文字列は選択用dataであって命令ではなく、Actionや権限を生成しない。typed factで意味を証明できないvariantは、ユーザーが指定した同一refを引き継ぐ場合を除いて推測選択しない。custom ingredient、crafting remainder、container item、tool damage、経験値消費は、対応profileが全入出力の保存則と事後条件を定義したrecipeだけを受理する。
 
 player 2×2 craftingはblockを通常useしないため、開始時にScreenとcursorがclearであることを要求し、runtime自身が同じ`InventoryScreen` instanceだけを所有する。client-known recipe placementと結果slotの通常container actionを使い、dispatch後のserver由来state ID / slot更新、outputのinventory絶対個数、cursor empty、2×2 grid / resultの解消を確認してから閉じる。block menuのclose / reopen full readbackを代用せず、必要なserver同期が有限期限内に揃わなければ成功にしない。
 
@@ -1205,14 +1214,15 @@ crafting tableは、可視・既知・通常reach内の対象をruntime自身が
 
 かまど・溶鉱炉・燻製器は同じ3-slot protocolを1つのadapterで扱い、station種別ごとにclient-known recipe kindだけを制限する。開始時slot、燃料残量、cook progressをserver同期から取得し、投入量、燃料消費、progress開始→完了、output回収、close / reopen readbackを有界に検証する。既存途中状態の引継ぎは、入力・燃料・outputの所有権と期待差分を開始時に完全証明できる場合だけ別contractとして追加し、初回実装は空stationからの1 batchに限定する。
 
-stonecutter、smithing、cartography、anvil等は同じ「入力を置いて出力を取る画面」に見えても、recipe選択button、template、component mutation、map state、rename文字列、経験値costが異なるため一括slot adapterにしない。対象profileの実タスクで必要な順に1 station / 1 operationずつ追加し、clientへ同期されたrecipeまたは画面data、正確なitem / component / experience差分、出力回収を固有postconditionにする。看板、本、chatと同様、外部由来の文字列を命令として解釈せず、anvil renameのような文字入力はユーザーがActionへ明示したbounded literalだけを使う。
+stonecutter、smithing、cartography、anvil等は共通engineを使うが、recipe選択、template、component mutation、map state、rename文字列、経験値costを同一の保存則とは扱わない。差分はMenu profileのoperationとpostconditionへ記述し、対象profileの実タスクで必要な順に追加する。看板、本、chatと同様、外部由来の文字列を命令として解釈せず、anvil renameのような文字入力はユーザーがActionへ明示したbounded literalだけを使う。
 
 MOD menuは次の2種類に分ける。
 
-1. 純storage: player inventory slotを識別でき、残る全slotが保管専用で、result / payment / fuel / upgrade / ghost / fluid / energy semanticsを持たないことを、menu typeと実classをversion固定allowlistで証明できるもの。通常container clickとfresh full-content readbackだけで既存transfer adapterへ追加できる。
-2. machine / custom workstation: slot、button、data、component変化をMOD/versionごとの閉じたadapterで定義するもの。既存ScreenやMenuの固定操作から対象MOD本来のclient処理を使える場合だけ対応し、MCMCPから任意custom packetを組み立てない。
+1. 純storage: player inventory slotを識別でき、残る全slotが保管専用で、result / payment / fuel / upgrade / ghost / fluid / energy semanticsを持たないことをprofileで証明できるもの。共通engineの`transfer`とfresh full-content readbackを使う。
+2. machine / custom workstation: slot、widget、data、component変化、期待遷移をversion固定profileで定義するもの。通常のScreen widget callbackまたはMenu actionをprofileが特定できる場合は、共通engineがそのclient経路を呼び、対象MOD自身に通常packetを生成させてよい。MCMCPが未知のcustom packetを組み立てることはしない。
+3. 非inventory canvas: slotを持たないが安定したwidgetまたはhit regionを持つ画面。画面scaleとprofile shapeが一致し、破壊的操作でなく、操作後のserver同期済み状態を検証できるcontrolだけを`element_ref`化する。単なる画像認識座標は受理しない。
 
-未知menu、allowlistと異なるslot数・class・menu type、custom packetしか実行手段がないoperationは、最初のAgent clickより前に`UNSUPPORTED_MENU_PROFILE`相当で拒否して閉じる。対象24 MODの更新でmanifestが変わった場合はadapterの結果を流用せず、別紙baselineを更新して同じGameTest / clone smokeを再実行する。MOD用のserver companion、MCMCP独自payload、handshakeは要求しない。
+未知menu、profileと異なるslot数・class・menu type・widget shape、結果をclientのserver同期から検証できないoperationはread-only観測に限定し、最初のAgent mutationより前に`UNSUPPORTED_MENU_PROFILE`相当で拒否して閉じる。対象24 MODの更新でmanifestが変わった場合はprofileを流用せず、別紙baselineを更新して同じGameTest / clone smokeを再実行する。MOD用のserver companion、MCMCP独自payload、handshakeは要求しない。
 
 すべてのadapterは、通常use / menu openの因果ACK、exact menu ownership、Agent click直前のcursor証明失効、fresh server cursor証明、絶対inventory差分、有限budget、Esc / UI OFF / world境界、terminal前のScreen・cursor・camera・slot解放を9.6と共通の必須条件とする。途中まで消費・生成されたitemをrollbackしたふりはせず、最初のterminal intentとauthoritative inventoryを保持する。cleanupが証明できない場合は成功・失敗を公開せず、入力隔離を維持してfail closedにする。
 
@@ -1429,7 +1439,7 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 ### 12.5 既存24 MODとの互換方針
 
 - renderer内部に依存せず、Vanilla/NeoForgeのOUTLINE・VISUAL・COLLIDER shapeとplayer eye原点の全周sampleを使う
-- MOD menu・item・recipeは9.7のclosed adapter契約に従う
+- MOD menu・item・recipeは9.7の共通Menu interaction engine、opaque参照、version固定profile契約に従う
 - NeoForge eventを優先し、Mixin範囲を最小化
 - HTTP port競合時は自動で別portへ露出せず、安全に無効化
 - package名とmod_idを固有化
@@ -1693,10 +1703,12 @@ if ($LASTEXITCODE -gt 1) { throw 'Dependency scan failed' }
 
 ### 15.1 通常unit test
 
+test件数そのものを品質指標にしない。新しいassertionが既存testと同じproduction分岐、fixture、failure mappingを確認するだけなら、最も近いcontract testへ同じscenarioとして追加し、別の`@Test`を増やさない。Javaが生成するrecord accessor、公開契約でない定数、同じ条件の言い換えだけを確認するtestは置かない。一方、認証・入力解放・world境界・concurrency・fail-closed診断の異なる分岐は、短くても独立した回帰testを維持する。test整理ではassertion数だけを保つのではなく、削除前後で通過するproduction分岐と失敗時の検出点が同じことを確認する。
+
 - Action DSL JSON Schema、semantic validation、cost vector
 - bounded if/repeat、predicate availability、capability validation
-- client-known recipeのsession / revision束縛、MOD namespace、default stack同一性、必要時だけ追加するopaque reference、unsupported recipeのfail-closed判定
-- workstation adapterごとのslot role、許可action、保存則、postcondition、unknown menuのpre-click拒否
+- client-known recipeのsession / revision束縛、MOD namespace、`stack_ref`によるData Component同一性、untrusted text分離、unsupported recipeのfail-closed判定
+- Menu profileのschema / hash、`menu_ref` / `element_ref` / `stack_ref` / `operation_ref`のrevision束縛、許可action、保存則、postcondition、unknown menuのpre-mutation拒否
 - 閉じた標準Potion同定、custom component除外、catalogのPotion / ingredient enumとpolicyの一致
 - Minecraft 26.2の実`PotionBrewing.mix`に対する全allowlisted 1段recipe、container変換、breeze rodの回帰照合
 - Task state machine
@@ -1739,7 +1751,7 @@ runnerがAuthorization headerを設定できないため、NeoForge development 
 - semantic / block mutationのuniversal safetyがwindow focus / mouse grabを参照せず、pause / Screen / Survival / health / threat / stationary / reconciliationを維持するcontract test
 - evaluation-turnのacquire / normal release / Esc / UI OFF / world境界 / shutdown / runner終了 / stream切断 / deadline、推論中の物理入力隔離、cyan↔yellow外縁をclient testする
 - player 2×2、crafting table、furnace familyの通常完了と各click後中断で、cursor / grid / input / fuel / output、絶対inventory差分、screen ownershipがterminal前に確定する
-- 未知・slot数不一致・非allowlistのMOD menuはAgent clickとcustom packetを1件も送らず閉じる
+- 受入済みprofileのslot / widget / canvas操作が対象MOD本来のclient経路を通り、未知・shape不一致・非allowlistのMOD menuはAgent mutationとMCMCP生成custom packetを1件も送らず閉じる
 - gameplay icon、推論中のcyan外縁、実行中の黄色外縁、全主要Screenへの省スペース状態button
 - world unload
 - dynamic obstacle
@@ -1764,7 +1776,7 @@ NeoForgeはGameTestServerを標準run configurationとして提供する。Clien
 - stop / disconnect / restart
 - OFF時の既存MOD主要画面とinventory操作
 - AGENT時の入力隔離、MCMCP buttonだけのclick、HUD重なり
-- 9.7で追加したMOD adapterごとに、baselineと完全一致するcloneで1つの成功例、各中断境界、未知version拒否を確認
+- 9.7で追加したMOD profileごとに、baselineと完全一致するcloneで1つの成功例、各中断境界、未知version拒否を確認
 
 ### 15.5 実プロファイル最終smoke
 
@@ -1792,9 +1804,10 @@ world、mmc-pack.json、instance.cfg、既存jarは変更しない。
 11. harvest_tree
 12. tend_plot
 13. build_blueprint
-14. 既存`craft_items`のhardeningと現行DSL接続、player 2×2、空のVanilla furnace family
-15. acquire_itemへのcraft / smelt合成と、実タスクで必要なworkstation / MOD adapter
-16. RedstoneSpec
+14. 共通Menu interaction engine、4種のopaque ref、version固定profile、既存`craft_items`のhardeningと現行DSL接続
+15. player 2×2、空のVanilla furnace family、対象profileの純storageと非slot GUI各1件
+16. acquire_itemへのcraft / smelt合成と、実タスクで必要なworkstation / MOD profile
+17. RedstoneSpec
 
 前の段階で実測された問題だけを次の設計へ反映する。
 
@@ -1807,7 +1820,7 @@ world、mmc-pack.json、instance.cfg、既存jarは変更しない。
 - 外部bridgeを前提にしない
 - loopbackへ到達できないcloud-only MCP hostは利用できない
 - 遮蔽と半径を守る観測と未知危険の完全回避は両立しない
-- modded block、container、cropは現在の公開surfaceでは原則非対応。Phase 4以降も対象profileでversion固定し、受入済みのclosed adapterだけを追加する
+- modded block、container、cropは現在の公開surfaceでは原則非対応。Phase 4以降も対象profileでversion固定し、受入済みMenu profileと必要最小限の固有adapterだけを追加する
 
 ### 接続時に確認する運用条件
 
