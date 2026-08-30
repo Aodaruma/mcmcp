@@ -108,8 +108,8 @@
                       "maxLength": 71,
                       "pattern": "^sha256:[0-9a-f]{64}$"
                     },
-                    "display_kind": {"enum": ["shaped", "shapeless", "other"]},
-                    "required_screen": {"enum": ["inventory_2x2", "crafting_table", "unsupported"]},
+                    "display_kind": {"enum": ["shaped", "shapeless", "smelting", "blasting", "smoking", "other"]},
+                    "required_screen": {"enum": ["inventory_2x2", "crafting_table", "furnace", "blast_furnace", "smoker", "unsupported"]},
                     "supported": {"type": "boolean"},
                     "unsupported_reason": {"type": ["string", "null"], "maxLength": 160},
                     "result": {

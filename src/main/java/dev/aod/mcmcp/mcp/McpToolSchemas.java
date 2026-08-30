@@ -1055,8 +1055,11 @@ public final class McpToolSchemas {
         Map<String, Object> recipe = closedObject(fields(
                 "recipe_ref", opaqueReference(),
                 "fingerprint", sha256Fingerprint(),
-                "display_kind", enumString("shaped", "shapeless", "other"),
-                "required_screen", enumString("inventory_2x2", "crafting_table", "unsupported"),
+                "display_kind", enumString(
+                        "shaped", "shapeless", "smelting", "blasting", "smoking", "other"),
+                "required_screen", enumString(
+                        "inventory_2x2", "crafting_table", "furnace",
+                        "blast_furnace", "smoker", "unsupported"),
                 "supported", schema("type", "boolean"),
                 "unsupported_reason", nullableString(160),
                 "result", recipeResult,
