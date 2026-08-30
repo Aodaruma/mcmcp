@@ -1202,6 +1202,8 @@ Phase 3完成時に追加する上限:
 - 公開済み`craft_known_recipe` / 既存`craft_items`: 現在は`crafting_table`だけ。次に`player_2x2`へ拡張
 - `smelt_items`: `furnace | blast_furnace | smoker`
 
+司書厳選のread-only first sliceでは、ユーザーまたは既存経路が現在開いているVanilla `MerchantScreen`だけを対象にする。world session開始時からmerchant-offers packetをimmutableに記録し、`agent_get_state`時点のScreen instance、player menu、world session、container ID、直近OpenScreen packet revisionがlatest merchant packetと完全一致する場合だけ、optional `merchant_offers`を返す。公開内容はitem ID / count、uses / max uses / out-of-stock、merchant level / XP、エンチャント本の登録済みstored enchantment ID / levelに閉じる。raw slot、Data Component / NBT、lore、表示文字列、未解決enchantment IDは返さない。画面を開く、任意click、取引実行、職業ブロックの破壊・再設置、reroll反復はこのsliceに含めない。
+
 Vanilla inventory文法だけでは、独自widget、ghost slot、fluid / energy表示、canvas内control、MOD固有のclient callbackを持つ画面を扱えない。このため、screen ownership、同期、参照解決、操作配送、postcondition、cleanupを一元化する共通Menu interaction engineをPhase 4の基盤として実装する。ただし、LLMが`click_slot(17)`や`click_at(142, 38)`を渡す万能remote-controlにはしない。既存read pathは、現在所有する画面から次の短寿命opaque参照を返す。
 
 - `menu_ref`: world session、同一Screen instance、container ID、menu type / class、state ID、slot数、profile hashへ束縛
@@ -1591,6 +1593,7 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - agent_start_actionはAction完了を待たずaction_idを返す
 - agent_get_stateが最新immutable observation frameのIDと概要を返す
 - agent_get_stateがtop-level `standard_potions` を`[{item,potion,count}]`で返し、自inventoryの標準component完全一致の1本stackだけをitem+potionで集計し、custom Potion、不可能な複数本stack、stand内容を含めない
+- agent_get_stateのoptional `merchant_offers`は現在のVanilla MerchantScreen、player menu、world session、container ID、open packet revisionがlatest merchant packetと一致する場合だけ現れ、typed取引factsと解決済みstored enchantment ID / levelだけを返し、raw slot / component / NBT / lore / text / 未解決IDを含めない
 - agent_get_stateで告知したframe IDはidle 60秒、最大16件のLRU上限内で保持され、上限超過とworld境界で確実に失効する
 - agent_get_observationは任意center/radiusを受け付けず、同じframe_idのpage内容がframe保持中に変わらない
 - 最大256件でpage分割し、壊れたcursorはINVALID_CURSOR、保持外frameはFRAME_EXPIRED

@@ -48,7 +48,7 @@ class MerchantOfferSignalsTest {
         var ledger = new MerchantOfferSignals.SessionLedger();
         var baseline = ledger.bind(UUID.randomUUID());
 
-        ledger.record(packet, 44);
+        ledger.record(packet, 44, 7);
         var snapshot = ledger.latestAfter(baseline).orElseThrow();
 
         result.setCount(8);
@@ -64,6 +64,7 @@ class MerchantOfferSignalsTest {
         assertThat(snapshot.showProgress()).isTrue();
         assertThat(snapshot.canRestock()).isTrue();
         assertThat(snapshot.receivedTick()).isEqualTo(44);
+        assertThat(snapshot.openPacketRevision()).isEqualTo(7);
         assertThat(snapshot.revision()).isEqualTo(1);
         assertThat(snapshot.offers()).hasSize(2);
         assertThat(first.offerIndex()).isZero();
@@ -91,7 +92,7 @@ class MerchantOfferSignalsTest {
         var packet = emptyPacket();
         var beforePacket = ledger.bind(firstSession);
 
-        ledger.record(packet, 1);
+        ledger.record(packet, 1, 1);
 
         assertThat(ledger.latestAfter(beforePacket)).isPresent();
         var afterPacket = ledger.bind(firstSession);
@@ -101,7 +102,7 @@ class MerchantOfferSignalsTest {
         assertThat(ledger.latestAfter(beforePacket)).isEmpty();
         assertThat(ledger.latestAfter(rebound)).isEmpty();
 
-        ledger.record(packet, 2);
+        ledger.record(packet, 2, 2);
         assertThat(ledger.latestAfter(rebound))
                 .get()
                 .extracting(MerchantOfferSignals.Snapshot::worldSessionId)

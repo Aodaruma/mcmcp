@@ -46,7 +46,10 @@ public final class MerchantOfferSignals {
 
     /** Records one post-handler {@link ClientboundMerchantOffersPacket}. */
     public void onOffers(
-            ClientLevel level, ClientboundMerchantOffersPacket packet, long receivedTick) {
+            ClientLevel level,
+            ClientboundMerchantOffersPacket packet,
+            long receivedTick,
+            long openPacketRevision) {
         if (level == null) {
             return;
         }
@@ -55,7 +58,7 @@ public final class MerchantOfferSignals {
             var ledger = ledgers.get(level);
             // Packets received before an explicit routine/session binding are never evidence.
             if (ledger != null && ledger.bound()) {
-                ledger.record(packet, receivedTick);
+                ledger.record(packet, receivedTick, openPacketRevision);
             }
         }
     }
@@ -150,6 +153,7 @@ public final class MerchantOfferSignals {
             boolean showProgress,
             boolean canRestock,
             long receivedTick,
+            long openPacketRevision,
             long revision) {
         public Snapshot {
             Objects.requireNonNull(worldSessionId, "worldSessionId");
@@ -164,6 +168,9 @@ public final class MerchantOfferSignals {
             if (receivedTick < 0) {
                 throw new IllegalArgumentException("receivedTick must be non-negative");
             }
+            if (openPacketRevision <= 0) {
+                throw new IllegalArgumentException("open packet revision must be positive");
+            }
             if (revision <= 0) {
                 throw new IllegalArgumentException("snapshot revision must be positive");
             }
@@ -173,6 +180,7 @@ public final class MerchantOfferSignals {
                 UUID worldSessionId,
                 ClientboundMerchantOffersPacket packet,
                 long receivedTick,
+                long openPacketRevision,
                 long revision) {
             Objects.requireNonNull(packet, "packet");
             var offers = new ArrayList<OfferSnapshot>(packet.getOffers().size());
@@ -188,6 +196,7 @@ public final class MerchantOfferSignals {
                     packet.showProgress(),
                     packet.canRestock(),
                     receivedTick,
+                    openPacketRevision,
                     revision);
         }
     }
@@ -212,7 +221,10 @@ public final class MerchantOfferSignals {
             return new Baseline(worldSessionId, revision);
         }
 
-        void record(ClientboundMerchantOffersPacket packet, long receivedTick) {
+        void record(
+                ClientboundMerchantOffersPacket packet,
+                long receivedTick,
+                long openPacketRevision) {
             if (!bound()) {
                 throw new IllegalStateException("merchant-offer ledger is not session-bound");
             }
@@ -221,7 +233,7 @@ public final class MerchantOfferSignals {
             }
             long nextRevision = revision + 1;
             var captured = Snapshot.capture(
-                    worldSessionId, packet, receivedTick, nextRevision);
+                    worldSessionId, packet, receivedTick, openPacketRevision, nextRevision);
             revision = nextRevision;
             latest = captured;
         }

@@ -19,6 +19,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -120,6 +121,39 @@ class MerchantOfferViewTest {
         assertThat(unknownView.storedEnchantments()).isEmpty();
     }
 
+    @Test
+    void publicStatePayloadRequiresTheExactCurrentMerchantOpen() {
+        var snapshot = snapshot(enchantedBook(boundEnchantment("minecraft:mending"), 1));
+        var open = new ContainerSyncSignals.OpenScreenEvidence(
+                snapshot.worldSessionId(), 9, "minecraft:merchant", 40, 2);
+
+        var payload = McmcpRuntime.merchantOfferPayload(
+                snapshot.worldSessionId(), 9, open, snapshot);
+
+        assertThat(payload).containsOnlyKeys(
+                "world_session_id", "container_id", "signal_revision",
+                "open_packet_revision", "received_tick", "offers");
+        assertThat((List<?>) payload.get("offers")).singleElement()
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+                .containsEntry("stored_enchantments", List.of(Map.of(
+                        "enchantment", "minecraft:mending", "level", 1)))
+                .doesNotContainKeys("raw_nbt", "components", "lore", "text", "raw_slot");
+        assertThat(McmcpRuntime.merchantOfferPayload(
+                UUID.randomUUID(), 9, open, snapshot)).isNull();
+        assertThat(McmcpRuntime.merchantOfferPayload(
+                snapshot.worldSessionId(), 10, open, snapshot)).isNull();
+        assertThat(McmcpRuntime.merchantOfferPayload(
+                snapshot.worldSessionId(), 9,
+                new ContainerSyncSignals.OpenScreenEvidence(
+                        snapshot.worldSessionId(), 9, "minecraft:merchant", 40, 3),
+                snapshot)).isNull();
+        assertThat(McmcpRuntime.merchantOfferPayload(
+                snapshot.worldSessionId(), 9,
+                new ContainerSyncSignals.OpenScreenEvidence(
+                        snapshot.worldSessionId(), 9, "example:merchant", 40, 2),
+                snapshot)).isNull();
+    }
+
     private static MerchantOfferSignals.Snapshot snapshot(ItemStack result) {
         var offer = new MerchantOfferSignals.OfferSnapshot(
                 0,
@@ -134,7 +168,7 @@ class MerchantOfferViewTest {
                 0,
                 0.05F);
         return new MerchantOfferSignals.Snapshot(
-                UUID.randomUUID(), 9, List.of(offer), 2, 31, true, true, 44, 3);
+                UUID.randomUUID(), 9, List.of(offer), 2, 31, true, true, 44, 2, 3);
     }
 
     private static ItemStack enchantedBook(Holder<Enchantment> enchantment, int level) {

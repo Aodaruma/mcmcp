@@ -560,6 +560,39 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void stateSchemaAllowsOnlyTheTypedFreshMerchantProjection() {
+        var catalog = new McpToolCatalog();
+        var schema = catalog.outputSchema("agent_get_state");
+        var state = new GsonBuilder().serializeNulls().create()
+                .toJsonTree(McpTestFixtures.state()).getAsJsonObject();
+        state.add("merchant_offers", JsonParser.parseString("""
+                {"world_session_id":"550e8400-e29b-41d4-a716-446655440000",
+                 "container_id":9,"signal_revision":3,"open_packet_revision":2,
+                 "received_tick":44,"offers":[{
+                   "world_session_id":"550e8400-e29b-41d4-a716-446655440000",
+                   "container_id":9,"signal_revision":3,"received_tick":44,"offer_index":0,
+                   "cost_a":{"item":"minecraft:emerald","count":12},
+                   "cost_b":{"item":"minecraft:book","count":1},
+                   "result":{"item":"minecraft:enchanted_book","count":1},
+                   "uses":0,"max_uses":12,"out_of_stock":false,
+                   "merchant_level":1,"merchant_xp":0,
+                   "book_result_kind":"single_known_enchantment",
+                   "stored_enchantment_count":1,"unresolved_enchantment_count":0,
+                   "stored_enchantments":[{"enchantment":"minecraft:mending","level":1}]
+                 }]}
+                """).getAsJsonObject());
+
+        assertThat(CatalogSchemaValidator.matches(schema, state)).isTrue();
+        state.getAsJsonObject("merchant_offers").getAsJsonArray("offers")
+                .get(0).getAsJsonObject().addProperty("raw_nbt", "forbidden");
+        assertThat(CatalogSchemaValidator.matches(schema, state)).isFalse();
+        assertThat(catalog.listResult().getAsJsonArray("tools").get(0)
+                .getAsJsonObject().get("description").getAsString())
+                .contains("current merchant screen")
+                .contains("never raw slots, components, NBT, lore, or display text");
+    }
+
+    @Test
     void productionReadyStatePayloadMatchesTheNormativeOutputSchema() {
         var catalog = new McpToolCatalog();
         var state = new GsonBuilder().serializeNulls().create().toJsonTree(

@@ -12,7 +12,7 @@
     {
       "name": "agent_get_state",
       "title": "Get MCMCP State",
-      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. Pass no arguments for state only. To search client-known recipe displays, use {\"query\":{\"kind\":\"result_item\",\"item\":\"minecraft:stick\"},\"max_results\":16} or {\"query\":{\"kind\":\"result_tag\",\"tag\":\"minecraft:planks\"},\"max_results\":16}; the bounded result appears in recipe_query. inventory keeps item-ID totals; standard_potions separately validates component-exact unmodified Vanilla singleton potion stacks and groups them by item+potion across inventory slots, so brewing inputs and outputs are distinguishable without exposing custom components or impossible overstacks. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. Recipe data comes only from displays synchronized into the current client recipe book. It never scans hidden world data.",
+      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. Pass no arguments for state only. To search client-known recipe displays, use {\"query\":{\"kind\":\"result_item\",\"item\":\"minecraft:stick\"},\"max_results\":16} or {\"query\":{\"kind\":\"result_tag\",\"tag\":\"minecraft:planks\"},\"max_results\":16}; the bounded result appears in recipe_query. inventory keeps item-ID totals; standard_potions separately validates component-exact unmodified Vanilla singleton potion stacks and groups them by item+potion across inventory slots, so brewing inputs and outputs are distinguishable without exposing custom components or impossible overstacks. merchant_offers is present only while the exact current merchant screen has a fresh same-session/container/open-revision server packet; it exposes typed item/count facts and registered stored-enchantment IDs+levels, never raw slots, components, NBT, lore, or display text. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. Recipe data comes only from displays synchronized into the current client recipe book. It never scans hidden world data.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -195,6 +195,15 @@
               }
             },
             "required": ["basis", "coverage", "recipes"]
+          },
+          "merchant_item": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "item": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 256},
+              "count": {"type": "integer", "minimum": 0, "maximum": 2147483647}
+            },
+            "required": ["item", "count"]
           }
         },
         "properties": {
@@ -312,6 +321,59 @@
               },
               "required": ["item", "potion", "count"]
             }
+          },
+          "merchant_offers": {
+            "type": "object",
+            "description": "Optional exact-current-screen projection. Omitted unless the visible MerchantScreen, player menu, world session, container ID, and open-packet revision all match the latest inbound merchant-offers packet.",
+            "additionalProperties": false,
+            "properties": {
+              "world_session_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+              "container_id": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+              "signal_revision": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+              "open_packet_revision": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+              "received_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+              "offers": {
+                "type": "array",
+                "maxItems": 256,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "world_session_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                    "container_id": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+                    "signal_revision": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+                    "received_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+                    "offer_index": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+                    "cost_a": {"$ref": "#/$defs/merchant_item"},
+                    "cost_b": {"$ref": "#/$defs/merchant_item"},
+                    "result": {"$ref": "#/$defs/merchant_item"},
+                    "uses": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+                    "max_uses": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+                    "out_of_stock": {"type": "boolean"},
+                    "merchant_level": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+                    "merchant_xp": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+                    "book_result_kind": {"enum": ["not_enchanted_book", "no_stored_enchantment", "single_known_enchantment", "multiple_stored_enchantments", "unresolved_stored_enchantment"]},
+                    "stored_enchantment_count": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+                    "unresolved_enchantment_count": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+                    "stored_enchantments": {
+                      "type": "array",
+                      "maxItems": 256,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "enchantment": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 256},
+                          "level": {"type": "integer", "minimum": 1, "maximum": 2147483647}
+                        },
+                        "required": ["enchantment", "level"]
+                      }
+                    }
+                  },
+                  "required": ["world_session_id", "container_id", "signal_revision", "received_tick", "offer_index", "cost_a", "cost_b", "result", "uses", "max_uses", "out_of_stock", "merchant_level", "merchant_xp", "book_result_kind", "stored_enchantment_count", "unresolved_enchantment_count", "stored_enchantments"]
+                }
+              }
+            },
+            "required": ["world_session_id", "container_id", "signal_revision", "open_packet_revision", "received_tick", "offers"]
           },
           "recipe_query": {
             "oneOf": [

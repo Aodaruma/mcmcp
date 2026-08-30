@@ -179,8 +179,15 @@ public abstract class ClientContainerSignalsMixin {
             ClientboundMerchantOffersPacket packet, CallbackInfo callback) {
         var minecraft = Minecraft.getInstance();
         if (minecraft.level != null) {
-            MerchantOfferSignals.global().onOffers(
-                    minecraft.level, packet, ScreenOwnershipSignals.global().currentTick());
+            ContainerSyncSignals.global().snapshot(minecraft.level)
+                    .map(ContainerSyncSignals.Snapshot::lastOpenScreen)
+                    .filter(java.util.Objects::nonNull)
+                    .filter(open -> open.containerId() == packet.getContainerId())
+                    .ifPresent(open -> MerchantOfferSignals.global().onOffers(
+                            minecraft.level,
+                            packet,
+                            ScreenOwnershipSignals.global().currentTick(),
+                            open.packetLedgerRevision()));
         }
     }
 

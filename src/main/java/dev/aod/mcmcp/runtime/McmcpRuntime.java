@@ -107,6 +107,7 @@ import dev.aod.mcmcp.voice.VoiceChatSafetyController;
 import dev.aod.mcmcp.voice.VoiceTransmissionGuard;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.inventory.MerchantScreen;
 import net.minecraft.client.resources.sounds.SoundInstance;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -2216,6 +2217,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var lock = arming.snapshot(session.worldSessionId());
         var inventory = new LinkedHashMap<String, Integer>();
         var standardPotions = new LinkedHashMap<StandardPotionKey, Integer>();
+        Map<String, Object> merchantOffers = null;
         Map<String, Object> world = null;
 
         if (session.worldReady() && minecraft.player != null && minecraft.level != null) {
@@ -2259,6 +2261,19 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                     Integer::sum));
                 }
             }
+            if (minecraft.gui.screen() instanceof MerchantScreen screen
+                    && screen.getMenu() == player.containerMenu) {
+                var snapshot = MerchantOfferSignals.global().latestAfter(
+                                minecraft.level,
+                                new MerchantOfferSignals.Baseline(
+                                        session.worldSessionId(), 0L))
+                        .orElse(null);
+                var open = ContainerSyncSignals.global().snapshot(minecraft.level)
+                        .map(ContainerSyncSignals.Snapshot::lastOpenScreen)
+                        .orElse(null);
+                merchantOffers = merchantOfferPayload(
+                        session.worldSessionId(), screen.getMenu().containerId, open, snapshot);
+            }
         }
 
         var inventoryPayload = inventory.entrySet().stream()
@@ -2288,6 +2303,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             requireReady(session);
             result.put("recipe_query", getRecipes(minecraft, session, arguments));
         }
+        if (merchantOffers != null) {
+            result.put("merchant_offers", merchantOffers);
+        }
         result.put("observation", agentObservationFrames.announceLatestSummary()
                 .map(ObservationWireMapper::summary)
                 .orElse(null));
@@ -2301,6 +2319,33 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 })
                 .orElse(null));
         return result;
+    }
+
+    static Map<String, Object> merchantOfferPayload(
+            UUID worldSessionId,
+            int containerId,
+            ContainerSyncSignals.OpenScreenEvidence open,
+            MerchantOfferSignals.Snapshot snapshot) {
+        if (open == null
+                || snapshot == null
+                || !worldSessionId.equals(open.worldSessionId())
+                || !worldSessionId.equals(snapshot.worldSessionId())
+                || containerId != open.containerId()
+                || containerId != snapshot.containerId()
+                || !"minecraft:merchant".equals(open.menuTypeId())
+                || snapshot.openPacketRevision() != open.packetLedgerRevision()
+                || snapshot.receivedTick() < open.receivedTick()) {
+            return null;
+        }
+        return Map.of(
+                "world_session_id", worldSessionId.toString(),
+                "container_id", containerId,
+                "signal_revision", snapshot.revision(),
+                "open_packet_revision", snapshot.openPacketRevision(),
+                "received_tick", snapshot.receivedTick(),
+                "offers", MerchantOfferView.from(snapshot).stream()
+                        .map(MerchantOfferView::toMap)
+                        .toList());
     }
 
     static Map<String, Object> statePayload(
@@ -9322,6 +9367,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     after.worldSessionId(), dimension, reconciliation.worldRevision());
             knownTraversabilityRevision = reconciliation.worldRevision();
             screenOwnership.bindWorldSession(minecraft.level, after.worldSessionId());
+            MerchantOfferSignals.global().bindSession(minecraft.level, after.worldSessionId());
         }
     }
 
