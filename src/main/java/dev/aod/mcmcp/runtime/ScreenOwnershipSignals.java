@@ -778,7 +778,8 @@ public final class ScreenOwnershipSignals {
         }
 
         Transition expire(long tick) {
-            if (!active() || tick <= expectedOpen.deadlineTick()) {
+            if (!active() || phase == Phase.OWNED || phase == Phase.CLOSING
+                    || tick <= expectedOpen.deadlineTick()) {
                 return Transition.irrelevant();
             }
             if (cancelBeforeOwnership && phase == Phase.EXPECTING_OPEN_PACKET

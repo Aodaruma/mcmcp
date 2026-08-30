@@ -1260,7 +1260,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
             return failure("BREWING_SAFE_OPEN_HAND_REQUIRED",
                     RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
-                    Map.of("empty_offhand_or_safe_hotbar_item", true), Map.of());
+                    Map.of("empty_or_safe_hotbar_item", true), Map.of());
         }
         BlockTarget target = brewing.target();
         Rotation targetRotation = ViewSlotLease.rotation(
@@ -1873,10 +1873,6 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
 
     private static Optional<OpenHandPlan> chooseOpenHand(LocalPlayer player) {
         Objects.requireNonNull(player, "player");
-        if (player.getOffhandItem().isEmpty()) {
-            return Optional.of(new OpenHandPlan(
-                    InteractionHand.OFF_HAND, player.getInventory().getSelectedSlot()));
-        }
         for (int slot = 0; slot < 9; slot++) {
             if (player.getInventory().getItem(slot).isEmpty()) {
                 return Optional.of(new OpenHandPlan(InteractionHand.MAIN_HAND, slot));
@@ -1963,7 +1959,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         return false;
     }
 
-    private static void closeOwnedMenuClient(
+    private void closeOwnedMenuClient(
             Minecraft minecraft, ScreenOwnershipSignals.CleanupDecision decision) {
         if (!(minecraft.gui.screen() instanceof AbstractContainerScreen<?> screen)
                 || screen.getMenu().containerId != decision.containerId()
@@ -1972,6 +1968,9 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
             throw new IllegalStateException("owned brewing screen changed before close");
         }
         screen.onClose();
+        screens.onScreenClosing(screen).ifPresent(reason -> {
+            throw new IllegalStateException("owned brewing screen close failed: " + reason);
+        });
     }
 
     private static KnownBrewingRequest parse(PhaseFiveRequest request) {

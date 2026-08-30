@@ -252,7 +252,7 @@ public final class ActionDslCompiler {
                 2);
     }
 
-    /** One initial open plus placement, two cursor-safe clicks, and readback per craft. */
+    /** Initial open plus three operations per craft, with one conservative safety slot. */
     public static long knownCraftInteractions(int maxCrafts) {
         if (maxCrafts < 1 || maxCrafts > 3) {
             throw new IllegalArgumentException("max crafts is outside the closed Action bound");

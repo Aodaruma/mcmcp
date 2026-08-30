@@ -8,6 +8,7 @@ import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilityMap;
 import dev.aod.mcmcp.agent.safety.ObservationRecord;
+import dev.aod.mcmcp.brewing.StandardPotionStackSpec;
 import dev.aod.mcmcp.routine.ActionBounds;
 import dev.aod.mcmcp.routine.ApplyBlockPlanOperation;
 import dev.aod.mcmcp.routine.ApplyBlockPlanRequest;
@@ -292,7 +293,15 @@ class McmcpRuntimeHardeningTest {
                         "minecraft:oak_planks", "default_components_only", 64,
                         "crafting_table", support,
                         new ActionDsl.BlockStateSpec("minecraft:crafting_table", Map.of()), 3)))
-                .contains(new ActionDslCompiler.Cost(0, 0, 0, 0, 13, 0, 0));
+                .contains(new ActionDslCompiler.Cost(30_000, 600, 0, 0, 13, 0, 0));
+        assertThat(McmcpRuntime.structuralPrimitiveCost(
+                new ActionDsl.BrewKnownPotionBatch(
+                        "brew", support, "minecraft:brewing_stand",
+                        new StandardPotionStackSpec("minecraft:potion", "minecraft:water", 3),
+                        "minecraft:nether_wart", "minecraft:blaze_powder",
+                        new StandardPotionStackSpec(
+                                "minecraft:potion", "minecraft:awkward", 3))))
+                .contains(new ActionDslCompiler.Cost(70_000, 1_400, 0, 0, 16, 0, 0));
         assertThat(McmcpRuntime.primitiveReobservationTicks(
                 new ActionDsl.OpenKnownFenceGate("open_gate", support)))
                 .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
@@ -343,6 +352,25 @@ class McmcpRuntimeHardeningTest {
                 budget,
                 waitCost,
                 Duration.ofMillis(1_001).toNanos())).isFalse();
+    }
+
+    @Test
+    void firstPrimitiveBudgetIncludesElapsedPartOfItsCurrentTick() {
+        var unused = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING,
+                "craft", 0, 1, 0, 0, 0, 0, 0, 0, false);
+        var planned = new ActionDslCompiler.Cost(30_000, 600, 0, 0, 5, 0, 0);
+        long elapsedNanos = 1_500_001L;
+
+        var remaining = McmcpRuntime.firstPrimitiveRemainingCost(
+                unused, planned, elapsedNanos);
+
+        assertThat(remaining.durationMillis()).isEqualTo(29_998L);
+        assertThat(McmcpRuntime.fitsRemainingBudget(
+                unused,
+                new ActionDsl.Budget(30_000, 600, 0, 0, 5, 0, 0),
+                remaining,
+                elapsedNanos)).isTrue();
     }
 
     @Test

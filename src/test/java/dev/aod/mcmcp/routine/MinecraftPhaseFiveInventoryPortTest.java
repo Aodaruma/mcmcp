@@ -1,7 +1,6 @@
 package dev.aod.mcmcp.routine;
 
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
-import dev.aod.mcmcp.runtime.ContainerSyncSignals.ContainerSnapshot;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
 import dev.aod.mcmcp.runtime.ScreenOwnershipSignals;
 import org.junit.jupiter.api.Test;
@@ -16,7 +15,6 @@ import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -153,32 +151,6 @@ class MinecraftPhaseFiveInventoryPortTest {
                 slots, List.of(10, 11), "minecraft:stick", DEFAULT_HASH, 5, 64))
                 .contains(11);
 
-        var before = slots.get(10);
-        slots.set(10, stack("minecraft:stick", 64, DEFAULT_HASH));
-        assertThat(MinecraftPhaseFiveInventoryPort.craftDestinationConfirmed(
-                slots, 10, before, "minecraft:stick", DEFAULT_HASH, 4)).isTrue();
-        slots.set(10, stack("minecraft:stick", 63, DEFAULT_HASH));
-        assertThat(MinecraftPhaseFiveInventoryPort.craftDestinationConfirmed(
-                slots, 10, before, "minecraft:stick", DEFAULT_HASH, 4)).isFalse();
-    }
-
-    @Test
-    void interruptedCraftCanReturnOnlyTheExactCursorStackToTheUnchangedDestination() {
-        var slots = emptySlots(46);
-        var before = stack("minecraft:stick", 60, DEFAULT_HASH);
-        slots.set(10, before);
-        var safe = new ContainerSnapshot(
-                UUID.randomUUID(), 1, "minecraft:crafting", 1, slots,
-                stack("minecraft:stick", 4, DEFAULT_HASH), 2, 3);
-
-        assertThat(MinecraftPhaseFiveInventoryPort.craftCursorReturnSafe(
-                safe, 10, before, "minecraft:stick", DEFAULT_HASH, 4)).isTrue();
-        slots.set(10, stack("minecraft:stick", 61, DEFAULT_HASH));
-        var changed = new ContainerSnapshot(
-                safe.worldSessionId(), 1, "minecraft:crafting", 2, slots,
-                safe.carried(), 3, 4);
-        assertThat(MinecraftPhaseFiveInventoryPort.craftCursorReturnSafe(
-                changed, 10, before, "minecraft:stick", DEFAULT_HASH, 4)).isFalse();
     }
 
     @Test
@@ -248,8 +220,10 @@ class MinecraftPhaseFiveInventoryPortTest {
         var node = classNode();
 
         assertThat(invocations(node, "closeOwnedMenuClient"))
-                .contains("net/minecraft/client/gui/screens/inventory/AbstractContainerScreen"
-                        + "#onClose")
+                .containsSubsequence(
+                        "net/minecraft/client/gui/screens/inventory/AbstractContainerScreen"
+                                + "#onClose",
+                        "dev/aod/mcmcp/runtime/ScreenOwnershipSignals#onScreenClosing")
                 .doesNotContain("net/minecraft/client/player/LocalPlayer#closeContainer");
         assertThat(invocations(node, "closeForReadback"))
                 .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
@@ -257,18 +231,23 @@ class MinecraftPhaseFiveInventoryPortTest {
         assertThat(invocations(node, "releaseOwnedMenu"))
                 .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                         + "#closeOwnedMenuClient");
+        var brewing = classNode("/dev/aod/mcmcp/routine/MinecraftKnownBrewingPort.class");
+        assertThat(invocations(brewing, "closeOwnedMenuClient"))
+                .containsSubsequence(
+                        "net/minecraft/client/gui/screens/inventory/AbstractContainerScreen"
+                                + "#onClose",
+                        "dev/aod/mcmcp/runtime/ScreenOwnershipSignals#onScreenClosing");
     }
 
     @Test
-    void recipePlacementReusesEmptyProofButBothCraftPickupsRequireFreshCursorProof()
+    void cursorInvariantQuickMovesKeepTheInitialEmptyProofForAuthoritativeReadback()
             throws Exception {
         var node = classNode();
 
         assertThat(invocations(node, "prepareOwnedDispatch"))
-                .containsSubsequence(
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#packetRevision",
-                        "dev/aod/mcmcp/runtime/ScreenOwnershipSignals"
-                                + "#invalidateServerCursorProof");
+                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#packetRevision")
+                .doesNotContain("dev/aod/mcmcp/runtime/ScreenOwnershipSignals"
+                        + "#invalidateServerCursorProof");
         assertThat(invocations(node, "dispatchContainerClick"))
                 .containsSubsequence(
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
@@ -289,20 +268,14 @@ class MinecraftPhaseFiveInventoryPortTest {
                 .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                         + "#dispatchContainerClick")
                 .noneMatch(call -> call.endsWith("#handleContainerInput"));
-        assertThat(invocations(node, "maintainCraftResultPickupAck"))
-                .containsSubsequence(
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
-                                + "#freshServerCursorSnapshot",
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
-                                + "#dispatchContainerClick");
         assertThat(invocations(node, "maintainClickAck"))
                 .containsSubsequence(
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#freshServerCursorSnapshot",
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
-                                + "#craftDestinationConfirmed",
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
-                                + "#closeForReadback");
+                                + "#closeForReadback")
+                .doesNotContain("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        + "#countTransfer");
         assertThat(invocations(node, "acceptCraftSnapshot"))
                 .contains(
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
@@ -336,9 +309,7 @@ class MinecraftPhaseFiveInventoryPortTest {
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#closeOwnedMenuClient");
         assertThat(containerInputs(node, "maintainCraftResult"))
-                .containsExactly("PICKUP");
-        assertThat(containerInputs(node, "maintainCraftResultPickupAck"))
-                .containsExactly("PICKUP");
+                .containsExactly("QUICK_MOVE");
     }
 
     @Test
@@ -376,6 +347,12 @@ class MinecraftPhaseFiveInventoryPortTest {
     @Test
     void safetyAndSlotOwnershipAreRecheckedAndReleasedBeforeTerminal() throws Exception {
         var node = classNode();
+        assertThat(invocations(node, "observe"))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$AttemptState"
+                                + "#terminal",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#ongoingFailure");
         assertThat(invocations(node, "preflight"))
                 .contains(
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
@@ -396,10 +373,12 @@ class MinecraftPhaseFiveInventoryPortTest {
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#visibleThreatClear");
         assertThat(invocations(node, "chooseOpenHand"))
-                .contains(
-                        "net/minecraft/client/player/LocalPlayer#getOffhandItem",
-                        "dev/aod/mcmcp/routine/MinecraftKnownBrewingPort"
-                                + "#safeNormalUseStack");
+                .contains("dev/aod/mcmcp/routine/MinecraftKnownBrewingPort"
+                        + "#safeNormalUseStack")
+                .doesNotContain("net/minecraft/client/player/LocalPlayer#getOffhandItem");
+        var brewing = classNode("/dev/aod/mcmcp/routine/MinecraftKnownBrewingPort.class");
+        assertThat(invocations(brewing, "chooseOpenHand"))
+                .doesNotContain("net/minecraft/client/player/LocalPlayer#getOffhandItem");
         assertThat(invocations(node, "maintain"))
                 .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                         + "#selectOpenHand");

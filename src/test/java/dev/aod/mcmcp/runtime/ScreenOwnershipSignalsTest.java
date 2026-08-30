@@ -144,6 +144,10 @@ class ScreenOwnershipSignalsTest {
         assertThat(expired.core.expire(3).reason())
                 .isEqualTo("expected_screen_deadline_exceeded");
 
+        var owned = ownedFixture(EMPTY);
+        assertThat(owned.core.expire(21).relevant()).isFalse();
+        assertThat(owned.core.snapshot().phase()).isEqualTo(ScreenOwnershipSignals.Phase.OWNED);
+
         var manual = new Fixture(20);
         assertThat(manual.core.failIfActive("manual_mouse_scroll_input").failedNow()).isTrue();
         assertThat(manual.core.snapshot().owned()).isFalse();
@@ -224,6 +228,7 @@ class ScreenOwnershipSignalsTest {
         assertThat(repeated.reason()).isEqualTo("owned_screen_close_pending");
         assertThat(fixture.core.snapshot().phase())
                 .isEqualTo(ScreenOwnershipSignals.Phase.CLOSING);
+        assertThat(fixture.core.expire(21).relevant()).isFalse();
 
         assertThat(fixture.core.onScreenClosing(7, MENU).allowed()).isTrue();
         assertThat(fixture.core.snapshot().phase())

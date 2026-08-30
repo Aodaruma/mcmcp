@@ -1822,6 +1822,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
+        long durationMillis = node instanceof ActionDsl.CraftKnownRecipe
+                ? ActionDslCompiler.KNOWN_CRAFTING_DURATION_MILLIS
+                : node instanceof ActionDsl.BrewKnownPotionBatch
+                        ? ActionDslCompiler.KNOWN_BREWING_DURATION_MILLIS : 0L;
+        long ticks = node instanceof ActionDsl.CraftKnownRecipe
+                ? ActionDslCompiler.KNOWN_CRAFTING_TICKS
+                : node instanceof ActionDsl.BrewKnownPotionBatch
+                        ? ActionDslCompiler.KNOWN_BREWING_TICKS : 0L;
         long interactions = node instanceof ActionDsl.TillKnownBlock
                         || node instanceof ActionDsl.OpenKnownFenceGate
                         || node instanceof ActionDsl.OpenKnownPassage
@@ -1845,7 +1853,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             placements = batch.targets().size();
         }
         return Optional.of(new ActionDslCompiler.Cost(
-                0L, 0L, 0.0D, 0.0D, interactions, breaks, placements));
+                durationMillis, ticks, 0.0D, 0.0D, interactions, breaks, placements));
     }
 
     private Map<String, Object> commitAgentAction(
@@ -3802,11 +3810,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             ActionDslCompiler.Cost cost = analysis.worstCase(agentExecution.primitive)
                     .orElseThrow(() -> new IllegalStateException(
                             "JIT primitive analysis did not produce a cost"));
+            long activeElapsedNanos = activeElapsedNanos(
+                    agentExecution, System.nanoTime());
             if (!fitsRemainingBudget(
                     progress,
                     action.program().effectiveBudget(),
-                    cost,
-                    activeElapsedNanos(agentExecution, System.nanoTime()))) {
+                    firstPrimitiveRemainingCost(progress, cost, activeElapsedNanos),
+                    activeElapsedNanos)) {
                 failAgentAction(
                         AgentActionStore.FailureCode.BUDGET_EXCEEDED,
                         false,
@@ -6528,6 +6538,24 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && fits(used.interactions(), next.interactions(), budget.maxInteractions())
                 && fits(used.blocksBroken(), next.blocksBroken(), budget.maxBlocksBroken())
                 && fits(used.blocksPlaced(), next.blocksPlaced(), budget.maxBlocksPlaced());
+    }
+
+    static ActionDslCompiler.Cost firstPrimitiveRemainingCost(
+            AgentActionStore.Progress used,
+            ActionDslCompiler.Cost planned,
+            long activeElapsedNanos) {
+        Objects.requireNonNull(used, "used");
+        Objects.requireNonNull(planned, "planned");
+        if (used.ticks() != 0L || activeElapsedNanos <= 0L) return planned;
+        long elapsedMillis = Math.ceilDiv(activeElapsedNanos, 1_000_000L);
+        return new ActionDslCompiler.Cost(
+                Math.max(0L, planned.durationMillis() - elapsedMillis),
+                planned.ticks(),
+                planned.distanceBlocks(),
+                planned.cameraDegrees(),
+                planned.interactions(),
+                planned.blocksBroken(),
+                planned.blocksPlaced());
     }
 
     static boolean motionBudgetExhausted(

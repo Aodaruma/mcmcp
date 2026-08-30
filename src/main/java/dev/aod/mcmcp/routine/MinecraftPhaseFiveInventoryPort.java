@@ -108,7 +108,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             var active = activeState(request);
             failure = active == null
                     ? preflight(minecraft, session, request)
-                    : ongoingFailure(minecraft, session, active);
+                    : active.terminal() ? null : ongoingFailure(minecraft, session, active);
         } catch (IllegalArgumentException | IllegalStateException failureException) {
             failure = failure("INVENTORY_REQUEST_INVALID", RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
@@ -271,8 +271,6 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             case AIMING_READBACK -> maintainAim(attempt, state, true);
             case OPENING_INITIAL, OPENING_READBACK -> acceptOwnedSnapshot(attempt, state, minecraft);
             case CRAFT_WAIT_RESULT -> maintainCraftResult(attempt, state, minecraft);
-            case CRAFT_RESULT_PICKUP_ACK ->
-                    maintainCraftResultPickupAck(attempt, state, minecraft);
             case AWAITING_CLICK_ACK -> maintainClickAck(attempt, state);
             case AWAITING_CLOSE -> {
                 if (screenState.phase() == ScreenOwnershipSignals.Phase.IDLE
@@ -522,34 +520,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     Map.of("compatible_or_empty_player_slot", true), Map.of());
             return;
         }
-        state.craftDestinationSlot = destination.orElseThrow();
-        state.craftDestinationBefore = snapshot.slots().get(state.craftDestinationSlot);
         dispatchContainerClick(
-                attempt, state, menu, CraftingMenu.RESULT_SLOT, ContainerInput.PICKUP,
-                Stage.CRAFT_RESULT_PICKUP_ACK);
-    }
-
-    private void maintainCraftResultPickupAck(
-            PhaseFiveAttempt attempt, AttemptState state, Minecraft minecraft) {
-        var proof = freshServerCursorSnapshot(attempt, state);
-        if (proof.isEmpty() || minecraft.player == null
-                || !(minecraft.player.containerMenu instanceof CraftingMenu menu)) {
-            return;
-        }
-        var snapshot = proof.orElseThrow();
-        var expected = state.recipe.view().result().alternatives().getFirst();
-        if (!matchesDefaultStack(
-                        snapshot.carried(), expected.item(), defaultStackHash(expected.item()))
-                || snapshot.carried().count() != expected.count()
-                || !craftingGridAndResultEmpty(snapshot.slots())
-                || state.craftDestinationSlot < 0
-                || state.craftDestinationSlot >= snapshot.slots().size()
-                || !state.craftDestinationBefore.equals(
-                        snapshot.slots().get(state.craftDestinationSlot))) {
-            return;
-        }
-        dispatchContainerClick(
-                attempt, state, menu, state.craftDestinationSlot, ContainerInput.PICKUP,
+                attempt, state, menu, CraftingMenu.RESULT_SLOT, ContainerInput.QUICK_MOVE,
                 Stage.AWAITING_CLICK_ACK);
     }
 
@@ -719,14 +691,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return -1L;
         }
         long before = packetRevision();
-        if (!screens.invalidateServerCursorProof(attempt.attemptId(), before)) {
-            fail(state, "OWNED_SCREEN_CLICK_AUTHORITY_LOST", RoutineFailure.Category.SAFETY,
-                    RoutineFailure.Recovery.REPLAN, Map.of(), Map.of());
-            return -1L;
-        }
-        state.cursorProofRequiredAfterRevision = Math.max(
-                state.cursorProofRequiredAfterRevision, before);
-        state.cursorReleaseConfirmed = false;
+        // Every click in this adapter is QUICK_MOVE, so the server-proven empty cursor remains
+        // invariant while slot packets provide the authoritative mutation/readback barrier.
         state.screenOwnedObserved = true;
         return before;
     }
@@ -736,16 +702,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         if (proof.isEmpty() || !proof.orElseThrow().carried().empty()) {
             return;
         }
-        if (state.parameters instanceof CraftParameters) {
-            var expected = state.recipe.view().result().alternatives().getFirst();
-            if (!craftingGridAndResultEmpty(proof.orElseThrow().slots())
-                    || !craftDestinationConfirmed(
-                            proof.orElseThrow().slots(), state.craftDestinationSlot,
-                            state.craftDestinationBefore, expected.item(),
-                            defaultStackHash(expected.item()), expected.count())) {
-                return;
-            }
-        }
+        // QUICK_MOVE has no cursor transition and successful prediction has no positive ACK.
+        // Close now; the same-target full-content reopen below is the authoritative result proof.
         closeForReadback(attempt, state);
     }
 
@@ -788,8 +746,6 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 || snapshot.expectedOpen() == null
                 || !attempt.attemptId().equals(snapshot.expectedOpen().routineId())
                 || !snapshot.lastServerCursorProven()
-                || snapshot.lastServerCursorProofRevision()
-                        <= state.cursorProofRequiredAfterRevision
                 || snapshot.ownedSession() == null
                 || snapshot.ownedSession().serverSnapshot().packetLedgerRevision()
                         < snapshot.lastServerCursorProofRevision()) {
@@ -952,7 +908,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return failure("INVENTORY_SAFE_OPEN_HAND_REQUIRED",
                     RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
-                    Map.of("empty_offhand_or_safe_hotbar_item", true), Map.of());
+                    Map.of("empty_or_safe_hotbar_item", true), Map.of());
         }
         var position = blockPos(parameters.target());
         if (!level.isLoaded(position) || !level.getWorldBorder().isWithinBounds(position)) {
@@ -1104,28 +1060,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         if (proof.isEmpty() || minecraft.player == null) return;
         var snapshot = proof.orElseThrow();
         if (!snapshot.carried().empty()) {
-            if (state.cleanupCursorClickDispatched) {
-                state.releaseFault = true;
-                return;
-            }
-            if (!(minecraft.player.containerMenu instanceof CraftingMenu menu)
-                    || !(state.parameters instanceof CraftParameters)
-                    || state.recipe == null
-                    || !craftCursorReturnSafe(
-                            snapshot,
-                            state.craftDestinationSlot,
-                            state.craftDestinationBefore,
-                            state.recipe.view().result().alternatives().getFirst().item(),
-                            defaultStackHash(
-                                    state.recipe.view().result().alternatives().getFirst().item()),
-                            state.recipe.view().result().alternatives().getFirst().count())) {
-                state.releaseFault = true;
-                return;
-            }
-            state.cleanupCursorClickDispatched = dispatchContainerClick(
-                    attempt, state, menu, state.craftDestinationSlot,
-                    ContainerInput.PICKUP, Stage.RELEASING);
-            state.releaseFault |= !state.cleanupCursorClickDispatched;
+            state.releaseFault = true;
             return;
         }
         state.cursorReleaseConfirmed = true;
@@ -1188,7 +1123,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
      * only LocalPlayer.closeContainer closes the negotiated menu but can leave the visual container
      * screen installed, causing the next bounded DSL node to fail its clear-screen preflight.
      */
-    private static void closeOwnedMenuClient(
+    private void closeOwnedMenuClient(
             Minecraft minecraft, ScreenOwnershipSignals.CleanupDecision decision) {
         if (!(minecraft.gui.screen() instanceof AbstractContainerScreen<?> containerScreen)
                 || containerScreen.getMenu().containerId != decision.containerId()
@@ -1197,6 +1132,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             throw new IllegalStateException("owned container screen changed before close");
         }
         containerScreen.onClose();
+        screens.onScreenClosing(containerScreen).ifPresent(reason -> {
+            throw new IllegalStateException("owned container screen close failed: " + reason);
+        });
     }
 
     private AttemptState requireAttempt(PhaseFiveAttempt attempt) {
@@ -1456,10 +1394,6 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
     private static Optional<OpenHandPlan> chooseOpenHand(LocalPlayer player) {
         Objects.requireNonNull(player, "player");
-        if (player.getOffhandItem().isEmpty()) {
-            return Optional.of(new OpenHandPlan(
-                    InteractionHand.OFF_HAND, player.getInventory().getSelectedSlot()));
-        }
         for (int slot = 0; slot < 9; slot++) {
             if (player.getInventory().getItem(slot).isEmpty()) {
                 return Optional.of(new OpenHandPlan(InteractionHand.MAIN_HAND, slot));
@@ -1610,41 +1544,6 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             }
         }
         return Optional.ofNullable(empty);
-    }
-
-    static boolean craftDestinationConfirmed(
-            List<ContainerSyncSignals.StackFingerprint> stacks,
-            int destinationSlot,
-            ContainerSyncSignals.StackFingerprint before,
-            String item,
-            int defaultHash,
-            int outputCount) {
-        if (destinationSlot < 0 || destinationSlot >= stacks.size()
-                || before == null || outputCount < 1
-                || !before.empty() && !matchesDefaultStack(before, item, defaultHash)) {
-            return false;
-        }
-        var after = stacks.get(destinationSlot);
-        return matchesDefaultStack(after, item, defaultHash)
-                && after.count() == (long) before.count() + outputCount;
-    }
-
-    static boolean craftCursorReturnSafe(
-            ContainerSyncSignals.ContainerSnapshot snapshot,
-            int destinationSlot,
-            ContainerSyncSignals.StackFingerprint destinationBefore,
-            String item,
-            int defaultHash,
-            int outputCount) {
-        if (destinationSlot < 0 || destinationSlot >= snapshot.slots().size()
-                || destinationBefore == null
-                || outputCount < 1
-                || !craftingGridAndResultEmpty(snapshot.slots())
-                || !snapshot.slots().get(destinationSlot).equals(destinationBefore)) {
-            return false;
-        }
-        return matchesDefaultStack(snapshot.carried(), item, defaultHash)
-                && snapshot.carried().count() == outputCount;
     }
 
     static int countExact(
@@ -1841,7 +1740,6 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         AIMING_INITIAL,
         OPENING_INITIAL,
         CRAFT_WAIT_RESULT,
-        CRAFT_RESULT_PICKUP_ACK,
         AWAITING_CLICK_ACK,
         AWAITING_CLOSE,
         AIMING_READBACK,
@@ -2037,15 +1935,10 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private int afterDestinationCount;
         private int dispatchedStackCount;
         private int expectedCraftOutputCount;
-        private int craftDestinationSlot = -1;
-        private ContainerSyncSignals.StackFingerprint craftDestinationBefore =
-                ContainerSyncSignals.StackFingerprint.EMPTY;
         private long lastPacketRevision;
         private long closeDeadlineClientTick;
-        private long cursorProofRequiredAfterRevision = -1L;
         private long releaseStartedTick = -1L;
         private long releaseDeadlineTick;
-        private boolean cleanupCursorClickDispatched;
         private boolean screenOwnedObserved;
         private boolean cursorReleaseConfirmed;
         private boolean releasePending;
