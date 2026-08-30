@@ -4,8 +4,11 @@ import dev.aod.mcmcp.runtime.ContainerSyncSignals;
 import dev.aod.mcmcp.runtime.KnownMenuOperationRefs;
 import dev.aod.mcmcp.runtime.KnownMenuProfileSupport;
 import dev.aod.mcmcp.runtime.WorldSessionTracker;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.network.HashedStack;
+import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
@@ -129,10 +132,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
                 return;
             }
             state.containerClicks++;
-            Objects.requireNonNull(minecraft.gameMode).handleContainerInput(
-                    context.menu().containerId,
-                    state.operation.sourceSlot(), 0, ContainerInput.QUICK_MOVE,
-                    minecraft.player);
+            dispatchServerConfirmedQuickMove(minecraft, context, state.operation.sourceSlot());
             state.stage = Stage.AWAIT_UPDATE;
             state.stageDeadline = boundedDeadline(tick, UPDATE_TIMEOUT_TICKS);
             return;
@@ -166,6 +166,25 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
                 && minecraft.player.containerMenu == minecraft.player.inventoryMenu) {
             state.latchSuccess();
         }
+    }
+
+    /** Sends the ordinary server QUICK_MOVE without client changed-slot prediction suppression. */
+    private static void dispatchServerConfirmedQuickMove(
+            Minecraft minecraft, KnownMenuProfileSupport.Context context, int sourceSlot) {
+        var connection = Objects.requireNonNull(minecraft.getConnection(), "connection");
+        var menu = context.menu();
+        if (!menu.getCarried().isEmpty()
+                || sourceSlot < 0 || sourceSlot >= context.storageSlots().size()) {
+            throw new IllegalStateException("known Menu click authority changed");
+        }
+        connection.send(new ServerboundContainerClickPacket(
+                menu.containerId,
+                menu.getStateId(),
+                (short) sourceSlot,
+                (byte) 0,
+                ContainerInput.QUICK_MOVE,
+                new Int2ObjectOpenHashMap<>(),
+                HashedStack.create(menu.getCarried(), connection.decoratedHashOpsGenenerator())));
     }
 
     @Override

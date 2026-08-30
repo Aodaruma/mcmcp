@@ -4,7 +4,11 @@ import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.routine.BlockTarget;
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.MethodInsnNode;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -52,5 +56,32 @@ class McmcpRuntimeKnownMenuTest {
 
         assertThat(McmcpRuntime.actionAdmissionRequiresLocalSafety(menuOnly)).isFalse();
         assertThat(McmcpRuntime.actionAdmissionRequiresLocalSafety(delayed)).isTrue();
+    }
+
+    @Test
+    void knownMenuQuickMoveWaitsForServerSlotsInsteadOfPredictingThemLocally() throws Exception {
+        var node = new ClassNode();
+        try (var stream = getClass().getResourceAsStream(
+                "/dev/aod/mcmcp/routine/MinecraftKnownMenuPort.class")) {
+            assertThat(stream).isNotNull();
+            new ClassReader(stream).accept(node, 0);
+        }
+        var method = node.methods.stream()
+                .filter(candidate -> candidate.name.equals("dispatchServerConfirmedQuickMove"))
+                .findFirst().orElseThrow();
+        var calls = new ArrayList<String>();
+        for (var instruction : method.instructions) {
+            if (instruction instanceof MethodInsnNode call) {
+                calls.add(call.owner + "#" + call.name);
+            }
+        }
+
+        assertThat(calls)
+                .contains(
+                        "net/minecraft/network/HashedStack#create",
+                        "net/minecraft/client/multiplayer/ClientPacketListener#send")
+                .doesNotContain(
+                        "net/minecraft/client/multiplayer/MultiPlayerGameMode#handleContainerInput",
+                        "net/minecraft/world/inventory/AbstractContainerMenu#clicked");
     }
 }
