@@ -61,7 +61,11 @@ class KnownConstructionAttemptTest {
         assertThat(second.placedDelta()).isEqualTo(1);
         assertThat(second.confirmedEntries()).isEqualTo(2);
         port.tick = 7;
-        var result = attempt.tick(7);
+        var verifying = attempt.tick(7);
+        assertThat(verifying.status()).isEqualTo(KnownConstructionAttempt.Status.RUNNING);
+        assertThat(verifying.evidence()).isEqualTo("construction_final_verifying");
+        port.tick = 8;
+        var result = attempt.tick(8);
 
         assertThat(result.status()).isEqualTo(KnownConstructionAttempt.Status.SUCCEEDED);
         assertThat(result.evidence()).isEqualTo("construction_complete");
@@ -169,10 +173,76 @@ class KnownConstructionAttemptTest {
     }
 
     @Test
-    void preexistingAfterStateIsNotSilentlySkipped() {
+    void resumedExactDependencyAllowsItsPendingSuccessor() {
+        var request = dependencyRequest();
+        var port = new FakePort(request);
+        port.deferSecondAimUntilFirstConfirmation = true;
+        port.states.put(request.entries().getFirst().target(), STONE);
+        var attempt = new KnownConstructionAttempt(port, request, 1, 601);
+
+        var result = attempt.tick(1);
+
+        assertThat(result.status()).isEqualTo(KnownConstructionAttempt.Status.RUNNING);
+        assertThat(result.evidence()).isEqualTo("construction_preparing");
+        assertThat(result.completedEntries()).isEqualTo(1);
+        assertThat(result.confirmedEntries()).isZero();
+        assertThat(port.activeChild.entryId()).isEqualTo("side");
+        assertThat(port.dispatchedEntryIds).isEmpty();
+    }
+
+    @Test
+    void preexistingExactAfterStateResumesWithoutDispatchOrPlacementCharge() {
         var request = request(1);
         var port = new FakePort(request);
         port.states.put(request.entries().getFirst().target(), STONE);
+        var attempt = new KnownConstructionAttempt(port, request, 1, 301);
+
+        var verifying = attempt.tick(1);
+        assertThat(verifying.status()).isEqualTo(KnownConstructionAttempt.Status.RUNNING);
+        assertThat(verifying.evidence()).isEqualTo("construction_final_verifying");
+        assertThat(verifying.placedDelta()).isZero();
+        assertThat(verifying.completedEntries()).isEqualTo(1);
+        assertThat(verifying.confirmedEntries()).isZero();
+
+        port.tick = 2;
+        var result = attempt.tick(2);
+
+        assertThat(result.status()).isEqualTo(KnownConstructionAttempt.Status.SUCCEEDED);
+        assertThat(result.evidence()).isEqualTo("construction_complete");
+        assertThat(result.placedDelta()).isZero();
+        assertThat(result.completedEntries()).isEqualTo(1);
+        assertThat(result.confirmedEntries()).isZero();
+        assertThat(port.beginPreparationCalls).isZero();
+        assertThat(port.dispatchedEntryIds).isEmpty();
+        assertThat(port.retired).isTrue();
+    }
+
+    @Test
+    void freshFinalVerificationRejectsAResumedEntryThatChanged() {
+        var request = request(1);
+        var port = new FakePort(request);
+        port.states.put(request.entries().getFirst().target(), STONE);
+        var attempt = new KnownConstructionAttempt(port, request, 1, 301);
+
+        assertThat(attempt.tick(1).evidence()).isEqualTo("construction_final_verifying");
+        port.states.put(request.entries().getFirst().target(), AIR);
+        port.tick = 2;
+        var result = attempt.tick(2);
+
+        assertThat(result.status()).isEqualTo(KnownConstructionAttempt.Status.FAILED);
+        assertThat(result.evidence()).isEqualTo("construction_precondition_changed");
+        assertThat(result.placedDelta()).isZero();
+        assertThat(port.beginPreparationCalls).isZero();
+        assertThat(port.dispatchedEntryIds).isEmpty();
+        assertThat(port.retired).isTrue();
+    }
+
+    @Test
+    void preflightStillRejectsStateThatIsNeitherBeforeNorAfter() {
+        var request = request(1);
+        var port = new FakePort(request);
+        port.states.put(request.entries().getFirst().target(),
+                new BlockStateFingerprint("minecraft:dirt", Map.of()));
         var attempt = new KnownConstructionAttempt(port, request, 1, 301);
 
         var result = attempt.tick(1);

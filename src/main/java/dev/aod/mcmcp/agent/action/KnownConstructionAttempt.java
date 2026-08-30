@@ -33,6 +33,8 @@ public final class KnownConstructionAttempt implements AutoCloseable {
     private int currentIndex = -1;
     private int confirmedEntries;
     private long lastTick;
+    private long finalVerificationAfterTick = -1L;
+    private long finalVerificationAfterRevision;
     private boolean closed;
 
     public KnownConstructionAttempt(
@@ -74,6 +76,7 @@ public final class KnownConstructionAttempt implements AutoCloseable {
                 case PREPARING -> prepare();
                 case CONFIRMING -> confirm();
                 case RELEASING_CONFIRMED -> releaseConfirmed();
+                case FINAL_VERIFY -> finalVerify(clientTick);
             };
         } catch (ConstructionSafetyChangedException changed) {
             return fail("construction_safety_changed");
@@ -110,6 +113,10 @@ public final class KnownConstructionAttempt implements AutoCloseable {
                 return fail("construction_observation_unknown");
             }
             var live = cell.liveState().orElseThrow();
+            if (step.expectedAfter().equals(live)) {
+                completed[index] = true;
+                continue;
+            }
             if (!step.expectedBefore().equals(live)) {
                 return fail("construction_precondition_changed");
             }
@@ -130,9 +137,10 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         }
 
         if (next < 0) {
-            TickResult result = result(Status.SUCCEEDED, "construction_complete");
-            close();
-            return result;
+            finalVerificationAfterTick = frame.clientTick();
+            finalVerificationAfterRevision = frame.observationRevision();
+            phase = Phase.FINAL_VERIFY;
+            return result(Status.RUNNING, "construction_final_verifying");
         }
         if (!frame.inventoryServerSynchronized()) {
             return fail("construction_inventory_unsynchronized");
@@ -228,6 +236,33 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         return result(Status.RUNNING, "construction_entry_confirmed", 1);
     }
 
+    private TickResult finalVerify(long clientTick) {
+        var frame = Objects.requireNonNull(
+                port.observe(request.plan()), "adapter returned no construction frame");
+        if (frame.clientTick() != clientTick
+                || frame.observationRevision() < finalVerificationAfterRevision) {
+            return fail("construction_adapter_contract");
+        }
+        if (!frame.universalSafetyClear()) {
+            return fail("construction_safety_changed");
+        }
+        if (frame.clientTick() <= finalVerificationAfterTick) {
+            return result(Status.RUNNING, "construction_final_verifying");
+        }
+        for (var step : request.entries()) {
+            var cell = frame.cells().get(step.target());
+            if (cell == null || cell.liveState().isEmpty()) {
+                return fail("construction_observation_unknown");
+            }
+            if (!step.expectedAfter().equals(cell.liveState().orElseThrow())) {
+                return fail("construction_precondition_changed");
+            }
+        }
+        TickResult result = result(Status.SUCCEEDED, "construction_complete");
+        close();
+        return result;
+    }
+
     private TickResult fail(String evidence) {
         TickResult result = result(Status.FAILED, evidence);
         close();
@@ -292,7 +327,9 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         return Long.MAX_VALUE - left < right ? Long.MAX_VALUE : left + right;
     }
 
-    private enum Phase { PREFLIGHT, PREPARING, CONFIRMING, RELEASING_CONFIRMED }
+    private enum Phase {
+        PREFLIGHT, PREPARING, CONFIRMING, RELEASING_CONFIRMED, FINAL_VERIFY
+    }
 
     public record TickResult(
             Status status,

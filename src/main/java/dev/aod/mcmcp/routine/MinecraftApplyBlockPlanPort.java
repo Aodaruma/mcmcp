@@ -170,6 +170,11 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             var position = blockPos(step.target());
             var sample = byPosition.get(position);
             Optional<BlockStateFingerprint> live = currentFingerprint(sample);
+            // A resumed exact-after entry is authoritative current evidence for a later explicit
+            // dependency. The support state is still checked again beside the placement packet.
+            if (live.filter(step.expectedAfter()::equals).isPresent()) {
+                plan.confirmedEntries.add(step.id());
+            }
             boolean replaceable = false;
             boolean supportedMutation = withinWorldBorder(level, position);
             if (sample != null && sample.outcome() == BlockOutcome.CURRENT) {

@@ -29,7 +29,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class McpToolCatalogTest {
     @Test
     void validConstructionExamplePassesAggregateSchemaAndReachesDispatch() throws Exception {
-        var example = new McpToolCatalog().inputSchema("agent_start_action")
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var example = schema
                 .getAsJsonArray("examples").asList().stream()
                 .map(value -> value.getAsJsonObject())
                 .filter(value -> value.getAsJsonObject("program").get("name").getAsString()
@@ -45,6 +46,10 @@ class McpToolCatalogTest {
         var prepared = registry.prepareCall("agent_start_action", example);
 
         assertThat(commands).singleElement().isInstanceOf(McpRuntimePort.StartAction.class);
+        assertThat(schema.getAsJsonObject("$defs").getAsJsonObject("applyKnownBlockPlanNode")
+                .get("description").getAsString())
+                .contains("adopted without input or placement budget")
+                .contains("later fresh exact verification of every entry");
         registry.abandonDelivery(prepared);
         assertThat(commands.getLast()).isInstanceOf(McpRuntimePort.AbandonActionDelivery.class);
     }
