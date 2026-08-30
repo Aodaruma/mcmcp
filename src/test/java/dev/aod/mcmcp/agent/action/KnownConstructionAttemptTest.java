@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -266,6 +267,91 @@ class KnownConstructionAttemptTest {
         assertThat(port.retired).isTrue();
     }
 
+    @Test
+    void constructionBatchStartsEachPhaseOnlyAfterThePriorPhaseRetires() {
+        var first = requestAt("first", DIMENSION, 0, 0);
+        var second = requestAt("second", DIMENSION, 1, 0);
+        var port = new FakePort(List.of(first, second));
+        var attempt = new KnownConstructionBatchAttempt(port, List.of(first, second), 1);
+
+        KnownConstructionBatchAttempt.TickResult result = null;
+        for (long tick = 1; tick <= 10; tick++) {
+            port.tick = tick;
+            result = attempt.tick(tick);
+            if (tick == 5) {
+                assertThat(result.evidence()).isEqualTo("construction_phase_complete");
+                assertThat(result.phaseIndex()).isEqualTo(1);
+                assertThat(result.placedEntries()).isEqualTo(1);
+                assertThat(result.completedEntries()).isEqualTo(1);
+                assertThat(result.serverConfirmedEntries()).isEqualTo(1);
+            }
+        }
+
+        assertThat(result.status()).isEqualTo(KnownConstructionBatchAttempt.Status.SUCCEEDED);
+        assertThat(result.evidence()).isEqualTo("construction_batch_complete");
+        assertThat(result.phaseIndex()).isEqualTo(2);
+        assertThat(result.phaseCount()).isEqualTo(2);
+        assertThat(result.placedEntries()).isEqualTo(2);
+        assertThat(result.completedEntries()).isEqualTo(2);
+        assertThat(result.serverConfirmedEntries()).isEqualTo(2);
+        assertThat(port.dispatchedEntryIds).containsExactly("first", "second");
+        assertThat(port.retireCallsAtPreparation).containsExactly(0, 1);
+        assertThat(port.retireCalls).isEqualTo(2);
+    }
+
+    @Test
+    void constructionBatchFailureAndCloseNeverStartTheSuffix() {
+        var first = requestAt("first", DIMENSION, 0, 0);
+        var second = requestAt("second", DIMENSION, 1, 0);
+
+        var failedPort = new FakePort(List.of(first, second));
+        failedPort.preparationFailureStep = 0;
+        var failed = new KnownConstructionBatchAttempt(
+                failedPort, List.of(first, second), 1);
+        failed.tick(1);
+        failedPort.tick = 2;
+        var failure = failed.tick(2);
+        assertThat(failure.status()).isEqualTo(KnownConstructionBatchAttempt.Status.FAILED);
+        assertThat(failure.phaseIndex()).isEqualTo(1);
+        assertThat(failedPort.beginPreparationCalls).isEqualTo(1);
+        assertThat(failedPort.dispatchedEntryIds).isEmpty();
+        assertThat(failedPort.retireCalls).isEqualTo(1);
+
+        var closedPort = new FakePort(List.of(first, second));
+        var closed = new KnownConstructionBatchAttempt(
+                closedPort, List.of(first, second), 1);
+        closed.tick(1);
+        closed.close();
+        assertThat(closedPort.beginPreparationCalls).isEqualTo(1);
+        assertThat(closedPort.dispatchedEntryIds).isEmpty();
+        assertThat(closedPort.retireCalls).isEqualTo(1);
+    }
+
+    @Test
+    void constructionBatchRejectsInvalidCrossPhaseGeometry() {
+        var first = requestAt("first", DIMENSION, 0, 0);
+        assertThatThrownBy(() -> new KnownConstructionBatchAttempt(
+                new FakePort(first), List.of(), 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("1..32 phases");
+        assertThatThrownBy(() -> new KnownConstructionBatchAttempt(
+                new FakePort(first), List.of(first, first), 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("globally unique");
+
+        var distant = requestAt("distant", DIMENSION, 9, 0);
+        assertThatThrownBy(() -> new KnownConstructionBatchAttempt(
+                new FakePort(List.of(first, distant)), List.of(first, distant), 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("9x9x9");
+
+        var nether = requestAt("nether", "minecraft:the_nether", 0, 0);
+        assertThatThrownBy(() -> new KnownConstructionBatchAttempt(
+                new FakePort(List.of(first, nether)), List.of(first, nether), 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("share a dimension");
+    }
+
     private static KnownConstructionRequest request(int count) {
         var entries = new java.util.ArrayList<ApplyBlockPlanStep>();
         for (int index = 0; index < count; index++) {
@@ -308,14 +394,38 @@ class KnownConstructionAttemptTest {
                         DIMENSION, firstTarget, secondTarget, 0, 30, false)));
     }
 
+    private static KnownConstructionRequest requestAt(
+            String id, String dimension, int x, int z) {
+        BlockTarget target = target(dimension, x, 65, z);
+        BlockTarget support = target(dimension, x, 64, z);
+        var entry = new ApplyBlockPlanStep(
+                id,
+                ApplyBlockPlanOperation.PLACE,
+                target,
+                AIR,
+                STONE,
+                Optional.of("minecraft:stone"),
+                Optional.of(PlacementSupportWitness.visible(support, "up", STONE)));
+        return new KnownConstructionRequest(new ApplyBlockPlanRequest(
+                id, 1, 1, List.of(entry),
+                new ActionBounds(dimension, support, target, 0, 15, false)));
+    }
+
     private static BlockTarget target(int x, int y, int z) {
-        return new BlockTarget(DIMENSION, x, y, z);
+        return target(DIMENSION, x, y, z);
+    }
+
+    private static BlockTarget target(String dimension, int x, int y, int z) {
+        return new BlockTarget(dimension, x, y, z);
     }
 
     private static final class FakePort implements ApplyBlockPlanPort {
-        private final KnownConstructionRequest request;
+        private final Map<ApplyBlockPlanRequest, KnownConstructionRequest> requests =
+                new java.util.IdentityHashMap<>();
         private final Map<BlockTarget, BlockStateFingerprint> states = new LinkedHashMap<>();
         private final java.util.ArrayList<String> dispatchedEntryIds = new java.util.ArrayList<>();
+        private final java.util.ArrayList<Integer> retireCallsAtPreparation =
+                new java.util.ArrayList<>();
         private long tick = 1;
         private int available;
         private int preparationFailureStep = -1;
@@ -327,18 +437,26 @@ class KnownConstructionAttemptTest {
         private boolean omitCompletedCells;
         private boolean safetyChangeOnPreparation;
         private boolean retired;
+        private int retireCalls;
         private ApplyBlockPlanChildAction activeChild;
         private ApplyBlockPlanPreparationAttempt preparation;
         private ApplyBlockPlanActionAttempt action;
 
         private FakePort(KnownConstructionRequest request) {
-            this.request = request;
-            this.available = request.entries().size();
-            request.entries().forEach(step -> states.put(step.target(), AIR));
+            this(List.of(request));
+        }
+
+        private FakePort(List<KnownConstructionRequest> requests) {
+            for (var request : requests) {
+                this.requests.put(request.plan(), request);
+                available += request.entries().size();
+                request.entries().forEach(step -> states.put(step.target(), AIR));
+            }
         }
 
         @Override
-        public ApplyBlockPlanFrame observe(ApplyBlockPlanRequest ignored) {
+        public ApplyBlockPlanFrame observe(ApplyBlockPlanRequest plan) {
+            KnownConstructionRequest request = Objects.requireNonNull(requests.get(plan));
             var cells = new LinkedHashMap<BlockTarget, ApplyBlockPlanCellObservation>();
             for (int index = 0; index < request.entries().size(); index++) {
                 var step = request.entries().get(index);
@@ -364,6 +482,7 @@ class KnownConstructionAttemptTest {
                 ApplyBlockPlanChildAction child,
                 long deadline) {
             beginPreparationCalls++;
+            retireCallsAtPreparation.add(retireCalls);
             if (safetyChangeOnPreparation) {
                 throw new ConstructionSafetyChangedException();
             }
@@ -434,6 +553,7 @@ class KnownConstructionAttemptTest {
         @Override
         public void retire(ApplyBlockPlanRequest ignored) {
             retired = true;
+            retireCalls++;
         }
     }
 }
