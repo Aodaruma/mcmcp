@@ -139,6 +139,11 @@ final class FixturePhase5Scenario {
             resetCombinedWheatWorkspace(context.level());
         } else {
             applyLayout(context.level());
+            if (mode == FixturePhase5Mode.REDSTONE) {
+                FixtureArena.setBlock(context.level(),
+                        REDSTONE_LEVER_TARGET.relative(Direction.SOUTH),
+                        Blocks.AIR.defaultBlockState());
+            }
             configureBarrel(context.level());
             configureFurnace(context.level());
             configureBrewingStand(context.level());
