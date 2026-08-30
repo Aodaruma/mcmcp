@@ -17,6 +17,7 @@ public final class SafePlacementSupportPolicy {
     private static final Set<String> ALLOWED_BLOCK_IDS = Set.of(
             "minecraft:cobblestone",
             "minecraft:dirt",
+            "minecraft:glass",
             "minecraft:grass_block",
             "minecraft:obsidian",
             "minecraft:smooth_stone",

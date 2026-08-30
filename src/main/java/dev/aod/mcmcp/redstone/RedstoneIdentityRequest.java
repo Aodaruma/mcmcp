@@ -7,6 +7,7 @@ import dev.aod.mcmcp.routine.BlockTarget;
 import dev.aod.mcmcp.routine.InteractBlockRequest;
 import dev.aod.mcmcp.routine.PlaceBlockRequest;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -90,9 +91,27 @@ public record RedstoneIdentityRequest(
                 leverTarget, LEVER_ON, LEVER_OFF, bounds, Optional.empty());
     }
 
+    /** Five face-neighbors other than the adjacent lamp: glass below and air elsewhere. */
+    public List<BlockTarget> leverSafetyHalo() {
+        return List.of(
+                        offset(leverTarget, 1, 0, 0),
+                        offset(leverTarget, -1, 0, 0),
+                        offset(leverTarget, 0, 1, 0),
+                        offset(leverTarget, 0, -1, 0),
+                        offset(leverTarget, 0, 0, 1),
+                        offset(leverTarget, 0, 0, -1))
+                .stream()
+                .filter(target -> !target.equals(lampTarget))
+                .toList();
+    }
+
     private static BlockTarget offset(BlockTarget origin, int x, int z) {
+        return offset(origin, x, 0, z);
+    }
+
+    private static BlockTarget offset(BlockTarget origin, int x, int y, int z) {
         return new BlockTarget(
-                origin.dimension(), origin.x() + x, origin.y(), origin.z() + z);
+                origin.dimension(), origin.x() + x, origin.y() + y, origin.z() + z);
     }
 
     private static void requireTopSupport(BlockTarget target, BlockAimWitness aim) {

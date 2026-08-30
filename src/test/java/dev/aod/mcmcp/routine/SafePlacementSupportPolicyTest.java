@@ -16,6 +16,7 @@ class SafePlacementSupportPolicyTest {
         assertThat(List.of(
                 "minecraft:cobblestone",
                 "minecraft:dirt",
+                "minecraft:glass",
                 "minecraft:grass_block",
                 "minecraft:obsidian",
                 "minecraft:smooth_stone",
@@ -41,6 +42,7 @@ class SafePlacementSupportPolicyTest {
         assertThat(List.of(
                 Blocks.COBBLESTONE,
                 Blocks.DIRT,
+                Blocks.GLASS,
                 Blocks.GRASS_BLOCK,
                 Blocks.OBSIDIAN,
                 Blocks.SMOOTH_STONE,

@@ -247,7 +247,12 @@ class McpToolCatalogTest {
         assertThat(schema.getAsJsonObject("$defs")
                 .getAsJsonObject("applyKnownRedstoneSpecNode")
                 .get("description").getAsString())
-                .contains("identity slice only", "live visual observation", "never moves");
+                .contains(
+                        "identity slice only",
+                        "minecraft:glass UP support",
+                        "four remaining face-neighbors",
+                        "same-client-tick live visual pairs",
+                        "never moves");
 
         var unsupported = request.deepCopy();
         unsupported.getAsJsonObject("program").getAsJsonArray("body").get(0)

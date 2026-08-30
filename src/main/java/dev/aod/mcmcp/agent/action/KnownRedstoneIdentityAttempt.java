@@ -8,6 +8,8 @@ import dev.aod.mcmcp.routine.BlockTarget;
 import dev.aod.mcmcp.routine.SemanticActionPort;
 import dev.aod.mcmcp.routine.SemanticActionRequest;
 
+import java.util.HashMap;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.LongFunction;
 
@@ -21,6 +23,7 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
     private final RedstoneIdentityRequest request;
     private final LongFunction<MinecraftObservationService.BlockSample> lampObserver;
     private final LongFunction<MinecraftObservationService.BlockSample> leverObserver;
+    private final LongFunction<List<MinecraftObservationService.BlockSample>> haloObserver;
     private final long deadlineTick;
     private Phase phase = Phase.PLACE_LAMP;
     private KnownBlockMutationAttempt mutation;
@@ -36,12 +39,14 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
             RedstoneIdentityRequest request,
             LongFunction<MinecraftObservationService.BlockSample> lampObserver,
             LongFunction<MinecraftObservationService.BlockSample> leverObserver,
+            LongFunction<List<MinecraftObservationService.BlockSample>> haloObserver,
             long admittedClientTick,
             long deadlineTick) {
         this.port = Objects.requireNonNull(port, "port");
         this.request = Objects.requireNonNull(request, "request");
         this.lampObserver = Objects.requireNonNull(lampObserver, "lampObserver");
         this.leverObserver = Objects.requireNonNull(leverObserver, "leverObserver");
+        this.haloObserver = Objects.requireNonNull(haloObserver, "haloObserver");
         if (admittedClientTick < 0L || deadlineTick <= admittedClientTick
                 || deadlineTick > saturatedAdd(admittedClientTick, MAX_TICKS)
                 || deadlineTick > request.bounds().hardDeadlineClientTick(admittedClientTick)) {
@@ -71,6 +76,9 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
 
     private TickResult tickMutation(long clientTick) {
         if (mutation == null) {
+            if (!haloClear(haloObserver.apply(clientTick), clientTick)) {
+                return fail("redstone_clearance_changed", 0, 0);
+            }
             long childDeadline = Math.min(
                     deadlineTick,
                     saturatedAdd(clientTick, AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND));
@@ -184,6 +192,22 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
             String property,
             boolean expected,
             boolean mismatchIsChanged) {
+        OutputObservation blockObservation = observedBlock(sample, target, clientTick, block);
+        if (blockObservation != OutputObservation.MATCHED) return blockObservation;
+        String value = Objects.requireNonNull(sample.observation(), "current redstone observation")
+                .state().properties().get(property);
+        if (!"true".equals(value) && !"false".equals(value)) {
+            return OutputObservation.TARGET_CHANGED;
+        }
+        if (Boolean.toString(expected).equals(value)) return OutputObservation.MATCHED;
+        return mismatchIsChanged ? OutputObservation.TARGET_CHANGED : OutputObservation.PENDING;
+    }
+
+    private OutputObservation observedBlock(
+            MinecraftObservationService.BlockSample sample,
+            BlockTarget target,
+            long clientTick,
+            String block) {
         Objects.requireNonNull(sample, "redstone observation");
         BlockPosition expectedPosition = new BlockPosition(
                 target.dimension(), target.x(), target.y(), target.z());
@@ -204,12 +228,31 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
         if (!block.equals(observation.state().block())) {
             return OutputObservation.TARGET_CHANGED;
         }
-        String value = observation.state().properties().get(property);
-        if (!"true".equals(value) && !"false".equals(value)) {
-            return OutputObservation.TARGET_CHANGED;
+        return OutputObservation.MATCHED;
+    }
+
+    private boolean haloClear(
+            List<MinecraftObservationService.BlockSample> samples, long clientTick) {
+        Objects.requireNonNull(samples, "redstone clearance observations");
+        List<BlockTarget> targets = request.leverSafetyHalo();
+        if (samples.size() != targets.size()) return false;
+        var byPosition = new HashMap<BlockPosition, MinecraftObservationService.BlockSample>();
+        for (var sample : samples) {
+            if (sample == null || byPosition.put(sample.position(), sample) != null) return false;
         }
-        if (Boolean.toString(expected).equals(value)) return OutputObservation.MATCHED;
-        return mismatchIsChanged ? OutputObservation.TARGET_CHANGED : OutputObservation.PENDING;
+        BlockTarget support = request.leverPlacementAim().block();
+        for (BlockTarget target : targets) {
+            var position = new BlockPosition(
+                    target.dimension(), target.x(), target.y(), target.z());
+            String expectedBlock = target.equals(support) ? "minecraft:glass" : "minecraft:air";
+            var sample = byPosition.get(position);
+            if (sample == null
+                    || observedBlock(sample, target, clientTick, expectedBlock)
+                    != OutputObservation.MATCHED) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private TickResult fail(String evidence, int placedDelta, int interactionDelta) {

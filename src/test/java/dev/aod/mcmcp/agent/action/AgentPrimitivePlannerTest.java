@@ -310,7 +310,7 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
-    void redstoneIdentityRequiresTwoCurrentInertTopSupports() {
+    void redstoneIdentityRequiresCurrentInertLampAndGlassLeverSupports() {
         UUID session = UUID.randomUUID();
         var map = map(session).snapshot().orElseThrow();
         var anchor = new ActionDsl.Position(DIMENSION, 2, 65, 0);
@@ -353,7 +353,7 @@ class AgentPrimitivePlannerTest {
                         surface(lampSupport, ObservationRecord.Face.UP,
                                 "minecraft:stone", null, 0L),
                         surface(leverSupport, ObservationRecord.Face.UP,
-                                "minecraft:stone", null, 0L)))),
+                                "minecraft:glass", null, 0L)))),
                 4.5F);
 
         assertThat(accepted.worstCase(redstone)).contains(
@@ -374,16 +374,31 @@ class AgentPrimitivePlannerTest {
         assertThat(accepted.knownSurfaces()).hasSize(2);
 
         assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
-                program,
-                map,
-                new DeterministicAStar(),
-                pose,
-                Optional.of(frame(List.of(
-                        surface(lampSupport, ObservationRecord.Face.UP,
-                                "minecraft:farmland", null, 0L),
-                        surface(leverSupport, ObservationRecord.Face.UP,
-                                "minecraft:stone", null, 0L)))),
-                4.5F))
+                        program,
+                        map,
+                        new DeterministicAStar(),
+                        pose,
+                        Optional.of(frame(List.of(
+                                surface(lampSupport, ObservationRecord.Face.UP,
+                                        "minecraft:farmland", null, 0L),
+                                surface(leverSupport, ObservationRecord.Face.UP,
+                                        "minecraft:glass", null, 0L)))),
+                        4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                        program,
+                        map,
+                        new DeterministicAStar(),
+                        pose,
+                        Optional.of(frame(List.of(
+                                surface(lampSupport, ObservationRecord.Face.UP,
+                                        "minecraft:stone", null, 0L),
+                                surface(leverSupport, ObservationRecord.Face.UP,
+                                        "minecraft:stone", null, 0L)))),
+                        4.5F))
                 .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
                 .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
                 .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);

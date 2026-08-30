@@ -53,11 +53,16 @@ class KnownRedstoneIdentityAttemptTest {
     void placesAndTestsTheCompleteIdentityTruthTableInOrder() {
         RedstoneIdentityRequest request = request();
         var port = new FakePort(request);
+        int[] haloChecks = {0};
         var attempt = new KnownRedstoneIdentityAttempt(
                 port,
                 request,
                 tick -> currentLamp(request, tick, port.lampLit),
                 tick -> currentLever(request, tick, port.leverPowered),
+                tick -> {
+                    haloChecks[0]++;
+                    return currentHalo(request, tick, null);
+                },
                 1,
                 100);
 
@@ -86,6 +91,7 @@ class KnownRedstoneIdentityAttemptTest {
                 "lever:false");
         assertThat(port.releaseCalls).isEqualTo(4);
         assertThat(port.retireCalls).isEqualTo(4);
+        assertThat(haloChecks[0]).isEqualTo(4);
     }
 
     @Test
@@ -97,6 +103,7 @@ class KnownRedstoneIdentityAttemptTest {
                 request,
                 tick -> hiddenLamp(request, tick),
                 tick -> currentLever(request, tick, port.leverPowered),
+                tick -> currentHalo(request, tick, null),
                 1,
                 100);
 
@@ -124,6 +131,7 @@ class KnownRedstoneIdentityAttemptTest {
                 request,
                 tick -> currentLamp(request, tick, port.lampLit),
                 tick -> currentLever(request, tick, !port.leverPowered),
+                tick -> currentHalo(request, tick, null),
                 1,
                 100);
 
@@ -140,6 +148,38 @@ class KnownRedstoneIdentityAttemptTest {
     }
 
     @Test
+    void stopsBeforeTheFirstToggleWhenTheLeverHaloIsNoLongerClear() {
+        RedstoneIdentityRequest request = request();
+        var port = new FakePort(request);
+        BlockTarget blocked = request.leverSafetyHalo().stream()
+                .filter(target -> !target.equals(request.leverPlacementAim().block()))
+                .findFirst()
+                .orElseThrow();
+        var attempt = new KnownRedstoneIdentityAttempt(
+                port,
+                request,
+                tick -> currentLamp(request, tick, port.lampLit),
+                tick -> currentLever(request, tick, port.leverPowered),
+                tick -> currentHalo(
+                        request, tick, port.dispatches.size() >= 2 ? blocked : null),
+                1,
+                100);
+
+        KnownRedstoneIdentityAttempt.TickResult result = null;
+        for (long tick = 1; tick < 100; tick++) {
+            port.tick = tick;
+            result = attempt.tick(tick);
+            if (result.status() != KnownRedstoneIdentityAttempt.Status.RUNNING) break;
+        }
+
+        assertThat(result.status()).isEqualTo(KnownRedstoneIdentityAttempt.Status.FAILED);
+        assertThat(result.evidence()).isEqualTo("redstone_clearance_changed");
+        assertThat(result.interactions()).isZero();
+        assertThat(port.dispatches).containsExactly(
+                "place:minecraft:redstone_lamp", "place:minecraft:lever");
+    }
+
+    @Test
     void closeReleasesTheActiveChildPreparation() {
         RedstoneIdentityRequest request = request();
         var port = new FakePort(request);
@@ -148,6 +188,7 @@ class KnownRedstoneIdentityAttemptTest {
                 request,
                 tick -> currentLamp(request, tick, port.lampLit),
                 tick -> currentLever(request, tick, port.leverPowered),
+                tick -> currentHalo(request, tick, null),
                 1,
                 100);
 
@@ -257,10 +298,35 @@ class KnownRedstoneIdentityAttemptTest {
             String block,
             String property,
             boolean value) {
+        return currentState(
+                request, target, tick, block, Map.of(property, Boolean.toString(value)));
+    }
+
+    private static List<MinecraftObservationService.BlockSample> currentHalo(
+            RedstoneIdentityRequest request, long tick, BlockTarget blocked) {
+        BlockTarget support = request.leverPlacementAim().block();
+        return request.leverSafetyHalo().stream()
+                .map(target -> currentState(
+                        request,
+                        target,
+                        tick,
+                        target.equals(blocked)
+                                ? "minecraft:stone"
+                                : target.equals(support) ? "minecraft:glass" : "minecraft:air",
+                        Map.of()))
+                .toList();
+    }
+
+    private static MinecraftObservationService.BlockSample currentState(
+            RedstoneIdentityRequest request,
+            BlockTarget target,
+            long tick,
+            String block,
+            Map<String, String> properties) {
         var position = blockPosition(target);
         var observed = new ObservedBlock(
                 position,
-                new BlockStateView(block, Map.of(property, Boolean.toString(value))),
+                new BlockStateView(block, properties),
                 new ObservedContext(0, 15, null, false, false, List.of("up")),
                 ObservationProvenance.LINE_OF_SIGHT_OBSERVATION,
                 tick,

@@ -147,8 +147,8 @@ NeoForge公式の26.2 MDKもJava 25を対象としている。開発は公式の
 ### Phase 5: レッドストーン
 
 - 初回vertical slice: lever 1入力、redstone lamp 1出力、false→false / true→trueの固定identityだけを扱う`apply_known_redstone_spec`
-- 現在可視の不活性なUP support 2面からtargetを導出し、stationaryでlamp / leverを通常設置する
-- live visualだけでlampのOFF→ON→OFFを有限settle内に確認する
+- lampには現在可視の不活性なUP support、leverには現在可視の`minecraft:glass` UP supportを要求し、stationaryで通常設置する
+- leverのlamp以外の4面隣接をLIVE current / visibleなairに閉じ、live visualだけでlever / lampのOFF→ON→OFFを同tick対として有限settle内に確認する
 - 真理値表と入出力を持つRedstoneSpec
 - 許可部品と最大footprint
 - Blueprintへの変換
@@ -741,7 +741,7 @@ Action DSL v1の制御構造:
 | harvest_known_wheat | camera, block_break | 可視・既知かつ実行時age=7のwheat 1個だけを通常破壊し、airを確認 |
 | harvest_known_wheat_batch | camera, block_break | 1〜8個の相異なる可視・既知かつ成熟済みwheatを入力順に収穫する |
 | apply_known_block_plan | camera, block_place | 完全な可視source stateをruntimeでmirror / rotationし、現在supportまたは明示先行dependency上へ1〜8 blockを入力順に通常設置する |
-| apply_known_redstone_spec | camera, block_interact, block_place | 可視UP support 2面へ固定lever→lamp identityを通常設置し、live visualでOFF / ON / OFFを試験する |
+| apply_known_redstone_spec | camera, block_interact, block_place | lampの可視不活性supportとleverの可視glass support、周囲4 airを確認して固定lever→lamp identityを設置し、live visualで入出力のOFF / ON / OFFを試験する |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のsingle chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
@@ -1246,7 +1246,7 @@ RedstoneSpec
 
 公開済みの初回sliceは`apply_known_redstone_spec:{id,op,anchor,rotation,components:[{id,role,block}],truth_table:[{inputs:{input},outputs:{output}}],footprint:{x,y,z},timing:{settle_ticks}}`へ閉じる。`components`は`input/input/minecraft:lever`と`output/output/minecraft:redstone_lamp`を各1件、真理値表は`false→false`と`true→true`を各1件、footprintは`2x1x1`、rotationは`0 / 90 / 180 / 270`、settleは1〜20 tickだけを受理する。`anchor`はlamp targetであり、lever targetはrotationに従って同じYの+X / +Z / -X / -Zへ1 blockずらす。LLMにblock座標とnavigation座標を相互変換させず、runtimeがこの固定offsetだけを適用する。
 
-plannerはlamp / lever直下の現在policy-visibleなUP面を2件要求し、support blockは通常useが不活性な閉じたallowlistに制限する。targetとsupportはinteraction reach内、同じworld/session/revisionでなければならず、movement 0、break 0で固定する。実行開始前に自inventoryのlampとleverを各1個確認し、lamp設置→lever設置→lamp OFF観測→lever操作→lamp ON観測→再操作→lamp OFF観測の順を変えない。設置と操作は既存semantic action / universal safety / server reconciliationを再利用し、出力は許可されたlive visual block observationだけで判定する。hidden power state、server MOD、command、raw input、任意packetは使わない。
+plannerはlamp直下の現在policy-visibleな不活性UP面と、lever直下の現在policy-visibleな`minecraft:glass` UP面を要求する。leverの6面隣接はlamp 1、直下glass 1、残り4 cellのairに閉じ、4 airとglassをlamp / leverの各配置前および各toggle直前に同じclient tickのLIVE current / visible observationで再確認する。targetとsupportはinteraction reach内、同じworld/session/revisionでなければならず、movement 0、break 0で固定する。実行開始前に自inventoryのlampとleverを各1個確認し、lamp設置→lever設置→lever / lamp OFF観測→lever操作→lever / lamp ON観測→再操作→lever / lamp OFF観測の順を変えない。設置と操作は既存semantic action / universal safety / server reconciliationを再利用し、入出力は許可されたlive visual block observationだけで同じclient tickの対として判定する。hidden power state、server MOD、command、raw input、任意packetは使わない。
 
 静的worst-caseは`400 + 3 * settle_ticks` active tick、その50倍ms、camera 720度、interaction 2、placement 2、distance / break 0とする。途中失敗では未開始suffixを実行せず、完了済みmutationとbudgetを監査traceへ残し、terminal公開前に既存の入力解放契約を通す。wire、NOT、repeater、一般Blueprint変換、任意回路合成はこのopcodeで利用可能とは扱わない。
 
@@ -1608,8 +1608,8 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - block planの`none/x/z` mirror後CW rotationが既存BlockPlan変換と一致し、offsetと完全BlockStateへ同じtransformを適用する
 - block planは入力順を維持し、1 entryあたり15,000 ms / 300 ticks / camera 80度 / 1 placement、distance / interaction / break 0の静的costから逸脱しない
 - `apply_known_redstone_spec`はlever入力1件・lamp出力1件、identity真理値表2行、footprint 2x1x1、rotation 4種、settle 1〜20だけをschema / validator / compilerで一致して受理する
-- Redstone plannerはlamp / lever直下のcurrent visible inert UP supportを両方要求し、stationary requestのtarget・aim・boundsへ同じrotationを変換する
-- Redstone実行はlamp / lever設置、OFF / ON / OFFのlive visual確認を入力順に行い、`400 + 3 * settle_ticks` tick / 2 interaction / 2 placementから逸脱しない
+- Redstone plannerはlamp直下のcurrent visible inert UP supportとlever直下のcurrent visible glass UP supportを要求し、stationary requestのtarget・aim・boundsへ同じrotationを変換する
+- Redstone実行は各配置・toggle直前にlever周囲のglass 1 / air 4をLIVE再確認し、lamp / lever設置、入出力対のOFF / ON / OFF確認を入力順に行い、`400 + 3 * settle_ticks` tick / 2 interaction / 2 placementから逸脱しない
 - `brew_known_potion_batch`は標準Potionの既知の1段recipe、1〜3本同数、blaze powder固定、開始時5 stand item slot空、internal brew time 0、fuel counter 0〜20を入力前に検証し、prechargedならinventory fuel投入を省略する
 - 醸造nodeはtop-level末尾のみで`if` / `repeat`内とsuffixを拒否し、plannerとbegin直前preflightで片道camera 270度以下を証明し、70,000 ms / 1,400 ticks / camera最大540度（照準＋醸造node受付時view復元）/ 16 interactionsを静的に予約し、resume / replay / blind retryを行わない
 - 公開`progress.interactions`の上限16は、醸造中のrecovery interaction非dispatchと現行recovery usage 0の不変条件を含めて検証される

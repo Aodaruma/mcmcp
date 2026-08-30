@@ -834,6 +834,11 @@ public final class AgentPrimitivePlanner {
                     leverSupport,
                     surfaceBarrierWorldRevision(
                             map, surfaceRevisionBarrier, leverSupport));
+            if (!"minecraft:glass".equals(lever.surface().block())) {
+                throw new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Redstone lever placement requires a current visible glass UP support");
+            }
             knownSurfaces.add(lamp.surface());
             knownSurfaces.add(lever.surface());
             mutationAims.put(
