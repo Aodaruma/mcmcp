@@ -950,7 +950,7 @@ class McmcpRuntimeHardeningTest {
     }
 
     @Test
-    void manualInputOrPauseReleasesBeforeTheRoutineCanTickAgain() {
+    void priorityEventStopsBeforeTickWhileAnAbsentEventContinues() {
         var calls = new ArrayList<String>();
 
         boolean stopped = McmcpRuntime.runPriorityEventStopIfRequired(
@@ -964,13 +964,9 @@ class McmcpRuntimeHardeningTest {
         assertThat(stopped).isTrue();
         assertThat(calls).containsExactly(
                 "event_stop_requested", "active_and_pending_released");
-    }
 
-    @Test
-    void pauseFalseDoesNotStopOrBlockTheNextRoutineTick() {
-        var calls = new ArrayList<String>();
-
-        boolean stopped = McmcpRuntime.runPriorityEventStopIfRequired(
+        calls.clear();
+        stopped = McmcpRuntime.runPriorityEventStopIfRequired(
                 false,
                 () -> calls.add("request"),
                 () -> calls.add("drain"));
@@ -1142,7 +1138,7 @@ class McmcpRuntimeHardeningTest {
     }
 
     @Test
-    void checksPendingFinalizationBeforeReplayCanPurgeAnExpiredTerminalRoutine() {
+    void checksPendingFinalizationBeforeEitherReplayCanPurgeATerminalRoutine() {
         var retries = new FinalizationRetryQueue();
         var routines = new RoutineManager(unusedStationaryBreakPort());
         var key = UUID.randomUUID().toString();
@@ -1176,41 +1172,40 @@ class McmcpRuntimeHardeningTest {
                 .isEqualTo("unsafe_state");
         assertThat(routines.getRoutine(receipt.routineId(), 0, 1).state())
                 .isEqualTo(RoutineState.CANCELLED);
-    }
 
-    @Test
-    void checksPendingFinalizationBeforeSemanticReplayCanPurgeAnExpiredTerminalRoutine() {
-        var retries = new FinalizationRetryQueue();
-        var routines = new RoutineManager(
+        var semanticRetries = new FinalizationRetryQueue();
+        var semanticRoutines = new RoutineManager(
                 unusedStationaryBreakPort(), unusedSemanticActionPort());
-        var key = UUID.randomUUID().toString();
+        var semanticKey = UUID.randomUUID().toString();
         var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
         var bounds = new ActionBounds(
                 target.dimension(), target, target, 1, 30, false);
-        var request = new NavigateToRequest(target, 0.5D, bounds);
-        var receipt = routines.startSemanticAction(key, "same-request", request, 10);
-        routines.cancelRoutine(receipt.routineId(), "test", 0, 1);
-        retries.attempt(
-                receipt.routineId(),
+        var semanticRequest = new NavigateToRequest(target, 0.5D, bounds);
+        var semanticReceipt = semanticRoutines.startSemanticAction(
+                semanticKey, "same-request", semanticRequest, 10);
+        semanticRoutines.cancelRoutine(semanticReceipt.routineId(), "test", 0, 1);
+        semanticRetries.attempt(
+                semanticReceipt.routineId(),
                 10,
                 ignored -> {
-                    retries.rememberCleanupOutcome(receipt.routineId(), false, false, "pending");
+                    semanticRetries.rememberCleanupOutcome(
+                            semanticReceipt.routineId(), false, false, "pending");
                     throw new IllegalStateException("record failed");
                 },
                 Object::new);
 
-        var blocked = catchThrowable(() ->
+        var semanticBlocked = catchThrowable(() ->
                 McmcpRuntime.replaySemanticActionAfterFinalizationGate(
-                        retries,
-                        routines,
-                        key,
+                        semanticRetries,
+                        semanticRoutines,
+                        semanticKey,
                         "same-request",
-                        request,
+                        semanticRequest,
                         10 + RoutineManager.DEFAULT_TERMINAL_TTL_TICKS));
 
-        assertThat(McmcpRuntime.mapFailure(blocked).failure().code())
+        assertThat(McmcpRuntime.mapFailure(semanticBlocked).failure().code())
                 .isEqualTo("unsafe_state");
-        assertThat(routines.getRoutine(receipt.routineId(), 0, 1).state())
+        assertThat(semanticRoutines.getRoutine(semanticReceipt.routineId(), 0, 1).state())
                 .isEqualTo(RoutineState.CANCELLED);
     }
 

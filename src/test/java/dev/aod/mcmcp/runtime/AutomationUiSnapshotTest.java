@@ -17,6 +17,9 @@ class AutomationUiSnapshotTest {
         assertThat(AutomationUiSnapshot.resolve(
                 true, control.snapshot(session), null).state())
                 .isEqualTo(AutomationUiSnapshot.State.OFF);
+        assertThat(AutomationUiSnapshot.resolve(
+                true, control.snapshot(session), true, null).state())
+                .isEqualTo(AutomationUiSnapshot.State.OFF);
 
         control.arm(session, Set.of("movement"));
         var ready = AutomationUiSnapshot.resolve(
@@ -34,15 +37,6 @@ class AutomationUiSnapshotTest {
         assertThat(AutomationUiSnapshot.resolve(
                 true, control.snapshot(session), true, null).state())
                 .isEqualTo(AutomationUiSnapshot.State.RECOVERING);
-    }
-
-    @Test
-    void anEvaluationGuardCannotOverrideOffControl() {
-        var control = new LocalArmingState();
-
-        assertThat(AutomationUiSnapshot.resolve(
-                true, control.snapshot(null), true, null).state())
-                .isEqualTo(AutomationUiSnapshot.State.OFF);
     }
 
     @Test

@@ -14,17 +14,13 @@ class FixturePhase4DivergenceTriggerTest {
         assertThat(trigger.observe(true)).isTrue();
         assertThat(trigger.observe(true)).isFalse();
         assertThat(trigger.observe(false)).isFalse();
-    }
 
-    @Test
-    void aLostOwnedBreakSignalResetsTheConsecutiveTickWindow() {
-        var trigger = new FixturePhase4DivergenceTrigger();
-
-        assertThat(trigger.observe(true)).isFalse();
-        assertThat(trigger.observe(true)).isFalse();
-        assertThat(trigger.observe(false)).isFalse();
-        assertThat(trigger.observe(true)).isFalse();
-        assertThat(trigger.observe(true)).isFalse();
-        assertThat(trigger.observe(true)).isTrue();
+        var interrupted = new FixturePhase4DivergenceTrigger();
+        assertThat(interrupted.observe(true)).isFalse();
+        assertThat(interrupted.observe(true)).isFalse();
+        assertThat(interrupted.observe(false)).isFalse();
+        assertThat(interrupted.observe(true)).isFalse();
+        assertThat(interrupted.observe(true)).isFalse();
+        assertThat(interrupted.observe(true)).isTrue();
     }
 }

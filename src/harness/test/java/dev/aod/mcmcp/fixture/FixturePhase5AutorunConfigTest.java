@@ -28,10 +28,6 @@ class FixturePhase5AutorunConfigTest {
                 .isThrownBy(() -> FixturePhase5AutorunConfig.parse("hidden"));
         assertThatIllegalArgumentException()
                 .isThrownBy(() -> FixturePhase5AutorunConfig.parse("divergence"));
-    }
-
-    @Test
-    void absentModeDisablesAutorun() {
         assertThat(FixturePhase5AutorunConfig.parse(null)).isEmpty();
         assertThat(FixturePhase5AutorunConfig.parse("  ")).isEmpty();
     }

@@ -7,63 +7,25 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 
 class FixturePhase3AutorunConfigTest {
     @Test
-    void absentModeLeavesAutorunDisabledEvenWhenAutoArmWasSet() {
+    void parsesTheClosedModeAndArmingContract() {
         assertThat(FixturePhase3AutorunConfig.parse(null, "true")).isEmpty();
         assertThat(FixturePhase3AutorunConfig.parse("  ", "true")).isEmpty();
-    }
-
-    @Test
-    void parsesEverySupportedModeAndNormalizesWhitespaceAndCase() {
-        assertThat(FixturePhase3AutorunConfig.parse(" NaViGaTe ", "true"))
-                .contains(new FixturePhase3AutorunConfig(FixturePhase3AutorunConfig.Mode.NAVIGATE, true));
-        assertThat(FixturePhase3AutorunConfig.parse("break", "true")).get()
-                .extracting(FixturePhase3AutorunConfig::mode)
-                .isEqualTo(FixturePhase3AutorunConfig.Mode.BREAK);
-        assertThat(FixturePhase3AutorunConfig.parse("place", "true")).get()
-                .extracting(FixturePhase3AutorunConfig::mode)
-                .isEqualTo(FixturePhase3AutorunConfig.Mode.PLACE);
-        assertThat(FixturePhase3AutorunConfig.parse("lever", "true")).get()
-                .extracting(FixturePhase3AutorunConfig::mode)
-                .isEqualTo(FixturePhase3AutorunConfig.Mode.LEVER);
-        assertThat(FixturePhase3AutorunConfig.parse("cow", "true")).get()
-                .extracting(FixturePhase3AutorunConfig::mode)
-                .isEqualTo(FixturePhase3AutorunConfig.Mode.COW);
-        assertThat(FixturePhase3AutorunConfig.parse("all_satisfied", "true")).get()
-                .extracting(FixturePhase3AutorunConfig::mode)
-                .isEqualTo(FixturePhase3AutorunConfig.Mode.ALL_SATISFIED);
-        assertThat(FixturePhase3AutorunConfig.parse("mutations", "true")).get()
-                .extracting(FixturePhase3AutorunConfig::mode)
-                .isEqualTo(FixturePhase3AutorunConfig.Mode.MUTATIONS);
-        assertThat(FixturePhase3AutorunConfig.parse("waterlogged", "true")).get()
-                .extracting(FixturePhase3AutorunConfig::mode)
-                .isEqualTo(FixturePhase3AutorunConfig.Mode.WATERLOGGED);
-        assertThat(FixturePhase3AutorunConfig.parse("directional_stairs", "true")).get()
-                .extracting(FixturePhase3AutorunConfig::mode)
-                .isEqualTo(FixturePhase3AutorunConfig.Mode.DIRECTIONAL_STAIRS);
-        assertThat(FixturePhase3AutorunConfig.parse("hopper", "true")).get()
-                .extracting(FixturePhase3AutorunConfig::mode)
-                .isEqualTo(FixturePhase3AutorunConfig.Mode.HOPPER);
-        assertThat(FixturePhase3AutorunConfig.parse("shortage", "true")).get()
-                .extracting(FixturePhase3AutorunConfig::mode)
-                .isEqualTo(FixturePhase3AutorunConfig.Mode.SHORTAGE);
-        assertThat(FixturePhase3AutorunConfig.parse("divergence", "true")).get()
-                .extracting(FixturePhase3AutorunConfig::mode)
-                .isEqualTo(FixturePhase3AutorunConfig.Mode.DIVERGENCE);
-        assertThat(FixturePhase3AutorunConfig.parse("hidden", "true")).get()
-                .extracting(FixturePhase3AutorunConfig::mode)
-                .isEqualTo(FixturePhase3AutorunConfig.Mode.HIDDEN);
-        assertThat(FixturePhase3AutorunConfig.parse("build_runner", "true")).get()
-                .extracting(FixturePhase3AutorunConfig::mode)
-                .isEqualTo(FixturePhase3AutorunConfig.Mode.BUILD_RUNNER);
-        assertThat(FixturePhase3AutorunConfig.parse("creative_capture", "true"))
-                .contains(new FixturePhase3AutorunConfig(
-                        FixturePhase3AutorunConfig.Mode.CREATIVE_CAPTURE, true));
-    }
-
-    @Test
-    void resetCanNeverRequestAutoArming() {
-        assertThat(FixturePhase3AutorunConfig.parse("reset", "true"))
-                .contains(new FixturePhase3AutorunConfig(FixturePhase3AutorunConfig.Mode.RESET, false));
+        for (var mode : FixturePhase3AutorunConfig.Mode.values()) {
+            assertThat(FixturePhase3AutorunConfig.parse(
+                    "  " + mode.name().toLowerCase(java.util.Locale.ROOT) + "  ", " TrUe "))
+                    .contains(new FixturePhase3AutorunConfig(
+                            mode, mode != FixturePhase3AutorunConfig.Mode.RESET));
+        }
+        assertThat(FixturePhase3AutorunConfig.parse("navigate", null)).get()
+                .extracting(FixturePhase3AutorunConfig::autoArm)
+                .isEqualTo(false);
+        assertThat(FixturePhase3AutorunConfig.parse("navigate", " FALSE ")).get()
+                .extracting(FixturePhase3AutorunConfig::autoArm)
+                .isEqualTo(false);
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> FixturePhase3AutorunConfig.parse("teleport", "true"));
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> FixturePhase3AutorunConfig.parse("navigate", "yes"));
     }
 
     @Test
@@ -97,29 +59,5 @@ class FixturePhase3AutorunConfigTest {
                         FixturePhase3AutorunConfig.Mode.HIDDEN,
                         FixturePhase3AutorunConfig.Mode.BUILD_RUNNER);
         assertThat(FixturePhase3AutorunConfig.Mode.CREATIVE_CAPTURE.creativeCapture()).isTrue();
-        assertThat(FixturePhase3AutorunConfig.Mode.values())
-                .filteredOn(FixturePhase3AutorunConfig.Mode::phase4)
-                .allSatisfy(mode -> assertThat(FixturePhase3AutorunConfig.parse(
-                        mode.name().toLowerCase(java.util.Locale.ROOT), "true")).get()
-                        .extracting(FixturePhase3AutorunConfig::autoArm)
-                        .isEqualTo(true));
-    }
-
-    @Test
-    void autoArmDefaultsToFalseAndAcceptsExplicitFalse() {
-        assertThat(FixturePhase3AutorunConfig.parse("navigate", null)).get()
-                .extracting(FixturePhase3AutorunConfig::autoArm)
-                .isEqualTo(false);
-        assertThat(FixturePhase3AutorunConfig.parse("navigate", " FALSE ")).get()
-                .extracting(FixturePhase3AutorunConfig::autoArm)
-                .isEqualTo(false);
-    }
-
-    @Test
-    void rejectsUnknownModesAndNonBooleanAutoArmValues() {
-        assertThatIllegalArgumentException()
-                .isThrownBy(() -> FixturePhase3AutorunConfig.parse("teleport", "true"));
-        assertThatIllegalArgumentException()
-                .isThrownBy(() -> FixturePhase3AutorunConfig.parse("navigate", "yes"));
     }
 }

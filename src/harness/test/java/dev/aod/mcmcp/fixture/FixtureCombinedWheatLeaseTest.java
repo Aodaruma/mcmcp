@@ -17,8 +17,6 @@ class FixtureCombinedWheatLeaseTest {
         lease.begin();
 
         assertThat(FixtureCombinedWheatLease.MAX_DURATION).isEqualTo(Duration.ofMinutes(20));
-        assertThat(FixtureCombinedWheatLease.MAX_DURATION)
-                .isGreaterThan(Duration.ofMinutes(17));
         assertThat(lease.remainingMillis()).isEqualTo(Duration.ofMinutes(20).toMillis());
         now.set(1_000L + Duration.ofMinutes(20).toNanos() - 1_000_000L);
         assertThat(lease.expired()).isFalse();
@@ -29,13 +27,9 @@ class FixtureCombinedWheatLeaseTest {
 
         lease.clear();
         assertThat(lease.active()).isFalse();
-    }
 
-    @Test
-    void cannotSilentlyRenewAnActiveLease() {
-        var lease = new FixtureCombinedWheatLease(() -> 0L);
-        lease.begin();
-
-        assertThatIllegalStateException().isThrownBy(lease::begin);
+        var active = new FixtureCombinedWheatLease(() -> 0L);
+        active.begin();
+        assertThatIllegalStateException().isThrownBy(active::begin);
     }
 }
