@@ -143,6 +143,46 @@ class MinecraftPhaseFiveInventoryPortTest {
                         + "#closeOwnedMenuClient");
     }
 
+    @Test
+    void everyAgentContainerClickInvalidatesCursorProofAndWaitsForFreshProofBeforeClose()
+            throws Exception {
+        var node = new ClassNode();
+        try (var stream = getClass().getResourceAsStream(
+                "/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort.class")) {
+            assertThat(stream).isNotNull();
+            new ClassReader(stream).accept(node, 0);
+        }
+
+        assertThat(invocations(node, "dispatchContainerClick"))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#packetRevision",
+                        "dev/aod/mcmcp/runtime/ScreenOwnershipSignals"
+                                + "#invalidateServerCursorProof",
+                        "net/minecraft/client/multiplayer/MultiPlayerGameMode"
+                                + "#handleContainerInput");
+        assertThat(invocations(node, "maintainCraftResult"))
+                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        + "#dispatchContainerClick")
+                .noneMatch(call -> call.endsWith("#handleContainerInput"));
+        assertThat(invocations(node, "acceptTransferSnapshot"))
+                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        + "#dispatchContainerClick")
+                .noneMatch(call -> call.endsWith("#handleContainerInput"));
+        assertThat(node.methods.stream()
+                .filter(method -> method.instructions.iterator().hasNext())
+                .filter(method -> invocations(node, method.name).stream()
+                        .anyMatch(call -> call.endsWith("#handleContainerInput")))
+                .map(method -> method.name))
+                .containsExactly("dispatchContainerClick");
+        assertThat(invocations(node, "closeForReadback"))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#freshEmptyServerCursorProof",
+                        "dev/aod/mcmcp/runtime/ScreenOwnershipSignals#cancelRoutine",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#closeOwnedMenuClient");
+    }
+
     private static List<String> invocations(ClassNode node, String methodName) {
         var calls = new ArrayList<String>();
         node.methods.stream()
