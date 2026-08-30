@@ -4,6 +4,9 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.Ingredient;
+import net.minecraft.world.item.crafting.RecipeBookCategories;
+import net.minecraft.world.item.crafting.RecipeBookCategory;
+import net.minecraft.world.item.crafting.display.FurnaceRecipeDisplay;
 import net.minecraft.world.item.crafting.display.RecipeDisplay;
 import net.minecraft.world.item.crafting.display.RecipeDisplayEntry;
 import net.minecraft.world.item.crafting.display.RecipeDisplayId;
@@ -195,6 +198,8 @@ public final class ClientRecipeCatalog {
         Shape shape;
         String requiredScreen;
         List<SlotDisplay> displayedIngredients;
+        int durationTicks = 0;
+        String unsupportedReason = null;
         if (display instanceof ShapedCraftingRecipeDisplay shaped) {
             displayKind = "shaped";
             shape = new Shape(shaped.width(), shaped.height());
@@ -209,6 +214,35 @@ public final class ClientRecipeCatalog {
                     ? "inventory_2x2" : "crafting_table";
             displayedIngredients = shapeless.ingredients();
         }
+        else if (display instanceof FurnaceRecipeDisplay furnace) {
+            shape = null;
+            displayedIngredients = List.of(furnace.ingredient());
+            durationTicks = furnace.duration();
+            CookingFamily categoryFamily = cookingCategory(entry.category());
+            CookingFamily stationFamily = cookingStation(furnace.craftingStation());
+            if (categoryFamily == null) {
+                displayKind = "other";
+                requiredScreen = "unsupported";
+                unsupportedReason = "unsupported_cooking_category";
+            }
+            else if (stationFamily == null) {
+                displayKind = "other";
+                requiredScreen = "unsupported";
+                unsupportedReason = "unsupported_cooking_station";
+            }
+            else if (categoryFamily != stationFamily) {
+                displayKind = "other";
+                requiredScreen = "unsupported";
+                unsupportedReason = "cooking_category_station_mismatch";
+            }
+            else {
+                displayKind = categoryFamily.displayKind;
+                requiredScreen = categoryFamily.requiredScreen;
+                if (durationTicks < 1) {
+                    unsupportedReason = "invalid_cooking_duration";
+                }
+            }
+        }
         else {
             displayKind = "other";
             shape = null;
@@ -218,16 +252,17 @@ public final class ClientRecipeCatalog {
 
         Result result = extractResult(display.result());
         var ingredients = new ArrayList<IngredientView>();
-        String unsupportedReason = null;
-        if (displayKind.equals("other")) {
+        if (unsupportedReason == null && displayKind.equals("other")) {
             unsupportedReason = "unsupported_display_kind";
         }
-        else if (entry.craftingRequirements().isEmpty()) {
+        else if (unsupportedReason == null && entry.craftingRequirements().isEmpty()) {
             unsupportedReason = "missing_crafting_requirements";
         }
-        else {
+        else if (unsupportedReason == null) {
             List<Ingredient> requirements = entry.craftingRequirements().orElseThrow();
-            if (requirements.isEmpty() || requirements.size() > 9) {
+            boolean cooking = durationTicks > 0;
+            if (requirements.isEmpty() || requirements.size() > 9
+                    || (cooking && requirements.size() != 1)) {
                 unsupportedReason = "invalid_crafting_requirements";
             }
             else {
@@ -286,11 +321,35 @@ public final class ClientRecipeCatalog {
         }
 
         var fingerprint = fingerprint(
-                entry.id().index(), displayKind, requiredScreen, shape, result, ingredients, supported,
-                unsupportedReason);
+                entry.id().index(), displayKind, requiredScreen, shape, durationTicks,
+                result, ingredients, supported, unsupportedReason);
         return new ExtractedRecipe(
                 entry.id(), fingerprint, displayKind, requiredScreen, supported, unsupportedReason,
-                result, List.copyOf(ingredients), shape, Set.copyOf(resultTags));
+                result, List.copyOf(ingredients), shape, durationTicks, Set.copyOf(resultTags));
+    }
+
+    private static CookingFamily cookingCategory(RecipeBookCategory category) {
+        if (category == RecipeBookCategories.FURNACE_FOOD
+                || category == RecipeBookCategories.FURNACE_BLOCKS
+                || category == RecipeBookCategories.FURNACE_MISC) {
+            return CookingFamily.SMELTING;
+        }
+        if (category == RecipeBookCategories.BLAST_FURNACE_BLOCKS
+                || category == RecipeBookCategories.BLAST_FURNACE_MISC) {
+            return CookingFamily.BLASTING;
+        }
+        return category == RecipeBookCategories.SMOKER_FOOD
+                ? CookingFamily.SMOKING : null;
+    }
+
+    private static CookingFamily cookingStation(SlotDisplay display) {
+        if (!(display instanceof SlotDisplay.ItemSlotDisplay station)) {
+            return null;
+        }
+        var item = station.item().value();
+        if (item == Items.FURNACE) return CookingFamily.SMELTING;
+        if (item == Items.BLAST_FURNACE) return CookingFamily.BLASTING;
+        return item == Items.SMOKER ? CookingFamily.SMOKING : null;
     }
 
     private static Result extractResult(SlotDisplay display) {
@@ -349,6 +408,7 @@ public final class ClientRecipeCatalog {
             String displayKind,
             String requiredScreen,
             Shape shape,
+            int durationTicks,
             Result result,
             List<IngredientView> ingredients,
             boolean supported,
@@ -365,6 +425,7 @@ public final class ClientRecipeCatalog {
                 out.writeInt(shape.width());
                 out.writeInt(shape.height());
             }
+            out.writeInt(durationTicks);
             out.writeBoolean(result.deterministic());
             out.writeInt(result.alternatives().size());
             for (var alternative : result.alternatives()) {
@@ -638,6 +699,7 @@ public final class ClientRecipeCatalog {
             Result result,
             List<IngredientView> ingredients,
             Shape shape,
+            int durationTicks,
             Set<String> resultTags) {
         private ExtractedRecipe {
             Objects.requireNonNull(displayId, "displayId");
@@ -647,6 +709,20 @@ public final class ClientRecipeCatalog {
             Objects.requireNonNull(result, "result");
             ingredients = List.copyOf(Objects.requireNonNull(ingredients, "ingredients"));
             resultTags = Set.copyOf(Objects.requireNonNull(resultTags, "resultTags"));
+        }
+    }
+
+    private enum CookingFamily {
+        SMELTING("smelting", "furnace"),
+        BLASTING("blasting", "blast_furnace"),
+        SMOKING("smoking", "smoker");
+
+        private final String displayKind;
+        private final String requiredScreen;
+
+        CookingFamily(String displayKind, String requiredScreen) {
+            this.displayKind = displayKind;
+            this.requiredScreen = requiredScreen;
         }
     }
 }
