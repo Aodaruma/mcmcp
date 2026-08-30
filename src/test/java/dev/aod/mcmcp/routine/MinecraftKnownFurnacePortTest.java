@@ -205,6 +205,12 @@ class MinecraftKnownFurnacePortTest {
         assertThat(invocations(node, "acceptLoadedSnapshot"))
                 .contains("dev/aod/mcmcp/routine/MinecraftKnownFurnacePort"
                         + "#inventoryReadbackMatches");
+        assertThat(invocations(node, "acceptInitialSnapshot"))
+                .containsSubsequence(
+                        "net/minecraft/world/item/crafting/RecipePropertySet#test",
+                        "net/minecraft/world/item/ItemStack#getBurnTime",
+                        "net/minecraft/world/item/crafting/RecipePropertySet#test")
+                .doesNotContain("net/minecraft/world/inventory/Slot#mayPlace");
         assertThat(invocations(node, "acceptFinalSnapshot"))
                 .contains("dev/aod/mcmcp/routine/MinecraftKnownFurnacePort"
                         + "#inventoryReadbackMatches");

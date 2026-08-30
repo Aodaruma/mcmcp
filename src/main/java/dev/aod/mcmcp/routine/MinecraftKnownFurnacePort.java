@@ -31,6 +31,8 @@ import net.minecraft.world.inventory.SmokerMenu;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.crafting.RecipePropertySet;
+import net.minecraft.world.item.crafting.RecipeType;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.AbstractFurnaceBlock;
 import net.minecraft.world.level.block.Blocks;
@@ -450,9 +452,21 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         SourcePlan sources = sourcePlan.orElseThrow();
         ItemStack ingredient = defaultItemStack(sources.ingredientKey().itemId());
         ItemStack fuel = defaultItemStack(state.fuelKey.itemId());
-        if (!view.menu().slots.get(INPUT_SLOT).mayPlace(ingredient)
-                || !view.menu().slots.get(FUEL_SLOT).mayPlace(fuel)
-                || view.menu().slots.get(INPUT_SLOT).mayPlace(fuel)) {
+        ClientLevel level = Objects.requireNonNull(requireMinecraft().level);
+        RecipePropertySet acceptedInputs = level.recipeAccess().propertySet(switch (
+                state.smelt.family()) {
+            case FURNACE -> RecipePropertySet.FURNACE_INPUT;
+            case BLAST_FURNACE -> RecipePropertySet.BLAST_FURNACE_INPUT;
+            case SMOKER -> RecipePropertySet.SMOKER_INPUT;
+        });
+        RecipeType<?> recipeType = switch (state.smelt.family()) {
+            case FURNACE -> RecipeType.SMELTING;
+            case BLAST_FURNACE -> RecipeType.BLASTING;
+            case SMOKER -> RecipeType.SMOKING;
+        };
+        if (!acceptedInputs.test(ingredient)
+                || fuel.getBurnTime(recipeType, level.fuelValues()) <= 0
+                || acceptedInputs.test(fuel)) {
             state.latchFailure(failure("FURNACE_QUICK_MOVE_ROUTE_AMBIGUOUS",
                     RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
