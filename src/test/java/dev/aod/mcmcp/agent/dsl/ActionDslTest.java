@@ -5,16 +5,19 @@ import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.aod.mcmcp.brewing.StandardPotionStackSpec;
+import dev.aod.mcmcp.redstone.RedstoneSpec;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -266,6 +269,80 @@ class ActionDslTest {
         assertCode(request(capabilities("camera", "block_place"), mismatchedPosition,
                         budget(30_000, 600, 0, 160, 0, 0, 2)),
                 ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
+    void parsesValidatesAndIntrinsicallyCompilesFixedRedstoneIdentity() {
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "block_interact", "block_place"),
+                applyKnownRedstoneSpec("identity", 90, 5),
+                budget(20_750, 415, 0, 720, 2, 0, 2)));
+
+        var redstone = (ActionDsl.ApplyKnownRedstoneSpec) request.program().body().getFirst();
+        assertThat(redstone.anchor()).isEqualTo(new ActionDsl.Position(
+                "minecraft:overworld", 10, 64, 10));
+        assertThat(redstone.rotation()).isEqualTo(90);
+        assertThat(redstone.components()).containsExactly(
+                new RedstoneSpec.Component(
+                        "input", RedstoneSpec.Role.INPUT, "minecraft:lever"),
+                new RedstoneSpec.Component(
+                        "output", RedstoneSpec.Role.OUTPUT, "minecraft:redstone_lamp"));
+        assertThat(redstone.truthTable()).containsExactly(
+                new RedstoneSpec.TruthRow(
+                        Map.of("input", false), Map.of("output", false)),
+                new RedstoneSpec.TruthRow(
+                        Map.of("input", true), Map.of("output", true)));
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.BLOCK_INTERACT,
+                        ActionDsl.Capability.BLOCK_PLACE);
+
+        var expectedCost = new ActionDslCompiler.Cost(
+                20_750, 415, 0, 720, 2, 0, 2);
+        assertThat(ActionDslCompiler.compile(
+                request, ignored -> Optional.empty(), request.program().capabilities())
+                .worstCaseCost()).isEqualTo(expectedCost);
+    }
+
+    @Test
+    void redstoneIdentityRejectsEveryShapeOutsideTheClosedSlice() {
+        for (Consumer<JsonObject> mutation : List.<Consumer<JsonObject>>of(
+                node -> node.addProperty("rotation", 45),
+                node -> node.getAsJsonObject("timing").addProperty("settle_ticks", 0),
+                node -> node.getAsJsonObject("timing").addProperty("settle_ticks", 21),
+                node -> node.getAsJsonObject("footprint").addProperty("x", 3),
+                node -> node.getAsJsonArray("components").remove(1),
+                node -> node.getAsJsonArray("components").add(
+                        node.getAsJsonArray("components").get(0).deepCopy()),
+                node -> node.getAsJsonArray("components").get(1).getAsJsonObject()
+                        .addProperty("block", "minecraft:redstone_wire"),
+                node -> node.getAsJsonArray("truth_table").remove(1),
+                node -> node.getAsJsonArray("truth_table").set(
+                        1, node.getAsJsonArray("truth_table").get(0).deepCopy()))) {
+            JsonObject node = applyKnownRedstoneSpec("identity", 0, 1);
+            mutation.accept(node);
+            assertCode(request(
+                            capabilities("camera", "block_interact", "block_place"),
+                            node,
+                            budget(600_000, 12_000, 0, 720, 2, 0, 2)),
+                    ActionDslException.Code.INVALID_ARGUMENT);
+        }
+
+        JsonObject extraField = applyKnownRedstoneSpec("identity", 0, 1);
+        extraField.addProperty("wire", "forbidden");
+        assertCode(request(
+                        capabilities("camera", "block_interact", "block_place"),
+                        extraField,
+                        budget(600_000, 12_000, 0, 720, 2, 0, 2)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        assertCode(request(
+                        capabilities("camera", "block_interact", "block_place"),
+                        repeat("repeat_identity", 2,
+                                array(applyKnownRedstoneSpec("identity", 0, 1))),
+                        budget(600_000, 12_000, 0, 720, 4, 0, 4)),
+                ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE);
     }
 
     @Test
@@ -1247,6 +1324,52 @@ class ActionDslTest {
         }
         node.add("entries", entries);
         return node;
+    }
+
+    private static JsonObject applyKnownRedstoneSpec(
+            String id, int rotation, int settleTicks) {
+        JsonObject node = baseNode(id, "apply_known_redstone_spec");
+        node.add("anchor", position(10, 64, 10));
+        node.addProperty("rotation", rotation);
+
+        JsonArray components = new JsonArray();
+        JsonObject input = new JsonObject();
+        input.addProperty("id", "input");
+        input.addProperty("role", "input");
+        input.addProperty("block", "minecraft:lever");
+        components.add(input);
+        JsonObject output = new JsonObject();
+        output.addProperty("id", "output");
+        output.addProperty("role", "output");
+        output.addProperty("block", "minecraft:redstone_lamp");
+        components.add(output);
+        node.add("components", components);
+
+        JsonArray truthTable = new JsonArray();
+        truthTable.add(redstoneTruthRow(false));
+        truthTable.add(redstoneTruthRow(true));
+        node.add("truth_table", truthTable);
+
+        JsonObject footprint = new JsonObject();
+        footprint.addProperty("x", 2);
+        footprint.addProperty("y", 1);
+        footprint.addProperty("z", 1);
+        node.add("footprint", footprint);
+        JsonObject timing = new JsonObject();
+        timing.addProperty("settle_ticks", settleTicks);
+        node.add("timing", timing);
+        return node;
+    }
+
+    private static JsonObject redstoneTruthRow(boolean value) {
+        JsonObject row = new JsonObject();
+        JsonObject inputs = new JsonObject();
+        inputs.addProperty("input", value);
+        row.add("inputs", inputs);
+        JsonObject outputs = new JsonObject();
+        outputs.addProperty("output", value);
+        row.add("outputs", outputs);
+        return row;
     }
 
     private static JsonObject brewKnownPotionBatch(String id, int count) {

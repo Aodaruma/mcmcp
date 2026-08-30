@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.agent.dsl;
 
 import dev.aod.mcmcp.brewing.StandardPotionPolicy;
+import dev.aod.mcmcp.redstone.RedstoneSpec;
 
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -367,6 +368,27 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_PLACE);
             return 1;
         }
+        if (node instanceof ActionDsl.ApplyKnownRedstoneSpec redstone) {
+            validatePosition(redstone.anchor(), path + ".anchor");
+            try {
+                new RedstoneSpec(
+                        redstone.components(),
+                        redstone.truthTable(),
+                        redstone.footprint(),
+                        redstone.rotation(),
+                        new RedstoneSpec.ExecutionBounds(
+                                true, redstone.timing().settleTicks()));
+            } catch (IllegalArgumentException failure) {
+                throw new ActionDslException(
+                        INVALID_ARGUMENT,
+                        "apply_known_redstone_spec is outside the fixed identity slice",
+                        failure);
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_INTERACT);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_PLACE);
+            return 1;
+        }
         if (node instanceof ActionDsl.OpenKnownFenceGate gate) {
             validatePosition(gate.target(), path + ".target");
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
@@ -482,6 +504,7 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.HarvestKnownWheat
                     || node instanceof ActionDsl.HarvestKnownWheatBatch
                     || node instanceof ActionDsl.ApplyKnownBlockPlan
+                    || node instanceof ActionDsl.ApplyKnownRedstoneSpec
                     || node instanceof ActionDsl.OpenKnownFenceGate
                     || node instanceof ActionDsl.OpenKnownPassage
                     || node instanceof ActionDsl.InspectKnownContainer

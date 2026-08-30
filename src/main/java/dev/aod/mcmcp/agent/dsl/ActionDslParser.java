@@ -7,6 +7,7 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import dev.aod.mcmcp.brewing.StandardPotionStackSpec;
+import dev.aod.mcmcp.redstone.RedstoneSpec;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -129,6 +130,7 @@ public final class ActionDslParser {
             case "harvest_known_wheat" -> harvestKnownWheat(object, path);
             case "harvest_known_wheat_batch" -> harvestKnownWheatBatch(object, path);
             case "apply_known_block_plan" -> applyKnownBlockPlan(object, path);
+            case "apply_known_redstone_spec" -> applyKnownRedstoneSpec(object, path);
             case "open_known_fence_gate" -> openKnownFenceGate(object, path);
             case "open_known_passage" -> openKnownPassage(object, path);
             case "inspect_known_container" -> inspectKnownContainer(object, path);
@@ -339,6 +341,76 @@ public final class ActionDslParser {
     private static Optional<String> nullableString(JsonElement value, String path) {
         if (value == null || value.isJsonNull()) return Optional.empty();
         return Optional.of(string(value, path));
+    }
+
+    private static ActionDsl.ApplyKnownRedstoneSpec applyKnownRedstoneSpec(
+            JsonObject source, String path) {
+        Set<String> fields = Set.of(
+                "id", "op", "anchor", "rotation", "components",
+                "truth_table", "footprint", "timing");
+        exactKeys(source, path, fields, fields);
+        JsonArray componentValues = array(source.get("components"), path + ".components");
+        var components = new ArrayList<RedstoneSpec.Component>(componentValues.size());
+        for (int index = 0; index < componentValues.size(); index++) {
+            components.add(redstoneComponent(
+                    componentValues.get(index), path + ".components[" + index + "]"));
+        }
+        JsonArray rowValues = array(source.get("truth_table"), path + ".truth_table");
+        var truthTable = new ArrayList<RedstoneSpec.TruthRow>(rowValues.size());
+        for (int index = 0; index < rowValues.size(); index++) {
+            truthTable.add(redstoneTruthRow(
+                    rowValues.get(index), path + ".truth_table[" + index + "]"));
+        }
+        return new ActionDsl.ApplyKnownRedstoneSpec(
+                string(source.get("id"), path + ".id"),
+                position(source.get("anchor"), path + ".anchor"),
+                integer(source.get("rotation"), path + ".rotation"),
+                components,
+                truthTable,
+                redstoneFootprint(source.get("footprint"), path + ".footprint"),
+                redstoneTiming(source.get("timing"), path + ".timing"));
+    }
+
+    private static RedstoneSpec.Component redstoneComponent(JsonElement value, String path) {
+        JsonObject object = object(value, path, Set.of("id", "role", "block"),
+                Set.of("id", "role", "block"));
+        String role = string(object.get("role"), path + ".role");
+        RedstoneSpec.Role parsedRole = switch (role) {
+            case "input" -> RedstoneSpec.Role.INPUT;
+            case "output" -> RedstoneSpec.Role.OUTPUT;
+            default -> throw invalid(path + ".role must be input or output");
+        };
+        return new RedstoneSpec.Component(
+                string(object.get("id"), path + ".id"),
+                parsedRole,
+                string(object.get("block"), path + ".block"));
+    }
+
+    private static RedstoneSpec.TruthRow redstoneTruthRow(JsonElement value, String path) {
+        JsonObject object = object(value, path, Set.of("inputs", "outputs"),
+                Set.of("inputs", "outputs"));
+        JsonObject inputs = object(object.get("inputs"), path + ".inputs",
+                Set.of("input"), Set.of("input"));
+        JsonObject outputs = object(object.get("outputs"), path + ".outputs",
+                Set.of("output"), Set.of("output"));
+        return new RedstoneSpec.TruthRow(
+                java.util.Map.of("input", bool(inputs.get("input"), path + ".inputs.input")),
+                java.util.Map.of("output", bool(outputs.get("output"), path + ".outputs.output")));
+    }
+
+    private static RedstoneSpec.Footprint redstoneFootprint(JsonElement value, String path) {
+        JsonObject object = object(value, path, Set.of("x", "y", "z"),
+                Set.of("x", "y", "z"));
+        return new RedstoneSpec.Footprint(
+                integer(object.get("x"), path + ".x"),
+                integer(object.get("y"), path + ".y"),
+                integer(object.get("z"), path + ".z"));
+    }
+
+    private static ActionDsl.RedstoneTiming redstoneTiming(JsonElement value, String path) {
+        JsonObject object = object(value, path, Set.of("settle_ticks"), Set.of("settle_ticks"));
+        return new ActionDsl.RedstoneTiming(
+                integer(object.get("settle_ticks"), path + ".settle_ticks"));
     }
 
     private static ActionDsl.OpenKnownFenceGate openKnownFenceGate(

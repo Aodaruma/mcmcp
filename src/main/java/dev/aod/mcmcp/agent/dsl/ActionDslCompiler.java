@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.agent.dsl;
 
+import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashMap;
@@ -91,6 +93,11 @@ public final class ActionDslCompiler {
         }
         if (node instanceof ActionDsl.ApplyKnownBlockPlan plan) {
             Cost cost = intrinsicKnownBlockPlanCost(plan.entries().size());
+            primitiveCostBounds.put(node.id(), cost);
+            return cost;
+        }
+        if (node instanceof ActionDsl.ApplyKnownRedstoneSpec redstone) {
+            Cost cost = intrinsicKnownRedstoneCost(redstone.timing().settleTicks());
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }
@@ -211,6 +218,25 @@ public final class ActionDslCompiler {
                 0,
                 0,
                 entries);
+    }
+
+    /** Structural bound for two placements, two lever interactions, and three observations. */
+    public static Cost intrinsicKnownRedstoneCost(int settleTicks) {
+        if (settleTicks < 1
+                || settleTicks > dev.aod.mcmcp.redstone.RedstoneSpec.MAX_SETTLE_TICKS) {
+            throw new IllegalArgumentException("redstone settle ticks are outside the closed bound");
+        }
+        long ticks = Math.addExact(
+                Math.multiplyExact(4L, AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND),
+                Math.multiplyExact(3L, settleTicks));
+        return new Cost(
+                multiplyExact(ticks, NOMINAL_TICK_MILLIS),
+                ticks,
+                0,
+                ActionDslValidator.MAX_ACTION_CAMERA_DEGREES,
+                2,
+                0,
+                2);
     }
 
     private static void requireMutationCost(

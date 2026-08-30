@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.agent.dsl;
 
 import dev.aod.mcmcp.brewing.StandardPotionStackSpec;
+import dev.aod.mcmcp.redstone.RedstoneSpec;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -38,6 +39,7 @@ public final class ActionDsl {
             FaceKnownPosition, BreakKnownFace,
             TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
             HarvestKnownWheat, HarvestKnownWheatBatch, ApplyKnownBlockPlan,
+            ApplyKnownRedstoneSpec,
             OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
             BrewKnownPotionBatch,
@@ -220,6 +222,28 @@ public final class ActionDsl {
     }
 
     public record Offset(int x, int y, int z) {
+    }
+
+    /** Fixed two-block lever-to-lamp identity circuit. */
+    public record ApplyKnownRedstoneSpec(
+            String id,
+            Position anchor,
+            int rotation,
+            List<RedstoneSpec.Component> components,
+            List<RedstoneSpec.TruthRow> truthTable,
+            RedstoneSpec.Footprint footprint,
+            RedstoneTiming timing) implements Node {
+        public ApplyKnownRedstoneSpec {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(anchor, "anchor");
+            components = List.copyOf(Objects.requireNonNull(components, "components"));
+            truthTable = List.copyOf(Objects.requireNonNull(truthTable, "truthTable"));
+            Objects.requireNonNull(footprint, "footprint");
+            Objects.requireNonNull(timing, "timing");
+        }
+    }
+
+    public record RedstoneTiming(int settleTicks) {
     }
 
     /** Wire-level mirror followed by clockwise Y-axis rotation. */
