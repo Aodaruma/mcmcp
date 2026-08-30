@@ -66,7 +66,8 @@ public final class AgentPrimitivePlanner {
     public static final long BREAK_REOBSERVATION_TICKS = 40L;
     public static final long MUTATION_BATCH_REPROOF_TICKS = 40L;
     public static final long BLOCK_MUTATION_TICK_UPPER_BOUND = 100L;
-    public static final long CONTAINER_TICK_UPPER_BOUND = 400L;
+    public static final long CONTAINER_OPERATION_TICK_UPPER_BOUND = 400L;
+    public static final long CONTAINER_TICK_UPPER_BOUND = 600L;
     public static final long BREWING_TICK_UPPER_BOUND =
             ActionDslCompiler.KNOWN_BREWING_TICKS;
     // Player-thrown item entities can retain a 40-tick pickup delay. Leave a bounded

@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.routine;
 
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
+import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.runtime.ClientPredictionSignals;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals;
 import dev.aod.mcmcp.runtime.ExpectedOpenToken;
@@ -8,12 +9,15 @@ import dev.aod.mcmcp.runtime.ScreenOwnershipSignals;
 import dev.aod.mcmcp.runtime.WorldSessionTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ChestMenu;
@@ -58,6 +62,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     private static final int RELEASE_TIMEOUT_TICKS = 40;
     private static final int CRAFTING_GRID_LAST_SLOT = 9;
     private static final float MIN_SAFE_HEALTH = 10.0F;
+    private static final double THREAT_RADIUS = 8.0D;
+    private static final double MAX_POSITION_DRIFT_SQUARED = 0.01D * 0.01D;
+    private static final double MAX_HORIZONTAL_VELOCITY_SQUARED = 0.01D;
     private static final float LEGACY_MAX_TURN_PER_TICK = 8.0F;
     private static final float AIM_EPSILON = 0.75F;
     private static final float ROTATION_EPSILON = 0.1F;
@@ -65,6 +72,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     private final Supplier<Minecraft> minecraftSupplier;
     private final Supplier<WorldSessionTracker.Snapshot> sessionSupplier;
     private final ClientRecipeCatalog recipes;
+    private final MinecraftObservationService observations;
     private final ScreenOwnershipSignals screens;
     private final DoubleSupplier runtimeCameraDegreesPerTick;
     private final ClientPredictionSignals predictions;
@@ -74,12 +82,14 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             Supplier<Minecraft> minecraftSupplier,
             Supplier<WorldSessionTracker.Snapshot> sessionSupplier,
             ClientRecipeCatalog recipes,
+            MinecraftObservationService observations,
             ScreenOwnershipSignals screens,
             DoubleSupplier runtimeCameraDegreesPerTick,
             ClientPredictionSignals predictions) {
         this.minecraftSupplier = Objects.requireNonNull(minecraftSupplier, "minecraftSupplier");
         this.sessionSupplier = Objects.requireNonNull(sessionSupplier, "sessionSupplier");
         this.recipes = Objects.requireNonNull(recipes, "recipes");
+        this.observations = Objects.requireNonNull(observations, "observations");
         this.screens = Objects.requireNonNull(screens, "screens");
         this.runtimeCameraDegreesPerTick = Objects.requireNonNull(
                 runtimeCameraDegreesPerTick, "runtimeCameraDegreesPerTick");
@@ -121,13 +131,16 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             AttemptState state) {
         if (session == null || !session.worldReady()
                 || minecraft.level == null || minecraft.player == null
+                || minecraft.gameMode == null || minecraft.getConnection() == null
+                || state.baseline == null || !state.baseline.sameSession(session)
                 || !state.request.bounds().dimension().equals(session.dimension())
                 || !state.request.bounds().dimension().equals(
                         minecraft.level.dimension().identifier().toString())) {
             return failure("INVENTORY_WORLD_SESSION_CHANGED", RoutineFailure.Category.EXTERNAL,
                     RoutineFailure.Recovery.REPLAN, Map.of("world_ready", true), Map.of());
         }
-        if (!safePlayer(minecraft)) {
+        if (!basicPlayerSafety(minecraft, state.baseline)
+                || state.view == null || !state.view.undisturbed(minecraft)) {
             return failure("INVENTORY_PLAYER_UNSAFE", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.USER,
                     Map.of("safe_survival_player", true), Map.of());
@@ -138,6 +151,37 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     RoutineFailure.Recovery.REPLAN,
                     Map.of("owned_screen", true),
                     Map.of("reason", Objects.toString(screen.failureReason(), "unknown")));
+        }
+        if (!screenContextMatches(minecraft, state, screen.phase())) {
+            return failure("INVENTORY_SCREEN_CONTEXT_CHANGED", RoutineFailure.Category.SAFETY,
+                    RoutineFailure.Recovery.USER,
+                    Map.of("expected_screen_context", true), Map.of());
+        }
+        if ((state.stage == Stage.AIMING_INITIAL || state.stage == Stage.AIMING_READBACK
+                || state.stage == Stage.OPENING_INITIAL || state.stage == Stage.OPENING_READBACK)
+                && (state.openHand == null || !state.openHand.ready(minecraft.player))) {
+            return failure("INVENTORY_SAFE_OPEN_HAND_CHANGED", RoutineFailure.Category.SAFETY,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("side_effect_free_normal_use", true), Map.of());
+        }
+        BlockPos target = blockPos(state.parameters.target());
+        if (!minecraft.level.isLoaded(target)
+                || !minecraft.level.getWorldBorder().isWithinBounds(target)
+                || !minecraft.player.isWithinBlockInteractionRange(target, 0.0D)) {
+            return failure("INVENTORY_TARGET_STATE_DIVERGED", RoutineFailure.Category.DIVERGENCE,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("target_current", true), Map.of());
+        }
+        BlockState liveTarget = minecraft.level.getBlockState(target);
+        boolean exactStateRequired = state.parameters instanceof CraftParameters
+                || state.stage == Stage.AIMING_INITIAL
+                || state.stage == Stage.AIMING_READBACK;
+        if (exactStateRequired
+                ? !state.parameters.expectedState().equals(fingerprint(liveTarget))
+                : !sameTransferContainerIdentity(state.parameters.expectedState(), liveTarget)) {
+            return failure("INVENTORY_TARGET_STATE_DIVERGED", RoutineFailure.Category.DIVERGENCE,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("target_current", true), Map.of());
         }
         return null;
     }
@@ -177,14 +221,21 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             state.stage = Stage.TERMINAL;
             return attempt;
         }
-        float cameraDegreesPerTick = state.parameters instanceof CraftParameters
-                ? configuredCameraDegreesPerTick()
-                : state.parameters.maxCameraDegreesPerTick();
-        state.view = ViewLease.acquire(
-                Objects.requireNonNull(minecraft.player),
-                state.parameters.restoreViewOnRelease(),
-                cameraDegreesPerTick);
-        state.stage = Stage.AIMING_INITIAL;
+        try {
+            LocalPlayer player = Objects.requireNonNull(minecraft.player);
+            state.baseline = PlayerBaseline.capture(player, Objects.requireNonNull(session));
+            float cameraDegreesPerTick = state.parameters instanceof CraftParameters
+                    ? configuredCameraDegreesPerTick()
+                    : state.parameters.maxCameraDegreesPerTick();
+            state.view = ViewLease.acquire(
+                    player, state.parameters.restoreViewOnRelease(), cameraDegreesPerTick);
+            if (selectOpenHand(minecraft, state, tick)) {
+                state.stage = Stage.AIMING_INITIAL;
+            }
+        } catch (IllegalArgumentException | IllegalStateException preparationFailure) {
+            fail(state, "INVENTORY_PREPARATION_FAILED", RoutineFailure.Category.SAFETY,
+                    RoutineFailure.Recovery.REPLAN, Map.of(), Map.of());
+        }
         return attempt;
     }
 
@@ -201,16 +252,10 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         }
         var session = sessionSupplier.get();
         long tick = session == null ? 0L : Math.max(0L, session.clientTick());
-        if (session == null || !session.worldReady()
-                || !state.request.bounds().dimension().equals(session.dimension())) {
-            fail(state, "INVENTORY_WORLD_SESSION_CHANGED", RoutineFailure.Category.EXTERNAL,
-                    RoutineFailure.Recovery.REPLAN, Map.of(), Map.of());
-            return;
-        }
-        if (!safePlayer(minecraft)) {
-            fail(state, "INVENTORY_PLAYER_UNSAFE", RoutineFailure.Category.SAFETY,
-                    RoutineFailure.Recovery.USER,
-                    Map.of("safe_survival_player", true), Map.of());
+        RoutineFailure ongoing = ongoingFailure(minecraft, session, state);
+        if (ongoing != null) {
+            state.failure = ongoing;
+            state.stage = Stage.TERMINAL;
             return;
         }
         if (tick >= attempt.hardDeadlineClientTick()) {
@@ -221,14 +266,6 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return;
         }
         var screenState = screens.snapshot();
-        if (screenState.phase() == ScreenOwnershipSignals.Phase.FAILED) {
-            fail(state, "OWNED_SCREEN_FAILED", RoutineFailure.Category.SAFETY,
-                    RoutineFailure.Recovery.REPLAN,
-                    Map.of("expected_target", state.parameters.target().toString()),
-                    Map.of("reason", Objects.toString(screenState.failureReason(), "unknown")));
-            return;
-        }
-
         switch (state.stage) {
             case AIMING_INITIAL -> maintainAim(attempt, state, false);
             case AIMING_READBACK -> maintainAim(attempt, state, true);
@@ -243,7 +280,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                         && minecraft.player != null
                         && minecraft.player.containerMenu == minecraft.player.inventoryMenu) {
                     if (targetReadyForReopen(minecraft, state.parameters)) {
-                        state.stage = Stage.AIMING_READBACK;
+                        if (selectOpenHand(minecraft, state, tick)) {
+                            state.stage = Stage.AIMING_READBACK;
+                        }
                     } else if (tick > state.closeDeadlineClientTick) {
                         state.inconclusive = new InconclusiveState(
                                 PhaseFiveEvidence.Certainty.UNKNOWN,
@@ -763,10 +802,17 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             PhaseFiveAttempt attempt, AttemptState state, boolean readback) {
         var minecraft = assertClientThread();
         var session = requireSession();
-        RoutineFailure failure = preflight(minecraft, session, state.request);
+        RoutineFailure failure = ongoingFailure(minecraft, session, state);
         if (failure != null) {
             state.failure = failure;
             state.stage = Stage.TERMINAL;
+            return;
+        }
+        if (state.openHand == null || !state.openHand.ready(Objects.requireNonNull(minecraft.player))
+                || currentTick() <= state.openHandSelectedClientTick) {
+            fail(state, "CONTAINER_SAFE_OPEN_HAND_NOT_SETTLED", RoutineFailure.Category.SAFETY,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("side_effect_free_normal_use", true), Map.of());
             return;
         }
         var parameters = state.parameters;
@@ -804,7 +850,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         final boolean consumed;
         try {
             consumed = Objects.requireNonNull(minecraft.gameMode)
-                    .useItemOn(minecraft.player, InteractionHand.MAIN_HAND, hit)
+                    .useItemOn(minecraft.player, state.openHand.hand(), hit)
                     .consumesAction();
             int sequenceAfter = prediction.captureIssuedPredictions();
             if (sequenceAfter != sequenceBefore + 1) {
@@ -832,7 +878,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
     private void maintainAim(PhaseFiveAttempt attempt, AttemptState state, boolean readback) {
         var minecraft = assertClientThread();
-        RoutineFailure failure = preflight(minecraft, sessionSupplier.get(), state.request);
+        RoutineFailure failure = ongoingFailure(minecraft, sessionSupplier.get(), state);
         if (failure != null) {
             state.failure = failure;
             state.stage = Stage.TERMINAL;
@@ -848,6 +894,22 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 && hit.getBlockPos().equals(blockPos(target))) {
             dispatchExpectedOpen(attempt, state, readback);
         }
+    }
+
+    private static boolean selectOpenHand(
+            Minecraft minecraft, AttemptState state, long clientTick) {
+        Optional<OpenHandPlan> openHand = chooseOpenHand(
+                Objects.requireNonNull(minecraft.player));
+        if (openHand.isEmpty()) {
+            fail(state, "INVENTORY_SAFE_OPEN_HAND_UNAVAILABLE", RoutineFailure.Category.SAFETY,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("side_effect_free_normal_use", true), Map.of());
+            return false;
+        }
+        state.openHand = openHand.orElseThrow();
+        state.view.selectOpenHand(minecraft, state.openHand);
+        state.openHandSelectedClientTick = clientTick;
+        return true;
     }
 
     private RoutineFailure preflight(
@@ -875,15 +937,22 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     RoutineFailure.Recovery.REPLAN,
                     Map.of("target_in_bounds", true), Map.of());
         }
-        if (!safePlayer(minecraft)) {
+        if (!basicPlayerSafety(minecraft, null)) {
             return failure("INVENTORY_PLAYER_UNSAFE", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.USER, Map.of("safe_survival_player", true), Map.of());
         }
-        if (player.containerMenu != player.inventoryMenu
+        if (minecraft.gui.screen() != null
+                || player.containerMenu != player.inventoryMenu
                 || screens.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE) {
             return failure("INVENTORY_SCREEN_NOT_CLEAR", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.USER,
                     Map.of("screen", "clear", "ownership", "idle"), Map.of());
+        }
+        if (chooseOpenHand(player).isEmpty()) {
+            return failure("INVENTORY_SAFE_OPEN_HAND_REQUIRED",
+                    RoutineFailure.Category.PRECONDITION,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("empty_offhand_or_safe_hotbar_item", true), Map.of());
         }
         var position = blockPos(parameters.target());
         if (!level.isLoaded(position) || !level.getWorldBorder().isWithinBounds(position)) {
@@ -1079,7 +1148,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 || (state.screenOwnedObserved && !state.cursorReleaseConfirmed)) {
             return;
         }
-        state.closeView(minecraft);
+        if (!state.closeView(minecraft)) {
+            return;
+        }
         state.releaseConfirmed = true;
         state.releasePending = false;
         state.stage = Stage.TERMINAL;
@@ -1297,19 +1368,108 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 && state.getValue(ChestBlock.TYPE) == ChestType.SINGLE;
     }
 
-    private static boolean safePlayer(Minecraft minecraft) {
-        var player = minecraft.player;
-        return player != null
-                && minecraft.gameMode != null
+    private boolean basicPlayerSafety(Minecraft minecraft, PlayerBaseline baseline) {
+        LocalPlayer player = minecraft.player;
+        ClientLevel level = minecraft.level;
+        if (player == null || level == null || minecraft.gameMode == null) return false;
+        Vec3 velocity = player.getDeltaMovement();
+        double horizontalVelocitySquared = velocity.x * velocity.x + velocity.z * velocity.z;
+        return !minecraft.isPaused()
+                && minecraft.gui.overlay() == null
                 && player.isAlive()
                 && !player.isDeadOrDying()
                 && player.getHealth() >= MIN_SAFE_HEALTH
+                && (baseline == null || player.getHealth() + 0.001F >= baseline.health())
                 && player.hurtTime == 0
                 && player.getRemainingFireTicks() <= 0
                 && !player.isUsingItem()
                 && !player.isShiftKeyDown()
                 && !player.isPassenger()
-                && minecraft.gameMode.getPlayerMode() == GameType.SURVIVAL;
+                && player.onGround()
+                && Double.isFinite(horizontalVelocitySquared)
+                && horizontalVelocitySquared <= MAX_HORIZONTAL_VELOCITY_SQUARED
+                && (baseline == null || baseline.matches(player))
+                && minecraft.gameMode.getPlayerMode() == GameType.SURVIVAL
+                && visibleThreatClear(minecraft, player, level);
+    }
+
+    private boolean visibleThreatClear(
+            Minecraft minecraft, LocalPlayer player, ClientLevel level) {
+        return level.getEntities(player, player.getBoundingBox().inflate(THREAT_RADIUS),
+                        entity -> entity.isAlive() && (entity instanceof Enemy
+                                || entity instanceof Mob mob && mob.getTarget() == player))
+                .stream().noneMatch(entity -> observations.isEntityCurrentlyVisible(
+                        minecraft, entity, THREAT_RADIUS));
+    }
+
+    private static boolean screenContextMatches(
+            Minecraft minecraft,
+            AttemptState state,
+            ScreenOwnershipSignals.Phase phase) {
+        boolean exactContainer = exactContainerScreen(minecraft, state.parameters.menuTypeId());
+        if (state.stage == Stage.AIMING_INITIAL || state.stage == Stage.AIMING_READBACK) {
+            return phase == ScreenOwnershipSignals.Phase.IDLE
+                    && minecraft.gui.screen() == null
+                    && minecraft.player != null
+                    && minecraft.player.containerMenu == minecraft.player.inventoryMenu;
+        }
+        if (state.stage == Stage.OPENING_INITIAL || state.stage == Stage.OPENING_READBACK) {
+            return (phase == ScreenOwnershipSignals.Phase.EXPECTING_OPEN_PACKET
+                    || phase == ScreenOwnershipSignals.Phase.EXPECTING_SCREEN
+                    || phase == ScreenOwnershipSignals.Phase.EXPECTING_FULL_CONTENT
+                    || phase == ScreenOwnershipSignals.Phase.OWNED)
+                    && (minecraft.gui.screen() == null || exactContainer);
+        }
+        if (state.stage == Stage.AWAITING_CLOSE) {
+            if (phase == ScreenOwnershipSignals.Phase.IDLE) {
+                return minecraft.gui.screen() == null
+                        && minecraft.player != null
+                        && minecraft.player.containerMenu == minecraft.player.inventoryMenu;
+            }
+            return phase == ScreenOwnershipSignals.Phase.CLOSING
+                    && (minecraft.gui.screen() == null || exactContainer);
+        }
+        return phase == ScreenOwnershipSignals.Phase.OWNED && exactContainer;
+    }
+
+    private static boolean exactContainerScreen(Minecraft minecraft, String menuTypeId) {
+        return minecraft.player != null
+                && minecraft.gui.screen() instanceof AbstractContainerScreen<?> screen
+                && screen.getMenu() == minecraft.player.containerMenu
+                && ScreenOwnershipSignals.menuTypeId(screen.getMenu().getType()).equals(menuTypeId);
+    }
+
+    private static Optional<OpenHandPlan> chooseOpenHand(LocalPlayer player) {
+        Objects.requireNonNull(player, "player");
+        if (player.getOffhandItem().isEmpty()) {
+            return Optional.of(new OpenHandPlan(
+                    InteractionHand.OFF_HAND, player.getInventory().getSelectedSlot()));
+        }
+        for (int slot = 0; slot < 9; slot++) {
+            if (player.getInventory().getItem(slot).isEmpty()) {
+                return Optional.of(new OpenHandPlan(InteractionHand.MAIN_HAND, slot));
+            }
+        }
+        for (int slot = 0; slot < 9; slot++) {
+            if (MinecraftKnownBrewingPort.safeNormalUseStack(
+                    player.getInventory().getItem(slot))) {
+                return Optional.of(new OpenHandPlan(InteractionHand.MAIN_HAND, slot));
+            }
+        }
+        return Optional.empty();
+    }
+
+    static boolean sameTransferContainerIdentity(
+            BlockStateFingerprint expected, BlockState live) {
+        if (!singleVanillaContainer(live)) return false;
+        BlockStateFingerprint actual = fingerprint(live);
+        if (live.is(Blocks.CHEST)) return expected.equals(actual);
+        if (!expected.blockId().equals(actual.blockId())) return false;
+        var expectedProperties = new LinkedHashMap<>(expected.properties());
+        var actualProperties = new LinkedHashMap<>(actual.properties());
+        expectedProperties.remove("open");
+        actualProperties.remove("open");
+        return expectedProperties.equals(actualProperties);
     }
 
     private static boolean targetReadyForReopen(
@@ -1788,6 +1948,61 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             PhaseFiveEvidence.Certainty certainty, String reason) {
     }
 
+    record OpenHandPlan(InteractionHand hand, int selectedSlot) {
+        OpenHandPlan {
+            Objects.requireNonNull(hand, "hand");
+            if (selectedSlot < 0 || selectedSlot > 8) {
+                throw new IllegalArgumentException("open-hand slot is outside the hotbar");
+            }
+        }
+
+        boolean ready(LocalPlayer player) {
+            if (player.getInventory().getSelectedSlot() != selectedSlot) return false;
+            ItemStack stack = hand == InteractionHand.OFF_HAND
+                    ? player.getOffhandItem() : player.getMainHandItem();
+            return stack.isEmpty()
+                    || hand == InteractionHand.MAIN_HAND
+                    && MinecraftKnownBrewingPort.safeNormalUseStack(stack);
+        }
+
+        boolean readyAtSlot(LocalPlayer player) {
+            ItemStack stack = hand == InteractionHand.OFF_HAND
+                    ? player.getOffhandItem()
+                    : player.getInventory().getItem(selectedSlot);
+            return stack.isEmpty()
+                    || hand == InteractionHand.MAIN_HAND
+                    && MinecraftKnownBrewingPort.safeNormalUseStack(stack);
+        }
+    }
+
+    private record PlayerBaseline(
+            UUID worldSessionId,
+            String dimension,
+            double x,
+            double y,
+            double z,
+            float health) {
+        static PlayerBaseline capture(
+                LocalPlayer player, WorldSessionTracker.Snapshot session) {
+            return new PlayerBaseline(
+                    session.worldSessionId(), session.dimension(),
+                    player.getX(), player.getY(), player.getZ(), player.getHealth());
+        }
+
+        boolean sameSession(WorldSessionTracker.Snapshot session) {
+            return worldSessionId.equals(session.worldSessionId())
+                    && dimension.equals(session.dimension());
+        }
+
+        boolean matches(LocalPlayer player) {
+            double dx = player.getX() - x;
+            double dy = player.getY() - y;
+            double dz = player.getZ() - z;
+            return Double.isFinite(dx) && Double.isFinite(dy) && Double.isFinite(dz)
+                    && dx * dx + dy * dy + dz * dz <= MAX_POSITION_DRIFT_SQUARED;
+        }
+    }
+
     private static final class AttemptState {
         private final PhaseFiveRequest request;
         private final ParsedParameters parameters;
@@ -1822,6 +2037,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private boolean releaseConfirmed;
         private boolean releaseFault;
         private ClientPredictionSignals.PredictionAttempt openPrediction;
+        private PlayerBaseline baseline;
+        private OpenHandPlan openHand;
+        private long openHandSelectedClientTick = -1L;
         private ViewLease view;
 
         private AttemptState(PhaseFiveRequest request, ParsedParameters parameters) {
@@ -1867,32 +2085,53 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return basis;
         }
 
-        private void closeView(Minecraft minecraft) {
-            if (view != null) {
-                view.close(minecraft);
-                view = null;
-            }
+        private boolean closeView(Minecraft minecraft) {
+            if (view == null) return true;
+            if (!view.close(minecraft)) return false;
+            view = null;
+            return true;
         }
     }
 
     /** Bounded camera lease; container use remains a normal first-person interaction. */
     private static final class ViewLease {
+        private final LocalPlayer playerIdentity;
+        private final Object levelIdentity;
         private final float originalYaw;
         private final float originalPitch;
+        private final int originalSlot;
         private float expectedYaw;
         private float expectedPitch;
+        private int expectedSlot;
         private final boolean restoreOnClose;
         private final float maxTurnPerTick;
         private boolean closed;
 
         private ViewLease(
-                LocalPlayer player, boolean restoreOnClose, float maxTurnPerTick) {
+            LocalPlayer player, boolean restoreOnClose, float maxTurnPerTick) {
+            playerIdentity = Objects.requireNonNull(player, "player");
+            levelIdentity = player.level();
             originalYaw = player.getYRot();
             originalPitch = player.getXRot();
+            originalSlot = player.getInventory().getSelectedSlot();
             expectedYaw = originalYaw;
             expectedPitch = originalPitch;
+            expectedSlot = originalSlot;
             this.restoreOnClose = restoreOnClose;
             this.maxTurnPerTick = maxTurnPerTick;
+        }
+
+        void selectOpenHand(Minecraft minecraft, OpenHandPlan plan) {
+            requireUndisturbed(minecraft);
+            LocalPlayer player = Objects.requireNonNull(minecraft.player);
+            if (!plan.readyAtSlot(player)) {
+                throw new IllegalStateException("side-effect-free open hand changed");
+            }
+            player.getInventory().setSelectedSlot(plan.selectedSlot());
+            expectedSlot = plan.selectedSlot();
+            if (!plan.ready(player)) {
+                throw new IllegalStateException("side-effect-free open hand is not selected");
+            }
         }
 
         static ViewLease acquire(
@@ -1924,28 +2163,55 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     && Math.abs(target.pitch - player.getXRot()) <= AIM_EPSILON;
         }
 
-        void close(Minecraft minecraft) {
-            if (closed) {
-                return;
+        boolean close(Minecraft minecraft) {
+            if (closed) return releaseConfirmed(minecraft);
+            if (ownershipContextLost(minecraft)) {
+                closed = true;
+                return true;
             }
             LocalPlayer player = minecraft.player;
-            if (player != null && restoreOnClose) {
+            if (player == null || !undisturbed(minecraft)) return false;
+            player.getInventory().setSelectedSlot(originalSlot);
+            expectedSlot = originalSlot;
+            if (restoreOnClose) {
                 float yaw = Mth.wrapDegrees(originalYaw - player.getYRot());
                 float pitch = originalPitch - player.getXRot();
                 player.turn(yaw / 0.15D, pitch / 0.15D);
+                expectedYaw = player.getYRot();
+                expectedPitch = player.getXRot();
             }
             closed = true;
+            return releaseConfirmed(minecraft);
+        }
+
+        boolean undisturbed(Minecraft minecraft) {
+            if (closed || ownershipContextLost(minecraft) || minecraft.player == null) return false;
+            LocalPlayer player = minecraft.player;
+            return Math.abs(Mth.wrapDegrees(player.getYRot() - expectedYaw))
+                            <= ROTATION_EPSILON
+                    && Math.abs(player.getXRot() - expectedPitch) <= ROTATION_EPSILON
+                    && player.getInventory().getSelectedSlot() == expectedSlot;
+        }
+
+        private boolean releaseConfirmed(Minecraft minecraft) {
+            if (closed && ownershipContextLost(minecraft)) return true;
+            LocalPlayer player = minecraft.player;
+            return closed && player != null
+                    && player.getInventory().getSelectedSlot() == originalSlot
+                    && (!restoreOnClose
+                    || Math.abs(Mth.wrapDegrees(player.getYRot() - originalYaw))
+                            <= ROTATION_EPSILON
+                    && Math.abs(player.getXRot() - originalPitch) <= ROTATION_EPSILON);
         }
 
         private void requireUndisturbed(Minecraft minecraft) {
-            if (closed) {
-                throw new IllegalStateException("view lease is closed");
-            }
-            LocalPlayer player = Objects.requireNonNull(minecraft.player);
-            if (Math.abs(Mth.wrapDegrees(player.getYRot() - expectedYaw)) > ROTATION_EPSILON
-                    || Math.abs(player.getXRot() - expectedPitch) > ROTATION_EPSILON) {
+            if (!undisturbed(minecraft)) {
                 throw new IllegalStateException("view ownership changed");
             }
+        }
+
+        private boolean ownershipContextLost(Minecraft minecraft) {
+            return minecraft.player != playerIdentity || minecraft.level != levelIdentity;
         }
 
         private static Rotation rotation(Vec3 from, Vec3 to) {

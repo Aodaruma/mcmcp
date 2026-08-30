@@ -1322,7 +1322,7 @@ class AgentPrimitivePlannerTest {
                 4.5F);
 
         assertThat(analysis.primitiveCosts().get("craft")).isEqualTo(
-                new ActionDslCompiler.Cost(20_000, 400, 0,
+                new ActionDslCompiler.Cost(30_000, 600, 0,
                         analysis.primitiveCosts().get("craft").cameraDegrees(), 13, 0, 0));
         assertThat(analysis.knownSurfaces()).singleElement().satisfies(surface ->
                 assertThat(surface.block()).isEqualTo("minecraft:crafting_table"));
@@ -1359,8 +1359,11 @@ class AgentPrimitivePlannerTest {
                 pose, new Vec3(3.0D, 64.5D, 0.5D), 4.5F, 1, 0, 0);
         assertThat(actual.cameraDegrees()).isEqualTo(centerCost.cameraDegrees());
         assertThat(actual.cameraDegrees()).isNotEqualTo(rayHitCost.cameraDegrees());
-        assertThat(actual.durationMillis()).isEqualTo(20_000L);
+        assertThat(actual.durationMillis()).isEqualTo(30_000L);
         assertThat(actual.ticks()).isEqualTo(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
+        assertThat(AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND).isEqualTo(400L);
+        assertThat(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND
+                - AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND).isEqualTo(200L);
     }
 
     @Test

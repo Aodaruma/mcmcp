@@ -8,6 +8,9 @@ import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -178,6 +181,30 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
+    void transferAllowsOnlyTheSameSingleContainerWhileBarrelOpenStateEvolves() {
+        var closedBarrel = Blocks.BARREL.defaultBlockState()
+                .setValue(BlockStateProperties.OPEN, false);
+        var openBarrel = closedBarrel.setValue(BlockStateProperties.OPEN, true);
+        var expected = MinecraftPhaseFiveInventoryPort.fingerprintLiveState(closedBarrel);
+
+        assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
+                expected, openBarrel)).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
+                expected, Blocks.CHEST.defaultBlockState())).isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
+                expected, openBarrel.setValue(BlockStateProperties.FACING, Direction.EAST)))
+                .isFalse();
+
+        var chest = Blocks.CHEST.defaultBlockState();
+        var expectedChest = MinecraftPhaseFiveInventoryPort.fingerprintLiveState(chest);
+        assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
+                expectedChest, chest)).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
+                expectedChest, chest.setValue(BlockStateProperties.HORIZONTAL_FACING,
+                        Direction.EAST))).isFalse();
+    }
+
+    @Test
     void craftingAloneRetainsTheStationHeadingAndUsesTheRuntimeCameraLimit() throws Exception {
         var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
         var parameters = new MinecraftPhaseFiveInventoryPort.CraftParameters(
@@ -195,7 +222,8 @@ class MinecraftPhaseFiveInventoryPortTest {
                 .containsSubsequence(
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#configuredCameraDegreesPerTick",
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$ViewLease#acquire");
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$ViewLease#acquire",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#selectOpenHand");
         assertThat(invocations(node, "configuredCameraDegreesPerTick"))
                 .contains("java/util/function/DoubleSupplier#getAsDouble");
     }
@@ -206,7 +234,7 @@ class MinecraftPhaseFiveInventoryPortTest {
 
         assertThat(invocations(node, "maintainAim"))
                 .containsSubsequence(
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#preflight",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#ongoingFailure",
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$ViewLease#turnToward");
         assertThat(invocations(node, "targetReadyForReopen"))
                 .contains("net/minecraft/client/player/LocalPlayer#isWithinBlockInteractionRange")
@@ -319,6 +347,12 @@ class MinecraftPhaseFiveInventoryPortTest {
 
         assertThat(invocations(node, "dispatchExpectedOpen"))
                 .contains(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#ongoingFailure",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$OpenHandPlan"
+                                + "#ready",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$OpenHandPlan"
+                                + "#hand",
                         "dev/aod/mcmcp/runtime/ClientPredictionSignals#begin",
                         "dev/aod/mcmcp/runtime/ClientPredictionSignals$PredictionAttempt"
                                 + "#sequenceBeforePrediction",
@@ -338,6 +372,51 @@ class MinecraftPhaseFiveInventoryPortTest {
                                 + "#closeOpenPrediction");
     }
 
+    @Test
+    void safetyAndSlotOwnershipAreRecheckedAndReleasedBeforeTerminal() throws Exception {
+        var node = classNode();
+        assertThat(invocations(node, "preflight"))
+                .contains(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#basicPlayerSafety",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#chooseOpenHand");
+        assertThat(invocations(node, "ongoingFailure"))
+                .contains(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#basicPlayerSafety",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#screenContextMatches",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$ViewLease"
+                                + "#undisturbed");
+        assertThat(invocations(node, "basicPlayerSafety"))
+                .contains(
+                        "net/minecraft/client/Minecraft#isPaused",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#visibleThreatClear");
+        assertThat(invocations(node, "chooseOpenHand"))
+                .contains(
+                        "net/minecraft/client/player/LocalPlayer#getOffhandItem",
+                        "dev/aod/mcmcp/routine/MinecraftKnownBrewingPort"
+                                + "#safeNormalUseStack");
+        assertThat(invocations(node, "maintain"))
+                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        + "#selectOpenHand");
+        assertThat(invocations(node, "maintainAim"))
+                .doesNotContain("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        + "#selectOpenHand");
+        assertThat(invocations(node, "confirmReleaseIfClear"))
+                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$AttemptState"
+                        + "#closeView");
+
+        var lease = classNode(
+                "/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$ViewLease.class");
+        assertThat(invocations(lease, "close"))
+                .contains("net/minecraft/world/entity/player/Inventory#setSelectedSlot");
+        assertThat(invocations(lease, "undisturbed"))
+                .contains("net/minecraft/world/entity/player/Inventory#getSelectedSlot");
+    }
+
     private static List<String> containerInputs(ClassNode node, String methodName) {
         var inputs = new ArrayList<String>();
         node.methods.stream()
@@ -353,9 +432,12 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     private ClassNode classNode() throws Exception {
+        return classNode("/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort.class");
+    }
+
+    private ClassNode classNode(String resource) throws Exception {
         var node = new ClassNode();
-        try (var stream = getClass().getResourceAsStream(
-                "/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort.class")) {
+        try (var stream = getClass().getResourceAsStream(resource)) {
             assertThat(stream).isNotNull();
             new ClassReader(stream).accept(node, 0);
         }

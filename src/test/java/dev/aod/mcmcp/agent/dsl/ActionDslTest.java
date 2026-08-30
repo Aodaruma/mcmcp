@@ -608,7 +608,9 @@ class ActionDslTest {
                         ActionDsl.Capability.CAMERA,
                         ActionDsl.Capability.INVENTORY_TRANSFER);
 
-        var cost = new ActionDslCompiler.Cost(20_000, 400, 0, 120, 13, 0, 0);
+        var cost = new ActionDslCompiler.Cost(30_000, 600, 0, 120, 13, 0, 0);
+        assertThat(ActionDslCompiler.KNOWN_CRAFTING_DURATION_MILLIS).isEqualTo(30_000L);
+        assertThat(ActionDslCompiler.KNOWN_CRAFTING_TICKS).isEqualTo(600L);
         assertThat(ActionDslCompiler.compile(
                 request, ignored -> Optional.of(cost), request.program().capabilities())
                 .worstCaseCost()).isEqualTo(cost);

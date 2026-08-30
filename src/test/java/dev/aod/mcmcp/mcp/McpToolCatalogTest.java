@@ -287,10 +287,10 @@ class McpToolCatalogTest {
             var budget = example.getAsJsonObject("budget");
             assertThat(budget.get("max_duration_ms").getAsLong()).isEqualTo(30_000L);
             assertThat(budget.get("max_ticks").getAsLong()).isEqualTo(600L)
-                    .isGreaterThan(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
+                    .isEqualTo(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
             assertThat(budget.get("max_camera_degrees").getAsDouble()).isEqualTo(360.0D);
             assertThat(budget.get("max_duration_ms").getAsLong())
-                    .isGreaterThan(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND * 50L);
+                    .isEqualTo(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND * 50L);
             assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
         });
     }

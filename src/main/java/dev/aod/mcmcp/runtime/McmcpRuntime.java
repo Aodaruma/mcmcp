@@ -285,6 +285,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 Minecraft::getInstance,
                 sessions::snapshot,
                 recipeCatalog,
+                observations,
                 screenOwnership,
                 () -> McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0D,
                 ClientPredictionSignals.global());
@@ -4642,7 +4643,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             PhaseFiveRequest request = containerRequest(
                     minecraft, session, agentExecution.primitive);
             long deadline = Math.addExact(
-                    session.clientTick(), AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
+                    session.clientTick(),
+                    AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND);
             agentExecution.containerAttempt = new KnownContainerAttempt(
                     phaseFiveInventoryPort, request, session.clientTick(), deadline);
         }
@@ -5206,7 +5208,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             WorldSessionTracker.Snapshot session,
             ActionDsl.Node primitive) {
         if (primitive instanceof ActionDsl.CraftKnownRecipe craft) {
-            return craftRequest(minecraft, session, craft);
+            return craftRequest(craft);
         }
         ActionDsl.Position position;
         String expectedBlock;
@@ -5265,23 +5267,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 "transfer_items", parameters, bounds, minimumInventoryCount, "items");
     }
 
-    private static PhaseFiveRequest craftRequest(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            ActionDsl.CraftKnownRecipe craft) {
+    static PhaseFiveRequest craftRequest(ActionDsl.CraftKnownRecipe craft) {
         ActionDsl.Position position = craft.target();
-        if (!position.dimension().equals(session.dimension())) {
-            throw new IllegalArgumentException("crafting target dimension changed");
-        }
         var expected = new BlockStateFingerprint(
                 craft.expectedState().block(), craft.expectedState().properties());
-        BlockPos blockPos = new BlockPos(position.x(), position.y(), position.z());
-        var level = Objects.requireNonNull(minecraft.level, "level");
-        BlockStateFingerprint actual = MinecraftPhaseFiveInventoryPort.fingerprintLiveState(
-                level.getBlockState(blockPos));
-        if (!expected.equals(actual)) {
-            throw new IllegalArgumentException("crafting target state changed");
-        }
         var target = new BlockTarget(
                 position.dimension(), position.x(), position.y(), position.z());
         var targetMap = Map.<String, Object>of(

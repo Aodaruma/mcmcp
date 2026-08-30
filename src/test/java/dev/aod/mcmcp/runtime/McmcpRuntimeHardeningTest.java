@@ -346,6 +346,27 @@ class McmcpRuntimeHardeningTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void craftRequestCarriesTheDeclaredStationStateWithoutReadingLiveWorldState() {
+        var target = new ActionDsl.Position("minecraft:the_nether", 4, 70, -3);
+        var expected = new ActionDsl.BlockStateSpec(
+                "minecraft:crafting_table", Map.of());
+        var craft = new ActionDsl.CraftKnownRecipe(
+                "craft", "abcdefghijklmnopqrstuvwx", "sha256:" + "a".repeat(64),
+                "minecraft:oak_planks", "default_components_only", 8,
+                "crafting_table", target, expected, 2);
+
+        var request = McmcpRuntime.craftRequest(craft);
+        var station = (Map<String, Object>) request.parameters().get("station");
+        var actualState = (Map<String, Object>) station.get("expected_state");
+
+        assertThat(request.kind()).isEqualTo("craft_items");
+        assertThat(request.bounds().dimension()).isEqualTo("minecraft:the_nether");
+        assertThat(actualState).containsEntry("block", "minecraft:crafting_table")
+                .containsEntry("properties", Map.of());
+    }
+
+    @Test
     void onlyAimRaycastFailureRebindsWithoutErasingConsumedOccurrenceBudget() {
         assertThat(McmcpRuntime.retryableMutationAimFailure("aim_raycast_unavailable")).isTrue();
         assertThat(McmcpRuntime.retryableMutationAimFailure("mutation_precondition_changed"))
