@@ -734,9 +734,7 @@ public final class ScreenOwnershipSignals {
                     || !liveScreenMatches
                     || content.containerId() != containerId
                     || !content.menuTypeId().equals(menuTypeId)
-                    || !content.worldSessionId().equals(expectedOpen.worldSessionId())
-                    || (!cancelBeforeOwnership
-                            && content.receivedTick() > expectedOpen.deadlineTick())) {
+                    || !content.worldSessionId().equals(expectedOpen.worldSessionId())) {
                 return fail("container_incremental_sync_mismatch");
             }
             ownedSession = new OwnedScreenSession(

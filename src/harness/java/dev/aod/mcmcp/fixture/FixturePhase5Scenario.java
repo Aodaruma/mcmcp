@@ -132,10 +132,8 @@ final class FixturePhase5Scenario {
         FixturePhase3Scenario.stop(context);
         FixturePhase4RouteBlocker.stop();
         FixtureArena.requireInitialized(context.level());
-        if (mode == FixturePhase5Mode.COMBINED_WHEAT) {
-            discardItemEntities(
-                    context.level(), AABB.encapsulatingFullBlocks(WORKSPACE_MIN, WORKSPACE_MAX));
-        }
+        discardItemEntities(
+                context.level(), AABB.encapsulatingFullBlocks(WORKSPACE_MIN, WORKSPACE_MAX));
         FixtureArena.resetPlayer(context.player());
         if (mode == FixturePhase5Mode.COMBINED_WHEAT) {
             resetCombinedWheatWorkspace(context.level());

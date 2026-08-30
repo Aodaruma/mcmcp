@@ -188,6 +188,15 @@ class ScreenOwnershipSignalsTest {
     }
 
     @Test
+    void ownedAsyncMenuAcceptsExactUpdatesAfterTheOpenDeadline() {
+        var fixture = ownedFixture(EMPTY);
+        var update = fixture.channel.slot(7, MENU, 2, 0, EMPTY, 21);
+
+        assertThat(fixture.core.onIncrementalContent(update, true).allowed()).isTrue();
+        assertThat(fixture.core.snapshot().phase()).isEqualTo(ScreenOwnershipSignals.Phase.OWNED);
+    }
+
+    @Test
     void cleanupClosesOnlyTheExactOwnedMenuAndNeverOffersACursorRescueClick() {
         var nonEmptyCursor = ownedFixture(STONE);
 
