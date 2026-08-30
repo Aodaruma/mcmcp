@@ -1603,7 +1603,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         String menuTypeId();
 
         default boolean restoreViewOnRelease() {
-            return false;
+            return true;
         }
 
         default float maxCameraDegreesPerTick() {
@@ -1634,6 +1634,11 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         @Override
         public String menuTypeId() {
             return CRAFTING_MENU;
+        }
+
+        @Override
+        public boolean restoreViewOnRelease() {
+            return false;
         }
     }
 

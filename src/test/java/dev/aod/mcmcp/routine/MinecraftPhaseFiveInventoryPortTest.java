@@ -178,12 +178,17 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
-    void craftingRetainsTheStationHeadingAndUsesTheRuntimeCameraLimit() throws Exception {
+    void craftingAloneRetainsTheStationHeadingAndUsesTheRuntimeCameraLimit() throws Exception {
         var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
         var parameters = new MinecraftPhaseFiveInventoryPort.CraftParameters(
                 "recipe-ref", "fingerprint", "minecraft:stick", 1, 1, target,
                 new BlockStateFingerprint("minecraft:crafting_table", Map.of()));
         assertThat(parameters.restoreViewOnRelease()).isFalse();
+        var transfer = new MinecraftPhaseFiveInventoryPort.TransferParameters(
+                false, "minecraft:stone", "default_components_only", 0, 1, 1,
+                false, 8.0D, target,
+                new BlockStateFingerprint("minecraft:barrel", Map.of()));
+        assertThat(transfer.restoreViewOnRelease()).isTrue();
 
         var node = classNode();
         assertThat(invocations(node, "begin"))
