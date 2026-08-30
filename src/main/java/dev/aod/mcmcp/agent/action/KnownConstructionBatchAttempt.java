@@ -22,6 +22,8 @@ public final class KnownConstructionBatchAttempt implements AutoCloseable {
     private int placedEntries;
     private int completedPriorPhases;
     private int confirmedPriorPhases;
+    private int completedEntries;
+    private int serverConfirmedEntries;
     private boolean advancePending;
     private boolean closed;
     private KnownConstructionAttempt active;
@@ -45,11 +47,15 @@ public final class KnownConstructionBatchAttempt implements AutoCloseable {
     public TickResult tick(long clientTick) {
         requireOpen();
         if (clientTick < lastTick) {
-            return fail("construction_batch_non_monotonic_tick", 0, 0);
+            return fail(
+                    "construction_batch_non_monotonic_tick",
+                    completedEntries,
+                    serverConfirmedEntries);
         }
         lastTick = clientTick;
         if (clientTick >= deadlineTick) {
-            return fail("construction_batch_deadline", 0, 0);
+            return fail(
+                    "construction_batch_deadline", completedEntries, serverConfirmedEntries);
         }
         if (advancePending) {
             phaseIndex++;
@@ -71,13 +77,15 @@ public final class KnownConstructionBatchAttempt implements AutoCloseable {
 
         KnownConstructionAttempt.TickResult result = active.tick(clientTick);
         placedEntries = Math.addExact(placedEntries, result.placedDelta());
-        int completed = Math.addExact(completedPriorPhases, result.completedEntries());
-        int confirmed = Math.addExact(confirmedPriorPhases, result.confirmedEntries());
+        completedEntries = Math.addExact(
+                completedPriorPhases, result.completedEntries());
+        serverConfirmedEntries = Math.addExact(
+                confirmedPriorPhases, result.confirmedEntries());
         return switch (result.status()) {
             case RUNNING -> result(
-                    Status.RUNNING, result.evidence(), completed, confirmed);
-            case FAILED -> fail(result.evidence(), completed, confirmed);
-            case SUCCEEDED -> completePhase(completed, confirmed);
+                    Status.RUNNING, result.evidence(), completedEntries, serverConfirmedEntries);
+            case FAILED -> fail(result.evidence(), completedEntries, serverConfirmedEntries);
+            case SUCCEEDED -> completePhase(completedEntries, serverConfirmedEntries);
         };
     }
 

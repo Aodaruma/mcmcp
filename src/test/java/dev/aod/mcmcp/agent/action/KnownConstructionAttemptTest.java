@@ -328,6 +328,34 @@ class KnownConstructionAttemptTest {
     }
 
     @Test
+    void constructionBatchOuterFailureRetainsReportedProgress() {
+        var first = requestAt("first", DIMENSION, 0, 0);
+        var second = requestAt("second", DIMENSION, 1, 0);
+        var port = new FakePort(List.of(first, second));
+        var attempt = new KnownConstructionBatchAttempt(port, List.of(first, second), 1);
+
+        KnownConstructionBatchAttempt.TickResult progress = null;
+        for (long tick = 1; tick <= 8; tick++) {
+            port.tick = tick;
+            progress = attempt.tick(tick);
+        }
+        assertThat(progress.phaseIndex()).isEqualTo(2);
+        assertThat(progress.placedEntries()).isEqualTo(2);
+        assertThat(progress.completedEntries()).isEqualTo(2);
+        assertThat(progress.serverConfirmedEntries()).isEqualTo(2);
+
+        var failure = attempt.tick(7);
+
+        assertThat(failure.status()).isEqualTo(KnownConstructionBatchAttempt.Status.FAILED);
+        assertThat(failure.evidence()).isEqualTo("construction_batch_non_monotonic_tick");
+        assertThat(failure.phaseIndex()).isEqualTo(2);
+        assertThat(failure.placedEntries()).isEqualTo(2);
+        assertThat(failure.completedEntries()).isEqualTo(2);
+        assertThat(failure.serverConfirmedEntries()).isEqualTo(2);
+        assertThat(port.retireCalls).isEqualTo(2);
+    }
+
+    @Test
     void constructionBatchRejectsInvalidCrossPhaseGeometry() {
         var first = requestAt("first", DIMENSION, 0, 0);
         assertThatThrownBy(() -> new KnownConstructionBatchAttempt(
