@@ -3,6 +3,7 @@ package dev.aod.mcmcp.routine;
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.ContainerSnapshot;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
+import dev.aod.mcmcp.runtime.ScreenOwnershipSignals;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.tree.ClassNode;
@@ -415,6 +416,19 @@ class MinecraftPhaseFiveInventoryPortTest {
                 .contains("net/minecraft/world/entity/player/Inventory#setSelectedSlot");
         assertThat(invocations(lease, "undisturbed"))
                 .contains("net/minecraft/world/entity/player/Inventory#getSelectedSlot");
+    }
+
+    @Test
+    void unownedScreenDoesNotBlockSlotReleaseButOwnedScreenStillRequiresFullClearance() {
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseScreenContextClear(
+                false, ScreenOwnershipSignals.Phase.IDLE, false)).isTrue();
+
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseScreenContextClear(
+                true, ScreenOwnershipSignals.Phase.IDLE, true)).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseScreenContextClear(
+                true, ScreenOwnershipSignals.Phase.IDLE, false)).isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseScreenContextClear(
+                false, ScreenOwnershipSignals.Phase.CLOSING, false)).isFalse();
     }
 
     private static List<String> containerInputs(ClassNode node, String methodName) {

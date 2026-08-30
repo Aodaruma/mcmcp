@@ -1140,13 +1140,20 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     }
 
     private void confirmReleaseIfClear(AttemptState state, Minecraft minecraft) {
-        if (screens.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE
-                || minecraft.gui.screen() != null
-                || minecraft.player == null
-                || minecraft.player.containerMenu != minecraft.player.inventoryMenu
-                || !minecraft.player.inventoryMenu.getCarried().isEmpty()
-                || (state.screenOwnedObserved && !state.cursorReleaseConfirmed)) {
+        LocalPlayer player = minecraft.player;
+        if (player == null || !releaseScreenContextClear(
+                state.screenOwnedObserved,
+                screens.snapshot().phase(),
+                minecraft.gui.screen() == null
+                        && player.containerMenu == player.inventoryMenu
+                        && player.inventoryMenu.getCarried().isEmpty()
+                        && state.cursorReleaseConfirmed)) {
             return;
+        }
+        if (!state.screenOwnedObserved) {
+            // No Agent-owned menu or click existed. Leave an unrelated Screen/cursor untouched,
+            // while still restoring the Agent-owned view and selected-slot lease.
+            state.cursorReleaseConfirmed = true;
         }
         if (!state.closeView(minecraft)) {
             return;
@@ -1154,6 +1161,14 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         state.releaseConfirmed = true;
         state.releasePending = false;
         state.stage = Stage.TERMINAL;
+    }
+
+    static boolean releaseScreenContextClear(
+            boolean screenOwnedObserved,
+            ScreenOwnershipSignals.Phase phase,
+            boolean ownedContextClear) {
+        return phase == ScreenOwnershipSignals.Phase.IDLE
+                && (!screenOwnedObserved || ownedContextClear);
     }
 
     private float configuredCameraDegreesPerTick() {
