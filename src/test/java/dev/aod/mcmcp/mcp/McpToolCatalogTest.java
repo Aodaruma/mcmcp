@@ -755,6 +755,16 @@ class McpToolCatalogTest {
                 state -> assertThat(new GsonBuilder().create().toJsonTree(state.arguments()))
                         .isEqualTo(itemQuery));
 
+        for (String malformed : List.of(
+                "{\"query\":null}",
+                "{\"max_results\":null}",
+                "{\"query\":null,\"max_results\":null}")) {
+            var arguments = JsonParser.parseString(malformed).getAsJsonObject();
+            assertThat(CatalogSchemaValidator.matches(schema, arguments)).isFalse();
+            assertThat(registry.call("agent_get_state", arguments).get("isError").getAsBoolean())
+                    .isTrue();
+        }
+
         var rejectedQuery = JsonParser.parseString("""
                 {"query":{"kind":"result_item","item":"minecraft:stick",
                  "private_token":"do-not-reflect"},"max_results":4}
