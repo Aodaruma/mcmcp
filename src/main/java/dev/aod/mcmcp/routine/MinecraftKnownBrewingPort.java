@@ -50,10 +50,11 @@ import java.util.function.Supplier;
 /**
  * Physical-client adapter for one bounded, standard Vanilla brewing batch.
  *
- * <p>The adapter never retries a container click. Every click is followed by a fresh inbound
- * packet snapshot which must agree with the live {@link BrewingStandMenu}. Success additionally
- * requires a second normal-use open, a fresh full-content/data readback, an exact whole-player
- * inventory delta, an empty server cursor, and confirmed screen/view/slot release.</p>
+ * <p>The adapter never retries a container click. All inventory transfers are cursor-invariant
+ * QUICK_MOVEs planned from the initial authoritative snapshot. Server truth is checked at two
+ * close/reopen full-content checkpoints: once after loading and once after recovery. Success also
+ * requires an exact whole-player inventory delta, an empty server cursor, and confirmed
+ * screen/view/slot release.</p>
  */
 public final class MinecraftKnownBrewingPort implements PhaseFivePort {
     static final String KIND = "brew_known_potion_batch";
@@ -191,9 +192,6 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
             state.playerIdentity = player;
             state.levelIdentity = minecraft.level;
             state.connectionIdentity = minecraft.getConnection();
-            state.initialTargetState = fingerprint(
-                    Objects.requireNonNull(minecraft.level).getBlockState(
-                            blockPos(brewing.target())));
             OpenHandPlan openHand = chooseOpenHand(player)
                     .orElseThrow(() -> new IllegalStateException(
                             "no side-effect-free normal-use hand is available"));
@@ -241,26 +239,19 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         }
 
         switch (state.stage) {
-            case AIMING_INITIAL -> maintainAim(attempt, state, false);
+            case AIMING_INITIAL, AIMING_LOADED_READBACK, AIMING_FINAL_READBACK ->
+                    maintainAim(attempt, state);
             case OPENING_INITIAL -> acceptInitialSnapshot(attempt, state);
-            case FUEL_TAKE_ACK -> maintainFuelTakeAck(attempt, state);
-            case FUEL_PLACE_ACK -> maintainFuelPlaceAck(attempt, state);
-            case FUEL_RETURN_ACK -> maintainFuelReturnAck(attempt, state);
-            case AWAITING_FUEL_CONSUMPTION -> maintainFuelConsumption(attempt, state);
-            case INPUT_DISPATCH -> dispatchNextInput(attempt, state);
-            case INPUT_ACK -> maintainInputAck(attempt, state);
-            case INGREDIENT_TAKE_ACK -> maintainIngredientTakeAck(attempt, state);
-            case INGREDIENT_PLACE_ACK -> maintainIngredientPlaceAck(attempt, state);
-            case INGREDIENT_RETURN_ACK -> maintainIngredientReturnAck(attempt, state);
-            case AWAITING_BREW_START -> maintainBrewStart(attempt, state);
+            case LOAD_DISPATCH -> dispatchNextLoad(attempt, state);
+            case CLOSING_LOADED_CHECKPOINT -> closeForCheckpoint(attempt, state, false);
+            case AWAITING_LOADED_CLOSE -> maintainClose(state);
+            case OPENING_LOADED_READBACK -> acceptLoadedSnapshot(attempt, state);
             case AWAITING_BREW_COMPLETE -> maintainBrewComplete(attempt, state);
-            case REMAINDER_ACK -> maintainRemainderAck(attempt, state);
-            case OUTPUT_DISPATCH -> dispatchNextOutput(attempt, state);
-            case OUTPUT_ACK -> maintainOutputAck(attempt, state);
-            case AWAITING_FIRST_CLOSE -> maintainClose(state, false);
-            case AIMING_READBACK -> maintainAim(attempt, state, true);
-            case OPENING_READBACK -> acceptReadbackSnapshot(attempt, state);
-            case AWAITING_FINAL_CLOSE -> maintainClose(state, true);
+            case UNLOAD_DISPATCH -> dispatchNextUnload(attempt, state);
+            case CLOSING_FINAL_CHECKPOINT -> closeForCheckpoint(attempt, state, true);
+            case AWAITING_FINAL_CHECKPOINT_CLOSE -> maintainClose(state);
+            case OPENING_FINAL_READBACK -> acceptFinalSnapshot(attempt, state);
+            case AWAITING_FINAL_CLOSE -> maintainClose(state);
             case RELEASING -> maintainTerminalRelease(attempt, state);
             case TERMINAL -> { }
         }
@@ -333,8 +324,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                 .orElse(null);
     }
 
-    private void maintainAim(
-            PhaseFiveAttempt attempt, AttemptState state, boolean readback) {
+    private void maintainAim(PhaseFiveAttempt attempt, AttemptState state) {
         Minecraft minecraft = assertClientThread();
         LocalPlayer player = Objects.requireNonNull(minecraft.player);
         Optional<OpenHandPlan> openHand = chooseOpenHand(player);
@@ -354,20 +344,18 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                 && minecraft.hitResult instanceof BlockHitResult hit
                 && hit.getType() == HitResult.Type.BLOCK
                 && !hit.isWorldBorderHit()
-                && hit.getBlockPos().equals(blockPos(target))) {
-            dispatchExpectedOpen(attempt, state, readback);
+                && hit.getBlockPos().equals(blockPos(target))
+                && targetReadyForOpen(minecraft, state,
+                        state.stage != Stage.AIMING_LOADED_READBACK)) {
+            dispatchExpectedOpen(attempt, state);
         }
     }
 
-    private void dispatchExpectedOpen(
-            PhaseFiveAttempt attempt, AttemptState state, boolean readback) {
+    private void dispatchExpectedOpen(PhaseFiveAttempt attempt, AttemptState state) {
         Minecraft minecraft = assertClientThread();
         WorldSessionTracker.Snapshot session = requireSession();
-        if (!targetReadyForEmptyOpen(minecraft, state)) {
-            fail(state, failure("BREWING_TARGET_NOT_EMPTY_FOR_OPEN",
-                    RoutineFailure.Category.DIVERGENCE,
-                    RoutineFailure.Recovery.REPLAN,
-                    Map.of("empty_brewing_stand", true), Map.of()));
+        boolean requireEmpty = state.stage != Stage.AIMING_LOADED_READBACK;
+        if (!targetReadyForOpen(minecraft, state, requireEmpty)) {
             return;
         }
         LocalPlayer player = Objects.requireNonNull(minecraft.player);
@@ -388,9 +376,12 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         long window = Math.min(OPEN_TIMEOUT_TICKS, remaining);
         long screenDeadline = now > Long.MAX_VALUE - window
                 ? Long.MAX_VALUE : now + window;
+        BlockStateFingerprint targetState = fingerprint(
+                Objects.requireNonNull(minecraft.level).getBlockState(
+                        blockPos(state.brewing.target())));
         ExpectedOpenToken token = new ExpectedOpenToken(
                 session.worldSessionId(), attempt.attemptId(), state.targetIdentity(),
-                state.initialTargetState.toString(), MENU_TYPE, screenDeadline);
+                targetState.toString(), MENU_TYPE, screenDeadline);
         if (!screens.beginExpectedOpen(token)) {
             fail(state, failure("BREWING_EXPECTED_OPEN_REJECTED",
                     RoutineFailure.Category.SAFETY,
@@ -441,7 +432,12 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                     RoutineFailure.Recovery.REPLAN, Map.of(), Map.of()));
             return;
         }
-        state.stage = readback ? Stage.OPENING_READBACK : Stage.OPENING_INITIAL;
+        state.stage = switch (state.stage) {
+            case AIMING_INITIAL -> Stage.OPENING_INITIAL;
+            case AIMING_LOADED_READBACK -> Stage.OPENING_LOADED_READBACK;
+            case AIMING_FINAL_READBACK -> Stage.OPENING_FINAL_READBACK;
+            default -> throw new IllegalStateException("brewing open dispatched outside aim stage");
+        };
         state.stageDeadlineClientTick = boundedDeadline(currentTick(), OPEN_TIMEOUT_TICKS);
     }
 
@@ -475,9 +471,13 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         FuelPlan fuelPlan = fuelPlan(view.fuel());
         state.loadsInventoryFuel = fuelPlan.loadsInventoryFuel();
         state.expectedFuelUses = fuelPlan.expectedFuelUses();
-        final Map<StackKey, Integer> expected;
+        final Map<StackKey, Integer> expectedLoaded;
+        final Map<StackKey, Integer> expectedFinal;
         try {
-            expected = expectedInventoryAfterBrew(
+            expectedLoaded = expectedInventoryAfterLoad(
+                    baseline, state.inputKey, state.brewing.input().count(),
+                    state.fuelKey, state.loadsInventoryFuel, state.ingredientKey);
+            expectedFinal = expectedInventoryAfterBrew(
                     baseline, state.inputKey, state.brewing.input().count(),
                     state.fuelKey, state.loadsInventoryFuel,
                     state.ingredientKey, state.outputKey,
@@ -489,220 +489,105 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                     Map.of("required_resources", true), Map.of()));
             return;
         }
-        if (chooseExactPotionSources(
+        Optional<List<Integer>> inputs = chooseExactPotionSources(
                 view.snapshot().slots(), playerSlots(), state.inputKey,
-                state.brewing.input().count()).isEmpty()) {
+                state.brewing.input().count());
+        if (inputs.isEmpty()) {
             fail(state, failure("BREWING_INPUT_BOTTLES_UNAVAILABLE",
                     RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
                     Map.of("exact_standard_input", true), Map.of()));
             return;
         }
-        state.initialInventory = baseline;
-        state.expectedInventory = expected;
+        var sources = new ArrayList<Integer>();
         if (state.loadsInventoryFuel) {
-            dispatchFuelTake(attempt, state, view);
-        } else {
-            state.stage = Stage.INPUT_DISPATCH;
-            state.stageDeadlineClientTick = boundedDeadline(
-                    currentTick(), CLICK_TIMEOUT_TICKS);
+            Optional<Integer> fuel = chooseSingletonSource(
+                    view.snapshot().slots(), state.fuelKey, sources);
+            if (fuel.isEmpty()) {
+                fail(state, failure("BREWING_FUEL_SINGLETON_REQUIRED",
+                        RoutineFailure.Category.PRECONDITION,
+                        RoutineFailure.Recovery.REPLAN,
+                        Map.of("fuel_source_count", 1), Map.of()));
+                return;
+            }
+            sources.add(fuel.orElseThrow());
         }
-    }
-
-    private void dispatchFuelTake(
-            PhaseFiveAttempt attempt, AttemptState state, BrewingView view) {
-        Optional<Integer> source = chooseDefaultSource(
-                view.snapshot().slots(), state.fuelKey);
-        if (source.isEmpty()) {
-            fail(state, failure("BREWING_FUEL_UNAVAILABLE",
+        sources.addAll(inputs.orElseThrow());
+        Optional<Integer> ingredient = chooseSingletonSource(
+                view.snapshot().slots(), state.ingredientKey, sources);
+        if (ingredient.isEmpty()) {
+            fail(state, failure("BREWING_INGREDIENT_SINGLETON_REQUIRED",
                     RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
-                    Map.of("fuel", StandardPotionPolicy.FUEL_ITEM), Map.of()));
+                    Map.of("ingredient_source_count", 1), Map.of()));
             return;
         }
-        startCursorTransaction(state, view, source.orElseThrow(), FUEL_SLOT);
-        dispatchContainerClick(attempt, state, view.menu(), source.orElseThrow(), 0,
-                ContainerInput.PICKUP, Stage.FUEL_TAKE_ACK, CLICK_TIMEOUT_TICKS);
+        sources.add(ingredient.orElseThrow());
+        state.expectedLoadedInventory = expectedLoaded;
+        state.expectedInventory = expectedFinal;
+        state.loadSourceSlots = List.copyOf(sources);
+        state.loadSourceStacks = sources.stream()
+                .map(view.snapshot().slots()::get).toList();
+        state.menuIdentity = view.menu();
+        state.stage = Stage.LOAD_DISPATCH;
+        state.stageDeadlineClientTick = boundedDeadline(currentTick(), CLICK_TIMEOUT_TICKS);
     }
 
-    private void maintainFuelTakeAck(PhaseFiveAttempt attempt, AttemptState state) {
-        Optional<BrewingView> optional = freshBrewingView(attempt, state);
-        if (optional.isEmpty()) return;
-        BrewingView view = optional.orElseThrow();
-        if (!cursorTaken(view, state.cursor)) return;
-        dispatchContainerClick(attempt, state, view.menu(), FUEL_SLOT, 1,
-                ContainerInput.PICKUP, Stage.FUEL_PLACE_ACK, CLICK_TIMEOUT_TICKS);
-        state.fuelPlacementPacketRevision = state.lastDispatchPacketRevision;
-    }
-
-    private void maintainFuelPlaceAck(PhaseFiveAttempt attempt, AttemptState state) {
-        Optional<BrewingView> optional = freshBrewingView(attempt, state);
-        if (optional.isEmpty()) return;
-        BrewingView view = optional.orElseThrow();
-        if (!onePlacedOrConsumed(view, state.cursor, true)) return;
-        if (state.cursor.original().count() == 1) {
-            state.stage = Stage.AWAITING_FUEL_CONSUMPTION;
+    private void dispatchNextLoad(PhaseFiveAttempt attempt, AttemptState state) {
+        if (state.loadDispatchIndex >= state.loadSourceSlots.size()) {
+            state.stage = Stage.CLOSING_LOADED_CHECKPOINT;
             state.stageDeadlineClientTick = boundedDeadline(currentTick(), CLICK_TIMEOUT_TICKS);
             return;
         }
-        dispatchContainerClick(attempt, state, view.menu(), state.cursor.sourceSlot(), 0,
-                ContainerInput.PICKUP, Stage.FUEL_RETURN_ACK, CLICK_TIMEOUT_TICKS);
-    }
-
-    private void maintainFuelReturnAck(PhaseFiveAttempt attempt, AttemptState state) {
-        Optional<BrewingView> optional = freshBrewingView(attempt, state);
-        if (optional.isEmpty()) return;
-        BrewingView view = optional.orElseThrow();
-        if (!cursorReturned(view, state.cursor)) return;
-        state.stage = Stage.AWAITING_FUEL_CONSUMPTION;
-        state.stageDeadlineClientTick = boundedDeadline(currentTick(), CLICK_TIMEOUT_TICKS);
-    }
-
-    private void maintainFuelConsumption(PhaseFiveAttempt attempt, AttemptState state) {
-        Optional<BrewingView> optional = brewingView(attempt, state);
-        if (optional.isEmpty()) return;
-        BrewingView view = optional.orElseThrow();
-        if (!view.snapshot().slots().get(FUEL_SLOT).empty()
-                || !view.snapshot().carried().empty()
-                || view.brewTime() != 0
-                || view.fuel() != FUEL_USES_AFTER_LOADING
-                || view.fuelEvidence().packetLedgerRevision()
-                        <= state.fuelPlacementPacketRevision) {
-            return;
-        }
-        state.cursor = null;
-        state.stage = Stage.INPUT_DISPATCH;
-        state.stageDeadlineClientTick = boundedDeadline(currentTick(), CLICK_TIMEOUT_TICKS);
-    }
-
-    private void dispatchNextInput(PhaseFiveAttempt attempt, AttemptState state) {
-        Optional<BrewingView> optional = brewingView(attempt, state);
-        if (optional.isEmpty()) return;
-        BrewingView view = optional.orElseThrow();
-        int remaining = state.brewing.input().count() - state.inputsMoved;
-        if (remaining <= 0) {
-            dispatchIngredientTake(attempt, state, view);
-            return;
-        }
-        Optional<List<Integer>> candidates = chooseExactPotionSources(
-                view.snapshot().slots(), playerSlots(), state.inputKey, remaining);
-        if (candidates.isEmpty() || candidates.orElseThrow().isEmpty()) {
-            fail(state, failure("BREWING_INPUT_CHANGED",
+        BrewingStandMenu menu = ownedBrewingMenu(attempt, state);
+        if (menu == null) return;
+        int index = state.loadDispatchIndex;
+        if (!menu.getCarried().isEmpty()
+                || !ContainerSyncSignals.StackFingerprint.fromServerPacket(
+                        menu.slots.get(state.loadSourceSlots.get(index)).getItem())
+                        .equals(state.loadSourceStacks.get(index))) {
+            fail(state, failure("BREWING_LOAD_SOURCE_CHANGED",
                     RoutineFailure.Category.DIVERGENCE,
                     RoutineFailure.Recovery.REPLAN,
-                    Map.of("remaining_input", remaining), Map.of()));
+                    Map.of("planned_singleton_source", true), Map.of()));
             return;
         }
-        int source = candidates.orElseThrow().getFirst();
-        ContainerSyncSignals.StackFingerprint stack = view.snapshot().slots().get(source);
-        if (stack.count() != 1 || state.clickedInputSlots.contains(source)) {
-            fail(state, failure("BREWING_INPUT_CLICK_PLAN_INVALID",
-                    RoutineFailure.Category.PRECONDITION,
-                    RoutineFailure.Recovery.REPLAN,
-                    Map.of("single_bottle_stack", true), Map.of()));
-            return;
+        if (!dispatchQuickMove(state, menu, state.loadSourceSlots.get(index))) return;
+        state.loadDispatchIndex++;
+        if (state.loadDispatchIndex >= state.loadSourceSlots.size()) {
+            state.stage = Stage.CLOSING_LOADED_CHECKPOINT;
         }
-        state.inputSourceSlot = source;
-        state.inputPlayerBefore = countKey(
-                view.snapshot().slots(), playerSlots(), state.inputKey);
-        state.inputStandBefore = countKey(
-                view.snapshot().slots(), bottleSlots(), state.inputKey);
-        dispatchContainerClick(attempt, state, view.menu(), source, 0,
-                ContainerInput.QUICK_MOVE, Stage.INPUT_ACK, CLICK_TIMEOUT_TICKS);
     }
 
-    private void maintainInputAck(PhaseFiveAttempt attempt, AttemptState state) {
-        Optional<BrewingView> optional = freshBrewingView(attempt, state);
-        if (optional.isEmpty()) return;
-        BrewingView view = optional.orElseThrow();
-        int playerAfter = countKey(view.snapshot().slots(), playerSlots(), state.inputKey);
-        int standAfter = countKey(view.snapshot().slots(), bottleSlots(), state.inputKey);
-        if (!view.snapshot().slots().get(state.inputSourceSlot).empty()
-                || !view.snapshot().carried().empty()
-                || playerAfter != state.inputPlayerBefore - 1
-                || standAfter != state.inputStandBefore + 1
-                || !standContainsExactPotion(view, state.brewing.input(), standAfter)) {
-            return;
-        }
-        state.clickedInputSlots.add(state.inputSourceSlot);
-        state.inputsMoved++;
-        state.stage = Stage.INPUT_DISPATCH;
-        state.stageDeadlineClientTick = boundedDeadline(currentTick(), CLICK_TIMEOUT_TICKS);
-    }
-
-    private void dispatchIngredientTake(
-            PhaseFiveAttempt attempt, AttemptState state, BrewingView view) {
-        Optional<Integer> source = chooseDefaultSource(
-                view.snapshot().slots(), state.ingredientKey);
-        if (source.isEmpty()) {
-            fail(state, failure("BREWING_INGREDIENT_UNAVAILABLE",
-                    RoutineFailure.Category.PRECONDITION,
-                    RoutineFailure.Recovery.REPLAN,
-                    Map.of("ingredient", state.brewing.ingredientItem()), Map.of()));
-            return;
-        }
-        startCursorTransaction(state, view, source.orElseThrow(), INGREDIENT_SLOT);
-        dispatchContainerClick(attempt, state, view.menu(), source.orElseThrow(), 0,
-                ContainerInput.PICKUP, Stage.INGREDIENT_TAKE_ACK, CLICK_TIMEOUT_TICKS);
-    }
-
-    private void maintainIngredientTakeAck(PhaseFiveAttempt attempt, AttemptState state) {
-        Optional<BrewingView> optional = freshBrewingView(attempt, state);
-        if (optional.isEmpty()) return;
-        BrewingView view = optional.orElseThrow();
-        if (!cursorTaken(view, state.cursor)) return;
-        dispatchContainerClick(attempt, state, view.menu(), INGREDIENT_SLOT, 1,
-                ContainerInput.PICKUP, Stage.INGREDIENT_PLACE_ACK, CLICK_TIMEOUT_TICKS);
-    }
-
-    private void maintainIngredientPlaceAck(PhaseFiveAttempt attempt, AttemptState state) {
-        Optional<BrewingView> optional = freshBrewingView(attempt, state);
-        if (optional.isEmpty()) return;
-        BrewingView view = optional.orElseThrow();
-        if (!onePlacedOrConsumed(view, state.cursor, false)) return;
-        state.ingredientDispatchPacketRevision = state.lastDispatchPacketRevision;
-        if (state.cursor.original().count() == 1) {
-            state.stage = Stage.AWAITING_BREW_START;
-            state.stageDeadlineClientTick = boundedDeadline(currentTick(), BREW_TIMEOUT_TICKS);
-            return;
-        }
-        dispatchContainerClick(attempt, state, view.menu(), state.cursor.sourceSlot(), 0,
-                ContainerInput.PICKUP, Stage.INGREDIENT_RETURN_ACK, CLICK_TIMEOUT_TICKS);
-    }
-
-    private void maintainIngredientReturnAck(PhaseFiveAttempt attempt, AttemptState state) {
-        Optional<BrewingView> optional = freshBrewingView(attempt, state);
-        if (optional.isEmpty()) return;
-        BrewingView view = optional.orElseThrow();
-        if (!cursorReturned(view, state.cursor)) return;
-        state.stage = Stage.AWAITING_BREW_START;
-        state.stageDeadlineClientTick = boundedDeadline(currentTick(), BREW_TIMEOUT_TICKS);
-    }
-
-    private void maintainBrewStart(PhaseFiveAttempt attempt, AttemptState state) {
+    private void acceptLoadedSnapshot(PhaseFiveAttempt attempt, AttemptState state) {
         Optional<BrewingView> optional = brewingView(attempt, state);
         if (optional.isEmpty()) return;
         BrewingView view = optional.orElseThrow();
+        closeOpenPrediction(state);
         int inputCount = countKey(
                 view.snapshot().slots(), bottleSlots(), state.inputKey);
-        if (view.brewTime() <= 0
-                || !fuelUseConfirmedAfterIngredient(
-                        view.fuel(), state.expectedFuelUses,
-                        view.fuelEvidence().packetLedgerRevision(),
-                        state.ingredientDispatchPacketRevision)
-                || view.brewTimeEvidence().packetLedgerRevision()
-                        <= state.ingredientDispatchPacketRevision
-                || inputCount != state.brewing.input().count()
+        if (inputCount != state.brewing.input().count()
                 || !standContainsExactPotion(view, state.brewing.input(), inputCount)
                 || !matches(view.snapshot().slots().get(INGREDIENT_SLOT),
                         state.ingredientKey, 1)
-                || !view.snapshot().slots().get(FUEL_SLOT).empty()
-                || !view.snapshot().carried().empty()) {
+                || !view.snapshot().carried().empty()
+                || !inventoryReadbackMatches(state.expectedLoadedInventory,
+                        inventoryMultiset(view.snapshot().slots(), playerSlots()))) {
+            fail(state, failure("BREWING_LOADED_READBACK_MISMATCH",
+                    RoutineFailure.Category.DIVERGENCE,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("loaded_full_content", true, "cursor", "empty"), Map.of()));
             return;
         }
+        // The reopen packet can be handled immediately before the next stand tick. Its full
+        // content proves the transfers; fresh data packets must then prove that brewing started.
+        if (!view.snapshot().slots().get(FUEL_SLOT).empty()
+                || view.brewTime() <= 0
+                || view.fuel() != state.expectedFuelUses) return;
+        state.loadedReadbackConfirmed = true;
         state.brewStarted = true;
         state.brewStartDataRevision = view.brewTimeEvidence().packetLedgerRevision();
-        state.cursor = null;
+        state.menuIdentity = view.menu();
         state.stage = Stage.AWAITING_BREW_COMPLETE;
         state.stageDeadlineClientTick = boundedDeadline(currentTick(), BREW_TIMEOUT_TICKS);
     }
@@ -717,7 +602,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                 ? view.snapshot().slots().get(INGREDIENT_SLOT).empty()
                 : matches(view.snapshot().slots().get(INGREDIENT_SLOT),
                         state.remainderKey, 1);
-        if (!state.brewStarted
+        if (!state.loadedReadbackConfirmed || !state.brewStarted
                 || view.brewTime() != 0
                 || view.brewTimeEvidence().packetLedgerRevision()
                         <= state.brewStartDataRevision
@@ -731,81 +616,76 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
             return;
         }
         state.brewCompleted = true;
+        var unload = new ArrayList<Integer>();
         if (state.remainderKey != null) {
-            dispatchContainerClick(attempt, state, view.menu(), INGREDIENT_SLOT, 0,
-                    ContainerInput.QUICK_MOVE, Stage.REMAINDER_ACK,
-                    CLICK_TIMEOUT_TICKS);
-        } else {
-            state.stage = Stage.OUTPUT_DISPATCH;
-            state.stageDeadlineClientTick = boundedDeadline(currentTick(), CLICK_TIMEOUT_TICKS);
+            unload.add(INGREDIENT_SLOT);
         }
-    }
-
-    private void maintainRemainderAck(PhaseFiveAttempt attempt, AttemptState state) {
-        Optional<BrewingView> optional = freshBrewingView(attempt, state);
-        if (optional.isEmpty()) return;
-        BrewingView view = optional.orElseThrow();
-        int expected = state.initialInventory.getOrDefault(state.remainderKey, 0) + 1;
-        if (!view.snapshot().slots().get(INGREDIENT_SLOT).empty()
-                || !view.snapshot().carried().empty()
-                || countKey(view.snapshot().slots(), playerSlots(), state.remainderKey)
-                        != expected) {
-            return;
-        }
-        state.remainderRecovered = true;
-        state.stage = Stage.OUTPUT_DISPATCH;
-        state.stageDeadlineClientTick = boundedDeadline(currentTick(), CLICK_TIMEOUT_TICKS);
-    }
-
-    private void dispatchNextOutput(PhaseFiveAttempt attempt, AttemptState state) {
-        Optional<BrewingView> optional = brewingView(attempt, state);
-        if (optional.isEmpty()) return;
-        BrewingView view = optional.orElseThrow();
-        if (state.outputsRecovered >= state.brewing.expectedOutput().count()) {
-            if (!standSlotsEmpty(view.snapshot().slots())
-                    || !view.snapshot().carried().empty()
-                    || view.brewTime() != 0
-                    || view.fuel() != state.expectedFuelUses) {
-                return;
+        for (int slot : bottleSlots()) {
+            if (matches(view.snapshot().slots().get(slot), state.outputKey, 1)) {
+                unload.add(slot);
             }
-            closeForReadback(attempt, state, false);
-            return;
         }
-        int slot = firstMatchingSlot(
-                view.snapshot().slots(), bottleSlots(), state.outputKey).orElse(-1);
-        if (slot < 0 || state.clickedOutputSlots.contains(slot)) {
-            fail(state, failure("BREWING_OUTPUT_CHANGED",
+        if (unload.size() != state.brewing.expectedOutput().count()
+                + (state.remainderKey == null ? 0 : 1)) {
+            fail(state, failure("BREWING_UNLOAD_PLAN_INVALID",
                     RoutineFailure.Category.DIVERGENCE,
                     RoutineFailure.Recovery.REPLAN,
-                    Map.of("standard_output", true), Map.of()));
+                    Map.of("exact_output_slots", state.brewing.expectedOutput().count()),
+                    Map.of()));
             return;
         }
-        state.outputSourceSlot = slot;
-        state.outputPlayerBefore = countKey(
-                view.snapshot().slots(), playerSlots(), state.outputKey);
-        dispatchContainerClick(attempt, state, view.menu(), slot, 0,
-                ContainerInput.QUICK_MOVE, Stage.OUTPUT_ACK, CLICK_TIMEOUT_TICKS);
-    }
-
-    private void maintainOutputAck(PhaseFiveAttempt attempt, AttemptState state) {
-        Optional<BrewingView> optional = freshBrewingView(attempt, state);
-        if (optional.isEmpty()) return;
-        BrewingView view = optional.orElseThrow();
-        int playerAfter = countKey(
-                view.snapshot().slots(), playerSlots(), state.outputKey);
-        if (!view.snapshot().slots().get(state.outputSourceSlot).empty()
-                || !view.snapshot().carried().empty()
-                || playerAfter != state.outputPlayerBefore + 1) {
-            return;
-        }
-        state.clickedOutputSlots.add(state.outputSourceSlot);
-        state.outputsRecovered++;
-        state.stage = Stage.OUTPUT_DISPATCH;
+        state.unloadSourceSlots = List.copyOf(unload);
+        state.unloadSourceStacks = unload.stream()
+                .map(view.snapshot().slots()::get).toList();
+        state.menuIdentity = view.menu();
+        state.stage = Stage.UNLOAD_DISPATCH;
         state.stageDeadlineClientTick = boundedDeadline(currentTick(), CLICK_TIMEOUT_TICKS);
     }
 
-    private void closeForReadback(
-            PhaseFiveAttempt attempt, AttemptState state, boolean finalClose) {
+    private void dispatchNextUnload(PhaseFiveAttempt attempt, AttemptState state) {
+        if (state.unloadDispatchIndex >= state.unloadSourceSlots.size()) {
+            state.stage = Stage.CLOSING_FINAL_CHECKPOINT;
+            state.stageDeadlineClientTick = boundedDeadline(currentTick(), CLICK_TIMEOUT_TICKS);
+            return;
+        }
+        BrewingStandMenu menu = ownedBrewingMenu(attempt, state);
+        if (menu == null) return;
+        int index = state.unloadDispatchIndex;
+        if (!menu.getCarried().isEmpty()
+                || !ContainerSyncSignals.StackFingerprint.fromServerPacket(
+                        menu.slots.get(state.unloadSourceSlots.get(index)).getItem())
+                        .equals(state.unloadSourceStacks.get(index))) {
+            fail(state, failure("BREWING_UNLOAD_SOURCE_CHANGED",
+                    RoutineFailure.Category.DIVERGENCE,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("planned_singleton_source", true), Map.of()));
+            return;
+        }
+        if (!dispatchQuickMove(state, menu, state.unloadSourceSlots.get(index))) return;
+        if (state.remainderKey != null && index == 0) {
+            state.remainderRecovered = true;
+        } else {
+            state.outputsRecovered++;
+        }
+        state.unloadDispatchIndex++;
+        if (state.unloadDispatchIndex >= state.unloadSourceSlots.size()) {
+            state.stage = Stage.CLOSING_FINAL_CHECKPOINT;
+        }
+    }
+
+    private void closeForCheckpoint(
+            PhaseFiveAttempt attempt, AttemptState state, boolean finalCheckpoint) {
+        closeOwnedScreen(attempt, state,
+                finalCheckpoint ? Stage.AWAITING_FINAL_CHECKPOINT_CLOSE
+                        : Stage.AWAITING_LOADED_CLOSE);
+    }
+
+    private void closeAfterFinalReadback(PhaseFiveAttempt attempt, AttemptState state) {
+        closeOwnedScreen(attempt, state, Stage.AWAITING_FINAL_CLOSE);
+    }
+
+    private void closeOwnedScreen(
+            PhaseFiveAttempt attempt, AttemptState state, Stage nextStage) {
         ScreenOwnershipSignals.CleanupDecision decision =
                 screens.cancelRoutine(attempt.attemptId());
         if (!decision.authorityMatched() || !decision.closeMenuBestEffort()) {
@@ -823,12 +703,11 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         }
         state.serverCursorReleaseConfirmed = true;
         closeOwnedMenuClient(requireMinecraft(), decision);
-        state.stage = finalClose
-                ? Stage.AWAITING_FINAL_CLOSE : Stage.AWAITING_FIRST_CLOSE;
+        state.stage = nextStage;
         state.stageDeadlineClientTick = boundedDeadline(currentTick(), OPEN_TIMEOUT_TICKS);
     }
 
-    private void maintainClose(AttemptState state, boolean terminalClose) {
+    private void maintainClose(AttemptState state) {
         Minecraft minecraft = requireMinecraft();
         if (screens.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE
                 || minecraft.gui.screen() != null
@@ -836,16 +715,19 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                 || minecraft.player.containerMenu != minecraft.player.inventoryMenu) {
             return;
         }
-        if (!terminalClose) {
-            if (!targetReadyForEmptyOpen(minecraft, state)) {
-                return;
+        state.stage = switch (state.stage) {
+            case AWAITING_LOADED_CLOSE -> Stage.AIMING_LOADED_READBACK;
+            case AWAITING_FINAL_CHECKPOINT_CLOSE -> Stage.AIMING_FINAL_READBACK;
+            case AWAITING_FINAL_CLOSE -> {
+                state.latchSuccess();
+                yield state.stage;
             }
-            state.stage = Stage.AIMING_READBACK;
+            default -> throw new IllegalStateException("brewing close maintained outside close stage");
+        };
+        if (!state.releasing()) {
             state.stageDeadlineClientTick = boundedDeadline(
                     currentTick(), aimTimeoutTicks(state.brewing.maxCameraDegreesPerTick()));
-            return;
         }
-        state.latchSuccess();
     }
 
     /** Cleanup-only path. Once entered it never dispatches brewing gameplay or replaces intent. */
@@ -885,16 +767,17 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
 
             ScreenOwnershipSignals.Phase phase = snapshot.phase();
             if (phase == ScreenOwnershipSignals.Phase.OWNED) {
-                Optional<BrewingView> optional = brewingView(attempt, state);
-                if (optional.isEmpty()) return;
-                BrewingView view = optional.orElseThrow();
                 closeOpenPrediction(state);
                 state.screenOwnedObserved = true;
                 if (!state.serverCursorProofFresh) {
                     return;
                 }
-                if (!view.snapshot().carried().empty()) {
-                    maintainCursorReturn(attempt, state, view);
+                if (!(minecraft.gui.screen() instanceof BrewingStandScreen screen)
+                        || minecraft.player == null
+                        || !(minecraft.player.containerMenu instanceof BrewingStandMenu menu)
+                        || screen.getMenu() != menu
+                        || !menu.getCarried().isEmpty()) {
+                    state.releaseFault = true;
                     return;
                 }
                 state.serverCursorReleaseConfirmed = true;
@@ -1009,51 +892,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         state.openPrediction = null;
     }
 
-    private void maintainCursorReturn(
-            PhaseFiveAttempt attempt, AttemptState state, BrewingView view) {
-        if (state.cleanupCursorClickDispatched) {
-            if (view.packetLedgerRevision() <= state.cleanupCursorDispatchRevision) return;
-            state.observeServerCursorProof(screens.snapshot());
-            if (state.serverCursorProofFresh
-                    && state.serverCursorReleaseConfirmed
-                    && view.snapshot().carried().empty()) {
-                state.cursor = null;
-            }
-            return;
-        }
-        if (!cursorReturnSafe(view.snapshot(), state.cursor)
-                || state.openCount + state.containerClicks
-                        >= KnownBrewingRequest.MAX_INTERACTIONS) {
-            state.releaseFault = true;
-            return;
-        }
-        state.cleanupCursorDispatchRevision = packetRevision();
-        if (!invalidateServerCursorProof(
-                attempt, state, state.cleanupCursorDispatchRevision)) {
-            state.releaseFault = true;
-            return;
-        }
-        state.containerClicks++;
-        Objects.requireNonNull(requireMinecraft().gameMode).handleContainerInput(
-                view.menu().containerId,
-                state.cursor.sourceSlot(),
-                0,
-                ContainerInput.PICKUP,
-                Objects.requireNonNull(requireMinecraft().player));
-        state.cleanupCursorClickDispatched = true;
-    }
-
-    static boolean cursorReturnSafe(
-            ContainerSyncSignals.ContainerSnapshot snapshot, CursorTransaction cursor) {
-        if (cursor == null || snapshot.carried().empty()
-                || !snapshot.slots().get(cursor.sourceSlot()).empty()) return false;
-        ContainerSyncSignals.StackFingerprint carried = snapshot.carried();
-        return StackKey.of(carried).equals(cursor.key())
-                && carried.count() >= 1
-                && carried.count() <= cursor.original().count();
-    }
-
-    private void acceptReadbackSnapshot(PhaseFiveAttempt attempt, AttemptState state) {
+    private void acceptFinalSnapshot(PhaseFiveAttempt attempt, AttemptState state) {
         Optional<BrewingView> optional = brewingView(attempt, state);
         if (optional.isEmpty()) return;
         BrewingView view = optional.orElseThrow();
@@ -1082,28 +921,10 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                 "fresh_full_readback", true,
                 "inventory_delta_exact", true,
                 "cursor_empty", true);
-        closeForReadback(attempt, state, true);
+        closeAfterFinalReadback(attempt, state);
     }
 
-    private void startCursorTransaction(
-            AttemptState state, BrewingView view, int sourceSlot, int destinationSlot) {
-        ContainerSyncSignals.StackFingerprint source = view.snapshot().slots().get(sourceSlot);
-        if (source.empty() || source.count() < 1
-                || !view.snapshot().carried().empty()) {
-            throw new IllegalStateException("cursor transaction source is invalid");
-        }
-        state.cursor = new CursorTransaction(sourceSlot, destinationSlot, source);
-    }
-
-    private void dispatchContainerClick(
-            PhaseFiveAttempt attempt,
-            AttemptState state,
-            BrewingStandMenu menu,
-            int slot,
-            int button,
-            ContainerInput input,
-            Stage nextStage,
-            int timeoutTicks) {
+    private boolean dispatchQuickMove(AttemptState state, BrewingStandMenu menu, int slot) {
         if (state.openCount + state.containerClicks
                 >= KnownBrewingRequest.MAX_INTERACTIONS) {
             fail(state, failure("BREWING_INTERACTION_LIMIT",
@@ -1111,51 +932,44 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                     RoutineFailure.Recovery.NONE,
                     Map.of("maximum_interactions",
                             KnownBrewingRequest.MAX_INTERACTIONS), Map.of()));
-            return;
+            return false;
         }
         Minecraft minecraft = requireMinecraft();
         if (screens.ownedSession().isEmpty()
                 || minecraft.player == null
-                || minecraft.player.containerMenu != menu) {
+                || minecraft.player.containerMenu != menu
+                || menu != state.menuIdentity) {
             fail(state, failure("BREWING_CLICK_AUTHORITY_LOST",
                     RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.REPLAN, Map.of(), Map.of()));
-            return;
-        }
-        long before = packetRevision();
-        if (!invalidateServerCursorProof(attempt, state, before)) {
-            fail(state, failure("BREWING_CLICK_AUTHORITY_LOST",
-                    RoutineFailure.Category.SAFETY,
-                    RoutineFailure.Recovery.REPLAN, Map.of(), Map.of()));
-            return;
+            return false;
         }
         // Account before dispatch so a rejected/throwing call cannot disappear from usage.
         state.containerClicks++;
         Objects.requireNonNull(minecraft.gameMode).handleContainerInput(
-                menu.containerId, slot, button, input, minecraft.player);
-        state.lastDispatchPacketRevision = before;
-        state.stage = nextStage;
-        state.stageDeadlineClientTick = boundedDeadline(currentTick(), timeoutTicks);
-    }
-
-    private boolean invalidateServerCursorProof(
-            PhaseFiveAttempt attempt, AttemptState state, long dispatchRevision) {
-        if (!screens.invalidateServerCursorProof(
-                attempt.attemptId(), dispatchRevision)) {
-            return false;
-        }
-        state.cursorProofRequiredAfterRevision = Math.max(
-                state.cursorProofRequiredAfterRevision, dispatchRevision);
-        state.serverCursorReleaseConfirmed = false;
-        state.serverCursorProofFresh = false;
+                menu.containerId, slot, 0, ContainerInput.QUICK_MOVE, minecraft.player);
+        state.stageDeadlineClientTick = boundedDeadline(currentTick(), CLICK_TIMEOUT_TICKS);
         return true;
     }
 
-    private Optional<BrewingView> freshBrewingView(
+    private BrewingStandMenu ownedBrewingMenu(
             PhaseFiveAttempt attempt, AttemptState state) {
-        Optional<BrewingView> view = brewingView(attempt, state);
-        return view.filter(value -> value.packetLedgerRevision()
-                > state.lastDispatchPacketRevision);
+        Minecraft minecraft = requireMinecraft();
+        Optional<ScreenOwnershipSignals.OwnedScreenSession> owned = screens.ownedSession();
+        if (owned.isEmpty()
+                || !attempt.attemptId().equals(owned.orElseThrow().token().routineId())
+                || !(minecraft.gui.screen() instanceof BrewingStandScreen screen)
+                || minecraft.player == null
+                || !(minecraft.player.containerMenu instanceof BrewingStandMenu menu)
+                || screen.getMenu() != menu
+                || menu != state.menuIdentity
+                || !exactBrewingLayout(menu, minecraft.player.getInventory())) {
+            fail(state, failure("BREWING_CLICK_AUTHORITY_LOST",
+                    RoutineFailure.Category.SAFETY,
+                    RoutineFailure.Recovery.REPLAN, Map.of(), Map.of()));
+            return null;
+        }
+        return menu;
     }
 
     private Optional<BrewingView> brewingView(
@@ -1250,7 +1064,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                     RoutineFailure.Recovery.USER,
                     Map.of("screen", "clear", "ownership", "idle"), Map.of());
         }
-        if (!targetReadyForEmptyOpen(minecraft, brewing.target(), null)) {
+        if (!targetReadyForOpen(minecraft, brewing.target(), true, null)) {
             return failure("BREWING_EMPTY_STAND_REQUIRED",
                     RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
@@ -1385,17 +1199,23 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
             Minecraft minecraft,
             Stage stage,
             ScreenOwnershipSignals.Phase phase) {
-        if (stage == Stage.AIMING_INITIAL || stage == Stage.AIMING_READBACK) {
+        if (stage == Stage.AIMING_INITIAL
+                || stage == Stage.AIMING_LOADED_READBACK
+                || stage == Stage.AIMING_FINAL_READBACK) {
             return phase == ScreenOwnershipSignals.Phase.IDLE
                     && minecraft.gui.screen() == null
                     && minecraft.player != null
                     && minecraft.player.containerMenu == minecraft.player.inventoryMenu;
         }
-        if (stage == Stage.AWAITING_FIRST_CLOSE || stage == Stage.AWAITING_FINAL_CLOSE) {
+        if (stage == Stage.AWAITING_LOADED_CLOSE
+                || stage == Stage.AWAITING_FINAL_CHECKPOINT_CLOSE
+                || stage == Stage.AWAITING_FINAL_CLOSE) {
             return phase == ScreenOwnershipSignals.Phase.CLOSING
                     || phase == ScreenOwnershipSignals.Phase.IDLE;
         }
-        if (stage == Stage.OPENING_INITIAL || stage == Stage.OPENING_READBACK) {
+        if (stage == Stage.OPENING_INITIAL
+                || stage == Stage.OPENING_LOADED_READBACK
+                || stage == Stage.OPENING_FINAL_READBACK) {
             return phase == ScreenOwnershipSignals.Phase.EXPECTING_OPEN_PACKET
                     || phase == ScreenOwnershipSignals.Phase.EXPECTING_SCREEN
                     || phase == ScreenOwnershipSignals.Phase.EXPECTING_FULL_CONTENT
@@ -1494,37 +1314,6 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         return count == expectedCount;
     }
 
-    private static boolean cursorTaken(
-            BrewingView view, CursorTransaction cursor) {
-        if (cursor == null) return false;
-        return view.snapshot().slots().get(cursor.sourceSlot()).empty()
-                && sameStack(view.snapshot().carried(), cursor.original());
-    }
-
-    private static boolean onePlacedOrConsumed(
-            BrewingView view, CursorTransaction cursor, boolean fuel) {
-        if (cursor == null
-                || !view.snapshot().slots().get(cursor.sourceSlot()).empty()) {
-            return false;
-        }
-        int expectedCursor = cursor.original().count() - 1;
-        if (!matches(view.snapshot().carried(), cursor.key(), expectedCursor)) {
-            return false;
-        }
-        ContainerSyncSignals.StackFingerprint destination =
-                view.snapshot().slots().get(cursor.destinationSlot());
-        if (matches(destination, cursor.key(), 1)) return true;
-        return fuel && destination.empty() && view.fuel() > 0;
-    }
-
-    private static boolean cursorReturned(
-            BrewingView view, CursorTransaction cursor) {
-        return cursor != null
-                && view.snapshot().carried().empty()
-                && matches(view.snapshot().slots().get(cursor.sourceSlot()),
-                        cursor.key(), cursor.original().count() - 1);
-    }
-
     private static boolean liveMenuMatches(
             ContainerSyncSignals.ContainerSnapshot snapshot,
             BrewingStandMenu menu) {
@@ -1592,17 +1381,6 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                 && brewTime == 0
                 && fuel >= 0
                 && fuel <= MAX_FUEL_USES;
-    }
-
-    static boolean fuelUseConfirmedAfterIngredient(
-            int observedFuel,
-            int expectedFuel,
-            long fuelPacketRevision,
-            long ingredientDispatchPacketRevision) {
-        return expectedFuel >= 0
-                && expectedFuel < MAX_FUEL_USES
-                && observedFuel == expectedFuel
-                && fuelPacketRevision > ingredientDispatchPacketRevision;
     }
 
     static FuelPlan fuelPlan(int initialFuelUses) {
@@ -1704,6 +1482,21 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         return Collections.unmodifiableMap(expected);
     }
 
+    static Map<StackKey, Integer> expectedInventoryAfterLoad(
+            Map<StackKey, Integer> baseline,
+            StackKey input,
+            int inputCount,
+            StackKey fuel,
+            boolean consumesInventoryFuel,
+            StackKey ingredient) {
+        var expected = new LinkedHashMap<>(Objects.requireNonNull(baseline, "baseline"));
+        adjust(expected, Objects.requireNonNull(input, "input"), -inputCount);
+        Objects.requireNonNull(fuel, "fuel");
+        if (consumesInventoryFuel) adjust(expected, fuel, -1);
+        adjust(expected, Objects.requireNonNull(ingredient, "ingredient"), -1);
+        return Collections.unmodifiableMap(expected);
+    }
+
     static boolean inventoryReadbackMatches(
             Map<StackKey, Integer> expected,
             Map<StackKey, Integer> actual) {
@@ -1722,19 +1515,15 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         else values.put(key, after);
     }
 
-    private static Optional<Integer> chooseDefaultSource(
-            List<ContainerSyncSignals.StackFingerprint> slots, StackKey key) {
-        return firstMatchingSlot(slots, playerSlots(), key);
-    }
-
-    private static Optional<Integer> firstMatchingSlot(
+    static Optional<Integer> chooseSingletonSource(
             List<ContainerSyncSignals.StackFingerprint> slots,
-            List<Integer> candidates,
-            StackKey key) {
-        for (int slot : candidates) {
+            StackKey key,
+            List<Integer> excluded) {
+        Objects.requireNonNull(excluded, "excluded");
+        for (int slot : playerSlots()) {
             requireSlot(slots, slot);
             ContainerSyncSignals.StackFingerprint stack = slots.get(slot);
-            if (matches(stack, key, stack.count()) && stack.count() > 0) {
+            if (!excluded.contains(slot) && matches(stack, key, 1)) {
                 return Optional.of(slot);
             }
         }
@@ -1767,12 +1556,6 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                 && stack.count() == count
                 && stack.itemId().equals(key.itemId())
                 && stack.itemAndComponentsHash() == key.componentsHash();
-    }
-
-    private static boolean sameStack(
-            ContainerSyncSignals.StackFingerprint left,
-            ContainerSyncSignals.StackFingerprint right) {
-        return left.equals(right);
     }
 
     private static void requireSlot(
@@ -1896,15 +1679,16 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         return ItemStack.isSameItemSameComponents(stack, defaultStack);
     }
 
-    private static boolean targetReadyForEmptyOpen(
-            Minecraft minecraft, AttemptState state) {
-        return targetReadyForEmptyOpen(
-                minecraft, state.brewing.target(), state.initialTargetState);
+    private static boolean targetReadyForOpen(
+            Minecraft minecraft, AttemptState state, boolean requireEmpty) {
+        return targetReadyForOpen(
+                minecraft, state.brewing.target(), requireEmpty, null);
     }
 
-    private static boolean targetReadyForEmptyOpen(
+    private static boolean targetReadyForOpen(
             Minecraft minecraft,
             BlockTarget target,
+            boolean requireEmpty,
             BlockStateFingerprint expected) {
         if (minecraft.level == null || minecraft.player == null) return false;
         BlockPos position = blockPos(target);
@@ -1915,7 +1699,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         }
         BlockState state = minecraft.level.getBlockState(position);
         return state.is(Blocks.BREWING_STAND)
-                && bottlesEmpty(state)
+                && (!requireEmpty || bottlesEmpty(state))
                 && minecraft.level.getBlockEntity(position)
                         instanceof BrewingStandBlockEntity
                 && (expected == null || expected.equals(fingerprint(state)));
@@ -2174,23 +1958,17 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
     enum Stage {
         AIMING_INITIAL,
         OPENING_INITIAL,
-        FUEL_TAKE_ACK,
-        FUEL_PLACE_ACK,
-        FUEL_RETURN_ACK,
-        AWAITING_FUEL_CONSUMPTION,
-        INPUT_DISPATCH,
-        INPUT_ACK,
-        INGREDIENT_TAKE_ACK,
-        INGREDIENT_PLACE_ACK,
-        INGREDIENT_RETURN_ACK,
-        AWAITING_BREW_START,
+        LOAD_DISPATCH,
+        CLOSING_LOADED_CHECKPOINT,
+        AWAITING_LOADED_CLOSE,
+        AIMING_LOADED_READBACK,
+        OPENING_LOADED_READBACK,
         AWAITING_BREW_COMPLETE,
-        REMAINDER_ACK,
-        OUTPUT_DISPATCH,
-        OUTPUT_ACK,
-        AWAITING_FIRST_CLOSE,
-        AIMING_READBACK,
-        OPENING_READBACK,
+        UNLOAD_DISPATCH,
+        CLOSING_FINAL_CHECKPOINT,
+        AWAITING_FINAL_CHECKPOINT_CLOSE,
+        AIMING_FINAL_READBACK,
+        OPENING_FINAL_READBACK,
         AWAITING_FINAL_CLOSE,
         RELEASING,
         TERMINAL
@@ -2207,24 +1985,6 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         static StackKey of(ContainerSyncSignals.StackFingerprint stack) {
             if (stack.empty()) throw new IllegalArgumentException("empty stack has no key");
             return new StackKey(stack.itemId(), stack.itemAndComponentsHash());
-        }
-    }
-
-    record CursorTransaction(
-            int sourceSlot,
-            int destinationSlot,
-            ContainerSyncSignals.StackFingerprint original) {
-        CursorTransaction {
-            if (sourceSlot < PLAYER_SLOT_START || sourceSlot > PLAYER_SLOT_END
-                    || destinationSlot < BOTTLE_SLOT_START
-                    || destinationSlot > FUEL_SLOT
-                    || original.empty()) {
-                throw new IllegalArgumentException("cursor transaction is invalid");
-            }
-        }
-
-        StackKey key() {
-            return StackKey.of(original);
         }
     }
 
@@ -2358,45 +2118,37 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         private Object levelIdentity;
         private Object connectionIdentity;
         private ViewSlotLease ownership;
-        private BlockStateFingerprint initialTargetState;
         private StackKey inputKey;
         private StackKey outputKey;
         private StackKey fuelKey;
         private StackKey ingredientKey;
         private StackKey remainderKey;
-        private Map<StackKey, Integer> initialInventory = Map.of();
+        private Map<StackKey, Integer> expectedLoadedInventory = Map.of();
         private Map<StackKey, Integer> expectedInventory = Map.of();
         private Map<String, Object> pendingResultBasis;
-        private CursorTransaction cursor;
-        private final List<Integer> clickedInputSlots = new ArrayList<>();
-        private final List<Integer> clickedOutputSlots = new ArrayList<>();
+        private List<Integer> loadSourceSlots = List.of();
+        private List<ContainerSyncSignals.StackFingerprint> loadSourceStacks = List.of();
+        private List<Integer> unloadSourceSlots = List.of();
+        private List<ContainerSyncSignals.StackFingerprint> unloadSourceStacks = List.of();
+        private BrewingStandMenu menuIdentity;
         private long stageDeadlineClientTick;
-        private long lastDispatchPacketRevision;
-        private long fuelPlacementPacketRevision;
-        private long ingredientDispatchPacketRevision;
         private long brewStartDataRevision;
         private int expectedFuelUses = -1;
         private int openCount;
         private int containerClicks;
-        private int inputsMoved;
+        private int loadDispatchIndex;
+        private int unloadDispatchIndex;
         private int outputsRecovered;
-        private int inputSourceSlot = -1;
-        private int inputPlayerBefore;
-        private int inputStandBefore;
-        private int outputSourceSlot = -1;
-        private int outputPlayerBefore;
         private boolean brewStarted;
         private boolean brewCompleted;
         private boolean loadsInventoryFuel;
         private boolean remainderRecovered;
+        private boolean loadedReadbackConfirmed;
         private boolean readbackConfirmed;
         private OpenHandPlan openHand;
         private ClientPredictionSignals.PredictionAttempt openPrediction;
         private long releaseStartedTick = -1L;
         private long releaseDeadlineTick;
-        private long cleanupCursorDispatchRevision;
-        private long cursorProofRequiredAfterRevision = -1L;
-        private boolean cleanupCursorClickDispatched;
         private boolean screenOwnedObserved;
         private boolean serverCursorProofFresh;
         private boolean serverCursorReleaseConfirmed;
@@ -2423,9 +2175,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
 
         private void observeServerCursorProof(ScreenOwnershipSignals.Snapshot snapshot) {
             screenOwnedObserved |= snapshot.everOwned();
-            if (snapshot.lastServerCursorProven()
-                    && snapshot.lastServerCursorProofRevision()
-                            > cursorProofRequiredAfterRevision) {
+            if (snapshot.lastServerCursorProven()) {
                 serverCursorProofFresh = true;
                 serverCursorReleaseConfirmed = snapshot.lastServerCursorEmpty();
             }
@@ -2508,6 +2258,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
             basis.put("stage", stage.name().toLowerCase(java.util.Locale.ROOT));
             basis.put("open_count", openCount);
             basis.put("container_clicks", containerClicks);
+            basis.put("loaded_readback", loadedReadbackConfirmed);
             basis.put("brew_time_positive_observed", brewStarted);
             basis.put("brew_time_zero_observed", brewCompleted);
             basis.put("outputs_recovered", outputsRecovered);

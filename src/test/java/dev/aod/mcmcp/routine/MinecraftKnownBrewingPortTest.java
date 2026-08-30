@@ -1,7 +1,6 @@
 package dev.aod.mcmcp.routine;
 
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.ContainerDataEvidence;
-import dev.aod.mcmcp.runtime.ContainerSyncSignals.ContainerSnapshot;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.OpenScreenEvidence;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
 import net.minecraft.core.component.DataComponentMap;
@@ -54,15 +53,19 @@ class MinecraftKnownBrewingPortTest {
     }
 
     @Test
-    void fuelUseMustBeAConfirmedServerUpdateAfterIngredientDispatch() {
-        assertThat(MinecraftKnownBrewingPort.fuelUseConfirmedAfterIngredient(
-                4, 4, 101, 100)).isTrue();
-        assertThat(MinecraftKnownBrewingPort.fuelUseConfirmedAfterIngredient(
-                4, 4, 100, 100)).isFalse();
-        assertThat(MinecraftKnownBrewingPort.fuelUseConfirmedAfterIngredient(
-                5, 4, 101, 100)).isFalse();
-        assertThat(MinecraftKnownBrewingPort.fuelUseConfirmedAfterIngredient(
-                19, -1, 101, 100)).isFalse();
+    void singletonLoadPlanRejectsBulkAndReservesDistinctMatchingSources() {
+        var slots = emptyMenu();
+        var blaze = key("minecraft:blaze_powder", BLAZE_HASH);
+        slots.set(5, stack("minecraft:blaze_powder", 2, BLAZE_HASH));
+        slots.set(6, stack("minecraft:blaze_powder", 1, BLAZE_HASH));
+        slots.set(7, stack("minecraft:blaze_powder", 1, BLAZE_HASH));
+
+        assertThat(MinecraftKnownBrewingPort.chooseSingletonSource(slots, blaze, List.of()))
+                .contains(6);
+        assertThat(MinecraftKnownBrewingPort.chooseSingletonSource(slots, blaze, List.of(6)))
+                .contains(7);
+        assertThat(MinecraftKnownBrewingPort.chooseSingletonSource(
+                slots, blaze, List.of(6, 7))).isEmpty();
     }
 
     @Test
@@ -123,23 +126,6 @@ class MinecraftKnownBrewingPortTest {
         assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(
                 testStack(Blocks.STONE.asItem()))).isFalse();
         assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(ItemStack.EMPTY)).isFalse();
-    }
-
-    @Test
-    void cursorReturnRequiresTheExactKnownEmptySource() {
-        var slots = emptyMenu();
-        var original = stack("minecraft:blaze_powder", 3, BLAZE_HASH);
-        var cursor = new MinecraftKnownBrewingPort.CursorTransaction(5, 4, original);
-        var safe = new ContainerSnapshot(
-                UUID.randomUUID(), 7, "minecraft:brewing_stand", 1,
-                slots, stack("minecraft:blaze_powder", 2, BLAZE_HASH), 10, 20);
-        assertThat(MinecraftKnownBrewingPort.cursorReturnSafe(safe, cursor)).isTrue();
-
-        slots.set(5, stack("minecraft:stone", 1, OTHER_HASH));
-        var occupied = new ContainerSnapshot(
-                safe.worldSessionId(), 7, "minecraft:brewing_stand", 2,
-                slots, safe.carried(), 11, 21);
-        assertThat(MinecraftKnownBrewingPort.cursorReturnSafe(occupied, cursor)).isFalse();
     }
 
     @Test
@@ -207,13 +193,12 @@ class MinecraftKnownBrewingPortTest {
 
         assertThat(expected).containsExactlyInAnyOrderEntriesOf(Map.of(
                 blaze, 3, output, 3));
-        int worstCaseInteractions = 1 // initial open
-                + 3 // fuel take/place/return
+        int worstCaseInteractions = 3 // initial, loaded-checkpoint and final opens
+                + 1 // singleton fuel QUICK_MOVE
                 + 3 // three singleton potion QUICK_MOVEs
-                + 3 // ingredient take/place/return
+                + 1 // singleton ingredient QUICK_MOVE
                 + 1 // possible crafting remainder QUICK_MOVE
-                + 3 // three output QUICK_MOVEs
-                + 1; // readback open
+                + 3; // three output QUICK_MOVEs
         assertThat(worstCaseInteractions)
                 .isLessThanOrEqualTo(KnownBrewingRequest.MAX_INTERACTIONS);
     }
@@ -228,12 +213,11 @@ class MinecraftKnownBrewingPortTest {
                 input, 3, blaze, false, blaze, output, 3, null);
 
         assertThat(expected).containsExactlyInAnyOrderEntriesOf(Map.of(output, 3));
-        int prechargedWorstCaseInteractions = 1 // initial open
+        int prechargedWorstCaseInteractions = 3 // initial, loaded-checkpoint and final opens
                 + 3 // three singleton potion QUICK_MOVEs
-                + 3 // ingredient take/place/return
+                + 1 // singleton ingredient QUICK_MOVE
                 + 1 // possible crafting remainder QUICK_MOVE
-                + 3 // three output QUICK_MOVEs
-                + 1; // readback open
+                + 3; // three output QUICK_MOVEs
         assertThat(prechargedWorstCaseInteractions)
                 .isLessThanOrEqualTo(KnownBrewingRequest.MAX_INTERACTIONS);
     }
@@ -300,31 +284,26 @@ class MinecraftKnownBrewingPortTest {
                         "net/minecraft/client/multiplayer/MultiPlayerGameMode#useItemOn",
                         "dev/aod/mcmcp/runtime/ClientPredictionSignals$PredictionAttempt"
                                 + "#captureIssuedPredictions");
-        var clickCalls = invocations(node, "dispatchContainerClick");
+        var clickCalls = invocations(node, "dispatchQuickMove");
         assertThat(clickCalls)
-                .containsSubsequence(
-                        "dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#packetRevision",
-                        "dev/aod/mcmcp/routine/MinecraftKnownBrewingPort"
-                                + "#invalidateServerCursorProof",
-                        "net/minecraft/client/multiplayer/MultiPlayerGameMode#handleContainerInput",
-                        "dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#currentTick",
-                        "dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#boundedDeadline");
+                .contains("net/minecraft/client/multiplayer/MultiPlayerGameMode#handleContainerInput")
+                .doesNotContain(
+                        "dev/aod/mcmcp/runtime/ScreenOwnershipSignals#invalidateServerCursorProof",
+                        "dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#packetRevision");
         assertThat(clickCalls.stream()
                 .filter(call -> call.endsWith("#handleContainerInput")))
                 .hasSize(1);
-        assertThat(invocations(node, "maintainCursorReturn"))
-                .containsSubsequence(
-                        "dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#packetRevision",
-                        "dev/aod/mcmcp/routine/MinecraftKnownBrewingPort"
-                                + "#invalidateServerCursorProof",
-                        "net/minecraft/client/multiplayer/MultiPlayerGameMode"
-                                + "#handleContainerInput");
-        assertThat(invocations(node, "invalidateServerCursorProof"))
-                .contains("dev/aod/mcmcp/runtime/ScreenOwnershipSignals"
-                        + "#invalidateServerCursorProof");
         assertThat(fieldReads(node))
-                .contains("net/minecraft/world/inventory/ContainerInput#PICKUP")
-                .contains("net/minecraft/world/inventory/ContainerInput#QUICK_MOVE");
+                .contains("net/minecraft/world/inventory/ContainerInput#QUICK_MOVE")
+                .doesNotContain("net/minecraft/world/inventory/ContainerInput#PICKUP");
+        assertThat(invocations(node, "acceptInitialSnapshot"))
+                .contains(
+                        "dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#chooseSingletonSource",
+                        "dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#expectedInventoryAfterLoad");
+        assertThat(invocations(node, "acceptLoadedSnapshot"))
+                .contains("dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#inventoryReadbackMatches");
+        assertThat(invocations(node, "acceptFinalSnapshot"))
+                .contains("dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#inventoryReadbackMatches");
         assertThat(invocations(node, "closeOwnedMenuClient"))
                 .contains("net/minecraft/client/gui/screens/inventory/AbstractContainerScreen#onClose")
                 .doesNotContain("net/minecraft/client/player/LocalPlayer#closeContainer");
@@ -333,7 +312,7 @@ class MinecraftKnownBrewingPortTest {
                 "net/minecraft/client/multiplayer/MultiPlayerGameMode", "useItemOn"))
                 .isTrue();
         assertThat(fieldWritePrecedesInvocation(
-                node, "dispatchContainerClick", "containerClicks",
+                node, "dispatchQuickMove", "containerClicks",
                 "net/minecraft/client/multiplayer/MultiPlayerGameMode", "handleContainerInput"))
                 .isTrue();
         assertThat(invocations(node, "observe"))

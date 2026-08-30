@@ -122,8 +122,8 @@ neoForge {
                 }
                 def requestedMode = phase5Mode.get()
                 def supportedModes = [
-                        'recipes', 'craft', 'transfer', 'crop',
-                        'tree', 'sleep', 'survey', 'iron_farm', 'reset'
+                        'recipes', 'craft', 'smelt', 'brew', 'redstone', 'transfer', 'crop',
+                        'combined_wheat', 'tree', 'sleep', 'survey', 'iron_farm', 'reset'
                 ]
                 if (!supportedModes.contains(requestedMode)) {
                     throw new GradleException(

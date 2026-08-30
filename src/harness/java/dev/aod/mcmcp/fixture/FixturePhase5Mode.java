@@ -6,6 +6,9 @@ import java.util.Locale;
 enum FixturePhase5Mode {
     RECIPES("recipes", 0),
     CRAFT("craft", 0),
+    SMELT("smelt", 0),
+    BREW("brew", 0),
+    REDSTONE("redstone", 0),
     TRANSFER("transfer", 0),
     CROP("crop", 1),
     COMBINED_WHEAT("combined_wheat", 0),
@@ -28,6 +31,9 @@ enum FixturePhase5Mode {
         return switch (normalized) {
             case "recipes" -> RECIPES;
             case "craft" -> CRAFT;
+            case "smelt" -> SMELT;
+            case "brew" -> BREW;
+            case "redstone" -> REDSTONE;
             case "transfer" -> TRANSFER;
             case "crop" -> CROP;
             case "combined_wheat" -> COMBINED_WHEAT;

@@ -2,6 +2,7 @@ package dev.aod.mcmcp.fixture;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -15,6 +16,7 @@ import net.minecraft.world.entity.Relative;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.alchemy.PotionContents;
 import net.minecraft.world.item.crafting.Recipe;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.ChestBlock;
@@ -39,6 +41,10 @@ final class FixturePhase5Scenario {
     static final BlockPos WORKSPACE_MAX = new BlockPos(206, 204, 206);
 
     static final BlockPos CRAFTING_TABLE = new BlockPos(195, 200, 194);
+    static final BlockPos FURNACE = new BlockPos(196, 200, 194);
+    static final BlockPos BREWING_STAND = new BlockPos(197, 200, 194);
+    static final BlockPos REDSTONE_LAMP_TARGET = new BlockPos(201, 200, 194);
+    static final BlockPos REDSTONE_LEVER_TARGET = new BlockPos(202, 200, 194);
     static final BlockPos TRANSFER_BARREL = new BlockPos(199, 200, 194);
 
     static final BlockPos COMBINED_SUPPLY_CHEST = new BlockPos(199, 200, 195);
@@ -136,6 +142,8 @@ final class FixturePhase5Scenario {
         } else {
             applyLayout(context.level());
             configureBarrel(context.level());
+            configureFurnace(context.level());
+            configureBrewingStand(context.level());
         }
         resetKnownRecipes(context);
         if (mode == FixturePhase5Mode.RECIPES || mode == FixturePhase5Mode.CRAFT) {
@@ -163,6 +171,10 @@ final class FixturePhase5Scenario {
 
         output.accept(Component.literal("phase5.mode=" + mode.wireName()
                 + " table=" + position(CRAFTING_TABLE)
+                + " furnace=" + position(FURNACE)
+                + " brewing=" + position(BREWING_STAND)
+                + " redstone=" + position(REDSTONE_LAMP_TARGET)
+                + "->" + position(REDSTONE_LEVER_TARGET)
                 + " container=" + position(TRANSFER_BARREL)
                 + " crops=" + positions(MATURE_CROPS)
                 + " logs=" + positions(TREE_LOGS)
@@ -176,6 +188,9 @@ final class FixturePhase5Scenario {
         var result = emptyWorkspace();
         result.put(CROP_WATER, Blocks.WATER.defaultBlockState());
         result.put(CRAFTING_TABLE, Blocks.CRAFTING_TABLE.defaultBlockState());
+        result.put(FURNACE, Blocks.FURNACE.defaultBlockState());
+        result.put(BREWING_STAND, Blocks.BREWING_STAND.defaultBlockState());
+        result.put(REDSTONE_LEVER_TARGET.below(), Blocks.GLASS.defaultBlockState());
         result.put(TRANSFER_BARREL, barrelState());
         for (BlockPos support : CROP_SUPPORTS) {
             result.put(support, hydratedFarmland());
@@ -392,6 +407,22 @@ final class FixturePhase5Scenario {
         container.setChanged();
     }
 
+    private static void configureFurnace(ServerLevel level) {
+        if (!(level.getBlockEntity(FURNACE) instanceof Container container)) {
+            throw new IllegalStateException("Phase 5 furnace has no vanilla container");
+        }
+        container.clearContent();
+        container.setChanged();
+    }
+
+    private static void configureBrewingStand(ServerLevel level) {
+        if (!(level.getBlockEntity(BREWING_STAND) instanceof Container container)) {
+            throw new IllegalStateException("Phase 5 brewing stand has no vanilla container");
+        }
+        container.clearContent();
+        container.setChanged();
+    }
+
     private static void configureCombinedSupplyChest(ServerLevel level) {
         if (!(level.getBlockEntity(COMBINED_SUPPLY_CHEST) instanceof Container container)) {
             throw new IllegalStateException("Combined wheat supply chest has no vanilla container");
@@ -410,6 +441,25 @@ final class FixturePhase5Scenario {
                 player.getInventory().setItem(1, new ItemStack(Items.OAK_PLANKS, 4));
             }
             case CRAFT -> player.getInventory().setItem(0, new ItemStack(Items.OAK_LOG, 4));
+            case SMELT -> {
+                player.getInventory().setItem(0, new ItemStack(Items.RAW_IRON));
+                player.getInventory().setItem(1, new ItemStack(Items.COAL));
+            }
+            case BREW -> {
+                var water = BuiltInRegistries.POTION.get(
+                                Identifier.fromNamespaceAndPath("minecraft", "water"))
+                        .orElseThrow(() -> new IllegalStateException("water potion is unavailable"));
+                for (int slot = 0; slot < 3; slot++) {
+                    player.getInventory().setItem(
+                            slot, PotionContents.createItemStack(Items.POTION, water));
+                }
+                player.getInventory().setItem(3, new ItemStack(Items.NETHER_WART));
+                player.getInventory().setItem(4, new ItemStack(Items.BLAZE_POWDER));
+            }
+            case REDSTONE -> {
+                player.getInventory().setItem(0, new ItemStack(Items.REDSTONE_LAMP));
+                player.getInventory().setItem(1, new ItemStack(Items.LEVER));
+            }
             case TRANSFER -> {
                 // Empty inventory is the deterministic destination for container-to-player tests.
             }
@@ -466,6 +516,9 @@ final class FixturePhase5Scenario {
     private static Pose pose(FixturePhase5Mode mode) {
         return switch (mode) {
             case RECIPES, CRAFT -> new Pose(195.5D, 200.0D, 196.5D, 180.0F, 25.0F);
+            case SMELT -> new Pose(196.5D, 200.0D, 196.5D, 180.0F, 25.0F);
+            case BREW -> new Pose(197.5D, 200.0D, 196.5D, 180.0F, 25.0F);
+            case REDSTONE -> new Pose(201.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case TRANSFER -> new Pose(199.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case CROP -> new Pose(194.5D, 200.0D, 201.5D, 180.0F, 28.0F);
             case COMBINED_WHEAT -> new Pose(199.5D, 200.0D, 197.0D, 180.0F, 18.0F);

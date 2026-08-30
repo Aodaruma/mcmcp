@@ -70,6 +70,12 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
   route for exactly 20 server ticks, then removes it. This exercises neutral occupant wait and
   recovery; another player uses the same production occupant check but is not covered by this
   private-singleplayer fixture.
+- `/mcmcp_fixture phase5 brew` — prepares an empty brewing stand plus three water bottles, one
+  nether wart, and one blaze powder for a production `brew_known_recipe` smoke test.
+- `/mcmcp_fixture phase5 smelt` — prepares an empty furnace plus one raw iron and one coal for a
+  production smelting smoke test.
+- `/mcmcp_fixture phase5 redstone` — prepares supported air cells and supplies one redstone lamp
+  and one lever for the bounded identity truth-table smoke test.
 - `/mcmcp_fixture phase5 combined_wheat` — prepares the production-prompt wheat E2E. The player
   starts in Survival with a completely empty inventory, facing a visible and normally reachable
   single chest containing one damage-37 vanilla iron hoe and 64 wheat seeds. A closed oak fence
