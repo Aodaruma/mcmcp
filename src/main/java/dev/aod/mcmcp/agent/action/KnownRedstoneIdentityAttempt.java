@@ -220,7 +220,7 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
                 || observation.observedAtClientTick() != clientTick
                 || !request.worldSessionId().equals(observation.worldSessionId())
                 || !expectedPosition.equals(observation.position())
-                || sample.visibleFaces().isEmpty()
+                || (!"minecraft:air".equals(block) && sample.visibleFaces().isEmpty())
                 || observation.provenance() != ObservationProvenance.LINE_OF_SIGHT_OBSERVATION
                         && observation.provenance() != ObservationProvenance.CROSSHAIR_OBSERVATION) {
             return OutputObservation.PENDING;

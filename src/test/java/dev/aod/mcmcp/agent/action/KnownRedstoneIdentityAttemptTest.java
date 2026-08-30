@@ -335,7 +335,7 @@ class KnownRedstoneIdentityAttemptTest {
                 MinecraftObservationService.BlockOutcome.CURRENT,
                 position,
                 observed,
-                List.of("north"),
+                "minecraft:air".equals(block) ? List.of() : List.of("north"),
                 true,
                 null,
                 tick);
