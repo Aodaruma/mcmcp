@@ -20,6 +20,7 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
     private final SemanticActionPort port;
     private final RedstoneIdentityRequest request;
     private final LongFunction<MinecraftObservationService.BlockSample> lampObserver;
+    private final LongFunction<MinecraftObservationService.BlockSample> leverObserver;
     private final long deadlineTick;
     private Phase phase = Phase.PLACE_LAMP;
     private KnownBlockMutationAttempt mutation;
@@ -34,11 +35,13 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
             SemanticActionPort port,
             RedstoneIdentityRequest request,
             LongFunction<MinecraftObservationService.BlockSample> lampObserver,
+            LongFunction<MinecraftObservationService.BlockSample> leverObserver,
             long admittedClientTick,
             long deadlineTick) {
         this.port = Objects.requireNonNull(port, "port");
         this.request = Objects.requireNonNull(request, "request");
         this.lampObserver = Objects.requireNonNull(lampObserver, "lampObserver");
+        this.leverObserver = Objects.requireNonNull(leverObserver, "leverObserver");
         if (admittedClientTick < 0L || deadlineTick <= admittedClientTick
                 || deadlineTick > saturatedAdd(admittedClientTick, MAX_TICKS)
                 || deadlineTick > request.bounds().hardDeadlineClientTick(admittedClientTick)) {
@@ -119,7 +122,11 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
     }
 
     private TickResult observeOutput(long clientTick, boolean expectedLit, Phase next) {
-        OutputObservation observed = outputObservation(lampObserver.apply(clientTick), clientTick, expectedLit);
+        OutputObservation observed = outputObservation(
+                lampObserver.apply(clientTick),
+                leverObserver.apply(clientTick),
+                clientTick,
+                expectedLit);
         if (observed == OutputObservation.TARGET_CHANGED) {
             return fail("redstone_output_changed", 0, 0);
         }
@@ -141,11 +148,43 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
     }
 
     private OutputObservation outputObservation(
-            MinecraftObservationService.BlockSample sample,
+            MinecraftObservationService.BlockSample lampSample,
+            MinecraftObservationService.BlockSample leverSample,
             long clientTick,
             boolean expectedLit) {
-        Objects.requireNonNull(sample, "lamp observation");
-        BlockTarget target = request.lampTarget();
+        OutputObservation lamp = observedProperty(
+                lampSample,
+                request.lampTarget(),
+                clientTick,
+                "minecraft:redstone_lamp",
+                "lit",
+                expectedLit,
+                false);
+        OutputObservation lever = observedProperty(
+                leverSample,
+                request.leverTarget(),
+                clientTick,
+                "minecraft:lever",
+                "powered",
+                expectedLit,
+                true);
+        if (lamp == OutputObservation.TARGET_CHANGED
+                || lever == OutputObservation.TARGET_CHANGED) {
+            return OutputObservation.TARGET_CHANGED;
+        }
+        return lamp == OutputObservation.MATCHED && lever == OutputObservation.MATCHED
+                ? OutputObservation.MATCHED : OutputObservation.PENDING;
+    }
+
+    private OutputObservation observedProperty(
+            MinecraftObservationService.BlockSample sample,
+            BlockTarget target,
+            long clientTick,
+            String block,
+            String property,
+            boolean expected,
+            boolean mismatchIsChanged) {
+        Objects.requireNonNull(sample, "redstone observation");
         BlockPosition expectedPosition = new BlockPosition(
                 target.dimension(), target.x(), target.y(), target.z());
         if (!expectedPosition.equals(sample.position())) return OutputObservation.TARGET_CHANGED;
@@ -162,15 +201,15 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
                         && observation.provenance() != ObservationProvenance.CROSSHAIR_OBSERVATION) {
             return OutputObservation.PENDING;
         }
-        if (!"minecraft:redstone_lamp".equals(observation.state().block())) {
+        if (!block.equals(observation.state().block())) {
             return OutputObservation.TARGET_CHANGED;
         }
-        String lit = observation.state().properties().get("lit");
-        if (!"true".equals(lit) && !"false".equals(lit)) {
+        String value = observation.state().properties().get(property);
+        if (!"true".equals(value) && !"false".equals(value)) {
             return OutputObservation.TARGET_CHANGED;
         }
-        return Boolean.toString(expectedLit).equals(lit)
-                ? OutputObservation.MATCHED : OutputObservation.PENDING;
+        if (Boolean.toString(expected).equals(value)) return OutputObservation.MATCHED;
+        return mismatchIsChanged ? OutputObservation.TARGET_CHANGED : OutputObservation.PENDING;
     }
 
     private TickResult fail(String evidence, int placedDelta, int interactionDelta) {

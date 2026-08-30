@@ -54,7 +54,12 @@ class KnownRedstoneIdentityAttemptTest {
         RedstoneIdentityRequest request = request();
         var port = new FakePort(request);
         var attempt = new KnownRedstoneIdentityAttempt(
-                port, request, tick -> currentLamp(request, tick, port.lampLit), 1, 100);
+                port,
+                request,
+                tick -> currentLamp(request, tick, port.lampLit),
+                tick -> currentLever(request, tick, port.leverPowered),
+                1,
+                100);
 
         KnownRedstoneIdentityAttempt.TickResult result = null;
         int placed = 0;
@@ -88,7 +93,12 @@ class KnownRedstoneIdentityAttemptTest {
         RedstoneIdentityRequest request = request();
         var port = new FakePort(request);
         var attempt = new KnownRedstoneIdentityAttempt(
-                port, request, tick -> hiddenLamp(request, tick), 1, 100);
+                port,
+                request,
+                tick -> hiddenLamp(request, tick),
+                tick -> currentLever(request, tick, port.leverPowered),
+                1,
+                100);
 
         KnownRedstoneIdentityAttempt.TickResult result = null;
         for (long tick = 1; tick < 100; tick++) {
@@ -106,11 +116,40 @@ class KnownRedstoneIdentityAttemptTest {
     }
 
     @Test
+    void rejectsAnOutputThatDoesNotMatchTheCurrentLeverInput() {
+        RedstoneIdentityRequest request = request();
+        var port = new FakePort(request);
+        var attempt = new KnownRedstoneIdentityAttempt(
+                port,
+                request,
+                tick -> currentLamp(request, tick, port.lampLit),
+                tick -> currentLever(request, tick, !port.leverPowered),
+                1,
+                100);
+
+        KnownRedstoneIdentityAttempt.TickResult result = null;
+        for (long tick = 1; tick < 100; tick++) {
+            port.tick = tick;
+            result = attempt.tick(tick);
+            if (result.status() != KnownRedstoneIdentityAttempt.Status.RUNNING) break;
+        }
+
+        assertThat(result.status()).isEqualTo(KnownRedstoneIdentityAttempt.Status.FAILED);
+        assertThat(result.evidence()).isEqualTo("redstone_output_changed");
+        assertThat(result.interactions()).isZero();
+    }
+
+    @Test
     void closeReleasesTheActiveChildPreparation() {
         RedstoneIdentityRequest request = request();
         var port = new FakePort(request);
         var attempt = new KnownRedstoneIdentityAttempt(
-                port, request, tick -> currentLamp(request, tick, port.lampLit), 1, 100);
+                port,
+                request,
+                tick -> currentLamp(request, tick, port.lampLit),
+                tick -> currentLever(request, tick, port.leverPowered),
+                1,
+                100);
 
         assertThat(attempt.tick(1).status())
                 .isEqualTo(KnownRedstoneIdentityAttempt.Status.RUNNING);
@@ -191,11 +230,37 @@ class KnownRedstoneIdentityAttemptTest {
 
     private static MinecraftObservationService.BlockSample currentLamp(
             RedstoneIdentityRequest request, long tick, boolean lit) {
-        var position = blockPosition(request.lampTarget());
+        return currentBlock(
+                request,
+                request.lampTarget(),
+                tick,
+                "minecraft:redstone_lamp",
+                "lit",
+                lit);
+    }
+
+    private static MinecraftObservationService.BlockSample currentLever(
+            RedstoneIdentityRequest request, long tick, boolean powered) {
+        return currentBlock(
+                request,
+                request.leverTarget(),
+                tick,
+                "minecraft:lever",
+                "powered",
+                powered);
+    }
+
+    private static MinecraftObservationService.BlockSample currentBlock(
+            RedstoneIdentityRequest request,
+            BlockTarget target,
+            long tick,
+            String block,
+            String property,
+            boolean value) {
+        var position = blockPosition(target);
         var observed = new ObservedBlock(
                 position,
-                new BlockStateView(
-                        "minecraft:redstone_lamp", Map.of("lit", Boolean.toString(lit))),
+                new BlockStateView(block, Map.of(property, Boolean.toString(value))),
                 new ObservedContext(0, 15, null, false, false, List.of("up")),
                 ObservationProvenance.LINE_OF_SIGHT_OBSERVATION,
                 tick,
@@ -236,6 +301,7 @@ class KnownRedstoneIdentityAttemptTest {
         private int releaseCalls;
         private int retireCalls;
         private boolean lampLit;
+        private boolean leverPowered;
 
         private FakePort(RedstoneIdentityRequest request) {
             states.put(request.lampTarget(), AIR);
@@ -303,7 +369,8 @@ class KnownRedstoneIdentityAttemptTest {
             BlockStateFingerprint after = expectedAfter(preparedRequest);
             states.put(target(preparedRequest), after);
             if (preparedRequest instanceof InteractBlockRequest) {
-                lampLit = Boolean.parseBoolean(after.properties().get("powered"));
+                leverPowered = Boolean.parseBoolean(after.properties().get("powered"));
+                lampLit = leverPowered;
             }
             return new SemanticActionEvidence(
                     action.attemptId(), tick, tick, true, Optional.of(after),

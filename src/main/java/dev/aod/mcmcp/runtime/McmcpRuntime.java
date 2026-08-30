@@ -4812,6 +4812,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     ActionDslCompiler.intrinsicKnownRedstoneCost(
                             redstone.timing().settleTicks()).ticks());
             BlockTarget lamp = request.lampTarget();
+            BlockTarget lever = request.leverTarget();
             agentExecution.redstoneAttempt = new KnownRedstoneIdentityAttempt(
                     semanticActionPort,
                     request,
@@ -4820,6 +4821,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             tick,
                             new BlockPosition(
                                     lamp.dimension(), lamp.x(), lamp.y(), lamp.z()),
+                            MinecraftObservationService.BlockSource.LIVE),
+                    tick -> observations.observeBlock(
+                            minecraft,
+                            tick,
+                            new BlockPosition(
+                                    lever.dimension(), lever.x(), lever.y(), lever.z()),
                             MinecraftObservationService.BlockSource.LIVE),
                     session.clientTick(),
                     deadline);
