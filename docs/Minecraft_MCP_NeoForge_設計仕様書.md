@@ -24,7 +24,7 @@
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
 - fresh評価turnまたはAgent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
-最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件のplace-only planへ無変換コピーする`apply_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`に加え、Phase 5の最初のvertical sliceとしてlever 1入力とredstone lamp 1出力の固定identity回路を配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の破壊・置換・256 block化、一般資源入手、一般回路合成は、同じ安全境界を維持して追加する。
+最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件のplace-only planへ無変換コピーする`apply_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`、現在開いているVanilla 9x3純storageからopaque参照で1 stackを移す`operate_known_menu`に加え、Phase 5の最初のvertical sliceとしてlever 1入力とredstone lamp 1出力の固定identity回路を配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の破壊・置換・256 block化、一般資源入手、一般回路合成は、同じ安全境界を維持して追加する。
 
 ## 1. 対象環境
 
@@ -1198,23 +1198,24 @@ Phase 3完成時に追加する上限:
 
 ### 9.7 crafting・精錬・workstation・MOD互換 — Phase 4
 
-現在の公開Action DSLは、既存のrecipe / container / screen同期基盤を直接再利用したcrafting-table限定の`craft_known_recipe`と、furnace familyで1個だけ処理する`smelt_known_recipe` vertical sliceを含む。player 2×2と専用workstationの実行adapterは未実装であり、製品機能として利用可能とは扱わない。
+現在の公開Action DSLは、既存のrecipe / container / screen同期基盤を直接再利用したcrafting-table限定の`craft_known_recipe`、furnace familyで1個だけ処理する`smelt_known_recipe`、共通Menu kernelの最初のvertical sliceである`operate_known_menu`を含む。最後のものは、ユーザーが現在開いているexactなVanilla `generic_9x3`純storageだけを受理し、stateが発行したsingle-use `operation_ref`で1 stack全量をplayer inventoryへQUICK_MOVEする。player 2×2、専用workstation、MOD profileの実行adapterは未実装であり、製品機能として利用可能とは扱わない。
 
 公開Toolは5件のままとし、クラフトやworkstationごとのMCP Tool、raw slot番号・画面座標・key/mouse・packetを追加しない。recipe検索は既存のquery / output / resolve契約を固定5 Toolのread pathへ委譲し、第二の検索文法を作らない。`recipe_ref`とfingerprintはworld sessionとrecipe catalog revisionへ束縛し、`craft_known_recipe`開始時と各craft前に再解決する。実行は`agent_start_action`の閉じたsemantic opcodeだけを使う。
 
 - 公開済み`craft_known_recipe` / 既存`craft_items`: 現在は`crafting_table`だけ。次に`player_2x2`へ拡張
 - 公開済み`smelt_known_recipe` / 内部`smelt_items`: `furnace | blast_furnace | smoker`、1 Action 1個だけ
+- 公開済み`operate_known_menu`: `minecraft:generic_9x3-pure-storage@26.2`、storage→playerの1 stack全量だけ
 
 司書厳選のread-only first sliceでは、ユーザーまたは既存経路が現在開いているVanilla `MerchantScreen`だけを対象にする。world session開始時からmerchant-offers packetをimmutableに記録し、`agent_get_state`時点のScreen instance、player menu、world session、container ID、直近OpenScreen packet revisionがlatest merchant packetと完全一致する場合だけ、optional `merchant_offers`を返す。公開内容はitem ID / count、uses / max uses / out-of-stock、merchant level / XP、エンチャント本の登録済みstored enchantment ID / levelに閉じる。raw slot、Data Component / NBT、lore、表示文字列、未解決enchantment IDは返さない。画面を開く、任意click、取引実行、職業ブロックの破壊・再設置、reroll反復はこのsliceに含めない。
 
-Vanilla inventory文法だけでは、独自widget、ghost slot、fluid / energy表示、canvas内control、MOD固有のclient callbackを持つ画面を扱えない。このため、screen ownership、同期、参照解決、操作配送、postcondition、cleanupを一元化する共通Menu interaction engineをPhase 4の基盤として実装する。ただし、LLMが`click_slot(17)`や`click_at(142, 38)`を渡す万能remote-controlにはしない。既存read pathは、現在所有する画面から次の短寿命opaque参照を返す。
+Vanilla inventory文法だけでは、独自widget、ghost slot、fluid / energy表示、canvas内control、MOD固有のclient callbackを持つ画面を扱えない。このため、screen ownership、同期、参照解決、操作配送、postcondition、cleanupを一元化する共通Menu interaction engineをPhase 4の基盤とする。ただし、LLMが`click_slot(17)`や`click_at(142, 38)`を渡す万能remote-controlにはしない。現在実装済みの最小kernelは、exact profile / Screen / container / state / packet revision / 全slot snapshotへ束縛した`operation_ref`だけを公開する。次の拡張では、同じread pathから必要になった種類の短寿命opaque参照を追加する。
 
 - `menu_ref`: world session、同一Screen instance、container ID、menu type / class、state ID、slot数、profile hashへ束縛
 - `element_ref`: profileが許可したslot group、widget、text field、canvas hit region、progress / cost fieldへ束縛
 - `stack_ref`: server同期済みの完全なItemStackとsource、count、Data Component fingerprint、menu / inventory revisionへ束縛
 - `operation_ref`: profileが許可した`transfer`、`activate`、`enter_bounded_text`等の1操作と、その期待遷移・resource上限へ束縛
 
-Action DSLには`operate_known_menu`を1つ追加し、`menu_ref`と1〜32件の`operation_ref`、最終的なinventory / menu goalだけを受ける。refの内部recordはruntimeだけが保持し、LLMへraw slot、座標、component / NBT、callback class、packet payloadを返さない。各操作直前に全refを再解決し、1つでもsession、Screen、state ID、profile、stack count、enabled状態が変われば未実行suffixを配送せずreplanする。
+現在の`operate_known_menu`は`{id,op,operation_ref}`へ閉じ、Action内でtop-level最終nodeとして1回だけ受ける。refの内部recordはruntimeだけが保持し、LLMへraw slot、座標、component / NBT、callback class、packet payloadを返さない。操作直前にrefを再解決し、session、同一Screen identity、container ID、menu type、state ID、slot数、profile hash、packet revision、全source snapshotのいずれかが変われば配送せずreplanする。dispatch後はfresh server packetを待ち、source empty、他storage slot不変、player slotの完全multisetとcomponent-exact個数を確認し、cursor emptyのまま画面を閉じてから成功にする。複数operationのtransactionは、実タスクで必要になるまで追加しない。
 
 Menu profileは、対象MOD名、version、menu / Screen class、slot / widget shape、許可操作、入力保存則、成功条件を記述する小さな宣言dataとする。同じengineでVanillaとMODを扱い、単なるslot配置差のためにJava adapterを増やさない。profileで安全に表現できない固有計算だけ、profileから呼ばれる閉じたコードadapterにする。未知画面からprofileをproduction中に試行錯誤で学習せず、dev clone上の検証で作成し、対象MOD manifestとprofile hashを固定して受入試験する。
 

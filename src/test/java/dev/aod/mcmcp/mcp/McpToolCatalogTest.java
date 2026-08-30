@@ -177,6 +177,7 @@ class McpToolCatalogTest {
                 .contains("take_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}")
                 .contains("craft_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:")
                 .contains("smelt_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:")
+                .contains("operate_known_menu:{id,op,operation_ref}")
                 .contains("till_known_batch:{id,op,targets:[position],expected_block,hoe_item}")
                 .contains("plant_known_wheat_batch:{id,op,targets:[{target,support}],seed_item}")
                 .contains("harvest_known_wheat_batch:{id,op,targets:[position]}")
@@ -185,6 +186,8 @@ class McpToolCatalogTest {
                 .contains("(400 + 3*settle_ticks) ticks")
                 .contains("up to the 720 camera-degree policy maximum")
                 .contains("split it into smaller batches instead of reordering at runtime")
+                .contains("operate_known_menu=inventory_transfer")
+                .contains("For operate_known_menu reserve at least 30000 ms, 600 ticks, and 1 interaction")
                 .contains("use the exact inputSchema fields and no aliases");
 
         var definitions = schema.getAsJsonObject("$defs");
@@ -205,13 +208,88 @@ class McpToolCatalogTest {
                 .map(element -> element.getAsJsonObject())
                 .map(example -> example.getAsJsonObject("program").getAsJsonArray("body")
                         .get(0).getAsJsonObject().get("op").getAsString()))
-                .contains("take_known_container_stack");
+                .contains("take_known_container_stack", "operate_known_menu");
 
         assertThat(description)
                 .contains("take stack_policy is exactly default_components_only")
                 .contains("or item_id_any_components")
                 .contains("craft/smelt goal.stack_policy")
                 .contains("smelt fuel.stack_policy are exactly default_components_only");
+    }
+
+    @Test
+    void knownMenuOperationCatalogContractIsClosedTerminalAndBudgeted() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var node = schema.getAsJsonObject("$defs").getAsJsonObject("operateKnownMenuNode");
+
+        assertThat(node.getAsJsonObject("properties").keySet())
+                .containsExactlyInAnyOrder("id", "op", "operation_ref");
+        assertThat(node.getAsJsonArray("required").toString())
+                .isEqualTo("[\"id\",\"op\",\"operation_ref\"]");
+        assertThat(node.getAsJsonObject("properties").getAsJsonObject("operation_ref")
+                .get("pattern").getAsString()).isEqualTo("^[A-Za-z0-9_-]{24}$");
+        assertThat(node.get("description").getAsString())
+                .contains("exactly one current opaque operation_ref")
+                .contains("final top-level Action node")
+                .contains("never appears inside if/repeat")
+                .contains("30000 ms", "600 ticks", "1 interaction")
+                .contains("distance, camera, breaks, and placements are zero");
+
+        var example = schema.getAsJsonArray("examples").asList().stream()
+                .map(value -> value.getAsJsonObject())
+                .filter(value -> value.getAsJsonObject("program").get("name").getAsString()
+                        .equals("operate_known_menu"))
+                .findFirst().orElseThrow();
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
+        assertThat(example.getAsJsonObject("program").getAsJsonArray("capabilities").toString())
+                .isEqualTo("[\"inventory_transfer\"]");
+        var budget = example.getAsJsonObject("budget");
+        assertThat(budget.get("max_duration_ms").getAsLong())
+                .isEqualTo(ActionDslCompiler.KNOWN_MENU_OPERATION_DURATION_MILLIS);
+        assertThat(budget.get("max_ticks").getAsLong())
+                .isEqualTo(ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS);
+        assertThat(budget.get("max_interactions").getAsLong())
+                .isEqualTo(ActionDslCompiler.KNOWN_MENU_OPERATION_INTERACTIONS);
+        assertThat(budget.get("max_distance_blocks").getAsLong()).isZero();
+        assertThat(budget.get("max_camera_degrees").getAsLong()).isZero();
+        assertThat(budget.get("max_blocks_broken").getAsLong()).isZero();
+        assertThat(budget.get("max_blocks_placed").getAsLong()).isZero();
+
+        var invalidRef = example.deepCopy();
+        invalidRef.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().addProperty("operation_ref", "not+base64url============");
+        assertThat(CatalogSchemaValidator.matches(schema, invalidRef)).isFalse();
+        var extraField = example.deepCopy();
+        extraField.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().addProperty("menu_ref", "abcdefghijklmnopqrstuvwx");
+        assertThat(CatalogSchemaValidator.matches(schema, extraField)).isFalse();
+    }
+
+    @Test
+    void knownMenuStateProjectionIsOptionalClosedAndBounded() {
+        var stateTool = new McpToolCatalog().listResult().getAsJsonArray("tools").asList().stream()
+                .map(value -> value.getAsJsonObject())
+                .filter(tool -> tool.get("name").getAsString().equals("agent_get_state"))
+                .findFirst().orElseThrow();
+        var output = stateTool.getAsJsonObject("outputSchema");
+        var menu = output.getAsJsonObject("$defs").getAsJsonObject("known_menu");
+        var operation = menu.getAsJsonObject("properties").getAsJsonObject("operations")
+                .getAsJsonObject("items");
+
+        assertThat(stateTool.get("description").getAsString())
+                .contains("known_menu", "single-use operation_ref", "never infer raw slots");
+        assertThat(output.getAsJsonArray("required").asList().stream()
+                .map(value -> value.getAsString())).doesNotContain("known_menu");
+        assertThat(output.getAsJsonObject("properties").getAsJsonObject("known_menu")
+                .get("$ref").getAsString()).isEqualTo("#/$defs/known_menu");
+        assertThat(menu.get("additionalProperties").getAsBoolean()).isFalse();
+        assertThat(menu.getAsJsonObject("properties").getAsJsonObject("operations")
+                .get("maxItems").getAsInt()).isEqualTo(16);
+        assertThat(operation.get("additionalProperties").getAsBoolean()).isFalse();
+        assertThat(operation.getAsJsonObject("properties").getAsJsonObject("operation_ref")
+                .get("pattern").getAsString()).isEqualTo("^[A-Za-z0-9_-]{24}$");
+        assertThat(operation.getAsJsonObject("properties").getAsJsonObject("stack")
+                .get("additionalProperties").getAsBoolean()).isFalse();
     }
 
     @Test

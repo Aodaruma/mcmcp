@@ -44,7 +44,7 @@ class ActionDslTest {
     void parsesEveryNormativeCatalogExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
-        assertThat(examples).hasSize(14);
+        assertThat(examples).hasSize(15);
         for (int index = 0; index < examples.size(); index++) {
             ActionDsl.Request parsed = ActionDslParser.parse(examples.get(index).getAsJsonObject());
             assertThat(parsed.schemaVersion()).isEqualTo(1);
@@ -677,6 +677,81 @@ class ActionDslTest {
                         capabilities("camera", "inventory_transfer"),
                         array(smeltKnownRecipe("smelt"), waitNode("after", 1)),
                         budget(120_050, 2_401, 0, 540, 6, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
+    void operateKnownMenuIsOneOpaqueTerminalInventoryOperation() {
+        JsonObject menu = operateKnownMenu("transfer");
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("inventory_transfer"),
+                menu,
+                budget(30_000, 600, 0, 0, 1, 0, 0)));
+
+        assertThat(request.program().body()).singleElement().satisfies(node -> {
+            var parsed = (ActionDsl.OperateKnownMenu) node;
+            assertThat(parsed.operationRef()).isEqualTo("abcdefghijklmnopqrstuvwx");
+        });
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactly(ActionDsl.Capability.INVENTORY_TRANSFER);
+
+        var cost = new ActionDslCompiler.Cost(30_000, 600, 0, 0, 1, 0, 0);
+        assertThat(ActionDslCompiler.compile(
+                request, ignored -> Optional.of(cost), request.program().capabilities())
+                .worstCaseCost()).isEqualTo(cost);
+
+        for (JsonObject insufficient : new JsonObject[] {
+                budget(29_999, 600, 0, 0, 1, 0, 0),
+                budget(30_000, 599, 0, 0, 1, 0, 0),
+                budget(30_000, 600, 0, 0, 0, 0, 0)}) {
+            ActionDsl.Request parsed = ActionDslParser.parse(request(
+                    capabilities("inventory_transfer"), operateKnownMenu("transfer"), insufficient));
+            assertThatThrownBy(() -> ActionDslCompiler.compile(
+                    parsed, ignored -> Optional.of(cost), parsed.program().capabilities()))
+                    .isInstanceOf(ActionDslException.class)
+                    .extracting(failure -> ((ActionDslException) failure).code())
+                    .isEqualTo(ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE);
+        }
+
+        var wrongCamera = new ActionDslCompiler.Cost(30_000, 600, 0, 1, 1, 0, 0);
+        assertThatThrownBy(() -> ActionDslCompiler.compile(
+                request, ignored -> Optional.of(wrongCamera), request.program().capabilities()))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE);
+
+        JsonObject invalidRef = operateKnownMenu("transfer");
+        invalidRef.addProperty("operation_ref", "not+base64url============");
+        assertCode(request(capabilities("inventory_transfer"), invalidRef,
+                        budget(30_000, 600, 0, 0, 1, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        JsonObject extra = operateKnownMenu("transfer");
+        extra.addProperty("menu_ref", "abcdefghijklmnopqrstuvwx");
+        assertCode(request(capabilities("inventory_transfer"), extra,
+                        budget(30_000, 600, 0, 0, 1, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        assertCode(request(capabilities(), operateKnownMenu("transfer"),
+                        budget(30_000, 600, 0, 0, 1, 0, 0)),
+                ActionDslException.Code.CAPABILITY_DENIED);
+    }
+
+    @Test
+    void operateKnownMenuMustBeTheFinalTopLevelNode() {
+        JsonObject menu = operateKnownMenu("transfer");
+        assertCode(request(
+                        capabilities("inventory_transfer"),
+                        array(menu, waitNode("after", 1)),
+                        budget(30_050, 601, 0, 0, 1, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        assertCode(request(
+                        capabilities("inventory_transfer"),
+                        conditional("choose", numeric("health", "gte", 1), array(menu), array()),
+                        budget(30_000, 600, 0, 0, 1, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        assertCode(request(
+                        capabilities("inventory_transfer"),
+                        repeat("twice", 2, array(menu)),
+                        budget(60_000, 1_200, 0, 0, 2, 0, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
     }
 
@@ -1528,6 +1603,12 @@ class ActionDslTest {
         fuel.addProperty("stack_policy", "default_components_only");
         node.add("fuel", fuel);
         node.addProperty("max_smelts", 1);
+        return node;
+    }
+
+    private static JsonObject operateKnownMenu(String id) {
+        JsonObject node = baseNode(id, "operate_known_menu");
+        node.addProperty("operation_ref", "abcdefghijklmnopqrstuvwx");
         return node;
     }
 

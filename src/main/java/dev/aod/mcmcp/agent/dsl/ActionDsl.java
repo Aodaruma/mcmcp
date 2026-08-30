@@ -44,6 +44,7 @@ public final class ActionDsl {
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
             CraftKnownRecipe,
             SmeltKnownRecipe,
+            OperateKnownMenu,
             BrewKnownPotionBatch,
             CollectVisibleItem, CollectVisibleItemBatch, WaitTicks, WaitUntil, If, Repeat {
         String id();
@@ -396,6 +397,14 @@ public final class ActionDsl {
             Objects.requireNonNull(expectedState, "expectedState");
             Objects.requireNonNull(fuelItem, "fuelItem");
             Objects.requireNonNull(fuelStackPolicy, "fuelStackPolicy");
+        }
+    }
+
+    /** Executes one current opaque operation against its session-bound known menu. */
+    public record OperateKnownMenu(String id, String operationRef) implements Node {
+        public OperateKnownMenu {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(operationRef, "operationRef");
         }
     }
 

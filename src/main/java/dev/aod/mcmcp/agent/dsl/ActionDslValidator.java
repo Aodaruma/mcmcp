@@ -485,6 +485,11 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
             return 1;
         }
+        if (node instanceof ActionDsl.OperateKnownMenu menu) {
+            requirePattern(menu.operationRef(), OPAQUE_REFERENCE, path + ".operation_ref");
+            walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
+            return 1;
+        }
         if (node instanceof ActionDsl.BrewKnownPotionBatch brew) {
             validatePosition(brew.target(), path + ".target");
             if (!StandardPotionPolicy.BREWING_STAND.equals(brew.expectedBlock())) {
@@ -568,6 +573,7 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.TakeKnownContainerStack
                     || node instanceof ActionDsl.CraftKnownRecipe
                     || node instanceof ActionDsl.SmeltKnownRecipe
+                    || node instanceof ActionDsl.OperateKnownMenu
                     || node instanceof ActionDsl.BrewKnownPotionBatch) return true;
             if (node instanceof ActionDsl.If conditional
                     && (containsWorldMutation(conditional.thenBranch())
@@ -582,7 +588,8 @@ public final class ActionDslValidator {
         for (int index = 0; index < body.size(); index++) {
             ActionDsl.Node node = body.get(index);
             if (node instanceof ActionDsl.BrewKnownPotionBatch
-                    || node instanceof ActionDsl.SmeltKnownRecipe) {
+                    || node instanceof ActionDsl.SmeltKnownRecipe
+                    || node instanceof ActionDsl.OperateKnownMenu) {
                 if (index != body.size() - 1) {
                     throw invalid("long-running owned-menu operation must be the final Action node");
                 }
@@ -594,7 +601,8 @@ public final class ActionDslValidator {
 
     private static boolean containsTerminalOwnedMenu(ActionDsl.Node node) {
         if (node instanceof ActionDsl.BrewKnownPotionBatch
-                || node instanceof ActionDsl.SmeltKnownRecipe) return true;
+                || node instanceof ActionDsl.SmeltKnownRecipe
+                || node instanceof ActionDsl.OperateKnownMenu) return true;
         if (node instanceof ActionDsl.If conditional) {
             return conditional.thenBranch().stream()
                     .anyMatch(ActionDslValidator::containsTerminalOwnedMenu)

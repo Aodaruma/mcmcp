@@ -25,6 +25,7 @@ public record PhaseFiveRequest(
             "transfer_items",
             "brew_known_potion_batch",
             "smelt_items",
+            "operate_known_menu",
             "tend_crop_area",
             "harvest_tree_area",
             "sleep_at_bed",
@@ -75,6 +76,7 @@ public record PhaseFiveRequest(
         return kind.equals("craft_items")
                 || kind.equals("transfer_items")
                 || kind.equals("brew_known_potion_batch")
-                || kind.equals("smelt_items");
+                || kind.equals("smelt_items")
+                || kind.equals("operate_known_menu");
     }
 }

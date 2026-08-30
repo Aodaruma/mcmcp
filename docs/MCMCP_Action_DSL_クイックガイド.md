@@ -34,6 +34,8 @@
 
 村人の取引画面を現在開いており、そのScreen・world session・container ID・open packet revisionと最新のserver取引packetがすべて一致する間だけ、`agent_get_state.merchant_offers`が現れます。各取引はitem ID / count、使用回数、在庫切れ、merchant level / XPを返し、エンチャント本は登録済みstored enchantmentのIDとlevelだけを返します。raw slot、component / NBT、lore、表示文字列、解決不能なenchantment IDは返しません。このread pathは画面を開く、取引する、職業ブロックを壊す・置く、厳選を自動反復する操作を行いません。
 
+現在開いているserver同期済みのVanilla 9x3純storage画面だけは、`agent_get_state.known_menu`に短寿命・single-useの`operation_ref`が現れます。各operationは表示された1 stack全量をstorageからplayer inventoryへ移すものだけで、raw slot番号、GUI座標、component / NBTは返しません。inventoryに全量の空きがないstackは候補から除外されます。
+
 ## 座標を変換しない
 
 | 用途 | コピー元 | Action側 | 禁止事項 |
@@ -54,6 +56,7 @@
 - `take_known_container_stack`: `{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}`
 - `craft_known_recipe`: `{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},max_crafts}`
 - `smelt_known_recipe`: `{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},fuel:{item,stack_policy},max_smelts}`
+- `operate_known_menu`: `{id,op,operation_ref}`
 - `brew_known_potion_batch`: `{id,op,target,expected_block,input:{item,potion,count},ingredient_item,fuel_item,expected_output:{item,potion,count}}`
 - `till_known_batch`: `{id,op,targets:[position],expected_block,hoe_item}`
 - `plant_known_wheat_batch`: `{id,op,targets:[{target,support}],seed_item}`
@@ -82,6 +85,12 @@ entry IDと変換後targetはplan内で一意、処理順は`entries`の入力�
 
 このnodeはtop-level bodyの最後に1回だけ置き、`if` / `repeat`内や後続nodeを許可しません。120秒、2,400 ticks、camera最大540度、6 interactionsを確保し、distance / break / placementは0にします。途中状態の自動再開やblind retryはしません。
 
+## 共通Menu操作の最小slice
+
+`operate_known_menu`は、ユーザーが現在開いているexactなVanilla 9x3純storage画面について、同じ`agent_get_state.known_menu.operations`から1件の`operation_ref`を無変換コピーして使います。現在のoperationは`transfer_to_player`だけで、1 stack全量を通常のQUICK_MOVE経路で移し、fresh server slot差分、他storage slot不変、player inventoryの完全multisetとcomponent-exact個数を確認してから画面を閉じます。
+
+このnodeはtop-level bodyの最後に1回だけ置き、30秒、600 ticks、1 interactionを確保します。raw slot / GUI座標を推測せず、refが期限切れ、別画面、別revision、source変更なら新しいstateを取得します。player 2x2、専用workstation、MOD固有profile、widget / canvas操作はまだこのsliceに含みません。
+
 ## 標準Potion醸造の最小slice
 
 `brew_known_potion_batch`は、現在可視で通常reach内にある`minecraft:brewing_stand`を通常useし、catalogに列挙されたVanillaの一段recipeを1回だけ実行します。`target`は最新`visible_surface.position`、`expected_block`は`minecraft:brewing_stand`、`input`は自分の`standard_potions`証拠から、`expected_output`は目的recipeが定める標準identityから指定します。出力Potionを事前に所持している必要はありません。`standard_potions.count`はitem+potionごとの集計値なので、同数の丸写しではなく、宣言する1〜3本以上あることを確認します。`item`は`minecraft:potion | splash_potion | lingering_potion`、`count`は1〜3で入出力同数、`fuel_item`は常に`minecraft:blaze_powder`です。たとえばwater potion 3本とnether wartからawkward potion 3本を宣言します。通常potion→splashはgunpowder、splash→lingeringはdragon breathというcontainer変換も、catalogにある一段recipeとしてだけ利用できます。
@@ -98,7 +107,7 @@ Action開始時には醸造台menuの5 item slotがすべて空で、内部のbr
 
 ## budgetと失敗時の直し方
 
-budgetは成功予想ではなく、worst-caseを収める停止上限です。container操作には少なくとも30秒、600 ticks、camera 360度とschema記載のinteraction数を確保します。精錬node 1回には120秒、2,400 ticks、camera最大540度、6 interactionsを確保します。醸造node 1回には70秒、1400 ticks、照準と受付済みheadingへの復元を合わせて最大camera 540度、16 interactionsを確保し、distance / break / placementは0とします。直前に`face_known_position`が必要なら、そのnodeのcostは別途加算します。`apply_known_block_plan`は1 entryごとに15秒、300 ticks、camera 80度、1 placementを確保し、8 entryなら120秒、2400 ticks、camera 640度、8 placementsとします。移動距離、interaction、breakは0です。他の8-target mutation batchには目安として120秒、2400 ticks、最大720 camera度と、処理に応じた8 interactions / breaks / placementsを確保します。targetは入力順に実行するため、その順序のworst-caseが720 camera度を超える場合はruntimeに並べ替えさせず、小さいbatchへ分割します。
+budgetは成功予想ではなく、worst-caseを収める停止上限です。container操作には少なくとも30秒、600 ticks、camera 360度とschema記載のinteraction数を確保します。`operate_known_menu`は30秒、600 ticks、1 interactionで、distance / camera / break / placementは0です。精錬node 1回には120秒、2,400 ticks、camera最大540度、6 interactionsを確保します。醸造node 1回には70秒、1400 ticks、照準と受付済みheadingへの復元を合わせて最大camera 540度、16 interactionsを確保し、distance / break / placementは0とします。直前に`face_known_position`が必要なら、そのnodeのcostは別途加算します。`apply_known_block_plan`は1 entryごとに15秒、300 ticks、camera 80度、1 placementを確保し、8 entryなら120秒、2400 ticks、camera 640度、8 placementsとします。移動距離、interaction、breakは0です。他の8-target mutation batchには目安として120秒、2400 ticks、最大720 camera度と、処理に応じた8 interactions / breaks / placementsを確保します。targetは入力順に実行するため、その順序のworst-caseが720 camera度を超える場合はruntimeに並べ替えさせず、小さいbatchへ分割します。
 
 schema違反はcatalog順に最大4件、budget不足は不足component名をまとめて返します。提出値や未知property名は診断へ反射されません。mutationやdrop生成後の`TARGET_UNKNOWN`をfield推測で直すのではなく、Actionを区切って新しいframeを観測してください。
 

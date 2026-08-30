@@ -32,6 +32,10 @@ public final class ActionDslCompiler {
     public static final long KNOWN_SMELTING_DURATION_MILLIS =
             KNOWN_SMELTING_TICKS * NOMINAL_TICK_MILLIS;
     public static final long KNOWN_SMELTING_INTERACTIONS = 6L;
+    public static final long KNOWN_MENU_OPERATION_TICKS = 600L;
+    public static final long KNOWN_MENU_OPERATION_DURATION_MILLIS =
+            KNOWN_MENU_OPERATION_TICKS * NOMINAL_TICK_MILLIS;
+    public static final long KNOWN_MENU_OPERATION_INTERACTIONS = 1L;
     public static final long KNOWN_CRAFTING_TICKS =
             AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND;
     public static final long KNOWN_CRAFTING_DURATION_MILLIS =
@@ -125,6 +129,7 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.TakeKnownContainerStack
                 || node instanceof ActionDsl.CraftKnownRecipe
                 || node instanceof ActionDsl.SmeltKnownRecipe
+                || node instanceof ActionDsl.OperateKnownMenu
                 || node instanceof ActionDsl.BrewKnownPotionBatch
                 || node instanceof ActionDsl.CollectVisibleItem
                 || node instanceof ActionDsl.CollectVisibleItemBatch) {
@@ -179,6 +184,15 @@ public final class ActionDslCompiler {
                 if (cost.durationMillis() != KNOWN_SMELTING_DURATION_MILLIS
                         || cost.ticks() != KNOWN_SMELTING_TICKS) {
                     throw unprovable("smelt_known_recipe has an invalid primitive time bound");
+                }
+            } else if (node instanceof ActionDsl.OperateKnownMenu) {
+                requireMutationCost(
+                        cost, KNOWN_MENU_OPERATION_INTERACTIONS, 0, 0,
+                        "operate_known_menu");
+                if (cost.durationMillis() != KNOWN_MENU_OPERATION_DURATION_MILLIS
+                        || cost.ticks() != KNOWN_MENU_OPERATION_TICKS
+                        || cost.cameraDegrees() != 0) {
+                    throw unprovable("operate_known_menu has an invalid primitive bound");
                 }
             } else if (node instanceof ActionDsl.BrewKnownPotionBatch) {
                 requireMutationCost(

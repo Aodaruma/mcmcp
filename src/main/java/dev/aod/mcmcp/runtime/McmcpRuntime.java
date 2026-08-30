@@ -79,6 +79,7 @@ import dev.aod.mcmcp.routine.KnownConstructionRequest;
 import dev.aod.mcmcp.routine.MinecraftApplyBlockPlanPort;
 import dev.aod.mcmcp.routine.MinecraftKnownBrewingPort;
 import dev.aod.mcmcp.routine.MinecraftKnownFurnacePort;
+import dev.aod.mcmcp.routine.MinecraftKnownMenuPort;
 import dev.aod.mcmcp.routine.MinecraftPhaseFiveInventoryPort;
 import dev.aod.mcmcp.routine.MinecraftPhaseFiveWorldPort;
 import dev.aod.mcmcp.routine.MinecraftSemanticActionPort;
@@ -86,6 +87,7 @@ import dev.aod.mcmcp.routine.MinecraftStationaryBreakPort;
 import dev.aod.mcmcp.routine.NavigateToRequest;
 import dev.aod.mcmcp.routine.PlaceBlockRequest;
 import dev.aod.mcmcp.routine.PhaseFiveBounds;
+import dev.aod.mcmcp.routine.PhaseFivePort;
 import dev.aod.mcmcp.routine.PhaseFivePortRouter;
 import dev.aod.mcmcp.routine.PhaseFiveRequest;
 import dev.aod.mcmcp.routine.PlacementSupportWitness;
@@ -125,6 +127,7 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.BedItem;
 import net.minecraft.world.item.DoubleHighBlockItem;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.SolidBucketItem;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.BedBlock;
@@ -203,6 +206,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final BlockPlanComparator blockPlans = new BlockPlanComparator(observations, memory);
     private final ClientRecipeCatalog recipeCatalog = new ClientRecipeCatalog();
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
+    private final KnownMenuOperationRefs knownMenuOperationRefs = new KnownMenuOperationRefs();
     private final LocalArmingState arming = new LocalArmingState();
     private final InputReleaseController inputRelease = new InputReleaseController();
     private final EvaluationTurnGuard evaluationTurns = new EvaluationTurnGuard();
@@ -215,6 +219,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final MinecraftApplyBlockPlanPort applyBlockPlanPort;
     private final MinecraftKnownBrewingPort knownBrewingPort;
     private final MinecraftKnownFurnacePort knownFurnacePort;
+    private final MinecraftKnownMenuPort knownMenuPort;
     private final MinecraftPhaseFiveInventoryPort phaseFiveInventoryPort;
     private final MinecraftPhaseFiveWorldPort phaseFiveWorldPort;
     private final PhaseFivePortRouter phaseFivePort;
@@ -292,6 +297,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 ContainerSyncSignals.global(),
                 ClientPredictionSignals.global(),
                 recipeCatalog);
+        knownMenuPort = new MinecraftKnownMenuPort(
+                Minecraft::getInstance,
+                sessions::snapshot,
+                ContainerSyncSignals.global(),
+                knownMenuOperationRefs);
         phaseFiveInventoryPort = new MinecraftPhaseFiveInventoryPort(
                 Minecraft::getInstance,
                 sessions::snapshot,
@@ -728,6 +738,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         clearAutomationPortSession("finite_plan", finitePlanPort::clearSession);
         clearAutomationPortSession("known_brewing", knownBrewingPort::clearSession);
         clearAutomationPortSession("known_furnace", knownFurnacePort::clearSession);
+        clearAutomationPortSession("known_menu", knownMenuPort::clearSession);
+        clearAutomationPortSession("known_menu_refs", knownMenuOperationRefs::clear);
         clearAutomationPortSession("phase_five_inventory", phaseFiveInventoryPort::clearSession);
         clearAutomationPortSession("phase_five_world", phaseFiveWorldPort::clearSession);
         clearAutomationPortSession("phase_five_router", phaseFivePort::clearSession);
@@ -1830,7 +1842,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private static boolean requiresWorldPlanning(ActionDsl.Node node) {
-        return !(node instanceof ActionDsl.WaitTicks);
+        return !(node instanceof ActionDsl.WaitTicks
+                || node instanceof ActionDsl.OperateKnownMenu);
     }
 
     static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
@@ -1838,12 +1851,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 ? ActionDslCompiler.KNOWN_CRAFTING_DURATION_MILLIS
                 : node instanceof ActionDsl.SmeltKnownRecipe
                         ? ActionDslCompiler.KNOWN_SMELTING_DURATION_MILLIS
+                : node instanceof ActionDsl.OperateKnownMenu
+                        ? ActionDslCompiler.KNOWN_MENU_OPERATION_DURATION_MILLIS
                 : node instanceof ActionDsl.BrewKnownPotionBatch
                         ? ActionDslCompiler.KNOWN_BREWING_DURATION_MILLIS : 0L;
         long ticks = node instanceof ActionDsl.CraftKnownRecipe
                 ? ActionDslCompiler.KNOWN_CRAFTING_TICKS
                 : node instanceof ActionDsl.SmeltKnownRecipe
                         ? ActionDslCompiler.KNOWN_SMELTING_TICKS
+                : node instanceof ActionDsl.OperateKnownMenu
+                        ? ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS
                 : node instanceof ActionDsl.BrewKnownPotionBatch
                         ? ActionDslCompiler.KNOWN_BREWING_TICKS : 0L;
         long interactions = node instanceof ActionDsl.TillKnownBlock
@@ -1858,6 +1875,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         ? ActionDslCompiler.knownCraftInteractions(craft.maxCrafts())
                 : node instanceof ActionDsl.SmeltKnownRecipe
                         ? ActionDslCompiler.KNOWN_SMELTING_INTERACTIONS
+                : node instanceof ActionDsl.OperateKnownMenu
+                        ? ActionDslCompiler.KNOWN_MENU_OPERATION_INTERACTIONS
                 : node instanceof ActionDsl.BrewKnownPotionBatch
                         ? ActionDslCompiler.KNOWN_BREWING_INTERACTIONS : 0L;
         long breaks = node instanceof ActionDsl.BreakKnownFace
@@ -2235,6 +2254,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var inventory = new LinkedHashMap<String, Integer>();
         var standardPotions = new LinkedHashMap<StandardPotionKey, Integer>();
         Map<String, Object> merchantOffers = null;
+        Map<String, Object> knownMenu = null;
         Map<String, Object> world = null;
 
         if (session.worldReady() && minecraft.player != null && minecraft.level != null) {
@@ -2291,6 +2311,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 merchantOffers = merchantOfferPayload(
                         session.worldSessionId(), screen.getMenu().containerId, open, snapshot);
             }
+            if (lock.mode() == LocalArmingState.Mode.READY) {
+                knownMenu = knownMenuPayload(
+                        minecraft, session, ContainerSyncSignals.global(), knownMenuOperationRefs);
+            }
         }
 
         var inventoryPayload = inventory.entrySet().stream()
@@ -2322,6 +2346,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (merchantOffers != null) {
             result.put("merchant_offers", merchantOffers);
+        }
+        if (knownMenu != null) {
+            result.put("known_menu", knownMenu);
         }
         result.put("observation", agentObservationFrames.announceLatestSummary()
                 .map(ObservationWireMapper::summary)
@@ -2363,6 +2390,86 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 "offers", MerchantOfferView.from(snapshot).stream()
                         .map(MerchantOfferView::toMap)
                         .toList());
+    }
+
+    static Map<String, Object> knownMenuPayload(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            ContainerSyncSignals signals,
+            KnownMenuOperationRefs references) {
+        KnownMenuProfileSupport.Context context = KnownMenuProfileSupport.current(
+                minecraft, session.worldSessionId(), signals).orElse(null);
+        if (context == null) return null;
+
+        var operations = new ArrayList<Map<String, Object>>();
+        boolean truncated = false;
+        long deadline = session.clientTick() > Long.MAX_VALUE - 1_200L
+                ? Long.MAX_VALUE : session.clientTick() + 1_200L;
+        for (int sourceSlot : context.storageSlots()) {
+            ItemStack source = context.menu().slots.get(sourceSlot).getItem();
+            if (source.isEmpty() || playerInventoryCapacity(context, source) < source.getCount()) {
+                continue;
+            }
+            if (operations.size() == KnownMenuOperationRefs.MAX_LEASES) {
+                truncated = true;
+                continue;
+            }
+            int baseline = exactPlayerCount(context, source);
+            int expected = Math.addExact(baseline, source.getCount());
+            String operationReference = references.issue(
+                    context.referenceContext(session.worldSessionId(), session.clientTick()),
+                    sourceSlot,
+                    context.snapshot().slots().get(sourceSlot),
+                    source,
+                    context.snapshot().slots(),
+                    baseline,
+                    expected,
+                    KnownMenuOperationRefs.TRANSFER_TO_PLAYER,
+                    deadline);
+            operations.add(Map.of(
+                    "operation_ref", operationReference,
+                    "kind", KnownMenuOperationRefs.TRANSFER_TO_PLAYER,
+                    "stack", Map.of(
+                            "item", context.snapshot().slots().get(sourceSlot).itemId(),
+                            "count", source.getCount(),
+                            "damage", source.getDamageValue(),
+                            "max_damage", source.getMaxDamage()),
+                    "expected_inventory_count", expected));
+        }
+        var payload = new LinkedHashMap<String, Object>();
+        payload.put("profile_id", KnownMenuProfileSupport.PROFILE_ID);
+        payload.put("profile_hash", KnownMenuProfileSupport.PROFILE_HASH);
+        payload.put("menu_type", KnownMenuProfileSupport.MENU_TYPE);
+        payload.put("operations_truncated", truncated);
+        payload.put("operations", List.copyOf(operations));
+        return Map.copyOf(payload);
+    }
+
+    private static int exactPlayerCount(
+            KnownMenuProfileSupport.Context context, ItemStack expected) {
+        int count = 0;
+        for (int slot : context.playerSlots()) {
+            ItemStack actual = context.menu().slots.get(slot).getItem();
+            if (ItemStack.isSameItemSameComponents(actual, expected)) {
+                count = Math.addExact(count, actual.getCount());
+            }
+        }
+        return count;
+    }
+
+    private static int playerInventoryCapacity(
+            KnownMenuProfileSupport.Context context, ItemStack source) {
+        int capacity = 0;
+        for (int slot : context.playerSlots()) {
+            ItemStack actual = context.menu().slots.get(slot).getItem();
+            if (actual.isEmpty()) {
+                capacity = Math.addExact(capacity, source.getMaxStackSize());
+            } else if (ItemStack.isSameItemSameComponents(actual, source)) {
+                capacity = Math.addExact(
+                        capacity, Math.max(0, source.getMaxStackSize() - actual.getCount()));
+            }
+        }
+        return capacity;
     }
 
     static Map<String, Object> statePayload(
@@ -3572,7 +3679,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (agentExecution.primitive instanceof ActionDsl.InspectKnownContainer
                     || agentExecution.primitive instanceof ActionDsl.TakeKnownContainerStack
                     || agentExecution.primitive instanceof ActionDsl.CraftKnownRecipe
-                    || agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe) {
+                    || agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe
+                    || agentExecution.primitive instanceof ActionDsl.OperateKnownMenu) {
                 tickAgentContainer(minecraft, session, action);
                 return;
             }
@@ -3859,18 +3967,24 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     Objects.requireNonNull(minecraft.level, "level"),
                     session.worldSessionId());
             long visualBarrierWorldRevision = visualBarrierWorldRevision(map, reconciliation);
-            var analysis = analyzePrimitive(
-                    action.program().request().program(),
-                    agentExecution.primitive,
-                    map,
-                    playerPose(player, session.dimension()),
-                    agentPlanningFrame(),
-                    McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
-                    visualBarrierWorldRevision,
-                    primitiveSurfaceRevisionBarrier(
-                            agentExecution.primitive, map, reconciliation),
-                    () -> true);
-            ActionDslCompiler.Cost cost = analysis.worstCase(agentExecution.primitive)
+            boolean worldPlanning = requiresWorldPlanning(agentExecution.primitive);
+            var analysis = worldPlanning
+                    ? analyzePrimitive(
+                            action.program().request().program(),
+                            agentExecution.primitive,
+                            map,
+                            playerPose(player, session.dimension()),
+                            agentPlanningFrame(),
+                            McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
+                            visualBarrierWorldRevision,
+                            primitiveSurfaceRevisionBarrier(
+                                    agentExecution.primitive, map, reconciliation),
+                            () -> true)
+                    : emptyPrimitiveAnalysis();
+            ActionDslCompiler.Cost cost = (worldPlanning
+                            ? analysis.worstCase(agentExecution.primitive)
+                            : Optional.ofNullable(action.program().primitiveCostBounds()
+                                    .get(agentExecution.primitive.id())))
                     .orElseThrow(() -> new IllegalStateException(
                             "JIT primitive analysis did not produce a cost"));
             long activeElapsedNanos = activeElapsedNanos(
@@ -4715,15 +4829,19 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (agentExecution.containerAttempt == null) {
             PhaseFiveRequest request = containerRequest(
                     minecraft, session, agentExecution.primitive);
+            boolean smelting = agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe;
+            boolean knownMenu = agentExecution.primitive instanceof ActionDsl.OperateKnownMenu;
             long deadline = Math.addExact(
                     session.clientTick(),
-                    agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe
+                    smelting
                             ? ActionDslCompiler.KNOWN_SMELTING_TICKS
+                            : knownMenu
+                                    ? ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS
                             : AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND);
+            PhaseFivePort port = smelting ? knownFurnacePort
+                    : knownMenu ? knownMenuPort : phaseFiveInventoryPort;
             agentExecution.containerAttempt = new KnownContainerAttempt(
-                    agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe
-                            ? knownFurnacePort : phaseFiveInventoryPort,
-                    request, session.clientTick(), deadline);
+                    port, request, session.clientTick(), deadline);
         }
         KnownContainerAttempt.TickResult result =
                 agentExecution.containerAttempt.tick(session.clientTick());
@@ -4748,6 +4866,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 } else if (agentExecution.primitive instanceof ActionDsl.CraftKnownRecipe craft) {
                     agentActions.recordNodeEvidence(
                             action.actionId(), "craft_complete=" + craft.goalItem());
+                } else if (agentExecution.primitive instanceof ActionDsl.OperateKnownMenu) {
+                    agentActions.recordNodeEvidence(
+                            action.actionId(), "menu_transfer_complete");
                 } else {
                     var smelt = (ActionDsl.SmeltKnownRecipe) agentExecution.primitive;
                     agentActions.recordNodeEvidence(
@@ -5287,6 +5408,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             ActionDsl.Node primitive) {
+        if (primitive instanceof ActionDsl.OperateKnownMenu operation) {
+            var player = Objects.requireNonNull(minecraft.player, "player");
+            return knownMenuRequest(operation, new BlockTarget(
+                    session.dimension(),
+                    Mth.floor(player.getX()),
+                    Mth.floor(player.getY()),
+                    Mth.floor(player.getZ())));
+        }
         if (primitive instanceof ActionDsl.CraftKnownRecipe craft) {
             return craftRequest(craft);
         }
@@ -5348,6 +5477,19 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 target.dimension(), target, target, 0, 20, false);
         return new PhaseFiveRequest(
                 "transfer_items", parameters, bounds, minimumInventoryCount, "items");
+    }
+
+    static PhaseFiveRequest knownMenuRequest(
+            ActionDsl.OperateKnownMenu operation, BlockTarget position) {
+        Objects.requireNonNull(operation, "operation");
+        Objects.requireNonNull(position, "position");
+        return new PhaseFiveRequest(
+                MinecraftKnownMenuPort.KIND,
+                Map.of("operation_ref", operation.operationRef()),
+                new PhaseFiveBounds(
+                        position.dimension(), position, position, 0, 30, false),
+                1,
+                "items");
     }
 
     static PhaseFiveRequest craftRequest(ActionDsl.CraftKnownRecipe craft) {

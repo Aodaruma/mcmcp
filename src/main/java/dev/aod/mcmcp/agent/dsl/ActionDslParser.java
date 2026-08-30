@@ -137,6 +137,7 @@ public final class ActionDslParser {
             case "take_known_container_stack" -> takeKnownContainerStack(object, path);
             case "craft_known_recipe" -> craftKnownRecipe(object, path);
             case "smelt_known_recipe" -> smeltKnownRecipe(object, path);
+            case "operate_known_menu" -> operateKnownMenu(object, path);
             case "brew_known_potion_batch" -> brewKnownPotionBatch(object, path);
             case "collect_visible_item" -> collectVisibleItem(object, path);
             case "collect_visible_item_batch" -> collectVisibleItemBatch(object, path);
@@ -516,6 +517,15 @@ public final class ActionDslParser {
                 string(fuel.get("item"), path + ".fuel.item"),
                 string(fuel.get("stack_policy"), path + ".fuel.stack_policy"),
                 integer(source.get("max_smelts"), path + ".max_smelts"));
+    }
+
+    private static ActionDsl.OperateKnownMenu operateKnownMenu(
+            JsonObject source, String path) {
+        exactKeys(source, path, Set.of("id", "op", "operation_ref"),
+                Set.of("id", "op", "operation_ref"));
+        return new ActionDsl.OperateKnownMenu(
+                string(source.get("id"), path + ".id"),
+                string(source.get("operation_ref"), path + ".operation_ref"));
     }
 
     private static ActionDsl.BrewKnownPotionBatch brewKnownPotionBatch(
