@@ -516,7 +516,7 @@ final class FixturePhase5Scenario {
             case RECIPES, CRAFT -> new Pose(195.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case SMELT -> new Pose(196.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case BREW -> new Pose(197.5D, 200.0D, 196.5D, 180.0F, 25.0F);
-            case REDSTONE -> new Pose(201.5D, 200.0D, 196.5D, 180.0F, 25.0F);
+            case REDSTONE -> new Pose(200.5D, 200.0D, 193.5D, 0.0F, 25.0F);
             case TRANSFER -> new Pose(199.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case CROP -> new Pose(194.5D, 200.0D, 201.5D, 180.0F, 28.0F);
             case COMBINED_WHEAT -> new Pose(199.5D, 200.0D, 197.0D, 180.0F, 18.0F);
