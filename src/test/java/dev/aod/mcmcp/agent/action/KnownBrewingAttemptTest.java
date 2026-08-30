@@ -78,10 +78,17 @@ class KnownBrewingAttemptTest {
         operation.tick(10);
         port.tick = 11;
         port.failure = new RoutineFailure(
-                "BREWING_READBACK_DELTA_MISMATCH",
                 RoutineFailure.Category.DIVERGENCE,
+                "BREWING_READBACK_DELTA_MISMATCH",
+                false,
                 RoutineFailure.Recovery.REPLAN,
-                Map.of(), Map.of());
+                RoutineFailure.Scope.STEP,
+                1,
+                Map.of(),
+                Map.of(),
+                Map.of(),
+                List.of("inventory"),
+                false);
 
         var result = operation.tick(11);
 

@@ -4,9 +4,12 @@ import dev.aod.mcmcp.runtime.ContainerSyncSignals.ContainerDataEvidence;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.OpenScreenEvidence;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
 import net.minecraft.core.component.DataComponentMap;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.alchemy.PotionContents;
 import net.minecraft.world.level.block.Blocks;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.Opcodes;
@@ -14,6 +17,7 @@ import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.IntInsnNode;
+import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.util.ArrayList;
@@ -183,6 +187,18 @@ class MinecraftKnownBrewingPortTest {
     }
 
     @Test
+    void standardWaterAndAwkwardPotionComponentHashesAreDistinct() {
+        testStack(Items.POTION); // Bind isolated-loader item defaults before creating potions.
+        var water = PotionContents.createItemStack(Items.POTION,
+                BuiltInRegistries.POTION.get(Identifier.parse("minecraft:water")).orElseThrow());
+        var awkward = PotionContents.createItemStack(Items.POTION,
+                BuiltInRegistries.POTION.get(Identifier.parse("minecraft:awkward")).orElseThrow());
+
+        assertThat(ItemStack.hashItemAndComponents(water))
+                .isNotEqualTo(ItemStack.hashItemAndComponents(awkward));
+    }
+
+    @Test
     void strengthBrewingConsumesTwoBlazePowderAndFitsInteractionCap() {
         var input = key("minecraft:potion", INPUT_HASH);
         var output = key("minecraft:potion", OUTPUT_HASH);
@@ -304,6 +320,13 @@ class MinecraftKnownBrewingPortTest {
                 .contains("dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#inventoryReadbackMatches");
         assertThat(invocations(node, "acceptFinalSnapshot"))
                 .contains("dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#inventoryReadbackMatches");
+        assertThat(stringConstants(node, "acceptFinalSnapshot"))
+                .containsSubsequence(
+                        "BREWING_FINAL_STAND_NOT_EMPTY",
+                        "BREWING_FINAL_DATA_MISMATCH",
+                        "BREWING_FINAL_CURSOR_NOT_EMPTY",
+                        "BREWING_FINAL_INVENTORY_DELTA_MISMATCH",
+                        "BREWING_FINAL_OUTPUT_COMPONENT_MISMATCH");
         assertThat(invocations(node, "closeOwnedMenuClient"))
                 .contains("net/minecraft/client/gui/screens/inventory/AbstractContainerScreen#onClose")
                 .doesNotContain("net/minecraft/client/player/LocalPlayer#closeContainer");
@@ -479,6 +502,20 @@ class MinecraftKnownBrewingPortTest {
                     }
                 });
         return calls;
+    }
+
+    private static List<String> stringConstants(ClassNode node, String methodName) {
+        var constants = new ArrayList<String>();
+        node.methods.stream()
+                .filter(method -> method.name.equals(methodName))
+                .findFirst().orElseThrow()
+                .instructions.forEach(instruction -> {
+                    if (instruction instanceof LdcInsnNode constant
+                            && constant.cst instanceof String value) {
+                        constants.add(value);
+                    }
+                });
+        return constants;
     }
 
     private static List<String> fieldReads(ClassNode node) {

@@ -897,20 +897,41 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         if (optional.isEmpty()) return;
         BrewingView view = optional.orElseThrow();
         closeOpenPrediction(state);
-        if (!standSlotsEmpty(view.snapshot().slots())
-                || view.brewTime() != 0
-                || view.fuel() != state.expectedFuelUses
-                || !view.snapshot().carried().empty()
-                || !inventoryReadbackMatches(
-                        state.expectedInventory,
-                        inventoryMultiset(view.snapshot().slots(), playerSlots()))
-                || !validateReadbackOutputStacks(view, state)) {
-            fail(state, failure("BREWING_READBACK_DELTA_MISMATCH",
+        if (!standSlotsEmpty(view.snapshot().slots())) {
+            fail(state, failure("BREWING_FINAL_STAND_NOT_EMPTY",
                     RoutineFailure.Category.DIVERGENCE,
                     RoutineFailure.Recovery.REPLAN,
-                    Map.of("exact_inventory_delta", true,
-                            "stand_empty", true,
-                            "cursor", "empty"), Map.of()));
+                    Map.of("stand_empty", true), Map.of()));
+            return;
+        }
+        if (view.brewTime() != 0 || view.fuel() != state.expectedFuelUses) {
+            fail(state, failure("BREWING_FINAL_DATA_MISMATCH",
+                    RoutineFailure.Category.DIVERGENCE,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("brew_complete_data", true), Map.of()));
+            return;
+        }
+        if (!view.snapshot().carried().empty()) {
+            fail(state, failure("BREWING_FINAL_CURSOR_NOT_EMPTY",
+                    RoutineFailure.Category.DIVERGENCE,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("cursor", "empty"), Map.of()));
+            return;
+        }
+        Map<StackKey, Integer> finalInventory = inventoryMultiset(
+                view.snapshot().slots(), playerSlots());
+        if (!inventoryReadbackMatches(state.expectedInventory, finalInventory)) {
+            fail(state, failure("BREWING_FINAL_INVENTORY_DELTA_MISMATCH",
+                    RoutineFailure.Category.DIVERGENCE,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("exact_inventory_delta", true), Map.of()));
+            return;
+        }
+        if (!validateReadbackOutputStacks(view, state)) {
+            fail(state, failure("BREWING_FINAL_OUTPUT_COMPONENT_MISMATCH",
+                    RoutineFailure.Category.DIVERGENCE,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("standard_output_components", true), Map.of()));
             return;
         }
         state.readbackConfirmed = true;
