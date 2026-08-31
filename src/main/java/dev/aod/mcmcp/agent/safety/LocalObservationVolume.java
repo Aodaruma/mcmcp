@@ -11,6 +11,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ScaffoldingBlock;
 import net.minecraft.world.level.block.SweetBerryBushBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -47,6 +48,7 @@ public final class LocalObservationVolume {
     private static final double SUPPORT_EPSILON = 1.0E-6D;
     private static final double MOVEMENT_EPSILON = 1.0E-7D;
     private static final double MAX_WALKING_DROP = 1.0D;
+    private static final double MAX_LADDER_DESCENT_PER_TICK = 0.15D;
     private static final double DROP_PROBE = 4.0D;
     static final int MAX_CLIMBABLE_RUNG_DELTA = 4;
     /*
@@ -510,6 +512,9 @@ public final class LocalObservationVolume {
                     player, level, startPoint, evaluated.endBox(), intent.locomotion());
             boolean targetClimbable = safeClimbableCell(
                     player, level, startPoint, targetBox, intent.locomotion());
+            boolean ladderBackingClip = intent.locomotion() == Locomotion.LADDER
+                    && exactLadderBackingClip(
+                            level, start, evaluated.endBox(), intended, resolved);
             return !bouncySupport(level, player, evaluated.endBox())
                     && !bouncySupport(level, player, targetBox)
                     && climbableNavigationMovementSafe(
@@ -523,6 +528,7 @@ public final class LocalObservationVolume {
                             targetClimbable,
                             !exactClimbableAtFeet(level, targetBox, intent.locomotion())
                                     && stableLanding(player, level, startPoint, targetBox),
+                            ladderBackingClip,
                             intended,
                             resolved);
         }
@@ -562,6 +568,7 @@ public final class LocalObservationVolume {
             boolean resolvedClimbable,
             boolean targetClimbable,
             boolean targetLanding,
+            boolean ladderBackingClip,
             Vec3 intended,
             Vec3 resolved) {
         Objects.requireNonNull(path, "path");
@@ -575,18 +582,27 @@ public final class LocalObservationVolume {
         boolean ordinaryPath = path.clearance() == Clearance.CLEAR
                 && path.transition() == Transition.PROBE_ALLOWED
                 && (path.hazard() == Hazard.NONE || path.hazard() == Hazard.FALL);
-        // Vanilla converts JUMP on a ladder into upward velocity after a move.  On the
-        // following tick the horizontal component may be clipped by the ladder backing
-        // while the vertical component is valid.  Admit only that exact, progressing
-        // ladder contact; all other blocked climbable movement remains fail-closed.
+        var target = point(intent.target());
+        double horizontalBefore = square(start.x() - target.x()) + square(start.z() - target.z());
+        double horizontalAfter = square(end.x() - target.x()) + square(end.z() - target.z());
+        boolean horizontalNonDivergence = horizontalAfter <= horizontalBefore + MOVEMENT_EPSILON;
+        // Vanilla applies the JUMP ladder boost after move(...). The first guarded move may
+        // therefore retain the ladder's -0.15 descent clamp while clipping into its backing.
+        // Admit only that exact bootstrap contact, plus the already-boosted ascent tick.
         boolean plannedLadderAscentClip = intent.locomotion() == Locomotion.LADDER
                 && intent.verticalDelta() > 0
-                && climbableContact
+                && sourceClimbable
+                && resolvedClimbable
+                && targetClimbable
+                && ladderBackingClip
                 && path.clearance() == Clearance.BLOCKED
                 && path.transition() == Transition.BLOCKED
                 && (path.hazard() == Hazard.COLLISION || path.hazard() == Hazard.FALL)
-                && resolved.y > MOVEMENT_EPSILON
+                && resolved.y >= -MAX_LADDER_DESCENT_PER_TICK - MOVEMENT_EPSILON
+                && horizontalNonDivergence
                 && intendedTowardNavigationTarget(start, intended, intent);
+        boolean ladderAscentBootstrap = plannedLadderAscentClip
+                && resolved.y <= MOVEMENT_EPSILON;
         if (intent.locomotion() == Locomotion.GROUND
                 || !targetClimbable && !targetLanding
                 || path.loaded() != LoadedState.LOADED
@@ -603,7 +619,7 @@ public final class LocalObservationVolume {
         if (!climbableContact && !goalIntendedMovementSafe(path)) {
             return false;
         }
-        return movesTowardNavigationTarget(start, end, intent);
+        return ladderAscentBootstrap || movesTowardNavigationTarget(start, end, intent);
     }
 
     private static boolean intendedTowardNavigationTarget(
@@ -1250,6 +1266,43 @@ public final class LocalObservationVolume {
     private static boolean exactLadderAtFeet(ClientLevel level, AABB box) {
         BlockPos position = feetBlock(box);
         return level.isLoaded(position) && level.getBlockState(position).is(Blocks.LADDER);
+    }
+
+    private static boolean exactLadderBackingClip(
+            ClientLevel level, AABB start, AABB end, Vec3 intended, Vec3 resolved) {
+        BlockPos sourcePosition = feetBlock(start);
+        BlockPos resolvedPosition = feetBlock(end);
+        return level.isLoaded(sourcePosition)
+                && level.isLoaded(resolvedPosition)
+                && ladderBackingClip(
+                        level.getBlockState(sourcePosition),
+                        level.getBlockState(resolvedPosition),
+                        intended,
+                        resolved);
+    }
+
+    static boolean ladderBackingClip(
+            BlockState source, BlockState end, Vec3 intended, Vec3 resolved) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(end, "end");
+        Objects.requireNonNull(intended, "intended");
+        Objects.requireNonNull(resolved, "resolved");
+        if (!source.is(Blocks.LADDER)
+                || !end.is(Blocks.LADDER)
+                || !source.hasProperty(BlockStateProperties.HORIZONTAL_FACING)
+                || !end.hasProperty(BlockStateProperties.HORIZONTAL_FACING)) {
+            return false;
+        }
+        var backing = source.getValue(BlockStateProperties.HORIZONTAL_FACING).getOpposite();
+        if (end.getValue(BlockStateProperties.HORIZONTAL_FACING).getOpposite() != backing) {
+            return false;
+        }
+        double intendedIntoBacking = intended.x * backing.getStepX()
+                + intended.z * backing.getStepZ();
+        double resolvedIntoBacking = resolved.x * backing.getStepX()
+                + resolved.z * backing.getStepZ();
+        return intendedIntoBacking > MOVEMENT_EPSILON
+                && intendedIntoBacking - resolvedIntoBacking > MOVEMENT_EPSILON;
     }
 
     private static boolean exactScaffoldingAtFeet(ClientLevel level, AABB box) {

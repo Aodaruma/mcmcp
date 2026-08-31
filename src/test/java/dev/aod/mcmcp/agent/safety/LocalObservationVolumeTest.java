@@ -1,8 +1,10 @@
 package dev.aod.mcmcp.agent.safety;
 
 import dev.aod.mcmcp.client.AgentInputState;
+import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ScaffoldingBlock;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
@@ -37,22 +39,22 @@ class LocalObservationVolumeTest {
 
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 safePath, safeEndpoint, start, end, target,
-                true, true, true, false, Vec3.ZERO, Vec3.ZERO)).isTrue();
+                true, true, true, false, false, Vec3.ZERO, Vec3.ZERO)).isTrue();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 safePath, safeEndpoint, start, end, target,
-                true, true, false, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
+                true, true, false, false, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 ladderPath(Clearance.BLOCKED, Fluid.NONE, true, Hazard.SUFFOCATION),
                 safeEndpoint, start, end, target,
-                true, true, true, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
+                true, true, true, false, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 ladderPath(Clearance.CLEAR, Fluid.WATER, false, Hazard.NONE),
                 safeEndpoint, start, end, target,
-                true, true, true, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
+                true, true, true, false, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
     }
 
     @Test
-    void ladderAscentAllowsOnlyProgressingVanillaBackingClip() {
+    void ladderAscentAllowsOnlyExactVanillaBackingClip() {
         var start = new Point(204.669921664D, 200.9D, 200.5D);
         var end = new Point(204.669921664D, 201.1D, 200.5D);
         var target = new AgentInputState.NavigationIntent(
@@ -65,19 +67,91 @@ class LocalObservationVolumeTest {
 
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 clippedPath, safeEndpoint, start, end, target,
-                true, true, true, false,
+                true, true, true, false, true,
                 new Vec3(-0.08D, 0.2D, 0.0D), new Vec3(0.0D, 0.2D, 0.0D)))
                 .isTrue();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 clippedPath, safeEndpoint, start, start, target,
-                true, true, true, false,
+                true, true, true, false, false,
                 new Vec3(-0.08D, 0.0D, 0.0D), Vec3.ZERO))
                 .isFalse();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 clippedPath, safeEndpoint, start, end, target,
-                false, false, true, false,
+                false, false, true, false, true,
                 new Vec3(-0.08D, 0.2D, 0.0D), new Vec3(0.0D, 0.2D, 0.0D)))
                 .isFalse();
+    }
+
+    @Test
+    void ladderAscentAllowsBoundedNonDivergingBootstrapBeforeVanillaJumpBoost() {
+        var start = new Point(204.669921664D, 200.9D, 200.5D);
+        var bootstrapEnd = new Point(204.669921664D, 200.82D, 200.5D);
+        var target = new AgentInputState.NavigationIntent(
+                new Vec3(204.5D, 201.9D, 200.5D), 1, Locomotion.LADDER);
+        var clippedPath = ladderPath(
+                Clearance.BLOCKED, Transition.BLOCKED,
+                Fluid.NONE, false, Hazard.FALL);
+        var safeEndpoint = ladderEndpoint(
+                Clearance.CLEAR, Fluid.NONE, false, Hazard.FALL);
+
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath, safeEndpoint, start, bootstrapEnd, target,
+                true, true, true, false, true,
+                new Vec3(-0.08D, -0.08D, 0.0D), new Vec3(0.0D, -0.08D, 0.0D)))
+                .isTrue();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath, safeEndpoint, start, bootstrapEnd, target,
+                true, true, true, false, false,
+                new Vec3(-0.08D, -0.08D, 0.0D), new Vec3(0.0D, -0.08D, 0.0D)))
+                .isFalse();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath,
+                safeEndpoint,
+                start,
+                new Point(start.x(), start.y() - 0.151D, start.z()),
+                target,
+                true,
+                true,
+                true,
+                false,
+                true,
+                new Vec3(-0.08D, -0.151D, 0.0D),
+                new Vec3(0.0D, -0.151D, 0.0D)))
+                .isFalse();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath,
+                safeEndpoint,
+                start,
+                new Point(start.x(), bootstrapEnd.y(), start.z() + 0.1D),
+                target,
+                true,
+                true,
+                true,
+                false,
+                true,
+                new Vec3(-0.08D, -0.08D, 0.1D),
+                new Vec3(0.0D, -0.08D, 0.1D)))
+                .isFalse();
+    }
+
+    @Test
+    void ladderBackingClipRequiresMatchingExactLaddersAndBackingAxisClip() {
+        var eastLadder = Blocks.LADDER.defaultBlockState()
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST);
+        var northLadder = Blocks.LADDER.defaultBlockState()
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.NORTH);
+        var intoWest = new Vec3(-0.08D, 0.0D, 0.0D);
+
+        assertThat(LocalObservationVolume.ladderBackingClip(
+                eastLadder, eastLadder, intoWest, Vec3.ZERO)).isTrue();
+        assertThat(LocalObservationVolume.ladderBackingClip(
+                eastLadder, eastLadder, intoWest, intoWest)).isFalse();
+        assertThat(LocalObservationVolume.ladderBackingClip(
+                eastLadder, eastLadder, intoWest.reverse(), Vec3.ZERO)).isFalse();
+        assertThat(LocalObservationVolume.ladderBackingClip(
+                eastLadder, northLadder, intoWest, Vec3.ZERO)).isFalse();
+        assertThat(LocalObservationVolume.ladderBackingClip(
+                eastLadder, Blocks.STONE.defaultBlockState(), intoWest, Vec3.ZERO)).isFalse();
     }
 
     @Test
@@ -92,14 +166,14 @@ class LocalObservationVolumeTest {
 
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 safePath, safeEndpoint, start, end, target,
-                true, true, true, false, Vec3.ZERO, Vec3.ZERO)).isTrue();
+                true, true, true, false, false, Vec3.ZERO, Vec3.ZERO)).isTrue();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 safePath, safeEndpoint, start, end, target,
-                true, true, false, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
+                true, true, false, false, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 ladderPath(Clearance.CLEAR, Fluid.WATER, false, Hazard.NONE),
                 safeEndpoint, start, end, target,
-                true, true, true, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
+                true, true, true, false, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 safePath,
                 ladderEndpoint(Clearance.CLEAR, Fluid.NONE, false, Hazard.NONE),
@@ -111,6 +185,7 @@ class LocalObservationVolumeTest {
                 false,
                 false,
                 true,
+                false,
                 Vec3.ZERO,
                 Vec3.ZERO)).isTrue();
     }
