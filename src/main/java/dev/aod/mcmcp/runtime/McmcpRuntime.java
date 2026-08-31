@@ -11,6 +11,7 @@ import dev.aod.mcmcp.agent.action.KnownBlockMutationAttempt;
 import dev.aod.mcmcp.agent.action.KnownBrewingAttempt;
 import dev.aod.mcmcp.agent.action.KnownContainerAttempt;
 import dev.aod.mcmcp.agent.action.KnownConstructionAttempt;
+import dev.aod.mcmcp.agent.action.KnownPillarUpAttempt;
 import dev.aod.mcmcp.agent.action.KnownRedstoneIdentityAttempt;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
@@ -76,7 +77,9 @@ import dev.aod.mcmcp.routine.InteractBlockRequest;
 import dev.aod.mcmcp.routine.InteractEntityRequest;
 import dev.aod.mcmcp.routine.KnownBrewingRequest;
 import dev.aod.mcmcp.routine.KnownConstructionRequest;
+import dev.aod.mcmcp.routine.KnownPillarUpRequest;
 import dev.aod.mcmcp.routine.MinecraftApplyBlockPlanPort;
+import dev.aod.mcmcp.routine.MinecraftPillarUpPort;
 import dev.aod.mcmcp.routine.MinecraftKnownBrewingPort;
 import dev.aod.mcmcp.routine.MinecraftKnownFurnacePort;
 import dev.aod.mcmcp.routine.MinecraftKnownMenuPort;
@@ -217,6 +220,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final ClientReconciliationSignals reconciliationSignals;
     private final MinecraftSemanticActionPort semanticActionPort;
     private final MinecraftApplyBlockPlanPort applyBlockPlanPort;
+    private final MinecraftPillarUpPort pillarUpPort;
     private final MinecraftKnownBrewingPort knownBrewingPort;
     private final MinecraftKnownFurnacePort knownFurnacePort;
     private final MinecraftKnownMenuPort knownMenuPort;
@@ -281,6 +285,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 Minecraft::getInstance,
                 sessions::snapshot,
                 memory,
+                observations,
+                ClientPredictionSignals.global(),
+                reconciliationSignals);
+        pillarUpPort = new MinecraftPillarUpPort(
+                Minecraft::getInstance,
+                sessions::snapshot,
                 observations,
                 ClientPredictionSignals.global(),
                 reconciliationSignals);
@@ -362,7 +372,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
                 semanticActionPort::clearSession,
-                applyBlockPlanPort::clearSession);
+                applyBlockPlanPort::clearSession,
+                pillarUpPort::clearSession);
         clearPhaseFivePortSessions();
         reconciliationSignals.closeLevel(minecraft.level);
         screenOwnership.clearLevel(minecraft.level);
@@ -386,7 +397,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
                 semanticActionPort::clearSession,
-                applyBlockPlanPort::clearSession);
+                applyBlockPlanPort::clearSession,
+                pillarUpPort::clearSession);
         clearPhaseFivePortSessions();
         reconciliationSignals.closeLevel(minecraft.level);
         screenOwnership.clearLevel(minecraft.level);
@@ -411,7 +423,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
                 semanticActionPort::clearSession,
-                applyBlockPlanPort::clearSession);
+                applyBlockPlanPort::clearSession,
+                pillarUpPort::clearSession);
         clearPhaseFivePortSessions();
         reconciliationSignals.closeLevel(minecraft.level);
         screenOwnership.clearLevel(minecraft.level);
@@ -436,7 +449,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
                 semanticActionPort::clearSession,
-                applyBlockPlanPort::clearSession);
+                applyBlockPlanPort::clearSession,
+                pillarUpPort::clearSession);
         clearPhaseFivePortSessions();
         reconciliationSignals.closeLevel(minecraft.level);
         screenOwnership.clearLevel(minecraft.level);
@@ -722,6 +736,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         clearAutomationPortSession("apply_block_plan", applyBlockPlanClear);
     }
 
+    static void clearAutomationPortSessions(
+            Runnable stationaryBreakClear,
+            Runnable semanticActionClear,
+            Runnable applyBlockPlanClear,
+            Runnable pillarUpClear) {
+        clearAutomationPortSessions(
+                stationaryBreakClear, semanticActionClear, applyBlockPlanClear);
+        clearAutomationPortSession("pillar_up", pillarUpClear);
+    }
+
     private static void clearAutomationPortSession(String name, Runnable clear) {
         Objects.requireNonNull(clear, name + "Clear");
         try {
@@ -815,7 +839,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
                 semanticActionPort::clearSession,
-                applyBlockPlanPort::clearSession);
+                applyBlockPlanPort::clearSession,
+                pillarUpPort::clearSession);
         clearPhaseFivePortSessions();
         reconciliationSignals.closeLevel(minecraft.level);
         screenOwnership.clearLevel(minecraft.level);
@@ -3538,6 +3563,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 return;
             }
             if (!(agentExecution.primitive instanceof ActionDsl.OperateKnownMenu)
+                    && !(agentExecution.primitive instanceof ActionDsl.PillarUpKnown)
                     && (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
                             || localSafety == LocalObservationProjector.CurrentSafety.REPLAN)) {
                 if (isAgentWait(agentExecution.primitive)) {
@@ -3695,6 +3721,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (agentExecution.primitive instanceof ActionDsl.ApplyKnownBlockPlan
                     || agentExecution.primitive instanceof ActionDsl.ClearKnownBlockPlan) {
                 tickAgentConstruction(minecraft, session, action);
+                return;
+            }
+
+            if (agentExecution.primitive instanceof ActionDsl.PillarUpKnown) {
+                tickAgentPillarUp(minecraft, session, action);
                 return;
             }
 
@@ -4992,6 +5023,68 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         minecraft, agentActions.get(action.actionId()).progress());
             }
         }
+    }
+
+    private void tickAgentPillarUp(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action) {
+        if (agentExecution.pillarUpAttempt == null) {
+            final KnownPillarUpRequest request;
+            try {
+                request = pillarUpRequest((ActionDsl.PillarUpKnown) agentExecution.primitive);
+            } catch (RuntimeException rejected) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                        false,
+                        "pillar_request_rejected");
+                return;
+            }
+            long deadline = Math.addExact(
+                    session.clientTick(), KnownPillarUpAttempt.MAX_TICKS);
+            agentExecution.pillarUpAttempt = new KnownPillarUpAttempt(
+                    pillarUpPort, request, session.clientTick(), deadline);
+        }
+        KnownPillarUpAttempt.TickResult result =
+                agentExecution.pillarUpAttempt.tick(session.clientTick());
+        for (int count = 0; count < result.placedDelta(); count++) {
+            agentActions.recordBlockPlace(action.actionId());
+        }
+        switch (result.status()) {
+            case RUNNING -> { }
+            case FAILED -> failAgentAction(
+                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                    true,
+                    result.evidence());
+            case SUCCEEDED -> {
+                agentExecution.pillarUpAttempt = null;
+                agentActions.recordNodeEvidence(action.actionId(), "pillar_up_complete=1");
+                agentActions.completeNode(action.actionId());
+                agentExecution.primitive = null;
+                agentExecution.replanning = false;
+                agentExecution.replanNotBeforeTick = 0L;
+                agentExecution.replanDeadlineTick = 0L;
+                advanceAgentProgram(
+                        minecraft, agentActions.get(action.actionId()).progress());
+            }
+        }
+    }
+
+    static KnownPillarUpRequest pillarUpRequest(ActionDsl.PillarUpKnown pillar) {
+        Objects.requireNonNull(pillar, "pillar");
+        return new KnownPillarUpRequest(
+                new BlockTarget(
+                        pillar.support().dimension(),
+                        pillar.support().x(),
+                        pillar.support().y(),
+                        pillar.support().z()),
+                new BlockStateFingerprint(
+                        pillar.expectedSupport().block(),
+                        pillar.expectedSupport().properties()),
+                new BlockStateFingerprint(
+                        pillar.sourceState().block(),
+                        pillar.sourceState().properties()),
+                pillar.item());
     }
 
     private void tickAgentRedstone(
@@ -7401,6 +7494,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 McmcpMod.LOGGER.error("MCMCP known-construction release failed", failure);
             }
         }
+        if (agentExecution.pillarUpAttempt != null) {
+            try {
+                agentExecution.pillarUpAttempt.close();
+                agentExecution.pillarUpAttempt = null;
+            } catch (RuntimeException | LinkageError failure) {
+                closed = false;
+                McmcpMod.LOGGER.error("MCMCP known-pillar release failed", failure);
+            }
+        }
         if (agentExecution.redstoneAttempt != null) {
             try {
                 agentExecution.redstoneAttempt.close();
@@ -9694,7 +9796,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 clearAutomationPortSessions(
                         stationaryBreakPort::clearSession,
                         semanticActionPort::clearSession,
-                        applyBlockPlanPort::clearSession);
+                        applyBlockPlanPort::clearSession,
+                        pillarUpPort::clearSession);
                 clearPhaseFivePortSessions();
                 recipeCatalog.detachSession();
                 memory.detachSession();
@@ -10045,6 +10148,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private KnownContainerAttempt containerAttempt;
         private KnownBrewingAttempt brewingAttempt;
         private KnownConstructionAttempt constructionAttempt;
+        private KnownPillarUpAttempt pillarUpAttempt;
         private KnownRedstoneIdentityAttempt redstoneAttempt;
         private int pickupInventoryBefore = -1;
         private long pickupArrivalTick = -1L;

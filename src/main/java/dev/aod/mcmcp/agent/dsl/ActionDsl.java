@@ -39,7 +39,7 @@ public final class ActionDsl {
             FaceKnownPosition, BreakKnownFace,
             TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
             HarvestKnownWheat, HarvestKnownWheatBatch, ApplyKnownBlockPlan,
-            ClearKnownBlockPlan,
+            ClearKnownBlockPlan, PillarUpKnown,
             ApplyKnownRedstoneSpec,
             OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
@@ -233,6 +233,22 @@ public final class ActionDsl {
             Objects.requireNonNull(block, "block");
             properties = Collections.unmodifiableMap(new LinkedHashMap<>(
                     Objects.requireNonNull(properties, "properties")));
+        }
+    }
+
+    /** Places exactly one full block below the jumping player and lands one block higher. */
+    public record PillarUpKnown(
+            String id,
+            Position support,
+            BlockStateSpec expectedSupport,
+            BlockStateSpec sourceState,
+            String item) implements Node {
+        public PillarUpKnown {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(support, "support");
+            Objects.requireNonNull(expectedSupport, "expectedSupport");
+            Objects.requireNonNull(sourceState, "sourceState");
+            Objects.requireNonNull(item, "item");
         }
     }
 

@@ -842,6 +842,34 @@ public final class AgentPrimitivePlanner {
                     ActionDslCompiler.intrinsicKnownBlockClearCost(plan.entries().size()));
             return input;
         }
+        if (node instanceof ActionDsl.PillarUpKnown pillar) {
+            ObservationRecord.VisibleSurface source = requireConstructionSource(
+                    map, latestFrame, pillar.sourceState(), pillar.item());
+            knownSurfaces.add(new KnownSurface(
+                    new ActionDsl.Position(
+                            source.position().dimension().value(),
+                            source.position().x(), source.position().y(), source.position().z()),
+                    ActionDsl.BlockFace.valueOf(source.face().name()),
+                    source.block().value(), null));
+            MutationSurface support = requireMutationSurface(
+                    map,
+                    latestFrame,
+                    input,
+                    pillar.support(),
+                    surfaceBarrierWorldRevision(
+                            map, surfaceRevisionBarrier, pillar.support()),
+                    pillar.expectedSupport().block(),
+                    surface -> surface.face() == ObservationRecord.Face.UP
+                            && exactObservedState(surface, pillar.expectedSupport()),
+                    "Pillar support requires the delivered exact UP face and block state");
+            knownSurfaces.add(support.surface());
+            for (Pose pose : input) {
+                work.poseTransition();
+                requirePillarPose(pose, pillar.support());
+            }
+            merge(costs, node.id(), ActionDslCompiler.intrinsicPillarUpCost());
+            return input;
+        }
         if (node instanceof ActionDsl.ApplyKnownRedstoneSpec redstone) {
             var spec = new RedstoneSpec(
                     redstone.components(), redstone.truthTable(), redstone.footprint(),
@@ -1641,6 +1669,23 @@ public final class AgentPrimitivePlanner {
                 pose.horizontalPositionError(),
                 Math.max(pose.yErrorBelow(), pose.yErrorAbove()));
         return distance + poseError <= MAX_BREAK_REACH_BLOCKS;
+    }
+
+    private static void requirePillarPose(Pose pose, ActionDsl.Position support) {
+        double centerX = support.x() + 0.5D;
+        double centerZ = support.z() + 0.5D;
+        if (!pose.cell().dimension().equals(support.dimension())
+                || pose.cell().x() != support.x()
+                || pose.cell().y() != support.y() + 1
+                || pose.cell().z() != support.z()
+                || Math.abs(pose.x() - centerX) + pose.horizontalPositionError() > 0.15D
+                || Math.abs(pose.z() - centerZ) + pose.horizontalPositionError() > 0.15D
+                || Math.abs(pose.y() - (support.y() + 1.0D))
+                        + Math.max(pose.yErrorBelow(), pose.yErrorAbove()) > 1.0e-4D) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Pillar support must be the centered block directly below the player");
+        }
     }
 
     private static void requireConstructionAim(Pose pose, Vec3 point) {

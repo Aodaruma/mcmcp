@@ -48,7 +48,7 @@
 
 移動用の整数feet-space座標と、block座標と、item entityの連続座標は別の型です。
 
-`navigate_to_known`は通常地形に加え、現在の局所観測で完全な`minecraft:ladder`または乾いた安定済み`minecraft:scaffolding`が連続している列を、観測入口から上下4段以内だけ経路にできます。公開される目的地は床のあるlandingだけで、中間段は内部経路に留まります。scaffoldingは上昇時にJUMP、下降時だけSHIFTを使います。LLMはlandingの`navigation_target`をそのままコピーし、block座標から目的地を計算しません。仮blockによるpillaringは未対応です。
+`navigate_to_known`は通常地形に加え、現在の局所観測で完全な`minecraft:ladder`または乾いた安定済み`minecraft:scaffolding`が連続している列を、観測入口から上下4段以内だけ経路にできます。公開される目的地は床のあるlandingだけで、中間段は内部経路に留まります。scaffoldingは上昇時にJUMP、下降時だけSHIFTを使います。LLMはlandingの`navigation_target`をそのままコピーし、block座標から目的地を計算しません。仮blockによる上昇は、下記の1 block専用Actionだけに限定します。
 
 ## 頻出nodeの必須field
 
@@ -65,6 +65,7 @@
 - `harvest_known_wheat_batch`: `{id,op,targets:[position]}`
 - `apply_known_block_plan`: `{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,source_state,item,support:{position,face,expected_state,dependency_entry_id}}]}`
 - `clear_known_block_plan`: `{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,expected_before}]}`
+- `pillar_up_known`: `{id,op,support,expected_support,source_state,item}`
 - `collect_visible_item_batch`: `{id,op,targets:[{displayed_item,target}]}`
 
 全nodeには一意の`id`が必要です。正規opcode、他の必須field、enum、上限、capabilityはcatalogの`inputSchema`をそのまま使い、aliasを推測しません。
@@ -74,6 +75,8 @@
 `apply_known_block_plan`は、移動や破壊を含まない1〜8 blockのstationaryなplace-only Actionです。`anchor`は設置先の基準block座標、各`offset`はコピー元構造内の相対整数座標（各軸-8〜8）です。`transform`は`mirror=none|x|z`を先に、`rotation=0|90|180|270`のY軸時計回り回転を後に適用します。offsetと完全BlockStateの向きはruntimeが同じ規則で変換するため、LLMは`source_state.properties`を書き換えません。
 
 `clear_known_block_plan`は同じ`anchor` / `transform`文法で、現在返却済みの`visible_surface.state`が完全一致し、`placement_item`が非nullな安全建築blockだけを1〜8件、既存の`BREAK_TO_AIR`経路で撤去します。成功条件は全targetのfreshなair再観測です。置換は同じActionへ続けず、terminal後に再観測してから既存`apply_known_block_plan`を別Actionで実行します。
+
+`pillar_up_known`は1 Actionで1 blockだけ上がる専用primitiveです。player直下の完全な`support / expected_support`と、eligibleな`visible_surface`から無変換コピーした`source_state / item`を渡します。runtimeが足元air targetと1段上landingを導出し、grounded・中央寄せ、軌道、reach、inventoryを再検証します。JUMP後にplayer AABBがtarget上面を抜けてからuseを1回だけ送り、exact block、inventory -1、grounded Y+1で成功します。`if` / `repeat`内や前後suffixは禁止で、唯一のtop-level nodeにします。fluid、欠損、危険、未知、占有、support不一致ではfail closedです。
 
 各`support`は、`position`から`face`方向へ1 block隣が当該entryの変換後targetになるよう指定します。`expected_state`と`dependency_entry_id`はどちらも必須nullable fieldで、次のどちらか一方だけを非nullにします。
 
@@ -116,7 +119,7 @@ Action開始時には醸造台menuの5 item slotがすべて空で、内部のbr
 
 ## budgetと失敗時の直し方
 
-budgetは成功予想ではなく、worst-caseを収める停止上限です。container操作には少なくとも30秒、600 ticks、camera 360度とschema記載のinteraction数を確保します。`operate_known_menu`は30秒、600 ticks、1 interactionで、distance / camera / break / placementは0です。精錬node 1回には120秒、2,400 ticks、camera最大540度、6 interactionsを確保します。醸造node 1回には70秒、1400 ticks、照準と受付済みheadingへの復元を合わせて最大camera 540度、16 interactionsを確保し、distance / break / placementは0とします。直前に`face_known_position`が必要なら、そのnodeのcostは別途加算します。`apply_known_block_plan`は1 entryごとに15秒、300 ticks、camera 80度、1 placement、`clear_known_block_plan`は同じ時間・cameraで1 breakを確保します。8 entryなら120秒、2400 ticks、camera 640度と8 placementsまたは8 breaksです。移動距離とinteractionは0です。他の8-target mutation batchには目安として120秒、2400 ticks、最大720 camera度と、処理に応じた8 interactions / breaks / placementsを確保します。targetは入力順に実行するため、その順序のworst-caseが720 camera度を超える場合はruntimeに並べ替えさせず、小さいbatchへ分割します。
+budgetは成功予想ではなく、worst-caseを収める停止上限です。container操作には少なくとも30秒、600 ticks、camera 360度とschema記載のinteraction数を確保します。`operate_known_menu`は30秒、600 ticks、1 interactionで、distance / camera / break / placementは0です。精錬node 1回には120秒、2,400 ticks、camera最大540度、6 interactionsを確保します。醸造node 1回には70秒、1400 ticks、照準と受付済みheadingへの復元を合わせて最大camera 540度、16 interactionsを確保し、distance / break / placementは0とします。直前に`face_known_position`が必要なら、そのnodeのcostは別途加算します。`apply_known_block_plan`は1 entryごとに15秒、300 ticks、camera 80度、1 placement、`clear_known_block_plan`は同じ時間・cameraで1 breakを確保します。8 entryなら120秒、2400 ticks、camera 640度と8 placementsまたは8 breaksです。`pillar_up_known`は15秒、300 ticks、distance 2、camera 360度、1 placementです。他の8-target mutation batchには目安として120秒、2400 ticks、最大720 camera度と、処理に応じた8 interactions / breaks / placementsを確保します。targetは入力順に実行するため、その順序のworst-caseが720 camera度を超える場合はruntimeに並べ替えさせず、小さいbatchへ分割します。
 
 schema違反はcatalog順に最大4件、budget不足は不足component名をまとめて返します。提出値や未知property名は診断へ反射されません。mutationやdrop生成後の`TARGET_UNKNOWN`をfield推測で直すのではなく、Actionを区切って新しいframeを観測してください。
 

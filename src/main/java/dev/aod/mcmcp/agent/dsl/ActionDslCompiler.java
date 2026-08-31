@@ -25,6 +25,9 @@ public final class ActionDslCompiler {
     private static final long NOMINAL_TICK_MILLIS = 50;
     private static final long BLOCK_PLAN_TICKS_PER_ENTRY = 300;
     private static final double BLOCK_PLAN_CAMERA_DEGREES_PER_ENTRY = 80;
+    public static final long PILLAR_UP_TICKS = 300L;
+    public static final long PILLAR_UP_DURATION_MILLIS =
+            PILLAR_UP_TICKS * NOMINAL_TICK_MILLIS;
     public static final long KNOWN_BREWING_TICKS = 1_400L;
     public static final long KNOWN_BREWING_DURATION_MILLIS = 70_000L;
     public static final long KNOWN_BREWING_INTERACTIONS = 16L;
@@ -110,6 +113,11 @@ public final class ActionDslCompiler {
         }
         if (node instanceof ActionDsl.ClearKnownBlockPlan plan) {
             Cost cost = intrinsicKnownBlockClearCost(plan.entries().size());
+            primitiveCostBounds.put(node.id(), cost);
+            return cost;
+        }
+        if (node instanceof ActionDsl.PillarUpKnown) {
+            Cost cost = intrinsicPillarUpCost();
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }
@@ -280,6 +288,18 @@ public final class ActionDslCompiler {
         return new Cost(
                 place.durationMillis(), place.ticks(), place.distanceBlocks(),
                 place.cameraDegrees(), place.interactions(), entries, 0);
+    }
+
+    /** Fixed bound for one jump, one placement, and restoring the admitted camera pose. */
+    public static Cost intrinsicPillarUpCost() {
+        return new Cost(
+                PILLAR_UP_DURATION_MILLIS,
+                PILLAR_UP_TICKS,
+                2.0D,
+                360.0D,
+                0,
+                0,
+                1);
     }
 
     /** Structural bound for the original one-output identity circuit. */

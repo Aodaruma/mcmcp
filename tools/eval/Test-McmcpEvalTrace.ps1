@@ -41,8 +41,8 @@ $AuditPromptProfile = if ($PSCmdlet.ParameterSetName -eq 'Audit') {
     'short-regression'
 }
 $ProductionPrompt = [string]$ProductionPrompts[$AuditPromptProfile]
-$ExpectedCatalogFileSha256 = '9f31ef06bad3b76eb60f76bc3eb0d5c1978aa3cfb74ef5af9a18655ae0ead210'
-$ExpectedToolSurfaceSha256 = '68fb1fc7c373c9511b65a1b1e68dd3e4e83174e81717326bc06ff4eff80a93f3'
+$ExpectedCatalogFileSha256 = '738e4c863c0c203dec1527855c96f4fd8a40233190eb3789cba8e2d117485ada'
+$ExpectedToolSurfaceSha256 = '8aef95bf1dbae7743339a50890a7045ff87c5d9e370a81e2016da0519202ddd8'
 $ExpectedEvaluatorTimeoutSeconds = 1800
 $TurnCompletionReserveSeconds = 15
 $MaximumMcpForwardSeconds = 35

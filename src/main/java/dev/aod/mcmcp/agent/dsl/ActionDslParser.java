@@ -131,6 +131,7 @@ public final class ActionDslParser {
             case "harvest_known_wheat_batch" -> harvestKnownWheatBatch(object, path);
             case "apply_known_block_plan" -> applyKnownBlockPlan(object, path);
             case "clear_known_block_plan" -> clearKnownBlockPlan(object, path);
+            case "pillar_up_known" -> pillarUpKnown(object, path);
             case "apply_known_redstone_spec" -> applyKnownRedstoneSpec(object, path);
             case "open_known_fence_gate" -> openKnownFenceGate(object, path);
             case "open_known_passage" -> openKnownPassage(object, path);
@@ -296,6 +297,18 @@ public final class ActionDslParser {
                 position(source.get("anchor"), path + ".anchor"),
                 blockPlanTransform(source.get("transform"), path + ".transform"),
                 entries);
+    }
+
+    private static ActionDsl.PillarUpKnown pillarUpKnown(JsonObject source, String path) {
+        exactKeys(source, path,
+                Set.of("id", "op", "support", "expected_support", "source_state", "item"),
+                Set.of("id", "op", "support", "expected_support", "source_state", "item"));
+        return new ActionDsl.PillarUpKnown(
+                string(source.get("id"), path + ".id"),
+                position(source.get("support"), path + ".support"),
+                blockStateSpec(source.get("expected_support"), path + ".expected_support"),
+                blockStateSpec(source.get("source_state"), path + ".source_state"),
+                string(source.get("item"), path + ".item"));
     }
 
     private static ActionDsl.BlockPlanTransform blockPlanTransform(

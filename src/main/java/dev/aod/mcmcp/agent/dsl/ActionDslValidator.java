@@ -107,6 +107,7 @@ public final class ActionDslValidator {
         }
         validateTerminalOwnedMenuPlacement(program.body());
         validateTerminalClearPlacement(program.body());
+        validateExclusivePillarPlacement(program.body());
         var walk = new Walk();
         int executed = walkSequence(program.body(), 1, walk, "program.body");
         if (walk.sourceNodes > MAX_SOURCE_NODES) {
@@ -402,6 +403,16 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
             return 1;
         }
+        if (node instanceof ActionDsl.PillarUpKnown pillar) {
+            validatePosition(pillar.support(), path + ".support");
+            validateBlockState(pillar.expectedSupport(), path + ".expected_support");
+            validateBlockState(pillar.sourceState(), path + ".source_state");
+            requireResourceLocation(pillar.item(), path + ".item");
+            walk.requiredCapabilities.add(ActionDsl.Capability.MOVEMENT);
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_PLACE);
+            return 1;
+        }
         if (node instanceof ActionDsl.ApplyKnownRedstoneSpec redstone) {
             validatePosition(redstone.anchor(), path + ".anchor");
             try {
@@ -597,6 +608,7 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.HarvestKnownWheatBatch
                     || node instanceof ActionDsl.ApplyKnownBlockPlan
                     || node instanceof ActionDsl.ClearKnownBlockPlan
+                    || node instanceof ActionDsl.PillarUpKnown
                     || node instanceof ActionDsl.ApplyKnownRedstoneSpec
                     || node instanceof ActionDsl.OpenKnownFenceGate
                     || node instanceof ActionDsl.OpenKnownPassage
@@ -668,6 +680,25 @@ public final class ActionDslValidator {
         }
         return node instanceof ActionDsl.Repeat repeat
                 && repeat.body().stream().anyMatch(ActionDslValidator::containsConstructionClear);
+    }
+
+    private static void validateExclusivePillarPlacement(List<ActionDsl.Node> body) {
+        boolean contains = body.stream().anyMatch(ActionDslValidator::containsPillarPlacement);
+        if (contains && (body.size() != 1 || !(body.getFirst() instanceof ActionDsl.PillarUpKnown))) {
+            throw invalid("pillar_up_known must be the only top-level Action node");
+        }
+    }
+
+    private static boolean containsPillarPlacement(ActionDsl.Node node) {
+        if (node instanceof ActionDsl.PillarUpKnown) return true;
+        if (node instanceof ActionDsl.If conditional) {
+            return conditional.thenBranch().stream()
+                    .anyMatch(ActionDslValidator::containsPillarPlacement)
+                    || conditional.elseBranch().stream()
+                            .anyMatch(ActionDslValidator::containsPillarPlacement);
+        }
+        return node instanceof ActionDsl.Repeat repeat
+                && repeat.body().stream().anyMatch(ActionDslValidator::containsPillarPlacement);
     }
 
     private static void validatePredicate(ActionDsl.Predicate predicate, String path) {

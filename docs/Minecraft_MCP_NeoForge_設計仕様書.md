@@ -24,7 +24,7 @@
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
 - fresh評価turnまたはAgent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
-最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件設置する`apply_known_block_plan`と同じ安全blockを1〜8件撤去する`clear_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`、現在開いているVanilla `generic_9x1`〜`generic_9x6`純storageまたは固定artifact検証済みSophisticated Backpacks通常storageからopaque参照で1 stackを移す`operate_known_menu`、床付きlanding間の完全なVanilla ladderまたは安定したscaffoldingを上下4段以内で通る`navigate_to_known`を公開する。Phase 5ではlever 1入力からredstone lamp 1個、固定配置の2個、または1 dustだけを挟む直線1出力へ同じ値を出すidentityを配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4拡張では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の同一Action内置換・256 block化、pillaring、一般資源入手、可変長・曲がりを含む一般回路合成は、同じ安全境界を維持して追加する。
+最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件設置する`apply_known_block_plan`と同じ安全blockを1〜8件撤去する`clear_known_block_plan`、1 blockだけ安全に積み上がる`pillar_up_known`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`、現在開いているVanilla `generic_9x1`〜`generic_9x6`純storageまたは固定artifact検証済みSophisticated Backpacks通常storageからopaque参照で1 stackを移す`operate_known_menu`、床付きlanding間の完全なVanilla ladderまたは安定したscaffoldingを上下4段以内で通る`navigate_to_known`を公開する。Phase 5ではlever 1入力からredstone lamp 1個、固定配置の2個、または1 dustだけを挟む直線1出力へ同じ値を出すidentityを配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4拡張では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の同一Action内置換・256 block化、2 block以上の連続pillaring、一般資源入手、可変長・曲がりを含む一般回路合成は、同じ安全境界を維持して追加する。
 
 ## 1. 対象環境
 
@@ -743,6 +743,7 @@ Action DSL v1の制御構造:
 | harvest_known_wheat_batch | camera, block_break | 1〜8個の相異なる可視・既知かつ成熟済みwheatを入力順に収穫する |
 | apply_known_block_plan | camera, block_place | 完全な可視source stateをruntimeでmirror / rotationし、現在supportまたは明示先行dependency上へ1〜8 blockを入力順に通常設置する |
 | clear_known_block_plan | camera, block_break | 現在返却済みの完全stateが一致する安全建築blockを1〜8件、既存BREAK_TO_AIR経路で撤去し、freshなair再観測後に完了する |
+| pillar_up_known | movement, camera, block_place | player直下のexactな安全supportから足元targetと上landingをruntime導出し、AABB clearance後に1 blockだけ設置してY+1へ着地する |
 | apply_known_redstone_spec | camera, block_interact, block_place | 固定lever→lamp 1出力、2出力fan-out、または1 dustの直線identityを設置し、live visualでOFF / ON / OFFを試験する。wire版はlamp / dust / leverの可視glass supportとdustの直線shape・power 0 / 15 / 0も完全一致させる |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
@@ -1105,7 +1106,7 @@ camera costは解析的なyaw/pitch誤差に加え、Vanillaの`player.turn`が0
 - block破壊・設置
 - doorやcontainer操作
 - 水泳、boat、elytra
-- 仮blockを足元へ置くpillaring、ladder / scaffoldingの新設・欠損段越え
+- 2 block以上の連続pillaring、ladder / scaffoldingの新設・欠損段越え（1 Action 1 blockの`pillar_up_known`だけは対応）
 - gap jump、parkour
 - sprint、combat
 - frontier探索
@@ -1856,7 +1857,7 @@ world、mmc-pack.json、instance.cfg、既存jarは変更しない。
 - loopbackへ到達できないcloud-only MCP hostは利用できない
 - 遮蔽と半径を守る観測と未知危険の完全回避は両立しない
 - modded block、container、cropは現在の公開surfaceでは原則非対応。Phase 4以降も対象profileでversion固定し、受入済みMenu profileと必要最小限の固有adapterだけを追加する
-- 移動は仮blockによるpillaring、建築は同一Action内置換、Menuは上記backpack以外のMOD GUI profile、回路は可変長・曲がり・wire付きfan-out・任意回路合成が未対応
+- 移動は2 block以上を連続実行するpillaring、建築は同一Action内置換、Menuは上記backpack以外のMOD GUI profile、回路は可変長・曲がり・wire付きfan-out・任意回路合成が未対応
 
 ### 接続時に確認する運用条件
 
