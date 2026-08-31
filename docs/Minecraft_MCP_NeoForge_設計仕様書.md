@@ -24,7 +24,7 @@
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
 - fresh評価turnまたはAgent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
-最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件設置する`apply_known_block_plan`と同じ安全blockを1〜8件撤去する`clear_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`、現在開いているVanilla 9x3純storageからopaque参照で1 stackを移す`operate_known_menu`に加え、Phase 5の最初のvertical sliceとしてlever 1入力とredstone lamp 1出力の固定identity回路を配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の置換・256 block化、一般資源入手、一般回路合成は、同じ安全境界を維持して追加する。
+最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件設置する`apply_known_block_plan`と同じ安全blockを1〜8件撤去する`clear_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`、現在開いているVanilla `generic_9x1`〜`generic_9x6`純storageからopaque参照で1 stackを移す`operate_known_menu`、床付きlanding間の完全なVanilla ladderを上下4 rung以内で通る`navigate_to_known`を公開する。Phase 5ではlever 1入力からredstone lamp 1個、または固定配置の2個へ同じ値を出すidentity / fan-outを配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4拡張では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の同一Action内置換・256 block化、scaffolding / pillaring、一般資源入手、wireを含む一般回路合成は、同じ安全境界を維持して追加する。
 
 ## 1. 対象環境
 
@@ -127,7 +127,7 @@ NeoForge公式の26.2 MDKもJava 25を対象としている。開発は公式の
 ### Phase 3: 小規模建築
 
 - 初回vertical slice: 閉じたcopy/support allowlistだけが返すpolicy-visibleな完全BlockStateと設置itemを使う、stationary・place-only・1〜8 blockの`apply_known_block_plan`
-- 同じ安全建築blockの完全な現行stateを使い、既存BREAK_TO_AIR経路とfresh air再観測で1〜8 blockを撤去する`clear_known_block_plan`
+- 同じ安全建築blockの完全な現行stateを使い、既存`BREAK_TO_AIR`経路で1〜8 blockを撤去し、全targetのfresh air再観測後に完了する`clear_known_block_plan`
 - offsetとBlockStateのmirror / rotationはruntimeが同じMinecraft規則で変換し、LLMへ向き変換させない
 - 現在surfaceまたは明示した先行entryだけをsupport proofとし、入力順のfail-fast実行とauthoritative postconditionを要求
 - ローカルに登録した許可box
@@ -147,9 +147,9 @@ NeoForge公式の26.2 MDKもJava 25を対象としている。開発は公式の
 
 ### Phase 5: レッドストーン
 
-- 初回vertical slice: lever 1入力、redstone lamp 1出力、false→false / true→trueの固定identityだけを扱う`apply_known_redstone_spec`
-- lampには現在可視の不活性なUP support、leverには現在可視の`minecraft:glass` UP supportを要求し、stationaryで通常設置する
-- leverのlamp以外の4面隣接をLIVE current / visibleなairに閉じ、live visualだけでlever / lampのOFF→ON→OFFを同tick対として有限settle内に確認する
+- 初回vertical slice: lever 1入力、redstone lamp 1出力identityまたは2出力の固定fan-outだけを扱う`apply_known_redstone_spec`
+- 各lampには現在可視の不活性なUP support、leverには現在可視の`minecraft:glass` UP supportを要求し、stationaryで通常設置する
+- leverのlamp以外の面隣接をLIVE current / visibleなairまたは直下glassに閉じ、live visualだけでlever / 全lampのOFF→ON→OFFを同tick集合として有限settle内に確認する
 - 真理値表と入出力を持つRedstoneSpec
 - 許可部品と最大footprint
 - Blueprintへの変換
@@ -535,12 +535,12 @@ Phase 1で許可するのは`navigate_to_known(location)`だけである。`expl
 
 | 状態 | 意味 | 使用可否 |
 |---|---|---|
-| CONFIRMED | support、clearance、transitionが有効 | 通常経路に使用 |
-| PROBE_ALLOWED | supportは確認済みだがtransitionの一部が未確定 | 低速の1 micro-stepだけ許可し、actual resolverで再検証 |
+| CONFIRMED | locomotion別のsupport / contact、clearance、transitionが有効 | 通常経路に使用 |
+| PROBE_ALLOWED | 地上supportまたは完全なladder接触を確認済みで、transitionの一部が未確定 | 低速の1 micro-stepだけ許可し、actual resolverで再検証 |
 | BLOCKED | actual collision、危険流体、支持不能を確認 | 使用禁止 |
 | STALE | revisionまたは鮮度が失効 | 再観測まで通常使用禁止 |
 
-全周visual rayだけでplayer AABB全体のclearanceを確定しない。`CONFIRMED` transitionには`LOCAL_VOLUME`または`CONTACT`証拠を必要とする。地形変更では影響cell/edgeだけをSTALEにし、現在AABBが危険でなければ停止せず局所再計画する。Mapはworld session内のメモリだけに保持する。
+全周visual rayだけでplayer AABB全体のclearanceを確定しない。`CONFIRMED` transitionには`LOCAL_VOLUME`または`CONTACT`証拠を必要とする。edgeは内部の`GROUND / LADDER` locomotionを保持し、床supportなしを許すのは完全な`minecraft:ladder`との接触、clearance、非fluid、非hazardを同時に証明したladder transitだけとする。中間rungは内部経路には保持するが、床supportのあるlandingだけを公開目的地にする。地形変更では影響cell/edgeだけをSTALEにし、現在AABBが危険でなければ停止せず局所再計画する。Mapはworld session内のメモリだけに保持する。
 
 ### 7.9 限界
 
@@ -701,7 +701,7 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 
 すべての`visible_surface`は、従来の`block`に加えてrequired nullableな`state`と`placement_item`を返す。`state={block,properties}`を公開するのは、閉じた建築copy allowlistと既存support用の`minecraft:dirt` / `minecraft:grass_block` / `minecraft:obsidian`だけとし、それ以外は、見た目から判別できないleavesの`distance / persistent`やbeehiveの中間`honey_level`等を渡さないため`state=null`とする。非nullの`state.properties`は当該registered blockが定義するpropertyを省略しない完全表現とし、propertyなしblockは空object、`block == state.block`とする。`placement_item`は、NBTなし・通常BlockItem設置・閉じた安全allowlist・完全state再現を満たすcopy sourceだけitem resource locationを返し、それ以外は`null`とし、`placement_item != null`なら必ず`state != null`とする。CropBlockの`visible_surface`だけは、成長段階の数値列挙を増やさず、収穫判断に必要な`crop_mature: boolean`を追加する。非作物surfaceではこのfield自体を返さない。生成したpageは内部pending receipt（最大16件、60秒）へ一旦置き、HTTP response write成功後のdelivery confirmで初めて、そのpageに実際に含まれた静的`visible_surface`だけを最大2,048件、最大60秒のbounded storeへ昇格する。write失敗、dispatch取消、timeout、world境界ではpendingをabandonする。entity、item、traversability、hazard、sound、unknown boundary、未返却pageは延長しない。保持surfaceを使う場合も、通常のworld/session/dimension、visual / target revision、observer pose、reach、commit、JIT、targeted raycast、server acknowledgementをすべて再検証し、world境界ではstoreを全消去する。
 
-traversabilityは連続値の`from / to` edge、target support、transition clearance、fluidに加え、`to`が属する整数feet-spaceを`navigation_target`として返し、斜めtransitionも曖昧にしない。LLMはnavigationに`navigation_target`だけを無変換コピーし、連続値`from / to`を丸めない。cursorは`SecureRandom`で生成した128 bit以上のopaqueなBase64URL tokenとし、server-side lease内のframe、kind集合、filter、offsetへ束縛する。任意center、任意radius、任意chunk、任意entity IDをqueryする入力は設けない。壊れた・未知・期限切れcursor、別frame/kind/filterへの使い回しは`INVALID_CURSOR`とする。同じ有効cursorの再送は同じpageを返し、失われたHTTP responseを再試行できる。`next_cursor=null`でpage終了である。
+traversabilityは連続値の`from / to` edge、target support、transition clearance、fluidに加え、`to`が属する整数feet-spaceを`navigation_target`として返し、斜めtransitionも曖昧にしない。Vanilla ladderでは床付きlandingだけをrecordとして公開し、支持床のない中間rungはA*用の内部edgeに留める。LLMはnavigationに`navigation_target`だけを無変換コピーし、連続値`from / to`やladderのblock座標を丸めたり変換したりしない。cursorは`SecureRandom`で生成した128 bit以上のopaqueなBase64URL tokenとし、server-side lease内のframe、kind集合、filter、offsetへ束縛する。任意center、任意radius、任意chunk、任意entity IDをqueryする入力は設けない。壊れた・未知・期限切れcursor、別frame/kind/filterへの使い回しは`INVALID_CURSOR`とする。同じ有効cursorの再送は同じpageを返し、失われたHTTP responseを再試行できる。`next_cursor=null`でpage終了である。
 
 全周観測はcamera yaw/pitch、入力、Action camera budgetを変更しない。LLMが明示的に`face_known_position`を使うことは妨げず、その回数は通常のAST、実行node、時間、camera累積budgetだけで制限する。
 
@@ -730,7 +730,7 @@ Action DSL v1の制御構造:
 
 | opcode | capability | 内容 |
 |---|---|---|
-| navigate_to_known | movement | Known Traversability Mapで現在証明されたplayer feet-spaceへ移動 |
+| navigate_to_known | movement | Known Traversability Mapで現在証明された地上feet-space、または完全なVanilla ladderで結ばれた床付きlandingへ移動 |
 | face_known_position | camera | 既知座標へ角速度制限付きで向く |
 | wait_ticks | なし | 1〜200 active tick待機 |
 | wait_until | なし | 開始時にpolicy-visibleなwheat surfaceだった明示座標を認可し、その座標のlive成熟を最大1〜12,000 active tick待機 |
@@ -743,7 +743,7 @@ Action DSL v1の制御構造:
 | harvest_known_wheat_batch | camera, block_break | 1〜8個の相異なる可視・既知かつ成熟済みwheatを入力順に収穫する |
 | apply_known_block_plan | camera, block_place | 完全な可視source stateをruntimeでmirror / rotationし、現在supportまたは明示先行dependency上へ1〜8 blockを入力順に通常設置する |
 | clear_known_block_plan | camera, block_break | 現在返却済みの完全stateが一致する安全建築blockを1〜8件、既存BREAK_TO_AIR経路で撤去し、freshなair再観測後に完了する |
-| apply_known_redstone_spec | camera, block_interact, block_place | lampの可視不活性supportとleverの可視glass support、周囲4 airを確認して固定lever→lamp identityを設置し、live visualで入出力のOFF / ON / OFFを試験する |
+| apply_known_redstone_spec | camera, block_interact, block_place | 各lampの可視不活性supportとleverの可視glass supportを確認して固定lever→lamp 1出力identityまたは2出力fan-outを設置し、live visualで入出力のOFF / ON / OFFを試験する |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のsingle chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
@@ -766,7 +766,7 @@ semantic action、stationary break、block plan、Phase 5 world adapterで共有
 
 `apply_known_block_plan`はPhase 3の初回vertical sliceであり、wire shapeを`{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,source_state,item,support:{position,face,expected_state,dependency_entry_id}}]}`へ閉じる。entryは1〜8件、offset各軸は-8〜8、entry IDと変換後targetはnode内で一意とする。`anchor`とsupportはdimension-qualified block座標で、変換後targetは`anchor + transform(offset)`だけから決定する。`mirror=none|x|z`を先に適用し、`x`はMinecraft `FRONT_BACK`と同じeast/west反転、`z`は`LEFT_RIGHT`と同じnorth/south反転とする。その後`rotation=0|90|180|270`のY軸時計回り回転を適用する。offsetと`source_state`は同じtransformを通し、方向propertyをLLMへ変換させない。
 
-`clear_known_block_plan`は同じ`anchor` / `transform`と1〜8件の`{id,offset,expected_before}`だけを受け取る。targetの返却済み完全stateとconstruction policyをplanner・packet直前・heartbeatで再検証し、全targetをfreshにair再観測してから完了する。撤去後の置換は再観測を挟んだ別Actionの`apply_known_block_plan`とする。
+`clear_known_block_plan`は同じ`anchor` / `transform`と1〜8件の`{id,offset,expected_before}`だけを受け取る。targetの返却済み完全stateとconstruction policyをplanner・packet直前・heartbeatで再検証し、既存`BREAK_TO_AIR`経路で入力順に撤去する。成功条件は全targetのfreshなair再観測であり、置換はそのterminal後に再観測を挟んだ別Actionの`apply_known_block_plan`とする。
 
 各`source_state`は`placement_item != null`だった可視sourceの完全`visible_surface.state`を無変換コピーし、`item`も同じrecordの`placement_item`をコピーする。runtimeはregistered BlockState定義に対してpropertyの欠落・余分・不正値を入力前に拒否し、MinecraftのBlockState mirror / rotation実装で完全stateを一意に変換する。入力値、未知property名、欠落property名は公開診断へ反射しない。BlockEntity / NBT、fluid、gravity block、container、portal、command block、通常BlockItem設置で完全stateを再現できないblockは`placement_item=null`とし、このnodeへ入れられない。
 
@@ -1096,21 +1096,25 @@ camera costは解析的なyaw/pitch誤差に加え、Vanillaの`player.turn`が0
 - 同一dimension
 - CONFIRMEDまたは条件を満たすPROBE_ALLOWED edge
 - 同一高さの通常歩行と、既知edge上のslab、stairs
+- 現在の局所観測入口から上下4 rung以内で連続する完全な`minecraft:ladder`と、床付きlanding間の昇降
 - forward、back、strafe、視点調整
 
 非対応:
 
 - block破壊・設置
 - doorやcontainer操作
-- ladder、水泳、boat、elytra
+- scaffolding、水泳、boat、elytra
+- SHIFTを使う下降、仮blockを足元へ置くpillaring、ladderの新設・欠損rung越え
 - gap jump、parkour
 - sprint、combat
 - frontier探索
 - full-block 1段分のstep-up / step-down edge自動生成
 
+ladderは上昇時だけjump入力を使い、下降時はSHIFTを使わない。中間rungはA*の内部transitに限り、床付きlandingだけを`navigation_target`として公開する。各micro-stepでrung、取付、clearance、窒息、fluidを再検証し、欠損または低天井等では入力をneutralにしてfail closedとする。
+
 経路が変化した場合は影響edgeだけをSTALEにし、現在AABBが安全なら再検証と局所再計画を行う。未知supportへは出ず、既知graphとPROBE_ALLOWEDだけで代替経路がない場合に`PATH_BLOCKED`とする。現在AABBが危険なら第10章のRECOVERINGへ昇格する。
 
-Phase 2時点のmovement gateは、既に選ばれた上下edgeのVanilla resolved movementを検証できるが、Local Observation Volumeからfull-block高低差edgeを能動生成する処理は未実装である。必要edgeを推測・合成せず、target自体が未知なら`TARGET_UNKNOWN`、targetは既知でも接続edgeがなければ`NO_KNOWN_PATH`として入力前にfail-closedとする。
+full-block高低差edgeを能動生成する処理は未実装であり、上記ladderの閉じたedge生成とは区別する。必要edgeを推測・合成せず、target自体が未知なら`TARGET_UNKNOWN`、targetは既知でも接続edgeがなければ`NO_KNOWN_PATH`として入力前にfail-closedとする。
 
 ### 9.3 harvest_tree — Phase 2
 
@@ -1203,13 +1207,13 @@ Phase 3完成時に追加する上限:
 
 ### 9.7 crafting・精錬・workstation・MOD互換 — Phase 4
 
-現在の公開Action DSLは、既存のrecipe / container / screen同期基盤を直接再利用したcrafting-table限定の`craft_known_recipe`、furnace familyで1個だけ処理する`smelt_known_recipe`、共通Menu kernelの最初のvertical sliceである`operate_known_menu`を含む。最後のものは、ユーザーが現在開いているexactなVanilla `generic_9x3`純storageだけを受理し、stateが発行したsingle-use `operation_ref`で1 stack全量をplayer inventoryへQUICK_MOVEする。player 2×2、専用workstation、MOD profileの実行adapterは未実装であり、製品機能として利用可能とは扱わない。
+現在の公開Action DSLは、既存のrecipe / container / screen同期基盤を直接再利用したcrafting-table限定の`craft_known_recipe`、furnace familyで1個だけ処理する`smelt_known_recipe`、共通Menu kernelの最初のvertical sliceである`operate_known_menu`を含む。最後のものは、ユーザーが現在開いているexactなVanilla `generic_9x1`〜`generic_9x6`純storageだけを受理し、stateが発行したsingle-use `operation_ref`で1 stack全量をplayer inventoryへQUICK_MOVEする。player 2×2、専用workstation、MOD GUI profileの実行adapterは未実装であり、製品機能として利用可能とは扱わない。
 
 公開Toolは5件のままとし、クラフトやworkstationごとのMCP Tool、raw slot番号・画面座標・key/mouse・packetを追加しない。recipe検索は既存のquery / output / resolve契約を固定5 Toolのread pathへ委譲し、第二の検索文法を作らない。`recipe_ref`とfingerprintはworld sessionとrecipe catalog revisionへ束縛し、`craft_known_recipe`開始時と各craft前に再解決する。実行は`agent_start_action`の閉じたsemantic opcodeだけを使う。
 
 - 公開済み`craft_known_recipe` / 既存`craft_items`: 現在は`crafting_table`だけ。次に`player_2x2`へ拡張
 - 公開済み`smelt_known_recipe` / 内部`smelt_items`: `furnace | blast_furnace | smoker`、1 Action 1個だけ
-- 公開済み`operate_known_menu`: `minecraft:generic_9x3-pure-storage@26.2`、storage→playerの1 stack全量だけ
+- 公開済み`operate_known_menu`: `minecraft:generic_9x1-pure-storage@26.2`〜`minecraft:generic_9x6-pure-storage@26.2`、storage→playerの1 stack全量だけ
 
 司書厳選のread-only first sliceでは、ユーザーまたは既存経路が現在開いているVanilla `MerchantScreen`だけを対象にする。world session開始時からmerchant-offers packetをimmutableに記録し、`agent_get_state`時点のScreen instance、player menu、world session、container ID、直近OpenScreen packet revisionがlatest merchant packetと完全一致する場合だけ、optional `merchant_offers`を返す。公開内容はitem ID / count、uses / max uses / out-of-stock、merchant level / XP、エンチャント本の登録済みstored enchantment ID / levelに閉じる。raw slot、Data Component / NBT、lore、表示文字列、未解決enchantment IDは返さない。画面を開く、任意click、取引実行、職業ブロックの破壊・再設置、reroll反復はこのsliceに含めない。
 
@@ -1258,11 +1262,11 @@ RedstoneSpec
   └─ max_footprint
 ~~~
 
-公開済みの初回sliceは`apply_known_redstone_spec:{id,op,anchor,rotation,components:[{id,role,block}],truth_table:[{inputs:{input},outputs:{output}}],footprint:{x,y,z},timing:{settle_ticks}}`へ閉じる。`components`は`input/input/minecraft:lever`と`output/output/minecraft:redstone_lamp`を各1件、真理値表は`false→false`と`true→true`を各1件、footprintは`2x1x1`、rotationは`0 / 90 / 180 / 270`、settleは1〜20 tickだけを受理する。`anchor`はlamp targetであり、lever targetはrotationに従って同じYの+X / +Z / -X / -Zへ1 blockずらす。LLMにblock座標とnavigation座標を相互変換させず、runtimeがこの固定offsetだけを適用する。
+公開済みsliceは`apply_known_redstone_spec:{id,op,anchor,rotation,components:[{id,role,block}],truth_table:[{inputs:{input},outputs:{...}}],footprint:{x,y,z},timing:{settle_ticks}}`へ閉じる。`components`は`input/input/minecraft:lever`、`output/output/minecraft:redstone_lamp`に、fan-out時だけ`output_2/output/minecraft:redstone_lamp`を加える。1出力は`false→false / true→true`と`2x1x1`、2出力は両lampが入力と一致する2行と`3x1x1`、rotationは`0 / 90 / 180 / 270`、settleは1〜20 tickだけを受理する。`anchor`は最初のlamp targetであり、leverはrotation方向へ1 block、2個目のlampは同方向へ2 blockずらす。LLMにblock座標とnavigation座標を相互変換させず、runtimeがこの固定offsetだけを適用する。
 
-plannerはlamp直下の現在policy-visibleな不活性UP面と、lever直下の現在policy-visibleな`minecraft:glass` UP面を要求する。leverの6面隣接はlamp 1、直下glass 1、残り4 cellのairに閉じ、4 airとglassをlamp / leverの各配置前および各toggle直前に同じclient tickのLIVE current / visible observationで再確認する。targetとsupportはinteraction reach内、同じworld/session/revisionでなければならず、movement 0、break 0で固定する。実行開始前に自inventoryのlampとleverを各1個確認し、lamp設置→lever設置→lever / lamp OFF観測→lever操作→lever / lamp ON観測→再操作→lever / lamp OFF観測の順を変えない。設置と操作は既存semantic action / universal safety / server reconciliationを再利用し、入出力は許可されたlive visual block observationだけで同じclient tickの対として判定する。hidden power state、server MOD、command、raw input、任意packetは使わない。
+plannerは各lamp直下の現在policy-visibleな不活性UP面と、lever直下の現在policy-visibleな`minecraft:glass` UP面を要求する。leverの6面隣接はlamp 1〜2、直下glass 1、残りcellのairに閉じ、airとglassを各配置前および各toggle直前に同じclient tickのLIVE current / visible observationで再確認する。targetとsupportはinteraction reach内、同じworld/session/revisionでなければならず、movement 0、break 0で固定する。実行開始前に自inventoryのlampを出力数分、leverを1個確認し、全lamp設置→lever設置→lever / 全lamp OFF観測→lever操作→lever / 全lamp ON観測→再操作→lever / 全lamp OFF観測の順を変えない。設置と操作は既存semantic action / universal safety / server reconciliationを再利用し、入出力は許可されたlive visual block observationだけで同じclient tickの集合として判定する。hidden power state、server MOD、command、raw input、任意packetは使わない。
 
-静的worst-caseは`400 + 3 * settle_ticks` active tick、その50倍ms、camera 720度、interaction 2、placement 2、distance / break 0とする。途中失敗では未開始suffixを実行せず、完了済みmutationとbudgetを監査traceへ残し、terminal公開前に既存の入力解放契約を通す。wire、NOT、repeater、一般Blueprint変換、任意回路合成はこのopcodeで利用可能とは扱わない。
+静的worst-caseは`300 + 100 * output_count + 3 * settle_ticks` active tick、その50倍ms、camera 720度、interaction 2、placement `1 + output_count`、distance / break 0とする。途中失敗では未開始suffixを実行せず、完了済みmutationとbudgetを監査traceへ残し、terminal公開前に既存の入力解放契約を通す。wire、NOT、repeater、一般Blueprint変換、任意回路合成はこのopcodeで利用可能とは扱わない。
 
 ## 10. Reflex Governor
 
@@ -1622,9 +1626,10 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - `apply_known_block_plan`は1〜8 entry、offset各軸±8、entry ID / 変換後target一意、support unionの両nullable field明示、先行dependency一致を入力前に検証する
 - block planの`none/x/z` mirror後CW rotationが既存BlockPlan変換と一致し、offsetと完全BlockStateへ同じtransformを適用する
 - block planは入力順を維持し、1 entryあたり15,000 ms / 300 ticks / camera 80度 / 1 placement、distance / interaction / break 0の静的costから逸脱しない
-- `apply_known_redstone_spec`はlever入力1件・lamp出力1件、identity真理値表2行、footprint 2x1x1、rotation 4種、settle 1〜20だけをschema / validator / compilerで一致して受理する
-- Redstone plannerはlamp直下のcurrent visible inert UP supportとlever直下のcurrent visible glass UP supportを要求し、stationary requestのtarget・aim・boundsへ同じrotationを変換する
-- Redstone実行は各配置・toggle直前にlever周囲のglass 1 / air 4をLIVE再確認し、lamp / lever設置、入出力対のOFF / ON / OFF確認を入力順に行い、`400 + 3 * settle_ticks` tick / 2 interaction / 2 placementから逸脱しない
+- `apply_known_redstone_spec`はlever入力1件・lamp出力1件または2件、各出力が入力と一致する真理値表2行、footprint 2x1x1または3x1x1、rotation 4種、settle 1〜20だけをschema / validator / compilerで一致して受理する
+- Redstone plannerは各lamp直下のcurrent visible inert UP supportとlever直下のcurrent visible glass UP supportを要求し、stationary requestの全target・aim・boundsへ同じrotationを変換する
+- Redstone実行は各配置・toggle直前にlever周囲のglass / airをLIVE再確認し、全lamp / lever設置、入出力集合のOFF / ON / OFF確認を入力順に行い、`300 + 100 * output_count + 3 * settle_ticks` tick / 2 interaction / `1 + output_count` placementから逸脱しない
+- Vanilla ladderは観測入口の上下4 rung以内だけを内部edge化し、支持床のあるlandingだけを公開目的地にする。欠損rung、低天井、fluidを拒否し、上下ともterminal時にmovement inputを解放する
 - `brew_known_potion_batch`は標準Potionの既知の1段recipe、1〜3本同数、blaze powder固定、開始時5 stand item slot空、internal brew time 0、fuel counter 0〜20を入力前に検証し、prechargedならinventory fuel投入を省略する
 - `craft_known_recipe`は同じrecipe query結果の24文字opaque refとSHA-256 fingerprint、crafting tableのexact state、component-exact絶対inventory目標1〜2,304、`max_crafts` 1〜3だけをschema / validator / runtimeで一致して受理する
 - crafting nodeは最大400 active tick、最低30,000 ms / 600 ticks / camera 360度 / `1 + 4 * max_crafts` interactionsを予約し、各完成品を1回分ずつcursor-safeに回収してclose/reopen full-contentのexact deltaで確定する
@@ -1849,6 +1854,7 @@ world、mmc-pack.json、instance.cfg、既存jarは変更しない。
 - loopbackへ到達できないcloud-only MCP hostは利用できない
 - 遮蔽と半径を守る観測と未知危険の完全回避は両立しない
 - modded block、container、cropは現在の公開surfaceでは原則非対応。Phase 4以降も対象profileでversion固定し、受入済みMenu profileと必要最小限の固有adapterだけを追加する
+- 移動はscaffolding、SHIFT下降、仮blockによるpillaring、建築は同一Action内置換、MenuはMOD GUI profile、回路はwire / 任意回路合成が未対応
 
 ### 接続時に確認する運用条件
 

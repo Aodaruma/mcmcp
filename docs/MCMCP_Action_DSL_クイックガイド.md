@@ -34,7 +34,7 @@
 
 村人の取引画面を現在開いており、そのScreen・world session・container ID・open packet revisionと最新のserver取引packetがすべて一致する間だけ、`agent_get_state.merchant_offers`が現れます。各取引はitem ID / count、使用回数、在庫切れ、merchant level / XPを返し、エンチャント本は登録済みstored enchantmentのIDとlevelだけを返します。raw slot、component / NBT、lore、表示文字列、解決不能なenchantment IDは返しません。このread pathは画面を開く、取引する、職業ブロックを壊す・置く、厳選を自動反復する操作を行いません。
 
-現在開いているserver同期済みのVanilla 9x3純storage画面だけは、`agent_get_state.known_menu`に短寿命・single-useの`operation_ref`が現れます。各operationは表示された1 stack全量をstorageからplayer inventoryへ移すものだけで、raw slot番号、GUI座標、component / NBTは返しません。inventoryに全量の空きがないstackは候補から除外されます。
+現在開いているserver同期済みのVanilla `generic_9x1`〜`generic_9x6`純storage画面だけは、`agent_get_state.known_menu`に短寿命・single-useの`operation_ref`が現れます。各operationは表示された1 stack全量をstorageからplayer inventoryへ移すものだけで、raw slot番号、GUI座標、component / NBTは返しません。inventoryに全量の空きがないstackは候補から除外されます。
 
 ## 座標を変換しない
 
@@ -47,6 +47,8 @@
 | drop回収 | `visible_entity.position`と`displayed_item` | collect nodeの連続値`target` | XYZのround、非公開entity IDの追加 |
 
 移動用の整数feet-space座標と、block座標と、item entityの連続座標は別の型です。
+
+`navigate_to_known`は通常地形に加え、現在の局所観測で完全な`minecraft:ladder`が連続している列を、観測入口から上下4 rung以内だけ経路にできます。公開される目的地は床のあるlandingだけで、中間rungは内部経路に留まります。LLMはlandingの`navigation_target`をそのままコピーし、ladderのblock座標から目的地を計算しません。scaffolding、SHIFTを使う下降、仮blockによるpillaringは未対応です。
 
 ## 頻出nodeの必須field
 
@@ -71,7 +73,7 @@
 
 `apply_known_block_plan`は、移動や破壊を含まない1〜8 blockのstationaryなplace-only Actionです。`anchor`は設置先の基準block座標、各`offset`はコピー元構造内の相対整数座標（各軸-8〜8）です。`transform`は`mirror=none|x|z`を先に、`rotation=0|90|180|270`のY軸時計回り回転を後に適用します。offsetと完全BlockStateの向きはruntimeが同じ規則で変換するため、LLMは`source_state.properties`を書き換えません。
 
-`clear_known_block_plan`は同じ`anchor` / `transform`文法で、現在返却済みの`visible_surface.state`が完全一致し、`placement_item`が非nullな安全建築blockだけを1〜8件撤去します。成功前に全targetのairをfresh再観測します。置換は同じActionへ続けず、terminal後に再観測してから既存`apply_known_block_plan`を別Actionで実行します。
+`clear_known_block_plan`は同じ`anchor` / `transform`文法で、現在返却済みの`visible_surface.state`が完全一致し、`placement_item`が非nullな安全建築blockだけを1〜8件、既存の`BREAK_TO_AIR`経路で撤去します。成功条件は全targetのfreshなair再観測です。置換は同じActionへ続けず、terminal後に再観測してから既存`apply_known_block_plan`を別Actionで実行します。
 
 各`support`は、`position`から`face`方向へ1 block隣が当該entryの変換後targetになるよう指定します。`expected_state`と`dependency_entry_id`はどちらも必須nullable fieldで、次のどちらか一方だけを非nullにします。
 
@@ -80,7 +82,7 @@
 
 既存supportは、`placement_item != null`のcopy可能block、または`minecraft:dirt` / `minecraft:grass_block` / `minecraft:obsidian`だけを使えます。全supportはAction開始時のheadingからyawとpitchの合計40度以内である必要があります。向きが合わない場合は、同じ最新frameの可視supportをtargetにした`face_known_position`をplan直前へ置くか、planを小さく分割します。
 
-entry IDと変換後targetはplan内で一意、処理順は`entries`の入力順です。開始時点で既にtargetが完成stateでもskipせず失敗します。その場合は未設置suffixだけで新しいplanを作り、既設blockを最新観測済み`expected_state` supportとして扱います。NBT、fluid、gravity block、container、portal、command block、既存blockの破壊・置換はこのsliceでは扱いません。途中失敗時は未開始suffixを実行せず、完了済み設置だけをtraceに残します。
+entry IDと変換後targetはplan内で一意、処理順は`entries`の入力順です。開始時点で既にtargetが完成stateでもskipせず失敗します。その場合は未設置suffixだけで新しいplanを作り、既設blockを最新観測済み`expected_state` supportとして扱います。NBT、fluid、gravity block、container、portal、command blockは扱いません。`apply_known_block_plan`自体は既存blockを破壊せず、置換は前述のclear→再観測→別Actionのapplyに分けます。途中失敗時は未開始suffixを実行せず、完了済み設置だけをtraceに残します。
 
 ## 精錬の最小slice
 
@@ -90,9 +92,13 @@ entry IDと変換後targetはplan内で一意、処理順は`entries`の入力�
 
 ## 共通Menu操作の最小slice
 
-`operate_known_menu`は、ユーザーが現在開いているexactなVanilla 9x3純storage画面について、同じ`agent_get_state.known_menu.operations`から1件の`operation_ref`を無変換コピーして使います。現在のoperationは`transfer_to_player`だけで、1 stack全量を通常のQUICK_MOVE経路で移し、fresh server slot差分、他storage slot不変、player inventoryの完全multisetとcomponent-exact個数を確認してから画面を閉じます。
+`operate_known_menu`は、ユーザーが現在開いているexactなVanilla `generic_9x1`〜`generic_9x6`純storage画面について、同じ`agent_get_state.known_menu.operations`から1件の`operation_ref`を無変換コピーして使います。現在のoperationは`transfer_to_player`だけで、1 stack全量を通常のQUICK_MOVE経路で移し、fresh server slot差分、他storage slot不変、player inventoryの完全multisetとcomponent-exact個数を確認してから画面を閉じます。
 
-このnodeはtop-level bodyの最後に1回だけ置き、30秒、600 ticks、1 interactionを確保します。raw slot / GUI座標を推測せず、refが期限切れ、別画面、別revision、source変更なら新しいstateを取得します。player 2x2、専用workstation、MOD固有profile、widget / canvas操作はまだこのsliceに含みません。
+このnodeはtop-level bodyの最後に1回だけ置き、30秒、600 ticks、1 interactionを確保します。raw slot / GUI座標を推測せず、refが期限切れ、別画面、別revision、source変更なら新しいstateを取得します。player 2x2、専用workstation、MOD GUI profile、widget / canvas操作はまだこのsliceに含みません。
+
+## レッドストーンの最小slice
+
+`apply_known_redstone_spec`は、lever 1入力からlamp 1個、または固定配置のlamp 2個へ同じ値を出すidentity / fan-outだけを扱います。1個版は`2x1x1`、2個版は`output_2`を加えた`3x1x1`で、runtimeが`anchor`の最初のlamp、隣のlever、さらに隣の2個目のlampへrotationを適用します。各lampの不活性なUP supportとleverのglass UP supportをlive再検証し、全出力をOFF→ON→OFFで確認します。wire、repeater、NOT、任意回路の合成は未対応です。
 
 ## 標準Potion醸造の最小slice
 
