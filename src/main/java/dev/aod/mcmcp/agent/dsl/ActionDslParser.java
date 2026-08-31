@@ -395,10 +395,16 @@ public final class ActionDslParser {
         JsonObject inputs = object(object.get("inputs"), path + ".inputs",
                 Set.of("input"), Set.of("input"));
         JsonObject outputs = object(object.get("outputs"), path + ".outputs",
-                Set.of("output"), Set.of("output"));
+                Set.of("output", "output_2"), Set.of("output"));
+        var parsedOutputs = new LinkedHashMap<String, Boolean>();
+        parsedOutputs.put("output", bool(outputs.get("output"), path + ".outputs.output"));
+        if (outputs.has("output_2")) {
+            parsedOutputs.put(
+                    "output_2", bool(outputs.get("output_2"), path + ".outputs.output_2"));
+        }
         return new RedstoneSpec.TruthRow(
                 java.util.Map.of("input", bool(inputs.get("input"), path + ".inputs.input")),
-                java.util.Map.of("output", bool(outputs.get("output"), path + ".outputs.output")));
+                parsedOutputs);
     }
 
     private static RedstoneSpec.Footprint redstoneFootprint(JsonElement value, String path) {

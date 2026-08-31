@@ -183,7 +183,7 @@ class McpToolCatalogTest {
                 .contains("harvest_known_wheat_batch:{id,op,targets:[position]}")
                 .contains("apply_known_redstone_spec:{id,op,anchor,rotation,components:")
                 .contains("collect_visible_item_batch:{id,op,targets:[{displayed_item,target}]}")
-                .contains("(400 + 3*settle_ticks) ticks")
+                .contains("(300 + 100*output_count + 3*settle_ticks) ticks")
                 .contains("up to the 720 camera-degree policy maximum")
                 .contains("split it into smaller batches instead of reordering at runtime")
                 .contains("operate_known_menu=inventory_transfer")
@@ -330,11 +330,29 @@ class McpToolCatalogTest {
                 .getAsJsonObject("applyKnownRedstoneSpecNode")
                 .get("description").getAsString())
                 .contains(
-                        "identity slice only",
+                        "identity slices only",
+                        "fan-out slice",
                         "minecraft:glass UP support",
-                        "four remaining face-neighbors",
-                        "same-client-tick live visual pairs",
+                        "same-client-tick live sets",
                         "never moves");
+
+        var fanOut = request.deepCopy();
+        var fanOutNode = fanOut.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject();
+        fanOutNode.getAsJsonArray("components").add(JsonParser.parseString("""
+                {"id":"output_2","role":"output","block":"minecraft:redstone_lamp"}
+                """));
+        fanOutNode.getAsJsonArray("truth_table").forEach(row -> {
+            var object = row.getAsJsonObject();
+            boolean value = object.getAsJsonObject("inputs").get("input").getAsBoolean();
+            object.getAsJsonObject("outputs").addProperty("output_2", value);
+        });
+        fanOutNode.getAsJsonObject("footprint").addProperty("x", 3);
+        var fanOutBudget = fanOut.getAsJsonObject("budget");
+        fanOutBudget.addProperty("max_duration_ms", 28_000);
+        fanOutBudget.addProperty("max_ticks", 560);
+        fanOutBudget.addProperty("max_blocks_placed", 3);
+        assertThat(CatalogSchemaValidator.matches(schema, fanOut)).isTrue();
 
         var unsupported = request.deepCopy();
         unsupported.getAsJsonObject("program").getAsJsonArray("body").get(0)

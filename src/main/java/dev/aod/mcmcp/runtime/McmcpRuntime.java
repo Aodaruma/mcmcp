@@ -5008,7 +5008,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             AgentActionStore.Active action) {
         if (agentExecution.redstoneAttempt == null) {
             var player = Objects.requireNonNull(minecraft.player, "player");
-            if (inventoryItemCount(player, "minecraft:redstone_lamp") < 1
+            var redstone = (ActionDsl.ApplyKnownRedstoneSpec) agentExecution.primitive;
+            int outputCount = redstone.components().size() - 1;
+            if (inventoryItemCount(player, "minecraft:redstone_lamp") < outputCount
                     || inventoryItemCount(player, "minecraft:lever") < 1) {
                 failAgentAction(
                         AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
@@ -5016,15 +5018,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         "redstone_items_unavailable");
                 return;
             }
-            var redstone = (ActionDsl.ApplyKnownRedstoneSpec) agentExecution.primitive;
             final RedstoneIdentityRequest request;
             try {
+                var lampAims = new ArrayList<AgentPrimitivePlanner.MutationAim>();
+                lampAims.add(Objects.requireNonNull(
+                        agentExecution.mutationAims.get(redstone.id() + "/lamp"),
+                        "lamp aim"));
+                if (outputCount == 2) {
+                    lampAims.add(Objects.requireNonNull(
+                            agentExecution.mutationAims.get(redstone.id() + "/lamp_2"),
+                            "second lamp aim"));
+                }
                 request = redstoneIdentityRequest(
                         redstone,
                         session.worldSessionId(),
-                        Objects.requireNonNull(
-                                agentExecution.mutationAims.get(redstone.id() + "/lamp"),
-                                "lamp aim"),
+                        lampAims,
                         Objects.requireNonNull(
                                 agentExecution.mutationAims.get(redstone.id() + "/lever"),
                                 "lever aim"));
@@ -5038,8 +5046,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             long deadline = Math.addExact(
                     session.clientTick(),
                     ActionDslCompiler.intrinsicKnownRedstoneCost(
-                            redstone.timing().settleTicks()).ticks());
-            BlockTarget lamp = request.lampTarget();
+                            redstone.timing().settleTicks(), outputCount).ticks());
+            List<BlockPosition> lamps = request.lampTargets().stream()
+                    .map(target -> new BlockPosition(
+                            target.dimension(), target.x(), target.y(), target.z()))
+                    .toList();
             BlockTarget lever = request.leverTarget();
             List<BlockPosition> halo = request.leverSafetyHalo().stream()
                     .map(target -> new BlockPosition(
@@ -5048,11 +5059,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             agentExecution.redstoneAttempt = new KnownRedstoneIdentityAttempt(
                     semanticActionPort,
                     request,
-                    tick -> observations.observeBlock(
+                    tick -> observations.observeBlocks(
                             minecraft,
                             tick,
-                            new BlockPosition(
-                                    lamp.dimension(), lamp.x(), lamp.y(), lamp.z()),
+                            lamps,
                             MinecraftObservationService.BlockSource.LIVE),
                     tick -> observations.observeBlock(
                             minecraft,
@@ -5353,9 +5363,18 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             UUID worldSessionId,
             AgentPrimitivePlanner.MutationAim lampAim,
             AgentPrimitivePlanner.MutationAim leverAim) {
+        return redstoneIdentityRequest(
+                redstone, worldSessionId, List.of(lampAim), leverAim);
+    }
+
+    static RedstoneIdentityRequest redstoneIdentityRequest(
+            ActionDsl.ApplyKnownRedstoneSpec redstone,
+            UUID worldSessionId,
+            List<AgentPrimitivePlanner.MutationAim> lampAims,
+            AgentPrimitivePlanner.MutationAim leverAim) {
         Objects.requireNonNull(redstone, "redstone");
         Objects.requireNonNull(worldSessionId, "worldSessionId");
-        Objects.requireNonNull(lampAim, "lampAim");
+        lampAims = List.copyOf(Objects.requireNonNull(lampAims, "lampAims"));
         Objects.requireNonNull(leverAim, "leverAim");
         var spec = new RedstoneSpec(
                 redstone.components(),
@@ -5365,37 +5384,51 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 new RedstoneSpec.ExecutionBounds(
                         true, redstone.timing().settleTicks()));
         ActionDsl.Position anchor = redstone.anchor();
-        var lampTarget = new BlockTarget(
+        var firstLampTarget = new BlockTarget(
                 anchor.dimension(), anchor.x(), anchor.y(), anchor.z());
-        var leverTarget = switch (redstone.rotation()) {
-            case 0 -> new BlockTarget(
-                    anchor.dimension(), anchor.x() + 1, anchor.y(), anchor.z());
-            case 90 -> new BlockTarget(
-                    anchor.dimension(), anchor.x(), anchor.y(), anchor.z() + 1);
-            case 180 -> new BlockTarget(
-                    anchor.dimension(), anchor.x() - 1, anchor.y(), anchor.z());
-            case 270 -> new BlockTarget(
-                    anchor.dimension(), anchor.x(), anchor.y(), anchor.z() - 1);
+        int x = switch (redstone.rotation()) {
+            case 0 -> 1;
+            case 180 -> -1;
+            case 90, 270 -> 0;
             default -> throw new IllegalArgumentException("unsupported redstone rotation");
         };
+        int z = switch (redstone.rotation()) {
+            case 90 -> 1;
+            case 270 -> -1;
+            case 0, 180 -> 0;
+            default -> throw new IllegalArgumentException("unsupported redstone rotation");
+        };
+        var leverTarget = new BlockTarget(
+                anchor.dimension(), anchor.x() + x, anchor.y(), anchor.z() + z);
+        var lampTargets = new ArrayList<BlockTarget>();
+        lampTargets.add(firstLampTarget);
+        if (spec.outputCount() == 2) {
+            lampTargets.add(new BlockTarget(
+                    anchor.dimension(), anchor.x() + 2 * x, anchor.y(), anchor.z() + 2 * z));
+        }
+        if (lampAims.size() != lampTargets.size()) {
+            throw new IllegalArgumentException("redstone lamp aims do not match the specification");
+        }
+        var targets = new ArrayList<>(lampTargets);
+        targets.add(leverTarget);
         var minimum = new BlockTarget(
                 anchor.dimension(),
-                Math.min(lampTarget.x(), leverTarget.x()),
+                targets.stream().mapToInt(BlockTarget::x).min().orElseThrow(),
                 anchor.y() - 1,
-                Math.min(lampTarget.z(), leverTarget.z()));
+                targets.stream().mapToInt(BlockTarget::z).min().orElseThrow());
         var maximum = new BlockTarget(
                 anchor.dimension(),
-                Math.max(lampTarget.x(), leverTarget.x()),
+                targets.stream().mapToInt(BlockTarget::x).max().orElseThrow(),
                 anchor.y(),
-                Math.max(lampTarget.z(), leverTarget.z()));
+                targets.stream().mapToInt(BlockTarget::z).max().orElseThrow());
         var bounds = new ActionBounds(
                 anchor.dimension(), minimum, maximum, 0, 30, false);
         return new RedstoneIdentityRequest(
                 spec,
                 worldSessionId,
-                lampTarget,
+                lampTargets,
                 leverTarget,
-                blockAimWitness(lampAim),
+                lampAims.stream().map(McmcpRuntime::blockAimWitness).toList(),
                 blockAimWitness(leverAim),
                 bounds);
     }

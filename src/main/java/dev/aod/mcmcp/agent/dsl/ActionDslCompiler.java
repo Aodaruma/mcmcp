@@ -109,7 +109,8 @@ public final class ActionDslCompiler {
             return cost;
         }
         if (node instanceof ActionDsl.ApplyKnownRedstoneSpec redstone) {
-            Cost cost = intrinsicKnownRedstoneCost(redstone.timing().settleTicks());
+            Cost cost = intrinsicKnownRedstoneCost(
+                    redstone.timing().settleTicks(), redstone.components().size() - 1);
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }
@@ -260,14 +261,24 @@ public final class ActionDslCompiler {
                 entries);
     }
 
-    /** Structural bound for two placements, two lever interactions, and three observations. */
+    /** Structural bound for the original one-output identity circuit. */
     public static Cost intrinsicKnownRedstoneCost(int settleTicks) {
+        return intrinsicKnownRedstoneCost(settleTicks, 1);
+    }
+
+    /** Structural bound for one or two lamps, one lever, two toggles, and three observations. */
+    public static Cost intrinsicKnownRedstoneCost(int settleTicks, int outputCount) {
         if (settleTicks < 1
                 || settleTicks > dev.aod.mcmcp.redstone.RedstoneSpec.MAX_SETTLE_TICKS) {
             throw new IllegalArgumentException("redstone settle ticks are outside the closed bound");
         }
+        if (outputCount < 1 || outputCount > 2) {
+            throw new IllegalArgumentException("redstone output count is outside the closed bound");
+        }
+        long placements = outputCount + 1L;
         long ticks = Math.addExact(
-                Math.multiplyExact(4L, AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND),
+                Math.multiplyExact(
+                        placements + 2L, AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND),
                 Math.multiplyExact(3L, settleTicks));
         return new Cost(
                 multiplyExact(ticks, NOMINAL_TICK_MILLIS),
@@ -276,7 +287,7 @@ public final class ActionDslCompiler {
                 ActionDslValidator.MAX_ACTION_CAMERA_DEGREES,
                 2,
                 0,
-                2);
+                placements);
     }
 
     /** Initial open plus three operations per craft, with one conservative safety slot. */

@@ -385,7 +385,7 @@ public final class ActionDslValidator {
             } catch (IllegalArgumentException failure) {
                 throw new ActionDslException(
                         INVALID_ARGUMENT,
-                        "apply_known_redstone_spec is outside the fixed identity slice",
+                        "apply_known_redstone_spec is outside the fixed identity slices",
                         failure);
             }
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);

@@ -17,9 +17,9 @@ import java.util.UUID;
 public record RedstoneIdentityRequest(
         RedstoneSpec spec,
         UUID worldSessionId,
-        BlockTarget lampTarget,
+        List<BlockTarget> lampTargets,
         BlockTarget leverTarget,
-        BlockAimWitness lampPlacementAim,
+        List<BlockAimWitness> lampPlacementAims,
         BlockAimWitness leverPlacementAim,
         ActionBounds bounds) {
     private static final BlockStateFingerprint AIR =
@@ -34,45 +34,94 @@ public record RedstoneIdentityRequest(
     public RedstoneIdentityRequest {
         Objects.requireNonNull(spec, "spec");
         Objects.requireNonNull(worldSessionId, "worldSessionId");
-        Objects.requireNonNull(lampTarget, "lampTarget");
+        lampTargets = List.copyOf(Objects.requireNonNull(lampTargets, "lampTargets"));
         Objects.requireNonNull(leverTarget, "leverTarget");
-        Objects.requireNonNull(lampPlacementAim, "lampPlacementAim");
+        lampPlacementAims = List.copyOf(
+                Objects.requireNonNull(lampPlacementAims, "lampPlacementAims"));
         Objects.requireNonNull(leverPlacementAim, "leverPlacementAim");
         Objects.requireNonNull(bounds, "bounds");
 
-        BlockTarget expectedLever = switch (spec.rotationDegrees()) {
-            case 0 -> offset(lampTarget, 1, 0);
-            case 90 -> offset(lampTarget, 0, 1);
-            case 180 -> offset(lampTarget, -1, 0);
-            case 270 -> offset(lampTarget, 0, -1);
+        if (lampTargets.size() != spec.outputCount()
+                || lampPlacementAims.size() != lampTargets.size()) {
+            throw new IllegalArgumentException("identity lamp targets do not match the specification");
+        }
+        BlockTarget firstLamp = lampTargets.getFirst();
+        int x = switch (spec.rotationDegrees()) {
+            case 0 -> 1;
+            case 180 -> -1;
+            case 90, 270 -> 0;
             default -> throw new IllegalArgumentException("identity rotation is unsupported");
         };
+        int z = switch (spec.rotationDegrees()) {
+            case 90 -> 1;
+            case 270 -> -1;
+            case 0, 180 -> 0;
+            default -> throw new IllegalArgumentException("identity rotation is unsupported");
+        };
+        BlockTarget expectedLever = offset(firstLamp, x, z);
+        if (spec.outputCount() == 2
+                && !offset(firstLamp, 2 * x, 2 * z).equals(lampTargets.get(1))) {
+            throw new IllegalArgumentException("fan-out second lamp target is outside its fixed layout");
+        }
         if (!expectedLever.equals(leverTarget)
-                || !bounds.contains(lampTarget)
+                || lampTargets.stream().anyMatch(target -> !bounds.contains(target))
                 || !bounds.contains(leverTarget)
-                || !bounds.contains(lampPlacementAim.block())
+                || lampPlacementAims.stream().anyMatch(aim -> !bounds.contains(aim.block()))
                 || !bounds.contains(leverPlacementAim.block())
                 || bounds.maxTravelBlocks() != 0
                 || bounds.allowBreak()
                 || bounds.maxDurationSeconds() > 30) {
             throw new IllegalArgumentException("identity targets are outside stationary bounds");
         }
-        requireTopSupport(lampTarget, lampPlacementAim);
+        for (int index = 0; index < lampTargets.size(); index++) {
+            requireTopSupport(lampTargets.get(index), lampPlacementAims.get(index));
+        }
         requireTopSupport(leverTarget, leverPlacementAim);
 
         // Reuse the packet-adjacent request validation before this composite can be admitted.
-        new PlaceBlockRequest(
-                lampTarget, AIR, "minecraft:redstone_lamp", LAMP_OFF,
-                bounds, Optional.of(lampPlacementAim));
+        for (int index = 0; index < lampTargets.size(); index++) {
+            new PlaceBlockRequest(
+                    lampTargets.get(index), AIR, "minecraft:redstone_lamp", LAMP_OFF,
+                    bounds, Optional.of(lampPlacementAims.get(index)));
+        }
         new PlaceBlockRequest(
                 leverTarget, AIR, "minecraft:lever", LEVER_OFF,
                 bounds, Optional.of(leverPlacementAim));
     }
 
+    public RedstoneIdentityRequest(
+            RedstoneSpec spec,
+            UUID worldSessionId,
+            BlockTarget lampTarget,
+            BlockTarget leverTarget,
+            BlockAimWitness lampPlacementAim,
+            BlockAimWitness leverPlacementAim,
+            ActionBounds bounds) {
+        this(
+                spec, worldSessionId, List.of(lampTarget), leverTarget,
+                List.of(lampPlacementAim), leverPlacementAim, bounds);
+    }
+
+    public BlockTarget lampTarget() {
+        return lampTargets.getFirst();
+    }
+
+    public BlockAimWitness lampPlacementAim() {
+        return lampPlacementAims.getFirst();
+    }
+
     public PlaceBlockRequest lampPlacement() {
-        return new PlaceBlockRequest(
-                lampTarget, AIR, "minecraft:redstone_lamp", LAMP_OFF,
-                bounds, Optional.of(lampPlacementAim));
+        return lampPlacements().getFirst();
+    }
+
+    public List<PlaceBlockRequest> lampPlacements() {
+        var placements = new java.util.ArrayList<PlaceBlockRequest>(lampTargets.size());
+        for (int index = 0; index < lampTargets.size(); index++) {
+            placements.add(new PlaceBlockRequest(
+                    lampTargets.get(index), AIR, "minecraft:redstone_lamp", LAMP_OFF,
+                    bounds, Optional.of(lampPlacementAims.get(index))));
+        }
+        return List.copyOf(placements);
     }
 
     public PlaceBlockRequest leverPlacement() {
@@ -91,7 +140,7 @@ public record RedstoneIdentityRequest(
                 leverTarget, LEVER_ON, LEVER_OFF, bounds, Optional.empty());
     }
 
-    /** Five face-neighbors other than the adjacent lamp: glass below and air elsewhere. */
+    /** Lever face-neighbors other than the adjacent lamps: glass below and air elsewhere. */
     public List<BlockTarget> leverSafetyHalo() {
         return List.of(
                         offset(leverTarget, 1, 0, 0),
@@ -101,7 +150,7 @@ public record RedstoneIdentityRequest(
                         offset(leverTarget, 0, 0, 1),
                         offset(leverTarget, 0, 0, -1))
                 .stream()
-                .filter(target -> !target.equals(lampTarget))
+                .filter(target -> !lampTargets.contains(target))
                 .toList();
     }
 

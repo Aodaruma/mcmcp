@@ -814,14 +814,21 @@ public final class AgentPrimitivePlanner {
         }
         if (node instanceof ActionDsl.ApplyKnownRedstoneSpec redstone) {
             ActionDsl.Position lampSupport = offset(redstone.anchor(), 0, -1, 0);
-            ActionDsl.Position leverTarget = switch (redstone.rotation()) {
-                case 0 -> offset(redstone.anchor(), 1, 0, 0);
-                case 90 -> offset(redstone.anchor(), 0, 0, 1);
-                case 180 -> offset(redstone.anchor(), -1, 0, 0);
-                case 270 -> offset(redstone.anchor(), 0, 0, -1);
+            int x = switch (redstone.rotation()) {
+                case 0 -> 1;
+                case 180 -> -1;
+                case 90, 270 -> 0;
                 default -> throw new PlanningException(
                         Code.TARGET_UNKNOWN, "Redstone rotation is outside the identity slice");
             };
+            int z = switch (redstone.rotation()) {
+                case 90 -> 1;
+                case 270 -> -1;
+                case 0, 180 -> 0;
+                default -> throw new PlanningException(
+                        Code.TARGET_UNKNOWN, "Redstone rotation is outside the identity slice");
+            };
+            ActionDsl.Position leverTarget = offset(redstone.anchor(), x, 0, z);
             ActionDsl.Position leverSupport = offset(leverTarget, 0, -1, 0);
             MutationSurface lamp = requireRedstoneSupport(
                     map,
@@ -850,8 +857,24 @@ public final class AgentPrimitivePlanner {
             mutationAims.put(
                     redstone.id() + "/lever",
                     new MutationAim(leverSupport, ActionDsl.BlockFace.UP, lever.point()));
+            if (redstone.components().size() == 3) {
+                ActionDsl.Position secondLampSupport = offset(
+                        redstone.anchor(), 2 * x, -1, 2 * z);
+                MutationSurface secondLamp = requireRedstoneSupport(
+                        map,
+                        latestFrame,
+                        input,
+                        secondLampSupport,
+                        surfaceBarrierWorldRevision(
+                                map, surfaceRevisionBarrier, secondLampSupport));
+                knownSurfaces.add(secondLamp.surface());
+                mutationAims.put(
+                        redstone.id() + "/lamp_2",
+                        new MutationAim(
+                                secondLampSupport, ActionDsl.BlockFace.UP, secondLamp.point()));
+            }
             merge(costs, node.id(), ActionDslCompiler.intrinsicKnownRedstoneCost(
-                    redstone.timing().settleTicks()));
+                    redstone.timing().settleTicks(), redstone.components().size() - 1));
             return input;
         }
         if (node instanceof ActionDsl.OpenKnownFenceGate gate) {

@@ -14,6 +14,7 @@ class RedstoneSpecTest {
     void acceptsOnlyTheFourIdentityRotations() {
         for (int rotation : List.of(0, 90, 180, 270)) {
             assertThat(identity(rotation).rotationDegrees()).isEqualTo(rotation);
+            assertThat(fanOut(rotation).outputCount()).isEqualTo(2);
         }
     }
 
@@ -46,6 +47,8 @@ class RedstoneSpecTest {
                         footprint(), 0, bounds()),
                 () -> spec(components(), rows(), new RedstoneSpec.Footprint(3, 1, 1),
                         0, bounds()),
+                () -> spec(fanOutComponents(), rows(), fanOutFootprint(), 0, bounds()),
+                () -> spec(components(), fanOutRows(), footprint(), 0, bounds()),
                 () -> spec(components(), rows(), footprint(), 45, bounds()),
                 () -> spec(components(), rows(), footprint(), 0,
                         new RedstoneSpec.ExecutionBounds(false, 2)),
@@ -61,6 +64,11 @@ class RedstoneSpecTest {
 
     private static RedstoneSpec identity(int rotation) {
         return spec(components(), rows(), footprint(), rotation, bounds());
+    }
+
+    private static RedstoneSpec fanOut(int rotation) {
+        return spec(
+                fanOutComponents(), fanOutRows(), fanOutFootprint(), rotation, bounds());
     }
 
     private static RedstoneSpec spec(
@@ -88,8 +96,30 @@ class RedstoneSpecTest {
                         Map.of("input", true), Map.of("output", true)));
     }
 
+    private static List<RedstoneSpec.Component> fanOutComponents() {
+        return List.of(
+                components().getFirst(),
+                components().getLast(),
+                new RedstoneSpec.Component(
+                        "output_2", RedstoneSpec.Role.OUTPUT, "minecraft:redstone_lamp"));
+    }
+
+    private static List<RedstoneSpec.TruthRow> fanOutRows() {
+        return List.of(
+                new RedstoneSpec.TruthRow(
+                        Map.of("input", false),
+                        Map.of("output", false, "output_2", false)),
+                new RedstoneSpec.TruthRow(
+                        Map.of("input", true),
+                        Map.of("output", true, "output_2", true)));
+    }
+
     private static RedstoneSpec.Footprint footprint() {
         return new RedstoneSpec.Footprint(2, 1, 1);
+    }
+
+    private static RedstoneSpec.Footprint fanOutFootprint() {
+        return new RedstoneSpec.Footprint(3, 1, 1);
     }
 
     private static RedstoneSpec.ExecutionBounds bounds() {

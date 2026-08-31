@@ -52,6 +52,44 @@ class McmcpRuntimeRedstoneTest {
         });
     }
 
+    @Test
+    void convertsEveryFanOutRotationIntoThreeStationaryTargets() {
+        var expectedOffsets = Map.of(
+                0, List.of(1, 0),
+                90, List.of(0, 1),
+                180, List.of(-1, 0),
+                270, List.of(0, -1));
+
+        expectedOffsets.forEach((rotation, offset) -> {
+            var node = fanOut(rotation);
+            var anchor = node.anchor();
+            var firstSupport = position(anchor.x(), anchor.y() - 1, anchor.z());
+            var secondSupport = position(
+                    anchor.x() + 2 * offset.get(0),
+                    anchor.y() - 1,
+                    anchor.z() + 2 * offset.get(1));
+            var leverSupport = position(
+                    anchor.x() + offset.get(0),
+                    anchor.y() - 1,
+                    anchor.z() + offset.get(1));
+
+            var request = McmcpRuntime.redstoneIdentityRequest(
+                    node,
+                    UUID.randomUUID(),
+                    List.of(aim(firstSupport), aim(secondSupport)),
+                    aim(leverSupport));
+
+            assertThat(request.lampTargets()).hasSize(2);
+            assertThat(request.lampTargets().get(1).x())
+                    .isEqualTo(anchor.x() + 2 * offset.get(0));
+            assertThat(request.lampTargets().get(1).z())
+                    .isEqualTo(anchor.z() + 2 * offset.get(1));
+            assertThat(request.lampPlacements()).hasSize(2);
+            assertThat(request.bounds().contains(request.leverTarget())).isTrue();
+            assertThat(request.lampTargets()).allMatch(request.bounds()::contains);
+        });
+    }
+
     private static ActionDsl.ApplyKnownRedstoneSpec identity(int rotation) {
         return new ActionDsl.ApplyKnownRedstoneSpec(
                 "identity",
@@ -69,6 +107,31 @@ class McmcpRuntimeRedstoneTest {
                         new RedstoneSpec.TruthRow(
                                 Map.of("input", true), Map.of("output", true))),
                 new RedstoneSpec.Footprint(2, 1, 1),
+                new ActionDsl.RedstoneTiming(5));
+    }
+
+    private static ActionDsl.ApplyKnownRedstoneSpec fanOut(int rotation) {
+        return new ActionDsl.ApplyKnownRedstoneSpec(
+                "fan_out",
+                position(2, 65, 3),
+                rotation,
+                List.of(
+                        new RedstoneSpec.Component(
+                                "input", RedstoneSpec.Role.INPUT, "minecraft:lever"),
+                        new RedstoneSpec.Component(
+                                "output", RedstoneSpec.Role.OUTPUT,
+                                "minecraft:redstone_lamp"),
+                        new RedstoneSpec.Component(
+                                "output_2", RedstoneSpec.Role.OUTPUT,
+                                "minecraft:redstone_lamp")),
+                List.of(
+                        new RedstoneSpec.TruthRow(
+                                Map.of("input", false),
+                                Map.of("output", false, "output_2", false)),
+                        new RedstoneSpec.TruthRow(
+                                Map.of("input", true),
+                                Map.of("output", true, "output_2", true))),
+                new RedstoneSpec.Footprint(3, 1, 1),
                 new ActionDsl.RedstoneTiming(5));
     }
 

@@ -306,6 +306,28 @@ class ActionDslTest {
     }
 
     @Test
+    void parsesValidatesAndCompilesTheFixedTwoLampFanOut() {
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "block_interact", "block_place"),
+                applyKnownRedstoneFanOut("fan_out", 180, 5),
+                budget(25_750, 515, 0, 720, 2, 0, 3)));
+
+        var redstone = (ActionDsl.ApplyKnownRedstoneSpec) request.program().body().getFirst();
+        assertThat(redstone.components()).hasSize(3);
+        assertThat(redstone.truthTable()).allSatisfy(row ->
+                assertThat(row.outputs()).containsKeys("output", "output_2"));
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.BLOCK_INTERACT,
+                        ActionDsl.Capability.BLOCK_PLACE);
+        assertThat(ActionDslCompiler.compile(
+                request, ignored -> Optional.empty(), request.program().capabilities())
+                .worstCaseCost())
+                .isEqualTo(new ActionDslCompiler.Cost(25_750, 515, 0, 720, 2, 0, 3));
+    }
+
+    @Test
     void redstoneIdentityRejectsEveryShapeOutsideTheClosedSlice() {
         for (Consumer<JsonObject> mutation : List.<Consumer<JsonObject>>of(
                 node -> node.addProperty("rotation", 45),
@@ -1530,6 +1552,23 @@ class ActionDslTest {
         JsonObject timing = new JsonObject();
         timing.addProperty("settle_ticks", settleTicks);
         node.add("timing", timing);
+        return node;
+    }
+
+    private static JsonObject applyKnownRedstoneFanOut(
+            String id, int rotation, int settleTicks) {
+        JsonObject node = applyKnownRedstoneSpec(id, rotation, settleTicks);
+        JsonObject secondOutput = new JsonObject();
+        secondOutput.addProperty("id", "output_2");
+        secondOutput.addProperty("role", "output");
+        secondOutput.addProperty("block", "minecraft:redstone_lamp");
+        node.getAsJsonArray("components").add(secondOutput);
+        node.getAsJsonArray("truth_table").forEach(row -> {
+            JsonObject object = row.getAsJsonObject();
+            boolean value = object.getAsJsonObject("inputs").get("input").getAsBoolean();
+            object.getAsJsonObject("outputs").addProperty("output_2", value);
+        });
+        node.getAsJsonObject("footprint").addProperty("x", 3);
         return node;
     }
 

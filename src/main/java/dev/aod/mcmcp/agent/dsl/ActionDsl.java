@@ -227,7 +227,7 @@ public final class ActionDsl {
     public record Offset(int x, int y, int z) {
     }
 
-    /** Fixed two-block lever-to-lamp identity circuit. */
+    /** Fixed one- or two-output lever-to-lamp identity circuit. */
     public record ApplyKnownRedstoneSpec(
             String id,
             Position anchor,
