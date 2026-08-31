@@ -522,7 +522,9 @@ public final class LocalObservationVolume {
                             resolvedClimbable,
                             targetClimbable,
                             !exactClimbableAtFeet(level, targetBox, intent.locomotion())
-                                    && stableLanding(player, level, startPoint, targetBox));
+                                    && stableLanding(player, level, startPoint, targetBox),
+                            intended,
+                            resolved);
         }
         if (intent.verticalDelta() < 0) {
             return !bouncySupport(level, player, evaluated.endBox())
@@ -559,28 +561,45 @@ public final class LocalObservationVolume {
             boolean sourceClimbable,
             boolean resolvedClimbable,
             boolean targetClimbable,
-            boolean targetLanding) {
+            boolean targetLanding,
+            Vec3 intended,
+            Vec3 resolved) {
         Objects.requireNonNull(path, "path");
         Objects.requireNonNull(endpoint, "endpoint");
         Objects.requireNonNull(start, "start");
         Objects.requireNonNull(end, "end");
         Objects.requireNonNull(intent, "intent");
+        Objects.requireNonNull(intended, "intended");
+        Objects.requireNonNull(resolved, "resolved");
+        boolean climbableContact = sourceClimbable || resolvedClimbable;
+        boolean ordinaryPath = path.clearance() == Clearance.CLEAR
+                && path.transition() == Transition.PROBE_ALLOWED
+                && (path.hazard() == Hazard.NONE || path.hazard() == Hazard.FALL);
+        // Vanilla converts JUMP on a ladder into upward velocity after a move.  On the
+        // following tick the horizontal component may be clipped by the ladder backing
+        // while the vertical component is valid.  Admit only that exact, progressing
+        // ladder contact; all other blocked climbable movement remains fail-closed.
+        boolean plannedLadderAscentClip = intent.locomotion() == Locomotion.LADDER
+                && intent.verticalDelta() > 0
+                && climbableContact
+                && path.clearance() == Clearance.BLOCKED
+                && path.transition() == Transition.BLOCKED
+                && (path.hazard() == Hazard.COLLISION || path.hazard() == Hazard.FALL)
+                && resolved.y > MOVEMENT_EPSILON
+                && intendedTowardNavigationTarget(start, intended, intent);
         if (intent.locomotion() == Locomotion.GROUND
                 || !targetClimbable && !targetLanding
                 || path.loaded() != LoadedState.LOADED
                 || endpoint.loaded() != LoadedState.LOADED
-                || path.clearance() != Clearance.CLEAR
                 || endpoint.clearance() != Clearance.CLEAR
-                || path.transition() != Transition.PROBE_ALLOWED
+                || !ordinaryPath && !plannedLadderAscentClip
                 || path.fluid() != Fluid.NONE
                 || endpoint.fluid() != Fluid.NONE
                 || path.suffocation()
                 || endpoint.suffocation()
-                || path.hazard() != Hazard.NONE && path.hazard() != Hazard.FALL
                 || endpoint.hazard() != Hazard.NONE && endpoint.hazard() != Hazard.FALL) {
             return false;
         }
-        boolean climbableContact = sourceClimbable || resolvedClimbable;
         if (!climbableContact && !goalIntendedMovementSafe(path)) {
             return false;
         }

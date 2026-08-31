@@ -37,18 +37,47 @@ class LocalObservationVolumeTest {
 
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 safePath, safeEndpoint, start, end, target,
-                true, true, true, false)).isTrue();
+                true, true, true, false, Vec3.ZERO, Vec3.ZERO)).isTrue();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 safePath, safeEndpoint, start, end, target,
-                true, true, false, false)).isFalse();
+                true, true, false, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 ladderPath(Clearance.BLOCKED, Fluid.NONE, true, Hazard.SUFFOCATION),
                 safeEndpoint, start, end, target,
-                true, true, true, false)).isFalse();
+                true, true, true, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 ladderPath(Clearance.CLEAR, Fluid.WATER, false, Hazard.NONE),
                 safeEndpoint, start, end, target,
-                true, true, true, false)).isFalse();
+                true, true, true, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
+    }
+
+    @Test
+    void ladderAscentAllowsOnlyProgressingVanillaBackingClip() {
+        var start = new Point(204.669921664D, 200.9D, 200.5D);
+        var end = new Point(204.669921664D, 201.1D, 200.5D);
+        var target = new AgentInputState.NavigationIntent(
+                new Vec3(204.5D, 201.9D, 200.5D), 1, Locomotion.LADDER);
+        var clippedPath = ladderPath(
+                Clearance.BLOCKED, Transition.BLOCKED,
+                Fluid.NONE, false, Hazard.FALL);
+        var safeEndpoint = ladderEndpoint(
+                Clearance.CLEAR, Fluid.NONE, false, Hazard.FALL);
+
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath, safeEndpoint, start, end, target,
+                true, true, true, false,
+                new Vec3(-0.08D, 0.2D, 0.0D), new Vec3(0.0D, 0.2D, 0.0D)))
+                .isTrue();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath, safeEndpoint, start, start, target,
+                true, true, true, false,
+                new Vec3(-0.08D, 0.0D, 0.0D), Vec3.ZERO))
+                .isFalse();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath, safeEndpoint, start, end, target,
+                false, false, true, false,
+                new Vec3(-0.08D, 0.2D, 0.0D), new Vec3(0.0D, 0.2D, 0.0D)))
+                .isFalse();
     }
 
     @Test
@@ -63,14 +92,14 @@ class LocalObservationVolumeTest {
 
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 safePath, safeEndpoint, start, end, target,
-                true, true, true, false)).isTrue();
+                true, true, true, false, Vec3.ZERO, Vec3.ZERO)).isTrue();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 safePath, safeEndpoint, start, end, target,
-                true, true, false, false)).isFalse();
+                true, true, false, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 ladderPath(Clearance.CLEAR, Fluid.WATER, false, Hazard.NONE),
                 safeEndpoint, start, end, target,
-                true, true, true, false)).isFalse();
+                true, true, true, false, Vec3.ZERO, Vec3.ZERO)).isFalse();
         assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 safePath,
                 ladderEndpoint(Clearance.CLEAR, Fluid.NONE, false, Hazard.NONE),
@@ -81,7 +110,9 @@ class LocalObservationVolumeTest {
                 true,
                 false,
                 false,
-                true)).isTrue();
+                true,
+                Vec3.ZERO,
+                Vec3.ZERO)).isTrue();
     }
 
     @Test
@@ -644,6 +675,16 @@ class LocalObservationVolumeTest {
 
     private static ObservationRecord ladderPath(
             Clearance clearance, Fluid fluid, boolean suffocation, Hazard hazard) {
+        return ladderPath(
+                clearance, Transition.PROBE_ALLOWED, fluid, suffocation, hazard);
+    }
+
+    private static ObservationRecord ladderPath(
+            Clearance clearance,
+            Transition transition,
+            Fluid fluid,
+            boolean suffocation,
+            Hazard hazard) {
         var to = new Point(0.5D, 65.0D, 0.5D);
         return new ObservationRecord(
                 1L,
@@ -654,7 +695,7 @@ class LocalObservationVolumeTest {
                 to,
                 Support.ABSENT,
                 clearance,
-                Transition.PROBE_ALLOWED,
+                transition,
                 fluid,
                 suffocation,
                 hazard,
