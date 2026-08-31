@@ -6,6 +6,7 @@ import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.agent.navigation.RoutePlan;
 import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
+import dev.aod.mcmcp.agent.safety.Locomotion;
 import dev.aod.mcmcp.agent.safety.ObservationRecord;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.routine.MovementInputLease;
@@ -197,6 +198,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                     finalCell,
                     state.tolerance,
                     0,
+                    Locomotion.GROUND,
                     EdgeDecision.CONFIRMED);
         }
 
@@ -239,6 +241,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 waypoint,
                 waypointTolerance,
                 Integer.compare(waypoint.y(), planned.key().from().y()),
+                planned.locomotion(),
                 edge);
     }
 
@@ -253,6 +256,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             NavCell waypoint,
             double waypointTolerance,
             int verticalDelta,
+            Locomotion locomotion,
             EdgeDecision edge) {
         NavigateState state = navigation;
         state.activeTicks++;
@@ -307,7 +311,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             movement = null;
             return finish(Status.FAILED, Reason.MOVEMENT_LEASE_EXPIRED);
         }
-        if (verticalDelta == 0) {
+        if (locomotion == Locomotion.GROUND) {
             AgentInputState.global().requireGoalMovementSafety(
                     player, player.level(), snapshot.worldRevision(), remainingDistance);
         } else {
@@ -321,7 +325,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                                     waypoint.x() + 0.5D,
                                     waypoint.y() + player.getBbHeight() * 0.5D,
                                     waypoint.z() + 0.5D),
-                            verticalDelta));
+                            verticalDelta,
+                            locomotion));
         }
         return runningNavigationResult(edge, !desired.isEmpty());
     }
@@ -559,7 +564,9 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         TraversabilityEdge planned = route.edges().get(edgeIndex);
         TraversabilityEdge current = snapshot.edge(planned.key()).orElse(null);
         if (current == null || !route.worldSessionId().equals(current.worldSessionId())
-                || !current.traversable() || !diagonalProofCurrent(current, snapshot)) {
+                || !current.traversable()
+                || current.locomotion() != planned.locomotion()
+                || !diagonalProofCurrent(current, snapshot)) {
             return EdgeDecision.REPLAN;
         }
         if (current.requiresProbe()) {

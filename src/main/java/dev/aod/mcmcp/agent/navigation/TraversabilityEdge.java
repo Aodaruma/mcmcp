@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.agent.navigation;
 
+import dev.aod.mcmcp.agent.safety.Locomotion;
+
 import java.util.Objects;
 import java.util.UUID;
 
@@ -16,7 +18,27 @@ public record TraversabilityEdge(
         Provenance provenance,
         NavCell observerPosition,
         long observedTick,
-        long worldRevision) {
+        long worldRevision,
+        Locomotion locomotion) {
+    public TraversabilityEdge(
+            UUID worldSessionId,
+            Key key,
+            Status status,
+            TargetSupport targetSupport,
+            Clearance clearance,
+            Transition transition,
+            Fluid fluid,
+            Hazard hazard,
+            Provenance provenance,
+            NavCell observerPosition,
+            long observedTick,
+            long worldRevision) {
+        this(
+                worldSessionId, key, status, targetSupport, clearance, transition,
+                fluid, hazard, provenance, observerPosition, observedTick, worldRevision,
+                Locomotion.GROUND);
+    }
+
     public TraversabilityEdge {
         Objects.requireNonNull(worldSessionId, "worldSessionId");
         Objects.requireNonNull(key, "key");
@@ -28,13 +50,18 @@ public record TraversabilityEdge(
         Objects.requireNonNull(hazard, "hazard");
         Objects.requireNonNull(provenance, "provenance");
         Objects.requireNonNull(observerPosition, "observerPosition");
+        Objects.requireNonNull(locomotion, "locomotion");
         if (!key.from().dimension().equals(observerPosition.dimension())) {
             throw new IllegalArgumentException("observer and edge must use the same dimension");
         }
         if (observedTick < 0 || worldRevision < 0) {
             throw new IllegalArgumentException("edge tick and revision must be non-negative");
         }
-        validateStatus(status, targetSupport, clearance, transition, fluid, hazard);
+        validateStatus(status, targetSupport, clearance, transition, fluid, hazard, locomotion);
+        if (locomotion == Locomotion.LADDER && !key.ladderAdjacent()) {
+            throw new IllegalArgumentException(
+                    "ladder edges must be vertical or cardinal horizontal transitions");
+        }
     }
 
     public boolean traversable() {
@@ -45,11 +72,19 @@ public record TraversabilityEdge(
         return status == Status.PROBE_ALLOWED;
     }
 
+    /** Ladder rungs remain internal transit nodes unless they also have floor support. */
+    public boolean destination() {
+        return traversable()
+                && (locomotion == Locomotion.GROUND
+                        || targetSupport == TargetSupport.CONFIRMED);
+    }
+
     TraversabilityEdge stale() {
         if (status == Status.STALE) return this;
         return new TraversabilityEdge(
                 worldSessionId, key, Status.STALE, targetSupport, clearance, transition,
-                fluid, hazard, provenance, observerPosition, observedTick, worldRevision);
+                fluid, hazard, provenance, observerPosition, observedTick, worldRevision,
+                locomotion);
     }
 
     private static void validateStatus(
@@ -58,27 +93,32 @@ public record TraversabilityEdge(
             Clearance clearance,
             Transition transition,
             Fluid fluid,
-            Hazard hazard) {
+            Hazard hazard,
+            Locomotion locomotion) {
         if (status == Status.STALE) {
             return;
         }
         if (status == Status.CONFIRMED
-                && (support != TargetSupport.CONFIRMED
+                && ((locomotion == Locomotion.GROUND
+                                && support != TargetSupport.CONFIRMED)
+                        || support == TargetSupport.UNKNOWN
                 || clearance != Clearance.CONFIRMED
                 || transition != Transition.CONFIRMED
                 || fluid != Fluid.NONE
                 || hazard != Hazard.NONE)) {
             throw new IllegalArgumentException(
-                    "CONFIRMED requires confirmed support/clearance and no fluid/hazard");
+                    "CONFIRMED requires valid support/clearance and no fluid/hazard");
         }
         if (status == Status.PROBE_ALLOWED
-                && (support != TargetSupport.CONFIRMED
+                && ((locomotion == Locomotion.GROUND
+                                && support != TargetSupport.CONFIRMED)
+                        || support == TargetSupport.UNKNOWN
                 || clearance != Clearance.CONFIRMED
                 || transition != Transition.PARTIAL
                 || fluid != Fluid.NONE
                 || hazard != Hazard.NONE)) {
             throw new IllegalArgumentException(
-                    "PROBE_ALLOWED requires confirmed support/clearance and a partial transition");
+                    "PROBE_ALLOWED requires valid support/clearance and a partial transition");
         }
         if (status == Status.BLOCKED
                 && support != TargetSupport.ABSENT
@@ -107,6 +147,13 @@ public record TraversabilityEdge(
 
         public double length() {
             return from.distanceTo(to);
+        }
+
+        boolean ladderAdjacent() {
+            int dx = Math.abs(to.x() - from.x());
+            int dy = Math.abs(to.y() - from.y());
+            int dz = Math.abs(to.z() - from.z());
+            return dx + dy + dz == 1;
         }
 
         @Override

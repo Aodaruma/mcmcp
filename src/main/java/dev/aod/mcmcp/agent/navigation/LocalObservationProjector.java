@@ -9,6 +9,7 @@ import dev.aod.mcmcp.agent.observation.ObservationRecord.TraversabilityStatus;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
 import dev.aod.mcmcp.agent.observation.ObservationValues.WorldPosition;
 import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
+import dev.aod.mcmcp.agent.safety.Locomotion;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -99,6 +100,27 @@ public final class LocalObservationProjector {
                         == dev.aod.mcmcp.agent.safety.ObservationRecord.Transition.CONTACT
                 ? EvidenceProvenance.CONTACT
                 : EvidenceProvenance.LOCAL_VOLUME;
+        var edge = new TraversabilityEdge(
+                worldSessionId,
+                key,
+                status,
+                edgeSupport(source),
+                edgeClearance(source),
+                edgeTransition(status),
+                edgeFluid(source),
+                edgeHazard(source),
+                provenance == EvidenceProvenance.CONTACT
+                        ? TraversabilityEdge.Provenance.CONTACT
+                        : TraversabilityEdge.Provenance.LOCAL_VOLUME,
+                navCell(dimension.value(), observer, centerToFeet),
+                source.observedTick(),
+                worldRevision,
+                source.locomotion());
+        edges.add(edge);
+        if (source.locomotion() == Locomotion.LADDER && !edge.destination()) {
+            return;
+        }
+
         var publicFrom = worldPosition(dimension, source.from());
         var publicTo = new WorldPosition(
                 dimension, source.requestedTo().x(), source.to().y(), source.requestedTo().z());
@@ -113,22 +135,6 @@ public final class LocalObservationProjector {
                 source.observedTick(),
                 worldRevision,
                 provenance));
-
-        edges.add(new TraversabilityEdge(
-                worldSessionId,
-                key,
-                status,
-                edgeSupport(source),
-                edgeClearance(source),
-                edgeTransition(status),
-                edgeFluid(source),
-                edgeHazard(source),
-                provenance == EvidenceProvenance.CONTACT
-                        ? TraversabilityEdge.Provenance.CONTACT
-                        : TraversabilityEdge.Provenance.LOCAL_VOLUME,
-                navCell(dimension.value(), observer, centerToFeet),
-                source.observedTick(),
-                worldRevision));
     }
 
     private static boolean unknown(dev.aod.mcmcp.agent.safety.ObservationRecord source) {
@@ -149,8 +155,12 @@ public final class LocalObservationProjector {
 
     private static TraversabilityEdge.Status status(
             dev.aod.mcmcp.agent.safety.ObservationRecord source) {
-        boolean safe = source.support()
+        boolean supported = source.support()
                         == dev.aod.mcmcp.agent.safety.ObservationRecord.Support.PRESENT
+                || source.locomotion() == Locomotion.LADDER
+                        && source.support()
+                                == dev.aod.mcmcp.agent.safety.ObservationRecord.Support.ABSENT;
+        boolean safe = supported
                 && source.clearance()
                         == dev.aod.mcmcp.agent.safety.ObservationRecord.Clearance.CLEAR
                 && source.fluid()

@@ -23,6 +23,7 @@ public final class KnownTraversabilityMap {
             .thenComparingInt(edge -> edge.transition().ordinal())
             .thenComparingInt(edge -> edge.fluid().ordinal())
             .thenComparingInt(edge -> edge.hazard().ordinal())
+            .thenComparingInt(edge -> edge.locomotion().ordinal())
             .thenComparing(TraversabilityEdge::observerPosition);
     private static final Comparator<TraversabilityEdge> EVICTION_ORDER = Comparator
             .comparingLong(TraversabilityEdge::observedTick)

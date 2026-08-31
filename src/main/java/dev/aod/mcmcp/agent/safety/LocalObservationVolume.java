@@ -20,6 +20,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeMap;
 
 import static dev.aod.mcmcp.agent.safety.ObservationRecord.Clearance;
 import static dev.aod.mcmcp.agent.safety.ObservationRecord.Drop;
@@ -45,6 +46,7 @@ public final class LocalObservationVolume {
     private static final double MOVEMENT_EPSILON = 1.0E-7D;
     private static final double MAX_WALKING_DROP = 1.0D;
     private static final double DROP_PROBE = 4.0D;
+    static final int MAX_LADDER_RUNG_DELTA = 4;
     /*
      * Radius stays large enough to reconnect a just-opened gate, but the
      * synchronous game-thread search has a strict work budget.  Breadth-first
@@ -63,6 +65,9 @@ public final class LocalObservationVolume {
             new HorizontalDirection(1, -1),
             new HorizontalDirection(-1, 1),
             new HorizontalDirection(-1, -1));
+    private static final List<HorizontalDirection> CARDINAL_DIRECTIONS = DIRECTIONS.stream()
+            .filter(direction -> Math.abs(direction.x()) + Math.abs(direction.z()) == 1)
+            .toList();
 
     private final AgentMovementTrace movementTrace;
     private volatile Snapshot latest;
@@ -181,7 +186,8 @@ public final class LocalObservationVolume {
                 source.hazard(),
                 source.loaded(),
                 source.drop(),
-                source.neutralizeAgentHorizontal());
+                source.neutralizeAgentHorizontal(),
+                source.locomotion());
     }
 
     public Optional<Snapshot> latestFor(LocalPlayer player) {
@@ -493,6 +499,23 @@ public final class LocalObservationVolume {
                 1,
                 worldRevision);
         var path = atTick(evaluated.record(), observedTick);
+        if (intent.locomotion() == Locomotion.LADDER) {
+            var endpoint = endpointSafety(player, level, startPoint, evaluated.endBox());
+            var targetBox = start.move(intent.target().subtract(start.getCenter()));
+            return !bouncySupport(level, player, evaluated.endBox())
+                    && !bouncySupport(level, player, targetBox)
+                    && ladderNavigationMovementSafe(
+                            path,
+                            endpoint,
+                            startPoint,
+                            point(evaluated.endBox().getCenter()),
+                            intent,
+                            safeLadderCell(player, level, startPoint, start),
+                            safeLadderCell(player, level, startPoint, evaluated.endBox()),
+                            safeLadderCell(player, level, startPoint, targetBox),
+                            !exactLadderAtFeet(level, targetBox)
+                                    && stableLanding(player, level, startPoint, targetBox));
+        }
         if (intent.verticalDelta() < 0) {
             return !bouncySupport(level, player, evaluated.endBox())
                     && goalIntendedMovementSafe(path)
@@ -517,6 +540,43 @@ public final class LocalObservationVolume {
                 && (ordinarySafe || plannedAscentClip)
                 && movesTowardNavigationTarget(
                         startPoint, point(evaluated.endBox().getCenter()), intent);
+    }
+
+    static boolean ladderNavigationMovementSafe(
+            ObservationRecord path,
+            EndpointSafety endpoint,
+            Point start,
+            Point end,
+            AgentInputState.NavigationIntent intent,
+            boolean sourceLadder,
+            boolean resolvedLadder,
+            boolean targetLadder,
+            boolean targetLanding) {
+        Objects.requireNonNull(path, "path");
+        Objects.requireNonNull(endpoint, "endpoint");
+        Objects.requireNonNull(start, "start");
+        Objects.requireNonNull(end, "end");
+        Objects.requireNonNull(intent, "intent");
+        if (intent.locomotion() != Locomotion.LADDER
+                || !targetLadder && !targetLanding
+                || path.loaded() != LoadedState.LOADED
+                || endpoint.loaded() != LoadedState.LOADED
+                || path.clearance() != Clearance.CLEAR
+                || endpoint.clearance() != Clearance.CLEAR
+                || path.transition() != Transition.PROBE_ALLOWED
+                || path.fluid() != Fluid.NONE
+                || endpoint.fluid() != Fluid.NONE
+                || path.suffocation()
+                || endpoint.suffocation()
+                || path.hazard() != Hazard.NONE && path.hazard() != Hazard.FALL
+                || endpoint.hazard() != Hazard.NONE && endpoint.hazard() != Hazard.FALL) {
+            return false;
+        }
+        boolean ladderContact = sourceLadder || resolvedLadder;
+        if (!ladderContact && !goalIntendedMovementSafe(path)) {
+            return false;
+        }
+        return movesTowardNavigationTarget(start, end, intent);
     }
 
     private static boolean intendedTowardNavigationTarget(
@@ -798,6 +858,7 @@ public final class LocalObservationVolume {
         var queue = new ArrayDeque<Node>();
         var reached = new HashSet<NodeKey>();
         var attempted = new HashSet<Edge>();
+        var attemptedLadderColumns = new HashSet<LadderColumn>();
         int evaluations = 0;
         var rootOffset = new GridOffset(0, 0);
         var rootKey = NodeKey.at(rootOffset, originBox);
@@ -812,6 +873,17 @@ public final class LocalObservationVolume {
             if (node.depth() >= MAX_TRANSITIONS) {
                 continue;
             }
+            addLadderTransitions(
+                    player,
+                    level,
+                    origin,
+                    node,
+                    worldRevision,
+                    attemptedLadderColumns,
+                    records);
+            if (records.size() == MAX_OBSERVATIONS) {
+                break;
+            }
             for (var direction : DIRECTIONS) {
                 var targetOffset = node.key().offset().move(direction);
                 var edge = new Edge(node.key(), direction);
@@ -820,6 +892,10 @@ public final class LocalObservationVolume {
                 }
                 var intended = adjacentCellCenterDelta(
                         node.box(), direction.x(), direction.z());
+                if (exactLadderAtFeet(level, node.box())
+                        || exactLadderAtFeet(level, node.box().move(intended))) {
+                    continue;
+                }
                 var targetCenter = point(node.box().move(intended).getCenter());
                 if (origin.distanceSquared(targetCenter) > RADIUS_SQUARED) {
                     continue;
@@ -856,6 +932,248 @@ public final class LocalObservationVolume {
             }
         }
         return List.copyOf(records);
+    }
+
+    private void addLadderTransitions(
+            LocalPlayer player,
+            ClientLevel level,
+            Point origin,
+            Node node,
+            long worldRevision,
+            HashSet<LadderColumn> attemptedColumns,
+            ArrayList<ObservationRecord> records) {
+        int feetY = Mth.floor(node.box().minY + MOVEMENT_EPSILON);
+        int feetX = Mth.floor(node.box().getCenter().x);
+        int feetZ = Mth.floor(node.box().getCenter().z);
+        var candidates = new ArrayList<BlockPos>(1 + CARDINAL_DIRECTIONS.size());
+        candidates.add(new BlockPos(feetX, feetY, feetZ));
+        for (var direction : CARDINAL_DIRECTIONS) {
+            candidates.add(new BlockPos(
+                    feetX + direction.x(), feetY, feetZ + direction.z()));
+        }
+        for (BlockPos entry : candidates) {
+            var entryBox = boxAtFeetCell(node.box(), entry);
+            if (!safeLadderCell(player, level, origin, entryBox)
+                    || !attemptedColumns.add(new LadderColumn(entry.getX(), entry.getZ()))) {
+                continue;
+            }
+            addLadderColumn(
+                    player, level, origin, node, entry, worldRevision, records);
+            if (records.size() == MAX_OBSERVATIONS) {
+                return;
+            }
+        }
+    }
+
+    private void addLadderColumn(
+            LocalPlayer player,
+            ClientLevel level,
+            Point origin,
+            Node entryNode,
+            BlockPos entry,
+            long worldRevision,
+            ArrayList<ObservationRecord> records) {
+        var rungs = new TreeMap<Integer, AABB>();
+        var entryBox = boxAtFeetCell(entryNode.box(), entry);
+        rungs.put(entry.getY(), entryBox);
+        for (int direction : List.of(-1, 1)) {
+            for (int delta = 1; delta <= MAX_LADDER_RUNG_DELTA; delta++) {
+                int y = entry.getY() + direction * delta;
+                var rungBox = boxAtFeetCell(
+                        entryNode.box(), new BlockPos(entry.getX(), y, entry.getZ()));
+                if (!safeLadderCell(player, level, origin, rungBox)
+                        || !ladderPathSafe(
+                                player,
+                                level,
+                                origin,
+                                rungs.get(y - direction),
+                                rungBox)) {
+                    break;
+                }
+                rungs.put(y, rungBox);
+            }
+        }
+
+        var rungEntries = new ArrayList<>(rungs.entrySet());
+        for (int index = 1; index < rungEntries.size(); index++) {
+            var lower = rungEntries.get(index - 1);
+            var upper = rungEntries.get(index);
+            if (upper.getKey() - lower.getKey() != 1) {
+                continue;
+            }
+            addLadderRecord(
+                    player,
+                    level,
+                    origin,
+                    entryNode,
+                    entry.getY(),
+                    lower.getValue(),
+                    upper.getValue(),
+                    worldRevision,
+                    records);
+            addLadderRecord(
+                    player,
+                    level,
+                    origin,
+                    entryNode,
+                    entry.getY(),
+                    upper.getValue(),
+                    lower.getValue(),
+                    worldRevision,
+                    records);
+        }
+
+        for (var rung : rungEntries) {
+            int y = rung.getKey();
+            for (var direction : CARDINAL_DIRECTIONS) {
+                var landingPos = new BlockPos(
+                        entry.getX() + direction.x(), y, entry.getZ() + direction.z());
+                var landingBox = boxAtFeetCell(entryNode.box(), landingPos);
+                if (exactLadderAtFeet(level, landingBox)
+                        || !stableLanding(player, level, origin, landingBox)
+                        || !ladderPathSafe(
+                                player, level, origin, rung.getValue(), landingBox)) {
+                    continue;
+                }
+                addLadderRecord(
+                        player,
+                        level,
+                        origin,
+                        entryNode,
+                        entry.getY(),
+                        rung.getValue(),
+                        landingBox,
+                        worldRevision,
+                        records);
+                addLadderRecord(
+                        player,
+                        level,
+                        origin,
+                        entryNode,
+                        entry.getY(),
+                        landingBox,
+                        rung.getValue(),
+                        worldRevision,
+                        records);
+            }
+        }
+    }
+
+    private static void addLadderRecord(
+            LocalPlayer player,
+            ClientLevel level,
+            Point origin,
+            Node entryNode,
+            int entryY,
+            AABB from,
+            AABB to,
+            long worldRevision,
+            ArrayList<ObservationRecord> records) {
+        if (records.size() == MAX_OBSERVATIONS) {
+            return;
+        }
+        int depth = entryNode.depth()
+                + Math.abs(Mth.floor(to.minY + MOVEMENT_EPSILON) - entryY) + 1;
+        if (depth > MAX_TRANSITIONS) {
+            return;
+        }
+        Support targetSupport = support(level, player, origin, to);
+        if (targetSupport == Support.UNKNOWN) {
+            return;
+        }
+        Point fromPoint = point(from.getCenter());
+        Point toPoint = point(to.getCenter());
+        records.add(new ObservationRecord(
+                player.tickCount,
+                worldRevision,
+                depth,
+                fromPoint,
+                toPoint,
+                toPoint,
+                targetSupport,
+                Clearance.CLEAR,
+                Transition.PROBE_ALLOWED,
+                Fluid.NONE,
+                false,
+                Hazard.NONE,
+                LoadedState.LOADED,
+                targetSupport == Support.PRESENT
+                        ? Drop.SUPPORTED : Drop.AIRBORNE_OR_SWIMMING,
+                false,
+                Locomotion.LADDER));
+    }
+
+    private static boolean safeLadderCell(
+            LocalPlayer player, ClientLevel level, Point origin, AABB box) {
+        if (!exactSurvivingLadderAtFeet(level, origin, box)
+                || loadedState(level, origin, List.of(box, supportSlab(box)))
+                        != LoadedState.LOADED
+                || !level.noCollision(player, box)
+                || level.collidesWithSuffocatingBlock(player, box)
+                || fluid(level, origin, List.of(box)) != Fluid.NONE) {
+            return false;
+        }
+        return damageBlockHazard(level, origin, List.of(box)) == Hazard.NONE;
+    }
+
+    private static boolean stableLanding(
+            LocalPlayer player, ClientLevel level, Point origin, AABB box) {
+        return stableEndpoint(endpointSafety(player, level, origin, box));
+    }
+
+    private static boolean ladderPathSafe(
+            LocalPlayer player,
+            ClientLevel level,
+            Point origin,
+            AABB from,
+            AABB to) {
+        Vec3 delta = to.getCenter().subtract(from.getCenter());
+        var regions = sweptRegions(SweptAabbPath.segments(from, delta, delta));
+        AABB swept = from.expandTowards(delta);
+        return loadedState(level, origin, append(regions, to)) == LoadedState.LOADED
+                && level.noCollision(player, swept)
+                && !level.collidesWithSuffocatingBlock(player, swept)
+                && fluid(level, origin, regions) == Fluid.NONE
+                && damageBlockHazard(level, origin, regions) == Hazard.NONE;
+    }
+
+    private static boolean exactLadderAtFeet(ClientLevel level, AABB box) {
+        BlockPos position = feetBlock(box);
+        return level.isLoaded(position) && level.getBlockState(position).is(Blocks.LADDER);
+    }
+
+    private static boolean exactSurvivingLadderAtFeet(
+            ClientLevel level, Point origin, AABB box) {
+        BlockPos position = feetBlock(box);
+        if (!level.isLoaded(position)) {
+            return false;
+        }
+        var state = level.getBlockState(position);
+        if (!state.is(Blocks.LADDER)
+                || !state.hasProperty(BlockStateProperties.HORIZONTAL_FACING)) {
+            return false;
+        }
+        BlockPos attachment = position.relative(
+                state.getValue(BlockStateProperties.HORIZONTAL_FACING).getOpposite());
+        return insideRadius(
+                        origin, attachment.getX(), attachment.getY(), attachment.getZ())
+                && level.isLoaded(attachment)
+                && state.canSurvive(level, position);
+    }
+
+    private static BlockPos feetBlock(AABB box) {
+        return new BlockPos(
+                Mth.floor(box.getCenter().x),
+                Mth.floor(box.minY + MOVEMENT_EPSILON),
+                Mth.floor(box.getCenter().z));
+    }
+
+    private static AABB boxAtFeetCell(AABB template, BlockPos cell) {
+        Vec3 center = template.getCenter();
+        return template.move(
+                cell.getX() + 0.5D - center.x,
+                cell.getY() - template.minY,
+                cell.getZ() + 0.5D - center.z);
     }
 
     private ObservationRecord evaluateCurrent(
@@ -1154,6 +1472,13 @@ public final class LocalObservationVolume {
             loaded = LoadedState.UNKNOWN;
         }
         Transition transition = actualTransition(frame, collision);
+        Locomotion locomotion = (safeLadderCell(player, level, origin, start)
+                        || safeLadderCell(player, level, origin, end))
+                        && ladderPathSafe(player, level, origin, start, end)
+                ? Locomotion.LADDER : Locomotion.GROUND;
+        if (locomotion == Locomotion.LADDER && drop == Drop.EXCEEDS_WALKING_LIMIT) {
+            drop = Drop.AIRBORNE_OR_SWIMMING;
+        }
         return new ObservationRecord(
                 frame.tick(),
                 worldRevision,
@@ -1172,7 +1497,8 @@ public final class LocalObservationVolume {
                                 level, origin, append(regions, damageSupportRegion(end)))),
                 loaded,
                 drop,
-                shouldNeutralize(support, drop));
+                locomotion == Locomotion.GROUND && shouldNeutralize(support, drop),
+                locomotion);
     }
 
     static Transition actualTransition(
@@ -1622,6 +1948,9 @@ public final class LocalObservationVolume {
         private GridOffset move(HorizontalDirection direction) {
             return new GridOffset(x + direction.x(), z + direction.z());
         }
+    }
+
+    private record LadderColumn(int x, int z) {
     }
 
     private record NodeKey(GridOffset offset, long quantizedMinY) {

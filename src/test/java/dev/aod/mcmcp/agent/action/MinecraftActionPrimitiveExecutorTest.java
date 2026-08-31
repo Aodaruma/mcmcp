@@ -301,6 +301,8 @@ class MinecraftActionPrimitiveExecutorTest {
                 1, 0.0625D, 0.6D)).isFalse();
         assertThat(MinecraftActionPrimitiveExecutor.jumpRequired(
                 1, 1.0D, 0.6D)).isTrue();
+        assertThat(MinecraftActionPrimitiveExecutor.jumpRequired(
+                -1, -1.0D, 0.6D)).isFalse();
     }
 
     @Test

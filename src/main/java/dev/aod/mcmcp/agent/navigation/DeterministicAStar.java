@@ -73,7 +73,7 @@ public final class DeterministicAStar {
         if (start.distanceTo(target) > MAX_ROUTE_DISTANCE_BLOCKS + EPSILON) {
             return SearchResult.failure(FailureReason.TARGET_TOO_FAR, List.of());
         }
-        if (!snapshot.containsCell(target)) {
+        if (!snapshot.containsDestination(target)) {
             return SearchResult.failure(FailureReason.TARGET_UNKNOWN, List.of());
         }
         if (start.equals(target)) {

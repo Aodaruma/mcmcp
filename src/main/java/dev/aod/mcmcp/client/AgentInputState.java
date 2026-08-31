@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.client;
 
+import dev.aod.mcmcp.agent.safety.Locomotion;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.phys.Vec3;
 
@@ -584,9 +585,14 @@ public final class AgentInputState {
         }
     }
 
-    public record NavigationIntent(Vec3 target, int verticalDelta) {
+    public record NavigationIntent(Vec3 target, int verticalDelta, Locomotion locomotion) {
+        public NavigationIntent(Vec3 target, int verticalDelta) {
+            this(target, verticalDelta, Locomotion.GROUND);
+        }
+
         public NavigationIntent {
             target = finiteVector(Objects.requireNonNull(target, "target"));
+            Objects.requireNonNull(locomotion, "locomotion");
             if (verticalDelta < -1 || verticalDelta > 1) {
                 throw new IllegalArgumentException("vertical delta must be within -1..1");
             }

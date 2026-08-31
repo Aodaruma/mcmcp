@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.agent.navigation;
 
 import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
+import dev.aod.mcmcp.agent.safety.Locomotion;
 import dev.aod.mcmcp.agent.safety.ObservationRecord;
 import org.junit.jupiter.api.Test;
 
@@ -11,6 +12,36 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class LocalObservationProjectorTest {
     private static final String OVERWORLD = "minecraft:overworld";
+
+    @Test
+    void keepsLadderRungsInternalAndPublishesOnlyFloorBackedLandings() {
+        var center = new ObservationRecord.Point(0.5D, 64.9D, 0.5D);
+        var upperRung = new ObservationRecord.Point(0.5D, 65.9D, 0.5D);
+        var landing = new ObservationRecord.Point(1.5D, 65.9D, 0.5D);
+        var current = record(10, 3, 0, center, center, center,
+                ObservationRecord.Transition.STATIONARY,
+                ObservationRecord.Clearance.CLEAR,
+                ObservationRecord.Hazard.NONE);
+        var rungTransition = ladderRecord(center, upperRung, ObservationRecord.Support.ABSENT);
+        var landingTransition = ladderRecord(
+                upperRung, landing, ObservationRecord.Support.PRESENT);
+        var snapshot = new LocalObservationVolume.Snapshot(
+                10, 3, center, current, List.of(rungTransition, landingTransition));
+
+        var projection = LocalObservationProjector.project(
+                snapshot, UUID.randomUUID(), OVERWORLD, 3, 64.0D);
+
+        assertThat(projection.edges()).hasSize(2);
+        assertThat(projection.edges().getFirst()).satisfies(edge -> {
+            assertThat(edge.locomotion()).isEqualTo(Locomotion.LADDER);
+            assertThat(edge.destination()).isFalse();
+            assertThat(edge.status()).isEqualTo(TraversabilityEdge.Status.PROBE_ALLOWED);
+        });
+        assertThat(projection.edges().getLast().destination()).isTrue();
+        assertThat(projection.records()).singleElement().satisfies(record ->
+                assertThat(record).isInstanceOf(
+                        dev.aod.mcmcp.agent.observation.ObservationRecord.Traversability.class));
+    }
 
     @Test
     void keepsRequestedEdgeWhenVanillaResolvedOnlyAMicroStep() {
@@ -227,5 +258,30 @@ class LocalObservationProjectorTest {
                 ObservationRecord.LoadedState.LOADED,
                 ObservationRecord.Drop.SUPPORTED,
                 false);
+    }
+
+    private static ObservationRecord ladderRecord(
+            ObservationRecord.Point from,
+            ObservationRecord.Point to,
+            ObservationRecord.Support support) {
+        return new ObservationRecord(
+                10L,
+                3L,
+                1,
+                from,
+                to,
+                to,
+                support,
+                ObservationRecord.Clearance.CLEAR,
+                ObservationRecord.Transition.PROBE_ALLOWED,
+                ObservationRecord.Fluid.NONE,
+                false,
+                ObservationRecord.Hazard.NONE,
+                ObservationRecord.LoadedState.LOADED,
+                support == ObservationRecord.Support.PRESENT
+                        ? ObservationRecord.Drop.SUPPORTED
+                        : ObservationRecord.Drop.AIRBORNE_OR_SWIMMING,
+                false,
+                Locomotion.LADDER);
     }
 }

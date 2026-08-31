@@ -21,7 +21,30 @@ public record ObservationRecord(
         Hazard hazard,
         LoadedState loaded,
         Drop drop,
-        boolean neutralizeAgentHorizontal) {
+        boolean neutralizeAgentHorizontal,
+        Locomotion locomotion) {
+    public ObservationRecord(
+            long observedTick,
+            long worldRevision,
+            int transitionDepth,
+            Point from,
+            Point requestedTo,
+            Point to,
+            Support support,
+            Clearance clearance,
+            Transition transition,
+            Fluid fluid,
+            boolean suffocation,
+            Hazard hazard,
+            LoadedState loaded,
+            Drop drop,
+            boolean neutralizeAgentHorizontal) {
+        this(
+                observedTick, worldRevision, transitionDepth, from, requestedTo, to,
+                support, clearance, transition, fluid, suffocation, hazard, loaded, drop,
+                neutralizeAgentHorizontal, Locomotion.GROUND);
+    }
+
     public ObservationRecord {
         if (observedTick < 0L) {
             throw new IllegalArgumentException("observedTick must be non-negative");
@@ -42,8 +65,12 @@ public record ObservationRecord(
         Objects.requireNonNull(hazard, "hazard");
         Objects.requireNonNull(loaded, "loaded");
         Objects.requireNonNull(drop, "drop");
+        Objects.requireNonNull(locomotion, "locomotion");
         if (transitionDepth == 0 && transition != Transition.STATIONARY) {
             throw new IllegalArgumentException("depth zero is reserved for the current AABB");
+        }
+        if (transitionDepth == 0 && locomotion != Locomotion.GROUND) {
+            throw new IllegalArgumentException("the current AABB uses ground locomotion");
         }
         if (transition == Transition.UNKNOWN && loaded != LoadedState.UNKNOWN
                 && fluid != Fluid.UNKNOWN) {
@@ -52,7 +79,8 @@ public record ObservationRecord(
     }
 
     public boolean canExpand() {
-        return loaded == LoadedState.LOADED
+        return locomotion == Locomotion.GROUND
+                && loaded == LoadedState.LOADED
                 && clearance == Clearance.CLEAR
                 && transition == Transition.PROBE_ALLOWED
                 && support == Support.PRESENT

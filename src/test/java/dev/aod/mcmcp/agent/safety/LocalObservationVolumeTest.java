@@ -24,6 +24,32 @@ class LocalObservationVolumeTest {
     private static final Point ORIGIN = new Point(0.0D, 64.0D, 0.0D);
 
     @Test
+    void ladderSafetyRejectsMissingRungsLowCeilingsAndFluid() {
+        var start = new Point(0.5D, 64.9D, 0.5D);
+        var end = new Point(0.5D, 65.0D, 0.5D);
+        var target = new AgentInputState.NavigationIntent(
+                new Vec3(0.5D, 65.9D, 0.5D), 1, Locomotion.LADDER);
+        var safePath = ladderPath(Clearance.CLEAR, Fluid.NONE, false, Hazard.FALL);
+        var safeEndpoint = ladderEndpoint(
+                Clearance.CLEAR, Fluid.NONE, false, Hazard.FALL);
+
+        assertThat(LocalObservationVolume.ladderNavigationMovementSafe(
+                safePath, safeEndpoint, start, end, target,
+                true, true, true, false)).isTrue();
+        assertThat(LocalObservationVolume.ladderNavigationMovementSafe(
+                safePath, safeEndpoint, start, end, target,
+                true, true, false, false)).isFalse();
+        assertThat(LocalObservationVolume.ladderNavigationMovementSafe(
+                ladderPath(Clearance.BLOCKED, Fluid.NONE, true, Hazard.SUFFOCATION),
+                safeEndpoint, start, end, target,
+                true, true, true, false)).isFalse();
+        assertThat(LocalObservationVolume.ladderNavigationMovementSafe(
+                ladderPath(Clearance.CLEAR, Fluid.WATER, false, Hazard.NONE),
+                safeEndpoint, start, end, target,
+                true, true, true, false)).isFalse();
+    }
+
+    @Test
     void publicationUsesEuclideanRadiusRatherThanAnAxisAlignedCube() {
         var inside = probe(1, new Point(6.0D, 64.0D, 0.0D));
         var outsideDiagonal = probe(1, new Point(5.0D, 64.0D, 5.0D));
@@ -564,6 +590,39 @@ class LocalObservationVolumeTest {
                 hazard,
                 LoadedState.LOADED,
                 fluid == Fluid.NONE ? Drop.SUPPORTED : Drop.AIRBORNE_OR_SWIMMING);
+    }
+
+    private static ObservationRecord ladderPath(
+            Clearance clearance, Fluid fluid, boolean suffocation, Hazard hazard) {
+        var to = new Point(0.5D, 65.0D, 0.5D);
+        return new ObservationRecord(
+                1L,
+                7L,
+                1,
+                ORIGIN,
+                to,
+                to,
+                Support.ABSENT,
+                clearance,
+                Transition.PROBE_ALLOWED,
+                fluid,
+                suffocation,
+                hazard,
+                LoadedState.LOADED,
+                Drop.EXCEEDS_WALKING_LIMIT,
+                true);
+    }
+
+    private static LocalObservationVolume.EndpointSafety ladderEndpoint(
+            Clearance clearance, Fluid fluid, boolean suffocation, Hazard hazard) {
+        return new LocalObservationVolume.EndpointSafety(
+                Support.ABSENT,
+                clearance,
+                fluid,
+                suffocation,
+                hazard,
+                LoadedState.LOADED,
+                Drop.EXCEEDS_WALKING_LIMIT);
     }
 
     private static ObservationRecord record(

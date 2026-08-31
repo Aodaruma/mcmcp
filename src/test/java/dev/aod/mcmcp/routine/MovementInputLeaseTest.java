@@ -51,14 +51,14 @@ class MovementInputLeaseTest {
     }
 
     @Test
-    void emptyHeartbeatPausesAndLaterResumesTheSameLease() {
+    void ladderJumpCanPauseForDescentAndStillReleaseTheLease() {
         var control = new FakeControl();
         var owner = UUID.randomUUID();
         var lease = MovementInputLease.acquire(control, owner, 0, Duration.ofSeconds(1));
 
-        lease.setDesired(owner, Set.of(MovementInputLease.MovementKey.FORWARD));
+        lease.setDesired(owner, Set.of(MovementInputLease.MovementKey.JUMP));
         assertThat(lease.heartbeat(owner, 1, Duration.ofSeconds(1))).isTrue();
-        assertThat(control.lastApplied).containsExactly(MovementInputLease.MovementKey.FORWARD);
+        assertThat(control.lastApplied).containsExactly(MovementInputLease.MovementKey.JUMP);
 
         lease.setDesired(owner, Set.of());
         assertThat(lease.heartbeat(owner, 2, Duration.ofSeconds(1))).isTrue();
@@ -66,14 +66,9 @@ class MovementInputLeaseTest {
         assertThat(lease.active()).isTrue();
         assertThat(control.releases).isZero();
 
-        lease.setDesired(owner, Set.of(
-                MovementInputLease.MovementKey.FORWARD,
-                MovementInputLease.MovementKey.RIGHT));
-        assertThat(lease.heartbeat(owner, 3, Duration.ofSeconds(1))).isTrue();
-        assertThat(control.lastApplied).containsExactlyInAnyOrder(
-                MovementInputLease.MovementKey.FORWARD,
-                MovementInputLease.MovementKey.RIGHT);
-        assertThat(control.releases).isZero();
+        lease.close(owner);
+        assertThat(control.lastApplied).isEmpty();
+        assertThat(control.releases).isOne();
     }
 
     @Test

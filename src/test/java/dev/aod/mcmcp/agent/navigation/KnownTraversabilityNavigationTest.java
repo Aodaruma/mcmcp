@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.agent.navigation;
 
+import dev.aod.mcmcp.agent.safety.Locomotion;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -10,6 +11,32 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownTraversabilityNavigationTest {
+
+    @Test
+    void ladderRoutesUseUnsupportedRungsOnlyAsInternalTransitNodes() {
+        UUID session = UUID.randomUUID();
+        NavCell bottom = cell(0, 64, 0);
+        NavCell rung = cell(0, 65, 0);
+        NavCell topLanding = cell(1, 65, 0);
+        var map = boundMap(session);
+        map.observe(ladderEdge(session, bottom, rung, false));
+        map.observe(ladderEdge(session, rung, topLanding, true));
+        map.observe(ladderEdge(session, topLanding, rung, false));
+        map.observe(ladderEdge(session, rung, bottom, true));
+        var snapshot = map.snapshot().orElseThrow();
+        var pathfinder = new DeterministicAStar();
+
+        assertThat(snapshot.containsCell(rung)).isTrue();
+        assertThat(snapshot.containsDestination(rung)).isFalse();
+        assertThat(pathfinder.findRoute(snapshot, bottom, rung).failure())
+                .contains(DeterministicAStar.FailureReason.TARGET_UNKNOWN);
+        assertThat(pathfinder.findRoute(snapshot, bottom, topLanding)
+                .route().orElseThrow().cells())
+                .containsExactly(bottom, rung, topLanding);
+        assertThat(pathfinder.findRoute(snapshot, topLanding, bottom)
+                .route().orElseThrow().cells())
+                .containsExactly(topLanding, rung, bottom);
+    }
     @Test
     void mapIsHardCappedAndRejectsDelayedOldRevisionEvidence() {
         var map = new KnownTraversabilityMap();
@@ -494,5 +521,25 @@ class KnownTraversabilityNavigationTest {
                 from,
                 tick,
                 revision);
+    }
+
+    private static TraversabilityEdge ladderEdge(
+            UUID session, NavCell from, NavCell to, boolean floorBackedTarget) {
+        return new TraversabilityEdge(
+                session,
+                new TraversabilityEdge.Key(from, to),
+                TraversabilityEdge.Status.PROBE_ALLOWED,
+                floorBackedTarget
+                        ? TraversabilityEdge.TargetSupport.CONFIRMED
+                        : TraversabilityEdge.TargetSupport.ABSENT,
+                TraversabilityEdge.Clearance.CONFIRMED,
+                TraversabilityEdge.Transition.PARTIAL,
+                TraversabilityEdge.Fluid.NONE,
+                TraversabilityEdge.Hazard.NONE,
+                TraversabilityEdge.Provenance.LOCAL_VOLUME,
+                from,
+                1L,
+                0L,
+                Locomotion.LADDER);
     }
 }

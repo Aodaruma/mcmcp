@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.agent.navigation;
 
+import dev.aod.mcmcp.agent.safety.Locomotion;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -72,6 +74,20 @@ public final class KnownTraversabilitySnapshot {
         for (TraversabilityEdge edge : edges.values()) {
             if (edge.status() != TraversabilityEdge.Status.STALE
                     && (edge.key().from().equals(cell) || edge.key().to().equals(cell))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** True only for a delivered safe endpoint, never for an unsupported ladder rung. */
+    public boolean containsDestination(NavCell cell) {
+        Objects.requireNonNull(cell, "cell");
+        for (TraversabilityEdge edge : edges.values()) {
+            if (edge.destination()
+                    && (edge.key().to().equals(cell)
+                            || edge.locomotion() == Locomotion.GROUND
+                                    && edge.key().from().equals(cell))) {
                 return true;
             }
         }
