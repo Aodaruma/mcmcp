@@ -329,6 +329,14 @@ final class FixturePhase5Scenario {
         for (BlockPos position : GENERALIZATION_SCAFFOLDING_UPPER_PLATFORM) {
             result.put(position, Blocks.SMOOTH_STONE.defaultBlockState());
         }
+        for (int x = GENERALIZATION_WIRE_LAMP_TARGET.getX() - 1;
+                x <= GENERALIZATION_WIRE_LEVER_TARGET.getX() + 1; x++) {
+            for (int z = GENERALIZATION_WIRE_LAMP_TARGET.getZ() - 1;
+                    z <= GENERALIZATION_WIRE_LAMP_TARGET.getZ() + 1; z++) {
+                result.put(new BlockPos(x, WORKSPACE_MIN.getY(), z),
+                        Blocks.AIR.defaultBlockState());
+            }
+        }
         for (BlockPos position : GENERALIZATION_WIRE_SUPPORTS) {
             result.put(position, Blocks.GLASS.defaultBlockState());
         }

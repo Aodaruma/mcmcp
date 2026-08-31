@@ -608,15 +608,15 @@ final class FixtureGameTests {
             helper.fail(Component.literal(
                     "Generalization wire targets must expose floor-level UP supports"));
         }
+        assertLayoutState(helper, generalization,
+                new BlockPos(205, wireFloorY, 204), Blocks.SMOOTH_STONE.defaultBlockState());
         for (int y = wireFloorY; y <= wireFloorY + 3; y++) {
             for (int x = 200; x <= 204; x++) {
                 for (int z = 203; z <= 205; z++) {
                     BlockPos position = new BlockPos(x, y, z);
                     BlockState expected = wireSupports.contains(position)
                             ? Blocks.GLASS.defaultBlockState()
-                            : y == FixturePhase5Scenario.WORKSPACE_MIN.getY()
-                                    ? Blocks.SMOOTH_STONE.defaultBlockState()
-                                    : Blocks.AIR.defaultBlockState();
+                            : Blocks.AIR.defaultBlockState();
                     if (!wireTargets.contains(position)) {
                         assertLayoutState(helper, generalization, position, expected);
                     }

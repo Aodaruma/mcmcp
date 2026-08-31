@@ -80,8 +80,9 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
   four-rung vanilla ladder and a separate four-block exact vanilla scaffolding column, each between
   floor-backed lower/upper landings; supported air cells for two-lamp fan-out; two removable glass
   blocks for clear-then-apply; and a vanilla double chest (`generic_9x6`) with deterministic
-  contents in both halves. A separate floor-level
-  three-cell glass-supported line supplies the lamp, redstone dust, and lever wire-identity layout.
+  contents in both halves. A separate floor-level three-cell line with isolated glass supports
+  supplies the lamp, redstone dust, and lever wire-identity layout while leaving its safety halo clear;
+  the retained floor at `205,199,204` is the nearest observation edge outside that halo.
   The player starts on the lower ladder landing with three lamps, two levers, one dust, two glass,
   and one smooth-stone block reserved for the one-step pillar smoke test.
 - `/mcmcp_fixture phase5 combined_wheat` — prepares the production-prompt wheat E2E. The player
