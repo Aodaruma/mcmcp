@@ -24,7 +24,7 @@
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
 - fresh評価turnまたはAgent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
-最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件設置する`apply_known_block_plan`と同じ安全blockを1〜8件撤去する`clear_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`、現在開いているVanilla `generic_9x1`〜`generic_9x6`純storageからopaque参照で1 stackを移す`operate_known_menu`、床付きlanding間の完全なVanilla ladderを上下4 rung以内で通る`navigate_to_known`を公開する。Phase 5ではlever 1入力からredstone lamp 1個、または固定配置の2個へ同じ値を出すidentity / fan-outを配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4拡張では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の同一Action内置換・256 block化、scaffolding / pillaring、一般資源入手、wireを含む一般回路合成は、同じ安全境界を維持して追加する。
+最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件設置する`apply_known_block_plan`と同じ安全blockを1〜8件撤去する`clear_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`、現在開いているVanilla `generic_9x1`〜`generic_9x6`純storageからopaque参照で1 stackを移す`operate_known_menu`、床付きlanding間の完全なVanilla ladderを上下4 rung以内で通る`navigate_to_known`を公開する。Phase 5ではlever 1入力からredstone lamp 1個、固定配置の2個、または1 dustだけを挟む直線1出力へ同じ値を出すidentityを配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4拡張では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の同一Action内置換・256 block化、scaffolding / pillaring、一般資源入手、可変長・曲がりを含む一般回路合成は、同じ安全境界を維持して追加する。
 
 ## 1. 対象環境
 
@@ -147,7 +147,7 @@ NeoForge公式の26.2 MDKもJava 25を対象としている。開発は公式の
 
 ### Phase 5: レッドストーン
 
-- 初回vertical slice: lever 1入力、redstone lamp 1出力identityまたは2出力の固定fan-outだけを扱う`apply_known_redstone_spec`
+- 公開vertical slice: lever 1入力に対し、redstone lampへの直接1出力、固定2出力fan-out、または1 dustだけを挟む直線1出力を扱う`apply_known_redstone_spec`
 - 各lampには現在可視の不活性なUP support、leverには現在可視の`minecraft:glass` UP supportを要求し、stationaryで通常設置する
 - leverのlamp以外の面隣接をLIVE current / visibleなairまたは直下glassに閉じ、live visualだけでlever / 全lampのOFF→ON→OFFを同tick集合として有限settle内に確認する
 - 真理値表と入出力を持つRedstoneSpec
@@ -743,7 +743,7 @@ Action DSL v1の制御構造:
 | harvest_known_wheat_batch | camera, block_break | 1〜8個の相異なる可視・既知かつ成熟済みwheatを入力順に収穫する |
 | apply_known_block_plan | camera, block_place | 完全な可視source stateをruntimeでmirror / rotationし、現在supportまたは明示先行dependency上へ1〜8 blockを入力順に通常設置する |
 | clear_known_block_plan | camera, block_break | 現在返却済みの完全stateが一致する安全建築blockを1〜8件、既存BREAK_TO_AIR経路で撤去し、freshなair再観測後に完了する |
-| apply_known_redstone_spec | camera, block_interact, block_place | 各lampの可視不活性supportとleverの可視glass supportを確認して固定lever→lamp 1出力identityまたは2出力fan-outを設置し、live visualで入出力のOFF / ON / OFFを試験する |
+| apply_known_redstone_spec | camera, block_interact, block_place | 固定lever→lamp 1出力、2出力fan-out、または1 dustの直線identityを設置し、live visualでOFF / ON / OFFを試験する。wire版はlamp / dust / leverの可視glass supportとdustの直線shape・power 0 / 15 / 0も完全一致させる |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のsingle chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
@@ -1262,11 +1262,11 @@ RedstoneSpec
   └─ max_footprint
 ~~~
 
-公開済みsliceは`apply_known_redstone_spec:{id,op,anchor,rotation,components:[{id,role,block}],truth_table:[{inputs:{input},outputs:{...}}],footprint:{x,y,z},timing:{settle_ticks}}`へ閉じる。`components`は`input/input/minecraft:lever`、`output/output/minecraft:redstone_lamp`に、fan-out時だけ`output_2/output/minecraft:redstone_lamp`を加える。1出力は`false→false / true→true`と`2x1x1`、2出力は両lampが入力と一致する2行と`3x1x1`、rotationは`0 / 90 / 180 / 270`、settleは1〜20 tickだけを受理する。`anchor`は最初のlamp targetであり、leverはrotation方向へ1 block、2個目のlampは同方向へ2 blockずらす。LLMにblock座標とnavigation座標を相互変換させず、runtimeがこの固定offsetだけを適用する。
+公開済みsliceは`apply_known_redstone_spec:{id,op,anchor,rotation,components:[{id,role,block}],truth_table:[{inputs:{input},outputs:{...}}],footprint:{x,y,z},timing:{settle_ticks}}`へ閉じる。`components`は`input/input/minecraft:lever`と`output/output/minecraft:redstone_lamp`を基礎に、fan-out時だけ`output_2/output/minecraft:redstone_lamp`、直線wire時だけ`wire/wire/minecraft:redstone_wire`を加える。直接1出力は`2x1x1`、fan-outと直線wireは`3x1x1`、rotationは`0 / 90 / 180 / 270`、settleは1〜20 tickだけを受理する。`anchor`は最初のlamp targetであり、直接版とfan-outのleverはrotation方向`+1`、fan-outの2個目lampは`+2`、wire版のdustは`+1`、leverは`+2`とする。LLMにblock座標とnavigation座標を相互変換させず、runtimeがこの固定offsetだけを適用する。
 
-plannerは各lamp直下の現在policy-visibleな不活性UP面と、lever直下の現在policy-visibleな`minecraft:glass` UP面を要求する。leverの6面隣接はlamp 1〜2、直下glass 1、残りcellのairに閉じ、airとglassを各配置前および各toggle直前に同じclient tickのLIVE current / visible observationで再確認する。targetとsupportはinteraction reach内、同じworld/session/revisionでなければならず、movement 0、break 0で固定する。実行開始前に自inventoryのlampを出力数分、leverを1個確認し、全lamp設置→lever設置→lever / 全lamp OFF観測→lever操作→lever / 全lamp ON観測→再操作→lever / 全lamp OFF観測の順を変えない。設置と操作は既存semantic action / universal safety / server reconciliationを再利用し、入出力は許可されたlive visual block observationだけで同じclient tickの集合として判定する。hidden power state、server MOD、command、raw input、任意packetは使わない。
+plannerは直接版とfan-outでは各lamp直下の現在policy-visibleな不活性UP面とlever直下の現在policy-visibleな`minecraft:glass` UP面を、wire版ではlamp / dust / lever直下の3つの現在policy-visibleなglass UP面を要求する。wire版は3 componentの周囲1 blockを固定glass / air envelopeとして最初の配置前にLIVE current / visible観測する。targetとsupportはinteraction reach内、同じworld/session/revisionでなければならず、movement 0、break 0で固定する。実行開始前に自inventoryのlampを出力数分、leverを1個、wire版ではredstoneを1個確認する。wire版はlamp設置→lever設置→dust設置後、lever / dust / lampを同じclient tickでOFF観測し、lever操作→ON観測→再操作→OFF観測する。設置と操作は既存semantic action / universal safety / server reconciliationを再利用し、hidden power state、server MOD、command、raw input、任意packetは使わない。
 
-静的worst-caseは`300 + 100 * output_count + 3 * settle_ticks` active tick、その50倍ms、camera 720度、interaction 2、placement `1 + output_count`、distance / break 0とする。途中失敗では未開始suffixを実行せず、完了済みmutationとbudgetを監査traceへ残し、terminal公開前に既存の入力解放契約を通す。wire、NOT、repeater、一般Blueprint変換、任意回路合成はこのopcodeで利用可能とは扱わない。
+静的worst-caseは`100 * (component_count + 2) + 3 * settle_ticks` active tick、その50倍ms、camera 720度、interaction 2、placement `component_count`、distance / break 0とする。途中失敗では未開始suffixを実行せず、完了済みmutationとbudgetを監査traceへ残し、terminal公開前に既存の入力解放契約を通す。wire版はlampを`anchor`、dustをrotation方向`+1`、leverを`+2`へ固定し、3つの可視glass UP support、直線shape、`power=0→15→0`を要求する。可変長・曲がり・wire付きfan-out、NOT、repeater、一般Blueprint変換、任意回路合成はこのopcodeで利用可能とは扱わない。
 
 ## 10. Reflex Governor
 
@@ -1626,9 +1626,9 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - `apply_known_block_plan`は1〜8 entry、offset各軸±8、entry ID / 変換後target一意、support unionの両nullable field明示、先行dependency一致を入力前に検証する
 - block planの`none/x/z` mirror後CW rotationが既存BlockPlan変換と一致し、offsetと完全BlockStateへ同じtransformを適用する
 - block planは入力順を維持し、1 entryあたり15,000 ms / 300 ticks / camera 80度 / 1 placement、distance / interaction / break 0の静的costから逸脱しない
-- `apply_known_redstone_spec`はlever入力1件・lamp出力1件または2件、各出力が入力と一致する真理値表2行、footprint 2x1x1または3x1x1、rotation 4種、settle 1〜20だけをschema / validator / compilerで一致して受理する
+- `apply_known_redstone_spec`はlever入力1件に対し、lamp出力1件、lamp出力2件、またはlamp出力1件と1 dustの直線のいずれかだけを受理する。各出力が入力と一致する真理値表2行、footprint 2x1x1または3x1x1、rotation 4種、settle 1〜20はschema / validator / compilerで一致させる
 - Redstone plannerは各lamp直下のcurrent visible inert UP supportとlever直下のcurrent visible glass UP supportを要求し、stationary requestの全target・aim・boundsへ同じrotationを変換する
-- Redstone実行は各配置・toggle直前にlever周囲のglass / airをLIVE再確認し、全lamp / lever設置、入出力集合のOFF / ON / OFF確認を入力順に行い、`300 + 100 * output_count + 3 * settle_ticks` tick / 2 interaction / `1 + output_count` placementから逸脱しない
+- Redstone実行は最初の配置前に固定fixtureのglass / airをLIVE再確認し、全component設置、入出力集合のOFF / ON / OFF確認を入力順に行う。直線wire版はdust shapeと`power=0→15→0`も同一tickで確認し、`100 * (component_count + 2) + 3 * settle_ticks` tick / 2 interaction / `component_count` placementから逸脱しない
 - Vanilla ladderは観測入口の上下4 rung以内だけを内部edge化し、支持床のあるlandingだけを公開目的地にする。欠損rung、低天井、fluidを拒否し、上下ともterminal時にmovement inputを解放する
 - `brew_known_potion_batch`は標準Potionの既知の1段recipe、1〜3本同数、blaze powder固定、開始時5 stand item slot空、internal brew time 0、fuel counter 0〜20を入力前に検証し、prechargedならinventory fuel投入を省略する
 - `craft_known_recipe`は同じrecipe query結果の24文字opaque refとSHA-256 fingerprint、crafting tableのexact state、component-exact絶対inventory目標1〜2,304、`max_crafts` 1〜3だけをschema / validator / runtimeで一致して受理する
@@ -1854,7 +1854,7 @@ world、mmc-pack.json、instance.cfg、既存jarは変更しない。
 - loopbackへ到達できないcloud-only MCP hostは利用できない
 - 遮蔽と半径を守る観測と未知危険の完全回避は両立しない
 - modded block、container、cropは現在の公開surfaceでは原則非対応。Phase 4以降も対象profileでversion固定し、受入済みMenu profileと必要最小限の固有adapterだけを追加する
-- 移動はscaffolding、SHIFT下降、仮blockによるpillaring、建築は同一Action内置換、MenuはMOD GUI profile、回路はwire / 任意回路合成が未対応
+- 移動はscaffolding、SHIFT下降、仮blockによるpillaring、建築は同一Action内置換、MenuはMOD GUI profile、回路は可変長・曲がり・wire付きfan-out・任意回路合成が未対応
 
 ### 接続時に確認する運用条件
 

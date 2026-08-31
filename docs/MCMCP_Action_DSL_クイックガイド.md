@@ -98,7 +98,7 @@ entry IDと変換後targetはplan内で一意、処理順は`entries`の入力�
 
 ## レッドストーンの最小slice
 
-`apply_known_redstone_spec`は、lever 1入力からlamp 1個、または固定配置のlamp 2個へ同じ値を出すidentity / fan-outだけを扱います。1個版は`2x1x1`、2個版は`output_2`を加えた`3x1x1`で、runtimeが`anchor`の最初のlamp、隣のlever、さらに隣の2個目のlampへrotationを適用します。各lampの不活性なUP supportとleverのglass UP supportをlive再検証し、全出力をOFF→ON→OFFで確認します。wire、repeater、NOT、任意回路の合成は未対応です。
+`apply_known_redstone_spec`は、lever 1入力からlampへ同じ値を出す3種の固定identityだけを扱います。直接1出力は`anchor`のlampとrotation方向`+1`のleverを使う`2x1x1`、2出力fan-outは`+2`に`output_2` lampを加える`3x1x1`です。直線wire版は`anchor`のlamp、`+1`の`wire/wire/minecraft:redstone_wire`、`+2`のleverを使う`3x1x1`で、3 blockすべてに可視なglass UP supportが必要です。runtimeはOFF→ON→OFFを同一tickのlive集合で確認し、wire版では直線shapeと`power=0→15→0`も完全一致させます。可変長・曲がり・wire付きfan-out・repeater・NOT・任意回路の合成は未対応です。
 
 ## 標準Potion醸造の最小slice
 

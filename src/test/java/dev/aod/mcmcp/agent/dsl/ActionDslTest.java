@@ -367,6 +367,25 @@ class ActionDslTest {
     }
 
     @Test
+    void parsesValidatesAndCompilesTheFixedStraightWireIdentity() {
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "block_interact", "block_place"),
+                applyKnownRedstoneWire("wire_identity", 270, 5),
+                budget(25_750, 515, 0, 720, 2, 0, 3)));
+
+        var redstone = (ActionDsl.ApplyKnownRedstoneSpec) request.program().body().getFirst();
+        assertThat(redstone.components()).contains(
+                new RedstoneSpec.Component(
+                        "wire", RedstoneSpec.Role.WIRE, "minecraft:redstone_wire"));
+        assertThat(redstone.truthTable()).allSatisfy(row ->
+                assertThat(row.outputs()).containsOnlyKeys("output"));
+        assertThat(ActionDslCompiler.compile(
+                request, ignored -> Optional.empty(), request.program().capabilities())
+                .worstCaseCost())
+                .isEqualTo(new ActionDslCompiler.Cost(25_750, 515, 0, 720, 2, 0, 3));
+    }
+
+    @Test
     void redstoneIdentityRejectsEveryShapeOutsideTheClosedSlice() {
         for (Consumer<JsonObject> mutation : List.<Consumer<JsonObject>>of(
                 node -> node.addProperty("rotation", 45),
@@ -1628,6 +1647,18 @@ class ActionDslTest {
             boolean value = object.getAsJsonObject("inputs").get("input").getAsBoolean();
             object.getAsJsonObject("outputs").addProperty("output_2", value);
         });
+        node.getAsJsonObject("footprint").addProperty("x", 3);
+        return node;
+    }
+
+    private static JsonObject applyKnownRedstoneWire(
+            String id, int rotation, int settleTicks) {
+        JsonObject node = applyKnownRedstoneSpec(id, rotation, settleTicks);
+        JsonObject wire = new JsonObject();
+        wire.addProperty("id", "wire");
+        wire.addProperty("role", "wire");
+        wire.addProperty("block", "minecraft:redstone_wire");
+        node.getAsJsonArray("components").add(wire);
         node.getAsJsonObject("footprint").addProperty("x", 3);
         return node;
     }

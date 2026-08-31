@@ -127,6 +127,72 @@ class KnownRedstoneIdentityAttemptTest {
     }
 
     @Test
+    void placesAndTestsTheFixedStraightWireInTheSameTickAsItsTruthTable() {
+        RedstoneIdentityRequest request = wireRequest();
+        var port = new FakePort(request);
+        var attempt = new KnownRedstoneIdentityAttempt(
+                port,
+                request,
+                tick -> List.of(currentLamp(request, tick, port.lampLit)),
+                tick -> currentLever(request, tick, port.leverPowered),
+                tick -> currentWire(request, tick, port.leverPowered ? 15 : 0),
+                tick -> currentHalo(request, tick, null),
+                1,
+                120);
+
+        KnownRedstoneIdentityAttempt.TickResult result = null;
+        for (long tick = 1; tick < 120; tick++) {
+            port.tick = tick;
+            result = attempt.tick(tick);
+            if (result.status() != KnownRedstoneIdentityAttempt.Status.RUNNING) break;
+        }
+
+        assertThat(result.status()).isEqualTo(KnownRedstoneIdentityAttempt.Status.SUCCEEDED);
+        assertThat(result.placed()).isEqualTo(3);
+        assertThat(result.interactions()).isEqualTo(2);
+        assertThat(result.outputObservations()).isEqualTo(3);
+        assertThat(port.dispatches).containsExactly(
+                "place:minecraft:redstone_lamp",
+                "place:minecraft:lever",
+                "place:minecraft:redstone",
+                "lever:true",
+                "lever:false");
+    }
+
+    @Test
+    void rejectsTheWireBeforeToggleWhenItsExactShapeIsWrong() {
+        RedstoneIdentityRequest request = wireRequest();
+        var port = new FakePort(request);
+        var attempt = new KnownRedstoneIdentityAttempt(
+                port,
+                request,
+                tick -> List.of(currentLamp(request, tick, port.lampLit)),
+                tick -> currentLever(request, tick, port.leverPowered),
+                tick -> currentState(
+                        request,
+                        request.wireTarget().orElseThrow(),
+                        tick,
+                        "minecraft:redstone_wire",
+                        Map.of(
+                                "north", "side", "east", "side", "south", "none",
+                                "west", "side", "power", "0")),
+                tick -> currentHalo(request, tick, null),
+                1,
+                120);
+
+        KnownRedstoneIdentityAttempt.TickResult result = null;
+        for (long tick = 1; tick < 120; tick++) {
+            port.tick = tick;
+            result = attempt.tick(tick);
+            if (result.status() != KnownRedstoneIdentityAttempt.Status.RUNNING) break;
+        }
+
+        assertThat(result.status()).isEqualTo(KnownRedstoneIdentityAttempt.Status.FAILED);
+        assertThat(result.evidence()).isEqualTo("redstone_output_changed");
+        assertThat(result.interactions()).isZero();
+    }
+
+    @Test
     void rejectsFanOutWhenOnlyOneLampFollowsTheInput() {
         RedstoneIdentityRequest request = fanOutRequest();
         var port = new FakePort(request);
@@ -366,6 +432,43 @@ class KnownRedstoneIdentityAttemptTest {
                 bounds);
     }
 
+    private static RedstoneIdentityRequest wireRequest() {
+        var lamp = new BlockTarget("minecraft:overworld", 0, 65, 0);
+        var wire = new BlockTarget("minecraft:overworld", 1, 65, 0);
+        var lever = new BlockTarget("minecraft:overworld", 2, 65, 0);
+        var bounds = new ActionBounds(
+                lamp.dimension(),
+                new BlockTarget(lamp.dimension(), 0, 64, 0),
+                new BlockTarget(lamp.dimension(), 2, 65, 0),
+                0, 30, false);
+        return new RedstoneIdentityRequest(
+                new RedstoneSpec(
+                        List.of(
+                                new RedstoneSpec.Component(
+                                        "input", RedstoneSpec.Role.INPUT, "minecraft:lever"),
+                                new RedstoneSpec.Component(
+                                        "output", RedstoneSpec.Role.OUTPUT,
+                                        "minecraft:redstone_lamp"),
+                                new RedstoneSpec.Component(
+                                        "wire", RedstoneSpec.Role.WIRE,
+                                        "minecraft:redstone_wire")),
+                        List.of(
+                                new RedstoneSpec.TruthRow(
+                                        Map.of("input", false), Map.of("output", false)),
+                                new RedstoneSpec.TruthRow(
+                                        Map.of("input", true), Map.of("output", true))),
+                        new RedstoneSpec.Footprint(3, 1, 1),
+                        0,
+                        new RedstoneSpec.ExecutionBounds(true, 2)),
+                UUID.randomUUID(),
+                List.of(lamp),
+                lever,
+                List.of(topAim(lamp)),
+                topAim(lever),
+                Optional.of(topAim(wire)),
+                bounds);
+    }
+
     private static BlockAimWitness topAim(BlockTarget target) {
         return new BlockAimWitness(
                 new BlockTarget(target.dimension(), target.x(), target.y() - 1, target.z()),
@@ -408,6 +511,17 @@ class KnownRedstoneIdentityAttemptTest {
                 powered);
     }
 
+    private static MinecraftObservationService.BlockSample currentWire(
+            RedstoneIdentityRequest request, long tick, int power) {
+        BlockStateFingerprint wire = request.wireState(power);
+        return currentState(
+                request,
+                request.wireTarget().orElseThrow(),
+                tick,
+                wire.blockId(),
+                wire.properties());
+    }
+
     private static MinecraftObservationService.BlockSample currentBlock(
             RedstoneIdentityRequest request,
             BlockTarget target,
@@ -421,7 +535,6 @@ class KnownRedstoneIdentityAttemptTest {
 
     private static List<MinecraftObservationService.BlockSample> currentHalo(
             RedstoneIdentityRequest request, long tick, BlockTarget blocked) {
-        BlockTarget support = request.leverPlacementAim().block();
         return request.leverSafetyHalo().stream()
                 .map(target -> currentState(
                         request,
@@ -429,7 +542,7 @@ class KnownRedstoneIdentityAttemptTest {
                         tick,
                         target.equals(blocked)
                                 ? "minecraft:stone"
-                                : target.equals(support) ? "minecraft:glass" : "minecraft:air",
+                                : request.safetyEnvelope().get(target).blockId(),
                         Map.of()))
                 .toList();
     }
@@ -489,6 +602,7 @@ class KnownRedstoneIdentityAttemptTest {
         private FakePort(RedstoneIdentityRequest request) {
             request.lampTargets().forEach(target -> states.put(target, AIR));
             states.put(request.leverTarget(), AIR);
+            request.wireTarget().ifPresent(target -> states.put(target, AIR));
         }
 
         @Override

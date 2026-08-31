@@ -21,6 +21,7 @@ public record RedstoneIdentityRequest(
         BlockTarget leverTarget,
         List<BlockAimWitness> lampPlacementAims,
         BlockAimWitness leverPlacementAim,
+        Optional<BlockAimWitness> wirePlacementAim,
         ActionBounds bounds) {
     private static final BlockStateFingerprint AIR =
             new BlockStateFingerprint("minecraft:air", Map.of());
@@ -39,6 +40,7 @@ public record RedstoneIdentityRequest(
         lampPlacementAims = List.copyOf(
                 Objects.requireNonNull(lampPlacementAims, "lampPlacementAims"));
         Objects.requireNonNull(leverPlacementAim, "leverPlacementAim");
+        Objects.requireNonNull(wirePlacementAim, "wirePlacementAim");
         Objects.requireNonNull(bounds, "bounds");
 
         if (lampTargets.size() != spec.outputCount()
@@ -58,16 +60,22 @@ public record RedstoneIdentityRequest(
             case 0, 180 -> 0;
             default -> throw new IllegalArgumentException("identity rotation is unsupported");
         };
-        BlockTarget expectedLever = offset(firstLamp, x, z);
+        BlockTarget expectedLever = offset(firstLamp, (1 + spec.wireCount()) * x,
+                (1 + spec.wireCount()) * z);
         if (spec.outputCount() == 2
                 && !offset(firstLamp, 2 * x, 2 * z).equals(lampTargets.get(1))) {
             throw new IllegalArgumentException("fan-out second lamp target is outside its fixed layout");
         }
+        Optional<BlockTarget> wireTarget = spec.wireCount() == 1
+                ? Optional.of(offset(firstLamp, x, z)) : Optional.empty();
         if (!expectedLever.equals(leverTarget)
+                || wirePlacementAim.isPresent() != wireTarget.isPresent()
                 || lampTargets.stream().anyMatch(target -> !bounds.contains(target))
                 || !bounds.contains(leverTarget)
+                || wireTarget.filter(target -> !bounds.contains(target)).isPresent()
                 || lampPlacementAims.stream().anyMatch(aim -> !bounds.contains(aim.block()))
                 || !bounds.contains(leverPlacementAim.block())
+                || wirePlacementAim.filter(aim -> !bounds.contains(aim.block())).isPresent()
                 || bounds.maxTravelBlocks() != 0
                 || bounds.allowBreak()
                 || bounds.maxDurationSeconds() > 30) {
@@ -77,6 +85,7 @@ public record RedstoneIdentityRequest(
             requireTopSupport(lampTargets.get(index), lampPlacementAims.get(index));
         }
         requireTopSupport(leverTarget, leverPlacementAim);
+        wirePlacementAim.ifPresent(aim -> requireTopSupport(wireTarget.orElseThrow(), aim));
 
         // Reuse the packet-adjacent request validation before this composite can be admitted.
         for (int index = 0; index < lampTargets.size(); index++) {
@@ -87,6 +96,23 @@ public record RedstoneIdentityRequest(
         new PlaceBlockRequest(
                 leverTarget, AIR, "minecraft:lever", LEVER_OFF,
                 bounds, Optional.of(leverPlacementAim));
+        if (wireTarget.isPresent()) {
+            new PlaceBlockRequest(
+                    wireTarget.orElseThrow(), AIR, "minecraft:redstone",
+                    wireState(spec, 0), bounds, wirePlacementAim);
+        }
+    }
+
+    public RedstoneIdentityRequest(
+            RedstoneSpec spec,
+            UUID worldSessionId,
+            List<BlockTarget> lampTargets,
+            BlockTarget leverTarget,
+            List<BlockAimWitness> lampPlacementAims,
+            BlockAimWitness leverPlacementAim,
+            ActionBounds bounds) {
+        this(spec, worldSessionId, lampTargets, leverTarget, lampPlacementAims,
+                leverPlacementAim, Optional.empty(), bounds);
     }
 
     public RedstoneIdentityRequest(
@@ -99,7 +125,7 @@ public record RedstoneIdentityRequest(
             ActionBounds bounds) {
         this(
                 spec, worldSessionId, List.of(lampTarget), leverTarget,
-                List.of(lampPlacementAim), leverPlacementAim, bounds);
+                List.of(lampPlacementAim), leverPlacementAim, Optional.empty(), bounds);
     }
 
     public BlockTarget lampTarget() {
@@ -130,6 +156,52 @@ public record RedstoneIdentityRequest(
                 bounds, Optional.of(leverPlacementAim));
     }
 
+    public Optional<BlockTarget> wireTarget() {
+        if (spec.wireCount() == 0) return Optional.empty();
+        int x = switch (spec.rotationDegrees()) {
+            case 0 -> 1;
+            case 180 -> -1;
+            case 90, 270 -> 0;
+            default -> throw new IllegalStateException("unsupported wire rotation");
+        };
+        int z = switch (spec.rotationDegrees()) {
+            case 90 -> 1;
+            case 270 -> -1;
+            case 0, 180 -> 0;
+            default -> throw new IllegalStateException("unsupported wire rotation");
+        };
+        return Optional.of(offset(lampTarget(), x, z));
+    }
+
+    public Optional<PlaceBlockRequest> wirePlacement() {
+        return wireTarget().map(target -> new PlaceBlockRequest(
+                target,
+                AIR,
+                "minecraft:redstone",
+                wireState(0),
+                bounds,
+                Optional.of(wirePlacementAim.orElseThrow())));
+    }
+
+    public BlockStateFingerprint wireState(int power) {
+        return wireState(spec, power);
+    }
+
+    private static BlockStateFingerprint wireState(RedstoneSpec spec, int power) {
+        if (spec.wireCount() != 1 || power < 0 || power > 15) {
+            throw new IllegalArgumentException("wire state is outside the fixed identity slice");
+        }
+        boolean xAxis = spec.rotationDegrees() == 0 || spec.rotationDegrees() == 180;
+        return new BlockStateFingerprint(
+                "minecraft:redstone_wire",
+                Map.of(
+                        "north", xAxis ? "none" : "side",
+                        "east", xAxis ? "side" : "none",
+                        "south", xAxis ? "none" : "side",
+                        "west", xAxis ? "side" : "none",
+                        "power", Integer.toString(power)));
+    }
+
     public InteractBlockRequest leverOn() {
         return new InteractBlockRequest(
                 leverTarget, LEVER_OFF, LEVER_ON, bounds, Optional.empty());
@@ -142,7 +214,16 @@ public record RedstoneIdentityRequest(
 
     /** Lever face-neighbors other than the adjacent lamps: glass below and air elsewhere. */
     public List<BlockTarget> leverSafetyHalo() {
-        return List.of(
+        return List.copyOf(safetyEnvelope().keySet());
+    }
+
+    /** Exact inert fixture cells checked before the first placement. */
+    public Map<BlockTarget, BlockStateFingerprint> safetyEnvelope() {
+        if (spec.wireCount() == 1) {
+            return wireSafetyEnvelope();
+        }
+        var result = new java.util.LinkedHashMap<BlockTarget, BlockStateFingerprint>();
+        List.of(
                         offset(leverTarget, 1, 0, 0),
                         offset(leverTarget, -1, 0, 0),
                         offset(leverTarget, 0, 1, 0),
@@ -151,7 +232,36 @@ public record RedstoneIdentityRequest(
                         offset(leverTarget, 0, 0, -1))
                 .stream()
                 .filter(target -> !lampTargets.contains(target))
-                .toList();
+                .forEach(target -> result.put(
+                        target,
+                        target.equals(leverPlacementAim.block())
+                                ? new BlockStateFingerprint("minecraft:glass", Map.of())
+                                : AIR));
+        return Map.copyOf(result);
+    }
+
+    private Map<BlockTarget, BlockStateFingerprint> wireSafetyEnvelope() {
+        var result = new java.util.LinkedHashMap<BlockTarget, BlockStateFingerprint>();
+        var targets = java.util.Set.of(lampTarget(), wireTarget().orElseThrow(), leverTarget);
+        int minimumX = targets.stream().mapToInt(BlockTarget::x).min().orElseThrow() - 1;
+        int maximumX = targets.stream().mapToInt(BlockTarget::x).max().orElseThrow() + 1;
+        int minimumZ = targets.stream().mapToInt(BlockTarget::z).min().orElseThrow() - 1;
+        int maximumZ = targets.stream().mapToInt(BlockTarget::z).max().orElseThrow() + 1;
+        int targetY = lampTarget().y();
+        var supports = java.util.Set.of(
+                lampPlacementAim().block(), wirePlacementAim.orElseThrow().block(),
+                leverPlacementAim.block());
+        for (int y = targetY - 1; y <= targetY + 1; y++) {
+            for (int x = minimumX; x <= maximumX; x++) {
+                for (int z = minimumZ; z <= maximumZ; z++) {
+                    var target = new BlockTarget(lampTarget().dimension(), x, y, z);
+                    if (targets.contains(target)) continue;
+                    result.put(target, supports.contains(target)
+                            ? new BlockStateFingerprint("minecraft:glass", Map.of()) : AIR);
+                }
+            }
+        }
+        return Map.copyOf(result);
     }
 
     private static BlockTarget offset(BlockTarget origin, int x, int z) {

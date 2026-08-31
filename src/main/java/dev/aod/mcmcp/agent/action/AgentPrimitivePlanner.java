@@ -16,6 +16,7 @@ import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 import dev.aod.mcmcp.observation.BlockPlan;
 import dev.aod.mcmcp.observation.BlockPlanStateTransformer;
 import dev.aod.mcmcp.observation.BlockStateView;
+import dev.aod.mcmcp.redstone.RedstoneSpec;
 import dev.aod.mcmcp.routine.KnownBrewingRequest;
 import dev.aod.mcmcp.routine.NavigationViewLease;
 import dev.aod.mcmcp.routine.SafePlacementSupportPolicy;
@@ -842,6 +843,10 @@ public final class AgentPrimitivePlanner {
             return input;
         }
         if (node instanceof ActionDsl.ApplyKnownRedstoneSpec redstone) {
+            var spec = new RedstoneSpec(
+                    redstone.components(), redstone.truthTable(), redstone.footprint(),
+                    redstone.rotation(),
+                    new RedstoneSpec.ExecutionBounds(true, redstone.timing().settleTicks()));
             ActionDsl.Position lampSupport = offset(redstone.anchor(), 0, -1, 0);
             int x = switch (redstone.rotation()) {
                 case 0 -> 1;
@@ -857,7 +862,9 @@ public final class AgentPrimitivePlanner {
                 default -> throw new PlanningException(
                         Code.TARGET_UNKNOWN, "Redstone rotation is outside the identity slice");
             };
-            ActionDsl.Position leverTarget = offset(redstone.anchor(), x, 0, z);
+            ActionDsl.Position leverTarget = offset(
+                    redstone.anchor(), (1 + spec.wireCount()) * x, 0,
+                    (1 + spec.wireCount()) * z);
             ActionDsl.Position leverSupport = offset(leverTarget, 0, -1, 0);
             MutationSurface lamp = requireRedstoneSupport(
                     map,
@@ -873,10 +880,12 @@ public final class AgentPrimitivePlanner {
                     leverSupport,
                     surfaceBarrierWorldRevision(
                             map, surfaceRevisionBarrier, leverSupport));
-            if (!"minecraft:glass".equals(lever.surface().block())) {
+            if (!"minecraft:glass".equals(lever.surface().block())
+                    || spec.wireCount() == 1
+                            && !"minecraft:glass".equals(lamp.surface().block())) {
                 throw new PlanningException(
                         Code.TARGET_UNKNOWN,
-                        "Redstone lever placement requires a current visible glass UP support");
+                        "Redstone placement requires the fixed current visible glass UP support");
             }
             knownSurfaces.add(lamp.surface());
             knownSurfaces.add(lever.surface());
@@ -886,7 +895,7 @@ public final class AgentPrimitivePlanner {
             mutationAims.put(
                     redstone.id() + "/lever",
                     new MutationAim(leverSupport, ActionDsl.BlockFace.UP, lever.point()));
-            if (redstone.components().size() == 3) {
+            if (spec.outputCount() == 2) {
                 ActionDsl.Position secondLampSupport = offset(
                         redstone.anchor(), 2 * x, -1, 2 * z);
                 MutationSurface secondLamp = requireRedstoneSupport(
@@ -899,11 +908,30 @@ public final class AgentPrimitivePlanner {
                 knownSurfaces.add(secondLamp.surface());
                 mutationAims.put(
                         redstone.id() + "/lamp_2",
-                        new MutationAim(
-                                secondLampSupport, ActionDsl.BlockFace.UP, secondLamp.point()));
+                            new MutationAim(
+                                    secondLampSupport, ActionDsl.BlockFace.UP, secondLamp.point()));
+            }
+            if (spec.wireCount() == 1) {
+                ActionDsl.Position wireSupport = offset(redstone.anchor(), x, -1, z);
+                MutationSurface wire = requireRedstoneSupport(
+                        map,
+                        latestFrame,
+                        input,
+                        wireSupport,
+                        surfaceBarrierWorldRevision(
+                                map, surfaceRevisionBarrier, wireSupport));
+                if (!"minecraft:glass".equals(wire.surface().block())) {
+                    throw new PlanningException(
+                            Code.TARGET_UNKNOWN,
+                            "Redstone wire placement requires a current visible glass UP support");
+                }
+                knownSurfaces.add(wire.surface());
+                mutationAims.put(
+                        redstone.id() + "/wire",
+                        new MutationAim(wireSupport, ActionDsl.BlockFace.UP, wire.point()));
             }
             merge(costs, node.id(), ActionDslCompiler.intrinsicKnownRedstoneCost(
-                    redstone.timing().settleTicks(), redstone.components().size() - 1));
+                    redstone.timing().settleTicks(), spec.outputCount(), spec.wireCount()));
             return input;
         }
         if (node instanceof ActionDsl.OpenKnownFenceGate gate) {

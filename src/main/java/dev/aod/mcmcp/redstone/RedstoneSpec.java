@@ -22,6 +22,10 @@ public record RedstoneSpec(
             new Component("input", Role.INPUT, "minecraft:lever"),
             new Component("output", Role.OUTPUT, "minecraft:redstone_lamp"),
             new Component("output_2", Role.OUTPUT, "minecraft:redstone_lamp"));
+    private static final Set<Component> WIRE_IDENTITY_COMPONENTS = Set.of(
+            new Component("input", Role.INPUT, "minecraft:lever"),
+            new Component("output", Role.OUTPUT, "minecraft:redstone_lamp"),
+            new Component("wire", Role.WIRE, "minecraft:redstone_wire"));
     private static final Set<TruthRow> IDENTITY_TRUTH_TABLE = Set.of(
             new TruthRow(Map.of("input", false), Map.of("output", false)),
             new TruthRow(Map.of("input", true), Map.of("output", true)));
@@ -45,12 +49,15 @@ public record RedstoneSpec(
                 && Set.copyOf(components).equals(IDENTITY_COMPONENTS);
         boolean fanOut = components.size() == FAN_OUT_COMPONENTS.size()
                 && Set.copyOf(components).equals(FAN_OUT_COMPONENTS);
-        if (!identity && !fanOut) {
+        boolean wireIdentity = components.size() == WIRE_IDENTITY_COMPONENTS.size()
+                && Set.copyOf(components).equals(WIRE_IDENTITY_COMPONENTS);
+        if (!identity && !fanOut && !wireIdentity) {
             throw new IllegalArgumentException(
-                    "identity slice requires one lever input and one or two lamp outputs");
+                    "identity slice requires one lever, one or two lamps, and at most one fixed wire");
         }
         Set<TruthRow> expectedTruthTable = fanOut ? FAN_OUT_TRUTH_TABLE : IDENTITY_TRUTH_TABLE;
-        Footprint expectedFootprint = fanOut ? FAN_OUT_FOOTPRINT : IDENTITY_FOOTPRINT;
+        Footprint expectedFootprint = fanOut || wireIdentity
+                ? FAN_OUT_FOOTPRINT : IDENTITY_FOOTPRINT;
         if (truthTable.size() != expectedTruthTable.size()
                 || !Set.copyOf(truthTable).equals(expectedTruthTable)) {
             throw new IllegalArgumentException(
@@ -70,10 +77,14 @@ public record RedstoneSpec(
     }
 
     public int outputCount() {
-        return components.size() - 1;
+        return (int) components.stream().filter(component -> component.role() == Role.OUTPUT).count();
     }
 
-    public enum Role { INPUT, OUTPUT }
+    public int wireCount() {
+        return (int) components.stream().filter(component -> component.role() == Role.WIRE).count();
+    }
+
+    public enum Role { INPUT, OUTPUT, WIRE }
 
     public record Component(String id, Role role, String blockId) {
         public Component {

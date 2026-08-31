@@ -190,7 +190,7 @@ class McpToolCatalogTest {
                 .contains("harvest_known_wheat_batch:{id,op,targets:[position]}")
                 .contains("apply_known_redstone_spec:{id,op,anchor,rotation,components:")
                 .contains("collect_visible_item_batch:{id,op,targets:[{displayed_item,target}]}")
-                .contains("(300 + 100*output_count + 3*settle_ticks) ticks")
+                .contains("100*(component_count+2) + 3*settle_ticks ticks")
                 .contains("up to the 720 camera-degree policy maximum")
                 .contains("split it into smaller batches instead of reordering at runtime")
                 .contains("operate_known_menu=inventory_transfer")
@@ -339,7 +339,9 @@ class McpToolCatalogTest {
                 .contains(
                         "identity slices only",
                         "fan-out slice",
-                        "minecraft:glass UP support",
+                        "straight-wire slice",
+                        "current visible minecraft:glass",
+                        "power 0, 15, and 0",
                         "same-client-tick live sets",
                         "never moves");
 
@@ -360,6 +362,19 @@ class McpToolCatalogTest {
         fanOutBudget.addProperty("max_ticks", 560);
         fanOutBudget.addProperty("max_blocks_placed", 3);
         assertThat(CatalogSchemaValidator.matches(schema, fanOut)).isTrue();
+
+        var wire = request.deepCopy();
+        var wireNode = wire.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject();
+        wireNode.getAsJsonArray("components").add(JsonParser.parseString("""
+                {"id":"wire","role":"wire","block":"minecraft:redstone_wire"}
+                """));
+        wireNode.getAsJsonObject("footprint").addProperty("x", 3);
+        var wireBudget = wire.getAsJsonObject("budget");
+        wireBudget.addProperty("max_duration_ms", 28_000);
+        wireBudget.addProperty("max_ticks", 560);
+        wireBudget.addProperty("max_blocks_placed", 3);
+        assertThat(CatalogSchemaValidator.matches(schema, wire)).isTrue();
 
         var unsupported = request.deepCopy();
         unsupported.getAsJsonObject("program").getAsJsonArray("body").get(0)

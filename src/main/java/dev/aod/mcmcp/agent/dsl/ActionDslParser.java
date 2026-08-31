@@ -406,7 +406,8 @@ public final class ActionDslParser {
         RedstoneSpec.Role parsedRole = switch (role) {
             case "input" -> RedstoneSpec.Role.INPUT;
             case "output" -> RedstoneSpec.Role.OUTPUT;
-            default -> throw invalid(path + ".role must be input or output");
+            case "wire" -> RedstoneSpec.Role.WIRE;
+            default -> throw invalid(path + ".role must be input, output, or wire");
         };
         return new RedstoneSpec.Component(
                 string(object.get("id"), path + ".id"),

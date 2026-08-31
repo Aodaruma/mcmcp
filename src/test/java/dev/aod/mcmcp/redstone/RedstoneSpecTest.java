@@ -15,6 +15,7 @@ class RedstoneSpecTest {
         for (int rotation : List.of(0, 90, 180, 270)) {
             assertThat(identity(rotation).rotationDegrees()).isEqualTo(rotation);
             assertThat(fanOut(rotation).outputCount()).isEqualTo(2);
+            assertThat(wireIdentity(rotation).wireCount()).isOne();
         }
     }
 
@@ -48,6 +49,8 @@ class RedstoneSpecTest {
                 () -> spec(components(), rows(), new RedstoneSpec.Footprint(3, 1, 1),
                         0, bounds()),
                 () -> spec(fanOutComponents(), rows(), fanOutFootprint(), 0, bounds()),
+                () -> spec(wireComponents(), fanOutRows(), fanOutFootprint(), 0, bounds()),
+                () -> spec(wireComponents(), rows(), footprint(), 0, bounds()),
                 () -> spec(components(), fanOutRows(), footprint(), 0, bounds()),
                 () -> spec(components(), rows(), footprint(), 45, bounds()),
                 () -> spec(components(), rows(), footprint(), 0,
@@ -69,6 +72,10 @@ class RedstoneSpecTest {
     private static RedstoneSpec fanOut(int rotation) {
         return spec(
                 fanOutComponents(), fanOutRows(), fanOutFootprint(), rotation, bounds());
+    }
+
+    private static RedstoneSpec wireIdentity(int rotation) {
+        return spec(wireComponents(), rows(), fanOutFootprint(), rotation, bounds());
     }
 
     private static RedstoneSpec spec(
@@ -102,6 +109,14 @@ class RedstoneSpecTest {
                 components().getLast(),
                 new RedstoneSpec.Component(
                         "output_2", RedstoneSpec.Role.OUTPUT, "minecraft:redstone_lamp"));
+    }
+
+    private static List<RedstoneSpec.Component> wireComponents() {
+        return List.of(
+                components().getFirst(),
+                components().getLast(),
+                new RedstoneSpec.Component(
+                        "wire", RedstoneSpec.Role.WIRE, "minecraft:redstone_wire"));
     }
 
     private static List<RedstoneSpec.TruthRow> fanOutRows() {

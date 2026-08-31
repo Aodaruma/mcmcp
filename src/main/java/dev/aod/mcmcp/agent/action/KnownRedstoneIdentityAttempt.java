@@ -4,12 +4,14 @@ import dev.aod.mcmcp.observation.BlockPosition;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.observation.ObservationProvenance;
 import dev.aod.mcmcp.redstone.RedstoneIdentityRequest;
+import dev.aod.mcmcp.routine.BlockStateFingerprint;
 import dev.aod.mcmcp.routine.BlockTarget;
 import dev.aod.mcmcp.routine.SemanticActionPort;
 import dev.aod.mcmcp.routine.SemanticActionRequest;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.LongFunction;
 
@@ -23,6 +25,7 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
     private final RedstoneIdentityRequest request;
     private final LongFunction<List<MinecraftObservationService.BlockSample>> lampObserver;
     private final LongFunction<MinecraftObservationService.BlockSample> leverObserver;
+    private final LongFunction<MinecraftObservationService.BlockSample> wireObserver;
     private final LongFunction<List<MinecraftObservationService.BlockSample>> haloObserver;
     private final long deadlineTick;
     private Phase phase = Phase.PLACE_LAMPS;
@@ -43,10 +46,24 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
             LongFunction<List<MinecraftObservationService.BlockSample>> haloObserver,
             long admittedClientTick,
             long deadlineTick) {
+        this(port, request, lampObserver, leverObserver, ignored -> null, haloObserver,
+                admittedClientTick, deadlineTick);
+    }
+
+    public KnownRedstoneIdentityAttempt(
+            SemanticActionPort port,
+            RedstoneIdentityRequest request,
+            LongFunction<List<MinecraftObservationService.BlockSample>> lampObserver,
+            LongFunction<MinecraftObservationService.BlockSample> leverObserver,
+            LongFunction<MinecraftObservationService.BlockSample> wireObserver,
+            LongFunction<List<MinecraftObservationService.BlockSample>> haloObserver,
+            long admittedClientTick,
+            long deadlineTick) {
         this.port = Objects.requireNonNull(port, "port");
         this.request = Objects.requireNonNull(request, "request");
         this.lampObserver = Objects.requireNonNull(lampObserver, "lampObserver");
         this.leverObserver = Objects.requireNonNull(leverObserver, "leverObserver");
+        this.wireObserver = Objects.requireNonNull(wireObserver, "wireObserver");
         this.haloObserver = Objects.requireNonNull(haloObserver, "haloObserver");
         if (admittedClientTick < 0L || deadlineTick <= admittedClientTick
                 || deadlineTick > saturatedAdd(admittedClientTick, MAX_TICKS)
@@ -64,7 +81,7 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
         if (clientTick >= deadlineTick) return fail("redstone_deadline", 0, 0);
         try {
             return switch (phase) {
-                case PLACE_LAMPS, PLACE_LEVER, SWITCH_ON, SWITCH_OFF ->
+                case PLACE_LAMPS, PLACE_LEVER, PLACE_WIRE, SWITCH_ON, SWITCH_OFF ->
                         tickMutation(clientTick);
                 case OBSERVE_INITIAL_OFF -> observeOutput(clientTick, false, Phase.SWITCH_ON);
                 case OBSERVE_ON -> observeOutput(clientTick, true, Phase.SWITCH_OFF);
@@ -101,13 +118,17 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
             return fail("redstone_transition_not_performed", 0, 0);
         }
 
-        if (phase == Phase.PLACE_LAMPS || phase == Phase.PLACE_LEVER) {
+        if (phase == Phase.PLACE_LAMPS
+                || phase == Phase.PLACE_LEVER
+                || phase == Phase.PLACE_WIRE) {
             placed++;
             if (phase == Phase.PLACE_LAMPS) {
                 nextLampIndex++;
                 if (nextLampIndex == request.lampTargets().size()) {
                     phase = Phase.PLACE_LEVER;
                 }
+            } else if (phase == Phase.PLACE_LEVER && request.wireTarget().isPresent()) {
+                phase = Phase.PLACE_WIRE;
             } else {
                 beginObservation(clientTick, Phase.OBSERVE_INITIAL_OFF);
             }
@@ -124,6 +145,7 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
         return switch (phase) {
             case PLACE_LAMPS -> request.lampPlacements().get(nextLampIndex);
             case PLACE_LEVER -> request.leverPlacement();
+            case PLACE_WIRE -> request.wirePlacement().orElseThrow();
             case SWITCH_ON -> request.leverOn();
             case SWITCH_OFF -> request.leverOff();
             default -> throw new IllegalStateException("redstone phase is not a mutation");
@@ -140,6 +162,7 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
         OutputObservation observed = outputObservation(
                 lampObserver.apply(clientTick),
                 leverObserver.apply(clientTick),
+                wireObserver.apply(clientTick),
                 clientTick,
                 expectedLit);
         if (observed == OutputObservation.TARGET_CHANGED) {
@@ -165,6 +188,7 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
     private OutputObservation outputObservation(
             List<MinecraftObservationService.BlockSample> lampSamples,
             MinecraftObservationService.BlockSample leverSample,
+            MinecraftObservationService.BlockSample wireSample,
             long clientTick,
             boolean expectedLit) {
         Objects.requireNonNull(lampSamples, "lamp observations");
@@ -182,7 +206,12 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
         if (lever == OutputObservation.TARGET_CHANGED) {
             return OutputObservation.TARGET_CHANGED;
         }
-        boolean allMatched = lever == OutputObservation.MATCHED;
+        OutputObservation wire = observedWire(wireSample, clientTick, expectedLit ? 15 : 0);
+        if (wire == OutputObservation.TARGET_CHANGED) {
+            return OutputObservation.TARGET_CHANGED;
+        }
+        boolean allMatched = lever == OutputObservation.MATCHED
+                && wire == OutputObservation.MATCHED;
         for (int index = 0; index < lampSamples.size(); index++) {
             OutputObservation lamp = observedProperty(
                     lampSamples.get(index),
@@ -198,6 +227,33 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
             allMatched &= lamp == OutputObservation.MATCHED;
         }
         return allMatched ? OutputObservation.MATCHED : OutputObservation.PENDING;
+    }
+
+    private OutputObservation observedWire(
+            MinecraftObservationService.BlockSample sample,
+            long clientTick,
+            int expectedPower) {
+        if (request.wireTarget().isEmpty()) {
+            return sample == null ? OutputObservation.MATCHED : OutputObservation.TARGET_CHANGED;
+        }
+        BlockTarget target = request.wireTarget().orElseThrow();
+        OutputObservation block = observedBlock(
+                sample, target, clientTick, "minecraft:redstone_wire");
+        if (block != OutputObservation.MATCHED) return block;
+        Map<String, String> expected = request.wireState(expectedPower).properties();
+        Map<String, String> actual = Objects.requireNonNull(
+                sample.observation(), "current wire observation").state().properties();
+        for (String direction : List.of("north", "east", "south", "west")) {
+            if (!expected.get(direction).equals(actual.get(direction))) {
+                return OutputObservation.TARGET_CHANGED;
+            }
+        }
+        String power = actual.get("power");
+        if (power == null || !power.matches("(?:[0-9]|1[0-5])")) {
+            return OutputObservation.TARGET_CHANGED;
+        }
+        return Integer.toString(expectedPower).equals(power)
+                ? OutputObservation.MATCHED : OutputObservation.PENDING;
     }
 
     private OutputObservation observedProperty(
@@ -250,21 +306,24 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
     private boolean haloClear(
             List<MinecraftObservationService.BlockSample> samples, long clientTick) {
         Objects.requireNonNull(samples, "redstone clearance observations");
-        List<BlockTarget> targets = request.leverSafetyHalo();
+        Map<BlockTarget, BlockStateFingerprint> expected = request.safetyEnvelope();
+        List<BlockTarget> targets = List.copyOf(expected.keySet());
         if (samples.size() != targets.size()) return false;
         var byPosition = new HashMap<BlockPosition, MinecraftObservationService.BlockSample>();
         for (var sample : samples) {
             if (sample == null || byPosition.put(sample.position(), sample) != null) return false;
         }
-        BlockTarget support = request.leverPlacementAim().block();
         for (BlockTarget target : targets) {
             var position = new BlockPosition(
                     target.dimension(), target.x(), target.y(), target.z());
-            String expectedBlock = target.equals(support) ? "minecraft:glass" : "minecraft:air";
             var sample = byPosition.get(position);
             if (sample == null
-                    || observedBlock(sample, target, clientTick, expectedBlock)
-                    != OutputObservation.MATCHED) {
+                    || observedBlock(
+                            sample, target, clientTick, expected.get(target).blockId())
+                            != OutputObservation.MATCHED
+                    || !expected.get(target).matches(new BlockStateFingerprint(
+                            sample.observation().state().block(),
+                            sample.observation().state().properties()))) {
                 return false;
             }
         }
@@ -301,6 +360,7 @@ public final class KnownRedstoneIdentityAttempt implements AutoCloseable {
     private enum Phase {
         PLACE_LAMPS,
         PLACE_LEVER,
+        PLACE_WIRE,
         OBSERVE_INITIAL_OFF,
         SWITCH_ON,
         OBSERVE_ON,

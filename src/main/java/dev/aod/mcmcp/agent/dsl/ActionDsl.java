@@ -253,7 +253,7 @@ public final class ActionDsl {
     public record Offset(int x, int y, int z) {
     }
 
-    /** Fixed one- or two-output lever-to-lamp identity circuit. */
+    /** Fixed direct, fan-out, or one-dust lever-to-lamp identity circuit. */
     public record ApplyKnownRedstoneSpec(
             String id,
             Position anchor,

@@ -114,8 +114,16 @@ public final class ActionDslCompiler {
             return cost;
         }
         if (node instanceof ActionDsl.ApplyKnownRedstoneSpec redstone) {
+            int outputCount = (int) redstone.components().stream()
+                    .filter(component -> component.role()
+                            == dev.aod.mcmcp.redstone.RedstoneSpec.Role.OUTPUT)
+                    .count();
+            int wireCount = (int) redstone.components().stream()
+                    .filter(component -> component.role()
+                            == dev.aod.mcmcp.redstone.RedstoneSpec.Role.WIRE)
+                    .count();
             Cost cost = intrinsicKnownRedstoneCost(
-                    redstone.timing().settleTicks(), redstone.components().size() - 1);
+                    redstone.timing().settleTicks(), outputCount, wireCount);
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }
@@ -281,14 +289,22 @@ public final class ActionDslCompiler {
 
     /** Structural bound for one or two lamps, one lever, two toggles, and three observations. */
     public static Cost intrinsicKnownRedstoneCost(int settleTicks, int outputCount) {
+        return intrinsicKnownRedstoneCost(settleTicks, outputCount, 0);
+    }
+
+    /** Structural bound for the closed direct, fan-out, and one-dust identity slices. */
+    public static Cost intrinsicKnownRedstoneCost(
+            int settleTicks, int outputCount, int wireCount) {
         if (settleTicks < 1
                 || settleTicks > dev.aod.mcmcp.redstone.RedstoneSpec.MAX_SETTLE_TICKS) {
             throw new IllegalArgumentException("redstone settle ticks are outside the closed bound");
         }
-        if (outputCount < 1 || outputCount > 2) {
-            throw new IllegalArgumentException("redstone output count is outside the closed bound");
+        if (outputCount < 1 || outputCount > 2
+                || wireCount < 0 || wireCount > 1
+                || outputCount == 2 && wireCount != 0) {
+            throw new IllegalArgumentException("redstone layout is outside the closed bound");
         }
-        long placements = outputCount + 1L;
+        long placements = outputCount + 1L + wireCount;
         long ticks = Math.addExact(
                 Math.multiplyExact(
                         placements + 2L, AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND),

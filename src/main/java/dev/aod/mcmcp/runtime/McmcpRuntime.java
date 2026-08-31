@@ -5015,9 +5015,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (agentExecution.redstoneAttempt == null) {
             var player = Objects.requireNonNull(minecraft.player, "player");
             var redstone = (ActionDsl.ApplyKnownRedstoneSpec) agentExecution.primitive;
-            int outputCount = redstone.components().size() - 1;
+            int outputCount = (int) redstone.components().stream()
+                    .filter(component -> component.role() == RedstoneSpec.Role.OUTPUT)
+                    .count();
+            int wireCount = (int) redstone.components().stream()
+                    .filter(component -> component.role() == RedstoneSpec.Role.WIRE)
+                    .count();
             if (inventoryItemCount(player, "minecraft:redstone_lamp") < outputCount
-                    || inventoryItemCount(player, "minecraft:lever") < 1) {
+                    || inventoryItemCount(player, "minecraft:lever") < 1
+                    || inventoryItemCount(player, "minecraft:redstone") < wireCount) {
                 failAgentAction(
                         AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
                         true,
@@ -5041,7 +5047,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         lampAims,
                         Objects.requireNonNull(
                                 agentExecution.mutationAims.get(redstone.id() + "/lever"),
-                                "lever aim"));
+                                "lever aim"),
+                        wireCount == 1
+                                ? Optional.of(Objects.requireNonNull(
+                                        agentExecution.mutationAims.get(redstone.id() + "/wire"),
+                                        "wire aim"))
+                                : Optional.empty());
             } catch (RuntimeException rejected) {
                 failAgentAction(
                         AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
@@ -5052,13 +5063,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             long deadline = Math.addExact(
                     session.clientTick(),
                     ActionDslCompiler.intrinsicKnownRedstoneCost(
-                            redstone.timing().settleTicks(), outputCount).ticks());
+                            redstone.timing().settleTicks(), outputCount, wireCount).ticks());
             List<BlockPosition> lamps = request.lampTargets().stream()
                     .map(target -> new BlockPosition(
                             target.dimension(), target.x(), target.y(), target.z()))
                     .toList();
             BlockTarget lever = request.leverTarget();
-            List<BlockPosition> halo = request.leverSafetyHalo().stream()
+            Optional<BlockPosition> wire = request.wireTarget().map(target -> new BlockPosition(
+                    target.dimension(), target.x(), target.y(), target.z()));
+            List<BlockPosition> halo = request.safetyEnvelope().keySet().stream()
                     .map(target -> new BlockPosition(
                             target.dimension(), target.x(), target.y(), target.z()))
                     .toList();
@@ -5076,6 +5089,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             new BlockPosition(
                                     lever.dimension(), lever.x(), lever.y(), lever.z()),
                             MinecraftObservationService.BlockSource.LIVE),
+                    tick -> wire.map(position -> observations.observeBlock(
+                                    minecraft,
+                                    tick,
+                                    position,
+                                    MinecraftObservationService.BlockSource.LIVE))
+                            .orElse(null),
                     tick -> observations.observeBlocks(
                             minecraft,
                             tick,
@@ -5430,7 +5449,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             AgentPrimitivePlanner.MutationAim lampAim,
             AgentPrimitivePlanner.MutationAim leverAim) {
         return redstoneIdentityRequest(
-                redstone, worldSessionId, List.of(lampAim), leverAim);
+                redstone, worldSessionId, List.of(lampAim), leverAim, Optional.empty());
     }
 
     static RedstoneIdentityRequest redstoneIdentityRequest(
@@ -5438,10 +5457,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             UUID worldSessionId,
             List<AgentPrimitivePlanner.MutationAim> lampAims,
             AgentPrimitivePlanner.MutationAim leverAim) {
+        return redstoneIdentityRequest(
+                redstone, worldSessionId, lampAims, leverAim, Optional.empty());
+    }
+
+    static RedstoneIdentityRequest redstoneIdentityRequest(
+            ActionDsl.ApplyKnownRedstoneSpec redstone,
+            UUID worldSessionId,
+            List<AgentPrimitivePlanner.MutationAim> lampAims,
+            AgentPrimitivePlanner.MutationAim leverAim,
+            Optional<AgentPrimitivePlanner.MutationAim> wireAim) {
         Objects.requireNonNull(redstone, "redstone");
         Objects.requireNonNull(worldSessionId, "worldSessionId");
         lampAims = List.copyOf(Objects.requireNonNull(lampAims, "lampAims"));
         Objects.requireNonNull(leverAim, "leverAim");
+        Objects.requireNonNull(wireAim, "wireAim");
         var spec = new RedstoneSpec(
                 redstone.components(),
                 redstone.truthTable(),
@@ -5465,18 +5495,27 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             default -> throw new IllegalArgumentException("unsupported redstone rotation");
         };
         var leverTarget = new BlockTarget(
-                anchor.dimension(), anchor.x() + x, anchor.y(), anchor.z() + z);
+                anchor.dimension(), anchor.x() + (1 + spec.wireCount()) * x, anchor.y(),
+                anchor.z() + (1 + spec.wireCount()) * z);
         var lampTargets = new ArrayList<BlockTarget>();
         lampTargets.add(firstLampTarget);
         if (spec.outputCount() == 2) {
             lampTargets.add(new BlockTarget(
                     anchor.dimension(), anchor.x() + 2 * x, anchor.y(), anchor.z() + 2 * z));
         }
+        Optional<BlockTarget> wireTarget = spec.wireCount() == 1
+                ? Optional.of(new BlockTarget(
+                        anchor.dimension(), anchor.x() + x, anchor.y(), anchor.z() + z))
+                : Optional.empty();
+        if (wireAim.isPresent() != wireTarget.isPresent()) {
+            throw new IllegalArgumentException("redstone wire aim does not match the specification");
+        }
         if (lampAims.size() != lampTargets.size()) {
             throw new IllegalArgumentException("redstone lamp aims do not match the specification");
         }
         var targets = new ArrayList<>(lampTargets);
         targets.add(leverTarget);
+        wireTarget.ifPresent(targets::add);
         var minimum = new BlockTarget(
                 anchor.dimension(),
                 targets.stream().mapToInt(BlockTarget::x).min().orElseThrow(),
@@ -5496,6 +5535,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 leverTarget,
                 lampAims.stream().map(McmcpRuntime::blockAimWitness).toList(),
                 blockAimWitness(leverAim),
+                wireAim.map(McmcpRuntime::blockAimWitness),
                 bounds);
     }
 
