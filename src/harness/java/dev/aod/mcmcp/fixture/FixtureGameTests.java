@@ -579,6 +579,22 @@ final class FixtureGameTests {
         assertLayoutState(helper, generalization,
                 FixturePhase5Scenario.GENERALIZATION_LADDER_UPPER_LANDING.below(),
                 Blocks.SMOOTH_STONE.defaultBlockState());
+        for (BlockPos cell : FixturePhase5Scenario.GENERALIZATION_SCAFFOLDING_COLUMN) {
+            assertLayoutState(helper, generalization, cell,
+                    FixturePhase5Scenario.generalizationScaffoldingState());
+        }
+        assertLayoutState(helper, generalization,
+                FixturePhase5Scenario.GENERALIZATION_SCAFFOLDING_LOWER_LANDING,
+                Blocks.AIR.defaultBlockState());
+        assertLayoutState(helper, generalization,
+                FixturePhase5Scenario.GENERALIZATION_SCAFFOLDING_LOWER_LANDING.below(),
+                Blocks.SMOOTH_STONE.defaultBlockState());
+        assertLayoutState(helper, generalization,
+                FixturePhase5Scenario.GENERALIZATION_SCAFFOLDING_UPPER_LANDING,
+                Blocks.AIR.defaultBlockState());
+        assertLayoutState(helper, generalization,
+                FixturePhase5Scenario.GENERALIZATION_SCAFFOLDING_UPPER_LANDING.below(),
+                Blocks.SMOOTH_STONE.defaultBlockState());
 
         var wireTargets = java.util.Set.of(
                 FixturePhase5Scenario.GENERALIZATION_WIRE_LAMP_TARGET,
@@ -678,6 +694,20 @@ final class FixtureGameTests {
         if (doubleChest == null || doubleChest.getContainerSize() != 54) {
             helper.fail(Component.literal(
                     "Generalization chest pair must expose one vanilla generic_9x6 container"));
+        }
+
+        BlockPos scaffoldingBase = new BlockPos(4, 1, 4);
+        helper.setBlock(scaffoldingBase.below(), Blocks.SMOOTH_STONE);
+        helper.setBlock(scaffoldingBase.relative(Direction.WEST).above(2), Blocks.SMOOTH_STONE);
+        for (int offset = 0; offset < 4; offset++) {
+            BlockPos cell = scaffoldingBase.above(offset);
+            helper.setBlock(cell, FixturePhase5Scenario.generalizationScaffoldingState());
+            BlockState actual = helper.getBlockState(cell);
+            if (!actual.equals(FixturePhase5Scenario.generalizationScaffoldingState())
+                    || !actual.canSurvive(helper.getLevel(), helper.absolutePos(cell))) {
+                helper.fail(Component.literal(
+                        "Generalization scaffolding column must stay exact and supported"));
+            }
         }
 
         // Exercise the same ordering as prepare(COMBINED_WHEAT): initial purge, layout-created

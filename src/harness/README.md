@@ -76,12 +76,13 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
   production smelting smoke test.
 - `/mcmcp_fixture phase5 redstone` — prepares supported air cells and supplies one redstone lamp
   and one lever for the bounded identity truth-table smoke test.
-- `/mcmcp_fixture phase5 generalization` — rebuilds one interference-free arena containing four
-  live-test zones: a four-rung vanilla ladder between floor-backed lower/upper landings; supported
-  air cells for two-lamp fan-out; two removable glass blocks for clear-then-apply; and a vanilla
-  double chest (`generic_9x6`) with deterministic contents in both halves. A separate elevated
+- `/mcmcp_fixture phase5 generalization` — rebuilds one interference-free arena containing a
+  four-rung vanilla ladder and a separate four-block exact vanilla scaffolding column, each between
+  floor-backed lower/upper landings; supported air cells for two-lamp fan-out; two removable glass
+  blocks for clear-then-apply; and a vanilla double chest (`generic_9x6`) with deterministic
+  contents in both halves. A separate elevated
   three-cell glass-supported line supplies the lamp, redstone dust, and lever wire-identity layout.
-  The player starts on the flat central floor with three lamps, two levers, one dust, and two glass.
+  The player starts on the lower ladder landing with three lamps, two levers, one dust, and two glass.
 - `/mcmcp_fixture phase5 combined_wheat` — prepares the production-prompt wheat E2E. The player
   starts in Survival with a completely empty inventory, facing a visible and normally reachable
   single chest containing one damage-37 vanilla iron hoe and 64 wheat seeds. A closed oak fence

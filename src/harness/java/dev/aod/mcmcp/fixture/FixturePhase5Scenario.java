@@ -21,6 +21,7 @@ import net.minecraft.world.item.crafting.Recipe;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ScaffoldingBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BedPart;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
@@ -71,6 +72,20 @@ final class FixturePhase5Scenario {
             new BlockPos(205, 202, 199), new BlockPos(205, 202, 200),
             new BlockPos(205, 202, 201), new BlockPos(206, 202, 199),
             new BlockPos(206, 202, 200), new BlockPos(206, 202, 201));
+    static final BlockPos GENERALIZATION_SCAFFOLDING_BASE = new BlockPos(200, 200, 199);
+    static final List<BlockPos> GENERALIZATION_SCAFFOLDING_COLUMN = List.of(
+            GENERALIZATION_SCAFFOLDING_BASE,
+            GENERALIZATION_SCAFFOLDING_BASE.above(),
+            GENERALIZATION_SCAFFOLDING_BASE.above(2),
+            GENERALIZATION_SCAFFOLDING_BASE.above(3));
+    static final BlockPos GENERALIZATION_SCAFFOLDING_LOWER_LANDING =
+            GENERALIZATION_SCAFFOLDING_BASE.relative(Direction.WEST);
+    static final BlockPos GENERALIZATION_SCAFFOLDING_UPPER_LANDING =
+            GENERALIZATION_SCAFFOLDING_LOWER_LANDING.above(3);
+    static final List<BlockPos> GENERALIZATION_SCAFFOLDING_UPPER_PLATFORM = List.of(
+            new BlockPos(198, 202, 198), new BlockPos(198, 202, 199),
+            new BlockPos(198, 202, 200), new BlockPos(199, 202, 198),
+            new BlockPos(199, 202, 199), new BlockPos(199, 202, 200));
     static final BlockPos GENERALIZATION_WIRE_LAMP_TARGET = new BlockPos(201, 201, 204);
     static final BlockPos GENERALIZATION_WIRE_TARGET =
             GENERALIZATION_WIRE_LAMP_TARGET.relative(Direction.EAST);
@@ -224,6 +239,8 @@ final class FixturePhase5Scenario {
                     + "->" + position(GENERALIZATION_WIRE_LEVER_TARGET)
                     + " ladder=" + position(GENERALIZATION_LADDER_LOWER_LANDING)
                     + "->" + position(GENERALIZATION_LADDER_UPPER_LANDING)
+                    + " scaffolding=" + position(GENERALIZATION_SCAFFOLDING_LOWER_LANDING)
+                    + "->" + position(GENERALIZATION_SCAFFOLDING_UPPER_LANDING)
                     + " construction=" + positions(GENERALIZATION_CONSTRUCTION_BLOCKS)
                     + " chest=" + position(GENERALIZATION_CHEST_WEST)
                     + ";" + position(GENERALIZATION_CHEST_EAST)
@@ -306,6 +323,12 @@ final class FixturePhase5Scenario {
         for (BlockPos position : GENERALIZATION_LADDER_UPPER_PLATFORM) {
             result.put(position, Blocks.SMOOTH_STONE.defaultBlockState());
         }
+        for (BlockPos position : GENERALIZATION_SCAFFOLDING_COLUMN) {
+            result.put(position, generalizationScaffoldingState());
+        }
+        for (BlockPos position : GENERALIZATION_SCAFFOLDING_UPPER_PLATFORM) {
+            result.put(position, Blocks.SMOOTH_STONE.defaultBlockState());
+        }
         for (BlockPos position : GENERALIZATION_WIRE_SUPPORTS) {
             result.put(position, Blocks.GLASS.defaultBlockState());
         }
@@ -316,6 +339,13 @@ final class FixturePhase5Scenario {
         return Blocks.LADDER.defaultBlockState()
                 .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST)
                 .setValue(BlockStateProperties.WATERLOGGED, false);
+    }
+
+    static BlockState generalizationScaffoldingState() {
+        return Blocks.SCAFFOLDING.defaultBlockState()
+                .setValue(ScaffoldingBlock.DISTANCE, 0)
+                .setValue(ScaffoldingBlock.BOTTOM, false)
+                .setValue(ScaffoldingBlock.WATERLOGGED, false);
     }
 
     static BlockState generalizationChestState(ChestType type) {
@@ -466,10 +496,14 @@ final class FixturePhase5Scenario {
     private static void applyGeneralizationLayout(ServerLevel level) {
         generalizationLayout().forEach((position, state) -> {
             if (!position.equals(GENERALIZATION_CHEST_WEST)
-                    && !position.equals(GENERALIZATION_CHEST_EAST)) {
+                    && !position.equals(GENERALIZATION_CHEST_EAST)
+                    && !GENERALIZATION_SCAFFOLDING_COLUMN.contains(position)) {
                 FixtureArena.setBlock(level, position, state);
             }
         });
+        for (BlockPos position : GENERALIZATION_SCAFFOLDING_COLUMN) {
+            FixtureArena.setBlock(level, position, generalizationScaffoldingState());
+        }
         FixtureArena.setPairedBlocks(
                 level,
                 GENERALIZATION_CHEST_WEST,
@@ -680,7 +714,7 @@ final class FixturePhase5Scenario {
             case TREE -> new Pose(201.5D, 200.0D, 198.5D, -90.0F, 8.0F);
             case SLEEP -> new Pose(193.5D, 200.0D, 204.5D, -90.0F, 18.0F);
             case SURVEY -> new Pose(200.5D, 200.0D, 204.5D, -90.0F, 12.0F);
-            case GENERALIZATION -> new Pose(198.5D, 200.0D, 200.5D, -90.0F, 12.0F);
+            case GENERALIZATION -> new Pose(205.5D, 200.0D, 200.5D, 90.0F, 0.0F);
             case IRON_FARM, RESET ->
                     throw new IllegalArgumentException(mode.wireName() + " has a separate pose");
         };
