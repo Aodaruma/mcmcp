@@ -34,7 +34,7 @@
 
 村人の取引画面を現在開いており、そのScreen・world session・container ID・open packet revisionと最新のserver取引packetがすべて一致する間だけ、`agent_get_state.merchant_offers`が現れます。各取引はitem ID / count、使用回数、在庫切れ、merchant level / XPを返し、エンチャント本は登録済みstored enchantmentのIDとlevelだけを返します。raw slot、component / NBT、lore、表示文字列、解決不能なenchantment IDは返しません。このread pathは画面を開く、取引する、職業ブロックを壊す・置く、厳選を自動反復する操作を行いません。
 
-現在開いているserver同期済みのVanilla `generic_9x1`〜`generic_9x6`純storage画面だけは、`agent_get_state.known_menu`に短寿命・single-useの`operation_ref`が現れます。各operationは表示された1 stack全量をstorageからplayer inventoryへ移すものだけで、raw slot番号、GUI座標、component / NBTは返しません。inventoryに全量の空きがないstackは候補から除外されます。
+現在開いているserver同期済みのVanilla `generic_9x1`〜`generic_9x6`純storage画面、または固定version/hash検証済みのSophisticated Backpacks通常storage画面では、`agent_get_state.known_menu`に短寿命・single-useの`operation_ref`が現れます。各operationは表示された1 stack全量をstorageからplayer inventoryへ移すものだけで、raw slot番号、GUI座標、component / NBTは返しません。inventoryに全量の空きがないstack、通常最大数を超えるstack、inaccessible slotは候補から除外されます。
 
 ## 座標を変換しない
 
@@ -92,9 +92,9 @@ entry IDと変換後targetはplan内で一意、処理順は`entries`の入力�
 
 ## 共通Menu操作の最小slice
 
-`operate_known_menu`は、ユーザーが現在開いているexactなVanilla `generic_9x1`〜`generic_9x6`純storage画面について、同じ`agent_get_state.known_menu.operations`から1件の`operation_ref`を無変換コピーして使います。現在のoperationは`transfer_to_player`だけで、1 stack全量を通常のQUICK_MOVE経路で移し、fresh server slot差分、他storage slot不変、player inventoryの完全multisetとcomponent-exact個数を確認してから画面を閉じます。
+`operate_known_menu`は、ユーザーが現在開いているexactなVanilla `generic_9x1`〜`generic_9x6`純storage画面、または`Sophisticated Backpacks 3.25.90 + Sophisticated Core 1.4.99`の通常`backpack`画面について、同じ`agent_get_state.known_menu.operations`から1件の`operation_ref`を無変換コピーして使います。MOD profileは起動時に両jarのSHA-256、Menu / Screen class、必要methodを固定値と照合し、未知buildでは現れません。現在のoperationは`transfer_to_player`だけで、1 stack全量を通常のQUICK_MOVE経路で移し、fresh server slot差分、他storageと全upgrade/protected slot不変、player inventoryの完全multisetとcomponent-exact個数を確認してから画面を閉じます。
 
-このnodeはtop-level bodyの最後に1回だけ置き、30秒、600 ticks、1 interactionを確保します。raw slot / GUI座標を推測せず、refが期限切れ、別画面、別revision、source変更なら新しいstateを取得します。player 2x2、専用workstation、MOD GUI profile、widget / canvas操作はまだこのsliceに含みません。
+このnodeはtop-level bodyの最後に1回だけ置き、30秒、600 ticks、1 interactionを確保します。raw slot / GUI座標を推測せず、refが期限切れ、別画面、別revision、source変更なら新しいstateを取得します。Sophisticated Backpacksではopen upgrade tab、extra slot、inaccessible / oversized stackを受理しません。player 2x2、専用workstation、backpack内craft/smelt、widget / canvas操作はまだこのsliceに含みません。
 
 ## レッドストーンの最小slice
 

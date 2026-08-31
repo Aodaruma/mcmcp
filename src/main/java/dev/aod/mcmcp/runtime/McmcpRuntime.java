@@ -262,6 +262,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     public McmcpRuntime(String modVersion, String neoForgeVersion) {
         this.modVersion = Objects.requireNonNull(modVersion, "modVersion");
         this.neoForgeVersion = Objects.requireNonNull(neoForgeVersion, "neoForgeVersion");
+        KnownMenuProfileSupport.initializeModProfiles();
         stationaryBreakPort = new MinecraftStationaryBreakPort(
                 Minecraft::getInstance,
                 sessions::snapshot,
@@ -2420,9 +2421,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         boolean truncated = false;
         long deadline = session.clientTick() > Long.MAX_VALUE - 1_200L
                 ? Long.MAX_VALUE : session.clientTick() + 1_200L;
-        for (int sourceSlot : context.storageSlots()) {
+        for (int sourceSlot : context.transferableStorageSlots()) {
             ItemStack source = context.menu().slots.get(sourceSlot).getItem();
-            if (source.isEmpty() || playerInventoryCapacity(context, source) < source.getCount()) {
+            if (!context.canTransferEntireStack(sourceSlot)) {
                 continue;
             }
             if (operations.size() == KnownMenuOperationRefs.MAX_LEASES) {
@@ -2470,21 +2471,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
         }
         return count;
-    }
-
-    private static int playerInventoryCapacity(
-            KnownMenuProfileSupport.Context context, ItemStack source) {
-        int capacity = 0;
-        for (int slot : context.playerSlots()) {
-            ItemStack actual = context.menu().slots.get(slot).getItem();
-            if (actual.isEmpty()) {
-                capacity = Math.addExact(capacity, source.getMaxStackSize());
-            } else if (ItemStack.isSameItemSameComponents(actual, source)) {
-                capacity = Math.addExact(
-                        capacity, Math.max(0, source.getMaxStackSize() - actual.getCount()));
-            }
-        }
-        return capacity;
     }
 
     static Map<String, Object> statePayload(

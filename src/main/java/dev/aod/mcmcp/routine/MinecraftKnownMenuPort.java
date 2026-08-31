@@ -6,6 +6,7 @@ import dev.aod.mcmcp.runtime.KnownMenuProfileSupport;
 import dev.aod.mcmcp.runtime.WorldSessionTracker;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.HashedStack;
 import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
@@ -165,7 +166,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
         var connection = Objects.requireNonNull(minecraft.getConnection(), "connection");
         var menu = context.menu();
         if (!menu.getCarried().isEmpty()
-                || !context.storageSlots().contains(sourceSlot)) {
+                || !context.canTransferEntireStack(sourceSlot)) {
             throw new IllegalStateException("known Menu click authority changed");
         }
         connection.send(new ServerboundContainerClickPacket(
@@ -264,7 +265,6 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
                         context.referenceContext(session.worldSessionId(), session.clientTick()));
         if (operation.isEmpty()
                 || !TRANSFER_TO_PLAYER.equals(operation.orElseThrow().operationKind())
-                || !context.storageSlots().contains(operation.orElseThrow().sourceSlot())
                 || !initialContextMatches(operation.orElseThrow(), context)) {
             return failure("KNOWN_MENU_OPERATION_REF_STALE",
                     RoutineFailure.Category.PRECONDITION, RoutineFailure.Recovery.REPLAN);
@@ -315,7 +315,8 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
             KnownMenuProfileSupport.Context context) {
         if (!operation.initialServerSlots().equals(context.snapshot().slots())
                 || operation.sourceSlot() < 0
-                || operation.sourceSlot() >= context.menu().slots.size()) return false;
+                || operation.sourceSlot() >= context.menu().slots.size()
+                || !context.canTransferEntireStack(operation.sourceSlot())) return false;
         ItemStack actual = context.menu().slots.get(operation.sourceSlot()).getItem();
         ItemStack expected = operation.exactStack();
         return actual.getCount() == expected.getCount()
@@ -328,12 +329,12 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
         List<ContainerSyncSignals.StackFingerprint> before = operation.initialServerSlots();
         List<ContainerSyncSignals.StackFingerprint> after = context.snapshot().slots();
         if (after.size() != before.size()
-                || !after.get(operation.sourceSlot()).empty()) return false;
-        for (int slot : context.storageSlots()) {
-            if (slot != operation.sourceSlot() && !after.get(slot).equals(before.get(slot))) {
-                return false;
-            }
-        }
+                || !after.get(operation.sourceSlot()).empty()
+                || !context.menu().getCarried().isEmpty()
+                || !context.snapshot().carried().empty()
+                || !immutableSlotsUnchanged(
+                        before, after, operation.sourceSlot(),
+                        context.storageSlots(), context.protectedSlots())) return false;
         Map<StackKey, Integer> expectedPlayers = multiset(before, context.playerSlots());
         StackKey moved = StackKey.of(operation.stack());
         expectedPlayers.merge(moved, operation.stack().count(), Math::addExact);
@@ -351,6 +352,22 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
                         == Math.addExact(operation.baselineExactComponentPlayerCount(),
                                 operation.stack().count())
                 && exactCount == operation.expectedExactComponentPlayerCount();
+    }
+
+    static boolean immutableSlotsUnchanged(
+            List<ContainerSyncSignals.StackFingerprint> before,
+            List<ContainerSyncSignals.StackFingerprint> after,
+            int sourceSlot,
+            List<Integer> storageSlots,
+            List<Integer> protectedSlots) {
+        if (before.size() != after.size()) return false;
+        for (int slot : storageSlots) {
+            if (slot != sourceSlot && !after.get(slot).equals(before.get(slot))) return false;
+        }
+        for (int slot : protectedSlots) {
+            if (!after.get(slot).equals(before.get(slot))) return false;
+        }
+        return true;
     }
 
     private static Map<StackKey, Integer> multiset(
@@ -488,7 +505,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
         private final String operationReference;
         private KnownMenuOperationRefs.Operation operation;
         private String profileHash;
-        private net.minecraft.client.gui.screens.inventory.ContainerScreen screenIdentity;
+        private AbstractContainerScreen<?> screenIdentity;
         private LocalPlayer playerIdentity;
         private Object levelIdentity;
         private Object connectionIdentity;

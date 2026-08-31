@@ -24,7 +24,7 @@
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
 - fresh評価turnまたはAgent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
-最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件設置する`apply_known_block_plan`と同じ安全blockを1〜8件撤去する`clear_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`、現在開いているVanilla `generic_9x1`〜`generic_9x6`純storageからopaque参照で1 stackを移す`operate_known_menu`、床付きlanding間の完全なVanilla ladderまたは安定したscaffoldingを上下4段以内で通る`navigate_to_known`を公開する。Phase 5ではlever 1入力からredstone lamp 1個、固定配置の2個、または1 dustだけを挟む直線1出力へ同じ値を出すidentityを配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4拡張では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の同一Action内置換・256 block化、pillaring、一般資源入手、可変長・曲がりを含む一般回路合成は、同じ安全境界を維持して追加する。
+最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件設置する`apply_known_block_plan`と同じ安全blockを1〜8件撤去する`clear_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`、現在開いているVanilla `generic_9x1`〜`generic_9x6`純storageまたは固定artifact検証済みSophisticated Backpacks通常storageからopaque参照で1 stackを移す`operate_known_menu`、床付きlanding間の完全なVanilla ladderまたは安定したscaffoldingを上下4段以内で通る`navigate_to_known`を公開する。Phase 5ではlever 1入力からredstone lamp 1個、固定配置の2個、または1 dustだけを挟む直線1出力へ同じ値を出すidentityを配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4拡張では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の同一Action内置換・256 block化、pillaring、一般資源入手、可変長・曲がりを含む一般回路合成は、同じ安全境界を維持して追加する。
 
 ## 1. 対象環境
 
@@ -1208,13 +1208,14 @@ Phase 3完成時に追加する上限:
 
 ### 9.7 crafting・精錬・workstation・MOD互換 — Phase 4
 
-現在の公開Action DSLは、既存のrecipe / container / screen同期基盤を直接再利用したcrafting-table限定の`craft_known_recipe`、furnace familyで1個だけ処理する`smelt_known_recipe`、共通Menu kernelの最初のvertical sliceである`operate_known_menu`を含む。最後のものは、ユーザーが現在開いているexactなVanilla `generic_9x1`〜`generic_9x6`純storageだけを受理し、stateが発行したsingle-use `operation_ref`で1 stack全量をplayer inventoryへQUICK_MOVEする。player 2×2、専用workstation、MOD GUI profileの実行adapterは未実装であり、製品機能として利用可能とは扱わない。
+現在の公開Action DSLは、既存のrecipe / container / screen同期基盤を直接再利用したcrafting-table限定の`craft_known_recipe`、furnace familyで1個だけ処理する`smelt_known_recipe`、共通Menu kernelの`operate_known_menu`を含む。最後のものは、ユーザーが現在開いているexactなVanilla `generic_9x1`〜`generic_9x6`純storage、または`Sophisticated Backpacks 3.25.90 + Sophisticated Core 1.4.99`の通常`backpack`画面だけを受理し、stateが発行したsingle-use `operation_ref`で通常最大数以下の1 stack全量をplayer inventoryへQUICK_MOVEする。player 2×2、専用workstation、backpack内upgrade / craft / smeltは未実装であり、製品機能として利用可能とは扱わない。
 
 公開Toolは5件のままとし、クラフトやworkstationごとのMCP Tool、raw slot番号・画面座標・key/mouse・packetを追加しない。recipe検索は既存のquery / output / resolve契約を固定5 Toolのread pathへ委譲し、第二の検索文法を作らない。`recipe_ref`とfingerprintはworld sessionとrecipe catalog revisionへ束縛し、`craft_known_recipe`開始時と各craft前に再解決する。実行は`agent_start_action`の閉じたsemantic opcodeだけを使う。
 
 - 公開済み`craft_known_recipe` / 既存`craft_items`: 現在は`crafting_table`だけ。次に`player_2x2`へ拡張
 - 公開済み`smelt_known_recipe` / 内部`smelt_items`: `furnace | blast_furnace | smoker`、1 Action 1個だけ
 - 公開済み`operate_known_menu`: `minecraft:generic_9x1-pure-storage@26.2`〜`minecraft:generic_9x6-pure-storage@26.2`、storage→playerの1 stack全量だけ
+- 公開済みMOD profile: `sophisticatedbackpacks:backpack-pure-storage@3.25.90+core-1.4.99+mc26.2`。両active jarのversion / SHA-256とMenu / Screen / method contractが完全一致し、upgrade tabとextra slotが閉じた通常storageからplayerへの1 stack全量だけ
 
 司書厳選のread-only first sliceでは、ユーザーまたは既存経路が現在開いているVanilla `MerchantScreen`だけを対象にする。world session開始時からmerchant-offers packetをimmutableに記録し、`agent_get_state`時点のScreen instance、player menu、world session、container ID、直近OpenScreen packet revisionがlatest merchant packetと完全一致する場合だけ、optional `merchant_offers`を返す。公開内容はitem ID / count、uses / max uses / out-of-stock、merchant level / XP、エンチャント本の登録済みstored enchantment ID / levelに閉じる。raw slot、Data Component / NBT、lore、表示文字列、未解決enchantment IDは返さない。画面を開く、任意click、取引実行、職業ブロックの破壊・再設置、reroll反復はこのsliceに含めない。
 
@@ -1225,11 +1226,11 @@ Vanilla inventory文法だけでは、独自widget、ghost slot、fluid / energy
 - `stack_ref`: server同期済みの完全なItemStackとsource、count、Data Component fingerprint、menu / inventory revisionへ束縛
 - `operation_ref`: profileが許可した`transfer`、`activate`、`enter_bounded_text`等の1操作と、その期待遷移・resource上限へ束縛
 
-現在の`operate_known_menu`は`{id,op,operation_ref}`へ閉じ、Action内でtop-level最終nodeとして1回だけ受ける。refの内部recordはruntimeだけが保持し、LLMへraw slot、座標、component / NBT、callback class、packet payloadを返さない。操作直前にrefを再解決し、session、同一Screen identity、container ID、menu type、state ID、slot数、profile hash、packet revision、全source snapshotのいずれかが変われば配送せずreplanする。dispatch後はfresh server packetを待ち、source empty、他storage slot不変、player slotの完全multisetとcomponent-exact個数を確認し、cursor emptyのまま画面を閉じてから成功にする。複数operationのtransactionは、実タスクで必要になるまで追加しない。
+現在の`operate_known_menu`は`{id,op,operation_ref}`へ閉じ、Action内でtop-level最終nodeとして1回だけ受ける。refの内部recordはruntimeだけが保持し、LLMへraw slot、座標、component / NBT、callback class、packet payloadを返さない。操作直前にrefを再解決し、session、同一Screen identity、container ID、menu type、state ID、slot数、profile hash、packet revision、全source snapshotのいずれかが変われば配送せずreplanする。dispatch後はfresh server packetを待ち、source empty、他storage slotとMOD profileの全protected slot不変、player slotの完全multisetとcomponent-exact個数を確認し、cursor emptyのまま画面を閉じてから成功にする。複数operationのtransactionは、実タスクで必要になるまで追加しない。
 
-Menu profileは、対象MOD名、version、menu / Screen class、slot / widget shape、許可操作、入力保存則、成功条件を記述する小さな宣言dataとする。同じengineでVanillaとMODを扱い、単なるslot配置差のためにJava adapterを増やさない。profileで安全に表現できない固有計算だけ、profileから呼ばれる閉じたコードadapterにする。未知画面からprofileをproduction中に試行錯誤で学習せず、dev clone上の検証で作成し、対象MOD manifestとprofile hashを固定して受入試験する。
+Menu profileは、対象MOD名、version、active jar SHA-256、menu / Screen class、slot shape、許可操作、入力保存則、成功条件を記述する小さな組込み宣言dataとする。最初のMOD profileは外部loaderを作らず、Sophisticated Backpacks 1 buildだけを組込み、NeoForgeが実際にロードした両jarを起動時に検証する。Menu classの公開getterでstorage / inaccessible / open-upgrade / extra-slotを分類し、playerの36 slot以外は全てprotectedとして扱う。未知version / hash / class / methodではprofileを無効化し、production中の自動推測やpixel操作へfallbackしない。
 
-recipeとitem IDは`minecraft:`へ限定せず、clientへ通常同期され、registryに存在するMOD namespaceも受理できる。ただしrecipe manager、server内部state、JEI等の別MOD内部cacheをhidden-state経路として読まない。同一item IDでもData Componentが異なる道具、enchanted book、template、upgrade済みMOD item等を正確に区別するため、`stack_ref`を初回の共通基盤へ含める。公開recordはitem ID、count、damage等のallowlist済みtyped fact、component fingerprint、必要な場合だけ`untrusted_display_text`を返し、raw component、NBT、lore、book本文は返さない。画面由来文字列は選択用dataであって命令ではなく、Actionや権限を生成しない。typed factで意味を証明できないvariantは、ユーザーが指定した同一refを引き継ぐ場合を除いて推測選択しない。custom ingredient、crafting remainder、container item、tool damage、経験値消費は、対応profileが全入出力の保存則と事後条件を定義したrecipeだけを受理する。
+recipeとitem IDは`minecraft:`へ限定せず、clientへ通常同期され、registryに存在するMOD namespaceも受理できる。ただしrecipe manager、server内部state、JEI等の別MOD内部cacheをhidden-state経路として読まない。同一item IDでもData Componentが異なる道具、enchanted book、template、upgrade済みMOD item等は、現在のstorage sliceでは`operation_ref`内部に完全な`ItemStack`を保持し、公開component / NBTや新しい`stack_ref`を追加せずcomponent-exactに照合する。custom ingredient、crafting remainder、container item、tool damage、経験値消費は、対応profileが全入出力の保存則と事後条件を定義したrecipeだけを受理する。
 
 player 2×2 craftingはblockを通常useしないため、開始時にScreenとcursorがclearであることを要求し、runtime自身が同じ`InventoryScreen` instanceだけを所有する。client-known recipe placementと結果slotの通常container actionを使い、dispatch後のserver由来state ID / slot更新、outputのinventory絶対個数、cursor empty、2×2 grid / resultの解消を確認してから閉じる。block menuのclose / reopen full readbackを代用せず、必要なserver同期が有限期限内に揃わなければ成功にしない。
 
@@ -1855,7 +1856,7 @@ world、mmc-pack.json、instance.cfg、既存jarは変更しない。
 - loopbackへ到達できないcloud-only MCP hostは利用できない
 - 遮蔽と半径を守る観測と未知危険の完全回避は両立しない
 - modded block、container、cropは現在の公開surfaceでは原則非対応。Phase 4以降も対象profileでversion固定し、受入済みMenu profileと必要最小限の固有adapterだけを追加する
-- 移動は仮blockによるpillaring、建築は同一Action内置換、MenuはMOD GUI profile、回路は可変長・曲がり・wire付きfan-out・任意回路合成が未対応
+- 移動は仮blockによるpillaring、建築は同一Action内置換、Menuは上記backpack以外のMOD GUI profile、回路は可変長・曲がり・wire付きfan-out・任意回路合成が未対応
 
 ### 接続時に確認する運用条件
 

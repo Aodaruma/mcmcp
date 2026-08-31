@@ -162,6 +162,13 @@ class McpToolCatalogTest {
                 .map(tool -> tool.getAsJsonObject().get("name").getAsString())
                 .toList();
         assertThat(names).containsExactlyElementsOf(McpToolCatalog.REQUIRED_NAMES);
+        String stateDescription = catalog.listResult().getAsJsonArray("tools").get(0)
+                .getAsJsonObject().get("description").getAsString();
+        assertThat(stateDescription)
+                .contains("Sophisticated Backpacks 3.25.90")
+                .contains("version/hash/class-fixed")
+                .contains("open upgrade/extra slots")
+                .contains("inaccessible or oversized stacks");
     }
 
     @Test
