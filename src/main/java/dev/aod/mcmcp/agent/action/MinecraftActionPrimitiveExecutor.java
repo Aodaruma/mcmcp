@@ -230,6 +230,11 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         if (edge == EdgeDecision.REPLAN) {
             return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
         }
+        int verticalDelta = effectiveVerticalDelta(
+                Integer.compare(waypoint.y(), planned.key().from().y()),
+                planned.locomotion(),
+                planned.targetSupport(),
+                waypoint.y() - player.getY());
         return driveNavigationWaypoint(
                 minecraft,
                 player,
@@ -240,7 +245,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 outputAllowed,
                 waypoint,
                 waypointTolerance,
-                Integer.compare(waypoint.y(), planned.key().from().y()),
+                verticalDelta,
                 planned.locomotion(),
                 edge);
     }
@@ -325,7 +330,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                                     waypoint.y() + player.getBbHeight() * 0.5D,
                                     waypoint.z() + 0.5D),
                             verticalDelta,
-                            locomotion));
+                            locomotion,
+                            waypointTolerance));
         }
         return runningNavigationResult(edge, !desired.isEmpty());
     }
@@ -736,6 +742,22 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             result.add(MovementInputLease.MovementKey.JUMP);
         }
         return Set.copyOf(result);
+    }
+
+    static int effectiveVerticalDelta(
+            int plannedVerticalDelta,
+            Locomotion locomotion,
+            TraversabilityEdge.TargetSupport targetSupport,
+            double remainingHeight) {
+        Objects.requireNonNull(locomotion, "locomotion");
+        Objects.requireNonNull(targetSupport, "targetSupport");
+        if (plannedVerticalDelta == 0
+                && locomotion == Locomotion.LADDER
+                && targetSupport == TraversabilityEdge.TargetSupport.CONFIRMED
+                && remainingHeight > STEP_EPSILON) {
+            return 1;
+        }
+        return plannedVerticalDelta;
     }
 
     public static Set<MovementInputLease.MovementKey> steering(

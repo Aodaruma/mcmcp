@@ -1,6 +1,5 @@
 package dev.aod.mcmcp.agent.safety;
 
-import dev.aod.mcmcp.McmcpMod;
 import dev.aod.mcmcp.client.AgentInputState;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
@@ -50,6 +49,7 @@ public final class LocalObservationVolume {
     private static final double MOVEMENT_EPSILON = 1.0E-7D;
     private static final double MAX_WALKING_DROP = 1.0D;
     private static final double MAX_LADDER_DESCENT_PER_TICK = 0.15D;
+    private static final double MAX_LADDER_ASCENT_PER_TICK = 0.20D;
     private static final double DROP_PROBE = 4.0D;
     static final int MAX_CLIMBABLE_RUNG_DELTA = 4;
     /*
@@ -536,23 +536,6 @@ public final class LocalObservationVolume {
                             ladderBackingClip,
                             intended,
                             resolved);
-            if (!safe && intent.locomotion() == Locomotion.LADDER) {
-                McmcpMod.LOGGER.warn(
-                        "MCMCP ladder movement rejected: pos=({}, {}, {}) target=({}, {}, {}) "
-                                + "intended=({}, {}, {}) resolved=({}, {}, {}) path={}/{}/{}/{}/{} "
-                                + "endpoint={}/{}/{}/{}/{} climbable={}/{}/{} landing={} "
-                                + "backing_clip={} bouncy={}/{}",
-                        player.getX(), player.getY(), player.getZ(),
-                        intent.target().x, intent.target().y, intent.target().z,
-                        intended.x, intended.y, intended.z,
-                        resolved.x, resolved.y, resolved.z,
-                        path.loaded(), path.clearance(), path.transition(), path.fluid(),
-                        path.hazard(),
-                        endpoint.loaded(), endpoint.clearance(), endpoint.fluid(),
-                        endpoint.hazard(), endpoint.suffocation(),
-                        sourceClimbable, resolvedClimbable, targetClimbable,
-                        targetLanding, ladderBackingClip, resolvedBouncy, targetBouncy);
-            }
             return safe;
         }
         if (intent.verticalDelta() < 0) {
@@ -609,6 +592,12 @@ public final class LocalObservationVolume {
         double horizontalBefore = square(start.x() - target.x()) + square(start.z() - target.z());
         double horizontalAfter = square(end.x() - target.x()) + square(end.z() - target.z());
         boolean horizontalNonDivergence = horizontalAfter <= horizontalBefore + MOVEMENT_EPSILON;
+        double horizontalToleranceSquared = square(intent.horizontalTolerance());
+        boolean withinHorizontalTolerance = horizontalBefore
+                        <= horizontalToleranceSquared + MOVEMENT_EPSILON
+                && horizontalAfter <= horizontalToleranceSquared + MOVEMENT_EPSILON;
+        boolean horizontalTargetProgress = horizontalAfter + MOVEMENT_EPSILON
+                < horizontalBefore;
         boolean exactLadderAscent = intent.locomotion() == Locomotion.LADDER
                 && intent.verticalDelta() > 0
                 && sourceClimbable
@@ -617,26 +606,47 @@ public final class LocalObservationVolume {
         // Vanilla applies the JUMP ladder boost after move(...). The first guarded move may
         // therefore retain the ladder's -0.15 descent clamp. A blocked path still requires the
         // exact backing clip; an otherwise ordinary rung path needs no collision exception.
+        // Steering stops inside the declared waypoint tolerance, so residual inertia may cross
+        // the exact center while remaining inside that already accepted circle.
         boolean plannedLadderAscentClip = exactLadderAscent
                 && ladderBackingClip
                 && path.clearance() == Clearance.BLOCKED
                 && path.transition() == Transition.BLOCKED
                 && (path.hazard() == Hazard.COLLISION || path.hazard() == Hazard.FALL)
                 && resolved.y >= -MAX_LADDER_DESCENT_PER_TICK - MOVEMENT_EPSILON
-                && horizontalNonDivergence
-                && intendedTowardNavigationTarget(start, intended, intent);
+                && (horizontalNonDivergence
+                        && intendedTowardNavigationTarget(start, intended, intent)
+                        || withinHorizontalTolerance);
         boolean ladderAscentBootstrap = exactLadderAscent
                 && resolved.y >= -MAX_LADDER_DESCENT_PER_TICK - MOVEMENT_EPSILON
                 && resolved.y <= MOVEMENT_EPSILON
-                && horizontalNonDivergence
-                && intendedTowardNavigationTarget(start, intended, intent)
+                && (horizontalNonDivergence
+                        && intendedTowardNavigationTarget(start, intended, intent)
+                        || withinHorizontalTolerance)
                 && (ordinaryPath || plannedLadderAscentClip);
+        // A same-level rung-to-floor edge can briefly clip the floor lip while the ladder descent
+        // clamp is still active. Keep this exception cardinal, targetward and bounded until the
+        // executor's verified supported-landing JUMP raises the player onto the floor.
+        boolean plannedLadderLandingLip = intent.locomotion() == Locomotion.LADDER
+                && intent.verticalDelta() >= 0
+                && sourceClimbable
+                && resolvedClimbable
+                && !targetClimbable
+                && targetLanding
+                && cardinalSameLevelTarget(start, target)
+                && path.clearance() == Clearance.BLOCKED
+                && path.transition() == Transition.BLOCKED
+                && (path.hazard() == Hazard.COLLISION || path.hazard() == Hazard.FALL)
+                && resolved.y >= -MAX_LADDER_DESCENT_PER_TICK - MOVEMENT_EPSILON
+                && resolved.y <= MAX_LADDER_ASCENT_PER_TICK + MOVEMENT_EPSILON
+                && intendedTowardNavigationTarget(start, intended, intent)
+                && horizontalTargetProgress;
         if (intent.locomotion() == Locomotion.GROUND
                 || !targetClimbable && !targetLanding
                 || path.loaded() != LoadedState.LOADED
                 || endpoint.loaded() != LoadedState.LOADED
                 || endpoint.clearance() != Clearance.CLEAR
-                || !ordinaryPath && !plannedLadderAscentClip
+                || !ordinaryPath && !plannedLadderAscentClip && !plannedLadderLandingLip
                 || path.fluid() != Fluid.NONE
                 || endpoint.fluid() != Fluid.NONE
                 || path.suffocation()
@@ -647,7 +657,15 @@ public final class LocalObservationVolume {
         if (!climbableContact && !goalIntendedMovementSafe(path)) {
             return false;
         }
-        return ladderAscentBootstrap || movesTowardNavigationTarget(start, end, intent);
+        return ladderAscentBootstrap
+                || plannedLadderLandingLip
+                || movesTowardNavigationTarget(start, end, intent);
+    }
+
+    private static boolean cardinalSameLevelTarget(Point start, Point target) {
+        int dx = Math.abs(Mth.floor(start.x()) - Mth.floor(target.x()));
+        int dz = Math.abs(Mth.floor(start.z()) - Mth.floor(target.z()));
+        return dx + dz == 1 && Mth.floor(start.y()) == Mth.floor(target.y());
     }
 
     private static boolean intendedTowardNavigationTarget(

@@ -83,6 +83,71 @@ class LocalObservationVolumeTest {
     }
 
     @Test
+    void ladderAscentAllowsOnlyToleranceBoundedCenteringOvershoot() {
+        var start = new Point(204.491190109D, 201.2176D, 200.5D);
+        var end = new Point(204.487496109D, 201.3352D, 200.5D);
+        var target = new Vec3(204.5D, 201.9D, 200.5D);
+        var clippedPath = ladderPath(
+                Clearance.BLOCKED, Transition.BLOCKED,
+                Fluid.NONE, false, Hazard.COLLISION);
+        var safeEndpoint = ladderEndpoint(
+                Clearance.CLEAR, Fluid.NONE, false, Hazard.NONE);
+        var intended = new Vec3(-0.074529D, 0.1176D, 0.0D);
+        var resolved = new Vec3(-0.003694D, 0.1176D, 0.0D);
+
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath, safeEndpoint, start, end,
+                new AgentInputState.NavigationIntent(target, 1, Locomotion.LADDER, 0.32D),
+                true, true, true, false, true, intended, resolved)).isTrue();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath, safeEndpoint, start, end,
+                new AgentInputState.NavigationIntent(target, 1, Locomotion.LADDER, 0.01D),
+                true, true, true, false, true, intended, resolved)).isFalse();
+    }
+
+    @Test
+    void ladderAllowsBoundedLipContactTowardAdjacentStableLanding() {
+        var start = new Point(204.67033D, 203.95156D, 200.5D);
+        var end = new Point(204.699997D, 203.80156D, 200.5D);
+        var target = new AgentInputState.NavigationIntent(
+                new Vec3(205.5D, 203.9D, 200.5D), 0, Locomotion.LADDER, 0.75D);
+        var clippedPath = ladderPath(
+                Clearance.BLOCKED, Transition.BLOCKED,
+                Fluid.NONE, false, Hazard.FALL);
+        var safeEndpoint = ladderEndpoint(
+                Clearance.CLEAR, Fluid.NONE, false, Hazard.FALL);
+        var intended = new Vec3(0.081877D, -0.15D, 0.0D);
+        var resolved = new Vec3(0.029667D, -0.15D, 0.0D);
+
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath, safeEndpoint, start, end, target,
+                true, true, false, true, false, intended, resolved)).isTrue();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath, safeEndpoint, start, end, target,
+                true, true, false, false, false, intended, resolved)).isFalse();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath, safeEndpoint, start, end, target,
+                true, false, false, true, false, intended, resolved)).isFalse();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath, safeEndpoint, start, end,
+                new AgentInputState.NavigationIntent(
+                        new Vec3(206.5D, 203.9D, 200.5D), 0, Locomotion.LADDER, 0.75D),
+                true, true, false, true, false, intended, resolved)).isFalse();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath, safeEndpoint, start,
+                new Point(204.640663D, 203.80156D, 200.5D), target,
+                true, true, false, true, false,
+                new Vec3(-0.081877D, -0.15D, 0.0D),
+                new Vec3(-0.029667D, -0.15D, 0.0D))).isFalse();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                clippedPath, safeEndpoint, start,
+                new Point(204.699997D, 203.80056D, 200.5D), target,
+                true, true, false, true, false,
+                new Vec3(0.081877D, -0.151D, 0.0D),
+                new Vec3(0.029667D, -0.151D, 0.0D))).isFalse();
+    }
+
+    @Test
     void ladderAscentAllowsBoundedNonDivergingBootstrapBeforeVanillaJumpBoost() {
         var start = new Point(204.669921664D, 200.9D, 200.5D);
         var bootstrapEnd = new Point(204.669921664D, 200.82D, 200.5D);

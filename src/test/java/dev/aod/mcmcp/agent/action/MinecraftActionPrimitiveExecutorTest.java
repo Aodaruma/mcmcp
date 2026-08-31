@@ -327,6 +327,25 @@ class MinecraftActionPrimitiveExecutorTest {
     }
 
     @Test
+    void supportedLadderLandingAddsJumpOnlyAfterFallingBelowItsHeight() {
+        assertThat(MinecraftActionPrimitiveExecutor.effectiveVerticalDelta(
+                0, Locomotion.LADDER,
+                TraversabilityEdge.TargetSupport.CONFIRMED, 0.2D)).isEqualTo(1);
+        assertThat(MinecraftActionPrimitiveExecutor.effectiveVerticalDelta(
+                0, Locomotion.LADDER,
+                TraversabilityEdge.TargetSupport.CONFIRMED, 0.0D)).isZero();
+        assertThat(MinecraftActionPrimitiveExecutor.effectiveVerticalDelta(
+                0, Locomotion.LADDER,
+                TraversabilityEdge.TargetSupport.ABSENT, 0.2D)).isZero();
+        assertThat(MinecraftActionPrimitiveExecutor.effectiveVerticalDelta(
+                0, Locomotion.SCAFFOLDING,
+                TraversabilityEdge.TargetSupport.CONFIRMED, 0.2D)).isZero();
+        assertThat(MinecraftActionPrimitiveExecutor.effectiveVerticalDelta(
+                -1, Locomotion.LADDER,
+                TraversabilityEdge.TargetSupport.CONFIRMED, 0.2D)).isEqualTo(-1);
+    }
+
+    @Test
     void settlementAcceptsCurrentSafeEvidenceWhileStandingOnAPressurePlate() {
         long revision = 12L;
         var plate = Blocks.OAK_PRESSURE_PLATE.defaultBlockState()

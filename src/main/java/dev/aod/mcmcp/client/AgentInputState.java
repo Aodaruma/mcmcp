@@ -618,9 +618,17 @@ public final class AgentInputState {
         }
     }
 
-    public record NavigationIntent(Vec3 target, int verticalDelta, Locomotion locomotion) {
+    public record NavigationIntent(
+            Vec3 target,
+            int verticalDelta,
+            Locomotion locomotion,
+            double horizontalTolerance) {
         public NavigationIntent(Vec3 target, int verticalDelta) {
             this(target, verticalDelta, Locomotion.GROUND);
+        }
+
+        public NavigationIntent(Vec3 target, int verticalDelta, Locomotion locomotion) {
+            this(target, verticalDelta, locomotion, 0.0D);
         }
 
         public NavigationIntent {
@@ -628,6 +636,12 @@ public final class AgentInputState {
             Objects.requireNonNull(locomotion, "locomotion");
             if (verticalDelta < -1 || verticalDelta > 1) {
                 throw new IllegalArgumentException("vertical delta must be within -1..1");
+            }
+            if (!Double.isFinite(horizontalTolerance)
+                    || horizontalTolerance < 0.0D
+                    || horizontalTolerance > 1.5D) {
+                throw new IllegalArgumentException(
+                        "horizontal tolerance must be within 0..1.5");
             }
         }
     }
