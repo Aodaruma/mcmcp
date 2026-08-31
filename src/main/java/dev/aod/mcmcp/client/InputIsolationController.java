@@ -42,7 +42,8 @@ public final class InputIsolationController {
      * focus or mouse-grab transition.</p>
      */
     public void reconcilePhysicalKeyMappings() {
-        boolean isolationActive = inputIsolationActive();
+        boolean isolationActive = isolatesPhysicalInput(
+                runtime.automationUiSnapshot().state());
         var action = physicalKeyMappingAction(previousIsolationActive, isolationActive);
         switch (action) {
             case RELEASE -> KeyMapping.releaseAll();
@@ -59,7 +60,7 @@ public final class InputIsolationController {
             event.setCanceled(true);
             return;
         }
-        if (!inputIsolationActive()) {
+        if (!isolatesPhysicalInput(runtime.automationUiSnapshot().state())) {
             return;
         }
 
@@ -74,19 +75,20 @@ public final class InputIsolationController {
     }
 
     public void onMouseScroll(InputEvent.MouseScrollingEvent event) {
-        if (inputIsolationActive()) {
+        if (isolatesPhysicalInput(runtime.automationUiSnapshot().state())) {
             event.setCanceled(true);
         }
     }
 
     public void onScreenMouseDragged(ScreenEvent.MouseDragged.Pre event) {
-        if (inputIsolationActive() || blocked(event.getMouseButton())) {
+        if (isolatesPhysicalInput(runtime.automationUiSnapshot().state())
+                || blocked(event.getMouseButton())) {
             event.setCanceled(true);
         }
     }
 
     public void onScreenMouseScrolled(ScreenEvent.MouseScrolled.Pre event) {
-        if (inputIsolationActive()) {
+        if (isolatesPhysicalInput(runtime.automationUiSnapshot().state())) {
             event.setCanceled(true);
         }
     }
@@ -99,10 +101,7 @@ public final class InputIsolationController {
             return false;
         }
         var decision = keyDecision(
-                current.runtime.automationUiSnapshot().state(),
-                current.inputIsolationActive(),
-                event.key(),
-                action);
+                current.runtime.automationUiSnapshot().state(), event.key(), action);
         return switch (decision) {
             case PASS, BLOCK -> decision.cancelsVanilla();
             case EMERGENCY_STOP -> {
@@ -115,39 +114,39 @@ public final class InputIsolationController {
     /** Called by the CharacterEvent and IME pre-edit mixin entry points. */
     public static boolean interceptTextInput() {
         var current = installed;
-        return current != null && current.inputIsolationActive();
+        return current != null && isolatesPhysicalInput(
+                current.runtime.automationUiSnapshot().state());
     }
 
     /** Called by MouseHandler#turnPlayer; raw mouse movement is otherwise untouched. */
     public static boolean interceptMouseTurn() {
         var current = installed;
-        return current != null && current.inputIsolationActive();
+        return current != null && isolatesPhysicalInput(
+                current.runtime.automationUiSnapshot().state());
     }
 
     static KeyDecision keyDecision(
             AutomationUiSnapshot.State state,
-            boolean isolationActive,
             int key,
             int action) {
         Objects.requireNonNull(state, "state");
         if (key == InputConstants.KEY_ESCAPE && action == InputConstants.PRESS) {
-            if (isolationActive) {
-                return KeyDecision.EMERGENCY_STOP;
-            }
             return switch (state) {
                 case EVALUATING, AGENT, RECOVERING -> KeyDecision.EMERGENCY_STOP;
                 case OFF, READY, FAULT -> KeyDecision.PASS;
             };
         }
-        return isolationActive || state == AutomationUiSnapshot.State.EVALUATING
+        return isolatesPhysicalInput(state)
                 ? KeyDecision.BLOCK
                 : KeyDecision.PASS;
     }
 
-    private boolean inputIsolationActive() {
-        return runtime.inputIsolationActive()
-                || runtime.automationUiSnapshot().state()
-                        == AutomationUiSnapshot.State.EVALUATING;
+    static boolean isolatesPhysicalInput(AutomationUiSnapshot.State state) {
+        Objects.requireNonNull(state, "state");
+        return switch (state) {
+            case EVALUATING, AGENT, RECOVERING -> true;
+            case OFF, READY, FAULT -> false;
+        };
     }
 
     private boolean blocked(int button) {

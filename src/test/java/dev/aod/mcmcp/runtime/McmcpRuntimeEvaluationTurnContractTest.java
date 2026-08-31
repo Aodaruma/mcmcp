@@ -262,14 +262,20 @@ class McmcpRuntimeEvaluationTurnContractTest {
     }
 
     @Test
-    void uiAndPhysicalIsolationReadTheSameGuardSnapshot() throws Exception {
+    void uiSnapshotIsTheSinglePhysicalIsolationAuthority() throws Exception {
         var runtime = classNode();
         assertThat(invocations(method(runtime, "automationUiSnapshot")))
                 .containsSubsequence(
                         "dev/aod/mcmcp/safety/EvaluationTurnGuard#snapshot",
                         "dev/aod/mcmcp/runtime/AutomationUiSnapshot#resolve");
-        assertThat(invocations(method(runtime, "inputIsolationActive")))
-                .contains("dev/aod/mcmcp/safety/EvaluationTurnGuard#snapshot");
+        assertThat(runtime.methods).noneMatch(method ->
+                method.name.equals("inputIsolationActive"));
+        var isolation = classNode(
+                "/dev/aod/mcmcp/client/InputIsolationController.class");
+        assertThat(isolation.methods.stream()
+                .flatMap(method -> invocations(method).stream()))
+                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#automationUiSnapshot")
+                .doesNotContain("dev/aod/mcmcp/runtime/McmcpRuntime#inputIsolationActive");
     }
 
     @Test

@@ -2,10 +2,9 @@ package dev.aod.mcmcp.safety;
 
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.client.AgentMovementInput;
-import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 
-/** Idempotent neutralization of every physical or agent input path automation may own. */
+/** Idempotent neutralization of every Agent-owned input path. */
 public final class InputReleaseController {
     public boolean releaseAll(Minecraft minecraft) {
         if (!minecraft.isSameThread()) {
@@ -24,11 +23,6 @@ public final class InputReleaseController {
             released = false;
         } finally {
             agentInput.suppressAllRetainingTrackedVelocity();
-        }
-        try {
-            KeyMapping.releaseAll();
-        } catch (RuntimeException | LinkageError failure) {
-            released = false;
         }
         var gameMode = minecraft.gameMode;
         if (player != null && player.input instanceof AgentMovementInput movementInput) {

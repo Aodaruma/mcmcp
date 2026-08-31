@@ -42,14 +42,12 @@ class InputIsolationContractTest {
     void onlyActiveEscPressStopsAndStillPassesToVanilla() {
         assertThat(InputIsolationController.keyDecision(
                 AutomationUiSnapshot.State.OFF,
-                false,
                 GLFW.GLFW_KEY_W,
                 InputConstants.PRESS))
                 .isEqualTo(InputIsolationController.KeyDecision.PASS);
 
         var escapePress = InputIsolationController.keyDecision(
                 AutomationUiSnapshot.State.AGENT,
-                true,
                 InputConstants.KEY_ESCAPE,
                 InputConstants.PRESS);
         assertThat(escapePress)
@@ -58,19 +56,16 @@ class InputIsolationContractTest {
 
         assertThat(InputIsolationController.keyDecision(
                 AutomationUiSnapshot.State.AGENT,
-                true,
                 InputConstants.KEY_ESCAPE,
                 InputConstants.RELEASE))
                 .isEqualTo(InputIsolationController.KeyDecision.BLOCK);
         assertThat(InputIsolationController.keyDecision(
                 AutomationUiSnapshot.State.RECOVERING,
-                true,
                 GLFW.GLFW_KEY_W,
                 InputConstants.PRESS))
                 .isEqualTo(InputIsolationController.KeyDecision.BLOCK);
         assertThat(InputIsolationController.keyDecision(
                 AutomationUiSnapshot.State.EVALUATING,
-                false,
                 GLFW.GLFW_KEY_W,
                 InputConstants.PRESS))
                 .isEqualTo(InputIsolationController.KeyDecision.BLOCK);
@@ -81,7 +76,6 @@ class InputIsolationContractTest {
     void evaluatingEscStopsTheTurnAndStillPassesToVanilla() {
         var decision = InputIsolationController.keyDecision(
                 AutomationUiSnapshot.State.EVALUATING,
-                true,
                 InputConstants.KEY_ESCAPE,
                 InputConstants.PRESS);
 
@@ -91,19 +85,28 @@ class InputIsolationContractTest {
     }
 
     @Test
-    void isolationStateMakesEscFailSafeEvenIfPresentationLagsToOffOrFault() {
+    void readyOffAndFaultAlwaysReturnEveryPhysicalKeyToVanilla() {
         for (var state : List.of(
                 AutomationUiSnapshot.State.OFF,
                 AutomationUiSnapshot.State.FAULT,
                 AutomationUiSnapshot.State.READY)) {
-            var decision = InputIsolationController.keyDecision(
-                    state,
-                    true,
-                    InputConstants.KEY_ESCAPE,
-                    InputConstants.PRESS);
-            assertThat(decision)
-                    .isEqualTo(InputIsolationController.KeyDecision.EMERGENCY_STOP);
-            assertThat(decision.cancelsVanilla()).isFalse();
+            assertThat(InputIsolationController.isolatesPhysicalInput(state)).isFalse();
+            for (int key : List.of(
+                    InputConstants.KEY_ESCAPE, GLFW.GLFW_KEY_T, GLFW.GLFW_KEY_SLASH)) {
+                assertThat(InputIsolationController.keyDecision(
+                        state, key, InputConstants.PRESS))
+                        .isEqualTo(InputIsolationController.KeyDecision.PASS);
+            }
+        }
+    }
+
+    @Test
+    void onlyEvaluatingAgentAndRecoveringOwnPhysicalInput() {
+        for (var state : List.of(
+                AutomationUiSnapshot.State.EVALUATING,
+                AutomationUiSnapshot.State.AGENT,
+                AutomationUiSnapshot.State.RECOVERING)) {
+            assertThat(InputIsolationController.isolatesPhysicalInput(state)).isTrue();
         }
     }
 
@@ -111,7 +114,6 @@ class InputIsolationContractTest {
     void readyEscPassesThroughWithoutStopping() {
         var readyEscape = InputIsolationController.keyDecision(
                 AutomationUiSnapshot.State.READY,
-                false,
                 InputConstants.KEY_ESCAPE,
                 InputConstants.PRESS);
         assertThat(readyEscape).isEqualTo(InputIsolationController.KeyDecision.PASS);
@@ -120,7 +122,7 @@ class InputIsolationContractTest {
         for (var state : List.of(
                 AutomationUiSnapshot.State.OFF, AutomationUiSnapshot.State.FAULT)) {
             assertThat(InputIsolationController.keyDecision(
-                    state, false, InputConstants.KEY_ESCAPE, InputConstants.PRESS))
+                    state, InputConstants.KEY_ESCAPE, InputConstants.PRESS))
                     .isEqualTo(InputIsolationController.KeyDecision.PASS);
         }
     }
@@ -184,6 +186,13 @@ class InputIsolationContractTest {
                 .contains(
                         "net/minecraft/client/KeyMapping#releaseAll",
                         "net/minecraft/client/KeyMapping#setAll");
+
+        var terminalRelease = classNode(
+                "/dev/aod/mcmcp/safety/InputReleaseController.class");
+        assertThat(invocations(method(terminalRelease, "releaseAll")))
+                .doesNotContain(
+                        "net/minecraft/client/KeyMapping#releaseAll",
+                        "net/minecraft/client/KeyMapping#setAll");
     }
 
     @Test
@@ -204,8 +213,6 @@ class InputIsolationContractTest {
             throws Exception {
         var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
 
-        assertThat(fieldAccesses(method(runtime, "inputIsolationActive")))
-                .doesNotContain("dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentInputRelease");
         assertThat(fieldAccesses(method(runtime, "returnControlReady")))
                 .contains(
                         "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentInputRelease",

@@ -621,14 +621,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 endpointFaultCode);
     }
 
-    public boolean inputIsolationActive() {
-        var session = sessions.snapshot();
-        // Pending cleanup already suppresses Agent output and fences the pre-tick. It must not
-        // keep swallowing physical input after the public control state has left AGENT/RECOVERING.
-        return arming.snapshot(session.worldSessionId()).inputIsolationActive()
-                || evaluationTurns.snapshot(session.worldSessionId()).active();
-    }
-
     /** May be called by the endpoint lifecycle worker; client-thread cleanup uses the priority lane. */
     public void reportEndpointFault(String code) {
         endpointFaultCode = sanitizeLocalCode(code);
