@@ -609,7 +609,14 @@ final class FixtureGameTests {
                     "Generalization wire targets must expose floor-level UP supports"));
         }
         assertLayoutState(helper, generalization,
-                new BlockPos(205, wireFloorY, 204), Blocks.SMOOTH_STONE.defaultBlockState());
+                FixturePhase5Scenario.GENERALIZATION_WIRE_OBSERVATION_PEDESTAL,
+                Blocks.SMOOTH_STONE.defaultBlockState());
+        assertLayoutState(helper, generalization,
+                FixturePhase5Scenario.GENERALIZATION_WIRE_OBSERVATION_PEDESTAL.below(),
+                Blocks.SMOOTH_STONE.defaultBlockState());
+        assertLayoutState(helper, generalization,
+                FixturePhase5Scenario.GENERALIZATION_WIRE_OBSERVATION_PEDESTAL.above(),
+                Blocks.AIR.defaultBlockState());
         for (int y = wireFloorY; y <= wireFloorY + 3; y++) {
             for (int x = 200; x <= 204; x++) {
                 for (int z = 203; z <= 205; z++) {

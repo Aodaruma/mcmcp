@@ -91,6 +91,8 @@ final class FixturePhase5Scenario {
             GENERALIZATION_WIRE_LAMP_TARGET.relative(Direction.EAST);
     static final BlockPos GENERALIZATION_WIRE_LEVER_TARGET =
             GENERALIZATION_WIRE_TARGET.relative(Direction.EAST);
+    static final BlockPos GENERALIZATION_WIRE_OBSERVATION_PEDESTAL =
+            GENERALIZATION_WIRE_LEVER_TARGET.relative(Direction.EAST, 2);
     static final List<BlockPos> GENERALIZATION_WIRE_SUPPORTS = List.of(
             GENERALIZATION_WIRE_LAMP_TARGET.below(),
             GENERALIZATION_WIRE_TARGET.below(),
@@ -340,6 +342,8 @@ final class FixturePhase5Scenario {
         for (BlockPos position : GENERALIZATION_WIRE_SUPPORTS) {
             result.put(position, Blocks.GLASS.defaultBlockState());
         }
+        result.put(GENERALIZATION_WIRE_OBSERVATION_PEDESTAL,
+                Blocks.SMOOTH_STONE.defaultBlockState());
         return Map.copyOf(result);
     }
 
