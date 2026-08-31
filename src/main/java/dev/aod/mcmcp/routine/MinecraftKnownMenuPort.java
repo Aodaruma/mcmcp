@@ -89,6 +89,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
             return attempt;
         }
         state.operation = operation;
+        state.profileHash = context.profile().profileHash();
         state.initialPacketRevision = context.snapshot().packetLedgerRevision();
         state.screenIdentity = context.screen();
         state.playerIdentity = minecraft.player;
@@ -164,7 +165,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
         var connection = Objects.requireNonNull(minecraft.getConnection(), "connection");
         var menu = context.menu();
         if (!menu.getCarried().isEmpty()
-                || sourceSlot < 0 || sourceSlot >= context.storageSlots().size()) {
+                || !context.storageSlots().contains(sourceSlot)) {
             throw new IllegalStateException("known Menu click authority changed");
         }
         connection.send(new ServerboundContainerClickPacket(
@@ -486,6 +487,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
         private final PhaseFiveRequest request;
         private final String operationReference;
         private KnownMenuOperationRefs.Operation operation;
+        private String profileHash;
         private net.minecraft.client.gui.screens.inventory.ContainerScreen screenIdentity;
         private LocalPlayer playerIdentity;
         private Object levelIdentity;
@@ -531,7 +533,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
                 pendingResult = new PhaseFiveResult(
                         operation.stack().count(), true,
                         Map.of("transferred_items", operation.stack().count(),
-                                "profile_hash", KnownMenuProfileSupport.PROFILE_HASH,
+                                "profile_hash", profileHash,
                                 "fresh_server_slot_delta", true),
                         List.of());
             }

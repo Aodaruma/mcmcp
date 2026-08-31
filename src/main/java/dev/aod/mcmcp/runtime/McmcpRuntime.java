@@ -2452,9 +2452,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     "expected_inventory_count", expected));
         }
         var payload = new LinkedHashMap<String, Object>();
-        payload.put("profile_id", KnownMenuProfileSupport.PROFILE_ID);
-        payload.put("profile_hash", KnownMenuProfileSupport.PROFILE_HASH);
-        payload.put("menu_type", KnownMenuProfileSupport.MENU_TYPE);
+        payload.put("profile_id", context.profile().profileId());
+        payload.put("profile_hash", context.profile().profileHash());
+        payload.put("menu_type", context.profile().menuType());
         payload.put("operations_truncated", truncated);
         payload.put("operations", List.copyOf(operations));
         return Map.copyOf(payload);
