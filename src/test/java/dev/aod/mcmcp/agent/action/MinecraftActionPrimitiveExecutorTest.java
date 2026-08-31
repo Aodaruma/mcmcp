@@ -8,6 +8,7 @@ import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.agent.navigation.RoutePlan;
 import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
+import dev.aod.mcmcp.agent.safety.Locomotion;
 import dev.aod.mcmcp.agent.safety.ObservationRecord;
 import dev.aod.mcmcp.routine.MovementInputLease;
 import net.minecraft.core.BlockPos;
@@ -303,6 +304,26 @@ class MinecraftActionPrimitiveExecutorTest {
                 1, 1.0D, 0.6D)).isTrue();
         assertThat(MinecraftActionPrimitiveExecutor.jumpRequired(
                 -1, -1.0D, 0.6D)).isFalse();
+    }
+
+    @Test
+    void scaffoldingUsesJumpUpAndCrouchDownWhileTrackingVerticalProgress() {
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(
+                java.util.Set.of(), 1, 1.0D, 0.6D, Locomotion.SCAFFOLDING))
+                .containsExactly(MovementInputLease.MovementKey.JUMP);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(
+                java.util.Set.of(), 1, 0.2D, 0.6D, Locomotion.SCAFFOLDING))
+                .containsExactly(MovementInputLease.MovementKey.JUMP);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(
+                java.util.Set.of(), -1, -1.0D, 0.6D, Locomotion.SCAFFOLDING))
+                .containsExactly(MovementInputLease.MovementKey.CROUCH);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(
+                java.util.Set.of(), -1, -1.0D, 0.6D, Locomotion.LADDER)).isEmpty();
+        var target = cell(0, 65, 0);
+        assertThat(MinecraftActionPrimitiveExecutor.navigationDistance(
+                0.5D, 64.0D, 0.5D, target, Locomotion.SCAFFOLDING)).isEqualTo(1.0D);
+        assertThat(MinecraftActionPrimitiveExecutor.navigationDistance(
+                0.5D, 64.5D, 0.5D, target, Locomotion.SCAFFOLDING)).isEqualTo(0.5D);
     }
 
     @Test

@@ -58,9 +58,9 @@ public record TraversabilityEdge(
             throw new IllegalArgumentException("edge tick and revision must be non-negative");
         }
         validateStatus(status, targetSupport, clearance, transition, fluid, hazard, locomotion);
-        if (locomotion == Locomotion.LADDER && !key.ladderAdjacent()) {
+        if (locomotion != Locomotion.GROUND && !key.climbableAdjacent()) {
             throw new IllegalArgumentException(
-                    "ladder edges must be vertical or cardinal horizontal transitions");
+                    "climbable edges must be vertical or cardinal horizontal transitions");
         }
     }
 
@@ -149,7 +149,7 @@ public record TraversabilityEdge(
             return from.distanceTo(to);
         }
 
-        boolean ladderAdjacent() {
+        boolean climbableAdjacent() {
             int dx = Math.abs(to.x() - from.x());
             int dy = Math.abs(to.y() - from.y());
             int dz = Math.abs(to.z() - from.z());

@@ -51,7 +51,7 @@ class MovementInputLeaseTest {
     }
 
     @Test
-    void ladderJumpCanPauseForDescentAndStillReleaseTheLease() {
+    void climbableVerticalInputCanChangeDirectionAndStillReleaseTheLease() {
         var control = new FakeControl();
         var owner = UUID.randomUUID();
         var lease = MovementInputLease.acquire(control, owner, 0, Duration.ofSeconds(1));
@@ -60,9 +60,9 @@ class MovementInputLeaseTest {
         assertThat(lease.heartbeat(owner, 1, Duration.ofSeconds(1))).isTrue();
         assertThat(control.lastApplied).containsExactly(MovementInputLease.MovementKey.JUMP);
 
-        lease.setDesired(owner, Set.of());
+        lease.setDesired(owner, Set.of(MovementInputLease.MovementKey.CROUCH));
         assertThat(lease.heartbeat(owner, 2, Duration.ofSeconds(1))).isTrue();
-        assertThat(control.lastApplied).isEmpty();
+        assertThat(control.lastApplied).containsExactly(MovementInputLease.MovementKey.CROUCH);
         assertThat(lease.active()).isTrue();
         assertThat(control.releases).isZero();
 

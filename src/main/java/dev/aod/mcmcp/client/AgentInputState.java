@@ -50,7 +50,17 @@ public final class AgentInputState {
             boolean left,
             boolean right,
             boolean jump) {
-        publishMovement(forward, backward, left, right, jump, 0L, false);
+        publishMovement(forward, backward, left, right, jump, false, 0L, false);
+    }
+
+    public synchronized void publishMovement(
+            boolean forward,
+            boolean backward,
+            boolean left,
+            boolean right,
+            boolean jump,
+            boolean crouch) {
+        publishMovement(forward, backward, left, right, jump, crouch, 0L, false);
     }
 
     public synchronized void publishMovement(
@@ -60,7 +70,18 @@ public final class AgentInputState {
             boolean right,
             boolean jump,
             long validUntilNanos) {
-        publishMovement(forward, backward, left, right, jump, validUntilNanos, true);
+        publishMovement(forward, backward, left, right, jump, false, validUntilNanos, true);
+    }
+
+    public synchronized void publishMovement(
+            boolean forward,
+            boolean backward,
+            boolean left,
+            boolean right,
+            boolean jump,
+            boolean crouch,
+            long validUntilNanos) {
+        publishMovement(forward, backward, left, right, jump, crouch, validUntilNanos, true);
     }
 
     private void publishMovement(
@@ -69,12 +90,13 @@ public final class AgentInputState {
             boolean left,
             boolean right,
             boolean jump,
+            boolean crouch,
             long validUntilNanos,
             boolean expiryRequired) {
         if (forward && backward || left && right) {
             throw new IllegalArgumentException("opposed agent movement cannot be published");
         }
-        movement = new MovementSnapshot(true, forward, backward, left, right, jump);
+        movement = new MovementSnapshot(true, forward, backward, left, right, jump, crouch);
         movementSuppressed = false;
         movementExpiryRequired = expiryRequired;
         movementValidUntilNanos = validUntilNanos;
@@ -525,22 +547,33 @@ public final class AgentInputState {
             boolean backward,
             boolean left,
             boolean right,
-            boolean jump) {
+            boolean jump,
+            boolean crouch) {
+        public MovementSnapshot(
+                boolean owned,
+                boolean forward,
+                boolean backward,
+                boolean left,
+                boolean right,
+                boolean jump) {
+            this(owned, forward, backward, left, right, jump, false);
+        }
+
         public MovementSnapshot {
             if (forward && backward || left && right) {
                 throw new IllegalArgumentException("opposed agent movement is invalid");
             }
-            if (!owned && (forward || backward || left || right || jump)) {
+            if (!owned && (forward || backward || left || right || jump || crouch)) {
                 throw new IllegalArgumentException("unowned movement must be neutral");
             }
         }
 
         private static MovementSnapshot unowned() {
-            return new MovementSnapshot(false, false, false, false, false, false);
+            return new MovementSnapshot(false, false, false, false, false, false, false);
         }
 
         private static MovementSnapshot ownedNeutral() {
-            return new MovementSnapshot(true, false, false, false, false, false);
+            return new MovementSnapshot(true, false, false, false, false, false, false);
         }
     }
 

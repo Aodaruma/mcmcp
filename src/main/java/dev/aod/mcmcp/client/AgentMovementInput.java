@@ -58,7 +58,7 @@ public final class AgentMovementInput extends KeyboardInput {
                 agent.left(),
                 agent.right(),
                 agent.jump(),
-                false,
+                agent.crouch(),
                 false);
         float forward = impulse(agent.forward(), agent.backward());
         float left = impulse(agent.left(), agent.right());

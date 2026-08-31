@@ -117,7 +117,7 @@ public final class LocalObservationProjector {
                 worldRevision,
                 source.locomotion());
         edges.add(edge);
-        if (source.locomotion() == Locomotion.LADDER && !edge.destination()) {
+        if (source.locomotion() != Locomotion.GROUND && !edge.destination()) {
             return;
         }
 
@@ -157,7 +157,7 @@ public final class LocalObservationProjector {
             dev.aod.mcmcp.agent.safety.ObservationRecord source) {
         boolean supported = source.support()
                         == dev.aod.mcmcp.agent.safety.ObservationRecord.Support.PRESENT
-                || source.locomotion() == Locomotion.LADDER
+                || source.locomotion() != Locomotion.GROUND
                         && source.support()
                                 == dev.aod.mcmcp.agent.safety.ObservationRecord.Support.ABSENT;
         boolean safe = supported

@@ -9,7 +9,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
-/** Renewable, owner-token-bound control of the five agent movement inputs used by navigation. */
+/** Renewable, owner-token-bound control of the agent movement inputs used by navigation. */
 public final class MovementInputLease implements AutoCloseable {
     public static final Duration MAX_HORIZON = Duration.ofSeconds(2);
     private static final long MAX_HORIZON_NANOS = MAX_HORIZON.toNanos();
@@ -181,7 +181,8 @@ public final class MovementInputLease implements AutoCloseable {
         BACK,
         LEFT,
         RIGHT,
-        JUMP
+        JUMP,
+        CROUCH
     }
 
     public interface MovementControl {
@@ -221,6 +222,7 @@ public final class MovementInputLease implements AutoCloseable {
                     keys.contains(MovementKey.LEFT),
                     keys.contains(MovementKey.RIGHT),
                     keys.contains(MovementKey.JUMP),
+                    keys.contains(MovementKey.CROUCH),
                     validUntilNanos);
         }
 

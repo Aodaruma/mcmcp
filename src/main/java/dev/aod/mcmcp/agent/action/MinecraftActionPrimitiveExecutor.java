@@ -270,13 +270,12 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         // a caller that wants camera motion must declare and execute face_known_position.
         Set<MovementInputLease.MovementKey> desired = steering(
                 player.getX(), player.getZ(), player.getYRot(), waypoint, waypointTolerance);
-        if (jumpRequired(
-                verticalDelta, waypoint.y() - player.getY(), player.maxUpStep())) {
-            var withJump = EnumSet.noneOf(MovementInputLease.MovementKey.class);
-            withJump.addAll(desired);
-            withJump.add(MovementInputLease.MovementKey.JUMP);
-            desired = Set.copyOf(withJump);
-        }
+        desired = withVerticalInput(
+                desired,
+                verticalDelta,
+                waypoint.y() - player.getY(),
+                player.maxUpStep(),
+                locomotion);
         Vec3 command = commandDirection(player.getYRot(), desired);
         if (command.horizontalDistanceSqr() > 0.0D) {
             double previewLength = Math.min(1.0D, horizontalDistance(player, waypoint));
@@ -286,7 +285,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 return finish(Status.REPLAN_REQUIRED, Reason.UNVERIFIED_MOVEMENT_VECTOR);
             }
         }
-        state.observeProgress(horizontalDistance(player, waypoint), clientTick);
+        state.observeProgress(navigationDistance(player, waypoint, locomotion), clientTick);
         if (state.stalled(clientTick)) {
             return finish(Status.REPLAN_REQUIRED, Reason.MOVEMENT_STALLED);
         }
@@ -699,6 +698,44 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
 
     private static double horizontalDistance(LocalPlayer player, NavCell cell) {
         return Math.hypot(cell.x() + 0.5D - player.getX(), cell.z() + 0.5D - player.getZ());
+    }
+
+    static double navigationDistance(
+            double playerX,
+            double playerY,
+            double playerZ,
+            NavCell cell,
+            Locomotion locomotion) {
+        double horizontal = Math.hypot(cell.x() + 0.5D - playerX, cell.z() + 0.5D - playerZ);
+        return locomotion == Locomotion.GROUND
+                ? horizontal : Math.hypot(horizontal, cell.y() - playerY);
+    }
+
+    private static double navigationDistance(
+            LocalPlayer player, NavCell cell, Locomotion locomotion) {
+        return navigationDistance(
+                player.getX(), player.getY(), player.getZ(), cell, locomotion);
+    }
+
+    static Set<MovementInputLease.MovementKey> withVerticalInput(
+            Set<MovementInputLease.MovementKey> horizontal,
+            int verticalDelta,
+            double remainingHeight,
+            double maxUpStep,
+            Locomotion locomotion) {
+        Objects.requireNonNull(horizontal, "horizontal");
+        Objects.requireNonNull(locomotion, "locomotion");
+        var result = horizontal.isEmpty()
+                ? EnumSet.noneOf(MovementInputLease.MovementKey.class)
+                : EnumSet.copyOf(horizontal);
+        if (locomotion == Locomotion.SCAFFOLDING && verticalDelta < 0) {
+            result.add(MovementInputLease.MovementKey.CROUCH);
+        } else if (locomotion != Locomotion.GROUND && verticalDelta > 0) {
+            result.add(MovementInputLease.MovementKey.JUMP);
+        } else if (jumpRequired(verticalDelta, remainingHeight, maxUpStep)) {
+            result.add(MovementInputLease.MovementKey.JUMP);
+        }
+        return Set.copyOf(result);
     }
 
     public static Set<MovementInputLease.MovementKey> steering(

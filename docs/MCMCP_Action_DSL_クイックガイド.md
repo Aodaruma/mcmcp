@@ -48,7 +48,7 @@
 
 移動用の整数feet-space座標と、block座標と、item entityの連続座標は別の型です。
 
-`navigate_to_known`は通常地形に加え、現在の局所観測で完全な`minecraft:ladder`が連続している列を、観測入口から上下4 rung以内だけ経路にできます。公開される目的地は床のあるlandingだけで、中間rungは内部経路に留まります。LLMはlandingの`navigation_target`をそのままコピーし、ladderのblock座標から目的地を計算しません。scaffolding、SHIFTを使う下降、仮blockによるpillaringは未対応です。
+`navigate_to_known`は通常地形に加え、現在の局所観測で完全な`minecraft:ladder`または乾いた安定済み`minecraft:scaffolding`が連続している列を、観測入口から上下4段以内だけ経路にできます。公開される目的地は床のあるlandingだけで、中間段は内部経路に留まります。scaffoldingは上昇時にJUMP、下降時だけSHIFTを使います。LLMはlandingの`navigation_target`をそのままコピーし、block座標から目的地を計算しません。仮blockによるpillaringは未対応です。
 
 ## 頻出nodeの必須field
 

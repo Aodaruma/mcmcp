@@ -52,4 +52,20 @@ class AgentMovementInputTest {
         assertThat(resolved.keyPresses()).isEqualTo(Input.EMPTY);
         assertThat(resolved.moveVector()).isEqualTo(Vec2.ZERO);
     }
+
+    @Test
+    void ownedCrouchMapsToVanillaShiftAndReleaseReturnsNeutral() {
+        var state = new AgentInputState();
+        state.publishMovement(false, false, false, false, false, true);
+
+        var crouching = AgentMovementInput.resolve(
+                Input.EMPTY, Vec2.ZERO, state.movementSnapshot());
+        assertThat(crouching.keyPresses())
+                .isEqualTo(new Input(false, false, false, false, false, true, false));
+
+        state.releaseMovement();
+        assertThat(AgentMovementInput.resolve(
+                Input.EMPTY, Vec2.ZERO, state.movementSnapshot()).keyPresses())
+                .isEqualTo(Input.EMPTY);
+    }
 }

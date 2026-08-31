@@ -9,10 +9,12 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ScaffoldingBlock;
 import net.minecraft.world.level.block.SweetBerryBushBlock;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.CollisionContext;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -46,7 +48,7 @@ public final class LocalObservationVolume {
     private static final double MOVEMENT_EPSILON = 1.0E-7D;
     private static final double MAX_WALKING_DROP = 1.0D;
     private static final double DROP_PROBE = 4.0D;
-    static final int MAX_LADDER_RUNG_DELTA = 4;
+    static final int MAX_CLIMBABLE_RUNG_DELTA = 4;
     /*
      * Radius stays large enough to reconnect a just-opened gate, but the
      * synchronous game-thread search has a strict work budget.  Breadth-first
@@ -499,21 +501,27 @@ public final class LocalObservationVolume {
                 1,
                 worldRevision);
         var path = atTick(evaluated.record(), observedTick);
-        if (intent.locomotion() == Locomotion.LADDER) {
+        if (intent.locomotion() != Locomotion.GROUND) {
             var endpoint = endpointSafety(player, level, startPoint, evaluated.endBox());
             var targetBox = start.move(intent.target().subtract(start.getCenter()));
+            boolean sourceClimbable = safeClimbableCell(
+                    player, level, startPoint, start, intent.locomotion());
+            boolean resolvedClimbable = safeClimbableCell(
+                    player, level, startPoint, evaluated.endBox(), intent.locomotion());
+            boolean targetClimbable = safeClimbableCell(
+                    player, level, startPoint, targetBox, intent.locomotion());
             return !bouncySupport(level, player, evaluated.endBox())
                     && !bouncySupport(level, player, targetBox)
-                    && ladderNavigationMovementSafe(
+                    && climbableNavigationMovementSafe(
                             path,
                             endpoint,
                             startPoint,
                             point(evaluated.endBox().getCenter()),
                             intent,
-                            safeLadderCell(player, level, startPoint, start),
-                            safeLadderCell(player, level, startPoint, evaluated.endBox()),
-                            safeLadderCell(player, level, startPoint, targetBox),
-                            !exactLadderAtFeet(level, targetBox)
+                            sourceClimbable,
+                            resolvedClimbable,
+                            targetClimbable,
+                            !exactClimbableAtFeet(level, targetBox, intent.locomotion())
                                     && stableLanding(player, level, startPoint, targetBox));
         }
         if (intent.verticalDelta() < 0) {
@@ -542,23 +550,23 @@ public final class LocalObservationVolume {
                         startPoint, point(evaluated.endBox().getCenter()), intent);
     }
 
-    static boolean ladderNavigationMovementSafe(
+    static boolean climbableNavigationMovementSafe(
             ObservationRecord path,
             EndpointSafety endpoint,
             Point start,
             Point end,
             AgentInputState.NavigationIntent intent,
-            boolean sourceLadder,
-            boolean resolvedLadder,
-            boolean targetLadder,
+            boolean sourceClimbable,
+            boolean resolvedClimbable,
+            boolean targetClimbable,
             boolean targetLanding) {
         Objects.requireNonNull(path, "path");
         Objects.requireNonNull(endpoint, "endpoint");
         Objects.requireNonNull(start, "start");
         Objects.requireNonNull(end, "end");
         Objects.requireNonNull(intent, "intent");
-        if (intent.locomotion() != Locomotion.LADDER
-                || !targetLadder && !targetLanding
+        if (intent.locomotion() == Locomotion.GROUND
+                || !targetClimbable && !targetLanding
                 || path.loaded() != LoadedState.LOADED
                 || endpoint.loaded() != LoadedState.LOADED
                 || path.clearance() != Clearance.CLEAR
@@ -572,8 +580,8 @@ public final class LocalObservationVolume {
                 || endpoint.hazard() != Hazard.NONE && endpoint.hazard() != Hazard.FALL) {
             return false;
         }
-        boolean ladderContact = sourceLadder || resolvedLadder;
-        if (!ladderContact && !goalIntendedMovementSafe(path)) {
+        boolean climbableContact = sourceClimbable || resolvedClimbable;
+        if (!climbableContact && !goalIntendedMovementSafe(path)) {
             return false;
         }
         return movesTowardNavigationTarget(start, end, intent);
@@ -858,7 +866,7 @@ public final class LocalObservationVolume {
         var queue = new ArrayDeque<Node>();
         var reached = new HashSet<NodeKey>();
         var attempted = new HashSet<Edge>();
-        var attemptedLadderColumns = new HashSet<LadderColumn>();
+        var attemptedClimbableColumns = new HashSet<ClimbableColumn>();
         int evaluations = 0;
         var rootOffset = new GridOffset(0, 0);
         var rootKey = NodeKey.at(rootOffset, originBox);
@@ -873,14 +881,24 @@ public final class LocalObservationVolume {
             if (node.depth() >= MAX_TRANSITIONS) {
                 continue;
             }
-            addLadderTransitions(
+            addClimbableTransitions(
                     player,
                     level,
                     origin,
                     node,
                     worldRevision,
-                    attemptedLadderColumns,
-                    records);
+                    attemptedClimbableColumns,
+                    records,
+                    Locomotion.LADDER);
+            addClimbableTransitions(
+                    player,
+                    level,
+                    origin,
+                    node,
+                    worldRevision,
+                    attemptedClimbableColumns,
+                    records,
+                    Locomotion.SCAFFOLDING);
             if (records.size() == MAX_OBSERVATIONS) {
                 break;
             }
@@ -892,8 +910,8 @@ public final class LocalObservationVolume {
                 }
                 var intended = adjacentCellCenterDelta(
                         node.box(), direction.x(), direction.z());
-                if (exactLadderAtFeet(level, node.box())
-                        || exactLadderAtFeet(level, node.box().move(intended))) {
+                if (exactClimbableAtFeet(level, node.box())
+                        || exactClimbableAtFeet(level, node.box().move(intended))) {
                     continue;
                 }
                 var targetCenter = point(node.box().move(intended).getCenter());
@@ -934,14 +952,15 @@ public final class LocalObservationVolume {
         return List.copyOf(records);
     }
 
-    private void addLadderTransitions(
+    private void addClimbableTransitions(
             LocalPlayer player,
             ClientLevel level,
             Point origin,
             Node node,
             long worldRevision,
-            HashSet<LadderColumn> attemptedColumns,
-            ArrayList<ObservationRecord> records) {
+            HashSet<ClimbableColumn> attemptedColumns,
+            ArrayList<ObservationRecord> records,
+            Locomotion locomotion) {
         int feetY = Mth.floor(node.box().minY + MOVEMENT_EPSILON);
         int feetX = Mth.floor(node.box().getCenter().x);
         int feetZ = Mth.floor(node.box().getCenter().z);
@@ -953,41 +972,44 @@ public final class LocalObservationVolume {
         }
         for (BlockPos entry : candidates) {
             var entryBox = boxAtFeetCell(node.box(), entry);
-            if (!safeLadderCell(player, level, origin, entryBox)
-                    || !attemptedColumns.add(new LadderColumn(entry.getX(), entry.getZ()))) {
+            if (!safeClimbableCell(player, level, origin, entryBox, locomotion)
+                    || !attemptedColumns.add(new ClimbableColumn(
+                            entry.getX(), entry.getZ(), locomotion))) {
                 continue;
             }
-            addLadderColumn(
-                    player, level, origin, node, entry, worldRevision, records);
+            addClimbableColumn(
+                    player, level, origin, node, entry, worldRevision, records, locomotion);
             if (records.size() == MAX_OBSERVATIONS) {
                 return;
             }
         }
     }
 
-    private void addLadderColumn(
+    private void addClimbableColumn(
             LocalPlayer player,
             ClientLevel level,
             Point origin,
             Node entryNode,
             BlockPos entry,
             long worldRevision,
-            ArrayList<ObservationRecord> records) {
+            ArrayList<ObservationRecord> records,
+            Locomotion locomotion) {
         var rungs = new TreeMap<Integer, AABB>();
         var entryBox = boxAtFeetCell(entryNode.box(), entry);
         rungs.put(entry.getY(), entryBox);
         for (int direction : List.of(-1, 1)) {
-            for (int delta = 1; delta <= MAX_LADDER_RUNG_DELTA; delta++) {
+            for (int delta = 1; delta <= MAX_CLIMBABLE_RUNG_DELTA; delta++) {
                 int y = entry.getY() + direction * delta;
                 var rungBox = boxAtFeetCell(
                         entryNode.box(), new BlockPos(entry.getX(), y, entry.getZ()));
-                if (!safeLadderCell(player, level, origin, rungBox)
-                        || !ladderPathSafe(
+                if (!safeClimbableCell(player, level, origin, rungBox, locomotion)
+                        || !climbablePathSafe(
                                 player,
                                 level,
                                 origin,
                                 rungs.get(y - direction),
-                                rungBox)) {
+                                rungBox,
+                                locomotion)) {
                     break;
                 }
                 rungs.put(y, rungBox);
@@ -1001,7 +1023,7 @@ public final class LocalObservationVolume {
             if (upper.getKey() - lower.getKey() != 1) {
                 continue;
             }
-            addLadderRecord(
+            addClimbableRecord(
                     player,
                     level,
                     origin,
@@ -1010,8 +1032,9 @@ public final class LocalObservationVolume {
                     lower.getValue(),
                     upper.getValue(),
                     worldRevision,
-                    records);
-            addLadderRecord(
+                    records,
+                    locomotion);
+            addClimbableRecord(
                     player,
                     level,
                     origin,
@@ -1020,7 +1043,8 @@ public final class LocalObservationVolume {
                     upper.getValue(),
                     lower.getValue(),
                     worldRevision,
-                    records);
+                    records,
+                    locomotion);
         }
 
         for (var rung : rungEntries) {
@@ -1029,13 +1053,13 @@ public final class LocalObservationVolume {
                 var landingPos = new BlockPos(
                         entry.getX() + direction.x(), y, entry.getZ() + direction.z());
                 var landingBox = boxAtFeetCell(entryNode.box(), landingPos);
-                if (exactLadderAtFeet(level, landingBox)
+                if (exactClimbableAtFeet(level, landingBox)
                         || !stableLanding(player, level, origin, landingBox)
-                        || !ladderPathSafe(
-                                player, level, origin, rung.getValue(), landingBox)) {
+                        || !climbablePathSafe(
+                                player, level, origin, rung.getValue(), landingBox, locomotion)) {
                     continue;
                 }
-                addLadderRecord(
+                addClimbableRecord(
                         player,
                         level,
                         origin,
@@ -1044,8 +1068,9 @@ public final class LocalObservationVolume {
                         rung.getValue(),
                         landingBox,
                         worldRevision,
-                        records);
-                addLadderRecord(
+                        records,
+                        locomotion);
+                addClimbableRecord(
                         player,
                         level,
                         origin,
@@ -1054,12 +1079,13 @@ public final class LocalObservationVolume {
                         landingBox,
                         rung.getValue(),
                         worldRevision,
-                        records);
+                        records,
+                        locomotion);
             }
         }
     }
 
-    private static void addLadderRecord(
+    private static void addClimbableRecord(
             LocalPlayer player,
             ClientLevel level,
             Point origin,
@@ -1068,7 +1094,8 @@ public final class LocalObservationVolume {
             AABB from,
             AABB to,
             long worldRevision,
-            ArrayList<ObservationRecord> records) {
+            ArrayList<ObservationRecord> records,
+            Locomotion locomotion) {
         if (records.size() == MAX_OBSERVATIONS) {
             return;
         }
@@ -1100,7 +1127,7 @@ public final class LocalObservationVolume {
                 targetSupport == Support.PRESENT
                         ? Drop.SUPPORTED : Drop.AIRBORNE_OR_SWIMMING,
                 false,
-                Locomotion.LADDER));
+                locomotion));
     }
 
     private static boolean safeLadderCell(
@@ -1114,6 +1141,32 @@ public final class LocalObservationVolume {
             return false;
         }
         return damageBlockHazard(level, origin, List.of(box)) == Hazard.NONE;
+    }
+
+    private static boolean safeScaffoldingCell(
+            LocalPlayer player, ClientLevel level, Point origin, AABB box) {
+        if (!exactSurvivingScaffoldingAtFeet(level, origin, box)
+                || loadedState(level, origin, List.of(box, supportSlab(box)))
+                        != LoadedState.LOADED
+                || !noScaffoldingTraversalCollision(level, player, box)
+                || level.collidesWithSuffocatingBlock(player, box)
+                || fluid(level, origin, List.of(box)) != Fluid.NONE) {
+            return false;
+        }
+        return damageBlockHazard(level, origin, List.of(box)) == Hazard.NONE;
+    }
+
+    private static boolean safeClimbableCell(
+            LocalPlayer player,
+            ClientLevel level,
+            Point origin,
+            AABB box,
+            Locomotion locomotion) {
+        return switch (locomotion) {
+            case LADDER -> safeLadderCell(player, level, origin, box);
+            case SCAFFOLDING -> safeScaffoldingCell(player, level, origin, box);
+            case GROUND -> false;
+        };
     }
 
     private static boolean stableLanding(
@@ -1137,9 +1190,65 @@ public final class LocalObservationVolume {
                 && damageBlockHazard(level, origin, regions) == Hazard.NONE;
     }
 
+    private static boolean scaffoldingPathSafe(
+            LocalPlayer player,
+            ClientLevel level,
+            Point origin,
+            AABB from,
+            AABB to) {
+        Vec3 delta = to.getCenter().subtract(from.getCenter());
+        var regions = sweptRegions(SweptAabbPath.segments(from, delta, delta));
+        AABB swept = from.expandTowards(delta);
+        return loadedState(level, origin, append(regions, to)) == LoadedState.LOADED
+                && noScaffoldingTraversalCollision(level, player, swept)
+                && !level.collidesWithSuffocatingBlock(player, swept)
+                && fluid(level, origin, regions) == Fluid.NONE
+                && damageBlockHazard(level, origin, regions) == Hazard.NONE;
+    }
+
+    private static boolean noScaffoldingTraversalCollision(
+            ClientLevel level, LocalPlayer player, AABB box) {
+        return !level.getBlockCollisionsFromContext(CollisionContext.empty(), box)
+                        .iterator().hasNext()
+                && level.noEntityCollision(player, box)
+                && level.noBorderCollision(player, box);
+    }
+
+    private static boolean climbablePathSafe(
+            LocalPlayer player,
+            ClientLevel level,
+            Point origin,
+            AABB from,
+            AABB to,
+            Locomotion locomotion) {
+        return switch (locomotion) {
+            case LADDER -> ladderPathSafe(player, level, origin, from, to);
+            case SCAFFOLDING -> scaffoldingPathSafe(player, level, origin, from, to);
+            case GROUND -> false;
+        };
+    }
+
     private static boolean exactLadderAtFeet(ClientLevel level, AABB box) {
         BlockPos position = feetBlock(box);
         return level.isLoaded(position) && level.getBlockState(position).is(Blocks.LADDER);
+    }
+
+    private static boolean exactScaffoldingAtFeet(ClientLevel level, AABB box) {
+        BlockPos position = feetBlock(box);
+        return level.isLoaded(position) && level.getBlockState(position).is(Blocks.SCAFFOLDING);
+    }
+
+    private static boolean exactClimbableAtFeet(ClientLevel level, AABB box) {
+        return exactLadderAtFeet(level, box) || exactScaffoldingAtFeet(level, box);
+    }
+
+    private static boolean exactClimbableAtFeet(
+            ClientLevel level, AABB box, Locomotion locomotion) {
+        return switch (locomotion) {
+            case LADDER -> exactLadderAtFeet(level, box);
+            case SCAFFOLDING -> exactScaffoldingAtFeet(level, box);
+            case GROUND -> false;
+        };
     }
 
     private static boolean exactSurvivingLadderAtFeet(
@@ -1159,6 +1268,29 @@ public final class LocalObservationVolume {
                         origin, attachment.getX(), attachment.getY(), attachment.getZ())
                 && level.isLoaded(attachment)
                 && state.canSurvive(level, position);
+    }
+
+    private static boolean exactSurvivingScaffoldingAtFeet(
+            ClientLevel level, Point origin, AABB box) {
+        BlockPos position = feetBlock(box);
+        if (!insideRadius(origin, position.getX(), position.getY(), position.getZ())
+                || !level.isLoaded(position)) {
+            return false;
+        }
+        var state = level.getBlockState(position);
+        return dryStableScaffoldingState(state)
+                && state.canSurvive(level, position);
+    }
+
+    static boolean dryStableScaffoldingState(
+            net.minecraft.world.level.block.state.BlockState state) {
+        Objects.requireNonNull(state, "state");
+        return state.is(Blocks.SCAFFOLDING)
+                && state.hasProperty(ScaffoldingBlock.DISTANCE)
+                && state.hasProperty(ScaffoldingBlock.WATERLOGGED)
+                && state.getValue(ScaffoldingBlock.DISTANCE)
+                        < ScaffoldingBlock.STABILITY_MAX_DISTANCE
+                && !state.getValue(ScaffoldingBlock.WATERLOGGED);
     }
 
     private static BlockPos feetBlock(AABB box) {
@@ -1472,11 +1604,19 @@ public final class LocalObservationVolume {
             loaded = LoadedState.UNKNOWN;
         }
         Transition transition = actualTransition(frame, collision);
-        Locomotion locomotion = (safeLadderCell(player, level, origin, start)
+        Locomotion locomotion;
+        if ((safeLadderCell(player, level, origin, start)
                         || safeLadderCell(player, level, origin, end))
-                        && ladderPathSafe(player, level, origin, start, end)
-                ? Locomotion.LADDER : Locomotion.GROUND;
-        if (locomotion == Locomotion.LADDER && drop == Drop.EXCEEDS_WALKING_LIMIT) {
+                && ladderPathSafe(player, level, origin, start, end)) {
+            locomotion = Locomotion.LADDER;
+        } else if ((safeScaffoldingCell(player, level, origin, start)
+                        || safeScaffoldingCell(player, level, origin, end))
+                && scaffoldingPathSafe(player, level, origin, start, end)) {
+            locomotion = Locomotion.SCAFFOLDING;
+        } else {
+            locomotion = Locomotion.GROUND;
+        }
+        if (locomotion != Locomotion.GROUND && drop == Drop.EXCEEDS_WALKING_LIMIT) {
             drop = Drop.AIRBORNE_OR_SWIMMING;
         }
         return new ObservationRecord(
@@ -1950,7 +2090,12 @@ public final class LocalObservationVolume {
         }
     }
 
-    private record LadderColumn(int x, int z) {
+    private record ClimbableColumn(int x, int z, Locomotion locomotion) {
+        private ClimbableColumn {
+            if (locomotion == Locomotion.GROUND) {
+                throw new IllegalArgumentException("ground is not a climbable column");
+            }
+        }
     }
 
     private record NodeKey(GridOffset offset, long quantizedMinY) {

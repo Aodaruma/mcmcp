@@ -14,33 +14,36 @@ class LocalObservationProjectorTest {
     private static final String OVERWORLD = "minecraft:overworld";
 
     @Test
-    void keepsLadderRungsInternalAndPublishesOnlyFloorBackedLandings() {
-        var center = new ObservationRecord.Point(0.5D, 64.9D, 0.5D);
-        var upperRung = new ObservationRecord.Point(0.5D, 65.9D, 0.5D);
-        var landing = new ObservationRecord.Point(1.5D, 65.9D, 0.5D);
-        var current = record(10, 3, 0, center, center, center,
-                ObservationRecord.Transition.STATIONARY,
-                ObservationRecord.Clearance.CLEAR,
-                ObservationRecord.Hazard.NONE);
-        var rungTransition = ladderRecord(center, upperRung, ObservationRecord.Support.ABSENT);
-        var landingTransition = ladderRecord(
-                upperRung, landing, ObservationRecord.Support.PRESENT);
-        var snapshot = new LocalObservationVolume.Snapshot(
-                10, 3, center, current, List.of(rungTransition, landingTransition));
+    void keepsClimbableTransitInternalAndPublishesOnlyFloorBackedLandings() {
+        for (var locomotion : List.of(Locomotion.LADDER, Locomotion.SCAFFOLDING)) {
+            var center = new ObservationRecord.Point(0.5D, 64.9D, 0.5D);
+            var upperRung = new ObservationRecord.Point(0.5D, 65.9D, 0.5D);
+            var landing = new ObservationRecord.Point(1.5D, 65.9D, 0.5D);
+            var current = record(10, 3, 0, center, center, center,
+                    ObservationRecord.Transition.STATIONARY,
+                    ObservationRecord.Clearance.CLEAR,
+                    ObservationRecord.Hazard.NONE);
+            var rungTransition = climbableRecord(
+                    center, upperRung, ObservationRecord.Support.ABSENT, locomotion);
+            var landingTransition = climbableRecord(
+                    upperRung, landing, ObservationRecord.Support.PRESENT, locomotion);
+            var snapshot = new LocalObservationVolume.Snapshot(
+                    10, 3, center, current, List.of(rungTransition, landingTransition));
 
-        var projection = LocalObservationProjector.project(
-                snapshot, UUID.randomUUID(), OVERWORLD, 3, 64.0D);
+            var projection = LocalObservationProjector.project(
+                    snapshot, UUID.randomUUID(), OVERWORLD, 3, 64.0D);
 
-        assertThat(projection.edges()).hasSize(2);
-        assertThat(projection.edges().getFirst()).satisfies(edge -> {
-            assertThat(edge.locomotion()).isEqualTo(Locomotion.LADDER);
-            assertThat(edge.destination()).isFalse();
-            assertThat(edge.status()).isEqualTo(TraversabilityEdge.Status.PROBE_ALLOWED);
-        });
-        assertThat(projection.edges().getLast().destination()).isTrue();
-        assertThat(projection.records()).singleElement().satisfies(record ->
-                assertThat(record).isInstanceOf(
-                        dev.aod.mcmcp.agent.observation.ObservationRecord.Traversability.class));
+            assertThat(projection.edges()).hasSize(2);
+            assertThat(projection.edges().getFirst()).satisfies(edge -> {
+                assertThat(edge.locomotion()).isEqualTo(locomotion);
+                assertThat(edge.destination()).isFalse();
+                assertThat(edge.status()).isEqualTo(TraversabilityEdge.Status.PROBE_ALLOWED);
+            });
+            assertThat(projection.edges().getLast().destination()).isTrue();
+            assertThat(projection.records()).singleElement().satisfies(record ->
+                    assertThat(record).isInstanceOf(
+                            dev.aod.mcmcp.agent.observation.ObservationRecord.Traversability.class));
+        }
     }
 
     @Test
@@ -260,10 +263,11 @@ class LocalObservationProjectorTest {
                 false);
     }
 
-    private static ObservationRecord ladderRecord(
+    private static ObservationRecord climbableRecord(
             ObservationRecord.Point from,
             ObservationRecord.Point to,
-            ObservationRecord.Support support) {
+            ObservationRecord.Support support,
+            Locomotion locomotion) {
         return new ObservationRecord(
                 10L,
                 3L,
@@ -282,6 +286,6 @@ class LocalObservationProjectorTest {
                         ? ObservationRecord.Drop.SUPPORTED
                         : ObservationRecord.Drop.AIRBORNE_OR_SWIMMING,
                 false,
-                Locomotion.LADDER);
+                locomotion);
     }
 }

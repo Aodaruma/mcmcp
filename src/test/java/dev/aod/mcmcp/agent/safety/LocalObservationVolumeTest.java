@@ -1,6 +1,8 @@
 package dev.aod.mcmcp.agent.safety;
 
 import dev.aod.mcmcp.client.AgentInputState;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ScaffoldingBlock;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
@@ -33,20 +35,68 @@ class LocalObservationVolumeTest {
         var safeEndpoint = ladderEndpoint(
                 Clearance.CLEAR, Fluid.NONE, false, Hazard.FALL);
 
-        assertThat(LocalObservationVolume.ladderNavigationMovementSafe(
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 safePath, safeEndpoint, start, end, target,
                 true, true, true, false)).isTrue();
-        assertThat(LocalObservationVolume.ladderNavigationMovementSafe(
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 safePath, safeEndpoint, start, end, target,
                 true, true, false, false)).isFalse();
-        assertThat(LocalObservationVolume.ladderNavigationMovementSafe(
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 ladderPath(Clearance.BLOCKED, Fluid.NONE, true, Hazard.SUFFOCATION),
                 safeEndpoint, start, end, target,
                 true, true, true, false)).isFalse();
-        assertThat(LocalObservationVolume.ladderNavigationMovementSafe(
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
                 ladderPath(Clearance.CLEAR, Fluid.WATER, false, Hazard.NONE),
                 safeEndpoint, start, end, target,
                 true, true, true, false)).isFalse();
+    }
+
+    @Test
+    void scaffoldingSafetyRequiresExactContinuousDryCellsOrAFloorLanding() {
+        var start = new Point(0.5D, 65.9D, 0.5D);
+        var end = new Point(0.5D, 64.9D, 0.5D);
+        var target = new AgentInputState.NavigationIntent(
+                new Vec3(0.5D, 64.9D, 0.5D), -1, Locomotion.SCAFFOLDING);
+        var safePath = ladderPath(Clearance.CLEAR, Fluid.NONE, false, Hazard.FALL);
+        var safeEndpoint = ladderEndpoint(
+                Clearance.CLEAR, Fluid.NONE, false, Hazard.FALL);
+
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                safePath, safeEndpoint, start, end, target,
+                true, true, true, false)).isTrue();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                safePath, safeEndpoint, start, end, target,
+                true, true, false, false)).isFalse();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                ladderPath(Clearance.CLEAR, Fluid.WATER, false, Hazard.NONE),
+                safeEndpoint, start, end, target,
+                true, true, true, false)).isFalse();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                safePath,
+                ladderEndpoint(Clearance.CLEAR, Fluid.NONE, false, Hazard.NONE),
+                start,
+                new Point(1.5D, 64.9D, 0.5D),
+                new AgentInputState.NavigationIntent(
+                        new Vec3(1.5D, 64.9D, 0.5D), 0, Locomotion.SCAFFOLDING),
+                true,
+                false,
+                false,
+                true)).isTrue();
+    }
+
+    @Test
+    void scaffoldingStateMustBeVanillaDryAndWithinTheStabilityLimit() {
+        var stable = Blocks.SCAFFOLDING.defaultBlockState()
+                .setValue(ScaffoldingBlock.DISTANCE, 6)
+                .setValue(ScaffoldingBlock.WATERLOGGED, false);
+
+        assertThat(LocalObservationVolume.dryStableScaffoldingState(stable)).isTrue();
+        assertThat(LocalObservationVolume.dryStableScaffoldingState(
+                stable.setValue(ScaffoldingBlock.DISTANCE, 7))).isFalse();
+        assertThat(LocalObservationVolume.dryStableScaffoldingState(
+                stable.setValue(ScaffoldingBlock.WATERLOGGED, true))).isFalse();
+        assertThat(LocalObservationVolume.dryStableScaffoldingState(
+                Blocks.LADDER.defaultBlockState())).isFalse();
     }
 
     @Test
