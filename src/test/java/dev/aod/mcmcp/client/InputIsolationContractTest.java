@@ -200,12 +200,28 @@ class InputIsolationContractTest {
     }
 
     @Test
-    void aPendingReleaseKeepsPhysicalInputIsolatedEvenAfterAnOffIntent()
+    void pendingCleanupCannotExtendPhysicalInputIsolationAfterControlBecomesReadyOrOff()
             throws Exception {
         var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
 
         assertThat(fieldAccesses(method(runtime, "inputIsolationActive")))
-                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentInputRelease");
+                .doesNotContain("dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentInputRelease");
+        assertThat(fieldAccesses(method(runtime, "returnControlReady")))
+                .contains(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentInputRelease",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentTerminal",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#agentExecution",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentAdmission");
+        assertThat(invocations(method(runtime, "returnControlReady")))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#retainReadyAfterDeferredAgentRelease",
+                        "dev/aod/mcmcp/safety/LocalArmingState#completeAction");
+        assertThat(fieldAccesses(method(runtime, "automationActivityPending")))
+                .contains(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentInputRelease",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentTerminal",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#agentExecution",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentAdmission");
     }
 
     @Test

@@ -623,9 +623,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     public boolean inputIsolationActive() {
         var session = sessions.snapshot();
+        // Pending cleanup already suppresses Agent output and fences the pre-tick. It must not
+        // keep swallowing physical input after the public control state has left AGENT/RECOVERING.
         return arming.snapshot(session.worldSessionId()).inputIsolationActive()
-                || evaluationTurns.snapshot(session.worldSessionId()).active()
-                || pendingAgentInputRelease;
+                || evaluationTurns.snapshot(session.worldSessionId()).active();
     }
 
     /** May be called by the endpoint lifecycle worker; client-thread cleanup uses the priority lane. */
@@ -714,6 +715,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private boolean automationActivityPending() {
         return routines.activeRoutineId().isPresent()
                 || agentActions.active().isPresent()
+                || pendingAgentInputRelease
+                || pendingAgentTerminal != null
+                || agentExecution != null
+                || pendingAgentAdmission != null
                 || inbox.hasPendingCommand("start_routine")
                 || inbox.hasPendingCommand("agent_start_action")
                 || finalizationRetries.hasPending()
@@ -7560,6 +7565,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void returnControlReady() {
+        // READY is both public state and the physical-input release edge. Do not publish it while
+        // any Agent cleanup reference is still retained for the next bounded retry.
+        if (pendingAgentInputRelease
+                || pendingAgentTerminal != null
+                || agentExecution != null
+                || pendingAgentAdmission != null) {
+            retainReadyAfterDeferredAgentRelease();
+            return;
+        }
         var session = sessions.snapshot();
         if (session.worldSessionId() != null) {
             arming.completeAction(session.worldSessionId());
