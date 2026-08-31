@@ -132,11 +132,9 @@ For the combined generalization smoke arena, run:
 .\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=generalization
 ```
 
-This passes the closed `mcmcp.fixture.phase5.mode` value and
-`mcmcp.fixture.phase5.autoArm=true`. After server-authoritative setup and client slot
-synchronization, only this mode waits 20 client ticks and clicks the registered local transport
-toggle once. A missing/false property, every other Phase 5 mode, or any setup/security failure
-keeps the prior setup-only behavior.
+This passes only the closed `mcmcp.fixture.phase5.mode` value. After server-authoritative setup and
+client slot synchronization, autorun stops in setup-only state. Open any Screen and press the MCMCP
+status button once before the live test; that explicit UI action is the local authorization.
 
 The autorun-only `creative_capture` mode keeps the existing gallery layout, changes the owner to
 Creative, and places them more than 32 blocks from the fixed 1,024-cell capture region
@@ -157,13 +155,12 @@ Accepted modes are `navigate`, `break`, `place`, `lever`, `cow`, `reset`, `all_s
 `build_runner`, plus the dedicated `creative_capture` mode.
 Only when this Gradle
 property is present, `runHarnessClient` adds Quick Play for `New World` and passes
-`mcmcp.fixture.phase3.mode`; modes other than `reset` also pass
-`mcmcp.fixture.phase3.autoArm=true`. After the private integrated-server boundary is checked on
-its server thread, the autorun rebuilds the entire fixed arena, prepares that mode, waits 20 client
-ticks, then clicks the registered `key.mcmcp.toggle_lock` mapping exactly once. It never arms
-after a setup/security failure, and `reset` never auto-arms. The autorun temporarily disables
-pause-on-lost-focus so an external MCP driver can run; the original option is restored when the
-client stops. With no mode property, all autorun listeners and option changes remain disabled.
+`mcmcp.fixture.phase3.mode`. After the private integrated-server boundary is checked on its server
+thread, the autorun rebuilds the entire fixed arena, prepares that mode, and stops in setup-only
+state. Open any Screen and press the MCMCP status button once before the live test. The autorun
+temporarily disables pause-on-lost-focus so an external MCP driver can run; the original option is
+restored when the client stops. With no mode property, all autorun listeners and option changes
+remain disabled.
 
 The legacy Gradle property and system-property names still contain `Phase3`; Phase 4 modes reuse the
 same bounded autorun transport and do not widen its security checks. The Phase 4 fixture supports an

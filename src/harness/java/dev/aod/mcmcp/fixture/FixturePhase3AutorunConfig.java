@@ -4,15 +4,14 @@ import java.util.Locale;
 import java.util.Optional;
 
 /** Pure configuration boundary for the opt-in Phase 3/4 live-test autorun. */
-record FixturePhase3AutorunConfig(Mode mode, boolean autoArm) {
+record FixturePhase3AutorunConfig(Mode mode) {
     static final String MODE_PROPERTY = "mcmcp.fixture.phase3.mode";
-    static final String AUTO_ARM_PROPERTY = "mcmcp.fixture.phase3.autoArm";
 
     static Optional<FixturePhase3AutorunConfig> fromSystemProperties() {
-        return parse(System.getProperty(MODE_PROPERTY), System.getProperty(AUTO_ARM_PROPERTY));
+        return parse(System.getProperty(MODE_PROPERTY));
     }
 
-    static Optional<FixturePhase3AutorunConfig> parse(String rawMode, String rawAutoArm) {
+    static Optional<FixturePhase3AutorunConfig> parse(String rawMode) {
         if (rawMode == null || rawMode.isBlank()) {
             return Optional.empty();
         }
@@ -38,21 +37,7 @@ record FixturePhase3AutorunConfig(Mode mode, boolean autoArm) {
                     "unsupported fixture autorun mode: " + sanitize(rawMode));
         };
 
-        boolean requestedAutoArm = parseBoolean(rawAutoArm);
-        return Optional.of(new FixturePhase3AutorunConfig(
-                mode,
-                requestedAutoArm && mode != Mode.RESET));
-    }
-
-    private static boolean parseBoolean(String rawValue) {
-        if (rawValue == null || rawValue.isBlank() || "false".equalsIgnoreCase(rawValue.strip())) {
-            return false;
-        }
-        if ("true".equalsIgnoreCase(rawValue.strip())) {
-            return true;
-        }
-        throw new IllegalArgumentException(
-                "invalid " + AUTO_ARM_PROPERTY + " value: " + sanitize(rawValue));
+        return Optional.of(new FixturePhase3AutorunConfig(mode));
     }
 
     private static String sanitize(String value) {

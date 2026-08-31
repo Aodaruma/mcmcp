@@ -7,25 +7,16 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 
 class FixturePhase3AutorunConfigTest {
     @Test
-    void parsesTheClosedModeAndArmingContract() {
-        assertThat(FixturePhase3AutorunConfig.parse(null, "true")).isEmpty();
-        assertThat(FixturePhase3AutorunConfig.parse("  ", "true")).isEmpty();
+    void parsesTheClosedModeSet() {
+        assertThat(FixturePhase3AutorunConfig.parse(null)).isEmpty();
+        assertThat(FixturePhase3AutorunConfig.parse("  ")).isEmpty();
         for (var mode : FixturePhase3AutorunConfig.Mode.values()) {
             assertThat(FixturePhase3AutorunConfig.parse(
-                    "  " + mode.name().toLowerCase(java.util.Locale.ROOT) + "  ", " TrUe "))
-                    .contains(new FixturePhase3AutorunConfig(
-                            mode, mode != FixturePhase3AutorunConfig.Mode.RESET));
+                    "  " + mode.name().toLowerCase(java.util.Locale.ROOT) + "  "))
+                    .contains(new FixturePhase3AutorunConfig(mode));
         }
-        assertThat(FixturePhase3AutorunConfig.parse("navigate", null)).get()
-                .extracting(FixturePhase3AutorunConfig::autoArm)
-                .isEqualTo(false);
-        assertThat(FixturePhase3AutorunConfig.parse("navigate", " FALSE ")).get()
-                .extracting(FixturePhase3AutorunConfig::autoArm)
-                .isEqualTo(false);
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> FixturePhase3AutorunConfig.parse("teleport", "true"));
-        assertThatIllegalArgumentException()
-                .isThrownBy(() -> FixturePhase3AutorunConfig.parse("navigate", "yes"));
+                .isThrownBy(() -> FixturePhase3AutorunConfig.parse("teleport"));
     }
 
     @Test

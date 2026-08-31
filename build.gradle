@@ -108,9 +108,6 @@ neoForge {
                 programArgument '--quickPlaySingleplayer'
                 programArgument 'New World'
                 systemProperty 'mcmcp.fixture.phase3.mode', requestedMode
-                if (requestedMode != 'reset') {
-                    systemProperty 'mcmcp.fixture.phase3.autoArm', 'true'
-                }
             }
 
             def phase5Mode = providers.gradleProperty('mcmcpFixturePhase5Mode')
@@ -134,9 +131,6 @@ neoForge {
                 programArgument '--quickPlaySingleplayer'
                 programArgument 'New World'
                 systemProperty 'mcmcp.fixture.phase5.mode', requestedMode
-                if (!['recipes', 'reset'].contains(requestedMode)) {
-                    systemProperty 'mcmcp.fixture.phase5.autoArm', 'true'
-                }
             }
         }
 

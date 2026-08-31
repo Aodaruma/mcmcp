@@ -1,7 +1,6 @@
 package dev.aod.mcmcp.fixture;
 
 import com.mojang.logging.LogUtils;
-import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Items;
@@ -27,15 +26,12 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 final class FixturePhase3Autorun {
     private static final Logger LOGGER = LogUtils.getLogger();
-    private static final String TOGGLE_ARMING_KEY = "key.mcmcp.toggle_lock";
-    private static final int ARM_DELAY_CLIENT_TICKS = 20;
 
     private final FixturePhase3AutorunConfig config;
     private final AtomicReference<Stage> stage = new AtomicReference<>(Stage.WAITING_FOR_WORLD);
     private final FixturePhase4DivergenceTrigger divergenceTrigger =
             new FixturePhase4DivergenceTrigger();
 
-    private int clientTicksAfterPrepare;
     private boolean clientSelectedSlotApplied;
     private boolean pauseOptionChanged;
     private boolean originalPauseOnLostFocus;
@@ -61,8 +57,8 @@ final class FixturePhase3Autorun {
         eventBus.addListener(autorun::onClientStarted);
         eventBus.addListener(autorun::onClientTick);
         eventBus.addListener(autorun::onClientStopping);
-        LOGGER.warn("MCMCP fixture autorun enabled: mode={}, autoArm={}",
-                config.mode().name().toLowerCase(Locale.ROOT), config.autoArm());
+        LOGGER.warn("MCMCP fixture autorun enabled: mode={}, setupOnly=true",
+                config.mode().name().toLowerCase(Locale.ROOT));
     }
 
     private void onClientStarted(ClientStartedEvent event) {
@@ -87,31 +83,8 @@ final class FixturePhase3Autorun {
         if (!applyClientSelectedSlot(Minecraft.getInstance())) {
             return;
         }
-        if (!config.autoArm()) {
-            if (stage.compareAndSet(Stage.PREPARED, Stage.COMPLETE)) {
-                LOGGER.info("MCMCP fixture prepared without auto-arming");
-            }
-            return;
-        }
-
-        clientTicksAfterPrepare++;
-        if (clientTicksAfterPrepare < ARM_DELAY_CLIENT_TICKS
-                || !stage.compareAndSet(Stage.PREPARED, Stage.ARMING)) {
-            return;
-        }
-
-        try {
-            KeyMapping toggleArming = KeyMapping.get(TOGGLE_ARMING_KEY);
-            if (toggleArming == null) {
-                fail("arming key mapping is unavailable", null);
-                return;
-            }
-            KeyMapping.click(toggleArming.getKey());
-            stage.set(Stage.COMPLETE);
-            LOGGER.info("MCMCP fixture requested one local-arm toggle after {} client ticks",
-                    ARM_DELAY_CLIENT_TICKS);
-        } catch (RuntimeException exception) {
-            fail("could not click the local-arm key mapping", exception);
+        if (stage.compareAndSet(Stage.PREPARED, Stage.COMPLETE)) {
+            LOGGER.info("MCMCP fixture prepared; press the Screen status button once to authorize");
         }
     }
 
@@ -289,9 +262,9 @@ final class FixturePhase3Autorun {
     private void fail(String reason, RuntimeException exception) {
         stage.set(Stage.FAILED);
         if (exception == null) {
-            LOGGER.error("MCMCP fixture autorun failed: {}. Local arming was not requested", reason);
+            LOGGER.error("MCMCP fixture autorun failed: {}. Local authorization remains unchanged", reason);
         } else {
-            LOGGER.error("MCMCP fixture autorun failed: {}. Local arming was not requested",
+            LOGGER.error("MCMCP fixture autorun failed: {}. Local authorization remains unchanged",
                     reason, exception);
         }
     }
@@ -331,7 +304,6 @@ final class FixturePhase3Autorun {
         WAITING_FOR_WORLD,
         PREPARING,
         PREPARED,
-        ARMING,
         COMPLETE,
         FAILED
     }
