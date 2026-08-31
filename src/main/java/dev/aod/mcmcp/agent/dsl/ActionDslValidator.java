@@ -106,6 +106,7 @@ public final class ActionDslValidator {
             throw invalid("program.body must contain 1.." + MAX_TOP_LEVEL_NODES + " nodes");
         }
         validateTerminalOwnedMenuPlacement(program.body());
+        validateTerminalClearPlacement(program.body());
         var walk = new Walk();
         int executed = walkSequence(program.body(), 1, walk, "program.body");
         if (walk.sourceNodes > MAX_SOURCE_NODES) {
@@ -372,6 +373,35 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_PLACE);
             return 1;
         }
+        if (node instanceof ActionDsl.ClearKnownBlockPlan plan) {
+            validatePosition(plan.anchor(), path + ".anchor");
+            requireSequenceSize(plan.entries(), 1, MAX_BLOCK_PLAN_ENTRIES, path + ".entries");
+            var entryIds = new HashSet<String>();
+            var targets = new HashSet<ActionDsl.Position>();
+            for (int index = 0; index < plan.entries().size(); index++) {
+                ActionDsl.ClearBlockPlanEntry entry = plan.entries().get(index);
+                String entryPath = path + ".entries[" + index + "]";
+                Objects.requireNonNull(entry, entryPath);
+                requirePattern(entry.id(), NODE_ID, entryPath + ".id");
+                if (!entryIds.add(entry.id())) {
+                    throw invalid(path + ".entries must contain unique ids");
+                }
+                validateOffset(entry.offset(), entryPath + ".offset");
+                ActionDsl.Position target = transformedTarget(
+                        plan.anchor(), plan.transform(), entry.offset());
+                validatePosition(target, entryPath + ".offset");
+                if (!targets.add(target)) {
+                    throw invalid(path + ".entries must produce distinct transformed targets");
+                }
+                validateBlockState(entry.expectedBefore(), entryPath + ".expected_before");
+                if ("minecraft:air".equals(entry.expectedBefore().block())) {
+                    throw invalid(entryPath + ".expected_before must be non-air");
+                }
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
+            return 1;
+        }
         if (node instanceof ActionDsl.ApplyKnownRedstoneSpec redstone) {
             validatePosition(redstone.anchor(), path + ".anchor");
             try {
@@ -566,6 +596,7 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.HarvestKnownWheat
                     || node instanceof ActionDsl.HarvestKnownWheatBatch
                     || node instanceof ActionDsl.ApplyKnownBlockPlan
+                    || node instanceof ActionDsl.ClearKnownBlockPlan
                     || node instanceof ActionDsl.ApplyKnownRedstoneSpec
                     || node instanceof ActionDsl.OpenKnownFenceGate
                     || node instanceof ActionDsl.OpenKnownPassage
@@ -612,6 +643,31 @@ public final class ActionDslValidator {
         return node instanceof ActionDsl.Repeat repeat
                 && repeat.body().stream()
                         .anyMatch(ActionDslValidator::containsTerminalOwnedMenu);
+    }
+
+    private static void validateTerminalClearPlacement(List<ActionDsl.Node> body) {
+        for (int index = 0; index < body.size(); index++) {
+            ActionDsl.Node node = body.get(index);
+            if (node instanceof ActionDsl.ClearKnownBlockPlan) {
+                if (index != body.size() - 1) {
+                    throw invalid("clear_known_block_plan must be the final Action node");
+                }
+            } else if (containsConstructionClear(node)) {
+                throw invalid("clear_known_block_plan must be a top-level Action node");
+            }
+        }
+    }
+
+    private static boolean containsConstructionClear(ActionDsl.Node node) {
+        if (node instanceof ActionDsl.ClearKnownBlockPlan) return true;
+        if (node instanceof ActionDsl.If conditional) {
+            return conditional.thenBranch().stream()
+                    .anyMatch(ActionDslValidator::containsConstructionClear)
+                    || conditional.elseBranch().stream()
+                            .anyMatch(ActionDslValidator::containsConstructionClear);
+        }
+        return node instanceof ActionDsl.Repeat repeat
+                && repeat.body().stream().anyMatch(ActionDslValidator::containsConstructionClear);
     }
 
     private static void validatePredicate(ActionDsl.Predicate predicate, String path) {

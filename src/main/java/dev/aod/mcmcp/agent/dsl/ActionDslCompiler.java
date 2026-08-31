@@ -108,6 +108,11 @@ public final class ActionDslCompiler {
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }
+        if (node instanceof ActionDsl.ClearKnownBlockPlan plan) {
+            Cost cost = intrinsicKnownBlockClearCost(plan.entries().size());
+            primitiveCostBounds.put(node.id(), cost);
+            return cost;
+        }
         if (node instanceof ActionDsl.ApplyKnownRedstoneSpec redstone) {
             Cost cost = intrinsicKnownRedstoneCost(
                     redstone.timing().settleTicks(), redstone.components().size() - 1);
@@ -259,6 +264,14 @@ public final class ActionDslCompiler {
                 0,
                 0,
                 entries);
+    }
+
+    /** Structural bound for the stationary break-only construction adapter. */
+    public static Cost intrinsicKnownBlockClearCost(int entries) {
+        Cost place = intrinsicKnownBlockPlanCost(entries);
+        return new Cost(
+                place.durationMillis(), place.ticks(), place.distanceBlocks(),
+                place.cameraDegrees(), place.interactions(), entries, 0);
     }
 
     /** Structural bound for the original one-output identity circuit. */

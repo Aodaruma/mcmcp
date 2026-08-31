@@ -3706,7 +3706,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 return;
             }
 
-            if (agentExecution.primitive instanceof ActionDsl.ApplyKnownBlockPlan) {
+            if (agentExecution.primitive instanceof ActionDsl.ApplyKnownBlockPlan
+                    || agentExecution.primitive instanceof ActionDsl.ClearKnownBlockPlan) {
                 tickAgentConstruction(minecraft, session, action);
                 return;
             }
@@ -4957,8 +4958,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (agentExecution.constructionAttempt == null) {
             final KnownConstructionRequest request;
             try {
-                request = constructionRequest(
-                        (ActionDsl.ApplyKnownBlockPlan) agentExecution.primitive);
+                request = agentExecution.primitive instanceof ActionDsl.ApplyKnownBlockPlan plan
+                        ? constructionRequest(plan)
+                        : constructionRequest(
+                                (ActionDsl.ClearKnownBlockPlan) agentExecution.primitive);
             } catch (RuntimeException rejected) {
                 // Registry/state diagnostics may contain submitted property names or values.
                 // Keep the public trace fixed and non-reflective.
@@ -4978,6 +4981,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 agentExecution.constructionAttempt.tick(session.clientTick());
         for (int count = 0; count < result.placedDelta(); count++) {
             agentActions.recordBlockPlace(action.actionId());
+        }
+        for (int count = 0; count < result.brokenDelta(); count++) {
+            agentActions.recordBlockBreak(action.actionId());
         }
         switch (result.status()) {
             case RUNNING -> { }
@@ -5356,6 +5362,66 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         0,
                         maxDurationSeconds,
                         false));
+    }
+
+    static KnownConstructionRequest constructionRequest(
+            ActionDsl.ClearKnownBlockPlan plan) {
+        Objects.requireNonNull(plan, "plan");
+        var transform = new BlockPlan.Transform(
+                plan.transform().rotation().degrees(),
+                plan.transform().mirror().wireName());
+        var entries = new ArrayList<ApplyBlockPlanStep>(plan.entries().size());
+        BlockTarget minimum = null;
+        BlockTarget maximum = null;
+        for (ActionDsl.ClearBlockPlanEntry entry : plan.entries()) {
+            ActionDsl.Offset offset = plan.transform().apply(entry.offset());
+            var target = new BlockTarget(
+                    plan.anchor().dimension(),
+                    Math.addExact(plan.anchor().x(), offset.x()),
+                    Math.addExact(plan.anchor().y(), offset.y()),
+                    Math.addExact(plan.anchor().z(), offset.z()));
+            BlockStateView transformed = BlockPlanStateTransformer.transformFull(
+                    new BlockStateView(
+                            entry.expectedBefore().block(),
+                            entry.expectedBefore().properties()),
+                    transform,
+                    "construction.clear.expected_before");
+            entries.add(new ApplyBlockPlanStep(
+                    entry.id(),
+                    ApplyBlockPlanOperation.BREAK_TO_AIR,
+                    target,
+                    new BlockStateFingerprint(
+                            transformed.block(), transformed.properties()),
+                    new BlockStateFingerprint("minecraft:air", Map.of()),
+                    Optional.empty(),
+                    Optional.empty()));
+            minimum = minimum == null ? target : new BlockTarget(
+                    target.dimension(),
+                    Math.min(minimum.x(), target.x()),
+                    Math.min(minimum.y(), target.y()),
+                    Math.min(minimum.z(), target.z()));
+            maximum = maximum == null ? target : new BlockTarget(
+                    target.dimension(),
+                    Math.max(maximum.x(), target.x()),
+                    Math.max(maximum.y(), target.y()),
+                    Math.max(maximum.z(), target.z()));
+        }
+        if (entries.isEmpty()) {
+            throw new IllegalArgumentException("construction clear plan is empty");
+        }
+        return new KnownConstructionRequest(new ApplyBlockPlanRequest(
+                "construction-clear",
+                1,
+                1,
+                entries,
+                new ActionBounds(
+                        plan.anchor().dimension(),
+                        Objects.requireNonNull(minimum, "minimum"),
+                        Objects.requireNonNull(maximum, "maximum"),
+                        0,
+                        Math.multiplyExact(entries.size(), 15),
+                        true),
+                ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK));
     }
 
     static RedstoneIdentityRequest redstoneIdentityRequest(

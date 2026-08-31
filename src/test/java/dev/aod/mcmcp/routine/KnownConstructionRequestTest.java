@@ -70,7 +70,7 @@ class KnownConstructionRequestTest {
     }
 
     @Test
-    void rejectsMoreThanEightEntriesAndEveryNonPlaceOperation() {
+    void rejectsMoreThanEightEntriesAndUnmarkedBreakOperation() {
         var entries = new ArrayList<ApplyBlockPlanStep>();
         for (int index = 0; index < 9; index++) {
             entries.add(step("cell" + index, target(index, 65, 0),
@@ -89,6 +89,22 @@ class KnownConstructionRequestTest {
         assertThatThrownBy(() -> new KnownConstructionRequest(
                 new ApplyBlockPlanRequest("copy", 1, 1, List.of(breakStep), breakBounds)))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void acceptsHomogeneousSafeConstructionClear() {
+        var breakBounds = new ActionBounds(
+                DIMENSION, target(0, 65, 0), target(0, 65, 0), 0, 15, true);
+        var breakStep = new ApplyBlockPlanStep(
+                "break", ApplyBlockPlanOperation.BREAK_TO_AIR, target(0, 65, 0),
+                STONE, AIR, Optional.empty());
+
+        var request = new KnownConstructionRequest(new ApplyBlockPlanRequest(
+                "clear", 1, 1, List.of(breakStep), breakBounds,
+                ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK));
+
+        assertThat(request.breakOnly()).isTrue();
+        assertThat(request.requiredResources()).isEmpty();
     }
 
     private static ApplyBlockPlanStep step(

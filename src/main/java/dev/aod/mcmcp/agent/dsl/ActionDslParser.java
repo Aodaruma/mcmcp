@@ -130,6 +130,7 @@ public final class ActionDslParser {
             case "harvest_known_wheat" -> harvestKnownWheat(object, path);
             case "harvest_known_wheat_batch" -> harvestKnownWheatBatch(object, path);
             case "apply_known_block_plan" -> applyKnownBlockPlan(object, path);
+            case "clear_known_block_plan" -> clearKnownBlockPlan(object, path);
             case "apply_known_redstone_spec" -> applyKnownRedstoneSpec(object, path);
             case "open_known_fence_gate" -> openKnownFenceGate(object, path);
             case "open_known_passage" -> openKnownPassage(object, path);
@@ -267,6 +268,30 @@ public final class ActionDslParser {
             entries.add(blockPlanEntry(values.get(index), path + ".entries[" + index + "]"));
         }
         return new ActionDsl.ApplyKnownBlockPlan(
+                string(source.get("id"), path + ".id"),
+                position(source.get("anchor"), path + ".anchor"),
+                blockPlanTransform(source.get("transform"), path + ".transform"),
+                entries);
+    }
+
+    private static ActionDsl.ClearKnownBlockPlan clearKnownBlockPlan(
+            JsonObject source, String path) {
+        exactKeys(source, path, Set.of("id", "op", "anchor", "transform", "entries"),
+                Set.of("id", "op", "anchor", "transform", "entries"));
+        JsonArray values = array(source.get("entries"), path + ".entries");
+        var entries = new ArrayList<ActionDsl.ClearBlockPlanEntry>(values.size());
+        for (int index = 0; index < values.size(); index++) {
+            String entryPath = path + ".entries[" + index + "]";
+            JsonObject entry = object(values.get(index), entryPath,
+                    Set.of("id", "offset", "expected_before"),
+                    Set.of("id", "offset", "expected_before"));
+            entries.add(new ActionDsl.ClearBlockPlanEntry(
+                    string(entry.get("id"), entryPath + ".id"),
+                    offset(entry.get("offset"), entryPath + ".offset"),
+                    blockStateSpec(entry.get("expected_before"),
+                            entryPath + ".expected_before")));
+        }
+        return new ActionDsl.ClearKnownBlockPlan(
                 string(source.get("id"), path + ".id"),
                 position(source.get("anchor"), path + ".anchor"),
                 blockPlanTransform(source.get("transform"), path + ".transform"),

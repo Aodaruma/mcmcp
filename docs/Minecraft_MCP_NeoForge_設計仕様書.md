@@ -24,7 +24,7 @@
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
 - fresh評価turnまたはAgent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
-最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件のplace-only planへ無変換コピーする`apply_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`、現在開いているVanilla 9x3純storageからopaque参照で1 stackを移す`operate_known_menu`に加え、Phase 5の最初のvertical sliceとしてlever 1入力とredstone lamp 1出力の固定identity回路を配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の破壊・置換・256 block化、一般資源入手、一般回路合成は、同じ安全境界を維持して追加する。
+最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件設置する`apply_known_block_plan`と同じ安全blockを1〜8件撤去する`clear_known_block_plan`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`、現在開いているVanilla 9x3純storageからopaque参照で1 stackを移す`operate_known_menu`に加え、Phase 5の最初のvertical sliceとしてlever 1入力とredstone lamp 1出力の固定identity回路を配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・storage・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の置換・256 block化、一般資源入手、一般回路合成は、同じ安全境界を維持して追加する。
 
 ## 1. 対象環境
 
@@ -127,6 +127,7 @@ NeoForge公式の26.2 MDKもJava 25を対象としている。開発は公式の
 ### Phase 3: 小規模建築
 
 - 初回vertical slice: 閉じたcopy/support allowlistだけが返すpolicy-visibleな完全BlockStateと設置itemを使う、stationary・place-only・1〜8 blockの`apply_known_block_plan`
+- 同じ安全建築blockの完全な現行stateを使い、既存BREAK_TO_AIR経路とfresh air再観測で1〜8 blockを撤去する`clear_known_block_plan`
 - offsetとBlockStateのmirror / rotationはruntimeが同じMinecraft規則で変換し、LLMへ向き変換させない
 - 現在surfaceまたは明示した先行entryだけをsupport proofとし、入力順のfail-fast実行とauthoritative postconditionを要求
 - ローカルに登録した許可box
@@ -741,6 +742,7 @@ Action DSL v1の制御構造:
 | harvest_known_wheat | camera, block_break | 可視・既知かつ実行時age=7のwheat 1個だけを通常破壊し、airを確認 |
 | harvest_known_wheat_batch | camera, block_break | 1〜8個の相異なる可視・既知かつ成熟済みwheatを入力順に収穫する |
 | apply_known_block_plan | camera, block_place | 完全な可視source stateをruntimeでmirror / rotationし、現在supportまたは明示先行dependency上へ1〜8 blockを入力順に通常設置する |
+| clear_known_block_plan | camera, block_break | 現在返却済みの完全stateが一致する安全建築blockを1〜8件、既存BREAK_TO_AIR経路で撤去し、freshなair再観測後に完了する |
 | apply_known_redstone_spec | camera, block_interact, block_place | lampの可視不活性supportとleverの可視glass support、周囲4 airを確認して固定lever→lamp identityを設置し、live visualで入出力のOFF / ON / OFFを試験する |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
@@ -763,6 +765,8 @@ semantic action、stationary break、block plan、Phase 5 world adapterで共有
 `collect_visible_item_batch`は2〜8件をlisted orderのまま保持する第一級の有限batch nodeである。batch開始時にitem種別ごとのplayer inventory絶対個数baselineを1回だけ固定する。各entryは通常の`collect_visible_item`と同じfresh visible entity、連続値XYZ、既知安全pickup cell、移動中再検証を要求する。先行entryへの移動中に後続entryのfresh policy-visible AABBとplayer pickup areaの実接触を確認し、その後に対応itemのinventory絶対個数増加を確認できた場合だけ、当該後続entryを`incidentally_collected`としてcreditできる。単なるwitness消失、merge、移動、近接や推定では成功にしない。listed orderの途中で接触・差分proof、経路、budgetのいずれかが不足した場合はAction全体をfail-fastで終了し、未開始entryをskip・置換・再順序化しない。
 
 `apply_known_block_plan`はPhase 3の初回vertical sliceであり、wire shapeを`{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,source_state,item,support:{position,face,expected_state,dependency_entry_id}}]}`へ閉じる。entryは1〜8件、offset各軸は-8〜8、entry IDと変換後targetはnode内で一意とする。`anchor`とsupportはdimension-qualified block座標で、変換後targetは`anchor + transform(offset)`だけから決定する。`mirror=none|x|z`を先に適用し、`x`はMinecraft `FRONT_BACK`と同じeast/west反転、`z`は`LEFT_RIGHT`と同じnorth/south反転とする。その後`rotation=0|90|180|270`のY軸時計回り回転を適用する。offsetと`source_state`は同じtransformを通し、方向propertyをLLMへ変換させない。
+
+`clear_known_block_plan`は同じ`anchor` / `transform`と1〜8件の`{id,offset,expected_before}`だけを受け取る。targetの返却済み完全stateとconstruction policyをplanner・packet直前・heartbeatで再検証し、全targetをfreshにair再観測してから完了する。撤去後の置換は再観測を挟んだ別Actionの`apply_known_block_plan`とする。
 
 各`source_state`は`placement_item != null`だった可視sourceの完全`visible_surface.state`を無変換コピーし、`item`も同じrecordの`placement_item`をコピーする。runtimeはregistered BlockState定義に対してpropertyの欠落・余分・不正値を入力前に拒否し、MinecraftのBlockState mirror / rotation実装で完全stateを一意に変換する。入力値、未知property名、欠落property名は公開診断へ反射しない。BlockEntity / NBT、fluid、gravity block、container、portal、command block、通常BlockItem設置で完全stateを再現できないblockは`placement_item=null`とし、このnodeへ入れられない。
 
@@ -1146,6 +1150,7 @@ Phase 2時点のmovement gateは、既に選ばれた上下edgeのVanilla resolv
 
 - `visible_surface.state / placement_item`はrequired nullable field。完全stateは閉じたcopy/support allowlistだけに公開し、`placement_item != null`なら`state != null`
 - `apply_known_block_plan`はstationary・place-onlyの1〜8 entry
+- `clear_known_block_plan`はstationary・break-onlyの1〜8 entryで、置換は再観測後の別Actionに分ける
 - source相対offsetと方向stateを同じmirror / rotationでruntime変換
 - 現在policy-visibleなsupport、または入力順で先行するentryだけへ依存可能
 - NBTなしで通常設置できるallowlisted blockだけ

@@ -50,6 +50,13 @@ class McpToolCatalogTest {
                 .get("description").getAsString())
                 .contains("adopted without input or placement budget")
                 .contains("later fresh exact verification of every entry");
+        var clear = schema.getAsJsonObject("$defs")
+                .getAsJsonObject("clearKnownBlockPlanNode");
+        assertThat(clear.getAsJsonObject("properties").getAsJsonObject("op")
+                .get("const").getAsString()).isEqualTo("clear_known_block_plan");
+        assertThat(clear.get("description").getAsString())
+                .contains("later fresh exact air observation")
+                .contains("separate Action after reobservation");
         registry.abandonDelivery(prepared);
         assertThat(commands.getLast()).isInstanceOf(McpRuntimePort.AbandonActionDelivery.class);
     }

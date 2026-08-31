@@ -39,6 +39,7 @@ public final class ActionDsl {
             FaceKnownPosition, BreakKnownFace,
             TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
             HarvestKnownWheat, HarvestKnownWheatBatch, ApplyKnownBlockPlan,
+            ClearKnownBlockPlan,
             ApplyKnownRedstoneSpec,
             OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
@@ -198,6 +199,31 @@ public final class ActionDsl {
             Objects.requireNonNull(sourceState, "sourceState");
             Objects.requireNonNull(item, "item");
             Objects.requireNonNull(support, "support");
+        }
+    }
+
+    /** Clears exact, currently visible safe construction states at transformed offsets. */
+    public record ClearKnownBlockPlan(
+            String id,
+            Position anchor,
+            BlockPlanTransform transform,
+            List<ClearBlockPlanEntry> entries) implements Node {
+        public ClearKnownBlockPlan {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(anchor, "anchor");
+            Objects.requireNonNull(transform, "transform");
+            entries = List.copyOf(Objects.requireNonNull(entries, "entries"));
+        }
+    }
+
+    public record ClearBlockPlanEntry(
+            String id,
+            Offset offset,
+            BlockStateSpec expectedBefore) {
+        public ClearBlockPlanEntry {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(offset, "offset");
+            Objects.requireNonNull(expectedBefore, "expectedBefore");
         }
     }
 

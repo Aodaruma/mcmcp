@@ -444,8 +444,9 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         if (child.stage() == ApplyBlockPlanChildStage.BREAK) {
             var level = Objects.requireNonNull(minecraft.level);
             var target = blockPos(child.target());
-            SafeBreakSourcePolicy.requireLiveState(
-                    level.getBlockState(target), level.getBlockEntity(target) != null);
+            requireBreakSource(
+                    request.breakSafety(), level.getBlockState(target),
+                    level.getBlockEntity(target) != null);
         } else {
             var level = Objects.requireNonNull(minecraft.level);
             var support = candidate.hitBlock();
@@ -527,7 +528,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 }
                 var sourceFailure = breakHeartbeatSourceFailure(
                         liveState, level.getBlockEntity(target) != null,
-                        active.child.expectedBefore());
+                        active.child.expectedBefore(), active.request.breakSafety());
                 if (sourceFailure != null) {
                     active.failure = sourceFailure;
                     stopAttack(active);
@@ -1457,9 +1458,25 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             BlockState liveState,
             boolean liveBlockEntityPresent,
             BlockStateFingerprint expectedBefore) {
+        return breakHeartbeatSourceFailure(
+                liveState, liveBlockEntityPresent, expectedBefore,
+                ApplyBlockPlanRequest.BreakSafety.SAFE_BREAK_SOURCE);
+    }
+
+    static RoutineFailure breakHeartbeatSourceFailure(
+            BlockState liveState,
+            boolean liveBlockEntityPresent,
+            BlockStateFingerprint expectedBefore,
+            ApplyBlockPlanRequest.BreakSafety breakSafety) {
         Objects.requireNonNull(liveState, "liveState");
         Objects.requireNonNull(expectedBefore, "expectedBefore");
-        if (!SafeBreakSourcePolicy.allowsLiveState(liveState, liveBlockEntityPresent)) {
+        Objects.requireNonNull(breakSafety, "breakSafety");
+        boolean safe = breakSafety == ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK
+                ? SafeConstructionBlockPolicy.allowsLiveState(
+                        liveState, liveBlockEntityPresent)
+                : SafeBreakSourcePolicy.allowsLiveState(
+                        liveState, liveBlockEntityPresent);
+        if (!safe) {
             return failure("UNSAFE_BREAK_SOURCE", RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
                     Map.of("safe_break_source", true),
@@ -1472,6 +1489,17 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                     stateMap(expectedBefore), stateMap(actual));
         }
         return null;
+    }
+
+    private static void requireBreakSource(
+            ApplyBlockPlanRequest.BreakSafety breakSafety,
+            BlockState liveState,
+            boolean liveBlockEntityPresent) {
+        if (breakSafety == ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK) {
+            SafeConstructionBlockPolicy.requireLiveState(liveState, liveBlockEntityPresent);
+        } else {
+            SafeBreakSourcePolicy.requireLiveState(liveState, liveBlockEntityPresent);
+        }
     }
 
     private static boolean withinWorldBorder(ClientLevel level, BlockPos position) {

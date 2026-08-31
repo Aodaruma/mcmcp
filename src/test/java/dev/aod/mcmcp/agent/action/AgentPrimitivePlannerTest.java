@@ -310,6 +310,59 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void knownClearPlanRequiresDeliveredExactStateAtItsTransformedTarget() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        var target = new ActionDsl.Position(DIMENSION, 0, 65, 2);
+        var expected = new ActionDsl.BlockStateSpec(
+                "minecraft:oak_log", Map.of("axis", "x"));
+        var clear = new ActionDsl.ClearKnownBlockPlan(
+                "clear",
+                target,
+                new ActionDsl.BlockPlanTransform(
+                        ActionDsl.BlockPlanRotation.DEGREES_0,
+                        ActionDsl.BlockPlanMirror.NONE),
+                List.of(new ActionDsl.ClearBlockPlanEntry(
+                        "beam", new ActionDsl.Offset(0, 0, 0), expected)));
+        var program = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_BREAK),
+                List.of(clear));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+
+        var accepted = AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                pose,
+                Optional.of(frame(List.of(surfaceWithState(
+                        target, ObservationRecord.Face.NORTH,
+                        "minecraft:oak_log", Map.of("axis", "x"), 0L)))),
+                4.5F);
+
+        assertThat(accepted.worstCase(clear)).contains(
+                ActionDslCompiler.intrinsicKnownBlockClearCost(1));
+        assertThat(accepted.knownSurfaces())
+                .extracting(AgentPrimitivePlanner.KnownSurface::position)
+                .contains(target);
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                pose,
+                Optional.of(frame(List.of(surface(
+                        target, ObservationRecord.Face.NORTH,
+                        "minecraft:oak_log", null, 0L)))),
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+    }
+
+    @Test
     void redstoneIdentityRequiresCurrentInertLampAndGlassLeverSupports() {
         UUID session = UUID.randomUUID();
         var map = map(session).snapshot().orElseThrow();

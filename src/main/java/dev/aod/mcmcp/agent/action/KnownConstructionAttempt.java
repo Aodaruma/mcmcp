@@ -120,7 +120,7 @@ public final class KnownConstructionAttempt implements AutoCloseable {
             if (!step.expectedBefore().equals(live)) {
                 return fail("construction_precondition_changed");
             }
-            if (!cell.replaceable() || !cell.safeStandAvailable()) {
+            if ((!request.breakOnly() && !cell.replaceable()) || !cell.safeStandAvailable()) {
                 return fail("construction_step_unpreparable");
             }
             // Dependency support for a later entry intentionally has no aim candidate until its
@@ -132,8 +132,7 @@ public final class KnownConstructionAttempt implements AutoCloseable {
                     return fail("construction_step_unpreparable");
                 }
             }
-            String item = step.requiredItemId().orElseThrow();
-            required.merge(item, 1, Integer::sum);
+            step.requiredItemId().ifPresent(item -> required.merge(item, 1, Integer::sum));
         }
 
         if (next < 0) {
@@ -142,7 +141,7 @@ public final class KnownConstructionAttempt implements AutoCloseable {
             phase = Phase.FINAL_VERIFY;
             return result(Status.RUNNING, "construction_final_verifying");
         }
-        if (!frame.inventoryServerSynchronized()) {
+        if (!request.breakOnly() && !frame.inventoryServerSynchronized()) {
             return fail("construction_inventory_unsynchronized");
         }
         for (var entry : required.entrySet()) {
@@ -185,7 +184,7 @@ public final class KnownConstructionAttempt implements AutoCloseable {
             return result(Status.RUNNING, "construction_preparing");
         }
         if (evidence.liveState().filter(child.expectedBefore()::equals).isEmpty()
-                || !evidence.targetReplaceable()) {
+                || (!request.breakOnly() && !evidence.targetReplaceable())) {
             return fail("construction_precondition_changed");
         }
         action = Objects.requireNonNull(
@@ -273,11 +272,12 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         return result(status, evidence, 0);
     }
 
-    private TickResult result(Status status, String evidence, int placedDelta) {
+    private TickResult result(Status status, String evidence, int confirmedDelta) {
         return new TickResult(
                 status,
                 Objects.requireNonNull(evidence, "evidence"),
-                placedDelta,
+                request.breakOnly() ? 0 : confirmedDelta,
+                request.breakOnly() ? confirmedDelta : 0,
                 completedCount(),
                 confirmedEntries);
     }
@@ -335,12 +335,15 @@ public final class KnownConstructionAttempt implements AutoCloseable {
             Status status,
             String evidence,
             int placedDelta,
+            int brokenDelta,
             int completedEntries,
             int confirmedEntries) {
         public TickResult {
             Objects.requireNonNull(status, "status");
             Objects.requireNonNull(evidence, "evidence");
             if (placedDelta < 0 || placedDelta > 1
+                    || brokenDelta < 0 || brokenDelta > 1
+                    || placedDelta + brokenDelta > 1
                     || completedEntries < 0
                     || completedEntries > KnownConstructionRequest.MAX_ENTRIES
                     || confirmedEntries < 0

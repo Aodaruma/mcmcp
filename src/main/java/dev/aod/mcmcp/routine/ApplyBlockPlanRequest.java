@@ -12,7 +12,8 @@ public record ApplyBlockPlanRequest(
         int phaseIndex,
         int phaseTotal,
         List<ApplyBlockPlanStep> steps,
-        ActionBounds bounds) {
+        ActionBounds bounds,
+        BreakSafety breakSafety) {
     public static final String KIND = "apply_block_plan";
     public static final int MAX_STEPS = 64;
 
@@ -26,6 +27,7 @@ public record ApplyBlockPlanRequest(
         }
         Objects.requireNonNull(steps, "steps");
         Objects.requireNonNull(bounds, "bounds");
+        Objects.requireNonNull(breakSafety, "breakSafety");
         steps = List.copyOf(steps);
         if (steps.isEmpty() || steps.size() > MAX_STEPS) {
             throw new IllegalArgumentException("block plan must contain 1..64 steps");
@@ -56,8 +58,23 @@ public record ApplyBlockPlanRequest(
         }
     }
 
+    public ApplyBlockPlanRequest(
+            String phaseId,
+            int phaseIndex,
+            int phaseTotal,
+            List<ApplyBlockPlanStep> steps,
+            ActionBounds bounds) {
+        this(phaseId, phaseIndex, phaseTotal, steps, bounds, BreakSafety.SAFE_BREAK_SOURCE);
+    }
+
     public ApplyBlockPlanRequest(List<ApplyBlockPlanStep> steps, ActionBounds bounds) {
         this("phase-1", 1, 1, steps, bounds);
+    }
+
+    /** Internal-only selector; public legacy plan parsing always uses SAFE_BREAK_SOURCE. */
+    public enum BreakSafety {
+        SAFE_BREAK_SOURCE,
+        SAFE_CONSTRUCTION_BLOCK
     }
 
     public String kind() {

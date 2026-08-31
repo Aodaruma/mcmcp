@@ -10,10 +10,10 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Internal Action adapter request for a place-only, one-pose construction suffix.
+ * Internal Action adapter request for a homogeneous, one-pose construction suffix.
  *
  * <p>The wrapped legacy plan remains the Minecraft adapter boundary, while this type closes the
- * public construction subset to at most eight ordered placements with explicit support evidence.</p>
+ * public construction subset to at most eight ordered placements or safe clears.</p>
  */
 public record KnownConstructionRequest(ApplyBlockPlanRequest plan) {
     public static final int MAX_ENTRIES = 8;
@@ -25,14 +25,35 @@ public record KnownConstructionRequest(ApplyBlockPlanRequest plan) {
         if (plan.steps().size() > MAX_ENTRIES) {
             throw new IllegalArgumentException("construction must contain at most 8 entries");
         }
-        if (plan.bounds().allowBreak() || plan.bounds().maxTravelBlocks() != 0) {
-            throw new IllegalArgumentException("construction v1 is place-only and stationary");
+        if (plan.bounds().maxTravelBlocks() != 0) {
+            throw new IllegalArgumentException("construction must be stationary");
+        }
+
+        boolean clear = plan.steps().stream()
+                .allMatch(step -> step.operation() == ApplyBlockPlanOperation.BREAK_TO_AIR);
+        boolean place = plan.steps().stream()
+                .allMatch(step -> step.operation() == ApplyBlockPlanOperation.PLACE);
+        if (clear == place || clear != plan.bounds().allowBreak()) {
+            throw new IllegalArgumentException(
+                    "construction must be homogeneous place-only or break-only");
+        }
+        if (clear != (plan.breakSafety()
+                == ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK)) {
+            throw new IllegalArgumentException("construction break safety does not match its mode");
         }
 
         var priorEntries = new LinkedHashMap<String, ApplyBlockPlanStep>();
         for (var step : plan.steps()) {
-            if (step.operation() != ApplyBlockPlanOperation.PLACE) {
-                throw new IllegalArgumentException("construction v1 accepts only place entries");
+            if (clear) {
+                SafeConstructionBlockPolicy.requireExpectedState(step.expectedBefore());
+                if (!"minecraft:air".equals(step.expectedAfter().blockId())
+                        || !step.expectedAfter().properties().isEmpty()
+                        || step.requiredItemId().isPresent()
+                        || step.supportWitness().isPresent()) {
+                    throw new IllegalArgumentException(
+                            "construction clear must be exact break-to-air");
+                }
+                continue;
             }
             if (!"minecraft:air".equals(step.expectedBefore().blockId())
                     || !step.expectedBefore().properties().isEmpty()) {
@@ -78,6 +99,11 @@ public record KnownConstructionRequest(ApplyBlockPlanRequest plan) {
 
     public Map<String, Integer> requiredResources() {
         return plan.requiredResources();
+    }
+
+    public boolean breakOnly() {
+        return plan.breakSafety()
+                == ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK;
     }
 
     private static void requireAdjacentSupport(

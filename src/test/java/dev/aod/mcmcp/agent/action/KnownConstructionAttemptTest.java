@@ -77,6 +77,29 @@ class KnownConstructionAttemptTest {
     }
 
     @Test
+    void clearsThenRequiresAFreshExactAirObservation() {
+        var request = clearRequest();
+        var port = new FakePort(request);
+        var attempt = new KnownConstructionAttempt(port, request, 1, 301);
+
+        assertThat(attempt.tick(1).evidence()).isEqualTo("construction_preparing");
+        port.tick = 2;
+        assertThat(attempt.tick(2).evidence()).isEqualTo("construction_confirming");
+        port.tick = 3;
+        var confirmed = attempt.tick(3);
+        assertThat(confirmed.brokenDelta()).isEqualTo(1);
+        assertThat(confirmed.placedDelta()).isZero();
+        port.tick = 4;
+        assertThat(attempt.tick(4).evidence()).isEqualTo("construction_final_verifying");
+        port.tick = 5;
+
+        assertThat(attempt.tick(5).status())
+                .isEqualTo(KnownConstructionAttempt.Status.SUCCEEDED);
+        assertThat(port.dispatchedEntryIds).containsExactly("clear0");
+        assertThat(port.retired).isTrue();
+    }
+
+    @Test
     void insufficientWholePlanResourcesFailBeforeAnyPreparationOrPacketBoundary() {
         var request = request(3);
         var port = new FakePort(request);
@@ -309,6 +332,17 @@ class KnownConstructionAttemptTest {
                         DIMENSION, firstTarget, secondTarget, 0, 30, false)));
     }
 
+    private static KnownConstructionRequest clearRequest() {
+        BlockTarget target = target(0, 65, 0);
+        var step = new ApplyBlockPlanStep(
+                "clear0", ApplyBlockPlanOperation.BREAK_TO_AIR,
+                target, STONE, AIR, Optional.empty());
+        return new KnownConstructionRequest(new ApplyBlockPlanRequest(
+                "clear", 1, 1, List.of(step),
+                new ActionBounds(DIMENSION, target, target, 0, 15, true),
+                ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK));
+    }
+
     private static BlockTarget target(int x, int y, int z) {
         return target(DIMENSION, x, y, z);
     }
@@ -322,6 +356,7 @@ class KnownConstructionAttemptTest {
                 new java.util.IdentityHashMap<>();
         private final Map<BlockTarget, BlockStateFingerprint> states = new LinkedHashMap<>();
         private final java.util.ArrayList<String> dispatchedEntryIds = new java.util.ArrayList<>();
+        private final boolean breakOnly;
         private long tick = 1;
         private int available;
         private int preparationFailureStep = -1;
@@ -339,8 +374,9 @@ class KnownConstructionAttemptTest {
 
         private FakePort(KnownConstructionRequest request) {
             requests.put(request.plan(), request);
+            breakOnly = request.breakOnly();
             available = request.entries().size();
-            request.entries().forEach(step -> states.put(step.target(), AIR));
+            request.entries().forEach(step -> states.put(step.target(), step.expectedBefore()));
         }
 
         @Override
@@ -349,7 +385,7 @@ class KnownConstructionAttemptTest {
             var cells = new LinkedHashMap<BlockTarget, ApplyBlockPlanCellObservation>();
             for (int index = 0; index < request.entries().size(); index++) {
                 var step = request.entries().get(index);
-                if (omitCompletedCells && !AIR.equals(states.get(step.target()))) {
+                if (omitCompletedCells && step.expectedAfter().equals(states.get(step.target()))) {
                     continue;
                 }
                 boolean aimFeasible = !deferSecondAimUntilFirstConfirmation
@@ -357,7 +393,7 @@ class KnownConstructionAttemptTest {
                         || STONE.equals(states.get(request.entries().getFirst().target()));
                 cells.put(step.target(), new ApplyBlockPlanCellObservation(
                         step.target(), Optional.of(states.get(step.target())),
-                        true, true, aimFeasible));
+                        !request.breakOnly(), true, aimFeasible));
             }
             return new ApplyBlockPlanFrame(
                     tick, tick, true, true, true, true, true, true, true,
@@ -397,7 +433,7 @@ class KnownConstructionAttemptTest {
             return new ApplyBlockPlanPreparationEvidence(
                     preparation.attemptId(), tick, tick,
                     Optional.of(states.get(activeChild.target())),
-                    true, true, true, true, failure);
+                    !breakOnly, true, true, true, failure);
         }
 
         @Override

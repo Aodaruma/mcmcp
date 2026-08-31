@@ -13,6 +13,9 @@ import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.ObservationValues;
 import dev.aod.mcmcp.construction.SafeConstructionBlocks;
+import dev.aod.mcmcp.observation.BlockPlan;
+import dev.aod.mcmcp.observation.BlockPlanStateTransformer;
+import dev.aod.mcmcp.observation.BlockStateView;
 import dev.aod.mcmcp.routine.KnownBrewingRequest;
 import dev.aod.mcmcp.routine.NavigationViewLease;
 import dev.aod.mcmcp.routine.SafePlacementSupportPolicy;
@@ -812,6 +815,32 @@ public final class AgentPrimitivePlanner {
             // The construction adapter restores the admitted camera pose and owns no movement.
             return input;
         }
+        if (node instanceof ActionDsl.ClearKnownBlockPlan plan) {
+            for (ActionDsl.ClearBlockPlanEntry entry : plan.entries()) {
+                ActionDsl.Position target = transformedTarget(
+                        plan.anchor(), plan.transform(), entry.offset());
+                ActionDsl.BlockStateSpec expected = transformedState(
+                        plan.transform(), entry.expectedBefore());
+                MutationSurface surface = requireMutationSurface(
+                        map,
+                        latestFrame,
+                        input,
+                        target,
+                        surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, target),
+                        expected.block(),
+                        value -> value.placementItem() != null
+                                && exactObservedState(value, expected),
+                        "Construction clear requires the delivered exact target state");
+                knownSurfaces.add(surface.surface());
+                for (Pose pose : input) {
+                    work.poseTransition();
+                    requireConstructionAim(pose, surface.point());
+                }
+            }
+            merge(costs, node.id(),
+                    ActionDslCompiler.intrinsicKnownBlockClearCost(plan.entries().size()));
+            return input;
+        }
         if (node instanceof ActionDsl.ApplyKnownRedstoneSpec redstone) {
             ActionDsl.Position lampSupport = offset(redstone.anchor(), 0, -1, 0);
             int x = switch (redstone.rotation()) {
@@ -1528,6 +1557,35 @@ public final class AgentPrimitivePlanner {
                 .orElseThrow(() -> new PlanningException(
                         Code.TARGET_UNKNOWN,
                         "Construction source requires a delivered exact state and placement item"));
+    }
+
+    private static ActionDsl.Position transformedTarget(
+            ActionDsl.Position anchor,
+            ActionDsl.BlockPlanTransform transform,
+            ActionDsl.Offset rawOffset) {
+        ActionDsl.Offset offset = transform.apply(rawOffset);
+        return new ActionDsl.Position(
+                anchor.dimension(),
+                Math.addExact(anchor.x(), offset.x()),
+                Math.addExact(anchor.y(), offset.y()),
+                Math.addExact(anchor.z(), offset.z()));
+    }
+
+    private static ActionDsl.BlockStateSpec transformedState(
+            ActionDsl.BlockPlanTransform transform,
+            ActionDsl.BlockStateSpec source) {
+        try {
+            BlockStateView state = BlockPlanStateTransformer.transformFull(
+                    new BlockStateView(source.block(), source.properties()),
+                    new BlockPlan.Transform(
+                            transform.rotation().degrees(), transform.mirror().wireName()),
+                    "construction.clear.expected_before");
+            return new ActionDsl.BlockStateSpec(state.block(), state.properties());
+        } catch (RuntimeException rejected) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Construction clear expected_before must be one complete safe state");
+        }
     }
 
     private static Vec3 supportFaceCenter(

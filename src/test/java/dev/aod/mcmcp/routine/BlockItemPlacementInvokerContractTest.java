@@ -228,6 +228,23 @@ class BlockItemPlacementInvokerContractTest {
     }
 
     @Test
+    void constructionClearHeartbeatUsesItsClosedFullBlockPolicyOnlyWhenMarked() {
+        var smoothStone = new BlockStateFingerprint("minecraft:smooth_stone", Map.of());
+
+        assertThat(MinecraftApplyBlockPlanPort.breakHeartbeatSourceFailure(
+                Blocks.SMOOTH_STONE.defaultBlockState(), false, smoothStone))
+                .isNotNull();
+        assertThat(MinecraftApplyBlockPlanPort.breakHeartbeatSourceFailure(
+                Blocks.SMOOTH_STONE.defaultBlockState(), false, smoothStone,
+                ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK))
+                .isNull();
+        assertThat(MinecraftApplyBlockPlanPort.breakHeartbeatSourceFailure(
+                Blocks.SMOOTH_STONE.defaultBlockState(), true, smoothStone,
+                ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK))
+                .isNotNull();
+    }
+
+    @Test
     void semanticBreakStopsOnAnOwnedLocalPostconditionWhileAwaitingServerEvidence() throws Exception {
         assertThat(invocations(
                 "/dev/aod/mcmcp/routine/MinecraftSemanticActionPort.class",

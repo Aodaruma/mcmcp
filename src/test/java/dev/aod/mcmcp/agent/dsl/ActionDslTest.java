@@ -161,6 +161,45 @@ class ActionDslTest {
     }
 
     @Test
+    void parsesAndIntrinsicallyCompilesOrderedBreakOnlyConstructionPlan() {
+        JsonObject node = clearKnownBlockPlan("clear", 2);
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "block_break"),
+                node,
+                budget(30_000, 600, 0, 160, 0, 2, 0)));
+
+        var plan = (ActionDsl.ClearKnownBlockPlan) request.program().body().getFirst();
+        assertThat(plan.entries()).extracting(ActionDsl.ClearBlockPlanEntry::id)
+                .containsExactly("entry_0", "entry_1");
+        assertThat(plan.entries().getFirst().expectedBefore())
+                .isEqualTo(new ActionDsl.BlockStateSpec(
+                        "minecraft:oak_log", Map.of("axis", "y")));
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.BLOCK_BREAK);
+
+        var compiled = ActionDslCompiler.compile(
+                request,
+                ignored -> Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_BREAK));
+        assertThat(compiled.worstCaseCost()).isEqualTo(
+                new ActionDslCompiler.Cost(30_000, 600, 0, 160, 0, 2, 0));
+
+        node.getAsJsonArray("entries").get(0).getAsJsonObject()
+                .add("expected_before", blockState("minecraft:air"));
+        assertCode(request(capabilities("camera", "block_break"), node,
+                        budget(30_000, 600, 0, 160, 0, 2, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        assertCode(request(
+                        capabilities("camera", "block_break"),
+                        array(clearKnownBlockPlan("clear", 1), waitNode("after", 1)),
+                        budget(15_050, 301, 0, 80, 0, 1, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
     void blockPlanTransformMatchesExistingMirrorThenClockwiseRotationContract() {
         var transform = new ActionDsl.BlockPlanTransform(
                 ActionDsl.BlockPlanRotation.DEGREES_270,
@@ -1514,6 +1553,27 @@ class ActionDslTest {
                 support.addProperty("dependency_entry_id", "entry_" + (index - 1));
             }
             entry.add("support", support);
+            entries.add(entry);
+        }
+        node.add("entries", entries);
+        return node;
+    }
+
+    private static JsonObject clearKnownBlockPlan(String id, int count) {
+        JsonObject node = baseNode(id, "clear_known_block_plan");
+        node.add("anchor", position(10, 64, 10));
+        JsonObject transform = new JsonObject();
+        transform.addProperty("rotation", 0);
+        transform.addProperty("mirror", "none");
+        node.add("transform", transform);
+        JsonArray entries = new JsonArray();
+        for (int index = 0; index < count; index++) {
+            JsonObject entry = new JsonObject();
+            entry.addProperty("id", "entry_" + index);
+            entry.add("offset", offset(0, index, 0));
+            JsonObject expected = blockState("minecraft:oak_log");
+            expected.getAsJsonObject("properties").addProperty("axis", "y");
+            entry.add("expected_before", expected);
             entries.add(entry);
         }
         node.add("entries", entries);
