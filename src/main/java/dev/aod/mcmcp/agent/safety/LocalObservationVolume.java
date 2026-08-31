@@ -609,14 +609,15 @@ public final class LocalObservationVolume {
         double horizontalBefore = square(start.x() - target.x()) + square(start.z() - target.z());
         double horizontalAfter = square(end.x() - target.x()) + square(end.z() - target.z());
         boolean horizontalNonDivergence = horizontalAfter <= horizontalBefore + MOVEMENT_EPSILON;
-        // Vanilla applies the JUMP ladder boost after move(...). The first guarded move may
-        // therefore retain the ladder's -0.15 descent clamp while clipping into its backing.
-        // Admit only that exact bootstrap contact, plus the already-boosted ascent tick.
-        boolean plannedLadderAscentClip = intent.locomotion() == Locomotion.LADDER
+        boolean exactLadderAscent = intent.locomotion() == Locomotion.LADDER
                 && intent.verticalDelta() > 0
                 && sourceClimbable
                 && resolvedClimbable
-                && targetClimbable
+                && targetClimbable;
+        // Vanilla applies the JUMP ladder boost after move(...). The first guarded move may
+        // therefore retain the ladder's -0.15 descent clamp. A blocked path still requires the
+        // exact backing clip; an otherwise ordinary rung path needs no collision exception.
+        boolean plannedLadderAscentClip = exactLadderAscent
                 && ladderBackingClip
                 && path.clearance() == Clearance.BLOCKED
                 && path.transition() == Transition.BLOCKED
@@ -624,8 +625,12 @@ public final class LocalObservationVolume {
                 && resolved.y >= -MAX_LADDER_DESCENT_PER_TICK - MOVEMENT_EPSILON
                 && horizontalNonDivergence
                 && intendedTowardNavigationTarget(start, intended, intent);
-        boolean ladderAscentBootstrap = plannedLadderAscentClip
-                && resolved.y <= MOVEMENT_EPSILON;
+        boolean ladderAscentBootstrap = exactLadderAscent
+                && resolved.y >= -MAX_LADDER_DESCENT_PER_TICK - MOVEMENT_EPSILON
+                && resolved.y <= MOVEMENT_EPSILON
+                && horizontalNonDivergence
+                && intendedTowardNavigationTarget(start, intended, intent)
+                && (ordinaryPath || plannedLadderAscentClip);
         if (intent.locomotion() == Locomotion.GROUND
                 || !targetClimbable && !targetLanding
                 || path.loaded() != LoadedState.LOADED
