@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.fixture;
 
 import com.mojang.logging.LogUtils;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -15,9 +16,12 @@ import java.util.UUID;
 /** One-shot Phase 5 setup for the disposable integrated-server fixture. */
 final class FixturePhase5Autorun {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final String TOGGLE_ARMING_KEY = "key.mcmcp.toggle_lock";
+    private static final int ARM_DELAY_CLIENT_TICKS = 20;
 
     private final FixturePhase5AutorunConfig config;
     private volatile Stage stage = Stage.WAITING_FOR_WORLD;
+    private int clientTicksAfterPrepare;
     private boolean clientSelectedSlotApplied;
     private boolean pauseOptionChanged;
     private boolean originalPauseOnLostFocus;
@@ -44,8 +48,8 @@ final class FixturePhase5Autorun {
         eventBus.addListener(autorun::onClientStarted);
         eventBus.addListener(autorun::onClientTick);
         eventBus.addListener(autorun::onClientStopping);
-        LOGGER.warn("MCMCP Phase 5 fixture autorun enabled: mode={}, setupOnly=true",
-                config.mode().wireName());
+        LOGGER.warn("MCMCP Phase 5 fixture autorun enabled: mode={}, autoArm={}",
+                config.mode().wireName(), config.autoArm());
     }
 
     private void onClientStarted(ClientStartedEvent event) {
@@ -62,8 +66,29 @@ final class FixturePhase5Autorun {
         if (stage != Stage.PREPARED || !applyClientSelectedSlot(Minecraft.getInstance())) {
             return;
         }
-        stage = Stage.COMPLETE;
-        LOGGER.info("MCMCP Phase 5 fixture prepared; local arming remains a user UI action");
+        if (!config.autoArm()) {
+            stage = Stage.COMPLETE;
+            LOGGER.info("MCMCP Phase 5 fixture prepared; local arming remains a user UI action");
+            return;
+        }
+        clientTicksAfterPrepare++;
+        if (clientTicksAfterPrepare < ARM_DELAY_CLIENT_TICKS) {
+            return;
+        }
+        stage = Stage.ARMING;
+        try {
+            KeyMapping toggleArming = KeyMapping.get(TOGGLE_ARMING_KEY);
+            if (toggleArming == null) {
+                fail("arming key mapping is unavailable", null);
+                return;
+            }
+            KeyMapping.click(toggleArming.getKey());
+            stage = Stage.COMPLETE;
+            LOGGER.info("MCMCP Phase 5 fixture requested one local-arm toggle after {} client ticks",
+                    ARM_DELAY_CLIENT_TICKS);
+        } catch (RuntimeException exception) {
+            fail("could not click the local-arm key mapping", exception);
+        }
     }
 
     private boolean applyClientSelectedSlot(Minecraft minecraft) {
@@ -154,6 +179,7 @@ final class FixturePhase5Autorun {
         WAITING_FOR_WORLD,
         PREPARING,
         PREPARED,
+        ARMING,
         COMPLETE,
         FAILED
     }

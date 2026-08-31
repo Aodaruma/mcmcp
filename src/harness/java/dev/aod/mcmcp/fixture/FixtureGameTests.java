@@ -16,6 +16,7 @@ import net.minecraft.gametest.framework.TestData;
 import net.minecraft.gametest.framework.TestEnvironmentDefinition;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.Container;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.LightLayer;
@@ -540,6 +541,76 @@ final class FixtureGameTests {
             helper.fail(Component.literal("Combined wheat chest supplies are not deterministic"));
         }
 
+        var generalization = FixturePhase5Scenario.generalizationLayout();
+        generalization.keySet().forEach(position -> assertInsideArena(helper, position));
+        for (BlockPos target : FixturePhase5Scenario.GENERALIZATION_FAN_OUT_LAMPS) {
+            assertLayoutState(helper, generalization, target, Blocks.AIR.defaultBlockState());
+        }
+        assertLayoutState(helper, generalization, FixturePhase5Scenario.REDSTONE_LEVER_TARGET,
+                Blocks.AIR.defaultBlockState());
+        assertLayoutState(helper, generalization,
+                FixturePhase5Scenario.REDSTONE_LEVER_TARGET.below(),
+                Blocks.GLASS.defaultBlockState());
+        for (BlockPos target : FixturePhase5Scenario.GENERALIZATION_CONSTRUCTION_BLOCKS) {
+            assertLayoutState(helper, generalization, target, Blocks.GLASS.defaultBlockState());
+        }
+        assertLayoutState(helper, generalization,
+                FixturePhase5Scenario.GENERALIZATION_CHEST_WEST,
+                FixturePhase5Scenario.generalizationChestState(
+                        net.minecraft.world.level.block.state.properties.ChestType.RIGHT));
+        assertLayoutState(helper, generalization,
+                FixturePhase5Scenario.GENERALIZATION_CHEST_EAST,
+                FixturePhase5Scenario.generalizationChestState(
+                        net.minecraft.world.level.block.state.properties.ChestType.LEFT));
+        for (BlockPos backing : FixturePhase5Scenario.GENERALIZATION_LADDER_BACKING) {
+            assertLayoutState(helper, generalization, backing,
+                    Blocks.SMOOTH_STONE.defaultBlockState());
+        }
+        for (BlockPos rung : FixturePhase5Scenario.GENERALIZATION_LADDER_RUNGS) {
+            assertLayoutState(helper, generalization, rung,
+                    FixturePhase5Scenario.generalizationLadderState());
+        }
+        assertLayoutState(helper, generalization,
+                FixturePhase5Scenario.GENERALIZATION_LADDER_LOWER_LANDING,
+                Blocks.AIR.defaultBlockState());
+        assertLayoutState(helper, generalization,
+                FixturePhase5Scenario.GENERALIZATION_LADDER_UPPER_LANDING,
+                Blocks.AIR.defaultBlockState());
+        assertLayoutState(helper, generalization,
+                FixturePhase5Scenario.GENERALIZATION_LADDER_UPPER_LANDING.below(),
+                Blocks.SMOOTH_STONE.defaultBlockState());
+
+        var wireTargets = java.util.Set.of(
+                FixturePhase5Scenario.GENERALIZATION_WIRE_LAMP_TARGET,
+                FixturePhase5Scenario.GENERALIZATION_WIRE_TARGET,
+                FixturePhase5Scenario.GENERALIZATION_WIRE_LEVER_TARGET);
+        var wireSupports = java.util.Set.copyOf(
+                FixturePhase5Scenario.GENERALIZATION_WIRE_SUPPORTS);
+        for (int y = 200; y <= 202; y++) {
+            for (int x = 200; x <= 204; x++) {
+                for (int z = 203; z <= 205; z++) {
+                    BlockPos position = new BlockPos(x, y, z);
+                    BlockState expected = wireSupports.contains(position)
+                            ? Blocks.GLASS.defaultBlockState()
+                            : Blocks.AIR.defaultBlockState();
+                    if (!wireTargets.contains(position)) {
+                        assertLayoutState(helper, generalization, position, expected);
+                    }
+                }
+            }
+        }
+        var westContents = FixturePhase5Scenario.generalizationChestWestContents();
+        var eastContents = FixturePhase5Scenario.generalizationChestEastContents();
+        if (westContents.size() != 1 || westContents.getFirst().slot() != 0
+                || westContents.getFirst().item() != net.minecraft.world.item.Items.COBBLESTONE
+                || westContents.getFirst().count() != 12
+                || eastContents.size() != 1 || eastContents.getFirst().slot() != 26
+                || eastContents.getFirst().item() != net.minecraft.world.item.Items.OAK_LOG
+                || eastContents.getFirst().count() != 4) {
+            helper.fail(Component.literal(
+                    "Generalization double chest contents must cover both vanilla halves"));
+        }
+
         // Install one representative of every state family against the real GameTest level.
         BlockPos cropSupport = new BlockPos(0, 0, 0);
         BlockPos crop = cropSupport.above();
@@ -583,6 +654,31 @@ final class FixtureGameTests {
                 FixturePhase5Scenario.bedState(BedPart.HEAD), pairFlags);
         assertExactState(helper, foot, FixturePhase5Scenario.bedState(BedPart.FOOT));
         assertExactState(helper, head, FixturePhase5Scenario.bedState(BedPart.HEAD));
+
+        BlockPos chestWest = new BlockPos(0, 1, 4);
+        BlockPos chestEast = chestWest.relative(Direction.EAST);
+        helper.setBlock(chestWest.below(), Blocks.SMOOTH_STONE);
+        helper.setBlock(chestEast.below(), Blocks.SMOOTH_STONE);
+        helper.getLevel().setBlock(
+                helper.absolutePos(chestWest),
+                FixturePhase5Scenario.generalizationChestState(
+                        net.minecraft.world.level.block.state.properties.ChestType.RIGHT),
+                pairFlags);
+        helper.getLevel().setBlock(
+                helper.absolutePos(chestEast),
+                FixturePhase5Scenario.generalizationChestState(
+                        net.minecraft.world.level.block.state.properties.ChestType.LEFT),
+                pairFlags);
+        Container doubleChest = net.minecraft.world.level.block.ChestBlock.getContainer(
+                (net.minecraft.world.level.block.ChestBlock) Blocks.CHEST,
+                helper.getBlockState(chestWest),
+                helper.getLevel(),
+                helper.absolutePos(chestWest),
+                false);
+        if (doubleChest == null || doubleChest.getContainerSize() != 54) {
+            helper.fail(Component.literal(
+                    "Generalization chest pair must expose one vanilla generic_9x6 container"));
+        }
 
         // Exercise the same ordering as prepare(COMBINED_WHEAT): initial purge, layout-created
         // drop, then final purge. The item outside the workspace must survive both passes.

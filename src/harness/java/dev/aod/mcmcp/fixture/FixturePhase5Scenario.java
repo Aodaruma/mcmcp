@@ -47,6 +47,40 @@ final class FixturePhase5Scenario {
     static final BlockPos REDSTONE_LEVER_TARGET = new BlockPos(202, 200, 194);
     static final BlockPos TRANSFER_BARREL = new BlockPos(199, 200, 194);
 
+    static final List<BlockPos> GENERALIZATION_FAN_OUT_LAMPS = List.of(
+            REDSTONE_LAMP_TARGET, REDSTONE_LAMP_TARGET.relative(Direction.EAST, 2));
+    static final List<BlockPos> GENERALIZATION_CONSTRUCTION_BLOCKS = List.of(
+            new BlockPos(194, 200, 197), new BlockPos(195, 200, 197));
+    static final BlockPos GENERALIZATION_CHEST_WEST = new BlockPos(194, 200, 203);
+    static final BlockPos GENERALIZATION_CHEST_EAST =
+            GENERALIZATION_CHEST_WEST.relative(Direction.EAST);
+    static final BlockPos GENERALIZATION_LADDER_BASE = new BlockPos(204, 200, 200);
+    static final List<BlockPos> GENERALIZATION_LADDER_RUNGS = List.of(
+            GENERALIZATION_LADDER_BASE,
+            GENERALIZATION_LADDER_BASE.above(),
+            GENERALIZATION_LADDER_BASE.above(2),
+            GENERALIZATION_LADDER_BASE.above(3));
+    static final List<BlockPos> GENERALIZATION_LADDER_BACKING = GENERALIZATION_LADDER_RUNGS.stream()
+            .map(position -> position.relative(Direction.WEST))
+            .toList();
+    static final BlockPos GENERALIZATION_LADDER_LOWER_LANDING =
+            GENERALIZATION_LADDER_BASE.relative(Direction.EAST);
+    static final BlockPos GENERALIZATION_LADDER_UPPER_LANDING =
+            GENERALIZATION_LADDER_LOWER_LANDING.above(3);
+    static final List<BlockPos> GENERALIZATION_LADDER_UPPER_PLATFORM = List.of(
+            new BlockPos(205, 202, 199), new BlockPos(205, 202, 200),
+            new BlockPos(205, 202, 201), new BlockPos(206, 202, 199),
+            new BlockPos(206, 202, 200), new BlockPos(206, 202, 201));
+    static final BlockPos GENERALIZATION_WIRE_LAMP_TARGET = new BlockPos(201, 201, 204);
+    static final BlockPos GENERALIZATION_WIRE_TARGET =
+            GENERALIZATION_WIRE_LAMP_TARGET.relative(Direction.EAST);
+    static final BlockPos GENERALIZATION_WIRE_LEVER_TARGET =
+            GENERALIZATION_WIRE_TARGET.relative(Direction.EAST);
+    static final List<BlockPos> GENERALIZATION_WIRE_SUPPORTS = List.of(
+            GENERALIZATION_WIRE_LAMP_TARGET.below(),
+            GENERALIZATION_WIRE_TARGET.below(),
+            GENERALIZATION_WIRE_LEVER_TARGET.below());
+
     static final BlockPos COMBINED_SUPPLY_CHEST = new BlockPos(199, 200, 195);
     static final BlockPos COMBINED_FARM_GATE = new BlockPos(199, 200, 199);
     static final BlockPos COMBINED_FARM_WATER = new BlockPos(197, 199, 201);
@@ -101,6 +135,10 @@ final class FixturePhase5Scenario {
     private static final List<ContainerEntry> TRANSFER_CONTENTS = List.of(
             new ContainerEntry(0, Items.COBBLESTONE, 12),
             new ContainerEntry(8, Items.OAK_LOG, 4));
+    private static final List<ContainerEntry> GENERALIZATION_CHEST_WEST_CONTENTS = List.of(
+            new ContainerEntry(0, Items.COBBLESTONE, 12));
+    private static final List<ContainerEntry> GENERALIZATION_CHEST_EAST_CONTENTS = List.of(
+            new ContainerEntry(26, Items.OAK_LOG, 4));
 
     private FixturePhase5Scenario() {
     }
@@ -137,6 +175,9 @@ final class FixturePhase5Scenario {
         FixtureArena.resetPlayer(context.player());
         if (mode == FixturePhase5Mode.COMBINED_WHEAT) {
             resetCombinedWheatWorkspace(context.level());
+        } else if (mode == FixturePhase5Mode.GENERALIZATION) {
+            applyGeneralizationLayout(context.level());
+            configureGeneralizationChest(context.level());
         } else {
             applyLayout(context.level());
             if (mode == FixturePhase5Mode.REDSTONE) {
@@ -171,6 +212,21 @@ final class FixturePhase5Scenario {
                     + " hoe=minecraft:iron_hoe damage=" + COMBINED_HOE_DAMAGE
                     + " seeds=" + COMBINED_SEED_COUNT
                     + " wheat_goal=" + COMBINED_WHEAT_GOAL
+                    + " selected_slot=" + mode.selectedSlot()));
+            return;
+        }
+        if (mode == FixturePhase5Mode.GENERALIZATION) {
+            output.accept(Component.literal("phase5.mode=generalization"
+                    + " fan_out=" + positions(GENERALIZATION_FAN_OUT_LAMPS)
+                    + " lever=" + position(REDSTONE_LEVER_TARGET)
+                    + " wire=" + position(GENERALIZATION_WIRE_LAMP_TARGET)
+                    + "->" + position(GENERALIZATION_WIRE_TARGET)
+                    + "->" + position(GENERALIZATION_WIRE_LEVER_TARGET)
+                    + " ladder=" + position(GENERALIZATION_LADDER_LOWER_LANDING)
+                    + "->" + position(GENERALIZATION_LADDER_UPPER_LANDING)
+                    + " construction=" + positions(GENERALIZATION_CONSTRUCTION_BLOCKS)
+                    + " chest=" + position(GENERALIZATION_CHEST_WEST)
+                    + ";" + position(GENERALIZATION_CHEST_EAST)
                     + " selected_slot=" + mode.selectedSlot()));
             return;
         }
@@ -233,6 +289,42 @@ final class FixturePhase5Scenario {
         return Map.copyOf(result);
     }
 
+    static Map<BlockPos, BlockState> generalizationLayout() {
+        var result = emptyWorkspace();
+        result.put(REDSTONE_LEVER_TARGET.below(), Blocks.GLASS.defaultBlockState());
+        for (BlockPos position : GENERALIZATION_CONSTRUCTION_BLOCKS) {
+            result.put(position, Blocks.GLASS.defaultBlockState());
+        }
+        result.put(GENERALIZATION_CHEST_WEST, generalizationChestState(ChestType.RIGHT));
+        result.put(GENERALIZATION_CHEST_EAST, generalizationChestState(ChestType.LEFT));
+        for (BlockPos position : GENERALIZATION_LADDER_BACKING) {
+            result.put(position, Blocks.SMOOTH_STONE.defaultBlockState());
+        }
+        for (BlockPos position : GENERALIZATION_LADDER_RUNGS) {
+            result.put(position, generalizationLadderState());
+        }
+        for (BlockPos position : GENERALIZATION_LADDER_UPPER_PLATFORM) {
+            result.put(position, Blocks.SMOOTH_STONE.defaultBlockState());
+        }
+        for (BlockPos position : GENERALIZATION_WIRE_SUPPORTS) {
+            result.put(position, Blocks.GLASS.defaultBlockState());
+        }
+        return Map.copyOf(result);
+    }
+
+    static BlockState generalizationLadderState() {
+        return Blocks.LADDER.defaultBlockState()
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST)
+                .setValue(BlockStateProperties.WATERLOGGED, false);
+    }
+
+    static BlockState generalizationChestState(ChestType type) {
+        return Blocks.CHEST.defaultBlockState()
+                .setValue(ChestBlock.FACING, Direction.SOUTH)
+                .setValue(ChestBlock.TYPE, type)
+                .setValue(ChestBlock.WATERLOGGED, false);
+    }
+
     static BlockState combinedSupplyChestState() {
         return Blocks.CHEST.defaultBlockState()
                 .setValue(ChestBlock.FACING, Direction.SOUTH)
@@ -292,6 +384,14 @@ final class FixturePhase5Scenario {
 
     static List<ContainerEntry> transferContents() {
         return TRANSFER_CONTENTS;
+    }
+
+    static List<ContainerEntry> generalizationChestWestContents() {
+        return GENERALIZATION_CHEST_WEST_CONTENTS;
+    }
+
+    static List<ContainerEntry> generalizationChestEastContents() {
+        return GENERALIZATION_CHEST_EAST_CONTENTS;
     }
 
     static ItemStack combinedSupplyHoe() {
@@ -361,6 +461,21 @@ final class FixturePhase5Scenario {
     private static void applyCombinedWheatLayout(ServerLevel level) {
         combinedWheatLayout().forEach((position, state) ->
                 FixtureArena.setBlock(level, position, state));
+    }
+
+    private static void applyGeneralizationLayout(ServerLevel level) {
+        generalizationLayout().forEach((position, state) -> {
+            if (!position.equals(GENERALIZATION_CHEST_WEST)
+                    && !position.equals(GENERALIZATION_CHEST_EAST)) {
+                FixtureArena.setBlock(level, position, state);
+            }
+        });
+        FixtureArena.setPairedBlocks(
+                level,
+                GENERALIZATION_CHEST_WEST,
+                generalizationChestState(ChestType.RIGHT),
+                GENERALIZATION_CHEST_EAST,
+                generalizationChestState(ChestType.LEFT));
     }
 
     private static List<BlockPos> treeEnclosure() {
@@ -439,6 +554,34 @@ final class FixturePhase5Scenario {
         container.setChanged();
     }
 
+    private static void configureGeneralizationChest(ServerLevel level) {
+        configureContainer(
+                level,
+                GENERALIZATION_CHEST_WEST,
+                GENERALIZATION_CHEST_WEST_CONTENTS,
+                "west double chest");
+        configureContainer(
+                level,
+                GENERALIZATION_CHEST_EAST,
+                GENERALIZATION_CHEST_EAST_CONTENTS,
+                "east double chest");
+    }
+
+    private static void configureContainer(
+            ServerLevel level,
+            BlockPos position,
+            List<ContainerEntry> contents,
+            String label) {
+        if (!(level.getBlockEntity(position) instanceof Container container)) {
+            throw new IllegalStateException("Phase 5 " + label + " has no vanilla container");
+        }
+        container.clearContent();
+        for (ContainerEntry entry : contents) {
+            container.setItem(entry.slot(), new ItemStack(entry.item(), entry.count()));
+        }
+        container.setChanged();
+    }
+
     private static void configureInventory(ServerPlayer player, FixturePhase5Mode mode) {
         player.getInventory().clearContent();
         switch (mode) {
@@ -484,6 +627,12 @@ final class FixturePhase5Scenario {
             }
             case SLEEP, SURVEY -> player.getInventory().setItem(
                     0, new ItemStack(Items.BREAD, 4));
+            case GENERALIZATION -> {
+                player.getInventory().setItem(0, new ItemStack(Items.REDSTONE_LAMP, 3));
+                player.getInventory().setItem(1, new ItemStack(Items.LEVER, 2));
+                player.getInventory().setItem(2, new ItemStack(Items.GLASS, 2));
+                player.getInventory().setItem(3, new ItemStack(Items.REDSTONE));
+            }
             case IRON_FARM, RESET ->
                     throw new IllegalArgumentException(mode.wireName() + " has separate inventory setup");
         }
@@ -531,6 +680,7 @@ final class FixturePhase5Scenario {
             case TREE -> new Pose(201.5D, 200.0D, 198.5D, -90.0F, 8.0F);
             case SLEEP -> new Pose(193.5D, 200.0D, 204.5D, -90.0F, 18.0F);
             case SURVEY -> new Pose(200.5D, 200.0D, 204.5D, -90.0F, 12.0F);
+            case GENERALIZATION -> new Pose(198.5D, 200.0D, 200.5D, -90.0F, 12.0F);
             case IRON_FARM, RESET ->
                     throw new IllegalArgumentException(mode.wireName() + " has a separate pose");
         };

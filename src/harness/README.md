@@ -76,6 +76,12 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
   production smelting smoke test.
 - `/mcmcp_fixture phase5 redstone` — prepares supported air cells and supplies one redstone lamp
   and one lever for the bounded identity truth-table smoke test.
+- `/mcmcp_fixture phase5 generalization` — rebuilds one interference-free arena containing four
+  live-test zones: a four-rung vanilla ladder between floor-backed lower/upper landings; supported
+  air cells for two-lamp fan-out; two removable glass blocks for clear-then-apply; and a vanilla
+  double chest (`generic_9x6`) with deterministic contents in both halves. A separate elevated
+  three-cell glass-supported line supplies the lamp, redstone dust, and lever wire-identity layout.
+  The player starts on the flat central floor with three lamps, two levers, one dust, and two glass.
 - `/mcmcp_fixture phase5 combined_wheat` — prepares the production-prompt wheat E2E. The player
   starts in Survival with a completely empty inventory, facing a visible and normally reachable
   single chest containing one damage-37 vanilla iron hoe and 64 wheat seeds. A closed oak fence
@@ -118,6 +124,18 @@ command above after `/mcmcp_fixture load`, or temporarily add the JVM argument
 the argument after the run. Autorun rebuilds the bounded arena and prepares the same state but does
 not arm MCMCP; local authorization remains one explicit user UI action before the production
 prompt begins.
+
+For the combined generalization smoke arena, run:
+
+```powershell
+.\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=generalization
+```
+
+This passes the closed `mcmcp.fixture.phase5.mode` value and
+`mcmcp.fixture.phase5.autoArm=true`. After server-authoritative setup and client slot
+synchronization, only this mode waits 20 client ticks and clicks the registered local transport
+toggle once. A missing/false property, every other Phase 5 mode, or any setup/security failure
+keeps the prior setup-only behavior.
 
 The autorun-only `creative_capture` mode keeps the existing gallery layout, changes the owner to
 Creative, and places them more than 32 blocks from the fixed 1,024-cell capture region
