@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.agent.safety;
 
+import dev.aod.mcmcp.McmcpMod;
 import dev.aod.mcmcp.client.AgentInputState;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
@@ -515,8 +516,13 @@ public final class LocalObservationVolume {
             boolean ladderBackingClip = intent.locomotion() == Locomotion.LADDER
                     && exactLadderBackingClip(
                             level, start, evaluated.endBox(), intended, resolved);
-            return !bouncySupport(level, player, evaluated.endBox())
-                    && !bouncySupport(level, player, targetBox)
+            boolean targetLanding = !exactClimbableAtFeet(
+                    level, targetBox, intent.locomotion())
+                    && stableLanding(player, level, startPoint, targetBox);
+            boolean resolvedBouncy = bouncySupport(level, player, evaluated.endBox());
+            boolean targetBouncy = bouncySupport(level, player, targetBox);
+            boolean safe = !resolvedBouncy
+                    && !targetBouncy
                     && climbableNavigationMovementSafe(
                             path,
                             endpoint,
@@ -526,11 +532,28 @@ public final class LocalObservationVolume {
                             sourceClimbable,
                             resolvedClimbable,
                             targetClimbable,
-                            !exactClimbableAtFeet(level, targetBox, intent.locomotion())
-                                    && stableLanding(player, level, startPoint, targetBox),
+                            targetLanding,
                             ladderBackingClip,
                             intended,
                             resolved);
+            if (!safe && intent.locomotion() == Locomotion.LADDER) {
+                McmcpMod.LOGGER.warn(
+                        "MCMCP ladder movement rejected: pos=({}, {}, {}) target=({}, {}, {}) "
+                                + "intended=({}, {}, {}) resolved=({}, {}, {}) path={}/{}/{}/{}/{} "
+                                + "endpoint={}/{}/{}/{}/{} climbable={}/{}/{} landing={} "
+                                + "backing_clip={} bouncy={}/{}",
+                        player.getX(), player.getY(), player.getZ(),
+                        intent.target().x, intent.target().y, intent.target().z,
+                        intended.x, intended.y, intended.z,
+                        resolved.x, resolved.y, resolved.z,
+                        path.loaded(), path.clearance(), path.transition(), path.fluid(),
+                        path.hazard(),
+                        endpoint.loaded(), endpoint.clearance(), endpoint.fluid(),
+                        endpoint.hazard(), endpoint.suffocation(),
+                        sourceClimbable, resolvedClimbable, targetClimbable,
+                        targetLanding, ladderBackingClip, resolvedBouncy, targetBouncy);
+            }
+            return safe;
         }
         if (intent.verticalDelta() < 0) {
             return !bouncySupport(level, player, evaluated.endBox())
