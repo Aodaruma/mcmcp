@@ -374,19 +374,21 @@ public final class ObservationFrameStore {
         if (candidate.worldRevision() != retained.worldRevision()) {
             return candidate.worldRevision() > retained.worldRevision() ? candidate : retained;
         }
+        // A later ray in the same unchanged world does not make its face more authoritative.
+        // Prefer the action-enabling UP face before scan timing so multi-tick direction order
+        // cannot erase an exact placement support at the delivery boundary.
+        int candidateRank = faceRank(candidate.face());
+        int retainedRank = faceRank(retained.face());
+        if (candidateRank != retainedRank) {
+            return candidateRank < retainedRank ? candidate : retained;
+        }
         if (candidate.observedTick() != retained.observedTick()) {
             return candidate.observedTick() > retained.observedTick() ? candidate : retained;
         }
         if (!Objects.equals(candidate.cropMature(), retained.cropMature())) {
             return Boolean.TRUE.equals(candidate.cropMature()) ? candidate : retained;
         }
-        if ("minecraft:farmland".equals(retained.block().value())) {
-            int candidateRank = faceRank(candidate.face());
-            int retainedRank = faceRank(retained.face());
-            if (candidateRank != retainedRank) {
-                return candidateRank < retainedRank ? candidate : retained;
-            }
-        } else {
+        if (!"minecraft:farmland".equals(retained.block().value())) {
             double candidateDistance = observationDistanceSquared(candidate);
             double retainedDistance = observationDistanceSquared(retained);
             if (candidateDistance != retainedDistance) {

@@ -314,6 +314,55 @@ class ObservationFrameStoreTest {
     }
 
     @Test
+    void sameRevisionUpSupportsSurviveNewerSideRaysAndTheDeliveredEvidenceFence()
+            throws Exception {
+        var frameStore = new ObservationFrameStore();
+        var raw = new java.util.ArrayList<ObservationRecord>();
+        for (int x = 1; x <= 3; x++) {
+            VisibleSurface up = new VisibleSurface(
+                    new ObservationValues.BlockPosition(DIMENSION, x, 64, 0),
+                    ObservationRecord.Face.UP,
+                    new ResourceId("minecraft:glass"),
+                    ObservationRecord.ShapeClass.TRANSPARENT,
+                    null,
+                    new ObservationValues.WorldPosition(DIMENSION, x + 0.5D, 65.0D, 0.5D),
+                    new ObservationValues.WorldPosition(DIMENSION, 0.5D, 65.62D, 0.5D),
+                    90,
+                    7);
+            VisibleSurface laterEast = new VisibleSurface(
+                    up.position(),
+                    ObservationRecord.Face.EAST,
+                    up.block(),
+                    up.shapeClass(),
+                    up.cropMature(),
+                    new ObservationValues.WorldPosition(DIMENSION, x + 1.0D, 64.5D, 0.5D),
+                    up.eyeOrigin(),
+                    99,
+                    up.worldRevision());
+            raw.add(up);
+            raw.add(laterEast);
+        }
+        var frame = new ObservationFrame(id(1), DIMENSION, 100, 16, false, raw);
+        frameStore.publish(frame);
+
+        ObservationPage delivered = frameStore.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 256);
+
+        assertThat(delivered.records())
+                .hasSize(3)
+                .allSatisfy(record -> assertThat(((VisibleSurface) record).face())
+                        .isEqualTo(ObservationRecord.Face.UP));
+
+        var evidence = new DeliveredPolicyEvidenceStore();
+        assertThat(evidence.confirmDelivery(evidence.prepareDelivery(delivered))).isTrue();
+        ObservationFrame plannerFrame = evidence.augment(Optional.of(frame)).orElseThrow();
+        assertThat(plannerFrame.records())
+                .hasSize(3)
+                .allSatisfy(record -> assertThat(((VisibleSurface) record).face())
+                        .isEqualTo(ObservationRecord.Face.UP));
+    }
+
+    @Test
     void deliveryFairlyIncludesSparseKindsBeforeLargeSurfaceSets() throws Exception {
         var store = new ObservationFrameStore();
         var records = new java.util.ArrayList<ObservationRecord>();
