@@ -86,7 +86,7 @@ final class FixturePhase5Scenario {
             new BlockPos(198, 202, 198), new BlockPos(198, 202, 199),
             new BlockPos(198, 202, 200), new BlockPos(199, 202, 198),
             new BlockPos(199, 202, 199), new BlockPos(199, 202, 200));
-    static final BlockPos GENERALIZATION_WIRE_LAMP_TARGET = new BlockPos(201, 201, 204);
+    static final BlockPos GENERALIZATION_WIRE_LAMP_TARGET = new BlockPos(201, 200, 204);
     static final BlockPos GENERALIZATION_WIRE_TARGET =
             GENERALIZATION_WIRE_LAMP_TARGET.relative(Direction.EAST);
     static final BlockPos GENERALIZATION_WIRE_LEVER_TARGET =
@@ -666,6 +666,7 @@ final class FixturePhase5Scenario {
                 player.getInventory().setItem(1, new ItemStack(Items.LEVER, 2));
                 player.getInventory().setItem(2, new ItemStack(Items.GLASS, 2));
                 player.getInventory().setItem(3, new ItemStack(Items.REDSTONE));
+                player.getInventory().setItem(4, new ItemStack(Items.SMOOTH_STONE));
             }
             case IRON_FARM, RESET ->
                     throw new IllegalArgumentException(mode.wireName() + " has separate inventory setup");

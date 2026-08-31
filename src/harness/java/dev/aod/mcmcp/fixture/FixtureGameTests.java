@@ -602,13 +602,21 @@ final class FixtureGameTests {
                 FixturePhase5Scenario.GENERALIZATION_WIRE_LEVER_TARGET);
         var wireSupports = java.util.Set.copyOf(
                 FixturePhase5Scenario.GENERALIZATION_WIRE_SUPPORTS);
-        for (int y = 200; y <= 202; y++) {
+        int wireFloorY = FixturePhase5Scenario.WORKSPACE_MIN.getY();
+        if (wireTargets.stream().anyMatch(target -> target.getY() != wireFloorY + 1)
+                || wireSupports.stream().anyMatch(support -> support.getY() != wireFloorY)) {
+            helper.fail(Component.literal(
+                    "Generalization wire targets must expose floor-level UP supports"));
+        }
+        for (int y = wireFloorY; y <= wireFloorY + 3; y++) {
             for (int x = 200; x <= 204; x++) {
                 for (int z = 203; z <= 205; z++) {
                     BlockPos position = new BlockPos(x, y, z);
                     BlockState expected = wireSupports.contains(position)
                             ? Blocks.GLASS.defaultBlockState()
-                            : Blocks.AIR.defaultBlockState();
+                            : y == FixturePhase5Scenario.WORKSPACE_MIN.getY()
+                                    ? Blocks.SMOOTH_STONE.defaultBlockState()
+                                    : Blocks.AIR.defaultBlockState();
                     if (!wireTargets.contains(position)) {
                         assertLayoutState(helper, generalization, position, expected);
                     }
