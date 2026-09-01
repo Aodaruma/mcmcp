@@ -391,7 +391,7 @@ class McpHttpServerTest {
         JsonObject acquireBody = new JsonObject();
         acquireBody.addProperty("lease_id", leaseId.toString());
         acquireBody.addProperty("runner_pid", ProcessHandle.current().pid());
-        acquireBody.addProperty("max_duration_ms", 60_000);
+        acquireBody.addProperty("max_duration_ms", 5_445_000);
         HttpRequest acquire = evaluationRequest("POST", acquireBody, McpTestFixtures.TOKEN, null);
         HttpResponse<java.io.InputStream> stream = client.send(
                 acquire, HttpResponse.BodyHandlers.ofInputStream());
