@@ -498,8 +498,9 @@ function Invoke-TraceAudit {
     $traceRecords = @(Read-JsonLines -Path $RawTrace -Label 'trace' -Violations $violations)
     $bridgeRecords = @(Read-JsonLines -Path $BridgeTrace -Label 'bridge' -Violations $violations)
 
-    $catalogPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot `
-            '..\..\docs\MCMCP_MCP_Tool_Catalog.json'))
+    $catalogPath = [IO.Path]::GetFullPath(
+        [IO.Path]::Combine($PSScriptRoot, '..', '..', 'docs',
+            'MCMCP_MCP_Tool_Catalog.json'))
     $catalogSurfaceHash = $null
     $catalogSurface = $null
     if (-not (Test-Path -LiteralPath $catalogPath -PathType Leaf)) {
@@ -2072,8 +2073,9 @@ function Invoke-AuditSelfTest {
         ('mcmcp-eval-audit-' + [Guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($temporaryRoot) | Out-Null
     $cwd = 'C:\Temp\mcmcp-eval-0123456789abcdef0123456789abcdef\empty-cwd'
-    $catalog = [IO.File]::ReadAllText((Join-Path $PSScriptRoot `
-                '..\..\docs\MCMCP_MCP_Tool_Catalog.json')) | ConvertFrom-Json -Depth 100
+    $catalog = [IO.File]::ReadAllText([IO.Path]::Combine(
+            $PSScriptRoot, '..', '..', 'docs',
+            'MCMCP_MCP_Tool_Catalog.json')) | ConvertFrom-Json -Depth 100
     $toolSpecs = @(@(Get-PropertyValue $catalog 'tools') | ForEach-Object {
             [ordered]@{
                 type = 'function'

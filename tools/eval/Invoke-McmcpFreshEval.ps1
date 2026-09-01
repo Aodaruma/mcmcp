@@ -400,7 +400,7 @@ function Assert-NoProjectCodexConfig {
     param([Parameter(Mandatory)][string]$Workspace)
     $cursor = [IO.DirectoryInfo]::new([IO.Path]::GetFullPath($Workspace))
     while ($null -ne $cursor) {
-        $candidate = Join-Path $cursor.FullName '.codex\config.toml'
+        $candidate = Join-Path (Join-Path $cursor.FullName '.codex') 'config.toml'
         if (Test-Path -LiteralPath $candidate -PathType Leaf) {
             throw "clean cwd ancestor contains project Codex config: $candidate"
         }
@@ -2045,7 +2045,8 @@ function Invoke-DynamicBridge {
         -ToolName $tool -Status 'Completed'
 }
 
-$sourceAuth = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex\auth.json'
+$sourceAuth = Join-Path (Join-Path `
+        ([Environment]::GetFolderPath('UserProfile')) '.codex') 'auth.json'
 $externalAuth = Get-ExternalAuthSecrets -AuthPath $sourceAuth
 $script:AccessToken = [string]$externalAuth.access_token
 $script:ChatgptAccountId = [string]$externalAuth.account_id
@@ -2059,8 +2060,9 @@ $validatedEndpointUri = [Uri]$Endpoint
 $script:EvaluationControlEndpoint = 'http://127.0.0.1:{0}/mcp/internal/evaluation-turn' -f `
     $validatedEndpointUri.Port
 
-$repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\', '/')
-$catalogPath = Join-Path $repoRoot 'docs\MCMCP_MCP_Tool_Catalog.json'
+$repoRoot = [IO.Path]::GetFullPath(
+    [IO.Path]::Combine($PSScriptRoot, '..', '..')).TrimEnd('\', '/')
+$catalogPath = [IO.Path]::Combine($repoRoot, 'docs', 'MCMCP_MCP_Tool_Catalog.json')
 $script:PinnedCatalogSurface = Get-PinnedCatalogSurface -CatalogPath $catalogPath
 $artifactPath = [IO.Path]::GetFullPath($ArtifactDirectory).TrimEnd('\', '/')
 if ($artifactPath.Equals($repoRoot, [StringComparison]::OrdinalIgnoreCase) -or
@@ -2114,7 +2116,11 @@ function Write-McmcpRunnerFailureEvent {
     }
 }
 
-$isolatedBase = Join-Path ([Environment]::GetFolderPath('CommonDocuments')) 'mcmcp-eval-tmp'
+$commonDocuments = [Environment]::GetFolderPath('CommonDocuments')
+if ([string]::IsNullOrWhiteSpace($commonDocuments)) {
+    $commonDocuments = [IO.Path]::GetTempPath()
+}
+$isolatedBase = Join-Path $commonDocuments 'mcmcp-eval-tmp'
 $isolatedRoot = $null
 $codexHome = $null
 $cleanCwd = $null
@@ -2769,8 +2775,21 @@ try {
     }
     Stop-McmcpLiveMonitorLog -State $script:LiveMonitorState
 
-    $gitCommit = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1)
-    $gitStatus = @(& git -C $repoRoot status --porcelain=v1 2>$null)
+    $gitCommit = $null
+    $gitWorktreeDirty = $null
+    $gitCommand = Get-Command git -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+    if ($gitCommand) {
+        $resolvedGitCommit = (& $gitCommand.Source -C $repoRoot rev-parse HEAD 2>$null |
+                Select-Object -First 1)
+        $gitCommitExitCode = $LASTEXITCODE
+        $gitStatus = @(& $gitCommand.Source -C $repoRoot status --porcelain=v1 2>$null)
+        if ($gitCommitExitCode -eq 0 -and $LASTEXITCODE -eq 0 -and
+                $resolvedGitCommit -cmatch '^[0-9a-f]{40}([0-9a-f]{24})?$') {
+            $gitCommit = $resolvedGitCommit
+            $gitWorktreeDirty = ($gitStatus.Count -gt 0)
+        }
+    }
     $manifest = [ordered]@{
         schema_version = 8
         baseline_id = $BaselineId
@@ -2822,7 +2841,7 @@ try {
         readiness_failure = $script:ReadinessFailure
         bridge_secret_blocked = $script:BridgeSecretDetected
         git_commit = $gitCommit
-        git_worktree_dirty = ($gitStatus.Count -gt 0)
+        git_worktree_dirty = $gitWorktreeDirty
         runner_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
         audit_script_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $auditScript).Hash.ToLowerInvariant()
         monitor_module_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $monitorModulePath).Hash.ToLowerInvariant()
