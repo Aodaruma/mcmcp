@@ -123,7 +123,8 @@ public final class LocalObservationProjector {
 
         var publicFrom = worldPosition(dimension, source.from());
         var publicTo = new WorldPosition(
-                dimension, source.requestedTo().x(), source.to().y(), source.requestedTo().z());
+                dimension, source.requestedTo().x(), source.to().y() - centerToFeet,
+                source.requestedTo().z());
         records.add(new dev.aod.mcmcp.agent.observation.ObservationRecord.Traversability(
                 publicFrom,
                 publicTo,

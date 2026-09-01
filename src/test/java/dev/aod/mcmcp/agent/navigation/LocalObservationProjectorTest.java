@@ -136,6 +136,12 @@ class LocalObservationProjectorTest {
                 assertThat(edge.targetSupport()).isEqualTo(
                         TraversabilityEdge.TargetSupport.CONFIRMED);
             });
+            assertThat(projection.records()).singleElement().satisfies(record -> {
+                var target = ((dev.aod.mcmcp.agent.observation.ObservationRecord.Traversability)
+                        record).navigationTarget();
+                assertThat(new NavCell(target.dimension().value(), target.x(), target.y(), target.z()))
+                        .isEqualTo(projection.edges().getFirst().key().to());
+            });
         }
     }
 
