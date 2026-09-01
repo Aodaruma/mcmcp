@@ -292,11 +292,8 @@ public final class MinecraftPillarUpPort implements PillarUpPort {
         state.inventoryRevisionAtDispatch = reconciliation.selectedSlotInventoryRevision();
         state.prediction = predictions.begin(level, target, requireSession().clientTick());
         int before = state.prediction.sequenceBeforePrediction();
-        var result = SafePlacementSupportPolicy.dispatchUseIfAllowed(
-                level.getBlockState(support),
-                level.getBlockEntity(support) != null,
-                () -> Objects.requireNonNull(minecraft.gameMode)
-                        .useItemOn(player, InteractionHand.MAIN_HAND, hit));
+        var result = Objects.requireNonNull(minecraft.gameMode)
+                .useItemOn(player, InteractionHand.MAIN_HAND, hit);
         int after = state.prediction.captureIssuedPredictions();
         if (after != before + 1 || !result.consumesAction()) {
             throw new IllegalStateException("pillar placement did not dispatch exactly once");
@@ -471,7 +468,7 @@ public final class MinecraftPillarUpPort implements PillarUpPort {
     private static void requireExactSupport(
             BlockStateFingerprint expected, ClientLevel level, BlockPos support) {
         BlockState live = level.getBlockState(support);
-        SafePlacementSupportPolicy.requireLiveState(
+        KnownPillarUpRequest.requireLiveSupport(
                 live, level.getBlockEntity(support) != null);
         if (!expected.equals(fingerprint(live))
                 || !Block.isShapeFullBlock(live.getCollisionShape(level, support))

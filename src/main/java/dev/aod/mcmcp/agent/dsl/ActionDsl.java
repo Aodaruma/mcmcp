@@ -363,7 +363,7 @@ public final class ActionDsl {
         }
     }
 
-    /** Opens a visible single chest/barrel and returns its server-synchronized item summary. */
+    /** Opens a visible vanilla chest/barrel and returns its server-synchronized item summary. */
     public record InspectKnownContainer(
             String id, Position target, String expectedBlock) implements Node {
         public InspectKnownContainer {
@@ -373,7 +373,7 @@ public final class ActionDsl {
         }
     }
 
-    /** Moves at most one whole matching stack from a visible single chest/barrel. */
+    /** Moves at most one whole matching stack from a visible vanilla chest/barrel. */
     public record TakeKnownContainerStack(
             String id,
             Position target,

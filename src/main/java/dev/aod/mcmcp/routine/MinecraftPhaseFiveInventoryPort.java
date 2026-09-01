@@ -58,6 +58,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     static final String TRANSFER_ITEMS = "transfer_items";
     static final String CRAFTING_MENU = "minecraft:crafting";
     static final String SINGLE_CONTAINER_MENU = "minecraft:generic_9x3";
+    static final String DOUBLE_CONTAINER_MENU = "minecraft:generic_9x6";
     private static final int OPEN_TIMEOUT_TICKS = 40;
     private static final int RELEASE_TIMEOUT_TICKS = 40;
     private static final int CRAFTING_GRID_LAST_SLOT = 9;
@@ -532,12 +533,14 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             LocalPlayer player,
             AbstractContainerMenu menu,
             ContainerSyncSignals.ContainerSnapshot snapshot) {
+        String expectedMenu = transfer.menuTypeId();
+        int expectedRows = DOUBLE_CONTAINER_MENU.equals(expectedMenu) ? 6 : 3;
         if (!(menu instanceof ChestMenu chestMenu)
-                || chestMenu.getRowCount() != 3
-                || !SINGLE_CONTAINER_MENU.equals(snapshot.menuTypeId())) {
-            fail(state, "SINGLE_CHEST_OR_BARREL_MENU_REQUIRED", RoutineFailure.Category.SAFETY,
+                || chestMenu.getRowCount() != expectedRows
+                || !expectedMenu.equals(snapshot.menuTypeId())) {
+            fail(state, "VANILLA_CHEST_OR_BARREL_MENU_REQUIRED", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.REPLAN,
-                    Map.of("menu_type", SINGLE_CONTAINER_MENU, "rows", 3),
+                    Map.of("menu_type", expectedMenu, "rows", expectedRows),
                     Map.of("menu_type", snapshot.menuTypeId()));
             return;
         }
@@ -937,10 +940,10 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                         Map.of("block", "minecraft:crafting_table"),
                         Map.of("block", actual.blockId()));
             }
-        } else if (!singleVanillaContainer(state)) {
-            return failure("SINGLE_CHEST_OR_BARREL_REQUIRED",
+        } else if (!vanillaStorageContainer(state)) {
+            return failure("VANILLA_CHEST_OR_BARREL_REQUIRED",
                     RoutineFailure.Category.PRECONDITION, RoutineFailure.Recovery.REPLAN,
-                    Map.of("container", "single_vanilla_chest_or_barrel"),
+                    Map.of("container", "vanilla_chest_or_barrel"),
                     Map.of("block", actual.blockId()));
         }
         return null;
@@ -1313,12 +1316,11 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         return hit;
     }
 
-    private static boolean singleVanillaContainer(BlockState state) {
+    private static boolean vanillaStorageContainer(BlockState state) {
         if (state.is(Blocks.BARREL)) {
             return true;
         }
-        return state.is(Blocks.CHEST)
-                && state.getValue(ChestBlock.TYPE) == ChestType.SINGLE;
+        return state.is(Blocks.CHEST);
     }
 
     private boolean basicPlayerSafety(Minecraft minecraft, PlayerBaseline baseline) {
@@ -1410,7 +1412,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
     static boolean sameTransferContainerIdentity(
             BlockStateFingerprint expected, BlockState live) {
-        if (!singleVanillaContainer(live)) return false;
+        if (!vanillaStorageContainer(live)) return false;
         BlockStateFingerprint actual = fingerprint(live);
         if (live.is(Blocks.CHEST)) return expected.equals(actual);
         if (!expected.blockId().equals(actual.blockId())) return false;
@@ -1826,7 +1828,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
         @Override
         public String menuTypeId() {
-            return SINGLE_CONTAINER_MENU;
+            return transferMenuType(expectedState);
         }
 
         boolean defaultComponentsOnly() {
@@ -1842,6 +1844,19 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         public float maxCameraDegreesPerTick() {
             return (float) cameraDegreesPerTick;
         }
+    }
+
+    static String transferMenuType(BlockStateFingerprint expectedState) {
+        if ("minecraft:barrel".equals(expectedState.blockId())) {
+            return SINGLE_CONTAINER_MENU;
+        }
+        if ("minecraft:chest".equals(expectedState.blockId())) {
+            return ChestType.SINGLE.getSerializedName().equals(
+                    expectedState.properties().get("type"))
+                    ? SINGLE_CONTAINER_MENU
+                    : DOUBLE_CONTAINER_MENU;
+        }
+        throw new IllegalArgumentException("unsupported vanilla storage container");
     }
 
     record MenuLayout(List<Integer> playerSlots, List<Integer> containerSlots) {

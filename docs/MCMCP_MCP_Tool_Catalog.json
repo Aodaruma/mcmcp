@@ -1266,7 +1266,7 @@
           },
           "applyKnownBlockPlanNode": {
             "type": "object",
-            "description": "Stationary place-only Phase 3 vertical slice for 1..8 ordered entries. Each transformed target is anchor plus offset after mirror (none/x/z) then clockwise Y rotation (0/90/180/270); transformed targets and entry ids must be unique. source_state and item come verbatim from one eligible visible_surface. The runtime applies Minecraft's BlockState mirror/rotation rules, so the policy never converts directional properties. Each entry uses either a current complete support-state witness or an explicit earlier-entry dependency. Every support aim must be within 40 total yaw+pitch degrees of the admitted heading; use a preceding face_known_position or a smaller plan when necessary. An entry already at its exact transformed expected-after state is adopted without input or placement budget, but success still requires a later fresh exact verification of every entry. No movement, breaking, replacement, hidden scan, NBT, fluid, gravity block, container, portal, or command block is admitted. Execution is fail-fast, never reorders entries, and requires authoritative placement postconditions. Reserve 15000 ms, 300 ticks, 80 camera degrees, and one max_blocks_placed per entry; distance, interactions, and breaks are zero.",
+            "description": "Stationary place-only Phase 3 vertical slice for 1..8 ordered entries. Each transformed target is anchor plus offset after mirror (none/x/z) then clockwise Y rotation (0/90/180/270); transformed targets and entry ids must be unique. source_state and item come verbatim from one eligible visible_surface. The runtime applies Minecraft's BlockState mirror/rotation rules, so the policy never converts directional properties. Each entry uses either a current complete support-state witness or an explicit earlier-entry dependency. Every support aim uses the declared face center, not an incidental observation ray endpoint, and must be within 40 total yaw+pitch degrees of the admitted heading; use a preceding face_known_position or a smaller plan when necessary. An entry already at its exact transformed expected-after state is adopted without input or placement budget, but success still requires a later fresh exact verification of every entry. No movement, breaking, replacement, hidden scan, NBT, fluid, gravity block, container, portal, or command block is admitted. Execution is fail-fast, never reorders entries, and requires authoritative placement postconditions. Reserve 15000 ms, 300 ticks, 80 camera degrees, and one max_blocks_placed per entry; distance, interactions, and breaks are zero.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
@@ -1306,7 +1306,7 @@
           },
           "clearKnownBlockPlanNode": {
             "type": "object",
-            "description": "Stationary break-only construction slice for 1..8 ordered entries. Every transformed target must have a currently delivered visible_surface with non-null placement_item and an exact complete transformed expected_before admitted by the same safe full-block construction policy as apply_known_block_plan. Runtime uses the existing authoritative BREAK_TO_AIR adapter, never moves or collects drops, and requires a later fresh exact air observation of every target before success. Replacement is a separate Action after reobservation, using apply_known_block_plan. Reserve 15000 ms, 300 ticks, 80 camera degrees, and one max_blocks_broken per entry; distance, interactions, and placements are zero.",
+            "description": "Stationary break-only construction slice for 1..8 ordered entries. Every transformed target must have a currently delivered visible_surface with non-null placement_item and an exact complete transformed expected_before admitted by the same safe full-block construction policy as apply_known_block_plan. Aim admission uses the delivered representative face center rather than its incidental observation ray endpoint. Runtime uses the existing authoritative BREAK_TO_AIR adapter, never moves or collects drops, and requires a later fresh exact air observation of every target before success. Replacement is a separate Action after reobservation, using apply_known_block_plan. Reserve 15000 ms, 300 ticks, 80 camera degrees, and one max_blocks_broken per entry; distance, interactions, and placements are zero.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
@@ -1333,7 +1333,7 @@
           },
           "pillarUpKnownNode": {
             "type": "object",
-            "description": "Exclusive one-block vertical primitive. support and expected_support must be the exact current inert full block directly below a grounded player centered within 0.15 blocks. source_state and item are copied verbatim from one eligible visible_surface. Runtime derives the air target at support+1 and the landing at support+2, rejects unknown, fluid, occupied, hazardous, unsupported, or obstructed cells, jumps, and dispatches exactly one use only after the player AABB clears the target. Success requires authoritative exact block confirmation, synchronized inventory -1, and grounded Y+1. It must be the only top-level Action node and is forbidden in if/repeat. Reserve 15000 ms, 300 ticks, 2 distance blocks, 360 camera degrees, one placement, and zero interactions/breaks.",
+            "description": "Exclusive one-block vertical primitive. support and expected_support must copy an exact delivered inert UP face before the final centering step; that witness alone may remain usable through the bounded delivery lease because the centered player occludes the block below, while runtime rechecks current position, world revision, and the complete live support state before input. The player must then be grounded and centered within 0.15 blocks directly above it. source_state and item are copied verbatim from one eligible visible_surface. Runtime derives the air target at support+1 and the landing at support+2, rejects unknown, fluid, occupied, hazardous, unsupported, or obstructed cells, jumps, and dispatches exactly one use only after the player AABB clears the target. Success requires authoritative exact block confirmation, synchronized inventory -1, and grounded Y+1. It must be the only top-level Action node and is forbidden in if/repeat. Reserve 15000 ms, 300 ticks, 2 distance blocks, 360 camera degrees, one placement, and zero interactions/breaks.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
@@ -1503,7 +1503,7 @@
           },
           "inspectContainerNode": {
             "type": "object",
-            "description": "Open one visible in-reach single chest/barrel and return up to 27 server-synchronized item counts in NODE_EVIDENCE. Reserve at least 600 ticks, 30000 ms, 360 camera degrees, and 1 interaction; this includes Action dispatch/JIT headroom around the bounded 400-tick container attempt.",
+            "description": "Open one visible in-reach vanilla chest/barrel and return up to 27 server-synchronized item counts in NODE_EVIDENCE. Reserve at least 600 ticks, 30000 ms, 360 camera degrees, and 1 interaction; this includes Action dispatch/JIT headroom around the bounded 400-tick container attempt.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
@@ -1515,7 +1515,7 @@
           },
           "takeContainerStackNode": {
             "type": "object",
-            "description": "Move at most one whole matching stack from one visible in-reach single chest/barrel, then close/reopen it for full server readback. Reserve at least 600 ticks, 30000 ms, 360 camera degrees, and 3 interactions; this includes Action dispatch/JIT headroom around the bounded 400-tick container attempt.",
+            "description": "Move at most one whole matching stack from one visible in-reach vanilla chest/barrel, then close/reopen it for full server readback. Reserve at least 600 ticks, 30000 ms, 360 camera degrees, and 3 interactions; this includes Action dispatch/JIT headroom around the bounded 400-tick container attempt.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},

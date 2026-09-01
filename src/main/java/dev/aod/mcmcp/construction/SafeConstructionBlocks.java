@@ -23,6 +23,11 @@ public final class SafeConstructionBlocks {
         return blockId != null && IDS.contains(blockId);
     }
 
+    public static boolean isSurfaceAttachment(String blockId) {
+        return "minecraft:ladder".equals(blockId)
+                || "minecraft:wall_torch".equals(blockId);
+    }
+
     /**
      * Complete BlockState properties may cross the policy boundary only for audited construction,
      * support, or owned-menu target contracts. Other visible blocks retain only visual identity.
@@ -54,6 +59,8 @@ public final class SafeConstructionBlocks {
         }
         ids.addAll(Set.of(
                 "minecraft:bamboo_planks",
+                "minecraft:ladder",
+                "minecraft:wall_torch",
                 "minecraft:crimson_planks",
                 "minecraft:warped_planks",
                 "minecraft:crimson_stem",

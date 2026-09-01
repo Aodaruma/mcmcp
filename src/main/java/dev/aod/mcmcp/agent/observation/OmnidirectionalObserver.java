@@ -30,6 +30,8 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.StandingAndWallBlockItem;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BedBlock;
@@ -500,6 +502,10 @@ public final class OmnidirectionalObserver {
     static ResourceId safeDirectPlacementItem(BlockState state) {
         Objects.requireNonNull(state, "state");
         Block block = state.getBlock();
+        if (block == Blocks.WALL_TORCH
+                && Items.TORCH instanceof StandingAndWallBlockItem) {
+            return new ResourceId("minecraft:torch");
+        }
         if (state.isAir()
                 || state.hasBlockEntity()
                 || block instanceof EntityBlock

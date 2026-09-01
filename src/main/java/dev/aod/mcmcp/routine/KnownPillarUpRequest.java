@@ -3,6 +3,7 @@ package dev.aod.mcmcp.routine;
 import dev.aod.mcmcp.observation.BlockPlan;
 import dev.aod.mcmcp.observation.BlockPlanStateTransformer;
 import dev.aod.mcmcp.observation.BlockStateView;
+import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.Objects;
 
@@ -21,11 +22,23 @@ public record KnownPillarUpRequest(
         Objects.requireNonNull(item, "item");
         Math.addExact(support.y(), 3);
         requireComplete(expectedSupport, "pillar.expected_support");
-        if (!SafePlacementSupportPolicy.allowsRegisteredBlockId(
-                expectedSupport.blockId())) {
+        if (!allowsSupportBlockId(expectedSupport.blockId())) {
             throw new IllegalArgumentException(SafePlacementSupportPolicy.REJECTION_MESSAGE);
         }
         SafeConstructionBlockPolicy.requireExpectedStateAndItem(sourceState, item);
+    }
+
+    static boolean allowsSupportBlockId(String blockId) {
+        return SafePlacementSupportPolicy.allowsRegisteredBlockId(blockId)
+                || SafeConstructionBlockPolicy.allowsRegisteredBlockId(blockId);
+    }
+
+    static void requireLiveSupport(BlockState state, boolean liveBlockEntityPresent) {
+        if (!SafePlacementSupportPolicy.allowsLiveState(state, liveBlockEntityPresent)
+                && !SafeConstructionBlockPolicy.allowsLiveState(
+                        state, liveBlockEntityPresent)) {
+            throw new SafePlacementSupportPolicy.UnsafePlacementSupportException();
+        }
     }
 
     private static void requireComplete(BlockStateFingerprint state, String path) {

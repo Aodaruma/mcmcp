@@ -248,6 +248,10 @@ class OmnidirectionalObserverTest {
                 Blocks.BLAST_FURNACE.defaultBlockState())).isNotNull();
         assertThat(OmnidirectionalObserver.policyVisibleBlockState(
                 Blocks.SMOKER.defaultBlockState())).isNotNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.LADDER.defaultBlockState())).isNotNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.WALL_TORCH.defaultBlockState())).isNotNull();
 
         // These blocks carry runtime properties which are not fully distinguishable from their
         // rendered surface. Their block ids remain visible, but complete state stays hidden.
@@ -260,6 +264,10 @@ class OmnidirectionalObserverTest {
 
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(xAxisLog).value())
                 .isEqualTo("minecraft:oak_log");
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.LADDER.defaultBlockState()).value()).isEqualTo("minecraft:ladder");
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.WALL_TORCH.defaultBlockState()).value()).isEqualTo("minecraft:torch");
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
                 Blocks.CHEST.defaultBlockState())).isNull();
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(

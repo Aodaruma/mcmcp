@@ -8,8 +8,10 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.StandingAndWallBlockItem;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -17,16 +19,16 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Closed v1 policy for one-cell, full-cube construction blocks.
+ * Closed v1 policy for one-cell construction blocks.
  *
  * <p>The allowlist is intentionally based on canonical vanilla registry ids rather than broad
  * class heuristics.  That keeps falling, fluid, redstone, dynamic, hazardous, multi-cell, and
- * neighbour-sensitive blocks outside the construction surface even if a future subclass happens
- * to expose a full collision shape.</p>
+ * neighbour-sensitive blocks outside the construction surface. Ladder and wall torch are the two
+ * audited exceptions and still require an exact adjacent support witness.</p>
  */
 public final class SafeConstructionBlockPolicy {
     public static final String REJECTION_MESSAGE =
-            "construction block is outside the closed full-block allowlist";
+            "construction block is outside the closed allowlist";
 
     private static final BlockPlan.Transform IDENTITY_TRANSFORM =
             new BlockPlan.Transform(0, "none");
@@ -47,7 +49,7 @@ public final class SafeConstructionBlockPolicy {
                 || !"minecraft".equals(itemIdentifier.getNamespace())
                 || registeredItem.isEmpty()
                 || !(registeredItem.orElseThrow().value() instanceof BlockItem blockItem)
-                || blockItem.getBlock() != state.getBlock()) {
+                || !matchesPlacementItem(state, blockItem, requiredItemId)) {
             throw new UnsafeConstructionBlockException();
         }
     }
@@ -109,8 +111,9 @@ public final class SafeConstructionBlockPolicy {
                 && !liveBlockEntityPresent
                 && state.getFluidState().isEmpty()
                 && !state.canBeReplaced()
-                && Block.isShapeFullBlock(state.getCollisionShape(
-                        EmptyBlockGetter.INSTANCE, BlockPos.ZERO));
+                && (Block.isShapeFullBlock(state.getCollisionShape(
+                        EmptyBlockGetter.INSTANCE, BlockPos.ZERO))
+                        || SafeConstructionBlocks.isSurfaceAttachment(identifier.toString()));
     }
 
     public static void requireLiveState(BlockState state, boolean liveBlockEntityPresent) {
@@ -126,6 +129,14 @@ public final class SafeConstructionBlockPolicy {
         var registered = BuiltInRegistries.BLOCK.get(identifier);
         return registered.isPresent()
                 && allowsLiveState(registered.orElseThrow().value().defaultBlockState(), false);
+    }
+
+    private static boolean matchesPlacementItem(
+            BlockState state, BlockItem item, String requiredItemId) {
+        return item.getBlock() == state.getBlock()
+                || state.is(Blocks.WALL_TORCH)
+                        && "minecraft:torch".equals(requiredItemId)
+                        && item instanceof StandingAndWallBlockItem;
     }
 
     private static BlockStateFingerprint fingerprint(BlockState state) {

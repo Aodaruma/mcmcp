@@ -67,6 +67,20 @@ class SafePlacementSupportPolicyTest {
     }
 
     @Test
+    void pillarSupportAlsoAcceptsSafeConstructionBlocks() {
+        assertThat(KnownPillarUpRequest.allowsSupportBlockId("minecraft:oak_planks"))
+                .isTrue();
+        assertThat(KnownPillarUpRequest.allowsSupportBlockId("minecraft:chest"))
+                .isFalse();
+        KnownPillarUpRequest.requireLiveSupport(
+                Blocks.OAK_PLANKS.defaultBlockState(), false);
+        assertThatThrownBy(() -> KnownPillarUpRequest.requireLiveSupport(
+                Blocks.CHEST.defaultBlockState(), true))
+                .isInstanceOf(
+                        SafePlacementSupportPolicy.UnsafePlacementSupportException.class);
+    }
+
+    @Test
     void farmlandIsAllowedOnlyForAnExactClosedCropPlacement() {
         var bounds = new ActionBounds(
                 "minecraft:overworld",

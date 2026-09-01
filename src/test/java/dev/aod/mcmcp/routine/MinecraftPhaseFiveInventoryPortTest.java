@@ -10,7 +10,9 @@ import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.ChestType;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -154,7 +156,7 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
-    void transferAllowsOnlyTheSameSingleContainerWhileBarrelOpenStateEvolves() {
+    void transferAllowsTheSameVanillaContainerWhileBarrelOpenStateEvolves() {
         var closedBarrel = Blocks.BARREL.defaultBlockState()
                 .setValue(BlockStateProperties.OPEN, false);
         var openBarrel = closedBarrel.setValue(BlockStateProperties.OPEN, true);
@@ -175,6 +177,17 @@ class MinecraftPhaseFiveInventoryPortTest {
         assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
                 expectedChest, chest.setValue(BlockStateProperties.HORIZONTAL_FACING,
                         Direction.EAST))).isFalse();
+
+        var doubleChest = chest.setValue(ChestBlock.TYPE, ChestType.LEFT);
+        var expectedDouble = MinecraftPhaseFiveInventoryPort.fingerprintLiveState(doubleChest);
+        assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
+                expectedDouble, doubleChest)).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
+                expectedDouble, doubleChest.setValue(ChestBlock.TYPE, ChestType.RIGHT))).isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.transferMenuType(expectedChest))
+                .isEqualTo(MinecraftPhaseFiveInventoryPort.SINGLE_CONTAINER_MENU);
+        assertThat(MinecraftPhaseFiveInventoryPort.transferMenuType(expectedDouble))
+                .isEqualTo(MinecraftPhaseFiveInventoryPort.DOUBLE_CONTAINER_MENU);
     }
 
     @Test

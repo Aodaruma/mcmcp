@@ -203,6 +203,17 @@ class BlockItemPlacementInvokerContractTest {
     }
 
     @Test
+    void pillarDispatchUsesItsBroaderExactSupportCheck() throws Exception {
+        assertThat(invocations(
+                "/dev/aod/mcmcp/routine/MinecraftPillarUpPort.class",
+                "placeOnce"))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/routine/MinecraftPillarUpPort#requireExactSupport",
+                        "dev/aod/mcmcp/runtime/ClientPredictionSignals#begin",
+                        "net/minecraft/client/multiplayer/MultiPlayerGameMode#useItemOn");
+    }
+
+    @Test
     void phaseFourBreakHeartbeatRejectsUnsafeAndChangedSourcesBeforeInputReassertion() {
         var expectedStone = new BlockStateFingerprint("minecraft:stone", Map.of());
 

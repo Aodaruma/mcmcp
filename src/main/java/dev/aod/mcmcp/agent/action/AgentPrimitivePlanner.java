@@ -456,6 +456,42 @@ public final class AgentPrimitivePlanner {
                 .orElseThrow(() -> new PlanningException(Code.TARGET_UNKNOWN, failure));
     }
 
+    /**
+     * A centered player necessarily occludes the support directly below their feet. Keep the
+     * previously delivered UP-face witness usable while the player takes the final centering step;
+     * the pillar port still rechecks the complete live state immediately before jumping and use.
+     */
+    private static MutationSurface requirePillarSupport(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.Position position,
+            long surfaceBarrierWorldRevision,
+            ActionDsl.BlockStateSpec expected) {
+        requireSurfaceBarrierWorldRevision(map, surfaceBarrierWorldRevision);
+        return latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(map.dimension()))
+                .flatMap(frame -> frame.records().stream())
+                .filter(ObservationRecord.VisibleSurface.class::isInstance)
+                .map(ObservationRecord.VisibleSurface.class::cast)
+                .filter(surface -> surface.worldRevision() >= surfaceBarrierWorldRevision
+                        && surface.worldRevision() <= map.worldRevision())
+                .filter(surface -> matches(surface, position, expected.block()))
+                .filter(surface -> surface.face() == ObservationRecord.Face.UP
+                        && exactObservedState(surface, expected)
+                        && surface.rayHit() != null)
+                .map(surface -> new MutationSurface(
+                        new KnownSurface(
+                                position,
+                                ActionDsl.BlockFace.UP,
+                                expected.block(),
+                                null),
+                        rayHit(surface)))
+                .findFirst()
+                .orElseThrow(() -> new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Pillar support requires a retained delivered exact UP face and block state"));
+    }
+
     private static MutationSurface requireRedstoneSupport(
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
@@ -796,7 +832,8 @@ public final class AgentPrimitivePlanner {
                     knownSurfaces.add(surface.surface());
                     for (Pose pose : input) {
                         work.poseTransition();
-                        requireConstructionAim(pose, surface.point());
+                        requireConstructionAim(
+                                pose, supportFaceCenter(support.position(), support.face()));
                     }
                 } else {
                     Vec3 supportPoint = supportFaceCenter(support.position(), support.face());
@@ -835,7 +872,8 @@ public final class AgentPrimitivePlanner {
                 knownSurfaces.add(surface.surface());
                 for (Pose pose : input) {
                     work.poseTransition();
-                    requireConstructionAim(pose, surface.point());
+                    requireConstructionAim(
+                            pose, supportFaceCenter(target, surface.surface().face()));
                 }
             }
             merge(costs, node.id(),
@@ -851,17 +889,13 @@ public final class AgentPrimitivePlanner {
                             source.position().x(), source.position().y(), source.position().z()),
                     ActionDsl.BlockFace.valueOf(source.face().name()),
                     source.block().value(), null));
-            MutationSurface support = requireMutationSurface(
+            MutationSurface support = requirePillarSupport(
                     map,
                     latestFrame,
-                    input,
                     pillar.support(),
                     surfaceBarrierWorldRevision(
                             map, surfaceRevisionBarrier, pillar.support()),
-                    pillar.expectedSupport().block(),
-                    surface -> surface.face() == ObservationRecord.Face.UP
-                            && exactObservedState(surface, pillar.expectedSupport()),
-                    "Pillar support requires the delivered exact UP face and block state");
+                    pillar.expectedSupport());
             knownSurfaces.add(support.surface());
             for (Pose pose : input) {
                 work.poseTransition();

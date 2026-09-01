@@ -11,12 +11,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SafeConstructionBlockPolicyTest {
     @Test
-    void acceptsClosedFullBlockFamiliesAndRejectsDynamicOrNeighbourSensitiveBlocks() {
+    void acceptsClosedFamiliesAndOnlyTheAuditedSurfaceAttachments() {
         assertThat(List.of(
                 Blocks.STONE,
                 Blocks.COBBLESTONE,
                 Blocks.OAK_PLANKS,
                 Blocks.GLASS,
+                Blocks.LADDER,
+                Blocks.WALL_TORCH,
                 Blocks.OAK_LOG,
                 Blocks.STRIPPED_OAK_LOG,
                 Blocks.CRIMSON_STEM))
@@ -48,6 +50,13 @@ class SafeConstructionBlockPolicyTest {
                 "minecraft:oak_log", Map.of("axis", "x"));
         SafeConstructionBlockPolicy.requireExpectedStateAndItem(
                 oakLog, "minecraft:oak_log");
+        SafeConstructionBlockPolicy.requireExpectedStateAndItem(
+                new BlockStateFingerprint(
+                        "minecraft:ladder", Map.of("facing", "north", "waterlogged", "false")),
+                "minecraft:ladder");
+        SafeConstructionBlockPolicy.requireExpectedStateAndItem(
+                new BlockStateFingerprint("minecraft:wall_torch", Map.of("facing", "north")),
+                "minecraft:torch");
 
         assertThatThrownBy(() -> SafeConstructionBlockPolicy.requireExpectedStateAndItem(
                 new BlockStateFingerprint("minecraft:oak_log", Map.of()),

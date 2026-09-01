@@ -743,11 +743,11 @@ Action DSL v1の制御構造:
 | harvest_known_wheat_batch | camera, block_break | 1〜8個の相異なる可視・既知かつ成熟済みwheatを入力順に収穫する |
 | apply_known_block_plan | camera, block_place | 完全な可視source stateをruntimeでmirror / rotationし、現在supportまたは明示先行dependency上へ1〜8 blockを入力順に通常設置する |
 | clear_known_block_plan | camera, block_break | 現在返却済みの完全stateが一致する安全建築blockを1〜8件、既存BREAK_TO_AIR経路で撤去し、freshなair再観測後に完了する |
-| pillar_up_known | movement, camera, block_place | player直下のexactな安全supportから足元targetと上landingをruntime導出し、AABB clearance後に1 blockだけ設置してY+1へ着地する |
+| pillar_up_known | movement, camera, block_place | centering直前に配達済みのexactな安全UP supportを保持し、player直下のlive完全stateを再検証して足元targetと上landingをruntime導出し、AABB clearance後に1 blockだけ設置してY+1へ着地する |
 | apply_known_redstone_spec | camera, block_interact, block_place | 固定lever→lamp 1出力、2出力fan-out、または1 dustの直線identityを設置し、live visualでOFF / ON / OFFを試験する。wire版はlamp / dust / leverの可視glass supportとdustの直線shape・power 0 / 15 / 0も完全一致させる |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
-| inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のsingle chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
+| inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のVanilla chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemのwhole stackを最大1回quick-moveし、close/reopen full readbackでplayer inventoryの絶対個数を確認 |
 | craft_known_recipe | camera, inventory_transfer | recipe queryの短寿命opaque参照を再検証し、可視・既知crafting tableで1〜3回、完成品を1回分ずつ回収して絶対inventory目標を確認 |
 | smelt_known_recipe | camera, inventory_transfer | recipe queryの短寿命opaque参照を再検証し、可視・既知のfurnace / blast furnace / smokerで1個だけ精錬して絶対inventory目標を確認 |
@@ -773,7 +773,7 @@ semantic action、stationary break、block plan、Phase 5 world adapterで共有
 
 `support.expected_state`と`support.dependency_entry_id`は両方をfieldとして必須にし、exactly-oneだけ非nullとする。現在blockをsupportにするentryは、`state != null`である最新policy-visible surfaceの完全stateを`expected_state`へコピーし、dependencyをnullにする。先行設置をsupportにするentryはexpected stateをnullにし、入力順で先行するentry IDだけをdependencyへ指定する。この場合`support.position`はその先行entryの変換後targetと完全一致しなければならない。どちらも`support.position`から`face`方向へ1 block隣が当該entry targetであることを静的検証する。未開始・後続・外部ID、暗黙の近傍探索、未観測supportは認めない。
 
-このsliceはAction開始から終了までstationaryで、移動、既存blockの破壊・置換、順序変更、rollbackを行わない。未実行entryが既に変換後の完全なexpected-after stateなら、再開済みentryとして入力もplacement budgetも消費せず採用できる。ただし同じframeだけで成功にせず、全entryを後続のfresh current frameで完全一致確認してから完了する。それ以外のair precondition不一致は入力前に終了する。残るentryのtarget air、support proof、可視性、reach、targeted raycast、inventory絶対個数、universal safety、world/session/revisionを受付時と各dispatch直前に再検証し、通常use ACKとauthoritativeな変換後完全BlockState一致を成功条件にする。packet準備でmain inventoryからselected hotbarへSWAPした場合は、そのserver同期と総数不変readbackを待ってから設置消費のrevision / count baselineを取り直す。消費待機中に総数が不変の同期だけを受けてもmismatchへ固定せず、正確な-1を期限まで待つ。途中失敗では未開始suffixを実行せず、完了済みmutationと使用itemをtraceへ残す。各support aimは受付headingからyaw絶対差とpitch絶対差の合計40度以内に制限し、plannerも同じ上限を証明する。adapterはentryごとに受付headingへ戻すため、worst-caseは1 entryあたり15,000 ms、300 active tick、camera 80度、1 placement、distance / interaction / breakは0と固定し、8 entryで120,000 ms、2,400 tick、camera 640度、8 placementsとする。world mutationであるため`repeat`内には置けない。
+このsliceはAction開始から終了までstationaryで、移動、既存blockの破壊・置換、順序変更、rollbackを行わない。未実行entryが既に変換後の完全なexpected-after stateなら、再開済みentryとして入力もplacement budgetも消費せず採用できる。ただし同じframeだけで成功にせず、全entryを後続のfresh current frameで完全一致確認してから完了する。それ以外のair precondition不一致は入力前に終了する。残るentryのtarget air、support proof、可視性、reach、targeted raycast、inventory絶対個数、universal safety、world/session/revisionを受付時と各dispatch直前に再検証し、通常use ACKとauthoritativeな変換後完全BlockState一致を成功条件にする。packet準備でmain inventoryからselected hotbarへSWAPした場合は、そのserver同期と総数不変readbackを待ってから設置消費のrevision / count baselineを取り直す。消費待機中に総数が不変の同期だけを受けてもmismatchへ固定せず、正確な-1を期限まで待つ。途中失敗では未開始suffixを実行せず、完了済みmutationと使用itemをtraceへ残す。各support aimは観測rayの端点ではなく宣言faceの中心を基準とし、受付headingからyaw絶対差とpitch絶対差の合計40度以内に制限する。clear planも配達済み代表faceの中心を同じ基準に使い、plannerは実行時と同じ上限を証明する。adapterはentryごとに受付headingへ戻すため、worst-caseは1 entryあたり15,000 ms、300 active tick、camera 80度、1 placement、distance / interaction / breakは0と固定し、8 entryで120,000 ms、2,400 tick、camera 640度、8 placementsとする。world mutationであるため`repeat`内には置けない。
 
 3種のmutation batchは`targets`を1〜8件に制限し、重複targetを拒否する。`till_known_batch`は位置配列と共通`expected_block` / `hoe_item`、`plant_known_wheat_batch`は`{target,support}`配列と共通`seed_item=minecraft:wheat_seeds`、`harvest_known_wheat_batch`は位置配列を受け取る。受付時に全対象の現在のsurface、block state、reachを入力順に確認し、`TARGET_UNKNOWN`なら最初に不足した入力順indexをmessageの`target[index]`として返す。これは提出済み配列のindexだけであり、hidden座標や未公開stateを追加開示しない。plannerとruntimeはcamera cost最小化やray関係を理由に入力順を変更しない。入力順の累積camera costと各primitive costを既存のAction上限内で事前証明できない場合は、入力発生前に拒否する。
 
@@ -904,7 +904,7 @@ templateは`agent_start_action.inputSchema.examples`に掲載し、実装reposit
 - [`break_known_oak_column.json`](action-templates/break_known_oak_column.json): 地上から届く、現在可視な3段oak幹を下から順に破壊する
 - [`wheat_cycle.json`](action-templates/wheat_cycle.json): 2区画をmutation batchで耕し、植え、有限成熟待機後に収穫する
 - [`open_known_passage.json`](action-templates/open_known_passage.json): 可視な木製通路を開く
-- [`inspect_known_container.json`](action-templates/inspect_known_container.json): single chestのserver同期済み内容を確認する
+- [`inspect_known_container.json`](action-templates/inspect_known_container.json): Vanilla chest / barrelのserver同期済み内容を確認する
 - [`take_wheat_seeds_stack.json`](action-templates/take_wheat_seeds_stack.json): wheat seedsをwhole stack 1回だけ取得する
 - [`copy_known_oak_beam.json`](action-templates/copy_known_oak_beam.json): 完全なoak log stateを90度回転し、現在supportと先行entry dependencyで2 blockの水平梁を設置する
 - [`brew_awkward_potions.json`](action-templates/brew_awkward_potions.json): 片道cameraが270度以内のheadingから、空の既知brewing standでwater potion 3本をawkward potionへ1段醸造する。超える場合は直前に`face_known_position`とその追加budgetを置く
@@ -985,7 +985,7 @@ agent_get_stateの返却対象:
 - 最新immutable observation frameのID、範囲、鮮度、coverage、kind別件数
 - 現在または直近action_idと終了理由
 
-生chunk、遮蔽されたentity、chat、看板、本、world seed、tokenはTool resultへ含めない。例外としてautomation-owned single containerを通常useで開いた直後のserver full-content packetから作るbounded item集計だけは、そのActionのtraceへ一時的に返せる。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
+生chunk、遮蔽されたentity、chat、看板、本、world seed、tokenはTool resultへ含めない。例外としてautomation-owned Vanilla chest / barrelを通常useで開いた直後のserver full-content packetから作るbounded item集計だけは、そのActionのtraceへ一時的に返せる。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
 
 ### 8.6 内部Task state
 

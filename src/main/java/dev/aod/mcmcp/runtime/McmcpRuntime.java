@@ -2708,7 +2708,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 5,
                                 McpToolSchemas.transferItemsStartInput(),
                                 List.of(
-                                        "only an automation-opened canonical single chest or barrel is used",
+                                        "only an automation-opened canonical vanilla chest or barrel is used",
                                         "minimum_destination_count zero performs a no-mutation bounded content readback",
                                         "default-only or exact item-ID whole stacks, including damaged tools, can be transferred",
                                         "a missing requested item reports a bounded list of observed source item IDs for replanning",

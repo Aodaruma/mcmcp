@@ -76,14 +76,14 @@
 
 `clear_known_block_plan`は同じ`anchor` / `transform`文法で、現在返却済みの`visible_surface.state`が完全一致し、`placement_item`が非nullな安全建築blockだけを1〜8件、既存の`BREAK_TO_AIR`経路で撤去します。成功条件は全targetのfreshなair再観測です。置換は同じActionへ続けず、terminal後に再観測してから既存`apply_known_block_plan`を別Actionで実行します。
 
-`pillar_up_known`は1 Actionで1 blockだけ上がる専用primitiveです。player直下の完全な`support / expected_support`と、eligibleな`visible_surface`から無変換コピーした`source_state / item`を渡します。runtimeが足元air targetと1段上landingを導出し、grounded・中央寄せ、軌道、reach、inventoryを再検証します。JUMP後にplayer AABBがtarget上面を抜けてからuseを1回だけ送り、exact block、inventory -1、grounded Y+1で成功します。`if` / `repeat`内や前後suffixは禁止で、唯一のtop-level nodeにします。fluid、欠損、危険、未知、占有、support不一致ではfail closedです。
+`pillar_up_known`は1 Actionで1 blockだけ上がる専用primitiveです。中央へ乗る直前に配達したUP面の完全な`support / expected_support`と、eligibleな`visible_surface`から無変換コピーした`source_state / item`を渡します。足元はplayer自身で遮蔽されるため、support証拠だけはbounded delivery lease内で最終centering移動をまたいで保持しますが、runtimeは現在位置、完全state、world revision、grounded・中央寄せ、軌道、reach、inventoryを実行直前に再検証します。JUMP後にplayer AABBがtarget上面を抜けてからuseを1回だけ送り、exact block、inventory -1、grounded Y+1で成功します。`if` / `repeat`内や前後suffixは禁止で、唯一のtop-level nodeにします。fluid、欠損、危険、未知、占有、support不一致ではfail closedです。
 
 各`support`は、`position`から`face`方向へ1 block隣が当該entryの変換後targetになるよう指定します。`expected_state`と`dependency_entry_id`はどちらも必須nullable fieldで、次のどちらか一方だけを非nullにします。
 
 - 既存blockをsupportにする: `state != null`である最新`visible_surface.state`を`expected_state`へコピーし、`dependency_entry_id=null`
 - 同じplanの先行entryをsupportにする: `expected_state=null`、`dependency_entry_id`へ先行entry IDを指定し、`position`をその先行entryの変換後targetと一致させる
 
-既存supportは、`placement_item != null`のcopy可能block、または`minecraft:dirt` / `minecraft:grass_block` / `minecraft:obsidian`だけを使えます。全supportはAction開始時のheadingからyawとpitchの合計40度以内である必要があります。向きが合わない場合は、同じ最新frameの可視supportをtargetにした`face_known_position`をplan直前へ置くか、planを小さく分割します。
+既存supportは、`placement_item != null`のcopy可能block、または`minecraft:dirt` / `minecraft:grass_block` / `minecraft:obsidian`だけを使えます。全supportはAction開始時のheadingからyawとpitchの合計40度以内である必要があります。この判定は観測rayの偶然の端点ではなく、宣言したsupport面の中心を使います。向きが合わない場合は、同じ最新frameの可視supportをtargetにした`face_known_position`をplan直前へ置くか、planを小さく分割します。
 
 entry IDと変換後targetはplan内で一意、処理順は`entries`の入力順です。開始時点で既にtargetが完成stateでもskipせず失敗します。その場合は未設置suffixだけで新しいplanを作り、既設blockを最新観測済み`expected_state` supportとして扱います。NBT、fluid、gravity block、container、portal、command blockは扱いません。`apply_known_block_plan`自体は既存blockを破壊せず、置換は前述のclear→再観測→別Actionのapplyに分けます。途中失敗時は未開始suffixを実行せず、完了済み設置だけをtraceに残します。
 
