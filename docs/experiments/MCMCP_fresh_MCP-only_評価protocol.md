@@ -2,7 +2,7 @@
 
 ## 目的
 
-選択したprompt profileのproduction prompt **だけ**を新規のephemeral Codex threadへ渡し、MCMCPの公開5 toolsだけで遂行できるかを比較する。runnerは任意文字列を受け取らず、次の厳格な2 profileだけを許可する。
+選択したprompt profileのproduction prompt **だけ**を新規のephemeral Codex threadへ渡し、MCMCPの公開5 toolsだけで遂行できるかを比較する。runnerは任意文字列を受け取らず、次の厳格な3 profileだけを許可する。
 
 `full-cycle`は製品受入の主profileである。
 
@@ -12,7 +12,15 @@
 
 > チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか
 
+`hard-building-copy`は、材料加工を含む建築copyの高難易度profileである。
+
+> チェストの材料を自由に加工して、近くにある屋根付きの木造建築を見本に、羊毛の上へ同じ建築をコピーしてください。
+
 `full-cycle`のproduction goalは、T0前にユーザーまたは評価計画が指定した畑区画について、耕作可能な全土blockの耕耘、全区画への播種、成熟後の全区画収穫、収穫区画への再播種を反復し、player inventoryの小麦絶対個数が64以上になることである。64個へ到達した最後の収穫cycleでも、対象区画の再播種を終えてからproduction goalを完了とする。固定arenaや無関係な座標へのteleport/buildはこの意味を置き換えない。`short-regression`の成功だけを、この明示的completionの代替合格にしてはならない。
+
+`hard-building-copy`のproduction goalは、見本建築を変更せず、羊毛で指定された領域に、airによる開口部を含む同一の完全BlockState配置を再現することである。合格にはsource/destinationの完全state差分、craft/smeltした材料の証拠、inventory収支、全Action terminalを一致させる。
+
+deadlineはprofileに固定し、`short-regression` / `full-cycle`は30分、`hard-building-copy`だけは90分とする。callerによる上書きや延長は認めない。
 
 対象は `gpt-5.6-sol/high` を先行し、必要に応じて同じ golden baseline を復元して `gpt-5.6-luna/xhigh`、`gpt-5.6-luna/high` を別runで評価する。session、観測、action historyをモデル間で共有しない。
 
@@ -43,7 +51,7 @@ golden baselineはevaluator未接続時に作る。少なくともworld save、p
 1. Minecraftと前runのevaluatorが停止していることを確認する。
 2. golden baselineを復元し、識別子が一致することを確認する。
 3. Minecraftを起動してworldを開き、MCMCPを一度だけarmする。
-4. player、inventory、chest、door、cropを変更せずrunnerを開始する。
+4. player、inventory、container、source/destination等の評価対象を変更せずrunnerを開始する。
 
 runnerはclean cwdからfilesystem rootまでの全祖先とisolated `CODEX_HOME`にCodex configがないことを先に証明する。ephemeral login後、artifactへrequest/response本文を記録しない`config/read(includeLayers=true,cwd=clean cwd)`を送り、effective `config.mcp_servers`がobjectかつ0件であることを検証する。bridgeへ残すのはrequest ID、include-layers/cwd/object判定、件数0、raw未記録のBoolean/count proofだけである。その後、T0前に限りMCP 2026-07-28のread-only preflightを直接送る。
 
@@ -53,9 +61,9 @@ runnerはclean cwdからfilesystem rootまでの全祖先とisolated `CODEX_HOME
 
 `agent_start_action`や`agent_cancel_action`はpreflightで呼ばない。各HTTP requestはliteral `127.0.0.1`だけへ`-NoProxy -MaximumRedirection 0`で送り、UTF-8 JSON Content-Type、JSON-RPC 2.0、request/response IDの型と値、result/errorの排他的存在を検査する。`server/discover`は`resultType=complete`、`supportedVersions=[2026-07-28]`、`capabilities.tools.listChanged=false`、`ttlMs=0`、`cacheScope=private`、serverInfo=`mcmcp/0.1.0`とsemantic exactで一致させる。`tools/list`は`docs/MCMCP_MCP_Tool_Catalog.json`のraw SHA-256 `9f31ef06bad3b76eb60f76bc3eb0d5c1978aa3cfb74ef5af9a18655ae0ead210`とsemantic tool surface SHA-256 `68fb1fc7c373c9511b65a1b1e68dd3e4e83174e81717326bc06ff4eff80a93f3`をscript内定数へpinし、full resultと固定5件の名前、description、inputSchemaをexact比較してからdynamicToolsへ変換する。
 
-`agent_get_state`は`isError`の存在とBoolean型、`resultType=complete`、serverInfo、TextContent/structuredContent型を検証する。さらに`control.mode=ready`、unpaused、world/observationあり、inventory空、`omnidirectional_rays_per_tick=512`、`observation.record_counts.visible_entity=0`、actionがnullまたはterminalでなければT0へ進まない。このfixtureはmobを生成しないため、visible entityが1件でもあれば作業領域の落下item等による開始条件汚染として扱う。state body、座標、fixture知識はartifactへ保存せず、各判定のBooleanだけを残す。thread作成成功後にも同じreadinessを再取得し、8判定が全てtrueであることを記録する。
+`agent_get_state`は`isError`の存在とBoolean型、`resultType=complete`、serverInfo、TextContent/structuredContent型を検証する。さらに`control.mode=ready`、unpaused、world/observationあり、inventory空、`omnidirectional_rays_per_tick=512`、`observation.record_counts.visible_entity=0`、actionがnullまたはterminalでなければT0へ進まない。各baselineはvisible entity 0を開始条件とし、1件でもあれば作業領域の落下item等による開始条件汚染として扱う。state body、座標、fixture知識はartifactへ保存せず、各判定のBooleanだけを残す。thread作成成功後にも同じreadinessを再取得し、8判定が全てtrueであることを記録する。
 
-preflightとapp-server thread作成後、runnerはpreliminary readinessを確認してevaluation-turn leaseを獲得する。その後、active lease header付き`agent_get_state`でauthoritative T0 readinessを再確認してからT0を記録し、exact promptを含む`turn/start`をstdin JSONLへ1回だけ送る。これによりpreliminary checkからlease取得までのfocus・物理入力変化をT0へ持ち越さない。T0後はモデルのdynamic tool requestに対する機械的な1対1 forward以外、operator/runnerからMinecraftやMCPを操作しない。唯一の例外として、残時間が安全なHTTP完了とturn終端に足りないrequestはMCPへ送信せず、後述の固定deadline拒否をapp-serverへ返す。この拒否はMinecraftを操作せず、引数も変更しない。拒否後もモデル自身が発行した厳密な`agent_cancel_action` 1件だけは、残時間を満たす場合にcleanupとしてforwardできるが、runnerが自動cancelを生成することはない。30分のTurnDeadlineは延長せず、15秒のterminalization reserveをその内側に確保する。30分でturnが完了しなければrunを終了し、一般的なapp-server応答障害ではなく`evaluation deadline expired before turn/completed`として分類する。
+preflightとapp-server thread作成後、runnerはpreliminary readinessを確認してevaluation-turn leaseを獲得する。その後、active lease header付き`agent_get_state`でauthoritative T0 readinessを再確認してからT0を記録し、exact promptを含む`turn/start`をstdin JSONLへ1回だけ送る。これによりpreliminary checkからlease取得までのfocus・物理入力変化をT0へ持ち越さない。T0後はモデルのdynamic tool requestに対する機械的な1対1 forward以外、operator/runnerからMinecraftやMCPを操作しない。唯一の例外として、残時間が安全なHTTP完了とturn終端に足りないrequestはMCPへ送信せず、後述の固定deadline拒否をapp-serverへ返す。この拒否はMinecraftを操作せず、引数も変更しない。拒否後もモデル自身が発行した厳密な`agent_cancel_action` 1件だけは、残時間を満たす場合にcleanupとしてforwardできるが、runnerが自動cancelを生成することはない。TurnDeadlineは選択profileの固定値（30分または90分）から決定して延長せず、15秒のterminalization reserveをその内側に確保する。期限までにturnが完了しなければrunを終了し、一般的なapp-server応答障害ではなく`evaluation deadline expired before turn/completed`として分類する。
 
 ## evaluation-turn lease と読み取り専用monitor
 
@@ -118,7 +126,7 @@ deferred_executor,token_budget,current_time_reminder
 
 MCMCP Bearerはrunner親プロセスだけがtoken fileからメモリへ読み、loopback direct HTTP Authorization headerを構成する。app-server childはMCMCPへ直接接続しないため、Bearerを渡さない。
 
-Codex認証はcanonical `~/.codex/auth.json`を親runnerだけが秘密としてparseし、`tokens.access_token`と`tokens.account_id`だけをメモリへ保持する。JWT `exp`がT0から30分の実行上限と5分の安全余裕を満たすことをstartup、login直前、T0直前に検証する。`initialize`/`initialized`後、artifactへ絶対に記録しない`account/login/start`（`type=chatgptAuthTokens`、`chatgptPlanType=null`）でephemeral loginし、安全な`id=login` responseとsecret-freeな成功eventだけを保存する。`account/chatgptAuthTokens/refresh`が来たrunは即無効とし、MCMCPへ転送しない。canonical auth fileは複製/hardlink/更新せず、終了時にhash不変とisolated credential file不在を確認する。
+Codex認証はcanonical `~/.codex/auth.json`を親runnerだけが秘密としてparseし、`tokens.access_token`と`tokens.account_id`だけをメモリへ保持する。JWT `exp`がT0から選択profileの実行上限と5分の安全余裕を満たすことをstartup、login直前、T0直前に検証する。`initialize`/`initialized`後、artifactへ絶対に記録しない`account/login/start`（`type=chatgptAuthTokens`、`chatgptPlanType=null`）でephemeral loginし、安全な`id=login` responseとsecret-freeな成功eventだけを保存する。`account/chatgptAuthTokens/refresh`が来たrunは即無効とし、MCMCPへ転送しない。canonical auth fileは複製/hardlink/更新せず、終了時にhash不変とisolated credential file不在を確認する。
 
 child environmentから全`CODEX_*`/`OPENAI_*`（最後にisolated `CODEX_HOME`だけ再設定）、`MCMCP*`、名前にTOKEN/BEARER/SECRET/API_KEY/ACCESS_KEY/PRIVATE_KEY/PASSWORD/CREDENTIALを含む変数、proxy/CA/TLS log設定、`RUST_LOG`、`OTEL_*`を削除する。残った全environment valueもMCMCP Bearer/access token literalでscanし、該当entryを開始前に削除する。
 
@@ -128,7 +136,7 @@ MCMCP Bearer、Codex access token、account IDをcommand line、app-server confi
 
 app-server client request IDは`init`、`login`、`config`、`thread`、`turn`という文字列を使い、app-serverが発行するserver request ID（`0`を含む）と名前空間を分ける。artifactに残す`client_send`は`initialize`、`initialized`、`thread_start`、`turn_start`のexact 4件だけである。`initialize`はexact clientInfoと`experimentalApi=true`、notification opt-out配列だけ、`initialized`は空paramsだけを許可する。raw reasoning text deltaとreasoning summary deltaはopt-outし、completed reasoning itemのsummaryだけをmonitor候補にする。setup proofは`launcher → initialize → init response → initialized → login response → login成功 → effective config確認 → preflight → thread/start → thread response → preliminary readiness → evaluation-turn acquire → lease-bound authoritative T0 readiness → T0 → turn/start → turn response`の順に固定し、その後だけdynamic forwardを許可する。
 
-turn中に受理するapp-server requestは`item/tool/call`だけである。requestに`id` propertyが存在するかを確認するため、値`0`も有効である。ID/callId一意性、namespaceが省略またはnull、threadId/turnIdが現在のturnとstrict一致、tool/argumentsをforward**前**に検証する。違反request、未知tool、別methodはMCMCPへ送らずfail closedとする。pacing後に残時間を再計算し、`agent_get_action`は厳密検証済み`wait_timeout_ms`を秒へ切り上げた値+2秒（上限35秒）、他toolは35秒をforward timeoutとする。残時間が`forward timeout + 15秒`以下ならMCP request IDを採番せず、`dynamic_deadline_rejected`を記録して固定の`success=false`結果を返し、terminalizingをlatchする。最初の理由は`insufficient_deadline_headroom`、以後のrequestは`terminalization_latched`として同様にMCPへ送らない。ただしlatch後、exact `{action_id}`かつ正規UUIDのモデル起点`agent_cancel_action`は1件だけcleanup候補にできる。pacing後の残時間が固定5秒timeout+15秒reserveの20秒を**超える**場合だけ、`forward_mode=deadline_cleanup_cancel`と残時間/headroom proofを付け、通常のMCP request ID採番・start/completion/response lifecycleでliteral forwardする。2件目、他tool、不正引数、残時間20秒以下は拒否を継続する。deadline拒否とcleanup startの`remaining_seconds`は、bridgeのT0 UTC+1800秒と各event UTCから再計算したfloor値に対して、event書込遅延分の0..1秒だけを許容して照合する。
+turn中に受理するapp-server requestは`item/tool/call`だけである。requestに`id` propertyが存在するかを確認するため、値`0`も有効である。ID/callId一意性、namespaceが省略またはnull、threadId/turnIdが現在のturnとstrict一致、tool/argumentsをforward**前**に検証する。違反request、未知tool、別methodはMCMCPへ送らずfail closedとする。pacing後に残時間を再計算し、`agent_get_action`は厳密検証済み`wait_timeout_ms`を秒へ切り上げた値+2秒（上限35秒）、他toolは35秒をforward timeoutとする。残時間が`forward timeout + 15秒`以下ならMCP request IDを採番せず、`dynamic_deadline_rejected`を記録して固定の`success=false`結果を返し、terminalizingをlatchする。最初の理由は`insufficient_deadline_headroom`、以後のrequestは`terminalization_latched`として同様にMCPへ送らない。ただしlatch後、exact `{action_id}`かつ正規UUIDのモデル起点`agent_cancel_action`は1件だけcleanup候補にできる。pacing後の残時間が固定5秒timeout+15秒reserveの20秒を**超える**場合だけ、`forward_mode=deadline_cleanup_cancel`と残時間/headroom proofを付け、通常のMCP request ID採番・start/completion/response lifecycleでliteral forwardする。2件目、他tool、不正引数、残時間20秒以下は拒否を継続する。deadline拒否とcleanup startの`remaining_seconds`は、bridgeのT0 UTC+選択profileの`timeout_seconds`と各event UTCから再計算したfloor値に対して、event書込遅延分の0..1秒だけを許容して照合する。
 
 MCP成功結果をmodelへ返す`inputText`はtoken節約のため次の優先順で作る。
 
@@ -168,6 +176,18 @@ pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
 
 短い依頼の回帰runは同じbaselineを復元して`-PromptProfile short-regression`を明示する。Luna runはbaselineを毎回復元してからmodel/effort、profile、空artifact directoryだけを変える。
 
+高難易度建築copy runは専用baselineを復元し、固定90分の`hard-building-copy`を明示する。
+
+```powershell
+pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
+  -Model gpt-5.6-sol `
+  -ReasoningEffort high `
+  -PromptProfile hard-building-copy `
+  -BaselineId '<復元した建築baselineの識別子>' `
+  -ArtifactDirectory '<repo外の空directory>\sol-high-hard-building' `
+  -TokenPath '<MCMCP tokenの絶対path>'
+```
+
 ```powershell
 # baseline復元後
 pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
@@ -195,9 +215,9 @@ pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
 - `bridge.jsonl`: setup messageとsecret-freeなdynamic forward対応。非公開evaluation-turn controlのbody / header / streamは記録しない
 - `preflight.json`: read-only preflight結果とschema hash
 - `final-message.txt`: 最終completed agent message
-- `audit.json`: fail-closed自動監査結果
+- `audit.json`: fail-closed自動監査結果とprofileから決定した`evaluator_timeout_seconds`
 - `audit-stderr.log`: audit process stderr
-- `manifest.json`: model/effort/baseline、prompt hash、T0、timeout、Codex version、git状態、runner / launcher / monitor script hash、isolation/secret状態、lease ID hash、acquire / terminal時刻、固定terminal reason、inputs released / input owner none / all Action terminalのBoolean proof
+- `manifest.json`: model/effort/baseline、prompt hash、T0、profile固定の`evaluator_timeout_seconds`、Codex version、git状態、runner / launcher / monitor script hash、isolation/secret状態、lease ID hash、acquire / terminal時刻、固定terminal reason、inputs released / input owner none / all Action terminalのBoolean proof
 - `live-monitor.log`: visible monitorを使ったrunだけに生成し、Terminalへ表示した安全な公開行をprefixなしで同じ順序・同じ本文のまま保存
 
 monitor境界は、raw / summary deltaがopt-outされartifactにも存在しないこと、completed summaryとpublic commentaryだけを採用すること、runner / module / self-test / launcher / hostの固定hash、monitor prefix / event allowlist / 制御文字guard、Terminal表示と`live-monitor.log`の完全一致self-testで証明する。opt-out対象のprivate reasoning notificationが到達した場合はraw writerより前にrunをfail closedさせ、Bearer、access token、account ID、evaluation lease IDの完全一致もraw / bridge / final message / stderr / preflight / manifest / live monitorの各書込み前に拒否する。
@@ -216,7 +236,7 @@ monitor境界は、raw / summary deltaがopt-outされartifactにも存在しな
 - runner、monitor host、visible childのprocess lifecycleはevent-drivenで、周期poll eventがなく、runner終了後のbounded wait内にvisible childが終了し同じexit codeを伝播する。
 - 禁止tool/item/request/notification、未知event/client_send、壊れたJSONL、orphan、重複、turn terminal後のresponse/server request/notificationを含む全messageをfail closedにする。
 
-dynamic requestが0件でも、trace構造とturn正常完了はprotocol上validになり得る。ただし自動監査は理由の意味を保証できないため、能力不足の具体的理由が最終agentMessageにあることを条件付きmanual reviewへ必ず出し、任意の短文を課題成功とは扱わない。監査は0件/成功/domain error/deadline拒否件数をreportし、課題達成可否とは分離する。deadline拒否が1件以上なら、lease terminal proofに加えてMCMCP action auditでも全Actionがterminalであることを確認するmanual reviewを必須にする。runnerはモデルがcancelしないActionを自動cancelしない。evaluation-turn終了時のpriority stopは安全解放であり、production成功へ算入しない。自動監査だけではgame内の達成を証明できないため、MCMCP action auditと突き合わせ、全actionがterminal、小麦64個、fixture外への危険な副作用なしを実験ノートで判定する。失敗runへ追加入力して直さず、artifactを保全してbaselineからやり直す。
+dynamic requestが0件でも、trace構造とturn正常完了はprotocol上validになり得る。ただし自動監査は理由の意味を保証できないため、能力不足の具体的理由が最終agentMessageにあることを条件付きmanual reviewへ必ず出し、任意の短文を課題成功とは扱わない。監査は0件/成功/domain error/deadline拒否件数をreportし、課題達成可否とは分離する。deadline拒否が1件以上なら、lease terminal proofに加えてMCMCP action auditでも全Actionがterminalであることを確認するmanual reviewを必須にする。runnerはモデルがcancelしないActionを自動cancelしない。evaluation-turn終了時のpriority stopは安全解放であり、production成功へ算入しない。自動監査だけではgame内の達成を証明できないため、MCMCP action auditと突き合わせ、全actionがterminalかつfixture外への危険な副作用がないことを実験ノートで判定する。畑profileは小麦64個と再播種、`hard-building-copy`はsource/destinationのairを含む完全state差分、craft/smelt evidence、inventory収支を追加で確認する。失敗runへ追加入力して直さず、artifactを保全してbaselineからやり直す。
 
 ## 変更時の検証
 
@@ -244,5 +264,7 @@ if ($LASTEXITCODE -ne 0) { throw 'monitor self-test failed' }
 ```
 
 trace self-testはrequest ID `0`を含むsuccess、回復可能domain error、dynamic call 0件、JSON-RPC/protocol failure、route/namespace違反、必須property欠落、禁止item、malformed JSONLに加え、未知client_send、setup順序、terminal後response、domain member欠落/重複/proof不一致、追加instruction/context、無効model/effort、item route/timestamp、notification `emittedAtMs`の欠落・非整数・範囲外・順序違反、readiness proofの欠落・raw混入、failure diagnostic違反、property大小文字違反、正常deadline拒否、`agent_get_action(25000)`のheadroom境界と不正型、latch後の連続拒否、正常cleanup cancel、cleanupのtimeout/headroom/引数/order/回数違反、T0/reject UTC欠落・改変・早すぎる拒否、response欠落、重複拒否、reject/forward混在、hash/success/headroom/reason/identity不一致を検証する。monitor / runner self-testはevaluation-turnのacquire / terminal順、active header付与、release proof、raw / summary delta opt-out、公開本文の無加工転送、実credential / Terminal制御文字guard、Terminal表示と`live-monitor.log`の行単位完全一致、周期polling不在、visible childの終了連動を固定する。endpoint認証、lease状態遷移、Esc / UI / lifecycle / deadline時のAction停止と入力解放はJava契約テストで検証する。Codex CLIを更新する場合はversion pinを先に緩めず、generated experimental schema、external auth、dynamic lifecycle、hardening key、synthetic auditを再確認する。
+
+profile回帰は30分（1800秒）と90分（5400秒）の正常deadline計算、`hard-building-copy`への1800秒混入の拒否、audit/manifestのprofile固定timeout、launcherのprofile allowlistを検証する。
 
 参考: [Codex app server](https://developers.openai.com/codex/app-server/)、[Codex MCP](https://developers.openai.com/codex/mcp/)

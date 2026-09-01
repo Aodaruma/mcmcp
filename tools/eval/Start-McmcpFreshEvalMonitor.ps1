@@ -21,7 +21,7 @@ param(
     [string]$TokenPath,
 
     [Parameter(Mandatory)]
-    [ValidateSet('short-regression', 'full-cycle')]
+    [ValidateSet('short-regression', 'full-cycle', 'hard-building-copy')]
     [string]$PromptProfile,
 
     [string]$Endpoint = 'http://127.0.0.1:8765/mcp'

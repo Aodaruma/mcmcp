@@ -39,6 +39,7 @@ import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -170,9 +171,21 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             var position = blockPos(step.target());
             var sample = byPosition.get(position);
             Optional<BlockStateFingerprint> live = currentFingerprint(sample);
+            boolean doorPlacement = supportedDoorPlacement(step.expectedAfter());
+            Optional<BlockStateFingerprint> upperLive = doorPlacement
+                    ? currentFingerprint(byPosition.get(position.above()))
+                    : Optional.empty();
+            boolean doorUpperAfterExact = !doorPlacement || upperLive
+                    .filter(expectedDoorUpper(step.expectedAfter())::equals).isPresent();
+            boolean doorUpperBeforeExact = !doorPlacement || upperLive
+                    .filter(MinecraftApplyBlockPlanPort::air).isPresent();
+            if (doorPlacement && live.filter(step.expectedAfter()::equals).isPresent()
+                    && !doorUpperAfterExact) {
+                live = Optional.empty();
+            }
             // A resumed exact-after entry is authoritative current evidence for a later explicit
             // dependency. The support state is still checked again beside the placement packet.
-            if (live.filter(step.expectedAfter()::equals).isPresent()) {
+            if (live.filter(step.expectedAfter()::equals).isPresent() && doorUpperAfterExact) {
                 plan.confirmedEntries.add(step.id());
             }
             boolean replaceable = false;
@@ -181,6 +194,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 BlockState state = level.getBlockState(position);
                 replaceable = state.canBeReplaced();
                 supportedMutation &= !multiCellBlock(state);
+                supportedMutation &= doorUpperBeforeExact || doorUpperAfterExact;
             }
             List<AimCandidate> breakCandidates = supportedMutation
                     ? breakCandidates(level, player, step.target(), byPosition) : List.of();
@@ -579,18 +593,40 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         }
         var confirmation = active.prediction == null ? null : active.prediction.confirmation(
                 state -> active.child.expectedAfter().equals(fingerprint(state)));
+        if (active.secondaryPrediction != null) {
+            active.secondaryPrediction.captureIssuedPredictions();
+        }
+        var secondaryConfirmation = active.secondaryPrediction == null ? null
+                : active.secondaryPrediction.confirmation(state ->
+                        expectedDoorUpper(active.child.expectedAfter()).equals(fingerprint(state)));
         boolean acknowledged = false;
         boolean serverStateExact = false;
+        boolean secondaryStateExact = secondaryConfirmation == null;
         Optional<BlockStateFingerprint> serverState = Optional.empty();
         if (confirmation != null) {
             Integer required = confirmation.stateRequiredSequence() != null
                     ? confirmation.stateRequiredSequence() : confirmation.issuedSequence();
             acknowledged = required != null && confirmation.acknowledgedSequence() != null
                     && Integer.compareUnsigned(confirmation.acknowledgedSequence(), required) >= 0;
+            if (secondaryConfirmation != null) {
+                Integer secondaryRequired = secondaryConfirmation.stateRequiredSequence() != null
+                        ? secondaryConfirmation.stateRequiredSequence()
+                        : secondaryConfirmation.issuedSequence();
+                acknowledged &= secondaryRequired != null
+                        && secondaryConfirmation.acknowledgedSequence() != null
+                        && Integer.compareUnsigned(
+                                secondaryConfirmation.acknowledgedSequence(), secondaryRequired) >= 0;
+                secondaryStateExact = secondaryConfirmation.serverConfirmed()
+                        && Optional.ofNullable(secondaryConfirmation.serverState())
+                                .map(MinecraftApplyBlockPlanPort::fingerprint)
+                                .filter(expectedDoorUpper(active.child.expectedAfter())::equals)
+                                .isPresent();
+            }
             serverState = Optional.ofNullable(confirmation.serverState())
                     .map(MinecraftApplyBlockPlanPort::fingerprint);
             serverStateExact = confirmation.serverConfirmed()
-                    && serverState.filter(active.child.expectedAfter()::equals).isPresent();
+                    && serverState.filter(active.child.expectedAfter()::equals).isPresent()
+                    && secondaryStateExact;
             if (confirmation.status()
                     == ClientPredictionSignals.ConfirmationStatus.SERVER_STATE_MISMATCH) {
                 active.failure = failure("POSTCONDITION_MISMATCH",
@@ -598,8 +634,17 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                         RoutineFailure.Recovery.REPLAN,
                         stateMap(active.child.expectedAfter()),
                         serverState.map(MinecraftApplyBlockPlanPort::stateMap).orElse(Map.of()));
+            } else if (secondaryConfirmation != null
+                    && secondaryConfirmation.status()
+                            == ClientPredictionSignals.ConfirmationStatus.SERVER_STATE_MISMATCH) {
+                active.failure = failure("POSTCONDITION_MISMATCH",
+                        RoutineFailure.Category.DIVERGENCE,
+                        RoutineFailure.Recovery.REPLAN,
+                        stateMap(expectedDoorUpper(active.child.expectedAfter())), Map.of());
             } else if (confirmation.status()
-                    == ClientPredictionSignals.ConfirmationStatus.INCOMPATIBLE) {
+                    == ClientPredictionSignals.ConfirmationStatus.INCOMPATIBLE
+                    || secondaryConfirmation != null && secondaryConfirmation.status()
+                            == ClientPredictionSignals.ConfirmationStatus.INCOMPATIBLE) {
                 active.failure = failure("PREDICTION_BRIDGE_INCOMPATIBLE",
                         RoutineFailure.Category.EXTERNAL,
                         RoutineFailure.Recovery.USER, Map.of(), Map.of());
@@ -640,6 +685,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         }
         var basis = new LinkedHashMap<String, Object>();
         basis.put("server_block_state_exact", serverStateExact);
+        basis.put("secondary_block_state_exact", secondaryStateExact);
         basis.put("server_inventory_synchronized", inventoryConfirmed);
         basis.put("prediction_acknowledged", acknowledged);
         if (confirmation != null) {
@@ -751,14 +797,15 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         }
         BlockState predicted = ((BlockItemPlacementInvoker) (Object) item)
                 .mcmcp$invokeGetPlacementState(context);
-        if (predicted == null || multiCellBlock(predicted)
+        if (predicted == null || !supportedPlacementFootprint(
+                    level, context.getClickedPos(), predicted)
                 || !active.child.expectedAfter().equals(fingerprint(predicted))) {
             throw new IllegalStateException("exact placement state does not match the plan");
         }
         var support = hit.getBlockPos();
         boolean constructionWitness = active.child.supportWitness().isPresent();
         if (constructionWitness) {
-            SafeConstructionBlockPolicy.requireLiveState(
+            SafeConstructionBlockPolicy.requirePlacementState(
                     predicted, level.getBlockEntity(context.getClickedPos()) != null);
             requireCurrentSupportWitness(level, active.plan, active.child, active.candidate);
         } else {
@@ -776,6 +823,16 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 level, context.getClickedPos(), requireSession().clientTick());
         int before = prediction.sequenceBeforePrediction();
         active.prediction = prediction;
+        int secondaryBefore = before;
+        if (supportedDoorPlacement(predicted)) {
+            active.secondaryPrediction = predictions.begin(
+                    level, context.getClickedPos().above(), requireSession().clientTick());
+            secondaryBefore = active.secondaryPrediction.sequenceBeforePrediction();
+            if (secondaryBefore != before) {
+                throw new ClientPredictionSignals.PredictionBridgeException(
+                        "door prediction targets did not share one sequence");
+            }
+        }
         var result = constructionWitness
                 ? dispatchConstructionUseIfAllowed(
                         level, support,
@@ -786,7 +843,10 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                         () -> Objects.requireNonNull(minecraft.gameMode)
                                 .useItemOn(player, InteractionHand.MAIN_HAND, hit));
         int after = prediction.captureIssuedPredictions();
-        if (after != before + 1) {
+        int secondaryAfter = active.secondaryPrediction == null ? after
+                : active.secondaryPrediction.captureIssuedPredictions();
+        if (after != before + 1 || secondaryAfter != secondaryBefore + 1
+                || secondaryAfter != after) {
             throw new ClientPredictionSignals.PredictionBridgeException(
                     "place action did not issue exactly one prediction");
         }
@@ -815,6 +875,9 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         if (ownedChild != null) {
             BlockPos target = blockPos(ownedChild.target());
             positions.add(target);
+            if (supportedDoorPlacement(ownedChild.expectedAfter())) {
+                positions.add(target.above());
+            }
             if (ownedChild.stage() == ApplyBlockPlanChildStage.PLACE) {
                 if (ownedChild.supportWitness().isPresent()) {
                     positions.add(blockPos(ownedChild.supportWitness().orElseThrow().support()));
@@ -829,6 +892,9 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         for (var step : request.steps()) {
             BlockPos target = blockPos(step.target());
             positions.add(target);
+            if (supportedDoorPlacement(step.expectedAfter())) {
+                positions.add(target.above());
+            }
             if (step.operation() == ApplyBlockPlanOperation.PLACE
                     || step.operation() == ApplyBlockPlanOperation.REPLACE) {
                 if (step.supportWitness().isPresent()) {
@@ -966,12 +1032,14 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             }
             BlockState predicted = ((BlockItemPlacementInvoker) (Object) item)
                     .mcmcp$invokeGetPlacementState(context);
-            if (predicted == null || multiCellBlock(predicted)
+            if (predicted == null || !supportedPlacementFootprint(
+                        Objects.requireNonNull(minecraft.level),
+                        context.getClickedPos(), predicted)
                     || !child.expectedAfter().equals(fingerprint(predicted))) {
                 continue;
             }
             if (child.supportWitness().isPresent()
-                    && !SafeConstructionBlockPolicy.allowsLiveState(predicted, false)) {
+                    && !SafeConstructionBlockPolicy.allowsPlacementState(predicted, false)) {
                 continue;
             }
             exact.add(candidate);
@@ -1020,17 +1088,18 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                         .map(box -> box.move(hitBlock)).toList();
         var result = new ArrayList<AimCandidate>();
         for (AABB box : boxes) {
-            Vec3 point = faceCenter(box, face);
-            if (player.getEyePosition().distanceToSqr(point)
-                    > square(player.blockInteractionRange() + 0.25D)) {
-                continue;
-            }
-            Rotation desired = rotationTo(player.getEyePosition(), point);
-            double displacement = Math.abs(Mth.wrapDegrees(
-                    desired.yaw() - player.getYRot()))
-                    + Math.abs(desired.pitch() - player.getXRot());
-            if (displacement <= SafeConstructionBlocks.MAX_ONE_WAY_CAMERA_DEGREES) {
-                result.add(new AimCandidate(hitBlock, face, point, target));
+            for (Vec3 point : placementAimPoints(box, face)) {
+                if (player.getEyePosition().distanceToSqr(point)
+                        > square(player.blockInteractionRange() + 0.25D)) {
+                    continue;
+                }
+                Rotation desired = rotationTo(player.getEyePosition(), point);
+                double displacement = Math.abs(Mth.wrapDegrees(
+                        desired.yaw() - player.getYRot()))
+                        + Math.abs(desired.pitch() - player.getXRot());
+                if (displacement <= SafeConstructionBlocks.MAX_ONE_WAY_CAMERA_DEGREES) {
+                    result.add(new AimCandidate(hitBlock, face, point, target));
+                }
             }
         }
         return result;
@@ -1372,12 +1441,15 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
 
     static boolean eligibleBlockStack(ItemStack stack) {
         if (!(stack.getItem() instanceof BlockItem item)
-                || item instanceof BedItem || item instanceof DoubleHighBlockItem
+                || item instanceof BedItem
+                || item instanceof DoubleHighBlockItem
+                        && !(item.getBlock() instanceof DoorBlock)
                 || item instanceof SolidBucketItem
                 || !supportsPlacementItem(item)) {
             return false;
         }
-        if (multiCellBlock(item.getBlock().defaultBlockState())) {
+        if (multiCellBlock(item.getBlock().defaultBlockState())
+                && !supportedDoorPlacement(item.getBlock().defaultBlockState())) {
             return false;
         }
         // Phase 4 verifies only the complete BlockState.  A component patch may carry block
@@ -1404,7 +1476,46 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         }
         Class<?> type = item.getClass();
         return type == BlockItem.class
-                || type == StandingAndWallBlockItem.class;
+                || type == StandingAndWallBlockItem.class
+                || type == DoubleHighBlockItem.class
+                        && item.getBlock() instanceof DoorBlock;
+    }
+
+    static boolean supportedDoorPlacement(BlockState state) {
+        return SafeConstructionBlockPolicy.supportedDoorPlacement(state);
+    }
+
+    public static boolean supportedDoorPlacement(BlockStateFingerprint state) {
+        try {
+            return SafeConstructionBlockPolicy.supportedDoorPlacement(
+                    SafeConstructionBlockPolicy.requireExpectedState(state));
+        } catch (RuntimeException rejected) {
+            return false;
+        }
+    }
+
+    static BlockState expectedDoorUpper(BlockState lower) {
+        if (!supportedDoorPlacement(lower)) {
+            throw new IllegalArgumentException("expected a dry lower door state");
+        }
+        return lower.setValue(BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.UPPER);
+    }
+
+    static BlockStateFingerprint expectedDoorUpper(BlockStateFingerprint lower) {
+        return fingerprint(expectedDoorUpper(
+                SafeConstructionBlockPolicy.requireExpectedState(lower)));
+    }
+
+    private static boolean supportedPlacementFootprint(
+            ClientLevel level, BlockPos target, BlockState predicted) {
+        if (!multiCellBlock(predicted)) return true;
+        if (!supportedDoorPlacement(predicted)) return false;
+        BlockPos upper = target.above();
+        return level.isInsideBuildHeight(upper.getY())
+                && level.isLoaded(upper)
+                && withinWorldBorder(level, upper)
+                && level.getBlockState(upper).isAir()
+                && level.getBlockEntity(upper) == null;
     }
 
     private static boolean multiCellBlock(BlockState state) {
@@ -1559,6 +1670,29 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         };
     }
 
+    /** Center plus bounded lower/upper side hits needed to select slab/stair half exactly. */
+    static List<Vec3> placementAimPoints(AABB box, Direction face) {
+        Vec3 center = faceCenter(box, face);
+        if (face.getAxis().isVertical()) {
+            double lowX = Mth.lerp(0.25D, box.minX, box.maxX);
+            double highX = Mth.lerp(0.75D, box.minX, box.maxX);
+            double lowZ = Mth.lerp(0.25D, box.minZ, box.maxZ);
+            double highZ = Mth.lerp(0.75D, box.minZ, box.maxZ);
+            return List.of(
+                    center,
+                    new Vec3(lowX, center.y, lowZ),
+                    new Vec3(lowX, center.y, highZ),
+                    new Vec3(highX, center.y, lowZ),
+                    new Vec3(highX, center.y, highZ));
+        }
+        double lowerY = Mth.lerp(0.25D, box.minY, box.maxY);
+        double upperY = Mth.lerp(0.75D, box.minY, box.maxY);
+        return List.of(
+                center,
+                new Vec3(center.x, lowerY, center.z),
+                new Vec3(center.x, upperY, center.z));
+    }
+
     private static double square(double value) {
         return value * value;
     }
@@ -1616,6 +1750,11 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         }
         try {
             if (active.prediction != null) active.prediction.close();
+        } catch (RuntimeException | LinkageError closeFailure) {
+            failure = combine(failure, closeFailure);
+        }
+        try {
+            if (active.secondaryPrediction != null) active.secondaryPrediction.close();
         } catch (RuntimeException | LinkageError closeFailure) {
             failure = combine(failure, closeFailure);
         }
@@ -1788,6 +1927,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         private final AimCandidate candidate;
         private final ClientReconciliationSignals.Snapshot reconciliationAtDispatch;
         private ClientPredictionSignals.PredictionAttempt prediction;
+        private ClientPredictionSignals.PredictionAttempt secondaryPrediction;
         private AttackInputLease attackLease;
         private String inventoryItemId;
         private int inventoryCountBefore;

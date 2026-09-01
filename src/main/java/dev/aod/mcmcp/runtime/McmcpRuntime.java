@@ -1884,16 +1884,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
         long durationMillis = node instanceof ActionDsl.CraftKnownRecipe
                 ? ActionDslCompiler.KNOWN_CRAFTING_DURATION_MILLIS
-                : node instanceof ActionDsl.SmeltKnownRecipe
-                        ? ActionDslCompiler.KNOWN_SMELTING_DURATION_MILLIS
+                : node instanceof ActionDsl.SmeltKnownRecipe smelt
+                        ? ActionDslCompiler.knownSmeltingDurationMillis(smelt.maxSmelts())
                 : node instanceof ActionDsl.OperateKnownMenu
                         ? ActionDslCompiler.KNOWN_MENU_OPERATION_DURATION_MILLIS
                 : node instanceof ActionDsl.BrewKnownPotionBatch
                         ? ActionDslCompiler.KNOWN_BREWING_DURATION_MILLIS : 0L;
         long ticks = node instanceof ActionDsl.CraftKnownRecipe
                 ? ActionDslCompiler.KNOWN_CRAFTING_TICKS
-                : node instanceof ActionDsl.SmeltKnownRecipe
-                        ? ActionDslCompiler.KNOWN_SMELTING_TICKS
+                : node instanceof ActionDsl.SmeltKnownRecipe smelt
+                        ? ActionDslCompiler.knownSmeltingTicks(smelt.maxSmelts())
                 : node instanceof ActionDsl.OperateKnownMenu
                         ? ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS
                 : node instanceof ActionDsl.BrewKnownPotionBatch
@@ -2549,8 +2549,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var policy = Map.<String, Object>ofEntries(
                 Map.entry("profile", "survival_omnidirectional"),
                 Map.entry("multiplayer_enabled", multiplayerEnabled),
-                Map.entry("max_duration_ms", 600_000),
-                Map.entry("max_ticks", 12_000),
+                Map.entry("max_duration_ms", Math.toIntExact(
+                        ActionDslValidator.MAX_ACTION_DURATION_MILLIS)),
+                Map.entry("max_ticks", ActionDslValidator.MAX_ACTION_TICKS),
                 Map.entry("max_distance_blocks", 32),
                 Map.entry("max_camera_degrees", ActionDslValidator.MAX_ACTION_CAMERA_DEGREES),
                 Map.entry("max_blocks_broken", 8),
@@ -4865,7 +4866,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             long deadline = Math.addExact(
                     session.clientTick(),
                     smelting
-                            ? ActionDslCompiler.KNOWN_SMELTING_TICKS
+                            ? ActionDslCompiler.knownSmeltingTicks(
+                                    ((ActionDsl.SmeltKnownRecipe) agentExecution.primitive)
+                                            .maxSmelts())
                             : knownMenu
                                     ? ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS
                             : AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND);
@@ -5442,6 +5445,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     Math.max(maximum.x(), target.x()),
                     Math.max(maximum.y(), target.y()),
                     Math.max(maximum.z(), target.z()));
+            if (MinecraftApplyBlockPlanPort.supportedDoorPlacement(expectedAfter)) {
+                maximum = new BlockTarget(
+                        target.dimension(), maximum.x(),
+                        Math.max(maximum.y(), Math.addExact(target.y(), 1)), maximum.z());
+            }
         }
         if (entries.isEmpty()) {
             throw new IllegalArgumentException("construction plan is empty");
@@ -5778,9 +5786,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 "item", smelt.fuelItem(),
                 "stack_policy", smelt.fuelStackPolicy()));
         parameters.put("max_smelts", smelt.maxSmelts());
+        long ticks = ActionDslCompiler.knownSmeltingTicks(smelt.maxSmelts());
         var bounds = new PhaseFiveBounds(
-                target.dimension(), target, target, 0, 120, false);
-        return new PhaseFiveRequest("smelt_items", parameters, bounds, 1, "items");
+                target.dimension(), target, target, 0,
+                Math.toIntExact((ticks + 19L) / 20L), false);
+        return new PhaseFiveRequest(
+                "smelt_items", parameters, bounds, smelt.maxSmelts(), "smelts");
     }
 
     private static String containerItemsTrace(List<KnownContainerAttempt.ItemCount> items) {
@@ -9525,7 +9536,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     static void validateApplyBlockPlanItems(ApplyBlockPlanRequest request) {
         for (var step : request.steps()) {
+            boolean supportedDoorPlace = step.operation() == ApplyBlockPlanOperation.PLACE
+                    && "minecraft:air".equals(step.expectedBefore().blockId())
+                    && step.expectedBefore().properties().isEmpty()
+                    && step.requiredItemId().filter("minecraft:oak_door"::equals).isPresent()
+                    && MinecraftApplyBlockPlanPort.supportedDoorPlacement(step.expectedAfter())
+                    && request.bounds().contains(new BlockTarget(
+                            step.target().dimension(), step.target().x(),
+                            Math.addExact(step.target().y(), 1), step.target().z()));
             if (step.operation().mutating()
+                    && !supportedDoorPlace
                     && (unsupportedMultiCellBlock(step.expectedBefore().blockId())
                             || unsupportedMultiCellBlock(step.expectedAfter().blockId()))) {
                 throw new IllegalArgumentException(
@@ -9563,11 +9583,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 throw new IllegalArgumentException("plan item must place the expected_after block");
             }
             if (blockItem instanceof BedItem
-                    || blockItem instanceof DoubleHighBlockItem
-                    || placedBlock instanceof DoorBlock
+                    || blockItem instanceof DoubleHighBlockItem && !supportedDoorPlace
+                    || placedBlock instanceof DoorBlock && !supportedDoorPlace
                     || placedBlock instanceof BedBlock
                     || placedBlock.defaultBlockState().hasProperty(
-                            BlockStateProperties.DOUBLE_BLOCK_HALF)
+                            BlockStateProperties.DOUBLE_BLOCK_HALF) && !supportedDoorPlace
                     || placedBlock.defaultBlockState().hasProperty(
                             BlockStateProperties.BED_PART)) {
                 throw new IllegalArgumentException(

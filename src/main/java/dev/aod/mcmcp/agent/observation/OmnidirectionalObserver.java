@@ -30,6 +30,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.DoubleHighBlockItem;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.StandingAndWallBlockItem;
 import net.minecraft.world.level.BlockGetter;
@@ -49,6 +50,7 @@ import net.minecraft.world.level.block.StainedGlassPaneBlock;
 import net.minecraft.world.level.block.WebBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.entity.EntityTypeTest;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
@@ -480,6 +482,8 @@ public final class OmnidirectionalObserver {
         Objects.requireNonNull(state, "state");
         String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
         return SafeConstructionBlocks.allowsVisibleState(blockId)
+                && (!SafeConstructionBlocks.allows(blockId)
+                        || SafeConstructionBlocks.allowsConstructionState(state))
                 ? blockStateView(state) : null;
     }
 
@@ -510,11 +514,16 @@ public final class OmnidirectionalObserver {
                 || state.hasBlockEntity()
                 || block instanceof EntityBlock
                 || block instanceof FallingBlock
-                || block instanceof DoorBlock
                 || block instanceof BedBlock
                 || block == Blocks.TNT
                 || !state.getFluidState().isEmpty()
+                || SafeConstructionBlocks.allows(
+                        BuiltInRegistries.BLOCK.getKey(block).toString())
+                        && !SafeConstructionBlocks.allowsConstructionState(state)
                 || state.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)
+                        && !(block instanceof DoorBlock
+                                && state.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF)
+                                        == DoubleBlockHalf.LOWER)
                 || state.hasProperty(BlockStateProperties.BED_PART)
                 || !(block.asItem() instanceof BlockItem item)
                 || item.getBlock() != block) {
@@ -528,7 +537,9 @@ public final class OmnidirectionalObserver {
                         BuiltInRegistries.BLOCK.getKey(block).toString())
                 || registered.isEmpty()
                 || registered.orElseThrow().value() != item
-                || implementation != BlockItem.class) {
+                || implementation != BlockItem.class
+                        && !(block instanceof DoorBlock
+                                && implementation == DoubleHighBlockItem.class)) {
             return null;
         }
         return new ResourceId(identifier.toString());

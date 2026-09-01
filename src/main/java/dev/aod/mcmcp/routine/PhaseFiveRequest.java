@@ -43,7 +43,8 @@ public record PhaseFiveRequest(
         }
         Objects.requireNonNull(bounds, "bounds");
         int maximumTravel = shortOperation(kind) ? 32 : 128;
-        int maximumDuration = shortOperation(kind) ? 120
+        int maximumDuration = kind.equals("smelt_items") ? 750
+                : shortOperation(kind) ? 120
                 : kind.equals("tend_crop_area") ? 7_200 : 600;
         if (bounds.maxTravelBlocks() > maximumTravel
                 || bounds.maxDurationSeconds() > maximumDuration) {

@@ -1622,8 +1622,8 @@ class AgentPrimitivePlannerTest {
 
         var cost = analysis.primitiveCosts().get("smelt");
         assertThat(cost.durationMillis()).isEqualTo(120_000L);
-        assertThat(cost.ticks()).isEqualTo(AgentPrimitivePlanner.SMELTING_TICK_UPPER_BOUND);
-        assertThat(cost.interactions()).isEqualTo(6L);
+        assertThat(cost.ticks()).isEqualTo(ActionDslCompiler.knownSmeltingTicks(1));
+        assertThat(cost.interactions()).isEqualTo(7L);
         var centerCost = AgentPrimitivePlanner.mutationCost(
                 pose, new Vec3(3.5D, 64.5D, 0.5D), 4.5F, 6, 0, 0);
         assertThat(cost.cameraDegrees()).isEqualTo(centerCost.cameraDegrees() * 2.0D);

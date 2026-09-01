@@ -31,10 +31,9 @@ public final class ActionDslCompiler {
     public static final long KNOWN_BREWING_TICKS = 1_400L;
     public static final long KNOWN_BREWING_DURATION_MILLIS = 70_000L;
     public static final long KNOWN_BREWING_INTERACTIONS = 16L;
-    public static final long KNOWN_SMELTING_TICKS = 2_400L;
-    public static final long KNOWN_SMELTING_DURATION_MILLIS =
-            KNOWN_SMELTING_TICKS * NOMINAL_TICK_MILLIS;
-    public static final long KNOWN_SMELTING_INTERACTIONS = 6L;
+    private static final long KNOWN_SMELTING_BASE_TICKS = 2_200L;
+    private static final long KNOWN_SMELTING_TICKS_PER_ITEM = 200L;
+    public static final long KNOWN_SMELTING_INTERACTIONS = 7L;
     public static final long KNOWN_MENU_OPERATION_TICKS = 600L;
     public static final long KNOWN_MENU_OPERATION_DURATION_MILLIS =
             KNOWN_MENU_OPERATION_TICKS * NOMINAL_TICK_MILLIS;
@@ -107,7 +106,8 @@ public final class ActionDslCompiler {
             return compileWait(node, wait.maxTicks(), primitiveCostBounds);
         }
         if (node instanceof ActionDsl.ApplyKnownBlockPlan plan) {
-            Cost cost = intrinsicKnownBlockPlanCost(plan.entries().size());
+            Cost cost = intrinsicKnownBlockPlanCost(
+                    plan.entries().size(), knownBlockPlanPlacements(plan));
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }
@@ -199,12 +199,12 @@ public final class ActionDslCompiler {
                         || cost.ticks() != KNOWN_CRAFTING_TICKS) {
                     throw unprovable("craft_known_recipe has an invalid primitive time bound");
                 }
-            } else if (node instanceof ActionDsl.SmeltKnownRecipe) {
+            } else if (node instanceof ActionDsl.SmeltKnownRecipe smelt) {
                 requireMutationCost(
                         cost, KNOWN_SMELTING_INTERACTIONS, 0, 0,
                         "smelt_known_recipe");
-                if (cost.durationMillis() != KNOWN_SMELTING_DURATION_MILLIS
-                        || cost.ticks() != KNOWN_SMELTING_TICKS) {
+                if (cost.durationMillis() != knownSmeltingDurationMillis(smelt.maxSmelts())
+                        || cost.ticks() != knownSmeltingTicks(smelt.maxSmelts())) {
                     throw unprovable("smelt_known_recipe has an invalid primitive time bound");
                 }
             } else if (node instanceof ActionDsl.OperateKnownMenu) {
@@ -268,8 +268,15 @@ public final class ActionDslCompiler {
 
     /** Structural bound for the stationary place-only block-plan adapter. */
     public static Cost intrinsicKnownBlockPlanCost(int entries) {
+        return intrinsicKnownBlockPlanCost(entries, entries);
+    }
+
+    public static Cost intrinsicKnownBlockPlanCost(int entries, long placements) {
         if (entries < 1 || entries > ActionDslValidator.MAX_BLOCK_PLAN_ENTRIES) {
             throw new IllegalArgumentException("block plan entry count is outside the closed bound");
+        }
+        if (placements < entries || placements > entries * 2L) {
+            throw new IllegalArgumentException("block plan footprint is outside the closed bound");
         }
         long ticks = Math.multiplyExact(BLOCK_PLAN_TICKS_PER_ENTRY, entries);
         return new Cost(
@@ -279,7 +286,13 @@ public final class ActionDslCompiler {
                 BLOCK_PLAN_CAMERA_DEGREES_PER_ENTRY * entries,
                 0,
                 0,
-                entries);
+                placements);
+    }
+
+    public static long knownBlockPlanPlacements(ActionDsl.ApplyKnownBlockPlan plan) {
+        Objects.requireNonNull(plan, "plan");
+        return plan.entries().stream().mapToLong(entry ->
+                "minecraft:oak_door".equals(entry.sourceState().block()) ? 2L : 1L).sum();
     }
 
     /** Structural bound for the stationary break-only construction adapter. */
@@ -345,6 +358,20 @@ public final class ActionDslCompiler {
             throw new IllegalArgumentException("max crafts is outside the closed Action bound");
         }
         return 1L + Math.multiplyExact(4L, maxCrafts);
+    }
+
+    /** GUI/release margin plus the Vanilla maximum 200-tick cook time per item. */
+    public static long knownSmeltingTicks(int maxSmelts) {
+        if (maxSmelts < 1 || maxSmelts > 64) {
+            throw new IllegalArgumentException("max smelts is outside the closed Action bound");
+        }
+        return Math.addExact(
+                KNOWN_SMELTING_BASE_TICKS,
+                Math.multiplyExact(KNOWN_SMELTING_TICKS_PER_ITEM, maxSmelts));
+    }
+
+    public static long knownSmeltingDurationMillis(int maxSmelts) {
+        return multiplyExact(knownSmeltingTicks(maxSmelts), NOMINAL_TICK_MILLIS);
     }
 
     private static void requireMutationCost(

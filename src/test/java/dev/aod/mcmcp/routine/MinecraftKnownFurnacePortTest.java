@@ -43,8 +43,11 @@ class MinecraftKnownFurnacePortTest {
         assertThatThrownBy(() -> MinecraftKnownFurnacePort.parseRequest(
                 request("campfire", 1, "default_components_only")))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThat(MinecraftKnownFurnacePort.parseRequest(
+                request("furnace", 64, "default_components_only")).maxSmelts())
+                .isEqualTo(64);
         assertThatThrownBy(() -> MinecraftKnownFurnacePort.parseRequest(
-                request("furnace", 2, "default_components_only")))
+                request("furnace", 65, "default_components_only")))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> MinecraftKnownFurnacePort.parseRequest(
                 request("furnace", 1, "item_id_any_components")))
@@ -109,47 +112,58 @@ class MinecraftKnownFurnacePortTest {
     }
 
     @Test
-    void singletonSourcesMustBeDistinctAndExact() {
+    void inputMustBeTheExactBatchAndFuelMayBeARecoverableStack() {
         var slots = emptyMenu();
         var ingredient = key("minecraft:raw_iron", INGREDIENT_HASH);
         var alternate = key("minecraft:raw_gold", INGREDIENT_HASH + 1);
         var fuel = key("minecraft:coal", FUEL_HASH);
-        slots.set(3, stack("minecraft:raw_iron", 2, INGREDIENT_HASH));
-        slots.set(4, stack("minecraft:raw_gold", 1, INGREDIENT_HASH + 1));
-        slots.set(5, stack("minecraft:coal", 1, FUEL_HASH));
+        slots.set(3, stack("minecraft:raw_iron", 63, INGREDIENT_HASH));
+        slots.set(4, stack("minecraft:raw_gold", 64, INGREDIENT_HASH + 1));
+        slots.set(5, stack("minecraft:coal", 8, FUEL_HASH));
 
         assertThat(MinecraftKnownFurnacePort.chooseSources(
-                slots, List.of(ingredient, alternate), fuel))
-                .contains(new MinecraftKnownFurnacePort.SourcePlan(4, 5, alternate));
+                slots, List.of(ingredient, alternate), fuel, 64, 8))
+                .contains(new MinecraftKnownFurnacePort.SourcePlan(4, 5, alternate, 8));
 
-        slots.set(5, stack("minecraft:coal", 2, FUEL_HASH));
+        slots.set(5, stack("minecraft:coal", 7, FUEL_HASH));
         assertThat(MinecraftKnownFurnacePort.chooseSources(
-                slots, List.of(ingredient, alternate), fuel)).isEmpty();
+                slots, List.of(ingredient, alternate), fuel, 64, 8)).isEmpty();
     }
 
     @Test
-    void exactInventoryReadbackAllowsOnlyOneIngredientFuelAndResultDelta() {
+    void exactInventoryReadbackAllowsOnlyDeclaredBatchFuelAndResultDelta() {
         var ingredient = key("minecraft:raw_iron", INGREDIENT_HASH);
         var fuel = key("minecraft:coal", FUEL_HASH);
         var output = key("minecraft:iron_ingot", OUTPUT_HASH);
         var unrelated = key("minecraft:cobblestone", 999);
         Map<MinecraftKnownFurnacePort.StackKey, Integer> baseline = Map.of(
-                ingredient, 1, fuel, 1, output, 3, unrelated, 9);
+                ingredient, 64, fuel, 16, output, 3, unrelated, 9);
 
         var loaded = MinecraftKnownFurnacePort.expectedInventoryAfterLoad(
-                baseline, ingredient, fuel);
+                baseline, ingredient, 64, fuel, 16);
         assertThat(loaded).containsExactlyInAnyOrderEntriesOf(Map.of(
                 output, 3, unrelated, 9));
         var finished = MinecraftKnownFurnacePort.expectedInventoryAfterSmelt(
-                baseline, ingredient, fuel, output, 1);
+                baseline, ingredient, 64, fuel, 8, output, 64);
         assertThat(finished).containsExactlyInAnyOrderEntriesOf(Map.of(
-                output, 4, unrelated, 9));
+                fuel, 8, output, 67, unrelated, 9));
         assertThat(MinecraftKnownFurnacePort.inventoryReadbackMatches(finished, finished))
                 .isTrue();
         var changed = new HashMap<>(finished);
         changed.put(unrelated, 10);
         assertThat(MinecraftKnownFurnacePort.inventoryReadbackMatches(finished, changed))
                 .isFalse();
+    }
+
+    @Test
+    void fuelRequirementRoundsUpWithoutOverconsuming() {
+        assertThat(MinecraftKnownFurnacePort.fuelItemsRequired(64, 200, 1_600))
+                .isEqualTo(8);
+        assertThat(MinecraftKnownFurnacePort.fuelItemsRequired(64, 200, 300))
+                .isEqualTo(43);
+        assertThatThrownBy(() ->
+                MinecraftKnownFurnacePort.fuelItemsRequired(64, 201, 1_600))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -206,8 +220,7 @@ class MinecraftKnownFurnacePortTest {
                 .contains("dev/aod/mcmcp/routine/MinecraftKnownFurnacePort"
                         + "#inventoryReadbackMatches");
         assertThat(invocations(node, "acceptInitialSnapshot"))
-                .containsSubsequence(
-                        "net/minecraft/world/item/crafting/RecipePropertySet#test",
+                .contains(
                         "net/minecraft/world/item/ItemStack#getBurnTime",
                         "net/minecraft/world/item/crafting/RecipePropertySet#test")
                 .doesNotContain("net/minecraft/world/inventory/Slot#mayPlace");
@@ -254,8 +267,8 @@ class MinecraftKnownFurnacePortTest {
         parameters.put("max_smelts", maxSmelts);
         return new PhaseFiveRequest(
                 "smelt_items", parameters,
-                new PhaseFiveBounds(target.dimension(), target, target, 0, 120, false),
-                1, "items");
+                new PhaseFiveBounds(target.dimension(), target, target, 0, 750, false),
+                maxSmelts, "smelts");
     }
 
     private static ClientRecipeCatalog.ResolvedRecipe recipe(
@@ -271,7 +284,7 @@ class MinecraftKnownFurnacePortTest {
                         0, 1, List.of("minecraft:raw_iron"))),
                 null);
         return new ClientRecipeCatalog.ResolvedRecipe(
-                new RecipeDisplayId(7), "recipe-fingerprint", view, session, 1);
+                new RecipeDisplayId(7), "recipe-fingerprint", view, 200, session, 1);
     }
 
     private static ArrayList<StackFingerprint> emptyMenu() {

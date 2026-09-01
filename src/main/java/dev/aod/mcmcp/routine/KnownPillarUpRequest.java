@@ -26,6 +26,9 @@ public record KnownPillarUpRequest(
             throw new IllegalArgumentException(SafePlacementSupportPolicy.REJECTION_MESSAGE);
         }
         SafeConstructionBlockPolicy.requireExpectedStateAndItem(sourceState, item);
+        if (sourceState.blockId().endsWith("_door")) {
+            throw new IllegalArgumentException("pillar placement requires one-cell blocks");
+        }
     }
 
     static boolean allowsSupportBlockId(String blockId) {

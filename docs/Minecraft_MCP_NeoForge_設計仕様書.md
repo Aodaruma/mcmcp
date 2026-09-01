@@ -24,7 +24,7 @@
 - chat、inventory、menuの表示とfocus喪失だけではActionを停止しない
 - fresh評価turnまたはAgent実行中の物理キーボード・マウス入力は、EscとScreen上の状態ボタンを除きMinecraftへ渡さない
 
-最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件設置する`apply_known_block_plan`と同じ安全blockを1〜8件撤去する`clear_known_block_plan`、1 blockだけ安全に積み上がる`pillar_up_known`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyで1個だけ精錬する`smelt_known_recipe`、現在開いているVanilla `generic_9x1`〜`generic_9x6`純storageまたは固定artifact検証済みSophisticated Backpacks通常storageからopaque参照で1 stackを移す`operate_known_menu`、床付きlanding間の完全なVanilla ladderまたは安定したscaffoldingを上下4段以内で通る`navigate_to_known`を公開する。Phase 5ではlever 1入力からredstone lamp 1個、固定配置の2個、または1 dustだけを挟む直線1出力へ同じ値を出すidentityを配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4拡張では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の同一Action内置換・256 block化、2 block以上の連続pillaring、一般資源入手、可変長・曲がりを含む一般回路合成は、同じ安全境界を維持して追加する。
+最初の実装は、既知地点への移動、既知地点への視点変更、有限待機を組み合わせるAction DSL v1から開始した。現在はPhase 2の伐採・小麦農業batch、Phase 3の監査済みcopy対象を1〜8件設置する`apply_known_block_plan`と同じ安全blockを1〜8件撤去する`clear_known_block_plan`、1 blockだけ安全に積み上がる`pillar_up_known`、Phase 4の標準Vanilla Potion 1段醸造`brew_known_potion_batch`、可視crafting tableで既知recipeを1〜3回作る`craft_known_recipe`、可視furnace familyでexact stack 1〜64個を精錬する`smelt_known_recipe`、現在開いているVanilla `generic_9x1`〜`generic_9x6`純storageまたは固定artifact検証済みSophisticated Backpacks通常storageからopaque参照で1 stackを移す`operate_known_menu`、床付きlanding間の完全なVanilla ladderまたは安定したscaffoldingを上下4段以内で通る`navigate_to_known`を公開する。Phase 5ではlever 1入力からredstone lamp 1個、固定配置の2個、または1 dustだけを挟む直線1出力へ同じ値を出すidentityを配置・OFF/ON/OFF観測する`apply_known_redstone_spec`までを公開する。次のPhase 4拡張では、player 2×2 crafting、Vanillaの専用workstation、対象Prism profileで必要なMOD item・workstationを、共通Menu interaction engineとversion固定の宣言profileで段階追加する。Phase 3の同一Action内置換・256 block化、2 block以上の連続pillaring、一般資源入手、可変長・曲がりを含む一般回路合成は、同じ安全境界を維持して追加する。
 
 ## 1. 対象環境
 
@@ -733,7 +733,7 @@ Action DSL v1の制御構造:
 | navigate_to_known | movement | Known Traversability Mapで現在証明された地上feet-space、または完全なVanilla ladder / scaffoldingで結ばれた床付きlandingへ移動 |
 | face_known_position | camera | 既知座標へ角速度制限付きで向く |
 | wait_ticks | なし | 1〜200 active tick待機 |
-| wait_until | なし | 開始時にpolicy-visibleなwheat surfaceだった明示座標を認可し、その座標のlive成熟を最大1〜12,000 active tick待機 |
+| wait_until | なし | 開始時にpolicy-visibleなwheat surfaceだった明示座標を認可し、その座標のlive成熟を最大1〜15,000 active tick待機 |
 | break_known_face | camera, block_break | 宣言した可視・既知のoak / birch幹1個を、指定したVanilla axeで通常入力から破壊 |
 | till_known_block | camera, block_interact | 可視・既知のdirt / grass_block / dirt_path 1個を、指定したVanilla hoeの通常useでfarmlandへ変換 |
 | till_known_batch | camera, block_interact | 1〜8個の相異なる可視・既知blockを、共通の`expected_block`とVanilla hoeで入力順に耕す |
@@ -750,7 +750,7 @@ Action DSL v1の制御構造:
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のVanilla chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemのwhole stackを最大1回quick-moveし、close/reopen full readbackでplayer inventoryの絶対個数を確認 |
 | craft_known_recipe | camera, inventory_transfer | recipe queryの短寿命opaque参照を再検証し、可視・既知crafting tableで1〜3回、完成品を1回分ずつ回収して絶対inventory目標を確認 |
-| smelt_known_recipe | camera, inventory_transfer | recipe queryの短寿命opaque参照を再検証し、可視・既知のfurnace / blast furnace / smokerで1個だけ精錬して絶対inventory目標を確認 |
+| smelt_known_recipe | camera, inventory_transfer | recipe queryの短寿命opaque参照を再検証し、可視・既知のfurnace / blast furnace / smokerでexact stack 1〜64個を精錬して絶対inventory目標を確認 |
 | brew_known_potion_batch | camera, inventory_transfer | 空の可視・既知brewing standで、宣言した標準Vanilla Potion 1〜3本を現行recipe tableの既知の1段変換だけ醸造 |
 | collect_visible_item | movement | 最新frameの可視item種別と連続値XYZをwitnessに、既知の安全なpickup cellへ移動し、inventory絶対個数の増加を確認 |
 | collect_visible_item_batch | movement | 2〜8件の可視item witnessをlisted orderで同じ安全検証経路へ展開し、失敗時は未開始suffixを実行しない |
@@ -766,6 +766,8 @@ semantic action、stationary break、block plan、Phase 5 world adapterで共有
 `collect_visible_item_batch`は2〜8件をlisted orderのまま保持する第一級の有限batch nodeである。batch開始時にitem種別ごとのplayer inventory絶対個数baselineを1回だけ固定する。各entryは通常の`collect_visible_item`と同じfresh visible entity、連続値XYZ、既知安全pickup cell、移動中再検証を要求する。先行entryへの移動中に後続entryのfresh policy-visible AABBとplayer pickup areaの実接触を確認し、その後に対応itemのinventory絶対個数増加を確認できた場合だけ、当該後続entryを`incidentally_collected`としてcreditできる。単なるwitness消失、merge、移動、近接や推定では成功にしない。listed orderの途中で接触・差分proof、経路、budgetのいずれかが不足した場合はAction全体をfail-fastで終了し、未開始entryをskip・置換・再順序化しない。
 
 `apply_known_block_plan`はPhase 3の初回vertical sliceであり、wire shapeを`{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,source_state,item,support:{position,face,expected_state,dependency_entry_id}}]}`へ閉じる。entryは1〜8件、offset各軸は-8〜8、entry IDと変換後targetはnode内で一意とする。`anchor`とsupportはdimension-qualified block座標で、変換後targetは`anchor + transform(offset)`だけから決定する。`mirror=none|x|z`を先に適用し、`x`はMinecraft `FRONT_BACK`と同じeast/west反転、`z`は`LEFT_RIGHT`と同じnorth/south反転とする。その後`rotation=0|90|180|270`のY軸時計回り回転を適用する。offsetと`source_state`は同じtransformを通し、方向propertyをLLMへ変換させない。
+
+唯一のmulti-cell例外は、閉じた未通電の`minecraft:oak_door` lower halfである。1 entryの通常useが生成するupper halfもAction boundsと事前air観測へ含め、同一prediction sequenceに対するlower / upper別々のserver-verified stateが完全一致した場合だけ成功する。upper halfは別entryにせず、door entryは`max_blocks_placed`を2消費する。doorはsupport、pillar、clearには使わない。
 
 `clear_known_block_plan`は同じ`anchor` / `transform`と1〜8件の`{id,offset,expected_before}`だけを受け取る。targetの返却済み完全stateとconstruction policyをplanner・packet直前・heartbeatで再検証し、既存`BREAK_TO_AIR`経路で入力順に撤去する。成功条件は全targetのfreshなair再観測であり、置換はそのterminal後に再観測を挟んだ別Actionの`apply_known_block_plan`とする。
 
@@ -791,7 +793,7 @@ container primitiveは別のMCP Toolやlegacy routineを公開せず、同じAct
 
 `craft_known_recipe`はwire shapeを`{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},max_crafts}`へ閉じる。`recipe_ref`と`recipe_fingerprint`は同じ最新`agent_get_state` recipe query結果からコピーし、world sessionとcatalog revisionへ束縛したままAction開始時と各craft前に再解決する。`station.kind`は`crafting_table`、stateは`minecraft:crafting_table`かつ空properties、goal policyは`default_components_only`、絶対個数は1〜2,304、`max_crafts`は1〜3に固定する。実行は初回open 1回と各craftのrecipe placement・cursor-invariantなresult QUICK_MOVE・readback openで進める。静的budgetは互換性と安全余裕のため従来どおり`1 + 4 * max_crafts` interaction、最大400 active tickを予約し、Action budgetには最低30,000 ms、600 tick、camera 360度を要求する。完成品は1回分ずつ回収し、click前のserver-confirmed empty cursorを維持したまま、空grid/result、close/reopen full-content、絶対inventoryのexact deltaを確認する。slot番号やmenu内部状態は公開せず、曖昧な更新をblind retryしない。
 
-`smelt_known_recipe`はwire shapeを`{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},fuel:{item,stack_policy},max_smelts}`へ閉じる。stationは`furnace | blast_furnace | smoker`、goalとfuelのpolicyは`default_components_only`、`max_smelts`は1固定とする。recipe display kind / required screen / station family、完全BlockState、空menu、singleton材料・燃料、QUICK_MOVE経路を再検証し、load後とresult回収後のclose/reopen full-content/data readbackで確定する。raw slot / GUI座標は公開せず、top-level最終nodeだけに許可する。worst-caseは120,000 ms、2,400 active tick、camera 540度、interaction 6回、distance / break / place 0に固定する。
+`smelt_known_recipe`はwire shapeを`{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},fuel:{item,stack_policy},max_smelts}`へ閉じる。stationは`furnace | blast_furnace | smoker`、goalとfuelのpolicyは`default_components_only`、`max_smelts`は1〜64とし、材料source stackの全量と一致させる。recipe display kind / required screen / station family、cook時間200 tick以下、完全BlockState、空menu、exact材料stack、全量完了に十分な燃料stack、QUICK_MOVE経路を入力前に再検証する。材料・燃料は全stackを一度ずつ投入し、完了後に残燃料とresultを回収する。load後と最終回収後のclose/reopen full-content/data readbackによりstation空、cursor空、材料全量消費、算出済み燃料消費、result exact deltaを確定する。raw slot / GUI座標は公開せず、top-level最終nodeだけに許可する。worst-caseは`2,200 + 200 * max_smelts` active tick、その50倍のms、camera 540度、interaction 7回、distance / break / place 0とする。
 
 `brew_known_potion_batch`はwire shapeを`{id,op,target,expected_block,input:{item,potion,count},ingredient_item,fuel_item,expected_output:{item,potion,count}}`へ閉じる。`expected_block`は`minecraft:brewing_stand`、`fuel_item`は`minecraft:blaze_powder`に固定し、入力と出力は同じ`count` 1〜3を要求する。itemは標準3形式の`minecraft:potion / splash_potion / lingering_potion`、potionとingredientはcatalogの閉じたenumだけを受理する。入出力はcustom name / color / effects等の追加componentのない標準stackと完全一致し、その宣言遷移がMinecraft 26.2の現行`PotionBrewing.mix`と完全一致する場合だけ実行する。
 
@@ -971,7 +973,7 @@ agent_get_action:
 }
 ~~~
 
-`progress`のschema上限は通常Actionと、そのActionをpreemptしたrecoveryの累積上限である。したがってdistanceは32 + 16 = 48 block、cameraは720 + 360 = 1,080度、tickは12,000 + 200 = 12,200となる。break / placeは通常Action最大8とrecoveryの4 / 8を合算して、公開counterの上限をbreak 12 / place 16とする。interactionは`brew_known_potion_batch`がActionの16全枚を使うが、このnodeはAction末尾でmenuを所有し、その間はrecovery gameplay interactionをdispatchしない。現行recoveryはmovement / jumpだけでinteraction usage 0であるため、Action budgetと公開counterのinteraction上限をともに16に固定する。この排他条件を崩すrecovery interactionを将来追加する場合は、先にcatalog、DSL hard limit、progress schemaを再設計する。同dimension内のserver correction、teleport、knockbackなど外力で実測値がこの固定契約を越えた場合、公開counterはschema上限へ飽和させると同時に内部overflow latchを立て、Actionをbudget超過として終了する。飽和値を「上限内」と誤認したり、契約外の値を返したり、外力を相殺したりはしない。
+`progress`のschema上限は通常Actionと、そのActionをpreemptしたrecoveryの累積上限である。したがってdistanceは32 + 16 = 48 block、cameraは720 + 360 = 1,080度、tickは15,000 + 200 = 15,200となる。break / placeは通常Action最大8とrecoveryの4 / 8を合算して、公開counterの上限をbreak 12 / place 16とする。interactionは`brew_known_potion_batch`がActionの16全枚を使うが、このnodeはAction末尾でmenuを所有し、その間はrecovery gameplay interactionをdispatchしない。現行recoveryはmovement / jumpだけでinteraction usage 0であるため、Action budgetと公開counterのinteraction上限をともに16に固定する。この排他条件を崩すrecovery interactionを将来追加する場合は、先にcatalog、DSL hard limit、progress schemaを再設計する。同dimension内のserver correction、teleport、knockbackなど外力で実測値がこの固定契約を越えた場合、公開counterはschema上限へ飽和させると同時に内部overflow latchを立て、Actionをbudget超過として終了する。飽和値を「上限内」と誤認したり、契約外の値を返したりはしない。
 
 agent_get_stateの返却対象:
 
@@ -1209,12 +1211,12 @@ Phase 3完成時に追加する上限:
 
 ### 9.7 crafting・精錬・workstation・MOD互換 — Phase 4
 
-現在の公開Action DSLは、既存のrecipe / container / screen同期基盤を直接再利用したcrafting-table限定の`craft_known_recipe`、furnace familyで1個だけ処理する`smelt_known_recipe`、共通Menu kernelの`operate_known_menu`を含む。最後のものは、ユーザーが現在開いているexactなVanilla `generic_9x1`〜`generic_9x6`純storage、または`Sophisticated Backpacks 3.25.90 + Sophisticated Core 1.4.99`の通常`backpack`画面だけを受理し、stateが発行したsingle-use `operation_ref`で通常最大数以下の1 stack全量をplayer inventoryへQUICK_MOVEする。player 2×2、専用workstation、backpack内upgrade / craft / smeltは未実装であり、製品機能として利用可能とは扱わない。
+現在の公開Action DSLは、既存のrecipe / container / screen同期基盤を直接再利用したcrafting-table限定の`craft_known_recipe`、furnace familyでexact stack 1〜64個を処理する`smelt_known_recipe`、共通Menu kernelの`operate_known_menu`を含む。最後のものは、ユーザーが現在開いているexactなVanilla `generic_9x1`〜`generic_9x6`純storage、または`Sophisticated Backpacks 3.25.90 + Sophisticated Core 1.4.99`の通常`backpack`画面だけを受理し、stateが発行したsingle-use `operation_ref`で通常最大数以下の1 stack全量をplayer inventoryへQUICK_MOVEする。player 2×2、専用workstation、backpack内upgrade / craft / smeltは未実装であり、製品機能として利用可能とは扱わない。
 
 公開Toolは5件のままとし、クラフトやworkstationごとのMCP Tool、raw slot番号・画面座標・key/mouse・packetを追加しない。recipe検索は既存のquery / output / resolve契約を固定5 Toolのread pathへ委譲し、第二の検索文法を作らない。`recipe_ref`とfingerprintはworld sessionとrecipe catalog revisionへ束縛し、`craft_known_recipe`開始時と各craft前に再解決する。実行は`agent_start_action`の閉じたsemantic opcodeだけを使う。
 
 - 公開済み`craft_known_recipe` / 既存`craft_items`: 現在は`crafting_table`だけ。次に`player_2x2`へ拡張
-- 公開済み`smelt_known_recipe` / 内部`smelt_items`: `furnace | blast_furnace | smoker`、1 Action 1個だけ
+- 公開済み`smelt_known_recipe` / 内部`smelt_items`: `furnace | blast_furnace | smoker`、1 Actionでexact stack 1〜64個
 - 公開済み`operate_known_menu`: `minecraft:generic_9x1-pure-storage@26.2`〜`minecraft:generic_9x6-pure-storage@26.2`、storage→playerの1 stack全量だけ
 - 公開済みMOD profile: `sophisticatedbackpacks:backpack-pure-storage@3.25.90+core-1.4.99+mc26.2`。両active jarのversion / SHA-256とMenu / Screen / method contractが完全一致し、upgrade tabとextra slotが閉じた通常storageからplayerへの1 stack全量だけ
 

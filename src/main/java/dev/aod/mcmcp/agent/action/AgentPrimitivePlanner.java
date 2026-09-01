@@ -74,8 +74,6 @@ public final class AgentPrimitivePlanner {
     public static final long CONTAINER_TICK_UPPER_BOUND = 600L;
     public static final long BREWING_TICK_UPPER_BOUND =
             ActionDslCompiler.KNOWN_BREWING_TICKS;
-    public static final long SMELTING_TICK_UPPER_BOUND =
-            ActionDslCompiler.KNOWN_SMELTING_TICKS;
     // Player-thrown item entities can retain a 40-tick pickup delay. Leave a bounded
     // synchronization margin without exposing hidden pickup-delay state to the model.
     public static final long PICKUP_CONFIRM_TICKS = 60L;
@@ -849,7 +847,9 @@ public final class AgentPrimitivePlanner {
                 }
             }
             merge(costs, node.id(),
-                    ActionDslCompiler.intrinsicKnownBlockPlanCost(plan.entries().size()));
+                    ActionDslCompiler.intrinsicKnownBlockPlanCost(
+                            plan.entries().size(),
+                            ActionDslCompiler.knownBlockPlanPlacements(plan)));
             // The construction adapter restores the admitted camera pose and owns no movement.
             return input;
         }
@@ -1059,7 +1059,7 @@ public final class AgentPrimitivePlanner {
             return analyzeOwnedMenu(
                     node, input, cameraLimit, costs, knownSurfaces, work, surface,
                     ActionDslCompiler.KNOWN_SMELTING_INTERACTIONS,
-                    SMELTING_TICK_UPPER_BOUND,
+                    ActionDslCompiler.knownSmeltingTicks(smelt.maxSmelts()),
                     "smelting",
                     true,
                     KnownBrewingRequest.MAX_ONE_WAY_CAMERA_DEGREES);

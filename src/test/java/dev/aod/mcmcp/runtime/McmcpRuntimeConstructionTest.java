@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
+import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.observation.BlockPlanValidationException;
 import org.junit.jupiter.api.Test;
 
@@ -83,6 +84,38 @@ class McmcpRuntimeConstructionTest {
                 .isInstanceOf(BlockPlanValidationException.class)
                 .extracting(failure -> ((BlockPlanValidationException) failure).code())
                 .isEqualTo("incomplete_block_state");
+    }
+
+    @Test
+    void doorEntryOwnsAndBudgetsItsDerivedUpperCell() {
+        var support = position(0, 64, 0);
+        var plan = new ActionDsl.ApplyKnownBlockPlan(
+                "door",
+                position(0, 65, 0),
+                new ActionDsl.BlockPlanTransform(
+                        ActionDsl.BlockPlanRotation.DEGREES_0,
+                        ActionDsl.BlockPlanMirror.NONE),
+                List.of(new ActionDsl.BlockPlanEntry(
+                        "door",
+                        new ActionDsl.Offset(0, 0, 0),
+                        new ActionDsl.BlockStateSpec("minecraft:oak_door", Map.of(
+                                "facing", "east", "half", "lower", "hinge", "right",
+                                "open", "false", "powered", "false")),
+                        "minecraft:oak_door",
+                        new ActionDsl.PlacementSupport(
+                                support,
+                                ActionDsl.BlockFace.UP,
+                                Optional.of(new ActionDsl.BlockStateSpec(
+                                        "minecraft:stone", Map.of())),
+                                Optional.empty()))));
+
+        var request = McmcpRuntime.constructionRequest(plan);
+
+        assertThat(request.bounds().maximum().y()).isEqualTo(66);
+        assertThat(request.placementCellCount(0)).isEqualTo(2);
+        assertThat(ActionDslCompiler.knownBlockPlanPlacements(plan)).isEqualTo(2);
+        assertThat(ActionDslCompiler.intrinsicKnownBlockPlanCost(1, 2).blocksPlaced())
+                .isEqualTo(2);
     }
 
     @Test

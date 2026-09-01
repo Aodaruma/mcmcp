@@ -229,10 +229,11 @@ public final class KnownConstructionAttempt implements AutoCloseable {
             // may still be active.
             return result(Status.RUNNING, "construction_releasing");
         }
+        int confirmedDelta = request.breakOnly() ? 1 : request.placementCellCount(currentIndex);
         currentIndex = -1;
         child = null;
         phase = Phase.PREFLIGHT;
-        return result(Status.RUNNING, "construction_entry_confirmed", 1);
+        return result(Status.RUNNING, "construction_entry_confirmed", confirmedDelta);
     }
 
     private TickResult finalVerify(long clientTick) {
@@ -341,9 +342,9 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         public TickResult {
             Objects.requireNonNull(status, "status");
             Objects.requireNonNull(evidence, "evidence");
-            if (placedDelta < 0 || placedDelta > 1
+            if (placedDelta < 0 || placedDelta > 2
                     || brokenDelta < 0 || brokenDelta > 1
-                    || placedDelta + brokenDelta > 1
+                    || placedDelta + brokenDelta > 2
                     || completedEntries < 0
                     || completedEntries > KnownConstructionRequest.MAX_ENTRIES
                     || confirmedEntries < 0

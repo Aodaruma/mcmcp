@@ -76,11 +76,12 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
     static final int DATA_COOK_PROGRESS = 2;
     static final int DATA_COOK_DURATION = 3;
     static final int DATA_COUNT = 4;
-    static final int MAX_INTERACTIONS = 6;
+    static final int MAX_INTERACTIONS = 7;
 
     private static final int OPEN_TIMEOUT_TICKS = 40;
     private static final int CLICK_TIMEOUT_TICKS = 60;
-    private static final int SMELT_TIMEOUT_TICKS = 2_200;
+    private static final int SMELT_SYNC_MARGIN_TICKS = 2_000;
+    private static final int MAX_COOK_DURATION_TICKS = 200;
     private static final int RELEASE_TIMEOUT_TICKS = 520;
     private static final int AIM_SETTLE_MARGIN_TICKS = 20;
     private static final float CAMERA_DEGREES_PER_TICK = 90.0F / 20.0F;
@@ -235,6 +236,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                     AWAITING_FINAL_CLOSE -> maintainClose(state);
             case OPENING_LOADED_READBACK -> acceptLoadedSnapshot(attempt, state);
             case AWAITING_SMELT_COMPLETE -> maintainSmeltComplete(attempt, state);
+            case UNLOAD_FUEL -> dispatchFuelRecovery(attempt, state);
             case UNLOAD_RESULT -> dispatchResult(attempt, state);
             case CLOSING_FINAL_CHECKPOINT -> closeOwnedScreen(
                     attempt, state, Stage.AWAITING_FINAL_CHECKPOINT_CLOSE);
@@ -437,20 +439,6 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                     Map.of("known_recipe", true), Map.of()));
             return;
         }
-        Map<StackKey, Integer> baseline = inventoryMultiset(
-                view.snapshot().slots(), playerSlots());
-        Optional<SourcePlan> sourcePlan = chooseSources(
-                view.snapshot().slots(), state.ingredientKeys, state.fuelKey);
-        if (sourcePlan.isEmpty()) {
-            state.latchFailure(failure("FURNACE_SINGLETON_SOURCES_REQUIRED",
-                    RoutineFailure.Category.PRECONDITION,
-                    RoutineFailure.Recovery.REPLAN,
-                    Map.of("ingredient_source_count", 1, "fuel_source_count", 1),
-                    Map.of()));
-            return;
-        }
-        SourcePlan sources = sourcePlan.orElseThrow();
-        ItemStack ingredient = defaultItemStack(sources.ingredientKey().itemId());
         ItemStack fuel = defaultItemStack(state.fuelKey.itemId());
         ClientLevel level = Objects.requireNonNull(requireMinecraft().level);
         RecipePropertySet acceptedInputs = level.recipeAccess().propertySet(switch (
@@ -464,9 +452,33 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
             case BLAST_FURNACE -> RecipeType.BLASTING;
             case SMOKER -> RecipeType.SMOKING;
         };
-        if (!acceptedInputs.test(ingredient)
-                || fuel.getBurnTime(recipeType, level.fuelValues()) <= 0
-                || acceptedInputs.test(fuel)) {
+        int fuelBurnTicks = fuel.getBurnTime(recipeType, level.fuelValues());
+        if (fuelBurnTicks <= 0 || acceptedInputs.test(fuel)) {
+            state.latchFailure(failure("FURNACE_QUICK_MOVE_ROUTE_AMBIGUOUS",
+                    RoutineFailure.Category.PRECONDITION,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("fuel_routes_only_to_fuel", true), Map.of()));
+            return;
+        }
+        int fuelItemsRequired = fuelItemsRequired(
+                state.smelt.maxSmelts(), state.recipe.cookingDurationTicks(), fuelBurnTicks);
+        Map<StackKey, Integer> baseline = inventoryMultiset(
+                view.snapshot().slots(), playerSlots());
+        Optional<SourcePlan> sourcePlan = chooseSources(
+                view.snapshot().slots(), state.ingredientKeys, state.fuelKey,
+                state.smelt.maxSmelts(), fuelItemsRequired);
+        if (sourcePlan.isEmpty()) {
+            state.latchFailure(failure("FURNACE_EXACT_STACK_SOURCES_REQUIRED",
+                    RoutineFailure.Category.PRECONDITION,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("ingredient_source_count", state.smelt.maxSmelts(),
+                            "minimum_fuel_source_count", fuelItemsRequired),
+                    Map.of()));
+            return;
+        }
+        SourcePlan sources = sourcePlan.orElseThrow();
+        ItemStack ingredient = defaultItemStack(sources.ingredientKey().itemId());
+        if (!acceptedInputs.test(ingredient)) {
             state.latchFailure(failure("FURNACE_QUICK_MOVE_ROUTE_AMBIGUOUS",
                     RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
@@ -476,10 +488,12 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         }
         try {
             state.expectedLoadedInventory = expectedInventoryAfterLoad(
-                    baseline, sources.ingredientKey(), state.fuelKey);
+                    baseline, sources.ingredientKey(), state.smelt.maxSmelts(),
+                    state.fuelKey, sources.fuelCount());
             state.expectedFinalInventory = expectedInventoryAfterSmelt(
-                    baseline, sources.ingredientKey(), state.fuelKey,
-                    state.outputKey, state.outputCount);
+                    baseline, sources.ingredientKey(), state.smelt.maxSmelts(),
+                    state.fuelKey, fuelItemsRequired,
+                    state.outputKey, state.outputTotal);
         } catch (IllegalArgumentException exception) {
             state.latchFailure(failure("FURNACE_RESOURCES_UNAVAILABLE",
                     RoutineFailure.Category.PRECONDITION,
@@ -487,12 +501,14 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
             return;
         }
         int before = baseline.getOrDefault(state.outputKey, 0);
-        if (before >= state.smelt.minimumInventoryCount()
-                || before + state.outputCount < state.smelt.minimumInventoryCount()) {
-            state.latchFailure(failure("FURNACE_GOAL_NOT_EXACTLY_ONE_SMELT",
+        if (before + state.outputTotal - state.outputCount
+                        >= state.smelt.minimumInventoryCount()
+                || before + state.outputTotal < state.smelt.minimumInventoryCount()) {
+            state.latchFailure(failure("FURNACE_GOAL_NOT_EXACT_SMELT_COUNT",
                     RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
-                    Map.of("smelts_required", 1), Map.of("inventory_count", before)));
+                    Map.of("smelts_required", state.smelt.maxSmelts()),
+                    Map.of("inventory_count", before)));
             return;
         }
         state.ingredientKey = sources.ingredientKey();
@@ -500,6 +516,8 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         state.fuelSourceSlot = sources.fuelSlot();
         state.inputSourceStack = view.snapshot().slots().get(state.inputSourceSlot);
         state.fuelSourceStack = view.snapshot().slots().get(state.fuelSourceSlot);
+        state.fuelLoadedCount = sources.fuelCount();
+        state.fuelConsumedCount = fuelItemsRequired;
         state.inventoryBeforeOutput = before;
         state.menuIdentity = view.menu();
         state.stage = Stage.LOAD_INPUT;
@@ -519,7 +537,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
             state.latchFailure(failure("FURNACE_LOAD_SOURCE_CHANGED",
                     RoutineFailure.Category.DIVERGENCE,
                     RoutineFailure.Recovery.REPLAN,
-                    Map.of("planned_singleton_source", true), Map.of()));
+                    Map.of("planned_full_stack_source", true), Map.of()));
             return;
         }
         if (!dispatchQuickMove(state, menu, slot)) return;
@@ -532,8 +550,17 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         FurnaceView view = optional.orElseThrow();
         closeOpenPrediction(state);
         List<ContainerSyncSignals.StackFingerprint> slots = view.snapshot().slots();
-        if (!matches(slots.get(INPUT_SLOT), state.ingredientKey, 1)
-                || !slots.get(RESULT_SLOT).empty()
+        int completed = completedSmelts(
+                slots.get(RESULT_SLOT), state.outputKey,
+                state.outputCount, state.smelt.maxSmelts());
+        int fuelRemaining = slots.get(FUEL_SLOT).empty()
+                ? 0 : slots.get(FUEL_SLOT).count();
+        if (completed < 0
+                || !matches(slots.get(INPUT_SLOT), state.ingredientKey,
+                        state.smelt.maxSmelts() - completed)
+                || !matches(slots.get(FUEL_SLOT), state.fuelKey, fuelRemaining)
+                || fuelRemaining < state.fuelLoadedCount - state.fuelConsumedCount
+                || fuelRemaining >= state.fuelLoadedCount
                 || !view.snapshot().carried().empty()
                 || !inventoryReadbackMatches(state.expectedLoadedInventory,
                         inventoryMultiset(slots, playerSlots()))) {
@@ -543,13 +570,26 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                     Map.of("loaded_full_content", true, "cursor", "empty"), Map.of()));
             return;
         }
-        if (!slots.get(FUEL_SLOT).empty() || !smeltStarted(view.data())) return;
         state.loadedReadbackConfirmed = true;
         state.smeltStarted = true;
+        if (completed == state.smelt.maxSmelts()) {
+            if (!finalDataReady(view.data())) return;
+            state.smeltCompleted = true;
+            state.fuelRecoveryStack = slots.get(FUEL_SLOT);
+            state.resultSourceStack = slots.get(RESULT_SLOT);
+            state.menuIdentity = view.menu();
+            state.stage = state.fuelRecoveryStack.empty()
+                    ? Stage.UNLOAD_RESULT : Stage.UNLOAD_FUEL;
+            state.stageDeadlineClientTick = boundedDeadline(
+                    currentTick(), CLICK_TIMEOUT_TICKS);
+            return;
+        }
+        if (!smeltStarted(view.data())) return;
         state.startDataRevision = view.maximumDataRevision();
         state.menuIdentity = view.menu();
         state.stage = Stage.AWAITING_SMELT_COMPLETE;
-        state.stageDeadlineClientTick = boundedDeadline(currentTick(), SMELT_TIMEOUT_TICKS);
+        state.stageDeadlineClientTick = boundedDeadline(
+                currentTick(), smeltTimeoutTicks(state));
     }
 
     private void maintainSmeltComplete(PhaseFiveAttempt attempt, AttemptState state) {
@@ -560,17 +600,40 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         if (!state.loadedReadbackConfirmed
                 || view.maximumDataRevision() <= state.startDataRevision
                 || !slots.get(INPUT_SLOT).empty()
-                || !slots.get(FUEL_SLOT).empty()
-                || !matches(slots.get(RESULT_SLOT), state.outputKey, state.outputCount)
+                || !matches(slots.get(FUEL_SLOT), state.fuelKey,
+                        state.fuelLoadedCount - state.fuelConsumedCount)
+                || !matches(slots.get(RESULT_SLOT), state.outputKey, state.outputTotal)
                 || !view.snapshot().carried().empty()
                 || view.data().get(DATA_COOK_PROGRESS).value() != 0) {
             return;
         }
         state.smeltCompleted = true;
+        state.fuelRecoveryStack = slots.get(FUEL_SLOT);
         state.resultSourceStack = slots.get(RESULT_SLOT);
         state.menuIdentity = view.menu();
-        state.stage = Stage.UNLOAD_RESULT;
+        state.stage = state.fuelRecoveryStack.empty()
+                ? Stage.UNLOAD_RESULT : Stage.UNLOAD_FUEL;
         state.stageDeadlineClientTick = boundedDeadline(currentTick(), CLICK_TIMEOUT_TICKS);
+    }
+
+    private void dispatchFuelRecovery(PhaseFiveAttempt attempt, AttemptState state) {
+        AbstractFurnaceMenu menu = ownedMenu(attempt, state);
+        if (menu == null) return;
+        if (state.fuelRecoveryStack == null
+                || state.fuelRecoveryStack.empty()
+                || !menu.getCarried().isEmpty()
+                || !ContainerSyncSignals.StackFingerprint.fromServerPacket(
+                        menu.slots.get(FUEL_SLOT).getItem())
+                        .equals(state.fuelRecoveryStack)) {
+            state.latchFailure(failure("FURNACE_FUEL_RECOVERY_SOURCE_CHANGED",
+                    RoutineFailure.Category.DIVERGENCE,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("planned_remaining_fuel", true), Map.of()));
+            return;
+        }
+        if (!dispatchQuickMove(state, menu, FUEL_SLOT)) return;
+        state.fuelRecovered = true;
+        state.stage = Stage.UNLOAD_RESULT;
     }
 
     private void dispatchResult(PhaseFiveAttempt attempt, AttemptState state) {
@@ -603,7 +666,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                 || !finalDataReady(view.data())
                 || !view.snapshot().carried().empty()
                 || !inventoryReadbackMatches(state.expectedFinalInventory, actual)
-                || outputAfter - state.inventoryBeforeOutput != state.outputCount
+                || outputAfter - state.inventoryBeforeOutput != state.outputTotal
                 || outputAfter < state.smelt.minimumInventoryCount()) {
             state.latchFailure(failure("FURNACE_FINAL_READBACK_MISMATCH",
                     RoutineFailure.Category.DIVERGENCE,
@@ -614,7 +677,10 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         }
         state.finalReadbackConfirmed = true;
         state.pendingResultBasis = Map.of(
-                "smelted_items", state.outputCount,
+                "smelted_items", state.outputTotal,
+                "smelts_completed", state.smelt.maxSmelts(),
+                "remaining_fuel_recovered", state.fuelRecovered
+                        || state.fuelLoadedCount == state.fuelConsumedCount,
                 "loaded_full_readback", true,
                 "smelt_started", state.smeltStarted,
                 "smelt_completed", state.smeltCompleted,
@@ -1058,6 +1124,8 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         if (!view.supported()
                 || !view.displayKind().equals(request.family().displayKind())
                 || !view.requiredScreen().equals(request.family().requiredScreen())
+                || recipe.cookingDurationTicks() < 1
+                || recipe.cookingDurationTicks() > MAX_COOK_DURATION_TICKS
                 || !view.result().deterministic()
                 || view.result().alternatives().size() != 1
                 || view.ingredients().size() != 1
@@ -1215,23 +1283,31 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
     static Optional<SourcePlan> chooseSources(
             List<ContainerSyncSignals.StackFingerprint> slots,
             List<StackKey> ingredientKeys,
-            StackKey fuelKey) {
+            StackKey fuelKey,
+            int ingredientCount,
+            int minimumFuelCount) {
         Objects.requireNonNull(slots, "slots");
         Objects.requireNonNull(ingredientKeys, "ingredientKeys");
         Objects.requireNonNull(fuelKey, "fuelKey");
+        if (ingredientCount < 1 || ingredientCount > 64
+                || minimumFuelCount < 1 || minimumFuelCount > 64) {
+            throw new IllegalArgumentException("source counts are outside 1..64");
+        }
         for (int ingredientSlot : playerSlots()) {
             requireSlot(slots, ingredientSlot);
             ContainerSyncSignals.StackFingerprint candidate = slots.get(ingredientSlot);
-            if (candidate.count() != 1) continue;
+            if (candidate.count() != ingredientCount) continue;
             Optional<StackKey> ingredient = ingredientKeys.stream()
-                    .filter(key -> matches(candidate, key, 1)).findFirst();
+                    .filter(key -> matches(candidate, key, ingredientCount)).findFirst();
             if (ingredient.isEmpty()) continue;
             for (int fuelSlot : playerSlots()) {
                 requireSlot(slots, fuelSlot);
-                if (fuelSlot != ingredientSlot
-                        && matches(slots.get(fuelSlot), fuelKey, 1)) {
+                ContainerSyncSignals.StackFingerprint fuel = slots.get(fuelSlot);
+                if (fuelSlot != ingredientSlot && !fuel.empty()
+                        && fuel.count() >= minimumFuelCount
+                        && matches(fuel, fuelKey, fuel.count())) {
                     return Optional.of(new SourcePlan(
-                            ingredientSlot, fuelSlot, ingredient.orElseThrow()));
+                            ingredientSlot, fuelSlot, ingredient.orElseThrow(), fuel.count()));
                 }
             }
         }
@@ -1255,23 +1331,45 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
     static Map<StackKey, Integer> expectedInventoryAfterLoad(
             Map<StackKey, Integer> baseline,
             StackKey ingredient,
-            StackKey fuel) {
+            int ingredientCount,
+            StackKey fuel,
+            int fuelCount) {
         var expected = new LinkedHashMap<>(Objects.requireNonNull(baseline, "baseline"));
-        adjust(expected, Objects.requireNonNull(ingredient, "ingredient"), -1);
-        adjust(expected, Objects.requireNonNull(fuel, "fuel"), -1);
+        adjust(expected, Objects.requireNonNull(ingredient, "ingredient"), -ingredientCount);
+        adjust(expected, Objects.requireNonNull(fuel, "fuel"), -fuelCount);
         return Collections.unmodifiableMap(expected);
     }
 
     static Map<StackKey, Integer> expectedInventoryAfterSmelt(
             Map<StackKey, Integer> baseline,
             StackKey ingredient,
+            int ingredientCount,
             StackKey fuel,
+            int fuelConsumed,
             StackKey output,
-            int outputCount) {
-        var expected = new LinkedHashMap<>(expectedInventoryAfterLoad(
-                baseline, ingredient, fuel));
-        adjust(expected, Objects.requireNonNull(output, "output"), outputCount);
+            int outputTotal) {
+        var expected = new LinkedHashMap<>(Objects.requireNonNull(baseline, "baseline"));
+        adjust(expected, Objects.requireNonNull(ingredient, "ingredient"), -ingredientCount);
+        adjust(expected, Objects.requireNonNull(fuel, "fuel"), -fuelConsumed);
+        adjust(expected, Objects.requireNonNull(output, "output"), outputTotal);
         return Collections.unmodifiableMap(expected);
+    }
+
+    static int fuelItemsRequired(int smelts, int cookingDurationTicks, int fuelBurnTicks) {
+        if (smelts < 1 || smelts > 64
+                || cookingDurationTicks < 1 || cookingDurationTicks > MAX_COOK_DURATION_TICKS
+                || fuelBurnTicks < 1) {
+            throw new IllegalArgumentException("furnace timing is outside the closed bound");
+        }
+        int totalCookTicks = Math.multiplyExact(smelts, cookingDurationTicks);
+        return Math.floorDiv(totalCookTicks - 1, fuelBurnTicks) + 1;
+    }
+
+    private static int smeltTimeoutTicks(AttemptState state) {
+        return Math.addExact(
+                SMELT_SYNC_MARGIN_TICKS,
+                Math.multiplyExact(
+                        state.smelt.maxSmelts(), state.recipe.cookingDurationTicks()));
     }
 
     static boolean inventoryReadbackMatches(
@@ -1294,6 +1392,20 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                 : !stack.empty() && stack.count() == count
                         && stack.itemId().equals(key.itemId())
                         && stack.itemAndComponentsHash() == key.componentsHash();
+    }
+
+    private static int completedSmelts(
+            ContainerSyncSignals.StackFingerprint result,
+            StackKey output,
+            int outputCount,
+            int maximumSmelts) {
+        if (result.empty()) return 0;
+        if (outputCount < 1
+                || !result.itemId().equals(output.itemId())
+                || result.itemAndComponentsHash() != output.componentsHash()
+                || result.count() % outputCount != 0) return -1;
+        int completed = result.count() / outputCount;
+        return completed <= maximumSmelts ? completed : -1;
     }
 
     private static void requireSlot(
@@ -1620,6 +1732,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         AIMING_LOADED_READBACK,
         OPENING_LOADED_READBACK,
         AWAITING_SMELT_COMPLETE,
+        UNLOAD_FUEL,
         UNLOAD_RESULT,
         CLOSING_FINAL_CHECKPOINT,
         AWAITING_FINAL_CHECKPOINT_CLOSE,
@@ -1719,14 +1832,14 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
             if (minimumInventoryCount < 1 || minimumInventoryCount > 2_304) {
                 throw new IllegalArgumentException("minimum inventory count must be in 1..2304");
             }
-            if (maxSmelts != 1) {
-                throw new IllegalArgumentException("private furnace slice supports one smelt");
+            if (maxSmelts < 1 || maxSmelts > 64) {
+                throw new IllegalArgumentException("private furnace slice supports 1..64 smelts");
             }
             if (!operation.bounds().contains(target)
                     || operation.bounds().maxTravelBlocks() != 0
                     || operation.bounds().allowBreak()
-                    || operation.expectedUnits() < 1
-                    || !operation.progressUnit().equals("items")) {
+                    || operation.expectedUnits() != maxSmelts
+                    || !operation.progressUnit().equals("smelts")) {
                 throw new IllegalArgumentException("furnace operation bounds are invalid");
             }
         }
@@ -1746,11 +1859,15 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         }
     }
 
-    record SourcePlan(int ingredientSlot, int fuelSlot, StackKey ingredientKey) {
+    record SourcePlan(
+            int ingredientSlot, int fuelSlot, StackKey ingredientKey, int fuelCount) {
         SourcePlan {
             Objects.requireNonNull(ingredientKey, "ingredientKey");
             if (ingredientSlot == fuelSlot) {
                 throw new IllegalArgumentException("source slots must be distinct");
+            }
+            if (fuelCount < 1 || fuelCount > 64) {
+                throw new IllegalArgumentException("fuel count must be in 1..64");
             }
         }
     }
@@ -1877,12 +1994,16 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         private StackKey fuelKey;
         private StackKey outputKey;
         private int outputCount;
+        private int outputTotal;
         private int inventoryBeforeOutput;
         private int inputSourceSlot = -1;
         private int fuelSourceSlot = -1;
         private ContainerSyncSignals.StackFingerprint inputSourceStack;
         private ContainerSyncSignals.StackFingerprint fuelSourceStack;
+        private ContainerSyncSignals.StackFingerprint fuelRecoveryStack;
         private ContainerSyncSignals.StackFingerprint resultSourceStack;
+        private int fuelLoadedCount;
+        private int fuelConsumedCount;
         private Map<StackKey, Integer> expectedLoadedInventory = Map.of();
         private Map<StackKey, Integer> expectedFinalInventory = Map.of();
         private AbstractFurnaceMenu menuIdentity;
@@ -1893,6 +2014,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         private boolean loadedReadbackConfirmed;
         private boolean smeltStarted;
         private boolean smeltCompleted;
+        private boolean fuelRecovered;
         private boolean resultRecovered;
         private boolean finalReadbackConfirmed;
         private Map<String, Object> pendingResultBasis;
@@ -1928,9 +2050,11 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                     view.result().alternatives().getFirst();
             outputKey = defaultKey(output.item());
             outputCount = output.count();
-            if (request.expectedUnits() != outputCount) {
+            outputTotal = Math.multiplyExact(outputCount, smelt.maxSmelts());
+            if (request.expectedUnits() != smelt.maxSmelts()
+                    || outputTotal > defaultItemStack(output.item()).getMaxStackSize()) {
                 throw new IllegalArgumentException(
-                        "operation expected units must match one recipe result");
+                        "operation/result stack is outside the exact batch bound");
             }
             ingredientKeys = view.ingredients().getFirst().alternatives().stream()
                     .map(MinecraftKnownFurnacePort::defaultKey)
@@ -1987,7 +2111,8 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                     verified.put("screen_release_confirmed", screenReleaseConfirmed);
                     verified.put("server_cursor_empty", serverCursorReleaseConfirmed);
                     verified.put("view_slot_release_confirmed", true);
-                    result = new PhaseFiveResult(outputCount, true, verified, List.of());
+                    result = new PhaseFiveResult(
+                            smelt.maxSmelts(), true, verified, List.of());
                 }
                 case FAILURE -> failure = terminalIntent.failure();
                 case INCONCLUSIVE -> inconclusive = terminalIntent.inconclusive();
@@ -2010,6 +2135,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
             basis.put("loaded_readback", loadedReadbackConfirmed);
             basis.put("smelt_started", smeltStarted);
             basis.put("smelt_completed", smeltCompleted);
+            basis.put("fuel_recovered", fuelRecovered);
             basis.put("result_recovered", resultRecovered);
             basis.put("fresh_readback", finalReadbackConfirmed);
             basis.put("release_pending", releasing());

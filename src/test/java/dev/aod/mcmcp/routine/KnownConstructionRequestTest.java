@@ -57,6 +57,16 @@ class KnownConstructionRequestTest {
                 bounds)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("point to");
 
+        var lowerDoor = new BlockStateFingerprint("minecraft:oak_door", Map.of(
+                "facing", "east", "half", "lower", "hinge", "right",
+                "open", "false", "powered", "false"));
+        assertThatThrownBy(() -> new KnownConstructionRequest(
+                "copy",
+                List.of(step("base", first,
+                        PlacementSupportWitness.visible(ground, "up", lowerDoor))),
+                bounds)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("support");
+
         assertThatThrownBy(() -> new KnownConstructionRequest(
                 "copy",
                 List.of(
@@ -105,6 +115,35 @@ class KnownConstructionRequestTest {
 
         assertThat(request.breakOnly()).isTrue();
         assertThat(request.requiredResources()).isEmpty();
+
+        var door = new BlockStateFingerprint("minecraft:oak_door", Map.of(
+                "facing", "east", "half", "lower", "hinge", "right",
+                "open", "false", "powered", "false"));
+        var doorBreak = new ApplyBlockPlanStep(
+                "door", ApplyBlockPlanOperation.BREAK_TO_AIR, target(0, 65, 0),
+                door, AIR, Optional.empty());
+        assertThatThrownBy(() -> new KnownConstructionRequest(new ApplyBlockPlanRequest(
+                "clear", 1, 1, List.of(doorBreak), breakBounds,
+                ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("multi-cell doors");
+    }
+
+    @Test
+    void acceptsOneLowerDoorPlacementWithAnExplicitSupport() {
+        var door = new BlockStateFingerprint("minecraft:oak_door", Map.of(
+                "facing", "east", "half", "lower", "hinge", "right",
+                "open", "false", "powered", "false"));
+        var ground = target(0, 64, 0);
+        var placed = target(0, 65, 0);
+        var step = new ApplyBlockPlanStep(
+                "door", ApplyBlockPlanOperation.PLACE, placed, AIR, door,
+                Optional.of("minecraft:oak_door"),
+                Optional.of(PlacementSupportWitness.visible(ground, "up", STONE)));
+
+        assertThat(new KnownConstructionRequest(
+                "door", List.of(step), bounds(ground, target(0, 66, 0))).requiredResources())
+                .containsEntry("minecraft:oak_door", 1);
     }
 
     private static ApplyBlockPlanStep step(

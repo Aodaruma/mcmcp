@@ -964,8 +964,8 @@ class McmcpRuntimeHardeningTest {
         assertThat(control.get("game_paused")).isEqualTo(false);
         var policy = (Map<?, ?>) state.get("policy");
         assertThat(policy.get("profile")).isEqualTo("survival_omnidirectional");
-        assertThat(policy.get("max_duration_ms")).isEqualTo(600_000);
-        assertThat(policy.get("max_ticks")).isEqualTo(12_000);
+        assertThat(policy.get("max_duration_ms")).isEqualTo(750_000);
+        assertThat(policy.get("max_ticks")).isEqualTo(15_000);
         assertThat(policy.get("max_distance_blocks")).isEqualTo(32);
         assertThat(policy.get("max_blocks_broken")).isEqualTo(8);
         assertThat(policy.get("max_interactions")).isEqualTo(16);
@@ -1802,6 +1802,24 @@ class McmcpRuntimeHardeningTest {
                         Optional.of("minecraft:stone"))),
                 executionBounds);
         assertThatCode(() -> McmcpRuntime.validateApplyBlockPlanItems(stone))
+                .doesNotThrowAnyException();
+
+        var lowerOakDoor = new ApplyBlockPlanRequest(
+                "fixture", 1, 1,
+                List.of(new ApplyBlockPlanStep(
+                        "door",
+                        ApplyBlockPlanOperation.PLACE,
+                        target,
+                        new BlockStateFingerprint("minecraft:air", Map.of()),
+                        new BlockStateFingerprint("minecraft:oak_door", Map.of(
+                                "facing", "east", "half", "lower", "hinge", "right",
+                                "open", "false", "powered", "false")),
+                        Optional.of("minecraft:oak_door"))),
+                new ActionBounds(
+                        target.dimension(), target,
+                        new BlockTarget(target.dimension(), target.x(), target.y() + 1, target.z()),
+                        0, 30, false));
+        assertThatCode(() -> McmcpRuntime.validateApplyBlockPlanItems(lowerOakDoor))
                 .doesNotThrowAnyException();
 
         var breakDoor = new ApplyBlockPlanRequest(

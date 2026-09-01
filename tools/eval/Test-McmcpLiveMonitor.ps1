@@ -250,6 +250,13 @@ $requiredRunnerContracts = @(
         'Stop-McmcpLiveMonitorLog -State $script:LiveMonitorState',
         'Write-McmcpRunnerFailureEvent',
         "'artifact_live-monitor.log_exact_display'",
+        "'hard-building-copy' = [ordered]@{",
+        "prompt = 'チェストの材料を自由に加工して、近くにある屋根付きの木造建築を見本に、羊毛の上へ同じ建築をコピーしてください。'",
+        'timeout_minutes = 90',
+        '$EvaluationProfile = $EvaluationProfiles[$PromptProfile]',
+        '$EvaluatorTimeout = [TimeSpan]::FromMinutes([int]$EvaluationProfile[''timeout_minutes''])',
+        '$deadline = $startedAt.Add($EvaluatorTimeout)',
+        'evaluator_timeout_seconds = [int]$EvaluatorTimeout.TotalSeconds',
         'monitor_module_sha256',
         'monitor_test_sha256',
         'monitor_launcher_sha256',
@@ -367,7 +374,12 @@ if (-not $launcherText.Contains('.WaitForExit()', [StringComparison]::Ordinal) -
         }).Count -gt 0) {
     throw 'visible launcherがchild終了連動契約を満たしていません。'
 }
+if (-not $launcherText.Contains(
+        "[ValidateSet('short-regression', 'full-cycle', 'hard-building-copy')]",
+        [StringComparison]::Ordinal)) {
+    throw 'visible launcherがhard-building-copy固定profileを受理しません。'
+}
 
 $passed = 15 + $publicCases.Count + $unsafeCases.Count + $expectedAliases.Count + `
-    $requiredRunnerContracts.Count + $removedSemanticFilters.Count + 7
+    $requiredRunnerContracts.Count + $removedSemanticFilters.Count + 8
 Write-Host "公開monitor/評価lease self-test: $passed/$passed passed"

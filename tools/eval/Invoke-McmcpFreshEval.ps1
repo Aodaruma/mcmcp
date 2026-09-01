@@ -21,7 +21,7 @@ param(
     [string]$TokenPath,
 
     [Parameter(Mandatory)]
-    [ValidateSet('short-regression', 'full-cycle')]
+    [ValidateSet('short-regression', 'full-cycle', 'hard-building-copy')]
     [string]$PromptProfile,
 
     [string]$Endpoint = 'http://127.0.0.1:8765/mcp',
@@ -42,14 +42,25 @@ Import-Module $monitorModulePath -Force
 $script:LiveMonitorState = New-McmcpLiveMonitorState -Enabled:$LiveMonitor
 Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'runner_started'
 
-$ProductionPrompts = [ordered]@{
-    'short-regression' = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
-    'full-cycle' = 'チェストに小麦の種と鍬が入っています。これを取り出し、この畑の区画にある耕作可能な土をすべて耕して、すべてに小麦の種を植えてください。成熟後はすべて収穫して植え直す工程を、小麦を1スタック（64個）以上所持するまで繰り返してください。'
+$EvaluationProfiles = [ordered]@{
+    'short-regression' = [ordered]@{
+        prompt = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
+        timeout_minutes = 30
+    }
+    'full-cycle' = [ordered]@{
+        prompt = 'チェストに小麦の種と鍬が入っています。これを取り出し、この畑の区画にある耕作可能な土をすべて耕して、すべてに小麦の種を植えてください。成熟後はすべて収穫して植え直す工程を、小麦を1スタック（64個）以上所持するまで繰り返してください。'
+        timeout_minutes = 30
+    }
+    'hard-building-copy' = [ordered]@{
+        prompt = 'チェストの材料を自由に加工して、近くにある屋根付きの木造建築を見本に、羊毛の上へ同じ建築をコピーしてください。'
+        timeout_minutes = 90
+    }
 }
-$ProductionPrompt = [string]$ProductionPrompts[$PromptProfile]
+$EvaluationProfile = $EvaluationProfiles[$PromptProfile]
+$ProductionPrompt = [string]$EvaluationProfile['prompt']
 $RequiredCodexVersion = 'codex-cli 0.146.1'
 $ModernProtocolVersion = '2026-07-28'
-$EvaluatorTimeout = [TimeSpan]::FromMinutes(30)
+$EvaluatorTimeout = [TimeSpan]::FromMinutes([int]$EvaluationProfile['timeout_minutes'])
 $TurnCompletionReserveSeconds = 15
 $EvaluationLeaseMaximumDuration = $EvaluatorTimeout.Add([TimeSpan]::FromSeconds(45))
 $EvaluationControlTimeoutSeconds = 10
@@ -61,8 +72,8 @@ $AuthExpirySafetyMargin = [TimeSpan]::FromMinutes(5)
 $MinimumMcpRequestIntervalMilliseconds = 60
 $ExpectedMcmcpServerName = 'mcmcp'
 $ExpectedMcmcpServerVersion = '0.1.0'
-$ExpectedCatalogFileSha256 = '738e4c863c0c203dec1527855c96f4fd8a40233190eb3789cba8e2d117485ada'
-$ExpectedToolSurfaceSha256 = '8aef95bf1dbae7743339a50890a7045ff87c5d9e370a81e2016da0519202ddd8'
+$ExpectedCatalogFileSha256 = '0fe7bb3dd70e46204c6204ea109ba4e24a062994b85154806ea422ac72dbc4d2'
+$ExpectedToolSurfaceSha256 = 'b27d59e96d7f2a59d8b1cb86d8951ab72806b5c46cbc744f9967ec6a1413ebb8'
 $AllowedTools = @(
     'agent_get_state',
     'agent_get_observation',

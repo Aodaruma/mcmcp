@@ -464,10 +464,10 @@ class McpToolCatalogTest {
         var definition = schema.getAsJsonObject("$defs")
                 .getAsJsonObject("smeltKnownRecipeNode");
         assertThat(definition.get("description").getAsString())
-                .contains("exactly one item")
+                .contains("exact full input stack of 1..64 items")
                 .contains("furnace, blast furnace, or smoker")
-                .contains("never exposes raw slots or GUI coordinates")
-                .contains("120000 ms", "2400 ticks", "540 camera degrees", "6 interactions");
+                .contains("Raw slots and GUI coordinates remain private")
+                .contains("2200+200*max_smelts ticks", "540 camera degrees", "7 interactions");
 
         var example = schema.getAsJsonArray("examples").asList().stream()
                 .map(value -> value.getAsJsonObject())
@@ -479,7 +479,12 @@ class McpToolCatalogTest {
         var twoSmelts = example.deepCopy();
         twoSmelts.getAsJsonObject("program").getAsJsonArray("body").get(0)
                 .getAsJsonObject().addProperty("max_smelts", 2);
-        assertThat(CatalogSchemaValidator.matches(schema, twoSmelts)).isFalse();
+        assertThat(CatalogSchemaValidator.matches(schema, twoSmelts)).isTrue();
+
+        var tooManySmelts = example.deepCopy();
+        tooManySmelts.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().addProperty("max_smelts", 65);
+        assertThat(CatalogSchemaValidator.matches(schema, tooManySmelts)).isFalse();
 
         var arbitraryFuelPolicy = example.deepCopy();
         arbitraryFuelPolicy.getAsJsonObject("program").getAsJsonArray("body").get(0)
@@ -786,12 +791,12 @@ class McpToolCatalogTest {
                 {"id":"await_mature","op":"wait_until",
                  "condition":{"type":"crop_mature","target":{
                    "dimension":"minecraft:overworld","x":10,"y":65,"z":10}},
-                 "max_ticks":12000}
+                 "max_ticks":15000}
                 """).getAsJsonObject();
         request.getAsJsonObject("program").add("body", new com.google.gson.JsonArray());
         request.getAsJsonObject("program").getAsJsonArray("body").add(wait);
-        request.getAsJsonObject("budget").addProperty("max_duration_ms", 600_000);
-        request.getAsJsonObject("budget").addProperty("max_ticks", 12_000);
+        request.getAsJsonObject("budget").addProperty("max_duration_ms", 750_000);
+        request.getAsJsonObject("budget").addProperty("max_ticks", 15_000);
         assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
 
         var unsupported = request.deepCopy();
@@ -802,7 +807,7 @@ class McpToolCatalogTest {
 
         var unbounded = request.deepCopy();
         unbounded.getAsJsonObject("program").getAsJsonArray("body").get(0)
-                .getAsJsonObject().addProperty("max_ticks", 12_001);
+                .getAsJsonObject().addProperty("max_ticks", 15_001);
         assertThat(CatalogSchemaValidator.matches(schema, unbounded)).isFalse();
     }
 

@@ -1,6 +1,17 @@
 package dev.aod.mcmcp.construction;
 
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.level.EmptyBlockGetter;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.SlabType;
+import net.minecraft.world.level.block.state.properties.StairsShape;
+
 import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
 
 /** Canonical registry-id allowlist shared by construction observation and execution. */
@@ -29,6 +40,42 @@ public final class SafeConstructionBlocks {
     }
 
     /**
+     * State-sensitive shape boundary for the construction allowlist.
+     *
+     * <p>Most admitted blocks must remain full collision cubes. The explicit partial-shape slice
+     * is limited to dry straight oak/cobblestone stairs, dry non-double oak slabs, dry glass
+     * panes, dry wooden doors, and the two previously audited surface attachments.</p>
+     */
+    public static boolean allowsConstructionState(BlockState state) {
+        Objects.requireNonNull(state, "state");
+        String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+        if (!allows(blockId)
+                || !state.getFluidState().isEmpty()
+                || state.hasProperty(BlockStateProperties.WATERLOGGED)
+                        && state.getValue(BlockStateProperties.WATERLOGGED)) {
+            return false;
+        }
+        if (state.getBlock() instanceof DoorBlock) {
+            return "minecraft:oak_door".equals(blockId)
+                    && !state.getValue(BlockStateProperties.OPEN)
+                    && !state.getValue(BlockStateProperties.POWERED);
+        }
+        return switch (blockId) {
+            case "minecraft:oak_stairs", "minecraft:cobblestone_stairs" ->
+                    state.hasProperty(BlockStateProperties.STAIRS_SHAPE)
+                            && state.getValue(BlockStateProperties.STAIRS_SHAPE)
+                                    == StairsShape.STRAIGHT;
+            case "minecraft:oak_slab" ->
+                    state.hasProperty(BlockStateProperties.SLAB_TYPE)
+                            && state.getValue(BlockStateProperties.SLAB_TYPE) != SlabType.DOUBLE;
+            case "minecraft:glass_pane" -> true;
+            default -> Block.isShapeFullBlock(state.getCollisionShape(
+                    EmptyBlockGetter.INSTANCE, BlockPos.ZERO))
+                    || isSurfaceAttachment(blockId);
+        };
+    }
+
+    /**
      * Complete BlockState properties may cross the policy boundary only for audited construction,
      * support, or owned-menu target contracts. Other visible blocks retain only visual identity.
      */
@@ -47,7 +94,12 @@ public final class SafeConstructionBlocks {
                 "minecraft:deepslate",
                 "minecraft:cobbled_deepslate",
                 "minecraft:polished_deepslate",
-                "minecraft:glass"));
+                "minecraft:glass",
+                "minecraft:glass_pane",
+                "minecraft:oak_stairs",
+                "minecraft:cobblestone_stairs",
+                "minecraft:oak_slab",
+                "minecraft:oak_door"));
         for (String wood : Set.of(
                 "oak", "spruce", "birch", "jungle", "acacia", "dark_oak",
                 "mangrove", "cherry", "pale_oak")) {

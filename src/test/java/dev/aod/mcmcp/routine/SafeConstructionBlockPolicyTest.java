@@ -1,6 +1,11 @@
 package dev.aod.mcmcp.routine;
 
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.Half;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.level.block.state.properties.SlabType;
+import net.minecraft.world.level.block.state.properties.StairsShape;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -17,6 +22,10 @@ class SafeConstructionBlockPolicyTest {
                 Blocks.COBBLESTONE,
                 Blocks.OAK_PLANKS,
                 Blocks.GLASS,
+                Blocks.GLASS_PANE,
+                Blocks.OAK_STAIRS,
+                Blocks.COBBLESTONE_STAIRS,
+                Blocks.OAK_SLAB,
                 Blocks.LADDER,
                 Blocks.WALL_TORCH,
                 Blocks.OAK_LOG,
@@ -33,8 +42,6 @@ class SafeConstructionBlockPolicyTest {
                 Blocks.REDSTONE_BLOCK,
                 Blocks.PISTON,
                 Blocks.TNT,
-                Blocks.OAK_DOOR,
-                Blocks.OAK_STAIRS,
                 Blocks.STONE_SLAB,
                 Blocks.SCAFFOLDING))
                 .allSatisfy(block -> assertThat(
@@ -42,6 +49,48 @@ class SafeConstructionBlockPolicyTest {
                                 block.defaultBlockState(), false)).isFalse());
         assertThat(SafeConstructionBlockPolicy.allowsLiveState(
                 Blocks.STONE.defaultBlockState(), true)).isFalse();
+        var lowerDoor = Blocks.OAK_DOOR.defaultBlockState()
+                .setValue(BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.LOWER);
+        assertThat(SafeConstructionBlockPolicy.allowsLiveState(lowerDoor, false)).isFalse();
+        assertThat(SafeConstructionBlockPolicy.allowsPlacementState(lowerDoor, false)).isTrue();
+        assertThat(SafeConstructionBlockPolicy.allowsPlacementState(
+                lowerDoor.setValue(BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.UPPER),
+                false)).isFalse();
+        assertThat(SafeConstructionBlockPolicy.allowsPlacementState(
+                lowerDoor.setValue(BlockStateProperties.OPEN, true), false)).isFalse();
+    }
+
+    @Test
+    void admitsOnlyTheAuditedDryPartialShapeStates() {
+        var topStraightStairs = Blocks.OAK_STAIRS.defaultBlockState()
+                .setValue(BlockStateProperties.HALF, Half.TOP)
+                .setValue(BlockStateProperties.STAIRS_SHAPE, StairsShape.STRAIGHT);
+        var connectedPane = Blocks.GLASS_PANE.defaultBlockState()
+                .setValue(BlockStateProperties.NORTH, true);
+
+        assertThat(List.of(
+                topStraightStairs,
+                Blocks.COBBLESTONE_STAIRS.defaultBlockState(),
+                Blocks.OAK_SLAB.defaultBlockState(),
+                Blocks.OAK_SLAB.defaultBlockState()
+                        .setValue(BlockStateProperties.SLAB_TYPE, SlabType.TOP),
+                connectedPane))
+                .allSatisfy(state -> assertThat(
+                        SafeConstructionBlockPolicy.allowsLiveState(state, false)).isTrue());
+
+        assertThat(List.of(
+                Blocks.OAK_STAIRS.defaultBlockState()
+                        .setValue(BlockStateProperties.STAIRS_SHAPE, StairsShape.INNER_LEFT),
+                Blocks.COBBLESTONE_STAIRS.defaultBlockState()
+                        .setValue(BlockStateProperties.WATERLOGGED, true),
+                Blocks.OAK_SLAB.defaultBlockState()
+                        .setValue(BlockStateProperties.SLAB_TYPE, SlabType.DOUBLE),
+                Blocks.OAK_SLAB.defaultBlockState()
+                        .setValue(BlockStateProperties.WATERLOGGED, true),
+                Blocks.GLASS_PANE.defaultBlockState()
+                        .setValue(BlockStateProperties.WATERLOGGED, true)))
+                .allSatisfy(state -> assertThat(
+                        SafeConstructionBlockPolicy.allowsLiveState(state, false)).isFalse());
     }
 
     @Test
@@ -57,6 +106,20 @@ class SafeConstructionBlockPolicyTest {
         SafeConstructionBlockPolicy.requireExpectedStateAndItem(
                 new BlockStateFingerprint("minecraft:wall_torch", Map.of("facing", "north")),
                 "minecraft:torch");
+        SafeConstructionBlockPolicy.requireExpectedStateAndItem(
+                new BlockStateFingerprint("minecraft:oak_stairs", Map.of(
+                        "facing", "north", "half", "bottom", "shape", "straight",
+                        "waterlogged", "false")),
+                "minecraft:oak_stairs");
+        SafeConstructionBlockPolicy.requireExpectedStateAndItem(
+                new BlockStateFingerprint("minecraft:oak_slab", Map.of(
+                        "type", "top", "waterlogged", "false")),
+                "minecraft:oak_slab");
+        SafeConstructionBlockPolicy.requireExpectedStateAndItem(
+                new BlockStateFingerprint("minecraft:oak_door", Map.of(
+                        "facing", "east", "half", "lower", "hinge", "right",
+                        "open", "false", "powered", "false")),
+                "minecraft:oak_door");
 
         assertThatThrownBy(() -> SafeConstructionBlockPolicy.requireExpectedStateAndItem(
                 new BlockStateFingerprint("minecraft:oak_log", Map.of()),
@@ -70,6 +133,19 @@ class SafeConstructionBlockPolicyTest {
         assertThatThrownBy(() -> SafeConstructionBlockPolicy.requireExpectedStateAndItem(
                 new BlockStateFingerprint("minecraft:redstone_block", Map.of()),
                 "minecraft:redstone_block"))
+                .isInstanceOf(
+                        SafeConstructionBlockPolicy.UnsafeConstructionBlockException.class);
+        assertThatThrownBy(() -> SafeConstructionBlockPolicy.requireExpectedStateAndItem(
+                new BlockStateFingerprint("minecraft:oak_stairs", Map.of(
+                        "facing", "north", "half", "bottom", "shape", "outer_left",
+                        "waterlogged", "false")),
+                "minecraft:oak_stairs"))
+                .isInstanceOf(
+                        SafeConstructionBlockPolicy.UnsafeConstructionBlockException.class);
+        assertThatThrownBy(() -> SafeConstructionBlockPolicy.requireExpectedStateAndItem(
+                new BlockStateFingerprint("minecraft:oak_slab", Map.of(
+                        "type", "double", "waterlogged", "false")),
+                "minecraft:oak_slab"))
                 .isInstanceOf(
                         SafeConstructionBlockPolicy.UnsafeConstructionBlockException.class);
     }

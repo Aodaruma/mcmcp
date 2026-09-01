@@ -17,6 +17,9 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.level.block.state.properties.SlabType;
+import net.minecraft.world.level.block.state.properties.StairsShape;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
@@ -252,6 +255,16 @@ class OmnidirectionalObserverTest {
                 Blocks.LADDER.defaultBlockState())).isNotNull();
         assertThat(OmnidirectionalObserver.policyVisibleBlockState(
                 Blocks.WALL_TORCH.defaultBlockState())).isNotNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.OAK_DOOR.defaultBlockState())).isNotNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.OAK_STAIRS.defaultBlockState())).isNotNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.COBBLESTONE_STAIRS.defaultBlockState())).isNotNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.OAK_SLAB.defaultBlockState())).isNotNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.GLASS_PANE.defaultBlockState())).isNotNull();
 
         // These blocks carry runtime properties which are not fully distinguishable from their
         // rendered surface. Their block ids remain visible, but complete state stays hidden.
@@ -273,19 +286,46 @@ class OmnidirectionalObserverTest {
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
                 Blocks.SAND.defaultBlockState())).isNull();
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
-                Blocks.OAK_DOOR.defaultBlockState())).isNull();
+                Blocks.OAK_DOOR.defaultBlockState()).value()).isEqualTo("minecraft:oak_door");
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.OAK_DOOR.defaultBlockState().setValue(
+                        BlockStateProperties.DOUBLE_BLOCK_HALF,
+                        DoubleBlockHalf.UPPER))).isNull();
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
                 Blocks.TNT.defaultBlockState())).isNull();
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
-                Blocks.OAK_STAIRS.defaultBlockState())).isNull();
+                Blocks.OAK_STAIRS.defaultBlockState()).value())
+                .isEqualTo("minecraft:oak_stairs");
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
-                Blocks.OAK_SLAB.defaultBlockState())).isNull();
+                Blocks.COBBLESTONE_STAIRS.defaultBlockState()).value())
+                .isEqualTo("minecraft:cobblestone_stairs");
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.OAK_SLAB.defaultBlockState()).value())
+                .isEqualTo("minecraft:oak_slab");
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.GLASS_PANE.defaultBlockState()).value())
+                .isEqualTo("minecraft:glass_pane");
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
                 Blocks.DIRT.defaultBlockState())).isNull();
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
                 Blocks.REDSTONE_BLOCK.defaultBlockState())).isNull();
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
                 Blocks.OAK_SLAB.defaultBlockState().setValue(
+                        BlockStateProperties.WATERLOGGED, true))).isNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.OAK_STAIRS.defaultBlockState().setValue(
+                        BlockStateProperties.STAIRS_SHAPE, StairsShape.OUTER_LEFT))).isNull();
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.OAK_STAIRS.defaultBlockState().setValue(
+                        BlockStateProperties.STAIRS_SHAPE, StairsShape.OUTER_LEFT))).isNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.OAK_SLAB.defaultBlockState().setValue(
+                        BlockStateProperties.SLAB_TYPE, SlabType.DOUBLE))).isNull();
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
+                Blocks.OAK_SLAB.defaultBlockState().setValue(
+                        BlockStateProperties.SLAB_TYPE, SlabType.DOUBLE))).isNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.GLASS_PANE.defaultBlockState().setValue(
                         BlockStateProperties.WATERLOGGED, true))).isNull();
     }
 

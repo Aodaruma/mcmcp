@@ -21,7 +21,7 @@ param(
     [string]$ExpectedEffort,
 
     [Parameter(Mandatory, ParameterSetName = 'Audit')]
-    [ValidateSet('short-regression', 'full-cycle')]
+    [ValidateSet('short-regression', 'full-cycle', 'hard-building-copy')]
     [string]$ExpectedPromptProfile,
 
     [Parameter(Mandatory, ParameterSetName = 'SelfTest')]
@@ -31,19 +31,30 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$ProductionPrompts = [ordered]@{
-    'short-regression' = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
-    'full-cycle' = 'チェストに小麦の種と鍬が入っています。これを取り出し、この畑の区画にある耕作可能な土をすべて耕して、すべてに小麦の種を植えてください。成熟後はすべて収穫して植え直す工程を、小麦を1スタック（64個）以上所持するまで繰り返してください。'
+$EvaluationProfiles = [ordered]@{
+    'short-regression' = [ordered]@{
+        prompt = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
+        timeout_minutes = 30
+    }
+    'full-cycle' = [ordered]@{
+        prompt = 'チェストに小麦の種と鍬が入っています。これを取り出し、この畑の区画にある耕作可能な土をすべて耕して、すべてに小麦の種を植えてください。成熟後はすべて収穫して植え直す工程を、小麦を1スタック（64個）以上所持するまで繰り返してください。'
+        timeout_minutes = 30
+    }
+    'hard-building-copy' = [ordered]@{
+        prompt = 'チェストの材料を自由に加工して、近くにある屋根付きの木造建築を見本に、羊毛の上へ同じ建築をコピーしてください。'
+        timeout_minutes = 90
+    }
 }
 $AuditPromptProfile = if ($PSCmdlet.ParameterSetName -eq 'Audit') {
     $ExpectedPromptProfile
 } else {
     'short-regression'
 }
-$ProductionPrompt = [string]$ProductionPrompts[$AuditPromptProfile]
-$ExpectedCatalogFileSha256 = '738e4c863c0c203dec1527855c96f4fd8a40233190eb3789cba8e2d117485ada'
-$ExpectedToolSurfaceSha256 = '8aef95bf1dbae7743339a50890a7045ff87c5d9e370a81e2016da0519202ddd8'
-$ExpectedEvaluatorTimeoutSeconds = 1800
+$AuditProfile = $EvaluationProfiles[$AuditPromptProfile]
+$ProductionPrompt = [string]$AuditProfile['prompt']
+$ExpectedCatalogFileSha256 = '0fe7bb3dd70e46204c6204ea109ba4e24a062994b85154806ea422ac72dbc4d2'
+$ExpectedToolSurfaceSha256 = 'b27d59e96d7f2a59d8b1cb86d8951ab72806b5c46cbc744f9967ec6a1413ebb8'
+$ExpectedEvaluatorTimeoutSeconds = [int]$AuditProfile['timeout_minutes'] * 60
 $TurnCompletionReserveSeconds = 15
 $MaximumMcpForwardSeconds = 35
 $AgentGetActionTransportMarginSeconds = 2
@@ -1988,7 +1999,13 @@ function Invoke-TraceAudit {
     $manualReviewRequired = [Collections.Generic.List[string]]::new()
     $manualReviewRequired.Add('agent_start_action の target が先行する正規MCP観測に由来すること')
     $manualReviewRequired.Add('agent_get_action(wait_timeout_ms=25000) をterminalまで反復し、非terminal timeout snapshotをエラー扱いしていないこと')
-    $manualReviewRequired.Add('最終 inventory/observation と action audit が小麦64個を裏付けること')
+    if ($AuditPromptProfile -ceq 'hard-building-copy') {
+        $manualReviewRequired.Add(
+            'source/destinationのairを含む完全state差分、craft/smelt evidence、inventory収支とaction auditが建築copy完了を裏付けること')
+    } else {
+        $manualReviewRequired.Add(
+            '最終 inventory/observation と action audit が小麦64個を裏付けること')
+    }
     if ($dynamicRequests.Count -eq 0) {
         $manualReviewRequired.Add(
             'zero-call run: capability不足の具体的理由が最終agentMessageに記載されていること')
@@ -1998,9 +2015,10 @@ function Invoke-TraceAudit {
             'deadline-rejected run: Minecraft内の全Actionがterminalであることを別artifactで確認すること')
     }
     $report = [ordered]@{
-        schema_version = 6
+        schema_version = 7
         passed = ($violations.Count -eq 0)
         prompt_profile = $AuditPromptProfile
+        evaluator_timeout_seconds = $ExpectedEvaluatorTimeoutSeconds
         trace_message_count = $traceRecords.Count
         bridge_record_count = $bridgeRecords.Count
         dynamic_request_count = $dynamicRequests.Count
@@ -3111,7 +3129,7 @@ function Invoke-AuditSelfTest {
         http_status = 429
     }
 
-    $fullCyclePrompt = [string]$ProductionPrompts['full-cycle']
+    $fullCyclePrompt = [string]$EvaluationProfiles['full-cycle']['prompt']
     $fullProfileTrace = @($trace | ForEach-Object {
             $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
             $item = Get-NestedValue $copy 'params.item'
@@ -3128,6 +3146,64 @@ function Invoke-AuditSelfTest {
             } elseif ((Get-PropertyValue $copy 'event') -ceq 'client_send' -and
                 (Get-PropertyValue $copy 'kind') -ceq 'turn_start') {
                 $copy.message.params.input[0].text = $fullCyclePrompt
+            }
+            $copy
+        })
+
+    $hardBuildingPrompt = [string]$EvaluationProfiles['hard-building-copy']['prompt']
+    $hardBuildingTimeoutSeconds =
+        [int]$EvaluationProfiles['hard-building-copy']['timeout_minutes'] * 60
+    $hardProfileTrace = @($trace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            $item = Get-NestedValue $copy 'params.item'
+            if ($null -ne $item -and (Get-PropertyValue $item 'type') -ceq 'userMessage') {
+                $item.content[0].text = $hardBuildingPrompt
+            }
+            $copy
+        })
+    $hardProfileBridge = @($bridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 't0') {
+                $copy.prompt_profile = 'hard-building-copy'
+                $copy.prompt_sha256 = Get-Sha256 $hardBuildingPrompt
+                $copy.timeout_seconds = $hardBuildingTimeoutSeconds
+            } elseif ((Get-PropertyValue $copy 'event') -ceq 'client_send' -and
+                (Get-PropertyValue $copy 'kind') -ceq 'turn_start') {
+                $copy.message.params.input[0].text = $hardBuildingPrompt
+            }
+            $copy
+        })
+    $hardWrongTimeoutBridge = @($hardProfileBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            if ((Get-PropertyValue $copy 'event') -ceq 't0') {
+                $copy.timeout_seconds = 1800
+            }
+            $copy
+        })
+    $hardDeadlineTrace = @($deadlineTrace | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            $item = Get-NestedValue $copy 'params.item'
+            if ($null -ne $item -and (Get-PropertyValue $item 'type') -ceq 'userMessage') {
+                $item.content[0].text = $hardBuildingPrompt
+            }
+            $copy
+        })
+    $hardDeadlineBridge = @($deadlineBridge | ForEach-Object {
+            $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+            $event = [string](Get-PropertyValue $copy 'event')
+            if ($event -ceq 't0') {
+                $copy.prompt_profile = 'hard-building-copy'
+                $copy.prompt_sha256 = Get-Sha256 $hardBuildingPrompt
+                $copy.timeout_seconds = $hardBuildingTimeoutSeconds
+            } elseif ($event -ceq 'client_send' -and
+                (Get-PropertyValue $copy 'kind') -ceq 'turn_start') {
+                $copy.message.params.input[0].text = $hardBuildingPrompt
+            } elseif ($event -ceq 'dynamic_deadline_rejected') {
+                $copy.utc = $syntheticT0Utc.AddSeconds(
+                    $hardBuildingTimeoutSeconds - 40.5D).ToString('o')
+            } elseif ($event -ceq 'dynamic_response_sent') {
+                $copy.utc = $syntheticT0Utc.AddSeconds(
+                    $hardBuildingTimeoutSeconds - 40.49D).ToString('o')
             }
             $copy
         })
@@ -3153,6 +3229,24 @@ function Invoke-AuditSelfTest {
             bridge = $fullProfileBridge; expected_profile = 'full-cycle'
             expected_exit = 0; expected_success = 1; expected_failure = 0
             required = @()
+        },
+        [ordered]@{
+            name = 'hard_profile_valid'; trace = $hardProfileTrace
+            bridge = $hardProfileBridge; expected_profile = 'hard-building-copy'
+            expected_exit = 0; expected_success = 1; expected_failure = 0
+            required = @(); required_manual = @('airを含む完全state差分')
+        },
+        [ordered]@{
+            name = 'hard_profile_wrong_timeout'; trace = $hardProfileTrace
+            bridge = $hardWrongTimeoutBridge; expected_profile = 'hard-building-copy'
+            expected_exit = 1; required = @('T0 timeout must be 5400 seconds')
+        },
+        [ordered]@{
+            name = 'hard_profile_deadline_rejection'; trace = $hardDeadlineTrace
+            bridge = $hardDeadlineBridge; expected_profile = 'hard-building-copy'
+            expected_exit = 0; expected_success = 0; expected_failure = 0
+            expected_rejection = 1; required = @()
+            required_manual = @('airを含む完全state差分', 'deadline-rejected run')
         },
         [ordered]@{
             name = 'domain_recovery'; trace = $domainTrace; bridge = $domainBridge
@@ -3484,6 +3578,11 @@ function Invoke-AuditSelfTest {
                 throw "self-test '$($case.name)' exit mismatch: $LASTEXITCODE; $failureDetail"
             }
             $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+            $caseTimeoutSeconds =
+                [int]$EvaluationProfiles[$casePromptProfile]['timeout_minutes'] * 60
+            if ($report.evaluator_timeout_seconds -ne $caseTimeoutSeconds) {
+                throw "self-test '$($case.name)' profile timeout mismatch"
+            }
             if ($case.Contains('expected_success') -and
                 ($report.successful_dynamic_call_count -ne $case.expected_success -or
                     $report.failed_dynamic_call_count -ne $case.expected_failure)) {

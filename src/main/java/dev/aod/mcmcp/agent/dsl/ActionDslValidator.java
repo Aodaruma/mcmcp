@@ -25,7 +25,7 @@ public final class ActionDslValidator {
     public static final int MAX_BRANCH_NODES = 16;
     public static final int MAX_PREDICATE_OPERANDS = 4;
     public static final int MAX_REQUEST_BYTES = 64 * 1024;
-    public static final int MAX_ACTION_TICKS = 12_000;
+    public static final int MAX_ACTION_TICKS = 15_000;
     public static final long MAX_ACTION_DURATION_MILLIS = MAX_ACTION_TICKS * 50L;
     public static final int MAX_ACTION_CAMERA_DEGREES = 720;
     public static final int MAX_BLOCKS_BROKEN = 8;
@@ -519,9 +519,7 @@ public final class ActionDslValidator {
             if (!"default_components_only".equals(smelt.fuelStackPolicy())) {
                 throw invalid(path + ".fuel.stack_policy must be default_components_only");
             }
-            if (smelt.maxSmelts() != 1) {
-                throw invalid(path + ".max_smelts must be 1");
-            }
+            requireRange(smelt.maxSmelts(), 1, 64, path + ".max_smelts");
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
             return 1;

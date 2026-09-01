@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
 /** Synchronized one-active-plus-one-terminal action state machine. */
 public final class AgentActionStore {
     public static final int TRACE_LIMIT = 256;
-    public static final int MAX_RECORDED_TICKS = 12_200;
+    public static final int MAX_RECORDED_TICKS = 15_200;
     public static final double MAX_RECORDED_DISTANCE = 48.0D;
     public static final double MAX_RECORDED_CAMERA_DEGREES = 1_080.0D;
     public static final int MAX_RECORDED_BLOCKS_BROKEN = 12;

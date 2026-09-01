@@ -165,6 +165,7 @@ public final class ClientRecipeCatalog {
                 recipe.extracted().displayId(),
                 recipe.extracted().fingerprint(),
                 recipe.toView(),
+                recipe.extracted().durationTicks(),
                 worldSessionId,
                 revision));
     }
@@ -659,6 +660,7 @@ public final class ClientRecipeCatalog {
             RecipeDisplayId displayId,
             String fingerprint,
             RecipeView view,
+            int cookingDurationTicks,
             UUID worldSessionId,
             long recipeBookRevision) {
         public ResolvedRecipe {
@@ -666,6 +668,9 @@ public final class ClientRecipeCatalog {
             Objects.requireNonNull(fingerprint, "fingerprint");
             Objects.requireNonNull(view, "view");
             Objects.requireNonNull(worldSessionId, "worldSessionId");
+            if (cookingDurationTicks < 0) {
+                throw new IllegalArgumentException("cooking duration must be non-negative");
+            }
         }
     }
 

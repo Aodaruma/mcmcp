@@ -45,6 +45,10 @@ public record KnownConstructionRequest(ApplyBlockPlanRequest plan) {
         var priorEntries = new LinkedHashMap<String, ApplyBlockPlanStep>();
         for (var step : plan.steps()) {
             if (clear) {
+                if (step.expectedBefore().blockId().endsWith("_door")) {
+                    throw new IllegalArgumentException(
+                            "construction clear does not admit multi-cell doors");
+                }
                 SafeConstructionBlockPolicy.requireExpectedState(step.expectedBefore());
                 if (!"minecraft:air".equals(step.expectedAfter().blockId())
                         || !step.expectedAfter().properties().isEmpty()
@@ -62,6 +66,15 @@ public record KnownConstructionRequest(ApplyBlockPlanRequest plan) {
             }
             String item = step.requiredItemId().orElseThrow();
             SafeConstructionBlockPolicy.requireExpectedStateAndItem(step.expectedAfter(), item);
+            if (MinecraftApplyBlockPlanPort.supportedDoorPlacement(step.expectedAfter())) {
+                var upper = new BlockTarget(
+                        step.target().dimension(), step.target().x(),
+                        Math.addExact(step.target().y(), 1), step.target().z());
+                if (!plan.bounds().contains(upper)) {
+                    throw new IllegalArgumentException(
+                            "construction bounds must include the door upper cell");
+                }
+            }
             PlacementSupportWitness witness = step.supportWitness().orElseThrow(() ->
                     new IllegalArgumentException(
                             "construction placement requires an explicit support witness"));
@@ -106,6 +119,11 @@ public record KnownConstructionRequest(ApplyBlockPlanRequest plan) {
                 == ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK;
     }
 
+    public int placementCellCount(int index) {
+        var step = plan.steps().get(index);
+        return MinecraftApplyBlockPlanPort.supportedDoorPlacement(step.expectedAfter()) ? 2 : 1;
+    }
+
     private static void requireAdjacentSupport(
             BlockTarget target, PlacementSupportWitness witness) {
         BlockTarget support = witness.support();
@@ -133,7 +151,9 @@ public record KnownConstructionRequest(ApplyBlockPlanRequest plan) {
     private static void requireSafeCompleteSupport(BlockStateFingerprint state) {
         try {
             SafeConstructionBlockPolicy.requireExpectedState(state);
-            return;
+            if (SafeConstructionBlockPolicy.allowsRegisteredBlockId(state.blockId())) {
+                return;
+            }
         } catch (SafeConstructionBlockPolicy.UnsafeConstructionBlockException ignored) {
             // Existing inert terrain supports use the older, smaller support policy.
         }

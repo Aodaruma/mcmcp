@@ -1,9 +1,13 @@
 package dev.aod.mcmcp.routine;
 
+import net.minecraft.core.Direction;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.phys.AABB;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.Type;
@@ -123,6 +127,8 @@ class BlockItemPlacementInvokerContractTest {
                 .allSatisfy(item -> assertThat(MinecraftApplyBlockPlanPort.supportsPlacementItem(
                         (BlockItem) item)).isTrue());
         assertThat(MinecraftApplyBlockPlanPort.supportsPlacementItem(
+                (BlockItem) Items.OAK_DOOR)).isTrue();
+        assertThat(MinecraftApplyBlockPlanPort.supportsPlacementItem(
                 (BlockItem) Items.OAK_SIGN)).isFalse();
         assertThat(MinecraftApplyBlockPlanPort.supportsPlacementItem(
                 (BlockItem) Items.SCAFFOLDING)).isFalse();
@@ -142,6 +148,50 @@ class BlockItemPlacementInvokerContractTest {
                 .isEqualTo(MinecraftApplyBlockPlanPort.InventoryConsumption.CONFIRMED);
         assertThat(MinecraftApplyBlockPlanPort.inventoryConsumption(64, 62))
                 .isEqualTo(MinecraftApplyBlockPlanPort.InventoryConsumption.MISMATCH);
+    }
+
+    @Test
+    void placementCandidatesAlsoSampleFloorQuadrantsForDoorHinges() {
+        var fullBlock = new AABB(1.0D, 2.0D, 3.0D, 2.0D, 3.0D, 4.0D);
+
+        assertThat(MinecraftApplyBlockPlanPort.placementAimPoints(fullBlock, Direction.NORTH))
+                .extracting(point -> point.y)
+                .containsExactly(2.5D, 2.25D, 2.75D);
+        assertThat(MinecraftApplyBlockPlanPort.placementAimPoints(fullBlock, Direction.UP))
+                .hasSize(5)
+                .allSatisfy(point -> assertThat(point.y).isEqualTo(3.0D));
+        assertThat(MinecraftApplyBlockPlanPort.placementAimPoints(fullBlock, Direction.DOWN))
+                .hasSize(5)
+                .allSatisfy(point -> assertThat(point.y).isEqualTo(2.0D));
+    }
+
+    @Test
+    void doorPlacementAdmitsOnlyTheLowerCellAndDerivesTheUpperState() {
+        var lower = Blocks.OAK_DOOR.defaultBlockState()
+                .setValue(BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.LOWER);
+        var upper = MinecraftApplyBlockPlanPort.expectedDoorUpper(lower);
+
+        assertThat(MinecraftApplyBlockPlanPort.supportedDoorPlacement(lower)).isTrue();
+        assertThat(upper.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF))
+                .isEqualTo(DoubleBlockHalf.UPPER);
+        assertThat(MinecraftApplyBlockPlanPort.supportedDoorPlacement(upper)).isFalse();
+        assertThatThrownBy(() -> MinecraftApplyBlockPlanPort.expectedDoorUpper(
+                Blocks.OAK_PLANKS.defaultBlockState()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void doorPlacementUsesDistinctServerConfirmationsForBothCells() throws Exception {
+        String begin = "dev/aod/mcmcp/runtime/ClientPredictionSignals#begin";
+        String confirm = "dev/aod/mcmcp/runtime/ClientPredictionSignals$PredictionAttempt#confirmation";
+        assertThat(invocations(
+                "/dev/aod/mcmcp/routine/MinecraftApplyBlockPlanPort.class", "dispatchPlace"))
+                .filteredOn(begin::equals)
+                .hasSize(2);
+        assertThat(invocations(
+                "/dev/aod/mcmcp/routine/MinecraftApplyBlockPlanPort.class", "actionEvidence"))
+                .filteredOn(confirm::equals)
+                .hasSize(2);
     }
 
     @Test

@@ -414,7 +414,7 @@ public final class ActionDsl {
         }
     }
 
-    /** Smelts exactly one item from one current recipe at a visible furnace-family station. */
+    /** Smelts one exact full input stack from one current furnace-family recipe. */
     public record SmeltKnownRecipe(
             String id,
             String recipeRef,

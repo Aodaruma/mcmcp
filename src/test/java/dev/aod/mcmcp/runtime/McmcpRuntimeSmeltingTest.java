@@ -17,7 +17,7 @@ class McmcpRuntimeSmeltingTest {
                 "furnace", new ActionDsl.Position("minecraft:overworld", 2, 64, 3),
                 new ActionDsl.BlockStateSpec(
                         "minecraft:furnace", Map.of("facing", "north", "lit", "false")),
-                "minecraft:coal", "default_components_only", 1);
+                "minecraft:coal", "default_components_only", 64);
 
         var request = McmcpRuntime.smeltRequest(smelt);
         var station = (Map<String, Object>) request.parameters().get("station");
@@ -25,13 +25,14 @@ class McmcpRuntimeSmeltingTest {
 
         assertThat(request.kind()).isEqualTo("smelt_items");
         assertThat(request.bounds().maxTravelBlocks()).isZero();
-        assertThat(request.bounds().maxDurationSeconds()).isEqualTo(120);
-        assertThat(request.expectedUnits()).isOne();
+        assertThat(request.bounds().maxDurationSeconds()).isEqualTo(750);
+        assertThat(request.expectedUnits()).isEqualTo(64);
+        assertThat(request.progressUnit()).isEqualTo("smelts");
         assertThat(station).containsEntry("kind", "furnace");
         assertThat(fuel).containsEntry("item", "minecraft:coal")
                 .containsEntry("stack_policy", "default_components_only");
         assertThat(McmcpRuntime.structuralPrimitiveCost(smelt).orElseThrow())
                 .isEqualTo(new dev.aod.mcmcp.agent.dsl.ActionDslCompiler.Cost(
-                        120_000, 2_400, 0, 0, 6, 0, 0));
+                        750_000, 15_000, 0, 0, 7, 0, 0));
     }
 }

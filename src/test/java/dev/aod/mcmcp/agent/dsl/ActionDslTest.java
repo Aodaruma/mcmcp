@@ -721,7 +721,7 @@ class ActionDslTest {
         ActionDsl.Request request = ActionDslParser.parse(request(
                 capabilities("camera", "inventory_transfer"),
                 smelt,
-                budget(120_000, 2_400, 0, 540, 6, 0, 0)));
+                budget(120_000, 2_400, 0, 540, 7, 0, 0)));
 
         assertThat(request.program().body()).singleElement().satisfies(node -> {
             var parsed = (ActionDsl.SmeltKnownRecipe) node;
@@ -737,26 +737,36 @@ class ActionDslTest {
                         ActionDsl.Capability.CAMERA,
                         ActionDsl.Capability.INVENTORY_TRANSFER);
 
-        var cost = new ActionDslCompiler.Cost(120_000, 2_400, 0, 120, 6, 0, 0);
+        var cost = new ActionDslCompiler.Cost(120_000, 2_400, 0, 120, 7, 0, 0);
         assertThat(ActionDslCompiler.compile(
                 request, ignored -> Optional.of(cost), request.program().capabilities())
                 .worstCaseCost()).isEqualTo(cost);
 
-        smelt.addProperty("max_smelts", 2);
+        smelt.addProperty("max_smelts", 64);
+        var batch = ActionDslParser.parse(request(
+                capabilities("camera", "inventory_transfer"), smelt,
+                budget(750_000, 15_000, 0, 540, 7, 0, 0)));
+        var batchCost = new ActionDslCompiler.Cost(
+                750_000, 15_000, 0, 120, 7, 0, 0);
+        assertThat(ActionDslCompiler.compile(
+                batch, ignored -> Optional.of(batchCost), batch.program().capabilities())
+                .worstCaseCost()).isEqualTo(batchCost);
+
+        smelt.addProperty("max_smelts", 65);
         assertCode(request(
                         capabilities("camera", "inventory_transfer"), smelt,
-                        budget(120_000, 2_400, 0, 540, 6, 0, 0)),
+                        budget(750_000, 15_000, 0, 540, 7, 0, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
         smelt = smeltKnownRecipe("smelt");
         smelt.getAsJsonObject("station").addProperty("kind", "smoker");
         assertCode(request(
                         capabilities("camera", "inventory_transfer"), smelt,
-                        budget(120_000, 2_400, 0, 540, 6, 0, 0)),
+                        budget(120_000, 2_400, 0, 540, 7, 0, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
         assertCode(request(
                         capabilities("camera", "inventory_transfer"),
                         array(smeltKnownRecipe("smelt"), waitNode("after", 1)),
-                        budget(120_050, 2_401, 0, 540, 6, 0, 0)),
+                        budget(120_050, 2_401, 0, 540, 7, 0, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
     }
 
@@ -1049,13 +1059,13 @@ class ActionDslTest {
     @Test
     void parsesAndCompilesBoundedCropMaturityWait() {
         ActionDsl.Request request = ActionDslParser.parse(request(
-                capabilities(), waitUntil("await_mature", 12_000),
-                budget(600_000, 12_000, 0, 0)));
+                capabilities(), waitUntil("await_mature", 15_000),
+                budget(750_000, 15_000, 0, 0)));
 
         ActionDsl.WaitUntil wait = (ActionDsl.WaitUntil) request.program().body().getFirst();
         assertThat(wait.condition().target()).isEqualTo(new ActionDsl.Position(
                 "minecraft:overworld", 10, 65, 10));
-        assertThat(wait.maxTicks()).isEqualTo(12_000);
+        assertThat(wait.maxTicks()).isEqualTo(15_000);
         assertThat(ActionDslValidator.validate(request).requiredCapabilities()).isEmpty();
 
         var compiled = ActionDslCompiler.compile(
@@ -1064,7 +1074,7 @@ class ActionDslTest {
                     throw new AssertionError("wait_until must have an intrinsic cost");
                 },
                 Set.of());
-        var expected = new ActionDslCompiler.Cost(600_000, 12_000, 0, 0, 0, 0, 0);
+        var expected = new ActionDslCompiler.Cost(750_000, 15_000, 0, 0, 0, 0, 0);
         assertThat(compiled.worstCaseCost()).isEqualTo(expected);
         assertThat(compiled.primitiveCostBounds()).containsOnlyKeys("await_mature")
                 .containsEntry("await_mature", expected);
@@ -1073,12 +1083,12 @@ class ActionDslTest {
     @Test
     void rejectsOpenOrUnboundedCropMaturityWaits() {
         assertCode(request(capabilities(), waitNode("legacy_wait", 201),
-                        budget(600_000, 12_000, 0, 0)),
+                        budget(750_000, 15_000, 0, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
 
-        for (int maxTicks : new int[] {0, 12_001}) {
+        for (int maxTicks : new int[] {0, 15_001}) {
             assertCode(request(capabilities(), waitUntil("bad_ticks", maxTicks),
-                            budget(600_000, 12_000, 0, 0)),
+                            budget(750_000, 15_000, 0, 0)),
                     ActionDslException.Code.INVALID_ARGUMENT);
         }
 
@@ -1092,11 +1102,11 @@ class ActionDslTest {
         assertCode(request(capabilities(), open, budget(100, 2, 0, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
 
-        assertCode(request(capabilities(), waitUntil("long", 12_000),
-                        budget(600_001, 12_000, 0, 0)),
+        assertCode(request(capabilities(), waitUntil("long", 15_000),
+                        budget(750_001, 15_000, 0, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
-        assertCode(request(capabilities(), waitUntil("long", 12_000),
-                        budget(600_000, 12_001, 0, 0)),
+        assertCode(request(capabilities(), waitUntil("long", 15_000),
+                        budget(750_000, 15_001, 0, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
     }
 

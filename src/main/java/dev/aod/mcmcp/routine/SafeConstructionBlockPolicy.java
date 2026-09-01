@@ -4,16 +4,17 @@ import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 import dev.aod.mcmcp.observation.BlockPlan;
 import dev.aod.mcmcp.observation.BlockPlanStateTransformer;
 import dev.aod.mcmcp.observation.BlockStateView;
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.StandingAndWallBlockItem;
-import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 
 import java.util.Map;
 import java.util.Objects;
@@ -23,8 +24,9 @@ import java.util.Objects;
  *
  * <p>The allowlist is intentionally based on canonical vanilla registry ids rather than broad
  * class heuristics.  That keeps falling, fluid, redstone, dynamic, hazardous, multi-cell, and
- * neighbour-sensitive blocks outside the construction surface. Ladder and wall torch are the two
- * audited exceptions and still require an exact adjacent support witness.</p>
+ * neighbour-sensitive blocks outside the construction surface. The few audited partial shapes
+ * are state-limited by {@link SafeConstructionBlocks#allowsConstructionState(BlockState)} and
+ * still require an exact adjacent support witness.</p>
  */
 public final class SafeConstructionBlockPolicy {
     public static final String REJECTION_MESSAGE =
@@ -86,7 +88,7 @@ public final class SafeConstructionBlockPolicy {
         }
         Block block = registered.orElseThrow().value();
         for (BlockState candidate : block.getStateDefinition().getPossibleStates()) {
-            if (expected.equals(fingerprint(candidate)) && allowsLiveState(candidate, false)) {
+            if (expected.equals(fingerprint(candidate)) && allowsExpectedState(candidate, false)) {
                 return candidate;
             }
         }
@@ -95,6 +97,35 @@ public final class SafeConstructionBlockPolicy {
 
     /** Packet-adjacent defence in depth for the exact state selected by placement. */
     public static boolean allowsLiveState(BlockState state, boolean liveBlockEntityPresent) {
+        return allowsExpectedState(state, liveBlockEntityPresent)
+                && !(state.getBlock() instanceof DoorBlock);
+    }
+
+    /** Exact state accepted immediately beside one normal placement packet. */
+    public static boolean allowsPlacementState(
+            BlockState state, boolean liveBlockEntityPresent) {
+        return allowsExpectedState(state, liveBlockEntityPresent)
+                && (!(state.getBlock() instanceof DoorBlock) || supportedDoorPlacement(state));
+    }
+
+    public static void requirePlacementState(BlockState state, boolean liveBlockEntityPresent) {
+        if (!allowsPlacementState(state, liveBlockEntityPresent)) {
+            throw new UnsafeConstructionBlockException();
+        }
+    }
+
+    public static boolean supportedDoorPlacement(BlockState state) {
+        return state.is(Blocks.OAK_DOOR)
+                && state.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)
+                && state.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF)
+                        == DoubleBlockHalf.LOWER
+                && !state.getValue(BlockStateProperties.OPEN)
+                && !state.getValue(BlockStateProperties.POWERED)
+                && state.getFluidState().isEmpty();
+    }
+
+    private static boolean allowsExpectedState(
+            BlockState state, boolean liveBlockEntityPresent) {
         Objects.requireNonNull(state, "state");
         Block block = state.getBlock();
         Identifier identifier = BuiltInRegistries.BLOCK.getKey(block);
@@ -109,11 +140,8 @@ public final class SafeConstructionBlockPolicy {
                 && !(block instanceof EntityBlock)
                 && !state.hasBlockEntity()
                 && !liveBlockEntityPresent
-                && state.getFluidState().isEmpty()
                 && !state.canBeReplaced()
-                && (Block.isShapeFullBlock(state.getCollisionShape(
-                        EmptyBlockGetter.INSTANCE, BlockPos.ZERO))
-                        || SafeConstructionBlocks.isSurfaceAttachment(identifier.toString()));
+                && SafeConstructionBlocks.allowsConstructionState(state);
     }
 
     public static void requireLiveState(BlockState state, boolean liveBlockEntityPresent) {
@@ -134,6 +162,7 @@ public final class SafeConstructionBlockPolicy {
     private static boolean matchesPlacementItem(
             BlockState state, BlockItem item, String requiredItemId) {
         return item.getBlock() == state.getBlock()
+                && (!(state.getBlock() instanceof DoorBlock) || supportedDoorPlacement(state))
                 || state.is(Blocks.WALL_TORCH)
                         && "minecraft:torch".equals(requiredItemId)
                         && item instanceof StandingAndWallBlockItem;
