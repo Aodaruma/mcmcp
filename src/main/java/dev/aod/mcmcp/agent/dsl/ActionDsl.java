@@ -190,15 +190,32 @@ public final class ActionDsl {
     public record BlockPlanEntry(
             String id,
             Offset offset,
-            BlockStateSpec sourceState,
-            String item,
+            Optional<BlockStateSpec> sourceState,
+            Optional<String> item,
+            Optional<String> placementStateRef,
             PlacementSupport support) {
         public BlockPlanEntry {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(offset, "offset");
             Objects.requireNonNull(sourceState, "sourceState");
             Objects.requireNonNull(item, "item");
+            Objects.requireNonNull(placementStateRef, "placementStateRef");
             Objects.requireNonNull(support, "support");
+            boolean inline = sourceState.isPresent() && item.isPresent();
+            if (sourceState.isPresent() != item.isPresent()
+                    || inline == placementStateRef.isPresent()) {
+                throw new IllegalArgumentException(
+                        "construction entry must select inline source or placement_state_ref");
+            }
+        }
+
+        public BlockPlanEntry(
+                String id,
+                Offset offset,
+                BlockStateSpec sourceState,
+                String item,
+                PlacementSupport support) {
+            this(id, offset, Optional.of(sourceState), Optional.of(item), Optional.empty(), support);
         }
     }
 

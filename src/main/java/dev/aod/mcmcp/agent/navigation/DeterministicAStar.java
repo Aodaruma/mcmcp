@@ -14,7 +14,10 @@ import java.util.function.BooleanSupplier;
 
 /** Deterministic A* over an immutable Known Traversability Map snapshot. */
 public final class DeterministicAStar {
-    public static final double MAX_ROUTE_DISTANCE_BLOCKS = 32.0;
+    /** Largest possible flat centerline route after reserving the first-pose uncertainty. */
+    public static final double MAX_ROUTE_DISTANCE_BLOCKS =
+            NavigationDistanceBudget.MAX_ROUTED_DISTANCE_BLOCKS
+                    / NavigationDistanceBudget.TRAJECTORY_FACTOR;
     public static final int MAX_EXPANDED_NODES = 2_048;
     private static final double EPSILON = 1.0e-9;
 
@@ -70,7 +73,8 @@ public final class DeterministicAStar {
                 || !snapshot.dimension().equals(target.dimension())) {
             return SearchResult.failure(FailureReason.DIMENSION_MISMATCH, List.of());
         }
-        if (start.distanceTo(target) > MAX_ROUTE_DISTANCE_BLOCKS + EPSILON) {
+        if (!NavigationDistanceBudget.searchCostFits(
+                start.distanceTo(target) * NavigationDistanceBudget.TRAJECTORY_FACTOR)) {
             return SearchResult.failure(FailureReason.TARGET_TOO_FAR, List.of());
         }
         if (!snapshot.containsDestination(target)) {
@@ -86,7 +90,8 @@ public final class DeterministicAStar {
         var predecessor = new HashMap<NavCell, TraversabilityEdge>();
         var closed = new HashSet<NavCell>();
         var expanded = new ArrayList<NavCell>();
-        double initialHeuristic = start.distanceTo(target);
+        double initialHeuristic = start.distanceTo(target)
+                * NavigationDistanceBudget.TRAJECTORY_FACTOR;
         best.put(start, new Score(0, 0));
         open.add(new OpenNode(start, 0, initialHeuristic, 0));
 
@@ -114,9 +119,9 @@ public final class DeterministicAStar {
                 if (!edge.traversable() || !cornerClear(snapshot, edge)) continue;
                 NavCell next = edge.key().to();
                 if (closed.contains(next)) continue;
-                double candidateDistance = current.distance() + edge.key().length();
-                if (!Double.isFinite(candidateDistance)
-                        || candidateDistance > MAX_ROUTE_DISTANCE_BLOCKS + EPSILON) {
+                double candidateDistance = current.distance()
+                        + NavigationDistanceBudget.edgeCost(edge);
+                if (!NavigationDistanceBudget.searchCostFits(candidateDistance)) {
                     continue;
                 }
                 int candidateProbes = current.probeEdges() + (edge.requiresProbe() ? 1 : 0);
@@ -125,7 +130,8 @@ public final class DeterministicAStar {
 
                 best.put(next, new Score(candidateDistance, candidateProbes));
                 predecessor.put(next, edge);
-                double heuristic = next.distanceTo(target);
+                double heuristic = next.distanceTo(target)
+                        * NavigationDistanceBudget.TRAJECTORY_FACTOR;
                 open.add(new OpenNode(next, candidateDistance, heuristic, candidateProbes));
             }
         }

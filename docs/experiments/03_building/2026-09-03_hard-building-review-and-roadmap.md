@@ -48,6 +48,8 @@
 
 また、A*が許可する幾何経路長は最大32 blocksだが、実行予算は安全余裕として`geometric × 1.5 + vertical allowance`を使い、公開DSLの距離上限も32である。このため、返却・探索できるのに最大budgetでも受付不能な経路が存在する。いずれもLLMの再計画では回復できないAPI契約の問題である。
 
+今回のP0修正では公開`max_distance_blocks=32`を維持し、A*、`RoutePlan`、planner、executorを同じ実行距離式へ統一した。A*はfirst waypointまでのcell内位置ずれと抽象pose誤差を`1.5 × √6` blocksとして先に予約し、残る約28.33 blocksだけをcenterline trajectoryと垂直edge余裕へ使う。したがって平坦な整数cardinal経路は最大18 edgesであり、垂直edgeを含むほど上限は短くなる。これにより、安全余裕を削らず、A*が返す経路は許可された境界poseでも公開最大budgetへ収まる。同じfresh local frameが公開する半径6 blocks以内の全`navigation_target`が最大budgetで受付可能なことも契約試験で固定した。
+
 ### 4. 必要なsupport faceを選んで受け取れない
 
 内部frameは同じblockの複数面を保持するが、配信時はpositionごとに1面へ圧縮し、UP面を優先する。一方、constructionはsupportのexact faceを要求するため、実際には視認済みの側面が返却結果から落ち、LLMが位置替えと再観測を繰り返す場合がある。
@@ -56,7 +58,7 @@
 
 ### 5. 高低差を作る移動と仮設足場が閉じていない
 
-既存navigationは観測済みの既知経路を32 block以内で通れるが、frontier探索、full-blockのstep-up/down edge生成、複数blockのpillaring、足場新設、縁でのsneak bridgeは未実装である。run07では`NO_KNOWN_PATH`が39件、`TARGET_UNKNOWN`が30件、`pillar_up_known`は4回とも失敗した。
+既存navigationは、公開距離budget 32 blocksから開始pose reserveと垂直edge余裕を差し引いた範囲で観測済みの既知経路を通れるが、frontier探索、full-blockのstep-up/down edge生成、複数blockのpillaring、足場新設、縁でのsneak bridgeは未実装である。現在の平坦な整数cardinal経路上限は18 edgesである。run07では`NO_KNOWN_PATH`が39件、`TARGET_UNKNOWN`が30件、`pillar_up_known`は4回とも失敗した。
 
 建築では、目的物と同じくらい「どこに立てば置けるか」「そこへどう安全に行くか」が本体になる。この責務を毎回LLMへ座標列として合成させると、任意規模・高所施工には伸びない。
 
@@ -205,4 +207,4 @@ survey、材料、基礎、上部、屋根、cleanup/verifyへ予算を分け、
 - `LocalObservationVolume`で、到達済みcellへの評価済みedgeも公開recordへ残し、BFS queueへの重複追加だけを抑えるよう修正した。対角のcorner安全条件は変更していない。
 - 既存`agent_get_observation.filter`へ`faces`を追加した。代表面をposition単位へ圧縮する前に適用し、raw frame、観測半径、policy-visible範囲は変更していない。
 
-いずれもfocused unit/contract testと通常unit test suiteまで合格しているが、実ワールドの能力gateは未実施である。route/budget契約、`placement_state_ref`、構造化error、construction job以降は引き続き未実装である。
+既存のfocused unit/contract testと通常unit test suiteは合格済みである。今回さらに、成功配達したcopyable surfaceだけからbounded・world-session scopedな`placement_state_ref`を発行し、見本座標の60秒evidence TTLと設置identityを分離するvertical sliceを実装した。inline `source_state`+`item`とのexact one-of、ref解決後の既存SafeConstructionBlockPolicy、target/support/JIT検証は維持する。また、navigationの公開32 blocks、trajectory係数、垂直余裕、開始pose reserveを単一定義へ揃え、freshな公開targetとA*返却経路が最大budgetで受付不能になる契約不一致を解消した。追加分はremote Dockerでfocused 156件と`check`が成功し、最終P0修正後も関連focused suiteと`check`を再実行して成功した。実ワールドでは`navigation`、`faces-place`、`state-ref-ttl`の3 gateがfresh baselineとoffline oracle付きで合格した。途中で見つかったcontainer中心照準の遮蔽不具合も、配達済みvisible ray hitを内部adapterまで保持する修正後に再試験している。詳細は[construction capability gate記録](./2026-09-03_construction-capability-gate.md)を参照。Gate B、construction job、構造化error等は引き続き未実装である。

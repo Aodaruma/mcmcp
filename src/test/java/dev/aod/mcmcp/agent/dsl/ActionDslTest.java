@@ -141,7 +141,7 @@ class ActionDslTest {
         assertThat(plan.entries()).extracting(ActionDsl.BlockPlanEntry::id)
                 .containsExactly("entry_0", "entry_1");
         assertThat(plan.entries().getFirst().sourceState())
-                .isEqualTo(new ActionDsl.BlockStateSpec(
+                .contains(new ActionDsl.BlockStateSpec(
                         "minecraft:oak_log", Map.of("axis", "y")));
         assertThat(plan.entries().get(1).support().dependencyEntryId())
                 .contains("entry_0");
@@ -158,6 +158,53 @@ class ActionDslTest {
                 new ActionDslCompiler.Cost(30_000, 600, 0, 160, 0, 0, 2));
         assertThat(compiled.primitiveCostBounds()).containsEntry(
                 "copy", new ActionDslCompiler.Cost(30_000, 600, 0, 160, 0, 0, 2));
+    }
+
+    @Test
+    void parsesOpaquePlacementStateRefAsAnExactAlternativeToInlineIdentity() {
+        JsonObject node = applyKnownBlockPlan("copy", 1);
+        JsonObject entry = node.getAsJsonArray("entries").get(0).getAsJsonObject();
+        entry.remove("source_state");
+        entry.remove("item");
+        entry.addProperty("placement_state_ref", "psr_0123456789abcdef0123456789abcdef");
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "block_place"), node,
+                budget(15_000, 300, 0, 80, 0, 0, 2)));
+
+        var plan = (ActionDsl.ApplyKnownBlockPlan) request.program().body().getFirst();
+        assertThat(plan.entries().getFirst().sourceState()).isEmpty();
+        assertThat(plan.entries().getFirst().item()).isEmpty();
+        assertThat(plan.entries().getFirst().placementStateRef())
+                .contains("psr_0123456789abcdef0123456789abcdef");
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(
+                        ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_PLACE);
+        assertThat(ActionDslCompiler.compile(
+                        request,
+                        ignored -> Optional.empty(),
+                        Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_PLACE))
+                .worstCaseCost().blocksPlaced()).isEqualTo(2);
+
+        assertThat(ActionDslCompiler.compile(
+                        request,
+                        ignored -> Optional.of(
+                                ActionDslCompiler.intrinsicKnownBlockPlanCost(1, 1)),
+                        Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_PLACE))
+                .worstCaseCost().blocksPlaced()).isEqualTo(1);
+
+        entry.add("source_state", blockState("minecraft:oak_planks"));
+        entry.addProperty("item", "minecraft:oak_planks");
+        assertCode(request(
+                        capabilities("camera", "block_place"), node,
+                        budget(15_000, 300, 0, 80, 0, 0, 1)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        entry.add("source_state", JsonNull.INSTANCE);
+        entry.add("item", JsonNull.INSTANCE);
+        assertCode(request(
+                        capabilities("camera", "block_place"), node,
+                        budget(15_000, 300, 0, 80, 0, 0, 1)),
+                ActionDslException.Code.INVALID_ARGUMENT);
     }
 
     @Test

@@ -844,7 +844,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return;
         }
         var target = state.parameters.target();
-        Vec3 point = new Vec3(target.x() + 0.5D, target.y() + 0.5D, target.z() + 0.5D);
+        Vec3 point = state.aimPoint;
         state.view.turnToward(minecraft, point);
         if (state.view.aligned(minecraft, point)
                 && minecraft.hitResult instanceof BlockHitResult hit
@@ -1304,6 +1304,29 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             throw new IllegalArgumentException(name + " must be a finite number");
         }
         return number.doubleValue();
+    }
+
+    static Vec3 inventoryAimPoint(PhaseFiveRequest request, BlockTarget target) {
+        Object raw = request.parameters().get("aim_point");
+        if (raw == null) {
+            return new Vec3(target.x() + 0.5D, target.y() + 0.5D, target.z() + 0.5D);
+        }
+        Map<String, Object> point = map(raw, "aim_point");
+        if (!point.keySet().equals(java.util.Set.of("dimension", "x", "y", "z"))) {
+            throw new IllegalArgumentException("aim_point fields are invalid");
+        }
+        if (!target.dimension().equals(string(point.get("dimension"), "aim_point.dimension"))) {
+            throw new IllegalArgumentException("aim_point dimension does not match target");
+        }
+        double x = finiteNumber(point.get("x"), "aim_point.x");
+        double y = finiteNumber(point.get("y"), "aim_point.y");
+        double z = finiteNumber(point.get("z"), "aim_point.z");
+        if (x < target.x() || x > target.x() + 1.0D
+                || y < target.y() || y > target.y() + 1.0D
+                || z < target.z() || z > target.z() + 1.0D) {
+            throw new IllegalArgumentException("aim_point is outside its target block");
+        }
+        return new Vec3(x, y, z);
     }
 
     private static BlockHitResult exactHit(Minecraft minecraft, BlockTarget target) {
@@ -1934,6 +1957,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     private static final class AttemptState {
         private final PhaseFiveRequest request;
         private final ParsedParameters parameters;
+        private final Vec3 aimPoint;
         private Stage stage = Stage.OPENING_INITIAL;
         private ClientRecipeCatalog.ResolvedRecipe recipe;
         private RoutineFailure failure;
@@ -1968,6 +1992,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private AttemptState(PhaseFiveRequest request, ParsedParameters parameters) {
             this.request = Objects.requireNonNull(request, "request");
             this.parameters = Objects.requireNonNull(parameters, "parameters");
+            this.aimPoint = inventoryAimPoint(request, parameters.target());
         }
 
         private boolean terminal() {

@@ -10,6 +10,7 @@ import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.ObservationValues;
+import dev.aod.mcmcp.agent.observation.PlacementStateResolver;
 import dev.aod.mcmcp.brewing.StandardPotionStackSpec;
 import dev.aod.mcmcp.redstone.RedstoneSpec;
 import net.minecraft.world.phys.Vec3;
@@ -330,6 +331,76 @@ class AgentPrimitivePlannerTest {
                         Map.of("axis", "y"),
                         0L)))),
                 4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+    }
+
+    @Test
+    void placementStateRefNeedsNoSourceCoordinateButKeepsCurrentSupportProof() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var support = new ActionDsl.Position(DIMENSION, 0, 64, 2);
+        var target = new ActionDsl.Position(DIMENSION, 0, 65, 2);
+        var expectedSupport = new ActionDsl.BlockStateSpec(
+                "minecraft:oak_log", Map.of("axis", "x"));
+        String ref = "psr_0123456789abcdef0123456789abcdef";
+        var plan = new ActionDsl.ApplyKnownBlockPlan(
+                "copy",
+                target,
+                new ActionDsl.BlockPlanTransform(
+                        ActionDsl.BlockPlanRotation.DEGREES_0,
+                        ActionDsl.BlockPlanMirror.NONE),
+                List.of(new ActionDsl.BlockPlanEntry(
+                        "cell",
+                        new ActionDsl.Offset(0, 0, 0),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.of(ref),
+                        new ActionDsl.PlacementSupport(
+                                support,
+                                ActionDsl.BlockFace.UP,
+                                Optional.of(expectedSupport),
+                                Optional.empty()))));
+        var program = new ActionDsl.Program(
+                1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_PLACE),
+                List.of(plan));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+        var remembered = new PlacementStateResolver.PlacementState(
+                new ObservationRecord.BlockStateView(
+                        new ObservationValues.ResourceId("minecraft:oak_planks"), Map.of()),
+                new ObservationValues.ResourceId("minecraft:oak_planks"));
+
+        var accepted = AgentPrimitivePlanner.analyze(
+                program,
+                map,
+                new DeterministicAStar(),
+                pose,
+                Optional.of(frame(List.of(surfaceWithState(
+                        support, ObservationRecord.Face.UP,
+                        "minecraft:oak_log", Map.of("axis", "x"), 0L)))),
+                4.5F,
+                map.worldRevision(),
+                ignored -> map.worldRevision(),
+                () -> true,
+                candidate -> candidate.equals(ref)
+                        ? Optional.of(remembered) : Optional.empty());
+
+        assertThat(accepted.worstCase(plan))
+                .contains(ActionDslCompiler.intrinsicKnownBlockPlanCost(1));
+        assertThat(accepted.knownSurfaces())
+                .extracting(AgentPrimitivePlanner.KnownSurface::position)
+                .containsExactly(support);
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(), pose,
+                Optional.of(frame(List.of(surfaceWithState(
+                        support, ObservationRecord.Face.UP,
+                        "minecraft:oak_log", Map.of("axis", "x"), 0L)))),
+                4.5F, map.worldRevision(), ignored -> map.worldRevision(),
+                () -> true, PlacementStateResolver.none()))
                 .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
                 .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
                 .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
@@ -1552,7 +1623,7 @@ class AgentPrimitivePlannerTest {
         assertThat(analysis.primitiveCosts().get("take").interactions()).isEqualTo(3);
         assertThat(analysis.primitiveCosts().get("take").ticks())
                 .isEqualTo(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
-        assertThat(analysis.mutationAims()).containsKey("open").doesNotContainKeys("inspect", "take");
+        assertThat(analysis.mutationAims()).containsKeys("open", "inspect", "take");
 
         assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
                 program, map, new DeterministicAStar(),
@@ -1633,7 +1704,7 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
-    void containerCostUsesTheAdaptersBlockCenterRatherThanTheAdmissionRayHit() {
+    void containerCostAndRuntimeAimUseVisibleUpRayHitWhenCenterMayBeOccluded() {
         UUID session = UUID.randomUUID();
         var map = map(session).snapshot().orElseThrow();
         var chest = new ActionDsl.Position(DIMENSION, 3, 64, 0);
@@ -1653,16 +1724,19 @@ class AgentPrimitivePlannerTest {
                 new DeterministicAStar(),
                 pose,
                 Optional.of(frame(
-                        chest, ObservationRecord.Face.WEST, "minecraft:chest", 0)),
+                        chest, ObservationRecord.Face.UP, "minecraft:chest", 0)),
                 4.5F);
 
         var actual = analysis.primitiveCosts().get("inspect");
         var centerCost = AgentPrimitivePlanner.mutationCost(
                 pose, new Vec3(3.5D, 64.5D, 0.5D), 4.5F, 1, 0, 0);
         var rayHitCost = AgentPrimitivePlanner.mutationCost(
-                pose, new Vec3(3.0D, 64.5D, 0.5D), 4.5F, 1, 0, 0);
-        assertThat(actual.cameraDegrees()).isEqualTo(centerCost.cameraDegrees());
-        assertThat(actual.cameraDegrees()).isNotEqualTo(rayHitCost.cameraDegrees());
+                pose, new Vec3(3.5D, 65.0D, 0.5D), 4.5F, 1, 0, 0);
+        assertThat(actual.cameraDegrees()).isEqualTo(rayHitCost.cameraDegrees());
+        assertThat(actual.cameraDegrees()).isNotEqualTo(centerCost.cameraDegrees());
+        assertThat(analysis.mutationAims().get("inspect"))
+                .isEqualTo(new AgentPrimitivePlanner.MutationAim(
+                        chest, ActionDsl.BlockFace.UP, new Vec3(3.5D, 65.0D, 0.5D)));
         assertThat(actual.durationMillis()).isEqualTo(30_000L);
         assertThat(actual.ticks()).isEqualTo(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
         assertThat(AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND).isEqualTo(400L);

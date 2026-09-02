@@ -15,6 +15,8 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
 
 /** Exact snake-case projection used by the checked-in MCP tool catalog. */
 public final class ObservationWireMapper {
@@ -42,9 +44,13 @@ public final class ObservationWireMapper {
                 "recent_sound_clues_truncated", summary.recentSoundCluesTruncated());
     }
 
-    public static Map<String, Object> page(ObservationPage page) {
+    public static Map<String, Object> page(
+            ObservationPage page,
+            Function<VisibleSurface, String> placementStateRefs) {
+        Objects.requireNonNull(page, "page");
+        Objects.requireNonNull(placementStateRefs, "placementStateRefs");
         List<Map<String, Object>> records = page.records().stream()
-                .map(ObservationWireMapper::record)
+                .map(record -> record(record, placementStateRefs))
                 .toList();
         return map(
                 "schema_version", page.schemaVersion(),
@@ -57,8 +63,15 @@ public final class ObservationWireMapper {
     }
 
     public static Map<String, Object> record(ObservationRecord record) {
+        return record(record, ignored -> null);
+    }
+
+    private static Map<String, Object> record(
+            ObservationRecord record,
+            Function<VisibleSurface, String> placementStateRefs) {
         return switch (record) {
-            case VisibleSurface surface -> visibleSurface(surface);
+            case VisibleSurface surface ->
+                    visibleSurface(surface, placementStateRefs.apply(surface));
             case VisibleEntity entity -> visibleEntity(entity);
             case Traversability edge -> map(
                     "kind", edge.kind().wireName(),
@@ -112,7 +125,8 @@ public final class ObservationWireMapper {
                 "z", position.z());
     }
 
-    private static Map<String, Object> visibleSurface(VisibleSurface surface) {
+    private static Map<String, Object> visibleSurface(
+            VisibleSurface surface, String placementStateRef) {
         var result = new LinkedHashMap<String, Object>();
         result.put("kind", surface.kind().wireName());
         result.put("position", blockPosition(surface.position()));
@@ -123,6 +137,7 @@ public final class ObservationWireMapper {
                 "properties", surface.state().properties()));
         result.put("placement_item", surface.placementItem() == null
                 ? null : surface.placementItem().value());
+        result.put("placement_state_ref", placementStateRef);
         result.put("shape_class", surface.shapeClass().wireName());
         if (surface.cropMature() != null) result.put("crop_mature", surface.cropMature());
         result.put("eye_origin", worldPosition(surface.eyeOrigin()));

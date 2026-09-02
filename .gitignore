@@ -12,6 +12,7 @@
 local.properties
 *.local.*
 /secrets/
+/.codex-temp/
 
 # Local MCP credentials
 /config/mcmcp/mcp-token

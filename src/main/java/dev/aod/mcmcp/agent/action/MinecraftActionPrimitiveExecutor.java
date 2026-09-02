@@ -3,6 +3,7 @@ package dev.aod.mcmcp.agent.action;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.NavCell;
+import dev.aod.mcmcp.agent.navigation.NavigationDistanceBudget;
 import dev.aod.mcmcp.agent.navigation.RoutePlan;
 import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
@@ -62,7 +63,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         if (!Double.isFinite(tolerance) || tolerance < 0.1D || tolerance > 1.5D) {
             throw new IllegalArgumentException("navigation tolerance must be within 0.1..1.5");
         }
-        if (route.distanceBlocks() > 32.0D) {
+        if (!NavigationDistanceBudget.searchCostFits(
+                NavigationDistanceBudget.centerlineRouteCost(route))) {
             throw new IllegalArgumentException("navigation route exceeds the Action DSL limit");
         }
         navigation = new NavigateState(route, tolerance);

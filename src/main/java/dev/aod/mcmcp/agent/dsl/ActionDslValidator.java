@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.agent.dsl;
 
+import dev.aod.mcmcp.agent.navigation.NavigationDistanceBudget;
 import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.redstone.RedstoneSpec;
 
@@ -42,6 +43,8 @@ public final class ActionDslValidator {
     private static final Pattern RESOURCE_LOCATION =
             Pattern.compile("[a-z0-9_.-]+:[a-z0-9_./-]+");
     private static final Pattern OPAQUE_REFERENCE = Pattern.compile("[A-Za-z0-9_-]{24}");
+    private static final Pattern PLACEMENT_STATE_REF =
+            Pattern.compile("psr_[0-9a-f]{32}");
     private static final Pattern SHA256_FINGERPRINT = Pattern.compile("sha256:[0-9a-f]{64}");
     private static final Pattern BLOCK_PROPERTY_NAME = Pattern.compile("[a-z0-9_]{1,64}");
     private static final Pattern BLOCK_PROPERTY_VALUE = Pattern.compile("[a-z0-9_.-]{1,64}");
@@ -134,7 +137,9 @@ public final class ActionDslValidator {
         requireRange(budget.maxDurationMillis(), 100, MAX_ACTION_DURATION_MILLIS,
                 "budget.max_duration_ms");
         requireRange(budget.maxTicks(), 2, MAX_ACTION_TICKS, "budget.max_ticks");
-        requireFiniteRange(budget.maxDistanceBlocks(), 0, 32, "budget.max_distance_blocks");
+        requireFiniteRange(
+                budget.maxDistanceBlocks(), 0, NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
+                "budget.max_distance_blocks");
         requireFiniteRange(
                 budget.maxCameraDegrees(), 0, MAX_ACTION_CAMERA_DEGREES,
                 "budget.max_camera_degrees");
@@ -333,8 +338,13 @@ public final class ActionDslValidator {
                 if (!distinctTargets.add(target)) {
                     throw invalid(path + ".entries must produce distinct transformed targets");
                 }
-                validateBlockState(entry.sourceState(), entryPath + ".source_state");
-                requireResourceLocation(entry.item(), entryPath + ".item");
+                entry.sourceState().ifPresent(state ->
+                        validateBlockState(state, entryPath + ".source_state"));
+                entry.item().ifPresent(item ->
+                        requireResourceLocation(item, entryPath + ".item"));
+                entry.placementStateRef().ifPresent(ref ->
+                        requirePattern(ref, PLACEMENT_STATE_REF,
+                                entryPath + ".placement_state_ref"));
 
                 ActionDsl.PlacementSupport support = entry.support();
                 validatePosition(support.position(), entryPath + ".support.position");

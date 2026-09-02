@@ -148,6 +148,39 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void observationConfirmationWaitsForRuntimeActivationBeforeReturning() throws Exception {
+        UUID receiptId = UUID.fromString("550e8400-e29b-41d4-a716-446655440001");
+        var confirmationSubmitted = new CountDownLatch(1);
+        var confirmation = new CompletableFuture<McpRuntimePort.RuntimeReply>();
+        var registry = new McmcpToolRegistry((command, context) -> {
+            if (command instanceof McpRuntimePort.GetObservation) {
+                return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(
+                        toolResult(command),
+                        new McpRuntimePort.ObservationDeliveryReceipt(receiptId)));
+            }
+            if (command instanceof McpRuntimePort.ConfirmObservationDelivery) {
+                confirmationSubmitted.countDown();
+                return confirmation;
+            }
+            return CompletableFuture.completedFuture(
+                    McpRuntimePort.RuntimeReply.success(toolResult(command)));
+        }, Duration.ofSeconds(1));
+        var observation = JsonParser.parseString("""
+                {"schema_version":1,"frame_id":"obs-0000000000000000",
+                 "kinds":["visible_surface"],"cursor":null,"limit":1}
+                """).getAsJsonObject();
+        var delivered = registry.prepareCall("agent_get_observation", observation);
+
+        CompletableFuture<Void> awaiting = CompletableFuture.runAsync(
+                () -> registry.confirmDelivery(delivered));
+        assertThat(confirmationSubmitted.await(1, TimeUnit.SECONDS)).isTrue();
+        assertThat(awaiting.isDone()).isFalse();
+
+        confirmation.complete(McpRuntimePort.RuntimeReply.success(Map.of("confirmed", true)));
+        awaiting.get(1, TimeUnit.SECONDS);
+    }
+
+    @Test
     void shippedCatalogIsTheNormativeFileAndHasTheFixedFiveTools() throws Exception {
         var file = JsonParser.parseReader(Files.newBufferedReader(
                 Path.of(System.getProperty("mcmcp.projectDir"), "docs", "MCMCP_MCP_Tool_Catalog.json"),

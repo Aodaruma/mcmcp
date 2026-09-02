@@ -765,13 +765,13 @@ semantic action、stationary break、block plan、Phase 5 world adapterで共有
 
 `collect_visible_item_batch`は2〜8件をlisted orderのまま保持する第一級の有限batch nodeである。batch開始時にitem種別ごとのplayer inventory絶対個数baselineを1回だけ固定する。各entryは通常の`collect_visible_item`と同じfresh visible entity、連続値XYZ、既知安全pickup cell、移動中再検証を要求する。先行entryへの移動中に後続entryのfresh policy-visible AABBとplayer pickup areaの実接触を確認し、その後に対応itemのinventory絶対個数増加を確認できた場合だけ、当該後続entryを`incidentally_collected`としてcreditできる。単なるwitness消失、merge、移動、近接や推定では成功にしない。listed orderの途中で接触・差分proof、経路、budgetのいずれかが不足した場合はAction全体をfail-fastで終了し、未開始entryをskip・置換・再順序化しない。
 
-`apply_known_block_plan`はPhase 3の初回vertical sliceであり、wire shapeを`{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,source_state,item,support:{position,face,expected_state,dependency_entry_id}}]}`へ閉じる。entryは1〜8件、offset各軸は-8〜8、entry IDと変換後targetはnode内で一意とする。`anchor`とsupportはdimension-qualified block座標で、変換後targetは`anchor + transform(offset)`だけから決定する。`mirror=none|x|z`を先に適用し、`x`はMinecraft `FRONT_BACK`と同じeast/west反転、`z`は`LEFT_RIGHT`と同じnorth/south反転とする。その後`rotation=0|90|180|270`のY軸時計回り回転を適用する。offsetと`source_state`は同じtransformを通し、方向propertyをLLMへ変換させない。
+`apply_known_block_plan`はPhase 3の初回vertical sliceであり、wire shapeを`{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}`へ閉じる。移行互換として各entryは`placement_state_ref`または旧`source_state`+`item`のexact one-ofを受ける。entryは1〜8件、offset各軸は-8〜8、entry IDと変換後targetはnode内で一意とする。`anchor`とsupportはdimension-qualified block座標で、変換後targetは`anchor + transform(offset)`だけから決定する。`mirror=none|x|z`を先に適用し、`x`はMinecraft `FRONT_BACK`と同じeast/west反転、`z`は`LEFT_RIGHT`と同じnorth/south反転とする。その後`rotation=0|90|180|270`のY軸時計回り回転を適用する。offsetとrefが解決した完全stateは同じtransformを通し、方向propertyをLLMへ変換させない。
 
 唯一のmulti-cell例外は、閉じた未通電の`minecraft:oak_door` lower halfである。1 entryの通常useが生成するupper halfもAction boundsと事前air観測へ含め、同一prediction sequenceに対するlower / upper別々のserver-verified stateが完全一致した場合だけ成功する。upper halfは別entryにせず、door entryは`max_blocks_placed`を2消費する。doorはsupport、pillar、clearには使わない。
 
 `clear_known_block_plan`は同じ`anchor` / `transform`と1〜8件の`{id,offset,expected_before}`だけを受け取る。targetの返却済み完全stateとconstruction policyをplanner・packet直前・heartbeatで再検証し、既存`BREAK_TO_AIR`経路で入力順に撤去する。成功条件は全targetのfreshなair再観測であり、置換はそのterminal後に再観測を挟んだ別Actionの`apply_known_block_plan`とする。
 
-各`source_state`は`placement_item != null`だった可視sourceの完全`visible_surface.state`を無変換コピーし、`item`も同じrecordの`placement_item`をコピーする。runtimeはregistered BlockState定義に対してpropertyの欠落・余分・不正値を入力前に拒否し、MinecraftのBlockState mirror / rotation実装で完全stateを一意に変換する。入力値、未知property名、欠落property名は公開診断へ反射しない。BlockEntity / NBT、fluid、gravity block、container、portal、command block、通常BlockItem設置で完全stateを再現できないblockは`placement_item=null`とし、このnodeへ入れられない。
+`placement_state_ref`は、MCP responseの成功書き込みが確認された`placement_item != null`の可視surfaceだけからstate+item identityへ発行する推測困難なopaque値である。成功書き込み後のconfirmation処理は完了を待ってからHTTP exchangeを閉じ、直後のAction受付とref有効化が競合しないようにする。最大512 identityを決定的にbounded保持し、座標surfaceの60秒TTLでは失効せず、world-session遷移で全消去する。refは見本座標の再訪を不要にするだけで、target、既存support、ray、player pose、hazardは短期証拠とpacket直前の再検証を維持する。移行用inline形式では完全`visible_surface.state`を`source_state`へ、同recordの`placement_item`を`item`へ無変換コピーする。runtimeはどちらもregistered BlockState定義に対してpropertyの欠落・余分・不正値を入力前に拒否し、MinecraftのBlockState mirror / rotation実装で完全stateを一意に変換する。受付時のcompilerは有効なrefを解決してordinary=1 / oak-door=2のplacement footprintを確定し、未解決refには安全側の2 cell上限を使って過小評価を防ぎ、budget不足またはplannerの`TARGET_UNKNOWN`で拒否する。BlockEntity / NBT、fluid、gravity block、container、portal、command block、通常BlockItem設置で完全stateを再現できないblockは`placement_item=null`とし、refも発行しない。
 
 `support.expected_state`と`support.dependency_entry_id`は両方をfieldとして必須にし、exactly-oneだけ非nullとする。現在blockをsupportにするentryは、`state != null`である最新policy-visible surfaceの完全stateを`expected_state`へコピーし、dependencyをnullにする。先行設置をsupportにするentryはexpected stateをnullにし、入力順で先行するentry IDだけをdependencyへ指定する。この場合`support.position`はその先行entryの変換後targetと完全一致しなければならない。どちらも`support.position`から`face`方向へ1 block隣が当該entry targetであることを静的検証する。未開始・後続・外部ID、暗黙の近傍探索、未観測supportは認めない。
 
@@ -1095,7 +1095,7 @@ camera costは解析的なyaw/pitch誤差に加え、Vanillaの`player.turn`が0
 
 対応:
 
-- 5〜32 block
+- `max_distance_blocks`の公開上限は32 block。A*は検索時に未知な開始cell内の実poseと誤差のため`1.5 × √6`（約3.67 block）を先取りし、残る約28.33 blockを`1.5 × centerline edge length + 垂直edgeごとに1.5`で消費する。このため平坦なcardinal経路は最大18 edgeで、垂直edgeを含む経路はさらに短い。A*がこの上限内で返すfreshな経路は、開始poseが規定envelope内なら、単独primitiveのdistance componentについて公開最大budget 32で静的受付可能でなければならない
 - 同一dimension
 - CONFIRMEDまたは条件を満たすPROBE_ALLOWED edge
 - 同一高さの通常歩行と、既知edge上のslab、stairs

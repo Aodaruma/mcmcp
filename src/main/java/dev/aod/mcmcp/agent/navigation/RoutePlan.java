@@ -108,7 +108,7 @@ public record RoutePlan(
         return new ActionDslCompiler.Cost(
                 durationMillisUpperBound,
                 tickUpperBound,
-                distanceBlocks,
+                NavigationDistanceBudget.centerlineRouteCost(this),
                 0,
                 0,
                 0,

@@ -228,7 +228,7 @@ public final class McmcpToolRegistry {
                             new McpRuntimePort.ConfirmActionDelivery(action.actionId()),
                             prepared.evaluationLeaseExpectation());
             case McpRuntimePort.ObservationDeliveryReceipt observation ->
-                    submitDelivery(
+                    submitDeliveryAndAwait(
                             new McpRuntimePort.ConfirmObservationDelivery(
                                     observation.receiptId()),
                             prepared.evaluationLeaseExpectation());
@@ -266,6 +266,26 @@ public final class McmcpToolRegistry {
         try {
             runtimePort.submit(command, context);
         } catch (RuntimeException failure) {
+            context.cancel();
+        }
+    }
+
+    /**
+     * Keeps delivery-derived opaque refs from racing the client's immediately following call.
+     * The HTTP layer invokes this only after the response body was written successfully.
+     */
+    private void submitDeliveryAndAwait(
+            McpRuntimePort.RuntimeCommand command,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation) {
+        RuntimeCallContext context = RuntimeCallContext.withTimeout(
+                runtimeDispatchTimeout, evaluationLeaseExpectation);
+        try {
+            runtimePort.submit(command, context).toCompletableFuture()
+                    .get(context.remainingNanos(), TimeUnit.NANOSECONDS);
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            context.cancel();
+        } catch (ExecutionException | TimeoutException | RuntimeException failure) {
             context.cancel();
         }
     }

@@ -91,7 +91,7 @@ class ObservationModelContractTest {
         assertThat(matches(summarySchema, gson.toJsonTree(
                 ObservationWireMapper.summary(frame.summary())))).isTrue();
         assertThat(matches(observationSchema, gson.toJsonTree(
-                ObservationWireMapper.page(page)))).isTrue();
+                ObservationWireMapper.page(page, ignored -> null)))).isTrue();
 
         @SuppressWarnings("unchecked")
         Map<String, Object> traversability = (Map<String, Object>) ObservationWireMapper.record(records.get(2));
@@ -245,11 +245,13 @@ class ObservationModelContractTest {
         var page = new ObservationPage(
                 "obs-0000000000000001", 10, false, List.of(surface), null);
         assertThat(matches(observationSchema, gson.toJsonTree(
-                ObservationWireMapper.page(page)))).isTrue();
+                ObservationWireMapper.page(
+                        page, ignored -> "psr_0123456789abcdef0123456789abcdef"))))
+                .isTrue();
         var hiddenPage = new ObservationPage(
                 "obs-0000000000000002", 10, false, List.of(surface(10, 0)), null);
         JsonObject invalidWire = gson.toJsonTree(
-                ObservationWireMapper.page(hiddenPage)).getAsJsonObject();
+                ObservationWireMapper.page(hiddenPage, ignored -> null)).getAsJsonObject();
         invalidWire.getAsJsonArray("records").get(0).getAsJsonObject()
                 .addProperty("placement_item", "minecraft:stone");
         assertThat(matches(observationSchema, invalidWire)).isFalse();

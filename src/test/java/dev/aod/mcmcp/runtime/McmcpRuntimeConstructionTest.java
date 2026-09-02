@@ -2,7 +2,11 @@ package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
+import dev.aod.mcmcp.agent.observation.ObservationRecord;
+import dev.aod.mcmcp.agent.observation.ObservationValues;
+import dev.aod.mcmcp.agent.observation.PlacementStateResolver;
 import dev.aod.mcmcp.observation.BlockPlanValidationException;
+import dev.aod.mcmcp.routine.SafeConstructionBlockPolicy;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -116,6 +120,57 @@ class McmcpRuntimeConstructionTest {
         assertThat(ActionDslCompiler.knownBlockPlanPlacements(plan)).isEqualTo(2);
         assertThat(ActionDslCompiler.intrinsicKnownBlockPlanCost(1, 2).blocksPlaced())
                 .isEqualTo(2);
+    }
+
+    @Test
+    void resolvesOpaquePlacementStateBeforeApplyingConstructionSafetyPolicy() {
+        String ref = "psr_0123456789abcdef0123456789abcdef";
+        var plan = new ActionDsl.ApplyKnownBlockPlan(
+                "copy",
+                position(0, 65, 0),
+                new ActionDsl.BlockPlanTransform(
+                        ActionDsl.BlockPlanRotation.DEGREES_90,
+                        ActionDsl.BlockPlanMirror.NONE),
+                List.of(new ActionDsl.BlockPlanEntry(
+                        "base",
+                        new ActionDsl.Offset(0, 0, 0),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.of(ref),
+                        new ActionDsl.PlacementSupport(
+                                position(0, 64, 0),
+                                ActionDsl.BlockFace.UP,
+                                Optional.of(new ActionDsl.BlockStateSpec(
+                                        "minecraft:stone", Map.of())),
+                                Optional.empty()))));
+        var remembered = new PlacementStateResolver.PlacementState(
+                new ObservationRecord.BlockStateView(
+                        new ObservationValues.ResourceId("minecraft:oak_log"),
+                        Map.of("axis", "x")),
+                new ObservationValues.ResourceId("minecraft:oak_log"));
+
+        var request = McmcpRuntime.constructionRequest(
+                plan, candidate -> candidate.equals(ref)
+                        ? Optional.of(remembered) : Optional.empty());
+
+        assertThat(request.entries()).singleElement().satisfies(step -> {
+            assertThat(step.expectedAfter().blockId()).isEqualTo("minecraft:oak_log");
+            assertThat(step.expectedAfter().properties()).containsEntry("axis", "z");
+            assertThat(step.requiredItemId()).contains("minecraft:oak_log");
+        });
+        assertThatThrownBy(() -> McmcpRuntime.constructionRequest(
+                plan, PlacementStateResolver.none()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("placement_state_ref is unknown");
+
+        var unsafe = new PlacementStateResolver.PlacementState(
+                new ObservationRecord.BlockStateView(
+                        new ObservationValues.ResourceId("minecraft:tnt"),
+                        Map.of("unstable", "false")),
+                new ObservationValues.ResourceId("minecraft:tnt"));
+        assertThatThrownBy(() -> McmcpRuntime.constructionRequest(
+                plan, ignored -> Optional.of(unsafe)))
+                .isInstanceOf(SafeConstructionBlockPolicy.UnsafeConstructionBlockException.class);
     }
 
     @Test

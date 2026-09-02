@@ -29,7 +29,7 @@
 
 `position_bounds`は任意center/radius scanではありません。surfaceはblock position、entity等は`floor(position)`、traversabilityは返却済み`navigation_target`を基準に除外します。
 
-各`visible_surface`はrequired nullableな`state`と`placement_item`を返します。`state={block,properties}`が非nullなのは、閉じた建築copy allowlist、既存support用の`minecraft:dirt` / `minecraft:grass_block` / `minecraft:obsidian`、精錬target用の`minecraft:furnace` / `minecraft:blast_furnace` / `minecraft:smoker`だけで、その場合は登録propertyを省略しない完全なBlockStateです。それ以外は見た目から判別不能なpropertyを渡さないため`state=null`です。`placement_item`が非nullなら`state`も必ず非nullで、建築コピーではそのsurfaceの`state`を`source_state`へ、`placement_item`を`item`へそのままコピーします。
+各`visible_surface`はrequired nullableな`state`、`placement_item`、`placement_state_ref`を返します。`state={block,properties}`が非nullなのは、閉じた建築copy allowlist、既存support用の`minecraft:dirt` / `minecraft:grass_block` / `minecraft:obsidian`、精錬target用の`minecraft:furnace` / `minecraft:blast_furnace` / `minecraft:smoker`だけで、その場合は登録propertyを省略しない完全なBlockStateです。それ以外は見た目から判別不能なpropertyを渡さないため`state=null`です。`placement_item`が非nullなら三者とも非nullです。`placement_state_ref`は成功配達したstate+itemだけから作るboundedなworld-session内の記憶で、座標surfaceの60秒TTL後も使えますが、target・support・poseの証拠を延長しません。
 
 `agent_get_state.standard_potions`は、自分のinventory内で標準Vanilla potionとcomponentが完全一致する1本stackだけを検証し、複数slot分を`{item,potion,count}`で集計します。従来の`inventory` item-ID集計も維持されますが、water / awkward / strength等は同じitem IDなので、醸造の宣言には`standard_potions`を使います。custom color / effect / name / lore等を持つstackや不可能な複数本stackは詳細を公開せず、この一覧から除外します。
 
@@ -44,12 +44,14 @@
 | 移動 | `traversability.navigation_target` | `navigate_to_known.target` | `from` / `to`のfloor・round、surfaceから立ち位置を推測 |
 | visible blockへの接近 | `visible_surface.position`と`block` | `approach_known_surface.target`と`expected_block` | block座標からfeet-spaceを推測、接近後の再観測を省略 |
 | block操作 | `visible_surface.position` | 各block nodeの`target` / `support` | block座標を中心座標へ変換 |
-| 建築copy state | `visible_surface.state`と`placement_item` | plan entryの`source_state`と`item` | `facing`、`axis`、`rotation`等をLLM側で回転・mirror変換 |
+| 建築copy state | `visible_surface.placement_state_ref`（推奨）または同recordの`state`と`placement_item` | plan entryの`placement_state_ref`または`source_state`+`item` | refとinline identityの併記、`facing`、`axis`、`rotation`等をLLM側で変換 |
 | drop回収 | `visible_entity.position`と`displayed_item` | collect nodeの連続値`target` | XYZのround、非公開entity IDの追加 |
 
 移動用の整数feet-space座標と、block座標と、item entityの連続座標は別の型です。
 
 `navigate_to_known`は通常地形に加え、現在の局所観測で完全な`minecraft:ladder`または乾いた安定済み`minecraft:scaffolding`が連続している列を、観測入口から上下4段以内だけ経路にできます。公開される目的地は床のあるlandingだけで、中間段は内部経路に留まります。scaffoldingは上昇時にJUMP、下降時だけSHIFTを使います。LLMはlandingの`navigation_target`をそのままコピーし、block座標から目的地を計算しません。仮blockによる上昇は、下記の1 block専用Actionだけに限定します。
+
+`max_distance_blocks`の公開上限は32です。経路探索は開始cell内の実pose誤差へ`1.5 × √6`（約3.67）を先に確保し、残る約28.33を`1.5 × centerline edge length + 垂直edgeごとに1.5`で数えます。このため平坦なcardinal経路は最大18 edgeで、垂直edgeを含む経路はさらに短くなります。freshな`navigation_target`への単独`navigate_to_known`は、最大値32ならdistance componentだけを理由に静的受付不能にはなりません。
 
 ## 頻出nodeの必須field
 
@@ -64,7 +66,7 @@
 - `till_known_batch`: `{id,op,targets:[position],expected_block,hoe_item}`
 - `plant_known_wheat_batch`: `{id,op,targets:[{target,support}],seed_item}`
 - `harvest_known_wheat_batch`: `{id,op,targets:[position]}`
-- `apply_known_block_plan`: `{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,source_state,item,support:{position,face,expected_state,dependency_entry_id}}]}`
+- `apply_known_block_plan`: `{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}`（各entryは`placement_state_ref`または旧`source_state`+`item`のexact one-of）
 - `clear_known_block_plan`: `{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,expected_before}]}`
 - `pillar_up_known`: `{id,op,support,expected_support,source_state,item}`
 - `collect_visible_item_batch`: `{id,op,targets:[{displayed_item,target}]}`
@@ -73,9 +75,9 @@
 
 ## 建築コピーの最小slice
 
-`apply_known_block_plan`は、移動や破壊を含まない1〜8 blockのstationaryなplace-only Actionです。`anchor`は設置先の基準block座標、各`offset`はコピー元構造内の相対整数座標（各軸-8〜8）です。`transform`は`mirror=none|x|z`を先に、`rotation=0|90|180|270`のY軸時計回り回転を後に適用します。offsetと完全BlockStateの向きはruntimeが同じ規則で変換するため、LLMは`source_state.properties`を書き換えません。
+`apply_known_block_plan`は、移動や破壊を含まない1〜8 blockのstationaryなplace-only Actionです。`anchor`は設置先の基準block座標、各`offset`はコピー元構造内の相対整数座標（各軸-8〜8）です。`transform`は`mirror=none|x|z`を先に、`rotation=0|90|180|270`のY軸時計回り回転を後に適用します。runtimeはrefが指す完全BlockStateにも同じ規則を適用するため、LLMは方向propertyを書き換えません。refは見本座標への再訪だけを不要にし、既存supportは最新の完全stateとfaceを引き続き要求します。
 
-閉じた未通電の`minecraft:oak_door`だけは、`placement_item`が返るlower halfを1 entryとして渡します。runtimeはupper halfを同じ設置の派生cellとして事前所有し、上下を別々のserver-confirmed stateで検証します。upper halfを別entryにせず、door entryには`max_blocks_placed=2`を予約します。
+閉じた未通電の`minecraft:oak_door`だけは、`placement_item`が返るlower halfを1 entryとして渡します。runtimeはupper halfを同じ設置の派生cellとして事前所有し、上下を別々のserver-confirmed stateで検証します。upper halfを別entryにせず、door entryには`max_blocks_placed=2`を予約します。compilerは配達済みrefを受付時に解決してこの1/2 cell costを確定し、未知refは安全側の2 cellとして扱ってbudgetまたはplannerで拒否します。
 
 `clear_known_block_plan`は同じ`anchor` / `transform`文法で、現在返却済みの`visible_surface.state`が完全一致し、`placement_item`が非nullな安全建築blockだけを1〜8件、既存の`BREAK_TO_AIR`経路で撤去します。成功条件は全targetのfreshなair再観測です。置換は同じActionへ続けず、terminal後に再観測してから既存`apply_known_block_plan`を別Actionで実行します。
 

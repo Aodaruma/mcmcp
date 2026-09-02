@@ -452,7 +452,7 @@
               "multiplayer_enabled": {"type": "boolean"},
               "max_duration_ms": {"const": 750000},
               "max_ticks": {"const": 15000},
-              "max_distance_blocks": {"const": 32},
+              "max_distance_blocks": {"const": 32, "description": "Public Action distance-budget hard maximum. Route search separately reserves bounded start-pose uncertainty before admitting a path."},
               "max_camera_degrees": {"const": 720},
               "max_blocks_broken": {"const": 8},
               "max_interactions": {"const": 16},
@@ -558,7 +558,7 @@
     {
       "name": "agent_get_observation",
       "title": "Get MCMCP Observation",
-      "description": "Returns a stable, paged projection of one policy-filtered omnidirectional frame; it accepts no arbitrary center or radius. Ask for one purpose at a time: crop/chest/gate=visible_surface, drops=visible_entity, route=traversability. Use optional filter to return only relevant block_ids, faces, entity_types, displayed_items, crop_mature, or one inclusive position_bounds; filters applicable to a record kind are ANDed and only remove already-policy-visible records, so they cannot weaken safety evidence or expose hidden state. faces filters visible_surface before the one-face-per-position representative is selected. position_bounds anchors visible_surface at position, visible_entity/hazard/unknown_boundary/sound_clue at floor(position), and traversability at navigation_target. For harvest use {block_ids:[\"minecraft:wheat\"],crop_mature:true}; for drops use {entity_types:[\"minecraft:item\"],displayed_items:[\"minecraft:wheat\",\"minecraft:wheat_seeds\"]}. visible_surface is one representative face per block position and is ordered mature crop, immature crop, then other surfaces, near-first. Every visible_surface includes required nullable state and placement_item fields. state is complete only for the closed construction copy/support and furnace-family target allowlist and is null for all other blocks so non-rendered properties never cross the visual boundary. A non-null placement_item always has a non-null state and marks an apply_known_block_plan copy source. Use the smallest useful limit. If next_cursor is non-null, either continue that exact frame/kinds/filter query immediately or allow its bounded 60-second lease to expire; abandoning two paged queries makes a third root query SERVER_BUSY. Only static visible_surface records actually returned may remain planner-usable for at most 60 seconds; dynamic records are never extended. On FRAME_EXPIRED, call agent_get_state and retry with observation.latest_frame_id.",
+      "description": "Returns a stable, paged projection of one policy-filtered omnidirectional frame; it accepts no arbitrary center or radius. Ask for one purpose at a time: crop/chest/gate=visible_surface, drops=visible_entity, route=traversability. Use optional filter to return only relevant block_ids, faces, entity_types, displayed_items, crop_mature, or one inclusive position_bounds; filters applicable to a record kind are ANDed and only remove already-policy-visible records, so they cannot weaken safety evidence or expose hidden state. faces filters visible_surface before the one-face-per-position representative is selected. position_bounds anchors visible_surface at position, visible_entity/hazard/unknown_boundary/sound_clue at floor(position), and traversability at navigation_target. For harvest use {block_ids:[\"minecraft:wheat\"],crop_mature:true}; for drops use {entity_types:[\"minecraft:item\"],displayed_items:[\"minecraft:wheat\",\"minecraft:wheat_seeds\"]}. visible_surface is one representative face per block position and is ordered mature crop, immature crop, then other surfaces, near-first. Every visible_surface includes required nullable state, placement_item, and placement_state_ref fields. state is complete only for the closed construction copy/support and furnace-family target allowlist and is null for all other blocks so non-rendered properties never cross the visual boundary. A non-null placement_item has a non-null state and session-scoped opaque placement_state_ref. The ref becomes usable only after successful response delivery, survives the 60-second coordinate-evidence TTL, and is cleared at the world-session boundary; target/support/pose evidence remains current and JIT-checked. Use the smallest useful limit. If next_cursor is non-null, either continue that exact frame/kinds/filter query immediately or allow its bounded 60-second lease to expire; abandoning two paged queries makes a third root query SERVER_BUSY. Only static visible_surface coordinate records actually returned may remain planner-usable for at most 60 seconds; dynamic records are never extended. On FRAME_EXPIRED, call agent_get_state and retry with observation.latest_frame_id.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -714,7 +714,7 @@
           },
           "visibleSurface": {
             "type": "object",
-            "description": "One deterministic representative visible face for this block position; UP is preferred over horizontal faces, which are preferred over DOWN. state is the complete runtime BlockState only for the closed construction copy/support and furnace-family target allowlist (copyable blocks plus minecraft:dirt, minecraft:grass_block, minecraft:obsidian, minecraft:furnace, minecraft:blast_furnace, and minecraft:smoker), and null otherwise so hidden properties are not disclosed. placement_item is the ordinary inventory item that may reproduce a non-null state through the closed placement adapter, or null when this surface is not eligible for safe copy placement.",
+            "description": "One deterministic representative visible face for this block position; UP is preferred over horizontal faces, which are preferred over DOWN. state is the complete runtime BlockState only for the closed construction copy/support and furnace-family target allowlist (copyable blocks plus minecraft:dirt, minecraft:grass_block, minecraft:obsidian, minecraft:furnace, minecraft:blast_furnace, and minecraft:smoker), and null otherwise so hidden properties are not disclosed. placement_item is the ordinary inventory item that may reproduce a non-null state through the closed placement adapter. placement_state_ref is its bounded, session-local opaque memory identity; it is null when the surface is not eligible for safe copy placement.",
             "additionalProperties": false,
             "properties": {
               "kind": {"const": "visible_surface"},
@@ -733,6 +733,12 @@
                   {"$ref": "#/$defs/resourceLocation"}
                 ]
               },
+              "placement_state_ref": {
+                "oneOf": [
+                  {"type": "null"},
+                  {"type": "string", "pattern": "^psr_[0-9a-f]{32}$"}
+                ]
+              },
               "shape_class": {"enum": ["opaque", "transparent", "cutout", "partial", "fluid", "unknown"]},
               "crop_mature": {"type": "boolean"},
               "eye_origin": {"$ref": "#/$defs/worldPosition"},
@@ -740,12 +746,13 @@
               "world_revision": {"$ref": "#/$defs/worldRevision"},
               "provenance": {"const": "OMNIDIRECTIONAL_VISUAL"}
             },
-            "required": ["kind", "position", "face", "block", "state", "placement_item", "shape_class", "eye_origin", "observed_tick", "world_revision", "provenance"],
+            "required": ["kind", "position", "face", "block", "state", "placement_item", "placement_state_ref", "shape_class", "eye_origin", "observed_tick", "world_revision", "provenance"],
             "oneOf": [
               {
                 "properties": {
                   "state": {"$ref": "#/$defs/completeBlockState"},
-                  "placement_item": {"$ref": "#/$defs/resourceLocation"}
+                  "placement_item": {"$ref": "#/$defs/resourceLocation"},
+                  "placement_state_ref": {"type": "string", "pattern": "^psr_[0-9a-f]{32}$"}
                 }
               },
               {
@@ -756,7 +763,8 @@
                       {"$ref": "#/$defs/completeBlockState"}
                     ]
                   },
-                  "placement_item": {"type": "null"}
+                  "placement_item": {"type": "null"},
+                  "placement_state_ref": {"type": "null"}
                 }
               }
             ]
@@ -790,7 +798,7 @@
               "from": {"$ref": "#/$defs/worldPosition"},
               "to": {"$ref": "#/$defs/worldPosition"},
               "navigation_target": {
-                "description": "Exact integer player feet-space cell accepted by navigate_to_known.target; copy without rounding from/to",
+                "description": "Exact integer player feet-space cell accepted by navigate_to_known.target; copy without rounding from/to. A standalone navigation to a freshly returned target is distance-admissible with the public maximum max_distance_blocks=32 when the starting pose remains inside its bounded cell envelope.",
                 "$ref": "#/$defs/blockPosition"
               },
               "status": {"enum": ["CONFIRMED", "PROBE_ALLOWED", "BLOCKED", "STALE"]},
@@ -1265,13 +1273,22 @@
                 "description": "Copy the same source visible_surface.placement_item; null sources are not eligible entries.",
                 "$ref": "#/$defs/resourceLocation"
               },
+              "placement_state_ref": {
+                "description": "Opaque session-local identity copied from one eligible visible_surface. It replaces source_state plus item and does not extend target/support/pose evidence.",
+                "type": "string",
+                "pattern": "^psr_[0-9a-f]{32}$"
+              },
               "support": {"$ref": "#/$defs/blockPlanSupport"}
             },
-            "required": ["id", "offset", "source_state", "item", "support"]
+            "required": ["id", "offset", "support"],
+            "oneOf": [
+              {"required": ["source_state", "item"], "not": {"required": ["placement_state_ref"]}},
+              {"required": ["placement_state_ref"], "not": {"anyOf": [{"required": ["source_state"]}, {"required": ["item"]}]}}
+            ]
           },
           "applyKnownBlockPlanNode": {
             "type": "object",
-            "description": "Stationary place-only Phase 3 vertical slice for 1..8 ordered entries. Each transformed target is anchor plus offset after mirror (none/x/z) then clockwise Y rotation (0/90/180/270); transformed targets and entry ids must be unique. source_state and item come verbatim from one eligible visible_surface. The runtime applies Minecraft's BlockState mirror/rotation rules, so the policy never converts directional properties. Each entry uses either a current complete support-state witness or an explicit earlier-entry dependency. Every support aim uses the declared face center, not an incidental observation ray endpoint, and must be within 40 total yaw+pitch degrees of the admitted heading; use a preceding face_known_position or a smaller plan when necessary. A closed unpowered minecraft:oak_door uses only its lower-half source as one entry; do not submit the upper half. The runtime owns and separately server-verifies the derived upper cell, and that door entry costs two max_blocks_placed. An entry already at its exact transformed expected-after state is adopted without input or placement budget, but success still requires a later fresh exact verification of every entry. No movement, breaking, replacement, hidden scan, NBT, fluid, gravity block, container, portal, or command block is admitted. Execution is fail-fast, never reorders entries, and requires authoritative placement postconditions. Reserve 15000 ms, 300 ticks, 80 camera degrees, and one max_blocks_placed per ordinary entry or two for the oak-door entry; distance, interactions, and breaks are zero.",
+            "description": "Stationary place-only Phase 3 vertical slice for 1..8 ordered entries. Each transformed target is anchor plus offset after mirror (none/x/z) then clockwise Y rotation (0/90/180/270); transformed targets and entry ids must be unique. Each entry selects exactly one source identity: legacy source_state plus item copied verbatim from a currently retained eligible visible_surface, or placement_state_ref copied from an eligible surface delivered in this world session. A ref removes only the need to revisit the source coordinate; every target, support, aim, pose, policy, and packet-adjacent check remains current. The runtime applies Minecraft's BlockState mirror/rotation rules, so the policy never converts directional properties. Each entry uses either a current complete support-state witness or an explicit earlier-entry dependency. Every support aim uses the declared face center, not an incidental observation ray endpoint, and must be within 40 total yaw+pitch degrees of the admitted heading; use a preceding face_known_position or a smaller plan when necessary. A closed unpowered minecraft:oak_door uses only its lower-half source as one entry; do not submit the upper half. The runtime owns and separately server-verifies the derived upper cell, and that door entry costs two max_blocks_placed. Admission resolves a valid ref to its exact ordinary=1 or oak-door=2 placement footprint; an unresolved ref is conservatively costed as two and rejected by the budget or planner. An entry already at its exact transformed expected-after state is adopted without input or placement budget, but success still requires a later fresh exact verification of every entry. No movement, breaking, replacement, hidden scan, NBT, fluid, gravity block, container, portal, or command block is admitted. Execution is fail-fast, never reorders entries, and requires authoritative placement postconditions. Reserve 15000 ms, 300 ticks, 80 camera degrees, and one max_blocks_placed per ordinary entry or two for the oak-door entry; distance, interactions, and breaks are zero.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
@@ -1900,7 +1917,7 @@
             "properties": {
               "max_duration_ms": {"type": "integer", "minimum": 100, "maximum": 750000},
               "max_ticks": {"type": "integer", "minimum": 2, "maximum": 15000},
-              "max_distance_blocks": {"type": "number", "minimum": 0, "maximum": 32},
+              "max_distance_blocks": {"type": "number", "minimum": 0, "maximum": 32, "description": "Public distance budget, capped at 32. Route search first reserves 1.5*sqrt(6) for bounded start-pose uncertainty, then charges 1.5 times centerline edge length plus 1.5 per vertical edge. A flat cardinal route is therefore at most 18 edges; routes with vertical edges are shorter."},
               "max_camera_degrees": {"type": "number", "minimum": 0, "maximum": 720},
               "max_interactions": {"type": "integer", "minimum": 0, "maximum": 16},
               "max_blocks_broken": {"type": "integer", "minimum": 0, "maximum": 8},

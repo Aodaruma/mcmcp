@@ -1,6 +1,8 @@
 package dev.aod.mcmcp.agent.dsl;
 
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
+import dev.aod.mcmcp.agent.navigation.NavigationDistanceBudget;
+import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -17,7 +19,7 @@ import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.PROGRAM_BUDGET_UNP
 public final class ActionDslCompiler {
     public static final ActionDsl.Budget PHASE_ONE_HARD_LIMIT = new ActionDsl.Budget(
             ActionDslValidator.MAX_ACTION_DURATION_MILLIS,
-            ActionDslValidator.MAX_ACTION_TICKS, 32,
+            ActionDslValidator.MAX_ACTION_TICKS, NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
             ActionDslValidator.MAX_ACTION_CAMERA_DEGREES,
             ActionDslValidator.MAX_INTERACTIONS,
             ActionDslValidator.MAX_BLOCKS_BROKEN,
@@ -106,8 +108,11 @@ public final class ActionDslCompiler {
             return compileWait(node, wait.maxTicks(), primitiveCostBounds);
         }
         if (node instanceof ActionDsl.ApplyKnownBlockPlan plan) {
-            Cost cost = intrinsicKnownBlockPlanCost(
-                    plan.entries().size(), knownBlockPlanPlacements(plan));
+            Cost cost = Objects.requireNonNull(
+                    primitiveCosts.worstCase(node), "primitive cost result")
+                    .orElseGet(() -> intrinsicKnownBlockPlanCost(
+                            plan.entries().size(), knownBlockPlanPlacements(plan)));
+            requireKnownBlockPlanCost(cost, plan.entries().size());
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }
@@ -292,7 +297,20 @@ public final class ActionDslCompiler {
     public static long knownBlockPlanPlacements(ActionDsl.ApplyKnownBlockPlan plan) {
         Objects.requireNonNull(plan, "plan");
         return plan.entries().stream().mapToLong(entry ->
-                "minecraft:oak_door".equals(entry.sourceState().block()) ? 2L : 1L).sum();
+                entry.sourceState()
+                        .map(state -> (long) SafeConstructionBlocks
+                                .placementCellCount(state.block()))
+                        // An unresolved opaque identity may be the admitted two-cell door.
+                        // Runtime admission supplies the exact remembered footprint when known.
+                        .orElse(2L)).sum();
+    }
+
+    private static void requireKnownBlockPlanCost(Cost cost, int entries) {
+        long placements = cost.blocksPlaced();
+        if (placements < entries || placements > entries * 2L
+                || !cost.equals(intrinsicKnownBlockPlanCost(entries, placements))) {
+            throw unprovable("apply_known_block_plan has an invalid primitive bound");
+        }
     }
 
     /** Structural bound for the stationary break-only construction adapter. */

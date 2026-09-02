@@ -309,7 +309,7 @@ class KnownTraversabilityNavigationTest {
                 RoutePlan.BASE_SETTLE_TICKS
                         + 2L * RoutePlan.TICKS_PER_TRANSITION
                         + RoutePlan.EXTRA_TICKS_PER_PROBE);
-        assertThat(route.toDslPrimitiveCost().distanceBlocks()).isEqualTo(2);
+        assertThat(route.toDslPrimitiveCost().distanceBlocks()).isEqualTo(3);
         assertThat(route.toDslPrimitiveCost().ticks()).isEqualTo(route.tickUpperBound());
         assertThatThrownBy(() -> route.cells().add(cell(3, 64, 0)))
                 .isInstanceOf(UnsupportedOperationException.class);
@@ -349,30 +349,68 @@ class KnownTraversabilityNavigationTest {
     }
 
     @Test
-    void enforcesSameDimensionAndThirtyTwoBlockRouteLimit() {
+    void enforcesSameDimensionAndSharedExecutionDistanceLimit() {
         UUID session = UUID.randomUUID();
         var map = boundMap(session);
+        int maximumFlatEdges = (int) Math.floor(
+                DeterministicAStar.MAX_ROUTE_DISTANCE_BLOCKS);
         List<NavCell> chain = new ArrayList<>();
-        for (int x = 0; x <= 33; x++) chain.add(cell(x, 64, 0));
-        for (int x = 0; x < 33; x++) {
+        for (int x = 0; x <= maximumFlatEdges + 1; x++) {
+            chain.add(cell(x, 64, 0));
+        }
+        for (int x = 0; x < maximumFlatEdges + 1; x++) {
             map.observe(confirmed(
                     session, chain.get(x), chain.get(x + 1), x, 0,
                     TraversabilityEdge.Provenance.LOCAL_VOLUME));
         }
         var pathfinder = new DeterministicAStar();
         RoutePlan maximum = pathfinder.findRoute(
-                map.snapshot().orElseThrow(), chain.getFirst(), chain.get(32)).route().orElseThrow();
-        assertThat(maximum.distanceBlocks()).isEqualTo(32);
-        assertThat(maximum.tickUpperBound()).isEqualTo(532);
+                map.snapshot().orElseThrow(), chain.getFirst(), chain.get(maximumFlatEdges))
+                .route().orElseThrow();
+        assertThat(maximum.distanceBlocks()).isEqualTo(maximumFlatEdges);
+        assertThat(NavigationDistanceBudget.centerlineRouteCost(maximum))
+                .isLessThanOrEqualTo(NavigationDistanceBudget.MAX_ROUTED_DISTANCE_BLOCKS);
 
         var tooFar = pathfinder.findRoute(
-                map.snapshot().orElseThrow(), chain.getFirst(), chain.get(33));
+                map.snapshot().orElseThrow(), chain.getFirst(),
+                chain.get(maximumFlatEdges + 1));
         assertThat(tooFar.failure()).contains(DeterministicAStar.FailureReason.TARGET_TOO_FAR);
         var wrongDimension = pathfinder.findRoute(
                 map.snapshot().orElseThrow(), chain.getFirst(),
                 new NavCell("minecraft:the_nether", 1, 64, 0));
         assertThat(wrongDimension.failure())
                 .contains(DeterministicAStar.FailureReason.DIMENSION_MISMATCH);
+    }
+
+    @Test
+    void verticalArcAllowanceAlsoConsumesTheSharedRouteBudget() {
+        UUID session = UUID.randomUUID();
+        var map = boundMap(session);
+        int maximumVerticalEdges = (int) Math.floor(
+                NavigationDistanceBudget.MAX_ROUTED_DISTANCE_BLOCKS
+                        / (NavigationDistanceBudget.TRAJECTORY_FACTOR
+                        + NavigationDistanceBudget.VERTICAL_ARC_ALLOWANCE));
+        List<NavCell> chain = new ArrayList<>();
+        for (int y = 0; y <= maximumVerticalEdges + 1; y++) {
+            chain.add(cell(0, 64 + y, 0));
+        }
+        for (int y = 0; y < maximumVerticalEdges + 1; y++) {
+            map.observe(confirmed(
+                    session, chain.get(y), chain.get(y + 1), y, 0,
+                    TraversabilityEdge.Provenance.LOCAL_VOLUME));
+        }
+
+        var pathfinder = new DeterministicAStar();
+        RoutePlan maximum = pathfinder.findRoute(
+                map.snapshot().orElseThrow(), chain.getFirst(),
+                chain.get(maximumVerticalEdges)).route().orElseThrow();
+        assertThat(NavigationDistanceBudget.centerlineRouteCost(maximum))
+                .isLessThanOrEqualTo(NavigationDistanceBudget.MAX_ROUTED_DISTANCE_BLOCKS);
+
+        var overBudget = pathfinder.findRoute(
+                map.snapshot().orElseThrow(), chain.getFirst(),
+                chain.get(maximumVerticalEdges + 1));
+        assertThat(overBudget.failure()).contains(DeterministicAStar.FailureReason.NO_PATH);
     }
 
     @Test

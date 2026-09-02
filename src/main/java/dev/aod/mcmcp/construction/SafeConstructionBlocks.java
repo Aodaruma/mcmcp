@@ -40,6 +40,12 @@ public final class SafeConstructionBlocks {
                 || "minecraft:wall_torch".equals(blockId);
     }
 
+    /** Number of cells mutated by one admitted placement source. */
+    public static int placementCellCount(String blockId) {
+        Objects.requireNonNull(blockId, "blockId");
+        return "minecraft:oak_door".equals(blockId) ? 2 : 1;
+    }
+
     /**
      * State-sensitive shape boundary for the construction allowlist.
      *

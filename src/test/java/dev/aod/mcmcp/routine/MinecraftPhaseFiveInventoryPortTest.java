@@ -13,12 +13,14 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.ChestType;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class MinecraftPhaseFiveInventoryPortTest {
     private static final int DEFAULT_HASH = 41;
@@ -226,6 +228,39 @@ class MinecraftPhaseFiveInventoryPortTest {
                 .contains("net/minecraft/client/player/LocalPlayer#isWithinBlockInteractionRange")
                 .doesNotContain(
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#exactHit");
+    }
+
+    @Test
+    void internalVisibleAimIsRevalidatedAndReplacesTheOccludableBlockCenter() {
+        var target = new BlockTarget("minecraft:overworld", -11, 56, 3);
+        var visibleUpHit = Map.<String, Object>of(
+                "dimension", target.dimension(),
+                "x", -10.5D,
+                "y", 57.0D,
+                "z", 3.5D);
+
+        assertThat(MinecraftPhaseFiveInventoryPort.inventoryAimPoint(
+                inventoryRequest(target, visibleUpHit), target))
+                .isEqualTo(new Vec3(-10.5D, 57.0D, 3.5D));
+        assertThat(MinecraftPhaseFiveInventoryPort.inventoryAimPoint(
+                inventoryRequest(target, null), target))
+                .isEqualTo(new Vec3(-10.5D, 56.5D, 3.5D));
+
+        assertThatThrownBy(() -> MinecraftPhaseFiveInventoryPort.inventoryAimPoint(
+                inventoryRequest(target, Map.of(
+                        "dimension", "minecraft:the_nether",
+                        "x", -10.5D, "y", 57.0D, "z", 3.5D)), target))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> MinecraftPhaseFiveInventoryPort.inventoryAimPoint(
+                inventoryRequest(target, Map.of(
+                        "dimension", target.dimension(),
+                        "x", -9.5D, "y", 57.0D, "z", 3.5D)), target))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> MinecraftPhaseFiveInventoryPort.inventoryAimPoint(
+                inventoryRequest(target, Map.of(
+                        "dimension", target.dimension(),
+                        "x", Double.NaN, "y", 57.0D, "z", 3.5D)), target))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -469,6 +504,17 @@ class MinecraftPhaseFiveInventoryPortTest {
 
     private static ArrayList<StackFingerprint> emptySlots(int size) {
         return new ArrayList<>(java.util.Collections.nCopies(size, StackFingerprint.EMPTY));
+    }
+
+    private static PhaseFiveRequest inventoryRequest(
+            BlockTarget target, Map<String, Object> aimPoint) {
+        return new PhaseFiveRequest(
+                "transfer_items",
+                aimPoint == null ? Map.of() : Map.of("aim_point", aimPoint),
+                new PhaseFiveBounds(
+                        target.dimension(), target, target, 0, 20, false),
+                0,
+                "items");
     }
 
     private static ClientRecipeCatalog.RecipeView recipe(

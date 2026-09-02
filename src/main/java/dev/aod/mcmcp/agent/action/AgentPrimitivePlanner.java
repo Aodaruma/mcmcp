@@ -7,11 +7,13 @@ import dev.aod.mcmcp.agent.dsl.ActionDslValidator;
 import dev.aod.mcmcp.agent.navigation.DeterministicAStar;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.NavCell;
+import dev.aod.mcmcp.agent.navigation.NavigationDistanceBudget;
 import dev.aod.mcmcp.agent.navigation.RoutePlan;
 import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.ObservationValues;
+import dev.aod.mcmcp.agent.observation.PlacementStateResolver;
 import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 import dev.aod.mcmcp.observation.BlockPlan;
 import dev.aod.mcmcp.observation.BlockPlanStateTransformer;
@@ -39,8 +41,10 @@ import java.util.function.ToLongFunction;
 public final class AgentPrimitivePlanner {
     private static final long TICK_MILLIS = 50L;
     private static final int MAX_ABSTRACT_POSES = 4_096;
-    private static final double MAX_CELL_HORIZONTAL_ERROR = Math.sqrt(0.5D);
-    private static final double NAVIGATION_VERTICAL_ERROR_ABOVE = 1.0D;
+    private static final double MAX_CELL_HORIZONTAL_ERROR =
+            NavigationDistanceBudget.MAX_HORIZONTAL_POSITION_ERROR;
+    private static final double NAVIGATION_VERTICAL_ERROR_ABOVE =
+            NavigationDistanceBudget.MAX_VERTICAL_POSITION_ERROR;
     private static final double FACE_COMPLETION_ERROR_DEGREES = 1.5D;
     /**
      * Vanilla's {@code player.turn} path converts the requested delta through a 0.15 scale and
@@ -48,8 +52,6 @@ public final class AgentPrimitivePlanner {
      * near-zero aim cannot consume more camera budget than admission proved.
      */
     public static final double CAMERA_QUANTIZATION_RESERVE_DEGREES = 0.25D;
-    private static final double NAVIGATION_TRAJECTORY_FACTOR = 1.5D;
-    private static final double VERTICAL_ARC_ALLOWANCE = 1.5D;
     private static final int MAX_TOTAL_ROUTE_EXPANSIONS = 32_768;
     private static final int MAX_POSE_TRANSITIONS = 16_384;
     private static final double MAX_BREAK_REACH_BLOCKS = 4.5D;
@@ -149,6 +151,24 @@ public final class AgentPrimitivePlanner {
             long visualBarrierWorldRevision,
             ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier,
             BooleanSupplier canContinue) {
+        return analyze(
+                program, map, pathfinder, initialPose, latestFrame,
+                maxCameraDegreesPerTick, visualBarrierWorldRevision,
+                surfaceRevisionBarrier, canContinue, PlacementStateResolver.none());
+    }
+
+    /** Runtime admission variant with session-scoped observed placement-state memory. */
+    public static Analysis analyze(
+            ActionDsl.Program program,
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            Pose initialPose,
+            Optional<ObservationFrame> latestFrame,
+            float maxCameraDegreesPerTick,
+            long visualBarrierWorldRevision,
+            ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier,
+            BooleanSupplier canContinue,
+            PlacementStateResolver placementStates) {
         Objects.requireNonNull(program, "program");
         Objects.requireNonNull(map, "map");
         Objects.requireNonNull(pathfinder, "pathfinder");
@@ -156,6 +176,7 @@ public final class AgentPrimitivePlanner {
         Objects.requireNonNull(latestFrame, "latestFrame");
         Objects.requireNonNull(surfaceRevisionBarrier, "surfaceRevisionBarrier");
         Objects.requireNonNull(canContinue, "canContinue");
+        Objects.requireNonNull(placementStates, "placementStates");
         requireVisualBarrierWorldRevision(
                 map, map.worldRevision(), visualBarrierWorldRevision);
         if (!map.dimension().equals(initialPose.cell().dimension())) {
@@ -194,6 +215,7 @@ public final class AgentPrimitivePlanner {
                 mutationBatchPlans,
                 routeCache,
                 waitsBackedByPriorPlant,
+                placementStates,
                 work);
         return new Analysis(
                 costs, routeDependencies, knownTargets, knownSurfaces,
@@ -619,6 +641,7 @@ public final class AgentPrimitivePlanner {
             Map<String, MutationBatchPlan> mutationBatchPlans,
             Map<RouteKey, RoutePlan> routeCache,
             Set<String> waitsBackedByPriorPlant,
+            PlacementStateResolver placementStates,
             PlanningWork work) {
         List<Pose> states = input;
         for (ActionDsl.Node node : nodes) {
@@ -628,7 +651,7 @@ public final class AgentPrimitivePlanner {
                     visualBarrierWorldRevision, surfaceRevisionBarrier, cameraLimit,
                     costs, routeDependencies, knownTargets, knownSurfaces,
                     mutationAims, mutationBatchPlans, routeCache,
-                    waitsBackedByPriorPlant, work);
+                    waitsBackedByPriorPlant, placementStates, work);
         }
         return states;
     }
@@ -650,6 +673,7 @@ public final class AgentPrimitivePlanner {
             Map<String, MutationBatchPlan> mutationBatchPlans,
             Map<RouteKey, RoutePlan> routeCache,
             Set<String> waitsBackedByPriorPlant,
+            PlacementStateResolver placementStates,
             PlanningWork work) {
         if (node instanceof ActionDsl.WaitTicks) {
             return input;
@@ -801,18 +825,23 @@ public final class AgentPrimitivePlanner {
                     surface, 0, 1, 0);
         }
         if (node instanceof ActionDsl.ApplyKnownBlockPlan plan) {
+            long placements = 0L;
             for (ActionDsl.BlockPlanEntry entry : plan.entries()) {
-                ObservationRecord.VisibleSurface source = requireConstructionSource(
-                        map, latestFrame, entry.sourceState(), entry.item());
-                knownSurfaces.add(new KnownSurface(
-                        new ActionDsl.Position(
-                                source.position().dimension().value(),
-                                source.position().x(),
-                                source.position().y(),
-                                source.position().z()),
-                        ActionDsl.BlockFace.valueOf(source.face().name()),
-                        source.block().value(),
-                        null));
+                ConstructionSource source = requireConstructionSource(
+                        map, latestFrame, entry, placementStates);
+                placements += SafeConstructionBlocks.placementCellCount(
+                        source.state().block());
+                if (source.surface() != null) {
+                    knownSurfaces.add(new KnownSurface(
+                            new ActionDsl.Position(
+                                    source.surface().position().dimension().value(),
+                                    source.surface().position().x(),
+                                    source.surface().position().y(),
+                                    source.surface().position().z()),
+                            ActionDsl.BlockFace.valueOf(source.surface().face().name()),
+                            source.surface().block().value(),
+                            null));
+                }
                 ActionDsl.PlacementSupport support = entry.support();
                 if (support.expectedState().isPresent()) {
                     ActionDsl.BlockStateSpec expected = support.expectedState().orElseThrow();
@@ -848,8 +877,7 @@ public final class AgentPrimitivePlanner {
             }
             merge(costs, node.id(),
                     ActionDslCompiler.intrinsicKnownBlockPlanCost(
-                            plan.entries().size(),
-                            ActionDslCompiler.knownBlockPlanPlacements(plan)));
+                            plan.entries().size(), placements));
             // The construction adapter restores the admitted camera pose and owns no movement.
             return input;
         }
@@ -1026,7 +1054,8 @@ public final class AgentPrimitivePlanner {
                     value -> true,
                     "Container target requires a current matching visible surface");
             return analyzeContainer(
-                    node, input, cameraLimit, costs, knownSurfaces, work, surface, 1);
+                    node, input, cameraLimit, costs, knownSurfaces, mutationAims,
+                    work, surface, 1);
         }
         if (node instanceof ActionDsl.TakeKnownContainerStack take) {
             MutationSurface surface = requireMutationSurface(
@@ -1036,7 +1065,8 @@ public final class AgentPrimitivePlanner {
                     value -> true,
                     "Container target requires a current matching visible surface");
             return analyzeContainer(
-                    node, input, cameraLimit, costs, knownSurfaces, work, surface, 3);
+                    node, input, cameraLimit, costs, knownSurfaces, mutationAims,
+                    work, surface, 3);
         }
         if (node instanceof ActionDsl.CraftKnownRecipe craft) {
             MutationSurface surface = requireMutationSurface(
@@ -1046,7 +1076,7 @@ public final class AgentPrimitivePlanner {
                     value -> true,
                     "Crafting target requires a current visible crafting table surface");
             return analyzeContainer(
-                    node, input, cameraLimit, costs, knownSurfaces, work, surface,
+                    node, input, cameraLimit, costs, knownSurfaces, mutationAims, work, surface,
                     ActionDslCompiler.knownCraftInteractions(craft.maxCrafts()));
         }
         if (node instanceof ActionDsl.SmeltKnownRecipe smelt) {
@@ -1109,7 +1139,7 @@ public final class AgentPrimitivePlanner {
                     costs, routeDependencies,
                     knownTargets, knownSurfaces, mutationAims,
                     mutationBatchPlans, routeCache,
-                    waitsBackedByPriorPlant, work));
+                    waitsBackedByPriorPlant, placementStates, work));
             output.addAll(analyzeSequence(
                     conditional.elseBranch(), input, map, pathfinder,
                     latestFrame, visualBarrierWorldRevision,
@@ -1117,7 +1147,7 @@ public final class AgentPrimitivePlanner {
                     costs, routeDependencies,
                     knownTargets, knownSurfaces, mutationAims,
                     mutationBatchPlans, routeCache,
-                    waitsBackedByPriorPlant, work));
+                    waitsBackedByPriorPlant, placementStates, work));
             return distinct(output);
         }
         var repeat = (ActionDsl.Repeat) node;
@@ -1130,7 +1160,7 @@ public final class AgentPrimitivePlanner {
                     costs, routeDependencies,
                     knownTargets, knownSurfaces, mutationAims,
                     mutationBatchPlans, routeCache,
-                    waitsBackedByPriorPlant, work);
+                    waitsBackedByPriorPlant, placementStates, work);
         }
         return output;
     }
@@ -1518,13 +1548,24 @@ public final class AgentPrimitivePlanner {
             float cameraLimit,
             Map<String, ActionDslCompiler.Cost> costs,
             Set<KnownSurface> knownSurfaces,
+            Map<String, MutationAim> mutationAims,
             PlanningWork work,
             MutationSurface containerSurface,
             long interactions) {
+        MutationAim candidate = new MutationAim(
+                containerSurface.surface().position(),
+                containerSurface.surface().face(),
+                containerSurface.point());
+        MutationAim previous = mutationAims.putIfAbsent(node.id(), candidate);
+        if (previous != null && !previous.equals(candidate)) {
+            throw new PlanningException(
+                    Code.PROGRAM_BUDGET_UNPROVABLE,
+                    "Container node resolves to more than one aim witness");
+        }
         return analyzeOwnedMenu(
                 node, input, cameraLimit, costs, knownSurfaces, work,
-                containerSurface, interactions, CONTAINER_TICK_UPPER_BOUND, "container", false,
-                Double.POSITIVE_INFINITY);
+                containerSurface, containerSurface.point(), interactions,
+                CONTAINER_TICK_UPPER_BOUND, "container", false, Double.POSITIVE_INFINITY);
     }
 
     private static List<Pose> analyzeOwnedMenu(
@@ -1541,14 +1582,32 @@ public final class AgentPrimitivePlanner {
             boolean restoreAdmittedPose,
             double maxOneWayCameraDegrees) {
         KnownSurface surface = menuSurface.surface();
-        knownSurfaces.add(surface);
-        // The visible ray hit is admission evidence only. The owned-menu inventory adapter
-        // continuously aims at the block center, so admission must reserve camera travel
-        // to that same point instead of the incidental sampled face hit.
         Vec3 point = new Vec3(
                 surface.position().x() + 0.5D,
                 surface.position().y() + 0.5D,
                 surface.position().z() + 0.5D);
+        return analyzeOwnedMenu(
+                node, input, cameraLimit, costs, knownSurfaces, work, menuSurface, point,
+                interactions, tickUpperBound, costLabel, restoreAdmittedPose,
+                maxOneWayCameraDegrees);
+    }
+
+    private static List<Pose> analyzeOwnedMenu(
+            ActionDsl.Node node,
+            List<Pose> input,
+            float cameraLimit,
+            Map<String, ActionDslCompiler.Cost> costs,
+            Set<KnownSurface> knownSurfaces,
+            PlanningWork work,
+            MutationSurface menuSurface,
+            Vec3 point,
+            long interactions,
+            long tickUpperBound,
+            String costLabel,
+            boolean restoreAdmittedPose,
+            double maxOneWayCameraDegrees) {
+        KnownSurface surface = menuSurface.surface();
+        knownSurfaces.add(surface);
         ActionDslCompiler.Cost worst = null;
         var output = new ArrayList<Pose>(input.size());
         for (Pose pose : input) {
@@ -1629,6 +1688,31 @@ public final class AgentPrimitivePlanner {
                 && expected.properties().equals(surface.state().properties());
     }
 
+    private static ConstructionSource requireConstructionSource(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.BlockPlanEntry entry,
+            PlacementStateResolver placementStates) {
+        if (entry.placementStateRef().isPresent()) {
+            PlacementStateResolver.PlacementState remembered = placementStates
+                    .resolve(entry.placementStateRef().orElseThrow())
+                    .orElseThrow(() -> new PlanningException(
+                            Code.TARGET_UNKNOWN,
+                            "Construction placement_state_ref is unknown in this world session"));
+            return new ConstructionSource(
+                    new ActionDsl.BlockStateSpec(
+                            remembered.state().block().value(), remembered.state().properties()),
+                    remembered.placementItem().value(),
+                    null);
+        }
+        ActionDsl.BlockStateSpec expected = entry.sourceState().orElseThrow();
+        String item = entry.item().orElseThrow();
+        ObservationRecord.VisibleSurface surface = requireConstructionSource(
+                map, latestFrame, expected, item);
+        return new ConstructionSource(expected, item, surface);
+    }
+
+    /** Legacy inline source admission retained for pillar_up_known and migration compatibility. */
     private static ObservationRecord.VisibleSurface requireConstructionSource(
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
@@ -1647,6 +1731,16 @@ public final class AgentPrimitivePlanner {
                 .orElseThrow(() -> new PlanningException(
                         Code.TARGET_UNKNOWN,
                         "Construction source requires a delivered exact state and placement item"));
+    }
+
+    private record ConstructionSource(
+            ActionDsl.BlockStateSpec state,
+            String item,
+            ObservationRecord.VisibleSurface surface) {
+        private ConstructionSource {
+            Objects.requireNonNull(state, "state");
+            Objects.requireNonNull(item, "item");
+        }
     }
 
     private static ActionDsl.Position transformedTarget(
@@ -1967,32 +2061,9 @@ public final class AgentPrimitivePlanner {
         if (!route.cells().getFirst().equals(pose.cell())) {
             throw new IllegalArgumentException("route does not start at the supplied pose cell");
         }
-        double geometricDistance;
-        if (route.edges().isEmpty()) {
-            NavCell waypoint = route.cells().getFirst();
-            geometricDistance = Math.hypot(
-                    pose.x() - (waypoint.x() + 0.5D),
-                    pose.z() - (waypoint.z() + 0.5D))
-                    + pose.horizontalPositionError();
-        } else {
-            NavCell waypoint = route.cells().get(1);
-            double horizontal = Math.hypot(
-                    pose.x() - (waypoint.x() + 0.5D),
-                    pose.z() - (waypoint.z() + 0.5D))
-                    + pose.horizontalPositionError();
-            double vertical = Math.max(
-                    Math.abs(pose.y() - pose.yErrorBelow() - waypoint.y()),
-                    Math.abs(pose.y() + pose.yErrorAbove() - waypoint.y()));
-            geometricDistance = route.distanceBlocks()
-                    - route.edges().getFirst().key().length()
-                    + Math.hypot(horizontal, vertical);
-        }
-        long verticalEdges = route.edges().stream()
-                .filter(edge -> edge.key().from().y() != edge.key().to().y())
-                .count();
-        // This is an enforced per-occurrence trajectory allowance, not a chord estimate.
-        double distance = geometricDistance * NAVIGATION_TRAJECTORY_FACTOR
-                + verticalEdges * VERTICAL_ARC_ALLOWANCE;
+        double distance = NavigationDistanceBudget.navigationCost(
+                route, pose.cell(), pose.x(), pose.y(), pose.z(),
+                pose.horizontalPositionError(), pose.yErrorBelow(), pose.yErrorAbove());
         var routeCost = route.toDslPrimitiveCost();
         return new ActionDslCompiler.Cost(
                 routeCost.durationMillis(),

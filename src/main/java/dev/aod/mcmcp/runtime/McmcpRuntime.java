@@ -38,6 +38,7 @@ import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.OmnidirectionalObserver;
 import dev.aod.mcmcp.agent.observation.ObservationStoreException;
 import dev.aod.mcmcp.agent.observation.ObservationWireMapper;
+import dev.aod.mcmcp.agent.observation.PlacementStateResolver;
 import dev.aod.mcmcp.agent.observation.SoundClueStore;
 import dev.aod.mcmcp.agent.observation.SoundPlaybackQueue;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
@@ -48,6 +49,7 @@ import dev.aod.mcmcp.McmcpMod;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.client.McmcpClientConfig;
 import dev.aod.mcmcp.client.MultiplayerAllowlist;
+import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 import dev.aod.mcmcp.mcp.EvaluationTurnControl;
 import dev.aod.mcmcp.mcp.McpRuntimePort;
 import dev.aod.mcmcp.mcp.McpToolSchemas;
@@ -1661,8 +1663,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     filter,
                     cursor,
                     intArgument(arguments, "limit"));
-            Map<String, Object> wirePage = ObservationWireMapper.page(page);
             UUID receiptId = deliveredAgentEvidence.prepareDelivery(page);
+            Map<String, Object> wirePage = ObservationWireMapper.page(page, surface ->
+                    deliveredAgentEvidence.preparedPlacementStateRef(receiptId, surface)
+                            .orElse(null));
             return new PreparedObservationPage(wirePage, receiptId);
         } catch (ObservationStoreException failure) {
             throw new RuntimeInvocationException(
@@ -1807,7 +1811,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             allowed.add(ActionDsl.Capability.INVENTORY_TRANSFER);
         }
         ActionDslCompiler.CompiledProgram program = ActionDslCompiler.compile(
-                request, McmcpRuntime::structuralPrimitiveCost, allowed);
+                request, this::admissionPrimitiveCost, allowed);
         Optional<ActionDsl.Node> initialPrimitive = firstPrimitive(
                 request.program(), snapshot.predicateSnapshot());
         final AgentPrimitivePlanner.Analysis analysis;
@@ -1857,7 +1861,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 cameraDegreesPerTick,
                 visualBarrierWorldRevision,
                 surfaceRevisionBarrier,
-                canContinue);
+                canContinue,
+                deliveredAgentEvidence::resolvePlacementState);
     }
 
     private static AgentPrimitivePlanner.Analysis emptyPrimitiveAnalysis() {
@@ -1926,6 +1931,32 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         return Optional.of(new ActionDslCompiler.Cost(
                 durationMillis, ticks, 0.0D, 0.0D, interactions, breaks, placements));
+    }
+
+    private Optional<ActionDslCompiler.Cost> admissionPrimitiveCost(ActionDsl.Node node) {
+        if (!(node instanceof ActionDsl.ApplyKnownBlockPlan plan)) {
+            return structuralPrimitiveCost(node);
+        }
+        long placements = plan.entries().stream()
+                .mapToLong(this::rememberedPlacementCells)
+                .sum();
+        return Optional.of(ActionDslCompiler.intrinsicKnownBlockPlanCost(
+                plan.entries().size(), placements));
+    }
+
+    private long rememberedPlacementCells(ActionDsl.BlockPlanEntry entry) {
+        Optional<ActionDsl.BlockStateSpec> state = entry.sourceState();
+        if (state.isEmpty()) {
+            state = entry.placementStateRef()
+                    .flatMap(deliveredAgentEvidence::resolvePlacementState)
+                    .map(remembered -> new ActionDsl.BlockStateSpec(
+                            remembered.state().block().value(),
+                            remembered.state().properties()));
+        }
+        // Unknown/evicted references remain fail-closed here and are rejected by planning.
+        return state.map(value -> (long) SafeConstructionBlocks
+                        .placementCellCount(value.block()))
+                .orElse(2L);
     }
 
     private Map<String, Object> commitAgentAction(
@@ -4860,7 +4891,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             AgentActionStore.Active action) {
         if (agentExecution.containerAttempt == null) {
             PhaseFiveRequest request = containerRequest(
-                    minecraft, session, agentExecution.primitive);
+                    minecraft,
+                    session,
+                    agentExecution.primitive,
+                    agentExecution.mutationAims.get(agentExecution.primitive.id()));
             boolean smelting = agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe;
             boolean knownMenu = agentExecution.primitive instanceof ActionDsl.OperateKnownMenu;
             long deadline = Math.addExact(
@@ -4976,7 +5010,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             final KnownConstructionRequest request;
             try {
                 request = agentExecution.primitive instanceof ActionDsl.ApplyKnownBlockPlan plan
-                        ? constructionRequest(plan)
+                        ? constructionRequest(
+                                plan, deliveredAgentEvidence::resolvePlacementState)
                         : constructionRequest(
                                 (ActionDsl.ClearKnownBlockPlan) agentExecution.primitive);
             } catch (RuntimeException rejected) {
@@ -5376,7 +5411,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     static KnownConstructionRequest constructionRequest(
             ActionDsl.ApplyKnownBlockPlan plan) {
+        return constructionRequest(plan, PlacementStateResolver.none());
+    }
+
+    static KnownConstructionRequest constructionRequest(
+            ActionDsl.ApplyKnownBlockPlan plan,
+            PlacementStateResolver placementStates) {
         Objects.requireNonNull(plan, "plan");
+        Objects.requireNonNull(placementStates, "placementStates");
         var transform = new BlockPlan.Transform(
                 plan.transform().rotation().degrees(),
                 plan.transform().mirror().wireName());
@@ -5385,6 +5427,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         BlockTarget minimum = null;
         BlockTarget maximum = null;
         for (ActionDsl.BlockPlanEntry entry : plan.entries()) {
+            ActionDsl.BlockStateSpec sourceState;
+            String item;
+            if (entry.placementStateRef().isPresent()) {
+                PlacementStateResolver.PlacementState remembered = placementStates
+                        .resolve(entry.placementStateRef().orElseThrow())
+                        .orElseThrow(() -> new IllegalArgumentException(
+                                "construction placement_state_ref is unknown"));
+                sourceState = new ActionDsl.BlockStateSpec(
+                        remembered.state().block().value(), remembered.state().properties());
+                item = remembered.placementItem().value();
+            } else {
+                sourceState = entry.sourceState().orElseThrow();
+                item = entry.item().orElseThrow();
+            }
             ActionDsl.Offset offset = plan.transform().apply(entry.offset());
             var target = new BlockTarget(
                     plan.anchor().dimension(),
@@ -5393,7 +5449,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     Math.addExact(plan.anchor().z(), offset.z()));
             BlockStateView transformed = BlockPlanStateTransformer.transformFull(
                     new BlockStateView(
-                            entry.sourceState().block(), entry.sourceState().properties()),
+                            sourceState.block(), sourceState.properties()),
                     transform,
                     "construction.entry.source_state");
             var expectedAfter = new BlockStateFingerprint(
@@ -5431,7 +5487,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     target,
                     new BlockStateFingerprint("minecraft:air", Map.of()),
                     expectedAfter,
-                    Optional.of(entry.item()),
+                    Optional.of(item),
                     Optional.of(witness));
             entries.add(step);
             prior.put(entry.id(), step);
@@ -5646,7 +5702,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private static PhaseFiveRequest containerRequest(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
-            ActionDsl.Node primitive) {
+            ActionDsl.Node primitive,
+            AgentPrimitivePlanner.MutationAim inventoryAim) {
         if (primitive instanceof ActionDsl.OperateKnownMenu operation) {
             var player = Objects.requireNonNull(minecraft.player, "player");
             return knownMenuRequest(operation, new BlockTarget(
@@ -5656,7 +5713,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     Mth.floor(player.getZ())));
         }
         if (primitive instanceof ActionDsl.CraftKnownRecipe craft) {
-            return craftRequest(craft);
+            return withInventoryAim(craftRequest(craft), craft.target(), inventoryAim);
         }
         if (primitive instanceof ActionDsl.SmeltKnownRecipe smelt) {
             return smeltRequest(smelt);
@@ -5712,10 +5769,42 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         parameters.put("retain_view_on_release", true);
         parameters.put("max_camera_degrees_per_tick",
                 McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0D);
+        parameters.put("aim_point", inventoryAimPoint(position, inventoryAim));
         var bounds = new PhaseFiveBounds(
                 target.dimension(), target, target, 0, 20, false);
         return new PhaseFiveRequest(
                 "transfer_items", parameters, bounds, minimumInventoryCount, "items");
+    }
+
+    private static PhaseFiveRequest withInventoryAim(
+            PhaseFiveRequest request,
+            ActionDsl.Position target,
+            AgentPrimitivePlanner.MutationAim aim) {
+        var parameters = new LinkedHashMap<String, Object>(request.parameters());
+        parameters.put("aim_point", inventoryAimPoint(target, aim));
+        return new PhaseFiveRequest(
+                request.kind(), parameters, request.bounds(),
+                request.expectedUnits(), request.progressUnit());
+    }
+
+    static Map<String, Object> inventoryAimPoint(
+            ActionDsl.Position target,
+            AgentPrimitivePlanner.MutationAim aim) {
+        if (aim == null || !target.equals(aim.block())) {
+            throw new IllegalArgumentException("container aim witness is unavailable");
+        }
+        Vec3 point = aim.point();
+        if (!Double.isFinite(point.x) || !Double.isFinite(point.y) || !Double.isFinite(point.z)
+                || point.x < target.x() || point.x > target.x() + 1.0D
+                || point.y < target.y() || point.y > target.y() + 1.0D
+                || point.z < target.z() || point.z > target.z() + 1.0D) {
+            throw new IllegalArgumentException("container aim witness is outside its target");
+        }
+        return Map.of(
+                "dimension", target.dimension(),
+                "x", point.x,
+                "y", point.y,
+                "z", point.z);
     }
 
     static PhaseFiveRequest knownMenuRequest(

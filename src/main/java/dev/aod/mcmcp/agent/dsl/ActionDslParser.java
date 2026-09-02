@@ -324,13 +324,30 @@ public final class ActionDslParser {
 
     private static ActionDsl.BlockPlanEntry blockPlanEntry(JsonElement value, String path) {
         JsonObject object = object(value, path,
-                Set.of("id", "offset", "source_state", "item", "support"),
-                Set.of("id", "offset", "source_state", "item", "support"));
+                Set.of("id", "offset", "source_state", "item", "placement_state_ref", "support"),
+                Set.of("id", "offset", "support"));
+        boolean hasSourceState = object.has("source_state");
+        boolean hasItem = object.has("item");
+        boolean hasPlacementStateRef = object.has("placement_state_ref");
+        if (hasSourceState != hasItem || hasSourceState == hasPlacementStateRef) {
+            throw invalid(path
+                    + " must select source_state plus item or placement_state_ref");
+        }
         return new ActionDsl.BlockPlanEntry(
                 string(object.get("id"), path + ".id"),
                 offset(object.get("offset"), path + ".offset"),
-                blockStateSpec(object.get("source_state"), path + ".source_state"),
-                string(object.get("item"), path + ".item"),
+                hasSourceState
+                        ? Optional.of(blockStateSpec(
+                                object.get("source_state"), path + ".source_state"))
+                        : Optional.empty(),
+                hasItem
+                        ? Optional.of(string(object.get("item"), path + ".item"))
+                        : Optional.empty(),
+                hasPlacementStateRef
+                        ? Optional.of(string(
+                                object.get("placement_state_ref"),
+                                path + ".placement_state_ref"))
+                        : Optional.empty(),
                 placementSupport(object.get("support"), path + ".support"));
     }
 

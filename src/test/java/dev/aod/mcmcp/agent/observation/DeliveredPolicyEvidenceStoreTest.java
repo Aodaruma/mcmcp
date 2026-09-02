@@ -203,6 +203,73 @@ class DeliveredPolicyEvidenceStoreTest {
                                 == DeliveredPolicyEvidenceStore.MAX_RETAINED_SURFACES);
     }
 
+    @Test
+    void placementStateRefActivatesOnlyAfterDeliveryAndOutlivesSurfaceTtl() {
+        var clock = new AtomicLong();
+        var ids = new AtomicLong();
+        var store = new DeliveredPolicyEvidenceStore(
+                clock::get, () -> new UUID(0L, ids.incrementAndGet()));
+        var source = copyableSurface(1, "minecraft:oak_stairs", Map.of(
+                "facing", "north", "half", "bottom", "shape", "straight",
+                "waterlogged", "false"));
+        UUID receipt = store.prepareDelivery(new ObservationPage(
+                "obs-0000000000000001", 10, List.of(source), null));
+        String ref = store.preparedPlacementStateRef(receipt, source).orElseThrow();
+
+        assertThat(ref).matches("psr_[0-9a-f]{32}");
+        assertThat(store.resolvePlacementState(ref)).isEmpty();
+        assertThat(store.confirmDelivery(receipt)).isTrue();
+        assertThat(store.resolvePlacementState(ref)).hasValueSatisfying(remembered -> {
+            assertThat(remembered.state()).isEqualTo(source.state());
+            assertThat(remembered.placementItem()).isEqualTo(source.placementItem());
+        });
+
+        clock.set(DeliveredPolicyEvidenceStore.SURFACE_IDLE_TIMEOUT.toNanos());
+        assertThat(store.retainedSurfaceCount()).isZero();
+        assertThat(store.resolvePlacementState(ref)).isPresent();
+
+        store.clear();
+        assertThat(store.resolvePlacementState(ref)).isEmpty();
+        assertThat(store.retainedPlacementStateCount()).isZero();
+    }
+
+    @Test
+    void abandonedDeliveryNeverActivatesItsPlacementStateRef() {
+        var ids = new AtomicLong();
+        var store = new DeliveredPolicyEvidenceStore(
+                System::nanoTime, () -> new UUID(0L, ids.incrementAndGet()));
+        var source = copyableSurface(1, "minecraft:oak_planks", Map.of());
+        UUID receipt = store.prepareDelivery(new ObservationPage(
+                "obs-0000000000000001", 10, List.of(source), null));
+        String ref = store.preparedPlacementStateRef(receipt, source).orElseThrow();
+
+        assertThat(store.abandonDelivery(receipt)).isTrue();
+        assertThat(store.resolvePlacementState(ref)).isEmpty();
+    }
+
+    @Test
+    void placementStateMemoryHasADeterministicCapacityBound() {
+        var ids = new AtomicLong();
+        var store = new DeliveredPolicyEvidenceStore(
+                System::nanoTime, () -> new UUID(0L, ids.incrementAndGet()));
+        String oldestRef = null;
+        for (int index = 0;
+                index <= DeliveredPolicyEvidenceStore.MAX_RETAINED_PLACEMENT_STATES;
+                index++) {
+            var source = copyableSurface(
+                    index, "minecraft:oak_planks", Map.of("test_variant", Integer.toString(index)));
+            UUID receipt = store.prepareDelivery(new ObservationPage(
+                    "obs-0000000000000001", 10, List.of(source), null));
+            String ref = store.preparedPlacementStateRef(receipt, source).orElseThrow();
+            if (index == 0) oldestRef = ref;
+            assertThat(store.confirmDelivery(receipt)).isTrue();
+        }
+
+        assertThat(store.retainedPlacementStateCount())
+                .isEqualTo(DeliveredPolicyEvidenceStore.MAX_RETAINED_PLACEMENT_STATES);
+        assertThat(store.resolvePlacementState(oldestRef)).isEmpty();
+    }
+
     private static ObservationFrame frame(
             String id, long completedTick, List<ObservationRecord> records) {
         return new ObservationFrame(id, DIMENSION, completedTick, 16.0, false, records);
@@ -264,5 +331,25 @@ class DeliveredPolicyEvidenceStoreTest {
                 eye,
                 tick,
                 revision);
+    }
+
+    private static ObservationRecord.VisibleSurface copyableSurface(
+            int x, String block, Map<String, String> properties) {
+        var position = new ObservationValues.BlockPosition(DIMENSION, x, 64, 1);
+        var eye = new ObservationValues.WorldPosition(DIMENSION, 0.5, 65.62, 0.5);
+        var hit = new ObservationValues.WorldPosition(DIMENSION, x + 0.5, 65.0, 1.5);
+        var blockId = new ObservationValues.ResourceId(block);
+        return new ObservationRecord.VisibleSurface(
+                position,
+                ObservationRecord.Face.UP,
+                blockId,
+                new ObservationRecord.BlockStateView(blockId, properties),
+                new ObservationValues.ResourceId(block),
+                ObservationRecord.ShapeClass.OPAQUE,
+                null,
+                hit,
+                eye,
+                10,
+                3);
     }
 }

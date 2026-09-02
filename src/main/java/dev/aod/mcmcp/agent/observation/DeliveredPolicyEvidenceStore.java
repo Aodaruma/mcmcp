@@ -14,16 +14,19 @@ import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 /**
- * Bounded, session-local memory of static visual surfaces actually delivered to the MCP client.
+ * Bounded, session-local memory of static visual evidence actually delivered to the MCP client.
  *
  * <p>This is not a hidden-world cache. Only {@link ObservationRecord.VisibleSurface} records from
  * successful {@code agent_get_observation} pages enter the store. Dynamic entities, hazards,
  * traversability, sounds, unknown boundaries, and records on undisclosed pages are never retained
- * here. Runtime admission still applies the current session, visual-revision, exact-target,
- * observer-pose, reach, commit, JIT, ray, and server-acknowledgement fences.</p>
+ * here. Copyable state/item identities receive opaque session refs only after delivery
+ * confirmation; unlike coordinate evidence, those identities have no time TTL. Runtime admission
+ * still applies the current session, visual-revision, exact-target, observer-pose, reach, commit,
+ * JIT, ray, and server-acknowledgement fences.</p>
  */
 public final class DeliveredPolicyEvidenceStore {
     public static final int MAX_RETAINED_SURFACES = 2_048;
+    public static final int MAX_RETAINED_PLACEMENT_STATES = 512;
     public static final Duration SURFACE_IDLE_TIMEOUT = Duration.ofSeconds(60);
     public static final int MAX_PENDING_DELIVERIES = 16;
     public static final Duration PENDING_DELIVERY_TIMEOUT = Duration.ofSeconds(60);
@@ -32,6 +35,10 @@ public final class DeliveredPolicyEvidenceStore {
     private final Supplier<UUID> receiptIds;
     private final LinkedHashMap<SurfaceKey, Entry> surfaces = new LinkedHashMap<>();
     private final LinkedHashMap<UUID, PendingDelivery> pending = new LinkedHashMap<>();
+    private final LinkedHashMap<PlacementStateKey, String> placementRefs =
+            new LinkedHashMap<>();
+    private final LinkedHashMap<String, PlacementStateResolver.PlacementState> placementStates =
+            new LinkedHashMap<>();
 
     public DeliveredPolicyEvidenceStore() {
         this(System::nanoTime, UUID::randomUUID);
@@ -55,7 +62,18 @@ public final class DeliveredPolicyEvidenceStore {
         do {
             receipt = Objects.requireNonNull(receiptIds.get(), "receiptId");
         } while (pending.containsKey(receipt));
-        pending.put(receipt, new PendingDelivery(page, now));
+        var stagedPlacementRefs = new LinkedHashMap<PlacementStateKey, String>();
+        for (ObservationRecord record : page.records()) {
+            if (!(record instanceof ObservationRecord.VisibleSurface surface)) {
+                continue;
+            }
+            PlacementStateKey key = PlacementStateKey.of(surface);
+            if (key == null || stagedPlacementRefs.containsKey(key)) {
+                continue;
+            }
+            stagedPlacementRefs.put(key, existingOrNewPlacementRef(key));
+        }
+        pending.put(receipt, new PendingDelivery(page, now, stagedPlacementRefs));
         while (pending.size() > MAX_PENDING_DELIVERIES) {
             Iterator<UUID> oldest = pending.keySet().iterator();
             oldest.next();
@@ -74,6 +92,9 @@ public final class DeliveredPolicyEvidenceStore {
             return false;
         }
         recordDelivered(delivery.page(), now);
+        for (var staged : delivery.placementRefs().entrySet()) {
+            activatePlacementState(staged.getKey(), staged.getValue());
+        }
         return true;
     }
 
@@ -90,6 +111,34 @@ public final class DeliveredPolicyEvidenceStore {
         long now = nanoTime.getAsLong();
         purgeExpired(now);
         recordDelivered(page, now);
+        for (ObservationRecord record : page.records()) {
+            if (record instanceof ObservationRecord.VisibleSurface surface) {
+                PlacementStateKey key = PlacementStateKey.of(surface);
+                if (key != null) {
+                    activatePlacementState(key, existingOrNewPlacementRef(key));
+                }
+            }
+        }
+    }
+
+    /** Returns the ref placed on a staged response; it is not usable until confirmation. */
+    public synchronized Optional<String> preparedPlacementStateRef(
+            UUID receipt, ObservationRecord.VisibleSurface surface) {
+        Objects.requireNonNull(receipt, "receipt");
+        Objects.requireNonNull(surface, "surface");
+        purgeExpired(nanoTime.getAsLong());
+        PendingDelivery delivery = pending.get(receipt);
+        PlacementStateKey key = PlacementStateKey.of(surface);
+        return delivery == null || key == null
+                ? Optional.empty()
+                : Optional.ofNullable(delivery.placementRefs().get(key));
+    }
+
+    /** Resolves only refs promoted by a successfully confirmed response write. */
+    public synchronized Optional<PlacementStateResolver.PlacementState> resolvePlacementState(
+            String placementStateRef) {
+        Objects.requireNonNull(placementStateRef, "placementStateRef");
+        return Optional.ofNullable(placementStates.get(placementStateRef));
     }
 
     private void recordDelivered(ObservationPage page, long now) {
@@ -180,6 +229,8 @@ public final class DeliveredPolicyEvidenceStore {
     public synchronized void clear() {
         surfaces.clear();
         pending.clear();
+        placementRefs.clear();
+        placementStates.clear();
     }
 
     synchronized int retainedSurfaceCount() {
@@ -190,6 +241,41 @@ public final class DeliveredPolicyEvidenceStore {
     synchronized int pendingDeliveryCount() {
         purgeExpired(nanoTime.getAsLong());
         return pending.size();
+    }
+
+    synchronized int retainedPlacementStateCount() {
+        return placementStates.size();
+    }
+
+    private String existingOrNewPlacementRef(PlacementStateKey key) {
+        String active = placementRefs.get(key);
+        if (active != null) {
+            return active;
+        }
+        for (PendingDelivery delivery : pending.values()) {
+            String staged = delivery.placementRefs().get(key);
+            if (staged != null) {
+                return staged;
+            }
+        }
+        return "psr_" + Objects.requireNonNull(receiptIds.get(), "placementStateRef")
+                .toString().replace("-", "");
+    }
+
+    private void activatePlacementState(PlacementStateKey key, String ref) {
+        String active = placementRefs.get(key);
+        if (active != null) {
+            return;
+        }
+        placementRefs.put(key, ref);
+        placementStates.put(ref, key.value());
+        while (placementStates.size() > MAX_RETAINED_PLACEMENT_STATES) {
+            Iterator<Map.Entry<String, PlacementStateResolver.PlacementState>> oldest =
+                    placementStates.entrySet().iterator();
+            Map.Entry<String, PlacementStateResolver.PlacementState> removed = oldest.next();
+            oldest.remove();
+            placementRefs.entrySet().removeIf(entry -> entry.getValue().equals(removed.getKey()));
+        }
     }
 
     private void purgeExpired(long now) {
@@ -213,9 +299,32 @@ public final class DeliveredPolicyEvidenceStore {
         }
     }
 
-    private record PendingDelivery(ObservationPage page, long preparedNanos) {
+    private record PendingDelivery(
+            ObservationPage page,
+            long preparedNanos,
+            Map<PlacementStateKey, String> placementRefs) {
         private PendingDelivery {
             Objects.requireNonNull(page, "page");
+            placementRefs = Map.copyOf(Objects.requireNonNull(placementRefs, "placementRefs"));
+        }
+    }
+
+    private record PlacementStateKey(
+            ObservationRecord.BlockStateView state,
+            ObservationValues.ResourceId placementItem) {
+        private PlacementStateKey {
+            Objects.requireNonNull(state, "state");
+            Objects.requireNonNull(placementItem, "placementItem");
+        }
+
+        private static PlacementStateKey of(ObservationRecord.VisibleSurface surface) {
+            return surface.state() == null || surface.placementItem() == null
+                    ? null
+                    : new PlacementStateKey(surface.state(), surface.placementItem());
+        }
+
+        private PlacementStateResolver.PlacementState value() {
+            return new PlacementStateResolver.PlacementState(state, placementItem);
         }
     }
 
