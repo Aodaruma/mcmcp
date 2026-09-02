@@ -14,6 +14,8 @@ import dev.aod.mcmcp.agent.observation.ObservationValues.Vector;
 import dev.aod.mcmcp.agent.observation.ObservationValues.WorldPosition;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
@@ -243,6 +245,9 @@ class OmnidirectionalObserverTest {
                 Blocks.GRASS_BLOCK.defaultBlockState())).isNotNull();
         assertThat(OmnidirectionalObserver.policyVisibleBlockState(
                 Blocks.OBSIDIAN.defaultBlockState())).isNotNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                BuiltInRegistries.BLOCK.get(Identifier.parse("minecraft:white_wool"))
+                        .orElseThrow().value().defaultBlockState())).isNotNull();
         assertThat(OmnidirectionalObserver.policyVisibleBlockState(
                 Blocks.FURNACE.defaultBlockState()).properties())
                 .containsEntry("facing", "north")

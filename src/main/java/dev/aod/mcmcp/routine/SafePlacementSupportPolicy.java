@@ -21,7 +21,8 @@ public final class SafePlacementSupportPolicy {
             "minecraft:grass_block",
             "minecraft:obsidian",
             "minecraft:smooth_stone",
-            "minecraft:stone");
+            "minecraft:stone",
+            "minecraft:white_wool");
 
     private SafePlacementSupportPolicy() {
     }

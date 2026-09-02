@@ -22,6 +22,7 @@ public final class SafeConstructionBlocks {
             "minecraft:dirt",
             "minecraft:grass_block",
             "minecraft:obsidian",
+            "minecraft:white_wool",
             "minecraft:furnace",
             "minecraft:blast_furnace",
             "minecraft:smoker");

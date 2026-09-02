@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.routine;
 
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.Blocks;
 import org.junit.jupiter.api.Test;
 
@@ -20,7 +22,8 @@ class SafePlacementSupportPolicyTest {
                 "minecraft:grass_block",
                 "minecraft:obsidian",
                 "minecraft:smooth_stone",
-                "minecraft:stone"))
+                "minecraft:stone",
+                "minecraft:white_wool"))
                 .allSatisfy(id -> assertThat(
                         SafePlacementSupportPolicy.allowsRegisteredBlockId(id)).isTrue());
 
@@ -39,6 +42,8 @@ class SafePlacementSupportPolicyTest {
 
     @Test
     void liveBoundaryRejectsInteractiveContainersFluidsAndUnexpectedEntities() {
+        var whiteWool = BuiltInRegistries.BLOCK.get(
+                Identifier.parse("minecraft:white_wool")).orElseThrow().value();
         assertThat(List.of(
                 Blocks.COBBLESTONE,
                 Blocks.DIRT,
@@ -46,7 +51,8 @@ class SafePlacementSupportPolicyTest {
                 Blocks.GRASS_BLOCK,
                 Blocks.OBSIDIAN,
                 Blocks.SMOOTH_STONE,
-                Blocks.STONE))
+                Blocks.STONE,
+                whiteWool))
                 .allSatisfy(block -> assertThat(SafePlacementSupportPolicy.allowsLiveState(
                         block.defaultBlockState(), false)).isTrue());
 
