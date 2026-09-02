@@ -188,6 +188,27 @@ class LocalObservationMixinContractTest {
     }
 
     @Test
+    void traversableExpansionPublishesAnEvaluatedEdgeBeforeDeduplicatingItsDestination()
+            throws Exception {
+        var calls = invocations(method(
+                classNode("/dev/aod/mcmcp/agent/safety/LocalObservationVolume.class"),
+                "expandTraversable"));
+        var candidate = calls.subList(
+                calls.lastIndexOf(
+                        "dev/aod/mcmcp/agent/safety/LocalObservationVolume$NodeKey#at"),
+                calls.size());
+
+        assertThat(candidate).contains(
+                "java/util/ArrayList#add",
+                "java/util/HashSet#add",
+                "java/util/ArrayDeque#addLast");
+        assertThat(candidate.indexOf("java/util/ArrayList#add"))
+                .isLessThan(candidate.indexOf("java/util/HashSet#add"));
+        assertThat(candidate.indexOf("java/util/HashSet#add"))
+                .isLessThan(candidate.indexOf("java/util/ArrayDeque#addLast"));
+    }
+
+    @Test
     void hypotheticalResolverReusesAllPrivateVanillaStepUpHelpers() throws Exception {
         var node = classNode(
                 "/dev/aod/mcmcp/agent/safety/VanillaCollisionResolver.class");

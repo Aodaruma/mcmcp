@@ -1017,11 +1017,11 @@ public final class LocalObservationVolume {
                 if (evaluation.record().canExpand()
                         && withinVolume(origin, evaluation.record())) {
                     var targetKey = NodeKey.at(targetOffset, evaluation.endBox());
-                    if (!reached.add(targetKey)) {
-                        continue;
-                    }
                     records.add(evaluation.record());
-                    queue.addLast(new Node(targetKey, evaluation.endBox(), node.depth() + 1));
+                    if (reached.add(targetKey)) {
+                        queue.addLast(new Node(
+                                targetKey, evaluation.endBox(), node.depth() + 1));
+                    }
                 } else {
                     records.add(evaluation.record());
                 }

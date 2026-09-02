@@ -241,6 +241,66 @@ class LocalObservationProjectorTest {
         }
     }
 
+    @Test
+    void alternativeSafeEdgeToReachedCellKeepsADeeperDiagonalRoutable() {
+        UUID session = UUID.randomUUID();
+        var start = new ObservationRecord.Point(0.5D, 64.9D, 0.5D);
+        var middle = new ObservationRecord.Point(1.5D, 64.9D, 0.5D);
+        var sharedSide = new ObservationRecord.Point(1.5D, 64.9D, 1.5D);
+        var eastSide = new ObservationRecord.Point(2.5D, 64.9D, 0.5D);
+        var target = new ObservationRecord.Point(2.5D, 64.9D, 1.5D);
+        var current = record(
+                10, 3, 0, start, start, start,
+                ObservationRecord.Transition.STATIONARY,
+                ObservationRecord.Clearance.CLEAR,
+                ObservationRecord.Hazard.NONE);
+        var transitions = List.of(
+                contact(start, middle, 1),
+                contact(start, sharedSide, 1),
+                contact(middle, eastSide, 2),
+                contact(middle, sharedSide, 2),
+                contact(middle, target, 2));
+
+        var projection = LocalObservationProjector.project(
+                new LocalObservationVolume.Snapshot(10, 3, start, current, transitions),
+                session,
+                OVERWORLD,
+                3,
+                64.0D);
+
+        var sharedCell = new NavCell(OVERWORLD, 1, 64, 1);
+        assertThat(projection.edges())
+                .filteredOn(edge -> edge.key().to().equals(sharedCell))
+                .hasSize(2);
+        var map = new KnownTraversabilityMap();
+        map.startSession(session, OVERWORLD, 3);
+        projection.edges().forEach(map::observe);
+        assertThat(new DeterministicAStar()
+                .findRoute(
+                        map.snapshot().orElseThrow(),
+                        new NavCell(OVERWORLD, 0, 64, 0),
+                        new NavCell(OVERWORLD, 2, 64, 1))
+                .route().orElseThrow().cells())
+                .containsExactly(
+                        new NavCell(OVERWORLD, 0, 64, 0),
+                        new NavCell(OVERWORLD, 1, 64, 0),
+                        new NavCell(OVERWORLD, 2, 64, 1));
+    }
+
+    private static ObservationRecord contact(
+            ObservationRecord.Point from, ObservationRecord.Point to, int depth) {
+        return record(
+                10,
+                3,
+                depth,
+                from,
+                to,
+                to,
+                ObservationRecord.Transition.CONTACT,
+                ObservationRecord.Clearance.CLEAR,
+                ObservationRecord.Hazard.NONE);
+    }
+
     private static ObservationRecord record(
             long tick,
             long revision,
