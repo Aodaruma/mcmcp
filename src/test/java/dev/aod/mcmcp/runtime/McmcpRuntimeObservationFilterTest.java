@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.observation.ObservationFilter;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.Face;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
 import org.junit.jupiter.api.Test;
 
@@ -14,7 +15,7 @@ class McmcpRuntimeObservationFilterTest {
     private static final ResourceId DIMENSION = new ResourceId("minecraft:overworld");
 
     @Test
-    void parsesPositionBoundsAlongsideExistingItemFilters() {
+    void parsesPositionBoundsAndFacesAlongsideExistingItemFilters() {
         var positionBounds = Map.<String, Object>of(
                 "dimension", DIMENSION.value(),
                 "min_x", -12,
@@ -25,6 +26,7 @@ class McmcpRuntimeObservationFilterTest {
                 "max_z", 24);
         var filterInput = Map.<String, Object>of(
                 "displayed_items", java.util.List.of("minecraft:wheat", "minecraft:wheat_seeds"),
+                "faces", java.util.List.of("up", "north"),
                 "position_bounds", positionBounds);
 
         ObservationFilter filter = ObservationFilterArguments.parse(
@@ -35,8 +37,22 @@ class McmcpRuntimeObservationFilterTest {
                 new ResourceId("minecraft:wheat_seeds"));
         assertThat(filter.positionBounds()).contains(new ObservationFilter.PositionBounds(
                 DIMENSION, -12, 63, 4, 18, 70, 24));
+        assertThat(filter.faces()).containsExactlyInAnyOrder(Face.UP, Face.NORTH);
         assertThat(filter.blockIds()).isEmpty();
         assertThat(filter.cropMature()).isEmpty();
+    }
+
+    @Test
+    void rejectsUnknownUpperCaseAndDuplicateFaces() {
+        assertThatThrownBy(() -> ObservationFilterArguments.parse(Map.of(
+                "filter", Map.of("faces", java.util.List.of("front")))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ObservationFilterArguments.parse(Map.of(
+                "filter", Map.of("faces", java.util.List.of("UP")))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ObservationFilterArguments.parse(Map.of(
+                "filter", Map.of("faces", java.util.List.of("up", "up")))))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -72,8 +88,10 @@ class McmcpRuntimeObservationFilterTest {
     void absentFilterKeepsTheCanonicalUnboundedValue() {
         assertThat(ObservationFilterArguments.parse(Map.of()))
                 .isEqualTo(ObservationFilter.NONE)
-                .extracting(ObservationFilter::positionBounds)
-                .isEqualTo(Optional.empty());
+                .satisfies(filter -> {
+                    assertThat(filter.positionBounds()).isEqualTo(Optional.empty());
+                    assertThat(filter.faces()).isEmpty();
+                });
     }
 
     private static ObservationFilter parse(Map<String, Object> bounds) {

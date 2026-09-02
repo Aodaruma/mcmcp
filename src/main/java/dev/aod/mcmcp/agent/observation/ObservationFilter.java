@@ -7,6 +7,7 @@ import java.util.Set;
 import static dev.aod.mcmcp.agent.observation.ObservationValues.BlockPosition;
 import static dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
 import static dev.aod.mcmcp.agent.observation.ObservationValues.WorldPosition;
+import static dev.aod.mcmcp.agent.observation.ObservationRecord.Face;
 
 /**
  * Optional delivery-only projection for an already policy-filtered observation frame.
@@ -20,10 +21,11 @@ public record ObservationFilter(
         Set<ResourceId> entityTypes,
         Set<ResourceId> displayedItems,
         Optional<Boolean> cropMature,
-        Optional<PositionBounds> positionBounds) {
+        Optional<PositionBounds> positionBounds,
+        Set<Face> faces) {
 
     public static final ObservationFilter NONE = new ObservationFilter(
-            Set.of(), Set.of(), Set.of(), Optional.empty(), Optional.empty());
+            Set.of(), Set.of(), Set.of(), Optional.empty(), Optional.empty(), Set.of());
 
     public ObservationFilter {
         blockIds = Set.copyOf(Objects.requireNonNull(blockIds, "blockIds"));
@@ -31,6 +33,16 @@ public record ObservationFilter(
         displayedItems = Set.copyOf(Objects.requireNonNull(displayedItems, "displayedItems"));
         cropMature = Objects.requireNonNull(cropMature, "cropMature");
         positionBounds = Objects.requireNonNull(positionBounds, "positionBounds");
+        faces = Set.copyOf(Objects.requireNonNull(faces, "faces"));
+    }
+
+    public ObservationFilter(
+            Set<ResourceId> blockIds,
+            Set<ResourceId> entityTypes,
+            Set<ResourceId> displayedItems,
+            Optional<Boolean> cropMature,
+            Optional<PositionBounds> positionBounds) {
+        this(blockIds, entityTypes, displayedItems, cropMature, positionBounds, Set.of());
     }
 
     public ObservationFilter(
@@ -48,6 +60,7 @@ public record ObservationFilter(
         }
         if (record instanceof ObservationRecord.VisibleSurface surface) {
             return (blockIds.isEmpty() || blockIds.contains(surface.block()))
+                    && (faces.isEmpty() || faces.contains(surface.face()))
                     && (cropMature.isEmpty()
                             || Objects.equals(cropMature.get(), surface.cropMature()));
         }

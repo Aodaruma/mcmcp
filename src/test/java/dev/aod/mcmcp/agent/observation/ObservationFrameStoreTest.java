@@ -314,6 +314,34 @@ class ObservationFrameStoreTest {
     }
 
     @Test
+    void faceFilterRunsBeforeRepresentativeSurfaceSelectionWithoutChangingTheFrame()
+            throws Exception {
+        var store = new ObservationFrameStore();
+        VisibleSurface up = ObservationModelContractTest.surface(99, 1);
+        VisibleSurface north = new VisibleSurface(
+                up.position(),
+                ObservationRecord.Face.NORTH,
+                up.block(),
+                up.shapeClass(),
+                up.cropMature(),
+                up.eyeOrigin(),
+                up.observedTick(),
+                up.worldRevision());
+        store.publish(new ObservationFrame(
+                id(1), DIMENSION, 100, 16, false, List.of(up, north)));
+        var filter = new ObservationFilter(
+                Set.of(), Set.of(), Set.of(), Optional.empty(), Optional.empty(),
+                Set.of(ObservationRecord.Face.NORTH));
+
+        ObservationPage page = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), filter, null, 256);
+
+        assertThat(page.records()).containsExactly(north);
+        assertThat(store.latestFrame()).get()
+                .extracting(frame -> frame.records().size()).isEqualTo(2);
+    }
+
+    @Test
     void sameRevisionUpSupportsSurviveNewerSideRaysAndTheDeliveredEvidenceFence()
             throws Exception {
         var frameStore = new ObservationFrameStore();

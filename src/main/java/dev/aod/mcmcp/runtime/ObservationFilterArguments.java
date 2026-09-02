@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.observation.ObservationFilter;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.Face;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
 
 import java.math.BigDecimal;
@@ -15,7 +16,7 @@ import java.util.Set;
 final class ObservationFilterArguments {
     private static final Set<String> FILTER_KEYS = Set.of(
             "block_ids", "entity_types", "displayed_items", "crop_mature",
-            "position_bounds");
+            "position_bounds", "faces");
     private static final Set<String> POSITION_BOUND_KEYS = Set.of(
             "dimension", "min_x", "min_y", "min_z", "max_x", "max_y", "max_z");
 
@@ -40,7 +41,8 @@ final class ObservationFilterArguments {
                         : Optional.empty(),
                 input.containsKey("position_bounds")
                         ? Optional.of(positionBounds(input))
-                        : Optional.empty());
+                        : Optional.empty(),
+                faces(input));
     }
 
     private static ObservationFilter.PositionBounds positionBounds(Map<String, Object> filter) {
@@ -68,6 +70,38 @@ final class ObservationFilterArguments {
         for (Object value : values) {
             if (!(value instanceof String id) || id.isBlank() || !result.add(new ResourceId(id))) {
                 throw new IllegalArgumentException(name + " must contain unique resource IDs");
+            }
+        }
+        return Set.copyOf(result);
+    }
+
+    private static Set<Face> faces(Map<String, Object> source) {
+        if (!source.containsKey("faces")) {
+            return Set.of();
+        }
+        Object raw = source.get("faces");
+        if (!(raw instanceof List<?> values) || values.isEmpty() || values.size() > 6) {
+            throw new IllegalArgumentException("faces must contain 1..6 values");
+        }
+        var result = new LinkedHashSet<Face>();
+        for (Object value : values) {
+            if (!(value instanceof String name)) {
+                throw new IllegalArgumentException(
+                        "faces must contain unique lower-case block faces");
+            }
+            Face face = switch (name) {
+                case "down" -> Face.DOWN;
+                case "up" -> Face.UP;
+                case "north" -> Face.NORTH;
+                case "south" -> Face.SOUTH;
+                case "west" -> Face.WEST;
+                case "east" -> Face.EAST;
+                default -> throw new IllegalArgumentException(
+                        "faces must contain unique lower-case block faces");
+            };
+            if (!result.add(face)) {
+                throw new IllegalArgumentException(
+                        "faces must contain unique lower-case block faces");
             }
         }
         return Set.copyOf(result);

@@ -23,6 +23,7 @@
 `agent_get_observation.filter`は、既にpolicy-visibleな同一frameから不要なrecordを削るdelivery-only filterです。record kindに適用可能な複数条件はANDで適用され、観測範囲やAction認可を拡張しません。
 
 - 作物: `block_ids=["minecraft:wheat"]`と`crop_mature=true|false`
+- 面: `faces=["up","north"]`（`down/up/north/south/west/east`。同一blockの代表面を選ぶ前に適用）
 - 落下物: `entity_types=["minecraft:item"]`と`displayed_items`
 - 指定区画: 単一のinclusive `position_bounds={dimension,min_x,min_y,min_z,max_x,max_y,max_z}`
 

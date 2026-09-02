@@ -684,6 +684,8 @@ class McpToolCatalogTest {
                 .contains("Use the smallest useful limit")
                 .contains("Use optional filter")
                 .contains("displayed_items")
+                .contains("faces")
+                .contains("before the one-face-per-position representative")
                 .contains("position_bounds")
                 .contains("traversability at navigation_target")
                 .contains("two paged queries")
@@ -694,7 +696,7 @@ class McpToolCatalogTest {
         var filteredObservation = JsonParser.parseString("""
                 {"schema_version":1,"frame_id":"obs-0000000000000000",
                  "kinds":["visible_surface","visible_entity","traversability"],
-                 "filter":{"displayed_items":["minecraft:wheat"],
+                 "filter":{"displayed_items":["minecraft:wheat"],"faces":["up","north"],
                    "position_bounds":{"dimension":"minecraft:overworld",
                      "min_x":0,"min_y":60,"min_z":0,"max_x":7,"max_y":70,"max_z":7}},
                  "cursor":null,"limit":64}
