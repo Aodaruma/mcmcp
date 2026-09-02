@@ -1154,6 +1154,8 @@ full-block高低差edgeを能動生成する処理は未実装であり、上記
 
 ### 9.5 build_blueprint — Phase 3
 
+高難易度建築copyの正式評価で、以下のvertical sliceだけでは任意規模・高所の施工を完結できないことを確認した。Phase 3の完成条件と採用ロードマップは[高難易度建築コピー失敗レビューと採用ロードマップ](./experiments/03_building/2026-09-03_hard-building-review-and-roadmap.md)に従う。特に、観測して覚えた`placement_state_ref`と実行直前のtarget/support証拠を分離し、既存のA*・BlockState transform・通常設置・server ackを再利用するcheckpoint式construction jobを追加する。LLMは目標、source/destination、transform、材料・作業領域を決め、runtimeは作業姿勢、有限phase、所有足場、隣接stateの検証順、cleanupを担当する。
+
 現在公開するvertical slice:
 
 - `visible_surface.state / placement_item`はrequired nullable field。完全stateは閉じたcopy/support allowlistだけに公開し、`placement_item != null`なら`state != null`

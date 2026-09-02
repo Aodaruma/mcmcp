@@ -4,6 +4,8 @@
 
 `aod-mimoid`上のDocker cloneで高難易度建築コピーを90分の正式条件で実行したが、**機能不合格**だった。destination 294 cellsの完全BlockState一致は171 cells（58.16%）で、正しく配置できた非air blockは10 cellsだけだった。屋根、上階、開口閉鎖、仮設撤去が未完了である。
 
+試験後の指標補正、根因レビュー、採用した修正ロードマップは[高難易度建築コピー失敗レビューと採用ロードマップ](./2026-09-03_hard-building-review-and-roadmap.md)に分離して記録した。
+
 run07の操作はproduction MCMCP公開5 Toolだけで行われ、T0後のoperator介入、Minecraft command、fixture/admin操作はない。入力lockの終了処理は正常で、全Action terminal、input ownerなし、入力解除済みを確認した。
 
 一方、元のtrace監査も不合格だった。理由はDockerでCodex sandboxを作れなかった`configWarning` 1件と、90分run中にapp-serverが通常生成した`contextCompaction` 2組である。後者はpayloadなしの厳密schemaに限って監査可能とする修正を試験後に加えた。前者はcontainer security profileの問題なのでallowlist化せず、次回正式runまでにcontainerを作り直す必要がある。機能結果が不合格なので、監査修正によって今回の合否が覆ることはない。
