@@ -75,7 +75,9 @@ $AllowedNotifications = @(
     'item/completed',
     'turn/completed'
 )
-$AllowedItemTypes = @('userMessage', 'reasoning', 'agentMessage', 'dynamicToolCall')
+$AllowedItemTypes = @(
+    'userMessage', 'reasoning', 'agentMessage', 'dynamicToolCall', 'contextCompaction'
+)
 $RequiredReasoningDeltaOptOuts = @(
     'item/reasoning/summaryPartAdded',
     'item/reasoning/summaryTextDelta',
@@ -1403,6 +1405,10 @@ function Invoke-TraceAudit {
                     Add-ViolationUnless (Test-IsSafeReasoningItem -Item $item -Method $method) `
                         "trace line ${line}: reasoning item exact safe schema mismatch" `
                         $violations
+                } elseif ($itemType -ceq 'contextCompaction') {
+                    Add-ViolationUnless (Test-ExactPropertySet $item @('type', 'id')) `
+                        "trace line ${line}: contextCompaction item exact schema mismatch" `
+                        $violations
                 }
                 if ([string]::IsNullOrWhiteSpace($itemId)) {
                     $violations.Add("trace line ${line}: item id missing")
@@ -2273,13 +2279,27 @@ function Invoke-AuditSelfTest {
             method = 'item/started'
             params = [ordered]@{
                 threadId = 'thread_1'; turnId = 'turn_1'; startedAtMs = 5
-                item = [ordered]@{ id = 'agent_1'; type = 'agentMessage'; text = '' }
+                item = [ordered]@{ id = 'compaction_1'; type = 'contextCompaction' }
             }
         },
         [ordered]@{
             method = 'item/completed'
             params = [ordered]@{
                 threadId = 'thread_1'; turnId = 'turn_1'; completedAtMs = 6
+                item = [ordered]@{ id = 'compaction_1'; type = 'contextCompaction' }
+            }
+        },
+        [ordered]@{
+            method = 'item/started'
+            params = [ordered]@{
+                threadId = 'thread_1'; turnId = 'turn_1'; startedAtMs = 7
+                item = [ordered]@{ id = 'agent_1'; type = 'agentMessage'; text = '' }
+            }
+        },
+        [ordered]@{
+            method = 'item/completed'
+            params = [ordered]@{
+                threadId = 'thread_1'; turnId = 'turn_1'; completedAtMs = 8
                 item = [ordered]@{ id = 'agent_1'; type = 'agentMessage'; text = 'done' }
             }
         },
