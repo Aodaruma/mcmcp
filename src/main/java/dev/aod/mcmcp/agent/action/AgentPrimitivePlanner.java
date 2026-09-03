@@ -19,7 +19,9 @@ import dev.aod.mcmcp.observation.BlockPlan;
 import dev.aod.mcmcp.observation.BlockPlanStateTransformer;
 import dev.aod.mcmcp.observation.BlockStateView;
 import dev.aod.mcmcp.redstone.RedstoneSpec;
+import dev.aod.mcmcp.routine.BlockStateFingerprint;
 import dev.aod.mcmcp.routine.KnownBrewingRequest;
+import dev.aod.mcmcp.routine.KnownPillarUpRequest;
 import dev.aod.mcmcp.routine.NavigationViewLease;
 import dev.aod.mcmcp.routine.SafePlacementSupportPolicy;
 import net.minecraft.util.Mth;
@@ -909,14 +911,28 @@ public final class AgentPrimitivePlanner {
             return input;
         }
         if (node instanceof ActionDsl.PillarUpKnown pillar) {
-            ObservationRecord.VisibleSurface source = requireConstructionSource(
-                    map, latestFrame, pillar.sourceState(), pillar.item());
-            knownSurfaces.add(new KnownSurface(
-                    new ActionDsl.Position(
-                            source.position().dimension().value(),
-                            source.position().x(), source.position().y(), source.position().z()),
-                    ActionDsl.BlockFace.valueOf(source.face().name()),
-                    source.block().value(), null));
+            ConstructionSource source = requirePillarSource(
+                    map, latestFrame, pillar, placementStates);
+            try {
+                KnownPillarUpRequest.requireSourceStateAndItem(
+                        new BlockStateFingerprint(
+                                source.state().block(), source.state().properties()),
+                        source.item());
+            } catch (RuntimeException rejected) {
+                throw new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Pillar source requires one safe ordinary full block");
+            }
+            if (source.surface() != null) {
+                knownSurfaces.add(new KnownSurface(
+                        new ActionDsl.Position(
+                                source.surface().position().dimension().value(),
+                                source.surface().position().x(),
+                                source.surface().position().y(),
+                                source.surface().position().z()),
+                        ActionDsl.BlockFace.valueOf(source.surface().face().name()),
+                        source.surface().block().value(), null));
+            }
             MutationSurface support = requirePillarSupport(
                     map,
                     latestFrame,
@@ -1087,7 +1103,8 @@ public final class AgentPrimitivePlanner {
                     value -> true,
                     "Smelting target requires a current matching visible surface");
             return analyzeOwnedMenu(
-                    node, input, cameraLimit, costs, knownSurfaces, work, surface,
+                    node, input, cameraLimit, costs, knownSurfaces, mutationAims,
+                    work, surface,
                     ActionDslCompiler.KNOWN_SMELTING_INTERACTIONS,
                     ActionDslCompiler.knownSmeltingTicks(smelt.maxSmelts()),
                     "smelting",
@@ -1102,7 +1119,8 @@ public final class AgentPrimitivePlanner {
                     value -> true,
                     "Brewing target requires a current matching visible surface");
             return analyzeOwnedMenu(
-                    node, input, cameraLimit, costs, knownSurfaces, work, surface,
+                    node, input, cameraLimit, costs, knownSurfaces, mutationAims,
+                    work, surface,
                     ActionDslCompiler.KNOWN_BREWING_INTERACTIONS,
                     BREWING_TICK_UPPER_BOUND,
                     "brewing",
@@ -1552,19 +1570,9 @@ public final class AgentPrimitivePlanner {
             PlanningWork work,
             MutationSurface containerSurface,
             long interactions) {
-        MutationAim candidate = new MutationAim(
-                containerSurface.surface().position(),
-                containerSurface.surface().face(),
-                containerSurface.point());
-        MutationAim previous = mutationAims.putIfAbsent(node.id(), candidate);
-        if (previous != null && !previous.equals(candidate)) {
-            throw new PlanningException(
-                    Code.PROGRAM_BUDGET_UNPROVABLE,
-                    "Container node resolves to more than one aim witness");
-        }
         return analyzeOwnedMenu(
-                node, input, cameraLimit, costs, knownSurfaces, work,
-                containerSurface, containerSurface.point(), interactions,
+                node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
+                containerSurface, interactions,
                 CONTAINER_TICK_UPPER_BOUND, "container", false, Double.POSITIVE_INFINITY);
     }
 
@@ -1574,6 +1582,7 @@ public final class AgentPrimitivePlanner {
             float cameraLimit,
             Map<String, ActionDslCompiler.Cost> costs,
             Set<KnownSurface> knownSurfaces,
+            Map<String, MutationAim> mutationAims,
             PlanningWork work,
             MutationSurface menuSurface,
             long interactions,
@@ -1582,32 +1591,15 @@ public final class AgentPrimitivePlanner {
             boolean restoreAdmittedPose,
             double maxOneWayCameraDegrees) {
         KnownSurface surface = menuSurface.surface();
-        Vec3 point = new Vec3(
-                surface.position().x() + 0.5D,
-                surface.position().y() + 0.5D,
-                surface.position().z() + 0.5D);
-        return analyzeOwnedMenu(
-                node, input, cameraLimit, costs, knownSurfaces, work, menuSurface, point,
-                interactions, tickUpperBound, costLabel, restoreAdmittedPose,
-                maxOneWayCameraDegrees);
-    }
-
-    private static List<Pose> analyzeOwnedMenu(
-            ActionDsl.Node node,
-            List<Pose> input,
-            float cameraLimit,
-            Map<String, ActionDslCompiler.Cost> costs,
-            Set<KnownSurface> knownSurfaces,
-            PlanningWork work,
-            MutationSurface menuSurface,
-            Vec3 point,
-            long interactions,
-            long tickUpperBound,
-            String costLabel,
-            boolean restoreAdmittedPose,
-            double maxOneWayCameraDegrees) {
-        KnownSurface surface = menuSurface.surface();
+        Vec3 point = menuSurface.point();
         knownSurfaces.add(surface);
+        MutationAim candidate = new MutationAim(surface.position(), surface.face(), point);
+        MutationAim previous = mutationAims.putIfAbsent(node.id(), candidate);
+        if (previous != null && !previous.equals(candidate)) {
+            throw new PlanningException(
+                    Code.PROGRAM_BUDGET_UNPROVABLE,
+                    "Owned menu node resolves to more than one aim witness");
+        }
         ActionDslCompiler.Cost worst = null;
         var output = new ArrayList<Pose>(input.size());
         for (Pose pose : input) {
@@ -1712,7 +1704,31 @@ public final class AgentPrimitivePlanner {
         return new ConstructionSource(expected, item, surface);
     }
 
-    /** Legacy inline source admission retained for pillar_up_known and migration compatibility. */
+    private static ConstructionSource requirePillarSource(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.PillarUpKnown pillar,
+            PlacementStateResolver placementStates) {
+        if (pillar.placementStateRef().isPresent()) {
+            PlacementStateResolver.PlacementState remembered = placementStates
+                    .resolve(pillar.placementStateRef().orElseThrow())
+                    .orElseThrow(() -> new PlanningException(
+                            Code.TARGET_UNKNOWN,
+                            "Pillar placement_state_ref is unknown in this world session"));
+            return new ConstructionSource(
+                    new ActionDsl.BlockStateSpec(
+                            remembered.state().block().value(), remembered.state().properties()),
+                    remembered.placementItem().value(),
+                    null);
+        }
+        ActionDsl.BlockStateSpec expected = pillar.sourceState().orElseThrow();
+        String item = pillar.item().orElseThrow();
+        ObservationRecord.VisibleSurface surface = requireConstructionSource(
+                map, latestFrame, expected, item);
+        return new ConstructionSource(expected, item, surface);
+    }
+
+    /** Legacy inline source admission retained for migration compatibility. */
     private static ObservationRecord.VisibleSurface requireConstructionSource(
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,

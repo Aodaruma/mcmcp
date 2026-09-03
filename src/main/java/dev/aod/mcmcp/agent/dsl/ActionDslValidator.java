@@ -416,8 +416,12 @@ public final class ActionDslValidator {
         if (node instanceof ActionDsl.PillarUpKnown pillar) {
             validatePosition(pillar.support(), path + ".support");
             validateBlockState(pillar.expectedSupport(), path + ".expected_support");
-            validateBlockState(pillar.sourceState(), path + ".source_state");
-            requireResourceLocation(pillar.item(), path + ".item");
+            pillar.sourceState().ifPresent(state ->
+                    validateBlockState(state, path + ".source_state"));
+            pillar.item().ifPresent(item ->
+                    requireResourceLocation(item, path + ".item"));
+            pillar.placementStateRef().ifPresent(ref ->
+                    requirePattern(ref, PLACEMENT_STATE_REF, path + ".placement_state_ref"));
             walk.requiredCapabilities.add(ActionDsl.Capability.MOVEMENT);
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_PLACE);

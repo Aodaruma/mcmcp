@@ -167,6 +167,8 @@ LLMの目標判断
 
 component gateはfixture専用Actionを作るためではなく、汎用能力を一つずつ隔離して失敗原因を短時間で再現するために用いる。
 
+2026-09-03時点でGate Bの3×3 full-cube壁は、fresh baselineから2回連続で完全合格した。通常player Actionだけで恒久9 cell、観測由来の仮足場1 cell、撤去・drop回収まで行い、offline oracleで余計な変更0、source不変、inventory -9を確認した。これはGate B前半の完了であり、5×5、複数足場、方向性block、construction jobは引き続き未完了である。
+
 ## 次回からの評価指標
 
 合否は以下を別々に記録し、重み付きの総合値だけでは隠さない。
@@ -189,7 +191,7 @@ survey、材料、基礎、上部、屋根、cleanup/verifyへ予算を分け、
 
 ## 明示的にまだ完了していないもの
 
-- session-scoped `placement_state_ref` / `blueprint_ref`
+- session-scoped `blueprint_ref`（`placement_state_ref`は実装・実機確認済み）
 - movement-aware construction jobと永続checkpoint
 - frontierを用いた段階的な観測移動
 - full-block step-up/down、連続pillar、安全なedge bridge、job所有足場cleanup
@@ -207,4 +209,4 @@ survey、材料、基礎、上部、屋根、cleanup/verifyへ予算を分け、
 - `LocalObservationVolume`で、到達済みcellへの評価済みedgeも公開recordへ残し、BFS queueへの重複追加だけを抑えるよう修正した。対角のcorner安全条件は変更していない。
 - 既存`agent_get_observation.filter`へ`faces`を追加した。代表面をposition単位へ圧縮する前に適用し、raw frame、観測半径、policy-visible範囲は変更していない。
 
-既存のfocused unit/contract testと通常unit test suiteは合格済みである。今回さらに、成功配達したcopyable surfaceだけからbounded・world-session scopedな`placement_state_ref`を発行し、見本座標の60秒evidence TTLと設置identityを分離するvertical sliceを実装した。inline `source_state`+`item`とのexact one-of、ref解決後の既存SafeConstructionBlockPolicy、target/support/JIT検証は維持する。また、navigationの公開32 blocks、trajectory係数、垂直余裕、開始pose reserveを単一定義へ揃え、freshな公開targetとA*返却経路が最大budgetで受付不能になる契約不一致を解消した。追加分はremote Dockerでfocused 156件と`check`が成功し、最終P0修正後も関連focused suiteと`check`を再実行して成功した。実ワールドでは`navigation`、`faces-place`、`state-ref-ttl`の3 gateがfresh baselineとoffline oracle付きで合格した。途中で見つかったcontainer中心照準の遮蔽不具合も、配達済みvisible ray hitを内部adapterまで保持する修正後に再試験している。詳細は[construction capability gate記録](./2026-09-03_construction-capability-gate.md)を参照。Gate B、construction job、構造化error等は引き続き未実装である。
+既存のfocused unit/contract testと通常unit test suiteは合格済みである。今回さらに、成功配達したcopyable surfaceだけからbounded・world-session scopedな`placement_state_ref`を発行し、見本座標の60秒evidence TTLと設置identityを分離するvertical sliceを実装した。inline `source_state`+`item`とのexact one-of、ref解決後の既存SafeConstructionBlockPolicy、target/support/JIT検証は維持する。また、navigationの公開32 blocks、trajectory係数、垂直余裕、開始pose reserveを単一定義へ揃え、freshな公開targetとA*返却経路が最大budgetで受付不能になる契約不一致を解消した。終了時の最終版はremote Dockerでfocused 235件、`check` 976件、construction mock、EvalTrace self-test 63件、build / installがすべて成功した。実ワールドでは`navigation`、`faces-place`、`state-ref-ttl`の3 gateに加え、Gate B 3×3がfresh baselineとoffline oracle付きで2回連続合格した。途中で見つかったcontainer中心照準の遮蔽不具合は配達済みvisible ray hitを内部adapterまで保持した。動くdrop向けの入力解放付きbounded replanを含むjarでdrop回収も再試験したが、r7 / r8 artifactからreplan経路の実発火までは主張しない。詳細は[construction capability gate記録](./2026-09-03_construction-capability-gate.md)を参照。Gate B 5×5、construction job、構造化error等は引き続き未実装である。

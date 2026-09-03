@@ -3,7 +3,7 @@ param(
     [string]$DataRoot = 'F:\mcmcp-testlab\20260902-hard-building-v1',
 
     [Parameter(Mandatory)]
-    [ValidateSet('navigation', 'faces-place', 'state-ref-ttl')]
+    [ValidateSet('navigation', 'faces-place', 'state-ref-ttl', 'wall-3x3')]
     [string]$Gate,
 
     # Dot-source pure guards without inspecting Docker or changing the filesystem.

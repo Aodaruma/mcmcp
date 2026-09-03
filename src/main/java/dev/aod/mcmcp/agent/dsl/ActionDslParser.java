@@ -301,14 +301,32 @@ public final class ActionDslParser {
 
     private static ActionDsl.PillarUpKnown pillarUpKnown(JsonObject source, String path) {
         exactKeys(source, path,
-                Set.of("id", "op", "support", "expected_support", "source_state", "item"),
-                Set.of("id", "op", "support", "expected_support", "source_state", "item"));
+                Set.of("id", "op", "support", "expected_support",
+                        "source_state", "item", "placement_state_ref"),
+                Set.of("id", "op", "support", "expected_support"));
+        boolean hasSourceState = source.has("source_state");
+        boolean hasItem = source.has("item");
+        boolean hasPlacementStateRef = source.has("placement_state_ref");
+        if (hasSourceState != hasItem || hasSourceState == hasPlacementStateRef) {
+            throw invalid(path
+                    + " must select source_state plus item or placement_state_ref");
+        }
         return new ActionDsl.PillarUpKnown(
                 string(source.get("id"), path + ".id"),
                 position(source.get("support"), path + ".support"),
                 blockStateSpec(source.get("expected_support"), path + ".expected_support"),
-                blockStateSpec(source.get("source_state"), path + ".source_state"),
-                string(source.get("item"), path + ".item"));
+                hasSourceState
+                        ? Optional.of(blockStateSpec(
+                                source.get("source_state"), path + ".source_state"))
+                        : Optional.empty(),
+                hasItem
+                        ? Optional.of(string(source.get("item"), path + ".item"))
+                        : Optional.empty(),
+                hasPlacementStateRef
+                        ? Optional.of(string(
+                                source.get("placement_state_ref"),
+                                path + ".placement_state_ref"))
+                        : Optional.empty());
     }
 
     private static ActionDsl.BlockPlanTransform blockPlanTransform(

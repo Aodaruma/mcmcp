@@ -246,6 +246,46 @@ class InputIsolationContractTest {
     }
 
     @Test
+    void movingPickupEvidenceUsesTheBoundedInputReleasingReplanPath() throws Exception {
+        var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
+        var tickCalls = invocations(method(runtime, "tickAgentAction"));
+        String replan = "dev/aod/mcmcp/runtime/McmcpRuntime#requestAgentReplan";
+
+        assertThat(tickCalls).containsSubsequence(
+                "dev/aod/mcmcp/agent/action/AgentPrimitivePlanner#visibleItemPickupCellCurrent",
+                replan,
+                "dev/aod/mcmcp/agent/action/AgentPrimitivePlanner#visibleItemAabb",
+                "dev/aod/mcmcp/runtime/McmcpRuntime#playerPickupAreaIntersects",
+                replan);
+
+        var request = method(runtime, "requestAgentReplan");
+        assertThat(invocations(request)).containsSubsequence(
+                "dev/aod/mcmcp/runtime/McmcpRuntime#closeAgentPrimitiveExecutor",
+                "dev/aod/mcmcp/runtime/McmcpRuntime#releaseAgentInputsForHold",
+                "dev/aod/mcmcp/runtime/McmcpRuntime#isCollectPrimitive",
+                "dev/aod/mcmcp/agent/action/AgentActionStore#setPhase",
+                "dev/aod/mcmcp/runtime/McmcpRuntime#agentReplanDeadlineTick");
+        assertThat(fieldWrites(request)).containsSubsequence(
+                "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#pickupArrivalTick",
+                "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#pickupCell",
+                "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#replanning",
+                "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#replanDeadlineTick");
+        assertThat(fieldAccesses(request)).containsSubsequence(
+                "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#pickupArrivalTick",
+                "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#pickupCell",
+                "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#replanning",
+                "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#replanning",
+                "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#replanDeadlineTick");
+        assertThat(invocations(request).stream()
+                .filter(call -> call.equals(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#agentReplanDeadlineTick")))
+                .hasSize(1);
+        assertThat(tickCalls).containsSubsequence(
+                "dev/aod/mcmcp/runtime/McmcpRuntime#replanDeadlineReached",
+                "dev/aod/mcmcp/runtime/McmcpRuntime#failAgentAction");
+    }
+
+    @Test
     void terminalActionFailureKeepsLocalAuthorizationIndependentOfRetryability() throws Exception {
         var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
 

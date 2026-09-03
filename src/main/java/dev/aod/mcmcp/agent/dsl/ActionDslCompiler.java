@@ -122,7 +122,12 @@ public final class ActionDslCompiler {
             return cost;
         }
         if (node instanceof ActionDsl.PillarUpKnown) {
-            Cost cost = intrinsicPillarUpCost();
+            Cost cost = Objects.requireNonNull(
+                    primitiveCosts.worstCase(node), "primitive cost result")
+                    .orElseGet(ActionDslCompiler::intrinsicPillarUpCost);
+            if (!cost.equals(intrinsicPillarUpCost())) {
+                throw unprovable("pillar_up_known has an invalid primitive bound");
+            }
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }

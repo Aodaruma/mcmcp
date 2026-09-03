@@ -388,6 +388,27 @@ class MinecraftKnownBrewingPortTest {
                                 + "#levelIdentity");
     }
 
+    @Test
+    void deliveryBackedAimDrivesPreflightAndEveryOpenWithoutWeakeningExactHit()
+            throws Exception {
+        ClassNode node = classNode();
+
+        assertThat(invocations(node, "aimPoint"))
+                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        + "#inventoryAimPoint");
+        assertThat(invocations(node, "initialPreflight"))
+                .contains("dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#aimPoint");
+        assertThat(fieldReads(node, "maintainAim"))
+                .contains("dev/aod/mcmcp/routine/MinecraftKnownBrewingPort$AttemptState"
+                        + "#aimPoint");
+        assertThat(invocations(node, "maintainAim"))
+                .contains("dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#targetReadyForOpen");
+        assertThat(invocations(node, "dispatchExpectedOpen"))
+                .contains(
+                        "dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#exactHit",
+                        "dev/aod/mcmcp/runtime/ClientPredictionSignals#begin");
+    }
+
     private static ClassNode classNode() throws Exception {
         return classNode("/dev/aod/mcmcp/routine/MinecraftKnownBrewingPort.class");
     }

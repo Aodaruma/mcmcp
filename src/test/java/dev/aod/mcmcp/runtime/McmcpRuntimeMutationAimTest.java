@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class McmcpRuntimeMutationAimTest {
     @Test
-    void containerAimSerializesOnlyThePlannerWitnessInsideTheExactTarget() {
+    void menuAimSerializesOnlyThePlannerWitnessInsideTheExactTarget() {
         var target = new ActionDsl.Position("minecraft:overworld", -11, 56, 3);
         var point = new net.minecraft.world.phys.Vec3(-10.5D, 57.0D, 3.5D);
         var aim = new AgentPrimitivePlanner.MutationAim(
@@ -30,6 +30,21 @@ class McmcpRuntimeMutationAimTest {
                         new ActionDsl.Position("minecraft:overworld", -11, 56, 4),
                         ActionDsl.BlockFace.UP,
                         new net.minecraft.world.phys.Vec3(-10.5D, 57.0D, 4.5D))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> McmcpRuntime.inventoryAimPoint(
+                target,
+                new AgentPrimitivePlanner.MutationAim(
+                        target,
+                        ActionDsl.BlockFace.UP,
+                        new net.minecraft.world.phys.Vec3(-9.5D, 57.0D, 3.5D))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> McmcpRuntime.inventoryAimPoint(
+                target,
+                new AgentPrimitivePlanner.MutationAim(
+                        target,
+                        ActionDsl.BlockFace.UP,
+                        new net.minecraft.world.phys.Vec3(
+                                Double.NaN, 57.0D, 3.5D))))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $resetScript = Join-Path $PSScriptRoot 'Reset-McmcpHardBuildingGateWorld.ps1'
-. $resetScript -Gate navigation -DataRoot 'F:\mcmcp-testlab\20260902-hard-building-v1' `
+. $resetScript -Gate wall-3x3 -DataRoot 'F:\mcmcp-testlab\20260902-hard-building-v1' `
     -LibraryOnly
 
 function Assert-True {

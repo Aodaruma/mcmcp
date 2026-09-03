@@ -1104,6 +1104,37 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void visibleItemCollectionCanRebindAStillMatchingItemToANewPickupCell() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        map.observe(confirmed(session, cell(0), cell(1)));
+        map.observe(confirmed(session, cell(1), cell(2)));
+        var submittedTarget = new ActionDsl.WorldPosition(DIMENSION, 2.49D, 64.1D, 0.5D);
+        var collect = new ActionDsl.CollectVisibleItem(
+                "collect", "minecraft:wheat", submittedTarget);
+        var initialFrame = entityFrame(visibleItem("minecraft:wheat", submittedTarget, 0L));
+
+        var initial = AgentPrimitivePlanner.requirePickupPlan(
+                map.snapshot().orElseThrow(), new DeterministicAStar(), cell(0),
+                Optional.of(initialFrame), collect);
+        assertThat(initial.pickupCell()).isEqualTo(cell(1));
+
+        var movedTarget = new ActionDsl.WorldPosition(DIMENSION, 3.2D, 64.1D, 0.5D);
+        var movedFrame = entityFrame(visibleItem("minecraft:wheat", movedTarget, 0L));
+        assertThat(AgentPrimitivePlanner.visibleItemCurrent(
+                map.snapshot().orElseThrow(), Optional.of(movedFrame), collect)).isTrue();
+        assertThat(AgentPrimitivePlanner.visibleItemPickupCellCurrent(
+                map.snapshot().orElseThrow(), Optional.of(movedFrame), collect,
+                initial.pickupCell(), 1L, 0L)).isFalse();
+
+        var rebound = AgentPrimitivePlanner.requirePickupPlan(
+                map.snapshot().orElseThrow(), new DeterministicAStar(), cell(0),
+                Optional.of(movedFrame), collect);
+        assertThat(rebound.pickupCell()).isEqualTo(cell(2));
+        assertThat(rebound.route().cells().getLast()).isEqualTo(cell(2));
+    }
+
+    @Test
     void visibleItemRevisionWindowCrossesOnlyNeutralMutations() {
         UUID session = UUID.randomUUID();
         var map = map(session);
@@ -1688,7 +1719,7 @@ class AgentPrimitivePlannerTest {
                         List.of(smelt)),
                 map, new DeterministicAStar(), pose,
                 Optional.of(frame(
-                        furnace, ObservationRecord.Face.WEST, "minecraft:furnace", 0)),
+                        furnace, ObservationRecord.Face.UP, "minecraft:furnace", 0)),
                 4.5F);
 
         var cost = analysis.primitiveCosts().get("smelt");
@@ -1696,11 +1727,17 @@ class AgentPrimitivePlannerTest {
         assertThat(cost.ticks()).isEqualTo(ActionDslCompiler.knownSmeltingTicks(1));
         assertThat(cost.interactions()).isEqualTo(7L);
         var centerCost = AgentPrimitivePlanner.mutationCost(
-                pose, new Vec3(3.5D, 64.5D, 0.5D), 4.5F, 6, 0, 0);
-        assertThat(cost.cameraDegrees()).isEqualTo(centerCost.cameraDegrees() * 2.0D);
+                pose, new Vec3(3.5D, 64.5D, 0.5D), 4.5F, 7, 0, 0);
+        var rayHitCost = AgentPrimitivePlanner.mutationCost(
+                pose, new Vec3(3.5D, 65.0D, 0.5D), 4.5F, 7, 0, 0);
+        assertThat(cost.cameraDegrees()).isEqualTo(rayHitCost.cameraDegrees() * 2.0D);
+        assertThat(cost.cameraDegrees()).isNotEqualTo(centerCost.cameraDegrees() * 2.0D);
+        assertThat(analysis.mutationAims().get("smelt"))
+                .isEqualTo(new AgentPrimitivePlanner.MutationAim(
+                        furnace, ActionDsl.BlockFace.UP, new Vec3(3.5D, 65.0D, 0.5D)));
         assertThat(analysis.knownSurfaces()).contains(
                 new AgentPrimitivePlanner.KnownSurface(
-                        furnace, ActionDsl.BlockFace.WEST, "minecraft:furnace"));
+                        furnace, ActionDsl.BlockFace.UP, "minecraft:furnace"));
     }
 
     @Test
@@ -1770,7 +1807,7 @@ class AgentPrimitivePlannerTest {
                 new AgentPrimitivePlanner.Pose(
                         cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F),
                 Optional.of(frame(
-                        stand, ObservationRecord.Face.WEST, "minecraft:brewing_stand", 0)),
+                        stand, ObservationRecord.Face.UP, "minecraft:brewing_stand", 0)),
                 4.5F);
 
         var cost = analysis.primitiveCosts().get("brew");
@@ -1781,13 +1818,19 @@ class AgentPrimitivePlannerTest {
                 cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
         var centerCost = AgentPrimitivePlanner.mutationCost(
                 admittedPose, new Vec3(3.5D, 64.5D, 0.5D), 4.5F, 16, 0, 0);
-        assertThat(cost.cameraDegrees()).isEqualTo(centerCost.cameraDegrees() * 2.0D);
+        var rayHitCost = AgentPrimitivePlanner.mutationCost(
+                admittedPose, new Vec3(3.5D, 65.0D, 0.5D), 4.5F, 16, 0, 0);
+        assertThat(cost.cameraDegrees()).isEqualTo(rayHitCost.cameraDegrees() * 2.0D);
+        assertThat(cost.cameraDegrees()).isNotEqualTo(centerCost.cameraDegrees() * 2.0D);
         assertThat(cost.distanceBlocks()).isZero();
         assertThat(cost.blocksBroken()).isZero();
         assertThat(cost.blocksPlaced()).isZero();
         assertThat(analysis.knownSurfaces()).contains(
                 new AgentPrimitivePlanner.KnownSurface(
-                        stand, ActionDsl.BlockFace.WEST, "minecraft:brewing_stand"));
+                        stand, ActionDsl.BlockFace.UP, "minecraft:brewing_stand"));
+        assertThat(analysis.mutationAims().get("brew"))
+                .isEqualTo(new AgentPrimitivePlanner.MutationAim(
+                        stand, ActionDsl.BlockFace.UP, new Vec3(3.5D, 65.0D, 0.5D)));
 
         assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
                 program,
@@ -1952,6 +1995,79 @@ class AgentPrimitivePlannerTest {
                         ActionDsl.BlockFace.UP,
                         "minecraft:smooth_stone",
                         null));
+    }
+
+    @Test
+    void pillarRefNeedsNoSourceCoordinateButStillRejectsNonFullPlacementState() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var support = new ActionDsl.Position(DIMENSION, 0, 63, 0);
+        var smoothStone = new ActionDsl.BlockStateSpec(
+                "minecraft:smooth_stone", Map.of());
+        String ref = "psr_0123456789abcdef0123456789abcdef";
+        var pillar = new ActionDsl.PillarUpKnown(
+                "pillar",
+                support,
+                smoothStone,
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(ref));
+        var program = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(
+                        ActionDsl.Capability.MOVEMENT,
+                        ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.BLOCK_PLACE),
+                List.of(pillar));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0, 0);
+        var supportFrame = Optional.of(frame(List.of(surfaceWithStateAtEye(
+                support,
+                ObservationRecord.Face.UP,
+                "minecraft:smooth_stone",
+                Map.of(),
+                0,
+                1.5D,
+                65.62D,
+                0.5D))));
+        var fullBlock = new PlacementStateResolver.PlacementState(
+                new ObservationRecord.BlockStateView(
+                        new ObservationValues.ResourceId("minecraft:oak_planks"), Map.of()),
+                new ObservationValues.ResourceId("minecraft:oak_planks"));
+
+        var accepted = AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(), pose, supportFrame,
+                4.5F, map.worldRevision(), ignored -> map.worldRevision(), () -> true,
+                candidate -> candidate.equals(ref)
+                        ? Optional.of(fullBlock) : Optional.empty());
+
+        assertThat(accepted.worstCase(pillar))
+                .contains(ActionDslCompiler.intrinsicPillarUpCost());
+        assertThat(accepted.knownSurfaces())
+                .extracting(AgentPrimitivePlanner.KnownSurface::position)
+                .containsExactly(support);
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(), pose, supportFrame,
+                4.5F, map.worldRevision(), ignored -> map.worldRevision(), () -> true,
+                PlacementStateResolver.none()))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+
+        var slab = new PlacementStateResolver.PlacementState(
+                new ObservationRecord.BlockStateView(
+                        new ObservationValues.ResourceId("minecraft:oak_slab"),
+                        Map.of("type", "bottom", "waterlogged", "false")),
+                new ObservationValues.ResourceId("minecraft:oak_slab"));
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(), pose, supportFrame,
+                4.5F, map.worldRevision(), ignored -> map.worldRevision(), () -> true,
+                ignored -> Optional.of(slab)))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
     }
 
     @Test

@@ -265,6 +265,51 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void pillarCatalogAcceptsRefOrInlineIdentityButRejectsNullAndMixedForms() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var request = JsonParser.parseString("""
+                {
+                  "schema_version":1,
+                  "program":{
+                    "dsl_version":1,
+                    "capabilities":["movement","camera","block_place"],
+                    "body":[{
+                      "id":"up",
+                      "op":"pillar_up_known",
+                      "support":{"dimension":"minecraft:overworld","x":0,"y":64,"z":0},
+                      "expected_support":{"block":"minecraft:stone","properties":{}},
+                      "placement_state_ref":"psr_0123456789abcdef0123456789abcdef"
+                    }]
+                  },
+                  "budget":{
+                    "max_duration_ms":15000,"max_ticks":300,
+                    "max_distance_blocks":2,"max_camera_degrees":360,
+                    "max_interactions":0,"max_blocks_broken":0,"max_blocks_placed":1
+                  }
+                }
+                """).getAsJsonObject();
+        var node = request.getAsJsonObject("program").getAsJsonArray("body")
+                .get(0).getAsJsonObject();
+
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+
+        node.remove("placement_state_ref");
+        node.add("source_state", JsonParser.parseString(
+                "{\"block\":\"minecraft:oak_planks\",\"properties\":{}}"));
+        node.addProperty("item", "minecraft:oak_planks");
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+
+        node.addProperty(
+                "placement_state_ref", "psr_0123456789abcdef0123456789abcdef");
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isFalse();
+
+        node.remove("source_state");
+        node.remove("item");
+        node.add("placement_state_ref", com.google.gson.JsonNull.INSTANCE);
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isFalse();
+    }
+
+    @Test
     void knownMenuOperationCatalogContractIsClosedTerminalAndBudgeted() {
         var schema = new McpToolCatalog().inputSchema("agent_start_action");
         var node = schema.getAsJsonObject("$defs").getAsJsonObject("operateKnownMenuNode");
@@ -499,6 +544,8 @@ class McpToolCatalogTest {
         assertThat(definition.get("description").getAsString())
                 .contains("exact full input stack of 1..64 items")
                 .contains("furnace, blast furnace, or smoker")
+                .contains("delivery-backed visible-surface ray hit",
+                        "live exact-target hit", "270 degrees")
                 .contains("Raw slots and GUI coordinates remain private")
                 .contains("2200+200*max_smelts ticks", "540 camera degrees", "7 interactions");
 
@@ -553,8 +600,9 @@ class McpToolCatalogTest {
                 .contains("cannot be resumed or replayed")
                 .contains("final top-level Action node")
                 .contains("never inside if/repeat")
-                .contains("execution-start preflight", "one-way stand-center",
-                        "270 degrees", "face_known_position")
+                .contains("execution-start preflight",
+                        "delivery-backed visible-surface ray hit",
+                        "live exact-target hit", "270 degrees", "face_known_position")
                 .contains("70000 ms", "1400 ticks", "540 camera degrees", "16 interactions")
                 .contains("recovery dispatches no gameplay interaction")
                 .contains("interaction ceiling remains 16")

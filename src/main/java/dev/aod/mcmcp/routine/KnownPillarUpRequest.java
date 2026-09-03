@@ -1,8 +1,12 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 import dev.aod.mcmcp.observation.BlockPlan;
 import dev.aod.mcmcp.observation.BlockPlanStateTransformer;
 import dev.aod.mcmcp.observation.BlockStateView;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.EmptyBlockGetter;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.Objects;
@@ -25,10 +29,7 @@ public record KnownPillarUpRequest(
         if (!allowsSupportBlockId(expectedSupport.blockId())) {
             throw new IllegalArgumentException(SafePlacementSupportPolicy.REJECTION_MESSAGE);
         }
-        SafeConstructionBlockPolicy.requireExpectedStateAndItem(sourceState, item);
-        if (sourceState.blockId().endsWith("_door")) {
-            throw new IllegalArgumentException("pillar placement requires one-cell blocks");
-        }
+        requireSourceStateAndItem(sourceState, item);
     }
 
     static boolean allowsSupportBlockId(String blockId) {
@@ -41,6 +42,19 @@ public record KnownPillarUpRequest(
                 && !SafeConstructionBlockPolicy.allowsLiveState(
                         state, liveBlockEntityPresent)) {
             throw new SafePlacementSupportPolicy.UnsafePlacementSupportException();
+        }
+    }
+
+    /** Pillaring accepts only one ordinary full collision block from the construction policy. */
+    public static void requireSourceStateAndItem(
+            BlockStateFingerprint sourceState, String item) {
+        SafeConstructionBlockPolicy.requireExpectedStateAndItem(sourceState, item);
+        BlockState resolved = SafeConstructionBlockPolicy.requireExpectedState(sourceState);
+        if (SafeConstructionBlocks.placementCellCount(sourceState.blockId()) != 1
+                || !Block.isShapeFullBlock(resolved.getCollisionShape(
+                        EmptyBlockGetter.INSTANCE, BlockPos.ZERO))) {
+            throw new IllegalArgumentException(
+                    "pillar placement requires one ordinary full block");
         }
     }
 

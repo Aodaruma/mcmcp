@@ -174,6 +174,62 @@ class McmcpRuntimeConstructionTest {
     }
 
     @Test
+    void resolvesPillarRefAgainAndKeepsTheOneFullBlockPolicy() {
+        String ref = "psr_0123456789abcdef0123456789abcdef";
+        var pillar = new ActionDsl.PillarUpKnown(
+                "up",
+                position(0, 64, 0),
+                new ActionDsl.BlockStateSpec("minecraft:stone", Map.of()),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(ref));
+        var planks = new PlacementStateResolver.PlacementState(
+                new ObservationRecord.BlockStateView(
+                        new ObservationValues.ResourceId("minecraft:oak_planks"), Map.of()),
+                new ObservationValues.ResourceId("minecraft:oak_planks"));
+
+        var request = McmcpRuntime.pillarUpRequest(
+                pillar, candidate -> candidate.equals(ref)
+                        ? Optional.of(planks) : Optional.empty());
+
+        assertThat(request.sourceState())
+                .isEqualTo(new dev.aod.mcmcp.routine.BlockStateFingerprint(
+                        "minecraft:oak_planks", Map.of()));
+        assertThat(request.item()).isEqualTo("minecraft:oak_planks");
+        assertThatThrownBy(() -> McmcpRuntime.pillarUpRequest(
+                pillar, PlacementStateResolver.none()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("placement_state_ref is unknown");
+
+        var door = new PlacementStateResolver.PlacementState(
+                new ObservationRecord.BlockStateView(
+                        new ObservationValues.ResourceId("minecraft:oak_door"),
+                        Map.of(
+                                "facing", "east", "half", "lower", "hinge", "right",
+                                "open", "false", "powered", "false")),
+                new ObservationValues.ResourceId("minecraft:oak_door"));
+        assertThatThrownBy(() -> McmcpRuntime.pillarUpRequest(
+                pillar, ignored -> Optional.of(door)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("one ordinary full block");
+    }
+
+    @Test
+    void unknownPillarRefKeepsItsFixedAdmissionCostForPlannerRejection() {
+        var pillar = new ActionDsl.PillarUpKnown(
+                "up",
+                position(0, 64, 0),
+                new ActionDsl.BlockStateSpec("minecraft:stone", Map.of()),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of("psr_0123456789abcdef0123456789abcdef"));
+
+        assertThat(McmcpRuntime.pillarAdmissionCost(
+                pillar, PlacementStateResolver.none()))
+                .isEqualTo(ActionDslCompiler.intrinsicPillarUpCost());
+    }
+
+    @Test
     void convertsTransformedExactClearStateIntoConstructionBreaks() {
         var plan = new ActionDsl.ClearKnownBlockPlan(
                 "clear",

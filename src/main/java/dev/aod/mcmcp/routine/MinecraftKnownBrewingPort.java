@@ -338,7 +338,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         state.openHand = openHand.orElseThrow();
         state.ownership.selectOpenHand(minecraft, state.openHand);
         BlockTarget target = state.brewing.target();
-        Vec3 point = new Vec3(target.x() + 0.5D, target.y() + 0.5D, target.z() + 0.5D);
+        Vec3 point = state.aimPoint;
         state.ownership.turnToward(minecraft, point);
         if (state.ownership.aligned(minecraft, point)
                 && minecraft.hitResult instanceof BlockHitResult hit
@@ -1097,10 +1097,9 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                     RoutineFailure.Recovery.REPLAN,
                     Map.of("empty_or_safe_hotbar_item", true), Map.of());
         }
-        BlockTarget target = brewing.target();
         Rotation targetRotation = ViewSlotLease.rotation(
                 minecraft.player.getEyePosition(),
-                new Vec3(target.x() + 0.5D, target.y() + 0.5D, target.z() + 0.5D));
+                aimPoint(brewing));
         if (oneWayCameraDegrees(
                 minecraft.player.getYRot(), minecraft.player.getXRot(),
                 targetRotation.yaw(), targetRotation.pitch())
@@ -1784,13 +1783,16 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         }
         requireExactKeys(request.parameters(), Set.of(
                 "target", "input", "ingredient_item", "fuel_item", "expected_output",
-                "max_camera_degrees_per_tick"));
+                "max_camera_degrees_per_tick", "aim_point"));
+        if (request.parameters().get("aim_point") == null) {
+            throw new IllegalArgumentException("brewing aim_point is required");
+        }
         BlockTarget target = target(map(request.parameters().get("target"), "target"));
         StandardPotionStackSpec input = potion(
                 map(request.parameters().get("input"), "input"));
         StandardPotionStackSpec output = potion(
                 map(request.parameters().get("expected_output"), "expected_output"));
-        return new KnownBrewingRequest(
+        KnownBrewingRequest result = new KnownBrewingRequest(
                 target, input,
                 string(request.parameters().get("ingredient_item"), "ingredient_item"),
                 string(request.parameters().get("fuel_item"), "fuel_item"),
@@ -1798,6 +1800,13 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                 decimal(request.parameters().get("max_camera_degrees_per_tick"),
                         "max_camera_degrees_per_tick"),
                 request);
+        aimPoint(result);
+        return result;
+    }
+
+    private static Vec3 aimPoint(KnownBrewingRequest brewing) {
+        return MinecraftPhaseFiveInventoryPort.inventoryAimPoint(
+                brewing.operation(), brewing.target());
     }
 
     private static StandardPotionStackSpec potion(Map<String, Object> value) {
@@ -2129,6 +2138,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
     private static final class AttemptState {
         private final PhaseFiveRequest request;
         private final KnownBrewingRequest brewing;
+        private final Vec3 aimPoint;
         private Stage stage = Stage.TERMINAL;
         private RoutineFailure failure;
         private InconclusiveState inconclusive;
@@ -2180,11 +2190,13 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         private AttemptState(PhaseFiveRequest request, KnownBrewingRequest brewing) {
             this.request = Objects.requireNonNull(request, "request");
             this.brewing = Objects.requireNonNull(brewing, "brewing");
+            this.aimPoint = aimPoint(brewing);
         }
 
         private AttemptState(PhaseFiveRequest request) {
             this.request = Objects.requireNonNull(request, "request");
             this.brewing = null;
+            this.aimPoint = null;
         }
 
         private boolean ownershipContextLost(Minecraft minecraft) {

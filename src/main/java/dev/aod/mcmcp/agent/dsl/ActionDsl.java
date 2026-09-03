@@ -258,14 +258,32 @@ public final class ActionDsl {
             String id,
             Position support,
             BlockStateSpec expectedSupport,
-            BlockStateSpec sourceState,
-            String item) implements Node {
+            Optional<BlockStateSpec> sourceState,
+            Optional<String> item,
+            Optional<String> placementStateRef) implements Node {
         public PillarUpKnown {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(support, "support");
             Objects.requireNonNull(expectedSupport, "expectedSupport");
             Objects.requireNonNull(sourceState, "sourceState");
             Objects.requireNonNull(item, "item");
+            Objects.requireNonNull(placementStateRef, "placementStateRef");
+            boolean inline = sourceState.isPresent() && item.isPresent();
+            if (sourceState.isPresent() != item.isPresent()
+                    || inline == placementStateRef.isPresent()) {
+                throw new IllegalArgumentException(
+                        "pillar source must select inline identity or placement_state_ref");
+            }
+        }
+
+        public PillarUpKnown(
+                String id,
+                Position support,
+                BlockStateSpec expectedSupport,
+                BlockStateSpec sourceState,
+                String item) {
+            this(id, support, expectedSupport,
+                    Optional.of(sourceState), Optional.of(item), Optional.empty());
         }
     }
 

@@ -1934,14 +1934,31 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private Optional<ActionDslCompiler.Cost> admissionPrimitiveCost(ActionDsl.Node node) {
-        if (!(node instanceof ActionDsl.ApplyKnownBlockPlan plan)) {
-            return structuralPrimitiveCost(node);
+        if (node instanceof ActionDsl.PillarUpKnown pillar) {
+            return Optional.of(pillarAdmissionCost(
+                    pillar, deliveredAgentEvidence::resolvePlacementState));
         }
-        long placements = plan.entries().stream()
-                .mapToLong(this::rememberedPlacementCells)
-                .sum();
-        return Optional.of(ActionDslCompiler.intrinsicKnownBlockPlanCost(
-                plan.entries().size(), placements));
+        if (node instanceof ActionDsl.ApplyKnownBlockPlan plan) {
+            long placements = plan.entries().stream()
+                    .mapToLong(this::rememberedPlacementCells)
+                    .sum();
+            return Optional.of(ActionDslCompiler.intrinsicKnownBlockPlanCost(
+                    plan.entries().size(), placements));
+        }
+        return structuralPrimitiveCost(node);
+    }
+
+    static ActionDslCompiler.Cost pillarAdmissionCost(
+            ActionDsl.PillarUpKnown pillar,
+            PlacementStateResolver placementStates) {
+        Optional<PillarSource> source = resolvePillarSource(pillar, placementStates);
+        source.ifPresent(value -> KnownPillarUpRequest.requireSourceStateAndItem(
+                new BlockStateFingerprint(
+                        value.state().block(), value.state().properties()),
+                value.item()));
+        // The footprint is fixed at one. Unknown/evicted refs need no identity guess for cost;
+        // the admission planner resolves them separately and reports TARGET_UNKNOWN.
+        return ActionDslCompiler.intrinsicPillarUpCost();
     }
 
     private long rememberedPlacementCells(ActionDsl.BlockPlanEntry entry) {
@@ -3712,10 +3729,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             session.clientTick(),
                             visibleItemEvidenceMaxAgeTicks(
                                     McmcpClientConfig.raysPerTick()))) {
-                        failAgentAction(
-                                AgentActionStore.FailureCode.PATH_BLOCKED,
-                                true,
-                                "pickup_witness_changed");
+                        requestAgentReplan(actionTick, "pickup_witness_changed");
                         return;
                     }
                 }
@@ -3883,10 +3897,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         if (itemBounds.isEmpty() || !playerPickupAreaIntersects(
                                 Objects.requireNonNull(minecraft.player, "player").getBoundingBox(),
                                 itemBounds.orElseThrow())) {
-                            failAgentAction(
-                                    AgentActionStore.FailureCode.PATH_BLOCKED,
-                                    true,
-                                    "pickup_area_unreached");
+                            requestAgentReplan(actionTick, "pickup_area_unreached");
                             return;
                         }
                         if (agentExecution.primitive
@@ -4962,6 +4973,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             try {
                 request = brewingRequest(
                         (ActionDsl.BrewKnownPotionBatch) agentExecution.primitive,
+                        agentExecution.mutationAims.get(agentExecution.primitive.id()),
                         agentExecution.maxCameraDegreesPerTick);
             } catch (RuntimeException rejected) {
                 failAgentAction(
@@ -5067,7 +5079,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (agentExecution.pillarUpAttempt == null) {
             final KnownPillarUpRequest request;
             try {
-                request = pillarUpRequest((ActionDsl.PillarUpKnown) agentExecution.primitive);
+                request = pillarUpRequest(
+                        (ActionDsl.PillarUpKnown) agentExecution.primitive,
+                        deliveredAgentEvidence::resolvePlacementState);
             } catch (RuntimeException rejected) {
                 failAgentAction(
                         AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
@@ -5106,7 +5120,17 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     static KnownPillarUpRequest pillarUpRequest(ActionDsl.PillarUpKnown pillar) {
+        return pillarUpRequest(pillar, PlacementStateResolver.none());
+    }
+
+    static KnownPillarUpRequest pillarUpRequest(
+            ActionDsl.PillarUpKnown pillar,
+            PlacementStateResolver placementStates) {
         Objects.requireNonNull(pillar, "pillar");
+        Objects.requireNonNull(placementStates, "placementStates");
+        PillarSource source = resolvePillarSource(pillar, placementStates)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "pillar placement_state_ref is unknown"));
         return new KnownPillarUpRequest(
                 new BlockTarget(
                         pillar.support().dimension(),
@@ -5117,9 +5141,31 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         pillar.expectedSupport().block(),
                         pillar.expectedSupport().properties()),
                 new BlockStateFingerprint(
-                        pillar.sourceState().block(),
-                        pillar.sourceState().properties()),
-                pillar.item());
+                        source.state().block(),
+                        source.state().properties()),
+                source.item());
+    }
+
+    private static Optional<PillarSource> resolvePillarSource(
+            ActionDsl.PillarUpKnown pillar,
+            PlacementStateResolver placementStates) {
+        if (pillar.placementStateRef().isPresent()) {
+            return placementStates.resolve(pillar.placementStateRef().orElseThrow())
+                    .map(remembered -> new PillarSource(
+                            new ActionDsl.BlockStateSpec(
+                                    remembered.state().block().value(),
+                                    remembered.state().properties()),
+                            remembered.placementItem().value()));
+        }
+        return Optional.of(new PillarSource(
+                pillar.sourceState().orElseThrow(), pillar.item().orElseThrow()));
+    }
+
+    private record PillarSource(ActionDsl.BlockStateSpec state, String item) {
+        private PillarSource {
+            Objects.requireNonNull(state, "state");
+            Objects.requireNonNull(item, "item");
+        }
     }
 
     private void tickAgentRedstone(
@@ -5680,7 +5726,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     static KnownBrewingRequest brewingRequest(
-            ActionDsl.BrewKnownPotionBatch brew, float maxCameraDegreesPerTick) {
+            ActionDsl.BrewKnownPotionBatch brew,
+            AgentPrimitivePlanner.MutationAim brewingAim,
+            float maxCameraDegreesPerTick) {
         Objects.requireNonNull(brew, "brew");
         if (!StandardPotionPolicy.BREWING_STAND.equals(brew.expectedBlock())) {
             throw new IllegalArgumentException("brewing target must be a brewing stand");
@@ -5690,13 +5738,18 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 brew.target().x(),
                 brew.target().y(),
                 brew.target().z());
-        return new KnownBrewingRequest(
+        KnownBrewingRequest base = new KnownBrewingRequest(
                 target,
                 brew.input(),
                 brew.ingredientItem(),
                 brew.fuelItem(),
                 brew.expectedOutput(),
                 maxCameraDegreesPerTick);
+        PhaseFiveRequest operation = withInventoryAim(
+                base.operation(), brew.target(), brewingAim);
+        return new KnownBrewingRequest(
+                base.target(), base.input(), base.ingredientItem(), base.fuelItem(),
+                base.expectedOutput(), base.maxCameraDegreesPerTick(), operation);
     }
 
     private static PhaseFiveRequest containerRequest(
@@ -5716,7 +5769,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return withInventoryAim(craftRequest(craft), craft.target(), inventoryAim);
         }
         if (primitive instanceof ActionDsl.SmeltKnownRecipe smelt) {
-            return smeltRequest(smelt);
+            return smeltRequest(smelt, inventoryAim);
         }
         ActionDsl.Position position;
         String expectedBlock;
@@ -5791,14 +5844,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             ActionDsl.Position target,
             AgentPrimitivePlanner.MutationAim aim) {
         if (aim == null || !target.equals(aim.block())) {
-            throw new IllegalArgumentException("container aim witness is unavailable");
+            throw new IllegalArgumentException("menu aim witness is unavailable");
         }
         Vec3 point = aim.point();
         if (!Double.isFinite(point.x) || !Double.isFinite(point.y) || !Double.isFinite(point.z)
                 || point.x < target.x() || point.x > target.x() + 1.0D
                 || point.y < target.y() || point.y > target.y() + 1.0D
                 || point.z < target.z() || point.z > target.z() + 1.0D) {
-            throw new IllegalArgumentException("container aim witness is outside its target");
+            throw new IllegalArgumentException("menu aim witness is outside its target");
         }
         return Map.of(
                 "dimension", target.dimension(),
@@ -5852,7 +5905,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 "craft_items", parameters, bounds, craft.minimumInventoryCount(), "items");
     }
 
-    static PhaseFiveRequest smeltRequest(ActionDsl.SmeltKnownRecipe smelt) {
+    static PhaseFiveRequest smeltRequest(
+            ActionDsl.SmeltKnownRecipe smelt,
+            AgentPrimitivePlanner.MutationAim smeltingAim) {
         ActionDsl.Position position = smelt.target();
         var target = new BlockTarget(
                 position.dimension(), position.x(), position.y(), position.z());
@@ -5879,8 +5934,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var bounds = new PhaseFiveBounds(
                 target.dimension(), target, target, 0,
                 Math.toIntExact((ticks + 19L) / 20L), false);
-        return new PhaseFiveRequest(
+        PhaseFiveRequest request = new PhaseFiveRequest(
                 "smelt_items", parameters, bounds, smelt.maxSmelts(), "smelts");
+        return withInventoryAim(request, position, smeltingAim);
     }
 
     private static String containerItemsTrace(List<KnownContainerAttempt.ItemCount> items) {

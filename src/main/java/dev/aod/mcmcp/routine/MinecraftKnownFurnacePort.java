@@ -317,7 +317,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         state.openHand = openHand.orElseThrow();
         state.ownership.selectOpenHand(minecraft, state.openHand);
         BlockTarget target = state.smelt.target();
-        Vec3 point = targetPoint(target);
+        Vec3 point = state.smelt.aimPoint();
         state.ownership.turnToward(minecraft, point);
         if (state.ownership.aligned(minecraft, point)
                 && minecraft.hitResult instanceof BlockHitResult hit
@@ -1007,7 +1007,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                     Map.of("empty_or_safe_hotbar_item", true), Map.of());
         }
         Rotation rotation = ViewSlotLease.rotation(
-                minecraft.player.getEyePosition(), targetPoint(smelt.target()));
+                minecraft.player.getEyePosition(), smelt.aimPoint());
         if (MinecraftKnownBrewingPort.oneWayCameraDegrees(
                 minecraft.player.getYRot(), minecraft.player.getXRot(),
                 rotation.yaw(), rotation.pitch()) > MAX_ONE_WAY_CAMERA_DEGREES) {
@@ -1537,7 +1537,10 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         }
         requireExactKeys(request.parameters(), Set.of(
                 "recipe_ref", "recipe_fingerprint", "goal", "station", "fuel",
-                "max_smelts"));
+                "max_smelts", "aim_point"));
+        if (request.parameters().get("aim_point") == null) {
+            throw new IllegalArgumentException("furnace aim_point is required");
+        }
         Map<String, Object> goal = map(request.parameters().get("goal"), "goal");
         requireExactKeys(goal, Set.of(
                 "item", "stack_policy", "minimum_inventory_count"));
@@ -1561,6 +1564,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                 family,
                 target,
                 expected,
+                MinecraftPhaseFiveInventoryPort.inventoryAimPoint(request, target),
                 string(fuel.get("item"), "fuel.item"),
                 integer(request.parameters().get("max_smelts"), "max_smelts"),
                 request);
@@ -1718,10 +1722,6 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
         return new BlockPos(target.x(), target.y(), target.z());
     }
 
-    private static Vec3 targetPoint(BlockTarget target) {
-        return new Vec3(target.x() + 0.5D, target.y() + 0.5D, target.z() + 0.5D);
-    }
-
     enum Stage {
         AIMING_INITIAL,
         OPENING_INITIAL,
@@ -1817,6 +1817,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
             FurnaceFamily family,
             BlockTarget target,
             BlockStateFingerprint expectedState,
+            Vec3 aimPoint,
             String fuelItem,
             int maxSmelts,
             PhaseFiveRequest operation) {
@@ -1827,6 +1828,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
             Objects.requireNonNull(family, "family");
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(expectedState, "expectedState");
+            Objects.requireNonNull(aimPoint, "aimPoint");
             Objects.requireNonNull(fuelItem, "fuelItem");
             Objects.requireNonNull(operation, "operation");
             if (minimumInventoryCount < 1 || minimumInventoryCount > 2_304) {

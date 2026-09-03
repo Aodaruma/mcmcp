@@ -44,10 +44,12 @@
 | 移動 | `traversability.navigation_target` | `navigate_to_known.target` | `from` / `to`のfloor・round、surfaceから立ち位置を推測 |
 | visible blockへの接近 | `visible_surface.position`と`block` | `approach_known_surface.target`と`expected_block` | block座標からfeet-spaceを推測、接近後の再観測を省略 |
 | block操作 | `visible_surface.position` | 各block nodeの`target` / `support` | block座標を中心座標へ変換 |
-| 建築copy state | `visible_surface.placement_state_ref`（推奨）または同recordの`state`と`placement_item` | plan entryの`placement_state_ref`または`source_state`+`item` | refとinline identityの併記、`facing`、`axis`、`rotation`等をLLM側で変換 |
+| 建築copy state | `visible_surface.placement_state_ref`（推奨）または同recordの`state`と`placement_item` | plan entry / `pillar_up_known`の`placement_state_ref`または`source_state`+`item` | refとinline identityの併記、`facing`、`axis`、`rotation`等をLLM側で変換 |
 | drop回収 | `visible_entity.position`と`displayed_item` | collect nodeの連続値`target` | XYZのround、非公開entity IDの追加 |
 
 移動用の整数feet-space座標と、block座標と、item entityの連続座標は別の型です。
+
+dropが通常の物理移動で少しずれ、古いpickup cellだけが使えなくなった場合、runtimeは操作入力をいったん解放し、同じ`displayed_item`のfresh witnessが提出位置の0.75 block以内に見えている間だけ、安全なpickup cellと経路を内部で再計画します。公開recordはentity UUIDを持たないため、同種dropの個体同一性は保証しません。開始時のinventory baselineと有効なoccurrence / Action期限は維持され、再計画のたびに期限を延ばしません。消失、範囲外への移動、安全な経路の不足では`PATH_BLOCKED`となり、回収成功は最後まで対象itemのinventory絶対個数増加だけで判定します。
 
 `navigate_to_known`は通常地形に加え、現在の局所観測で完全な`minecraft:ladder`または乾いた安定済み`minecraft:scaffolding`が連続している列を、観測入口から上下4段以内だけ経路にできます。公開される目的地は床のあるlandingだけで、中間段は内部経路に留まります。scaffoldingは上昇時にJUMP、下降時だけSHIFTを使います。LLMはlandingの`navigation_target`をそのままコピーし、block座標から目的地を計算しません。仮blockによる上昇は、下記の1 block専用Actionだけに限定します。
 
@@ -68,7 +70,7 @@
 - `harvest_known_wheat_batch`: `{id,op,targets:[position]}`
 - `apply_known_block_plan`: `{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}`（各entryは`placement_state_ref`または旧`source_state`+`item`のexact one-of）
 - `clear_known_block_plan`: `{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,expected_before}]}`
-- `pillar_up_known`: `{id,op,support,expected_support,source_state,item}`
+- `pillar_up_known`: `{id,op,support,expected_support,placement_state_ref}`（または旧`source_state`+`item`のexact one-of）
 - `collect_visible_item_batch`: `{id,op,targets:[{displayed_item,target}]}`
 
 全nodeには一意の`id`が必要です。正規opcode、他の必須field、enum、上限、capabilityはcatalogの`inputSchema`をそのまま使い、aliasを推測しません。
@@ -81,7 +83,7 @@
 
 `clear_known_block_plan`は同じ`anchor` / `transform`文法で、現在返却済みの`visible_surface.state`が完全一致し、`placement_item`が非nullな安全建築blockだけを1〜8件、既存の`BREAK_TO_AIR`経路で撤去します。成功条件は全targetのfreshなair再観測です。置換は同じActionへ続けず、terminal後に再観測してから既存`apply_known_block_plan`を別Actionで実行します。
 
-`pillar_up_known`は1 Actionで1 blockだけ上がる専用primitiveです。中央へ乗る直前に配達したUP面の完全な`support / expected_support`と、eligibleな`visible_surface`から無変換コピーした`source_state / item`を渡します。足元はplayer自身で遮蔽されるため、support証拠だけはbounded delivery lease内で最終centering移動をまたいで保持しますが、runtimeは現在位置、完全state、world revision、grounded・中央寄せ、軌道、reach、inventoryを実行直前に再検証します。JUMP後にplayer AABBがtarget上面を抜けてからuseを1回だけ送り、exact block、inventory -1、grounded Y+1で成功します。`if` / `repeat`内や前後suffixは禁止で、唯一のtop-level nodeにします。fluid、欠損、危険、未知、占有、support不一致ではfail closedです。
+`pillar_up_known`は1 Actionで1 blockだけ上がる専用primitiveです。中央へ乗る直前に配達したUP面の完全な`support / expected_support`と、eligibleな`visible_surface`の`placement_state_ref`、または移行用の`source_state / item`をexact one-ofで渡します。refは同じworld sessionならsource座標の60秒TTL後も使えますが、support、target、poseの証拠は延長しません。planner受付時とruntime request生成直前にrefを二重解決し、単一の通常full collision blockだけを許可します。door等のmulti-cell、slab / stairs / pane / ladder等のpartial shapeはpillarには使えません。足元はplayer自身で遮蔽されるため、support証拠だけはbounded delivery lease内で最終centering移動をまたいで保持しますが、runtimeは現在位置、完全state、world revision、grounded・中央寄せ、軌道、reach、inventoryを実行直前に再検証します。JUMP後にplayer AABBがtarget上面を抜けてからuseを1回だけ送り、exact block、inventory -1、grounded Y+1で成功します。`if` / `repeat`内や前後suffixは禁止で、唯一のtop-level nodeにします。fluid、欠損、危険、未知、占有、support不一致ではfail closedです。
 
 各`support`は、`position`から`face`方向へ1 block隣が当該entryの変換後targetになるよう指定します。`expected_state`と`dependency_entry_id`はどちらも必須nullable fieldで、次のどちらか一方だけを非nullにします。
 
@@ -95,6 +97,8 @@ entry IDと変換後targetはplan内で一意、処理順は`entries`の入力�
 ## 精錬の最小slice
 
 `smelt_known_recipe`は、最新`agent_get_state.recipes`の同じ結果から`recipe_ref`と`fingerprint`をコピーし、可視な`furnace | blast_furnace | smoker`で1〜64個を精錬します。`station.target`と完全な`expected_state`は同じ最新surfaceからコピーし、`goal.stack_policy`と`fuel.stack_policy`は`default_components_only`、`max_smelts`は投入材料stackの全量と完全一致させます。開始時に空の正規menu、材料のexact stack、処理完了に十分な燃料stackを確認し、両stackを`QUICK_MOVE`します。完了後は残燃料とresultを回収し、load後と最終回収後のclose/reopen full-content/data readbackでstation空とexact inventory deltaを証明します。raw slot番号やGUI座標は入力にも結果にも出しません。
+
+照準にはstationのblock中心ではなく、planner受付に使った配達済み`visible_surface`のray hitを内部で保持して使います。planner受付時と実行開始直前は同じ点への片道`|yaw|+|pitch|`を270度以下に制限し、初回openと各readback openでも同じ点へ向きながらliveのexact target hit、station state、通常reachを再確認します。照準と受付時viewへの復帰を合わせたcamera上限は540度です。
 
 このnodeはtop-level bodyの最後に1回だけ置き、`if` / `repeat`内や後続nodeを許可しません。`2,200 + 200 * max_smelts` ticks、その50倍のms、camera最大540度、7 interactionsを確保し、distance / break / placementは0にします。途中状態の自動再開やblind retryはしません。
 
@@ -112,7 +116,7 @@ entry IDと変換後targetはplan内で一意、処理順は`entries`の入力�
 
 `brew_known_potion_batch`は、現在可視で通常reach内にある`minecraft:brewing_stand`を通常useし、catalogに列挙されたVanillaの一段recipeを1回だけ実行します。`target`は最新`visible_surface.position`、`expected_block`は`minecraft:brewing_stand`、`input`は自分の`standard_potions`証拠から、`expected_output`は目的recipeが定める標準identityから指定します。出力Potionを事前に所持している必要はありません。`standard_potions.count`はitem+potionごとの集計値なので、同数の丸写しではなく、宣言する1〜3本以上あることを確認します。`item`は`minecraft:potion | splash_potion | lingering_potion`、`count`は1〜3で入出力同数、`fuel_item`は常に`minecraft:blaze_powder`です。たとえばwater potion 3本とnether wartからawkward potion 3本を宣言します。通常potion→splashはgunpowder、splash→lingeringはdragon breathというcontainer変換も、catalogにある一段recipeとしてだけ利用できます。
 
-醸造台中央までの片道`|yaw|+|pitch|`は、planner受付時と実行開始直前の両方で270度以下でなければなりません。270度を超えるheadingでは、同じ可視醸造台をtargetにした`face_known_position`を`brew_known_potion_batch`の直前へ置き、そのface node自身の時間・tick・camera costを70秒 / 1,400 tickの醸造node costへ加えてAction budgetを宣言します。醸造node自体は、受付済みheadingからの照準とそのheadingへの復元を合わせて最大540度のままです。
+醸造台のblock中心ではなく、planner受付に使った配達済み`visible_surface`のray hitまでの片道`|yaw|+|pitch|`を、planner受付時と実行開始直前の両方で270度以下に制限します。初回openと各readback openでも同じ点へ向きながらliveのexact target hit、stand state、通常reachを再確認します。270度を超えるheadingでは、同じ可視醸造台をtargetにした`face_known_position`を`brew_known_potion_batch`の直前へ置き、そのface node自身の時間・tick・camera costを70秒 / 1,400 tickの醸造node costへ加えてAction budgetを宣言します。醸造node自体は、受付済みheadingからの照準とそのheadingへの復元を合わせて最大540度のままです。
 
 レシピ対応表の正本はcatalogの`$defs.brewingIngredient.description`です。特にVanilla 26.2の`addStartMix`系材料（breeze rod、slime block、stone、cobweb、magma cream、rabbit foot、sugar、glistering melon slice、spider eye、ghast tear、blaze powder）は、`water + 材料 -> mundane`と`awkward + 材料 -> 対応効果`の両方を持ちます。たとえば`awkward + breeze_rod -> wind_charged`であり、waterに対する同材料の結果はwind chargedではなくmundaneです。
 

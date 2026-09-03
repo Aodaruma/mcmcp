@@ -36,6 +36,8 @@ class MinecraftKnownFurnacePortTest {
             assertThat(parsed.family()).isEqualTo(family);
             assertThat(parsed.maxSmelts()).isOne();
             assertThat(parsed.minimumInventoryCount()).isEqualTo(4);
+            assertThat(parsed.aimPoint()).isEqualTo(new net.minecraft.world.phys.Vec3(
+                    1.5D, 65.0D, 2.5D));
         }
         assertThat(PhaseFiveRequest.supportsAdapterKind("smelt_items")).isTrue();
         assertThat(PhaseFiveRequest.KINDS).doesNotContain("smelt_items");
@@ -58,6 +60,22 @@ class MinecraftKnownFurnacePortTest {
         extra.put("unexpected", true);
         assertThatThrownBy(() -> MinecraftKnownFurnacePort.parseRequest(
                 new PhaseFiveRequest(base.kind(), extra, base.bounds(),
+                        base.expectedUnits(), base.progressUnit())))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        var withoutAim = new LinkedHashMap<>(base.parameters());
+        withoutAim.remove("aim_point");
+        assertThatThrownBy(() -> MinecraftKnownFurnacePort.parseRequest(
+                new PhaseFiveRequest(base.kind(), withoutAim, base.bounds(),
+                        base.expectedUnits(), base.progressUnit())))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        var outsideAim = new LinkedHashMap<>(base.parameters());
+        outsideAim.put("aim_point", Map.of(
+                "dimension", "minecraft:overworld",
+                "x", 2.5D, "y", 65.0D, "z", 2.5D));
+        assertThatThrownBy(() -> MinecraftKnownFurnacePort.parseRequest(
+                new PhaseFiveRequest(base.kind(), outsideAim, base.bounds(),
                         base.expectedUnits(), base.progressUnit())))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -239,6 +257,28 @@ class MinecraftKnownFurnacePortTest {
                 .doesNotContain("net/minecraft/client/player/LocalPlayer#closeContainer");
     }
 
+    @Test
+    void deliveryBackedAimDrivesPreflightAndEveryOpenWithoutWeakeningExactHit()
+            throws Exception {
+        ClassNode node = classNode();
+
+        assertThat(invocations(node, "parseRequest"))
+                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        + "#inventoryAimPoint");
+        assertThat(invocations(node, "initialPreflight"))
+                .contains("dev/aod/mcmcp/routine/MinecraftKnownFurnacePort$FurnaceRequest"
+                        + "#aimPoint");
+        assertThat(invocations(node, "maintainAim"))
+                .contains(
+                        "dev/aod/mcmcp/routine/MinecraftKnownFurnacePort$FurnaceRequest"
+                                + "#aimPoint",
+                        "dev/aod/mcmcp/routine/MinecraftKnownFurnacePort#targetReadyForOpen");
+        assertThat(invocations(node, "dispatchExpectedOpen"))
+                .contains(
+                        "dev/aod/mcmcp/routine/MinecraftKnownFurnacePort#exactHit",
+                        "dev/aod/mcmcp/runtime/ClientPredictionSignals#begin");
+    }
+
     private static PhaseFiveRequest request(
             String stationKind, int maxSmelts, String goalPolicy) {
         String block = switch (stationKind) {
@@ -265,6 +305,11 @@ class MinecraftKnownFurnacePortTest {
                 "item", "minecraft:coal",
                 "stack_policy", "default_components_only"));
         parameters.put("max_smelts", maxSmelts);
+        parameters.put("aim_point", Map.of(
+                "dimension", target.dimension(),
+                "x", target.x() + 0.5D,
+                "y", target.y() + 1.0D,
+                "z", target.z() + 0.5D));
         return new PhaseFiveRequest(
                 "smelt_items", parameters,
                 new PhaseFiveBounds(target.dimension(), target, target, 0, 750, false),
