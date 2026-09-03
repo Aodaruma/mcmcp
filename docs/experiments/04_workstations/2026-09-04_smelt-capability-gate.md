@@ -21,10 +21,14 @@
 | r2 | Action自体はSUCCESS。raw iron / coal消費、ingot回収まで成立したがgateはFAIL | 予算上限`max_interactions=7`を実行回数の固定値と誤認し、実測6を拒否した | terminal proofを`1..7`へ修正し、実測値をartifactへ保存 |
 | r3 | 1 interaction後に`SERVER_DENIED_OR_DESYNC`で安全停止 | r2後にfixtureを再適用した際、炉slotだけを空にし、約1400 tickの残燃焼dataを保持した。製品側はcold empty `[0,0,0,0]`だけを初期状態として受理する | fixtureのfurnaceとbrewing standをairへ戻して再設置し、BlockEntityごと再生成するよう修正。本体の安全判定は緩めない |
 | r4 | **PASS** | なし | accepted / terminal 1、interaction 6、distance / break / place 0。公開入力解放とtoken削除もPASS |
+| r5 | **PASS** | なし | 修正版harness JARを実際にロードした1回目。r4と同じinventory / Action契約を確認 |
+| r6 | **PASS** | なし | r5直後の残熱状態からcooldownなしでfixtureを再適用した2回目。accepted / terminal 1、interaction 6、offline NBTもPASS |
 
 r4 artifactは`F:\mcmcp-testlab\20260902-hard-building-v1\eval-artifacts\20260904-smelt-r4`である。`runner-console.log`、`gate-events.jsonl`、`gate-result.json`、`material-output-oracle.json`、`offline-smelt-oracle.json`、cleanup / world-reset receiptを保存した。保存後NBTではplayer inventoryがraw iron 0、coal 0、iron ingot 1、furnace item slotが空、cook time 0だった。burn timeは1204 tick残っており、r3のfixture隔離バグも独立に裏づけた。
 
-試験後はcontainerを停止し、一時test harness JARを削除、`instance.cfg`を`JvmArgs=`へ復元した。production mod SHA-256は`B98D32368CF9C3775EB8E7AF6DAE5FBEC06CA9EB84B8FEE68466057015379AE4`のまま、一時tokenは不在である。worldはfresh `wall-5x5` baselineへ復元した。
+修正版harness SHA-256 `5A9F26EC252ACB6613939F70A3C86613AF64CBBC2EBF4D6A357EB41692BA8B35`をロードしたr5 / r6も連続PASSした。r5完了直後に待機せず同じfixture commandを再適用し、r6が初期cold-empty判定を通過したことから、BlockEntity再生成が実機でも成立したと判定する。r6 artifactは`F:\mcmcp-testlab\20260902-hard-building-v1\eval-artifacts\20260904-smelt-r6`で、保存後NBTはraw iron 0、coal 0、iron ingot 1、furnace item slot空、cook time 0、burn time 1248だった。
+
+各試験後はcontainerを停止し、一時test harness JARを削除、`instance.cfg`を`JvmArgs=`へ復元した。production mod SHA-256は`B98D32368CF9C3775EB8E7AF6DAE5FBEC06CA9EB84B8FEE68466057015379AE4`のまま、一時tokenは不在である。最終worldはfresh `wall-5x5` baselineへ復元し、containerを停止した。
 
 ## 実装・検証
 
