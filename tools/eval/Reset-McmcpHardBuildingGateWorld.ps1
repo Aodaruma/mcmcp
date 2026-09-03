@@ -50,6 +50,64 @@ function Test-DescendantPath {
     $candidateFull.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Get-NormalizedDockerBindSourcePath {
+    param([Parameter(Mandatory)][string]$Source)
+    if (-not $Source.StartsWith('/', [StringComparison]::Ordinal)) {
+        return Get-NormalizedFullPath $Source
+    }
+
+    # Docker Desktop's Linux daemon reports a Windows F:\... bind through this
+    # one host-mount namespace. Do not accept other POSIX aliases: they have not
+    # been audited as referring to the same host path.
+    if ($Source -cnotmatch '\A/run/desktop/mnt/host/([A-Za-z])(?:/(.*))?\z') {
+        throw 'unsupported Docker bind source path representation'
+    }
+    $drive = $Matches[1].ToUpperInvariant()
+    $tail = [string]$Matches[2]
+    $segments = @(
+        if (-not [string]::IsNullOrEmpty($tail)) { $tail.Split('/') }
+    )
+    foreach ($segment in $segments) {
+        if ([string]::IsNullOrEmpty($segment) -or $segment -ceq '.' -or
+            $segment -ceq '..' -or $segment.Contains('\')) {
+            throw 'unsafe Docker Desktop bind source path'
+        }
+    }
+    $windowsPath = "${drive}:\"
+    if ($segments.Count -gt 0) {
+        $windowsPath += $segments -join '\'
+    }
+    return Get-NormalizedFullPath $windowsPath
+}
+
+function Test-DockerBindSourceSamePath {
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Path
+    )
+    try {
+        (Get-NormalizedDockerBindSourcePath $Source).Equals(
+            (Get-NormalizedFullPath $Path), [StringComparison]::OrdinalIgnoreCase)
+    } catch {
+        return $false
+    }
+}
+
+function Test-DockerBindSourceOverlapsPath {
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Path
+    )
+    try {
+        $sourcePath = Get-NormalizedDockerBindSourcePath $Source
+        return (Test-SamePath $sourcePath $Path) -or
+            (Test-DescendantPath -Candidate $sourcePath -Parent $Path) -or
+            (Test-DescendantPath -Candidate $Path -Parent $sourcePath)
+    } catch {
+        return $false
+    }
+}
+
 function Assert-ExactKnownDataRoot {
     param([Parameter(Mandatory)][string]$Path)
     $resolved = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
@@ -153,7 +211,8 @@ function Assert-ContainerContract {
             [string]$_.Type -ceq 'bind' -and [string]$_.Destination -ceq '/data'
         })
     if ($dataMounts.Count -ne 1 -or
-        -not (Test-SamePath ([string]$dataMounts[0].Source) $Root)) {
+        -not (Test-DockerBindSourceSamePath `
+            -Source ([string]$dataMounts[0].Source) -Path $Root)) {
         throw 'container /data bind does not match the audited DataRoot'
     }
 }
@@ -191,9 +250,7 @@ function Get-DockerInspection {
                 $source = [string]$mount.Source
                 if ([string]$mount.Type -ceq 'bind' -and
                     -not [string]::IsNullOrWhiteSpace($source) -and (
-                        (Test-SamePath $source $Root) -or
-                        (Test-DescendantPath -Candidate $source -Parent $Root) -or
-                        (Test-DescendantPath -Candidate $Root -Parent $source))) {
+                        Test-DockerBindSourceOverlapsPath -Source $source -Path $Root)) {
                     throw "running container still binds DataRoot: $($container.Name)"
                 }
             }

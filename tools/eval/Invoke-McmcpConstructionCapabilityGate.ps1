@@ -25,6 +25,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:Utf8NoBom = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $script:Utf8NoBom
+Add-Type -AssemblyName System.Net.Http
 
 $script:ProtocolVersion = '2026-07-28'
 $script:AllowedTools = @(
@@ -46,6 +47,7 @@ $script:SourceObservationForbidden = $false
 $script:SourceObservationCount = 0
 $script:ConstructionNavigationTolerance = 0.75
 $script:PillarNavigationTolerance = 0.1
+$script:MaximumScaffoldNavigationSlices = 3
 
 $script:ChestBounds = [ordered]@{
     dimension = 'minecraft:overworld'
@@ -123,6 +125,56 @@ function Wait-McpRequestSlot {
     $script:LastRequestTimestamp = [Diagnostics.Stopwatch]::GetTimestamp()
 }
 
+function Invoke-NoProxyJsonPost {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][Collections.IDictionary]$Headers,
+        [Parameter(Mandatory)][string]$Body,
+        [ValidateRange(1, 35)][int]$TimeoutSeconds
+    )
+    $handler = [Net.Http.HttpClientHandler]::new()
+    $handler.UseProxy = $false
+    $handler.AllowAutoRedirect = $false
+    $client = [Net.Http.HttpClient]::new($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds($TimeoutSeconds)
+    $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Post, $Uri)
+    $response = $null
+    try {
+        foreach ($header in $Headers.GetEnumerator()) {
+            if (-not $request.Headers.TryAddWithoutValidation(
+                    [string]$header.Key, [string]$header.Value)) {
+                throw "HTTP request rejected header $($header.Key)"
+            }
+        }
+        $request.Content = [Net.Http.StringContent]::new(
+            $Body, [Text.Encoding]::UTF8, 'application/json')
+        $response = $client.SendAsync($request).GetAwaiter().GetResult()
+        $contentType = if ($null -eq $response.Content.Headers.ContentType) {
+            ''
+        } else {
+            [string]$response.Content.Headers.ContentType
+        }
+        $responseBody = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        if (-not $response.IsSuccessStatusCode) {
+            throw "MCP HTTP request failed with status $([int]$response.StatusCode)"
+        }
+        try {
+            $json = ConvertFrom-Json -InputObject $responseBody
+        } catch {
+            throw 'MCP HTTP response was not valid JSON'
+        }
+        return [pscustomobject]@{
+            body = $json
+            content_type = $contentType
+        }
+    } finally {
+        if ($null -ne $response) { $response.Dispose() }
+        $request.Dispose()
+        $client.Dispose()
+        $handler.Dispose()
+    }
+}
+
 function Invoke-LiveMcpRequest {
     param(
         [Parameter(Mandatory)]
@@ -144,14 +196,13 @@ function Invoke-LiveMcpRequest {
     if (-not [string]::IsNullOrWhiteSpace($ToolName)) {
         $headers['Mcp-Name'] = $ToolName
     }
-    $responseHeaders = $null
-    $response = Invoke-RestMethod -Method Post -Uri $Endpoint -Headers $headers `
-        -ContentType 'application/json; charset=utf-8' -NoProxy -MaximumRedirection 0 `
-        -TimeoutSec $TimeoutSeconds -ResponseHeadersVariable responseHeaders `
+    $transport = Invoke-NoProxyJsonPost -Uri $Endpoint -Headers $headers `
+        -TimeoutSeconds $TimeoutSeconds `
         -Body (ConvertTo-CompactJson ([ordered]@{
                 jsonrpc = '2.0'; id = $requestId; method = $Method; params = $Parameters
             }))
-    $contentType = [string]$responseHeaders['Content-Type']
+    $response = $transport.body
+    $contentType = [string]$transport.content_type
     if ($contentType -notmatch '(?i)^application/json(?:\s*;\s*charset=(?:utf-8|"utf-8"))?\s*$') {
         throw "$Method returned an invalid Content-Type"
     }
@@ -202,7 +253,8 @@ function Assert-FixedFiveToolSurface {
 function Invoke-GateTool {
     param(
         [Parameter(Mandatory)][string]$Tool,
-        [Parameter(Mandatory)][Collections.IDictionary]$Arguments
+        [Parameter(Mandatory)][Collections.IDictionary]$Arguments,
+        [switch]$ReturnDomainError
     )
     if ($Tool -cnotin $script:AllowedTools) {
         throw "capability gate rejected a non-public tool: $Tool"
@@ -210,6 +262,18 @@ function Invoke-GateTool {
     Add-GateEvent -Event 'tool_call_started' -Detail ([ordered]@{ tool = $Tool })
     if ($null -ne $script:ToolTransport) {
         $structured = & $script:ToolTransport $Tool $Arguments
+        $domainError = Get-ObjectProperty $structured '__domain_error'
+        if ($null -ne $domainError) {
+            if (-not $ReturnDomainError) {
+                throw "$Tool returned a domain error: $(ConvertTo-CompactJson $domainError)"
+            }
+            Add-GateEvent -Event 'tool_call_domain_error' -Detail ([ordered]@{
+                    tool = $Tool
+                    code = [string](Get-ObjectProperty $domainError 'code')
+                    recoverable = Get-ObjectProperty $domainError 'recoverable'
+                })
+            return [pscustomobject]@{ domain_error = $domainError }
+        }
     } else {
         $timeout = if ($Tool -ceq 'agent_get_action' -and
             $Arguments.Contains('wait_timeout_ms')) {
@@ -232,6 +296,23 @@ function Invoke-GateTool {
             $diagnostic = if ($content.Count -gt 0) {
                 [string](Get-ObjectProperty $content[0] 'text')
             } else { '{"code":"UNKNOWN_TOOL_ERROR"}' }
+            if ($ReturnDomainError) {
+                try {
+                    $domainError = $diagnostic | ConvertFrom-Json -ErrorAction Stop
+                } catch {
+                    $domainError = [pscustomobject]@{
+                        code = 'UNKNOWN_TOOL_ERROR'
+                        message = $diagnostic
+                        recoverable = $false
+                    }
+                }
+                Add-GateEvent -Event 'tool_call_domain_error' -Detail ([ordered]@{
+                        tool = $Tool
+                        code = [string](Get-ObjectProperty $domainError 'code')
+                        recoverable = Get-ObjectProperty $domainError 'recoverable'
+                    })
+                return [pscustomobject]@{ domain_error = $domainError }
+            }
             throw "$Tool returned a domain error: $diagnostic"
         }
         $structured = Get-ObjectProperty $result 'structuredContent'
@@ -400,12 +481,43 @@ function Wait-McmcpActionTerminal {
     throw "Action did not become terminal within $WallTimeoutSeconds seconds"
 }
 
+function Add-ActionTerminalEvent {
+    param(
+        [Parameter(Mandatory)][string]$ActionId,
+        [Parameter(Mandatory)][object]$Terminal,
+        [ValidateSet('request_wait', 'cleanup_recovery')][string]$Source = 'request_wait'
+    )
+    $existing = @($script:GateEvents | Where-Object {
+            (Get-ObjectProperty $_ 'event') -ceq 'action_terminal' -and
+            (Get-ObjectProperty $_ 'action_id') -ceq $ActionId
+        })
+    if ($existing.Count -gt 0) { return }
+    Add-GateEvent -Event 'action_terminal' -Detail ([ordered]@{
+            action_id = $ActionId
+            state = [string](Get-ObjectProperty $Terminal 'state')
+            progress = Get-ObjectProperty $Terminal 'progress'
+            failure = Get-ObjectProperty $Terminal 'failure'
+            trace = Get-ObjectProperty $Terminal 'trace'
+            terminal_source = $Source
+        })
+}
+
 function Invoke-ActionRequest {
     param(
         [Parameter(Mandatory)][Collections.IDictionary]$Request,
-        [ValidateRange(1, 900)][int]$WallTimeoutSeconds = 180
+        [ValidateRange(1, 900)][int]$WallTimeoutSeconds = 180,
+        [switch]$ReturnFailure,
+        [switch]$ReturnStartDomainError
     )
-    $receipt = Invoke-GateTool -Tool 'agent_start_action' -Arguments $Request
+    $receipt = Invoke-GateTool -Tool 'agent_start_action' -Arguments $Request `
+        -ReturnDomainError:$ReturnStartDomainError
+    $startDomainError = Get-ObjectProperty $receipt 'domain_error'
+    if ($null -ne $startDomainError) {
+        return [pscustomobject]@{
+            state = 'rejected'
+            start_domain_error = $startDomainError
+        }
+    }
     $actionId = [string](Get-ObjectProperty $receipt 'action_id')
     if ($actionId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' -or
         (Get-ObjectProperty $receipt 'state') -cne 'queued') {
@@ -421,18 +533,39 @@ function Invoke-ActionRequest {
     $terminal = Wait-McmcpActionTerminal -ActionId $actionId `
         -WallTimeoutSeconds $WallTimeoutSeconds
     $script:ActiveActionId = $null
-    Add-GateEvent -Event 'action_terminal' -Detail ([ordered]@{
-            action_id = $actionId
-            state = [string](Get-ObjectProperty $terminal 'state')
-            progress = Get-ObjectProperty $terminal 'progress'
-            failure = Get-ObjectProperty $terminal 'failure'
-            trace = Get-ObjectProperty $terminal 'trace'
-        })
+    Add-ActionTerminalEvent -ActionId $actionId -Terminal $terminal
     if ((Get-ObjectProperty $terminal 'state') -cne 'succeeded') {
+        if ($ReturnFailure) { return $terminal }
         $failure = Get-ObjectProperty $terminal 'failure'
         throw "Action ended as $(Get-ObjectProperty $terminal 'state'): $(Get-ObjectProperty $failure 'code')"
     }
     return $terminal
+}
+
+function Test-NavigationTerminalRequiresFreshSlice {
+    param([Parameter(Mandatory)][object]$Terminal)
+    if ((Get-ObjectProperty $Terminal 'state') -cne 'failed') { return $false }
+    $failure = Get-ObjectProperty $Terminal 'failure'
+    if ((Get-ObjectProperty $failure 'code') -cne 'BUDGET_EXCEEDED') { return $false }
+    $evidence = @((Get-ObjectProperty $failure 'evidence'))
+    if ($evidence.Count -ne 1 -or
+        $evidence[0] -cnotin @(
+            'primitive_replanned_route',
+            'replanned_route',
+            'replanned_route_shape_exceeds_occurrence',
+            'replanned_route_global_budget',
+            'replanned_route_remaining_occurrence')) {
+        return $false
+    }
+    $progress = Get-ObjectProperty $Terminal 'progress'
+    if ([int](Get-ObjectProperty $progress 'interactions') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'blocks_broken') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'blocks_placed') -ne 0) {
+        return $false
+    }
+    return @((Get-ObjectProperty $Terminal 'trace') | Where-Object {
+            (Get-ObjectProperty $_ 'event') -ceq 'REPLANNING'
+        }).Count -ge 1
 }
 
 function Invoke-GateCleanup {
@@ -458,6 +591,8 @@ function Invoke-GateCleanup {
         if ((Get-ObjectProperty $snapshot 'state') -cnotin $script:TerminalStates) {
             throw 'cleanup did not reach a terminal Action state'
         }
+        Add-ActionTerminalEvent -ActionId $actionId -Terminal $snapshot `
+            -Source 'cleanup_recovery'
         $script:ActiveActionId = $null
     }
     $state = Invoke-GateTool -Tool 'agent_get_state' -Arguments ([ordered]@{})
@@ -708,9 +843,9 @@ function Select-NavigationRecordTowardBounds {
         }
     }
     $selected = @($candidates | Sort-Object `
-            @{ Expression = 'travel_distance'; Descending = $false },
             @{ Expression = 'goal_distance'; Descending = $false },
             @{ Expression = 'progress'; Descending = $true },
+            @{ Expression = 'travel_distance'; Descending = $false },
             @{ Expression = { ConvertTo-CompactJson (Get-ObjectProperty $_.record 'navigation_target') }; Descending = $false } |
             Select-Object -First 1)
     if ($selected.Count -ne 1) {
@@ -776,7 +911,24 @@ function Get-OrNavigateToVisibleSurface {
                 block = $Block; attempt = $attempt + 1
                 navigation_target = $target; target_verbatim = $true
             })
-        [void](Invoke-ActionRequest -Request $request -WallTimeoutSeconds 90)
+        $terminal = Invoke-ActionRequest -Request $request -WallTimeoutSeconds 90 `
+            -ReturnFailure
+        if ((Get-ObjectProperty $terminal 'state') -cne 'succeeded') {
+            if (-not (Test-NavigationTerminalRequiresFreshSlice -Terminal $terminal)) {
+                $failure = Get-ObjectProperty $terminal 'failure'
+                throw "Action ended as $(Get-ObjectProperty $terminal 'state'): $(Get-ObjectProperty $failure 'code')"
+            }
+            Add-GateEvent -Event 'surface_approach_navigation_reslice_required' `
+                -Detail ([ordered]@{
+                    block = $Block; attempt = $attempt + 1
+                    failed_action_id = [string](Get-ObjectProperty $terminal 'action_id')
+                    failure_code = [string](Get-ObjectProperty `
+                        (Get-ObjectProperty $terminal 'failure') 'code')
+                    fresh_state_required = $true
+                    old_target_reuse_allowed = $false
+                })
+            continue
+        }
     }
     throw "no visible $Block surface was delivered after bounded observed-target approaches"
 }
@@ -1340,13 +1492,17 @@ function Wait-ForCurrentWallReorientationSurface {
     }
     $current = Wait-ForCurrentVisibleSurfaceRecords -InitialState $InitialState `
         -Block 'minecraft:oak_log' -Bounds $bounds `
-        -Faces @('north', 'south', 'east', 'west')
+        -Faces @('up', 'north', 'south', 'east', 'west')
     $positionKey = Get-BlockPositionKey $Position
     $eligible = @($current.records | Where-Object {
             (Get-BlockPositionKey (Get-ObjectProperty $_ 'position')) -ceq $positionKey -and
             (ConvertTo-CompactJson (Get-ObjectProperty $_ 'state')) -ceq
                 (ConvertTo-CompactJson $ExpectedState)
-        } | Sort-Object { [string](Get-ObjectProperty $_ 'face') })
+        } | Sort-Object `
+            @{ Expression = {
+                    if ((Get-ObjectProperty $_ 'face') -ceq 'up') { 0 } else { 1 }
+                }; Descending = $false }, `
+            @{ Expression = { [string](Get-ObjectProperty $_ 'face') }; Descending = $false })
     if ($eligible.Count -eq 0) {
         throw 'current wall reorientation surface has the wrong complete state'
     }
@@ -1419,19 +1575,36 @@ function Get-BlockColumnKey {
         [int](Get-ObjectProperty $Position 'z'))
 }
 
-function Get-WallGroundTraversabilityRecords {
-    param([Parameter(Mandatory)][object]$State)
+function Get-WallScaffoldTraversabilityRecords {
+    param(
+        [Parameter(Mandatory)][object]$State,
+        [ValidateRange(0, 4)][int]$AdditionalHeight = 4
+    )
     $bounds = [ordered]@{
         dimension = [string]$script:DestinationSupportBounds.dimension
         min_x = [int]$script:DestinationSupportBounds.min_x
         min_y = [int]$script:DestinationSupportBounds.min_y + 1
         min_z = [int]$script:DestinationSupportBounds.min_z
         max_x = [int]$script:DestinationSupportBounds.max_x
-        max_y = [int]$script:DestinationSupportBounds.max_y + 1
+        max_y = [int]$script:DestinationSupportBounds.max_y + 1 + $AdditionalHeight
         max_z = [int]$script:DestinationSupportBounds.max_z
     }
     return @(Get-RecordsFromState -State $State -Kinds @('traversability') `
         -Filter ([ordered]@{ position_bounds = $bounds }))
+}
+
+function Get-WallGroundTraversabilityRecords {
+    param([Parameter(Mandatory)][object]$State)
+    return @(Get-WallScaffoldTraversabilityRecords -State $State -AdditionalHeight 0)
+}
+
+function Test-SafeTraversabilityRecord {
+    param([Parameter(Mandatory)][object]$Record)
+    return (Get-ObjectProperty $Record 'kind') -ceq 'traversability' -and
+        (Get-ObjectProperty $Record 'status') -cin @('CONFIRMED', 'PROBE_ALLOWED') -and
+        (Get-ObjectProperty $Record 'target_support') -ceq 'confirmed' -and
+        (Get-ObjectProperty $Record 'transition_clearance') -ceq 'confirmed' -and
+        (Get-ObjectProperty $Record 'fluid') -ceq 'none'
 }
 
 function Select-TemporaryPillarSite {
@@ -1536,6 +1709,354 @@ function Select-TemporaryPillarSite {
     return $selected[0]
 }
 
+function Select-TemporaryStaircasePlan {
+    param(
+        [Parameter(Mandatory)][object[]]$WhiteWoolRecords,
+        [Parameter(Mandatory)][object[]]$TraversabilityRecords,
+        [Parameter(Mandatory)][object[]]$WallFoundation,
+        [Parameter(Mandatory)][object[]]$RowOneTargets,
+        [ValidateRange(1, 8)][double]$MaximumReach = 4.5,
+        [ValidateRange(0.1, 1.5)][double]$NavigationTolerance =
+            $script:ConstructionNavigationTolerance
+    )
+    if ($WallFoundation.Count -ne 5 -or $RowOneTargets.Count -ne 5) {
+        throw 'temporary staircase selection requires the complete five-wide wall'
+    }
+    $wallColumns = @{}
+    foreach ($record in $WallFoundation) {
+        $wallColumns[(Get-BlockColumnKey (Get-ObjectProperty $record 'position'))] = $true
+    }
+    $safeRecords = @($TraversabilityRecords | Where-Object {
+            Test-SafeTraversabilityRecord $_
+        } | Sort-Object `
+            @{ Expression = {
+                    if ((Get-ObjectProperty $_ 'status') -ceq 'CONFIRMED') { 0 } else { 1 }
+                }; Descending = $false },
+            @{ Expression = {
+                    Get-BlockPositionKey (Get-ObjectProperty $_ 'navigation_target')
+                }; Descending = $false },
+            @{ Expression = { ConvertTo-CompactJson $_ }; Descending = $false })
+    $safeByTarget = @{}
+    foreach ($record in $safeRecords) {
+        $targetKey = Get-BlockPositionKey (Get-ObjectProperty $record 'navigation_target')
+        if (-not $safeByTarget.ContainsKey($targetKey)) {
+            # Preserve the first, deterministically preferred delivered record object.
+            $safeByTarget[$targetKey] = $record
+        }
+    }
+    $groundY = [int]$script:DestinationSupportBounds.min_y + 1
+    $sites = [Collections.Generic.List[object]]::new()
+    $sitesByTarget = @{}
+    foreach ($support in @($WhiteWoolRecords | Sort-Object `
+            @{ Expression = {
+                    Get-BlockPositionKey (Get-ObjectProperty $_ 'position')
+                }; Descending = $false },
+            @{ Expression = { ConvertTo-CompactJson $_ }; Descending = $false })) {
+        $position = Get-ObjectProperty $support 'position'
+        $state = Get-ObjectProperty $support 'state'
+        if ((Get-ObjectProperty $support 'kind') -cne 'visible_surface' -or
+            (Get-ObjectProperty $support 'block') -cne 'minecraft:white_wool' -or
+            (Get-ObjectProperty $support 'face') -cne 'up' -or
+            (Get-ObjectProperty $state 'block') -cne 'minecraft:white_wool' -or
+            $wallColumns.ContainsKey((Get-BlockColumnKey $position))) { continue }
+        $joinedKey = '{0}|{1}|{2}|{3}' -f
+            (Get-ObjectProperty $position 'dimension'),
+            [int](Get-ObjectProperty $position 'x'),
+            ([int](Get-ObjectProperty $position 'y') + 1),
+            [int](Get-ObjectProperty $position 'z')
+        if (-not $safeByTarget.ContainsKey($joinedKey)) { continue }
+        $joinedRecord = $safeByTarget[$joinedKey]
+        $joinedTarget = Get-ObjectProperty $joinedRecord 'navigation_target'
+        if ([int](Get-ObjectProperty $joinedTarget 'y') -ne $groundY -or
+            $sitesByTarget.ContainsKey($joinedKey)) { continue }
+        $site = [pscustomobject]@{
+                support = $support
+                navigation_record = $joinedRecord
+                target = $joinedTarget
+                key = Get-BlockPositionKey $position
+            }
+        $sites.Add($site)
+        $sitesByTarget[$joinedKey] = $site
+    }
+
+    $plans = [Collections.Generic.List[object]]::new()
+    $directions = @(
+        [pscustomobject]@{ x = -1; z = 0 },
+        [pscustomobject]@{ x = 0; z = -1 },
+        [pscustomobject]@{ x = 0; z = 1 },
+        [pscustomobject]@{ x = 1; z = 0 }
+    )
+    foreach ($high in $sites) {
+        $highTarget = $high.target
+        $maximumWallDistanceSquared = 0.0
+        foreach ($wallSupport in $RowOneTargets) {
+            $dx = ([double]$wallSupport.x + 0.5) - ([double]$highTarget.x + 0.5)
+            $dy = ([double]$wallSupport.y + 1.0) -
+                ([double]$highTarget.y + 3.0 + 1.62)
+            $dz = ([double]$wallSupport.z + 0.5) - ([double]$highTarget.z + 0.5)
+            $horizontal = [Math]::Sqrt($dx * $dx + $dz * $dz)
+            $distance = ($horizontal + $NavigationTolerance) *
+                ($horizontal + $NavigationTolerance) + $dy * $dy
+            $maximumWallDistanceSquared = [Math]::Max(
+                $maximumWallDistanceSquared, $distance)
+        }
+        if ($maximumWallDistanceSquared -gt $MaximumReach * $MaximumReach) { continue }
+        foreach ($direction in $directions) {
+            $stepX = [int]$direction.x
+            $stepZ = [int]$direction.z
+            $mediumKey = '{0}|{1}|{2}|{3}' -f
+                $highTarget.dimension, ([int]$highTarget.x + $stepX), $groundY,
+                ([int]$highTarget.z + $stepZ)
+            if (-not $sitesByTarget.ContainsKey($mediumKey)) { continue }
+            $medium = $sitesByTarget[$mediumKey]
+            $mediumTarget = $medium.target
+            $lowKey = '{0}|{1}|{2}|{3}' -f
+                $highTarget.dimension, ([int]$mediumTarget.x + $stepX), $groundY,
+                ([int]$mediumTarget.z + $stepZ)
+            if (-not $sitesByTarget.ContainsKey($lowKey)) { continue }
+            $low = $sitesByTarget[$lowKey]
+            $lowTarget = $low.target
+            $temporaryPositions = @(
+                [pscustomobject]@{ dimension = $highTarget.dimension; x = $highTarget.x; y = $highTarget.y; z = $highTarget.z },
+                [pscustomobject]@{ dimension = $highTarget.dimension; x = $highTarget.x; y = ([int]$highTarget.y + 1); z = $highTarget.z },
+                [pscustomobject]@{ dimension = $highTarget.dimension; x = $highTarget.x; y = ([int]$highTarget.y + 2); z = $highTarget.z },
+                [pscustomobject]@{ dimension = $mediumTarget.dimension; x = $mediumTarget.x; y = $mediumTarget.y; z = $mediumTarget.z },
+                [pscustomobject]@{ dimension = $mediumTarget.dimension; x = $mediumTarget.x; y = ([int]$mediumTarget.y + 1); z = $mediumTarget.z },
+                [pscustomobject]@{ dimension = $lowTarget.dimension; x = $lowTarget.x; y = $lowTarget.y; z = $lowTarget.z }
+            )
+            foreach ($groundDirection in $directions) {
+                $groundKey = '{0}|{1}|{2}|{3}' -f
+                    $lowTarget.dimension,
+                    ([int]$lowTarget.x + [int]$groundDirection.x), $groundY,
+                    ([int]$lowTarget.z + [int]$groundDirection.z)
+                if ($groundKey -cin @(
+                        Get-BlockPositionKey $highTarget
+                        Get-BlockPositionKey $mediumTarget
+                        Get-BlockPositionKey $lowTarget) -or
+                    -not $safeByTarget.ContainsKey($groundKey)) { continue }
+                $groundRecord = $safeByTarget[$groundKey]
+                $groundTarget = Get-ObjectProperty $groundRecord 'navigation_target'
+                if ($wallColumns.ContainsKey((Get-BlockColumnKey $groundTarget))) { continue }
+                $maximumCleanupDistanceSquared = 0.0
+                foreach ($temporary in $temporaryPositions) {
+                    $dx = ([double]$temporary.x + 0.5) - ([double]$groundTarget.x + 0.5)
+                    $dy = ([double]$temporary.y + 0.5) - ([double]$groundTarget.y + 1.62)
+                    $dz = ([double]$temporary.z + 0.5) - ([double]$groundTarget.z + 0.5)
+                    $horizontal = [Math]::Sqrt($dx * $dx + $dz * $dz)
+                    $distance = ($horizontal + $NavigationTolerance) *
+                        ($horizontal + $NavigationTolerance) + $dy * $dy
+                    $maximumCleanupDistanceSquared = [Math]::Max(
+                        $maximumCleanupDistanceSquared, $distance)
+                }
+                if ($maximumWallDistanceSquared -gt $MaximumReach * $MaximumReach -or
+                    $maximumCleanupDistanceSquared -gt $MaximumReach * $MaximumReach) { continue }
+                $plans.Add([pscustomobject]@{
+                        high = $high
+                        medium = $medium
+                        low = $low
+                        ground_record = $groundRecord
+                        maximum_wall_tolerance_bound_squared = $maximumWallDistanceSquared
+                        maximum_cleanup_tolerance_bound_squared = $maximumCleanupDistanceSquared
+                        key = ((Get-BlockPositionKey $highTarget) + '>' +
+                            (Get-BlockPositionKey $mediumTarget) + '>' +
+                            (Get-BlockPositionKey $lowTarget) + '>' +
+                            (Get-BlockPositionKey $groundTarget))
+                    })
+            }
+        }
+    }
+    $selected = @($plans | Sort-Object `
+            @{ Expression = 'maximum_wall_tolerance_bound_squared'; Descending = $false },
+            @{ Expression = 'maximum_cleanup_tolerance_bound_squared'; Descending = $false },
+            @{ Expression = 'key'; Descending = $false } | Select-Object -First 1)
+    if ($selected.Count -ne 1) {
+        $siteKeys = @($sites | ForEach-Object { Get-BlockPositionKey $_.target }) -join ','
+        $recordKeys = @($safeRecords | ForEach-Object {
+                Get-BlockPositionKey (Get-ObjectProperty $_ 'navigation_target')
+            }) -join ','
+        throw "no delivery-backed 3-2-1 temporary staircase keeps wall and cleanup reach; sites=$siteKeys records=$recordKeys"
+    }
+    return $selected[0]
+}
+
+function Select-TemporaryStaircaseSurveyRecord {
+    param(
+        [Parameter(Mandatory)][object[]]$Records,
+        [Parameter(Mandatory)][object]$PlayerPosition,
+        [Parameter(Mandatory)][object[]]$WallFoundation
+    )
+    $wallColumns = @{}
+    foreach ($record in $WallFoundation) {
+        $wallColumns[(Get-BlockColumnKey (Get-ObjectProperty $record 'position'))] = $true
+    }
+    $fromX = [Math]::Floor([double](Get-ObjectProperty $PlayerPosition 'x'))
+    $fromY = [Math]::Floor([double](Get-ObjectProperty $PlayerPosition 'y'))
+    $fromZ = [Math]::Floor([double](Get-ObjectProperty $PlayerPosition 'z'))
+    $candidates = @($Records | Where-Object {
+            if (-not (Test-SafeTraversabilityRecord $_)) { return $false }
+            $target = Get-ObjectProperty $_ 'navigation_target'
+            $dx = [int]$target.x - $fromX
+            $dz = [int]$target.z - $fromZ
+            [int]$target.y -eq $fromY -and
+            -not $wallColumns.ContainsKey((Get-BlockColumnKey $target)) -and
+            $dx * $dx + $dz * $dz -ge 4 -and
+            $dx * $dx + $dz * $dz -le 16
+        } | Sort-Object `
+            @{ Expression = {
+                    $target = Get-ObjectProperty $_ 'navigation_target'
+                    $dx = [int]$target.x - $fromX
+                    $dz = [int]$target.z - $fromZ
+                    $dx * $dx + $dz * $dz
+                }; Descending = $true },
+            @{ Expression = {
+                    Get-BlockPositionKey (Get-ObjectProperty $_ 'navigation_target')
+                }; Descending = $false })
+    if ($candidates.Count -eq 0) {
+        throw 'no delivered safe survey stance can reveal the under-foot staircase base'
+    }
+    return $candidates[0]
+}
+
+function Select-AdjacentScaffoldNavigationRecord {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Records,
+        [Parameter(Mandatory)][object]$FromPosition,
+        [Parameter(Mandatory)][object]$TargetColumn,
+        [Parameter(Mandatory)][int]$TargetY,
+        [switch]$AllowMissing
+    )
+    $fromX = [Math]::Floor([double](Get-ObjectProperty $FromPosition 'x'))
+    $fromY = [Math]::Floor([double](Get-ObjectProperty $FromPosition 'y'))
+    $fromZ = [Math]::Floor([double](Get-ObjectProperty $FromPosition 'z'))
+    $eligible = @($Records | Where-Object {
+            if (-not (Test-SafeTraversabilityRecord $_)) { return $false }
+            $target = Get-ObjectProperty $_ 'navigation_target'
+            (Get-ObjectProperty $target 'dimension') -ceq
+                (Get-ObjectProperty $TargetColumn 'dimension') -and
+            [int](Get-ObjectProperty $target 'x') -eq [int](Get-ObjectProperty $TargetColumn 'x') -and
+            [int](Get-ObjectProperty $target 'y') -eq $TargetY -and
+            [int](Get-ObjectProperty $target 'z') -eq [int](Get-ObjectProperty $TargetColumn 'z') -and
+            [Math]::Abs([int]$target.x - $fromX) +
+                [Math]::Abs([int]$target.z - $fromZ) -eq 1 -and
+            [Math]::Abs([int]$target.y - $fromY) -le 1
+        } | Sort-Object `
+            @{ Expression = {
+                    if ((Get-ObjectProperty $_ 'status') -ceq 'CONFIRMED') { 0 } else { 1 }
+                }; Descending = $false },
+            @{ Expression = { ConvertTo-CompactJson $_ }; Descending = $false })
+    if ($eligible.Count -lt 1) {
+        if ($AllowMissing) { return $null }
+        throw 'no delivered adjacent scaffold navigation step satisfies abs(dy)<=1'
+    }
+    # A single observed target can be delivered more than once (for example,
+    # as both CONFIRMED and PROBE_ALLOWED).  They name the same exact step;
+    # use the deterministically preferred original record instead of treating
+    # redundant policy evidence as spatial ambiguity.
+    return $eligible[0]
+}
+
+function Select-ExactScaffoldNavigationRecord {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Records,
+        [Parameter(Mandatory)][object]$ExpectedTarget,
+        [switch]$AllowMissing
+    )
+    $key = Get-BlockPositionKey $ExpectedTarget
+    $eligible = @($Records | Where-Object {
+            (Test-SafeTraversabilityRecord $_) -and
+            (Get-BlockPositionKey (Get-ObjectProperty $_ 'navigation_target')) -ceq $key
+        } | Sort-Object `
+            @{ Expression = {
+                    if ((Get-ObjectProperty $_ 'status') -ceq 'CONFIRMED') { 0 } else { 1 }
+                }; Descending = $false },
+            @{ Expression = { ConvertTo-CompactJson $_ }; Descending = $false })
+    if ($eligible.Count -lt 1) {
+        if ($AllowMissing) { return $null }
+        throw 'no delivered scaffold navigation target matches the requested step'
+    }
+    # Preserve the selected delivery object.  Duplicate evidence for this
+    # exact coordinate is ordered CONFIRMED-first and then by compact JSON.
+    return $eligible[0]
+}
+
+function Wait-ForExactScaffoldNavigationRecord {
+    param(
+        [Parameter(Mandatory)][object]$InitialState,
+        [Parameter(Mandatory)][object]$ExpectedTarget,
+        [ValidateRange(1, 40)][int]$MaximumPolls = 40,
+        [ValidateRange(1, 1000)][int]$DelayMilliseconds = 50
+    )
+    $state = $InitialState
+    for ($poll = 1; $poll -le $MaximumPolls; $poll++) {
+        $worldRevision = Get-CurrentWorldRevision -State $state
+        $records = @(Get-WallScaffoldTraversabilityRecords -State $state | Where-Object {
+                $recordRevision = Get-ObjectProperty $_ 'world_revision'
+                ($recordRevision -is [sbyte] -or $recordRevision -is [byte] -or
+                    $recordRevision -is [int16] -or $recordRevision -is [uint16] -or
+                    $recordRevision -is [int32] -or $recordRevision -is [uint32] -or
+                    $recordRevision -is [int64] -or $recordRevision -is [uint64]) -and
+                [long]$recordRevision -eq $worldRevision
+            })
+        $record = Select-ExactScaffoldNavigationRecord `
+            -Records $records `
+            -ExpectedTarget $ExpectedTarget -AllowMissing
+        if ($null -ne $record) {
+            Add-GateEvent -Event 'scaffold_traversability_current' -Detail ([ordered]@{
+                    mode = 'exact'; polls = $poll
+                    target = Get-ObjectProperty $record 'navigation_target'
+                    frame_id = Get-ObservationFrameId -State $state
+                    world_revision = $worldRevision
+                })
+            return [pscustomobject]@{ state = $state; record = $record; polls = $poll }
+        }
+        if ($poll -lt $MaximumPolls) {
+            Invoke-GateDelaySeconds -Seconds ($DelayMilliseconds / 1000.0)
+            $state = Get-FreshState
+        }
+    }
+    throw 'no delivered scaffold navigation target became safe within the bounded wait'
+}
+
+function Wait-ForAdjacentScaffoldNavigationRecord {
+    param(
+        [Parameter(Mandatory)][object]$InitialState,
+        [Parameter(Mandatory)][object]$TargetColumn,
+        [Parameter(Mandatory)][int]$TargetY,
+        [ValidateRange(1, 40)][int]$MaximumPolls = 40,
+        [ValidateRange(1, 1000)][int]$DelayMilliseconds = 50
+    )
+    $state = $InitialState
+    for ($poll = 1; $poll -le $MaximumPolls; $poll++) {
+        $worldRevision = Get-CurrentWorldRevision -State $state
+        $records = @(Get-WallScaffoldTraversabilityRecords -State $state | Where-Object {
+                $recordRevision = Get-ObjectProperty $_ 'world_revision'
+                ($recordRevision -is [sbyte] -or $recordRevision -is [byte] -or
+                    $recordRevision -is [int16] -or $recordRevision -is [uint16] -or
+                    $recordRevision -is [int32] -or $recordRevision -is [uint32] -or
+                    $recordRevision -is [int64] -or $recordRevision -is [uint64]) -and
+                [long]$recordRevision -eq $worldRevision
+            })
+        $record = Select-AdjacentScaffoldNavigationRecord `
+            -Records $records `
+            -FromPosition (Get-ObjectProperty (Get-ObjectProperty $state 'world') 'position') `
+            -TargetColumn $TargetColumn -TargetY $TargetY -AllowMissing
+        if ($null -ne $record) {
+            Add-GateEvent -Event 'scaffold_traversability_current' -Detail ([ordered]@{
+                    mode = 'adjacent'; polls = $poll
+                    target = Get-ObjectProperty $record 'navigation_target'
+                    frame_id = Get-ObservationFrameId -State $state
+                    world_revision = $worldRevision
+                })
+            return [pscustomobject]@{ state = $state; record = $record; polls = $poll }
+        }
+        if ($poll -lt $MaximumPolls) {
+            Invoke-GateDelaySeconds -Seconds ($DelayMilliseconds / 1000.0)
+            $state = Get-FreshState
+        }
+    }
+    throw 'no delivered adjacent scaffold navigation step became safe within the bounded wait'
+}
+
 function New-TemporaryPillarActionRequest {
     param(
         [Parameter(Mandatory)][object]$Source,
@@ -1560,6 +2081,211 @@ function New-TemporaryPillarActionRequest {
     return New-PrimitiveRequest -Name 'capability_gate_wall_temporary_pillar' `
         -Capabilities @('movement', 'camera', 'block_place') -Node $node `
         -Duration 15000 -Ticks 300 -Distance 2 -Camera 360 -Placements 1
+}
+
+function Invoke-TemporaryScaffoldColumn {
+    param(
+        [Parameter(Mandatory)][object]$InitialState,
+        [Parameter(Mandatory)][object]$Source,
+        [Parameter(Mandatory)][object]$Site,
+        [Parameter(Mandatory)][ValidateSet('single', 'low', 'medium', 'high')][string]$Role,
+        [Parameter(Mandatory)][ValidateRange(1, 3)][int]$Height,
+        [AllowNull()][string]$RaiseNavigationActionId
+    )
+    $state = $InitialState
+    $positions = [Collections.Generic.List[object]]::new()
+    $scaffolds = [Collections.Generic.List[object]]::new()
+    for ($level = 1; $level -le $Height; $level++) {
+        if ($level -eq 1) {
+            $support = Get-ObjectProperty $Site 'support'
+            $position = Get-ObjectProperty `
+                (Get-ObjectProperty $Site 'navigation_record') 'navigation_target'
+        } else {
+            $previous = $positions[$positions.Count - 1]
+            $support = Get-ExactTemporarySurface -State $state -Position $previous `
+                -ExpectedState (Get-ObjectProperty $Source 'state') -Faces @('up')
+            $position = Get-TargetAboveSupport $previous
+        }
+        $request = New-TemporaryPillarActionRequest -Source $Source -Support $support
+        $frameId = Get-ObservationFrameId -State $state
+        $terminal = Invoke-ActionRequest -Request $request -WallTimeoutSeconds 60
+        $state = Wait-ForObservationFrameAdvance -PreviousFrameId $frameId
+        $positions.Add($position)
+        $record = [ordered]@{
+            column_role = $Role
+            column_height = $Height
+            level = $level
+            level_in_column = $level
+            support = Get-ObjectProperty $support 'position'
+            position = $position
+            raise_navigation_action_id = if ($level -eq 1) {
+                $RaiseNavigationActionId
+            } else { $null }
+            pillar_action_id = [string](Get-ObjectProperty $terminal 'action_id')
+            placement_state_ref = [string](Get-ObjectProperty $Source 'placement_state_ref')
+        }
+        $scaffolds.Add($record)
+        Add-GateEvent -Event 'wall_temporary_pillar_terminal' -Detail ([ordered]@{
+                column_role = $Role
+                column_height = $Height
+                level = $level
+                action_id = [string](Get-ObjectProperty $terminal 'action_id')
+                support = Get-ObjectProperty $support 'position'
+                placed_position = $position
+                placement_state_ref = [string](Get-ObjectProperty $Source 'placement_state_ref')
+            })
+    }
+    return [pscustomobject]@{
+        state = $state
+        positions = @($positions)
+        scaffolds = @($scaffolds)
+        top_position = $positions[$positions.Count - 1]
+    }
+}
+
+function Get-CurrentTemporaryScaffoldSite {
+    param(
+        [Parameter(Mandatory)][object]$State,
+        [Parameter(Mandatory)][object]$ExpectedSite,
+        [Parameter(Mandatory)][object]$NavigationRecord
+    )
+    $expectedSupport = Get-ObjectProperty $ExpectedSite 'support'
+    $expectedPosition = Get-ObjectProperty $expectedSupport 'position'
+    $current = Wait-ForCurrentVisibleSurfaceRecords -InitialState $State `
+        -Block 'minecraft:white_wool' -Bounds $script:DestinationSupportBounds `
+        -Faces @('up') -ExcludePlayerFeetAbove
+    $matches = @($current.records | Where-Object {
+            (Get-BlockPositionKey (Get-ObjectProperty $_ 'position')) -ceq
+                (Get-BlockPositionKey $expectedPosition)
+        })
+    if ($matches.Count -ne 1) {
+        throw 'temporary staircase base did not have one current exact UP surface'
+    }
+    return [pscustomobject]@{
+        state = $current.state
+        site = [pscustomobject]@{
+            support = $matches[0]
+            navigation_record = $NavigationRecord
+            target = Get-ObjectProperty $NavigationRecord 'navigation_target'
+            key = Get-BlockPositionKey $expectedPosition
+        }
+    }
+}
+
+function Invoke-TemporaryScaffoldNavigation {
+    param(
+        [Parameter(Mandatory)][object]$State,
+        [Parameter(Mandatory)][object]$NavigationRecord,
+        [Parameter(Mandatory)][double]$Tolerance,
+        [Parameter(Mandatory)][string]$Step,
+        [Parameter(Mandatory)][string]$Event,
+        [ValidateRange(1, 8)][int]$MaximumSlices =
+            $script:MaximumScaffoldNavigationSlices
+    )
+    $expectedTarget = Get-ObjectProperty $NavigationRecord 'navigation_target'
+    $expectedTargetKey = Get-BlockPositionKey $expectedTarget
+    $sliceState = $State
+    $sliceRecord = $NavigationRecord
+    $actionIds = [Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::Ordinal)
+
+    for ($slice = 1; $slice -le $MaximumSlices; $slice++) {
+        $from = Get-ObjectProperty (Get-ObjectProperty $sliceState 'world') 'position'
+        $target = Get-ObjectProperty $sliceRecord 'navigation_target'
+        if ((Get-BlockPositionKey $target) -cne $expectedTargetKey) {
+            throw 'fresh scaffold navigation record changed the requested exact coordinate'
+        }
+        $request = New-NavigationActionRequest -NavigationRecord $sliceRecord `
+            -State $sliceState -Tolerance $Tolerance
+        $terminal = Invoke-ActionRequest -Request $request -WallTimeoutSeconds 90 `
+            -ReturnFailure
+        $actionId = [string](Get-ObjectProperty $terminal 'action_id')
+        $hasNewActionId = -not [string]::IsNullOrWhiteSpace($actionId) -and
+            $actionIds.Add($actionId)
+        if ((Get-ObjectProperty $terminal 'state') -ceq 'succeeded') {
+            if (-not $hasNewActionId) {
+                throw 'temporary scaffold navigation did not receive a new action_id for each slice'
+            }
+            $nextState = Get-FreshState
+            $fromX = [Math]::Floor([double](Get-ObjectProperty $from 'x'))
+            $fromY = [Math]::Floor([double](Get-ObjectProperty $from 'y'))
+            $fromZ = [Math]::Floor([double](Get-ObjectProperty $from 'z'))
+            $dx = [Math]::Abs([int](Get-ObjectProperty $target 'x') - $fromX)
+            $dy = [Math]::Abs([int](Get-ObjectProperty $target 'y') - $fromY)
+            $dz = [Math]::Abs([int](Get-ObjectProperty $target 'z') - $fromZ)
+            Add-GateEvent -Event $Event -Detail ([ordered]@{
+                    step = $Step
+                    action_id = $actionId
+                    from = $from
+                    target = $target
+                    target_verbatim = [object]::ReferenceEquals(
+                        $target, $request.program.body[0].target)
+                    status = [string](Get-ObjectProperty $sliceRecord 'status')
+                    horizontal_manhattan = $dx + $dz
+                    absolute_y_delta = $dy
+                    tolerance = $request.program.body[0].tolerance
+                    slice = $slice
+                    maximum_slices = $MaximumSlices
+                    resliced = $slice -gt 1
+                    action_ids = @($actionIds)
+                })
+            return [pscustomobject]@{
+                state = $nextState
+                terminal = $terminal
+                target = $target
+                horizontal_manhattan = $dx + $dz
+                absolute_y_delta = $dy
+                slices = $slice
+            }
+        }
+
+        $failure = Get-ObjectProperty $terminal 'failure'
+        $resliceAllowed = Test-NavigationTerminalRequiresFreshSlice -Terminal $terminal
+        Add-GateEvent -Event 'temporary_scaffold_navigation_slice_failed' `
+            -Detail ([ordered]@{
+                step = $Step
+                slice = $slice
+                maximum_slices = $MaximumSlices
+                failed_action_id = $actionId
+                new_action_id = $hasNewActionId
+                target = $target
+                failure_code = [string](Get-ObjectProperty $failure 'code')
+                failure_evidence = @((Get-ObjectProperty $failure 'evidence'))
+                reslice_allowed = $resliceAllowed
+                slices_remaining = $MaximumSlices - $slice
+                fresh_state_required = $true
+                old_record_reuse_allowed = $false
+                synthetic_target_allowed = $false
+            })
+        if (-not $hasNewActionId) {
+            throw 'temporary scaffold navigation did not receive a new action_id for each slice'
+        }
+        if (-not $resliceAllowed) {
+            throw "Action ended as $(Get-ObjectProperty $terminal 'state'): $(Get-ObjectProperty $failure 'code')"
+        }
+        if ($slice -eq $MaximumSlices) {
+            throw "temporary scaffold navigation exhausted its bounded $MaximumSlices Action slices"
+        }
+
+        $freshState = Get-FreshState
+        $fresh = Wait-ForExactScaffoldNavigationRecord -InitialState $freshState `
+            -ExpectedTarget $expectedTarget
+        $sliceState = $fresh.state
+        $sliceRecord = $fresh.record
+        Add-GateEvent -Event 'temporary_scaffold_navigation_reslice_selected' `
+            -Detail ([ordered]@{
+                step = $Step
+                next_slice = $slice + 1
+                maximum_slices = $MaximumSlices
+                previous_action_id = $actionId
+                target = Get-ObjectProperty $sliceRecord 'navigation_target'
+                frame_id = Get-ObservationFrameId -State $sliceState
+                world_revision = Get-CurrentWorldRevision -State $sliceState
+                target_from_fresh_delivery = $true
+                old_record_reuse_allowed = $false
+                synthetic_target_allowed = $false
+            })
+    }
 }
 
 function Select-TemporaryPillarDescentRecord {
@@ -1778,19 +2504,6 @@ function Get-TemporaryDropRecords {
     return @($eligible)
 }
 
-function Get-TemporaryDropRecord {
-    param(
-        [Parameter(Mandatory)][object]$State,
-        [Parameter(Mandatory)][object]$TemporaryPosition
-    )
-    $eligible = @(Get-TemporaryDropRecords -State $State `
-        -TemporaryPosition $TemporaryPosition)
-    if ($eligible.Count -ne 1) {
-        throw "temporary pillar cleanup requires exactly one fresh nearby oak-log drop; observed $($eligible.Count)"
-    }
-    return $eligible[0]
-}
-
 function Assert-NoTemporaryDropRecord {
     param(
         [Parameter(Mandatory)][object]$State,
@@ -1800,6 +2513,121 @@ function Assert-NoTemporaryDropRecord {
         -TemporaryPosition $TemporaryPosition)
     if ($eligible.Count -ne 0) {
         throw "temporary pillar cleanup area already contains $($eligible.Count) oak-log drop(s)"
+    }
+}
+
+function Resolve-TemporaryDropRecovery {
+    param(
+        [Parameter(Mandatory)][long]$InventoryBeforeClear,
+        [Parameter(Mandatory)][long]$InventoryAfterSettle,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$VisibleDrops
+    )
+    $drops = @($VisibleDrops)
+    $inventoryDelta = $InventoryAfterSettle - $InventoryBeforeClear
+    if ($inventoryDelta -eq 1L -and $drops.Count -eq 0) {
+        return [pscustomobject]@{
+            recovery_mode = 'passive_pickup'
+            inventory_delta = $inventoryDelta
+            visible_drop_count = 0
+            drop = $null
+        }
+    }
+    if ($inventoryDelta -eq 0L -and $drops.Count -eq 1) {
+        return [pscustomobject]@{
+            recovery_mode = 'active_collect'
+            inventory_delta = $inventoryDelta
+            visible_drop_count = 1
+            drop = $drops[0]
+        }
+    }
+    throw ('temporary pillar recovery evidence is inconsistent: ' +
+        "inventory_delta=$inventoryDelta, visible_oak_drops=$($drops.Count)")
+}
+
+function Wait-ForTemporaryDropRecoveryEvidence {
+    param(
+        [Parameter(Mandatory)][object]$InitialState,
+        [Parameter(Mandatory)][object]$TemporaryPosition,
+        [Parameter(Mandatory)][long]$InventoryBeforeClear,
+        [ValidateRange(1, 40)][int]$MaximumPolls = 40,
+        [ValidateRange(1, 1000)][int]$DelayMilliseconds = 50,
+        [switch]$AllowUnavailable
+    )
+    $state = $InitialState
+    $lastObservedFrameId = $null
+    $observedFrames = 0
+    $pendingEmptyObservations = 0
+    for ($poll = 1; $poll -le $MaximumPolls; $poll++) {
+        $frameId = Get-ObservationFrameId -State $state
+        if ($frameId -cne $lastObservedFrameId) {
+            $lastObservedFrameId = $frameId
+            $observedFrames++
+            $inventoryAfterSettle = Get-InventoryCount -State $state `
+                -Item 'minecraft:oak_log'
+            $visibleDrops = @(Get-TemporaryDropRecords -State $state `
+                -TemporaryPosition $TemporaryPosition)
+            $inventoryDelta = $inventoryAfterSettle - $InventoryBeforeClear
+
+            # An unchanged inventory with no visible item is not contradictory:
+            # the entity observation may trail the block break by one or more
+            # frames. Keep the wait read-only and bounded, while every other
+            # unsupported combination still fails closed immediately.
+            if ($inventoryDelta -eq 0L -and $visibleDrops.Count -eq 0) {
+                $pendingEmptyObservations++
+            } else {
+                $recovery = Resolve-TemporaryDropRecovery `
+                    -InventoryBeforeClear $InventoryBeforeClear `
+                    -InventoryAfterSettle $inventoryAfterSettle `
+                    -VisibleDrops $visibleDrops
+                Add-GateEvent -Event 'temporary_drop_recovery_evidence_ready' `
+                    -Detail ([ordered]@{
+                        frame_id = $frameId
+                        polls = $poll
+                        observed_frames = $observedFrames
+                        pending_empty_observations = $pendingEmptyObservations
+                        recovery_mode = [string](Get-ObjectProperty $recovery 'recovery_mode')
+                        inventory_delta = [long](Get-ObjectProperty $recovery 'inventory_delta')
+                        visible_drop_count = [int](Get-ObjectProperty $recovery 'visible_drop_count')
+                    })
+                return [pscustomobject]@{
+                    state = $state
+                    recovery = $recovery
+                    inventory_after_settle = $inventoryAfterSettle
+                    visible_drops = @($visibleDrops)
+                    polls = $poll
+                    observed_frames = $observedFrames
+                    pending_empty_observations = $pendingEmptyObservations
+                }
+            }
+        }
+
+        if ($poll -lt $MaximumPolls) {
+            Invoke-GateDelaySeconds ($DelayMilliseconds / 1000.0)
+            $state = Get-FreshState
+        }
+    }
+    $message = 'temporary pillar recovery evidence remained unavailable after ' +
+        "$MaximumPolls bounded poll(s): observed_frames=$observedFrames, " +
+        "pending_empty_observations=$pendingEmptyObservations"
+    if (-not $AllowUnavailable) { throw $message }
+    Add-GateEvent -Event 'temporary_drop_recovery_evidence_unavailable' `
+        -Detail ([ordered]@{
+            frame_id = $lastObservedFrameId
+            polls = $MaximumPolls
+            observed_frames = $observedFrames
+            pending_empty_observations = $pendingEmptyObservations
+            inventory_delta = $inventoryAfterSettle - $InventoryBeforeClear
+            visible_drop_count = @($visibleDrops).Count
+            bounded_passive_approach_required = $true
+        })
+    return [pscustomobject]@{
+        state = $state
+        recovery = $null
+        inventory_after_settle = $inventoryAfterSettle
+        visible_drops = @($visibleDrops)
+        polls = $MaximumPolls
+        observed_frames = $observedFrames
+        pending_empty_observations = $pendingEmptyObservations
     }
 }
 
@@ -1836,6 +2664,88 @@ function New-TemporaryDropCollectionRequest {
     return New-PrimitiveRequest -Name 'capability_gate_collect_temporary_wall_pillar' `
         -Capabilities @('movement') -Node $node -Distance (Get-PolicyDistanceBudget $State) `
         -Camera 0
+}
+
+function Get-CurrentSafeWallTraversabilityRecords {
+    param([Parameter(Mandatory)][object]$State)
+    $worldRevision = Get-CurrentWorldRevision -State $State
+    return @(Get-WallScaffoldTraversabilityRecords -State $State | Where-Object {
+            $recordRevision = Get-ObjectProperty $_ 'world_revision'
+            (Test-SafeTraversabilityRecord $_) -and
+            ($recordRevision -is [sbyte] -or $recordRevision -is [byte] -or
+                $recordRevision -is [int16] -or $recordRevision -is [uint16] -or
+                $recordRevision -is [int32] -or $recordRevision -is [uint32] -or
+                $recordRevision -is [int64] -or $recordRevision -is [uint64]) -and
+            [long]$recordRevision -eq $worldRevision
+        })
+}
+
+function Select-TemporaryDropRecoveryApproachRecord {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Records,
+        [Parameter(Mandatory)][object]$State,
+        [Parameter(Mandatory)][object]$TemporaryPosition
+    )
+    $bounds = [ordered]@{
+        dimension = [string](Get-ObjectProperty $TemporaryPosition 'dimension')
+        min_x = [double](Get-ObjectProperty $TemporaryPosition 'x')
+        min_y = [double](Get-ObjectProperty $TemporaryPosition 'y')
+        min_z = [double](Get-ObjectProperty $TemporaryPosition 'z')
+        max_x = [double](Get-ObjectProperty $TemporaryPosition 'x')
+        max_y = [double](Get-ObjectProperty $TemporaryPosition 'y')
+        max_z = [double](Get-ObjectProperty $TemporaryPosition 'z')
+    }
+    return Select-NavigationRecordTowardBounds -Records $Records `
+        -WorldPosition (Get-ObjectProperty (Get-ObjectProperty $State 'world') 'position') `
+        -Bounds $bounds
+}
+
+function Get-CurrentTemporaryDropPickupTraversabilityRecords {
+    param(
+        [Parameter(Mandatory)][object]$State,
+        [Parameter(Mandatory)][object]$Drop
+    )
+    # visible_entity only proves that the item exists. collect_visible_item also
+    # requires an independently delivered, current safe pickup cell and route.
+    # Query a bounded area centred on the observed item, because break physics
+    # can move it just beyond the construction footprint. The observed position
+    # is only a filter centre: every Action target remains an unchanged target
+    # from one of the returned policy records.
+    $worldRevision = Get-CurrentWorldRevision -State $State
+    $position = Get-ObjectProperty $Drop 'position'
+    $dimension = [string](Get-ObjectProperty $position 'dimension')
+    $dropX = [Math]::Floor([double](Get-ObjectProperty $position 'x'))
+    $dropY = [Math]::Floor([double](Get-ObjectProperty $position 'y'))
+    $dropZ = [Math]::Floor([double](Get-ObjectProperty $position 'z'))
+    $bounds = [ordered]@{
+        dimension = $dimension
+        min_x = $dropX - 4; min_y = $dropY - 3; min_z = $dropZ - 4
+        max_x = $dropX + 4; max_y = $dropY + 3; max_z = $dropZ + 4
+    }
+    $records = @(Get-RecordsFromState -State $State -Kinds @('traversability') `
+        -Filter ([ordered]@{ position_bounds = $bounds }) | Where-Object {
+            $recordRevision = Get-ObjectProperty $_ 'world_revision'
+            (Test-SafeTraversabilityRecord $_) -and
+            ($recordRevision -is [sbyte] -or $recordRevision -is [byte] -or
+                $recordRevision -is [int16] -or $recordRevision -is [uint16] -or
+                $recordRevision -is [int32] -or $recordRevision -is [uint32] -or
+                $recordRevision -is [int64] -or $recordRevision -is [uint64]) -and
+            [long]$recordRevision -eq $worldRevision
+        })
+    if ($records.Count -lt 1) {
+        throw 'no current safe traversability was delivered for temporary drop pickup'
+    }
+    Add-GateEvent -Event 'temporary_drop_pickup_traversability_current' `
+        -Detail ([ordered]@{
+            frame_id = Get-ObservationFrameId -State $State
+            world_revision = $worldRevision
+            record_count = $records.Count
+            query_bounds = $bounds
+            drop_position = $position
+            records_delivered_for_product_planner_selection = $true
+            pickup_cell_selected = $false
+        })
+    return @($records)
 }
 
 function New-WallRowActionPhase {
@@ -1970,15 +2880,16 @@ function Invoke-WallGate {
     param(
         [Parameter(Mandatory)][ValidateRange(3, 5)][int]$Width,
         [Parameter(Mandatory)][ValidateRange(3, 5)][int]$Height,
-        [Parameter(Mandatory)][ValidateRange(1, 2)][int]$ScaffoldLevels
+        [Parameter(Mandatory)][ValidateRange(1, 3)][int]$ScaffoldLevels
     )
     if (($Width -ne 3 -or $Height -ne 3 -or $ScaffoldLevels -ne 1) -and
-        ($Width -ne 5 -or $Height -ne 5 -or $ScaffoldLevels -ne 2)) {
-        throw 'wall gate supports only the audited 3x3/one-level and 5x5/two-level profiles'
+        ($Width -ne 5 -or $Height -ne 5 -or $ScaffoldLevels -ne 3)) {
+        throw 'wall gate supports only the audited 3x3/one-level and 5x5/three-level profiles'
     }
     $permanentBlockCount = $Width * $Height
+    $temporaryBlockCount = if ($Width -eq 5) { 6 } else { 1 }
     $inventoryBefore = Acquire-OakLogFromChest
-    if ($inventoryBefore -lt $permanentBlockCount + $ScaffoldLevels) {
+    if ($inventoryBefore -lt $permanentBlockCount + $temporaryBlockCount) {
         throw 'normal material acquisition cannot cover the permanent wall and transient scaffold'
     }
     Move-NearDestinationSupport -Width $Width
@@ -2131,84 +3042,184 @@ function Invoke-WallGate {
 
     $temporaryPositions = [Collections.Generic.List[object]]::new()
     $temporaryScaffolds = [Collections.Generic.List[object]]::new()
+    $temporaryColumns = [Collections.Generic.List[object]]::new()
+    $descentRoute = [Collections.Generic.List[object]]::new()
     $temporaryBasePosition = $null
+    $temporaryStaircasePlan = $null
+    $cleanupGroundTarget = $null
+
+    $currentTemporarySupports = Wait-ForCurrentVisibleSurfaceRecords `
+        -InitialState $state -Block 'minecraft:white_wool' `
+        -Bounds $script:DestinationSupportBounds -Faces @('up') `
+        -ExcludePlayerFeetAbove
+    $state = $currentTemporarySupports.state
+    $temporarySupports = @($currentTemporarySupports.records)
+    $temporaryTraversability = @(Get-WallScaffoldTraversabilityRecords -State $state)
+    if ($Width -eq 3) {
+        $temporarySite = Select-TemporaryPillarSite `
+            -WhiteWoolRecords $temporarySupports `
+            -TraversabilityRecords $temporaryTraversability `
+            -WallFoundation $wallFoundation -RowOneTargets $previousRowTargets `
+            -NavigationTolerance $script:PillarNavigationTolerance
+        $temporaryBasePosition = Get-ObjectProperty `
+            (Get-ObjectProperty $temporarySite 'navigation_record') 'navigation_target'
+        $raise = Invoke-TemporaryScaffoldNavigation -State $state `
+            -NavigationRecord $temporarySite.navigation_record `
+            -Tolerance $script:PillarNavigationTolerance -Step 'ground_to_single' `
+            -Event 'wall_temporary_pillar_navigation_terminal'
+        $state = $raise.state
+        $column = Invoke-TemporaryScaffoldColumn -InitialState $state -Source $source `
+            -Site $temporarySite -Role 'single' -Height 1 `
+            -RaiseNavigationActionId ([string](Get-ObjectProperty $raise.terminal 'action_id'))
+        $state = $column.state
+        foreach ($position in $column.positions) { $temporaryPositions.Add($position) }
+        foreach ($scaffold in $column.scaffolds) { $temporaryScaffolds.Add($scaffold) }
+        $temporaryColumns.Add([ordered]@{
+                role = 'single'; height = 1; base_position = $temporaryBasePosition
+                top_position = $column.top_position
+            })
+    } else {
+        # The best high base can initially be hidden below the staging pose.
+        # Move to a delivered safe survey target, then reacquire all candidate UP
+        # faces at the same world revision instead of treating occlusion as air.
+        $surveyRecord = Select-TemporaryStaircaseSurveyRecord `
+            -Records $temporaryTraversability `
+            -PlayerPosition (Get-ObjectProperty (Get-ObjectProperty $state 'world') 'position') `
+            -WallFoundation $wallFoundation
+        $survey = Invoke-TemporaryScaffoldNavigation -State $state `
+            -NavigationRecord $surveyRecord `
+            -Tolerance $script:ConstructionNavigationTolerance `
+            -Step 'staging_to_survey_stance' `
+            -Event 'wall_temporary_survey_navigation_terminal'
+        $state = $survey.state
+        $currentTemporarySupports = Wait-ForCurrentVisibleSurfaceRecords `
+            -InitialState $state -Block 'minecraft:white_wool' `
+            -Bounds $script:DestinationSupportBounds -Faces @('up') `
+            -ExcludePlayerFeetAbove
+        $state = $currentTemporarySupports.state
+        $temporarySupports = @($currentTemporarySupports.records)
+        $temporaryTraversability = @(Get-WallScaffoldTraversabilityRecords -State $state)
+        $temporaryStaircasePlan = Select-TemporaryStaircasePlan `
+            -WhiteWoolRecords $temporarySupports `
+            -TraversabilityRecords $temporaryTraversability `
+            -WallFoundation $wallFoundation -RowOneTargets $previousRowTargets `
+            -NavigationTolerance $script:ConstructionNavigationTolerance
+        $cleanupGroundTarget = Get-ObjectProperty `
+            $temporaryStaircasePlan.ground_record 'navigation_target'
+        Add-GateEvent -Event 'wall_temporary_staircase_selected' -Detail ([ordered]@{
+                shape = '3-2-1'
+                high = $temporaryStaircasePlan.high.target
+                medium = $temporaryStaircasePlan.medium.target
+                low = $temporaryStaircasePlan.low.target
+                ground = $cleanupGroundTarget
+                maximum_wall_tolerance_bound_squared =
+                    $temporaryStaircasePlan.maximum_wall_tolerance_bound_squared
+                maximum_cleanup_tolerance_bound_squared =
+                    $temporaryStaircasePlan.maximum_cleanup_tolerance_bound_squared
+                target_records_from_policy_delivery = $true
+            })
+
+        # Build low first. Each later base is refreshed at the current world
+        # revision before navigation so a prior pillar cannot stale its UP face.
+        $lowSite = Get-CurrentTemporaryScaffoldSite -State $state `
+            -ExpectedSite $temporaryStaircasePlan.low `
+            -NavigationRecord $temporaryStaircasePlan.low.navigation_record
+        $state = $lowSite.state
+        $lowNavigation = Wait-ForExactScaffoldNavigationRecord -InitialState $state `
+            -ExpectedTarget $temporaryStaircasePlan.low.target
+        $state = $lowNavigation.state
+        $lowRecord = $lowNavigation.record
+        $lowSite.site.navigation_record = $lowRecord
+        $lowSite.site.target = Get-ObjectProperty $lowRecord 'navigation_target'
+        $raise = Invoke-TemporaryScaffoldNavigation -State $state `
+            -NavigationRecord $lowRecord -Tolerance $script:PillarNavigationTolerance `
+            -Step 'ground_to_low_base' -Event 'wall_temporary_pillar_navigation_terminal'
+        $state = $raise.state
+        $column = Invoke-TemporaryScaffoldColumn -InitialState $state -Source $source `
+            -Site $lowSite.site -Role 'low' -Height 1 `
+            -RaiseNavigationActionId ([string](Get-ObjectProperty $raise.terminal 'action_id'))
+        $state = $column.state
+        foreach ($position in $column.positions) { $temporaryPositions.Add($position) }
+        foreach ($scaffold in $column.scaffolds) { $temporaryScaffolds.Add($scaffold) }
+        $temporaryColumns.Add([ordered]@{
+                role = 'low'; height = 1; base_position = $lowSite.site.target
+                top_position = $column.top_position
+            })
+
+        $mediumSite = Get-CurrentTemporaryScaffoldSite -State $state `
+            -ExpectedSite $temporaryStaircasePlan.medium `
+            -NavigationRecord $temporaryStaircasePlan.medium.navigation_record
+        $state = $mediumSite.state
+        $mediumNavigation = Wait-ForAdjacentScaffoldNavigationRecord -InitialState $state `
+            -TargetColumn $temporaryStaircasePlan.medium.target `
+            -TargetY ([int]$temporaryStaircasePlan.medium.target.y)
+        $state = $mediumNavigation.state
+        $mediumRecord = $mediumNavigation.record
+        $mediumSite.site.navigation_record = $mediumRecord
+        $mediumSite.site.target = Get-ObjectProperty $mediumRecord 'navigation_target'
+        $raise = Invoke-TemporaryScaffoldNavigation -State $state `
+            -NavigationRecord $mediumRecord -Tolerance $script:PillarNavigationTolerance `
+            -Step 'low_top_to_medium_base' -Event 'wall_temporary_pillar_navigation_terminal'
+        $state = $raise.state
+        $column = Invoke-TemporaryScaffoldColumn -InitialState $state -Source $source `
+            -Site $mediumSite.site -Role 'medium' -Height 2 `
+            -RaiseNavigationActionId ([string](Get-ObjectProperty $raise.terminal 'action_id'))
+        $state = $column.state
+        foreach ($position in $column.positions) { $temporaryPositions.Add($position) }
+        foreach ($scaffold in $column.scaffolds) { $temporaryScaffolds.Add($scaffold) }
+        $temporaryColumns.Add([ordered]@{
+                role = 'medium'; height = 2; base_position = $mediumSite.site.target
+                top_position = $column.top_position
+            })
+
+        $lowTopNavigation = Wait-ForAdjacentScaffoldNavigationRecord -InitialState $state `
+            -TargetColumn $temporaryStaircasePlan.low.target `
+            -TargetY ([int]$temporaryStaircasePlan.low.target.y + 1)
+        $state = $lowTopNavigation.state
+        $lowTopRecord = $lowTopNavigation.record
+        $step = Invoke-TemporaryScaffoldNavigation -State $state `
+            -NavigationRecord $lowTopRecord `
+            -Tolerance $script:ConstructionNavigationTolerance `
+            -Step 'medium_top_to_low_top' -Event 'wall_temporary_build_route_terminal'
+        $state = $step.state
+        $groundNavigation = Wait-ForAdjacentScaffoldNavigationRecord -InitialState $state `
+            -TargetColumn $cleanupGroundTarget -TargetY ([int]$cleanupGroundTarget.y)
+        $state = $groundNavigation.state
+        $groundRecord = $groundNavigation.record
+        $step = Invoke-TemporaryScaffoldNavigation -State $state `
+            -NavigationRecord $groundRecord `
+            -Tolerance $script:ConstructionNavigationTolerance `
+            -Step 'low_top_to_ground' -Event 'wall_temporary_build_route_terminal'
+        $state = $step.state
+
+        $highSite = Get-CurrentTemporaryScaffoldSite -State $state `
+            -ExpectedSite $temporaryStaircasePlan.high `
+            -NavigationRecord $temporaryStaircasePlan.high.navigation_record
+        $state = $highSite.state
+        $highNavigation = Wait-ForExactScaffoldNavigationRecord -InitialState $state `
+            -ExpectedTarget $temporaryStaircasePlan.high.target
+        $state = $highNavigation.state
+        $highRecord = $highNavigation.record
+        $highSite.site.navigation_record = $highRecord
+        $highSite.site.target = Get-ObjectProperty $highRecord 'navigation_target'
+        $raise = Invoke-TemporaryScaffoldNavigation -State $state `
+            -NavigationRecord $highRecord -Tolerance $script:PillarNavigationTolerance `
+            -Step 'ground_to_high_base' -Event 'wall_temporary_pillar_navigation_terminal'
+        $state = $raise.state
+        $column = Invoke-TemporaryScaffoldColumn -InitialState $state -Source $source `
+            -Site $highSite.site -Role 'high' -Height 3 `
+            -RaiseNavigationActionId ([string](Get-ObjectProperty $raise.terminal 'action_id'))
+        $state = $column.state
+        foreach ($position in $column.positions) { $temporaryPositions.Add($position) }
+        foreach ($scaffold in $column.scaffolds) { $temporaryScaffolds.Add($scaffold) }
+        $temporaryColumns.Add([ordered]@{
+                role = 'high'; height = 3; base_position = $highSite.site.target
+                top_position = $column.top_position
+            })
+        $temporaryBasePosition = $highSite.site.target
+    }
+
     for ($row = 2; $row -lt $Height; $row++) {
-        # Build the complete bounded scaffold before the first elevated row. The
-        # first pillar's UP witness is necessarily occluded once centered and can
-        # only be retained across the immediately following pillar Action; wall
-        # mutations must not intervene and invalidate that witness.
-        $requiredScaffoldLevel = $ScaffoldLevels
-        while ($temporaryPositions.Count -lt $requiredScaffoldLevel) {
-            $level = $temporaryPositions.Count + 1
-            $raiseNavigationActionId = $null
-            if ($level -eq 1) {
-                $currentTemporarySupports = Wait-ForCurrentVisibleSurfaceRecords `
-                    -InitialState $state -Block 'minecraft:white_wool' `
-                    -Bounds $script:DestinationSupportBounds -Faces @('up') `
-                    -ExcludePlayerFeetAbove
-                $state = $currentTemporarySupports.state
-                $temporarySupports = @($currentTemporarySupports.records)
-                $temporaryTraversability = @(Get-WallGroundTraversabilityRecords -State $state)
-                $temporarySite = Select-TemporaryPillarSite `
-                    -WhiteWoolRecords $temporarySupports `
-                    -TraversabilityRecords $temporaryTraversability `
-                    -WallFoundation $wallFoundation -RowOneTargets $previousRowTargets `
-                    -NavigationTolerance $script:PillarNavigationTolerance
-                $temporarySupport = $temporarySite.support
-                $temporaryNavigation = $temporarySite.navigation_record
-                $temporaryPosition = Get-ObjectProperty $temporaryNavigation 'navigation_target'
-                $temporaryBasePosition = $temporaryPosition
-                $raiseNavigationRequest = New-NavigationActionRequest `
-                    -NavigationRecord $temporaryNavigation -State $state `
-                    -Tolerance $script:PillarNavigationTolerance
-                $raiseNavigationTerminal = Invoke-ActionRequest `
-                    -Request $raiseNavigationRequest -WallTimeoutSeconds 90
-                $raiseNavigationActionId = [string](
-                    Get-ObjectProperty $raiseNavigationTerminal 'action_id')
-                Add-GateEvent -Event 'wall_temporary_pillar_navigation_terminal' `
-                    -Detail ([ordered]@{
-                        level = $level; action_id = $raiseNavigationActionId
-                        target = $temporaryPosition
-                        target_verbatim = [object]::ReferenceEquals(
-                            $temporaryPosition,
-                            $raiseNavigationRequest.program.body[0].target)
-                        tolerance = $raiseNavigationRequest.program.body[0].tolerance
-                    })
-            } else {
-                # Keep the first post-pillar frame. The centered player occludes
-                # the support, so an intervening world mutation or later scan may
-                # only weaken this retained exact UP witness.
-                $previousTemporary = $temporaryPositions[$temporaryPositions.Count - 1]
-                $temporarySupport = Get-ExactTemporarySurface -State $state `
-                    -Position $previousTemporary `
-                    -ExpectedState (Get-ObjectProperty $source 'state') -Faces @('up')
-                $temporaryPosition = Get-TargetAboveSupport $previousTemporary
-            }
-
-            $pillarRequest = New-TemporaryPillarActionRequest `
-                -Source $source -Support $temporarySupport
-            $pillarFrameId = Get-ObservationFrameId -State $state
-            $pillarTerminal = Invoke-ActionRequest `
-                -Request $pillarRequest -WallTimeoutSeconds 60
-            $state = Wait-ForObservationFrameAdvance -PreviousFrameId $pillarFrameId
-            $temporaryPositions.Add($temporaryPosition)
-            $temporaryScaffolds.Add([ordered]@{
-                    level = $level
-                    support = Get-ObjectProperty $temporarySupport 'position'
-                    position = $temporaryPosition
-                    raise_navigation_action_id = $raiseNavigationActionId
-                    pillar_action_id = [string](Get-ObjectProperty $pillarTerminal 'action_id')
-                    placement_state_ref = [string](Get-ObjectProperty $source 'placement_state_ref')
-                })
-            Add-GateEvent -Event 'wall_temporary_pillar_terminal' -Detail ([ordered]@{
-                    level = $level
-                    action_id = [string](Get-ObjectProperty $pillarTerminal 'action_id')
-                    support = Get-ObjectProperty $temporarySupport 'position'
-                    placed_position = $temporaryPosition
-                    placement_state_ref = [string](Get-ObjectProperty $source 'placement_state_ref')
-                })
-        }
-
         # Every elevated row is split far-to-near. Each one-entry Action receives
         # its own post-face frame so a nearer block cannot hide a farther UP face.
         $reorientationTargets = @($previousRowTargets | Where-Object {
@@ -2223,12 +3234,13 @@ function Invoke-WallGate {
         $state = $reorientation.state
         Invoke-FaceSupport -Support $reorientation.surface
         Add-GateEvent -Event 'wall_elevated_row_reoriented' -Detail ([ordered]@{
-                row = $row
-                position = $reorientationTargets[0]
-                world_revision = $reorientation.world_revision
-                polls = $reorientation.polls
-                proof = 'current_horizontal_surface_before_up_surface_scan'
-            })
+            row = $row
+            position = $reorientationTargets[0]
+            face = Get-ObjectProperty $reorientation.surface 'face'
+            world_revision = $reorientation.world_revision
+            polls = $reorientation.polls
+            proof = 'current_exact_surface_before_up_surface_scan'
+        })
         $currentPlacedRow = Wait-ForCurrentExactWallSupportRow `
             -InitialState (Get-FreshState) -Block 'minecraft:oak_log' `
             -Bounds $script:DestinationWallBounds `
@@ -2299,27 +3311,87 @@ function Invoke-WallGate {
                 stationary = $true
                 order = 'far_to_near'
                 targets = @($rowTargets)
-            })
+        })
     }
 
-    for ($index = $temporaryPositions.Count - 1; $index -ge 0; $index--) {
-        $temporaryPosition = $temporaryPositions[$index]
+    if ($Width -eq 5) {
+        $descentSteps = @(
+            [pscustomobject]@{
+                name = 'high_top_to_medium_top'
+                column = $temporaryStaircasePlan.medium.target
+                y = [int]$temporaryStaircasePlan.medium.target.y + 2
+            },
+            [pscustomobject]@{
+                name = 'medium_top_to_low_top'
+                column = $temporaryStaircasePlan.low.target
+                y = [int]$temporaryStaircasePlan.low.target.y + 1
+            },
+            [pscustomobject]@{
+                name = 'low_top_to_ground'
+                column = $cleanupGroundTarget
+                y = [int]$cleanupGroundTarget.y
+            }
+        )
+        foreach ($descentStep in $descentSteps) {
+            $descentNavigation = Wait-ForAdjacentScaffoldNavigationRecord -InitialState $state `
+                -TargetColumn $descentStep.column -TargetY $descentStep.y
+            $state = $descentNavigation.state
+            $record = $descentNavigation.record
+            $routeStep = Invoke-TemporaryScaffoldNavigation -State $state `
+                -NavigationRecord $record -Tolerance $script:ConstructionNavigationTolerance `
+                -Step $descentStep.name -Event 'wall_temporary_descent_step_terminal'
+            $state = $routeStep.state
+            $descentRoute.Add([ordered]@{
+                    step = $descentStep.name
+                    action_id = [string](Get-ObjectProperty $routeStep.terminal 'action_id')
+                    target = $routeStep.target
+                    horizontal_manhattan = $routeStep.horizontal_manhattan
+                    absolute_y_delta = $routeStep.absolute_y_delta
+                    target_from_policy_delivery = $true
+                })
+        }
+    }
+
+    $cleanupScaffolds = @($temporaryScaffolds | Sort-Object `
+            @{ Expression = { [int](Get-ObjectProperty (Get-ObjectProperty $_ 'position') 'y') }; Descending = $true },
+            # At one height, remove the outer/lower column first so it cannot
+            # occlude the next inner block from the ground cleanup stance.
+            @{ Expression = { [int](Get-ObjectProperty $_ 'column_height') }; Descending = $false },
+            @{ Expression = { Get-BlockPositionKey (Get-ObjectProperty $_ 'position') }; Descending = $false })
+    for ($cleanupIndex = 0; $cleanupIndex -lt $cleanupScaffolds.Count; $cleanupIndex++) {
+        $scaffold = $cleanupScaffolds[$cleanupIndex]
+        $temporaryPosition = Get-ObjectProperty $scaffold 'position'
         $state = Get-FreshState
         # Collection may walk back toward the scaffold. Before every clear, move
-        # to a newly delivered safe ground target far enough away that neither an
-        # under-foot break nor incidental pickup can satisfy the lifecycle.
-        $descentRecords = @(Get-WallGroundTraversabilityRecords -State $state)
-        $descentRecord = Select-TemporaryPillarDescentRecord -Records $descentRecords `
-            -TemporaryPosition $temporaryBasePosition -WallFoundation $wallFoundation `
-            -NavigationTolerance $script:ConstructionNavigationTolerance
+        # to a newly delivered safe ground target so the block is never broken
+        # underfoot. A normal passive pickup may still race the post-break entity
+        # observation; the inventory/drop reconciliation below proves either
+        # passive pickup or an explicit collect. The product pathfinder must prove
+        # a route through staircase blocks that still exist; do not name a top
+        # waypoint that an earlier cleanup removed.
+        $descentRecord = if ($Width -eq 5) {
+            $currentDescent = Wait-ForExactScaffoldNavigationRecord -InitialState $state `
+                -ExpectedTarget $cleanupGroundTarget
+            $state = $currentDescent.state
+            $currentDescent.record
+        } else {
+            $descentRecords = @(Get-WallScaffoldTraversabilityRecords -State $state)
+            Select-TemporaryPillarDescentRecord -Records $descentRecords `
+                -TemporaryPosition $temporaryBasePosition -WallFoundation $wallFoundation `
+                -NavigationTolerance $script:ConstructionNavigationTolerance
+        }
         $descentTarget = Get-ObjectProperty $descentRecord 'navigation_target'
         $descentRequest = New-NavigationActionRequest -NavigationRecord $descentRecord `
             -State $state -Tolerance $script:ConstructionNavigationTolerance
         Add-GateEvent -Event 'wall_temporary_descent_selected' -Detail ([ordered]@{
-                scaffold_level = $index + 1
+                cleanup_order = $cleanupIndex + 1
+                column_role = [string](Get-ObjectProperty $scaffold 'column_role')
+                scaffold_level = [int](Get-ObjectProperty $scaffold 'level')
                 frame_id = [string](Get-ObjectProperty `
                     (Get-ObjectProperty $state 'observation') 'latest_frame_id')
                 target = $descentTarget
+                target_verbatim = [object]::ReferenceEquals(
+                    $descentTarget, $descentRequest.program.body[0].target)
                 status = [string](Get-ObjectProperty $descentRecord 'status')
             })
         $descentTerminal = Invoke-ActionRequest `
@@ -2330,43 +3402,220 @@ function Invoke-WallGate {
             -ExpectedState (Get-ObjectProperty $source 'state') -Faces $null
         $state = $currentTemporary.state
         $temporarySurface = $currentTemporary.surface
-        Assert-NoTemporaryDropRecord -State $state -TemporaryPosition $temporaryPosition
         Invoke-FaceSupport -Support $temporarySurface
         $currentTemporary = Wait-ForCurrentExactTemporarySurface `
             -InitialState (Get-FreshState) -Position $temporaryPosition `
             -ExpectedState (Get-ObjectProperty $source 'state') -Faces $null
         $state = $currentTemporary.state
         $temporarySurface = $currentTemporary.surface
+        Assert-NoTemporaryDropRecord -State $state -TemporaryPosition $temporaryPosition
+        $inventoryBeforeClear = Get-InventoryCount -State $state -Item 'minecraft:oak_log'
         $clearRequest = New-TemporaryClearActionRequest -Surface $temporarySurface
         $clearFrameId = Get-ObservationFrameId -State $state
         $clearTerminal = Invoke-ActionRequest -Request $clearRequest -WallTimeoutSeconds 60
 
         # A freshly broken item is still moving. Wait without observing it, then
-        # bind collect to the first post-settle policy-visible continuous pose.
+        # reconcile passive pickup or bind active collect to one fresh drop pose.
         $settleRequest = New-TemporaryDropSettleActionRequest
         $settleTerminal = Invoke-ActionRequest -Request $settleRequest -WallTimeoutSeconds 60
         $state = Wait-ForObservationFrameAdvance -PreviousFrameId $clearFrameId
-        $drop = Get-TemporaryDropRecord -State $state -TemporaryPosition $temporaryPosition
-        Add-GateEvent -Event 'wall_temporary_drop_observed' -Detail ([ordered]@{
-                scaffold_level = $index + 1
+        $recoveryApproachActionIds = [Collections.Generic.List[string]]::new()
+        $collectAdmissionDeferrals = 0
+        $collectTerminal = $null
+        for ($recoveryApproach = 0; $recoveryApproach -le 2; $recoveryApproach++) {
+            $recoveryEvidence = Wait-ForTemporaryDropRecoveryEvidence `
+                -InitialState $state -TemporaryPosition $temporaryPosition `
+                -InventoryBeforeClear $inventoryBeforeClear -AllowUnavailable
+            $state = Get-ObjectProperty $recoveryEvidence 'state'
+            $recovery = Get-ObjectProperty $recoveryEvidence 'recovery'
+            $approachGoal = $temporaryPosition
+            $approachReason = 'occluded_drop'
+            $approachRecords = $null
+
+            if ($null -ne $recovery) {
+                $recoveryMode = [string](Get-ObjectProperty $recovery 'recovery_mode')
+                if ($recoveryMode -ceq 'passive_pickup') { break }
+                if ($recoveryMode -cne 'active_collect') {
+                    throw "unsupported temporary recovery mode: $recoveryMode"
+                }
+
+                $drop = Get-ObjectProperty $recovery 'drop'
+                Add-GateEvent -Event 'wall_temporary_drop_observed' -Detail ([ordered]@{
+                        cleanup_order = $cleanupIndex + 1
+                        column_role = [string](Get-ObjectProperty $scaffold 'column_role')
+                        scaffold_level = [int](Get-ObjectProperty $scaffold 'level')
+                        frame_id = Get-ObservationFrameId -State $state
+                        recovery_mode = 'active_collect'
+                        inventory_delta = [long](Get-ObjectProperty $recovery 'inventory_delta')
+                        position = Get-ObjectProperty $drop 'position'
+                        displayed_item = [string](Get-ObjectProperty $drop 'displayed_item')
+                        settle_action_id = [string](Get-ObjectProperty $settleTerminal 'action_id')
+                        settle_ticks = 40
+                })
+                # The fresh item record and current traversability are
+                # independent policy evidence. Let the product planner admit
+                # collect first; TARGET_UNKNOWN is a recoverable request for a
+                # new viewpoint, not permission to reuse either stale record.
+                $approachRecords = @(Get-CurrentTemporaryDropPickupTraversabilityRecords `
+                        -State $state -Drop $drop)
+                $collectRequest = New-TemporaryDropCollectionRequest -Record $drop -State $state
+                $collectAttempt = Invoke-ActionRequest -Request $collectRequest `
+                    -WallTimeoutSeconds 90 -ReturnStartDomainError
+                $startDomainError = Get-ObjectProperty $collectAttempt 'start_domain_error'
+                if ($null -eq $startDomainError) {
+                    $collectTerminal = $collectAttempt
+                    break
+                }
+                if ((Get-ObjectProperty $startDomainError 'code') -cne 'TARGET_UNKNOWN' -or
+                    (Get-ObjectProperty $startDomainError 'recoverable') -isnot [bool] -or
+                    -not [bool](Get-ObjectProperty $startDomainError 'recoverable')) {
+                    throw ('temporary drop collect admission failed closed: ' +
+                        (ConvertTo-CompactJson $startDomainError))
+                }
+                $collectAdmissionDeferrals++
+                $approachReason = 'collect_target_unknown'
+                $rejectedFrameId = Get-ObservationFrameId -State $state
+                # The admission attempt may advance both frame and policy
+                # state. Discard every pre-rejection item/traversability object,
+                # wait for a new frame, and reacquire the recovery evidence
+                # before selecting the bounded approach Action.
+                $approachRecords = $null
+                $state = Wait-ForObservationFrameAdvance `
+                    -PreviousFrameId $rejectedFrameId
+                $recoveryEvidence = Wait-ForTemporaryDropRecoveryEvidence `
+                    -InitialState $state -TemporaryPosition $temporaryPosition `
+                    -InventoryBeforeClear $inventoryBeforeClear -AllowUnavailable
+                $state = Get-ObjectProperty $recoveryEvidence 'state'
+                $recovery = Get-ObjectProperty $recoveryEvidence 'recovery'
+                Add-GateEvent -Event 'wall_temporary_drop_collect_admission_deferred' `
+                    -Detail ([ordered]@{
+                        cleanup_order = $cleanupIndex + 1
+                        approach = $recoveryApproach + 1
+                        code = 'TARGET_UNKNOWN'
+                        recoverable = $true
+                        old_drop_reuse_allowed = $false
+                        fresh_observation_required = $true
+                        rejected_frame_id = $rejectedFrameId
+                        fresh_frame_id = Get-ObservationFrameId -State $state
+                        fresh_recovery_mode = if ($null -eq $recovery) {
+                            'unavailable'
+                        } else {
+                            [string](Get-ObjectProperty $recovery 'recovery_mode')
+                        }
+                    })
+                if ($null -ne $recovery -and
+                    (Get-ObjectProperty $recovery 'recovery_mode') -ceq 'passive_pickup') {
+                    break
+                }
+                if ($null -ne $recovery) {
+                    if ((Get-ObjectProperty $recovery 'recovery_mode') -cne 'active_collect') {
+                        throw 'fresh temporary drop recovery returned an unsupported mode'
+                    }
+                    $drop = Get-ObjectProperty $recovery 'drop'
+                    $approachGoal = Get-ObjectProperty $drop 'position'
+                    $approachRecords = @(Get-CurrentTemporaryDropPickupTraversabilityRecords `
+                            -State $state -Drop $drop)
+                } else {
+                    $approachGoal = $temporaryPosition
+                    $approachReason = 'collect_target_unknown_drop_occluded'
+                }
+            }
+
+            if ($recoveryApproach -eq 2) {
+                throw 'temporary pillar recovery exhausted 2 bounded passive approach Action(s)'
+            }
+            if ($null -eq $approachRecords) {
+                # Clear success plus an unchanged inventory can leave the drop
+                # occluded by the wall or the lower scaffold.
+                $approachRecords = @(Get-CurrentSafeWallTraversabilityRecords -State $state)
+            }
+            if ($approachRecords.Count -lt 1) {
+                throw 'no current safe traversability was delivered for temporary drop passive recovery'
+            }
+            $approachRecord = Select-TemporaryDropRecoveryApproachRecord `
+                -Records $approachRecords -State $state `
+                -TemporaryPosition $approachGoal
+            $approachTarget = Get-ObjectProperty $approachRecord 'navigation_target'
+            Add-GateEvent -Event 'wall_temporary_drop_passive_approach_selected' `
+                -Detail ([ordered]@{
+                    cleanup_order = $cleanupIndex + 1
+                    approach = $recoveryApproach + 1
+                    reason = $approachReason
+                    frame_id = Get-ObservationFrameId -State $state
+                    world_revision = Get-CurrentWorldRevision -State $state
+                    target = $approachTarget
+                    target_from_current_policy_delivery = $true
+                    synthetic_target_allowed = $false
+                })
+            $approachResult = Invoke-TemporaryScaffoldNavigation `
+                -State $state -NavigationRecord $approachRecord `
+                -Tolerance $script:ConstructionNavigationTolerance `
+                -Step "cleanup-$($cleanupIndex + 1)-passive-recovery-$($recoveryApproach + 1)" `
+                -Event 'wall_temporary_drop_passive_approach_terminal'
+            $state = Get-ObjectProperty $approachResult 'state'
+            $recoveryApproachActionIds.Add([string](Get-ObjectProperty `
+                (Get-ObjectProperty $approachResult 'terminal') 'action_id'))
+        }
+        $state = Get-ObjectProperty $recoveryEvidence 'state'
+        $inventoryAfterSettle = [long](Get-ObjectProperty `
+            $recoveryEvidence 'inventory_after_settle')
+        $visibleDrops = @(Get-ObjectProperty $recoveryEvidence 'visible_drops')
+        $recovery = Get-ObjectProperty $recoveryEvidence 'recovery'
+        $drop = Get-ObjectProperty $recovery 'drop'
+        Add-GateEvent -Event 'wall_temporary_drop_recovery_selected' -Detail ([ordered]@{
+                cleanup_order = $cleanupIndex + 1
+                column_role = [string](Get-ObjectProperty $scaffold 'column_role')
+                scaffold_level = [int](Get-ObjectProperty $scaffold 'level')
                 frame_id = [string](Get-ObjectProperty `
                     (Get-ObjectProperty $state 'observation') 'latest_frame_id')
-                position = Get-ObjectProperty $drop 'position'
-                displayed_item = [string](Get-ObjectProperty $drop 'displayed_item')
+                recovery_mode = [string](Get-ObjectProperty $recovery 'recovery_mode')
+                inventory_before_clear = $inventoryBeforeClear
+                inventory_after_settle = $inventoryAfterSettle
+                inventory_delta = [long](Get-ObjectProperty $recovery 'inventory_delta')
+                visible_drop_count = [int](Get-ObjectProperty $recovery 'visible_drop_count')
+                position = if ($null -eq $drop) {
+                    $null
+                } else {
+                    Get-ObjectProperty $drop 'position'
+                }
                 settle_action_id = [string](Get-ObjectProperty $settleTerminal 'action_id')
                 settle_ticks = 40
-            })
-        $collectRequest = New-TemporaryDropCollectionRequest -Record $drop -State $state
-        $collectTerminal = Invoke-ActionRequest -Request $collectRequest -WallTimeoutSeconds 90
-        $scaffold = $temporaryScaffolds[$index]
+                evidence_polls = [int](Get-ObjectProperty $recoveryEvidence 'polls')
+                evidence_observed_frames = [int](Get-ObjectProperty `
+                    $recoveryEvidence 'observed_frames')
+                evidence_pending_empty_observations = [int](Get-ObjectProperty `
+                    $recoveryEvidence 'pending_empty_observations')
+        })
         $scaffold.descent_target = $descentTarget
         $scaffold.descent_action_id = [string](Get-ObjectProperty $descentTerminal 'action_id')
-        $scaffold.cleanup_order = $temporaryPositions.Count - $index
+        $scaffold.cleanup_order = $cleanupIndex + 1
         $scaffold.clear_action_id = [string](Get-ObjectProperty $clearTerminal 'action_id')
         $scaffold.settle_action_id = [string](Get-ObjectProperty $settleTerminal 'action_id')
         $scaffold.settle_ticks = 40
-        $scaffold.collected_drop_target = Get-ObjectProperty $drop 'position'
-        $scaffold.collect_action_id = [string](Get-ObjectProperty $collectTerminal 'action_id')
+        $scaffold.recovery_mode = [string](Get-ObjectProperty $recovery 'recovery_mode')
+        $scaffold.inventory_before_clear = $inventoryBeforeClear
+        $scaffold.inventory_after_settle = $inventoryAfterSettle
+        $scaffold.inventory_delta = [long](Get-ObjectProperty $recovery 'inventory_delta')
+        $scaffold.visible_drop_count = [int](Get-ObjectProperty $recovery 'visible_drop_count')
+        $scaffold.recovery_evidence_polls = [int](Get-ObjectProperty `
+            $recoveryEvidence 'polls')
+        $scaffold.recovery_evidence_observed_frames = [int](Get-ObjectProperty `
+            $recoveryEvidence 'observed_frames')
+        $scaffold.recovery_pending_empty_observations = [int](Get-ObjectProperty `
+            $recoveryEvidence 'pending_empty_observations')
+        $scaffold.recovery_approach_action_ids = @($recoveryApproachActionIds)
+        $scaffold.recovery_approach_action_count = $recoveryApproachActionIds.Count
+        $scaffold.collect_admission_deferrals = $collectAdmissionDeferrals
+        $scaffold.collected_drop_target = if ($null -eq $drop) {
+            $null
+        } else {
+            Get-ObjectProperty $drop 'position'
+        }
+        $scaffold.collect_action_id = if ($null -eq $collectTerminal) {
+            $null
+        } else {
+            [string](Get-ObjectProperty $collectTerminal 'action_id')
+        }
         $scaffold.expected_cleanup = $true
         $scaffold.expected_drop_collection = 'minecraft:oak_log'
         $scaffold.included_in_expected_changed_cells = $false
@@ -2406,6 +3655,11 @@ function Invoke-WallGate {
         temporary_scaffold = $temporaryScaffolds[0]
         temporary_scaffolds = @($temporaryScaffolds)
         temporary_scaffold_count = $temporaryScaffolds.Count
+        temporary_shape = if ($Width -eq 5) { '3-2-1 staircase' } else { 'single column' }
+        temporary_columns = @($temporaryColumns)
+        temporary_column_count = $temporaryColumns.Count
+        descent_route = @($descentRoute)
+        descent_action_count = $descentRoute.Count
         total_action_count = @($script:GateEvents | Where-Object {
                 (Get-ObjectProperty $_ 'event') -ceq 'action_accepted'
             }).Count
@@ -2419,7 +3673,7 @@ function Invoke-WallGate {
         expected_air_violations = 0
         expected_extra_mutations = 0
         external_oracle_status = 'pending'
-        mutation_proof = "$permanentBlockCount unique fresh supports plus $ScaffoldLevels observation-derived temporary blocks cleared top-down and recollected; placement inventory delta minus $permanentBlockCount; external MCA required"
+        mutation_proof = "$permanentBlockCount unique fresh supports plus $temporaryBlockCount observation-derived temporary blocks cleared top-down and recollected; placement inventory delta minus $permanentBlockCount; external MCA required"
         inventory_before_placement = $inventoryBefore
         inventory_after_placement = $inventoryAfter
         inventory_delta = $inventoryAfter - $inventoryBefore
@@ -2432,7 +3686,7 @@ function Invoke-Wall3x3Gate {
 }
 
 function Invoke-Wall5x5Gate {
-    Invoke-WallGate -Width 5 -Height 5 -ScaffoldLevels 2
+    Invoke-WallGate -Width 5 -Height 5 -ScaffoldLevels 3
 }
 
 function Write-GateArtifacts {

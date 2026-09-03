@@ -181,6 +181,12 @@ import java.util.function.ToLongFunction;
 public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl {
     static final int MAX_MUTATION_AIM_FAILURES = 3;
     static final int MAX_ACTION_INPUT_RELEASE_ATTEMPTS = 3;
+    static final String REPLANNED_ROUTE_SHAPE_EVIDENCE =
+            "replanned_route_shape_exceeds_occurrence";
+    static final String REPLANNED_ROUTE_GLOBAL_EVIDENCE =
+            "replanned_route_global_budget";
+    static final String REPLANNED_ROUTE_REMAINING_EVIDENCE =
+            "replanned_route_remaining_occurrence";
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private static final String MCP_PROTOCOL_VERSION = "2026-07-28";
     private static final Duration FINALIZATION_RESERVE = Duration.ofSeconds(5);
@@ -4258,36 +4264,41 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         agentPathfinder,
                         playerCell(player, map.dimension()),
                         navigate.target());
-                cost = AgentPrimitivePlanner.navigationCost(
-                        route, playerPose(player, map.dimension()));
+                var pose = playerPose(player, map.dimension());
+                cost = agentExecution.replanning
+                        ? AgentPrimitivePlanner.navigationReplanCost(route, pose)
+                        : AgentPrimitivePlanner.navigationCost(route, pose);
                 if (agentExecution.replanning) {
-                    if (!fits(0L, cost.durationMillis(),
-                                    agentExecution.occurrenceLimit.durationMillis())
-                            || !fits(0L, cost.ticks(),
-                                    agentExecution.occurrenceLimit.ticks())) {
+                    String evidence = replannedRouteBudgetFailure(
+                            progressBeforeTick,
+                            agentExecution.occurrenceBaseline,
+                            agentExecution.occurrenceLimit,
+                            action.program().effectiveBudget(),
+                            cost,
+                            activeElapsedNanos(agentExecution, System.nanoTime()));
+                    if (evidence != null) {
                         failAgentAction(
                                 AgentActionStore.FailureCode.BUDGET_EXCEEDED,
                                 false,
-                                "primitive_replanned_route");
+                                evidence);
                         return false;
                     }
-                    cost = AgentPrimitivePlanner.navigationReplanCost(route, cost);
-                }
-                if (!fitsRemainingBudget(
-                        progressBeforeTick,
-                        action.program().effectiveBudget(),
-                        cost,
-                        activeElapsedNanos(agentExecution, System.nanoTime()))) {
+                } else if (!fitsRemainingBudget(
+                                progressBeforeTick,
+                                action.program().effectiveBudget(),
+                                cost,
+                                activeElapsedNanos(agentExecution, System.nanoTime()))) {
                     failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "replanned_route");
+                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                            false,
+                            "navigate_to_known");
                     return false;
-                }
-                if (!fitsOccurrenceRemaining(
+                } else if (!fitsOccurrenceRemaining(
                         progressBeforeTick, agentExecution, cost)) {
                     failAgentAction(
                             AgentActionStore.FailureCode.BUDGET_EXCEEDED,
                             false,
-                            "primitive_replanned_route");
+                            "primitive_navigate_to_known");
                     return false;
                 }
                 agentExecution.primitiveExecutor.beginNavigate(route, navigate.tolerance());
@@ -4304,26 +4315,30 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 agentPathfinder,
                                 playerCell(player, map.dimension()),
                                 approach.target());
-                cost = AgentPrimitivePlanner.navigationCost(
-                        plan.route(), playerPose(player, map.dimension()));
+                var pose = playerPose(player, map.dimension());
+                cost = agentExecution.replanning
+                        ? AgentPrimitivePlanner.navigationReplanCost(plan.route(), pose)
+                        : AgentPrimitivePlanner.navigationCost(plan.route(), pose);
                 if (agentExecution.replanning) {
-                    if (!fits(0L, cost.durationMillis(),
-                                    agentExecution.occurrenceLimit.durationMillis())
-                            || !fits(0L, cost.ticks(),
-                                    agentExecution.occurrenceLimit.ticks())) {
+                    String evidence = replannedRouteBudgetFailure(
+                            progressBeforeTick,
+                            agentExecution.occurrenceBaseline,
+                            agentExecution.occurrenceLimit,
+                            action.program().effectiveBudget(),
+                            cost,
+                            activeElapsedNanos(agentExecution, System.nanoTime()));
+                    if (evidence != null) {
                         failAgentAction(
                                 AgentActionStore.FailureCode.BUDGET_EXCEEDED,
                                 false,
-                                "approach_replanned_route");
+                                evidence);
                         return false;
                     }
-                    cost = AgentPrimitivePlanner.navigationReplanCost(plan.route(), cost);
-                }
-                if (!fitsRemainingBudget(
-                        progressBeforeTick,
-                        action.program().effectiveBudget(),
-                        cost,
-                        activeElapsedNanos(agentExecution, System.nanoTime()))
+                } else if (!fitsRemainingBudget(
+                                progressBeforeTick,
+                                action.program().effectiveBudget(),
+                                cost,
+                                activeElapsedNanos(agentExecution, System.nanoTime()))
                         || !fitsOccurrenceRemaining(
                                 progressBeforeTick, agentExecution, cost)) {
                     failAgentAction(
@@ -4421,26 +4436,30 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         visualBarrierWorldRevision,
                         currentTick,
                         visibleItemEvidenceMaxAgeTicks(McmcpClientConfig.raysPerTick()));
-                cost = AgentPrimitivePlanner.pickupCost(
-                        pickup.route(), playerPose(player, map.dimension()));
+                var pose = playerPose(player, map.dimension());
+                cost = agentExecution.replanning
+                        ? AgentPrimitivePlanner.pickupReplanCost(pickup.route(), pose)
+                        : AgentPrimitivePlanner.pickupCost(pickup.route(), pose);
                 if (agentExecution.replanning) {
-                    if (!fits(0L, cost.durationMillis(),
-                                    agentExecution.occurrenceLimit.durationMillis())
-                            || !fits(0L, cost.ticks(),
-                                    agentExecution.occurrenceLimit.ticks())) {
+                    String evidence = replannedRouteBudgetFailure(
+                            progressBeforeTick,
+                            agentExecution.occurrenceBaseline,
+                            agentExecution.occurrenceLimit,
+                            action.program().effectiveBudget(),
+                            cost,
+                            activeElapsedNanos(agentExecution, System.nanoTime()));
+                    if (evidence != null) {
                         failAgentAction(
                                 AgentActionStore.FailureCode.BUDGET_EXCEEDED,
                                 false,
-                                "collect_replanned_route");
+                                evidence);
                         return false;
                     }
-                    cost = AgentPrimitivePlanner.navigationReplanCost(pickup.route(), cost);
-                }
-                if (!fitsRemainingBudget(
-                        progressBeforeTick,
-                        action.program().effectiveBudget(),
-                        cost,
-                        activeElapsedNanos(agentExecution, System.nanoTime()))
+                } else if (!fitsRemainingBudget(
+                                progressBeforeTick,
+                                action.program().effectiveBudget(),
+                                cost,
+                                activeElapsedNanos(agentExecution, System.nanoTime()))
                         || !fitsOccurrenceRemaining(
                                 progressBeforeTick, agentExecution, cost)) {
                     failAgentAction(
@@ -7170,6 +7189,47 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && fits(used.interactions(), next.interactions(), budget.maxInteractions())
                 && fits(used.blocksBroken(), next.blocksBroken(), budget.maxBlocksBroken())
                 && fits(used.blocksPlaced(), next.blocksPlaced(), budget.maxBlocksPlaced());
+    }
+
+    /**
+     * Returns a fixed, non-reflective diagnostic when a freshly planned movement route cannot
+     * use the reserve admitted for its original logical occurrence.
+     */
+    static String replannedRouteBudgetFailure(
+            AgentActionStore.Progress used,
+            AgentActionStore.Progress occurrenceBaseline,
+            ActionDslCompiler.Cost occurrenceLimit,
+            ActionDsl.Budget globalBudget,
+            ActionDslCompiler.Cost retry,
+            long activeElapsedNanos) {
+        Objects.requireNonNull(used, "used");
+        Objects.requireNonNull(occurrenceBaseline, "occurrenceBaseline");
+        Objects.requireNonNull(occurrenceLimit, "occurrenceLimit");
+        Objects.requireNonNull(globalBudget, "globalBudget");
+        Objects.requireNonNull(retry, "retry");
+        if (!costFitsLimit(retry, occurrenceLimit)) {
+            return REPLANNED_ROUTE_SHAPE_EVIDENCE;
+        }
+        if (!fitsRemainingBudget(used, globalBudget, retry, activeElapsedNanos)) {
+            return REPLANNED_ROUTE_GLOBAL_EVIDENCE;
+        }
+        if (!fitsOccurrenceBudget(used, occurrenceBaseline, occurrenceLimit, retry)) {
+            return REPLANNED_ROUTE_REMAINING_EVIDENCE;
+        }
+        return null;
+    }
+
+    private static boolean costFitsLimit(
+            ActionDslCompiler.Cost cost, ActionDslCompiler.Cost limit) {
+        Objects.requireNonNull(cost, "cost");
+        Objects.requireNonNull(limit, "limit");
+        return fits(0L, cost.durationMillis(), limit.durationMillis())
+                && fits(0L, cost.ticks(), limit.ticks())
+                && fits(0.0D, cost.distanceBlocks(), limit.distanceBlocks())
+                && fits(0.0D, cost.cameraDegrees(), limit.cameraDegrees())
+                && fits(0L, cost.interactions(), limit.interactions())
+                && fits(0L, cost.blocksBroken(), limit.blocksBroken())
+                && fits(0L, cost.blocksPlaced(), limit.blocksPlaced());
     }
 
     static ActionDslCompiler.Cost firstPrimitiveRemainingCost(

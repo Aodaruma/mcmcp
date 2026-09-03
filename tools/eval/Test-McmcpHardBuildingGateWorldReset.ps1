@@ -85,6 +85,7 @@ try {
 Assert-True $unsafeArchiveRejected 'archive traversal entry was accepted'
 
 $root = 'F:\mcmcp-testlab\20260902-hard-building-v1'
+$dockerDesktopRoot = '/run/desktop/mnt/host/f/mcmcp-testlab/20260902-hard-building-v1'
 $stopped = [pscustomobject]@{
     Name = '/mcmcp-hard-building-20260902'
     State = [pscustomobject]@{ Running = $false; Paused = $false }
@@ -93,6 +94,15 @@ $stopped = [pscustomobject]@{
         })
 }
 Assert-ContainerContract -Container $stopped -Root $root
+
+$dockerDesktopStopped = $stopped.PSObject.Copy()
+$dockerDesktopStopped.Mounts = @([pscustomobject]@{
+        Type = 'bind'; Source = $dockerDesktopRoot; Destination = '/data'
+    })
+Assert-ContainerContract -Container $dockerDesktopStopped -Root $root
+Assert-True `
+    ((Get-NormalizedDockerBindSourcePath $dockerDesktopRoot) -ceq $root) `
+    'Docker Desktop host bind did not normalize to the audited Windows root'
 
 $runningRejected = $false
 $running = $stopped.PSObject.Copy()
@@ -111,5 +121,36 @@ try { Assert-ContainerContract -Container $wrongBind -Root $root } catch {
     $wrongBindRejected = $_.Exception.Message -match 'bind does not match'
 }
 Assert-True $wrongBindRejected 'wrong /data bind passed the container guard'
+
+foreach ($invalidDockerSource in @(
+        '/run/desktop/mnt/host/f/mcmcp-testlab/20260902-hard-building',
+        '/run/desktop/mnt/host/f/mcmcp-testlab/20260902-hard-building-v1/child',
+        '/run/desktop/mnt/host/f/mcmcp-testlab/wrong',
+        '/run/desktop/mnt/host/g/mcmcp-testlab/20260902-hard-building-v1',
+        '/run/desktop/mnt/host/f/mcmcp-testlab/../20260902-hard-building-v1',
+        '/host_mnt/f/mcmcp-testlab/20260902-hard-building-v1')) {
+    $invalidBind = $stopped.PSObject.Copy()
+    $invalidBind.Mounts = @([pscustomobject]@{
+            Type = 'bind'; Source = $invalidDockerSource; Destination = '/data'
+        })
+    $invalidBindRejected = $false
+    try { Assert-ContainerContract -Container $invalidBind -Root $root } catch {
+        $invalidBindRejected = $_.Exception.Message -match 'bind does not match'
+    }
+    Assert-True $invalidBindRejected "unsafe Docker bind source passed: $invalidDockerSource"
+}
+
+Assert-True `
+    (Test-DockerBindSourceOverlapsPath `
+        -Source $dockerDesktopRoot -Path $root) `
+    'exact Docker Desktop bind was not detected as overlapping'
+Assert-True `
+    (Test-DockerBindSourceOverlapsPath `
+        -Source "$dockerDesktopRoot/child" -Path $root) `
+    'Docker Desktop descendant bind was not detected as overlapping'
+Assert-True `
+    (Test-DockerBindSourceOverlapsPath `
+        -Source '/run/desktop/mnt/host/f/mcmcp-testlab' -Path $root) `
+    'Docker Desktop ancestor bind was not detected as overlapping'
 
 'MCMCP hard-building world reset static tests passed.'

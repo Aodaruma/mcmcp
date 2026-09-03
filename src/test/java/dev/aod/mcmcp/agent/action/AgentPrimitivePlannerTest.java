@@ -801,6 +801,9 @@ class AgentPrimitivePlannerTest {
         assertThat(plan.anchor()).isEqualTo(cell(4));
         assertThat(plan.route().cells()).containsExactly(
                 cell(0), cell(1), cell(2), cell(3), cell(4));
+        assertThat(analysis.worstCase(approach).map(ActionDslCompiler.Cost::ticks))
+                .contains(plan.route().tickUpperBound()
+                        + AgentPrimitivePlanner.NAVIGATION_REPLAN_RESERVE_TICKS);
     }
 
     @Test
@@ -937,8 +940,10 @@ class AgentPrimitivePlannerTest {
         var cost = analysis.primitiveCosts().get("center");
         assertThat(cost.distanceBlocks())
                 .isEqualTo(1.5D * 0.49D);
-        assertThat(cost.ticks()).isEqualTo(36L);
-        assertThat(cost.durationMillis()).isEqualTo(1_800L);
+        assertThat(cost.ticks()).isEqualTo(
+                36L + AgentPrimitivePlanner.NAVIGATION_REPLAN_RESERVE_TICKS);
+        assertThat(cost.durationMillis()).isEqualTo(
+                (36L + AgentPrimitivePlanner.NAVIGATION_REPLAN_RESERVE_TICKS) * 50L);
     }
 
     @Test
@@ -968,6 +973,10 @@ class AgentPrimitivePlannerTest {
         assertThat(analysis.primitiveCosts().get("collect").ticks())
                 .isEqualTo(AgentPrimitivePlanner.navigationCost(pickup.route(), pose).ticks()
                         + AgentPrimitivePlanner.PICKUP_CONFIRM_TICKS);
+        assertThat(AgentPrimitivePlanner.pickupReplanCost(pickup.route(), pose).ticks())
+                .isEqualTo(
+                        analysis.primitiveCosts().get("collect").ticks()
+                                - AgentPrimitivePlanner.NAVIGATION_REPLAN_RESERVE_TICKS);
         assertThat(analysis.primitiveCosts().get("collect").interactions()).isZero();
 
         map.advanceWorldRevision(1L, List.of(), List.of());
@@ -997,6 +1006,29 @@ class AgentPrimitivePlannerTest {
         assertThat(AgentPrimitivePlanner.visibleItemPickupCellCurrent(
                 map.snapshot().orElseThrow(), Optional.of(mixedRevisionFrame), collect,
                 cell(0), 5L, 4L)).isFalse();
+    }
+
+    @Test
+    void visibleItemCollectionUsesFreshlyDeliveredElevatedPickupCellFromR22Geometry() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        var start = new NavCell(DIMENSION, -18, 56, 11);
+        var middle = new NavCell(DIMENSION, -18, 56, 10);
+        var pickupCell = new NavCell(DIMENSION, -19, 57, 10);
+        map.observe(confirmed(session, start, middle));
+        map.observe(confirmed(session, middle, pickupCell));
+        var target = new ActionDsl.WorldPosition(
+                DIMENSION, -18.859252773215758D, 57.0D, 10.125D);
+        var collect = new ActionDsl.CollectVisibleItem(
+                "collect", "minecraft:oak_log", target);
+
+        var pickup = AgentPrimitivePlanner.requirePickupPlan(
+                map.snapshot().orElseThrow(), new DeterministicAStar(), start,
+                Optional.of(entityFrame(visibleItem("minecraft:oak_log", target, 0L))),
+                collect);
+
+        assertThat(pickup.pickupCell()).isEqualTo(pickupCell);
+        assertThat(pickup.route().cells()).containsExactly(start, middle, pickupCell);
     }
 
     @Test
@@ -2138,7 +2170,7 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
-    void navigationReplanDoesNotChargeReservedProbeTimeTwice() {
+    void navigationOccurrencePrepaysFixedReplanReserveWithoutRemovingProbeCost() {
         UUID session = UUID.randomUUID();
         var map = map(session);
         NavCell start = cell(0);
@@ -2147,17 +2179,63 @@ class AgentPrimitivePlannerTest {
         RoutePlan route = new DeterministicAStar()
                 .findRoute(map.snapshot().orElseThrow(), start, target)
                 .route().orElseThrow();
-        var planned = AgentPrimitivePlanner.navigationCost(
-                route,
-                new AgentPrimitivePlanner.Pose(start, 0.5D, 64, 0.5D, 1.62D, 0, 0));
+        var pose = new AgentPrimitivePlanner.Pose(
+                start, 0.5D, 64, 0.5D, 1.62D, 0, 0);
+        var planned = AgentPrimitivePlanner.navigationCost(route, pose);
 
-        var retry = AgentPrimitivePlanner.navigationReplanCost(route, planned);
+        var retry = AgentPrimitivePlanner.navigationReplanCost(route, pose);
 
+        assertThat(retry.ticks()).isEqualTo(route.tickUpperBound());
         assertThat(retry.ticks()).isEqualTo(
-                planned.ticks() - RoutePlan.EXTRA_TICKS_PER_PROBE);
-        assertThat(retry.durationMillis()).isEqualTo(
-                planned.durationMillis() - RoutePlan.EXTRA_TICKS_PER_PROBE * 50L);
+                RoutePlan.BASE_SETTLE_TICKS
+                        + RoutePlan.TICKS_PER_TRANSITION
+                        + RoutePlan.EXTRA_TICKS_PER_PROBE);
+        assertThat(planned.ticks()).isEqualTo(
+                retry.ticks() + AgentPrimitivePlanner.NAVIGATION_REPLAN_RESERVE_TICKS);
+        assertThat(planned.durationMillis()).isEqualTo(
+                retry.durationMillis()
+                        + AgentPrimitivePlanner.NAVIGATION_REPLAN_RESERVE_TICKS * 50L);
         assertThat(retry.distanceBlocks()).isEqualTo(planned.distanceBlocks());
+    }
+
+    @Test
+    void prepaidReserveCoversAOneProbeReplanAfterPartialConfirmedRouteProgress() {
+        UUID session = UUID.randomUUID();
+        var initialMap = map(session);
+        NavCell start = cell(0);
+        NavCell middle = cell(1);
+        NavCell target = cell(2);
+        initialMap.observe(confirmed(session, start, middle));
+        initialMap.observe(confirmed(session, middle, target));
+        RoutePlan initialRoute = new DeterministicAStar()
+                .findRoute(initialMap.snapshot().orElseThrow(), start, target)
+                .route().orElseThrow();
+        var initial = AgentPrimitivePlanner.navigationCost(
+                initialRoute,
+                new AgentPrimitivePlanner.Pose(
+                        start, 0.5D, 64, 0.5D, 1.62D, 0, 0));
+
+        var retryMap = map(session);
+        retryMap.observe(probeAllowed(session, middle, target));
+        RoutePlan retryRoute = new DeterministicAStar()
+                .findRoute(retryMap.snapshot().orElseThrow(), middle, target)
+                .route().orElseThrow();
+        var retry = AgentPrimitivePlanner.navigationReplanCost(
+                retryRoute,
+                new AgentPrimitivePlanner.Pose(
+                        middle, 1.5D, 64, 0.5D, 1.62D, 0, 0));
+
+        assertThat(initial.ticks()).isEqualTo(
+                RoutePlan.BASE_SETTLE_TICKS
+                        + 2L * RoutePlan.TICKS_PER_TRANSITION
+                        + AgentPrimitivePlanner.NAVIGATION_REPLAN_RESERVE_TICKS);
+        assertThat(retry.ticks()).isEqualTo(
+                RoutePlan.BASE_SETTLE_TICKS
+                        + RoutePlan.TICKS_PER_TRANSITION
+                        + RoutePlan.EXTRA_TICKS_PER_PROBE);
+        assertThat(6L + retry.ticks()).isLessThanOrEqualTo(initial.ticks());
+        assertThat(0.832D + retry.distanceBlocks())
+                .isLessThanOrEqualTo(initial.distanceBlocks());
     }
 
     private static ActionDsl.FaceKnownPosition face(String id, NavCell target) {

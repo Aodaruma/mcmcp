@@ -641,6 +641,67 @@ class McmcpRuntimeHardeningTest {
     }
 
     @Test
+    void navigationReplanConsumesItsPrepaidOccurrenceReserveWithoutReplenishment() {
+        var baseline = progress(0.0D, 0);
+        var afterSixTicks = progress(0.832D, 6);
+        var occurrence = new ActionDslCompiler.Cost(3_600, 72, 3.0D, 0, 0, 0, 0);
+        var retry = new ActionDslCompiler.Cost(2_800, 56, 1.5D, 0, 0, 0, 0);
+        var global = new ActionDsl.Budget(30_000, 600, 32, 0, 0, 0, 0);
+
+        assertThat(McmcpRuntime.replannedRouteBudgetFailure(
+                afterSixTicks,
+                baseline,
+                occurrence,
+                global,
+                retry,
+                Duration.ofMillis(300).toNanos())).isNull();
+
+        var afterReserveWasConsumed = progress(0.832D, 17);
+        assertThat(McmcpRuntime.replannedRouteBudgetFailure(
+                afterReserveWasConsumed,
+                baseline,
+                occurrence,
+                global,
+                retry,
+                Duration.ofMillis(850).toNanos()))
+                .isEqualTo(McmcpRuntime.REPLANNED_ROUTE_REMAINING_EVIDENCE);
+    }
+
+    @Test
+    void replannedRouteBudgetDiagnosticsSeparateShapeGlobalAndOccurrenceFailures() {
+        var baseline = progress(0.0D, 0);
+        var global = new ActionDsl.Budget(30_000, 600, 32, 0, 0, 0, 0);
+        var occurrence = new ActionDslCompiler.Cost(3_600, 72, 3.0D, 0, 0, 0, 0);
+
+        assertThat(McmcpRuntime.replannedRouteBudgetFailure(
+                progress(0.0D, 1),
+                baseline,
+                occurrence,
+                global,
+                new ActionDslCompiler.Cost(3_650, 73, 1.0D, 0, 0, 0, 0),
+                Duration.ofMillis(50).toNanos()))
+                .isEqualTo(McmcpRuntime.REPLANNED_ROUTE_SHAPE_EVIDENCE);
+
+        assertThat(McmcpRuntime.replannedRouteBudgetFailure(
+                progress(31.0D, 6),
+                baseline,
+                new ActionDslCompiler.Cost(5_000, 100, 32.0D, 0, 0, 0, 0),
+                global,
+                new ActionDslCompiler.Cost(500, 10, 1.5D, 0, 0, 0, 0),
+                Duration.ofMillis(300).toNanos()))
+                .isEqualTo(McmcpRuntime.REPLANNED_ROUTE_GLOBAL_EVIDENCE);
+
+        assertThat(McmcpRuntime.replannedRouteBudgetFailure(
+                progress(0.832D, 6),
+                baseline,
+                occurrence,
+                global,
+                new ActionDslCompiler.Cost(2_000, 40, 2.2D, 0, 0, 0, 0),
+                Duration.ofMillis(300).toNanos()))
+                .isEqualTo(McmcpRuntime.REPLANNED_ROUTE_REMAINING_EVIDENCE);
+    }
+
+    @Test
     void anActivePrimitiveCannotEmitAgainAtItsExactMotionLimit() {
         var used = new AgentActionStore.Progress(
                 AgentActionStore.Phase.EXECUTING,
@@ -2069,6 +2130,21 @@ class McmcpRuntimeHardeningTest {
             String block,
             Map<String, String> properties) {
         return Map.of("block", block, "properties", properties);
+    }
+
+    private static AgentActionStore.Progress progress(double distance, int ticks) {
+        return new AgentActionStore.Progress(
+                AgentActionStore.Phase.REPLANNING,
+                "move",
+                0,
+                1,
+                distance,
+                0.0D,
+                0,
+                0,
+                0,
+                ticks,
+                false);
     }
 
     private static Map<String, Object> applyPlanArguments(

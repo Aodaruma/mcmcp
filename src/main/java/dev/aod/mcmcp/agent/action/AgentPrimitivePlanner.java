@@ -78,6 +78,12 @@ public final class AgentPrimitivePlanner {
     public static final long CONTAINER_TICK_UPPER_BOUND = 600L;
     public static final long BREWING_TICK_UPPER_BOUND =
             ActionDslCompiler.KNOWN_BREWING_TICKS;
+    /**
+     * Cumulative time reserved by every newly bound movement occurrence for a bounded route
+     * replan. The executor's original route does not own this reserve; only a later rebind may
+     * consume it, and the runtime never replenishes it.
+     */
+    public static final long NAVIGATION_REPLAN_RESERVE_TICKS = 20L;
     // Player-thrown item entities can retain a 40-tick pickup delay. Leave a bounded
     // synchronization margin without exposing hidden pickup-delay state to the model.
     public static final long PICKUP_CONFIRM_TICKS = 60L;
@@ -2079,8 +2085,21 @@ public final class AgentPrimitivePlanner {
                 interactions, blocksBroken, blocksPlaced);
     }
 
-    /** Replaces the first center-to-center edge with the real pose-to-first-waypoint distance. */
+    /**
+     * Initial occurrence cost. In addition to the executable route, this prepays one bounded
+     * cumulative replan window without enlarging the route executor's own tick bound.
+     */
     public static ActionDslCompiler.Cost navigationCost(RoutePlan route, Pose pose) {
+        return withNavigationReplanReserve(navigationExecutionCost(route, pose));
+    }
+
+    /** Raw executable cost of a freshly rebound route, including every current probe edge. */
+    public static ActionDslCompiler.Cost navigationReplanCost(RoutePlan route, Pose pose) {
+        return navigationExecutionCost(route, pose);
+    }
+
+    /** Replaces the first center-to-center edge with the real pose-to-first-waypoint distance. */
+    private static ActionDslCompiler.Cost navigationExecutionCost(RoutePlan route, Pose pose) {
         Objects.requireNonNull(route, "route");
         Objects.requireNonNull(pose, "pose");
         if (!route.cells().getFirst().equals(pose.cell())) {
@@ -2103,6 +2122,32 @@ public final class AgentPrimitivePlanner {
     /** Navigation cost plus a bounded post-arrival item pickup confirmation window. */
     public static ActionDslCompiler.Cost pickupCost(RoutePlan route, Pose pose) {
         ActionDslCompiler.Cost navigation = navigationCost(route, pose);
+        return withPickupConfirmation(navigation);
+    }
+
+    /** Raw rebound navigation plus pickup confirmation; no new replan reserve is granted. */
+    public static ActionDslCompiler.Cost pickupReplanCost(RoutePlan route, Pose pose) {
+        return withPickupConfirmation(navigationReplanCost(route, pose));
+    }
+
+    private static ActionDslCompiler.Cost withNavigationReplanReserve(
+            ActionDslCompiler.Cost navigation) {
+        Objects.requireNonNull(navigation, "navigation");
+        long reserveMillis = Math.multiplyExact(
+                NAVIGATION_REPLAN_RESERVE_TICKS, TICK_MILLIS);
+        return new ActionDslCompiler.Cost(
+                Math.addExact(navigation.durationMillis(), reserveMillis),
+                Math.addExact(navigation.ticks(), NAVIGATION_REPLAN_RESERVE_TICKS),
+                navigation.distanceBlocks(),
+                navigation.cameraDegrees(),
+                navigation.interactions(),
+                navigation.blocksBroken(),
+                navigation.blocksPlaced());
+    }
+
+    private static ActionDslCompiler.Cost withPickupConfirmation(
+            ActionDslCompiler.Cost navigation) {
+        Objects.requireNonNull(navigation, "navigation");
         return new ActionDslCompiler.Cost(
                 Math.addExact(navigation.durationMillis(),
                         Math.multiplyExact(PICKUP_CONFIRM_TICKS, TICK_MILLIS)),
@@ -2509,24 +2554,6 @@ public final class AgentPrimitivePlanner {
         return square(observed.x() - requested.x())
                 + square(observed.y() - requested.y())
                 + square(observed.z() - requested.z());
-    }
-
-    /** Removes probe time already reserved by the admitted occurrence before a retry. */
-    public static ActionDslCompiler.Cost navigationReplanCost(
-            RoutePlan route, ActionDslCompiler.Cost planned) {
-        Objects.requireNonNull(route, "route");
-        Objects.requireNonNull(planned, "planned");
-        long reservedTicks = Math.multiplyExact(
-                (long) route.probeEdgeCount(), RoutePlan.EXTRA_TICKS_PER_PROBE);
-        long reservedMillis = Math.multiplyExact(reservedTicks, TICK_MILLIS);
-        return new ActionDslCompiler.Cost(
-                Math.subtractExact(planned.durationMillis(), reservedMillis),
-                Math.subtractExact(planned.ticks(), reservedTicks),
-                planned.distanceBlocks(),
-                planned.cameraDegrees(),
-                planned.interactions(),
-                planned.blocksBroken(),
-                planned.blocksPlaced());
     }
 
     private static void merge(

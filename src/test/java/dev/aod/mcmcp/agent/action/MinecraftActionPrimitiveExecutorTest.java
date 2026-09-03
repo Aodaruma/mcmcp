@@ -327,6 +327,38 @@ class MinecraftActionPrimitiveExecutorTest {
     }
 
     @Test
+    void oneBlockDescentReacquiresExactTargetAfterLandingMomentumDrift() {
+        UUID session = UUID.randomUUID();
+        NavCell start = cell(0, 65, 0);
+        NavCell target = cell(-1, 64, 0);
+        var map = new KnownTraversabilityMap();
+        map.startSession(session, DIMENSION, 4);
+        map.observe(edge(session, start, target, TraversabilityEdge.Status.CONFIRMED, 1));
+        RoutePlan route = route(map.snapshot().orElseThrow(), start, target);
+
+        assertThat(MinecraftActionPrimitiveExecutor.insideRouteCorridor(
+                -0.20D, 64.50D, 0.5D, new TraversabilityEdge.Key(start, target))).isTrue();
+        assertThat(MinecraftActionPrimitiveExecutor.settlementDriftDecision(
+                route, map.snapshot().orElseThrow(),
+                -0.55D, 64.0D, 0.5D, 0.1D))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SettlementDriftDecision.SETTLE);
+        assertThat(MinecraftActionPrimitiveExecutor.settlementDriftDecision(
+                route, map.snapshot().orElseThrow(),
+                -0.62D, 64.0D, 0.5D, 0.1D))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SettlementDriftDecision.DRIVE);
+        assertThat(MinecraftActionPrimitiveExecutor.settlementDriftDecision(
+                route, map.snapshot().orElseThrow(),
+                -1.40D, 64.0D, 0.5D, 0.1D))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SettlementDriftDecision.OFF_ROUTE);
+
+        map.observe(edge(session, start, target, TraversabilityEdge.Status.BLOCKED, 2));
+        assertThat(MinecraftActionPrimitiveExecutor.settlementDriftDecision(
+                route, map.snapshot().orElseThrow(),
+                -0.62D, 64.0D, 0.5D, 0.1D))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.SettlementDriftDecision.ROUTE_CHANGED);
+    }
+
+    @Test
     void supportedLadderLandingAddsJumpOnlyAfterFallingBelowItsHeight() {
         assertThat(MinecraftActionPrimitiveExecutor.effectiveVerticalDelta(
                 0, Locomotion.LADDER,

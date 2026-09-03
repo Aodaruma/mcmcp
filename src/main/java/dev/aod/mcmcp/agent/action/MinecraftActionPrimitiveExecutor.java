@@ -351,8 +351,62 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 snapshot.worldRevision(),
                 movementSafety.latestFor(player));
         NavCell destination = state.route.cells().getLast();
-        if (!atWaypoint(player, destination, state.tolerance)) {
+        SettlementDriftDecision drift = settlementDriftDecision(
+                state.route,
+                snapshot,
+                player.getX(),
+                player.getY(),
+                player.getZ(),
+                state.tolerance);
+        if (drift == SettlementDriftDecision.ROUTE_CHANGED) {
+            return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
+        }
+        if (drift == SettlementDriftDecision.OFF_ROUTE) {
             return finish(Status.REPLAN_REQUIRED, Reason.PLAYER_OFF_ROUTE);
+        }
+        if (drift == SettlementDriftDecision.DRIVE) {
+            // Reaching the destination once does not mean Vanilla has removed all horizontal
+            // momentum. In particular, a one-block descent can cross the exact tolerance while
+            // the player is still falling. Keep the already-delivered final edge bound and
+            // reacquire its centre instead of turning that ordinary settling drift into a fresh
+            // route/replan cycle.
+            state.resumeFinalApproach();
+            if (state.route.edges().isEmpty()) {
+                return driveNavigationWaypoint(
+                        minecraft,
+                        player,
+                        snapshot,
+                        movementSafety,
+                        remainingDistance,
+                        clientTick,
+                        outputAllowed,
+                        destination,
+                        state.tolerance,
+                        0,
+                        Locomotion.GROUND,
+                        EdgeDecision.CONFIRMED);
+            }
+            TraversabilityEdge planned = state.route.edges().getLast();
+            EdgeDecision edge = edgeDecision(
+                    state.route, state.route.edges().size() - 1, snapshot);
+            int verticalDelta = effectiveVerticalDelta(
+                    Integer.compare(destination.y(), planned.key().from().y()),
+                    planned.locomotion(),
+                    planned.targetSupport(),
+                    destination.y() - player.getY());
+            return driveNavigationWaypoint(
+                    minecraft,
+                    player,
+                    snapshot,
+                    movementSafety,
+                    remainingDistance,
+                    clientTick,
+                    outputAllowed,
+                    destination,
+                    state.tolerance,
+                    verticalDelta,
+                    planned.locomotion(),
+                    edge);
         }
         if (state.lastSettlePosition != null
                 && player.position().distanceToSqr(state.lastSettlePosition)
@@ -441,6 +495,34 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         return safety == SettlementSafetyDecision.CLEAR && safeTicks >= SETTLE_SAFETY_TICKS
                 ? new TickResult(Status.SUCCEEDED, Reason.NONE)
                 : new TickResult(Status.REPLAN_REQUIRED, Reason.DESTINATION_SAFETY_UNVERIFIED);
+    }
+
+    static SettlementDriftDecision settlementDriftDecision(
+            RoutePlan route,
+            KnownTraversabilitySnapshot snapshot,
+            double x,
+            double y,
+            double z,
+            double tolerance) {
+        Objects.requireNonNull(route, "route");
+        Objects.requireNonNull(snapshot, "snapshot");
+        NavCell destination = route.cells().getLast();
+        if (waypointReached(x, y, z, destination, tolerance)) {
+            return SettlementDriftDecision.SETTLE;
+        }
+        if (route.edges().isEmpty()) {
+            if (!sameCellRouteCurrent(route, snapshot)) {
+                return SettlementDriftDecision.ROUTE_CHANGED;
+            }
+            return sameCellDecision(x, y, z, destination, tolerance) == SameCellDecision.DRIVE
+                    ? SettlementDriftDecision.DRIVE : SettlementDriftDecision.OFF_ROUTE;
+        }
+        int edgeIndex = route.edges().size() - 1;
+        if (edgeDecision(route, edgeIndex, snapshot) == EdgeDecision.REPLAN) {
+            return SettlementDriftDecision.ROUTE_CHANGED;
+        }
+        return insideRouteCorridor(x, y, z, route.edges().get(edgeIndex).key())
+                ? SettlementDriftDecision.DRIVE : SettlementDriftDecision.OFF_ROUTE;
     }
 
     private TickResult tickFace(
@@ -1036,6 +1118,13 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         UNSAFE
     }
 
+    enum SettlementDriftDecision {
+        SETTLE,
+        DRIVE,
+        ROUTE_CHANGED,
+        OFF_ROUTE
+    }
+
     private static final class NavigateState extends ProgressState {
         private final RoutePlan route;
         private final double tolerance;
@@ -1056,6 +1145,15 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             lastSettlePosition = null;
             stableTicks = 0;
             safeTicks = 0;
+        }
+
+        private void resumeFinalApproach() {
+            settling = false;
+            edgeIndex = Math.max(0, route.edges().size() - 1);
+            lastSettlePosition = null;
+            stableTicks = 0;
+            safeTicks = 0;
+            resetProgress();
         }
     }
 
