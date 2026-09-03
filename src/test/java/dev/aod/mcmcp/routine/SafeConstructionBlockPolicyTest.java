@@ -149,4 +149,44 @@ class SafeConstructionBlockPolicyTest {
                 .isInstanceOf(
                         SafeConstructionBlockPolicy.UnsafeConstructionBlockException.class);
     }
+
+    @Test
+    void defersOnlyAuditedHorizontalNeighborPropertiesUntilFinalVerification() {
+        var finalCorner = new BlockStateFingerprint("minecraft:oak_stairs", Map.of(
+                "facing", "north", "half", "bottom", "shape", "inner_left",
+                "waterlogged", "false"));
+        var immediateStraight = new BlockStateFingerprint("minecraft:oak_stairs", Map.of(
+                "facing", "north", "half", "bottom", "shape", "straight",
+                "waterlogged", "false"));
+        var wrongFacing = new BlockStateFingerprint("minecraft:oak_stairs", Map.of(
+                "facing", "south", "half", "bottom", "shape", "straight",
+                "waterlogged", "false"));
+        var finalPane = new BlockStateFingerprint("minecraft:glass_pane", Map.of(
+                "north", "true", "east", "true", "south", "false", "west", "false",
+                "waterlogged", "false"));
+        var immediatePane = new BlockStateFingerprint("minecraft:glass_pane", Map.of(
+                "north", "false", "east", "false", "south", "false", "west", "false",
+                "waterlogged", "false"));
+        var wetPane = new BlockStateFingerprint("minecraft:glass_pane", Map.of(
+                "north", "false", "east", "false", "south", "false", "west", "false",
+                "waterlogged", "true"));
+
+        assertThat(SafeConstructionBlockPolicy
+                .placementStateMatchesFinalStableProperties(
+                        finalCorner, immediateStraight)).isFalse();
+        assertThat(SafeConstructionBlockPolicy
+                .placementStateMatchesFinalStableProperties(
+                        finalCorner, wrongFacing)).isFalse();
+        assertThat(SafeConstructionBlockPolicy
+                .placementStateMatchesFinalStableProperties(
+                        finalPane, immediatePane)).isTrue();
+        assertThat(SafeConstructionBlockPolicy
+                .placementStateMatchesFinalStableProperties(
+                        finalPane, wetPane)).isFalse();
+        assertThat(SafeConstructionBlockPolicy
+                .placementStateMatchesFinalStableProperties(
+                        new BlockStateFingerprint("minecraft:stone", Map.of()),
+                        new BlockStateFingerprint("minecraft:cobblestone", Map.of())))
+                .isFalse();
+    }
 }

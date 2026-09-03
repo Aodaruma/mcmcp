@@ -210,7 +210,11 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         }
         if (evidence.acknowledged()
                 && evidence.worldDiffObserved()
-                && evidence.liveStateAfter().filter(child.expectedAfter()::equals).isPresent()) {
+                && evidence.liveStateAfter().filter(after -> request.breakOnly()
+                        ? child.expectedAfter().equals(after)
+                        : SafeConstructionBlockPolicy
+                                .placementStateMatchesFinalStableProperties(
+                                        child.expectedAfter(), after)).isPresent()) {
             completed[currentIndex] = true;
             confirmedEntries++;
             phase = Phase.RELEASING_CONFIRMED;

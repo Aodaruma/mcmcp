@@ -2100,11 +2100,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         .equals(prepared.initialPrimitive())
                 && routeDependenciesCurrent(currentMap, prepared.analysis().routeDependencies())
                 && prepared.analysis().knownTargets().stream().allMatch(target ->
-                        AgentPrimitivePlanner.knownTarget(
-                                currentMap,
-                                currentPlanningFrame,
-                                target,
-                                currentSurfaceRevisionBarrier.applyAsLong(target)))
+                        prepared.initialPrimitive()
+                                        .filter(ActionDsl.FaceKnownPosition.class::isInstance)
+                                        .isPresent()
+                                ? AgentPrimitivePlanner.knownFacingTarget(
+                                        currentMap, currentPlanningFrame, target)
+                                : AgentPrimitivePlanner.knownTarget(
+                                        currentMap,
+                                        currentPlanningFrame,
+                                        target,
+                                        currentSurfaceRevisionBarrier.applyAsLong(target)))
                 && prepared.analysis().knownSurfaces().stream().allMatch(surface ->
                         AgentPrimitivePlanner.knownSurface(
                                 currentMap,
@@ -3787,11 +3792,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 var faceSurfaceBarrier = surfaceRevisionBarrier(map, faceReconciliation);
                 boolean faceEvidenceCurrent;
                 if (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition face) {
-                    faceEvidenceCurrent = AgentPrimitivePlanner.knownTarget(
-                            map,
-                            agentPlanningFrame(),
-                            face.target(),
-                            faceSurfaceBarrier.applyAsLong(face.target()));
+                    faceEvidenceCurrent = AgentPrimitivePlanner.knownFacingTarget(
+                            map, agentPlanningFrame(), face.target());
                 } else {
                     var block = (ActionDsl.BreakKnownFace) agentExecution.primitive;
                     faceEvidenceCurrent = AgentPrimitivePlanner.knownSurface(
@@ -4335,8 +4337,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 var target = AgentPrimitivePlanner.requireKnownFaceTarget(
                         map,
                         agentPlanningFrame(),
-                        face.target(),
-                        surfaceRevisionBarrier.applyAsLong(face.target()));
+                        face.target());
                 cost = AgentPrimitivePlanner.faceCost(
                         playerPose(player, map.dimension()),
                         face.target(),

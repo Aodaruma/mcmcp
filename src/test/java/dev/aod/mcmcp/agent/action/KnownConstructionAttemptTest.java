@@ -25,7 +25,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -262,6 +261,54 @@ class KnownConstructionAttemptTest {
     }
 
     @Test
+    void neighborDerivedImmediateStateStillRequiresExactFinalComponentState() {
+        var finalConnected = new BlockStateFingerprint("minecraft:glass_pane", Map.of(
+                "north", "false", "east", "true", "south", "false", "west", "false",
+                "waterlogged", "false"));
+        var immediateUnconnected = new BlockStateFingerprint("minecraft:glass_pane", Map.of(
+                "north", "false", "east", "false", "south", "false", "west", "false",
+                "waterlogged", "false"));
+        BlockTarget placed = target(0, 65, 0);
+        var step = new ApplyBlockPlanStep(
+                "pane", ApplyBlockPlanOperation.PLACE, placed, AIR, finalConnected,
+                Optional.of("minecraft:glass_pane"),
+                Optional.of(PlacementSupportWitness.visible(
+                        target(0, 64, 0), "up", STONE)));
+        var request = new KnownConstructionRequest(new ApplyBlockPlanRequest(
+                "pane", 1, 1, List.of(step),
+                new ActionBounds(DIMENSION, target(0, 64, 0), placed, 0, 15, false)));
+        var port = new FakePort(request);
+        port.packetAfterStates.put(placed, immediateUnconnected);
+        var attempt = new KnownConstructionAttempt(port, request, 1, 301);
+
+        assertThat(attempt.tick(1).evidence()).isEqualTo("construction_preparing");
+        port.tick = 2;
+        assertThat(attempt.tick(2).evidence()).isEqualTo("construction_confirming");
+        port.tick = 3;
+        assertThat(attempt.tick(3).evidence()).isEqualTo("construction_entry_confirmed");
+        port.states.put(placed, finalConnected);
+        port.tick = 4;
+        assertThat(attempt.tick(4).evidence()).isEqualTo("construction_final_verifying");
+        port.tick = 5;
+        assertThat(attempt.tick(5).status())
+                .isEqualTo(KnownConstructionAttempt.Status.SUCCEEDED);
+
+        var mismatchPort = new FakePort(request);
+        mismatchPort.packetAfterStates.put(placed, immediateUnconnected);
+        var mismatch = new KnownConstructionAttempt(mismatchPort, request, 1, 301);
+        mismatch.tick(1);
+        mismatchPort.tick = 2;
+        mismatch.tick(2);
+        mismatchPort.tick = 3;
+        mismatch.tick(3);
+        mismatchPort.tick = 4;
+        mismatch.tick(4);
+        mismatchPort.tick = 5;
+        assertThat(mismatch.tick(5).status())
+                .isEqualTo(KnownConstructionAttempt.Status.FAILED);
+    }
+
+    @Test
     void preflightStillRejectsStateThatIsNeitherBeforeNorAfter() {
         var request = request(1);
         var port = new FakePort(request);
@@ -355,6 +402,8 @@ class KnownConstructionAttemptTest {
         private final Map<ApplyBlockPlanRequest, KnownConstructionRequest> requests =
                 new java.util.IdentityHashMap<>();
         private final Map<BlockTarget, BlockStateFingerprint> states = new LinkedHashMap<>();
+        private final Map<BlockTarget, BlockStateFingerprint> packetAfterStates =
+                new LinkedHashMap<>();
         private final java.util.ArrayList<String> dispatchedEntryIds = new java.util.ArrayList<>();
         private final boolean breakOnly;
         private long tick = 1;
@@ -395,10 +444,11 @@ class KnownConstructionAttemptTest {
                         step.target(), Optional.of(states.get(step.target())),
                         !request.breakOnly(), true, aimFeasible));
             }
+            var inventory = new LinkedHashMap<String, Integer>();
+            request.requiredResources().keySet().forEach(item -> inventory.put(item, available));
             return new ApplyBlockPlanFrame(
                     tick, tick, true, true, true, true, true, true, true,
-                    cells, Map.of("minecraft:stone", available),
-                    Set.of("minecraft:stone"));
+                    cells, inventory, request.requiredResources().keySet());
         }
 
         @Override
@@ -459,11 +509,13 @@ class KnownConstructionAttemptTest {
         @Override
         public ApplyBlockPlanActionEvidence actionEvidence(
                 ApplyBlockPlanActionAttempt ignored) {
-            states.put(activeChild.target(), activeChild.expectedAfter());
+            BlockStateFingerprint packetAfter = packetAfterStates.getOrDefault(
+                    activeChild.target(), activeChild.expectedAfter());
+            states.put(activeChild.target(), packetAfter);
             available--;
             return new ApplyBlockPlanActionEvidence(
                     action.attemptId(), tick, tick, true, true,
-                    Optional.of(activeChild.expectedAfter()), Map.of(), null);
+                    Optional.of(packetAfter), Map.of(), null);
         }
 
         @Override

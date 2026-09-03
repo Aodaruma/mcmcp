@@ -1,12 +1,16 @@
 package dev.aod.mcmcp.routine;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.level.block.state.properties.StairsShape;
 import net.minecraft.world.phys.AABB;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
@@ -20,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -393,6 +398,205 @@ class BlockItemPlacementInvokerContractTest {
                 .containsExactlyInAnyOrder(
                         new net.minecraft.core.BlockPos(0, 65, 0),
                         new net.minecraft.core.BlockPos(0, 64, 0));
+    }
+
+    @Test
+    void placeRejectsAnExistingNeighborSensitiveCellOutsideThePlan() {
+        BlockPos first = new BlockPos(0, 65, 0);
+        BlockPos east = first.east();
+        BlockState straight = Blocks.OAK_STAIRS.defaultBlockState();
+        var oneStair = placementRequest(Map.of(first, straight));
+        var twoStairs = placementRequest(Map.of(first, straight, east, straight));
+        BlockState liveStair = Blocks.COBBLESTONE_STAIRS.defaultBlockState();
+
+        assertThat(MinecraftApplyBlockPlanPort.horizontalNeighborMutationsContained(
+                oneStair,
+                position -> position.equals(east)
+                        ? liveStair : Blocks.AIR.defaultBlockState())).isFalse();
+        assertThat(MinecraftApplyBlockPlanPort.horizontalNeighborMutationsContained(
+                twoStairs,
+                position -> position.equals(east)
+                        ? liveStair : Blocks.AIR.defaultBlockState())).isTrue();
+        assertThat(MinecraftApplyBlockPlanPort.horizontalNeighborMutationsContained(
+                twoStairs,
+                position -> position.equals(first.west()) ? null
+                        : position.equals(east)
+                                ? liveStair : Blocks.AIR.defaultBlockState())).isFalse();
+
+        var onePane = placementRequest(Map.of(first, Blocks.GLASS_PANE.defaultBlockState()));
+        assertThat(MinecraftApplyBlockPlanPort.horizontalNeighborMutationsContained(
+                onePane,
+                position -> position.equals(east)
+                        ? Blocks.GLASS_PANE.defaultBlockState()
+                        : Blocks.AIR.defaultBlockState())).isFalse();
+
+        var fullCubePlace = placementRequest(Map.of(first, Blocks.STONE.defaultBlockState()));
+        var placeWithPaneFinal = placementRequest(Map.of(
+                first, Blocks.STONE.defaultBlockState(),
+                east, Blocks.GLASS_PANE.defaultBlockState()));
+        assertThat(MinecraftApplyBlockPlanPort.horizontalNeighborMutationsContained(
+                fullCubePlace,
+                position -> position.equals(east)
+                        ? Blocks.GLASS_PANE.defaultBlockState()
+                        : Blocks.AIR.defaultBlockState())).isFalse();
+        assertThat(MinecraftApplyBlockPlanPort.horizontalNeighborMutationsContained(
+                placeWithPaneFinal,
+                position -> position.equals(east)
+                        ? Blocks.GLASS_PANE.defaultBlockState()
+                        : Blocks.AIR.defaultBlockState())).isTrue();
+    }
+
+    @Test
+    void breakRejectsAnExistingNeighborSensitiveCellOutsideThePlan() {
+        BlockPos first = new BlockPos(0, 65, 0);
+        BlockPos east = first.east();
+        var breakCube = breakRequest(Map.of(first, Blocks.STONE.defaultBlockState()));
+        var breakCubeAndPane = breakRequest(Map.of(
+                first, Blocks.STONE.defaultBlockState(),
+                east, Blocks.GLASS_PANE.defaultBlockState()));
+        assertThat(MinecraftApplyBlockPlanPort.horizontalNeighborMutationsContained(
+                breakCube,
+                position -> position.equals(east)
+                        ? Blocks.GLASS_PANE.defaultBlockState()
+                        : Blocks.AIR.defaultBlockState())).isFalse();
+        assertThat(MinecraftApplyBlockPlanPort.horizontalNeighborMutationsContained(
+                breakCubeAndPane,
+                position -> position.equals(first)
+                        ? Blocks.STONE.defaultBlockState()
+                        : position.equals(east)
+                                ? Blocks.GLASS_PANE.defaultBlockState()
+                                : Blocks.AIR.defaultBlockState())).isTrue();
+    }
+
+    @Test
+    void replaceRejectsAnExistingNeighborSensitiveCellOutsideThePlan() {
+        BlockPos first = new BlockPos(0, 65, 0);
+        BlockPos east = first.east();
+        var replaceCube = replaceRequest(first);
+        assertThat(MinecraftApplyBlockPlanPort.horizontalNeighborMutationsContained(
+                replaceCube,
+                position -> position.equals(east)
+                        ? Blocks.OAK_STAIRS.defaultBlockState()
+                        : Blocks.AIR.defaultBlockState())).isFalse();
+    }
+
+    @Test
+    void stairShapeDifferencesAreNeverDeferred() {
+        BlockPos cornerPosition = new BlockPos(0, 65, 0);
+        BlockPos frontPosition = cornerPosition.north();
+        BlockState predictedStraight = Blocks.OAK_STAIRS.defaultBlockState()
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.NORTH);
+        BlockState expectedCorner = predictedStraight
+                .setValue(BlockStateProperties.STAIRS_SHAPE, StairsShape.OUTER_LEFT);
+        BlockState plannedFront = Blocks.COBBLESTONE_STAIRS.defaultBlockState()
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.WEST);
+
+        var singleton = placementRequest(Map.of(cornerPosition, expectedCorner));
+        assertThat(MinecraftApplyBlockPlanPort.derivedPlacementDifferenceHasPlannedCause(
+                singleton, target(cornerPosition), fingerprint(expectedCorner),
+                predictedStraight, ignored -> Blocks.AIR.defaultBlockState())).isFalse();
+
+        var component = placementRequest(Map.of(
+                cornerPosition, expectedCorner,
+                frontPosition, plannedFront));
+        assertThat(MinecraftApplyBlockPlanPort.derivedPlacementDifferenceHasPlannedCause(
+                component, target(cornerPosition), fingerprint(expectedCorner),
+                predictedStraight, ignored -> Blocks.AIR.defaultBlockState())).isFalse();
+    }
+
+    @Test
+    void singletonConnectedPaneNeedsTheMatchingUnfinishedPlanNeighbour() {
+        BlockPos panePosition = new BlockPos(0, 65, 0);
+        BlockPos east = panePosition.east();
+        BlockState predictedUnconnected = Blocks.GLASS_PANE.defaultBlockState();
+        BlockState expectedConnected = predictedUnconnected
+                .setValue(BlockStateProperties.EAST, true);
+        BlockState plannedEast = predictedUnconnected
+                .setValue(BlockStateProperties.WEST, true);
+
+        var singleton = placementRequest(Map.of(panePosition, expectedConnected));
+        assertThat(MinecraftApplyBlockPlanPort.derivedPlacementDifferenceHasPlannedCause(
+                singleton, target(panePosition), fingerprint(expectedConnected),
+                predictedUnconnected, ignored -> Blocks.AIR.defaultBlockState())).isFalse();
+
+        var component = placementRequest(Map.of(
+                panePosition, expectedConnected,
+                east, plannedEast));
+        assertThat(MinecraftApplyBlockPlanPort.derivedPlacementDifferenceHasPlannedCause(
+                component, target(panePosition), fingerprint(expectedConnected),
+                predictedUnconnected, ignored -> Blocks.AIR.defaultBlockState())).isTrue();
+    }
+
+    private static ApplyBlockPlanRequest placementRequest(Map<BlockPos, BlockState> states) {
+        var steps = new java.util.ArrayList<ApplyBlockPlanStep>();
+        int index = 0;
+        for (var entry : states.entrySet()) {
+            BlockPos position = entry.getKey();
+            steps.add(new ApplyBlockPlanStep(
+                    "cell" + index++, ApplyBlockPlanOperation.PLACE, target(position),
+                    new BlockStateFingerprint("minecraft:air", Map.of()),
+                    fingerprint(entry.getValue()),
+                    Optional.of(BuiltInRegistries.ITEM.getKey(
+                            entry.getValue().getBlock().asItem()).toString())));
+        }
+        return mutationRequest(steps, false);
+    }
+
+    private static ApplyBlockPlanRequest breakRequest(Map<BlockPos, BlockState> states) {
+        var steps = new java.util.ArrayList<ApplyBlockPlanStep>();
+        int index = 0;
+        for (var entry : states.entrySet()) {
+            BlockPos position = entry.getKey();
+            steps.add(new ApplyBlockPlanStep(
+                    "cell" + index++, ApplyBlockPlanOperation.BREAK_TO_AIR,
+                    target(position), fingerprint(entry.getValue()),
+                    new BlockStateFingerprint("minecraft:air", Map.of()), Optional.empty()));
+        }
+        return mutationRequest(steps, true);
+    }
+
+    private static ApplyBlockPlanRequest replaceRequest(BlockPos position) {
+        var step = new ApplyBlockPlanStep(
+                "replace", ApplyBlockPlanOperation.REPLACE, target(position),
+                fingerprint(Blocks.STONE.defaultBlockState()),
+                fingerprint(Blocks.COBBLESTONE.defaultBlockState()),
+                Optional.of("minecraft:cobblestone"));
+        return mutationRequest(List.of(step), true);
+    }
+
+    private static ApplyBlockPlanRequest mutationRequest(
+            List<ApplyBlockPlanStep> steps, boolean allowBreak) {
+        int minimumX = steps.stream().map(ApplyBlockPlanStep::target)
+                .mapToInt(BlockTarget::x).min().orElseThrow();
+        int maximumX = steps.stream().map(ApplyBlockPlanStep::target)
+                .mapToInt(BlockTarget::x).max().orElseThrow();
+        int minimumY = steps.stream().map(ApplyBlockPlanStep::target)
+                .mapToInt(BlockTarget::y).min().orElseThrow();
+        int maximumY = steps.stream().map(ApplyBlockPlanStep::target)
+                .mapToInt(BlockTarget::y).max().orElseThrow();
+        int minimumZ = steps.stream().map(ApplyBlockPlanStep::target)
+                .mapToInt(BlockTarget::z).min().orElseThrow();
+        int maximumZ = steps.stream().map(ApplyBlockPlanStep::target)
+                .mapToInt(BlockTarget::z).max().orElseThrow();
+        var bounds = new ActionBounds(
+                "minecraft:overworld",
+                new BlockTarget("minecraft:overworld", minimumX, minimumY, minimumZ),
+                new BlockTarget("minecraft:overworld", maximumX, maximumY, maximumZ),
+                0, 30, allowBreak);
+        return new ApplyBlockPlanRequest("component", 1, 1, steps, bounds);
+    }
+
+    private static BlockTarget target(BlockPos position) {
+        return new BlockTarget("minecraft:overworld",
+                position.getX(), position.getY(), position.getZ());
+    }
+
+    private static BlockStateFingerprint fingerprint(BlockState state) {
+        var properties = new TreeMap<String, String>();
+        state.getValues().forEach(value ->
+                properties.put(value.property().getName(), value.valueName()));
+        return new BlockStateFingerprint(
+                BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString(), properties);
     }
 
     private static net.minecraft.core.BlockPos firstTargetPosition() {

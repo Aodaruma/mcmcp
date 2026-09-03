@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('navigation', 'faces-place', 'state-ref-ttl', 'wall-3x3')]
+    [ValidateSet('navigation', 'faces-place', 'state-ref-ttl', 'wall-3x3', 'wall-5x5')]
     [string]$Gate,
 
     [Parameter(Mandatory)]
@@ -44,6 +44,8 @@ $script:ToolTransport = $null
 $script:DelayTransport = $null
 $script:SourceObservationForbidden = $false
 $script:SourceObservationCount = 0
+$script:ConstructionNavigationTolerance = 0.75
+$script:PillarNavigationTolerance = 0.1
 
 $script:ChestBounds = [ordered]@{
     dimension = 'minecraft:overworld'
@@ -63,7 +65,7 @@ $script:DestinationSupportBounds = [ordered]@{
 $script:DestinationWallBounds = [ordered]@{
     dimension = 'minecraft:overworld'
     min_x = -23; min_y = 55; min_z = 9
-    max_x = -18; max_y = 58; max_z = 15
+    max_x = -18; max_y = 60; max_z = 15
 }
 
 function ConvertTo-CompactJson {
@@ -264,17 +266,59 @@ function Get-FreshState {
     return $state
 }
 
+function Get-ObservationFrameId {
+    param([Parameter(Mandatory)][object]$State)
+    $frameId = [string](Get-ObjectProperty `
+        (Get-ObjectProperty $State 'observation') 'latest_frame_id')
+    if ($frameId -cnotmatch '^obs-[0-9a-f]{16}$') {
+        throw 'agent_get_state did not announce a valid observation frame'
+    }
+    return $frameId
+}
+
+function Invoke-GateDelaySeconds {
+    param([ValidateRange(0.001, 900.0)][double]$Seconds)
+    if ($null -ne $script:DelayTransport) {
+        & $script:DelayTransport $Seconds
+        return
+    }
+    Start-Sleep -Milliseconds ([Math]::Max(1, [Math]::Ceiling($Seconds * 1000.0)))
+}
+
+function Wait-ForObservationFrameAdvance {
+    param(
+        [Parameter(Mandatory)][string]$PreviousFrameId,
+        [ValidateRange(1, 40)][int]$MaximumPolls = 40,
+        [ValidateRange(1, 1000)][int]$DelayMilliseconds = 50
+    )
+    if ($PreviousFrameId -cnotmatch '^obs-[0-9a-f]{16}$') {
+        throw 'observation frame barrier requires a valid previous frame id'
+    }
+    for ($poll = 1; $poll -le $MaximumPolls; $poll++) {
+        $state = Get-FreshState
+        $currentFrameId = Get-ObservationFrameId -State $state
+        if ($currentFrameId -cne $PreviousFrameId) {
+            Add-GateEvent -Event 'observation_frame_advanced' -Detail ([ordered]@{
+                    previous_frame_id = $PreviousFrameId
+                    current_frame_id = $currentFrameId
+                    polls = $poll
+                })
+            return $state
+        }
+        if ($poll -lt $MaximumPolls) {
+            Invoke-GateDelaySeconds -Seconds ($DelayMilliseconds / 1000.0)
+        }
+    }
+    throw "observation frame did not advance from $PreviousFrameId after $MaximumPolls polls"
+}
+
 function Get-RecordsFromState {
     param(
         [Parameter(Mandatory)][object]$State,
         [Parameter(Mandatory)][string[]]$Kinds,
         [AllowNull()][Collections.IDictionary]$Filter
     )
-    $observation = Get-ObjectProperty $State 'observation'
-    $frameId = [string](Get-ObjectProperty $observation 'latest_frame_id')
-    if ($frameId -cnotmatch '^obs-[0-9a-f]{16}$') {
-        throw 'agent_get_state did not announce a valid observation frame'
-    }
+    $frameId = Get-ObservationFrameId -State $State
     $records = [Collections.Generic.List[object]]::new()
     $cursor = $null
     do {
@@ -780,10 +824,12 @@ function Acquire-OakLogFromChest {
 }
 
 function Move-NearDestinationSupport {
+    param([ValidateSet(3, 5)][int]$Width = 3)
     $support = Get-OrNavigateToVisibleSurface -Block 'minecraft:white_wool' `
         -Bounds $script:DestinationSupportBounds -Faces @('up') -ExcludePlayerFeetAbove
     $state = Get-FreshState
     Invoke-ApproachSurface -Record $support -State $state
+    if ($Width -eq 5) { Invoke-WallStagingNavigation -Width $Width }
 }
 
 function Assert-SourceObservationAllowed {
@@ -915,11 +961,7 @@ function Wait-StateRefRetentionWindow {
             seconds = $Seconds; source_observation_count = $script:SourceObservationCount
         })
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    if ($null -ne $script:DelayTransport) {
-        & $script:DelayTransport $Seconds
-    } else {
-        Start-Sleep -Seconds $Seconds
-    }
+    Invoke-GateDelaySeconds -Seconds $Seconds
     $watch.Stop()
     Add-GateEvent -Event 'state_ref_retention_wait_completed' -Detail ([ordered]@{
             requested_seconds = $Seconds
@@ -1058,9 +1100,139 @@ function Select-ContiguousWallFoundation {
             @{ Expression = 'start_key'; Descending = $false } |
             Select-Object -First 1)
     if ($selected.Count -ne 1) {
-        throw 'no policy-visible contiguous three-block white-wool UP foundation is within stationary reach'
+        throw "no policy-visible contiguous $Width-block white-wool UP foundation is within stationary reach"
     }
     return @($selected[0].supports)
+}
+
+function Select-WallStagingNavigationSite {
+    param(
+        [Parameter(Mandatory)][object[]]$WallFoundation,
+        [Parameter(Mandatory)][object[]]$TraversabilityRecords,
+        [ValidateRange(1, 8)][double]$MaximumReach = 4.5,
+        [ValidateRange(0.1, 1.5)][double]$NavigationTolerance =
+            $script:ConstructionNavigationTolerance
+    )
+    if ($WallFoundation.Count -ne 5) {
+        throw '5-wide staging requires one exact observed foundation row'
+    }
+    $wallColumns = @{}
+    foreach ($support in $WallFoundation) {
+        $wallColumns[(Get-BlockColumnKey (Get-ObjectProperty $support 'position'))] = $true
+    }
+    $center = Get-ObjectProperty `
+        $WallFoundation[[int][Math]::Floor($WallFoundation.Count / 2)] 'position'
+    $supportY = [int](Get-ObjectProperty `
+        (Get-ObjectProperty $WallFoundation[0] 'position') 'y')
+    $maximumReachSquared = $MaximumReach * $MaximumReach
+    $candidates = foreach ($record in $TraversabilityRecords) {
+        if ((Get-ObjectProperty $record 'kind') -cne 'traversability' -or
+            (Get-ObjectProperty $record 'status') -cnotin @('CONFIRMED', 'PROBE_ALLOWED') -or
+            (Get-ObjectProperty $record 'target_support') -cne 'confirmed' -or
+            (Get-ObjectProperty $record 'transition_clearance') -cne 'confirmed' -or
+            (Get-ObjectProperty $record 'fluid') -cne 'none') { continue }
+        $target = Get-ObjectProperty $record 'navigation_target'
+        if ((Get-ObjectProperty $target 'dimension') -cne
+                (Get-ObjectProperty $center 'dimension') -or
+            [int](Get-ObjectProperty $target 'y') -ne $supportY + 1 -or
+            $wallColumns.ContainsKey((Get-BlockColumnKey $target))) { continue }
+
+        $maximumDistanceSquared = 0.0
+        $maximumToleranceBoundSquared = 0.0
+        foreach ($support in $WallFoundation) {
+            $position = Get-ObjectProperty $support 'position'
+            $dx = ([double](Get-ObjectProperty $position 'x') + 0.5) -
+                ([double](Get-ObjectProperty $target 'x') + 0.5)
+            $dy = ([double](Get-ObjectProperty $position 'y') + 1.0) -
+                ([double](Get-ObjectProperty $target 'y') + 1.62)
+            $dz = ([double](Get-ObjectProperty $position 'z') + 0.5) -
+                ([double](Get-ObjectProperty $target 'z') + 0.5)
+            $horizontalDistance = [Math]::Sqrt($dx * $dx + $dz * $dz)
+            $distanceSquared = $horizontalDistance * $horizontalDistance + $dy * $dy
+            $toleranceBoundSquared =
+                ($horizontalDistance + $NavigationTolerance) *
+                ($horizontalDistance + $NavigationTolerance) + $dy * $dy
+            $maximumDistanceSquared = [Math]::Max(
+                $maximumDistanceSquared, $distanceSquared)
+            $maximumToleranceBoundSquared = [Math]::Max(
+                $maximumToleranceBoundSquared, $toleranceBoundSquared)
+        }
+        if ($maximumToleranceBoundSquared -gt $maximumReachSquared) { continue }
+        $centerDx = ([double](Get-ObjectProperty $center 'x') + 0.5) -
+            ([double](Get-ObjectProperty $target 'x') + 0.5)
+        $centerDz = ([double](Get-ObjectProperty $center 'z') + 0.5) -
+            ([double](Get-ObjectProperty $target 'z') + 0.5)
+        [pscustomobject]@{
+            navigation_record = $record
+            maximum_support_distance_squared = $maximumDistanceSquared
+            maximum_tolerance_bound_squared = $maximumToleranceBoundSquared
+            center_horizontal_distance_squared = $centerDx * $centerDx + $centerDz * $centerDz
+            status_rank = if ((Get-ObjectProperty $record 'status') -ceq 'CONFIRMED') { 0 } else { 1 }
+            target_key = Get-BlockPositionKey $target
+        }
+    }
+    # Prefer the site with the largest reach margin. The final accepted pose may
+    # lie anywhere inside navigation tolerance, so center-distance alone is not
+    # a valid construction-reach proof.
+    $selected = @($candidates | Sort-Object `
+            @{ Expression = 'maximum_tolerance_bound_squared'; Descending = $false },
+            @{ Expression = 'maximum_support_distance_squared'; Descending = $false },
+            @{ Expression = 'center_horizontal_distance_squared'; Descending = $false },
+            @{ Expression = 'status_rank'; Descending = $false },
+            @{ Expression = 'target_key'; Descending = $false } |
+            Select-Object -First 1)
+    if ($selected.Count -ne 1) {
+        throw 'no fresh outside-row traversability target keeps all five supports within reach'
+    }
+    return $selected[0]
+}
+
+function Invoke-WallStagingNavigation {
+    param([Parameter(Mandatory)][ValidateSet(5)][int]$Width)
+    $state = Get-FreshState
+    $foundationRecords = @(Get-VisibleSurfaceRecords -State $state `
+        -Block 'minecraft:white_wool' -Bounds $script:DestinationSupportBounds `
+        -Faces @('up') -ExcludePlayerFeetAbove)
+    $foundation = @(Select-ContiguousWallFoundation -Records $foundationRecords `
+        -PlayerPosition (Get-ObjectProperty (Get-ObjectProperty $state 'world') 'position') `
+        -Width $Width -MaximumReach 8)
+    $traversability = @(Get-WallGroundTraversabilityRecords -State $state)
+    $site = Select-WallStagingNavigationSite -WallFoundation $foundation `
+        -TraversabilityRecords $traversability `
+        -NavigationTolerance $script:ConstructionNavigationTolerance
+    $record = $site.navigation_record
+    $target = Get-ObjectProperty $record 'navigation_target'
+    $request = New-NavigationActionRequest -NavigationRecord $record `
+        -State $state -Tolerance $script:ConstructionNavigationTolerance
+    Add-GateEvent -Event 'wall_staging_navigation_selected' -Detail ([ordered]@{
+            target = $target
+            target_verbatim = [object]::ReferenceEquals($target, $request.program.body[0].target)
+            foundation_positions = @($foundation | ForEach-Object {
+                    Get-ObjectProperty $_ 'position'
+                })
+            maximum_support_distance = [Math]::Sqrt(
+                [double]$site.maximum_support_distance_squared)
+            maximum_support_distance_with_tolerance = [Math]::Sqrt(
+                [double]$site.maximum_tolerance_bound_squared)
+            navigation_tolerance = $script:ConstructionNavigationTolerance
+        })
+    $terminal = Invoke-ActionRequest -Request $request -WallTimeoutSeconds 90
+
+    # A terminal navigation does not extend the old evidence lease. Prove the
+    # complete row again from the first post-navigation frame before construction.
+    $verifiedState = Get-FreshState
+    $verifiedRecords = @(Get-VisibleSurfaceRecords -State $verifiedState `
+        -Block 'minecraft:white_wool' -Bounds $script:DestinationSupportBounds `
+        -Faces @('up') -ExcludePlayerFeetAbove)
+    $verified = @(Select-ContiguousWallFoundation -Records $verifiedRecords `
+        -PlayerPosition (Get-ObjectProperty `
+            (Get-ObjectProperty $verifiedState 'world') 'position') -Width $Width)
+    Add-GateEvent -Event 'wall_staging_foundation_verified' -Detail ([ordered]@{
+            action_id = [string](Get-ObjectProperty $terminal 'action_id')
+            target = $target
+            support_count = $verified.Count
+            positions = @($verified | ForEach-Object { Get-ObjectProperty $_ 'position' })
+        })
 }
 
 function Select-ExactWallSupportRow {
@@ -1093,6 +1265,152 @@ function Select-ExactWallSupportRow {
     return @($selected)
 }
 
+function Get-CurrentWorldRevision {
+    param([Parameter(Mandatory)][object]$State)
+    $revision = Get-ObjectProperty (Get-ObjectProperty $State 'world') 'world_revision'
+    if ($revision -isnot [sbyte] -and $revision -isnot [byte] -and
+        $revision -isnot [int16] -and $revision -isnot [uint16] -and
+        $revision -isnot [int32] -and $revision -isnot [uint32] -and
+        $revision -isnot [int64] -and $revision -isnot [uint64]) {
+        throw 'agent_get_state did not announce an integer world revision'
+    }
+    return [long]$revision
+}
+
+function Wait-ForCurrentVisibleSurfaceRecords {
+    param(
+        [Parameter(Mandatory)][object]$InitialState,
+        [Parameter(Mandatory)][string]$Block,
+        [Parameter(Mandatory)][Collections.IDictionary]$Bounds,
+        [AllowNull()][string[]]$Faces,
+        [switch]$ExcludePlayerFeetAbove,
+        [ValidateRange(1, 40)][int]$MaximumPolls = 40,
+        [ValidateRange(1, 1000)][int]$DelayMilliseconds = 50
+    )
+    $state = $InitialState
+    for ($poll = 1; $poll -le $MaximumPolls; $poll++) {
+        $worldRevision = Get-CurrentWorldRevision -State $state
+        $records = @(Get-VisibleSurfaceRecords -State $state -Block $Block `
+            -Bounds $Bounds -Faces $Faces `
+            -ExcludePlayerFeetAbove:$ExcludePlayerFeetAbove -AllowMissing)
+        $currentRecords = @($records | Where-Object {
+                $recordRevision = Get-ObjectProperty $_ 'world_revision'
+                ($recordRevision -is [sbyte] -or $recordRevision -is [byte] -or
+                    $recordRevision -is [int16] -or $recordRevision -is [uint16] -or
+                    $recordRevision -is [int32] -or $recordRevision -is [uint32] -or
+                    $recordRevision -is [int64] -or $recordRevision -is [uint64]) -and
+                [long]$recordRevision -eq $worldRevision
+            })
+        if ($currentRecords.Count -gt 0) {
+            Add-GateEvent -Event 'visible_surfaces_revision_current' -Detail ([ordered]@{
+                    block = $Block
+                    world_revision = $worldRevision
+                    polls = $poll
+                    surface_count = $currentRecords.Count
+                })
+            return [pscustomobject]@{
+                state = $state
+                records = @($currentRecords)
+                world_revision = $worldRevision
+                polls = $poll
+            }
+        }
+        if ($poll -lt $MaximumPolls) {
+            Invoke-GateDelaySeconds -Seconds ($DelayMilliseconds / 1000.0)
+            $state = Get-FreshState
+        }
+    }
+    throw "$Block surfaces did not reach the current world revision after $MaximumPolls polls"
+}
+
+function Wait-ForCurrentWallReorientationSurface {
+    param(
+        [Parameter(Mandatory)][object]$InitialState,
+        [Parameter(Mandatory)][object]$Position,
+        [Parameter(Mandatory)][object]$ExpectedState
+    )
+    $bounds = [ordered]@{
+        dimension = [string](Get-ObjectProperty $Position 'dimension')
+        min_x = [int](Get-ObjectProperty $Position 'x')
+        min_y = [int](Get-ObjectProperty $Position 'y')
+        min_z = [int](Get-ObjectProperty $Position 'z')
+        max_x = [int](Get-ObjectProperty $Position 'x')
+        max_y = [int](Get-ObjectProperty $Position 'y')
+        max_z = [int](Get-ObjectProperty $Position 'z')
+    }
+    $current = Wait-ForCurrentVisibleSurfaceRecords -InitialState $InitialState `
+        -Block 'minecraft:oak_log' -Bounds $bounds `
+        -Faces @('north', 'south', 'east', 'west')
+    $positionKey = Get-BlockPositionKey $Position
+    $eligible = @($current.records | Where-Object {
+            (Get-BlockPositionKey (Get-ObjectProperty $_ 'position')) -ceq $positionKey -and
+            (ConvertTo-CompactJson (Get-ObjectProperty $_ 'state')) -ceq
+                (ConvertTo-CompactJson $ExpectedState)
+        } | Sort-Object { [string](Get-ObjectProperty $_ 'face') })
+    if ($eligible.Count -eq 0) {
+        throw 'current wall reorientation surface has the wrong complete state'
+    }
+    return [pscustomobject]@{
+        state = $current.state
+        surface = $eligible[0]
+        world_revision = $current.world_revision
+        polls = $current.polls
+    }
+}
+
+function Wait-ForCurrentExactWallSupportRow {
+    param(
+        [Parameter(Mandatory)][object]$InitialState,
+        [Parameter(Mandatory)][string]$Block,
+        [Parameter(Mandatory)][Collections.IDictionary]$Bounds,
+        [Parameter(Mandatory)][object[]]$ExpectedPositions,
+        [Parameter(Mandatory)][object]$ExpectedState,
+        [AllowNull()][string[]]$Faces = @('up'),
+        [switch]$ExcludePlayerFeetAbove,
+        [ValidateRange(1, 40)][int]$MaximumPolls = 40,
+        [ValidateRange(1, 1000)][int]$DelayMilliseconds = 50
+    )
+    $state = $InitialState
+    for ($poll = 1; $poll -le $MaximumPolls; $poll++) {
+        $worldRevision = Get-CurrentWorldRevision -State $state
+        $records = @(Get-VisibleSurfaceRecords -State $state -Block $Block `
+            -Bounds $Bounds -Faces $Faces `
+            -ExcludePlayerFeetAbove:$ExcludePlayerFeetAbove -AllowMissing)
+        $currentRecords = @($records | Where-Object {
+                $recordRevision = Get-ObjectProperty $_ 'world_revision'
+                ($recordRevision -is [sbyte] -or $recordRevision -is [byte] -or
+                    $recordRevision -is [int16] -or $recordRevision -is [uint16] -or
+                    $recordRevision -is [int32] -or $recordRevision -is [uint32] -or
+                    $recordRevision -is [int64] -or $recordRevision -is [uint64]) -and
+                [long]$recordRevision -eq $worldRevision
+            })
+        if ($currentRecords.Count -gt 0) {
+            try {
+                $supports = @(Select-ExactWallSupportRow -Records $currentRecords `
+                    -ExpectedPositions $ExpectedPositions -ExpectedState $ExpectedState)
+                Add-GateEvent -Event 'wall_support_revision_current' -Detail ([ordered]@{
+                        world_revision = $worldRevision
+                        polls = $poll
+                        positions = @($ExpectedPositions)
+                    })
+                return [pscustomobject]@{
+                    state = $state
+                    supports = @($supports)
+                    world_revision = $worldRevision
+                    polls = $poll
+                }
+            } catch {
+                if ($_.Exception.Message -notmatch 'was not freshly delivered') { throw }
+            }
+        }
+        if ($poll -lt $MaximumPolls) {
+            Invoke-GateDelaySeconds -Seconds ($DelayMilliseconds / 1000.0)
+            $state = Get-FreshState
+        }
+    }
+    throw "exact $Block support did not reach the current world revision after $MaximumPolls polls"
+}
+
 function Get-BlockColumnKey {
     param([Parameter(Mandatory)][object]$Position)
     return ('{0}|{1}|{2}' -f
@@ -1122,10 +1440,13 @@ function Select-TemporaryPillarSite {
         [Parameter(Mandatory)][object[]]$TraversabilityRecords,
         [Parameter(Mandatory)][object[]]$WallFoundation,
         [Parameter(Mandatory)][object[]]$RowOneTargets,
-        [ValidateRange(1, 8)][double]$MaximumWallReach = 4.5
+        [ValidateRange(1, 8)][double]$MaximumWallReach = 4.5,
+        [ValidateRange(0.1, 1.5)][double]$NavigationTolerance =
+            $script:ConstructionNavigationTolerance
     )
-    if ($WallFoundation.Count -ne 3 -or $RowOneTargets.Count -ne 3) {
-        throw 'temporary pillar selection requires the exact three-column wall footprint'
+    if ($WallFoundation.Count -lt 1 -or
+        $WallFoundation.Count -ne $RowOneTargets.Count) {
+        throw 'temporary pillar selection requires one complete wall row'
     }
     $wallColumns = @{}
     foreach ($record in $WallFoundation) {
@@ -1175,6 +1496,7 @@ function Select-TemporaryPillarSite {
         # The pillar lands one block above navigation_target. From that delivered
         # cell, every already-built row-1 UP face must remain within product reach.
         $maximumDistanceSquared = 0.0
+        $maximumToleranceBoundSquared = 0.0
         foreach ($wallSupport in $RowOneTargets) {
             $dx = ([double](Get-ObjectProperty $wallSupport 'x') + 0.5) -
                 ([double](Get-ObjectProperty $target 'x') + 0.5)
@@ -1182,18 +1504,29 @@ function Select-TemporaryPillarSite {
                 ([double](Get-ObjectProperty $target 'y') + 1.0 + 1.62)
             $dz = ([double](Get-ObjectProperty $wallSupport 'z') + 0.5) -
                 ([double](Get-ObjectProperty $target 'z') + 0.5)
+            $horizontalDistance = [Math]::Sqrt($dx * $dx + $dz * $dz)
+            $distanceSquared = $horizontalDistance * $horizontalDistance + $dy * $dy
+            $toleranceBoundSquared =
+                ($horizontalDistance + $NavigationTolerance) *
+                ($horizontalDistance + $NavigationTolerance) + $dy * $dy
             $maximumDistanceSquared = [Math]::Max(
-                $maximumDistanceSquared, $dx * $dx + $dy * $dy + $dz * $dz)
+                $maximumDistanceSquared, $distanceSquared)
+            $maximumToleranceBoundSquared = [Math]::Max(
+                $maximumToleranceBoundSquared, $toleranceBoundSquared)
         }
-        if ([Math]::Sqrt($maximumDistanceSquared) -gt $MaximumWallReach) { continue }
+        if ($maximumToleranceBoundSquared -gt $MaximumWallReach * $MaximumWallReach) {
+            continue
+        }
         $candidates.Add([pscustomobject]@{
                 support = $support
                 navigation_record = $joinedRecord
                 maximum_wall_distance_squared = $maximumDistanceSquared
+                maximum_wall_tolerance_bound_squared = $maximumToleranceBoundSquared
                 support_key = Get-BlockPositionKey $position
             })
     }
     $selected = @($candidates | Sort-Object `
+            @{ Expression = 'maximum_wall_tolerance_bound_squared'; Descending = $false },
             @{ Expression = 'maximum_wall_distance_squared'; Descending = $false },
             @{ Expression = 'support_key'; Descending = $false } |
             Select-Object -First 1)
@@ -1211,8 +1544,9 @@ function New-TemporaryPillarActionRequest {
     $supportPosition = Get-ObjectProperty $Support 'position'
     $supportState = Get-ObjectProperty $Support 'state'
     $placementStateRef = [string](Get-ObjectProperty $Source 'placement_state_ref')
+    $supportBlock = [string](Get-ObjectProperty $supportState 'block')
     if ((Get-ObjectProperty $Support 'face') -cne 'up' -or
-        (Get-ObjectProperty $supportState 'block') -cne 'minecraft:white_wool' -or
+        $supportBlock -cnotin @('minecraft:white_wool', 'minecraft:oak_log') -or
         $placementStateRef -cnotmatch '^psr_[0-9a-f]{32}$') {
         throw 'temporary pillar inputs are not delivery-backed safe identities'
     }
@@ -1232,7 +1566,9 @@ function Select-TemporaryPillarDescentRecord {
     param(
         [Parameter(Mandatory)][object[]]$Records,
         [Parameter(Mandatory)][object]$TemporaryPosition,
-        [Parameter(Mandatory)][object[]]$WallFoundation
+        [Parameter(Mandatory)][object[]]$WallFoundation,
+        [ValidateRange(0.1, 1.5)][double]$NavigationTolerance =
+            $script:ConstructionNavigationTolerance
     )
     $wallColumns = @{}
     foreach ($record in $WallFoundation) {
@@ -1255,10 +1591,11 @@ function Select-TemporaryPillarDescentRecord {
         $dz = [double](Get-ObjectProperty $target 'z') -
             [double](Get-ObjectProperty $TemporaryPosition 'z')
         $horizontalDistanceSquared = $dx * $dx + $dz * $dz
-        # Two to three blocks prevents incidental pickup while retaining normal
-        # break reach after the centered descent.
-        if ($horizontalDistanceSquared -ge 4.0 -and
-            $horizontalDistanceSquared -le 9.0) {
+        $horizontalDistance = [Math]::Sqrt($horizontalDistanceSquared)
+        # Account for every pose accepted by navigate_to_known. A two-block
+        # minimum remains after tolerance, while the far edge stays in break reach.
+        if ($horizontalDistance - $NavigationTolerance -ge 2.0 -and
+            $horizontalDistance + $NavigationTolerance -le 4.0) {
             [pscustomobject]@{
                 record = $record
                 horizontal_distance_squared = $horizontalDistanceSquared
@@ -1280,7 +1617,8 @@ function Get-ExactTemporarySurface {
     param(
         [Parameter(Mandatory)][object]$State,
         [Parameter(Mandatory)][object]$Position,
-        [Parameter(Mandatory)][object]$ExpectedState
+        [Parameter(Mandatory)][object]$ExpectedState,
+        [AllowNull()][string[]]$Faces
     )
     $bounds = [ordered]@{
         dimension = [string](Get-ObjectProperty $Position 'dimension')
@@ -1292,7 +1630,7 @@ function Get-ExactTemporarySurface {
         max_z = [int](Get-ObjectProperty $Position 'z')
     }
     $records = @(Get-VisibleSurfaceRecords -State $State -Block 'minecraft:oak_log' `
-        -Bounds $bounds -Faces $null)
+        -Bounds $bounds -Faces $Faces)
     $eligible = @($records | Where-Object {
             (Get-BlockPositionKey (Get-ObjectProperty $_ 'position')) -ceq
                 (Get-BlockPositionKey $Position) -and
@@ -1304,6 +1642,66 @@ function Get-ExactTemporarySurface {
         throw 'temporary pillar was not freshly delivered with its exact safe state'
     }
     return $eligible[0]
+}
+
+function Wait-ForCurrentExactTemporarySurface {
+    param(
+        [Parameter(Mandatory)][object]$InitialState,
+        [Parameter(Mandatory)][object]$Position,
+        [Parameter(Mandatory)][object]$ExpectedState,
+        [AllowNull()][string[]]$Faces,
+        [ValidateRange(1, 40)][int]$MaximumPolls = 40,
+        [ValidateRange(1, 1000)][int]$DelayMilliseconds = 50
+    )
+    $bounds = [ordered]@{
+        dimension = [string](Get-ObjectProperty $Position 'dimension')
+        min_x = [int](Get-ObjectProperty $Position 'x')
+        min_y = [int](Get-ObjectProperty $Position 'y')
+        min_z = [int](Get-ObjectProperty $Position 'z')
+        max_x = [int](Get-ObjectProperty $Position 'x')
+        max_y = [int](Get-ObjectProperty $Position 'y')
+        max_z = [int](Get-ObjectProperty $Position 'z')
+    }
+    $positionKey = Get-BlockPositionKey $Position
+    $state = $InitialState
+    for ($poll = 1; $poll -le $MaximumPolls; $poll++) {
+        $worldRevision = Get-CurrentWorldRevision -State $state
+        $records = @(Get-VisibleSurfaceRecords -State $state -Block 'minecraft:oak_log' `
+            -Bounds $bounds -Faces $Faces -AllowMissing)
+        $eligible = @($records | Where-Object {
+                $recordRevision = Get-ObjectProperty $_ 'world_revision'
+                (Get-BlockPositionKey (Get-ObjectProperty $_ 'position')) -ceq $positionKey -and
+                (Get-ObjectProperty $_ 'placement_item') -ceq 'minecraft:oak_log' -and
+                (ConvertTo-CompactJson (Get-ObjectProperty $_ 'state')) -ceq
+                    (ConvertTo-CompactJson $ExpectedState) -and
+                ($recordRevision -is [sbyte] -or $recordRevision -is [byte] -or
+                    $recordRevision -is [int16] -or $recordRevision -is [uint16] -or
+                    $recordRevision -is [int32] -or $recordRevision -is [uint32] -or
+                    $recordRevision -is [int64] -or $recordRevision -is [uint64]) -and
+                [long]$recordRevision -eq $worldRevision
+            })
+        if ($eligible.Count -eq 1) {
+            Add-GateEvent -Event 'temporary_surface_revision_current' -Detail ([ordered]@{
+                    world_revision = $worldRevision
+                    polls = $poll
+                    position = $Position
+                })
+            return [pscustomobject]@{
+                state = $state
+                surface = $eligible[0]
+                world_revision = $worldRevision
+                polls = $poll
+            }
+        }
+        if ($eligible.Count -gt 1) {
+            throw 'duplicate current-revision temporary pillar surfaces were delivered'
+        }
+        if ($poll -lt $MaximumPolls) {
+            Invoke-GateDelaySeconds -Seconds ($DelayMilliseconds / 1000.0)
+            $state = Get-FreshState
+        }
+    }
+    throw "temporary pillar surface did not reach the current world revision after $MaximumPolls polls"
 }
 
 function New-TemporaryClearActionRequest {
@@ -1408,15 +1806,17 @@ function Assert-NoTemporaryDropRecord {
 function Sort-WallSupportsFarToNear {
     param(
         [Parameter(Mandatory)][object[]]$Supports,
-        [Parameter(Mandatory)][object]$ObserverPosition
+        [Parameter(Mandatory)][object]$ObserverPosition,
+        [switch]$ObserverIsPlayerPosition
     )
+    $observerOffset = if ($ObserverIsPlayerPosition) { 0.0 } else { 0.5 }
     return @($Supports | Sort-Object `
             @{ Expression = {
                     $position = Get-ObjectProperty $_ 'position'
                     $dx = ([double](Get-ObjectProperty $position 'x') + 0.5) -
-                        ([double](Get-ObjectProperty $ObserverPosition 'x') + 0.5)
+                        ([double](Get-ObjectProperty $ObserverPosition 'x') + $observerOffset)
                     $dz = ([double](Get-ObjectProperty $position 'z') + 0.5) -
-                        ([double](Get-ObjectProperty $ObserverPosition 'z') + 0.5)
+                        ([double](Get-ObjectProperty $ObserverPosition 'z') + $observerOffset)
                     $dx * $dx + $dz * $dz
                 }; Descending = $true },
             @{ Expression = { Get-BlockPositionKey (Get-ObjectProperty $_ 'position') }; Descending = $false })
@@ -1442,9 +1842,12 @@ function New-WallRowActionPhase {
     param(
         [Parameter(Mandatory)][object]$Source,
         [Parameter(Mandatory)][object[]]$Supports,
-        [Parameter(Mandatory)][ValidateRange(0, 2)][int]$RowIndex
+        [Parameter(Mandatory)][ValidateRange(0, 7)][int]$RowIndex,
+        [ValidateRange(1, 8)][int]$WallWidth = $Supports.Count
     )
-    if ($Supports.Count -ne 3) { throw 'a wall row must contain exactly three supports' }
+    if ($Supports.Count -ne $WallWidth) {
+        throw "a wall row must contain exactly $WallWidth supports"
+    }
     $placementStateRef = [string](Get-ObjectProperty $Source 'placement_state_ref')
     if ($placementStateRef -cnotmatch '^psr_[0-9a-f]{32}$') {
         throw 'wall source did not retain a delivered placement_state_ref'
@@ -1486,9 +1889,11 @@ function New-WallRowActionPhase {
         transform = [ordered]@{ rotation = 0; mirror = 'none' }
         entries = @($entries)
     }
-    $request = New-PrimitiveRequest -Name "capability_gate_wall_3x3_row_$RowIndex" `
+    $entryCount = @($entries).Count
+    $request = New-PrimitiveRequest -Name "capability_gate_wall_${WallWidth}wide_row_$RowIndex" `
         -Capabilities @('camera', 'block_place') -Node $node `
-        -Duration 45000 -Ticks 900 -Distance 0 -Camera 240 -Placements 3
+        -Duration (15000 * $entryCount) -Ticks (300 * $entryCount) `
+        -Distance 0 -Camera (80 * $entryCount) -Placements $entryCount
     return [pscustomobject]@{
         request = $request
         targets = @($targets)
@@ -1501,19 +1906,42 @@ function New-WallExternalOracleManifest {
         [Parameter(Mandatory)][object[]]$Targets,
         [Parameter(Mandatory)][object]$ExpectedState,
         [Parameter(Mandatory)][object]$SourcePosition,
-        [Parameter(Mandatory)][object]$TemporaryPosition
+        [Parameter(Mandatory)][object[]]$TemporaryPositions
     )
-    if ($Targets.Count -ne 9) { throw 'wall oracle requires exactly nine targets' }
     $keys = @($Targets | ForEach-Object { Get-BlockPositionKey $_ } | Select-Object -Unique)
-    if ($keys.Count -ne 9) { throw 'wall oracle targets are not unique' }
-    if ((Get-BlockPositionKey $TemporaryPosition) -cin $keys) {
-        throw 'temporary pillar overlaps the permanent wall oracle'
+    if ($Targets.Count -lt 1 -or $keys.Count -ne $Targets.Count) {
+        throw 'wall oracle targets are empty or not unique'
     }
+    $temporaryKeys = @($TemporaryPositions | ForEach-Object {
+            Get-BlockPositionKey $_
+        } | Select-Object -Unique)
+    if ($TemporaryPositions.Count -lt 1 -or
+        $temporaryKeys.Count -ne $TemporaryPositions.Count) {
+        throw 'temporary scaffold positions are empty or not unique'
+    }
+    if (@($temporaryKeys | Where-Object { $_ -cin $keys }).Count -gt 0) {
+        throw 'temporary scaffold overlaps the permanent wall oracle'
+    }
+    $temporaryScaffolds = @($TemporaryPositions | ForEach-Object {
+            [ordered]@{
+                position = $_
+                before_state = [ordered]@{
+                    block = 'minecraft:air'; properties = [ordered]@{}
+                }
+                transient_state = $ExpectedState
+                after_state = [ordered]@{
+                    block = 'minecraft:air'; properties = [ordered]@{}
+                }
+                included_in_expected_changed_cells = $false
+                cleanup_required = $true
+                drop_collection_required = 'minecraft:oak_log'
+            }
+        })
     [ordered]@{
         schema_version = 1
         oracle = 'offline_anvil_before_after'
         dimension = [string](Get-ObjectProperty $Targets[0] 'dimension')
-        expected_changed_cell_count = 9
+        expected_changed_cell_count = $Targets.Count
         expected_changed_cells = @($Targets | ForEach-Object {
                 [ordered]@{
                     position = $_
@@ -1528,29 +1956,32 @@ function New-WallExternalOracleManifest {
             state = $ExpectedState
             changed = $false
         }
-        temporary_scaffold = [ordered]@{
-            position = $TemporaryPosition
-            before_state = [ordered]@{
-                block = 'minecraft:air'; properties = [ordered]@{}
-            }
-            transient_state = $ExpectedState
-            after_state = [ordered]@{
-                block = 'minecraft:air'; properties = [ordered]@{}
-            }
-            included_in_expected_changed_cells = $false
-            cleanup_required = $true
-            drop_collection_required = 'minecraft:oak_log'
-        }
+        # Keep the singular field for the established 3x3 artifact reader.
+        temporary_scaffold = $temporaryScaffolds[0]
+        temporary_scaffolds = $temporaryScaffolds
+        temporary_scaffold_count = $temporaryScaffolds.Count
         reject_unlisted_changes = $true
         expected_air_violations = 0
         expected_extra_mutations = 0
     }
 }
 
-function Invoke-Wall3x3Gate {
+function Invoke-WallGate {
+    param(
+        [Parameter(Mandatory)][ValidateRange(3, 5)][int]$Width,
+        [Parameter(Mandatory)][ValidateRange(3, 5)][int]$Height,
+        [Parameter(Mandatory)][ValidateRange(1, 2)][int]$ScaffoldLevels
+    )
+    if (($Width -ne 3 -or $Height -ne 3 -or $ScaffoldLevels -ne 1) -and
+        ($Width -ne 5 -or $Height -ne 5 -or $ScaffoldLevels -ne 2)) {
+        throw 'wall gate supports only the audited 3x3/one-level and 5x5/two-level profiles'
+    }
+    $permanentBlockCount = $Width * $Height
     $inventoryBefore = Acquire-OakLogFromChest
-    if ($inventoryBefore -lt 9) { throw 'normal material acquisition yielded fewer than nine oak logs' }
-    Move-NearDestinationSupport
+    if ($inventoryBefore -lt $permanentBlockCount + $ScaffoldLevels) {
+        throw 'normal material acquisition cannot cover the permanent wall and transient scaffold'
+    }
+    Move-NearDestinationSupport -Width $Width
 
     $state = Get-FreshState
     $source = Get-OakLogPlacementSource -State $state
@@ -1570,224 +2001,394 @@ function Invoke-Wall3x3Gate {
             maximum_stationary_reach = 4.5
         })
     $supports = @(Select-ContiguousWallFoundation -Records $foundationRecords `
-        -PlayerPosition (Get-ObjectProperty (Get-ObjectProperty $state 'world') 'position'))
+        -PlayerPosition (Get-ObjectProperty (Get-ObjectProperty $state 'world') 'position') `
+        -Width $Width)
     $wallFoundation = @($supports)
+    $wallCenterColumn = Get-BlockColumnKey (Get-ObjectProperty `
+        $wallFoundation[[int][Math]::Floor($wallFoundation.Count / 2)] 'position')
 
     $allTargets = [Collections.Generic.List[object]]::new()
     $rowActions = [Collections.Generic.List[object]]::new()
-    $rowOneTargets = $null
+    $previousRowTargets = $null
     for ($row = 0; $row -lt 2; $row++) {
-        # Construction deliberately allows only a narrow camera correction. Face
-        # the delivered middle support first, then keep the three-entry placement
-        # Action itself at its exact fixed cost.
-        $faceSupport = $supports[[int][Math]::Floor($supports.Count / 2)]
-        Invoke-FaceSupport -Support $faceSupport
-        Add-GateEvent -Event 'wall_row_heading_admitted' -Detail ([ordered]@{
-                row = $row
-                face_target = Get-ObjectProperty $faceSupport 'position'
-                support_count = $supports.Count
+        # Establish execution order before any camera change. Width three fits
+        # the shared admission heading; width five does not, so it uses the same
+        # face -> fresh exact support -> one-entry boundary as elevated rows.
+        $supports = @(Sort-WallSupportsFarToNear -Supports $supports `
+            -ObserverPosition (Get-ObjectProperty (Get-ObjectProperty $state 'world') 'position') `
+            -ObserverIsPlayerPosition)
+        $orderedSupportPositions = @($supports | ForEach-Object {
+                Get-ObjectProperty $_ 'position'
             })
-        $phase = New-WallRowActionPhase -Source $source -Supports $supports -RowIndex $row
-        $terminal = Invoke-ActionRequest -Request $phase.request -WallTimeoutSeconds 90
-        foreach ($target in @($phase.targets)) { $allTargets.Add($target) }
+        $supportBlock = if ($row -eq 0) { 'minecraft:white_wool' } else { 'minecraft:oak_log' }
+        $freshBounds = if ($row -eq 0) {
+            $script:DestinationSupportBounds
+        } else {
+            $script:DestinationWallBounds
+        }
+        $expectedSupportState = Get-ObjectProperty $supports[0] 'state'
+        $rowActionIds = [Collections.Generic.List[string]]::new()
+        $rowTerminalStates = [Collections.Generic.List[string]]::new()
+        $rowTargets = [Collections.Generic.List[object]]::new()
+        if ($Width -eq 3) {
+            $pivotSupports = @($supports | Where-Object {
+                    (Get-BlockColumnKey (Get-ObjectProperty $_ 'position')) -ceq
+                        $wallCenterColumn
+                })
+            if ($pivotSupports.Count -ne 1) {
+                throw 'fresh three-wide row did not retain its unique center pivot'
+            }
+            $faceSupport = $pivotSupports[0]
+            Invoke-FaceSupport -Support $faceSupport
+            $currentRow = Wait-ForCurrentExactWallSupportRow `
+                -InitialState (Get-FreshState) -Block $supportBlock -Bounds $freshBounds `
+                -ExpectedPositions $orderedSupportPositions `
+                -ExpectedState $expectedSupportState
+            $state = $currentRow.state
+            $supports = @($currentRow.supports)
+            Add-GateEvent -Event 'wall_row_heading_admitted' -Detail ([ordered]@{
+                    row = $row; entry = 0
+                    face_target = Get-ObjectProperty $faceSupport 'position'
+                    first_execution_support = Get-ObjectProperty $supports[0] 'position'
+                    support_count = $supports.Count
+                    heading_strategy = 'center_pivot_batch'
+                    proof = 'post_face_frame_exact_ordered_row'
+                })
+            $phase = New-WallRowActionPhase -Source $source -Supports $supports `
+                -RowIndex $row -WallWidth $Width
+            $placementFrameId = Get-ObservationFrameId -State $state
+            $terminal = Invoke-ActionRequest -Request $phase.request -WallTimeoutSeconds 120
+            $state = Wait-ForObservationFrameAdvance -PreviousFrameId $placementFrameId
+            $rowActionIds.Add([string](Get-ObjectProperty $terminal 'action_id'))
+            $rowTerminalStates.Add([string](Get-ObjectProperty $terminal 'state'))
+            foreach ($target in @($phase.targets)) { $rowTargets.Add($target) }
+        } else {
+            for ($entry = 0; $entry -lt $orderedSupportPositions.Count; $entry++) {
+                # Every successful placement invalidates the preceding surface
+                # frame. Reacquire this exact still-unbuilt support before even
+                # the next face Action, then reacquire it again after facing.
+                if ($entry -eq 0) { $state = Get-FreshState }
+                $currentBeforeFace = Wait-ForCurrentExactWallSupportRow `
+                    -InitialState $state -Block $supportBlock -Bounds $freshBounds `
+                    -ExpectedPositions @($orderedSupportPositions[$entry]) `
+                    -ExpectedState $expectedSupportState
+                $state = $currentBeforeFace.state
+                $supportBeforeFace = @($currentBeforeFace.supports)[0]
+                Invoke-FaceSupport -Support $supportBeforeFace
+                $currentAfterFace = Wait-ForCurrentExactWallSupportRow `
+                    -InitialState (Get-FreshState) -Block $supportBlock -Bounds $freshBounds `
+                    -ExpectedPositions @($orderedSupportPositions[$entry]) `
+                    -ExpectedState $expectedSupportState
+                $state = $currentAfterFace.state
+                $freshSupport = @($currentAfterFace.supports)[0]
+                Add-GateEvent -Event 'wall_row_heading_admitted' -Detail ([ordered]@{
+                        row = $row; entry = $entry
+                        face_target = Get-ObjectProperty $supportBeforeFace 'position'
+                        first_execution_support = Get-ObjectProperty $freshSupport 'position'
+                        support_count = 1
+                        heading_strategy = 'first_entry_singleton'
+                        proof = 'post_face_frame_exact_ordered_row'
+                    })
+                $single = New-OneOakLogPlacementPhase -Source $source `
+                    -Support $freshSupport -UseStateRef
+                $placementFrameId = Get-ObservationFrameId -State $state
+                $terminal = Invoke-ActionRequest -Request $single.request -WallTimeoutSeconds 60
+                $state = Wait-ForObservationFrameAdvance -PreviousFrameId $placementFrameId
+                $rowActionIds.Add([string](Get-ObjectProperty $terminal 'action_id'))
+                $rowTerminalStates.Add([string](Get-ObjectProperty $terminal 'state'))
+                $rowTargets.Add($single.target)
+            }
+        }
+        foreach ($target in @($rowTargets)) { $allTargets.Add($target) }
         $rowActions.Add([ordered]@{
                 row = $row
-                action_id = [string](Get-ObjectProperty $terminal 'action_id')
-                action_ids = @([string](Get-ObjectProperty $terminal 'action_id'))
-                action_count = 1
-                terminal_state = [string](Get-ObjectProperty $terminal 'state')
-                terminal_states = @([string](Get-ObjectProperty $terminal 'state'))
-                entry_count = @($phase.entries).Count
-                maximum_entries_per_action = @($phase.entries).Count
-                stationary = $phase.request.budget.max_distance_blocks -eq 0
-                targets = @($phase.targets)
+                action_id = $rowActionIds[0]
+                action_ids = @($rowActionIds)
+                action_count = $rowActionIds.Count
+                terminal_state = $rowTerminalStates[$rowTerminalStates.Count - 1]
+                terminal_states = @($rowTerminalStates)
+                entry_count = $rowTargets.Count
+                maximum_entries_per_action = if ($Width -eq 3) { 3 } else { 1 }
+                stationary = $true
+                order = 'far_to_near'
+                targets = @($rowTargets)
             })
 
-        $state = Get-FreshState
+        $previousRowTargets = @($rowTargets)
         if ($row -eq 0) {
-            $placedRecords = @(Get-VisibleSurfaceRecords -State $state `
-                -Block 'minecraft:oak_log' -Bounds $script:DestinationWallBounds `
-                -Faces @('up'))
-            $supports = @(Select-ExactWallSupportRow -Records $placedRecords `
-                -ExpectedPositions @($phase.targets) `
-                -ExpectedState (Get-ObjectProperty $source 'state'))
+            $currentPlacedRow = Wait-ForCurrentExactWallSupportRow `
+                -InitialState $state -Block 'minecraft:oak_log' `
+                -Bounds $script:DestinationWallBounds `
+                -ExpectedPositions @($rowTargets) `
+                -ExpectedState (Get-ObjectProperty $source 'state')
+            $state = $currentPlacedRow.state
+            $supports = @($currentPlacedRow.supports)
             Add-GateEvent -Event 'wall_row_fresh_support_verified' -Detail ([ordered]@{
-                    row = $row; positions = @($phase.targets); support_count = $supports.Count
+                    row = $row; positions = @($rowTargets); support_count = $supports.Count
                 })
-        } else {
-            $rowOneTargets = @($phase.targets)
         }
     }
 
-    # The r3 failure occurred because row 1 hid its own UP faces from the low eye.
-    # Deliver an outside-footprint inert support first, then join its direct-above
-    # cell to a safe traversability target from this same immutable frame.
-    $temporarySupports = @(Get-VisibleSurfaceRecords -State $state `
-        -Block 'minecraft:white_wool' -Bounds $script:DestinationSupportBounds `
-        -Faces @('up') -ExcludePlayerFeetAbove)
-    $temporaryTraversability = @(Get-WallGroundTraversabilityRecords -State $state)
-    $temporarySite = Select-TemporaryPillarSite `
-        -WhiteWoolRecords $temporarySupports `
-        -TraversabilityRecords $temporaryTraversability `
-        -WallFoundation $wallFoundation -RowOneTargets $rowOneTargets
-    $temporarySupport = $temporarySite.support
-    $temporaryNavigation = $temporarySite.navigation_record
-    $temporaryPosition = Get-ObjectProperty $temporaryNavigation 'navigation_target'
-    $raiseNavigationRequest = New-NavigationActionRequest `
-        -NavigationRecord $temporaryNavigation -State $state -Tolerance 0.1
-    $raiseNavigationTerminal = Invoke-ActionRequest `
-        -Request $raiseNavigationRequest -WallTimeoutSeconds 90
-    Add-GateEvent -Event 'wall_temporary_pillar_navigation_terminal' `
-        -Detail ([ordered]@{
-            action_id = [string](Get-ObjectProperty $raiseNavigationTerminal 'action_id')
-            target = $temporaryPosition
-            target_verbatim = [object]::ReferenceEquals(
-                $temporaryPosition,
-                $raiseNavigationRequest.program.body[0].target)
-            tolerance = $raiseNavigationRequest.program.body[0].tolerance
-        })
+    $temporaryPositions = [Collections.Generic.List[object]]::new()
+    $temporaryScaffolds = [Collections.Generic.List[object]]::new()
+    $temporaryBasePosition = $null
+    for ($row = 2; $row -lt $Height; $row++) {
+        # Build the complete bounded scaffold before the first elevated row. The
+        # first pillar's UP witness is necessarily occluded once centered and can
+        # only be retained across the immediately following pillar Action; wall
+        # mutations must not intervene and invalidate that witness.
+        $requiredScaffoldLevel = $ScaffoldLevels
+        while ($temporaryPositions.Count -lt $requiredScaffoldLevel) {
+            $level = $temporaryPositions.Count + 1
+            $raiseNavigationActionId = $null
+            if ($level -eq 1) {
+                $currentTemporarySupports = Wait-ForCurrentVisibleSurfaceRecords `
+                    -InitialState $state -Block 'minecraft:white_wool' `
+                    -Bounds $script:DestinationSupportBounds -Faces @('up') `
+                    -ExcludePlayerFeetAbove
+                $state = $currentTemporarySupports.state
+                $temporarySupports = @($currentTemporarySupports.records)
+                $temporaryTraversability = @(Get-WallGroundTraversabilityRecords -State $state)
+                $temporarySite = Select-TemporaryPillarSite `
+                    -WhiteWoolRecords $temporarySupports `
+                    -TraversabilityRecords $temporaryTraversability `
+                    -WallFoundation $wallFoundation -RowOneTargets $previousRowTargets `
+                    -NavigationTolerance $script:PillarNavigationTolerance
+                $temporarySupport = $temporarySite.support
+                $temporaryNavigation = $temporarySite.navigation_record
+                $temporaryPosition = Get-ObjectProperty $temporaryNavigation 'navigation_target'
+                $temporaryBasePosition = $temporaryPosition
+                $raiseNavigationRequest = New-NavigationActionRequest `
+                    -NavigationRecord $temporaryNavigation -State $state `
+                    -Tolerance $script:PillarNavigationTolerance
+                $raiseNavigationTerminal = Invoke-ActionRequest `
+                    -Request $raiseNavigationRequest -WallTimeoutSeconds 90
+                $raiseNavigationActionId = [string](
+                    Get-ObjectProperty $raiseNavigationTerminal 'action_id')
+                Add-GateEvent -Event 'wall_temporary_pillar_navigation_terminal' `
+                    -Detail ([ordered]@{
+                        level = $level; action_id = $raiseNavigationActionId
+                        target = $temporaryPosition
+                        target_verbatim = [object]::ReferenceEquals(
+                            $temporaryPosition,
+                            $raiseNavigationRequest.program.body[0].target)
+                        tolerance = $raiseNavigationRequest.program.body[0].tolerance
+                    })
+            } else {
+                # Keep the first post-pillar frame. The centered player occludes
+                # the support, so an intervening world mutation or later scan may
+                # only weaken this retained exact UP witness.
+                $previousTemporary = $temporaryPositions[$temporaryPositions.Count - 1]
+                $temporarySupport = Get-ExactTemporarySurface -State $state `
+                    -Position $previousTemporary `
+                    -ExpectedState (Get-ObjectProperty $source 'state') -Faces @('up')
+                $temporaryPosition = Get-TargetAboveSupport $previousTemporary
+            }
 
-    # Do not refresh or re-observe the source/support between centering and this
-    # exclusive pillar Action. pillar_up_known retains only the delivered support
-    # witness through that bounded centering step.
-    $pillarRequest = New-TemporaryPillarActionRequest `
-        -Source $source -Support $temporarySupport
-    $pillarTerminal = Invoke-ActionRequest -Request $pillarRequest -WallTimeoutSeconds 60
-    Add-GateEvent -Event 'wall_temporary_pillar_terminal' -Detail ([ordered]@{
-            action_id = [string](Get-ObjectProperty $pillarTerminal 'action_id')
-            support = Get-ObjectProperty $temporarySupport 'position'
-            placed_position = $temporaryPosition
-            placement_state_ref = [string](Get-ObjectProperty $source 'placement_state_ref')
-        })
+            $pillarRequest = New-TemporaryPillarActionRequest `
+                -Source $source -Support $temporarySupport
+            $pillarFrameId = Get-ObservationFrameId -State $state
+            $pillarTerminal = Invoke-ActionRequest `
+                -Request $pillarRequest -WallTimeoutSeconds 60
+            $state = Wait-ForObservationFrameAdvance -PreviousFrameId $pillarFrameId
+            $temporaryPositions.Add($temporaryPosition)
+            $temporaryScaffolds.Add([ordered]@{
+                    level = $level
+                    support = Get-ObjectProperty $temporarySupport 'position'
+                    position = $temporaryPosition
+                    raise_navigation_action_id = $raiseNavigationActionId
+                    pillar_action_id = [string](Get-ObjectProperty $pillarTerminal 'action_id')
+                    placement_state_ref = [string](Get-ObjectProperty $source 'placement_state_ref')
+                })
+            Add-GateEvent -Event 'wall_temporary_pillar_terminal' -Detail ([ordered]@{
+                    level = $level
+                    action_id = [string](Get-ObjectProperty $pillarTerminal 'action_id')
+                    support = Get-ObjectProperty $temporarySupport 'position'
+                    placed_position = $temporaryPosition
+                    placement_state_ref = [string](Get-ObjectProperty $source 'placement_state_ref')
+                })
+        }
 
-    # The raised eye must now receive all three row-1 UP faces freshly before row 2.
-    $state = Get-FreshState
-    $placedRecords = @(Get-VisibleSurfaceRecords -State $state `
-        -Block 'minecraft:oak_log' -Bounds $script:DestinationWallBounds `
-        -Faces @('up'))
-    $supports = @(Select-ExactWallSupportRow -Records $placedRecords `
-        -ExpectedPositions $rowOneTargets `
-        -ExpectedState (Get-ObjectProperty $source 'state'))
-    Add-GateEvent -Event 'wall_row_fresh_support_verified' -Detail ([ordered]@{
-            row = 1; positions = $rowOneTargets; support_count = $supports.Count
-            raised_by_temporary_pillar = $true
-        })
-
-    # A near block can hide a farther UP face from this raised pose. Place the top
-    # row far-to-near as three independent, freshly admitted one-entry Actions.
-    # This reuses the product heading/reach checks instead of copying their math.
-    $remainingSupports = @(Sort-WallSupportsFarToNear -Supports $supports `
-        -ObserverPosition $temporaryPosition)
-    $topActionIds = [Collections.Generic.List[string]]::new()
-    $topTerminalStates = [Collections.Generic.List[string]]::new()
-    $topTargets = [Collections.Generic.List[object]]::new()
-    while ($remainingSupports.Count -gt 0) {
-        $support = $remainingSupports[0]
-        Invoke-FaceSupport -Support $support
-        $state = Get-FreshState
-        $freshRecords = @(Get-VisibleSurfaceRecords -State $state `
-            -Block 'minecraft:oak_log' -Bounds $script:DestinationWallBounds `
-            -Faces @('up'))
-        $support = @(Select-ExactWallSupportRow -Records $freshRecords `
-            -ExpectedPositions @((Get-ObjectProperty $support 'position')) `
-            -ExpectedState (Get-ObjectProperty $source 'state'))[0]
-        $single = New-OneOakLogPlacementPhase -Source $source -Support $support `
-            -UseStateRef
-        $terminal = Invoke-ActionRequest -Request $single.request -WallTimeoutSeconds 60
-        $topActionIds.Add([string](Get-ObjectProperty $terminal 'action_id'))
-        $topTerminalStates.Add([string](Get-ObjectProperty $terminal 'state'))
-        $topTargets.Add($single.target)
-        $allTargets.Add($single.target)
-        Add-GateEvent -Event 'wall_top_cell_terminal' -Detail ([ordered]@{
-                row = 2
-                action_id = [string](Get-ObjectProperty $terminal 'action_id')
-                support = Get-ObjectProperty $support 'position'
-                target = $single.target
-                remaining_cells = $remainingSupports.Count - 1
+        # Every elevated row is split far-to-near. Each one-entry Action receives
+        # its own post-face frame so a nearer block cannot hide a farther UP face.
+        $reorientationTargets = @($previousRowTargets | Where-Object {
+                (Get-BlockColumnKey $_) -ceq $wallCenterColumn
+            })
+        if ($reorientationTargets.Count -ne 1) {
+            throw 'elevated row did not retain its unique center reorientation target'
+        }
+        $reorientation = Wait-ForCurrentWallReorientationSurface `
+            -InitialState (Get-FreshState) -Position $reorientationTargets[0] `
+            -ExpectedState (Get-ObjectProperty $source 'state')
+        $state = $reorientation.state
+        Invoke-FaceSupport -Support $reorientation.surface
+        Add-GateEvent -Event 'wall_elevated_row_reoriented' -Detail ([ordered]@{
+                row = $row
+                position = $reorientationTargets[0]
+                world_revision = $reorientation.world_revision
+                polls = $reorientation.polls
+                proof = 'current_horizontal_surface_before_up_surface_scan'
+            })
+        $currentPlacedRow = Wait-ForCurrentExactWallSupportRow `
+            -InitialState (Get-FreshState) -Block 'minecraft:oak_log' `
+            -Bounds $script:DestinationWallBounds `
+            -ExpectedPositions $previousRowTargets `
+            -ExpectedState (Get-ObjectProperty $source 'state')
+        $state = $currentPlacedRow.state
+        $supports = @($currentPlacedRow.supports)
+        Add-GateEvent -Event 'wall_row_fresh_support_verified' -Detail ([ordered]@{
+                row = $row - 1; positions = $previousRowTargets
+                support_count = $supports.Count
+                raised_by_temporary_pillar = $true
+                scaffold_level = $temporaryPositions.Count
             })
 
-        $remainingPositions = @($remainingSupports | Select-Object -Skip 1 | ForEach-Object {
-                Get-ObjectProperty $_ 'position'
+        $observerPosition = $temporaryPositions[$temporaryPositions.Count - 1]
+        $remainingSupports = @(Sort-WallSupportsFarToNear -Supports $supports `
+            -ObserverPosition $observerPosition)
+        $rowActionIds = [Collections.Generic.List[string]]::new()
+        $rowTerminalStates = [Collections.Generic.List[string]]::new()
+        $rowTargets = [Collections.Generic.List[object]]::new()
+        while ($remainingSupports.Count -gt 0) {
+            $support = $remainingSupports[0]
+            Invoke-FaceSupport -Support $support
+            $currentSupport = Wait-ForCurrentExactWallSupportRow `
+                -InitialState (Get-FreshState) -Block 'minecraft:oak_log' `
+                -Bounds $script:DestinationWallBounds `
+                -ExpectedPositions @((Get-ObjectProperty $support 'position')) `
+                -ExpectedState (Get-ObjectProperty $source 'state')
+            $state = $currentSupport.state
+            $support = @($currentSupport.supports)[0]
+            $single = New-OneOakLogPlacementPhase -Source $source -Support $support `
+                -UseStateRef
+            $placementFrameId = Get-ObservationFrameId -State $state
+            $terminal = Invoke-ActionRequest -Request $single.request -WallTimeoutSeconds 60
+            $state = Wait-ForObservationFrameAdvance -PreviousFrameId $placementFrameId
+            $rowActionIds.Add([string](Get-ObjectProperty $terminal 'action_id'))
+            $rowTerminalStates.Add([string](Get-ObjectProperty $terminal 'state'))
+            $rowTargets.Add($single.target)
+            $allTargets.Add($single.target)
+            Add-GateEvent -Event 'wall_elevated_cell_terminal' -Detail ([ordered]@{
+                    row = $row
+                    action_id = [string](Get-ObjectProperty $terminal 'action_id')
+                    support = Get-ObjectProperty $support 'position'
+                    target = $single.target
+                    remaining_cells = $remainingSupports.Count - 1
+                })
+
+            $remainingPositions = @($remainingSupports | Select-Object -Skip 1 | ForEach-Object {
+                    Get-ObjectProperty $_ 'position'
             })
-        if ($remainingPositions.Count -eq 0) { break }
-        $state = Get-FreshState
-        $freshRecords = @(Get-VisibleSurfaceRecords -State $state `
-            -Block 'minecraft:oak_log' -Bounds $script:DestinationWallBounds `
-            -Faces @('up'))
-        $remainingSupports = @(Select-ExactWallSupportRow -Records $freshRecords `
-            -ExpectedPositions $remainingPositions `
-            -ExpectedState (Get-ObjectProperty $source 'state'))
+            if ($remainingPositions.Count -eq 0) { break }
+            $currentRemaining = Wait-ForCurrentExactWallSupportRow `
+                -InitialState $state -Block 'minecraft:oak_log' `
+                -Bounds $script:DestinationWallBounds `
+                -ExpectedPositions $remainingPositions `
+                -ExpectedState (Get-ObjectProperty $source 'state')
+            $state = $currentRemaining.state
+            $remainingSupports = @($currentRemaining.supports)
+        }
+        $previousRowTargets = @($rowTargets)
+        $rowActions.Add([ordered]@{
+                row = $row
+                action_ids = @($rowActionIds)
+                action_count = $rowActionIds.Count
+                terminal_states = @($rowTerminalStates)
+                entry_count = $rowTargets.Count
+                maximum_entries_per_action = 1
+                stationary = $true
+                order = 'far_to_near'
+                targets = @($rowTargets)
+            })
     }
-    $rowActions.Add([ordered]@{
-            row = 2
-            action_ids = @($topActionIds)
-            action_count = $topActionIds.Count
-            terminal_states = @($topTerminalStates)
-            entry_count = $topTargets.Count
-            maximum_entries_per_action = 1
-            stationary = $true
-            order = 'far_to_near'
-            targets = @($topTargets)
-        })
 
-    $state = Get-FreshState
-    # Descend to a newly delivered safe target far enough away that breaking the
-    # temporary pillar cannot be credited by incidental pickup.
-    $descentRecords = @(Get-WallGroundTraversabilityRecords -State $state)
-    $descentRecord = Select-TemporaryPillarDescentRecord -Records $descentRecords `
-        -TemporaryPosition $temporaryPosition -WallFoundation $wallFoundation
-    $descentTarget = Get-ObjectProperty $descentRecord 'navigation_target'
-    $descentRequest = New-NavigationActionRequest -NavigationRecord $descentRecord `
-        -State $state -Tolerance 0.1
-    Add-GateEvent -Event 'wall_temporary_descent_selected' -Detail ([ordered]@{
-            frame_id = [string](Get-ObjectProperty `
-                (Get-ObjectProperty $state 'observation') 'latest_frame_id')
-            target = $descentTarget
-            status = [string](Get-ObjectProperty $descentRecord 'status')
-        })
-    $descentTerminal = Invoke-ActionRequest -Request $descentRequest -WallTimeoutSeconds 90
+    for ($index = $temporaryPositions.Count - 1; $index -ge 0; $index--) {
+        $temporaryPosition = $temporaryPositions[$index]
+        $state = Get-FreshState
+        # Collection may walk back toward the scaffold. Before every clear, move
+        # to a newly delivered safe ground target far enough away that neither an
+        # under-foot break nor incidental pickup can satisfy the lifecycle.
+        $descentRecords = @(Get-WallGroundTraversabilityRecords -State $state)
+        $descentRecord = Select-TemporaryPillarDescentRecord -Records $descentRecords `
+            -TemporaryPosition $temporaryBasePosition -WallFoundation $wallFoundation `
+            -NavigationTolerance $script:ConstructionNavigationTolerance
+        $descentTarget = Get-ObjectProperty $descentRecord 'navigation_target'
+        $descentRequest = New-NavigationActionRequest -NavigationRecord $descentRecord `
+            -State $state -Tolerance $script:ConstructionNavigationTolerance
+        Add-GateEvent -Event 'wall_temporary_descent_selected' -Detail ([ordered]@{
+                scaffold_level = $index + 1
+                frame_id = [string](Get-ObjectProperty `
+                    (Get-ObjectProperty $state 'observation') 'latest_frame_id')
+                target = $descentTarget
+                status = [string](Get-ObjectProperty $descentRecord 'status')
+            })
+        $descentTerminal = Invoke-ActionRequest `
+            -Request $descentRequest -WallTimeoutSeconds 90
 
-    $state = Get-FreshState
-    $temporarySurface = Get-ExactTemporarySurface -State $state `
-        -Position $temporaryPosition -ExpectedState (Get-ObjectProperty $source 'state')
-    Assert-NoTemporaryDropRecord -State $state -TemporaryPosition $temporaryPosition
-    Invoke-FaceSupport -Support $temporarySurface
-    $clearRequest = New-TemporaryClearActionRequest -Surface $temporarySurface
-    $clearTerminal = Invoke-ActionRequest -Request $clearRequest -WallTimeoutSeconds 60
+        $currentTemporary = Wait-ForCurrentExactTemporarySurface `
+            -InitialState (Get-FreshState) -Position $temporaryPosition `
+            -ExpectedState (Get-ObjectProperty $source 'state') -Faces $null
+        $state = $currentTemporary.state
+        $temporarySurface = $currentTemporary.surface
+        Assert-NoTemporaryDropRecord -State $state -TemporaryPosition $temporaryPosition
+        Invoke-FaceSupport -Support $temporarySurface
+        $currentTemporary = Wait-ForCurrentExactTemporarySurface `
+            -InitialState (Get-FreshState) -Position $temporaryPosition `
+            -ExpectedState (Get-ObjectProperty $source 'state') -Faces $null
+        $state = $currentTemporary.state
+        $temporarySurface = $currentTemporary.surface
+        $clearRequest = New-TemporaryClearActionRequest -Surface $temporarySurface
+        $clearFrameId = Get-ObservationFrameId -State $state
+        $clearTerminal = Invoke-ActionRequest -Request $clearRequest -WallTimeoutSeconds 60
 
-    # A freshly broken item is still moving. Wait without observing it, then bind
-    # the collect Action to the first post-settle policy-visible continuous pose.
-    $settleRequest = New-TemporaryDropSettleActionRequest
-    $settleTerminal = Invoke-ActionRequest -Request $settleRequest -WallTimeoutSeconds 60
-    $state = Get-FreshState
-    $drop = Get-TemporaryDropRecord -State $state -TemporaryPosition $temporaryPosition
-    Add-GateEvent -Event 'wall_temporary_drop_observed' -Detail ([ordered]@{
-            frame_id = [string](Get-ObjectProperty `
-                (Get-ObjectProperty $state 'observation') 'latest_frame_id')
-            position = Get-ObjectProperty $drop 'position'
-            displayed_item = [string](Get-ObjectProperty $drop 'displayed_item')
-            settle_action_id = [string](Get-ObjectProperty $settleTerminal 'action_id')
-            settle_ticks = 40
-        })
-    $collectRequest = New-TemporaryDropCollectionRequest -Record $drop -State $state
-    $collectTerminal = Invoke-ActionRequest -Request $collectRequest -WallTimeoutSeconds 90
+        # A freshly broken item is still moving. Wait without observing it, then
+        # bind collect to the first post-settle policy-visible continuous pose.
+        $settleRequest = New-TemporaryDropSettleActionRequest
+        $settleTerminal = Invoke-ActionRequest -Request $settleRequest -WallTimeoutSeconds 60
+        $state = Wait-ForObservationFrameAdvance -PreviousFrameId $clearFrameId
+        $drop = Get-TemporaryDropRecord -State $state -TemporaryPosition $temporaryPosition
+        Add-GateEvent -Event 'wall_temporary_drop_observed' -Detail ([ordered]@{
+                scaffold_level = $index + 1
+                frame_id = [string](Get-ObjectProperty `
+                    (Get-ObjectProperty $state 'observation') 'latest_frame_id')
+                position = Get-ObjectProperty $drop 'position'
+                displayed_item = [string](Get-ObjectProperty $drop 'displayed_item')
+                settle_action_id = [string](Get-ObjectProperty $settleTerminal 'action_id')
+                settle_ticks = 40
+            })
+        $collectRequest = New-TemporaryDropCollectionRequest -Record $drop -State $state
+        $collectTerminal = Invoke-ActionRequest -Request $collectRequest -WallTimeoutSeconds 90
+        $scaffold = $temporaryScaffolds[$index]
+        $scaffold.descent_target = $descentTarget
+        $scaffold.descent_action_id = [string](Get-ObjectProperty $descentTerminal 'action_id')
+        $scaffold.cleanup_order = $temporaryPositions.Count - $index
+        $scaffold.clear_action_id = [string](Get-ObjectProperty $clearTerminal 'action_id')
+        $scaffold.settle_action_id = [string](Get-ObjectProperty $settleTerminal 'action_id')
+        $scaffold.settle_ticks = 40
+        $scaffold.collected_drop_target = Get-ObjectProperty $drop 'position'
+        $scaffold.collect_action_id = [string](Get-ObjectProperty $collectTerminal 'action_id')
+        $scaffold.expected_cleanup = $true
+        $scaffold.expected_drop_collection = 'minecraft:oak_log'
+        $scaffold.included_in_expected_changed_cells = $false
+    }
     $state = Get-FreshState
 
     if ($script:SourceObservationCount -ne 1) {
         throw 'wall gate re-observed its placement source'
     }
     $inventoryAfter = Get-InventoryCount -State $state -Item 'minecraft:oak_log'
-    if ($inventoryAfter -ne $inventoryBefore - 9) {
-        throw 'oak-log inventory ledger did not decrease by exactly nine'
+    if ($inventoryAfter -ne $inventoryBefore - $permanentBlockCount) {
+        throw "oak-log inventory ledger did not decrease by exactly $permanentBlockCount"
     }
     $targets = @($allTargets)
     $oracle = New-WallExternalOracleManifest -Targets $targets `
         -ExpectedState (Get-ObjectProperty $source 'state') `
         -SourcePosition (Get-ObjectProperty $source 'position') `
-        -TemporaryPosition $temporaryPosition
+        -TemporaryPositions @($temporaryPositions)
+    $gateName = "wall-${Width}x${Height}"
     return [ordered]@{
-        gate = 'wall-3x3'
-        wall_dimensions = [ordered]@{ width = 3; height = 3; depth = 1 }
+        gate = $gateName
+        wall_dimensions = [ordered]@{ width = $Width; height = $Height; depth = 1 }
         full_cube_block = 'minecraft:oak_log'
         action_coordinates_from_observations_only = $true
         configured_bounds_used_as_observation_filters_only = $true
@@ -1802,27 +2403,15 @@ function Invoke-Wall3x3Gate {
         wall_placement_action_count = @($rowActions | ForEach-Object {
                 [int](Get-ObjectProperty $_ 'action_count')
             } | Measure-Object -Sum).Sum
-        temporary_scaffold = [ordered]@{
-            support = Get-ObjectProperty $temporarySupport 'position'
-            position = $temporaryPosition
-            raise_navigation_action_id = [string](
-                Get-ObjectProperty $raiseNavigationTerminal 'action_id')
-            pillar_action_id = [string](Get-ObjectProperty $pillarTerminal 'action_id')
-            descent_target = $descentTarget
-            descent_action_id = [string](Get-ObjectProperty $descentTerminal 'action_id')
-            clear_action_id = [string](Get-ObjectProperty $clearTerminal 'action_id')
-            settle_action_id = [string](Get-ObjectProperty $settleTerminal 'action_id')
-            settle_ticks = 40
-            collected_drop_target = Get-ObjectProperty $drop 'position'
-            collect_action_id = [string](Get-ObjectProperty $collectTerminal 'action_id')
-            expected_cleanup = $true
-            expected_drop_collection = 'minecraft:oak_log'
-            included_in_expected_changed_cells = $false
-        }
+        temporary_scaffold = $temporaryScaffolds[0]
+        temporary_scaffolds = @($temporaryScaffolds)
+        temporary_scaffold_count = $temporaryScaffolds.Count
         total_action_count = @($script:GateEvents | Where-Object {
                 (Get-ObjectProperty $_ 'event') -ceq 'action_accepted'
             }).Count
-        maximum_entries_per_action = 3
+        maximum_entries_per_action = @($rowActions | ForEach-Object {
+                [int](Get-ObjectProperty $_ 'maximum_entries_per_action')
+            } | Measure-Object -Maximum).Maximum
         phase_entry_limit = 8
         stationary_placement = $true
         exact_target_count = $targets.Count
@@ -1830,12 +2419,20 @@ function Invoke-Wall3x3Gate {
         expected_air_violations = 0
         expected_extra_mutations = 0
         external_oracle_status = 'pending'
-        mutation_proof = 'nine unique fresh supports plus one observation-derived pillar fully cleared and recollected; placement inventory delta minus 9; external MCA required'
+        mutation_proof = "$permanentBlockCount unique fresh supports plus $ScaffoldLevels observation-derived temporary blocks cleared top-down and recollected; placement inventory delta minus $permanentBlockCount; external MCA required"
         inventory_before_placement = $inventoryBefore
         inventory_after_placement = $inventoryAfter
         inventory_delta = $inventoryAfter - $inventoryBefore
         external_oracle = $oracle
     }
+}
+
+function Invoke-Wall3x3Gate {
+    Invoke-WallGate -Width 3 -Height 3 -ScaffoldLevels 1
+}
+
+function Invoke-Wall5x5Gate {
+    Invoke-WallGate -Width 5 -Height 5 -ScaffoldLevels 2
 }
 
 function Write-GateArtifacts {
@@ -1863,7 +2460,8 @@ function Write-GateArtifacts {
     [IO.File]::WriteAllText(
         (Join-Path $ArtifactDirectory 'gate-result.json'),
         (ConvertTo-Json $manifest -Depth 100), $script:Utf8NoBom)
-    if ($Gate -ceq 'wall-3x3' -and $null -ne (Get-ObjectProperty $Result 'gate_result')) {
+    if ($Gate -cin @('wall-3x3', 'wall-5x5') -and
+        $null -ne (Get-ObjectProperty $Result 'gate_result')) {
         $oracle = Get-ObjectProperty (Get-ObjectProperty $Result 'gate_result') 'external_oracle'
         if ($null -eq $oracle) { throw 'wall gate did not produce an external oracle manifest' }
         [IO.File]::WriteAllText(
@@ -1888,6 +2486,7 @@ function Invoke-McmcpConstructionCapabilityGate {
             'faces-place' { Invoke-PlacementGate }
             'state-ref-ttl' { Invoke-PlacementGate -UseStateRef }
             'wall-3x3' { Invoke-Wall3x3Gate }
+            'wall-5x5' { Invoke-Wall5x5Gate }
         }
     } catch {
         $primaryFailure = $_

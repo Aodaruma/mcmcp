@@ -2,9 +2,9 @@
 
 ## 状態と目的
 
-本書は、[高難易度建築レビュー](./2026-09-03_hard-building-review-and-roadmap.md)後のP0修正を、90分の建築再試験より先に3つの短い実ワールドgateで分離検証するための記録である。対象は`ssh aod-mimoid`上のDocker環境であり、ローカルPCでは実ワールド操作しない。
+本書は、[高難易度建築レビュー](./2026-09-03_hard-building-review-and-roadmap.md)後のP0修正を、90分の建築再試験より先に短い実ワールドgateで分離検証するための記録である。初期gateは`ssh aod-mimoid`上のDocker環境、2026-09-03の5×5再試験r1以降はユーザー指定によりローカルPC上の物理Prism profileで実施した。local実施中は`aod-mimoid`へ接続していない。
 
-remoteでは`navigation` r3、`faces-place` r7、`state-ref-ttl` r1の3 gateに加え、Gate Bの`wall-3x3` r7 / r8がfresh baselineから2回連続で完全合格した。3×3壁は通常player Actionだけで9 blockを設置し、観測由来の仮足場を設置・撤去・回収した後、offline oracleでも恒久9 cell以外の変更0を確認した。`wall-3x3` r1-r6は製品とrunnerの境界不良を一つずつ分離した不合格runとして残す。5×5 Gate Bと90分の高難易度建築再試験はまだ実施していない。
+remoteでは`navigation` r3、`faces-place` r7、`state-ref-ttl` r1の3 gateに加え、Gate Bの`wall-3x3` r7 / r8がfresh baselineから2回連続で完全合格した。3×3壁は通常player Actionだけで9 blockを設置し、観測由来の仮足場を設置・撤去・回収した後、offline oracleでも恒久9 cell以外の変更0を確認した。`wall-3x3` r1-r6は製品とrunnerの境界不良を一つずつ分離した不合格runとして残す。local 5×5 Gate Bはr9で恒久20 / 25 blockと2段pillaringまで到達したが、まだ完全合格していない。90分の高難易度建築再試験も未完走である。
 
 ## 今回の変更
 
@@ -45,6 +45,21 @@ remoteでは`navigation` r3、`faces-place` r7、`state-ref-ttl` r1の3 gateに�
 - 動くdropが旧pickup cellを外れた場合、runtimeは即`PATH_BLOCKED`にせず入力を解放し、同じ`displayed_item`かつ提出位置から0.75 block以内のfresh witness、既知安全pickup cell / route、実AABBを有効なoccurrence / Action期限内で再証明する。公開recordにentity UUIDはなく個体同一性は主張しない。期限は再失効で延長しない。
 - gate eventはAction受付時のbody / budget、terminalのprogress / failure / trace、descent target、settle、post-settle drop座標を保存する。失敗runでも外側の`PATH_BLOCKED`だけで推測しない。
 
+### Gate B 5×5・2段仮足場（local実施中・未完走）
+
+- 3×3専用の施工本体を、監査済みprofileだけを受ける共通`Invoke-WallGate`へまとめた。`wall-3x3`は3×3 / 1段、`wall-5x5`は5×5 / 2段に固定し、任意値やfixture専用Actionは公開しない。
+- 5×5は全5段をfresh player pose基準の奥→手前順にし、各cellを`face`→最初のpost-face frameからfresh exact supportを再取得→1 entry Actionの境界で置く。下2段も5 entry batchにはしない。5幅全体はconstructionの同一admission headingから各supportまで40°以内に収まらず、batch化すると入力前に安全拒否されるためである。仮足場2段目は、1段目のoak-log UP面をfreshに再配達できた場合だけ同じ`pillar_up_known(placement_state_ref)`で積む。
+- r2は材料取得後に31件のfoundation UP面を配達したが、端の面への一般approach後のplayer `(-14.62,56,8.64)`から5幅の反対端が4.5 block reach外となり、施工前に安全停止した。修正後は5幅だけ、観測済み5連続面と同じfresh frameのtraversabilityを結合し、壁列外かつ全5面が4.5以内となる配達targetへ移動してからfoundationを再観測する。固定staging座標は持たない。
+- local r4では、staging navigationがtarget `(-19,56,11)`、tolerance `0.75`で成功し、実pose `(-18.501,56,11.240)`からx=-20のfreshな5 support rowを選択した。幾何中心`(-20,55,11)`へのfaceは成功したが、実行順先頭は奥→手前sort後の別supportだったため、5-entry `apply_known_block_plan`は入力前に`TARGET_UNKNOWN` / `Construction support requires a nearer admitted camera heading`で拒否された。placement 0、終了時input解放を確認した。先頭だけへ向いても同じposeに対する後続entryの40°証明が残るため、最終修正は下2段も各supportごとのface・fresh再証明・1-entry Actionへ分割した。
+- local r5ではstaging、1件目のface、post-face fresh support、1-entry配置が成功し、`(-20,56,13)`へoak logを通常player Actionで設置した。直後の2件目faceがmutation前の`$supports[$entry]`を再利用したため、`TARGET_UNKNOWN` / `Face target is not current known evidence`で入力前拒否された。追加placement 0、終了時input解放を確認した。修正後の幅5下段loopは、各反復の冒頭でも対象1 supportをexact取得し、`pre-face fresh exact → face → post-face fresh exact → place`を必須にした。
+- local r6では1件目の配置まで成功した後、次の`agent_get_state`とsurface取得を行ったにもかかわらず2件目faceが同じ`TARGET_UNKNOWN`で拒否された。tailを比較すると、mutation前後の`latest_frame_id`が同一であり、APIをもう一度呼ぶことは新しい観測frameの保証ではなかった。終了時input解放を確認した。修正後はpost-face supportを取得したframe idを配置直前に記録し、mutation terminal後に`latest_frame_id`が異なるまで50 ms間隔・最大40 pollで待つ。幅5下段だけでなく、幅3 batch、上段singleton、仮足場配置、撤去にも同じbarrierを適用し、未更新時は古い証拠で続行せず失敗する。PowerShell mockは各mutation後に同一frameを最低1回返してから更新し、barrier成功とtimeoutの両方を固定する。
+- local r7（`C:\Users\aod\AppData\Local\Temp\mcmcp-hard-building-20260902\local-eval-artifacts\20260903-wall-5x5-r7`）では、1件目のfaceと通常player配置が成功し、oak logは64から63へ減った。配置後barrierも1 pollで別frameへ進んだが、続く`agent_get_state`と`agent_get_observation`後の2件目faceは`TARGET_UNKNOWN` / `Face target is not current known evidence`で入力前拒否された。終了時は`control_ready=true`かつ全Action terminalでinput解放を確認した。解析で、新frameにもmutation前`world_revision`のsurfaceが含まれるtemporal composite性を原因と確定した。製品側はcamera-only `face_known_position`だけ、同一session / dimension / TTL内の配達済み座標へ再照準できるようにし、future revisionを拒否する。設置・破壊・clearのcurrent revision fenceは緩めていない。runnerはexact surface自身のrevisionが現在world revisionへ一致するまで50 ms間隔・最大40 pollで待つ。
+- local r8（`C:\Users\aod\AppData\Local\Temp\mcmcp-hard-building-20260902\local-eval-artifacts\20260903-wall-5x5-r8`）は恒久10 / 25 block、41 / 41 Action terminal、59.575 sまで進んだ。下2段は連続成功したが、仮足場へ通常移動用tolerance `0.75`で接近した結果、隣接cell側で停止し、`pillar_up_known`の真下中央条件により入力前拒否された。足場上昇だけtoleranceを`0.1`へ分離し、通常staging / descentの`0.75`は維持した。
+- local r9（`C:\Users\aod\AppData\Local\Temp\mcmcp-hard-building-20260902\local-eval-artifacts\20260903-wall-5x5-r9`）は恒久20 / 25 block、仮足場2 block、63 / 63 Action terminal、85.944 sまで進んだ。2段pillaringと高所2段の施工は成功したが、最上段開始時に直前のsupportを見下ろしたまま5個のUP面を待ち、視野外のため40 pollで停止した。各高所段の前に、center cellのcurrent horizontal surfaceを取得して向き直り、その後UP面を取得するreorientationを追加した。
+- local r10（`C:\Users\aod\AppData\Local\Temp\mcmcp-hard-building-20260902\local-eval-artifacts\20260903-wall-5x5-r10`）は恒久15 / 25 block、仮足場1 block、53 / 53 Action terminal、70.981 sまで進んだ。reorientationで高所1段は成功したが、その後に2段目足場を追加しようとしたため、間の5 block施工で1段目UP witnessのrevision barrierが進み、保持証拠をruntimeが安全拒否した。最新runnerは2段足場を高所施工前に連続完成させ、centered playerが足下面を遮蔽する前提の保持証拠へworld mutationを挟まない。これはmock合格済みだが、次のlocal実ワールドrunでは未検証である。
+- 完成後は上段から下段の順に処理し、各撤去の直前にfresh traversability由来の地上targetへ退避してから、fresh exact surface、近傍drop 0件、1 block撤去、40 tick wait、fresh exact 1 drop、回収を要求する。上段dropの回収で足場側へ戻っても、下段を足元から壊さない。25個の恒久配置と2個の一時配置・回収後、oak log収支は施工前から正確に`-25`でなければ失敗する。
+- PowerShell 5.1 mockは、恒久25 cell、placement 25 Action（全cellが1 entry）、高所3段のhorizontal reorientation、各配置前のfaceとpost-face current-revision exact support、高所施工前に連続完成する仮足場2段、上→下cleanup、25-cell oracle、source観測1回・再観測0回を固定する。mutation後には新frame内のsurfaceだけを1回旧revisionにするr7回帰も再現し、5×5の合計67 Actionを確認する。これはrunner契約の確認であり、実ワールド成功を意味しない。
+
 ## 自動テスト事実
 
 remote Dockerで次のfocused集合を実行し、**156 / 156件成功**を確認した。
@@ -68,6 +83,8 @@ remote Dockerで次のfocused集合を実行し、**156 / 156件成功**を確�
 ```
 
 `check`は通常unit testに加え、`verifyHarnessIsolation`、`harnessTest`、`adminBridgeTest`を依存taskとして持つ。さらにr6のP0修正後、`AgentPrimitivePlannerTest`、`McmcpRuntimeMutationAimTest`、`MinecraftPhaseFiveInventoryPortTest`、`KnownContainerAttemptTest`のfocused suite、`./gradlew check`、[`Test-McmcpConstructionCapabilityGate.ps1`](../../../tools/eval/Test-McmcpConstructionCapabilityGate.ps1)と[`Test-McmcpHardBuildingGateWorldReset.ps1`](../../../tools/eval/Test-McmcpHardBuildingGateWorldReset.ps1)のrunner/reset mockもすべて成功した。P0後focused suiteの総件数は記録にないため、推測して補完しない。
+
+local r8準備時点の最新版では`gradlew clean check` **983 / 983件**、PowerShell construction mock、local world reset contract、`git diff --check`が成功した。製品jarはSHA-256 `1261dcb2484f69ddb0a55da17f19ff1a82c853738dce762e43a262aecd1608f5`で、物理Prism profileへのcopy後hashも一致した。r10後の変更はrunnerとmockだけであり、PowerShell construction mockと`git diff --check`を再実行して成功している。
 
 Gate B最終版v10/v11では、remote JDK 25 Dockerでconstruction、collect replan、pillar ref、smelt / brew aimを含むfocused 11 class **194 / 194件**、`./gradlew check` **943 / 943件**、remote Windows PowerShell 5.1 runner mockに成功した。built / installed jarのSHA-256は`ccf0fd9adce31f553a91e7665f830f52f4990778b5561bc08bc920308496da16`で一致した。tracked-only source archive v11は503件、SHA-256 `6ef38e06519b1ace1fc02445f7ec14bea4ea7e1ce73e7fb5754fe155b11d63cc`である。
 
@@ -108,7 +125,8 @@ gateごとに独立して次を行う。`<repo>`、`<artifact-dir>`、`<token-pa
 4. reset時と同じGate名でpublic gateを実行する。
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\eval\Invoke-McmcpConstructionCapabilityGate.ps1 `
+   # live HTTP runner requires PowerShell 7 (Invoke-RestMethod -NoProxy / response headers).
+   pwsh -NoProfile -File .\tools\eval\Invoke-McmcpConstructionCapabilityGate.ps1 `
      -Gate navigation -ArtifactDirectory <artifact-dir> -TokenPath <token-path>
    ```
 
@@ -149,6 +167,37 @@ r7のdrop targetは`(-20.350639770968613, 56.0, 8.882561189427028)`、collectは
 
 artifact rootはそれぞれ`F:\mcmcp-testlab\20260902-hard-building-v1\eval-artifacts\20260903-wall-3x3-r1`から`r8`である。最終fresh resetはr7が`20260903T061954565Z-wall-3x3-401d145fdf6f4464ba4726d4ce7fc58f`、r8が`20260903T063425599Z-wall-3x3-e3e132f74e36456f8a345e7485514497`で、いずれもcontainer 0を確認した。resource-load停滞、stale X99 lock、PS5.1の`-NoProxy`非対応試行はrunner / HTTP / Action開始前でworld変更0のinfrastructure事象として製品判定から分離した。
 
+## Gate B `wall-5x5`再実施手順（既存remote環境の例）
+
+状態は**実world施工未完走**である。local r9で恒久20 / 25 blockと2段pillaring、r10で新しい高所reorientationの1段分を確認した。最新の「2段足場を高所施工前に連続完成」修正はmock合格済み・実world未検証である。以下の件数・収支は完全合格時のrunner / mock契約であり、未達部分を実測成功とは扱わない。また、以下は既存`aod-mimoid`環境を再利用する場合の例であり、次回の実world検証hostを固定しない。実施時はその時点のユーザー指定hostに従い、local PCの場合はlocal用reset / instance pathへ読み替える。
+
+1. container 0を確認し、remote Windows PowerShell 5.1でfresh baselineを復元する。出力されたreceipt path / operation idをartifactへ控える。
+
+   ```powershell
+   Set-Location <repo>
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\eval\Reset-McmcpHardBuildingGateWorld.ps1 -Gate wall-5x5
+   ```
+
+2. worldが閉じている間に、3×3と同じ監査領域`x=-32..0, y=52..70, z=-16..24`のbefore snapshotを取得する。`<closed-overworld-dir>`はreceiptの`restored_world`に対応するoverworld dimension directoryである。
+
+   ```powershell
+   $artifact = 'F:\mcmcp-testlab\20260902-hard-building-v1\eval-artifacts\20260903-wall-5x5-r1'
+   New-Item -ItemType Directory -Force -Path $artifact | Out-Null
+   python .\tools\eval\Inspect-McmcpRegion.py <closed-overworld-dir> -32 0 52 70 -16 24 --output "$artifact\before-region.json"
+   ```
+
+3. containerを開始してworld loadを待ち、Screen buttonでMCPを`READY`にする。公開5 Toolだけを使うrunnerを実行する。
+
+   ```powershell
+   # live HTTP runner requires PowerShell 7 (Invoke-RestMethod -NoProxy / response headers).
+   pwsh -NoProfile -File .\tools\eval\Invoke-McmcpConstructionCapabilityGate.ps1 `
+     -Gate wall-5x5 -ArtifactDirectory $artifact -TokenPath <token-path>
+   ```
+
+4. `gate-result.json`でsource観測1 / 再観測0、5行 / 25 unique target、wall placement 25 Action、各cell直前のface / fresh support、仮足場2段、各段の40 tick settleとdrop回収、inventory delta `-25`を確認する。全Actionがterminalで終了し、最終`control.mode=ready`でなければ不合格とする。
+5. Save and Quitしてcontainer 0を確認後、同じ範囲を`after-region.json`へ取得する。`external-oracle-manifest.json`の25 permanent cellだけが`air`→`minecraft:oak_log[axis=y]`、source不変、仮足場2 cellがbefore / afterともair、未列挙変更0であることを比較する。どれか1条件でも欠けたrunはPASSにしない。
+6. 合格してもfresh baselineへ復元してから独立runをもう1回行う。2回のartifact、receipt、before / after、oracle結果が揃うまで5×5を安定合格とは扱わず、90分のfull hard-buildingへ進めない。
+
 ## 合格条件と次修正方針
 
 - 全gate共通: 固定5 Toolのみ、通常player Actionのみ、Action terminal、終了時`control.mode=ready`、source保全、想定外world mutationなし。cleanup/input解放不成立またはsource/領域外変更は安全P0として後続gateを止める。
@@ -156,8 +205,8 @@ artifact rootはそれぞれ`F:\mcmcp-testlab\20260902-hard-building-v1\eval-art
 - `faces-place`: `faces=["up"]`がUP面だけを返し、inline identityでexact stateを1個設置し、inventoryが正確に1減り、offlineでもtarget 1 cellだけが変化する。失敗時はfilter、support/aim、placement/server ACKのどこまで成功したかをeventとAction failureで分離する。
 - `state-ref-ttl`: source観測1回、61秒以上、同一world session、source再観測0回でref設置が成功し、`faces-place`と同じinventory/oracle条件を満たす。失敗時はresponse delivery confirmation、session clear、eviction、compiler budget、planner/runtime二重解決を順に確認する。
 - readiness、reset、build、JDK、PowerShell、bind、artifact不足で止まった場合は製品コードを修正せず、同じbaselineで環境を直して再実行する。
-- 3 gateとGate B 3×3は合格した。次は5×5 full-cube wallでphase分割、材料会計、仮足場の複数回利用を確認し、その後にfull hard-buildingへ戻す。3×3 PASSは任意規模construction jobや方向性blockを保証しない。
+- 3 gateとGate B 3×3は合格した。5×5 r2は施工前stagingで停止し、観測由来staging修正とmockまでは完了した。上記手順でphase分割、材料会計、仮足場の複数回利用を2回確認してからfull hard-buildingへ戻す。3×3 / 5×5 PASSは任意規模construction jobや方向性blockを保証しない。
 - smelt / brewも、container / craftと同じく配達済みvisible ray hitをplannerから各portの全open / reopenまで保持するよう修正し、remote focused testまで完了した。block center固定経路は削除したが、実ワールドのstation gateは未実施である。
 - aim待機のno-progress診断には、stage、検証済みaim point、現在raycast target/face、interaction送信回数を残す。安全条件やtimeoutは緩めず、`container_deadline`だけでは失われていた停止位置を観測可能にする。
-- `pillar_up_known(placement_state_ref)`はGate B r7 / r8で、1回の仮足場設置、上昇、撤去、drop回収まで実ワールド合格した。ただし連続2 block以上のpillaring、ladder / scaffolding新設、sneak bridge、複数足場の計画は未保証である。
+- `pillar_up_known(placement_state_ref)`はGate B 3×3 r7 / r8で1回の仮足場設置、上昇、撤去、drop回収まで実ワールド合格し、5×5 local r9では2 block連続pillaring自体にも成功した。ただし5×5全体の足場撤去・回収、ladder / scaffolding新設、sneak bridge、複数足場の一般計画は未保証である。
 - 90分のfull hard-building再試験はまだ実施していない。Gate B 5×5とstation系の実ワールド照準確認後にfresh baselineから行う。

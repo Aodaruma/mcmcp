@@ -52,7 +52,8 @@ function New-MockSurface {
         [string]$Face = 'up',
         [AllowNull()][object]$State = $null,
         [AllowNull()][string]$PlacementItem = $null,
-        [AllowNull()][string]$PlacementStateRef = $null
+        [AllowNull()][string]$PlacementStateRef = $null,
+        [long]$WorldRevision = 1L
     )
     if ($null -eq $State) {
         $State = [pscustomobject]@{ block = $Block; properties = [pscustomobject]@{} }
@@ -67,6 +68,8 @@ function New-MockSurface {
         state = $State
         placement_item = $PlacementItem
         placement_state_ref = $PlacementStateRef
+        observed_tick = 10L
+        world_revision = $WorldRevision
     }
 }
 
@@ -276,6 +279,30 @@ try { Assert-SourceObservationAllowed } catch {
 Assert-True $sourceRejected 'source re-observation remained possible after the retention wait'
 Assert-True ($script:SourceObservationCount -eq 1) 'source observation count changed during wait'
 
+# A fresh state call may still announce the pre-mutation frame. The explicit
+# barrier is bounded and must fail rather than relabel that stale frame as fresh.
+$script:MockBarrierState = New-MockState
+$script:MockBarrierState.observation.latest_frame_id = 'obs-00000000000000aa'
+$script:MockBarrierPolls = 0
+$script:MockBarrierDelays = 0
+$script:ToolTransport = {
+    param($Tool, $Arguments)
+    if ($Tool -cne 'agent_get_state') { throw "unexpected barrier mock tool: $Tool" }
+    $script:MockBarrierPolls++
+    return $script:MockBarrierState
+}
+$script:DelayTransport = { param($Seconds) $script:MockBarrierDelays++ }
+$barrierTimedOut = $false
+try {
+    Wait-ForObservationFrameAdvance -PreviousFrameId 'obs-00000000000000aa' `
+        -MaximumPolls 3 -DelayMilliseconds 1
+} catch {
+    $barrierTimedOut = $_.Exception.Message -match 'did not advance'
+}
+Assert-True $barrierTimedOut 'unchanged observation frame did not fail closed'
+Assert-True ($script:MockBarrierPolls -eq 3 -and $script:MockBarrierDelays -eq 2) `
+    'observation frame barrier did not retain its exact poll and delay bounds'
+
 # Wall construction is derived entirely from fresh visible surfaces: choose a
 # contiguous three-cell white-wool UP row within stationary reach.
 $wallPlayer = [pscustomobject]@{ x = -18.5; y = 56.0; z = 11.5 }
@@ -312,6 +339,37 @@ Assert-True ($r1Selected.Count -eq 3) `
 Assert-True ((Get-BlockPositionKey $r1Selected[2].position) -ceq
     'minecraft:overworld|-18|55|11') `
     'wall foundation selection lost the r1 regression row'
+
+# r3 selected the far end of a five-wide row and combined it with an
+# unnecessarily strict 0.1 arrival tolerance. Preserve that geometry and prove
+# that the selector now chooses the central delivered cell with enough reach
+# margin for every pose accepted by the ordinary construction tolerance.
+$r3Foundation = @(9..13 | ForEach-Object {
+        New-MockSurface -Block 'minecraft:white_wool' -X -18 -Y 55 -Z $_
+    })
+$r3EndTarget = [pscustomobject]@{
+    dimension = 'minecraft:overworld'; x = -19; y = 56; z = 9
+}
+$r3CenterTarget = [pscustomobject]@{
+    dimension = 'minecraft:overworld'; x = -19; y = 56; z = 11
+}
+$r3FarEndTarget = [pscustomobject]@{
+    dimension = 'minecraft:overworld'; x = -19; y = 56; z = 13
+}
+$r3EndNavigation = New-MockTraversability -Target $r3EndTarget -Status 'CONFIRMED'
+$r3CenterNavigation = New-MockTraversability `
+    -Target $r3CenterTarget -Status 'CONFIRMED'
+$r3FarEndNavigation = New-MockTraversability `
+    -Target $r3FarEndTarget -Status 'CONFIRMED'
+$r3Site = Select-WallStagingNavigationSite -WallFoundation $r3Foundation `
+    -TraversabilityRecords @(
+        $r3EndNavigation, $r3CenterNavigation, $r3FarEndNavigation)
+Assert-True ([object]::ReferenceEquals(
+        $r3CenterNavigation, $r3Site.navigation_record)) `
+    'r3 staging regression did not select the central delivered target'
+Assert-True ([Math]::Sqrt(
+        [double]$r3Site.maximum_tolerance_bound_squared) -le 4.5) `
+    'r3 staging regression did not include navigation tolerance in its reach proof'
 
 # One delivery-backed state reference is copied verbatim into a stationary
 # three-entry phase; support positions/states remain the delivered objects.
@@ -506,7 +564,7 @@ for ($row = 0; $row -lt 3; $row++) {
 }
 $oracle = New-WallExternalOracleManifest -Targets @($oracleTargets) `
     -ExpectedState $oakState -SourcePosition $sourcePosition `
-    -TemporaryPosition $temporaryTarget
+    -TemporaryPositions @($temporaryTarget)
 Assert-True ($oracle.expected_changed_cell_count -eq 9) `
     'wall oracle manifest did not require exactly nine changed cells'
 Assert-True (@($oracle.expected_changed_cells).Count -eq 9) `
@@ -545,17 +603,41 @@ $script:MockWallWait = 0
 $script:MockTemporaryCleared = $false
 $script:MockWallPlacedTargets = @()
 $script:MockWallTopTargetKeys = [Collections.Generic.List[string]]::new()
+$script:MockWallPlacementRequests = [Collections.Generic.List[object]]::new()
+$script:MockTemporaryClearKeys = [Collections.Generic.List[string]]::new()
 $script:MockWallDropProbes = 0
 $script:MockFrameCounter = 0
 $script:MockLastFaceFrame = -1
+$script:MockLastPlacementFrame = -1
+$script:MockPendingStaleStateCalls = 0
+$script:MockWorldRevision = 1L
+$script:MockPendingStaleSurfaceDeliveries = 0
+$script:MockFrameAdvanceDelayCalls = 0
+$script:MockSurfaceDeliveryFrame = @{}
+$script:MockWallPlayer = [pscustomobject]@{ x = -18.5; y = 56.0; z = 13.5 }
+$script:MockWallFoundation = @($foundation)
+$script:MockWallTraversability = @($temporaryNavigation, $descentNavigation)
+$script:MockPillarNavigationTarget = $temporaryTarget
+$script:MockTemporarySurfaces = @{}
+$script:MockTemporaryPositions = @()
+$script:MockCurrentDropRecord = $null
+$script:MockPlayerPoseEvents = [Collections.Generic.List[object]]::new()
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 function Acquire-OakLogFromChest { return 64L }
-function Move-NearDestinationSupport {}
+function Move-NearDestinationSupport {
+    param([ValidateSet(3, 5)][int]$Width = 3)
+    if ($Width -eq 5) { Invoke-WallStagingNavigation -Width $Width }
+}
 function Get-FreshState {
-    $script:MockFrameCounter++
+    if ($script:MockPendingStaleStateCalls -gt 0) {
+        $script:MockPendingStaleStateCalls--
+    } else {
+        $script:MockFrameCounter++
+    }
     $state = New-MockState
     $state.observation.latest_frame_id = 'obs-{0:x16}' -f $script:MockFrameCounter
-    $state.world.position = $wallPlayer
+    $state.world.world_revision = $script:MockWorldRevision
+    $state.world.position = $script:MockWallPlayer
     $state.inventory = @([pscustomobject]@{
             item = 'minecraft:oak_log'; count = [long]$script:MockWallInventory
         })
@@ -579,23 +661,70 @@ function Get-VisibleSurfaceRecords {
     Assert-True ((Get-ObjectProperty (Get-ObjectProperty $State 'observation') `
                 'latest_frame_id') -ceq ('obs-{0:x16}' -f $script:MockFrameCounter)) `
         'wall observation did not use the latest fresh frame'
-    if ($Block -ceq 'minecraft:oak_log' -and $script:MockLastFaceFrame -ge 0) {
+    if ($script:MockLastFaceFrame -ge 0) {
         Assert-True ($script:MockFrameCounter -gt $script:MockLastFaceFrame) `
             'wall support was not refreshed after its face Action'
     }
-    if ($Block -ceq 'minecraft:white_wool') { return @($foundation) }
-    $exactTemporary = $Bounds.min_x -eq $Bounds.max_x -and
-        $Bounds.min_y -eq $Bounds.max_y -and $Bounds.min_z -eq $Bounds.max_z -and
-        $Bounds.min_x -eq $temporaryTarget.x -and
-        $Bounds.min_y -eq $temporaryTarget.y -and
-        $Bounds.min_z -eq $temporaryTarget.z
-    if ($exactTemporary -and -not $script:MockTemporaryCleared) {
-        return @($freshTemporarySurface)
+    $records = @()
+    if ($Block -ceq 'minecraft:white_wool') {
+        $records = @($script:MockWallFoundation)
     }
-    return @($script:MockWallPlacedTargets | ForEach-Object {
-            New-MockSurface -Block 'minecraft:oak_log' `
-                -X $_.x -Y $_.y -Z $_.z -State $oakState
-        })
+    $exactTemporary = $Bounds.min_x -eq $Bounds.max_x -and
+        $Bounds.min_y -eq $Bounds.max_y -and $Bounds.min_z -eq $Bounds.max_z
+    if ($Block -ceq 'minecraft:oak_log' -and $exactTemporary) {
+        $temporaryKey = ('minecraft:overworld|{0}|{1}|{2}' -f
+            [int]$Bounds.min_x, [int]$Bounds.min_y, [int]$Bounds.min_z)
+        if ($script:MockTemporarySurfaces.ContainsKey($temporaryKey)) {
+            $records = @($script:MockTemporarySurfaces[$temporaryKey])
+        } else {
+            $records = @($script:MockWallPlacedTargets | Where-Object {
+                    [int]$_.x -eq [int]$Bounds.min_x -and
+                    [int]$_.y -eq [int]$Bounds.min_y -and
+                    [int]$_.z -eq [int]$Bounds.min_z
+                } | ForEach-Object {
+                    $surfaceFace = if ($Faces -contains 'east') { 'east' } else { 'up' }
+                    New-MockSurface -Block 'minecraft:oak_log' `
+                        -X $_.x -Y $_.y -Z $_.z -Face $surfaceFace -State $oakState
+                })
+        }
+    }
+    if ($Block -ceq 'minecraft:oak_log' -and $records.Count -eq 0 -and
+        -not $exactTemporary) {
+        $records = @($script:MockWallPlacedTargets | ForEach-Object {
+                New-MockSurface -Block 'minecraft:oak_log' `
+                    -X $_.x -Y $_.y -Z $_.z -State $oakState
+            })
+    }
+    if ($ExcludePlayerFeetAbove) {
+        $feetX = [Math]::Floor([double]$script:MockWallPlayer.x)
+        $feetY = [Math]::Floor([double]$script:MockWallPlayer.y)
+        $feetZ = [Math]::Floor([double]$script:MockWallPlayer.z)
+        $records = @($records | Where-Object {
+                $position = Get-ObjectProperty $_ 'position'
+                -not ([int]$position.x -eq $feetX -and
+                    [int]$position.y + 1 -eq $feetY -and
+                    [int]$position.z -eq $feetZ)
+            })
+    }
+    if ($records.Count -eq 0 -and -not $AllowMissing) {
+        throw "mock delivered no eligible $Block surface"
+    }
+    if ($records.Count -gt 0) {
+        $surfaceRevision = $script:MockWorldRevision
+        if ($script:MockPendingStaleSurfaceDeliveries -gt 0) {
+            $script:MockPendingStaleSurfaceDeliveries--
+            $surfaceRevision = [Math]::Max(1L, $script:MockWorldRevision - 1L)
+        }
+        foreach ($record in $records) {
+            $record.world_revision = $surfaceRevision
+        }
+    }
+    foreach ($record in $records) {
+        $script:MockSurfaceDeliveryFrame[
+            (Get-BlockPositionKey (Get-ObjectProperty $record 'position'))] =
+                $script:MockFrameCounter
+    }
+    return @($records)
 }
 function Get-RecordsFromState {
     param(
@@ -607,12 +736,13 @@ function Get-RecordsFromState {
                 'latest_frame_id') -ceq ('obs-{0:x16}' -f $script:MockFrameCounter)) `
         'wall record query did not use the latest fresh frame'
     if ($Kinds.Count -eq 1 -and $Kinds[0] -ceq 'traversability') {
-        return @($temporaryNavigation, $descentNavigation)
+        return @($script:MockWallTraversability)
     }
-    if ($Kinds.Count -eq 1 -and $Kinds[0] -ceq 'visible_entity' -and
-        $script:MockWallCollect -eq 0) {
+    if ($Kinds.Count -eq 1 -and $Kinds[0] -ceq 'visible_entity') {
         $script:MockWallDropProbes++
-        if ($script:MockTemporaryCleared) { return @($dropRecord) }
+        if ($null -ne $script:MockCurrentDropRecord) {
+            return @($script:MockCurrentDropRecord)
+        }
     }
     return @()
 }
@@ -630,6 +760,7 @@ function Invoke-ActionRequest {
         })
     switch ($node.op) {
         'apply_known_block_plan' {
+            $script:MockWallPlacementRequests.Add($Request)
             $newTargets = @($node.entries | ForEach-Object {
                     [pscustomobject]@{
                         dimension = $node.anchor.dimension
@@ -644,36 +775,133 @@ function Invoke-ActionRequest {
             }
             $script:MockWallPlaced += [int]$Request.budget.max_blocks_placed
             $script:MockWallInventory -= [int]$Request.budget.max_blocks_placed
+            $script:MockLastPlacementFrame = $script:MockFrameCounter
+            $script:MockPendingStaleStateCalls = 1
+            $script:MockWorldRevision++
+            $script:MockPendingStaleSurfaceDeliveries = 1
         }
         'navigate_to_known' {
             $script:MockWallNavigation++
-            Assert-True ($node.tolerance -eq 0.1) `
-                'temporary navigation did not retain the tight tolerance'
-            Assert-True ([object]::ReferenceEquals($node.target, $temporaryTarget) -or
-                [object]::ReferenceEquals($node.target, $descentTarget)) `
+            $expectedNavigationTolerance = if ([object]::ReferenceEquals(
+                    $node.target, $script:MockPillarNavigationTarget)) {
+                $script:PillarNavigationTolerance
+            } else {
+                $script:ConstructionNavigationTolerance
+            }
+            Assert-True ($node.tolerance -eq $expectedNavigationTolerance) `
+                'construction navigation did not retain its purpose-specific tolerance'
+            Assert-True (@($script:MockWallTraversability | Where-Object {
+                        [object]::ReferenceEquals(
+                            $node.target, (Get-ObjectProperty $_ 'navigation_target'))
+                    }).Count -gt 0) `
                 'temporary navigation target did not originate in a delivered record'
+            $script:MockWallPlayer = [pscustomobject]@{
+                x = [double]$node.target.x + 0.5
+                y = [double]$node.target.y
+                z = [double]$node.target.z + 0.5
+            }
+            $script:MockPlayerPoseEvents.Add([pscustomobject]@{
+                    op = 'navigate'; position = $script:MockWallPlayer
+                })
         }
         'pillar_up_known' {
             $script:MockWallPillar++
             $script:MockWallInventory--
-            Assert-True ([object]::ReferenceEquals(
-                    $node.support, $temporarySupport.position) -and
-                [object]::ReferenceEquals(
-                    $node.expected_support, $temporarySupport.state)) `
+            Assert-True ([Math]::Floor([double]$script:MockWallPlayer.x) -eq
+                    [int]$node.support.x -and
+                [Math]::Floor([double]$script:MockWallPlayer.y) -eq
+                    ([int]$node.support.y + 1) -and
+                [Math]::Floor([double]$script:MockWallPlayer.z) -eq
+                    [int]$node.support.z) `
+                'mock pillar began away from the delivered support-above feet cell'
+            $deliveredSupports = @($script:MockWallFoundation) +
+                @($script:MockTemporarySurfaces.Values)
+            Assert-True (@($deliveredSupports | Where-Object {
+                        [object]::ReferenceEquals(
+                            $node.support, (Get-ObjectProperty $_ 'position')) -and
+                        [object]::ReferenceEquals(
+                            $node.expected_support, (Get-ObjectProperty $_ 'state'))
+                    }).Count -eq 1) `
                 'mock pillar did not retain delivered support evidence'
+            $placedPosition = Get-TargetAboveSupport $node.support
+            $knownNavigationPosition = @($script:MockWallTraversability | ForEach-Object {
+                    Get-ObjectProperty $_ 'navigation_target'
+                } | Where-Object {
+                    (Get-BlockPositionKey $_) -ceq (Get-BlockPositionKey $placedPosition)
+                } | Select-Object -First 1)
+            if ($knownNavigationPosition.Count -eq 1) {
+                $placedPosition = $knownNavigationPosition[0]
+            }
+            $placedSurface = New-MockSurface -Block 'minecraft:oak_log' `
+                -X $placedPosition.x -Y $placedPosition.y -Z $placedPosition.z `
+                -State $oakState -PlacementItem 'minecraft:oak_log' `
+                -PlacementStateRef $source.placement_state_ref
+            $placedSurface.position = $placedPosition
+            $placedKey = Get-BlockPositionKey $placedPosition
+            $script:MockTemporarySurfaces[$placedKey] = $placedSurface
+            $script:MockTemporaryPositions += $placedPosition
+            $script:MockWallPlayer = [pscustomobject]@{
+                x = [double]$placedPosition.x + 0.5
+                y = [double]$placedPosition.y + 1.0
+                z = [double]$placedPosition.z + 0.5
+            }
+            $script:MockPlayerPoseEvents.Add([pscustomobject]@{
+                    op = 'pillar'; position = $script:MockWallPlayer
+                })
+            $script:MockLastPlacementFrame = $script:MockFrameCounter
+            $script:MockPendingStaleStateCalls = 1
+            $script:MockWorldRevision++
+            $script:MockPendingStaleSurfaceDeliveries = 1
         }
         'clear_known_block_plan' {
             $script:MockWallClear++
             $script:MockTemporaryCleared = $true
-            Assert-True ([object]::ReferenceEquals(
-                    $node.anchor, $freshTemporarySurface.position)) `
+            $clearKey = Get-BlockPositionKey $node.anchor
+            $script:MockTemporaryClearKeys.Add($clearKey)
+            Assert-True (-not (
+                    [Math]::Floor([double]$script:MockWallPlayer.x) -eq
+                        [int]$node.anchor.x -and
+                    [Math]::Floor([double]$script:MockWallPlayer.y) -eq
+                        ([int]$node.anchor.y + 1) -and
+                    [Math]::Floor([double]$script:MockWallPlayer.z) -eq
+                        [int]$node.anchor.z)) `
+                'mock clear attempted to break the temporary block below player feet'
+            Assert-True ($script:MockTemporarySurfaces.ContainsKey($clearKey)) `
                 'mock clear did not retain the fresh temporary position'
+            [void]$script:MockTemporarySurfaces.Remove($clearKey)
+            $dropPositionForClear = [pscustomobject]@{
+                dimension = [string]$node.anchor.dimension
+                x = [double]$node.anchor.x + 0.2
+                y = [double]$node.anchor.y + 0.2
+                z = [double]$node.anchor.z + 0.2
+            }
+            if ($clearKey -ceq (Get-BlockPositionKey $temporaryTarget)) {
+                $dropPositionForClear = $dropPosition
+            }
+            $script:MockCurrentDropRecord = New-MockVisibleItem `
+                -Position $dropPositionForClear
+            $script:MockPendingStaleStateCalls = 1
+            $script:MockWorldRevision++
+            $script:MockPendingStaleSurfaceDeliveries = 1
         }
         'collect_visible_item' {
             $script:MockWallCollect++
             $script:MockWallInventory++
-            Assert-True ([object]::ReferenceEquals($node.target, $dropPosition)) `
+            Assert-True ($null -ne $script:MockCurrentDropRecord -and
+                [object]::ReferenceEquals(
+                    $node.target,
+                    (Get-ObjectProperty $script:MockCurrentDropRecord 'position'))) `
                 'mock collect did not retain the fresh visible_entity position'
+            $pickupTarget = Get-ObjectProperty $script:MockCurrentDropRecord 'position'
+            $script:MockWallPlayer = [pscustomobject]@{
+                x = [Math]::Floor([double]$pickupTarget.x) + 0.5
+                y = [Math]::Floor([double]$pickupTarget.y)
+                z = [Math]::Floor([double]$pickupTarget.z) + 0.5
+            }
+            $script:MockPlayerPoseEvents.Add([pscustomobject]@{
+                    op = 'collect'; position = $script:MockWallPlayer
+                })
+            $script:MockCurrentDropRecord = $null
         }
         'wait_ticks' {
             $script:MockWallWait++
@@ -684,8 +912,18 @@ function Invoke-ActionRequest {
         'face_known_position' {
             Assert-True ($null -ne $node.target) `
                 'wall face Action did not retain a delivered target'
-            if ((Get-BlockPositionKey $node.target) -ceq
-                (Get-BlockPositionKey $temporaryTarget)) {
+            $faceKey = Get-BlockPositionKey $node.target
+            if ($script:MockLastPlacementFrame -ge 0) {
+                Assert-True ($script:MockFrameCounter -gt $script:MockLastPlacementFrame -and
+                    $script:MockSurfaceDeliveryFrame.ContainsKey($faceKey) -and
+                    [int]$script:MockSurfaceDeliveryFrame[$faceKey] -eq
+                        $script:MockFrameCounter) `
+                    'wall face reused surface evidence invalidated by the previous placement'
+            }
+            if ((Get-BlockPositionKey $node.target) -cin
+                @($script:MockTemporaryPositions | ForEach-Object {
+                        Get-BlockPositionKey $_
+                    })) {
                 $script:MockWallCleanupFace++
             } else {
                 $script:MockWallRowFace++
@@ -699,6 +937,12 @@ function Invoke-ActionRequest {
         })
     return New-MockActionSnapshot -ActionId $actionId -State 'succeeded'
 }
+$script:DelayTransport = {
+    param($Seconds)
+    Assert-True ([Math]::Abs([double]$Seconds - 0.05) -lt 0.000001) `
+        'wall frame barrier changed its 50ms bounded retry interval'
+    $script:MockFrameAdvanceDelayCalls++
+}
 $script:SourceObservationCount = 0
 $script:SourceObservationForbidden = $false
 $wallResult = Invoke-Wall3x3Gate
@@ -710,6 +954,8 @@ Assert-True ($wallResult.row_phase_count -eq 3 -and
     'wall result did not record three row phases'
 Assert-True ($wallResult.wall_placement_action_count -eq 5) `
     'wall result did not distinguish five placement Actions from three rows'
+Assert-True ($wallResult.maximum_entries_per_action -eq 3) `
+    '3x3 result lost its maximum three-entry batch fact'
 Assert-True (@($wallResult.row_actions | Where-Object {
             $_.entry_count -ne 3 -or -not $_.stationary -or
             @($_.terminal_states | Where-Object { $_ -cne 'succeeded' }).Count -ne 0
@@ -721,6 +967,32 @@ Assert-True ($wallResult.row_actions[0].action_count -eq 1 -and
     $wallResult.row_actions[2].maximum_entries_per_action -eq 1 -and
     $wallResult.row_actions[2].order -ceq 'far_to_near') `
     'wall result did not retain the safe top-row split contract'
+Assert-True ((@($wallResult.row_actions[0].targets | ForEach-Object {
+                Get-BlockPositionKey $_
+            }) -join ',') -ceq
+        'minecraft:overworld|-18|56|11,minecraft:overworld|-20|56|11,minecraft:overworld|-19|56|11' -and
+    (@($wallResult.row_actions[1].targets | ForEach-Object {
+                Get-BlockPositionKey $_
+            }) -join ',') -ceq
+        'minecraft:overworld|-18|57|11,minecraft:overworld|-20|57|11,minecraft:overworld|-19|57|11') `
+    '3x3 lower rows did not retain fresh-pose far-to-near order'
+$wallHeadingEvents = @($script:GateEvents | Where-Object {
+        $_.event -ceq 'wall_row_heading_admitted'
+    })
+Assert-True ($wallHeadingEvents.Count -eq 2 -and
+    @($wallHeadingEvents | Where-Object {
+            $first = $wallResult.row_actions[[int]$_.row].targets[0]
+            $pivot = $wallResult.row_actions[[int]$_.row].targets[2]
+            $_.proof -cne 'post_face_frame_exact_ordered_row' -or
+            $_.heading_strategy -cne 'center_pivot_batch' -or
+            [int]$_.face_target.x -ne [int]$pivot.x -or
+            [int]$_.face_target.y + 1 -ne [int]$pivot.y -or
+            [int]$_.face_target.z -ne [int]$pivot.z -or
+            [int]$_.first_execution_support.x -ne [int]$first.x -or
+            [int]$_.first_execution_support.y + 1 -ne [int]$first.y -or
+            [int]$_.first_execution_support.z -ne [int]$first.z
+        }).Count -eq 0) `
+    '3x3 row heading did not preserve its center pivot and fresh execution order'
 Assert-True ($wallResult.exact_target_count -eq 9 -and
     @($wallResult.exact_targets).Count -eq 9) `
     'wall result did not retain exactly nine target cells'
@@ -732,20 +1004,35 @@ Assert-True ($wallResult.expected_air_violations -eq 0 -and
     $wallResult.expected_extra_mutations -eq 0 -and
     $wallResult.external_oracle_status -ceq 'pending') `
     'wall result confused expected oracle values with completed measurements'
-Assert-True ($script:MockWallAction -eq 17 -and $script:MockWallPlaced -eq 9) `
-    'mock wall orchestration did not execute five placement Actions plus the bounded scaffold lifecycle'
-Assert-True ($wallResult.total_action_count -eq 17) `
+Assert-True ($script:MockWallAction -eq 18 -and $script:MockWallPlaced -eq 9) `
+    'mock wall orchestration did not execute five placement Actions plus reorientation and the bounded scaffold lifecycle'
+Assert-True ($wallResult.total_action_count -eq 18) `
     'wall result did not aggregate all accepted Actions'
 Assert-True ($script:MockWallPillar -eq 1 -and $script:MockWallClear -eq 1 -and
     $script:MockWallCollect -eq 1 -and $script:MockWallWait -eq 1 -and
     $script:MockWallNavigation -eq 2) `
     'mock wall orchestration did not execute one complete temporary scaffold lifecycle'
-Assert-True ($script:MockWallRowFace -eq 5) `
-    'mock wall orchestration did not execute two row and three top-cell face Actions'
+Assert-True ($script:MockWallRowFace -eq 6) `
+    'mock wall orchestration did not execute row, reorientation, and top-cell face Actions'
 Assert-True ($script:MockWallCleanupFace -eq 1) `
     'mock wall orchestration did not face the fresh temporary block before clear'
+$semanticBarrierEvents = @($script:GateEvents | Where-Object {
+        $_.event -cin @('wall_support_revision_current',
+            'visible_surfaces_revision_current', 'temporary_surface_revision_current') -and
+        $_.polls -eq 2
+    })
+Assert-True ($script:MockFrameAdvanceDelayCalls -eq 13 -and
+    @($script:GateEvents | Where-Object {
+            $_.event -ceq 'observation_frame_advanced' -and $_.polls -eq 2
+        }).Count -eq 7 -and $semanticBarrierEvents.Count -eq 6) `
+    "3x3 revision barriers mismatch: delays=$($script:MockFrameAdvanceDelayCalls), frame_events=$(@($script:GateEvents | Where-Object { $_.event -ceq 'observation_frame_advanced' -and $_.polls -eq 2 }).Count), semantic_events=$($semanticBarrierEvents.Count)"
 Assert-True ($script:MockWallDropProbes -eq 2) `
     'mock wall orchestration did not prove zero pre-existing drops then one cleanup drop'
+Assert-True ((@($script:MockPlayerPoseEvents | ForEach-Object { $_.op }) -join ',') -ceq
+        'navigate,pillar,navigate,collect' -and
+    (@($script:MockPlayerPoseEvents | ForEach-Object { $_.position.y }) -join ',') -ceq
+        '56,57,56,56') `
+    '3x3 mock did not retain ascent, safe descent, and collection pose transitions'
 Assert-True (($script:MockWallTopTargetKeys -join ',') -ceq
     'minecraft:overworld|-18|58|11,minecraft:overworld|-19|58|11,minecraft:overworld|-20|58|11') `
     'mock wall orchestration did not place the top row far-to-near'
@@ -764,6 +1051,257 @@ Assert-True ($wallResult.temporary_scaffold.settle_ticks -eq 40 -and
     $wallResult.temporary_scaffold.settle_action_id -cmatch `
         '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') `
     'wall result did not retain the bounded drop-settle Action'
+
+# The 5x5 profile reuses the same orchestration with two delivered temporary
+# scaffold levels. Every cell uses a one-entry, freshly observed far-to-near
+# Action because the five-wide row cannot share the 40-degree admission heading.
+$wall5Player = [pscustomobject]@{ x = -14.6192777; y = 56.0; z = 8.6406432 }
+$wall5Foundation = @(-22..-18 | ForEach-Object {
+        New-MockSurface -Block 'minecraft:white_wool' -X $_ -Y 55 -Z 11
+    })
+$wall5Foundation += New-MockSurface -Block 'minecraft:white_wool' `
+    -X -20 -Y 55 -Z 13
+$wall5Foundation += New-MockSurface -Block 'minecraft:white_wool' `
+    -X -20 -Y 55 -Z 14
+$wall5Foundation += New-MockSurface -Block 'minecraft:white_wool' `
+    -X -20 -Y 55 -Z 15
+$wall5TemporaryTarget = [pscustomobject]@{
+    dimension = 'minecraft:overworld'; x = -20; y = 56; z = 13
+}
+$wall5StagingTarget = [pscustomobject]@{
+    dimension = 'minecraft:overworld'; x = -20; y = 56; z = 14
+}
+$wall5DescentTarget = [pscustomobject]@{
+    dimension = 'minecraft:overworld'; x = -23; y = 56; z = 13
+}
+$wall5TemporaryNavigation = New-MockTraversability -Target $wall5TemporaryTarget
+$wall5StagingNavigation = New-MockTraversability `
+    -Target $wall5StagingTarget -Status 'CONFIRMED'
+$wall5DescentNavigation = New-MockTraversability `
+    -Target $wall5DescentTarget -Status 'CONFIRMED'
+
+$script:MockWallPlaced = 0
+$script:MockWallInventory = 64
+$script:MockWallAction = 0
+$script:MockWallRowFace = 0
+$script:MockWallCleanupFace = 0
+$script:MockWallNavigation = 0
+$script:MockWallPillar = 0
+$script:MockWallClear = 0
+$script:MockWallCollect = 0
+$script:MockWallWait = 0
+$script:MockTemporaryCleared = $false
+$script:MockWallPlacedTargets = @()
+$script:MockWallTopTargetKeys = [Collections.Generic.List[string]]::new()
+$script:MockWallPlacementRequests = [Collections.Generic.List[object]]::new()
+$script:MockTemporaryClearKeys = [Collections.Generic.List[string]]::new()
+$script:MockWallDropProbes = 0
+$script:MockFrameCounter = 0
+$script:MockLastFaceFrame = -1
+$script:MockLastPlacementFrame = -1
+$script:MockPendingStaleStateCalls = 0
+$script:MockWorldRevision = 1L
+$script:MockPendingStaleSurfaceDeliveries = 0
+$script:MockFrameAdvanceDelayCalls = 0
+$script:MockSurfaceDeliveryFrame = @{}
+$script:MockWallPlayer = $wall5Player
+$script:MockWallFoundation = @($wall5Foundation)
+$script:MockWallTraversability = @(
+    $wall5TemporaryNavigation, $wall5StagingNavigation, $wall5DescentNavigation)
+$script:MockPillarNavigationTarget = $wall5StagingTarget
+$script:MockTemporarySurfaces = @{}
+$script:MockTemporaryPositions = @()
+$script:MockCurrentDropRecord = $null
+$script:MockPlayerPoseEvents = [Collections.Generic.List[object]]::new()
+$script:GateEvents = [Collections.Generic.List[object]]::new()
+$script:SourceObservationCount = 0
+$script:SourceObservationForbidden = $false
+
+$wall5Result = Invoke-Wall5x5Gate
+Assert-True ($wall5Result.gate -ceq 'wall-5x5' -and
+    $wall5Result.wall_dimensions.width -eq 5 -and
+    $wall5Result.wall_dimensions.height -eq 5) `
+    '5x5 result did not retain its exact audited profile'
+Assert-True ($wall5Result.source_observations -eq 1 -and
+    -not $wall5Result.source_reobserved) `
+    '5x5 result did not preserve the one-source-observation contract'
+Assert-True ($wall5Result.row_phase_count -eq 5 -and
+    @($wall5Result.row_actions).Count -eq 5 -and
+    $wall5Result.wall_placement_action_count -eq 25) `
+    '5x5 result did not record twenty-five single-cell placement Actions'
+Assert-True ($wall5Result.maximum_entries_per_action -eq 1) `
+    '5x5 result did not report its maximum one-entry Action size'
+Assert-True (@($wall5Result.row_actions | Where-Object {
+            $_.action_count -ne 5 -or $_.entry_count -ne 5 -or
+            $_.maximum_entries_per_action -ne 1 -or
+            $_.order -cne 'far_to_near' -or -not $_.stationary
+        }).Count -eq 0) `
+    '5x5 row contracts are not five freshly proved one-entry Actions per row'
+Assert-True ((@($wall5Result.row_actions[0].targets | ForEach-Object {
+                Get-BlockPositionKey $_
+            }) -join ',') -ceq
+        'minecraft:overworld|-18|56|11,minecraft:overworld|-22|56|11,minecraft:overworld|-19|56|11,minecraft:overworld|-21|56|11,minecraft:overworld|-20|56|11' -and
+    (@($wall5Result.row_actions[1].targets | ForEach-Object {
+                Get-BlockPositionKey $_
+            }) -join ',') -ceq
+        'minecraft:overworld|-18|57|11,minecraft:overworld|-22|57|11,minecraft:overworld|-19|57|11,minecraft:overworld|-21|57|11,minecraft:overworld|-20|57|11') `
+    '5x5 lower rows did not retain fresh-pose far-to-near order'
+$wall5HeadingEvents = @($script:GateEvents | Where-Object {
+        $_.event -ceq 'wall_row_heading_admitted'
+    })
+Assert-True ($wall5HeadingEvents.Count -eq 10 -and
+    @($wall5HeadingEvents | Where-Object {
+            $target = $wall5Result.row_actions[[int]$_.row].targets[[int]$_.entry]
+            $_.proof -cne 'post_face_frame_exact_ordered_row' -or
+            $_.heading_strategy -cne 'first_entry_singleton' -or
+            (Get-BlockPositionKey $_.face_target) -cne
+                (Get-BlockPositionKey $_.first_execution_support) -or
+            [int]$_.face_target.x -ne [int]$target.x -or
+            [int]$_.face_target.y + 1 -ne [int]$target.y -or
+            [int]$_.face_target.z -ne [int]$target.z
+        }).Count -eq 0) `
+    '5x5 row heading did not face the first freshly reproved execution support'
+$wall5ReorientationEvents = @($script:GateEvents | Where-Object {
+        $_.event -ceq 'wall_elevated_row_reoriented'
+    })
+Assert-True ($wall5ReorientationEvents.Count -eq 3 -and
+    (@($wall5ReorientationEvents | ForEach-Object { $_.row }) -join ',') -ceq '2,3,4' -and
+    @($wall5ReorientationEvents | Where-Object {
+            $_.proof -cne 'current_horizontal_surface_before_up_surface_scan'
+        }).Count -eq 0) `
+    '5x5 elevated rows did not retain a current horizontal reorientation proof'
+Assert-True (@($script:MockWallPlacementRequests).Count -eq 25) `
+    '5x5 mock did not retain every placement request'
+Assert-True (@($script:MockWallPlacementRequests | Where-Object {
+            @($_.program.body[0].entries).Count -ne 1 -or
+            $_.budget.max_duration_ms -ne 15000 -or
+            $_.budget.max_ticks -ne 300 -or
+            $_.budget.max_distance_blocks -ne 0 -or
+            $_.budget.max_camera_degrees -ne 80 -or
+            $_.budget.max_blocks_placed -ne 1
+        }).Count -eq 0) `
+    '5x5 request budget is not the exact one-entry fixed cost'
+Assert-True ($wall5Result.exact_target_count -eq 25 -and
+    @($wall5Result.exact_targets).Count -eq 25 -and
+    @($wall5Result.exact_targets | ForEach-Object {
+            Get-BlockPositionKey $_
+        } | Select-Object -Unique).Count -eq 25) `
+    '5x5 result did not retain exactly 25 unique permanent targets'
+Assert-True ($wall5Result.inventory_before_placement -eq 64 -and
+    $wall5Result.inventory_after_placement -eq 39 -and
+    $wall5Result.inventory_delta -eq -25) `
+    '5x5 material ledger did not recover both scaffolds before proving net minus 25'
+Assert-True ($script:MockWallAction -eq 67 -and
+    $wall5Result.total_action_count -eq 67 -and
+    $script:MockWallPlaced -eq 25) `
+    '5x5 orchestration did not execute the complete bounded Action lifecycle'
+Assert-True ($script:MockWallPillar -eq 2 -and $script:MockWallClear -eq 2 -and
+    $script:MockWallCollect -eq 2 -and $script:MockWallWait -eq 2 -and
+    $script:MockWallNavigation -eq 4) `
+    '5x5 orchestration did not execute two complete temporary scaffold lifecycles'
+Assert-True ($script:MockWallRowFace -eq 28 -and
+    $script:MockWallCleanupFace -eq 2 -and $script:MockWallDropProbes -eq 4) `
+    '5x5 orchestration lost fresh face or drop evidence at a phase boundary'
+$semanticBarrierEvents = @($script:GateEvents | Where-Object {
+        $_.event -cin @('wall_support_revision_current',
+            'visible_surfaces_revision_current', 'temporary_surface_revision_current') -and
+        $_.polls -eq 2
+    })
+Assert-True ($script:MockFrameAdvanceDelayCalls -eq 56 -and
+    @($script:GateEvents | Where-Object {
+            $_.event -ceq 'observation_frame_advanced' -and $_.polls -eq 2
+        }).Count -eq 29 -and $semanticBarrierEvents.Count -eq 27) `
+    "5x5 revision barriers mismatch: delays=$($script:MockFrameAdvanceDelayCalls), frame_events=$(@($script:GateEvents | Where-Object { $_.event -ceq 'observation_frame_advanced' -and $_.polls -eq 2 }).Count), semantic_events=$($semanticBarrierEvents.Count)"
+Assert-True ((@($script:MockPlayerPoseEvents | ForEach-Object { $_.op }) -join ',') -ceq
+        'navigate,navigate,pillar,pillar,navigate,collect,navigate,collect' -and
+    (@($script:MockPlayerPoseEvents | ForEach-Object { $_.position.y }) -join ',') -ceq
+        '56,56,57,58,56,57,56,56' -and
+    $script:MockPlayerPoseEvents[0].position.z -eq 13.5 -and
+    $script:MockPlayerPoseEvents[1].position.z -eq 14.5 -and
+    $script:MockPlayerPoseEvents[3].position.z -eq 14.5 -and
+    $script:MockPlayerPoseEvents[4].position.x -eq -22.5 -and
+    $script:MockPlayerPoseEvents[4].position.z -eq 13.5 -and
+    $script:MockPlayerPoseEvents[5].position.z -eq 14.5 -and
+    $script:MockPlayerPoseEvents[6].position.x -eq -22.5 -and
+    $script:MockPlayerPoseEvents[6].position.z -eq 13.5) `
+    '5x5 mock did not retain two ascents and a fresh safe descent before each clear'
+$stagingEvents = @($script:GateEvents | Where-Object {
+        $_.event -ceq 'wall_staging_navigation_selected'
+    })
+Assert-True ($stagingEvents.Count -eq 1 -and
+    [object]::ReferenceEquals($stagingEvents[0].target, $wall5TemporaryTarget) -and
+    [double]$stagingEvents[0].maximum_support_distance_with_tolerance -le 4.5 -and
+    [double]$stagingEvents[0].navigation_tolerance -eq
+        $script:ConstructionNavigationTolerance) `
+    '5x5 staging did not retain the central delivered target and tolerance-aware reach proof'
+Assert-True ($wall5Result.temporary_scaffold_count -eq 2 -and
+    @($wall5Result.temporary_scaffolds).Count -eq 2 -and
+    $wall5Result.temporary_scaffolds[0].level -eq 1 -and
+    $wall5Result.temporary_scaffolds[1].level -eq 2 -and
+    $wall5Result.temporary_scaffolds[1].position.y -eq
+        ($wall5Result.temporary_scaffolds[0].position.y + 1)) `
+    '5x5 result did not retain the exact two-level temporary scaffold'
+Assert-True ($wall5Result.temporary_scaffolds[1].cleanup_order -eq 1 -and
+    $wall5Result.temporary_scaffolds[0].cleanup_order -eq 2 -and
+    ($script:MockTemporaryClearKeys -join ',') -ceq
+        ((Get-BlockPositionKey $wall5Result.temporary_scaffolds[1].position) + ',' +
+            (Get-BlockPositionKey $wall5Result.temporary_scaffolds[0].position))) `
+    '5x5 scaffold cleanup did not run from the upper block down to the base'
+$firstElevatedCellEvent = @($script:GateEvents | Where-Object {
+        $_.event -ceq 'wall_elevated_cell_terminal'
+    } | Select-Object -First 1)
+$secondPillarEvent = @($script:GateEvents | Where-Object {
+        $_.event -ceq 'wall_temporary_pillar_terminal' -and $_.level -eq 2
+    })
+Assert-True ($firstElevatedCellEvent.Count -eq 1 -and $secondPillarEvent.Count -eq 1 -and
+    $script:GateEvents.IndexOf($secondPillarEvent[0]) -lt
+        $script:GateEvents.IndexOf($firstElevatedCellEvent[0])) `
+    '5x5 did not finish its two-level scaffold before the first elevated wall mutation'
+for ($row = 2; $row -lt 5; $row++) {
+    $observer = $wall5Result.temporary_scaffolds[1].position
+    $previousDistanceSquared = [double]::PositiveInfinity
+    foreach ($targetPosition in @($wall5Result.row_actions[$row].targets)) {
+        $dx = ([double]$targetPosition.x + 0.5) - ([double]$observer.x + 0.5)
+        $dz = ([double]$targetPosition.z + 0.5) - ([double]$observer.z + 0.5)
+        $distanceSquared = $dx * $dx + $dz * $dz
+        Assert-True ($distanceSquared -le $previousDistanceSquared) `
+            "5x5 row $row was not emitted far-to-near"
+        $previousDistanceSquared = $distanceSquared
+    }
+}
+Assert-True (@($wall5Result.temporary_scaffolds | Where-Object {
+            -not $_.expected_cleanup -or
+            $_.expected_drop_collection -cne 'minecraft:oak_log' -or
+            $_.included_in_expected_changed_cells -or
+            $_.settle_ticks -ne 40
+        }).Count -eq 0) `
+    '5x5 result did not prove top-down cleanup and drop recovery for both scaffolds'
+Assert-True ($wall5Result.external_oracle.expected_changed_cell_count -eq 25 -and
+    @($wall5Result.external_oracle.expected_changed_cells).Count -eq 25 -and
+    $wall5Result.external_oracle.temporary_scaffold_count -eq 2 -and
+    @($wall5Result.external_oracle.temporary_scaffolds).Count -eq 2 -and
+    $wall5Result.external_oracle.reject_unlisted_changes -and
+    $wall5Result.external_oracle.expected_air_violations -eq 0 -and
+    $wall5Result.external_oracle.expected_extra_mutations -eq 0) `
+    '5x5 external oracle does not require only 25 permanent cells and two cleared scaffolds'
+
+$savedMockPlayer = $script:MockWallPlayer
+$occupiedFoundation = $wall5Foundation[0].position
+$script:MockWallPlayer = [pscustomobject]@{
+    x = [double]$occupiedFoundation.x + 0.5
+    y = [double]$occupiedFoundation.y + 1.0
+    z = [double]$occupiedFoundation.z + 0.5
+}
+$feetFilteredState = Get-FreshState
+$feetFilteredFoundations = @(Get-VisibleSurfaceRecords -State $feetFilteredState `
+    -Block 'minecraft:white_wool' -Bounds $script:DestinationSupportBounds `
+    -Faces @('up') -ExcludePlayerFeetAbove)
+Assert-True (@($feetFilteredFoundations | Where-Object {
+            (Get-BlockPositionKey $_.position) -ceq
+                (Get-BlockPositionKey $occupiedFoundation)
+        }).Count -eq 0) `
+    'mock visible-surface delivery did not exclude the support below player feet'
+$script:MockWallPlayer = $savedMockPlayer
 
 $script:ToolTransport = $null
 $script:DelayTransport = $null

@@ -18,6 +18,7 @@ import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Closed v1 policy for one-cell construction blocks.
@@ -112,6 +113,43 @@ public final class SafeConstructionBlockPolicy {
         if (!allowsPlacementState(state, liveBlockEntityPresent)) {
             throw new UnsafeConstructionBlockException();
         }
+    }
+
+    /**
+     * Matches the state fixed by the placement context while deferring only properties which
+     * vanilla recomputes from horizontal neighbours until the closed component is complete.
+     */
+    public static boolean placementStateMatchesFinalStableProperties(
+            BlockStateFingerprint expectedFinal,
+            BlockStateFingerprint immediate) {
+        Objects.requireNonNull(expectedFinal, "expectedFinal");
+        Objects.requireNonNull(immediate, "immediate");
+        try {
+            requireExpectedState(expectedFinal);
+            requireExpectedState(immediate);
+        } catch (UnsafeConstructionBlockException rejected) {
+            return false;
+        }
+        if (!expectedFinal.blockId().equals(immediate.blockId())
+                || !expectedFinal.properties().keySet().equals(immediate.properties().keySet())) {
+            return false;
+        }
+        Set<String> derived = neighborDerivedProperties(expectedFinal.blockId());
+        for (var property : expectedFinal.properties().entrySet()) {
+            if (!derived.contains(property.getKey())
+                    && !property.getValue().equals(
+                            immediate.properties().get(property.getKey()))) {
+                return false;
+            }
+        }
+        return !derived.isEmpty() || expectedFinal.equals(immediate);
+    }
+
+    private static Set<String> neighborDerivedProperties(String blockId) {
+        return switch (blockId) {
+            case "minecraft:glass_pane" -> Set.of("north", "east", "south", "west");
+            default -> Set.of();
+        };
     }
 
     public static boolean supportedDoorPlacement(BlockState state) {

@@ -72,6 +72,10 @@ public final class ActionDsl {
         }
     }
 
+    /**
+     * Turns toward a policy-delivered coordinate so a later observation can refresh its rays.
+     * This node changes only the camera; every later interaction still needs current evidence.
+     */
     public record FaceKnownPosition(String id, Position target) implements Node {
         public FaceKnownPosition {
             Objects.requireNonNull(id, "id");

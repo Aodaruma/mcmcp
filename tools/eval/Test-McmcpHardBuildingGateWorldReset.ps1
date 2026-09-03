@@ -34,6 +34,9 @@ Assert-True ($unsupportedDepth.Count -eq 0) `
 # Windows PowerShell 5.1 returns $null rather than an empty collection when
 # Get-ChildItem has no results. Every Count check must force array semantics.
 $resetSource = [IO.File]::ReadAllText($resetScript)
+Assert-True ($resetSource -match
+    "ValidateSet\('navigation', 'faces-place', 'state-ref-ttl', 'wall-3x3', 'wall-5x5'\)") `
+    'remote reset gate list does not include the 5x5 wall profile'
 Assert-True (-not [Text.RegularExpressions.Regex]::IsMatch(
         $resetSource,
         '(?<!@)\(Get-ChildItem[^\r\n]*\)\.Count')) `

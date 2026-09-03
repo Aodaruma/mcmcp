@@ -248,30 +248,41 @@ public final class AgentPrimitivePlanner {
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
             ActionDsl.Position target) {
-        return requireKnownFaceTarget(
-                map, latestFrame, target, map.worldRevision(), false);
-    }
-
-    public static MinecraftActionPrimitiveExecutor.KnownFaceTarget requireKnownFaceTarget(
-            KnownTraversabilitySnapshot map,
-            Optional<ObservationFrame> latestFrame,
-            ActionDsl.Position target,
-            long surfaceBarrierWorldRevision) {
-        return requireKnownFaceTarget(
-                map, latestFrame, target, surfaceBarrierWorldRevision, true);
-    }
-
-    private static MinecraftActionPrimitiveExecutor.KnownFaceTarget requireKnownFaceTarget(
-            KnownTraversabilitySnapshot map,
-            Optional<ObservationFrame> latestFrame,
-            ActionDsl.Position target,
-            long surfaceBarrierWorldRevision,
-            boolean allowNewerWorldRevision) {
-        if (!knownTarget(map, latestFrame, target, surfaceBarrierWorldRevision)) {
-            throw new PlanningException(Code.TARGET_UNKNOWN, "Face target is not current known evidence");
+        if (!knownFacingTarget(map, latestFrame, target)) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Face target is not delivered policy evidence in this world session");
         }
         return new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
-                map.worldSessionId(), map.worldRevision(), target, allowNewerWorldRevision);
+                map.worldSessionId(), map.worldRevision(), target, true);
+    }
+
+    /**
+     * Camera-only facing may use a successfully delivered coordinate until that delivery expires.
+     *
+     * <p>The runtime supplies its delivery-filtered planner frame, so accepting an older revision
+     * here does not reveal hidden world state. Facing is the recovery operation which lets the
+     * observer obtain a new ray after a nearby mutation invalidated visual evidence. Mutation
+     * primitives continue to use {@link #knownSurface} and its current revision barrier.</p>
+     */
+    public static boolean knownFacingTarget(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.Position target) {
+        Objects.requireNonNull(map, "map");
+        Objects.requireNonNull(latestFrame, "latestFrame");
+        Objects.requireNonNull(target, "target");
+        if (!map.dimension().equals(target.dimension())) {
+            return false;
+        }
+        if (map.containsCell(navCell(target))) {
+            return true;
+        }
+        return latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(target.dimension()))
+                .flatMap(frame -> frame.records().stream())
+                .filter(record -> record.worldRevision() <= map.worldRevision())
+                .anyMatch(record -> matches(record, target));
     }
 
     public static boolean knownTarget(
@@ -737,9 +748,7 @@ public final class AgentPrimitivePlanner {
             return distinct(output);
         }
         if (node instanceof ActionDsl.FaceKnownPosition face) {
-            long surfaceBarrier = surfaceBarrierWorldRevision(
-                    map, surfaceRevisionBarrier, face.target());
-            requireKnownFaceTarget(map, latestFrame, face.target(), surfaceBarrier);
+            requireKnownFaceTarget(map, latestFrame, face.target());
             knownTargets.add(face.target());
             ActionDslCompiler.Cost worst = null;
             var output = new ArrayList<Pose>(input.size());

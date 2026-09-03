@@ -1194,7 +1194,7 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
-    void surfaceRevisionWindowCrossesOnlyUnrelatedNeutralMutations() {
+    void mutationSurfaceStaysRevisionFencedButCameraCanReacquireDeliveredCoordinate() {
         UUID session = UUID.randomUUID();
         var map = map(session);
         var target = new ActionDsl.Position(DIMENSION, 3, 65, 0);
@@ -1232,7 +1232,7 @@ class AgentPrimitivePlannerTest {
                 0L,
                 ignored -> 0L,
                 () -> true)).doesNotThrowAnyException();
-        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+        assertThatCode(() -> AgentPrimitivePlanner.analyze(
                 program,
                 currentMap,
                 new DeterministicAStar(),
@@ -1241,7 +1241,21 @@ class AgentPrimitivePlannerTest {
                 4.5F,
                 0L,
                 ignored -> 1L,
-                () -> true)).isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+                () -> true)).doesNotThrowAnyException();
+
+        assertThat(AgentPrimitivePlanner.knownFacingTarget(
+                currentMap, Optional.of(oldFrame), target)).isTrue();
+        assertThat(AgentPrimitivePlanner.requireKnownFaceTarget(
+                currentMap, Optional.of(oldFrame), target).allowNewerWorldRevision()).isTrue();
+        assertThat(AgentPrimitivePlanner.knownFacingTarget(
+                currentMap, Optional.of(futureFrame), target)).isFalse();
+        assertThat(AgentPrimitivePlanner.knownFacingTarget(
+                currentMap, Optional.empty(), target)).isFalse();
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requireKnownFaceTarget(
+                currentMap, Optional.empty(), target))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
     }
 
     @Test
