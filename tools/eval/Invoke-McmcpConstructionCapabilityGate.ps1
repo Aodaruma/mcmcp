@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('navigation', 'faces-place', 'state-ref-ttl', 'wall-3x3', 'wall-5x5')]
+    [ValidateSet('navigation', 'faces-place', 'state-ref-ttl', 'wall-3x3', 'wall-5x5', 'gate-c')]
     [string]$Gate,
 
     [Parameter(Mandatory)]
@@ -2987,18 +2987,77 @@ function New-WallExternalOracleManifest {
     }
 }
 
+function New-GateCExternalOracleManifest {
+    param(
+        [Parameter(Mandatory)][object]$ExpectedState,
+        [Parameter(Mandatory)][object]$SourcePosition,
+        [Parameter(Mandatory)][object[]]$TemporaryPositions
+    )
+    $temporaryKeys = @($TemporaryPositions | ForEach-Object {
+            Get-BlockPositionKey $_
+        } | Select-Object -Unique)
+    if ($TemporaryPositions.Count -ne 3 -or
+        $temporaryKeys.Count -ne $TemporaryPositions.Count) {
+        throw 'Gate C oracle requires exactly three unique temporary scaffold cells'
+    }
+    $temporaryScaffolds = @($TemporaryPositions | ForEach-Object {
+            [ordered]@{
+                position = $_
+                before_state = [ordered]@{
+                    block = 'minecraft:air'; properties = [ordered]@{}
+                }
+                transient_state = $ExpectedState
+                after_state = [ordered]@{
+                    block = 'minecraft:air'; properties = [ordered]@{}
+                }
+                included_in_expected_changed_cells = $false
+                cleanup_required = $true
+                drop_collection_required = 'minecraft:oak_log'
+            }
+        })
+    return [ordered]@{
+        schema_version = 1
+        oracle = 'offline_anvil_before_after'
+        dimension = [string](Get-ObjectProperty $TemporaryPositions[0] 'dimension')
+        expected_changed_cell_count = 0
+        expected_changed_cells = @()
+        expected_source = [ordered]@{
+            position = $SourcePosition
+            state = $ExpectedState
+            changed = $false
+        }
+        temporary_scaffolds = $temporaryScaffolds
+        temporary_scaffold_count = $temporaryScaffolds.Count
+        reject_unlisted_changes = $true
+        expected_air_violations = 0
+        expected_extra_mutations = 0
+        expected_inventory_delta = 0
+    }
+}
+
 function Invoke-WallGate {
     param(
         [Parameter(Mandatory)][ValidateRange(3, 5)][int]$Width,
         [Parameter(Mandatory)][ValidateRange(3, 5)][int]$Height,
-        [Parameter(Mandatory)][ValidateRange(1, 3)][int]$ScaffoldLevels
+        [Parameter(Mandatory)][ValidateRange(1, 3)][int]$ScaffoldLevels,
+        [switch]$MovementCapabilityOnly
     )
     if (($Width -ne 3 -or $Height -ne 3 -or $ScaffoldLevels -ne 1) -and
         ($Width -ne 5 -or $Height -ne 5 -or $ScaffoldLevels -ne 3)) {
         throw 'wall gate supports only the audited 3x3/one-level and 5x5/three-level profiles'
     }
-    $permanentBlockCount = $Width * $Height
-    $temporaryBlockCount = if ($Width -eq 5) { 6 } else { 1 }
+    if ($MovementCapabilityOnly -and
+        ($Width -ne 5 -or $Height -ne 5 -or $ScaffoldLevels -ne 3)) {
+        throw 'Gate C movement profile must reuse the audited five-wide staircase selector'
+    }
+    $permanentBlockCount = if ($MovementCapabilityOnly) { 0 } else { $Width * $Height }
+    $temporaryBlockCount = if ($MovementCapabilityOnly) {
+        3
+    } elseif ($Width -eq 5) {
+        6
+    } else {
+        1
+    }
     $inventoryBefore = Acquire-OakLogFromChest
     if ($inventoryBefore -lt $permanentBlockCount + $temporaryBlockCount) {
         throw 'normal material acquisition cannot cover the permanent wall and transient scaffold'
@@ -3031,8 +3090,16 @@ function Invoke-WallGate {
 
     $allTargets = [Collections.Generic.List[object]]::new()
     $rowActions = [Collections.Generic.List[object]]::new()
-    $previousRowTargets = $null
-    for ($row = 0; $row -lt 2; $row++) {
+    $previousRowTargets = if ($MovementCapabilityOnly) {
+        @($wallFoundation | ForEach-Object {
+                Get-TargetAboveSupport (
+                    Get-TargetAboveSupport (Get-ObjectProperty $_ 'position'))
+            })
+    } else {
+        $null
+    }
+    $lowerRowCount = if ($MovementCapabilityOnly) { 0 } else { 2 }
+    for ($row = 0; $row -lt $lowerRowCount; $row++) {
         # Establish execution order before any camera change. Width three fits
         # the shared admission heading; width five does not, so it uses the same
         # face -> fresh exact support -> one-entry boundary as elevated rows.
@@ -3158,6 +3225,7 @@ function Invoke-WallGate {
     $temporaryBasePosition = $null
     $temporaryStaircasePlan = $null
     $cleanupGroundTarget = $null
+    $gateCStepUp = $null
 
     $currentTemporarySupports = Wait-ForCurrentVisibleSurfaceRecords `
         -InitialState $state -Block 'minecraft:white_wool' `
@@ -3293,6 +3361,16 @@ function Invoke-WallGate {
             -Tolerance $script:ConstructionNavigationTolerance `
             -Step 'medium_top_to_low_top' -Event 'wall_temporary_build_route_terminal'
         $state = $step.state
+        if ($MovementCapabilityOnly) {
+            $descentRoute.Add([ordered]@{
+                    step = 'medium_top_to_low_top'
+                    action_id = [string](Get-ObjectProperty $step.terminal 'action_id')
+                    target = $step.target
+                    horizontal_manhattan = $step.horizontal_manhattan
+                    absolute_y_delta = $step.absolute_y_delta
+                    target_from_policy_delivery = $true
+                })
+        }
         $groundNavigation = Wait-ForAdjacentScaffoldNavigationRecord -InitialState $state `
             -TargetColumn $cleanupGroundTarget -TargetY ([int]$cleanupGroundTarget.y)
         $state = $groundNavigation.state
@@ -3302,35 +3380,108 @@ function Invoke-WallGate {
             -Tolerance $script:ConstructionNavigationTolerance `
             -Step 'low_top_to_ground' -Event 'wall_temporary_build_route_terminal'
         $state = $step.state
+        if ($MovementCapabilityOnly) {
+            $descentRoute.Add([ordered]@{
+                    step = 'low_top_to_ground'
+                    action_id = [string](Get-ObjectProperty $step.terminal 'action_id')
+                    target = $step.target
+                    horizontal_manhattan = $step.horizontal_manhattan
+                    absolute_y_delta = $step.absolute_y_delta
+                    target_from_policy_delivery = $true
+                })
 
-        $highSite = Get-CurrentTemporaryScaffoldSite -State $state `
-            -ExpectedSite $temporaryStaircasePlan.high `
-            -NavigationRecord $temporaryStaircasePlan.high.navigation_record
-        $state = $highSite.state
-        $highNavigation = Wait-ForExactScaffoldNavigationRecord -InitialState $state `
-            -ExpectedTarget $temporaryStaircasePlan.high.target
-        $state = $highNavigation.state
-        $highRecord = $highNavigation.record
-        $highSite.site.navigation_record = $highRecord
-        $highSite.site.target = Get-ObjectProperty $highRecord 'navigation_target'
-        $raise = Invoke-TemporaryScaffoldNavigation -State $state `
-            -NavigationRecord $highRecord -Tolerance $script:PillarNavigationTolerance `
-            -Step 'ground_to_high_base' -Event 'wall_temporary_pillar_navigation_terminal'
-        $state = $raise.state
-        $column = Invoke-TemporaryScaffoldColumn -InitialState $state -Source $source `
-            -Site $highSite.site -Role 'high' -Height 3 `
-            -RaiseNavigationActionId ([string](Get-ObjectProperty $raise.terminal 'action_id'))
-        $state = $column.state
-        foreach ($position in $column.positions) { $temporaryPositions.Add($position) }
-        foreach ($scaffold in $column.scaffolds) { $temporaryScaffolds.Add($scaffold) }
-        $temporaryColumns.Add([ordered]@{
-                role = 'high'; height = 3; base_position = $highSite.site.target
-                top_position = $column.top_position
-            })
-        $temporaryBasePosition = $highSite.site.target
+            # Gate C probes one upward full-block edge only after a complete,
+            # already-proved descent to ground.  Missing policy evidence or a
+            # fail-closed admission is a capability result, not permission to
+            # synthesize a target.  Any accepted Action is still waited to a
+            # terminal state before the shared top-down cleanup runs.
+            $gateCStepUp = [ordered]@{
+                status = 'not_delivered'
+                target = $temporaryStaircasePlan.low.target
+                target_from_policy_delivery = $false
+                action_id = $null
+                failure = $null
+                returned_to_ground = $false
+            }
+            try {
+                $upNavigation = Wait-ForAdjacentScaffoldNavigationRecord `
+                    -InitialState $state -TargetColumn $temporaryStaircasePlan.low.target `
+                    -TargetY ([int]$temporaryStaircasePlan.low.target.y + 1) `
+                    -MaximumPolls 8
+                $state = $upNavigation.state
+                $upRecord = $upNavigation.record
+                $upRequest = New-NavigationActionRequest -NavigationRecord $upRecord `
+                    -State $state -Tolerance $script:ConstructionNavigationTolerance
+                $upAttempt = Invoke-ActionRequest -Request $upRequest `
+                    -WallTimeoutSeconds 90 -ReturnFailure -ReturnStartDomainError
+                $gateCStepUp.target = Get-ObjectProperty $upRecord 'navigation_target'
+                $gateCStepUp.target_from_policy_delivery = [object]::ReferenceEquals(
+                    $gateCStepUp.target, $upRequest.program.body[0].target)
+                $startError = Get-ObjectProperty $upAttempt 'start_domain_error'
+                if ($null -ne $startError) {
+                    $gateCStepUp.status = 'admission_rejected'
+                    $gateCStepUp.failure = $startError
+                } elseif ((Get-ObjectProperty $upAttempt 'state') -ceq 'succeeded') {
+                    $gateCStepUp.status = 'passed'
+                    $gateCStepUp.action_id = [string](Get-ObjectProperty $upAttempt 'action_id')
+                    $state = Get-FreshState
+                    $returnNavigation = Wait-ForAdjacentScaffoldNavigationRecord `
+                        -InitialState $state -TargetColumn $cleanupGroundTarget `
+                        -TargetY ([int]$cleanupGroundTarget.y)
+                    $state = $returnNavigation.state
+                    $returnStep = Invoke-TemporaryScaffoldNavigation -State $state `
+                        -NavigationRecord $returnNavigation.record `
+                        -Tolerance $script:ConstructionNavigationTolerance `
+                        -Step 'gate_c_low_top_to_ground' `
+                        -Event 'gate_c_step_up_return_terminal'
+                    $state = $returnStep.state
+                    $gateCStepUp.returned_to_ground = $true
+                } else {
+                    $gateCStepUp.status = 'terminal_failed'
+                    $gateCStepUp.action_id = [string](Get-ObjectProperty $upAttempt 'action_id')
+                    $gateCStepUp.failure = Get-ObjectProperty $upAttempt 'failure'
+                }
+            } catch {
+                $gateCStepUp.status = 'evidence_or_return_failed'
+                $gateCStepUp.failure = [ordered]@{
+                    type = $_.Exception.GetType().FullName
+                    message = $_.Exception.Message
+                }
+            }
+            Add-GateEvent -Event 'gate_c_step_up_probe_completed' -Detail $gateCStepUp
+        }
+
+        if (-not $MovementCapabilityOnly) {
+            $highSite = Get-CurrentTemporaryScaffoldSite -State $state `
+                -ExpectedSite $temporaryStaircasePlan.high `
+                -NavigationRecord $temporaryStaircasePlan.high.navigation_record
+            $state = $highSite.state
+            $highNavigation = Wait-ForExactScaffoldNavigationRecord -InitialState $state `
+                -ExpectedTarget $temporaryStaircasePlan.high.target
+            $state = $highNavigation.state
+            $highRecord = $highNavigation.record
+            $highSite.site.navigation_record = $highRecord
+            $highSite.site.target = Get-ObjectProperty $highRecord 'navigation_target'
+            $raise = Invoke-TemporaryScaffoldNavigation -State $state `
+                -NavigationRecord $highRecord -Tolerance $script:PillarNavigationTolerance `
+                -Step 'ground_to_high_base' -Event 'wall_temporary_pillar_navigation_terminal'
+            $state = $raise.state
+            $column = Invoke-TemporaryScaffoldColumn -InitialState $state -Source $source `
+                -Site $highSite.site -Role 'high' -Height 3 `
+                -RaiseNavigationActionId ([string](Get-ObjectProperty $raise.terminal 'action_id'))
+            $state = $column.state
+            foreach ($position in $column.positions) { $temporaryPositions.Add($position) }
+            foreach ($scaffold in $column.scaffolds) { $temporaryScaffolds.Add($scaffold) }
+            $temporaryColumns.Add([ordered]@{
+                    role = 'high'; height = 3; base_position = $highSite.site.target
+                    top_position = $column.top_position
+                })
+            $temporaryBasePosition = $highSite.site.target
+        }
     }
 
-    for ($row = 2; $row -lt $Height; $row++) {
+    $firstElevatedRow = if ($MovementCapabilityOnly) { $Height } else { 2 }
+    for ($row = $firstElevatedRow; $row -lt $Height; $row++) {
         # Every elevated row is split far-to-near. Each one-entry Action receives
         # its own post-face frame so a nearer block cannot hide a farther UP face.
         $reorientationTargets = @($previousRowTargets | Where-Object {
@@ -3425,7 +3576,7 @@ function Invoke-WallGate {
         })
     }
 
-    if ($Width -eq 5) {
+    if ($Width -eq 5 -and -not $MovementCapabilityOnly) {
         $descentSteps = @(
             [pscustomobject]@{
                 name = 'high_top_to_medium_top'
@@ -3752,11 +3903,18 @@ function Invoke-WallGate {
         throw "oak-log inventory ledger did not decrease by exactly $permanentBlockCount"
     }
     $targets = @($allTargets)
-    $oracle = New-WallExternalOracleManifest -Targets $targets `
-        -ExpectedState (Get-ObjectProperty $source 'state') `
-        -SourcePosition (Get-ObjectProperty $source 'position') `
-        -TemporaryPositions @($temporaryPositions)
-    $gateName = "wall-${Width}x${Height}"
+    $oracle = if ($MovementCapabilityOnly) {
+        New-GateCExternalOracleManifest `
+            -ExpectedState (Get-ObjectProperty $source 'state') `
+            -SourcePosition (Get-ObjectProperty $source 'position') `
+            -TemporaryPositions @($temporaryPositions)
+    } else {
+        New-WallExternalOracleManifest -Targets $targets `
+            -ExpectedState (Get-ObjectProperty $source 'state') `
+            -SourcePosition (Get-ObjectProperty $source 'position') `
+            -TemporaryPositions @($temporaryPositions)
+    }
+    $gateName = if ($MovementCapabilityOnly) { 'gate-c' } else { "wall-${Width}x${Height}" }
     return [ordered]@{
         gate = $gateName
         wall_dimensions = [ordered]@{ width = $Width; height = $Height; depth = 1 }
@@ -3771,13 +3929,23 @@ function Invoke-WallGate {
         foundation_evidence = 'policy_visible_white_wool_up_faces'
         row_actions = @($rowActions)
         row_phase_count = $rowActions.Count
-        wall_placement_action_count = @($rowActions | ForEach-Object {
-                [int](Get-ObjectProperty $_ 'action_count')
-            } | Measure-Object -Sum).Sum
+        wall_placement_action_count = if ($rowActions.Count -eq 0) {
+            0
+        } else {
+            @($rowActions | ForEach-Object {
+                    [int](Get-ObjectProperty $_ 'action_count')
+                } | Measure-Object -Sum).Sum
+        }
         temporary_scaffold = $temporaryScaffolds[0]
         temporary_scaffolds = @($temporaryScaffolds)
         temporary_scaffold_count = $temporaryScaffolds.Count
-        temporary_shape = if ($Width -eq 5) { '3-2-1 staircase' } else { 'single column' }
+        temporary_shape = if ($MovementCapabilityOnly) {
+            '2-1 staircase'
+        } elseif ($Width -eq 5) {
+            '3-2-1 staircase'
+        } else {
+            'single column'
+        }
         temporary_columns = @($temporaryColumns)
         temporary_column_count = $temporaryColumns.Count
         descent_route = @($descentRoute)
@@ -3785,9 +3953,13 @@ function Invoke-WallGate {
         total_action_count = @($script:GateEvents | Where-Object {
                 (Get-ObjectProperty $_ 'event') -ceq 'action_accepted'
             }).Count
-        maximum_entries_per_action = @($rowActions | ForEach-Object {
-                [int](Get-ObjectProperty $_ 'maximum_entries_per_action')
-            } | Measure-Object -Maximum).Maximum
+        maximum_entries_per_action = if ($rowActions.Count -eq 0) {
+            0
+        } else {
+            @($rowActions | ForEach-Object {
+                    [int](Get-ObjectProperty $_ 'maximum_entries_per_action')
+                } | Measure-Object -Maximum).Maximum
+        }
         phase_entry_limit = 8
         stationary_placement = $true
         exact_target_count = $targets.Count
@@ -3799,6 +3971,16 @@ function Invoke-WallGate {
         inventory_before_placement = $inventoryBefore
         inventory_after_placement = $inventoryAfter
         inventory_delta = $inventoryAfter - $inventoryBefore
+        capability_complete = -not $MovementCapabilityOnly
+        capability_components = if ($MovementCapabilityOnly) {
+            [ordered]@{
+                pillar_scaffold = 'passed'
+                step_down = 'passed'
+                step_up = [string](Get-ObjectProperty $gateCStepUp 'status')
+                edge_bridge = 'not_expressible_without_safe_crouch_bridge_primitive'
+            }
+        } else { $null }
+        step_up_probe = if ($MovementCapabilityOnly) { $gateCStepUp } else { $null }
         external_oracle = $oracle
     }
 }
@@ -3811,6 +3993,10 @@ function Invoke-Wall5x5Gate {
     Invoke-WallGate -Width 5 -Height 5 -ScaffoldLevels 3
 }
 
+function Invoke-BuildingGateC {
+    Invoke-WallGate -Width 5 -Height 5 -ScaffoldLevels 3 -MovementCapabilityOnly
+}
+
 function Write-GateArtifacts {
     param(
         [Parameter(Mandatory)][Collections.IDictionary]$Result,
@@ -3820,10 +4006,18 @@ function Write-GateArtifacts {
     $eventsPath = Join-Path $ArtifactDirectory 'gate-events.jsonl'
     $eventLines = @($script:GateEvents | ForEach-Object { ConvertTo-CompactJson $_ })
     [IO.File]::WriteAllLines($eventsPath, $eventLines, $script:Utf8NoBom)
+    $gateResult = Get-ObjectProperty $Result 'gate_result'
+    $capabilityComplete = Get-ObjectProperty $gateResult 'capability_complete'
     $manifest = [ordered]@{
         schema_version = 1
         gate = $Gate
-        status = if ($null -eq $Failure) { 'passed' } else { 'failed' }
+        status = if ($null -ne $Failure) {
+            'failed'
+        } elseif ($capabilityComplete -is [bool] -and -not [bool]$capabilityComplete) {
+            'incomplete'
+        } else {
+            'passed'
+        }
         fixed_tools = @($script:AllowedTools)
         fixed_five_only = $true
         normal_player_actions_only = $true
@@ -3836,7 +4030,7 @@ function Write-GateArtifacts {
     [IO.File]::WriteAllText(
         (Join-Path $ArtifactDirectory 'gate-result.json'),
         (ConvertTo-Json $manifest -Depth 100), $script:Utf8NoBom)
-    if ($Gate -cin @('wall-3x3', 'wall-5x5') -and
+    if ($Gate -cin @('wall-3x3', 'wall-5x5', 'gate-c') -and
         $null -ne (Get-ObjectProperty $Result 'gate_result')) {
         $oracle = Get-ObjectProperty (Get-ObjectProperty $Result 'gate_result') 'external_oracle'
         if ($null -eq $oracle) { throw 'wall gate did not produce an external oracle manifest' }
@@ -3863,6 +4057,7 @@ function Invoke-McmcpConstructionCapabilityGate {
             'state-ref-ttl' { Invoke-PlacementGate -UseStateRef }
             'wall-3x3' { Invoke-Wall3x3Gate }
             'wall-5x5' { Invoke-Wall5x5Gate }
+            'gate-c' { Invoke-BuildingGateC }
         }
     } catch {
         $primaryFailure = $_

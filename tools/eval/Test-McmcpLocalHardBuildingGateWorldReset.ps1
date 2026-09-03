@@ -48,7 +48,7 @@ Assert-True ([Text.RegularExpressions.Regex]::IsMatch(
 Assert-True ($resetSource -notmatch '(?i)docker') 'local reset is coupled to Docker'
 Assert-True ($resetSource -notmatch '(?i)mcp-token|token\.json') 'local reset touches or names token state'
 Assert-True ($resetSource -notmatch '(?i)Remove-Item') 'local reset contains a recursive-capable removal command'
-Assert-True ($resetSource -match "ValidateSet\('navigation', 'faces-place', 'state-ref-ttl', 'wall-3x3', 'wall-5x5'\)") `
+Assert-True ($resetSource -match "ValidateSet\('navigation', 'faces-place', 'state-ref-ttl', 'wall-3x3', 'wall-5x5', 'gate-c'\)") `
     'gate allow-list changed'
 Assert-True ($resetSource -match [regex]::Escape($script:ArchiveSha256)) 'known archive hash is absent'
 Assert-True ($resetSource -match [regex]::Escape($script:PlayerSha256)) 'known player hash is absent'

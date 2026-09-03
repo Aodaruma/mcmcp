@@ -13,6 +13,39 @@ function Assert-True {
     if (-not $Condition) { throw "capability gate mock test failed: $Message" }
 }
 
+# Parse the production runner, not a copied fixture, so Gate C cannot silently
+# disappear from the public selector/dispatcher or grow a command/fixture escape
+# hatch.  Runtime transport still enforces the fixed-five allowlist separately.
+$runnerTokens = $null
+$runnerParseErrors = $null
+$runnerAst = [Management.Automation.Language.Parser]::ParseFile(
+    (Resolve-Path -LiteralPath $runner), [ref]$runnerTokens, [ref]$runnerParseErrors)
+Assert-True (@($runnerParseErrors).Count -eq 0) 'production runner did not parse'
+$gateCFunctions = @($runnerAst.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -cin @('New-GateCExternalOracleManifest',
+                'Invoke-BuildingGateC')
+        }, $true))
+Assert-True ($gateCFunctions.Count -eq 2) `
+    'Gate C production functions are missing or duplicated'
+$runnerSource = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $runner))
+Assert-True ($runnerSource -match
+        "ValidateSet\('navigation', 'faces-place', 'state-ref-ttl', 'wall-3x3', 'wall-5x5', 'gate-c'\)" -and
+    $runnerSource -match "'gate-c' \{ Invoke-BuildingGateC \}" -and
+    $runnerSource -notmatch '(?i)brew') `
+    'Gate C selector/dispatch changed or construction runner crossed into brew scope'
+$runnerCommands = @($runnerAst.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.CommandAst]
+        }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        })
+Assert-True (@($runnerCommands | Where-Object {
+            $_ -cin @('docker', 'Set-Block', 'Fill-Block', 'Invoke-Expression')
+        }).Count -eq 0) `
+    'Gate C runner contains a command/fixture mutation escape hatch'
+
 function New-MockState {
     [pscustomobject]@{
         schema_version = 1
@@ -2301,6 +2334,114 @@ Assert-True (@($feetFilteredFoundations | Where-Object {
         }).Count -eq 0) `
     'mock visible-surface delivery did not exclude the support below player feet'
 $script:MockWallPlayer = $savedMockPlayer
+
+# Gate C reuses only the two lowest columns of the audited staircase.  It places
+# no permanent wall cells, proves the two one-block descents, probes one upward
+# edge from fresh delivered policy evidence, returns to ground, and recovers all
+# three temporary blocks.  The result remains explicitly incomplete until a safe
+# crouch/edge-bridge primitive exists.
+$script:MockWallPlaced = 0
+$script:MockWallInventory = 64
+$script:MockWallAction = 0
+$script:MockWallRowFace = 0
+$script:MockWallCleanupFace = 0
+$script:MockWallNavigation = 0
+$script:MockWallPillar = 0
+$script:MockWallClear = 0
+$script:MockWallCollect = 0
+$script:MockWallWait = 0
+$script:MockTemporaryCleared = $false
+$script:MockWallPlacedTargets = @()
+$script:MockWallTopTargetKeys = [Collections.Generic.List[string]]::new()
+$script:MockWallPlacementRequests = [Collections.Generic.List[object]]::new()
+$script:MockTemporaryClearKeys = [Collections.Generic.List[string]]::new()
+$script:MockWallDropProbes = 0
+$script:MockPassivePickup = $true
+$script:MockRejectNextCollectStart = $false
+$script:MockPendingPassiveRecoveryPickup = $false
+$script:MockFrameCounter = 0
+$script:MockLastFaceFrame = -1
+$script:MockLastPlacementFrame = -1
+$script:MockPendingStaleStateCalls = 0
+$script:MockWorldRevision = 1L
+$script:MockPendingStaleSurfaceDeliveries = 0
+$script:MockFrameAdvanceDelayCalls = 0
+$script:MockSurfaceDeliveryFrame = @{}
+$script:MockWallPlayer = $wall5Player
+$script:MockWallFoundation = @($wall5Foundation)
+$script:MockWallTraversability = @(
+    $wall5TemporaryNavigation, $wall5StagingNavigation, $wall5LowNavigation,
+    $wall5DescentNavigation, $wall5LowTopNavigation, $wall5MediumTopNavigation)
+$script:MockPillarNavigationTarget = $wall5StagingTarget
+$script:MockPillarNavigationTargetKeys = @(
+    (Get-BlockPositionKey $wall5TemporaryTarget),
+    (Get-BlockPositionKey $wall5StagingTarget),
+    (Get-BlockPositionKey $wall5LowTarget))
+$script:MockRequireAdjacentDescent = $true
+$script:MockTemporarySurfaces = @{}
+$script:MockTemporaryPositions = @()
+$script:MockCurrentDropRecord = $null
+$script:MockPlayerPoseEvents = [Collections.Generic.List[object]]::new()
+$script:MockNavigationEdges = [Collections.Generic.List[object]]::new()
+$script:GateEvents = [Collections.Generic.List[object]]::new()
+$script:SourceObservationCount = 0
+$script:SourceObservationForbidden = $false
+
+$gateCResult = Invoke-BuildingGateC
+Assert-True ($gateCResult.gate -ceq 'gate-c' -and
+    -not $gateCResult.capability_complete -and
+    $gateCResult.wall_placement_action_count -eq 0 -and
+    $gateCResult.exact_target_count -eq 0) `
+    'Gate C overstated capability completion or permanent construction'
+Assert-True ($gateCResult.temporary_shape -ceq '2-1 staircase' -and
+    $gateCResult.temporary_scaffold_count -eq 3 -and
+    $gateCResult.temporary_column_count -eq 2 -and
+    (@($gateCResult.temporary_columns | ForEach-Object { $_.role }) -join ',') -ceq
+        'low,medium' -and
+    (@($gateCResult.temporary_columns | ForEach-Object { $_.height }) -join ',') -ceq
+        '1,2') `
+    'Gate C did not retain its bounded two-column scaffold profile'
+Assert-True ($gateCResult.capability_components.pillar_scaffold -ceq 'passed' -and
+    $gateCResult.capability_components.step_down -ceq 'passed' -and
+    $gateCResult.capability_components.step_up -ceq 'passed' -and
+    $gateCResult.capability_components.edge_bridge -ceq
+        'not_expressible_without_safe_crouch_bridge_primitive' -and
+    $gateCResult.step_up_probe.target_from_policy_delivery -and
+    $gateCResult.step_up_probe.returned_to_ground) `
+    'Gate C did not separate proved movement from the unimplemented bridge gap'
+Assert-True ($gateCResult.descent_action_count -eq 2 -and
+    (@($gateCResult.descent_route | ForEach-Object { $_.step }) -join ',') -ceq
+        'medium_top_to_low_top,low_top_to_ground' -and
+    @($gateCResult.descent_route | Where-Object {
+            $_.horizontal_manhattan -ne 1 -or $_.absolute_y_delta -ne 1 -or
+            -not $_.target_from_policy_delivery
+        }).Count -eq 0) `
+    'Gate C did not retain two delivery-backed one-block descent proofs'
+Assert-True ($script:MockWallAction -eq 23 -and
+    $gateCResult.total_action_count -eq 23 -and
+    $script:MockWallPlaced -eq 0 -and $script:MockWallPillar -eq 3 -and
+    $script:MockWallNavigation -eq 11 -and $script:MockWallClear -eq 3 -and
+    $script:MockWallWait -eq 3 -and $script:MockWallCollect -eq 0 -and
+    $script:MockWallCleanupFace -eq 3 -and $script:MockWallRowFace -eq 0) `
+    'Gate C mock lifecycle did not stay within its exact temporary-only action set'
+Assert-True ($gateCResult.inventory_before_placement -eq 64 -and
+    $gateCResult.inventory_after_placement -eq 64 -and
+    $gateCResult.inventory_delta -eq 0 -and
+    $script:MockTemporarySurfaces.Count -eq 0) `
+    'Gate C did not recover every temporary material and clear every scaffold'
+Assert-True ($gateCResult.external_oracle.expected_changed_cell_count -eq 0 -and
+    @($gateCResult.external_oracle.expected_changed_cells).Count -eq 0 -and
+    $gateCResult.external_oracle.temporary_scaffold_count -eq 3 -and
+    $gateCResult.external_oracle.expected_inventory_delta -eq 0 -and
+    $gateCResult.external_oracle.reject_unlisted_changes) `
+    'Gate C external oracle permits a permanent or unlisted world mutation'
+$gateCAccepted = @($script:GateEvents | Where-Object { $_.event -ceq 'action_accepted' })
+$gateCTerminal = @($script:GateEvents | Where-Object { $_.event -ceq 'action_terminal' })
+Assert-True ($gateCAccepted.Count -eq 23 -and $gateCTerminal.Count -eq 23 -and
+    @($gateCTerminal | Where-Object { $_.state -cne 'succeeded' }).Count -eq 0 -and
+    (@($gateCAccepted | ForEach-Object { $_.action_id }) -join ',') -ceq
+        (@($gateCTerminal | ForEach-Object { $_.action_id }) -join ',')) `
+    'Gate C lost exact accepted-to-terminal Action lifecycle matching'
 
 # A movement-only route-replan budget terminal is retried only as a bounded new
 # Action slice. The retry must use a new state and an exact-coordinate record

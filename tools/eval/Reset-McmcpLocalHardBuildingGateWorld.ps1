@@ -5,7 +5,7 @@ param(
     [string]$InstanceRoot = 'C:\Users\aod\AppData\Roaming\PrismLauncher\instances\MCMCP-Validation',
 
     [Parameter(Mandatory)]
-    [ValidateSet('navigation', 'faces-place', 'state-ref-ttl', 'wall-3x3', 'wall-5x5')]
+    [ValidateSet('navigation', 'faces-place', 'state-ref-ttl', 'wall-3x3', 'wall-5x5', 'gate-c')]
     [string]$Gate,
 
     # Only for an audited empty local profile. Existing saves are always backed up.
