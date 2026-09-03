@@ -216,6 +216,18 @@ r16-r27も`aod-mimoid`の停止済みDocker worldを毎回fresh baselineへ復�
 
 r25 / r27のbefore SHA-256は同じ`C7DC87113500E74A4BF9635516D63EE897C519A961E44C3ADB1380E89D3A793A`、after SHA-256も同じ`8FFFC194ED36D1A67B302E9405B082F6B78F813F5D0E9459DEB5E0BFDD6A7B69`である。両runはmanifestが期待する恒久25 cellと独立MCA差分25が一致し、一時6 cellはairへ戻った。全r16-r27で終了時`control_ready=true`、`all_actions_terminal=true`を確認し、一時token pathも残していない。artifact directoryは`F:\mcmcp-testlab\20260902-hard-building-v1\eval-artifacts\20260904-wall-5x5-r16`から`r27`である。
 
+## Gate B `wall-5x5` remote r28-r30追加結果
+
+r27後のレビュー修正をfresh baselineから3回追加検証した。3 runとも恒久壁25 / 25を通常player Actionで施工し、`action_accepted == action_terminal`、終了時`control_ready=true`を保ったが、後処理のfalse negativeを順に露出したためgate判定はFAILのまま保持する。
+
+| Run | 到達点・結果 | 根因 | 採用修正・証跡 |
+|---|---|---|---|
+| r28 | 恒久25 / 25、足場1 / 6撤去、90 / 90 terminal（87 succeeded / 3 failed）。offlineは恒久25＋残存足場5、extras 0 | 高さ58の足場から落ちたitemが地上Y=56まで達した一方、drop filterが撤去位置近傍だけを見てY=57未満を除外した。itemは存在するのにinventory差0 / drop 0と判定した探索範囲外false negative | 撤去位置からcleanup groundまでのbounded swept volumeと水平±2を`position_bounds`にし、3×3 / 5×5ごとの下限Yを明示した。証跡は`F:\mcmcp-testlab\20260902-hard-building-v1\eval-artifacts\20260904-wall-5x5-r28`（before `C7DC8711...793A`、after `68D4D185...288B`） |
+| r29 | 恒久25 / 25、足場2 / 6撤去、92 / 92 terminal（89 succeeded / 3 failed）。cleanup #2の接近Actionは1.042 block進んで`BUDGET_EXCEEDED`となったが、その途中でitemを回収済み | recovery用navigationが失敗terminal後も旧exact targetの再配達を待った。playerがすでにitemとtarget付近を横切ったため同targetは40 pollで現れず、material ledgerを再確認する前に`no delivered scaffold navigation target...`としたfalse negative | recovery接近だけはreslice可能な失敗1回でfresh stateを返し、旧targetを待たずinventory / drop台帳へ戻す。通常navigationのreslice契約は変えない。証跡は`F:\mcmcp-testlab\20260902-hard-building-v1\eval-artifacts\20260904-wall-5x5-r29`（before `C7DC8711...793A`、after `04E4827F...1120`） |
+| r30 | 恒久25 / 25、足場6 / 6を全撤去、111 / 111 terminal（107 succeeded / 4 failed）。offline afterはr25 / r27と同じ`8FFFC194...7B69`で恒久25 cellだけが残った。終了時はinventory 38＋最後の可視drop 1＋恒久25＝施工前64個を保存 | `Get-RecordsFromState`は各cursorを`next_cursor=null`まで完走していたが、serverの`ObservationFrameStore`が最終page後もleaseを60秒保持した。cleanup #2の全域traversabilityとcleanup #3の295件drop周辺queryで2枠が残り、cleanup #6の3件目が`SERVER_BUSY`になった | 最終pageでleaseをcompletedとしてactive 2枠から即時除外し、同一cursorのpage replayと既存expiryは維持する。上限増加や60秒sleepでは回避しない。証跡は`F:\mcmcp-testlab\20260902-hard-building-v1\eval-artifacts\20260904-wall-5x5-r30`（before `C7DC8711...793A`、after `8FFFC194...7B69`） |
+
+r28-r30はいずれもworld変更そのものではなく、観測後処理が実際より厳しく失敗したrunである。r30はblock oracleと64個のmaterial conservationまで成立したが、最後のdropをinventoryへ戻す前にpaginationが停止したため完全PASSへ昇格しない。次runでは、completed lease後の新規paginationとcursor replayのcore回帰を通したJARを使い、同じbaselineから6回の撤去・6個のinventory回収まで再確認する。
+
 ## Gate B `wall-5x5`再現・追加実施手順（既存remote環境の例）
 
 状態は**実worldで2回完全合格済み**である。以下はr25 / r27を再現する手順であり、mockの99 Actionをliveの固定値にはしない。実際のAction数は観測由来の接近・reslice・drop回収方式によって変わる。また、以下は既存`aod-mimoid`環境を再利用する場合の例であり、次回の実world検証hostを固定しない。実施時はその時点のユーザー指定hostに従い、local PCの場合はlocal用reset / instance pathへ読み替える。

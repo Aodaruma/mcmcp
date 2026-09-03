@@ -1598,6 +1598,24 @@ function Get-WallGroundTraversabilityRecords {
     return @(Get-WallScaffoldTraversabilityRecords -State $State -AdditionalHeight 0)
 }
 
+function Get-ExactScaffoldTraversabilityRecords {
+    param(
+        [Parameter(Mandatory)][object]$State,
+        [Parameter(Mandatory)][object]$ExpectedTarget
+    )
+    $dimension = [string](Get-ObjectProperty $ExpectedTarget 'dimension')
+    $x = [int](Get-ObjectProperty $ExpectedTarget 'x')
+    $y = [int](Get-ObjectProperty $ExpectedTarget 'y')
+    $z = [int](Get-ObjectProperty $ExpectedTarget 'z')
+    $bounds = [ordered]@{
+        dimension = $dimension
+        min_x = $x; min_y = $y; min_z = $z
+        max_x = $x; max_y = $y; max_z = $z
+    }
+    return @(Get-RecordsFromState -State $State -Kinds @('traversability') `
+        -Filter ([ordered]@{ position_bounds = $bounds }))
+}
+
 function Test-SafeTraversabilityRecord {
     param([Parameter(Mandatory)][object]$Record)
     return (Get-ObjectProperty $Record 'kind') -ceq 'traversability' -and
@@ -1989,7 +2007,10 @@ function Wait-ForExactScaffoldNavigationRecord {
     $state = $InitialState
     for ($poll = 1; $poll -le $MaximumPolls; $poll++) {
         $worldRevision = Get-CurrentWorldRevision -State $state
-        $records = @(Get-WallScaffoldTraversabilityRecords -State $state | Where-Object {
+        # This is an exact-coordinate wait, so ask the public filter for that
+        # one cell instead of opening a multi-page lease for the whole worksite.
+        $records = @(Get-ExactScaffoldTraversabilityRecords -State $state `
+                -ExpectedTarget $ExpectedTarget | Where-Object {
                 $recordRevision = Get-ObjectProperty $_ 'world_revision'
                 ($recordRevision -is [sbyte] -or $recordRevision -is [byte] -or
                     $recordRevision -is [int16] -or $recordRevision -is [uint16] -or
@@ -2179,6 +2200,7 @@ function Invoke-TemporaryScaffoldNavigation {
         [Parameter(Mandatory)][double]$Tolerance,
         [Parameter(Mandatory)][string]$Step,
         [Parameter(Mandatory)][string]$Event,
+        [switch]$ReturnAfterResliceableFailure,
         [ValidateRange(1, 8)][int]$MaximumSlices =
             $script:MaximumScaffoldNavigationSlices
     )
@@ -2262,6 +2284,46 @@ function Invoke-TemporaryScaffoldNavigation {
         }
         if (-not $resliceAllowed) {
             throw "Action ended as $(Get-ObjectProperty $terminal 'state'): $(Get-ObjectProperty $failure 'code')"
+        }
+        if ($ReturnAfterResliceableFailure) {
+            # A movement Action can cross the item before a route-shape replan
+            # closes it as failed.  Recovery is governed by the material/drop
+            # ledger, so return one fresh state to that caller instead of
+            # waiting for the now-occupied exact target to be delivered again.
+            $nextState = Get-FreshState
+            $fromX = [Math]::Floor([double](Get-ObjectProperty $from 'x'))
+            $fromY = [Math]::Floor([double](Get-ObjectProperty $from 'y'))
+            $fromZ = [Math]::Floor([double](Get-ObjectProperty $from 'z'))
+            $dx = [Math]::Abs([int](Get-ObjectProperty $target 'x') - $fromX)
+            $dy = [Math]::Abs([int](Get-ObjectProperty $target 'y') - $fromY)
+            $dz = [Math]::Abs([int](Get-ObjectProperty $target 'z') - $fromZ)
+            Add-GateEvent -Event $Event -Detail ([ordered]@{
+                    step = $Step
+                    action_id = $actionId
+                    terminal_state = [string](Get-ObjectProperty $terminal 'state')
+                    failure_code = [string](Get-ObjectProperty $failure 'code')
+                    reslice_required = $true
+                    material_recheck_required = $true
+                    from = $from
+                    target = $target
+                    target_verbatim = [object]::ReferenceEquals(
+                        $target, $request.program.body[0].target)
+                    horizontal_manhattan = $dx + $dz
+                    absolute_y_delta = $dy
+                    tolerance = $request.program.body[0].tolerance
+                    slice = $slice
+                    maximum_slices = $MaximumSlices
+                    action_ids = @($actionIds)
+                })
+            return [pscustomobject]@{
+                state = $nextState
+                terminal = $terminal
+                target = $target
+                horizontal_manhattan = $dx + $dz
+                absolute_y_delta = $dy
+                slices = $slice
+                reslice_required = $true
+            }
         }
         if ($slice -eq $MaximumSlices) {
             throw "temporary scaffold navigation exhausted its bounded $MaximumSlices Action slices"
@@ -2464,16 +2526,26 @@ function New-TemporaryDropSettleActionRequest {
 function Get-TemporaryDropRecords {
     param(
         [Parameter(Mandatory)][object]$State,
-        [Parameter(Mandatory)][object]$TemporaryPosition
+        [Parameter(Mandatory)][object]$TemporaryPosition,
+        [AllowNull()][Nullable[int]]$MinimumY = $null
     )
+    $temporaryY = [int](Get-ObjectProperty $TemporaryPosition 'y')
+    $minimumDropY = if ($null -eq $MinimumY) {
+        $temporaryY - 1
+    } else {
+        [int]$MinimumY
+    }
+    if ($minimumDropY -gt $temporaryY + 1) {
+        throw 'temporary drop swept-volume minimum y exceeds its maximum'
+    }
     $bounds = [ordered]@{
         dimension = [string](Get-ObjectProperty $TemporaryPosition 'dimension')
-        min_x = [int](Get-ObjectProperty $TemporaryPosition 'x') - 1
-        min_y = [int](Get-ObjectProperty $TemporaryPosition 'y') - 1
-        min_z = [int](Get-ObjectProperty $TemporaryPosition 'z') - 1
-        max_x = [int](Get-ObjectProperty $TemporaryPosition 'x') + 1
-        max_y = [int](Get-ObjectProperty $TemporaryPosition 'y') + 1
-        max_z = [int](Get-ObjectProperty $TemporaryPosition 'z') + 1
+        min_x = [int](Get-ObjectProperty $TemporaryPosition 'x') - 2
+        min_y = $minimumDropY
+        min_z = [int](Get-ObjectProperty $TemporaryPosition 'z') - 2
+        max_x = [int](Get-ObjectProperty $TemporaryPosition 'x') + 2
+        max_y = $temporaryY + 1
+        max_z = [int](Get-ObjectProperty $TemporaryPosition 'z') + 2
     }
     $records = @(Get-RecordsFromState -State $State -Kinds @('visible_entity') `
         -Filter ([ordered]@{
@@ -2507,10 +2579,11 @@ function Get-TemporaryDropRecords {
 function Assert-NoTemporaryDropRecord {
     param(
         [Parameter(Mandatory)][object]$State,
-        [Parameter(Mandatory)][object]$TemporaryPosition
+        [Parameter(Mandatory)][object]$TemporaryPosition,
+        [AllowNull()][Nullable[int]]$MinimumY = $null
     )
     $eligible = @(Get-TemporaryDropRecords -State $State `
-        -TemporaryPosition $TemporaryPosition)
+        -TemporaryPosition $TemporaryPosition -MinimumY $MinimumY)
     if ($eligible.Count -ne 0) {
         throw "temporary pillar cleanup area already contains $($eligible.Count) oak-log drop(s)"
     }
@@ -2549,6 +2622,7 @@ function Wait-ForTemporaryDropRecoveryEvidence {
         [Parameter(Mandatory)][object]$InitialState,
         [Parameter(Mandatory)][object]$TemporaryPosition,
         [Parameter(Mandatory)][long]$InventoryBeforeClear,
+        [AllowNull()][Nullable[int]]$MinimumY = $null,
         [ValidateRange(1, 40)][int]$MaximumPolls = 40,
         [ValidateRange(1, 1000)][int]$DelayMilliseconds = 50,
         [switch]$AllowUnavailable
@@ -2565,7 +2639,7 @@ function Wait-ForTemporaryDropRecoveryEvidence {
             $inventoryAfterSettle = Get-InventoryCount -State $state `
                 -Item 'minecraft:oak_log'
             $visibleDrops = @(Get-TemporaryDropRecords -State $state `
-                -TemporaryPosition $TemporaryPosition)
+                -TemporaryPosition $TemporaryPosition -MinimumY $MinimumY)
             $inventoryDelta = $inventoryAfterSettle - $InventoryBeforeClear
 
             # An unchanged inventory with no visible item is not contradictory:
@@ -2686,18 +2760,55 @@ function Select-TemporaryDropRecoveryApproachRecord {
         [Parameter(Mandatory)][object]$State,
         [Parameter(Mandatory)][object]$TemporaryPosition
     )
-    $bounds = [ordered]@{
-        dimension = [string](Get-ObjectProperty $TemporaryPosition 'dimension')
-        min_x = [double](Get-ObjectProperty $TemporaryPosition 'x')
-        min_y = [double](Get-ObjectProperty $TemporaryPosition 'y')
-        min_z = [double](Get-ObjectProperty $TemporaryPosition 'z')
-        max_x = [double](Get-ObjectProperty $TemporaryPosition 'x')
-        max_y = [double](Get-ObjectProperty $TemporaryPosition 'y')
-        max_z = [double](Get-ObjectProperty $TemporaryPosition 'z')
+    $world = Get-ObjectProperty $State 'world'
+    $player = Get-ObjectProperty $world 'position'
+    $dimension = [string](Get-ObjectProperty $TemporaryPosition 'dimension')
+    $goalX = [double](Get-ObjectProperty $TemporaryPosition 'x')
+    $goalY = [double](Get-ObjectProperty $TemporaryPosition 'y')
+    $goalZ = [double](Get-ObjectProperty $TemporaryPosition 'z')
+    $playerX = [double](Get-ObjectProperty $player 'x')
+    $playerY = [double](Get-ObjectProperty $player 'y')
+    $playerZ = [double](Get-ObjectProperty $player 'z')
+    $currentGoalDistance = [Math]::Sqrt(
+        [Math]::Pow($playerX - $goalX, 2) +
+        [Math]::Pow($playerY - $goalY, 2) +
+        [Math]::Pow($playerZ - $goalZ, 2))
+    $candidates = foreach ($record in $Records) {
+        if (-not (Test-SafeTraversabilityRecord $record)) { continue }
+        $target = Get-ObjectProperty $record 'navigation_target'
+        if ((Get-ObjectProperty $target 'dimension') -cne $dimension) { continue }
+        $targetX = [double](Get-ObjectProperty $target 'x')
+        $targetY = [double](Get-ObjectProperty $target 'y')
+        $targetZ = [double](Get-ObjectProperty $target 'z')
+        $travelDistance = [Math]::Sqrt(
+            [Math]::Pow($targetX - $playerX, 2) +
+            [Math]::Pow($targetY - $playerY, 2) +
+            [Math]::Pow($targetZ - $playerZ, 2))
+        $goalDistance = [Math]::Sqrt(
+            [Math]::Pow($targetX - $goalX, 2) +
+            [Math]::Pow($targetY - $goalY, 2) +
+            [Math]::Pow($targetZ - $goalZ, 2))
+        if ($travelDistance -ge 1 -and $travelDistance -le 8 -and
+            $goalDistance -lt $currentGoalDistance) {
+            [pscustomobject]@{
+                record = $record
+                goal_distance = $goalDistance
+                progress = $currentGoalDistance - $goalDistance
+                travel_distance = $travelDistance
+            }
+        }
     }
-    return Select-NavigationRecordTowardBounds -Records $Records `
-        -WorldPosition (Get-ObjectProperty (Get-ObjectProperty $State 'world') 'position') `
-        -Bounds $bounds
+    $selected = @($candidates | Sort-Object `
+            @{ Expression = 'goal_distance'; Descending = $false },
+            @{ Expression = 'progress'; Descending = $true },
+            @{ Expression = 'travel_distance'; Descending = $false },
+            @{ Expression = {
+                    ConvertTo-CompactJson (Get-ObjectProperty $_.record 'navigation_target')
+                }; Descending = $false } | Select-Object -First 1)
+    if ($selected.Count -ne 1) {
+        throw 'no current safe traversability makes three-dimensional progress toward temporary recovery'
+    }
+    return $selected[0].record
 }
 
 function Get-CurrentTemporaryDropPickupTraversabilityRecords {
@@ -3358,6 +3469,11 @@ function Invoke-WallGate {
             # occlude the next inner block from the ground cleanup stance.
             @{ Expression = { [int](Get-ObjectProperty $_ 'column_height') }; Descending = $false },
             @{ Expression = { Get-BlockPositionKey (Get-ObjectProperty $_ 'position') }; Descending = $false })
+    $cleanupRecoveryMinimumY = if ($Width -eq 5) {
+        [int](Get-ObjectProperty $cleanupGroundTarget 'y')
+    } else {
+        [int](Get-ObjectProperty $temporaryBasePosition 'y')
+    }
     for ($cleanupIndex = 0; $cleanupIndex -lt $cleanupScaffolds.Count; $cleanupIndex++) {
         $scaffold = $cleanupScaffolds[$cleanupIndex]
         $temporaryPosition = Get-ObjectProperty $scaffold 'position'
@@ -3408,7 +3524,8 @@ function Invoke-WallGate {
             -ExpectedState (Get-ObjectProperty $source 'state') -Faces $null
         $state = $currentTemporary.state
         $temporarySurface = $currentTemporary.surface
-        Assert-NoTemporaryDropRecord -State $state -TemporaryPosition $temporaryPosition
+        Assert-NoTemporaryDropRecord -State $state -TemporaryPosition $temporaryPosition `
+            -MinimumY $cleanupRecoveryMinimumY
         $inventoryBeforeClear = Get-InventoryCount -State $state -Item 'minecraft:oak_log'
         $clearRequest = New-TemporaryClearActionRequest -Surface $temporarySurface
         $clearFrameId = Get-ObservationFrameId -State $state
@@ -3425,7 +3542,9 @@ function Invoke-WallGate {
         for ($recoveryApproach = 0; $recoveryApproach -le 2; $recoveryApproach++) {
             $recoveryEvidence = Wait-ForTemporaryDropRecoveryEvidence `
                 -InitialState $state -TemporaryPosition $temporaryPosition `
-                -InventoryBeforeClear $inventoryBeforeClear -AllowUnavailable
+                -InventoryBeforeClear $inventoryBeforeClear `
+                -MinimumY $cleanupRecoveryMinimumY `
+                -AllowUnavailable
             $state = Get-ObjectProperty $recoveryEvidence 'state'
             $recovery = Get-ObjectProperty $recoveryEvidence 'recovery'
             $approachGoal = $temporaryPosition
@@ -3484,7 +3603,9 @@ function Invoke-WallGate {
                     -PreviousFrameId $rejectedFrameId
                 $recoveryEvidence = Wait-ForTemporaryDropRecoveryEvidence `
                     -InitialState $state -TemporaryPosition $temporaryPosition `
-                    -InventoryBeforeClear $inventoryBeforeClear -AllowUnavailable
+                    -InventoryBeforeClear $inventoryBeforeClear `
+                    -MinimumY $cleanupRecoveryMinimumY `
+                    -AllowUnavailable
                 $state = Get-ObjectProperty $recoveryEvidence 'state'
                 $recovery = Get-ObjectProperty $recoveryEvidence 'recovery'
                 Add-GateEvent -Event 'wall_temporary_drop_collect_admission_deferred' `
@@ -3551,7 +3672,8 @@ function Invoke-WallGate {
                 -State $state -NavigationRecord $approachRecord `
                 -Tolerance $script:ConstructionNavigationTolerance `
                 -Step "cleanup-$($cleanupIndex + 1)-passive-recovery-$($recoveryApproach + 1)" `
-                -Event 'wall_temporary_drop_passive_approach_terminal'
+                -Event 'wall_temporary_drop_passive_approach_terminal' `
+                -ReturnAfterResliceableFailure
             $state = Get-ObjectProperty $approachResult 'state'
             $recoveryApproachActionIds.Add([string](Get-ObjectProperty `
                 (Get-ObjectProperty $approachResult 'terminal') 'action_id'))

@@ -10,8 +10,8 @@ import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -20,8 +20,8 @@ import java.util.Set;
 import java.util.function.LongSupplier;
 
 /**
- * Thread-safe rolling frame store with bounded announced-frame handles and at most two
- * independently expiring pagination leases.
+ * Thread-safe rolling frame store with bounded announced-frame handles, at most two active
+ * pagination leases, and a two-entry LRU of completed leases for cursor replay.
  * Minecraft objects never enter this boundary.
  */
 public final class ObservationFrameStore {
@@ -30,6 +30,7 @@ public final class ObservationFrameStore {
     public static final int ANNOUNCED_RECORD_LIMIT = 65_536;
     public static final Duration ANNOUNCED_FRAME_IDLE_TIMEOUT = Duration.ofSeconds(60);
     public static final int PAGINATION_LEASE_LIMIT = 2;
+    public static final int COMPLETED_LEASE_REPLAY_LIMIT = 2;
     public static final Duration LEASE_IDLE_TIMEOUT = Duration.ofSeconds(60);
     public static final Duration LEASE_ABSOLUTE_TIMEOUT = Duration.ofMinutes(5);
 
@@ -39,7 +40,7 @@ public final class ObservationFrameStore {
     private final SecureRandom secureRandom;
     private final ArrayDeque<ObservationFrame> rollingFrames = new ArrayDeque<>(ROLLING_FRAME_LIMIT);
     private final LinkedHashMap<String, AnnouncedFrame> announcedFrames = new LinkedHashMap<>();
-    private final Set<Lease> leases = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<Lease> leases = new LinkedHashSet<>();
     private final Map<String, CursorState> cursors = new HashMap<>();
 
     public ObservationFrameStore() {
@@ -104,7 +105,7 @@ public final class ObservationFrameStore {
 
     public synchronized int activePaginationLeases() {
         purgeExpired(nanoTime.getAsLong());
-        return leases.size();
+        return activeLeaseCount();
     }
 
     public synchronized ObservationPage page(
@@ -160,7 +161,7 @@ public final class ObservationFrameStore {
         if (end == selected.size()) {
             return page(frame, selected.subList(0, end), null);
         }
-        if (leases.size() >= PAGINATION_LEASE_LIMIT) {
+        if (activeLeaseCount() >= PAGINATION_LEASE_LIMIT) {
             throw failure(ObservationStoreException.Code.SERVER_BUSY,
                     "All observation pagination leases are in use");
         }
@@ -188,7 +189,7 @@ public final class ObservationFrameStore {
         }
 
         Lease lease = state.lease;
-        lease.lastAccessNanos = now;
+        touchLease(lease, now);
         if (state.cachedPage == null) {
             int end = Math.min(state.offset + limit, lease.selectedRecords.size());
             String nextCursor = end < lease.selectedRecords.size()
@@ -198,8 +199,47 @@ public final class ObservationFrameStore {
                     lease.frame,
                     lease.selectedRecords.subList(state.offset, end),
                     nextCursor);
+            if (nextCursor == null) {
+                lease.completed = true;
+                trimCompletedLeases();
+            }
         }
         return state.cachedPage;
+    }
+
+    private int activeLeaseCount() {
+        return (int) leases.stream()
+                .filter(lease -> !lease.completed)
+                .count();
+    }
+
+    private void touchLease(Lease lease, long now) {
+        leases.remove(lease);
+        lease.lastAccessNanos = now;
+        leases.add(lease);
+    }
+
+    private void trimCompletedLeases() {
+        while (completedLeaseCount() > COMPLETED_LEASE_REPLAY_LIMIT) {
+            Lease leastRecentlyUsed = leases.stream()
+                    .filter(lease -> lease.completed)
+                    .findFirst()
+                    .orElseThrow();
+            invalidateLease(leastRecentlyUsed);
+        }
+    }
+
+    private int completedLeaseCount() {
+        return (int) leases.stream()
+                .filter(lease -> lease.completed)
+                .count();
+    }
+
+    private void invalidateLease(Lease lease) {
+        leases.remove(lease);
+        for (String token : lease.cursorTokens) {
+            cursors.remove(token);
+        }
     }
 
     private String createCursor(Lease lease, int offset) {
@@ -436,6 +476,7 @@ public final class ObservationFrameStore {
         private final List<ObservationRecord> selectedRecords;
         private final long createdNanos;
         private long lastAccessNanos;
+        private boolean completed;
         private final List<String> cursorTokens = new ArrayList<>();
 
         private Lease(

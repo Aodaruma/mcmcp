@@ -177,6 +177,128 @@ class ObservationFrameStoreTest {
         assertThat(last.records()).extracting(record -> ((VisibleSurface) record).position().x())
                 .containsExactly(4);
         assertThat(last.nextCursor()).isNull();
+        assertThat(store.activePaginationLeases()).isZero();
+    }
+
+    @Test
+    void completedLeaseReleasesCapacityWithoutInvalidatingAnyCursorReplay() throws Exception {
+        var clock = new FakeClock();
+        var store = store(clock);
+        store.publish(frame(1, 5));
+
+        ObservationPage first = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 2);
+        ObservationPage second = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 2);
+        assertThat(store.activePaginationLeases()).isEqualTo(2);
+
+        ObservationPage completed = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), first.nextCursor(), 256);
+        assertThat(completed.nextCursor()).isNull();
+        assertThat(store.activePaginationLeases()).isOne();
+
+        ObservationPage replacement = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 2);
+        assertThat(replacement.nextCursor()).isNotNull();
+        assertThat(store.activePaginationLeases()).isEqualTo(2);
+
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), first.nextCursor(), 1))
+                .isSameAs(completed);
+        assertThat(store.activePaginationLeases()).isEqualTo(2);
+
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), second.nextCursor(), 256)
+                .nextCursor()).isNull();
+        ObservationPage replacementCompleted = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE),
+                replacement.nextCursor(), 256);
+        assertThat(replacementCompleted.nextCursor()).isNull();
+        assertThat(store.activePaginationLeases()).isZero();
+
+        clock.advance(Duration.ofSeconds(59));
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), replacement.nextCursor(), 1))
+                .isSameAs(replacementCompleted);
+        clock.advance(Duration.ofSeconds(2));
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), replacement.nextCursor(), 1))
+                .isSameAs(replacementCompleted);
+        clock.advance(ObservationFrameStore.LEASE_IDLE_TIMEOUT);
+        assertFailure(
+                () -> store.page(
+                        id(1), Set.of(ObservationKind.VISIBLE_SURFACE),
+                        replacement.nextCursor(), 1),
+                ObservationStoreException.Code.INVALID_CURSOR);
+    }
+
+    @Test
+    void completedLeaseReplayCacheEvictsTheLeastRecentlyUsedLease() throws Exception {
+        var clock = new FakeClock();
+        var store = store(clock);
+        store.publish(frame(1, 5));
+
+        ObservationPage first = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 2);
+        ObservationPage firstCompleted = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), first.nextCursor(), 256);
+        clock.advance(Duration.ofSeconds(1));
+        ObservationPage second = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 2);
+        store.page(id(1), Set.of(ObservationKind.VISIBLE_SURFACE), second.nextCursor(), 256);
+
+        clock.advance(Duration.ofSeconds(1));
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), first.nextCursor(), 1))
+                .isSameAs(firstCompleted);
+        clock.advance(Duration.ofSeconds(1));
+        ObservationPage third = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 2);
+        ObservationPage thirdCompleted = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), third.nextCursor(), 256);
+
+        assertFailure(
+                () -> store.page(
+                        id(1), Set.of(ObservationKind.VISIBLE_SURFACE), second.nextCursor(), 1),
+                ObservationStoreException.Code.INVALID_CURSOR);
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), first.nextCursor(), 1))
+                .isSameAs(firstCompleted);
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), third.nextCursor(), 1))
+                .isSameAs(thirdCompleted);
+        assertThat(store.activePaginationLeases()).isZero();
+    }
+
+    @Test
+    void rapidCompletedQueriesNeverRetainMoreThanTheReplayLimit() throws Exception {
+        var store = new ObservationFrameStore();
+        store.publish(frame(1, 5));
+        var cursors = new java.util.ArrayList<String>();
+        var completedPages = new java.util.ArrayList<ObservationPage>();
+
+        for (int query = 0; query < 20; query++) {
+            ObservationPage first = store.page(
+                    id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 2);
+            cursors.add(first.nextCursor());
+            completedPages.add(store.page(
+                    id(1), Set.of(ObservationKind.VISIBLE_SURFACE), first.nextCursor(), 256));
+            assertThat(store.activePaginationLeases()).isZero();
+        }
+
+        int firstRetained = cursors.size() - ObservationFrameStore.COMPLETED_LEASE_REPLAY_LIMIT;
+        for (int query = 0; query < firstRetained; query++) {
+            String cursor = cursors.get(query);
+            assertFailure(
+                    () -> store.page(
+                            id(1), Set.of(ObservationKind.VISIBLE_SURFACE), cursor, 1),
+                    ObservationStoreException.Code.INVALID_CURSOR);
+        }
+        for (int query = firstRetained; query < cursors.size(); query++) {
+            assertThat(store.page(
+                    id(1), Set.of(ObservationKind.VISIBLE_SURFACE), cursors.get(query), 1))
+                    .isSameAs(completedPages.get(query));
+        }
     }
 
     @Test

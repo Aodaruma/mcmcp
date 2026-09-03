@@ -686,7 +686,7 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 
 全周visualは既定8 active ClientTick、設定変更時は`ceil(2048 / rays_per_tick)` tickで1 immutable frameを完成させる。完成前のframeを公開せず、内部rolling保持は最新2 frameとする。これとは別に、`agent_get_state`がLLMへ告知した`latest_frame_id`を最大16件、合計65,536 record以下のLRU handleとして保持する。同じIDの再告知またはそのIDによる初回page取得でidle期限を更新し、最終accessから60秒、handle件数またはrecord予算超過時のLRU evictionで失効する。
 
-`cursor=null`の初回pageが続きpageを必要とする場合だけ、そのframeを別のpagination leaseへpinする。leaseは同時最大2件、最終accessから60秒、初回accessから最大5分で失効し、時間は`System.nanoTime`で測る。これによりframe生成速度とLLMの推論待ちを分離しつつ、同じframeを最後まで読める。上限中の3件目は`SERVER_BUSY`、announced handle、rolling frame、pagination leaseのいずれにも保持されないIDは`FRAME_EXPIRED`を返す。world unload、respawn、dimension変更で全frame、announced handle、lease、cursorを破棄する。
+`cursor=null`の初回pageが続きpageを必要とする場合だけ、そのframeを別のpagination leaseへpinする。未完了leaseは同時最大2件で、上限中の3件目は`SERVER_BUSY`を返す。`next_cursor=null`の最終pageを生成したleaseは即座に未完了枠を解放するが、同じcursorの再送へ同じpageを返すため、完了leaseを最終access順のLRU最大2件だけ保持する。3件目の完了時は最終accessが最も古い完了leaseと全cursorを破棄し、以後の再送は`INVALID_CURSOR`とする。未完了・完了とも最終accessから60秒、初回accessから最大5分で失効し、時間は`System.nanoTime`で測る。これにより保持量を固定上限へ抑えながら、frame生成速度とLLMの推論待ちを分離し、読み切ったqueryが次のpaginationを不必要に阻害しない。announced handle、rolling frame、pagination leaseのいずれにも保持されないIDは`FRAME_EXPIRED`を返す。world unload、respawn、dimension変更で全frame、announced handle、lease、cursorを破棄する。
 
 `agent_get_observation`入力:
 

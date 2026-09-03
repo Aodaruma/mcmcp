@@ -100,6 +100,40 @@ function New-MockVisibleItem {
     }
 }
 
+# Exact scaffold waits must use the public coordinate filter rather than open a
+# multi-page lease for every traversability record in the worksite.
+$exactFilterTarget = [pscustomobject]@{
+    dimension = 'minecraft:overworld'; x = -21; y = 57; z = 14
+}
+$script:CapturedExactFilter = $null
+$script:ToolTransport = {
+    param($Tool, $Arguments)
+    if ($Tool -cne 'agent_get_observation') {
+        throw "unexpected exact-filter mock tool: $Tool"
+    }
+    $script:CapturedExactFilter = $Arguments.filter.position_bounds
+    [pscustomobject]@{
+        schema_version = 1; frame_id = 'obs-0123456789abcdef'
+        records = @((New-MockTraversability -Target $exactFilterTarget))
+        next_cursor = $null
+    }
+}
+try {
+    $exactRecords = @(Get-ExactScaffoldTraversabilityRecords `
+            -State (New-MockState) -ExpectedTarget $exactFilterTarget)
+    Assert-True ($exactRecords.Count -eq 1) 'exact scaffold query lost its record'
+    Assert-True ($script:CapturedExactFilter.dimension -ceq 'minecraft:overworld' -and
+        $script:CapturedExactFilter.min_x -eq -21 -and
+        $script:CapturedExactFilter.max_x -eq -21 -and
+        $script:CapturedExactFilter.min_y -eq 57 -and
+        $script:CapturedExactFilter.max_y -eq 57 -and
+        $script:CapturedExactFilter.min_z -eq 14 -and
+        $script:CapturedExactFilter.max_z -eq 14) `
+        'exact scaffold wait did not send one-cell position_bounds'
+} finally {
+    $script:ToolTransport = $null
+}
+
 # A navigate_to_known target must be the exact delivered object, not a value derived
 # from traversability.from/to.
 $target = [pscustomobject]@{
@@ -959,6 +993,36 @@ try {
 Assert-True $missingCurrentPickupRejected `
     'temporary pickup delivery accepted only stale traversability'
 ${function:Get-RecordsFromState} = $savedGetRecordsFromStateForPickup
+
+# A high scaffold item can settle on the fixture ground several blocks below.
+# The entity filter follows that bounded vertical swept volume rather than only
+# the clear position +/- one block.
+$savedToolTransportForSweptDrop = $script:ToolTransport
+$script:SweptDropObservationArguments = $null
+$sweptDropState = New-MockState
+$sweptDropPosition = [pscustomobject]@{
+    dimension = 'minecraft:overworld'; x = -20; y = 58; z = 10
+}
+$script:ToolTransport = {
+    param($Tool, $Arguments)
+    $script:SweptDropObservationArguments = $Arguments
+    return [pscustomobject]@{
+        schema_version = 1
+        frame_id = 'obs-0123456789abcdef'
+        records = @($dropRecord)
+        next_cursor = $null
+    }
+}
+$sweptDrops = @(Get-TemporaryDropRecords -State $sweptDropState `
+        -TemporaryPosition $sweptDropPosition -MinimumY 56)
+$sweptBounds = $script:SweptDropObservationArguments.filter.position_bounds
+Assert-True ($sweptDrops.Count -eq 1 -and
+    [object]::ReferenceEquals($sweptDrops[0], $dropRecord) -and
+    $sweptBounds.min_x -eq -22 -and $sweptBounds.max_x -eq -18 -and
+    $sweptBounds.min_y -eq 56 -and $sweptBounds.max_y -eq 59 -and
+    $sweptBounds.min_z -eq 8 -and $sweptBounds.max_z -eq 12) `
+    'temporary drop query did not cover the bounded clear-to-ground swept volume'
+$script:ToolTransport = $savedToolTransportForSweptDrop
 $invalidRecoveryCases = @(
     [pscustomobject]@{ before = 33; after = 32; drops = @() },
     [pscustomobject]@{ before = 33; after = 35; drops = @() },
@@ -1016,7 +1080,8 @@ function Get-FreshState {
 function Get-TemporaryDropRecords {
     param(
         [Parameter(Mandatory)][object]$State,
-        [Parameter(Mandatory)][object]$TemporaryPosition
+        [Parameter(Mandatory)][object]$TemporaryPosition,
+        [AllowNull()][Nullable[int]]$MinimumY = $null
     )
     if ((Get-ObservationFrameId -State $State) -ceq 'obs-0000000000000113') {
         return @($dropRecord)
@@ -1082,9 +1147,14 @@ $approachGoal = [pscustomobject]@{
     dimension = 'minecraft:overworld'; x = -20; y = 58; z = 10
 }
 $approachTarget = [pscustomobject]@{
-    dimension = 'minecraft:overworld'; x = -20; y = 58; z = 10
+    dimension = 'minecraft:overworld'; x = -20; y = 58; z = 11
 }
 $approachSafe = New-MockTraversability -Target $approachTarget `
+    -Status 'CONFIRMED' -WorldRevision $approachRevision
+$approachGroundTarget = [pscustomobject]@{
+    dimension = 'minecraft:overworld'; x = -20; y = 56; z = 10
+}
+$approachGround = New-MockTraversability -Target $approachGroundTarget `
     -Status 'CONFIRMED' -WorldRevision $approachRevision
 $approachStale = New-MockTraversability -Target ([pscustomobject]@{
         dimension = 'minecraft:overworld'; x = -19; y = 57; z = 10
@@ -1092,17 +1162,17 @@ $approachStale = New-MockTraversability -Target ([pscustomobject]@{
 $savedGetWallScaffoldTraversabilityRecords = ${function:Get-WallScaffoldTraversabilityRecords}
 function Get-WallScaffoldTraversabilityRecords {
     param([Parameter(Mandatory)][object]$State, [int]$AdditionalHeight = 4)
-    return @($approachStale, $approachSafe)
+    return @($approachStale, $approachGround, $approachSafe)
 }
 $currentApproachRecords = @(Get-CurrentSafeWallTraversabilityRecords -State $approachState)
 $selectedRecoveryApproach = Select-TemporaryDropRecoveryApproachRecord `
     -Records $currentApproachRecords -State $approachState `
     -TemporaryPosition $approachGoal
-Assert-True ($currentApproachRecords.Count -eq 1 -and
+Assert-True ($currentApproachRecords.Count -eq 2 -and
     [object]::ReferenceEquals($selectedRecoveryApproach, $approachSafe) -and
     [object]::ReferenceEquals(
         $approachTarget, (Get-ObjectProperty $selectedRecoveryApproach 'navigation_target'))) `
-    'temporary passive recovery did not retain the current policy-delivered progress target'
+    'temporary recovery did not prefer the three-dimensionally nearest delivered target'
 ${function:Get-WallScaffoldTraversabilityRecords} = $savedGetWallScaffoldTraversabilityRecords
 
 # The offline MCA comparison contract enumerates nine unique expected-air
@@ -2069,7 +2139,7 @@ Assert-True ($script:MockFrameAdvanceDelayCalls -eq 70 -and
 $downwardEdges = @($script:MockNavigationEdges | Where-Object {
         [int]$_.target.y -lt [int]$_.from.y
     })
-Assert-True ($downwardEdges.Count -eq 8 -and
+Assert-True ($downwardEdges.Count -eq 9 -and
     @($downwardEdges | Where-Object {
             -not $_.safe_descent_proved
         }).Count -eq 0) `
@@ -2403,6 +2473,44 @@ Assert-True ($script:ResliceActionCalls -eq 2 -and
         $exhaustedFailures[1].failed_action_id -and
     $exhaustedFailures[1].slices_remaining -eq 0) `
     'scaffold navigation exceeded its bound or lost one of its failure events'
+
+# Drop recovery must return to its material ledger after one resliceable
+# movement failure.  The failed Action may already have crossed and picked up
+# the item, while its exact target is no longer eligible for policy delivery.
+$recoveryRecheckState = New-MockState
+$recoveryRecheckState.observation.latest_frame_id = 'obs-0000000000000602'
+$script:ResliceStates = @($recoveryRecheckState)
+$script:ResliceRecords = @()
+$script:ResliceRecordStates = @()
+$script:ResliceTerminals = @(
+    (New-MockRetryableNavigationFailure `
+        -ActionId '550e8400-e29b-41d4-a716-446655440301'))
+$script:ResliceStateCalls = 0
+$script:ResliceRecordCalls = 0
+$script:ResliceActionCalls = 0
+$script:ResliceRequests = [Collections.Generic.List[object]]::new()
+$script:GateEvents = [Collections.Generic.List[object]]::new()
+$recoveryRecheck = Invoke-TemporaryScaffoldNavigation `
+    -State $resliceInitialState -NavigationRecord $resliceOldRecord `
+    -Tolerance $script:PillarNavigationTolerance -Step 'recovery_recheck' `
+    -Event 'mock_drop_recovery_approach_terminal' -MaximumSlices 3 `
+    -ReturnAfterResliceableFailure
+$recoveryRecheckEvents = @($script:GateEvents | Where-Object {
+        $_.event -ceq 'mock_drop_recovery_approach_terminal'
+    })
+Assert-True ([object]::ReferenceEquals($recoveryRecheckState, $recoveryRecheck.state) -and
+    $recoveryRecheck.terminal.state -ceq 'failed' -and
+    $recoveryRecheck.reslice_required -and $recoveryRecheck.slices -eq 1) `
+    'drop recovery did not return a fresh material-recheck state after one failed movement Action'
+Assert-True ($script:ResliceActionCalls -eq 1 -and
+    $script:ResliceStateCalls -eq 1 -and $script:ResliceRecordCalls -eq 0) `
+    'drop recovery retried or waited for the failed exact navigation target before material recheck'
+Assert-True ($recoveryRecheckEvents.Count -eq 1 -and
+    $recoveryRecheckEvents[0].terminal_state -ceq 'failed' -and
+    $recoveryRecheckEvents[0].failure_code -ceq 'BUDGET_EXCEEDED' -and
+    $recoveryRecheckEvents[0].reslice_required -and
+    $recoveryRecheckEvents[0].material_recheck_required) `
+    'drop recovery did not retain the failed terminal and material-recheck proof'
 
 $script:ToolTransport = $null
 $script:DelayTransport = $null
