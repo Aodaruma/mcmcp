@@ -33,9 +33,10 @@ function New-MockSmeltState {
             }
             coverage = [pscustomobject]@{
                 source = 'client_known_recipe_displays'; complete = $false
-                known = 1; matched = 1; returned = 1; truncated = $false
+                known = 5; matched = 2; returned = 2; truncated = $false
             }
-            recipes = @([pscustomobject]@{
+            recipes = @(
+                [pscustomobject]@{
                     recipe_ref = 'abcdefghijklmnopqrstuvwx'
                     fingerprint = 'sha256:' + ('a' * 64)
                     display_kind = 'smelting'; required_screen = 'furnace'
@@ -52,7 +53,26 @@ function New-MockSmeltState {
                             alternatives = @([pscustomobject]@{ item = 'minecraft:raw_iron' })
                         })
                     shape = $null
-                })
+                }
+                [pscustomobject]@{
+                    recipe_ref = 'zyxwvutsrqponmlkjihgfedc'
+                    fingerprint = 'sha256:' + ('c' * 64)
+                    display_kind = 'blasting'; required_screen = 'blast_furnace'
+                    supported = $true; unsupported_reason = $null
+                    result = [pscustomobject]@{
+                        deterministic = $true
+                        alternatives = @([pscustomobject]@{
+                                item = 'minecraft:iron_ingot'; count = 1
+                                stack_fingerprint = 'sha256:' + ('b' * 64)
+                            })
+                    }
+                    ingredients = @([pscustomobject]@{
+                            index = 0; count_per_craft = 1
+                            alternatives = @([pscustomobject]@{ item = 'minecraft:raw_iron' })
+                        })
+                    shape = $null
+                }
+            )
         }
     }
     $inventory = if ($Completed) {
@@ -102,6 +122,9 @@ $surface = [pscustomobject]@{
 }
 $initial = New-MockSmeltState -Completed:$false -WithRecipe
 $recipe = Get-OnlySmeltRecipe -State $initial
+Assert-True ($recipe.display_kind -ceq 'smelting' -and
+    $recipe.required_screen -ceq 'furnace') `
+    'the furnace recipe was not selected from the smelting/blasting result set'
 $request = New-SmeltActionRequest -Recipe $recipe -Surface $surface
 $node = $request.program.body[0]
 Assert-True ([object]::ReferenceEquals($surface.position, $node.station.target)) `
@@ -157,7 +180,7 @@ $script:ToolTransport = {
                 progress = [pscustomobject]@{
                     executed_nodes = 1; total_node_upper_bound = 1
                     distance_travelled = 0; camera_degrees = 120
-                    interactions = 7; blocks_broken = 0; blocks_placed = 0
+                    interactions = 6; blocks_broken = 0; blocks_placed = 0
                 }
                 failure = $null
                 trace = @(

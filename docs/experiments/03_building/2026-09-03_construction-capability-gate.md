@@ -228,6 +228,14 @@ r27後のレビュー修正をfresh baselineから3回追加検証した。3 run
 
 r28-r30はいずれもworld変更そのものではなく、観測後処理が実際より厳しく失敗したrunである。r30はblock oracleと64個のmaterial conservationまで成立したが、最後のdropをinventoryへ戻す前にpaginationが停止したため完全PASSへ昇格しない。次runでは、completed lease後の新規paginationとcursor replayのcore回帰を通したJARを使い、同じbaselineから6回の撤去・6個のinventory回収まで再確認する。
 
+## Gate B `wall-5x5` remote r31結果
+
+r30で露出したobservation leaseの実装を修正した。最終pageを配達したleaseはcompletedとしてactive上限2件から即座に外しつつ、最終cursorの同一page replayをcompleted LRU 2件で保持する。unfinished leaseのactive上限2件、idle 60秒、absolute 5分は変更していない。runner側ではdrop探索を撤去位置からcleanup floorまでのswept volumeへ広げ、recovery接近の安全なreslice失敗後は旧targetを待たずfresh inventory/drop台帳へ戻した。また1 cellの足場確認は全worksite走査ではなく公開`position_bounds` filterへ閉じた。
+
+r31は恒久25 / 25、一時足場6 / 6の設置・撤去・回収まで完走し、110 / 110 Action terminal（108 succeeded / 2 safe reslice failure）、`SERVER_BUSY=0`、passive pickup 4、active collect 2だった。終了時は`control_ready=true`、`all_actions_terminal=true`、`cancel_requested=false`である。offline oracleはbefore `C7DC87113500E74A4BF9635516D63EE897C519A961E44C3ADB1380E89D3A793A`、after `8FFFC194ED36D1A67B302E9405B082F6B78F813F5D0E9459DEB5E0BFDD6A7B69`で、期待した恒久25 cellだけが変化し、missing 0、extras 0、仮設残0、source変更0だった。player inventoryのoak logは39個で、恒久25個と合わせて開始時64個を保存した。
+
+最終判定は**PASS**。証跡は`F:\mcmcp-testlab\20260902-hard-building-v1\eval-artifacts\20260904-wall-5x5-r31`にあり、`gate-result.json`、`gate-events.jsonl`、`runner-console.log`、before / after、external manifest、offline oracle、offline inventoryを保存した。修正commitは`cd99dfa`である。
+
 ## Gate B `wall-5x5`再現・追加実施手順（既存remote環境の例）
 
 状態は**実worldで2回完全合格済み**である。以下はr25 / r27を再現する手順であり、mockの99 Actionをliveの固定値にはしない。実際のAction数は観測由来の接近・reslice・drop回収方式によって変わる。また、以下は既存`aod-mimoid`環境を再利用する場合の例であり、次回の実world検証hostを固定しない。実施時はその時点のユーザー指定hostに従い、local PCの場合はlocal用reset / instance pathへ読み替える。

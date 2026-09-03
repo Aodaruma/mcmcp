@@ -196,6 +196,7 @@ final class FixturePhase5Scenario {
             applyGeneralizationLayout(context.level());
             configureGeneralizationChest(context.level());
         } else {
+            resetStatefulWorkstations(context.level());
             applyLayout(context.level());
             if (mode == FixturePhase5Mode.REDSTONE) {
                 FixtureArena.setBlock(context.level(),
@@ -572,6 +573,14 @@ final class FixturePhase5Scenario {
             container.setItem(entry.slot(), new ItemStack(entry.item(), entry.count()));
         }
         container.setChanged();
+    }
+
+    private static void resetStatefulWorkstations(ServerLevel level) {
+        // Replacing these blocks also resets furnace burn/cook data and brewing progress.
+        // Clearing Container slots alone leaves those block-entity timers behind, so a
+        // repeated fixture invocation would not actually produce an idle workstation.
+        FixtureArena.setBlock(level, FURNACE, Blocks.AIR.defaultBlockState());
+        FixtureArena.setBlock(level, BREWING_STAND, Blocks.AIR.defaultBlockState());
     }
 
     private static void configureFurnace(ServerLevel level) {

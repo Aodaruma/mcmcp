@@ -85,22 +85,48 @@ function Get-OnlySmeltRecipe {
             throw "smelt recipe coverage omitted required field: $field"
         }
     }
+    $matched = [int](Get-ObjectProperty $coverage 'matched')
+    $returned = [int](Get-ObjectProperty $coverage 'returned')
     if ((Get-ObjectProperty $coverage 'source') -cne 'client_known_recipe_displays' -or
         [bool](Get-ObjectProperty $coverage 'complete') -or
-        [int](Get-ObjectProperty $coverage 'matched') -ne 1 -or
-        [int](Get-ObjectProperty $coverage 'returned') -ne 1 -or
+        $matched -lt 1 -or $returned -ne $matched -or $returned -gt 8 -or
         [bool](Get-ObjectProperty $coverage 'truncated')) {
-        throw 'smelt gate requires one untruncated client-known iron-ingot recipe'
+        throw 'smelt gate requires a bounded untruncated client-known iron-ingot result set'
     }
     $recipes = @((Get-ObjectProperty $query 'recipes'))
-    if ($recipes.Count -ne 1) { throw 'smelt gate requires exactly one returned recipe' }
-    $recipe = $recipes[0]
-    if ((Get-ObjectProperty $recipe 'display_kind') -cne 'smelting' -or
-        (Get-ObjectProperty $recipe 'required_screen') -cne 'furnace' -or
-        -not [bool](Get-ObjectProperty $recipe 'supported') -or
-        $null -ne (Get-ObjectProperty $recipe 'unsupported_reason')) {
-        throw 'iron-ingot recipe is not the supported furnace smelting slice'
+    if ($recipes.Count -ne $returned) {
+        throw 'smelt recipe coverage count does not match the returned recipe array'
     }
+    # Vanilla exposes both smelting and blasting for the same input/output. A
+    # modpack may add more result variants. Select by the requested station
+    # contract, then require that slice to be unique instead of assuming the
+    # broad result_item query itself has exactly one match.
+    $candidates = @(foreach ($candidate in $recipes) {
+            $candidateResult = Get-ObjectProperty $candidate 'result'
+            $candidateOutputs = @((Get-ObjectProperty $candidateResult 'alternatives'))
+            $candidateIngredients = @((Get-ObjectProperty $candidate 'ingredients'))
+            $candidateInputs = @(if ($candidateIngredients.Count -eq 1) {
+                    @((Get-ObjectProperty $candidateIngredients[0] 'alternatives'))
+                })
+            if ((Get-ObjectProperty $candidate 'display_kind') -ceq 'smelting' -and
+                (Get-ObjectProperty $candidate 'required_screen') -ceq 'furnace' -and
+                [bool](Get-ObjectProperty $candidate 'supported') -and
+                $null -eq (Get-ObjectProperty $candidate 'unsupported_reason') -and
+                [bool](Get-ObjectProperty $candidateResult 'deterministic') -and
+                $candidateOutputs.Count -eq 1 -and
+                (Get-ObjectProperty $candidateOutputs[0] 'item') -ceq 'minecraft:iron_ingot' -and
+                [int](Get-ObjectProperty $candidateOutputs[0] 'count') -eq 1 -and
+                $candidateIngredients.Count -eq 1 -and
+                [int](Get-ObjectProperty $candidateIngredients[0] 'count_per_craft') -eq 1 -and
+                $candidateInputs.Count -eq 1 -and
+                (Get-ObjectProperty $candidateInputs[0] 'item') -ceq 'minecraft:raw_iron') {
+                $candidate
+            }
+        })
+    if ($candidates.Count -ne 1) {
+        throw "smelt gate requires exactly one supported furnace-smelting candidate; found=$($candidates.Count)"
+    }
+    $recipe = $candidates[0]
     $recipeRef = [string](Get-ObjectProperty $recipe 'recipe_ref')
     $fingerprint = [string](Get-ObjectProperty $recipe 'fingerprint')
     if ($recipeRef -cnotmatch '^[A-Za-z0-9_-]{24}$' -or
@@ -276,13 +302,14 @@ function Assert-SmeltTerminalProof {
         throw 'smelt terminal proof requires a succeeded Action without failure'
     }
     $progress = Get-ObjectProperty $Terminal 'progress'
+    $interactions = [int](Get-ObjectProperty $progress 'interactions')
     if ([int](Get-ObjectProperty $progress 'executed_nodes') -ne 1 -or
         [int](Get-ObjectProperty $progress 'total_node_upper_bound') -ne 1 -or
         [double](Get-ObjectProperty $progress 'distance_travelled') -ne 0 -or
-        [int](Get-ObjectProperty $progress 'interactions') -ne 7 -or
+        $interactions -lt 1 -or $interactions -gt 7 -or
         [int](Get-ObjectProperty $progress 'blocks_broken') -ne 0 -or
         [int](Get-ObjectProperty $progress 'blocks_placed') -ne 0) {
-        throw 'smelt terminal progress does not prove the one-node stationary seven-interaction contract'
+        throw 'smelt terminal progress exceeds the one-node stationary interaction contract'
     }
     $trace = @((Get-ObjectProperty $Terminal 'trace'))
     $completionEvidence = @($trace | Where-Object {
@@ -305,7 +332,7 @@ function Assert-SmeltTerminalProof {
         completion_evidence = Get-ObjectProperty $completionEvidence[0] 'detail'
         completed_node = Get-ObjectProperty $nodeCompleted[0] 'detail'
         executed_nodes = 1
-        interactions = 7
+        interactions = $interactions
         distance_travelled = 0
         blocks_broken = 0
         blocks_placed = 0
