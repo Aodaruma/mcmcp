@@ -6,6 +6,7 @@ import com.google.gson.JsonParser;
 import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
+import dev.aod.mcmcp.agent.dsl.ActionDslOperationManifest;
 import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.runtime.McmcpRuntimeContractTestAccess;
 import org.junit.jupiter.api.Test;
@@ -255,6 +256,8 @@ class McpToolCatalogTest {
                         .getAsJsonObject("op").get("const").getAsString())
                 .toList();
         assertThat(description + definitions.getAsJsonObject("operateKillZoneNode")
+                        .get("description").getAsString()
+                        + definitions.getAsJsonObject("holdBoundedInputsNode")
                         .get("description").getAsString())
                 .contains(opcodes.toArray(String[]::new));
 
@@ -799,7 +802,7 @@ class McpToolCatalogTest {
         assertThat(actionOutput.getAsJsonObject("properties")
                 .getAsJsonObject("trace").getAsJsonObject("items")
                 .getAsJsonObject("properties").getAsJsonObject("tick")
-                .get("maximum").getAsInt()).isEqualTo(36_200);
+                .get("maximum").getAsInt()).isEqualTo(AgentActionStore.MAX_RECORDED_TICKS);
     }
 
     @Test
@@ -1008,7 +1011,8 @@ class McpToolCatalogTest {
         var actionDsl = state.getAsJsonObject()
                 .getAsJsonObject("policy")
                 .getAsJsonObject("action_dsl");
-        assertThat(actionDsl.getAsJsonArray("available_operations")).hasSize(36);
+        assertThat(actionDsl.getAsJsonArray("available_operations"))
+                .hasSize(ActionDslOperationManifest.operations().size());
         assertThat(actionDsl.getAsJsonArray("reference_descriptors")).hasSize(6);
         assertThat(actionDsl.getAsJsonObject("missing_capability_guidance")
                 .get("code").getAsString()).isEqualTo("MISSING_CAPABILITY");
@@ -1107,6 +1111,66 @@ class McpToolCatalogTest {
         unbounded.getAsJsonObject("program").getAsJsonArray("body").get(0)
                 .getAsJsonObject().addProperty("max_ticks", 15_001);
         assertThat(CatalogSchemaValidator.matches(schema, unbounded)).isFalse();
+    }
+
+    @Test
+    void catalogClosesBoundedInputHoldsAndPublishesTheTwentyFourHourCeiling() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var definitions = schema.getAsJsonObject("$defs");
+        var hold = definitions.getAsJsonObject("holdBoundedInputsNode");
+        var properties = hold.getAsJsonObject("properties");
+
+        assertThat(properties.getAsJsonObject("inputs").getAsJsonObject("items")
+                        .getAsJsonArray("enum").asList().stream()
+                        .map(JsonElement::getAsString))
+                .containsExactly("forward", "back", "left", "right", "jump", "sneak",
+                        "attack", "use");
+        assertThat(properties.getAsJsonObject("duration_ticks").get("maximum").getAsLong())
+                .isEqualTo(1_728_000L);
+        assertThat(hold.get("description").getAsString())
+                .contains("only top-level Action node")
+                .contains("target_guard")
+                .contains("selected item")
+                .contains("releases every held input before terminal")
+                .contains("24 hours");
+        var budget = schema.getAsJsonObject("properties").getAsJsonObject("budget")
+                .getAsJsonObject("properties");
+        assertThat(budget.getAsJsonObject("max_duration_ms").get("maximum").getAsLong())
+                .isEqualTo(86_400_000L);
+        assertThat(budget.getAsJsonObject("max_ticks").get("maximum").getAsLong())
+                .isEqualTo(1_728_000L);
+
+        var request = schema.getAsJsonArray("examples").asList().stream()
+                .map(JsonElement::getAsJsonObject)
+                .filter(example -> example.getAsJsonObject("program").get("name").getAsString()
+                        .equals("hold_attack_on_obsidian"))
+                .findFirst().orElseThrow();
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+
+        var fullDay = request.deepCopy();
+        fullDay.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().addProperty("duration_ticks", 1_728_000L);
+        var fullDayBudget = fullDay.getAsJsonObject("budget");
+        fullDayBudget.addProperty("max_duration_ms", 86_400_000L);
+        fullDayBudget.addProperty("max_ticks", 1_728_000L);
+        assertThat(CatalogSchemaValidator.matches(schema, fullDay)).isTrue();
+
+        var unbounded = fullDay.deepCopy();
+        unbounded.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().addProperty("duration_ticks", 1_728_001L);
+        assertThat(CatalogSchemaValidator.matches(schema, unbounded)).isFalse();
+
+        var targetedCondition = hold.getAsJsonArray("allOf").get(0).getAsJsonObject();
+        assertThat(targetedCondition.getAsJsonObject("then").getAsJsonArray("required")
+                .asList().stream().map(JsonElement::getAsString))
+                .containsExactly("target_guard", "selected_item");
+        assertThat(targetedCondition.getAsJsonObject("else").has("not")).isTrue();
+
+        var duplicateInput = request.deepCopy();
+        duplicateInput.getAsJsonObject("program").getAsJsonArray("body").get(0)
+                .getAsJsonObject().add("inputs", JsonParser.parseString("[\"attack\",\"attack\"]"));
+        assertThat(CatalogSchemaValidator.matches(schema, duplicateInput)).isFalse();
+
     }
 
     @Test

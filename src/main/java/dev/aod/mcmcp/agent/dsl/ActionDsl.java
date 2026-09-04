@@ -39,6 +39,7 @@ public final class ActionDsl {
             ApproachKnownPlacement,
             FaceKnownPosition, FaceKnownBlockFace, BreakKnownFace, BreakKnownBlock,
             OperateKnownCobblestoneGenerator,
+            HoldBoundedInputs,
             TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
             HarvestKnownWheat, HarvestKnownWheatBatch, ApplyKnownBlockPlan,
             ClearKnownBlockPlan, PillarUpKnown,
@@ -183,6 +184,36 @@ public final class ActionDsl {
             Objects.requireNonNull(expectedState, "expectedState");
             Objects.requireNonNull(toolItem, "toolItem");
             Objects.requireNonNull(expectedDrop, "expectedDrop");
+        }
+    }
+
+    /**
+     * Holds a closed set of semantic Minecraft inputs for a finite duration. Attack and use
+     * are never raw/unscoped: they require one exact, pre-aimed block guard and selected item.
+     */
+    public record HoldBoundedInputs(
+            String id,
+            List<BoundedInput> inputs,
+            long durationTicks,
+            Optional<ExactBlockTargetGuard> targetGuard,
+            Optional<String> selectedItem) implements Node {
+        public HoldBoundedInputs {
+            Objects.requireNonNull(id, "id");
+            inputs = List.copyOf(Objects.requireNonNull(inputs, "inputs"));
+            Objects.requireNonNull(targetGuard, "targetGuard");
+            Objects.requireNonNull(selectedItem, "selectedItem");
+        }
+    }
+
+    /** Exact live crosshair guard required by bounded attack/use input holds. */
+    public record ExactBlockTargetGuard(
+            Position target,
+            BlockFace face,
+            BlockStateSpec expectedState) {
+        public ExactBlockTargetGuard {
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(face, "face");
+            Objects.requireNonNull(expectedState, "expectedState");
         }
     }
 
@@ -827,6 +858,27 @@ public final class ActionDsl {
         private final String wireName;
 
         Capability(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
+    public enum BoundedInput {
+        FORWARD("forward"),
+        BACK("back"),
+        LEFT("left"),
+        RIGHT("right"),
+        JUMP("jump"),
+        SNEAK("sneak"),
+        ATTACK("attack"),
+        USE("use");
+
+        private final String wireName;
+
+        BoundedInput(String wireName) {
             this.wireName = wireName;
         }
 

@@ -142,6 +142,22 @@ class AgentInputStateTest {
     }
 
     @Test
+    void boundedAttackAndUseExpireNeutralButRetainOwnershipUntilClosed() {
+        var state = new AgentInputState();
+        state.publishAttack(100L);
+        state.publishUse(100L);
+
+        assertThat(state.attackActive()).isFalse();
+        assertThat(state.useActive()).isFalse();
+        assertThat(state.inputOwnershipSnapshot().attackOwned()).isTrue();
+        assertThat(state.inputOwnershipSnapshot().useOwned()).isTrue();
+
+        state.releaseAttack();
+        state.releaseUse();
+        assertThat(state.inputOwnerNone()).isTrue();
+    }
+
+    @Test
     void terminalOwnerNoneIsMeasuredAcrossMovementAttackProofAndTrackedVelocity() {
         var state = new AgentInputState();
         assertThat(state.inputOwnershipSnapshot().ownerNone()).isTrue();
@@ -154,6 +170,11 @@ class AgentInputStateTest {
         state.publishAttack();
         assertThat(state.inputOwnershipSnapshot().attackOwned()).isTrue();
         state.releaseAttack();
+        assertThat(state.inputOwnerNone()).isTrue();
+
+        state.publishUse(Long.MAX_VALUE);
+        assertThat(state.inputOwnershipSnapshot().useOwned()).isTrue();
+        state.releaseUse();
         assertThat(state.inputOwnerNone()).isTrue();
 
         var player = new Object();

@@ -128,6 +128,7 @@ public final class ActionDslParser {
             case "break_known_block" -> breakKnownBlock(object, path);
             case "operate_known_cobblestone_generator" ->
                     operateKnownCobblestoneGenerator(object, path);
+            case "hold_bounded_inputs" -> holdBoundedInputs(object, path);
             case "till_known_block" -> tillKnownBlock(object, path);
             case "till_known_batch" -> tillKnownBatch(object, path);
             case "plant_known_wheat" -> plantKnownWheat(object, path);
@@ -264,6 +265,46 @@ public final class ActionDslParser {
                         path + ".regeneration_wait_ticks"),
                 longInteger(source.get("max_operation_duration_ticks"),
                         path + ".max_operation_duration_ticks"));
+    }
+
+    private static ActionDsl.HoldBoundedInputs holdBoundedInputs(
+            JsonObject source, String path) {
+        Set<String> fields = Set.of(
+                "id", "op", "inputs", "duration_ticks", "target_guard", "selected_item");
+        exactKeys(source, path, fields, Set.of("id", "op", "inputs", "duration_ticks"));
+        JsonArray rawInputs = array(source.get("inputs"), path + ".inputs");
+        var inputs = new ArrayList<ActionDsl.BoundedInput>(rawInputs.size());
+        for (int index = 0; index < rawInputs.size(); index++) {
+            inputs.add(boundedInput(
+                    string(rawInputs.get(index), path + ".inputs[" + index + "]"),
+                    path + ".inputs[" + index + "]"));
+        }
+        JsonElement rawGuard = source.get("target_guard");
+        Optional<ActionDsl.ExactBlockTargetGuard> guard =
+                rawGuard == null || rawGuard.isJsonNull()
+                        ? Optional.empty()
+                        : Optional.of(exactBlockTargetGuard(rawGuard, path + ".target_guard"));
+        JsonElement rawItem = source.get("selected_item");
+        Optional<String> selectedItem = rawItem == null || rawItem.isJsonNull()
+                ? Optional.empty()
+                : Optional.of(string(rawItem, path + ".selected_item"));
+        return new ActionDsl.HoldBoundedInputs(
+                string(source.get("id"), path + ".id"),
+                inputs,
+                longInteger(source.get("duration_ticks"), path + ".duration_ticks"),
+                guard,
+                selectedItem);
+    }
+
+    private static ActionDsl.ExactBlockTargetGuard exactBlockTargetGuard(
+            JsonElement value, String path) {
+        JsonObject guard = rawObject(value, path);
+        Set<String> fields = Set.of("target", "face", "expected_state");
+        exactKeys(guard, path, fields, fields);
+        return new ActionDsl.ExactBlockTargetGuard(
+                position(guard.get("target"), path + ".target"),
+                blockFace(string(guard.get("face"), path + ".face"), path + ".face"),
+                blockStateSpec(guard.get("expected_state"), path + ".expected_state"));
     }
 
     private static ActionDsl.TillKnownBlock tillKnownBlock(JsonObject source, String path) {
@@ -1059,6 +1100,13 @@ public final class ActionDslParser {
             case "east" -> ActionDsl.BlockFace.EAST;
             default -> throw invalid("Unsupported block face at " + path + ": " + value);
         };
+    }
+
+    private static ActionDsl.BoundedInput boundedInput(String value, String path) {
+        for (ActionDsl.BoundedInput input : ActionDsl.BoundedInput.values()) {
+            if (input.wireName().equals(value)) return input;
+        }
+        throw invalid("Unsupported bounded input at " + path + ": " + value);
     }
 
     private static ActionDsl.BlockPlanRotation blockPlanRotation(int value, String path) {

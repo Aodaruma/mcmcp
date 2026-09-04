@@ -130,7 +130,7 @@ class ActionDslTest {
     void parsesEveryNormativeCatalogExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
-        assertThat(examples).hasSize(17);
+        assertThat(examples).hasSize(18);
         for (int index = 0; index < examples.size(); index++) {
             ActionDsl.Request parsed = ActionDslParser.parse(examples.get(index).getAsJsonObject());
             assertThat(parsed.schemaVersion()).isEqualTo(1);

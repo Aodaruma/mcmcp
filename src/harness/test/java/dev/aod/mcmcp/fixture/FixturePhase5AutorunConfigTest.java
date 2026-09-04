@@ -15,6 +15,7 @@ class FixturePhase5AutorunConfigTest {
                 .containsExactly(
                         "recipes", "craft", "smelt", "warehouse_smelt", "label_transfer", "brew", "redstone", "transfer", "crop",
                         "combined_wheat", "tree", "sleep", "survey", "generalization",
+                        "bounded_input_hold",
                         "cobblestone_generator",
                         "fishing",
                         "kill_zone",

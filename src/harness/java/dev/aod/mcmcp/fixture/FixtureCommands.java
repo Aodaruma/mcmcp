@@ -131,6 +131,8 @@ final class FixtureCommands {
                         .then(phase5("sleep", FixturePhase5Mode.SLEEP))
                         .then(phase5("survey", FixturePhase5Mode.SURVEY))
                         .then(phase5("generalization", FixturePhase5Mode.GENERALIZATION))
+                        .then(phase5("bounded_input_hold",
+                                FixturePhase5Mode.BOUNDED_INPUT_HOLD))
                         .then(phase5("cobblestone_generator",
                                 FixturePhase5Mode.COBBLESTONE_GENERATOR))
                         .then(Commands.literal("cobblestone_generator_status")

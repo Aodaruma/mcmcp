@@ -59,6 +59,9 @@ final class FixturePhase5Scenario {
     static final BlockPos REDSTONE_LAMP_TARGET = new BlockPos(201, 200, 194);
     static final BlockPos REDSTONE_LEVER_TARGET = new BlockPos(202, 200, 194);
     static final BlockPos TRANSFER_BARREL = new BlockPos(199, 200, 194);
+    static final BlockPos BOUNDED_INPUT_HOLD_TARGET = new BlockPos(204, 200, 194);
+    static final BlockPos BOUNDED_INPUT_HOLD_LINE_OF_SIGHT =
+            BOUNDED_INPUT_HOLD_TARGET.relative(Direction.SOUTH);
 
     static final List<BlockPos> GENERALIZATION_FAN_OUT_LAMPS = List.of(
             REDSTONE_LAMP_TARGET, REDSTONE_LAMP_TARGET.relative(Direction.EAST, 2));
@@ -239,6 +242,13 @@ final class FixturePhase5Scenario {
                 FixtureArena.setBlock(context.level(),
                         REDSTONE_LEVER_TARGET.relative(Direction.SOUTH),
                         Blocks.AIR.defaultBlockState());
+            } else if (mode == FixturePhase5Mode.BOUNDED_INPUT_HOLD) {
+                FixtureArena.setBlock(context.level(), BOUNDED_INPUT_HOLD_TARGET,
+                        Blocks.OBSIDIAN.defaultBlockState());
+                // The common tree fixture has a fence at z=195. The bounded-input target sits
+                // immediately behind it, so this mode needs one deliberate sight-line opening.
+                FixtureArena.setBlock(context.level(), BOUNDED_INPUT_HOLD_LINE_OF_SIGHT,
+                        Blocks.AIR.defaultBlockState());
             }
             configureBarrel(context.level());
             configureFurnace(context.level());
@@ -306,6 +316,14 @@ final class FixturePhase5Scenario {
                     + " source_count=" + LABEL_ITEM_COUNT
                     + " player_inventory=empty destination_inventory=empty selected_slot="
                     + mode.selectedSlot()));
+            return;
+        }
+        if (mode == FixturePhase5Mode.BOUNDED_INPUT_HOLD) {
+            output.accept(Component.literal("phase5.mode=bounded_input_hold"
+                    + " target=" + position(BOUNDED_INPUT_HOLD_TARGET)
+                    + " target_state=minecraft:obsidian"
+                    + " selected_item=minecraft:wooden_pickaxe"
+                    + " safe_hold_ticks=60 selected_slot=" + mode.selectedSlot()));
             return;
         }
 
@@ -807,6 +825,8 @@ final class FixturePhase5Scenario {
                 player.getInventory().setItem(3, new ItemStack(Items.REDSTONE));
                 player.getInventory().setItem(4, new ItemStack(Items.SMOOTH_STONE));
             }
+            case BOUNDED_INPUT_HOLD -> player.getInventory().setItem(
+                    0, new ItemStack(Items.WOODEN_PICKAXE));
             case COBBLESTONE_GENERATOR ->
                     throw new IllegalArgumentException("cobblestone_generator has separate inventory setup");
             case FISHING ->
@@ -862,6 +882,8 @@ final class FixturePhase5Scenario {
             case SLEEP -> new Pose(193.5D, 200.0D, 204.5D, -90.0F, 18.0F);
             case SURVEY -> new Pose(200.5D, 200.0D, 204.5D, -90.0F, 12.0F);
             case GENERALIZATION -> new Pose(205.5D, 200.0D, 200.5D, 90.0F, 0.0F);
+            case BOUNDED_INPUT_HOLD ->
+                    new Pose(204.5D, 200.0D, 196.5D, 180.0F, 35.0F);
             case COBBLESTONE_GENERATOR ->
                     throw new IllegalArgumentException("cobblestone_generator has a separate pose");
             case FISHING ->

@@ -79,6 +79,7 @@ import dev.aod.mcmcp.routine.ApplyBlockPlanStep;
 import dev.aod.mcmcp.routine.BlockTarget;
 import dev.aod.mcmcp.routine.BlockAimWitness;
 import dev.aod.mcmcp.routine.BlockStateFingerprint;
+import dev.aod.mcmcp.routine.BoundedInputLease;
 import dev.aod.mcmcp.routine.BreakBlockRequest;
 import dev.aod.mcmcp.routine.FinitePlanRequest;
 import dev.aod.mcmcp.routine.InteractBlockRequest;
@@ -2100,6 +2101,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || node instanceof ActionDsl.OperateKnownMenu
                 || node instanceof ActionDsl.ReelKnownFishingSession
                 || node instanceof ActionDsl.OperateKillZone
+                || node instanceof ActionDsl.HoldBoundedInputs
                 || node instanceof ActionDsl.WaitUntil wait
                         && wait.condition() instanceof ActionDsl.SoundClueCondition);
     }
@@ -2152,6 +2154,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
+        if (node instanceof ActionDsl.HoldBoundedInputs hold) {
+            return Optional.of(ActionDslCompiler.intrinsicBoundedInputCost(hold));
+        }
         long durationMillis = node instanceof ActionDsl.CraftKnownRecipe
                 ? ActionDslCompiler.KNOWN_CRAFTING_DURATION_MILLIS
                 : node instanceof ActionDsl.SmeltKnownRecipe smelt
@@ -4356,6 +4361,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             if (paused) {
                 releaseAgentInputsForHold(minecraft, "pause_input_release_failed");
+                if (agentExecution.primitive instanceof ActionDsl.HoldBoundedInputs) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
+                            true,
+                            "bounded_input_screen_open");
+                }
                 return;
             }
             if (!session.worldReady()
@@ -4409,6 +4420,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         AgentActionStore.FailureCode.BUDGET_EXCEEDED,
                         false,
                         "fixed_motion_contract");
+                return;
+            }
+            if (agentExecution.primitive instanceof ActionDsl.HoldBoundedInputs hold) {
+                tickAgentBoundedInputHold(minecraft, session, action, hold, true);
                 return;
             }
             var recovery = tickAgentRecovery(minecraft, session, now);
@@ -4583,6 +4598,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 } else {
                     requestAgentReplan(actionTick, "local_safety_changed");
                 }
+                return;
+            }
+            if (agentExecution.primitive
+                    instanceof ActionDsl.HoldBoundedInputs hold) {
+                tickAgentBoundedInputHold(minecraft, session, action, hold, false);
                 return;
             }
             if (agentExecution.primitive
@@ -6583,6 +6603,178 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     effect.clientTick(),
                     effect.worldRevision());
         }
+    }
+
+    private void tickAgentBoundedInputHold(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action,
+            ActionDsl.HoldBoundedInputs hold,
+            boolean recordTick) {
+        var player = Objects.requireNonNull(minecraft.player, "player");
+        var level = Objects.requireNonNull(minecraft.level, "level");
+        var progress = agentActions.get(action.actionId()).progress();
+        if (agentExecution.boundedInputHold != null
+                && agentExecution.boundedInputHold.activeTicks >= hold.durationTicks()) {
+            if (!closeBoundedInputHold()) {
+                failAgentAction(AgentActionStore.FailureCode.INTERNAL_ERROR, false,
+                        "bounded_input_release_failed");
+                return;
+            }
+            agentActions.completeNode(action.actionId());
+            agentExecution.primitive = null;
+            advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
+            return;
+        }
+        long durationLimit = Duration.ofMillis(
+                action.program().effectiveBudget().maxDurationMillis()).toNanos();
+        if ((recordTick
+                        ? progress.ticks() >= action.program().effectiveBudget().maxTicks()
+                        : progress.ticks() > action.program().effectiveBudget().maxTicks())
+                || activeElapsedNanos(agentExecution, System.nanoTime()) >= durationLimit) {
+            failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false,
+                    "bounded_input_duration_budget");
+            return;
+        }
+        String unsafe = boundedInputUnsafeReason(minecraft, session, action, hold);
+        if (unsafe != null) {
+            failAgentAction(AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
+                    "bounded_input_" + unsafe);
+            return;
+        }
+        try {
+            boolean acquired = false;
+            if (agentExecution.boundedInputHold == null) {
+                Set<BoundedInputLease.Input> inputs = hold.inputs().stream()
+                        .map(McmcpRuntime::boundedLeaseInput)
+                        .collect(java.util.stream.Collectors.toUnmodifiableSet());
+                var lease = BoundedInputLease.acquire(
+                        AgentInputState.global(), inputs, System.nanoTime(), Duration.ofSeconds(1));
+                agentExecution.boundedInputHold = new BoundedInputExecution(
+                        lease, player.position(), player.getHealth() + player.getAbsorptionAmount());
+                acquired = true;
+            }
+            var execution = agentExecution.boundedInputHold;
+            if (!acquired && !execution.lease.heartbeat(
+                    System.nanoTime(), Duration.ofSeconds(1))) {
+                failAgentAction(AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
+                        "bounded_input_lease_expired");
+                return;
+            }
+            if (boundedInputMoves(hold)) {
+                double remaining = Math.max(0.0D,
+                        action.program().effectiveBudget().maxDistanceBlocks()
+                                - progress.distanceTravelled());
+                AgentInputState.global().requireGoalMovementSafety(
+                        player, level, agentExecution.latestWorldRevision, remaining);
+            }
+            execution.observeMovement(player.position(), boundedInputMovesHorizontally(hold));
+            execution.activeTicks++;
+            if (recordTick) agentActions.recordTick(action.actionId());
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error("MCMCP bounded input hold failed", failure);
+            failAgentAction(AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
+                    "bounded_input_runtime_failure");
+        }
+    }
+
+    private String boundedInputUnsafeReason(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action,
+            ActionDsl.HoldBoundedInputs hold) {
+        var player = minecraft.player;
+        var level = minecraft.level;
+        if (player == null || level == null || minecraft.gameMode == null
+                || minecraft.getConnection() == null) return "world_unavailable";
+        if (player != agentExecution.playerIdentity || !session.worldReady()
+                || !Objects.equals(session.worldSessionId(), agentExecution.worldSessionId)) {
+            return "world_session_changed";
+        }
+        if (!player.isAlive() || player.isDeadOrDying()) return "player_dead";
+        if (agentExecution.boundedInputHold != null
+                && player.getHealth() + player.getAbsorptionAmount()
+                        < agentExecution.boundedInputHold.effectiveHealthBaseline) {
+            return "health_decreased";
+        }
+        if (player.isOnFire()) return "on_fire";
+        if (player.isInLava()) return "in_lava";
+        if (player.isInWater()) return "in_water";
+        if (player.isPassenger() || player.isFallFlying() || player.fallDistance > 0.0F) {
+            return "unstable_pose";
+        }
+        if (minecraft.gui.screen() != null) return "screen_open";
+        if (minecraft.gui.overlay() != null) return "overlay_open";
+        if (screenOwnership.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE) {
+            return "screen_owner_active";
+        }
+        if (localSafety != LocalObservationProjector.CurrentSafety.CONTINUE) {
+            return "local_safety_changed";
+        }
+        BlockPos feet = BlockPos.containing(player.position());
+        if (!level.isLoaded(feet) || !level.isLoaded(feet.below())
+                || !level.getWorldBorder().isWithinBounds(feet)) return "unknown_or_unloaded";
+        if (agentExecution.boundedInputHold != null
+                && agentExecution.boundedInputHold.stalledTicks >= 10) return "movement_blocked";
+        if (action.program().effectiveBudget().maxDistanceBlocks()
+                - agentActions.get(action.actionId()).progress().distanceTravelled() <= 0.0D
+                && boundedInputMoves(hold)) return "distance_limit";
+        if (hold.targetGuard().isEmpty()) return null;
+        var guard = hold.targetGuard().orElseThrow();
+        if (!guard.target().dimension().equals(level.dimension().identifier().toString())) {
+            return "target_dimension_changed";
+        }
+        var target = new BlockPos(guard.target().x(), guard.target().y(), guard.target().z());
+        if (!level.isLoaded(target) || !level.getWorldBorder().isWithinBounds(target)
+                || !player.isWithinBlockInteractionRange(target, 0.0D)
+                || !(minecraft.hitResult instanceof BlockHitResult hit)
+                || hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(target)
+                || hit.getDirection() != Direction.valueOf(guard.face().name())) {
+            return "target_face_or_reach_changed";
+        }
+        var expected = new BlockStateFingerprint(
+                guard.expectedState().block(), guard.expectedState().properties());
+        if (!expected.equals(MinecraftStationaryBreakPort.fingerprintForPolicy(
+                level.getBlockState(target)))) return "target_state_changed";
+        var selected = player.getMainHandItem();
+        if (selected.isEmpty() || !hold.selectedItem().orElseThrow().equals(
+                BuiltInRegistries.ITEM.getKey(selected.getItem()).toString())) {
+            return "selected_item_changed";
+        }
+        if (agentExecution.boundedInputHold != null
+                && player.position().distanceToSqr(agentExecution.boundedInputHold.startPosition)
+                        > 1.0D / (1024.0D * 1024.0D)) return "station_changed";
+        return null;
+    }
+
+    private boolean closeBoundedInputHold() {
+        if (agentExecution == null || agentExecution.boundedInputHold == null) return true;
+        try {
+            agentExecution.boundedInputHold.lease.close();
+            agentExecution.boundedInputHold = null;
+            return true;
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error("MCMCP bounded input release failed", failure);
+            return false;
+        }
+    }
+
+    private static boolean boundedInputMoves(ActionDsl.HoldBoundedInputs hold) {
+        return hold.inputs().stream().anyMatch(input -> switch (input) {
+            case FORWARD, BACK, LEFT, RIGHT, JUMP, SNEAK -> true;
+            case ATTACK, USE -> false;
+        });
+    }
+
+    private static boolean boundedInputMovesHorizontally(ActionDsl.HoldBoundedInputs hold) {
+        return hold.inputs().stream().anyMatch(input -> switch (input) {
+            case FORWARD, BACK, LEFT, RIGHT -> true;
+            case JUMP, SNEAK, ATTACK, USE -> false;
+        });
+    }
+
+    private static BoundedInputLease.Input boundedLeaseInput(ActionDsl.BoundedInput input) {
+        return BoundedInputLease.Input.valueOf(input.name());
     }
 
     private void tickAgentCobblestoneGenerator(
@@ -9798,6 +9990,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private boolean closeAgentPrimitiveExecutor() {
         if (agentExecution == null) return true;
         boolean closed = true;
+        if (!closeBoundedInputHold()) closed = false;
         try {
             agentExecution.primitiveExecutor.close();
         } catch (RuntimeException | LinkageError failure) {
@@ -12687,6 +12880,34 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
+    private static final class BoundedInputExecution {
+        private final BoundedInputLease lease;
+        private final Vec3 startPosition;
+        private final float effectiveHealthBaseline;
+        private Vec3 lastPosition;
+        private long activeTicks;
+        private int stalledTicks;
+
+        private BoundedInputExecution(
+                BoundedInputLease lease, Vec3 startPosition, float effectiveHealthBaseline) {
+            this.lease = Objects.requireNonNull(lease, "lease");
+            this.startPosition = Objects.requireNonNull(startPosition, "startPosition");
+            this.lastPosition = startPosition;
+            if (!Float.isFinite(effectiveHealthBaseline) || effectiveHealthBaseline <= 0.0F) {
+                throw new IllegalArgumentException("bounded input health baseline must be positive");
+            }
+            this.effectiveHealthBaseline = effectiveHealthBaseline;
+        }
+
+        private void observeMovement(Vec3 current, boolean expectsHorizontalMovement) {
+            Objects.requireNonNull(current, "current");
+            double horizontal = Math.hypot(current.x - lastPosition.x, current.z - lastPosition.z);
+            stalledTicks = expectsHorizontalMovement && horizontal < 1.0E-4D
+                    ? Math.min(10, stalledTicks + 1) : 0;
+            lastPosition = current;
+        }
+    }
+
     private static final class AgentExecution {
         private final UUID actionId;
         private final UUID worldSessionId;
@@ -12724,6 +12945,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private int mutationAimFailures;
         private KnownBlockBreakAttempt blockBreakAttempt;
         private StationaryBreakOperation cobblestoneGeneratorAttempt;
+        private BoundedInputExecution boundedInputHold;
         private long cobblestoneGeneratorCheckpoint;
         private boolean cobblestoneGeneratorUnknownRecorded;
         private KnownBlockMutationAttempt blockMutationAttempt;

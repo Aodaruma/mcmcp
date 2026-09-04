@@ -17,6 +17,7 @@
     "client.LivingEntityAgentMovementMixin",
     "client.LocalPlayerMovementTickMixin",
     "client.MinecraftAttackInputMixin",
+    "client.MinecraftUseItemInvoker",
     "client.MouseHandlerMixin"
   ],
   "injectors": {

@@ -26,6 +26,10 @@ public final class ActionDslOperationManifest {
                     ActionDsl.OperateKnownCobblestoneGenerator.class,
                     "operate_known_cobblestone_generator",
                     caps("block_break")),
+            inputUnion(
+                    ActionDsl.HoldBoundedInputs.class,
+                    "hold_bounded_inputs",
+                    caps("movement", "block_break", "item_use")),
             fixed(ActionDsl.TillKnownBlock.class, "till_known_block", caps("block_interact", "camera")),
             fixed(ActionDsl.TillKnownBatch.class, "till_known_batch", caps("block_interact", "camera")),
             fixed(ActionDsl.PlantKnownWheat.class, "plant_known_wheat", caps("block_place", "camera")),
@@ -213,6 +217,14 @@ public final class ActionDslOperationManifest {
             Class<? extends ActionDsl.Node> nodeType, String op) {
         return new OperationDescriptor(
                 nodeType, op, 1, Set.of(), "union_of_descendants", List.of());
+    }
+
+    private static OperationDescriptor inputUnion(
+            Class<? extends ActionDsl.Node> nodeType,
+            String op,
+            Set<String> capabilities) {
+        return new OperationDescriptor(
+                nodeType, op, 1, capabilities, "union_of_inputs", List.of());
     }
 
     private static Set<String> caps(String... capabilities) {

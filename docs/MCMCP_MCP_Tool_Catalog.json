@@ -593,8 +593,8 @@
                   },
                   "available_operations": {
                     "type": "array",
-                    "minItems": 36,
-                    "maxItems": 36,
+                    "minItems": 37,
+                    "maxItems": 37,
                     "items": {
                       "type": "object",
                       "additionalProperties": false,
@@ -605,7 +605,7 @@
                           "type": "array", "minItems": 0, "maxItems": 3, "uniqueItems": true,
                           "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use", "entity_attack"]}
                         },
-                        "capability_rule": {"enum": ["fixed", "union_of_descendants"]},
+                        "capability_rule": {"enum": ["fixed", "union_of_descendants", "union_of_inputs"]},
                         "locally_granted": {"type": "boolean"},
                         "locally_missing_capabilities": {
                           "type": "array", "minItems": 0, "maxItems": 3, "uniqueItems": true,
@@ -1406,6 +1406,52 @@
               "max_operation_duration_ticks": {"type": "integer", "minimum": 1, "maximum": 36000}
             },
             "required": ["id", "op", "target", "face", "expected_state", "tool_item", "expected_drop", "minimum_inventory_count", "max_breaks", "regeneration_wait_ticks", "max_operation_duration_ticks"]
+          },
+          "holdBoundedInputsNode": {
+            "type": "object",
+            "description": "hold_bounded_inputs holds one closed set of semantic Minecraft inputs for a finite duration, as the only top-level Action node. inputs is duplicate-free. Movement inputs require movement; attack requires block_break; use requires item_use. An attack/use hold must copy one fresh visible_surface position, face, and complete state into target_guard and declare the exact currently selected item. The runtime reproves that exact crosshair target/state/face and selected item before acquiring input and throughout the hold; any mismatch, screen/focus loss, pause, OFF, emergency stop, cancellation, world/session change, health or safety interruption releases every held input before terminal. Movement-only holds forbid target_guard and selected_item. The 1,728,000-tick maximum is 24 hours; prefer the shortest duration that completes the requested stationary job.",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "hold_bounded_inputs"},
+              "inputs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "uniqueItems": true,
+                "items": {"enum": ["forward", "back", "left", "right", "jump", "sneak", "attack", "use"]}
+              },
+              "duration_ticks": {"type": "integer", "minimum": 1, "maximum": 1728000},
+              "target_guard": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "target": {"$ref": "#/$defs/position"},
+                  "face": {"enum": ["down", "up", "north", "south", "west", "east"]},
+                  "expected_state": {"$ref": "#/$defs/completeBlockState"}
+                },
+                "required": ["target", "face", "expected_state"]
+              },
+              "selected_item": {"$ref": "#/$defs/resourceLocation"}
+            },
+            "required": ["id", "op", "inputs", "duration_ticks"],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {"inputs": {"contains": {"enum": ["attack", "use"]}}},
+                  "required": ["inputs"]
+                },
+                "then": {"required": ["target_guard", "selected_item"]},
+                "else": {
+                  "not": {
+                    "anyOf": [
+                      {"required": ["target_guard"]},
+                      {"required": ["selected_item"]}
+                    ]
+                  }
+                }
+              }
+            ]
           },
           "tillNode": {
             "type": "object",
@@ -2300,6 +2346,7 @@
               {"$ref": "#/$defs/breakNode"},
               {"$ref": "#/$defs/breakKnownBlockNode"},
               {"$ref": "#/$defs/operateKnownCobblestoneGeneratorNode"},
+              {"$ref": "#/$defs/holdBoundedInputsNode"},
               {"$ref": "#/$defs/tillNode"},
               {"$ref": "#/$defs/tillBatchNode"},
               {"$ref": "#/$defs/plantWheatNode"},
@@ -2360,10 +2407,11 @@
           },
           "budget": {
             "type": "object",
+            "description": "The schema-wide 86,400,000-ms and 1,728,000-tick maxima exist only for one top-level hold_bounded_inputs node. Runtime admission retains the smaller per-op limits for every other Action. For hold_bounded_inputs, max_duration_ms and max_ticks must cover duration_ticks at 50 ms per tick; use zero movement for attack/use-only holds, one interaction for use, and one possible block break for attack.",
             "additionalProperties": false,
             "properties": {
-              "max_duration_ms": {"type": "integer", "minimum": 100, "maximum": 1800000},
-              "max_ticks": {"type": "integer", "minimum": 2, "maximum": 36000},
+              "max_duration_ms": {"type": "integer", "minimum": 100, "maximum": 86400000},
+              "max_ticks": {"type": "integer", "minimum": 2, "maximum": 1728000},
               "max_distance_blocks": {"type": "number", "minimum": 0, "maximum": 32, "description": "Public distance budget, capped at 32. Route search first reserves 1.5*sqrt(6) for bounded start-pose uncertainty, then charges 1.5 times centerline edge length plus 1.5 per vertical edge. A flat cardinal route is therefore at most 18 edges; routes with vertical edges are shorter."},
               "max_camera_degrees": {"type": "number", "minimum": 0, "maximum": 720},
               "max_interactions": {"type": "integer", "minimum": 0, "maximum": 2048},
@@ -2958,6 +3006,37 @@
               "max_blocks_broken": 0,
               "max_blocks_placed": 0
             }
+          },
+          {
+            "schema_version": 1,
+            "program": {
+              "dsl_version": 1,
+              "name": "hold_attack_on_obsidian",
+              "capabilities": ["block_break"],
+              "body": [
+                {
+                  "id": "hold_attack",
+                  "op": "hold_bounded_inputs",
+                  "inputs": ["attack"],
+                  "duration_ticks": 60,
+                  "target_guard": {
+                    "target": {"dimension": "minecraft:overworld", "x": 204, "y": 200, "z": 194},
+                    "face": "south",
+                    "expected_state": {"block": "minecraft:obsidian", "properties": {}}
+                  },
+                  "selected_item": "minecraft:wooden_pickaxe"
+                }
+              ]
+            },
+            "budget": {
+              "max_duration_ms": 3000,
+              "max_ticks": 60,
+              "max_distance_blocks": 0,
+              "max_camera_degrees": 0,
+              "max_interactions": 0,
+              "max_blocks_broken": 1,
+              "max_blocks_placed": 0
+            }
           }
         ]
       },
@@ -3093,7 +3172,7 @@
               "interactions": {"type": "integer", "minimum": 0, "maximum": 2048},
               "blocks_broken": {"type": "integer", "minimum": 0, "maximum": 64},
               "blocks_placed": {"type": "integer", "minimum": 0, "maximum": 16},
-              "ticks": {"type": "integer", "minimum": 0, "maximum": 36200}
+              "ticks": {"type": "integer", "minimum": 0, "maximum": 1728200}
             },
             "required": ["phase", "current_node_id", "executed_nodes", "total_node_upper_bound", "distance_travelled", "camera_degrees", "interactions", "blocks_broken", "blocks_placed", "ticks"]
           },
@@ -3141,7 +3220,7 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "tick": {"type": "integer", "minimum": 0, "maximum": 36200},
+                "tick": {"type": "integer", "minimum": 0, "maximum": 1728200},
                 "event": {"type": "string", "pattern": "^[A-Z0-9_]+$", "maxLength": 64},
                 "detail": {"type": "string", "maxLength": 256}
               },

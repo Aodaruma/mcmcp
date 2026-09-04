@@ -19,7 +19,8 @@ import java.util.concurrent.TimeUnit;
 public final class AgentActionStore {
     public static final int TRACE_LIMIT = 256;
     public static final int EFFECT_LIMIT = 64;
-    public static final int MAX_RECORDED_TICKS = 36_200;
+    /** 24-hour bounded-input Action plus the existing 200-tick terminalization headroom. */
+    public static final int MAX_RECORDED_TICKS = 1_728_200;
     public static final double MAX_RECORDED_DISTANCE = 48.0D;
     public static final double MAX_RECORDED_CAMERA_DEGREES = 1_080.0D;
     public static final int MAX_RECORDED_BLOCKS_BROKEN = 64;

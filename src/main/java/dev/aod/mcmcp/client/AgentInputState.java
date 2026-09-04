@@ -36,6 +36,12 @@ public final class AgentInputState {
     private boolean agentVelocityReset;
     private boolean attackOwned;
     private boolean attackSuppressed;
+    private boolean attackExpiryRequired;
+    private long attackValidUntilNanos;
+    private boolean useOwned;
+    private boolean useSuppressed;
+    private boolean useExpiryRequired;
+    private long useValidUntilNanos;
     private boolean paused;
     private long pauseStartedAtNanos;
     private long accumulatedPauseNanos;
@@ -357,11 +363,36 @@ public final class AgentInputState {
     public synchronized void publishAttack() {
         attackOwned = true;
         attackSuppressed = false;
+        attackExpiryRequired = false;
+        attackValidUntilNanos = 0L;
+    }
+
+    public synchronized void publishAttack(long validUntilNanos) {
+        attackOwned = true;
+        attackSuppressed = false;
+        attackExpiryRequired = true;
+        attackValidUntilNanos = validUntilNanos;
     }
 
     public synchronized void releaseAttack() {
         attackOwned = false;
         attackSuppressed = false;
+        attackExpiryRequired = false;
+        attackValidUntilNanos = 0L;
+    }
+
+    public synchronized void publishUse(long validUntilNanos) {
+        useOwned = true;
+        useSuppressed = false;
+        useExpiryRequired = true;
+        useValidUntilNanos = validUntilNanos;
+    }
+
+    public synchronized void releaseUse() {
+        useOwned = false;
+        useSuppressed = false;
+        useExpiryRequired = false;
+        useValidUntilNanos = 0L;
     }
 
     /** Neutralizes all agent channels until their owning leases explicitly publish again. */
@@ -369,6 +400,9 @@ public final class AgentInputState {
         suppressMovement();
         if (attackOwned) {
             attackSuppressed = true;
+        }
+        if (useOwned) {
+            useSuppressed = true;
         }
     }
 
@@ -384,6 +418,9 @@ public final class AgentInputState {
         invalidateGoalMovementCycle();
         if (attackOwned) {
             attackSuppressed = true;
+        }
+        if (useOwned) {
+            useSuppressed = true;
         }
     }
 
@@ -401,7 +438,7 @@ public final class AgentInputState {
                 || agentMoveContribution.lengthSqr() > 0.0D
                 || agentVelocityReset;
         return new InputOwnershipSnapshot(
-                movement.owned(), attackOwned, goalProofRetained, velocityTracked);
+                movement.owned(), attackOwned, useOwned, goalProofRetained, velocityTracked);
     }
 
     public synchronized boolean inputOwnerNone() {
@@ -409,7 +446,13 @@ public final class AgentInputState {
     }
 
     public synchronized boolean attackActive() {
+        expireButtonsIfNeeded(System.nanoTime());
         return attackOwned && !attackSuppressed && !paused;
+    }
+
+    public synchronized boolean useActive() {
+        expireButtonsIfNeeded(System.nanoTime());
+        return useOwned && !useSuppressed && !paused;
     }
 
     public synchronized MovementSnapshot movementSnapshot() {
@@ -457,6 +500,18 @@ public final class AgentInputState {
         suppressMovement();
         if (rejectGoal) {
             goalMovementRejected = true;
+        }
+    }
+
+    private void expireButtonsIfNeeded(long nowNanos) {
+        long watchdogNow = watchdogTime(nowNanos);
+        if (attackOwned && attackExpiryRequired && !paused
+                && watchdogNow - attackValidUntilNanos >= 0L) {
+            attackSuppressed = true;
+        }
+        if (useOwned && useExpiryRequired && !paused
+                && watchdogNow - useValidUntilNanos >= 0L) {
+            useSuppressed = true;
         }
     }
 
@@ -687,10 +742,20 @@ public final class AgentInputState {
     public record InputOwnershipSnapshot(
             boolean movementOwned,
             boolean attackOwned,
+            boolean useOwned,
             boolean goalProofRetained,
             boolean velocityTracked) {
+        public InputOwnershipSnapshot(
+                boolean movementOwned,
+                boolean attackOwned,
+                boolean goalProofRetained,
+                boolean velocityTracked) {
+            this(movementOwned, attackOwned, false, goalProofRetained, velocityTracked);
+        }
+
         public boolean ownerNone() {
-            return !movementOwned && !attackOwned && !goalProofRetained && !velocityTracked;
+            return !movementOwned && !attackOwned && !useOwned
+                    && !goalProofRetained && !velocityTracked;
         }
     }
 }

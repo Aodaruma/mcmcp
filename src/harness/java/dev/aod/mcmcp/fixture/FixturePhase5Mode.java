@@ -18,6 +18,7 @@ enum FixturePhase5Mode {
     SLEEP("sleep", 0),
     SURVEY("survey", 0),
     GENERALIZATION("generalization", 0),
+    BOUNDED_INPUT_HOLD("bounded_input_hold", 0),
     COBBLESTONE_GENERATOR("cobblestone_generator", 0),
     FISHING("fishing", 0),
     KILL_ZONE("kill_zone", 0),
@@ -49,6 +50,7 @@ enum FixturePhase5Mode {
             case "sleep" -> SLEEP;
             case "survey" -> SURVEY;
             case "generalization" -> GENERALIZATION;
+            case "bounded_input_hold" -> BOUNDED_INPUT_HOLD;
             case "cobblestone_generator" -> COBBLESTONE_GENERATOR;
             case "fishing" -> FISHING;
             case "kill_zone" -> KILL_ZONE;

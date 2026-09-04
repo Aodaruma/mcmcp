@@ -18,8 +18,9 @@ import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.PROGRAM_BUDGET_UNP
 /** Component-wise worst-case compiler for one already closed Action DSL v1 tree. */
 public final class ActionDslCompiler {
     public static final ActionDsl.Budget PHASE_ONE_HARD_LIMIT = new ActionDsl.Budget(
-            ActionDslValidator.MAX_KILL_ZONE_DURATION_MILLIS,
-            ActionDslValidator.MAX_KILL_ZONE_TICKS, NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
+            ActionDslValidator.MAX_BOUNDED_INPUT_DURATION_MILLIS,
+            ActionDslValidator.MAX_BOUNDED_INPUT_TICKS,
+            NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
             ActionDslValidator.MAX_ACTION_CAMERA_DEGREES,
             ActionDslValidator.MAX_KILL_ZONE_ATTACKS,
             ActionDslValidator.MAX_COBBLESTONE_GENERATOR_BREAKS,
@@ -123,6 +124,11 @@ public final class ActionDslCompiler {
         }
         if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
             Cost cost = intrinsicCobblestoneGeneratorCost(operation);
+            primitiveCostBounds.put(node.id(), cost);
+            return cost;
+        }
+        if (node instanceof ActionDsl.HoldBoundedInputs hold) {
+            Cost cost = intrinsicBoundedInputCost(hold);
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }
@@ -334,6 +340,26 @@ public final class ActionDslCompiler {
                 0.0D,
                 0L,
                 operation.maxBreaks(),
+                0L);
+    }
+
+    /** Finite reservation for one top-level semantic input hold. */
+    public static Cost intrinsicBoundedInputCost(ActionDsl.HoldBoundedInputs hold) {
+        Objects.requireNonNull(hold, "hold");
+        long ticks = hold.durationTicks();
+        boolean movement = hold.inputs().stream().anyMatch(input -> switch (input) {
+            case FORWARD, BACK, LEFT, RIGHT, JUMP, SNEAK -> true;
+            case ATTACK, USE -> false;
+        });
+        boolean attack = hold.inputs().contains(ActionDsl.BoundedInput.ATTACK);
+        boolean use = hold.inputs().contains(ActionDsl.BoundedInput.USE);
+        return new Cost(
+                Math.multiplyExact(ticks, NOMINAL_TICK_MILLIS),
+                ticks,
+                movement ? NavigationDistanceBudget.MAX_DISTANCE_BLOCKS : 0.0D,
+                0.0D,
+                use ? 1L : 0L,
+                attack ? 1L : 0L,
                 0L);
     }
 

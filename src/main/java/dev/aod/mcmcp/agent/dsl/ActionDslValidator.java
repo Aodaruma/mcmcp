@@ -32,6 +32,7 @@ public final class ActionDslValidator {
     public static final int MAX_ACTION_TICKS = 15_000;
     public static final int MAX_KILL_ZONE_TICKS = 36_000;
     public static final int MAX_COBBLESTONE_GENERATOR_TICKS = 36_000;
+    public static final long MAX_BOUNDED_INPUT_TICKS = 1_728_000L;
     public static final int MAX_KILL_ZONE_OPERATION_TICKS =
             MAX_KILL_ZONE_TICKS - ActionDslCompiler.KILL_ZONE_EFFECT_RESERVE_TICKS;
     public static final int MAX_FISHING_SOUND_WAIT_TICKS = 900;
@@ -39,6 +40,8 @@ public final class ActionDslValidator {
     public static final long MAX_KILL_ZONE_DURATION_MILLIS = MAX_KILL_ZONE_TICKS * 50L;
     public static final long MAX_COBBLESTONE_GENERATOR_DURATION_MILLIS =
             MAX_COBBLESTONE_GENERATOR_TICKS * 50L;
+    public static final long MAX_BOUNDED_INPUT_DURATION_MILLIS =
+            MAX_BOUNDED_INPUT_TICKS * 50L;
     public static final int MAX_ACTION_CAMERA_DEGREES = 720;
     public static final int MAX_BLOCKS_BROKEN = 8;
     public static final int MAX_COBBLESTONE_GENERATOR_BREAKS = 64;
@@ -121,7 +124,10 @@ public final class ActionDslValidator {
         boolean cobblestoneGeneratorOnly = program.body().size() == 1
                 && program.body().getFirst()
                         instanceof ActionDsl.OperateKnownCobblestoneGenerator;
-        validateRequestBudget(request.budget(), killZoneOnly, cobblestoneGeneratorOnly);
+        boolean boundedInputsOnly = program.body().size() == 1
+                && program.body().getFirst() instanceof ActionDsl.HoldBoundedInputs;
+        validateRequestBudget(
+                request.budget(), killZoneOnly, cobblestoneGeneratorOnly, boundedInputsOnly);
 
         if (program.body().isEmpty() || program.body().size() > MAX_TOP_LEVEL_NODES) {
             throw invalid("program.body must contain 1.." + MAX_TOP_LEVEL_NODES + " nodes");
@@ -142,6 +148,9 @@ public final class ActionDslValidator {
         validateExclusiveNode(program.body(),
                 node -> node instanceof ActionDsl.OperateKnownCobblestoneGenerator,
                 "operate_known_cobblestone_generator must be the only top-level Action node");
+        validateExclusiveNode(program.body(),
+                node -> node instanceof ActionDsl.HoldBoundedInputs,
+                "hold_bounded_inputs must be the only top-level Action node");
         var walk = new Walk();
         int executed = walkSequence(program.body(), 1, walk, "program.body");
         if (walk.sourceNodes > MAX_SOURCE_NODES) {
@@ -164,20 +173,24 @@ public final class ActionDslValidator {
     }
 
     static void validateRequestBudget(ActionDsl.Budget budget) {
-        validateRequestBudget(budget, false, false);
+        validateRequestBudget(budget, false, false, false);
     }
 
     private static void validateRequestBudget(
             ActionDsl.Budget budget,
             boolean killZoneOnly,
-            boolean cobblestoneGeneratorOnly) {
+            boolean cobblestoneGeneratorOnly,
+            boolean boundedInputsOnly) {
         Objects.requireNonNull(budget, "budget");
         boolean longRunningOnly = killZoneOnly || cobblestoneGeneratorOnly;
         requireRange(budget.maxDurationMillis(), 100,
-                longRunningOnly ? MAX_KILL_ZONE_DURATION_MILLIS : MAX_ACTION_DURATION_MILLIS,
+                boundedInputsOnly ? MAX_BOUNDED_INPUT_DURATION_MILLIS
+                        : longRunningOnly ? MAX_KILL_ZONE_DURATION_MILLIS
+                        : MAX_ACTION_DURATION_MILLIS,
                 "budget.max_duration_ms");
         requireRange(budget.maxTicks(), 2,
-                longRunningOnly ? MAX_KILL_ZONE_TICKS : MAX_ACTION_TICKS,
+                boundedInputsOnly ? MAX_BOUNDED_INPUT_TICKS
+                        : longRunningOnly ? MAX_KILL_ZONE_TICKS : MAX_ACTION_TICKS,
                 "budget.max_ticks");
         requireFiniteRange(
                 budget.maxDistanceBlocks(), 0, NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
@@ -378,6 +391,63 @@ public final class ActionDslValidator {
                     MAX_COBBLESTONE_GENERATOR_TICKS,
                     path + ".max_operation_duration_ticks");
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
+            return 1;
+        }
+        if (node instanceof ActionDsl.HoldBoundedInputs hold) {
+            requireSequenceSize(hold.inputs(), 1, ActionDsl.BoundedInput.values().length,
+                    path + ".inputs");
+            var distinctInputs = EnumSet.noneOf(ActionDsl.BoundedInput.class);
+            for (int index = 0; index < hold.inputs().size(); index++) {
+                ActionDsl.BoundedInput input = Objects.requireNonNull(
+                        hold.inputs().get(index), path + ".inputs[" + index + "]");
+                if (!distinctInputs.add(input)) {
+                    throw invalid(path + ".inputs must not contain duplicates");
+                }
+            }
+            requireRange(hold.durationTicks(), 1, MAX_BOUNDED_INPUT_TICKS,
+                    path + ".duration_ticks");
+            boolean attacks = distinctInputs.contains(ActionDsl.BoundedInput.ATTACK);
+            boolean uses = distinctInputs.contains(ActionDsl.BoundedInput.USE);
+            if (distinctInputs.contains(ActionDsl.BoundedInput.FORWARD)
+                    && distinctInputs.contains(ActionDsl.BoundedInput.BACK)) {
+                throw invalid(path + ".inputs cannot combine forward and back");
+            }
+            if (distinctInputs.contains(ActionDsl.BoundedInput.LEFT)
+                    && distinctInputs.contains(ActionDsl.BoundedInput.RIGHT)) {
+                throw invalid(path + ".inputs cannot combine left and right");
+            }
+            if (attacks && uses) {
+                throw invalid(path + ".inputs cannot combine attack and use");
+            }
+            boolean changesAimOrPosition = distinctInputs.stream().anyMatch(input -> switch (input) {
+                case FORWARD, BACK, LEFT, RIGHT, JUMP -> true;
+                case SNEAK, ATTACK, USE -> false;
+            });
+            if ((attacks || uses) && changesAimOrPosition) {
+                throw invalid(path
+                        + ".inputs cannot combine attack/use with movement or jump; sneak is allowed");
+            }
+            boolean needsGuard = attacks || uses;
+            if (hold.targetGuard().isPresent() != needsGuard
+                    || hold.selectedItem().isPresent() != needsGuard) {
+                throw invalid(path
+                        + " attack/use requires target_guard and selected_item; movement-only holds forbid both");
+            }
+            if (needsGuard) {
+                ActionDsl.ExactBlockTargetGuard guard = hold.targetGuard().orElseThrow();
+                validatePosition(guard.target(), path + ".target_guard.target");
+                validateBlockState(guard.expectedState(), path + ".target_guard.expected_state");
+                requireResourceLocation(hold.selectedItem().orElseThrow(),
+                        path + ".selected_item");
+            }
+            if (distinctInputs.stream().anyMatch(input -> switch (input) {
+                case FORWARD, BACK, LEFT, RIGHT, JUMP, SNEAK -> true;
+                case ATTACK, USE -> false;
+            })) {
+                walk.requiredCapabilities.add(ActionDsl.Capability.MOVEMENT);
+            }
+            if (attacks) walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
+            if (uses) walk.requiredCapabilities.add(ActionDsl.Capability.ITEM_USE);
             return 1;
         }
         if (node instanceof ActionDsl.TillKnownBlock till) {
@@ -854,6 +924,9 @@ public final class ActionDslValidator {
             if (node instanceof ActionDsl.BreakKnownFace
                     || node instanceof ActionDsl.BreakKnownBlock
                     || node instanceof ActionDsl.OperateKnownCobblestoneGenerator
+                    || node instanceof ActionDsl.HoldBoundedInputs hold
+                            && (hold.inputs().contains(ActionDsl.BoundedInput.ATTACK)
+                                    || hold.inputs().contains(ActionDsl.BoundedInput.USE))
                     || node instanceof ActionDsl.TillKnownBlock
                     || node instanceof ActionDsl.TillKnownBatch
                     || node instanceof ActionDsl.PlantKnownWheat
