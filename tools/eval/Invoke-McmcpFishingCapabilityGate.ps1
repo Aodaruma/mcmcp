@@ -317,13 +317,18 @@ function Get-VisibleFishingLoot {
     return $null
 }
 
-function Assert-NoVisibleFishingEntities {
+function Get-VisibleFishingEntities {
     param([Parameter(Mandatory)][object]$State)
-    $records = @(Get-RecordsFromState -State $State -Kinds @('visible_entity') `
+    return @(Get-RecordsFromState -State $State -Kinds @('visible_entity') `
         -Filter ([ordered]@{
             entity_types = @('minecraft:item', 'minecraft:fishing_bobber')
             position_bounds = $script:FishingWorkspaceBounds
         }))
+}
+
+function Assert-NoVisibleFishingEntities {
+    param([Parameter(Mandatory)][object]$State)
+    $records = @(Get-VisibleFishingEntities -State $State)
     if ($records.Count -ne 0) {
         throw "fishing gate left $($records.Count) visible bobber/item entities"
     }
@@ -524,7 +529,16 @@ function Invoke-FishingGateCore {
         throw 'fishing inventory did not gain one allowed Vanilla fishing loot'
     }
     Assert-FishingPlayerState -State $final -ExpectedHealth $initialHealth -Phase 'final state'
-    Assert-NoVisibleFishingEntities -State $final
+    for ($entitySettlePoll = 0; $entitySettlePoll -le 40; $entitySettlePoll++) {
+        if (@(Get-VisibleFishingEntities -State $final).Count -eq 0) { break }
+        if ($entitySettlePoll -eq 40) {
+            Assert-NoVisibleFishingEntities -State $final
+        }
+        Invoke-GateDelaySeconds -Seconds 0.05
+        $final = Get-FreshState
+        Assert-FishingPlayerState -State $final -ExpectedHealth $initialHealth `
+            -Phase 'fishing entity cleanup settlement'
+    }
 
     return [ordered]@{
         gate = 'phase9-fishing'
