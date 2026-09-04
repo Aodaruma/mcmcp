@@ -13,6 +13,7 @@ import net.minecraft.world.Container;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.Relative;
+import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -46,6 +47,15 @@ final class FixturePhase5Scenario {
     static final BlockPos BREWING_STAND = new BlockPos(197, 200, 194);
     static final BlockPos WAREHOUSE_SOURCE_CHEST = CRAFTING_TABLE;
     static final BlockPos WAREHOUSE_OUTPUT_BARREL = BREWING_STAND;
+    static final BlockPos LABEL_SOURCE_CHEST = CRAFTING_TABLE;
+    static final BlockPos LABEL_DESTINATION_BARREL = BREWING_STAND;
+    static final Direction LABEL_ATTACHMENT_FACE = Direction.SOUTH;
+    static final BlockPos LABEL_SOURCE_FRAME =
+            LABEL_SOURCE_CHEST.relative(LABEL_ATTACHMENT_FACE);
+    static final BlockPos LABEL_DESTINATION_FRAME =
+            LABEL_DESTINATION_BARREL.relative(LABEL_ATTACHMENT_FACE);
+    static final Item LABEL_ITEM = Items.RAW_IRON;
+    static final int LABEL_ITEM_COUNT = 16;
     static final BlockPos REDSTONE_LAMP_TARGET = new BlockPos(201, 200, 194);
     static final BlockPos REDSTONE_LEVER_TARGET = new BlockPos(202, 200, 194);
     static final BlockPos TRANSFER_BARREL = new BlockPos(199, 200, 194);
@@ -210,6 +220,8 @@ final class FixturePhase5Scenario {
         FixtureArena.requireInitialized(context.level());
         discardItemEntities(
                 context.level(), AABB.encapsulatingFullBlocks(WORKSPACE_MIN, WORKSPACE_MAX));
+        discardItemFrames(
+                context.level(), AABB.encapsulatingFullBlocks(WORKSPACE_MIN, WORKSPACE_MAX));
         FixtureArena.resetPlayer(context.player());
         if (mode == FixturePhase5Mode.COMBINED_WHEAT) {
             resetCombinedWheatWorkspace(context.level());
@@ -218,6 +230,8 @@ final class FixturePhase5Scenario {
             configureGeneralizationChest(context.level());
         } else if (mode == FixturePhase5Mode.WAREHOUSE_SMELT) {
             resetWarehouseSmeltWorkspace(context.level());
+        } else if (mode == FixturePhase5Mode.LABEL_TRANSFER) {
+            resetLabelTransferWorkspace(context.level());
         } else {
             resetStatefulWorkstations(context.level());
             applyLayout(context.level());
@@ -281,6 +295,16 @@ final class FixturePhase5Scenario {
                     + " output=" + position(WAREHOUSE_OUTPUT_BARREL)
                     + " source_items=minecraft:raw_iron*1;minecraft:coal*1"
                     + " player_inventory=empty output_inventory=empty selected_slot="
+                    + mode.selectedSlot()));
+            return;
+        }
+        if (mode == FixturePhase5Mode.LABEL_TRANSFER) {
+            output.accept(Component.literal("phase5.mode=label_transfer"
+                    + " source=" + position(LABEL_SOURCE_CHEST)
+                    + " destination=" + position(LABEL_DESTINATION_BARREL)
+                    + " labels=minecraft:raw_iron"
+                    + " source_count=" + LABEL_ITEM_COUNT
+                    + " player_inventory=empty destination_inventory=empty selected_slot="
                     + mode.selectedSlot()));
             return;
         }
@@ -390,6 +414,13 @@ final class FixturePhase5Scenario {
         return Map.copyOf(result);
     }
 
+    static Map<BlockPos, BlockState> labelTransferLayout() {
+        var result = emptyWorkspace();
+        result.put(LABEL_SOURCE_CHEST, combinedSupplyChestState());
+        result.put(LABEL_DESTINATION_BARREL, barrelState());
+        return Map.copyOf(result);
+    }
+
     static BlockState generalizationLadderState() {
         return Blocks.LADDER.defaultBlockState()
                 .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST)
@@ -495,6 +526,12 @@ final class FixturePhase5Scenario {
         return staleItems.size();
     }
 
+    static int discardItemFrames(ServerLevel level, AABB bounds) {
+        var frames = level.getEntitiesOfClass(ItemFrame.class, bounds, Entity::isAlive);
+        frames.forEach(Entity::discard);
+        return frames.size();
+    }
+
     static int resetCombinedWheatWorkspace(ServerLevel level) {
         applyCombinedWheatLayout(level);
         configureCombinedSupplyChest(level);
@@ -514,6 +551,27 @@ final class FixturePhase5Scenario {
         configureContainer(level, WAREHOUSE_OUTPUT_BARREL,
                 List.of(), "warehouse output barrel");
         configureFurnace(level);
+    }
+
+    private static void resetLabelTransferWorkspace(ServerLevel level) {
+        labelTransferLayout().forEach((position, state) ->
+                FixtureArena.setBlock(level, position, state));
+        configureContainer(level, LABEL_SOURCE_CHEST,
+                List.of(new ContainerEntry(0, LABEL_ITEM, LABEL_ITEM_COUNT)),
+                "label source chest");
+        configureContainer(level, LABEL_DESTINATION_BARREL,
+                List.of(), "label destination barrel");
+        spawnLabelFrame(level, LABEL_SOURCE_FRAME, LABEL_ITEM);
+        spawnLabelFrame(level, LABEL_DESTINATION_FRAME, LABEL_ITEM);
+    }
+
+    private static void spawnLabelFrame(ServerLevel level, BlockPos position, Item item) {
+        var frame = new ItemFrame(level, position, LABEL_ATTACHMENT_FACE);
+        frame.setItem(new ItemStack(item), false);
+        if (!frame.survives() || !level.addFreshEntity(frame)) {
+            frame.discard();
+            throw new IllegalStateException("Phase 5 label item frame could not be placed");
+        }
     }
 
     static void verifyTreeGate(
@@ -706,6 +764,9 @@ final class FixturePhase5Scenario {
             case WAREHOUSE_SMELT -> {
                 // Supplies and the completed product must cross ordinary container GUIs.
             }
+            case LABEL_TRANSFER -> {
+                // The labeled source is the only initial item holder.
+            }
             case BREW -> {
                 var water = BuiltInRegistries.POTION.get(
                                 Identifier.fromNamespaceAndPath("minecraft", "water"))
@@ -790,7 +851,7 @@ final class FixturePhase5Scenario {
     private static Pose pose(FixturePhase5Mode mode) {
         return switch (mode) {
             case RECIPES, CRAFT -> new Pose(195.5D, 200.0D, 196.5D, 180.0F, 25.0F);
-            case SMELT, WAREHOUSE_SMELT ->
+            case SMELT, WAREHOUSE_SMELT, LABEL_TRANSFER ->
                     new Pose(196.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case BREW -> new Pose(197.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case REDSTONE -> new Pose(201.5D, 200.0D, 193.5D, 0.0F, 25.0F);

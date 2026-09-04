@@ -184,6 +184,8 @@ pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
 
 warehouse E2Eはdev-only fixtureの`mcmcp.fixture.phase5.mode=warehouse_smelt`（Gradle実行では`-PmcmcpFixturePhase5Mode=warehouse_smelt`）でT0前だけ初期化し、MCPを手動ONにしてから通常runnerの固定profileを使う。
 
+額縁ラベル経路だけを短く検証する場合は、dev-only fixtureの`label_transfer`を準備し、`Invoke-McmcpWarehouseLabelCapabilityGate.ps1`を使う。これはsource single chestのraw iron 16個をlabel付きtakeし、freshに再取得した別barrelのlabelで全量storeする2 Actionの固定gateである。double chestやカテゴリ分類は扱わない。詳細とremote手順は[`04_workstations/2026-09-05_warehouse-label-transfer-gate.md`](04_workstations/2026-09-05_warehouse-label-transfer-gate.md)を参照する。
+
 ```powershell
 pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
   -Model gpt-5.6-sol -ReasoningEffort high `

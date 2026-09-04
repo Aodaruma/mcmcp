@@ -29,6 +29,7 @@ import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.SweetBerryBushBlock;
 import net.minecraft.world.level.block.entity.BarrelBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -37,6 +38,7 @@ import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DoorHingeSide;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.block.state.properties.Half;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.level.block.state.properties.StairsShape;
 import net.minecraft.world.phys.AABB;
@@ -898,6 +900,25 @@ final class FixtureGameTests {
                 || declaredContents.get(1).item() != net.minecraft.world.item.Items.OAK_LOG
                 || declaredContents.get(1).count() != 4) {
             helper.fail(Component.literal("Phase 5 transfer contents are not deterministic"));
+        }
+
+        var labelTransfer = FixturePhase5Scenario.labelTransferLayout();
+        assertLayoutState(helper, labelTransfer, FixturePhase5Scenario.LABEL_SOURCE_CHEST,
+                FixturePhase5Scenario.combinedSupplyChestState());
+        assertLayoutState(helper, labelTransfer, FixturePhase5Scenario.LABEL_DESTINATION_BARREL,
+                FixturePhase5Scenario.barrelState());
+        if (!FixturePhase5Scenario.LABEL_SOURCE_FRAME.equals(
+                    FixturePhase5Scenario.LABEL_SOURCE_CHEST.relative(
+                            FixturePhase5Scenario.LABEL_ATTACHMENT_FACE))
+                || !FixturePhase5Scenario.LABEL_DESTINATION_FRAME.equals(
+                    FixturePhase5Scenario.LABEL_DESTINATION_BARREL.relative(
+                            FixturePhase5Scenario.LABEL_ATTACHMENT_FACE))
+                || !labelTransfer.get(FixturePhase5Scenario.LABEL_SOURCE_CHEST)
+                        .getValue(ChestBlock.TYPE).equals(ChestType.SINGLE)
+                || FixturePhase5Scenario.LABEL_ITEM != net.minecraft.world.item.Items.RAW_IRON
+                || FixturePhase5Scenario.LABEL_ITEM_COUNT != 16) {
+            helper.fail(Component.literal(
+                    "Phase 5 label-transfer fixture must use two direct exact-item labels"));
         }
 
         var combined = FixturePhase5Scenario.combinedWheatLayout();
