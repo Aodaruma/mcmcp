@@ -877,6 +877,13 @@
             "properties": {
               "kind": {"const": "visible_entity"},
               "entity_type": {"$ref": "#/$defs/resourceLocation"},
+              "entity_ref": {
+                "description": "Nullable for players or when safe issuance failed. A non-null value is a 24-character opaque reference issued only from this current visual entity sample. It is bound server-side to the exact world session, dimension, registry type, and internal entity identity, resolves for at most 100 client ticks after the latest visible observation, and never exposes the UUID. Reobserve after expiry; the ref alone never proves current visibility or authorizes an operation.",
+                "oneOf": [
+                  {"type": "null"},
+                  {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"}
+                ]
+              },
               "displayed_item": {
                 "description": "Present only for a visible minecraft:item entity; registry identity of its rendered non-empty ItemStack. Stack count, components, UUID, owner, pickup delay, and age are intentionally omitted.",
                 "$ref": "#/$defs/resourceLocation"
@@ -890,7 +897,7 @@
               "world_revision": {"$ref": "#/$defs/worldRevision"},
               "provenance": {"const": "OMNIDIRECTIONAL_VISUAL"}
             },
-            "required": ["kind", "entity_type", "position", "velocity", "aabb", "hazard_class", "eye_origin", "observed_tick", "world_revision", "provenance"]
+            "required": ["kind", "entity_type", "entity_ref", "position", "velocity", "aabb", "hazard_class", "eye_origin", "observed_tick", "world_revision", "provenance"]
           },
           "traversability": {
             "type": "object",

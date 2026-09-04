@@ -38,6 +38,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -262,6 +263,7 @@ class ObservationModelContractTest {
         var item = new VisibleEntity(
                 new ResourceId("minecraft:item"),
                 new ResourceId("minecraft:wheat"),
+                "abcdefghijklmnopqrstuvwx",
                 world(2, 64, 2),
                 new Vector(0, 0, 0),
                 new Aabb(1.875, 64, 1.875, 2.125, 64.25, 2.125),
@@ -273,6 +275,7 @@ class ObservationModelContractTest {
         assertThat(ObservationWireMapper.record(item))
                 .containsEntry("entity_type", "minecraft:item")
                 .containsEntry("displayed_item", "minecraft:wheat")
+                .containsEntry("entity_ref", "abcdefghijklmnopqrstuvwx")
                 .doesNotContainKeys(
                         "count", "components", "uuid", "owner", "pickup_delay", "age", "nbt");
 
@@ -286,6 +289,7 @@ class ObservationModelContractTest {
                 96,
                 7);
         assertThat(ObservationWireMapper.record(zombie))
+                .containsEntry("entity_ref", null)
                 .doesNotContainKey("displayed_item");
     }
 
@@ -323,6 +327,34 @@ class ObservationModelContractTest {
                 96,
                 7)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("displayedItem");
+    }
+
+    @Test
+    void entityReferenceRejectsRawOrMalformedIdentityAndNeverAttachesToPlayers() {
+        assertThatThrownBy(() -> new VisibleEntity(
+                new ResourceId("minecraft:zombie"),
+                null,
+                UUID.randomUUID().toString(),
+                world(2, 64, 2),
+                new Vector(0, 0, 0),
+                new Aabb(1.7, 64, 1.7, 2.3, 65.95, 2.3),
+                EntityHazardClass.HOSTILE,
+                world(0, 65.62, 0),
+                96,
+                7)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("opaque");
+        assertThatThrownBy(() -> new VisibleEntity(
+                new ResourceId("minecraft:player"),
+                null,
+                "abcdefghijklmnopqrstuvwx",
+                world(2, 64, 2),
+                new Vector(0, 0, 0),
+                new Aabb(1.7, 64, 1.7, 2.3, 65.95, 2.3),
+                EntityHazardClass.PLAYER,
+                world(0, 65.62, 0),
+                96,
+                7)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("player");
     }
 
     @Test
@@ -393,6 +425,7 @@ class ObservationModelContractTest {
                 new VisibleEntity(
                         new ResourceId("minecraft:item"),
                         new ResourceId("minecraft:wheat"),
+                        "abcdefghijklmnopqrstuvwx",
                         world(2, 64, 2),
                         new Vector(0, 0, 0),
                         new Aabb(1.875, 64, 1.875, 2.125, 64.25, 2.125),

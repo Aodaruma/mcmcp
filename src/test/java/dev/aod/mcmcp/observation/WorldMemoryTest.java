@@ -86,6 +86,51 @@ class WorldMemoryTest {
     }
 
     @Test
+    void visibleReferenceIssuerBindsSessionDimensionTypeAndInternalIdentity() {
+        var session = UUID.randomUUID();
+        var entity = UUID.randomUUID();
+        var memory = new WorldMemory();
+        memory.startSession(session, "minecraft:overworld");
+
+        String ref = memory.rememberVisibleEntityReference(
+                session, "minecraft:overworld", entity, "minecraft:zombie",
+                1, 64, 2, 0, 0, 0, false, false, 40);
+
+        assertThat(ref).matches("[A-Za-z0-9_-]{24}");
+        assertThat(memory.resolveEntityRef(ref, 140, session, "minecraft:overworld"))
+                .contains(new WorldMemory.ResolvedEntityRef(
+                        entity, "minecraft:zombie", "minecraft:overworld", 40, session));
+        assertThat(memory.resolveEntityRef(ref, 141, session, "minecraft:overworld")).isEmpty();
+        assertThat(memory.resolveEntityRef(
+                ref, 40, UUID.randomUUID(), "minecraft:overworld")).isEmpty();
+        assertThat(memory.resolveEntityRef(
+                ref, 40, session, "minecraft:the_nether")).isEmpty();
+        assertThat(memory.rememberVisibleEntityReference(
+                session, "minecraft:overworld", UUID.randomUUID(), "minecraft:player",
+                2, 64, 2, 0, 0, 0, false, false, 40)).isNull();
+        assertThatThrownBy(() -> memory.rememberVisibleEntityReference(
+                UUID.randomUUID(), "minecraft:overworld", UUID.randomUUID(), "minecraft:zombie",
+                2, 64, 2, 0, 0, 0, false, false, 40))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        String rotatedRef = memory.rememberVisibleEntityReference(
+                session, "minecraft:overworld", entity, "minecraft:zombie",
+                1, 64, 2, 0, 0, 0, false, false, 141);
+        assertThat(rotatedRef).isNotEqualTo(ref);
+        assertThat(memory.resolveEntityRef(ref, 141, session, "minecraft:overworld")).isEmpty();
+        assertThat(memory.resolveEntityRef(rotatedRef, 141, session, "minecraft:overworld"))
+                .contains(new WorldMemory.ResolvedEntityRef(
+                        entity, "minecraft:zombie", "minecraft:overworld", 141, session));
+
+        memory.startSession(session, "minecraft:the_nether");
+        String dimensionBoundRef = memory.rememberVisibleEntityReference(
+                session, "minecraft:the_nether", entity, "minecraft:zombie",
+                1, 64, 2, 0, 0, 0, false, false, 50);
+        assertThat(dimensionBoundRef).isNotEqualTo(ref);
+        assertThat(memory.resolveEntityRef(ref, 50, session, "minecraft:the_nether")).isEmpty();
+    }
+
+    @Test
     void detachClearsSessionSpecificEvictionStatistics() {
         var session = UUID.randomUUID();
         var memory = new WorldMemory(1, 1);

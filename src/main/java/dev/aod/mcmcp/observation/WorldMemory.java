@@ -133,7 +133,14 @@ public final class WorldMemory {
             throw new IllegalArgumentException("entity observation belongs to another dimension");
         }
         var previous = entities.get(internalUuid);
-        var opaqueRef = player ? null : previous == null ? newEntityRef() : previous.opaqueRef();
+        boolean sameReferenceScope = previous != null
+                && previous.worldSessionId().equals(sessionId)
+                && previous.dimension().equals(observedDimension)
+                && previous.type().equals(type)
+                && observedTick >= previous.observedAtClientTick()
+                && observedTick - previous.observedAtClientTick() <= ENTITY_REF_TTL_TICKS;
+        var opaqueRef = player ? null
+                : sameReferenceScope ? previous.opaqueRef() : newEntityRef();
         var result = new EntityObservation(internalUuid, opaqueRef, type, x, y, z, dx, dy, dz, player, vehicle,
                 passenger, Objects.requireNonNull(observedDimension, "observedDimension"), observedTick, sessionId);
         entities.put(internalUuid, result);
@@ -151,6 +158,54 @@ public final class WorldMemory {
         revision++;
         updateOldestTick();
         return result;
+    }
+
+    /**
+     * Records one non-player identity after the caller has proved it visible in the current
+     * omnidirectional sample. The opaque value remains bound to this memory's exact world session,
+     * dimension, registry type, and internal UUID and is resolvable for at most
+     * {@link #ENTITY_REF_TTL_TICKS} after its latest visible observation.
+     *
+     * <p>This method does not perform entity discovery. Callers must invoke it only from the
+     * successful branch of a policy-visible sampler; hidden or merely client-loaded entities must
+     * never reach this boundary.</p>
+     */
+    public synchronized String rememberVisibleEntityReference(
+            UUID expectedSessionId,
+            String expectedDimension,
+            UUID internalUuid,
+            String type,
+            double x,
+            double y,
+            double z,
+            double dx,
+            double dy,
+            double dz,
+            boolean vehicle,
+            boolean passenger,
+            long observedTick) {
+        Objects.requireNonNull(expectedSessionId, "expectedSessionId");
+        Objects.requireNonNull(expectedDimension, "expectedDimension");
+        Objects.requireNonNull(internalUuid, "internalUuid");
+        Objects.requireNonNull(type, "type");
+        requireCurrentSession(expectedSessionId, expectedDimension);
+        if ("minecraft:player".equals(type)) {
+            return null;
+        }
+        return rememberEntity(
+                internalUuid,
+                type,
+                x,
+                y,
+                z,
+                dx,
+                dy,
+                dz,
+                false,
+                vehicle,
+                passenger,
+                expectedDimension,
+                observedTick).opaqueRef();
     }
 
     synchronized List<EntityObservation> retainedEntities(int maxResults) {

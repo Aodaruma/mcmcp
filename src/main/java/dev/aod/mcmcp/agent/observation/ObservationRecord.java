@@ -160,6 +160,7 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
     record VisibleEntity(
             ResourceId entityType,
             ResourceId displayedItem,
+            String entityRef,
             WorldPosition position,
             Vector velocity,
             Aabb aabb,
@@ -180,9 +181,31 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
                 throw new IllegalArgumentException(
                         "displayedItem is required exactly for a non-empty minecraft:item entity");
             }
+            if (entityRef != null && !entityRef.matches("[A-Za-z0-9_-]{24}")) {
+                throw new IllegalArgumentException(
+                        "entityRef must be a 24-character opaque reference");
+            }
+            if (hazardClass == EntityHazardClass.PLAYER && entityRef != null) {
+                throw new IllegalArgumentException("player entities must not expose entityRef");
+            }
             ObservationValues.requireSameDimension(position.dimension(), eyeOrigin.dimension());
             ObservationValues.requireTick(observedTick, "observedTick");
             ObservationValues.requireTick(worldRevision, "worldRevision");
+        }
+
+        /** Compatibility constructor for observations captured before opaque refs are attached. */
+        public VisibleEntity(
+                ResourceId entityType,
+                ResourceId displayedItem,
+                WorldPosition position,
+                Vector velocity,
+                Aabb aabb,
+                EntityHazardClass hazardClass,
+                WorldPosition eyeOrigin,
+                long observedTick,
+                long worldRevision) {
+            this(entityType, displayedItem, null, position, velocity, aabb, hazardClass,
+                    eyeOrigin, observedTick, worldRevision);
         }
 
         /** Backward-compatible constructor for visible entities that do not render an item stack. */
@@ -195,7 +218,7 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
                 WorldPosition eyeOrigin,
                 long observedTick,
                 long worldRevision) {
-            this(entityType, null, position, velocity, aabb, hazardClass,
+            this(entityType, null, null, position, velocity, aabb, hazardClass,
                     eyeOrigin, observedTick, worldRevision);
         }
 

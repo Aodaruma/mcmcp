@@ -10949,7 +10949,27 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         session.clientTick(),
                         worldRevision,
                         reconciliation.visualRevision(),
-                        fogDistance)
+                        fogDistance,
+                        entity -> {
+                            var position = entity.position();
+                            var velocity = entity.getDeltaMovement();
+                            String entityType = BuiltInRegistries.ENTITY_TYPE
+                                    .getKey(entity.getType()).toString();
+                            return memory.rememberVisibleEntityReference(
+                                    session.worldSessionId(),
+                                    session.dimension(),
+                                    entity.getUUID(),
+                                    entityType,
+                                    position.x,
+                                    position.y,
+                                    position.z,
+                                    velocity.x,
+                                    velocity.y,
+                                    velocity.z,
+                                    entity.isVehicle(),
+                                    entity.isPassenger(),
+                                    session.clientTick());
+                        })
                 .ifPresent(visual -> {
                     var sounds = soundClues.snapshot(visual.frameCompletedTick());
                     var records = new ArrayList<>(visual.records());

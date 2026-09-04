@@ -151,6 +151,7 @@ public final class ObservationWireMapper {
         var result = new LinkedHashMap<String, Object>();
         result.put("kind", entity.kind().wireName());
         result.put("entity_type", entity.entityType().value());
+        result.put("entity_ref", entity.entityRef());
         if (entity.displayedItem() != null) {
             result.put("displayed_item", entity.displayedItem().value());
         }

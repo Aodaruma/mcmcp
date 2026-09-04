@@ -107,7 +107,9 @@ public final class OmnidirectionalObserver {
             .thenComparingDouble(value -> value.velocity().x())
             .thenComparingDouble(value -> value.velocity().y())
             .thenComparingDouble(value -> value.velocity().z())
-            .thenComparing(value -> value.hazardClass().name());
+            .thenComparing(value -> value.hazardClass().name())
+            .thenComparing(VisibleEntity::entityRef,
+                    Comparator.nullsFirst(Comparator.naturalOrder()));
 
     private final double configuredRadiusBlocks;
     private final int raysPerTick;
@@ -153,8 +155,32 @@ public final class OmnidirectionalObserver {
             long worldRevision,
             long visualRevision,
             double fogDistanceBlocks) {
+        return tick(
+                level,
+                player,
+                clientTick,
+                worldRevision,
+                visualRevision,
+                fogDistanceBlocks,
+                ignored -> null);
+    }
+
+    /**
+     * Samples one batch and attaches an opaque identity only after the entity passes this
+     * observer's current visibility policy. The issuer never receives hidden candidates or the
+     * local player; remote players are deliberately passed through without requesting a ref.
+     */
+    public Optional<ObservationFrame> tick(
+            ClientLevel level,
+            LocalPlayer player,
+            long clientTick,
+            long worldRevision,
+            long visualRevision,
+            double fogDistanceBlocks,
+            VisibleEntityRefIssuer entityRefs) {
         Objects.requireNonNull(level, "level");
         Objects.requireNonNull(player, "player");
+        Objects.requireNonNull(entityRefs, "entityRefs");
         if (player.level() != level) {
             throw new IllegalArgumentException("player must belong to the sampled client level");
         }
@@ -183,7 +209,7 @@ public final class OmnidirectionalObserver {
                 sample,
                 (directionIndex, direction, tickSample) -> traceMinecraftRay(
                         level, player, direction, tickSample, tickSample.effectiveRadiusBlocks()),
-                () -> observeEntities(level, player, sample));
+                () -> observeEntities(level, player, sample, entityRefs));
     }
 
     /** Discards a partial temporal frame, for example after disconnecting from a world. */
@@ -416,7 +442,8 @@ public final class OmnidirectionalObserver {
     private EntityObservation observeEntities(
             ClientLevel level,
             LocalPlayer player,
-            TickSample sample) {
+            TickSample sample,
+            VisibleEntityRefIssuer entityRefs) {
         Vec3 eye = vec3(sample.eyeOrigin());
         double radius = sample.effectiveRadiusBlocks();
         AABB queryBounds = player.getBoundingBox().inflate(radius);
@@ -449,9 +476,13 @@ public final class OmnidirectionalObserver {
                 Vec3 position = entity.position();
                 Vec3 velocity = entity.getDeltaMovement();
                 AABB box = entity.getBoundingBox();
+                var entityType = new ResourceId(
+                        BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString());
+                String entityRef = entity instanceof Player ? null : entityRefs.issue(entity);
                 result.add(new VisibleEntity(
-                        new ResourceId(BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString()),
+                        entityType,
                         displayedItem(entity),
+                        entityRef,
                         worldPosition(sample.dimension(), position),
                         new Vector(velocity.x, velocity.y, velocity.z),
                         new Aabb(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ),
@@ -878,6 +909,12 @@ public final class OmnidirectionalObserver {
         static EntityObservation empty() {
             return new EntityObservation(List.of(), false);
         }
+    }
+
+    /** Issues an opaque identity for one entity already proved visible in the completed sample. */
+    @FunctionalInterface
+    public interface VisibleEntityRefIssuer {
+        String issue(Entity entity);
     }
 
     @FunctionalInterface

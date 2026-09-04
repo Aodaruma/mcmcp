@@ -56,9 +56,11 @@ Action本文は通常のJSONなので、LLMは`agent_get_action.source.canonical
 | 方向付き階段planへの接近 | 後続planと同じ`anchor` / `transform` / `entries` | `approach_known_placement` | stand cellやyawをLLMで推測、接近後の再観測を省略 |
 | block操作 | `visible_surface.position` | 各block nodeの`target` / `support` | block座標を中心座標へ変換 |
 | 建築copy state | `visible_surface.placement_state_ref`（推奨）または同recordの`state`と`placement_item` | plan entry / `pillar_up_known`の`placement_state_ref`または`source_state`+`item` | refとinline identityの併記、`facing`、`axis`、`rotation`等をLLM側で変換 |
-| drop回収 | `visible_entity.position`と`displayed_item` | collect nodeの連続値`target` | XYZのround、非公開entity IDの追加 |
+| drop回収 | `visible_entity.position`と`displayed_item` | collect nodeの連続値`target` | XYZのround、`entity_ref`やraw UUIDの追加 |
 
 移動用の整数feet-space座標と、block座標と、item entityの連続座標は別の型です。
+
+`visible_entity.entity_ref`は、現在の全周visualで可視だった非playerだけに発行される24文字のopaque値です。world session、dimension、entity type、内部identityへ束縛され、最新の可視観測から100 client tickで解決不能になります。playerは常にnullです。現行のdrop回収nodeはrefを受け取らないため、そこへ追加せず従来どおりpositionとdisplayed_itemをコピーします。将来のentity操作でもrefだけを可視性・reach・操作許可の代用にはしません。
 
 dropが通常の物理移動で少しずれ、古いpickup cellだけが使えなくなった場合、runtimeは操作入力をいったん解放し、同じ`displayed_item`のfresh witnessが提出位置の0.75 block以内に見えている間だけ、安全なpickup cellと経路を内部で再計画します。公開recordはentity UUIDを持たないため、同種dropの個体同一性は保証しません。開始時のinventory baselineと有効なoccurrence / Action期限は維持され、再計画のたびに期限を延ばしません。消失、範囲外への移動、安全な経路の不足では`PATH_BLOCKED`となり、回収成功は最後まで対象itemのinventory絶対個数増加だけで判定します。
 

@@ -60,7 +60,7 @@ sourceを返す場合も、Bearer、内部slot、hidden state、raw Tool payload
 
 ### 3.3 P1: 作業領域を広げるために必要
 
-- policy-visibleなopaque `entity_ref`
+- policy-visibleなopaque `entity_ref`（全周visualの可視非playerから発行する100 tick・session/dimension/type/identity束縛refまでは実装済み。consumerは未実装）
 - entityへのinteract、attack、kill確認、retreat
 - hotbar選択、equip、armor、offhand、consume / use、drop
 - villager取引とoffer / enchantmentのpolicy-visible表現
