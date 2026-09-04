@@ -151,13 +151,20 @@ final class FixtureGameTests {
         }
         var edge = (dev.aod.mcmcp.agent.observation.ObservationRecord.Traversability)
                 projection.records().getFirst();
+        var routeEdge = projection.edges().getFirst();
         if (edge.navigationTarget().x() != 1 || edge.navigationTarget().y() != 2
                 || edge.navigationTarget().z() != 0
+                || edge.status()
+                        != dev.aod.mcmcp.agent.observation.ObservationRecord.TraversabilityStatus.PROBE_ALLOWED
                 || edge.targetSupport()
                         != dev.aod.mcmcp.agent.observation.ObservationRecord.TargetSupport.CONFIRMED
                 || edge.transitionClearance()
-                        != dev.aod.mcmcp.agent.observation.ObservationRecord.TransitionClearance.CONFIRMED) {
-            helper.fail(Component.literal("safe adjacent step-up projection lost its proof"));
+                        != dev.aod.mcmcp.agent.observation.ObservationRecord.TransitionClearance.CONFIRMED
+                || routeEdge.locomotion()
+                        != dev.aod.mcmcp.agent.safety.Locomotion.GROUND
+                || routeEdge.key().to().y() - routeEdge.key().from().y() != 1) {
+            helper.fail(Component.literal(
+                    "safe adjacent step-up projection lost its executable ground-ascent proof"));
             return;
         }
         helper.succeed();

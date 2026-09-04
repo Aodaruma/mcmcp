@@ -307,6 +307,20 @@ class MinecraftActionPrimitiveExecutorTest {
     }
 
     @Test
+    void fullBlockGroundAscentUsesTargetBoundNavigationSafety() {
+        assertThat(MinecraftActionPrimitiveExecutor.requiresNavigationMovementSafety(
+                Locomotion.GROUND, 1)).isTrue();
+        assertThat(MinecraftActionPrimitiveExecutor.requiresNavigationMovementSafety(
+                Locomotion.GROUND, 0)).isFalse();
+        assertThat(MinecraftActionPrimitiveExecutor.requiresNavigationMovementSafety(
+                Locomotion.GROUND, -1)).isFalse();
+        assertThat(MinecraftActionPrimitiveExecutor.requiresNavigationMovementSafety(
+                Locomotion.LADDER, 1)).isTrue();
+        assertThat(MinecraftActionPrimitiveExecutor.requiresNavigationMovementSafety(
+                Locomotion.SCAFFOLDING, -1)).isTrue();
+    }
+
+    @Test
     void scaffoldingUsesJumpUpAndCrouchDownWhileTrackingVerticalProgress() {
         assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(
                 java.util.Set.of(), 1, 1.0D, 0.6D, Locomotion.SCAFFOLDING))

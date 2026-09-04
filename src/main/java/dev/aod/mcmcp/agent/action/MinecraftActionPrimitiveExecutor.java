@@ -317,7 +317,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             movement = null;
             return finish(Status.FAILED, Reason.MOVEMENT_LEASE_EXPIRED);
         }
-        if (locomotion == Locomotion.GROUND) {
+        if (!requiresNavigationMovementSafety(locomotion, verticalDelta)) {
             AgentInputState.global().requireGoalMovementSafety(
                     player, player.level(), snapshot.worldRevision(), remainingDistance);
         } else {
@@ -336,6 +336,17 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                             waypointTolerance));
         }
         return runningNavigationResult(edge, !desired.isEmpty());
+    }
+
+    /**
+     * A full-block ground ascent needs the same target-bound collision proof as climbable
+     * movement. Vanilla initially resolves the jump against the step face, which is safe only
+     * when it is the selected, supported upward edge. Flat and descending ground movement keep
+     * the stricter ordinary goal proof.
+     */
+    static boolean requiresNavigationMovementSafety(Locomotion locomotion, int verticalDelta) {
+        Objects.requireNonNull(locomotion, "locomotion");
+        return locomotion != Locomotion.GROUND || verticalDelta > 0;
     }
 
     private TickResult tickNavigationSettlement(
