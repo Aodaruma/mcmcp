@@ -43,6 +43,27 @@ function New-MockCobblestoneSurface {
     }
 }
 
+function New-MockCobblestoneDrop {
+    param([Parameter(Mandatory)][long]$Revision)
+    $position = [pscustomobject]@{
+        dimension = 'minecraft:overworld'; x = 199.5; y = 201.1; z = 200.1
+    }
+    [pscustomobject]@{
+        kind = 'visible_entity'; entity_type = 'minecraft:item'
+        entity_ref = 'abcdefghijklmnopqrstuvwx'
+        displayed_item = 'minecraft:cobblestone'; position = $position
+        velocity = [pscustomobject]@{ x = 0.0; y = 0.0; z = 0.0 }
+        aabb = [pscustomobject]@{
+            min_x = 199.375; min_y = 201.0; min_z = 199.975
+            max_x = 199.625; max_y = 201.25; max_z = 200.225
+        }
+        hazard_class = 'passive'
+        eye_origin = [pscustomobject]@{ x = 199.5; y = 202.62; z = 199.5 }
+        observed_tick = 100L + $Revision; world_revision = $Revision
+        provenance = 'OMNIDIRECTIONAL_VISUAL'
+    }
+}
+
 function New-MockCobblestoneState {
     param(
         [Parameter(Mandatory)][int]$CobblestoneCount,
@@ -104,9 +125,10 @@ function New-MockBreakTerminal {
     param(
         [ValidateRange(1, 8)][int]$MinimumInventoryCount,
         [ValidateRange(1, 16)][int]$Attempt = $MinimumInventoryCount,
+        [ValidateRange(1, 32)][int]$ActionSequence = $Attempt,
         [string]$Verification = 'confirmed'
     )
-    $actionId = '550e8400-e29b-41d4-a716-' + $Attempt.ToString('000000000000')
+    $actionId = '550e8400-e29b-41d4-a716-' + $ActionSequence.ToString('000000000000')
     [pscustomobject]@{
         schema_version = 1; action_id = $actionId; state = 'succeeded'
         progress = [pscustomobject]@{
@@ -152,10 +174,11 @@ function New-MockBreakTerminal {
 function New-MockLostDropTerminal {
     param(
         [ValidateRange(1, 8)][int]$MinimumInventoryCount,
-        [ValidateRange(1, 16)][int]$Attempt
+        [ValidateRange(1, 16)][int]$Attempt,
+        [ValidateRange(1, 32)][int]$ActionSequence = $Attempt
     )
     $terminal = New-MockBreakTerminal -MinimumInventoryCount $MinimumInventoryCount `
-        -Attempt $Attempt
+        -Attempt $Attempt -ActionSequence $ActionSequence
     $terminal.state = 'failed'
     $terminal.progress.executed_nodes = 0
     $terminal.progress.blocks_broken = 0
@@ -178,6 +201,43 @@ function New-MockLostDropTerminal {
     $terminal.partial.interrupted_node_id = "break_cobblestone_$MinimumInventoryCount"
     $terminal.partial.resume_requires_reobservation = $true
     return $terminal
+}
+
+function New-MockCobblestoneCollectTerminal {
+    param(
+        [ValidateRange(1, 16)][int]$Attempt,
+        [ValidateRange(1, 32)][int]$ActionSequence,
+        [ValidateRange(0, 7)][int]$InventoryBefore
+    )
+    $inventoryAfter = $InventoryBefore + 1
+    [pscustomobject]@{
+        schema_version = 1
+        action_id = '550e8400-e29b-41d4-a716-' + $ActionSequence.ToString('000000000000')
+        state = 'succeeded'
+        progress = [pscustomobject]@{
+            executed_nodes = 1; total_node_upper_bound = 1
+            distance_travelled = 0; camera_degrees = 0
+            interactions = 0; blocks_broken = 0; blocks_placed = 0
+        }
+        failure = $null
+        trace = @(
+            [pscustomobject]@{
+                tick = 0; event = 'NODE_STARTED'; detail = "collect_cobble_$Attempt"
+            },
+            [pscustomobject]@{
+                tick = 3; event = 'NODE_EVIDENCE'
+                detail = "item_pickup=minecraft:cobblestone,inventory_before=$InventoryBefore,inventory_after=$inventoryAfter"
+            },
+            [pscustomobject]@{ tick = 3; event = 'SUCCEEDED'; detail = 'succeeded' }
+        )
+        effects = @()
+        partial = [pscustomobject]@{
+            has_confirmed_effects = $false; interrupted_node_id = $null
+            remaining_node_upper_bound = 0; resume_requires_reobservation = $false
+        }
+        source = [pscustomobject]@{}; template = [pscustomobject]@{}
+        reference_requirements = @()
+    }
 }
 
 [void](Assert-CobblestoneBreakTerminal `
@@ -211,6 +271,41 @@ $wrongFailure.failure.evidence = @('pickup_unconfirmed')
 Assert-True (-not (Test-CobblestoneLostDropTerminal -Terminal $wrongFailure `
             -MinimumInventoryCount 1)) `
     'unrelated failure was accepted for lost-drop retry'
+$drop = New-MockCobblestoneDrop -Revision 21
+$noLooseRecovery = Resolve-CobblestoneLooseDropRecovery -VisibleItems @()
+Assert-True ($noLooseRecovery.mode -ceq 'lost_drop_retry') `
+    'zero loose items did not retain the qualified lost-drop retry'
+$oneLooseRecovery = Resolve-CobblestoneLooseDropRecovery -VisibleItems @($drop)
+Assert-True ($oneLooseRecovery.mode -ceq 'active_collect' -and
+    [object]::ReferenceEquals($drop, $oneLooseRecovery.item)) `
+    'one cobblestone drop did not select its delivered record for collection'
+$wrongDrop = $drop.PSObject.Copy()
+$wrongDrop.displayed_item = 'minecraft:diamond'
+Assert-Throws { Resolve-CobblestoneLooseDropRecovery -VisibleItems @($wrongDrop) } `
+    'a different loose item was accepted for cobblestone recovery'
+Assert-Throws { Resolve-CobblestoneLooseDropRecovery -VisibleItems @($drop, $drop) } `
+    'multiple loose items were accepted for cobblestone recovery'
+$script:ToolTransport = {
+    param($Tool, $Arguments)
+    if ($Tool -cne 'agent_get_observation') { throw "unexpected loose-item tool: $Tool" }
+    [pscustomobject]@{
+        frame_id = $Arguments.frame_id; records = @($drop); next_cursor = $null
+    }
+}
+Assert-Throws { Assert-NoVisibleLooseItems `
+        -State (New-MockCobblestoneState -CobblestoneCount 1) } `
+    'a normal successful cycle accepted a remaining loose item'
+$script:ToolTransport = $null
+$collectRequest = New-CobblestoneDropCollectionRequest -Record $drop -Attempt 1
+Assert-True ($collectRequest.program.body[0].op -ceq 'collect_visible_item' -and
+    $collectRequest.program.body[0].displayed_item -ceq 'minecraft:cobblestone' -and
+    [object]::ReferenceEquals($drop.position, $collectRequest.program.body[0].target) -and
+    $collectRequest.budget.max_distance_blocks -eq 0) `
+    'loose-drop collection did not retain exact delivery evidence or stationarity'
+[void](Assert-CobblestoneCollectionTerminal `
+        -Terminal (New-MockCobblestoneCollectTerminal -Attempt 1 `
+            -ActionSequence 2 -InventoryBefore 0) `
+        -Attempt 1 -InventoryBefore 0 -InventoryAfter 1)
 
 $script:ToolTransport = {
     param($Tool, $Arguments)
@@ -233,10 +328,17 @@ $script:ToolTransport = $null
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null
 $script:MockCompleted = 0
-$script:MockAttempt = 0
+$script:MockBreakAttempt = 0
+$script:MockActionSequence = 0
+$script:MockPendingKind = $null
 $script:MockPendingMinimum = 0
+$script:MockPendingBreakAttempt = 0
+$script:MockPendingActionSequence = 0
 $script:MockObservationSerial = 0L
-$script:MockLostDropEmitted = $false
+$script:MockLooseDrop = $false
+$script:MockLooseMode = 'none'
+$script:MockLoosePollsRemaining = 0
+$script:MockDelayedPickupMinimum = 0
 Add-GateEvent -Event 'fixed_five_surface_verified' -Detail ([ordered]@{
         protocol_version = $script:ProtocolVersion; tools = @($script:AllowedTools)
     })
@@ -246,6 +348,28 @@ $script:ToolTransport = {
     switch ($Tool) {
         'agent_get_state' {
             $script:MockObservationSerial++
+            if ($script:MockLooseMode -ceq 'transient') {
+                if ($script:MockLoosePollsRemaining -gt 0) {
+                    $script:MockLoosePollsRemaining--
+                    $script:MockLooseDrop = $true
+                } else {
+                    $script:MockLooseMode = 'none'
+                    $script:MockLooseDrop = $false
+                }
+            } elseif ($script:MockLooseMode -ceq 'delayed_pickup') {
+                if ($script:MockLoosePollsRemaining -gt 0) {
+                    $script:MockLoosePollsRemaining--
+                    $script:MockLooseDrop = $true
+                } else {
+                    $script:MockCompleted = $script:MockDelayedPickupMinimum
+                    $script:MockLooseMode = 'none'
+                    $script:MockLooseDrop = $false
+                }
+            } elseif ($script:MockLooseMode -ceq 'stable') {
+                $script:MockLooseDrop = $true
+            } else {
+                $script:MockLooseDrop = $false
+            }
             New-MockCobblestoneState -CobblestoneCount $script:MockCompleted `
                 -FrameSequence $script:MockObservationSerial
         }
@@ -253,6 +377,9 @@ $script:ToolTransport = {
             $kinds = @($Arguments.kinds)
             $records = if ($kinds.Count -eq 1 -and $kinds[0] -ceq 'visible_surface') {
                 @(New-MockCobblestoneSurface -Revision (20L + $script:MockObservationSerial))
+            } elseif ($kinds.Count -eq 1 -and $kinds[0] -ceq 'visible_entity' -and
+                $script:MockLooseDrop) {
+                @(New-MockCobblestoneDrop -Revision (20L + $script:MockObservationSerial))
             } else { @() }
             [pscustomobject]@{
                 schema_version = 1
@@ -264,34 +391,85 @@ $script:ToolTransport = {
         }
         'agent_start_action' {
             $submitted = $Arguments.program.body[0]
-            $expected = $script:MockCompleted + 1
-            if ($submitted.op -cne 'break_known_block' -or
-                [int]$submitted.minimum_inventory_count -ne $expected -or
-                $submitted.target.x -ne 199 -or $submitted.target.y -ne 201 -or
-                $submitted.target.z -ne 200) {
-                throw 'mock received a stale or malformed cobblestone break'
+            $script:MockActionSequence++
+            $script:MockPendingActionSequence = $script:MockActionSequence
+            if ($submitted.op -ceq 'break_known_block') {
+                $expected = $script:MockCompleted + 1
+                if ([int]$submitted.minimum_inventory_count -ne $expected -or
+                    $submitted.target.x -ne 199 -or $submitted.target.y -ne 201 -or
+                    $submitted.target.z -ne 200) {
+                    throw 'mock received a stale or malformed cobblestone break'
+                }
+                $script:MockBreakAttempt++
+                $script:MockPendingKind = 'break'
+                $script:MockPendingMinimum = $expected
+                $script:MockPendingBreakAttempt = $script:MockBreakAttempt
+            } elseif ($submitted.op -ceq 'collect_visible_item') {
+                if (-not $script:MockLooseDrop -or
+                    $submitted.displayed_item -cne 'minecraft:cobblestone' -or
+                    $submitted.target.x -ne 199.5 -or $submitted.target.y -ne 201.1 -or
+                    $submitted.target.z -ne 200.1) {
+                    throw 'mock received a stale or malformed cobblestone collection'
+                }
+                $script:MockPendingKind = 'collect'
+                $script:MockPendingMinimum = $script:MockCompleted + 1
+                $script:MockPendingBreakAttempt = $script:MockBreakAttempt
+            } else {
+                throw "unexpected cobblestone Action op: $($submitted.op)"
             }
-            $script:MockAttempt++
-            $script:MockPendingMinimum = $expected
             [pscustomobject]@{
                 schema_version = 1
                 action_id = '550e8400-e29b-41d4-a716-' + `
-                    $script:MockAttempt.ToString('000000000000')
+                    $script:MockActionSequence.ToString('000000000000')
                 state = 'queued'
             }
         }
         'agent_get_action' {
-            if ($script:MockPendingMinimum -lt 1) { throw 'mock has no pending break' }
+            if ($null -eq $script:MockPendingKind -or $script:MockPendingMinimum -lt 1) {
+                throw 'mock has no pending Action'
+            }
+            $kind = $script:MockPendingKind
             $minimum = $script:MockPendingMinimum
+            $breakAttempt = $script:MockPendingBreakAttempt
+            $actionSequence = $script:MockPendingActionSequence
+            $script:MockPendingKind = $null
             $script:MockPendingMinimum = 0
-            if (-not $script:MockLostDropEmitted -and $script:MockAttempt -eq 2) {
-                $script:MockLostDropEmitted = $true
+            if ($kind -ceq 'collect') {
+                $before = $script:MockCompleted
+                $script:MockCompleted = $minimum
+                $script:MockLooseMode = 'none'
+                $script:MockLooseDrop = $false
+                New-MockCobblestoneCollectTerminal -Attempt $breakAttempt `
+                    -ActionSequence $actionSequence -InventoryBefore $before
+            } elseif ($breakAttempt -eq 2) {
+                $script:MockLooseMode = 'stable'
+                $script:MockLooseDrop = $true
                 New-MockLostDropTerminal -MinimumInventoryCount $minimum `
-                    -Attempt $script:MockAttempt
+                    -Attempt $breakAttempt -ActionSequence $actionSequence
+            } elseif ($breakAttempt -eq 4) {
+                $script:MockLooseMode = 'none'
+                $script:MockLooseDrop = $false
+                New-MockLostDropTerminal -MinimumInventoryCount $minimum `
+                    -Attempt $breakAttempt -ActionSequence $actionSequence
+            } elseif ($breakAttempt -eq 6) {
+                $script:MockLooseMode = 'delayed_pickup'
+                $script:MockLoosePollsRemaining = 1
+                $script:MockDelayedPickupMinimum = $minimum
+                $script:MockLooseDrop = $true
+                New-MockLostDropTerminal -MinimumInventoryCount $minimum `
+                    -Attempt $breakAttempt -ActionSequence $actionSequence
             } else {
                 $script:MockCompleted = $minimum
+                if ($breakAttempt -eq 1) {
+                    $script:MockLooseMode = 'transient'
+                    $script:MockLoosePollsRemaining = 2
+                    $script:MockLooseDrop = $true
+                } else {
+                    $script:MockLooseMode = 'none'
+                    $script:MockLooseDrop = $false
+                }
                 New-MockBreakTerminal -MinimumInventoryCount $minimum `
-                    -Attempt $script:MockAttempt
+                    -Attempt $breakAttempt -ActionSequence $actionSequence
             }
         }
         'agent_cancel_action' { throw 'mock should not cancel a successful break' }
@@ -303,22 +481,31 @@ try {
     $result = Invoke-McmcpCobblestoneGeneratorCapabilityGate
     Assert-True ($result.gate_result.gate -ceq 'phase9-cobblestone-generator') `
         'gate result name is wrong'
-    Assert-True ($result.gate_result.lifecycle.accepted -eq 9 -and
-        $result.gate_result.lifecycle.terminal -eq 9 -and
+    Assert-True ($result.gate_result.lifecycle.accepted -eq 10 -and
+        $result.gate_result.lifecycle.terminal -eq 10 -and
         $result.gate_result.lifecycle.unique_frame_ids -eq 9 -and
         $result.gate_result.lifecycle.successful_pickups -eq 8 -and
         $result.gate_result.lifecycle.lost_drops -eq 1 -and
+        $result.gate_result.lifecycle.recovered_loose_drops -eq 2 -and
+        $result.gate_result.lifecycle.active_collection_actions -eq 1 -and
+        $result.gate_result.lifecycle.delayed_passive_pickups -eq 1 -and
+        $result.gate_result.lifecycle.total_attempts -eq 9 -and
+        $result.gate_result.lifecycle.total_actions -eq 10 -and
         $result.gate_result.lifecycle.expected_pickaxe_damage -eq 9) `
-        'lost drop plus eight fresh successful Action cycles were not proven'
+        'lost, recovered, and directly picked-up break lifecycles were not proven'
     Assert-True ($result.gate_result.terminal_effects.Count -eq 8) `
         'eight confirmed break effects were not retained'
     Assert-True ($result.gate_result.online_oracle.cobblestone_delta -eq 8) `
         'online inventory oracle is not +8'
     Assert-True ($result.gate_result.total_attempts -eq 9 -and
         $result.gate_result.lost_drops -eq 1 -and
+        $result.gate_result.recovered_loose_drops -eq 2 -and
+        $result.gate_result.active_collection_actions -eq 1 -and
+        $result.gate_result.delayed_passive_pickups -eq 1 -and
         $result.gate_result.maximum_attempts -eq 16 -and
         $result.gate_result.expected_pickaxe_damage -eq 9 -and
-        $result.gate_result.lost_drop_effects.Count -eq 1) `
+        $result.gate_result.lost_drop_effects.Count -eq 1 -and
+        $result.gate_result.recovered_drop_effects.Count -eq 2) `
         'attempt, lost-drop, or pickaxe-damage accounting is wrong'
     Assert-True ($result.gate_result.external_oracle.player.health -eq 20.0) `
         'offline oracle did not bind the observed health baseline'
@@ -326,8 +513,23 @@ try {
         $result.gate_result.external_oracle.total_attempts -eq 9 -and
         $result.gate_result.external_oracle.maximum_attempts -eq 16 -and
         $result.gate_result.external_oracle.lost_drops -eq 1 -and
+        $result.gate_result.external_oracle.recovered_loose_drops -eq 2 -and
+        $result.gate_result.external_oracle.active_collection_actions -eq 1 -and
+        $result.gate_result.external_oracle.delayed_passive_pickups -eq 1 -and
         $result.gate_result.external_oracle.inspector_arguments[1] -ceq '9') `
         'offline oracle did not bind attempts to pickaxe damage'
+    $delayedSuccessSettlements = @($script:GateEvents | Where-Object {
+            $_.event -ceq 'cobblestone_pickup_settled' -and
+            $_.phase -ceq 'attempt 1 pickup reobservation' -and
+            [int]$_.polls -gt 1
+        })
+    $recoveryModes = @($result.gate_result.recovered_drop_effects | ForEach-Object {
+            [string]$_.pickup_mode
+        } | Sort-Object)
+    Assert-True ($delayedSuccessSettlements.Count -eq 1 -and
+        ($recoveryModes -join ',') -ceq
+            'delayed_passive_pickup,delivery_backed_collect_visible_item') `
+        'mock did not exercise delayed success convergence and both failed-break recoveries'
     Assert-True ([bool]$result.input_release.control_ready -and
         [bool]$result.input_release.all_actions_terminal) `
         'input release was not proven'
