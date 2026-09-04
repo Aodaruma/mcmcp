@@ -16,9 +16,12 @@ import net.minecraft.gametest.framework.TestData;
 import net.minecraft.gametest.framework.TestEnvironmentDefinition;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.GameType;
@@ -63,7 +66,11 @@ final class FixtureGameTests {
             id("kill_zone_armor_stand_hit_fixture");
     private static final Identifier KILL_ZONE_GEOMETRY_TEST_ID =
             id("kill_zone_geometry_fixture");
+    private static final Identifier PLAYER_SAFETY_BASELINE_TEST_ID =
+            id("player_safety_baseline_fixture");
     private static final Identifier ENVIRONMENT_ID = id("fixture_environment");
+    private static final Identifier PLAYER_BASELINE_ENVIRONMENT_ID =
+            id("player_baseline_environment");
 
     private static final DeferredRegister<Consumer<GameTestHelper>> TEST_FUNCTIONS =
             DeferredRegister.create(BuiltInRegistries.TEST_FUNCTION, McmcpTestFixtureMod.MOD_ID);
@@ -105,6 +112,10 @@ final class FixtureGameTests {
             TEST_FUNCTIONS.register(
                     "kill_zone_geometry_fixture",
                     () -> FixtureGameTests::runKillZoneGeometryFixture);
+    private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> PLAYER_SAFETY_BASELINE_FIXTURE =
+            TEST_FUNCTIONS.register(
+                    "player_safety_baseline_fixture",
+                    () -> FixtureGameTests::runPlayerSafetyBaselineFixture);
 
     private FixtureGameTests() {
     }
@@ -117,6 +128,8 @@ final class FixtureGameTests {
     private static void register(RegisterGameTestsEvent event) {
         Holder<TestEnvironmentDefinition<?>> environment = event.registerEnvironment(
                 ENVIRONMENT_ID, new TestEnvironmentDefinition.AllOf());
+        Holder<TestEnvironmentDefinition<?>> playerBaselineEnvironment = event.registerEnvironment(
+                PLAYER_BASELINE_ENVIRONMENT_ID, new TestEnvironmentDefinition.AllOf());
         TestData<Holder<TestEnvironmentDefinition<?>>> data = new TestData<>(
                 environment,
                 Identifier.withDefaultNamespace("empty"),
@@ -145,6 +158,67 @@ final class FixtureGameTests {
                 new FunctionGameTestInstance(KILL_ZONE_ARMOR_STAND_FIXTURE.getKey(), data));
         event.registerTest(KILL_ZONE_GEOMETRY_TEST_ID,
                 new FunctionGameTestInstance(KILL_ZONE_GEOMETRY_FIXTURE.getKey(), data));
+        TestData<Holder<TestEnvironmentDefinition<?>>> playerBaselineData = new TestData<>(
+                playerBaselineEnvironment,
+                Identifier.withDefaultNamespace("empty"),
+                100,
+                0,
+                true);
+        event.registerTest(PLAYER_SAFETY_BASELINE_TEST_ID,
+                new FunctionGameTestInstance(PLAYER_SAFETY_BASELINE_FIXTURE.getKey(), playerBaselineData));
+    }
+
+    private static void runPlayerSafetyBaselineFixture(GameTestHelper helper) {
+        ServerPlayer player = helper.makeMockServerPlayerInLevel();
+        dirtyPlayerSafetyBaseline(player);
+        FixtureCobblestoneGeneratorScenario.configurePlayer(player);
+        ItemStack pickaxe = player.getInventory().getItem(0);
+        int occupiedSlots = 0;
+        for (ItemStack stack : player.getInventory().getNonEquipmentItems()) {
+            if (!stack.isEmpty()) {
+                occupiedSlots++;
+            }
+        }
+        if (!player.isAlive()
+                || player.gameMode.getGameModeForPlayer() != GameType.SURVIVAL
+                || Math.abs(player.getHealth() - 16.0F) >= 0.0001F
+                || Math.abs(player.getAbsorptionAmount()) >= 0.0001F
+                || player.getRemainingFireTicks() != 0
+                || player.getAirSupply() != player.getMaxAirSupply()
+                || !player.getActiveEffects().isEmpty()
+                || player.getFoodData().getFoodLevel() != 17
+                || Math.abs(player.getFoodData().getSaturationLevel() - 3.5F) >= 0.0001F
+                || player.getDeltaMovement().lengthSqr() >= 1.0e-12D
+                || Math.abs(player.fallDistance) >= 0.0001F
+                || !pickaxe.is(Items.IRON_PICKAXE)
+                || pickaxe.getCount() != 1
+                || pickaxe.isEnchanted()
+                || pickaxe.getDamageValue() != 0
+                || player.getInventory().getSelectedSlot() != 0
+                || occupiedSlots != 1
+                || !player.getInventory().getItem(net.minecraft.world.entity.player.Inventory.SLOT_OFFHAND).isEmpty()) {
+            helper.fail(Component.literal(
+                    "Cobblestone fixture did not restore its exact player baseline"));
+            return;
+        }
+        helper.succeed();
+    }
+
+    private static void dirtyPlayerSafetyBaseline(ServerPlayer player) {
+        player.setGameMode(GameType.CREATIVE);
+        player.setHealth(3.0F);
+        player.setAbsorptionAmount(4.0F);
+        player.setRemainingFireTicks(40);
+        player.setAirSupply(Math.max(0, player.getMaxAirSupply() - 1));
+        player.addEffect(new MobEffectInstance(MobEffects.POISON, 200));
+        player.getFoodData().setFoodLevel(1);
+        player.getFoodData().setSaturation(0.0F);
+        player.setDeltaMovement(0.25D, 0.5D, -0.25D);
+        player.fallDistance = 3.0F;
+        player.getInventory().setItem(7, new ItemStack(Items.DIAMOND, 3));
+        player.getInventory().setItem(
+                net.minecraft.world.entity.player.Inventory.SLOT_OFFHAND,
+                new ItemStack(Items.SHIELD));
     }
 
     private static void runKillZoneGeometryFixture(GameTestHelper helper) {

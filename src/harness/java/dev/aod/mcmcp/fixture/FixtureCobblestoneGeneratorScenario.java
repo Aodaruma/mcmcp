@@ -150,7 +150,8 @@ final class FixtureCobblestoneGeneratorScenario {
         }
     }
 
-    private static void configurePlayer(ServerPlayer player) {
+    static void configurePlayer(ServerPlayer player) {
+        FixtureArena.resetPlayer(player);
         player.getInventory().clearContent();
         ItemStack pickaxe = new ItemStack(Items.IRON_PICKAXE);
         if (pickaxe.isEnchanted() || pickaxe.getDamageValue() != 0) {
