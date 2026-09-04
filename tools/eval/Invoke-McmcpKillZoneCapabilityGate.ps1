@@ -248,11 +248,18 @@ function Assert-KillZoneInputRequired {
 }
 
 function Assert-NoMinecraftKillZonePrompt {
-    param([Parameter(Mandatory)][object]$State)
+    param(
+        [Parameter(Mandatory)][object]$State,
+        [AllowNull()][AllowEmptyString()][string]$PreviousActionId
+    )
     $control = Get-ObjectProperty $State 'control'
     $consent = Get-ObjectProperty $State 'entity_attack_consent'
+    $action = Get-ObjectProperty $State 'action'
+    $actionId = if ($null -eq $action) { '' } else {
+        [string](Get-ObjectProperty $action 'action_id')
+    }
     if ((Get-ObjectProperty $control 'mode') -cne 'ready' -or
-        $null -ne (Get-ObjectProperty $State 'action') -or
+        $actionId -cne $PreviousActionId -or
         (Get-ObjectProperty $consent 'state') -cne 'none' -or
         $null -ne (Get-ObjectProperty $consent 'policy_binding_hash') -or
         $null -ne (Get-ObjectProperty $consent 'scope') -or
@@ -264,6 +271,7 @@ function Assert-NoMinecraftKillZonePrompt {
 function Invoke-McpFormKillZoneAction {
     param(
         [Parameter(Mandatory)][Collections.IDictionary]$Request,
+        [AllowNull()][AllowEmptyString()][string]$PreviousActionId,
         [ValidateRange(1, 900)][int]$WallTimeoutSeconds = 25
     )
     $requestBefore = ConvertTo-CompactJson $Request
@@ -271,7 +279,8 @@ function Invoke-McpFormKillZoneAction {
         -RequestState $null -InputResponses $null
     $requestState = Assert-KillZoneInputRequired -Result $initial
     $waitingState = Get-FreshState
-    Assert-NoMinecraftKillZonePrompt -State $waitingState
+    Assert-NoMinecraftKillZonePrompt -State $waitingState `
+        -PreviousActionId $PreviousActionId
     Add-GateEvent -Event 'mcp_form_input_required' -Detail ([ordered]@{
             action_reserved = $false; input_acquired = $false
             minecraft_consent_ui = $false; request_state_redacted = $true
@@ -469,7 +478,12 @@ function Invoke-KillZoneGateCore {
 
     $request = New-KillZoneRequest -ConsentRef $null
     if ($ApprovalMode -ceq 'mcp_form') {
-        $terminal = Invoke-McpFormKillZoneAction -Request $request -WallTimeoutSeconds 25
+        $initialAction = Get-ObjectProperty $initial 'action'
+        $previousActionId = if ($null -eq $initialAction) { $null } else {
+            [string](Get-ObjectProperty $initialAction 'action_id')
+        }
+        $terminal = Invoke-McpFormKillZoneAction -Request $request `
+            -PreviousActionId $previousActionId -WallTimeoutSeconds 25
     } else {
         $awaiting = Invoke-GateTool -Tool 'agent_start_action' -Arguments $request
         $policyHash = Assert-AwaitingKillZoneConsent -Receipt $awaiting
