@@ -368,8 +368,24 @@ function Invoke-FishingGateCore {
     Assert-FishingTerminalBudget -Terminal $reelTerminal -Phase 'reel' `
         -ExpectedInteractions 1 -MaximumCamera 0
 
-    $final = Get-FreshState
-    $loot = Get-FishingLootSummary -State $final
+    # Vanilla launches the caught item from the bobber toward the player. The reel Action can be
+    # terminal before that entity crosses the pickup radius, so give passive delivery a short,
+    # bounded settle window before deciding that an explicit collect Action is required.
+    $final = $null
+    $loot = $null
+    $settleAttempts = 0
+    for ($settlePoll = 0; $settlePoll -le 40; $settlePoll++) {
+        $settleAttempts++
+        $final = Get-FreshState
+        $loot = Get-FishingLootSummary -State $final
+        if ($loot.loot_item_count -ge 1) { break }
+        if ($settlePoll -lt 40) { Invoke-GateDelaySeconds -Seconds 0.05 }
+    }
+    Add-GateEvent -Event 'fishing_loot_delivery_settled' -Detail ([ordered]@{
+            polls = $settleAttempts
+            inventory_loot_count = $loot.loot_item_count
+            maximum_wait_seconds = 2.0
+        })
     $collectionUsed = $false
     if ($loot.loot_item_count -lt 1) {
         $visible = Get-VisibleFishingLoot -State $final
