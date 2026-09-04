@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$TokenPath,
     [string]$Endpoint = 'http://127.0.0.1:8765/mcp',
     [ValidateRange(10, 55)][int]$ConsentWaitSeconds = 55,
+    [ValidateSet('mcp_form', 'physical_fallback')][string]$ApprovalMode = 'mcp_form',
     [switch]$LibraryOnly
 )
 
@@ -14,6 +15,7 @@ $killZoneArtifactDirectory = $ArtifactDirectory
 $killZoneTokenPath = $TokenPath
 $killZoneEndpoint = $Endpoint
 $killZoneConsentWaitSeconds = $ConsentWaitSeconds
+$killZoneApprovalMode = $ApprovalMode
 $killZoneLibraryOnly = [bool]$LibraryOnly
 $commonRunner = Join-Path $PSScriptRoot 'Invoke-McmcpConstructionCapabilityGate.ps1'
 . $commonRunner -Gate navigation -ArtifactDirectory $killZoneArtifactDirectory `
@@ -22,11 +24,13 @@ $ArtifactDirectory = $killZoneArtifactDirectory
 $TokenPath = $killZoneTokenPath
 $Endpoint = $killZoneEndpoint
 $ConsentWaitSeconds = $killZoneConsentWaitSeconds
+$ApprovalMode = $killZoneApprovalMode
 $LibraryOnly = $killZoneLibraryOnly
 
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null
 $script:ToolTransport = $null
+$script:KillZoneElicitationTransport = $null
 $script:DelayTransport = $null
 $script:Bearer = $null
 $script:KillZoneArtifactInitialized = $false
@@ -44,9 +48,14 @@ $script:KillZoneObservationBounds = [ordered]@{
 }
 
 function Get-McpMeta {
+    $capabilities = if ($ApprovalMode -ceq 'mcp_form') {
+        [ordered]@{ elicitation = [ordered]@{ form = [ordered]@{} } }
+    } else {
+        [ordered]@{}
+    }
     [ordered]@{
         'io.modelcontextprotocol/protocolVersion' = $script:ProtocolVersion
-        'io.modelcontextprotocol/clientCapabilities' = [ordered]@{}
+        'io.modelcontextprotocol/clientCapabilities' = $capabilities
         'io.modelcontextprotocol/clientInfo' = [ordered]@{
             name = 'mcmcp-kill-zone-capability-gate'; version = '1'
         }
@@ -181,6 +190,134 @@ function Assert-AwaitingKillZoneConsent {
         throw 'first kill-zone start did not return the non-owning AWAITING_CONSENT receipt'
     }
     return $hash
+}
+
+function Invoke-KillZoneElicitationCall {
+    param(
+        [Parameter(Mandatory)][Collections.IDictionary]$Request,
+        [AllowNull()][object]$RequestState,
+        [AllowNull()][Collections.IDictionary]$InputResponses
+    )
+    Add-GateEvent -Event 'tool_call_started' -Detail ([ordered]@{
+            tool = 'agent_start_action'; elicitation_retry = $null -ne $RequestState
+        })
+    if ($null -ne $script:KillZoneElicitationTransport) {
+        return & $script:KillZoneElicitationTransport $Request $RequestState $InputResponses
+    }
+    $parameters = [ordered]@{
+        _meta = Get-McpMeta
+        name = 'agent_start_action'
+        arguments = $Request
+    }
+    if ($null -ne $RequestState) {
+        $parameters.requestState = $RequestState
+        $parameters.inputResponses = $InputResponses
+    }
+    return Invoke-LiveMcpRequest -Method 'tools/call' -ToolName 'agent_start_action' `
+        -TimeoutSeconds 35 -Parameters $parameters
+}
+
+function Assert-KillZoneInputRequired {
+    param([Parameter(Mandatory)][object]$Result)
+    $requestState = [string](Get-ObjectProperty $Result 'requestState')
+    $requests = Get-ObjectProperty $Result 'inputRequests'
+    $approval = Get-ObjectProperty $requests 'kill_zone_operation_approval'
+    $parameters = Get-ObjectProperty $approval 'params'
+    $schema = Get-ObjectProperty $parameters 'requestedSchema'
+    $properties = Get-ObjectProperty $schema 'properties'
+    $approve = Get-ObjectProperty $properties 'approve'
+    $required = @((Get-ObjectProperty $schema 'required'))
+    if ((Get-ObjectProperty $Result 'resultType') -cne 'input_required' -or
+        $null -ne (Get-ObjectProperty $Result 'structuredContent') -or
+        $requestState -cnotmatch '^kz1\.[A-Za-z0-9_-]{24}\.[0-9a-f]{64}\.[A-Za-z0-9_-]{43}$' -or
+        $null -eq $requests -or
+        @($requests.PSObject.Properties.Name).Count -ne 1 -or
+        (Get-ObjectProperty $approval 'method') -cne 'elicitation/create' -or
+        (Get-ObjectProperty $parameters 'mode') -cne 'form' -or
+        [string]::IsNullOrWhiteSpace([string](Get-ObjectProperty $parameters 'message')) -or
+        (Get-ObjectProperty $schema 'type') -cne 'object' -or
+        (Get-ObjectProperty $schema 'additionalProperties') -isnot [bool] -or
+        [bool](Get-ObjectProperty $schema 'additionalProperties') -or
+        $required.Count -ne 1 -or $required[0] -cne 'approve' -or
+        (Get-ObjectProperty $approve 'type') -cne 'boolean' -or
+        (Get-ObjectProperty $approve 'default') -isnot [bool] -or
+        [bool](Get-ObjectProperty $approve 'default')) {
+        throw 'kill-zone form elicitation did not return the exact closed input_required shape'
+    }
+    return $requestState
+}
+
+function Assert-NoMinecraftKillZonePrompt {
+    param([Parameter(Mandatory)][object]$State)
+    $control = Get-ObjectProperty $State 'control'
+    $consent = Get-ObjectProperty $State 'entity_attack_consent'
+    if ((Get-ObjectProperty $control 'mode') -cne 'ready' -or
+        $null -ne (Get-ObjectProperty $State 'action') -or
+        (Get-ObjectProperty $consent 'state') -cne 'none' -or
+        $null -ne (Get-ObjectProperty $consent 'policy_binding_hash') -or
+        $null -ne (Get-ObjectProperty $consent 'scope') -or
+        $null -ne (Get-ObjectProperty $consent 'consent_ref')) {
+        throw 'MCP form input_required created a Minecraft consent prompt, input lock, or Action'
+    }
+}
+
+function Invoke-McpFormKillZoneAction {
+    param(
+        [Parameter(Mandatory)][Collections.IDictionary]$Request,
+        [ValidateRange(1, 900)][int]$WallTimeoutSeconds = 25
+    )
+    $requestBefore = ConvertTo-CompactJson $Request
+    $initial = Invoke-KillZoneElicitationCall -Request $Request `
+        -RequestState $null -InputResponses $null
+    $requestState = Assert-KillZoneInputRequired -Result $initial
+    $waitingState = Get-FreshState
+    Assert-NoMinecraftKillZonePrompt -State $waitingState
+    Add-GateEvent -Event 'mcp_form_input_required' -Detail ([ordered]@{
+            action_reserved = $false; input_acquired = $false
+            minecraft_consent_ui = $false; request_state_redacted = $true
+        })
+
+    $responses = [ordered]@{
+        kill_zone_operation_approval = [ordered]@{
+            action = 'accept'; content = [ordered]@{ approve = $true }
+        }
+    }
+    if ((ConvertTo-CompactJson $Request) -cne $requestBefore) {
+        throw 'kill-zone request changed before the elicitation retry'
+    }
+    $accepted = Invoke-KillZoneElicitationCall -Request $Request `
+        -RequestState $requestState -InputResponses $responses
+    if ((Get-ObjectProperty $accepted 'resultType') -cne 'complete' -or
+        (Get-ObjectProperty $accepted 'isError') -isnot [bool] -or
+        [bool](Get-ObjectProperty $accepted 'isError')) {
+        throw 'accepted kill-zone form response did not complete agent_start_action'
+    }
+    $receipt = Get-ObjectProperty $accepted 'structuredContent'
+    $actionId = [string](Get-ObjectProperty $receipt 'action_id')
+    if ($actionId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' -or
+        (Get-ObjectProperty $receipt 'state') -cne 'queued') {
+        throw 'accepted kill-zone form response returned an invalid Action receipt'
+    }
+    Add-GateEvent -Event 'mcp_form_approval_submitted' -Detail ([ordered]@{
+            explicit_approve = $true; exact_request_retried = $true
+            approval_source = 'user_authorized_capability_gate'
+        })
+    $script:ActiveActionId = $actionId
+    Add-GateEvent -Event 'action_accepted' -Detail ([ordered]@{
+            action_id = $actionId
+            program = [string](Get-ObjectProperty (Get-ObjectProperty $Request 'program') 'name')
+            body = Get-ObjectProperty (Get-ObjectProperty $Request 'program') 'body'
+            budget = Get-ObjectProperty $Request 'budget'
+        })
+    $terminal = Wait-McmcpActionTerminal -ActionId $actionId `
+        -WallTimeoutSeconds $WallTimeoutSeconds
+    $script:ActiveActionId = $null
+    Add-ActionTerminalEvent -ActionId $actionId -Terminal $terminal
+    if ((Get-ObjectProperty $terminal 'state') -cne 'succeeded') {
+        $failure = Get-ObjectProperty $terminal 'failure'
+        throw "Action ended as $(Get-ObjectProperty $terminal 'state'): $(Get-ObjectProperty $failure 'code')"
+    }
+    return $terminal
 }
 
 function Assert-ConsentBoundsEqual {
@@ -330,18 +467,21 @@ function Invoke-KillZoneGateCore {
         throw 'kill-zone fixture starts with stale consent state'
     }
 
-    $awaiting = Invoke-GateTool -Tool 'agent_start_action' `
-        -Arguments (New-KillZoneRequest -ConsentRef $null)
-    $policyHash = Assert-AwaitingKillZoneConsent -Receipt $awaiting
-    Add-GateEvent -Event 'awaiting_physical_consent' -Detail ([ordered]@{
-            policy_binding_hash = $policyHash; action_reserved = $false
-            input_acquired = $false
-        })
-    Write-Host "AWAITING_CONSENT: MinecraftのGrantを物理クリックしてください（自動化しません）。"
-    $consentRef = Wait-ForPhysicalKillZoneGrant -PolicyHash $policyHash
-
-    $terminal = Invoke-ActionRequest `
-        -Request (New-KillZoneRequest -ConsentRef $consentRef) -WallTimeoutSeconds 25
+    $request = New-KillZoneRequest -ConsentRef $null
+    if ($ApprovalMode -ceq 'mcp_form') {
+        $terminal = Invoke-McpFormKillZoneAction -Request $request -WallTimeoutSeconds 25
+    } else {
+        $awaiting = Invoke-GateTool -Tool 'agent_start_action' -Arguments $request
+        $policyHash = Assert-AwaitingKillZoneConsent -Receipt $awaiting
+        Add-GateEvent -Event 'awaiting_physical_consent' -Detail ([ordered]@{
+                policy_binding_hash = $policyHash; action_reserved = $false
+                input_acquired = $false
+            })
+        Write-Host 'AWAITING_CONSENT: physically click Grant in Minecraft (this runner will not automate it).'
+        $consentRef = Wait-ForPhysicalKillZoneGrant -PolicyHash $policyHash
+        $terminal = Invoke-ActionRequest `
+            -Request (New-KillZoneRequest -ConsentRef $consentRef) -WallTimeoutSeconds 25
+    }
     $summary = Assert-KillZoneTerminal -Terminal $terminal
 
     $final = Get-FreshState
@@ -349,7 +489,7 @@ function Invoke-KillZoneGateCore {
     Assert-KillZoneInventory -State $final
     if ((Get-ObjectProperty (Get-ObjectProperty $final 'entity_attack_consent') 'state') -cne
         'none') {
-        throw 'single-use physical Grant was not consumed by the finite Action'
+        throw 'single-use kill-zone approval was not consumed by the finite Action'
     }
 
     return [ordered]@{
@@ -357,9 +497,10 @@ function Invoke-KillZoneGateCore {
         fixture_precondition = '/mcmcp_fixture phase5 kill_zone'
         fixed_five_surface = $fixedFive
         normal_player_actions_only = $true
-        physical_grant_required = $true
-        physical_grant_observed = $true
-        grant_automation = $false
+        approval_mode = $ApprovalMode
+        mcp_form_input_required = $ApprovalMode -ceq 'mcp_form'
+        minecraft_consent_ui = $ApprovalMode -ceq 'physical_fallback'
+        explicit_user_authorization_required = $true
         action_boundary = 'one_stationary_finite_attack'
         online_oracle = [ordered]@{
             dispatched_attacks = [int](Get-ObjectProperty $summary 'dispatched_attacks')
@@ -392,7 +533,9 @@ function Write-KillZoneArtifacts {
         status = if ($null -eq $Failure) { 'passed' } else { 'failed' }
         fixed_tools = @($script:AllowedTools); fixed_five_only = $true
         normal_player_actions_only = $true
-        physical_grant_required = $true; grant_automation = $false
+        approval_mode = $ApprovalMode
+        explicit_user_authorization_required = $true
+        minecraft_consent_ui = $ApprovalMode -ceq 'physical_fallback'
         public_input_release = $InputRelease
         result = $GateResult
         failure = if ($null -eq $Failure) { $null } else {

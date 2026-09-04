@@ -149,6 +149,12 @@ function New-MockKillZoneTerminal {
 
 $pendingRequest = New-KillZoneRequest -ConsentRef $null
 $node = $pendingRequest.program.body[0]
+$metaCapabilities = Get-ObjectProperty (Get-McpMeta) `
+    'io.modelcontextprotocol/clientCapabilities'
+Assert-True ($ApprovalMode -ceq 'mcp_form' -and
+    $null -ne (Get-ObjectProperty `
+        (Get-ObjectProperty $metaCapabilities 'elicitation') 'form')) `
+    'runner does not advertise MCP form elicitation by default'
 Assert-True ($node.op -ceq 'operate_kill_zone' -and $null -eq $node.consent_ref) `
     'first request is not an ungranted kill-zone request'
 Assert-True ($pendingRequest.program.capabilities.Count -eq 1 -and
@@ -183,27 +189,73 @@ try {
 
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null
-$script:MockAwaiting = $false
-$script:MockGrantPoll = 0
 $script:MockActionQueued = $false
 $script:MockCompleted = $false
+$script:MockElicitationCalls = 0
+$script:MockInitialRequest = $null
+$script:MockRequestState = 'kz1.' + ('r' * 24) + '.' + ('a' * 64) + '.' + ('s' * 43)
 Add-GateEvent -Event 'fixed_five_surface_verified' -Detail ([ordered]@{
         protocol_version = $script:ProtocolVersion; tools = @($script:AllowedTools)
     })
 $script:DelayTransport = { param($Seconds) }
+$script:KillZoneElicitationTransport = {
+    param($Request, $RequestState, $InputResponses)
+    $script:MockElicitationCalls++
+    if ($script:MockElicitationCalls -eq 1) {
+        if ($null -ne $RequestState -or $null -ne $InputResponses -or
+            $null -ne $Request.program.body[0].consent_ref) {
+            throw 'mock initial form call carried an elicitation response or consent ref'
+        }
+        $script:MockInitialRequest = ConvertTo-CompactJson $Request
+        return [pscustomobject]@{
+            resultType = 'input_required'
+            requestState = $script:MockRequestState
+            inputRequests = [pscustomobject]@{
+                kill_zone_operation_approval = [pscustomobject]@{
+                    method = 'elicitation/create'
+                    params = [pscustomobject]@{
+                        mode = 'form'; message = 'Approve this bounded repeated-attack operation?'
+                        requestedSchema = [pscustomobject]@{
+                            type = 'object'
+                            properties = [pscustomobject]@{
+                                approve = [pscustomobject]@{
+                                    type = 'boolean'; title = 'Approve'
+                                    description = 'Allow repeated attacks within the declared zone.'; 'default' = $false
+                                }
+                            }
+                            'required' = @('approve'); additionalProperties = $false
+                        }
+                    }
+                }
+            }
+        }
+    }
+    $approval = Get-ObjectProperty $InputResponses 'kill_zone_operation_approval'
+    $content = Get-ObjectProperty $approval 'content'
+    if ($script:MockElicitationCalls -ne 2 -or
+        $RequestState -cne $script:MockRequestState -or
+        (ConvertTo-CompactJson $Request) -cne $script:MockInitialRequest -or
+        $null -ne $Request.program.body[0].consent_ref -or
+        (Get-ObjectProperty $approval 'action') -cne 'accept' -or
+        (Get-ObjectProperty $content 'approve') -isnot [bool] -or
+        -not [bool](Get-ObjectProperty $content 'approve')) {
+        throw 'mock accepted retry was not the exact approved input_required request'
+    }
+    $script:MockActionQueued = $true
+    [pscustomobject]@{
+        resultType = 'complete'; isError = $false
+        structuredContent = [pscustomobject]@{
+            schema_version = 1
+            action_id = '550e8400-e29b-41d4-a716-446655440000'
+            state = 'queued'
+        }
+    }
+}
 $script:ToolTransport = {
     param($Tool, $Arguments)
     switch ($Tool) {
         'agent_get_state' {
-            $consentState = if (-not $script:MockAwaiting -or $script:MockCompleted) {
-                'none'
-            } elseif ($script:MockGrantPoll -eq 0) {
-                $script:MockGrantPoll++
-                'pending'
-            } else {
-                'granted'
-            }
-            New-MockKillZoneState -ConsentState $consentState
+            New-MockKillZoneState -ConsentState 'none'
         }
         'agent_get_observation' {
             [pscustomobject]@{
@@ -214,31 +266,7 @@ $script:ToolTransport = {
             }
         }
         'agent_start_action' {
-            $candidate = $Arguments.program.body[0]
-            if ($candidate.op -cne 'operate_kill_zone') {
-                throw 'mock received a non-kill-zone Action'
-            }
-            if (-not $script:MockAwaiting) {
-                if ($null -ne $candidate.consent_ref) {
-                    throw 'mock first Action unexpectedly contained a consent ref'
-                }
-                $script:MockAwaiting = $true
-                [pscustomobject]@{
-                    schema_version = 1; state = 'AWAITING_CONSENT'
-                    policy_binding_hash = 'sha256:' + ('a' * 64)
-                    action_reserved = $false; input_acquired = $false
-                }
-            } else {
-                if ($candidate.consent_ref -cne ('k_' + ('b' * 22)) -or
-                    $script:MockActionQueued) {
-                    throw 'mock second Action lacked the exact one-use physical Grant'
-                }
-                $script:MockActionQueued = $true
-                [pscustomobject]@{
-                    schema_version = 1; action_id = '550e8400-e29b-41d4-a716-446655440000'
-                    state = 'queued'
-                }
-            }
+            throw 'mock form flow bypassed the elicitation transport'
         }
         'agent_get_action' {
             if (-not $script:MockActionQueued -or $script:MockCompleted) {
@@ -256,21 +284,23 @@ try {
     $result = Invoke-McmcpKillZoneCapabilityGate
     Assert-True ($result.gate_result.gate -ceq 'phase9-kill-zone') `
         'gate result name is wrong'
-    Assert-True ([bool]$result.gate_result.physical_grant_observed -and
-        -not [bool]$result.gate_result.grant_automation) `
-        'physical-only Grant result was not retained'
+    Assert-True ($result.gate_result.approval_mode -ceq 'mcp_form' -and
+        [bool]$result.gate_result.mcp_form_input_required -and
+        -not [bool]$result.gate_result.minecraft_consent_ui) `
+        'default MCP form approval result was not retained'
     Assert-True ($result.gate_result.online_oracle.confirmed_attacks -eq 1 -and
         $result.gate_result.online_oracle.unknown_attacks -eq 0) `
         'online oracle did not prove exactly one confirmed attack'
     Assert-True ([bool]$result.input_release.control_ready -and
         [bool]$result.input_release.all_actions_terminal) 'input release was not proven'
-    $awaiting = @($script:GateEvents | Where-Object event -CEQ 'awaiting_physical_consent')
-    $granted = @($script:GateEvents | Where-Object event -CEQ 'physical_consent_observed')
+    $awaiting = @($script:GateEvents | Where-Object event -CEQ 'mcp_form_input_required')
+    $granted = @($script:GateEvents | Where-Object event -CEQ 'mcp_form_approval_submitted')
     $accepted = @($script:GateEvents | Where-Object event -CEQ 'action_accepted')
     $terminal = @($script:GateEvents | Where-Object event -CEQ 'action_terminal')
-    Assert-True ($awaiting.Count -eq 1 -and $granted.Count -eq 1 -and
+    Assert-True ($script:MockElicitationCalls -eq 2 -and
+        $awaiting.Count -eq 1 -and $granted.Count -eq 1 -and
         $accepted.Count -eq 1 -and $terminal.Count -eq 1) `
-        'consent and single-Action lifecycle is incomplete'
+        'MCP form approval and single-Action lifecycle is incomplete'
     foreach ($name in @('gate-events.jsonl', 'gate-result.json')) {
         Assert-True (Test-Path -LiteralPath (Join-Path $artifactDirectory $name)) `
             "missing artifact $name"

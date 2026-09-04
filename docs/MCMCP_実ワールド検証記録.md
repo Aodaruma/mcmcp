@@ -199,3 +199,7 @@ commit `7fabfca`で、vanillaの段階的なcamera回転とfloat丸めをadmissi
 5. 各ActionのID、terminal state、failure code、ticks、distance、camera、interaction / place / break数を本記録へ追記する。
 
 途中に手動補助が1回でも入った場合、その試行は部分機能の診断結果として残すが、end-to-end合格にはしない。
+
+## 2026-09-05 kill-zone MCP form runner
+
+`Invoke-McmcpKillZoneCapabilityGate.ps1`の既定許可経路をMCP 2026-07-28 form elicitationに変更した。runner mockで、form capability広告、初回`input_required`時にAction・Minecraft同意UI・input lockがないこと、署名済み`requestState`と`accept / approve:true`付きで同一要求を再送すること、finite Action成功後も同意stateが`none`であることを確認した。`-ApprovalMode physical_fallback`は明示的fallbackとして残す。実機検証は未実施。

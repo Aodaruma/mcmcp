@@ -1,5 +1,8 @@
 # MCMCP Action DSL クイックガイド
 
+### kill-zone許可経路（2026-09-05更新）
+
+2026-07-28 MCP form elicitation対応clientでは、`operate_kill_zone`の既定許可経路はMinecraft内GrantではなくMCP formです。初回要求はActionやMinecraft内同意UI・input lockを作らず`input_required`と署名済み`requestState`を返します。LLM側で利用者の明示許可を受け、同じ要求と`requestState`、`accept / approve:true`を再送したときだけfinite Actionを予約します。物理Grantはform非対応client向けの明示的fallbackです。runner mockは初回無Action、同一要求のapprove再送、terminal成功、同意state非保持までを検査します。
 この文書は、公開MCP Toolだけを使って安全に複数段階の作業を組み立てるための説明書です。公開surfaceの正本は`MCMCP_MCP_Tool_Catalog.json`であり、この文書はfixture固有の座標、非公開alias、評価promptの答えを追加しません。
 
 ## 基本の考え方
