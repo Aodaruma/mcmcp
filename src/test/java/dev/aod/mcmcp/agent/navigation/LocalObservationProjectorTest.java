@@ -146,6 +146,40 @@ class LocalObservationProjectorTest {
     }
 
     @Test
+    void projectsSafeAdjacentOneBlockJumpAsSupportedClearNavigationTarget() {
+        var start = new ObservationRecord.Point(0.5D, 64.9D, 0.5D);
+        var requested = new ObservationRecord.Point(1.5D, 64.9D, 0.5D);
+        var landing = new ObservationRecord.Point(1.5D, 65.9D, 0.5D);
+        var current = record(
+                10, 3, 0, start, start, start,
+                ObservationRecord.Transition.STATIONARY,
+                ObservationRecord.Clearance.CLEAR,
+                ObservationRecord.Hazard.NONE);
+        var jump = record(
+                10, 3, 1, start, requested, landing,
+                ObservationRecord.Transition.PROBE_ALLOWED,
+                ObservationRecord.Clearance.CLEAR,
+                ObservationRecord.Hazard.NONE);
+
+        var projection = LocalObservationProjector.project(
+                new LocalObservationVolume.Snapshot(10, 3, start, current, List.of(jump)),
+                UUID.randomUUID(), OVERWORLD, 3, 64.0D);
+
+        assertThat(projection.records()).singleElement().satisfies(record -> {
+            var edge = (dev.aod.mcmcp.agent.observation.ObservationRecord.Traversability) record;
+            assertThat(edge.navigationTarget()).isEqualTo(
+                    new dev.aod.mcmcp.agent.observation.ObservationValues.BlockPosition(
+                            new dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId(
+                                    OVERWORLD),
+                            1, 65, 0));
+            assertThat(edge.targetSupport()).isEqualTo(
+                    dev.aod.mcmcp.agent.observation.ObservationRecord.TargetSupport.CONFIRMED);
+            assertThat(edge.transitionClearance()).isEqualTo(
+                    dev.aod.mcmcp.agent.observation.ObservationRecord.TransitionClearance.CONFIRMED);
+        });
+    }
+
+    @Test
     void postMutationDerivedPassageReconnectsAFiveBlockExitForEveryPassageKind() {
         for (String passageKind : List.of("gate", "door", "trapdoor")) {
             UUID session = UUID.randomUUID();

@@ -52,6 +52,7 @@ final class FixtureGameTests {
     private static final Identifier PHASE5_TEST_ID = id("phase5_workspace_fixture");
     private static final Identifier PASSAGE_TEST_ID = id("passage_shapes_fixture");
     private static final Identifier IRON_FARM_TEST_ID = id("iron_farm_lab_fixture");
+    private static final Identifier STEP_UP_TEST_ID = id("adjacent_step_up_fixture");
     private static final Identifier ENVIRONMENT_ID = id("fixture_environment");
 
     private static final DeferredRegister<Consumer<GameTestHelper>> TEST_FUNCTIONS =
@@ -75,6 +76,9 @@ final class FixtureGameTests {
     private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> IRON_FARM_LAB_FIXTURE =
             TEST_FUNCTIONS.register(
                     "iron_farm_lab_fixture", () -> FixtureGameTests::runIronFarmLabFixture);
+    private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> ADJACENT_STEP_UP_FIXTURE =
+            TEST_FUNCTIONS.register(
+                    "adjacent_step_up_fixture", () -> FixtureGameTests::runAdjacentStepUpFixture);
 
     private FixtureGameTests() {
     }
@@ -105,6 +109,58 @@ final class FixtureGameTests {
                 new FunctionGameTestInstance(PASSAGE_SHAPES_FIXTURE.getKey(), data));
         event.registerTest(IRON_FARM_TEST_ID,
                 new FunctionGameTestInstance(IRON_FARM_LAB_FIXTURE.getKey(), data));
+        event.registerTest(STEP_UP_TEST_ID,
+                new FunctionGameTestInstance(ADJACENT_STEP_UP_FIXTURE.getKey(), data));
+    }
+
+    private static void runAdjacentStepUpFixture(GameTestHelper helper) {
+        var sourceFloor = new BlockPos(0, 0, 0);
+        var targetSupport = new BlockPos(1, 1, 0);
+        helper.setBlock(sourceFloor, Blocks.SMOOTH_STONE);
+        helper.setBlock(targetSupport, Blocks.OAK_LOG);
+        helper.setBlock(sourceFloor.above(), Blocks.AIR);
+        helper.setBlock(sourceFloor.above(2), Blocks.AIR);
+        helper.setBlock(targetSupport.above(), Blocks.AIR);
+        helper.setBlock(targetSupport.above(2), Blocks.AIR);
+        helper.assertBlockPresent(Blocks.AIR, sourceFloor.above());
+        helper.assertBlockPresent(Blocks.AIR, sourceFloor.above(2));
+        helper.assertBlockPresent(Blocks.AIR, targetSupport.above());
+        helper.assertBlockPresent(Blocks.AIR, targetSupport.above(2));
+
+        var from = new ObservationRecord.Point(0.5D, 1.9D, 0.5D);
+        var requested = new ObservationRecord.Point(1.5D, 1.9D, 0.5D);
+        var landing = new ObservationRecord.Point(1.5D, 2.9D, 0.5D);
+        var current = new ObservationRecord(
+                10, 1, 0, from, from, from,
+                ObservationRecord.Support.PRESENT, ObservationRecord.Clearance.CLEAR,
+                ObservationRecord.Transition.STATIONARY, ObservationRecord.Fluid.NONE,
+                false, ObservationRecord.Hazard.NONE, ObservationRecord.LoadedState.LOADED,
+                ObservationRecord.Drop.SUPPORTED, false);
+        var jump = new ObservationRecord(
+                10, 1, 1, from, requested, landing,
+                ObservationRecord.Support.PRESENT, ObservationRecord.Clearance.CLEAR,
+                ObservationRecord.Transition.PROBE_ALLOWED, ObservationRecord.Fluid.NONE,
+                false, ObservationRecord.Hazard.NONE, ObservationRecord.LoadedState.LOADED,
+                ObservationRecord.Drop.SUPPORTED, false);
+        var projection = LocalObservationProjector.project(
+                new LocalObservationVolume.Snapshot(10, 1, from, current, List.of(jump)),
+                UUID.randomUUID(), "minecraft:overworld", 1, 1.0D);
+        if (projection.records().size() != 1) {
+            helper.fail(Component.literal("safe adjacent step-up was not publicly projected"));
+            return;
+        }
+        var edge = (dev.aod.mcmcp.agent.observation.ObservationRecord.Traversability)
+                projection.records().getFirst();
+        if (edge.navigationTarget().x() != 1 || edge.navigationTarget().y() != 2
+                || edge.navigationTarget().z() != 0
+                || edge.targetSupport()
+                        != dev.aod.mcmcp.agent.observation.ObservationRecord.TargetSupport.CONFIRMED
+                || edge.transitionClearance()
+                        != dev.aod.mcmcp.agent.observation.ObservationRecord.TransitionClearance.CONFIRMED) {
+            helper.fail(Component.literal("safe adjacent step-up projection lost its proof"));
+            return;
+        }
+        helper.succeed();
     }
 
     private static void runPhase1BlockStates(GameTestHelper helper) {

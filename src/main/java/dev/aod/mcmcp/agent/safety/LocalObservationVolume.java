@@ -73,6 +73,7 @@ public final class LocalObservationVolume {
     private static final List<HorizontalDirection> CARDINAL_DIRECTIONS = DIRECTIONS.stream()
             .filter(direction -> Math.abs(direction.x()) + Math.abs(direction.z()) == 1)
             .toList();
+    private static final double ONE_BLOCK_JUMP_APEX = 1.25D;
 
     private final AgentMovementTrace movementTrace;
     private volatile Snapshot latest;
@@ -1014,6 +1015,12 @@ public final class LocalObservationVolume {
                         node.depth() + 1,
                         worldRevision,
                         true);
+                if (!evaluation.record().canExpand()
+                        && Math.abs(direction.x()) + Math.abs(direction.z()) == 1) {
+                    evaluation = evaluateAdjacentJumpUp(
+                            player, level, origin, node.box(), intended,
+                            node.depth() + 1, worldRevision).orElse(evaluation);
+                }
                 if (evaluation.record().canExpand()
                         && withinVolume(origin, evaluation.record())) {
                     var targetKey = NodeKey.at(targetOffset, evaluation.endBox());
@@ -1031,6 +1038,76 @@ public final class LocalObservationVolume {
             }
         }
         return List.copyOf(records);
+    }
+
+    /**
+     * Publishes the same one-block jump that the navigation executor can deliberately request.
+     * The conservative three-leg envelope must be loaded, collision-free, dry, harmless, and
+     * end on an exact supported feet box before the edge may enter the public map.
+     */
+    private Optional<Evaluation> evaluateAdjacentJumpUp(
+            LocalPlayer player,
+            ClientLevel level,
+            Point origin,
+            AABB start,
+            Vec3 horizontal,
+            int depth,
+            long worldRevision) {
+        var apex = start.move(0.0D, ONE_BLOCK_JUMP_APEX, 0.0D);
+        var overTarget = apex.move(horizontal);
+        var target = start.move(horizontal).move(0.0D, 1.0D, 0.0D);
+        var regions = List.of(
+                start.expandTowards(0.0D, ONE_BLOCK_JUMP_APEX, 0.0D),
+                apex.expandTowards(horizontal),
+                overTarget.expandTowards(0.0D, 1.0D - ONE_BLOCK_JUMP_APEX, 0.0D),
+                target,
+                supportSlab(target));
+        boolean pathClear = regions.subList(0, 4).stream()
+                .allMatch(box -> level.noCollision(player, box));
+        if (!adjacentJumpEvidenceSafe(
+                loadedState(level, origin, regions),
+                pathClear,
+                !level.collidesWithSuffocatingBlock(player, target),
+                support(level, player, origin, target),
+                fluid(level, origin, regions.subList(0, 4)),
+                damageBlockHazard(
+                        level, origin, append(regions, damageSupportRegion(target))))) {
+            return Optional.empty();
+        }
+        var from = point(start.getCenter());
+        var requested = point(start.move(horizontal).getCenter());
+        var to = point(target.getCenter());
+        return Optional.of(new Evaluation(new ObservationRecord(
+                player.tickCount,
+                worldRevision,
+                depth,
+                from,
+                requested,
+                to,
+                Support.PRESENT,
+                Clearance.CLEAR,
+                Transition.PROBE_ALLOWED,
+                Fluid.NONE,
+                false,
+                Hazard.NONE,
+                LoadedState.LOADED,
+                Drop.SUPPORTED,
+                false), target));
+    }
+
+    static boolean adjacentJumpEvidenceSafe(
+            LoadedState loaded,
+            boolean pathClear,
+            boolean targetNotSuffocating,
+            Support targetSupport,
+            Fluid fluid,
+            Hazard hazard) {
+        return loaded == LoadedState.LOADED
+                && pathClear
+                && targetNotSuffocating
+                && targetSupport == Support.PRESENT
+                && fluid == Fluid.NONE
+                && hazard == Hazard.NONE;
     }
 
     private void addClimbableTransitions(

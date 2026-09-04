@@ -28,6 +28,31 @@ class LocalObservationVolumeTest {
     private static final Point ORIGIN = new Point(0.0D, 64.0D, 0.0D);
 
     @Test
+    void oneBlockJumpPublicationRequiresEveryLoadedSafeLandingProof() {
+        assertThat(LocalObservationVolume.adjacentJumpEvidenceSafe(
+                LoadedState.LOADED, true, true, Support.PRESENT,
+                Fluid.NONE, Hazard.NONE)).isTrue();
+        assertThat(LocalObservationVolume.adjacentJumpEvidenceSafe(
+                LoadedState.UNKNOWN, true, true, Support.PRESENT,
+                Fluid.NONE, Hazard.NONE)).isFalse();
+        assertThat(LocalObservationVolume.adjacentJumpEvidenceSafe(
+                LoadedState.LOADED, false, true, Support.PRESENT,
+                Fluid.NONE, Hazard.NONE)).isFalse();
+        assertThat(LocalObservationVolume.adjacentJumpEvidenceSafe(
+                LoadedState.LOADED, true, false, Support.PRESENT,
+                Fluid.NONE, Hazard.NONE)).isFalse();
+        assertThat(LocalObservationVolume.adjacentJumpEvidenceSafe(
+                LoadedState.LOADED, true, true, Support.ABSENT,
+                Fluid.NONE, Hazard.NONE)).isFalse();
+        assertThat(LocalObservationVolume.adjacentJumpEvidenceSafe(
+                LoadedState.LOADED, true, true, Support.PRESENT,
+                Fluid.WATER, Hazard.NONE)).isFalse();
+        assertThat(LocalObservationVolume.adjacentJumpEvidenceSafe(
+                LoadedState.LOADED, true, true, Support.PRESENT,
+                Fluid.NONE, Hazard.CONTACT_DAMAGE)).isFalse();
+    }
+
+    @Test
     void ladderSafetyRejectsMissingRungsLowCeilingsAndFluid() {
         var start = new Point(0.5D, 64.9D, 0.5D);
         var end = new Point(0.5D, 65.0D, 0.5D);
