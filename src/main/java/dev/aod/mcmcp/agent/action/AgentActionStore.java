@@ -22,7 +22,7 @@ public final class AgentActionStore {
     public static final int MAX_RECORDED_TICKS = 36_200;
     public static final double MAX_RECORDED_DISTANCE = 48.0D;
     public static final double MAX_RECORDED_CAMERA_DEGREES = 1_080.0D;
-    public static final int MAX_RECORDED_BLOCKS_BROKEN = 12;
+    public static final int MAX_RECORDED_BLOCKS_BROKEN = 64;
     public static final int MAX_RECORDED_INTERACTIONS = 2_048;
     public static final long MAX_EFFECT_SEQUENCE = MAX_RECORDED_INTERACTIONS + 2L;
     public static final int MAX_RECORDED_BLOCKS_PLACED = 16;

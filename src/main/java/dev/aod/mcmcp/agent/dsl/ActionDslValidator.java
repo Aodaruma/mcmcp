@@ -30,13 +30,17 @@ public final class ActionDslValidator {
     public static final int MAX_REQUEST_BYTES = 64 * 1024;
     public static final int MAX_ACTION_TICKS = 15_000;
     public static final int MAX_KILL_ZONE_TICKS = 36_000;
+    public static final int MAX_COBBLESTONE_GENERATOR_TICKS = 36_000;
     public static final int MAX_KILL_ZONE_OPERATION_TICKS =
             MAX_KILL_ZONE_TICKS - ActionDslCompiler.KILL_ZONE_EFFECT_RESERVE_TICKS;
     public static final int MAX_FISHING_SOUND_WAIT_TICKS = 900;
     public static final long MAX_ACTION_DURATION_MILLIS = MAX_ACTION_TICKS * 50L;
     public static final long MAX_KILL_ZONE_DURATION_MILLIS = MAX_KILL_ZONE_TICKS * 50L;
+    public static final long MAX_COBBLESTONE_GENERATOR_DURATION_MILLIS =
+            MAX_COBBLESTONE_GENERATOR_TICKS * 50L;
     public static final int MAX_ACTION_CAMERA_DEGREES = 720;
     public static final int MAX_BLOCKS_BROKEN = 8;
+    public static final int MAX_COBBLESTONE_GENERATOR_BREAKS = 64;
     public static final int MAX_INTERACTIONS = 16;
     public static final int MAX_KILL_ZONE_ATTACKS = 2_048;
     public static final int MAX_BLOCKS_PLACED = 8;
@@ -113,7 +117,10 @@ public final class ActionDslValidator {
         }
         boolean killZoneOnly = program.body().size() == 1
                 && program.body().getFirst() instanceof ActionDsl.OperateKillZone;
-        validateRequestBudget(request.budget(), killZoneOnly);
+        boolean cobblestoneGeneratorOnly = program.body().size() == 1
+                && program.body().getFirst()
+                        instanceof ActionDsl.OperateKnownCobblestoneGenerator;
+        validateRequestBudget(request.budget(), killZoneOnly, cobblestoneGeneratorOnly);
 
         if (program.body().isEmpty() || program.body().size() > MAX_TOP_LEVEL_NODES) {
             throw invalid("program.body must contain 1.." + MAX_TOP_LEVEL_NODES + " nodes");
@@ -131,6 +138,9 @@ public final class ActionDslValidator {
         validateExclusiveNode(program.body(),
                 node -> node instanceof ActionDsl.OperateKillZone,
                 "operate_kill_zone must be the only top-level Action node");
+        validateExclusiveNode(program.body(),
+                node -> node instanceof ActionDsl.OperateKnownCobblestoneGenerator,
+                "operate_known_cobblestone_generator must be the only top-level Action node");
         var walk = new Walk();
         int executed = walkSequence(program.body(), 1, walk, "program.body");
         if (walk.sourceNodes > MAX_SOURCE_NODES) {
@@ -153,16 +163,20 @@ public final class ActionDslValidator {
     }
 
     static void validateRequestBudget(ActionDsl.Budget budget) {
-        validateRequestBudget(budget, false);
+        validateRequestBudget(budget, false, false);
     }
 
-    private static void validateRequestBudget(ActionDsl.Budget budget, boolean killZoneOnly) {
+    private static void validateRequestBudget(
+            ActionDsl.Budget budget,
+            boolean killZoneOnly,
+            boolean cobblestoneGeneratorOnly) {
         Objects.requireNonNull(budget, "budget");
+        boolean longRunningOnly = killZoneOnly || cobblestoneGeneratorOnly;
         requireRange(budget.maxDurationMillis(), 100,
-                killZoneOnly ? MAX_KILL_ZONE_DURATION_MILLIS : MAX_ACTION_DURATION_MILLIS,
+                longRunningOnly ? MAX_KILL_ZONE_DURATION_MILLIS : MAX_ACTION_DURATION_MILLIS,
                 "budget.max_duration_ms");
         requireRange(budget.maxTicks(), 2,
-                killZoneOnly ? MAX_KILL_ZONE_TICKS : MAX_ACTION_TICKS,
+                longRunningOnly ? MAX_KILL_ZONE_TICKS : MAX_ACTION_TICKS,
                 "budget.max_ticks");
         requireFiniteRange(
                 budget.maxDistanceBlocks(), 0, NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
@@ -173,7 +187,9 @@ public final class ActionDslValidator {
         requireRange(budget.maxInteractions(), 0,
                 killZoneOnly ? MAX_KILL_ZONE_ATTACKS : MAX_INTERACTIONS,
                 "budget.max_interactions");
-        requireRange(budget.maxBlocksBroken(), 0, MAX_BLOCKS_BROKEN,
+        requireRange(budget.maxBlocksBroken(), 0,
+                cobblestoneGeneratorOnly
+                        ? MAX_COBBLESTONE_GENERATOR_BREAKS : MAX_BLOCKS_BROKEN,
                 "budget.max_blocks_broken");
         requireRange(budget.maxBlocksPlaced(), 0, MAX_BLOCKS_PLACED,
                 "budget.max_blocks_placed");
@@ -335,6 +351,31 @@ public final class ActionDslValidator {
             requireRange(block.minimumInventoryCount(), 1, 2_304,
                     path + ".minimum_inventory_count");
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
+            return 1;
+        }
+        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
+            validatePosition(operation.target(), path + ".target");
+            validateBlockState(operation.expectedState(), path + ".expected_state");
+            if (!"minecraft:cobblestone".equals(operation.expectedState().block())
+                    || !operation.expectedState().properties().isEmpty()) {
+                throw invalid(path + ".expected_state must be exact minecraft:cobblestone");
+            }
+            if (!"minecraft:iron_pickaxe".equals(operation.toolItem())) {
+                throw invalid(path + ".tool_item must be minecraft:iron_pickaxe");
+            }
+            if (!"minecraft:cobblestone".equals(operation.expectedDrop())) {
+                throw invalid(path + ".expected_drop must be minecraft:cobblestone");
+            }
+            requireRange(operation.minimumInventoryCount(), 1, 2_304,
+                    path + ".minimum_inventory_count");
+            requireRange(operation.maxBreaks(), 1, MAX_COBBLESTONE_GENERATOR_BREAKS,
+                    path + ".max_breaks");
+            requireRange(operation.regenerationWaitTicks(), 1, 200,
+                    path + ".regeneration_wait_ticks");
+            requireRange(operation.maxOperationDurationTicks(), 1,
+                    MAX_COBBLESTONE_GENERATOR_TICKS,
+                    path + ".max_operation_duration_ticks");
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
             return 1;
         }
@@ -808,6 +849,7 @@ public final class ActionDslValidator {
         for (var node : nodes) {
             if (node instanceof ActionDsl.BreakKnownFace
                     || node instanceof ActionDsl.BreakKnownBlock
+                    || node instanceof ActionDsl.OperateKnownCobblestoneGenerator
                     || node instanceof ActionDsl.TillKnownBlock
                     || node instanceof ActionDsl.TillKnownBatch
                     || node instanceof ActionDsl.PlantKnownWheat

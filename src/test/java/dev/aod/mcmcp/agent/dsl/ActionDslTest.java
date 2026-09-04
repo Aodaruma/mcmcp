@@ -24,6 +24,48 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ActionDslTest {
     @Test
+    void cobblestoneGeneratorIsFiniteTopLevelOnlyAndUsesItsStructuralBound() {
+        JsonObject json = JsonParser.parseString("""
+                {"schema_version":1,"program":{"dsl_version":1,
+                 "capabilities":["block_break"],"body":[{
+                   "id":"cobble","op":"operate_known_cobblestone_generator",
+                   "target":{"dimension":"minecraft:overworld","x":1,"y":64,"z":2},
+                   "face":"north",
+                   "expected_state":{"block":"minecraft:cobblestone","properties":{}},
+                   "tool_item":"minecraft:iron_pickaxe",
+                   "expected_drop":"minecraft:cobblestone",
+                   "minimum_inventory_count":64,"max_breaks":64,
+                   "regeneration_wait_ticks":20,
+                   "max_operation_duration_ticks":36000}]},
+                 "budget":{"max_duration_ms":1800000,"max_ticks":36000,
+                   "max_distance_blocks":0,"max_camera_degrees":0,
+                   "max_interactions":0,"max_blocks_broken":64,"max_blocks_placed":0}}
+                """).getAsJsonObject();
+
+        ActionDsl.Request parsed = ActionDslParser.parse(json);
+        var operation = (ActionDsl.OperateKnownCobblestoneGenerator)
+                parsed.program().body().getFirst();
+        assertThat(operation.maxBreaks()).isEqualTo(64);
+        assertThat(ActionDslValidator.validate(parsed).requiredCapabilities())
+                .containsExactly(ActionDsl.Capability.BLOCK_BREAK);
+        var compiled = ActionDslCompiler.compile(
+                parsed, ignored -> Optional.empty(), Set.of(ActionDsl.Capability.BLOCK_BREAK));
+        assertThat(compiled.worstCaseCost()).isEqualTo(
+                new ActionDslCompiler.Cost(1_800_000, 36_000, 0, 0, 0, 64, 0));
+
+        JsonObject nested = json.deepCopy();
+        JsonArray body = nested.getAsJsonObject("program").getAsJsonArray("body");
+        body.add(waitNode("later", 1));
+        assertCode(nested, ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject wrongTool = json.deepCopy();
+        wrongTool.getAsJsonObject("program").getAsJsonArray("body")
+                .get(0).getAsJsonObject()
+                .addProperty("tool_item", "minecraft:diamond_pickaxe");
+        assertCode(wrongTool, ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
     void killZoneIsTopLevelOnlyAndItsCostComesFromTheOperation() {
         JsonObject json = JsonParser.parseString("""
                 {"schema_version":1,"program":{"dsl_version":1,

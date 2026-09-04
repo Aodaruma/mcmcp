@@ -38,6 +38,7 @@ public final class ActionDsl {
     public sealed interface Node permits NavigateToKnown, ApproachKnownSurface,
             ApproachKnownPlacement,
             FaceKnownPosition, FaceKnownBlockFace, BreakKnownFace, BreakKnownBlock,
+            OperateKnownCobblestoneGenerator,
             TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
             HarvestKnownWheat, HarvestKnownWheatBatch, ApplyKnownBlockPlan,
             ClearKnownBlockPlan, PillarUpKnown,
@@ -150,6 +151,32 @@ public final class ActionDsl {
             String expectedDrop,
             int minimumInventoryCount) implements Node {
         public BreakKnownBlock {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(face, "face");
+            Objects.requireNonNull(expectedState, "expectedState");
+            Objects.requireNonNull(toolItem, "toolItem");
+            Objects.requireNonNull(expectedDrop, "expectedDrop");
+        }
+    }
+
+    /**
+     * Operates one already-built, stationary cobblestone generator until an absolute inventory
+     * goal is reached. The runtime may hold attack only while the exact declared block face is
+     * current cobblestone; every acknowledged break is checkpointed before regeneration wait.
+     */
+    public record OperateKnownCobblestoneGenerator(
+            String id,
+            Position target,
+            BlockFace face,
+            BlockStateSpec expectedState,
+            String toolItem,
+            String expectedDrop,
+            int minimumInventoryCount,
+            int maxBreaks,
+            int regenerationWaitTicks,
+            long maxOperationDurationTicks) implements Node {
+        public OperateKnownCobblestoneGenerator {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(face, "face");

@@ -126,6 +126,8 @@ public final class ActionDslParser {
             case "face_known_block_face" -> faceKnownBlockFace(object, path);
             case "break_known_face" -> breakKnownFace(object, path);
             case "break_known_block" -> breakKnownBlock(object, path);
+            case "operate_known_cobblestone_generator" ->
+                    operateKnownCobblestoneGenerator(object, path);
             case "till_known_block" -> tillKnownBlock(object, path);
             case "till_known_batch" -> tillKnownBatch(object, path);
             case "plant_known_wheat" -> plantKnownWheat(object, path);
@@ -239,6 +241,29 @@ public final class ActionDslParser {
                 string(source.get("expected_drop"), path + ".expected_drop"),
                 integer(source.get("minimum_inventory_count"),
                         path + ".minimum_inventory_count"));
+    }
+
+    private static ActionDsl.OperateKnownCobblestoneGenerator
+            operateKnownCobblestoneGenerator(JsonObject source, String path) {
+        Set<String> fields = Set.of(
+                "id", "op", "target", "face", "expected_state", "tool_item",
+                "expected_drop", "minimum_inventory_count", "max_breaks",
+                "regeneration_wait_ticks", "max_operation_duration_ticks");
+        exactKeys(source, path, fields, fields);
+        return new ActionDsl.OperateKnownCobblestoneGenerator(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                blockFace(string(source.get("face"), path + ".face"), path + ".face"),
+                blockStateSpec(source.get("expected_state"), path + ".expected_state"),
+                string(source.get("tool_item"), path + ".tool_item"),
+                string(source.get("expected_drop"), path + ".expected_drop"),
+                integer(source.get("minimum_inventory_count"),
+                        path + ".minimum_inventory_count"),
+                integer(source.get("max_breaks"), path + ".max_breaks"),
+                integer(source.get("regeneration_wait_ticks"),
+                        path + ".regeneration_wait_ticks"),
+                longInteger(source.get("max_operation_duration_ticks"),
+                        path + ".max_operation_duration_ticks"));
     }
 
     private static ActionDsl.TillKnownBlock tillKnownBlock(JsonObject source, String path) {

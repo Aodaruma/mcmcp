@@ -242,7 +242,7 @@ class McpToolCatalogTest {
                 .contains("For operate_known_menu reserve at least 30000 ms, 600 ticks, and 1 interaction")
                 .contains("operate_kill_zone=entity_attack")
                 .contains("max_operation_duration_ticks+10")
-                .contains("accepted only for one top-level operate_kill_zone")
+                .contains("accepted for one top-level operate_kill_zone or operate_known_cobblestone_generator")
                 .contains("use the exact inputSchema fields and no aliases");
 
         var definitions = schema.getAsJsonObject("$defs");
@@ -1004,7 +1004,7 @@ class McpToolCatalogTest {
         var actionDsl = state.getAsJsonObject()
                 .getAsJsonObject("policy")
                 .getAsJsonObject("action_dsl");
-        assertThat(actionDsl.getAsJsonArray("available_operations")).hasSize(35);
+        assertThat(actionDsl.getAsJsonArray("available_operations")).hasSize(36);
         assertThat(actionDsl.getAsJsonArray("reference_descriptors")).hasSize(5);
         assertThat(actionDsl.getAsJsonObject("missing_capability_guidance")
                 .get("code").getAsString()).isEqualTo("MISSING_CAPABILITY");

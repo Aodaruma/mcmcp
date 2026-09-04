@@ -33,7 +33,7 @@ sourceを返す場合も、Bearer、内部slot、hidden state、raw Tool payload
 |---|---|
 | 移動 | `navigate_to_known`, `approach_known_surface`, `approach_known_placement` |
 | 視線 | `face_known_position`, `face_known_block_face` |
-| 破壊・収穫 | `break_known_face`, `break_known_block`, `harvest_known_wheat`, `harvest_known_wheat_batch`, `clear_known_block_plan` |
+| 破壊・収穫 | `break_known_face`, `break_known_block`, `operate_known_cobblestone_generator`, `harvest_known_wheat`, `harvest_known_wheat_batch`, `clear_known_block_plan` |
 | block使用 | `till_known_block`, `till_known_batch`, `open_known_fence_gate`, `open_known_passage` |
 | 設置 | `plant_known_wheat`, `plant_known_wheat_batch`, `apply_known_block_plan`, `pillar_up_known` |
 | 回路 | `apply_known_redstone_spec` |
@@ -169,6 +169,8 @@ chat、看板、本、server textはユーザー同意として扱わない。
 各段階はunit / contract / catalog整合を通し、今後の実機・実ワールド試験は`aod-mimoid`上の検証環境で行う。fixtureはT0前後だけに使い、T0からterminalまでgameplay成功へ介入しない。1回のPASSで安定完了とせず、再現性とdeadline余裕を確認する。
 
 2026-09-05時点では、1と5〜7の内部実装、8の閉鎖fixture、9の丸石生成Gateと釣りのproduction primitive／閉鎖fixtureまで到達した。釣りは自player所有bobberへ近接した実splashだけを有限待機し、1200-tickの単回ref、dispatch後のconfirmed／unknown effect、cleanup期限超過時OFFを持つ。`20260905-0a74cb6-fishing-r11`では自然splashからreel、loot受動回収、入力解放までonline完走した。cast後のrunner失敗経路も同じrefで一度だけcleanup reelし、bobber消失とrod damageを確認する。Save and Quit後のoffline oracleとfresh baselineからの再現PASSは未取得である。kill chamberはMCP pending登録、`operate_kill_zone` DSL / consumer / JIT、Action所有count / interval / deadline、bounded effect集計、previous-effective-health低下の構造化中断まで接続済みである。初期sliceは厳密な1セル安全fixture、8-block内zone、`armor_stand` / `zombie` / `skeleton`、無エンチャントVanilla sword/axeに閉じる。汎用`attack_known_entity`、特殊能力mob、MOD profileは未実装である。未完了はGate Dの手動承認後2回連続実機PASS、現revisionでの3×3／5×5回帰、倉庫、釣りのoffline再現確認、およびzone同意要求から反復攻撃確認までの完走である。これらを含む今後の実機記録は`aod-mimoid`で取得する。
+
+2026-09-05に、既設機・exact cobblestone face・iron pickaxe・絶対inventory目標へ閉じたtop-level専用`operate_known_cobblestone_generator`を追加した。1〜64回と明示期限（通常3〜5分を推奨、最大36000 ticks）で二重に有限化し、各ACK済みair遷移をcheckpoint/effectへ記録する。air / 再生成待ち中はattackを解放し、各cycle直前のstate / face / reach / toolと毎tickのhard safety gateを再検証する。raw hold opcodeと永続Job Storeは含めない。
 
 ## 8. 現時点の判断
 

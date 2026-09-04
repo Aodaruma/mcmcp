@@ -22,6 +22,10 @@ public final class ActionDslOperationManifest {
             fixed(ActionDsl.FaceKnownBlockFace.class, "face_known_block_face", caps("camera")),
             fixed(ActionDsl.BreakKnownFace.class, "break_known_face", caps("block_break", "camera")),
             fixed(ActionDsl.BreakKnownBlock.class, "break_known_block", caps("block_break", "camera")),
+            fixed(
+                    ActionDsl.OperateKnownCobblestoneGenerator.class,
+                    "operate_known_cobblestone_generator",
+                    caps("block_break")),
             fixed(ActionDsl.TillKnownBlock.class, "till_known_block", caps("block_interact", "camera")),
             fixed(ActionDsl.TillKnownBatch.class, "till_known_batch", caps("block_interact", "camera")),
             fixed(ActionDsl.PlantKnownWheat.class, "plant_known_wheat", caps("block_place", "camera")),

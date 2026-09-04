@@ -22,7 +22,7 @@ public final class ActionDslCompiler {
             ActionDslValidator.MAX_KILL_ZONE_TICKS, NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
             ActionDslValidator.MAX_ACTION_CAMERA_DEGREES,
             ActionDslValidator.MAX_KILL_ZONE_ATTACKS,
-            ActionDslValidator.MAX_BLOCKS_BROKEN,
+            ActionDslValidator.MAX_COBBLESTONE_GENERATOR_BREAKS,
             ActionDslValidator.MAX_BLOCKS_PLACED);
     private static final long NOMINAL_TICK_MILLIS = 50;
     private static final long BLOCK_PLAN_TICKS_PER_ENTRY = 300;
@@ -118,6 +118,11 @@ public final class ActionDslCompiler {
         }
         if (node instanceof ActionDsl.OperateKillZone operation) {
             Cost cost = intrinsicKillZoneCost(operation);
+            primitiveCostBounds.put(node.id(), cost);
+            return cost;
+        }
+        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
+            Cost cost = intrinsicCobblestoneGeneratorCost(operation);
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }
@@ -314,6 +319,21 @@ public final class ActionDslCompiler {
                 0.0D,
                 operation.maxAttacks(),
                 0L,
+                0L);
+    }
+
+    /** Exact finite reservation for one top-level stationary cobblestone-generator run. */
+    public static Cost intrinsicCobblestoneGeneratorCost(
+            ActionDsl.OperateKnownCobblestoneGenerator operation) {
+        Objects.requireNonNull(operation, "operation");
+        long ticks = operation.maxOperationDurationTicks();
+        return new Cost(
+                Math.multiplyExact(ticks, NOMINAL_TICK_MILLIS),
+                ticks,
+                0.0D,
+                0.0D,
+                0L,
+                operation.maxBreaks(),
                 0L);
     }
 

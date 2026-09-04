@@ -1025,6 +1025,29 @@ public final class AgentPrimitivePlanner {
             merge(costs, node.id(), Objects.requireNonNull(worst, "break cost"));
             return distinct(output);
         }
+        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
+            var block = new ActionDsl.BreakKnownBlock(
+                    operation.id(), operation.target(), operation.face(),
+                    operation.expectedState(), operation.toolItem(),
+                    operation.expectedDrop(), operation.minimumInventoryCount());
+            long surfaceBarrier = surfaceBarrierWorldRevision(
+                    map, surfaceRevisionBarrier, operation.target());
+            var required = requireKnownBreakSurface(
+                    map, latestFrame, block, surfaceBarrier);
+            var surface = knownSurfaceRecord(
+                    map, latestFrame, required, surfaceBarrier).orElseThrow();
+            knownSurfaces.add(required);
+            Vec3 point = rayHit(surface);
+            for (Pose pose : input) {
+                work.poseTransition();
+                requireBreakPose(pose, surface, point);
+            }
+            merge(costs, node.id(),
+                    ActionDslCompiler.intrinsicCobblestoneGeneratorCost(operation));
+            // This operation is deliberately pre-aimed and stationary. It never turns the
+            // camera itself; the exact face is revalidated immediately before every attack.
+            return input;
+        }
         if (node instanceof ActionDsl.TillKnownBlock till) {
             MutationSurface surface = requireMutationSurface(
                     map, latestFrame, input, till.target(),

@@ -1362,7 +1362,7 @@ class McmcpRuntimeHardeningTest {
         assertThat(policy.get("max_blocks_broken")).isEqualTo(8);
         assertThat(policy.get("max_interactions")).isEqualTo(16);
         var actionDsl = (Map<?, ?>) policy.get("action_dsl");
-        assertThat((List<?>) actionDsl.get("available_operations")).hasSize(35);
+        assertThat((List<?>) actionDsl.get("available_operations")).hasSize(36);
         assertThat(((Map<?, ?>) actionDsl.get("missing_capability_guidance")).get("code"))
                 .isEqualTo("MISSING_CAPABILITY");
         assertThat((List<?>) actionDsl.get("reference_descriptors")).hasSize(5);

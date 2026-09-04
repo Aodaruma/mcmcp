@@ -110,6 +110,7 @@ import dev.aod.mcmcp.routine.RoutineSnapshot;
 import dev.aod.mcmcp.routine.RoutineState;
 import dev.aod.mcmcp.routine.SemanticActionRequest;
 import dev.aod.mcmcp.routine.StationaryBreakGoal;
+import dev.aod.mcmcp.routine.StationaryBreakOperation;
 import dev.aod.mcmcp.routine.StationaryBreakRequest;
 import dev.aod.mcmcp.routine.UseItemOnBlockRequest;
 import dev.aod.mcmcp.redstone.RedstoneIdentityRequest;
@@ -2191,6 +2192,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 : node instanceof ActionDsl.CastKnownFishingRod ? 2L : 0L;
         if (node instanceof ActionDsl.OperateKillZone operation) {
             return Optional.of(ActionDslCompiler.intrinsicKillZoneCost(operation));
+        }
+        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
+            return Optional.of(ActionDslCompiler.intrinsicCobblestoneGeneratorCost(operation));
         }
         long breaks = node instanceof ActionDsl.BreakKnownFace
                         || node instanceof ActionDsl.BreakKnownBlock
@@ -4557,6 +4561,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             actionTick)) {
                 return;
             }
+            if (agentExecution.primitive
+                    instanceof ActionDsl.OperateKnownCobblestoneGenerator
+                    && (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
+                            || localSafety == LocalObservationProjector.CurrentSafety.REPLAN)) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
+                        true,
+                        "cobblestone_generator_safety_changed");
+                return;
+            }
             if (!(agentExecution.primitive instanceof ActionDsl.OperateKnownMenu)
                     && !(agentExecution.primitive instanceof ActionDsl.PillarUpKnown)
                     && (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
@@ -4569,6 +4583,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 } else {
                     requestAgentReplan(actionTick, "local_safety_changed");
                 }
+                return;
+            }
+            if (agentExecution.primitive
+                    instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
+                tickAgentCobblestoneGenerator(minecraft, session, action, operation);
                 return;
             }
             if (isAgentWait(agentExecution.primitive)) {
@@ -6564,6 +6583,207 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     effect.clientTick(),
                     effect.worldRevision());
         }
+    }
+
+    private void tickAgentCobblestoneGenerator(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action,
+            ActionDsl.OperateKnownCobblestoneGenerator operation) {
+        var player = Objects.requireNonNull(minecraft.player, "player");
+        ActionDsl.BreakKnownBlock block = cobblestoneGeneratorBreak(operation);
+        if (agentExecution.cobblestoneGeneratorAttempt == null) {
+            int currentCount = inventoryItemCount(player, operation.expectedDrop());
+            if (currentCount < operation.minimumInventoryCount()
+                    && operation.minimumInventoryCount() - currentCount > operation.maxBreaks()) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.WORLD_CHANGED,
+                        true,
+                        "cobblestone_goal_exceeds_max_breaks");
+                return;
+            }
+            int toolSlot = findDurableHotbarTool(
+                    player, operation.toolItem(), operation.maxBreaks());
+            if (toolSlot < 0 || !inventoryCanReceiveKnownBreakDrops(player, action.program())) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.WORLD_CHANGED,
+                        true,
+                        toolSlot < 0
+                                ? "required_iron_pickaxe_unavailable"
+                                : "inventory_full");
+                return;
+            }
+            if (!breakTargetStateMatches(minecraft, block)
+                    || !breakSourceControlled(minecraft, block)) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.WORLD_CHANGED,
+                        true,
+                        "cobblestone_generator_target_or_face_changed");
+                return;
+            }
+            try {
+                player.getInventory().setSelectedSlot(toolSlot);
+                agentExecution.agentSelectedSlot = toolSlot;
+                var target = new BlockTarget(
+                        operation.target().dimension(), operation.target().x(),
+                        operation.target().y(), operation.target().z());
+                BlockStateFingerprint observed = stationaryBreakPort.captureExpectedSource(
+                        target, Set.of("minecraft:cobblestone"));
+                var expected = new BlockStateFingerprint(
+                        operation.expectedState().block(),
+                        operation.expectedState().properties());
+                if (!expected.equals(observed)) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.WORLD_CHANGED,
+                            true,
+                            "cobblestone_generator_state_changed");
+                    return;
+                }
+                var request = new StationaryBreakRequest(
+                        target,
+                        expected,
+                        new StationaryBreakGoal(
+                                operation.expectedDrop(), operation.minimumInventoryCount()),
+                        Math.addExact(
+                                session.clientTick(), operation.maxOperationDurationTicks()),
+                        StationaryBreakRequest.MAX_ATTACK_LEASE_TICKS,
+                        operation.regenerationWaitTicks());
+                agentExecution.cobblestoneGeneratorAttempt = new StationaryBreakOperation(
+                        stationaryBreakPort, request, operation.maxBreaks(), session.clientTick());
+                agentExecution.cobblestoneGeneratorCheckpoint = 0L;
+            } catch (RuntimeException | LinkageError failure) {
+                McmcpMod.LOGGER.error(
+                        "MCMCP cobblestone-generator operation could not start", failure);
+                failAgentAction(
+                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                        true,
+                        "cobblestone_generator_start_failed");
+                return;
+            }
+        }
+
+        // Air is the expected neutral regeneration wait. Once cobblestone is present again,
+        // exact target, state, face, reach, and tool are all rechecked before another lease.
+        if (breakTargetStateMatches(minecraft, block)
+                && !breakSourceControlled(minecraft, block)) {
+            failAgentAction(
+                    AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
+                    true,
+                    "cobblestone_generator_stationary_face_changed");
+            return;
+        }
+
+        final StationaryBreakOperation.TickResult result;
+        try {
+            result = agentExecution.cobblestoneGeneratorAttempt.tick();
+            recordCobblestoneGeneratorCheckpoints(
+                    action.actionId(), operation, result.snapshot());
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error(
+                    "MCMCP cobblestone-generator confirmation failed", failure);
+            failAgentAction(
+                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                    true,
+                    "cobblestone_generator_confirmation_failed");
+            return;
+        }
+        switch (result.status()) {
+            case RUNNING -> { }
+            case SUCCEEDED -> {
+                try {
+                    agentExecution.cobblestoneGeneratorAttempt.close();
+                    agentExecution.cobblestoneGeneratorAttempt = null;
+                } catch (RuntimeException | LinkageError releaseFailure) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.INTERNAL_ERROR,
+                            true,
+                            "cobblestone_generator_release_failed");
+                    return;
+                }
+                agentActions.completeNode(action.actionId());
+                agentExecution.primitive = null;
+                advanceAgentProgram(
+                        minecraft, agentActions.get(action.actionId()).progress());
+            }
+            case MAX_BREAKS_REACHED -> failAgentAction(
+                    AgentActionStore.FailureCode.CONDITION_TIMEOUT,
+                    true,
+                    "cobblestone_generator_max_breaks_reached");
+            case FAILED -> {
+                RoutineFailure failure = result.snapshot().failure();
+                AgentActionStore.FailureCode code = failure != null
+                                && failure.category() == RoutineFailure.Category.SAFETY
+                        ? AgentActionStore.FailureCode.SAFETY_INTERRUPTED
+                        : failure != null && "HARD_DEADLINE_EXPIRED".equals(failure.code())
+                                ? AgentActionStore.FailureCode.CONDITION_TIMEOUT
+                                : failure != null
+                                        && (failure.category()
+                                                        == RoutineFailure.Category.PRECONDITION
+                                                || failure.category()
+                                                        == RoutineFailure.Category.DIVERGENCE)
+                                                ? AgentActionStore.FailureCode.WORLD_CHANGED
+                                                : AgentActionStore.FailureCode
+                                                        .SERVER_DENIED_OR_DESYNC;
+                failAgentAction(
+                        code,
+                        failure == null || failure.retryable(),
+                        "cobblestone_generator_"
+                                + (failure == null ? "failed"
+                                        : failure.code().toLowerCase(Locale.ROOT)));
+            }
+        }
+    }
+
+    private void recordCobblestoneGeneratorCheckpoints(
+            UUID actionId,
+            ActionDsl.OperateKnownCobblestoneGenerator operation,
+            RoutineSnapshot snapshot) {
+        long checkpoint = snapshot.checkpoint().seq();
+        while (agentExecution.cobblestoneGeneratorCheckpoint < checkpoint) {
+            agentExecution.cobblestoneGeneratorCheckpoint++;
+            agentActions.recordBlockBreak(actionId);
+            agentActions.recordEffect(
+                    actionId,
+                    "block_break",
+                    "block:" + operation.target().dimension() + ":"
+                            + operation.target().x() + "," + operation.target().y() + ","
+                            + operation.target().z(),
+                    Map.of(
+                            "block", operation.expectedState().block(),
+                            "properties", operation.expectedState().properties(),
+                            "cycle", agentExecution.cobblestoneGeneratorCheckpoint),
+                    Map.of(
+                            "block", "minecraft:air",
+                            "properties", Map.of(),
+                            "inventory_count", snapshot.progress().completed()),
+                    AgentActionStore.Verification.CONFIRMED,
+                    snapshot.lastClientTick(),
+                    snapshot.checkpoint().observationRevision());
+        }
+    }
+
+    private void recordUnconfirmedCobblestoneGeneratorDispatch(
+            ActionDsl.OperateKnownCobblestoneGenerator operation,
+            RoutineSnapshot snapshot) {
+        if (agentExecution.cobblestoneGeneratorUnknownRecorded) return;
+        Object rawAttempts = snapshot.diagnostics().get("attempts");
+        long attempts = rawAttempts instanceof Number number ? number.longValue() : 0L;
+        if (attempts <= snapshot.checkpoint().seq()) return;
+        agentActions.recordEffect(
+                agentExecution.actionId,
+                "block_break",
+                "block:" + operation.target().dimension() + ":"
+                        + operation.target().x() + "," + operation.target().y() + ","
+                        + operation.target().z(),
+                Map.of(
+                        "block", operation.expectedState().block(),
+                        "properties", operation.expectedState().properties(),
+                        "cycle", attempts),
+                Map.of(),
+                AgentActionStore.Verification.UNKNOWN,
+                snapshot.lastClientTick(),
+                snapshot.checkpoint().observationRevision());
+        agentExecution.cobblestoneGeneratorUnknownRecorded = true;
     }
 
     private void tickAgentBlockMutation(
@@ -8730,36 +8950,52 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private static boolean isKnownBreak(ActionDsl.Node node) {
         return node instanceof ActionDsl.BreakKnownFace
-                || node instanceof ActionDsl.BreakKnownBlock;
+                || node instanceof ActionDsl.BreakKnownBlock
+                || node instanceof ActionDsl.OperateKnownCobblestoneGenerator;
     }
 
     private static ActionDsl.Position breakTarget(ActionDsl.Node node) {
         if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.target();
         if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.target();
+        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
+            return operation.target();
+        }
         throw new IllegalArgumentException("node is not a known break");
     }
 
     private static ActionDsl.BlockFace breakFace(ActionDsl.Node node) {
         if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.face();
         if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.face();
+        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
+            return operation.face();
+        }
         throw new IllegalArgumentException("node is not a known break");
     }
 
     private static String breakBlockId(ActionDsl.Node node) {
         if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.expectedBlock();
         if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.expectedState().block();
+        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
+            return operation.expectedState().block();
+        }
         throw new IllegalArgumentException("node is not a known break");
     }
 
     private static String breakToolItem(ActionDsl.Node node) {
         if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.toolItem();
         if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.toolItem();
+        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
+            return operation.toolItem();
+        }
         throw new IllegalArgumentException("node is not a known break");
     }
 
     private static String breakExpectedDrop(ActionDsl.Node node) {
         if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.expectedBlock();
         if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.expectedDrop();
+        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
+            return operation.expectedDrop();
+        }
         throw new IllegalArgumentException("node is not a known break");
     }
 
@@ -8775,6 +9011,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 collectBreakNodes(repeat.body(), output);
             }
         }
+    }
+
+    private static ActionDsl.BreakKnownBlock cobblestoneGeneratorBreak(
+            ActionDsl.OperateKnownCobblestoneGenerator operation) {
+        return new ActionDsl.BreakKnownBlock(
+                operation.id(), operation.target(), operation.face(),
+                operation.expectedState(), operation.toolItem(), operation.expectedDrop(),
+                operation.minimumInventoryCount());
     }
 
     private static int findDurableHotbarTool(
@@ -9555,6 +9799,24 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     McmcpMod.LOGGER.error(
                             "MCMCP known-block break effect capture failed", failure);
                 }
+            }
+        }
+        if (agentExecution.cobblestoneGeneratorAttempt != null) {
+            try {
+                if (agentExecution.primitive
+                        instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
+                    RoutineSnapshot snapshot =
+                            agentExecution.cobblestoneGeneratorAttempt.snapshot();
+                    recordCobblestoneGeneratorCheckpoints(
+                            agentExecution.actionId, operation, snapshot);
+                    recordUnconfirmedCobblestoneGeneratorDispatch(operation, snapshot);
+                }
+                agentExecution.cobblestoneGeneratorAttempt.close();
+                agentExecution.cobblestoneGeneratorAttempt = null;
+            } catch (RuntimeException | LinkageError failure) {
+                closed = false;
+                McmcpMod.LOGGER.error(
+                        "MCMCP cobblestone-generator release failed", failure);
             }
         }
         if (agentExecution.blockMutationAttempt != null) {
@@ -12435,6 +12697,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private FishingAttempt fishingAttempt;
         private int mutationAimFailures;
         private KnownBlockBreakAttempt blockBreakAttempt;
+        private StationaryBreakOperation cobblestoneGeneratorAttempt;
+        private long cobblestoneGeneratorCheckpoint;
+        private boolean cobblestoneGeneratorUnknownRecorded;
         private KnownBlockMutationAttempt blockMutationAttempt;
         private AgentPrimitivePlanner.MutationBatchPlan mutationBatchPlan;
         private int mutationBatchIndex;
