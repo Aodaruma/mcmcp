@@ -1,6 +1,6 @@
 # MCMCP 実ワールド検証記録
 
-- 更新日: 2026-08-29
+- 更新日: 2026-09-05
 - 対象: Prism Launcherの単一検証profile、Minecraft 26.2 / NeoForge 26.2.0.59
 - 状態: 木こりの最小gateは合格。畑の栽培・収穫ループはMCP操作だけでwheat 64個へ到達。fresh LLMによるchest取得からのend-to-endはR10で39 / 64、R11で26 / 64となり、最終合格は未達
 - 最新実験ノート: [`experiments/02_wheet/2026-08-29_fresh-sol-high-mcp-only-r11-original-field.md`](experiments/02_wheet/2026-08-29_fresh-sol-high-mcp-only-r11-original-field.md)
@@ -17,6 +17,30 @@
 - Minecraftの移動・視点・attack・useを外部のraw key / mouse操作で補う
 
 最終的な合格判定では、観測、item取得、container操作、gate操作、移動、作業、成果確認をMCP呼出しだけで連続実行し、各操作をMCMCPの監査traceとworld / inventoryの事後条件で確認する。
+
+## 2026-09-05 Phase 5 実ワールド回帰試験
+
+`aod-mimoid`のDocker内Prism profileで、精錬、醸造、丸石生成、釣りを順に検証した。
+
+| 対象 | 結果 | artifact / 所見 |
+|---|---|---|
+| 精錬 | 合格 | `20260905-3a57b18-smelt-r1` |
+| 醸造 | 合格 | `20260905-3a57b18-brew-r1` |
+| 丸石生成 | 合格 | `20260905-9ff0af0-cobble-r15`。8個を9試行で回収し、1 drop喪失をbounded retryで回復 |
+| 釣り | 継続 | castは成功。旧audio-source hookではheadless環境のsplash音を観測できず、level sound eventへ変更した。自然なsplashからloot取得までの再試験が残る |
+
+### fixture切替時の死亡事故と修正
+
+Fishingの11×11×3水槽を後続fixtureへ置換するcleanupで、player直下を先に消去した後、残留水の即時検査が失敗して後続layoutを作らないまま例外終了した。このためplayerが落下死した。意図されたfixture動作ではなく、試験ハーネスの順序不具合である。
+
+- 事故時刻: 2026-09-05 01:56:20 JST
+- 復旧: respawn後、`(210.5, 201.0, 210.5)`の一時的な滑らかな石の足場へ退避し、health 20を確認
+- 修正commit: `cf6393d`（cleanup前にarena通常床上へ退避、速度とfall distanceをreset、neighbor updateを抑えた全owned-volume消去）
+- 内部検証: `harnessTest`成功、GameTest 14/14成功
+- 再起動後確認: 2026-09-05 02:11:09 JSTに`cobblestone_generator`のserver setup/client slot適用が完了し、cleanup例外・再死亡なし
+- review反映: 退避床を宣言外のBEDROCKにせず、arena共通baselineのsmooth stoneへ変更。同一tick内の無意味な二重clearは削除
+
+残る回帰確認は、MCMCP再許可後にFishing→各後続fixtureを切り替え、20〜40 ticks後にも旧Fishing外周が乾いていること、playerの座標・体力・支持面が保たれることを観測することである。
 
 ## 木こりテスト
 
