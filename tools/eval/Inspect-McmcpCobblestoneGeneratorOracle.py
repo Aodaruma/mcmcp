@@ -200,6 +200,18 @@ def position_inside_workspace(position) -> bool:
     )
 
 
+def player_matches_expected(player: dict[str, object], expected_attempts: int) -> bool:
+    return (
+        close_enough(player["position"], PLAYER_POSITION)
+        and math.isfinite(player["health"])
+        and 0.0 < player["health"] <= 20.0
+        and player["cobblestone_count"] == 8
+        and player["iron_pickaxe_count"] == 1
+        and player["iron_pickaxe_damage"] == expected_attempts
+        and player["iron_pickaxe_enchanted"] is False
+    )
+
+
 def loose_items(world: Path) -> list[dict[str, object]]:
     directory = world / "entities"
     if not directory.is_dir():
@@ -241,7 +253,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("world", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--expected-attempts", type=int, default=8)
     arguments = parser.parse_args()
+    if not 8 <= arguments.expected_attempts <= 16:
+        parser.error("--expected-attempts must be between 8 and 16")
 
     blocks = state_index(arguments.world)
     static_mismatches = check_static_cells(blocks)
@@ -249,15 +264,7 @@ def main() -> None:
     items = loose_items(arguments.world)
     water_source_unchanged = fluid_source(blocks, WATER_SOURCE, "minecraft:water")
     lava_source_unchanged = fluid_source(blocks, LAVA_SOURCE, "minecraft:lava")
-    player_passed = (
-        close_enough(player["position"], PLAYER_POSITION)
-        and math.isfinite(player["health"])
-        and 0.0 < player["health"] <= 20.0
-        and player["cobblestone_count"] == 8
-        and player["iron_pickaxe_count"] == 1
-        and player["iron_pickaxe_damage"] == 8
-        and player["iron_pickaxe_enchanted"] is False
-    )
+    player_passed = player_matches_expected(player, arguments.expected_attempts)
     passed = (
         not static_mismatches
         and water_source_unchanged
@@ -278,6 +285,9 @@ def main() -> None:
             "block": blocks.get(GENERATION_CELL, {}).get("block"),
             "expected": "minecraft:cobblestone",
         },
+        "total_attempts": arguments.expected_attempts,
+        "lost_drops": arguments.expected_attempts - 8,
+        "expected_pickaxe_damage": arguments.expected_attempts,
         "water_source_unchanged": water_source_unchanged,
         "lava_source_unchanged": lava_source_unchanged,
         "static_cell_mismatches": static_mismatches,

@@ -81,4 +81,15 @@ assert oracle.item_enchanted(enchanted_pickaxe)
 assert oracle.close_enough([199.5, 201.0, 199.5], oracle.PLAYER_POSITION)
 assert not oracle.close_enough([199.6, 201.0, 199.5], oracle.PLAYER_POSITION)
 
+player = {
+    "position": list(oracle.PLAYER_POSITION),
+    "health": 20.0,
+    "cobblestone_count": 8,
+    "iron_pickaxe_count": 1,
+    "iron_pickaxe_damage": 10,
+    "iron_pickaxe_enchanted": False,
+}
+assert oracle.player_matches_expected(player, 10)
+assert not oracle.player_matches_expected(player, 8)
+
 print("MCMCP cobblestone generator offline oracle tests passed.")

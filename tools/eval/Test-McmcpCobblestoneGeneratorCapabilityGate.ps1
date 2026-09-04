@@ -44,7 +44,10 @@ function New-MockCobblestoneSurface {
 }
 
 function New-MockCobblestoneState {
-    param([Parameter(Mandatory)][int]$CobblestoneCount)
+    param(
+        [Parameter(Mandatory)][int]$CobblestoneCount,
+        [long]$FrameSequence = $CobblestoneCount
+    )
     $inventory = [Collections.Generic.List[object]]::new()
     $inventory.Add([pscustomobject]@{ item = 'minecraft:iron_pickaxe'; count = 1 })
     if ($CobblestoneCount -gt 0) {
@@ -52,7 +55,7 @@ function New-MockCobblestoneState {
                 item = 'minecraft:cobblestone'; count = $CobblestoneCount
             })
     }
-    $frameId = 'obs-' + ([long]$CobblestoneCount).ToString('x16')
+    $frameId = 'obs-' + $FrameSequence.ToString('x16')
     [pscustomobject]@{
         schema_version = 1
         control = [pscustomobject]@{
@@ -95,10 +98,15 @@ Assert-True ($request.budget.max_blocks_broken -eq 1 -and
     $request.budget.max_interactions -eq 0 -and
     $request.budget.max_blocks_placed -eq 0) `
     'request budget is not a stationary single break'
+Assert-True ($script:CobbleMaximumAttempts -eq 16) 'attempt cap is not exactly sixteen'
 
 function New-MockBreakTerminal {
-    param([ValidateRange(1, 8)][int]$Iteration, [string]$Verification = 'confirmed')
-    $actionId = '550e8400-e29b-41d4-a716-' + $Iteration.ToString('000000000000')
+    param(
+        [ValidateRange(1, 8)][int]$MinimumInventoryCount,
+        [ValidateRange(1, 16)][int]$Attempt = $MinimumInventoryCount,
+        [string]$Verification = 'confirmed'
+    )
+    $actionId = '550e8400-e29b-41d4-a716-' + $Attempt.ToString('000000000000')
     [pscustomobject]@{
         schema_version = 1; action_id = $actionId; state = 'succeeded'
         progress = [pscustomobject]@{
@@ -109,27 +117,27 @@ function New-MockBreakTerminal {
         failure = $null
         trace = @(
             [pscustomobject]@{
-                tick = 0; event = 'NODE_STARTED'; detail = "break_cobblestone_$Iteration"
+                tick = 0; event = 'NODE_STARTED'; detail = "break_cobblestone_$MinimumInventoryCount"
             },
             [pscustomobject]@{
-                tick = 4; event = 'NODE_COMPLETED'; detail = "break_cobblestone_$Iteration"
+                tick = 4; event = 'NODE_COMPLETED'; detail = "break_cobblestone_$MinimumInventoryCount"
             },
             [pscustomobject]@{ tick = 4; event = 'SUCCEEDED'; detail = 'succeeded' }
         )
         effects = @([pscustomobject]@{
-                seq = 1; node_id = "break_cobblestone_$Iteration"; kind = 'block_break'
+                seq = 1; node_id = "break_cobblestone_$MinimumInventoryCount"; kind = 'block_break'
                 subject = 'block:minecraft:overworld:199,201,200'
                 observed_before = [pscustomobject]@{
                     block = 'minecraft:cobblestone'; properties = [pscustomobject]@{}
                     expected_drop = 'minecraft:cobblestone'
-                    minimum_inventory_count = $Iteration
+                    minimum_inventory_count = $MinimumInventoryCount
                 }
                 observed_after = [pscustomobject]@{
                     block = 'minecraft:air'; properties = [pscustomobject]@{}
-                    inventory_count = $Iteration
+                    inventory_count = $MinimumInventoryCount
                 }
                 verification = $Verification
-                client_tick = 100L + $Iteration; world_revision = 20L + $Iteration
+                client_tick = 100L + $Attempt; world_revision = 20L + $Attempt
             })
         partial = [pscustomobject]@{
             has_confirmed_effects = $true; interrupted_node_id = $null
@@ -141,19 +149,68 @@ function New-MockBreakTerminal {
     }
 }
 
-[void](Assert-CobblestoneBreakTerminal -Terminal (New-MockBreakTerminal -Iteration 1) `
-        -Iteration 1)
-$noEffect = New-MockBreakTerminal -Iteration 1
+function New-MockLostDropTerminal {
+    param(
+        [ValidateRange(1, 8)][int]$MinimumInventoryCount,
+        [ValidateRange(1, 16)][int]$Attempt
+    )
+    $terminal = New-MockBreakTerminal -MinimumInventoryCount $MinimumInventoryCount `
+        -Attempt $Attempt
+    $terminal.state = 'failed'
+    $terminal.progress.executed_nodes = 0
+    $terminal.progress.blocks_broken = 0
+    $terminal.failure = [pscustomobject]@{
+        code = 'SERVER_DENIED_OR_DESYNC'; recoverable = $true
+        evidence = @('break_not_server_confirmed')
+    }
+    $terminal.trace = @(
+        [pscustomobject]@{
+            tick = 0; event = 'NODE_STARTED'; detail = "break_cobblestone_$MinimumInventoryCount"
+        },
+        [pscustomobject]@{
+            tick = 8; event = 'FAILED'; detail = 'break_not_server_confirmed'
+        }
+    )
+    $terminal.effects[0].observed_after = [pscustomobject]@{
+        block = 'minecraft:air'; properties = [pscustomobject]@{}
+    }
+    $terminal.partial.remaining_node_upper_bound = 1
+    $terminal.partial.interrupted_node_id = "break_cobblestone_$MinimumInventoryCount"
+    $terminal.partial.resume_requires_reobservation = $true
+    return $terminal
+}
+
+[void](Assert-CobblestoneBreakTerminal `
+        -Terminal (New-MockBreakTerminal -MinimumInventoryCount 1) `
+        -Attempt 1 -MinimumInventoryCount 1)
+$noEffect = New-MockBreakTerminal -MinimumInventoryCount 1
 $noEffect.effects = @()
-Assert-Throws { Assert-CobblestoneBreakTerminal -Terminal $noEffect -Iteration 1 } `
+Assert-Throws { Assert-CobblestoneBreakTerminal -Terminal $noEffect `
+        -Attempt 1 -MinimumInventoryCount 1 } `
     'terminal without an effect was accepted'
-$unknownEffect = New-MockBreakTerminal -Iteration 1 -Verification 'unknown'
-Assert-Throws { Assert-CobblestoneBreakTerminal -Terminal $unknownEffect -Iteration 1 } `
+$unknownEffect = New-MockBreakTerminal -MinimumInventoryCount 1 -Verification 'unknown'
+Assert-Throws { Assert-CobblestoneBreakTerminal -Terminal $unknownEffect `
+        -Attempt 1 -MinimumInventoryCount 1 } `
     'unknown break effect was accepted'
-$moved = New-MockBreakTerminal -Iteration 1
+$moved = New-MockBreakTerminal -MinimumInventoryCount 1
 $moved.progress.distance_travelled = 0.1
-Assert-Throws { Assert-CobblestoneBreakTerminal -Terminal $moved -Iteration 1 } `
+Assert-Throws { Assert-CobblestoneBreakTerminal -Terminal $moved `
+        -Attempt 1 -MinimumInventoryCount 1 } `
     'moving break terminal was accepted'
+$lostDrop = New-MockLostDropTerminal -MinimumInventoryCount 1 -Attempt 1
+Assert-True (Test-CobblestoneLostDropTerminal -Terminal $lostDrop `
+        -MinimumInventoryCount 1) 'exact lost-drop terminal was rejected'
+$lostWithInventory = New-MockLostDropTerminal -MinimumInventoryCount 1 -Attempt 1
+$lostWithInventory.effects[0].observed_after | Add-Member -NotePropertyName inventory_count `
+    -NotePropertyValue 1
+Assert-True (-not (Test-CobblestoneLostDropTerminal -Terminal $lostWithInventory `
+            -MinimumInventoryCount 1)) `
+    'lost-drop terminal with pickup proof was accepted for retry'
+$wrongFailure = New-MockLostDropTerminal -MinimumInventoryCount 1 -Attempt 1
+$wrongFailure.failure.evidence = @('pickup_unconfirmed')
+Assert-True (-not (Test-CobblestoneLostDropTerminal -Terminal $wrongFailure `
+            -MinimumInventoryCount 1)) `
+    'unrelated failure was accepted for lost-drop retry'
 
 $script:ToolTransport = {
     param($Tool, $Arguments)
@@ -176,7 +233,10 @@ $script:ToolTransport = $null
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null
 $script:MockCompleted = 0
-$script:MockPendingIteration = 0
+$script:MockAttempt = 0
+$script:MockPendingMinimum = 0
+$script:MockObservationSerial = 0L
+$script:MockLostDropEmitted = $false
 Add-GateEvent -Event 'fixed_five_surface_verified' -Detail ([ordered]@{
         protocol_version = $script:ProtocolVersion; tools = @($script:AllowedTools)
     })
@@ -185,17 +245,19 @@ $script:ToolTransport = {
     param($Tool, $Arguments)
     switch ($Tool) {
         'agent_get_state' {
-            New-MockCobblestoneState -CobblestoneCount $script:MockCompleted
+            $script:MockObservationSerial++
+            New-MockCobblestoneState -CobblestoneCount $script:MockCompleted `
+                -FrameSequence $script:MockObservationSerial
         }
         'agent_get_observation' {
             $kinds = @($Arguments.kinds)
             $records = if ($kinds.Count -eq 1 -and $kinds[0] -ceq 'visible_surface') {
-                @(New-MockCobblestoneSurface -Revision (20L + $script:MockCompleted))
+                @(New-MockCobblestoneSurface -Revision (20L + $script:MockObservationSerial))
             } else { @() }
             [pscustomobject]@{
                 schema_version = 1
-                frame_id = 'obs-' + ([long]$script:MockCompleted).ToString('x16')
-                frame_completed_tick = 100L + $script:MockCompleted
+                frame_id = $Arguments.frame_id
+                frame_completed_tick = 100L + $script:MockObservationSerial
                 visible_entities_truncated = $false
                 records = $records; next_cursor = $null; sampling_coverage = 1
             }
@@ -209,19 +271,28 @@ $script:ToolTransport = {
                 $submitted.target.z -ne 200) {
                 throw 'mock received a stale or malformed cobblestone break'
             }
-            $script:MockPendingIteration = $expected
+            $script:MockAttempt++
+            $script:MockPendingMinimum = $expected
             [pscustomobject]@{
                 schema_version = 1
-                action_id = '550e8400-e29b-41d4-a716-' + $expected.ToString('000000000000')
+                action_id = '550e8400-e29b-41d4-a716-' + `
+                    $script:MockAttempt.ToString('000000000000')
                 state = 'queued'
             }
         }
         'agent_get_action' {
-            if ($script:MockPendingIteration -lt 1) { throw 'mock has no pending break' }
-            $iteration = $script:MockPendingIteration
-            $script:MockCompleted = $iteration
-            $script:MockPendingIteration = 0
-            New-MockBreakTerminal -Iteration $iteration
+            if ($script:MockPendingMinimum -lt 1) { throw 'mock has no pending break' }
+            $minimum = $script:MockPendingMinimum
+            $script:MockPendingMinimum = 0
+            if (-not $script:MockLostDropEmitted -and $script:MockAttempt -eq 2) {
+                $script:MockLostDropEmitted = $true
+                New-MockLostDropTerminal -MinimumInventoryCount $minimum `
+                    -Attempt $script:MockAttempt
+            } else {
+                $script:MockCompleted = $minimum
+                New-MockBreakTerminal -MinimumInventoryCount $minimum `
+                    -Attempt $script:MockAttempt
+            }
         }
         'agent_cancel_action' { throw 'mock should not cancel a successful break' }
         default { throw "unexpected cobblestone mock tool: $Tool" }
@@ -232,16 +303,31 @@ try {
     $result = Invoke-McmcpCobblestoneGeneratorCapabilityGate
     Assert-True ($result.gate_result.gate -ceq 'phase9-cobblestone-generator') `
         'gate result name is wrong'
-    Assert-True ($result.gate_result.lifecycle.accepted -eq 8 -and
-        $result.gate_result.lifecycle.terminal -eq 8 -and
-        $result.gate_result.lifecycle.unique_frame_ids -eq 8) `
-        'eight fresh single-Action cycles were not proven'
+    Assert-True ($result.gate_result.lifecycle.accepted -eq 9 -and
+        $result.gate_result.lifecycle.terminal -eq 9 -and
+        $result.gate_result.lifecycle.unique_frame_ids -eq 9 -and
+        $result.gate_result.lifecycle.successful_pickups -eq 8 -and
+        $result.gate_result.lifecycle.lost_drops -eq 1 -and
+        $result.gate_result.lifecycle.expected_pickaxe_damage -eq 9) `
+        'lost drop plus eight fresh successful Action cycles were not proven'
     Assert-True ($result.gate_result.terminal_effects.Count -eq 8) `
         'eight confirmed break effects were not retained'
     Assert-True ($result.gate_result.online_oracle.cobblestone_delta -eq 8) `
         'online inventory oracle is not +8'
+    Assert-True ($result.gate_result.total_attempts -eq 9 -and
+        $result.gate_result.lost_drops -eq 1 -and
+        $result.gate_result.maximum_attempts -eq 16 -and
+        $result.gate_result.expected_pickaxe_damage -eq 9 -and
+        $result.gate_result.lost_drop_effects.Count -eq 1) `
+        'attempt, lost-drop, or pickaxe-damage accounting is wrong'
     Assert-True ($result.gate_result.external_oracle.player.health -eq 20.0) `
         'offline oracle did not bind the observed health baseline'
+    Assert-True ($result.gate_result.external_oracle.player.iron_pickaxe_damage -eq 9 -and
+        $result.gate_result.external_oracle.total_attempts -eq 9 -and
+        $result.gate_result.external_oracle.maximum_attempts -eq 16 -and
+        $result.gate_result.external_oracle.lost_drops -eq 1 -and
+        $result.gate_result.external_oracle.inspector_arguments[1] -ceq '9') `
+        'offline oracle did not bind attempts to pickaxe damage'
     Assert-True ([bool]$result.input_release.control_ready -and
         [bool]$result.input_release.all_actions_terminal) `
         'input release was not proven'

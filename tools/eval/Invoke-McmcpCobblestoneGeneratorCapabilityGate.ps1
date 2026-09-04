@@ -44,6 +44,7 @@ $script:CobbleExpectedPosition = [ordered]@{
 }
 $script:CobbleExpectedStand = [ordered]@{ x = 199.5; y = 201.0; z = 199.5 }
 $script:CobbleBreakCount = 8
+$script:CobbleMaximumAttempts = 16
 
 function Get-McpMeta {
     [ordered]@{
@@ -194,7 +195,8 @@ function New-CobblestoneBreakRequest {
 function Assert-CobblestoneBreakTerminal {
     param(
         [Parameter(Mandatory)][object]$Terminal,
-        [ValidateRange(1, 8)][int]$Iteration
+        [ValidateRange(1, 16)][int]$Attempt,
+        [ValidateRange(1, 8)][int]$MinimumInventoryCount
     )
 
     $progress = Get-ObjectProperty $Terminal 'progress'
@@ -207,36 +209,78 @@ function Assert-CobblestoneBreakTerminal {
         [int](Get-ObjectProperty $progress 'blocks_broken') -ne 1 -or
         [int](Get-ObjectProperty $progress 'blocks_placed') -ne 0 -or
         [double](Get-ObjectProperty $progress 'camera_degrees') -gt 360) {
-        throw "cobblestone break $Iteration terminal violates the one-break stationary budget"
+        throw "cobblestone attempt $Attempt terminal violates the one-break stationary budget"
     }
     $effects = @((Get-ObjectProperty $Terminal 'effects'))
     if ($effects.Count -ne 1) {
-        throw "cobblestone break $Iteration must publish exactly one effect"
+        throw "cobblestone attempt $Attempt must publish exactly one effect"
     }
     $effect = $effects[0]
     $before = Get-ObjectProperty $effect 'observed_before'
     $after = Get-ObjectProperty $effect 'observed_after'
     if ([int](Get-ObjectProperty $effect 'seq') -ne 1 -or
-        (Get-ObjectProperty $effect 'node_id') -cne "break_cobblestone_$Iteration" -or
+        (Get-ObjectProperty $effect 'node_id') -cne "break_cobblestone_$MinimumInventoryCount" -or
         (Get-ObjectProperty $effect 'kind') -cne 'block_break' -or
         (Get-ObjectProperty $effect 'subject') -cne
             'block:minecraft:overworld:199,201,200' -or
         (Get-ObjectProperty $effect 'verification') -cne 'confirmed' -or
         (Get-ObjectProperty $before 'block') -cne 'minecraft:cobblestone' -or
         (Get-ObjectProperty $before 'expected_drop') -cne 'minecraft:cobblestone' -or
-        [int](Get-ObjectProperty $before 'minimum_inventory_count') -ne $Iteration -or
+        [int](Get-ObjectProperty $before 'minimum_inventory_count') -ne $MinimumInventoryCount -or
         (Get-ObjectProperty $after 'block') -cne 'minecraft:air' -or
-        [int](Get-ObjectProperty $after 'inventory_count') -ne $Iteration) {
-        throw "cobblestone break $Iteration lacks one confirmed break/pickup effect"
+        [int](Get-ObjectProperty $after 'inventory_count') -ne $MinimumInventoryCount) {
+        throw "cobblestone attempt $Attempt lacks one confirmed break/pickup effect"
     }
     return [ordered]@{
-        iteration = $Iteration
+        attempt = $Attempt
+        minimum_inventory_count = $MinimumInventoryCount
         node_id = Get-ObjectProperty $effect 'node_id'
         verification = Get-ObjectProperty $effect 'verification'
         inventory_count = Get-ObjectProperty $after 'inventory_count'
         client_tick = Get-ObjectProperty $effect 'client_tick'
         world_revision = Get-ObjectProperty $effect 'world_revision'
     }
+}
+
+function Test-CobblestoneLostDropTerminal {
+    param(
+        [Parameter(Mandatory)][object]$Terminal,
+        [ValidateRange(1, 8)][int]$MinimumInventoryCount
+    )
+
+    $failure = Get-ObjectProperty $Terminal 'failure'
+    $progress = Get-ObjectProperty $Terminal 'progress'
+    $effects = @((Get-ObjectProperty $Terminal 'effects'))
+    $evidence = @((Get-ObjectProperty $failure 'evidence'))
+    if ((Get-ObjectProperty $Terminal 'state') -cne 'failed' -or
+        (Get-ObjectProperty $failure 'code') -cne 'SERVER_DENIED_OR_DESYNC' -or
+        -not [bool](Get-ObjectProperty $failure 'recoverable') -or
+        $evidence.Count -ne 1 -or $evidence[0] -cne 'break_not_server_confirmed' -or
+        [int](Get-ObjectProperty $progress 'executed_nodes') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'total_node_upper_bound') -ne 1 -or
+        [double](Get-ObjectProperty $progress 'distance_travelled') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'interactions') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'blocks_broken') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'blocks_placed') -ne 0 -or
+        [double](Get-ObjectProperty $progress 'camera_degrees') -gt 360 -or
+        $effects.Count -ne 1) {
+        return $false
+    }
+    $effect = $effects[0]
+    $before = Get-ObjectProperty $effect 'observed_before'
+    $after = Get-ObjectProperty $effect 'observed_after'
+    if ($null -eq $before -or $null -eq $after) { return $false }
+    $inventoryProperty = @($after.PSObject.Properties | Where-Object Name -CEQ 'inventory_count')
+    return [int](Get-ObjectProperty $effect 'seq') -eq 1 -and
+        (Get-ObjectProperty $effect 'node_id') -ceq "break_cobblestone_$MinimumInventoryCount" -and
+        (Get-ObjectProperty $effect 'kind') -ceq 'block_break' -and
+        (Get-ObjectProperty $effect 'subject') -ceq 'block:minecraft:overworld:199,201,200' -and
+        (Get-ObjectProperty $effect 'verification') -ceq 'confirmed' -and
+        (Get-ObjectProperty $before 'block') -ceq 'minecraft:cobblestone' -and
+        (Get-ObjectProperty $before 'expected_drop') -ceq 'minecraft:cobblestone' -and
+        [int](Get-ObjectProperty $before 'minimum_inventory_count') -eq $MinimumInventoryCount -and
+        (Get-ObjectProperty $after 'block') -ceq 'minecraft:air' -and
+        $inventoryProperty.Count -eq 0
 }
 
 function Assert-NoVisibleCobblestoneDrops {
@@ -253,6 +297,13 @@ function Assert-NoVisibleCobblestoneDrops {
 }
 
 function Assert-CobblestoneLifecycle {
+    param(
+        [ValidateRange(8, 16)][int]$TotalAttempts,
+        [ValidateRange(0, 8)][int]$LostDrops
+    )
+    if ($TotalAttempts -ne ($script:CobbleBreakCount + $LostDrops)) {
+        throw 'cobblestone attempt count does not equal pickups plus qualified lost drops'
+    }
     $events = @($script:GateEvents)
     $accepted = @($events | Where-Object {
             (Get-ObjectProperty $_ 'event') -ceq 'action_accepted'
@@ -263,21 +314,29 @@ function Assert-CobblestoneLifecycle {
     $observations = @($events | Where-Object {
             (Get-ObjectProperty $_ 'event') -ceq 'cobblestone_break_observation'
         })
-    if ($accepted.Count -ne $script:CobbleBreakCount -or
-        $terminal.Count -ne $script:CobbleBreakCount -or
-        $observations.Count -ne $script:CobbleBreakCount) {
-        throw 'cobblestone gate requires eight fresh-observation/single-Action break cycles'
+    $lostDropEvents = @($events | Where-Object {
+            (Get-ObjectProperty $_ 'event') -ceq 'cobblestone_lost_drop_reobserved'
+        })
+    if ($accepted.Count -ne $TotalAttempts -or
+        $terminal.Count -ne $TotalAttempts -or
+        $observations.Count -ne $TotalAttempts -or
+        $lostDropEvents.Count -ne $LostDrops) {
+        throw 'cobblestone gate lifecycle count does not match its bounded attempts'
     }
     $frameIds = @($observations | ForEach-Object {
             [string](Get-ObjectProperty $_ 'frame_id')
         } | Sort-Object -Unique)
-    if ($frameIds.Count -ne $script:CobbleBreakCount) {
+    if ($frameIds.Count -ne $TotalAttempts) {
         throw 'cobblestone gate reused an observation frame between breaks'
     }
-    for ($index = 0; $index -lt $script:CobbleBreakCount; $index++) {
+    $succeeded = @($terminal | Where-Object { (Get-ObjectProperty $_ 'state') -ceq 'succeeded' })
+    $failed = @($terminal | Where-Object { (Get-ObjectProperty $_ 'state') -ceq 'failed' })
+    if ($succeeded.Count -ne $script:CobbleBreakCount -or $failed.Count -ne $LostDrops) {
+        throw 'cobblestone gate terminal states do not match pickup and lost-drop counts'
+    }
+    for ($index = 0; $index -lt $TotalAttempts; $index++) {
         if ((Get-ObjectProperty $accepted[$index] 'action_id') -cne
                 (Get-ObjectProperty $terminal[$index] 'action_id') -or
-            (Get-ObjectProperty $terminal[$index] 'state') -cne 'succeeded' -or
             [Array]::IndexOf($events, $observations[$index]) -gt
                 [Array]::IndexOf($events, $accepted[$index])) {
             throw "cobblestone gate lifecycle mismatch at break $($index + 1)"
@@ -293,17 +352,26 @@ function Assert-CobblestoneLifecycle {
         terminal = $terminal.Count
         fresh_observations = $observations.Count
         unique_frame_ids = $frameIds.Count
+        successful_pickups = $script:CobbleBreakCount
+        lost_drops = $LostDrops
+        total_attempts = $TotalAttempts
+        expected_pickaxe_damage = $TotalAttempts
         accepted_equals_terminal = $true
         stale_frame_reuse = $false
     }
 }
 
 function New-CobblestoneOfflineOracleManifest {
-    param([Parameter(Mandatory)][double]$ExpectedHealth)
+    param(
+        [Parameter(Mandatory)][double]$ExpectedHealth,
+        [ValidateRange(8, 16)][int]$ExpectedAttempts,
+        [ValidateRange(0, 8)][int]$LostDrops
+    )
     return [ordered]@{
         schema_version = 1
         oracle = 'offline-cobblestone-generator-world'
         inspector = 'tools/eval/Inspect-McmcpCobblestoneGeneratorOracle.py'
+        inspector_arguments = @('--expected-attempts', [string]$ExpectedAttempts)
         world_closed_required = $true
         dimension = 'minecraft:overworld'
         workspace = $script:CobbleWorkspaceBounds
@@ -312,9 +380,13 @@ function New-CobblestoneOfflineOracleManifest {
         lava_source = [ordered]@{ x = 200; y = 201; z = 200; block = 'minecraft:lava'; level = '0' }
         player = [ordered]@{
             position = $script:CobbleExpectedStand; health = $ExpectedHealth
-            cobblestone_count = 8; iron_pickaxe_count = 1; iron_pickaxe_damage = 8
+            cobblestone_count = 8; iron_pickaxe_count = 1
+            iron_pickaxe_damage = $ExpectedAttempts
             iron_pickaxe_enchanted = $false
         }
+        total_attempts = $ExpectedAttempts
+        maximum_attempts = $script:CobbleMaximumAttempts
+        lost_drops = $LostDrops
         loose_item_count = 0
         allowed_dynamic_cells = @(
             [ordered]@{ x = 198; y = 200; z = 200 },
@@ -342,20 +414,67 @@ function Invoke-CobblestoneGeneratorGateCore {
 
     $previousFrameId = $null
     $proofs = [Collections.Generic.List[object]]::new()
-    for ($iteration = 1; $iteration -le $script:CobbleBreakCount; $iteration++) {
-        $fresh = Wait-FreshGeneratedCobblestone -PreviousFrameId $previousFrameId
+    $lostDropProofs = [Collections.Generic.List[object]]::new()
+    $fresh = $null
+    $inventoryCount = 0
+    $attempt = 0
+    while ($inventoryCount -lt $script:CobbleBreakCount) {
+        if ($attempt -ge $script:CobbleMaximumAttempts) {
+            throw "cobblestone gate exhausted $($script:CobbleMaximumAttempts) attempts before collecting eight blocks"
+        }
+        if ($null -eq $fresh) {
+            $fresh = Wait-FreshGeneratedCobblestone -PreviousFrameId $previousFrameId
+        }
+        $attempt++
+        $minimumInventoryCount = $inventoryCount + 1
         Assert-CobblePlayerState -State $fresh.state -ExpectedHealth $initialHealth `
-            -Phase "break $iteration admission"
+            -Phase "attempt $attempt admission"
         $beforeCount = Get-InventoryCount -State $fresh.state -Item 'minecraft:cobblestone'
-        if ($beforeCount -ne ($iteration - 1)) {
-            throw "cobblestone inventory before break $iteration is $beforeCount"
+        if ($beforeCount -ne $inventoryCount) {
+            throw "cobblestone inventory before attempt $attempt is $beforeCount; expected=$inventoryCount"
         }
         $request = New-CobblestoneBreakRequest -Surface $fresh.surface `
-            -MinimumInventoryCount $iteration
-        $terminal = Invoke-ActionRequest -Request $request -WallTimeoutSeconds 45
-        $proofs.Add((Assert-CobblestoneBreakTerminal -Terminal $terminal `
-                    -Iteration $iteration))
+            -MinimumInventoryCount $minimumInventoryCount
+        $terminal = Invoke-ActionRequest -Request $request -WallTimeoutSeconds 45 `
+            -ReturnFailure
+        if ((Get-ObjectProperty $terminal 'state') -ceq 'succeeded') {
+            $proofs.Add((Assert-CobblestoneBreakTerminal -Terminal $terminal `
+                        -Attempt $attempt -MinimumInventoryCount $minimumInventoryCount))
+            $inventoryCount = $minimumInventoryCount
+            $previousFrameId = $fresh.frame_id
+            $fresh = $null
+            continue
+        }
+        if (-not (Test-CobblestoneLostDropTerminal -Terminal $terminal `
+                    -MinimumInventoryCount $minimumInventoryCount)) {
+            throw "cobblestone attempt $attempt failed outside the qualified lost-drop boundary"
+        }
+
+        # A confirmed block mutation is never replayed. First obtain a new frame proving that
+        # fluid regeneration completed and that pickup count did not advance.
+        $reobserved = Wait-FreshGeneratedCobblestone -PreviousFrameId $fresh.frame_id
+        Assert-CobblePlayerState -State $reobserved.state -ExpectedHealth $initialHealth `
+            -Phase "attempt $attempt lost-drop reobservation"
+        $reobservedCount = Get-InventoryCount -State $reobserved.state `
+            -Item 'minecraft:cobblestone'
+        if ($reobservedCount -ne $inventoryCount) {
+            throw "cobblestone attempt $attempt did not prove an unchanged inventory after the lost drop"
+        }
+        Assert-NoVisibleCobblestoneDrops -State $reobserved.state
+        $lostDrop = [ordered]@{
+            attempt = $attempt
+            minimum_inventory_count = $minimumInventoryCount
+            action_id = Get-ObjectProperty $terminal 'action_id'
+            failure_code = 'SERVER_DENIED_OR_DESYNC'
+            failure_evidence = 'break_not_server_confirmed'
+            inventory_count = $reobservedCount
+            visible_loose_cobblestone = 0
+            reobserved_frame_id = $reobserved.frame_id
+        }
+        $lostDropProofs.Add($lostDrop)
+        Add-GateEvent -Event 'cobblestone_lost_drop_reobserved' -Detail $lostDrop
         $previousFrameId = $fresh.frame_id
+        $fresh = $reobserved
     }
 
     $final = Get-FreshState
@@ -366,26 +485,36 @@ function Invoke-CobblestoneGeneratorGateCore {
     }
     [void](Get-OnlyGeneratedCobblestoneSurface -State $final)
     Assert-NoVisibleCobblestoneDrops -State $final
-    $lifecycle = Assert-CobblestoneLifecycle
+    $lifecycle = Assert-CobblestoneLifecycle -TotalAttempts $attempt `
+        -LostDrops $lostDropProofs.Count
     return [ordered]@{
         gate = 'phase9-cobblestone-generator'
         fixture_precondition = '/mcmcp_fixture phase5 cobblestone_generator'
         fixed_five_surface = $fixedFive
         normal_player_actions_only = $true
         break_count = $script:CobbleBreakCount
-        action_boundary = 'fresh_observation_then_one_break_per_action'
+        total_attempts = $attempt
+        lost_drops = $lostDropProofs.Count
+        maximum_attempts = $script:CobbleMaximumAttempts
+        expected_pickaxe_damage = $attempt
+        action_boundary = 'fresh_observation_then_one_break_per_action_with_qualified_lost_drop_retry'
         lifecycle = $lifecycle
         terminal_effects = @($proofs)
+        lost_drop_effects = @($lostDropProofs)
         online_oracle = [ordered]@{
             cobblestone_before = 0; cobblestone_after = $finalCobblestone
             cobblestone_delta = $finalCobblestone
             confirmed_break_effects = $proofs.Count
+            total_break_attempts = $attempt
+            qualified_lost_drops = $lostDropProofs.Count
+            expected_pickaxe_damage = $attempt
             player_position_unchanged = $true
             player_health_unchanged = $true
             visible_loose_cobblestone = 0
         }
         external_oracle_status = 'pending_world_close'
-        external_oracle = New-CobblestoneOfflineOracleManifest -ExpectedHealth $initialHealth
+        external_oracle = New-CobblestoneOfflineOracleManifest -ExpectedHealth $initialHealth `
+            -ExpectedAttempts $attempt -LostDrops $lostDropProofs.Count
     }
 }
 
