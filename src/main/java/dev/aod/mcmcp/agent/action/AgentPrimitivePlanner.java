@@ -57,6 +57,7 @@ public final class AgentPrimitivePlanner {
     private static final int MAX_TOTAL_ROUTE_EXPANSIONS = 32_768;
     private static final int MAX_POSE_TRANSITIONS = 16_384;
     private static final double MAX_BREAK_REACH_BLOCKS = 4.5D;
+    private static final double MAX_FISHING_AIM_BLOCKS = 8.0D;
     private static final double APPROACH_REACH_BLOCKS = 4.25D;
     private static final double APPROACH_EYE_HEIGHT = 1.62D;
     private static final double APPROACH_TOLERANCE = 0.25D;
@@ -559,6 +560,21 @@ public final class AgentPrimitivePlanner {
             String block,
             java.util.function.Predicate<ObservationRecord.VisibleSurface> allowed,
             String failure) {
+        return requireMutationSurface(
+                map, latestFrame, poses, position, surfaceBarrierWorldRevision,
+                block, allowed, failure, MAX_BREAK_REACH_BLOCKS);
+    }
+
+    private static MutationSurface requireMutationSurface(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            List<Pose> poses,
+            ActionDsl.Position position,
+            long surfaceBarrierWorldRevision,
+            String block,
+            java.util.function.Predicate<ObservationRecord.VisibleSurface> allowed,
+            String failure,
+            double maxAimDistance) {
         requireSurfaceBarrierWorldRevision(map, surfaceBarrierWorldRevision);
         List<ObservationRecord.VisibleSurface> matchingSurfaces = latestFrame.stream()
                 .filter(frame -> frame.dimension().value().equals(map.dimension()))
@@ -575,7 +591,8 @@ public final class AgentPrimitivePlanner {
         }
         return matchingSurfaces.stream()
                 .filter(surface -> surface.rayHit() != null
-                        && poses.stream().allMatch(pose -> mutationSurfaceValid(pose, surface)))
+                        && poses.stream().allMatch(
+                                pose -> mutationSurfaceValid(pose, surface, maxAimDistance)))
                 .sorted(java.util.Comparator
                         .comparingInt((ObservationRecord.VisibleSurface surface) ->
                                 surface.face() == ObservationRecord.Face.UP ? 0 : 1)
@@ -969,7 +986,8 @@ public final class AgentPrimitivePlanner {
                     "minecraft:water",
                     value -> value.face().name().equals(cast.face().name())
                             && exactObservedState(value, cast.expectedState()),
-                    "Fishing cast requires a current exact source-water face");
+                    "Fishing cast requires a current exact source-water face",
+                    MAX_FISHING_AIM_BLOCKS);
             return analyzeMutation(
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
                     surface, 2, 0, 0);
@@ -1885,6 +1903,11 @@ public final class AgentPrimitivePlanner {
 
     private static boolean mutationSurfaceValid(
             Pose pose, ObservationRecord.VisibleSurface surface) {
+        return mutationSurfaceValid(pose, surface, MAX_BREAK_REACH_BLOCKS);
+    }
+
+    private static boolean mutationSurfaceValid(
+            Pose pose, ObservationRecord.VisibleSurface surface, double maxAimDistance) {
         var eye = surface.eyeOrigin();
         if (!eye.dimension().value().equals(pose.cell().dimension())) {
             return false;
@@ -1905,7 +1928,7 @@ public final class AgentPrimitivePlanner {
         double poseError = Math.hypot(
                 pose.horizontalPositionError(),
                 Math.max(pose.yErrorBelow(), pose.yErrorAbove()));
-        return distance + poseError <= MAX_BREAK_REACH_BLOCKS;
+        return distance + poseError <= maxAimDistance;
     }
 
     private static boolean exactObservedState(

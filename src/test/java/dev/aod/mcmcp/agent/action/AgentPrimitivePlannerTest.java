@@ -1716,6 +1716,33 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void fishingCastAcceptsAVisibleRayBeyondDirectInteractionReach() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var target = new ActionDsl.Position(DIMENSION, 0, 64, 6);
+        var cast = new ActionDsl.CastKnownFishingRod(
+                "cast", "main_hand", "minecraft:fishing_rod", target,
+                ActionDsl.BlockFace.UP,
+                new ActionDsl.BlockStateSpec("minecraft:water", Map.of("level", "0")));
+        var program = new ActionDsl.Program(
+                1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.ITEM_USE),
+                List.of(cast));
+        var evidence = frame(List.of(surfaceWithState(
+                target, ObservationRecord.Face.UP,
+                "minecraft:water", Map.of("level", "0"), 0)));
+
+        var analysis = AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(
+                        cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                Optional.of(evidence), 4.5F);
+
+        assertThat(analysis.mutationAims()).containsKey("cast");
+        assertThat(analysis.primitiveCosts().get("cast").interactions()).isEqualTo(2);
+    }
+
+    @Test
     void genericBreakRequiresDeliveredCompleteStateRatherThanBlockIdAlone() {
         UUID session = UUID.randomUUID();
         var map = map(session).snapshot().orElseThrow();
