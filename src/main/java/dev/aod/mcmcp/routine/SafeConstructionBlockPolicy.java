@@ -148,6 +148,7 @@ public final class SafeConstructionBlockPolicy {
     private static Set<String> neighborDerivedProperties(String blockId) {
         return switch (blockId) {
             case "minecraft:glass_pane" -> Set.of("north", "east", "south", "west");
+            case "minecraft:oak_stairs", "minecraft:cobblestone_stairs" -> Set.of("shape");
             default -> Set.of();
         };
     }

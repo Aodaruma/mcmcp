@@ -70,6 +70,10 @@ class SafeConstructionBlockPolicyTest {
 
         assertThat(List.of(
                 topStraightStairs,
+                Blocks.OAK_STAIRS.defaultBlockState()
+                        .setValue(BlockStateProperties.STAIRS_SHAPE, StairsShape.INNER_LEFT),
+                Blocks.COBBLESTONE_STAIRS.defaultBlockState()
+                        .setValue(BlockStateProperties.STAIRS_SHAPE, StairsShape.OUTER_RIGHT),
                 Blocks.COBBLESTONE_STAIRS.defaultBlockState(),
                 Blocks.OAK_SLAB.defaultBlockState(),
                 Blocks.OAK_SLAB.defaultBlockState()
@@ -79,8 +83,6 @@ class SafeConstructionBlockPolicyTest {
                         SafeConstructionBlockPolicy.allowsLiveState(state, false)).isTrue());
 
         assertThat(List.of(
-                Blocks.OAK_STAIRS.defaultBlockState()
-                        .setValue(BlockStateProperties.STAIRS_SHAPE, StairsShape.INNER_LEFT),
                 Blocks.COBBLESTONE_STAIRS.defaultBlockState()
                         .setValue(BlockStateProperties.WATERLOGGED, true),
                 Blocks.OAK_SLAB.defaultBlockState()
@@ -108,7 +110,7 @@ class SafeConstructionBlockPolicyTest {
                 "minecraft:torch");
         SafeConstructionBlockPolicy.requireExpectedStateAndItem(
                 new BlockStateFingerprint("minecraft:oak_stairs", Map.of(
-                        "facing", "north", "half", "bottom", "shape", "straight",
+                        "facing", "north", "half", "bottom", "shape", "outer_left",
                         "waterlogged", "false")),
                 "minecraft:oak_stairs");
         SafeConstructionBlockPolicy.requireExpectedStateAndItem(
@@ -133,13 +135,6 @@ class SafeConstructionBlockPolicyTest {
         assertThatThrownBy(() -> SafeConstructionBlockPolicy.requireExpectedStateAndItem(
                 new BlockStateFingerprint("minecraft:redstone_block", Map.of()),
                 "minecraft:redstone_block"))
-                .isInstanceOf(
-                        SafeConstructionBlockPolicy.UnsafeConstructionBlockException.class);
-        assertThatThrownBy(() -> SafeConstructionBlockPolicy.requireExpectedStateAndItem(
-                new BlockStateFingerprint("minecraft:oak_stairs", Map.of(
-                        "facing", "north", "half", "bottom", "shape", "outer_left",
-                        "waterlogged", "false")),
-                "minecraft:oak_stairs"))
                 .isInstanceOf(
                         SafeConstructionBlockPolicy.UnsafeConstructionBlockException.class);
         assertThatThrownBy(() -> SafeConstructionBlockPolicy.requireExpectedStateAndItem(
@@ -173,7 +168,7 @@ class SafeConstructionBlockPolicyTest {
 
         assertThat(SafeConstructionBlockPolicy
                 .placementStateMatchesFinalStableProperties(
-                        finalCorner, immediateStraight)).isFalse();
+                        finalCorner, immediateStraight)).isTrue();
         assertThat(SafeConstructionBlockPolicy
                 .placementStateMatchesFinalStableProperties(
                         finalCorner, wrongFacing)).isFalse();

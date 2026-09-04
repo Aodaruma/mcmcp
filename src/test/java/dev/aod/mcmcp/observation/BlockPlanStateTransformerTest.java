@@ -35,7 +35,7 @@ class BlockPlanStateTransformerTest {
                 Map.of("facing", "east", "shape", "inner_left"),
                 mirrorX))
                 .containsEntry("facing", "west")
-                .containsEntry("shape", "inner_left");
+                .containsEntry("shape", "inner_right");
     }
 
     @Test
@@ -131,11 +131,43 @@ class BlockPlanStateTransformerTest {
         assertThat(mirrored).isEqualTo(original);
     }
 
+    @Test
+    void transformsCompleteStraightInnerAndOuterStairsWithExactHandedness() {
+        Map<String, String> straight = Map.of(
+                "facing", "north", "half", "bottom", "shape", "straight",
+                "waterlogged", "false");
+        Map<String, String> inner = Map.of(
+                "facing", "north", "half", "bottom", "shape", "inner_left",
+                "waterlogged", "false");
+        Map<String, String> outer = Map.of(
+                "facing", "north", "half", "bottom", "shape", "outer_left",
+                "waterlogged", "false");
+
+        assertThat(transformFull(straight, new BlockPlan.Transform(90, "x")))
+                .containsExactlyInAnyOrderEntriesOf(Map.of(
+                        "facing", "east", "half", "bottom", "shape", "straight",
+                        "waterlogged", "false"));
+        assertThat(transformFull(inner, new BlockPlan.Transform(90, "x")))
+                .containsExactlyInAnyOrderEntriesOf(Map.of(
+                        "facing", "east", "half", "bottom", "shape", "inner_right",
+                        "waterlogged", "false"));
+        assertThat(transformFull(outer, new BlockPlan.Transform(90, "x")))
+                .containsExactlyInAnyOrderEntriesOf(Map.of(
+                        "facing", "east", "half", "bottom", "shape", "outer_right",
+                        "waterlogged", "false"));
+    }
+
     private static Map<String, String> transform(
             String block,
             Map<String, String> properties,
             BlockPlan.Transform transform) {
         return BlockPlanStateTransformer.transform(
                 new BlockStateView(block, properties), transform).properties();
+    }
+
+    private static Map<String, String> transformFull(
+            Map<String, String> properties, BlockPlan.Transform transform) {
+        return BlockPlanStateTransformer.transformFull(
+                new BlockStateView("minecraft:oak_stairs", properties), transform).properties();
     }
 }

@@ -8,7 +8,6 @@ import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.SlabType;
-import net.minecraft.world.level.block.state.properties.StairsShape;
 
 import java.util.LinkedHashSet;
 import java.util.Objects;
@@ -50,7 +49,7 @@ public final class SafeConstructionBlocks {
      * State-sensitive shape boundary for the construction allowlist.
      *
      * <p>Most admitted blocks must remain full collision cubes. The explicit partial-shape slice
-     * is limited to dry straight oak/cobblestone stairs, dry non-double oak slabs, dry glass
+     * is limited to dry oak/cobblestone stairs, dry non-double oak slabs, dry glass
      * panes, dry wooden doors, and the two previously audited surface attachments.</p>
      */
     public static boolean allowsConstructionState(BlockState state) {
@@ -68,10 +67,11 @@ public final class SafeConstructionBlocks {
                     && !state.getValue(BlockStateProperties.POWERED);
         }
         return switch (blockId) {
+            // Stair shape is a bounded, neighbour-derived vanilla property. The construction
+            // port admits it only when the complete horizontal component is inside the plan and
+            // still verifies every final state exactly after all server acknowledgements.
             case "minecraft:oak_stairs", "minecraft:cobblestone_stairs" ->
-                    state.hasProperty(BlockStateProperties.STAIRS_SHAPE)
-                            && state.getValue(BlockStateProperties.STAIRS_SHAPE)
-                                    == StairsShape.STRAIGHT;
+                    state.hasProperty(BlockStateProperties.STAIRS_SHAPE);
             case "minecraft:oak_slab" ->
                     state.hasProperty(BlockStateProperties.SLAB_TYPE)
                             && state.getValue(BlockStateProperties.SLAB_TYPE) != SlabType.DOUBLE;

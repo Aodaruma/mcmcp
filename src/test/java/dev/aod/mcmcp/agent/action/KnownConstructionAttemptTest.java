@@ -309,6 +309,40 @@ class KnownConstructionAttemptTest {
     }
 
     @Test
+    void serverAcknowledgedStraightStairMayBecomeAnExactPlannedCornerAtFinalVerify() {
+        var finalCorner = new BlockStateFingerprint("minecraft:oak_stairs", Map.of(
+                "facing", "north", "half", "bottom", "shape", "outer_left",
+                "waterlogged", "false"));
+        var immediateStraight = new BlockStateFingerprint("minecraft:oak_stairs", Map.of(
+                "facing", "north", "half", "bottom", "shape", "straight",
+                "waterlogged", "false"));
+        BlockTarget placed = target(0, 65, 0);
+        var step = new ApplyBlockPlanStep(
+                "corner", ApplyBlockPlanOperation.PLACE, placed, AIR, finalCorner,
+                Optional.of("minecraft:oak_stairs"),
+                Optional.of(PlacementSupportWitness.visible(
+                        target(0, 64, 0), "up", STONE)));
+        var request = new KnownConstructionRequest(new ApplyBlockPlanRequest(
+                "corner", 1, 1, List.of(step),
+                new ActionBounds(DIMENSION, target(0, 64, 0), placed, 0, 15, false)));
+        var port = new FakePort(request);
+        port.packetAfterStates.put(placed, immediateStraight);
+        var attempt = new KnownConstructionAttempt(port, request, 1, 301);
+
+        assertThat(attempt.tick(1).evidence()).isEqualTo("construction_preparing");
+        port.tick = 2;
+        assertThat(attempt.tick(2).evidence()).isEqualTo("construction_confirming");
+        port.tick = 3;
+        assertThat(attempt.tick(3).evidence()).isEqualTo("construction_entry_confirmed");
+        port.states.put(placed, finalCorner);
+        port.tick = 4;
+        assertThat(attempt.tick(4).evidence()).isEqualTo("construction_final_verifying");
+        port.tick = 5;
+        assertThat(attempt.tick(5).status())
+                .isEqualTo(KnownConstructionAttempt.Status.SUCCEEDED);
+    }
+
+    @Test
     void preflightStillRejectsStateThatIsNeitherBeforeNorAfter() {
         var request = request(1);
         var port = new FakePort(request);

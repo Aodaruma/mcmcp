@@ -40,6 +40,26 @@ final class FixturePhase4Scenario {
     static final List<BlockPos> BUILD_RUNNER_SECOND_COLUMN = List.of(
             ORIGIN.offset(3, 0, 1), ORIGIN.offset(3, 1, 1));
     static final int BUILD_RUNNER_COBBLESTONE_COUNT = 8;
+    static final BlockPos STAIRS_MATRIX_PLAYER_SUPPORT = new BlockPos(201, 199, 197);
+    static final BlockPos STAIRS_MATRIX_STRAIGHT_SOURCE = new BlockPos(199, 203, 192);
+    static final BlockPos STAIRS_MATRIX_INNER_SOURCE = new BlockPos(201, 203, 192);
+    static final BlockPos STAIRS_MATRIX_INNER_COMPANION = new BlockPos(201, 203, 193);
+    static final BlockPos STAIRS_MATRIX_OUTER_SOURCE = new BlockPos(203, 203, 193);
+    static final BlockPos STAIRS_MATRIX_OUTER_COMPANION = new BlockPos(203, 203, 192);
+    static final List<BlockPos> STAIRS_MATRIX_SOURCES = List.of(
+            STAIRS_MATRIX_STRAIGHT_SOURCE,
+            STAIRS_MATRIX_INNER_SOURCE,
+            STAIRS_MATRIX_INNER_COMPANION,
+            STAIRS_MATRIX_OUTER_SOURCE,
+            STAIRS_MATRIX_OUTER_COMPANION);
+    static final BlockPos STAIRS_MATRIX_TARGET_ANCHOR = new BlockPos(202, 200, 194);
+    static final List<BlockPos> STAIRS_MATRIX_TARGETS = List.of(
+            new BlockPos(202, 200, 196),
+            new BlockPos(202, 200, 194),
+            new BlockPos(201, 200, 194),
+            new BlockPos(201, 200, 192),
+            new BlockPos(202, 200, 192));
+    static final int STAIRS_MATRIX_ITEM_COUNT = 8;
     static final float PLAN_YAW_DEGREES = -90.0F;
     static final float PLAN_PITCH_DEGREES = 24.0F;
     static final float HIDDEN_PITCH_DEGREES = 5.0F;
@@ -59,11 +79,13 @@ final class FixturePhase4Scenario {
         FixtureArena.resetPlayer(context.player());
         applyLayout(context.level(), mode);
         configureInventory(context.player(), mode);
+        BlockPos playerPose = mode == Mode.DIRECTIONAL_STAIRS_MATRIX
+                ? STAIRS_MATRIX_PLAYER_SUPPORT.above() : BUILD_RUNNER_START_POSE;
         teleport(context,
-                BUILD_RUNNER_START_POSE.getX() + 0.5D,
-                BUILD_RUNNER_START_POSE.getY(),
-                BUILD_RUNNER_START_POSE.getZ() + 0.5D,
-                PLAN_YAW_DEGREES,
+                playerPose.getX() + 0.5D,
+                playerPose.getY(),
+                playerPose.getZ() + 0.5D,
+                mode == Mode.DIRECTIONAL_STAIRS_MATRIX ? 180.0F : PLAN_YAW_DEGREES,
                 mode == Mode.HIDDEN ? HIDDEN_PITCH_DEGREES : PLAN_PITCH_DEGREES);
         if (mode == Mode.BUILD_RUNNER) {
             FixturePhase4RouteBlocker.arm(context);
@@ -71,7 +93,7 @@ final class FixturePhase4Scenario {
 
         output.accept(Component.literal("phase4.mode=" + mode.wireName
                 + " phase_id=" + mode.phaseId()
-                + " player=" + position(BUILD_RUNNER_START_POSE)
+                + " player=" + position(playerPose)
                 + " cells=" + planLine(mode)
                 + " selected_slot=" + mode.selectedSlot()
                 + (mode == Mode.BUILD_RUNNER
@@ -115,6 +137,21 @@ final class FixturePhase4Scenario {
                 put(result, TARGET_A, Blocks.AIR.defaultBlockState());
                 put(result, TARGET_B, Blocks.AIR.defaultBlockState());
             }
+            case DIRECTIONAL_STAIRS_MATRIX -> {
+                put(result, STAIRS_MATRIX_PLAYER_SUPPORT, Blocks.SMOOTH_STONE.defaultBlockState());
+                STAIRS_MATRIX_TARGETS.forEach(position ->
+                        put(result, position, Blocks.AIR.defaultBlockState()));
+                STAIRS_MATRIX_SOURCES.forEach(position ->
+                        put(result, position.below(), Blocks.STONE.defaultBlockState()));
+                put(result, STAIRS_MATRIX_STRAIGHT_SOURCE,
+                        northBottomStairs(StairsShape.STRAIGHT));
+                put(result, STAIRS_MATRIX_INNER_SOURCE,
+                        northBottomStairs(StairsShape.INNER_LEFT));
+                put(result, STAIRS_MATRIX_INNER_COMPANION, westBottomStraightStairs());
+                put(result, STAIRS_MATRIX_OUTER_SOURCE,
+                        northBottomStairs(StairsShape.OUTER_LEFT));
+                put(result, STAIRS_MATRIX_OUTER_COMPANION, westBottomStraightStairs());
+            }
             case DIVERGENCE -> {
                 put(result, TARGET_A, Blocks.OBSIDIAN.defaultBlockState());
                 put(result, TARGET_B, Blocks.DIRT.defaultBlockState());
@@ -151,6 +188,17 @@ final class FixturePhase4Scenario {
             case DIRECTIONAL_STAIRS -> List.of(cell(
                     "east_stairs", TARGET_B, "place",
                     Blocks.AIR.defaultBlockState(), eastBottomStairs(), Items.OAK_STAIRS));
+            case DIRECTIONAL_STAIRS_MATRIX -> List.of(
+                    verify("matrix_straight_source", STAIRS_MATRIX_STRAIGHT_SOURCE,
+                            northBottomStairs(StairsShape.STRAIGHT)),
+                    verify("matrix_inner_source", STAIRS_MATRIX_INNER_SOURCE,
+                            northBottomStairs(StairsShape.INNER_LEFT)),
+                    verify("matrix_inner_companion", STAIRS_MATRIX_INNER_COMPANION,
+                            westBottomStraightStairs()),
+                    verify("matrix_outer_source", STAIRS_MATRIX_OUTER_SOURCE,
+                            northBottomStairs(StairsShape.OUTER_LEFT)),
+                    verify("matrix_outer_companion", STAIRS_MATRIX_OUTER_COMPANION,
+                            westBottomStraightStairs()));
             case HOPPER -> List.of(cell(
                     "down_hopper", TARGET_B, "place",
                     Blocks.AIR.defaultBlockState(), downHopper(), Items.HOPPER));
@@ -192,6 +240,22 @@ final class FixturePhase4Scenario {
     static BlockState eastBottomStairs() {
         return Blocks.OAK_STAIRS.defaultBlockState()
                 .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST)
+                .setValue(BlockStateProperties.HALF, Half.BOTTOM)
+                .setValue(BlockStateProperties.STAIRS_SHAPE, StairsShape.STRAIGHT)
+                .setValue(BlockStateProperties.WATERLOGGED, false);
+    }
+
+    static BlockState northBottomStairs(StairsShape shape) {
+        return Blocks.OAK_STAIRS.defaultBlockState()
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.NORTH)
+                .setValue(BlockStateProperties.HALF, Half.BOTTOM)
+                .setValue(BlockStateProperties.STAIRS_SHAPE, shape)
+                .setValue(BlockStateProperties.WATERLOGGED, false);
+    }
+
+    static BlockState westBottomStraightStairs() {
+        return Blocks.OAK_STAIRS.defaultBlockState()
+                .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.WEST)
                 .setValue(BlockStateProperties.HALF, Half.BOTTOM)
                 .setValue(BlockStateProperties.STAIRS_SHAPE, StairsShape.STRAIGHT)
                 .setValue(BlockStateProperties.WATERLOGGED, false);
@@ -247,6 +311,8 @@ final class FixturePhase4Scenario {
                     7, new ItemStack(Items.SMOOTH_STONE_SLAB, 4));
             case DIRECTIONAL_STAIRS -> player.getInventory().setItem(
                     7, new ItemStack(Items.OAK_STAIRS, 4));
+            case DIRECTIONAL_STAIRS_MATRIX -> player.getInventory().setItem(
+                    7, new ItemStack(Items.OAK_STAIRS, STAIRS_MATRIX_ITEM_COUNT));
             case HOPPER -> player.getInventory().setItem(7, new ItemStack(Items.HOPPER, 2));
             case SHORTAGE -> player.getInventory().setItem(1, new ItemStack(Items.COBBLESTONE, 1));
             case DIVERGENCE -> player.getInventory().setItem(
@@ -344,6 +410,8 @@ final class FixturePhase4Scenario {
         MUTATIONS("mutations", "fixture_mutations", 0),
         WATERLOGGED("waterlogged", "fixture_waterlogged", 7),
         DIRECTIONAL_STAIRS("directional_stairs", "fixture_directional_stairs", 7),
+        DIRECTIONAL_STAIRS_MATRIX(
+                "directional_stairs_matrix", "fixture_directional_stairs_matrix", 7),
         HOPPER("hopper", "fixture_hopper", 7),
         SHORTAGE("shortage", "fixture_shortage", 1),
         DIVERGENCE("divergence", "fixture_divergence", 0),

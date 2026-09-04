@@ -7,8 +7,11 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.Property;
+import net.minecraft.world.level.block.state.properties.StairsShape;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -88,9 +91,7 @@ public final class BlockPlanStateTransformer {
                     Map.of("block", source.block()));
         }
 
-        BlockState transformed = matched
-                .mirror(minecraftMirror(transform.mirror()))
-                .rotate(minecraftRotation(transform.rotation()));
+        BlockState transformed = transformState(matched, transform);
         return new BlockStateView(source.block(), project(transformed, input.properties()));
     }
 
@@ -114,9 +115,7 @@ public final class BlockPlanStateTransformer {
             if (!matches(candidate, source.properties(), requestedProperties)) {
                 continue;
             }
-            BlockState transformed = candidate
-                    .mirror(minecraftMirror(transform.mirror()))
-                    .rotate(minecraftRotation(transform.rotation()));
+            BlockState transformed = transformState(candidate, transform);
             projections.add(project(transformed, requestedProperties));
         }
         if (projections.isEmpty()) {
@@ -260,6 +259,34 @@ public final class BlockPlanStateTransformer {
             case 180 -> Rotation.CLOCKWISE_180;
             case 270 -> Rotation.COUNTERCLOCKWISE_90;
             default -> throw new AssertionError(rotation);
+        };
+    }
+
+    /**
+     * Applies the spatial transform, correcting the neighbour-derived stair handedness so it
+     * agrees with the mirrored component offsets. Vanilla's standalone StairBlock mirror rule
+     * intentionally depends on facing-axis branches and is not a complete component transform.
+     */
+    @SuppressWarnings("deprecation")
+    private static BlockState transformState(BlockState source, BlockPlan.Transform transform) {
+        BlockState transformed = source
+                .mirror(minecraftMirror(transform.mirror()))
+                .rotate(minecraftRotation(transform.rotation()));
+        if (source.getBlock() instanceof StairBlock && !"none".equals(transform.mirror())) {
+            transformed = transformed.setValue(
+                    BlockStateProperties.STAIRS_SHAPE,
+                    mirroredStairShape(source.getValue(BlockStateProperties.STAIRS_SHAPE)));
+        }
+        return transformed;
+    }
+
+    private static StairsShape mirroredStairShape(StairsShape source) {
+        return switch (source) {
+            case STRAIGHT -> StairsShape.STRAIGHT;
+            case INNER_LEFT -> StairsShape.INNER_RIGHT;
+            case INNER_RIGHT -> StairsShape.INNER_LEFT;
+            case OUTER_LEFT -> StairsShape.OUTER_RIGHT;
+            case OUTER_RIGHT -> StairsShape.OUTER_LEFT;
         };
     }
 

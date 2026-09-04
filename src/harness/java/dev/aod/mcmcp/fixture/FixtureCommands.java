@@ -87,6 +87,8 @@ final class FixtureCommands {
                         .then(phase4("waterlogged", FixturePhase4Scenario.Mode.WATERLOGGED))
                         .then(phase4("directional_stairs",
                                 FixturePhase4Scenario.Mode.DIRECTIONAL_STAIRS))
+                        .then(phase4("directional_stairs_matrix",
+                                FixturePhase4Scenario.Mode.DIRECTIONAL_STAIRS_MATRIX))
                         .then(phase4("hopper", FixturePhase4Scenario.Mode.HOPPER))
                         .then(phase4("shortage", FixturePhase4Scenario.Mode.SHORTAGE))
                         .then(phase4("divergence", FixturePhase4Scenario.Mode.DIVERGENCE))

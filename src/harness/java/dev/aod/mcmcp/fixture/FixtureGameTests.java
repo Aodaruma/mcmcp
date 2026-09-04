@@ -433,6 +433,21 @@ final class FixtureGameTests {
         helper.assertBlockProperty(sample, BlockStateProperties.WATERLOGGED, false);
         assertExactState(helper, sample, stairs);
 
+        BlockPos front = sample.relative(Direction.NORTH);
+        BlockPos back = sample.relative(Direction.SOUTH);
+        helper.setBlock(front.below(), Blocks.SMOOTH_STONE);
+        helper.setBlock(back.below(), Blocks.SMOOTH_STONE);
+        helper.setBlock(front, Blocks.AIR);
+        helper.setBlock(back, Blocks.AIR);
+        helper.setBlock(sample, FixturePhase4Scenario.northBottomStairs(StairsShape.STRAIGHT));
+        helper.setBlock(front, FixturePhase4Scenario.westBottomStraightStairs());
+        helper.assertBlockProperty(
+                sample, BlockStateProperties.STAIRS_SHAPE, StairsShape.OUTER_LEFT);
+        helper.setBlock(front, Blocks.AIR);
+        helper.setBlock(back, FixturePhase4Scenario.westBottomStraightStairs());
+        helper.assertBlockProperty(
+                sample, BlockStateProperties.STAIRS_SHAPE, StairsShape.INNER_LEFT);
+
         BlockState hopper = FixturePhase4Scenario.downHopper();
         helper.setBlock(sample, hopper);
         helper.assertBlockProperty(sample, BlockStateProperties.FACING_HOPPER, Direction.DOWN);

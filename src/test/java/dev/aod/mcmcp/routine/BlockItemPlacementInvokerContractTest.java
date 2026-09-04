@@ -481,7 +481,7 @@ class BlockItemPlacementInvokerContractTest {
     }
 
     @Test
-    void stairShapeDifferencesAreNeverDeferred() {
+    void stairShapeDifferenceRequiresTheExactUnfinishedPlanNeighbour() {
         BlockPos cornerPosition = new BlockPos(0, 65, 0);
         BlockPos frontPosition = cornerPosition.north();
         BlockState predictedStraight = Blocks.OAK_STAIRS.defaultBlockState()
@@ -501,7 +501,22 @@ class BlockItemPlacementInvokerContractTest {
                 frontPosition, plannedFront));
         assertThat(MinecraftApplyBlockPlanPort.derivedPlacementDifferenceHasPlannedCause(
                 component, target(cornerPosition), fingerprint(expectedCorner),
+                predictedStraight, ignored -> Blocks.AIR.defaultBlockState())).isTrue();
+
+        BlockState wrongFront = plannedFront.setValue(
+                BlockStateProperties.HORIZONTAL_FACING, Direction.EAST);
+        var wrongComponent = placementRequest(Map.of(
+                cornerPosition, expectedCorner,
+                frontPosition, wrongFront));
+        assertThat(MinecraftApplyBlockPlanPort.derivedPlacementDifferenceHasPlannedCause(
+                wrongComponent, target(cornerPosition), fingerprint(expectedCorner),
                 predictedStraight, ignored -> Blocks.AIR.defaultBlockState())).isFalse();
+
+        assertThat(MinecraftApplyBlockPlanPort.derivedPlacementDifferenceHasPlannedCause(
+                component, target(cornerPosition), fingerprint(expectedCorner),
+                predictedStraight,
+                position -> position.equals(frontPosition)
+                        ? plannedFront : Blocks.AIR.defaultBlockState())).isFalse();
     }
 
     @Test

@@ -1608,12 +1608,16 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 expectedFinal, predictedFingerprint)) {
             return false;
         }
-        if (!"minecraft:glass_pane".equals(expectedFinal.blockId())) return false;
         var finalStates = new LinkedHashMap<BlockPos, BlockStateFingerprint>();
         for (ApplyBlockPlanStep step : request.steps()) {
             finalStates.put(blockPos(step.target()), step.expectedAfter());
         }
         BlockPos position = blockPos(target);
+        if (predicted.getBlock() instanceof StairBlock) {
+            return stairShapeDifferenceHasPlannedCause(
+                    position, expectedFinal, predictedFingerprint, finalStates, currentState);
+        }
+        if (!"minecraft:glass_pane".equals(expectedFinal.blockId())) return false;
         for (Direction direction : Direction.Plane.HORIZONTAL) {
             String property = direction.getSerializedName();
             boolean expectedConnection = Boolean.parseBoolean(
@@ -1634,6 +1638,116 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             }
         }
         return true;
+    }
+
+    /**
+     * Replays the closed vanilla stair-shape rule against both the live and declared-final
+     * horizontal neighbourhood. No mismatch is deferred unless an unfinished planned neighbour
+     * is the complete cause and both projections agree with the immediate/final exact states.
+     */
+    private static boolean stairShapeDifferenceHasPlannedCause(
+            BlockPos position,
+            BlockStateFingerprint expectedFinal,
+            BlockStateFingerprint predicted,
+            Map<BlockPos, BlockStateFingerprint> finalStates,
+            Function<BlockPos, BlockState> currentState) {
+        if (!isSupportedStair(expectedFinal) || !isSupportedStair(predicted)) return false;
+        Function<BlockPos, BlockStateFingerprint> current = neighbour -> {
+            BlockState state = currentState.apply(neighbour);
+            return state == null ? null : fingerprint(state);
+        };
+        Function<BlockPos, BlockStateFingerprint> projected = neighbour -> {
+            BlockStateFingerprint planned = finalStates.get(neighbour);
+            return planned == null ? current.apply(neighbour) : planned;
+        };
+        String immediateShape = stairShape(predicted, position, current);
+        String finalShape = stairShape(expectedFinal, position, projected);
+        if (!Objects.equals(immediateShape, predicted.properties().get("shape"))
+                || !Objects.equals(finalShape, expectedFinal.properties().get("shape"))) {
+            return false;
+        }
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            BlockPos neighbour = position.relative(direction);
+            BlockStateFingerprint planned = finalStates.get(neighbour);
+            BlockStateFingerprint live = current.apply(neighbour);
+            if (planned != null && live != null
+                    && hasExactPlannedFinalState(planned)
+                    && !planned.equals(live)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Minecraft's closed horizontal StairsBlock#getStairsShape semantics. */
+    private static String stairShape(
+            BlockStateFingerprint center,
+            BlockPos position,
+            Function<BlockPos, BlockStateFingerprint> stateAt) {
+        Direction facing = horizontalDirection(center.properties().get("facing"));
+        if (facing == null) return null;
+        BlockStateFingerprint front = stateAt.apply(position.relative(facing));
+        if (sameStairHalf(center, front)) {
+            Direction frontFacing = horizontalDirection(front.properties().get("facing"));
+            if (frontFacing != null && frontFacing.getAxis() != facing.getAxis()
+                    && canTakeStairShape(
+                            center, position, frontFacing.getOpposite(), stateAt)) {
+                return frontFacing == facing.getCounterClockWise()
+                        ? "outer_left" : "outer_right";
+            }
+        }
+        BlockStateFingerprint back = stateAt.apply(position.relative(facing.getOpposite()));
+        if (sameStairHalf(center, back)) {
+            Direction backFacing = horizontalDirection(back.properties().get("facing"));
+            if (backFacing != null && backFacing.getAxis() != facing.getAxis()
+                    && canTakeStairShape(center, position, backFacing, stateAt)) {
+                return backFacing == facing.getCounterClockWise()
+                        ? "inner_left" : "inner_right";
+            }
+        }
+        return "straight";
+    }
+
+    private static boolean canTakeStairShape(
+            BlockStateFingerprint center,
+            BlockPos position,
+            Direction side,
+            Function<BlockPos, BlockStateFingerprint> stateAt) {
+        return !sameStair(center, stateAt.apply(position.relative(side)));
+    }
+
+    private static boolean sameStairHalf(
+            BlockStateFingerprint center, BlockStateFingerprint candidate) {
+        return isSupportedStair(candidate)
+                && Objects.equals(center.properties().get("half"),
+                        candidate.properties().get("half"));
+    }
+
+    private static boolean sameStair(
+            BlockStateFingerprint center, BlockStateFingerprint candidate) {
+        return sameStairHalf(center, candidate)
+                && Objects.equals(center.properties().get("facing"),
+                        candidate.properties().get("facing"));
+    }
+
+    private static boolean isSupportedStair(BlockStateFingerprint state) {
+        return state != null
+                && ("minecraft:oak_stairs".equals(state.blockId())
+                        || "minecraft:cobblestone_stairs".equals(state.blockId()))
+                && state.properties().keySet().equals(
+                        Set.of("facing", "half", "shape", "waterlogged"))
+                && "false".equals(state.properties().get("waterlogged"));
+    }
+
+    private static Direction horizontalDirection(String name) {
+        if (name == null) return null;
+        return switch (name) {
+            case "north" -> Direction.NORTH;
+            case "east" -> Direction.EAST;
+            case "south" -> Direction.SOUTH;
+            case "west" -> Direction.WEST;
+            default -> null;
+        };
     }
 
     private static boolean hasExactPlannedFinalState(BlockStateFingerprint state) {

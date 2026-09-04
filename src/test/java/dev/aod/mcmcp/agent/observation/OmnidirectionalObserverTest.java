@@ -317,12 +317,12 @@ class OmnidirectionalObserverTest {
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
                 Blocks.OAK_SLAB.defaultBlockState().setValue(
                         BlockStateProperties.WATERLOGGED, true))).isNull();
-        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
-                Blocks.OAK_STAIRS.defaultBlockState().setValue(
-                        BlockStateProperties.STAIRS_SHAPE, StairsShape.OUTER_LEFT))).isNull();
-        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
-                Blocks.OAK_STAIRS.defaultBlockState().setValue(
-                        BlockStateProperties.STAIRS_SHAPE, StairsShape.OUTER_LEFT))).isNull();
+        var outerStairs = Blocks.OAK_STAIRS.defaultBlockState().setValue(
+                BlockStateProperties.STAIRS_SHAPE, StairsShape.OUTER_LEFT);
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(outerStairs).properties())
+                .containsEntry("shape", "outer_left");
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(outerStairs).value())
+                .isEqualTo("minecraft:oak_stairs");
         assertThat(OmnidirectionalObserver.policyVisibleBlockState(
                 Blocks.OAK_SLAB.defaultBlockState().setValue(
                         BlockStateProperties.SLAB_TYPE, SlabType.DOUBLE))).isNull();
