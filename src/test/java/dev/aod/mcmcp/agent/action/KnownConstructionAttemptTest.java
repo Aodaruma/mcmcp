@@ -51,6 +51,17 @@ class KnownConstructionAttemptTest {
         assertThat(first.placedDelta()).isEqualTo(1);
         assertThat(first.completedEntries()).isEqualTo(1);
         assertThat(first.confirmedEntries()).isEqualTo(1);
+        assertThat(first.effects()).singleElement().satisfies(effect -> {
+            assertThat(effect.kind()).isEqualTo("block_place");
+            assertThat(effect.subject())
+                    .isEqualTo("block:minecraft:overworld:0,65,0");
+            assertThat(effect.observedBefore()).containsEntry("block", "minecraft:air");
+            assertThat(effect.observedAfter()).containsEntry("block", "minecraft:stone");
+            assertThat(effect.verification())
+                    .isEqualTo(AgentActionStore.Verification.CONFIRMED);
+            assertThat(effect.clientTick()).isEqualTo(3L);
+            assertThat(effect.worldRevision()).isEqualTo(3L);
+        });
 
         port.tick = 4;
         attempt.tick(4);
@@ -88,6 +99,13 @@ class KnownConstructionAttemptTest {
         var confirmed = attempt.tick(3);
         assertThat(confirmed.brokenDelta()).isEqualTo(1);
         assertThat(confirmed.placedDelta()).isZero();
+        assertThat(confirmed.effects()).singleElement().satisfies(effect -> {
+            assertThat(effect.kind()).isEqualTo("block_break");
+            assertThat(effect.observedBefore()).containsEntry("block", "minecraft:stone");
+            assertThat(effect.observedAfter()).containsEntry("block", "minecraft:air");
+            assertThat(effect.verification())
+                    .isEqualTo(AgentActionStore.Verification.CONFIRMED);
+        });
         port.tick = 4;
         assertThat(attempt.tick(4).evidence()).isEqualTo("construction_final_verifying");
         port.tick = 5;
@@ -112,6 +130,29 @@ class KnownConstructionAttemptTest {
         assertThat(port.beginPreparationCalls).isZero();
         assertThat(port.dispatchedEntryIds).isEmpty();
         assertThat(port.retired).isTrue();
+    }
+
+    @Test
+    void closingAfterDispatchRecordsOneUnknownEffectWithoutInventingAnAfterState() {
+        var request = request(1);
+        var port = new FakePort(request);
+        var attempt = new KnownConstructionAttempt(port, request, 1, 301);
+        attempt.tick(1);
+        port.tick = 2;
+        assertThat(attempt.tick(2).evidence()).isEqualTo("construction_confirming");
+
+        attempt.close();
+        var effects = attempt.drainEffectDeltas();
+        assertThat(effects).singleElement().satisfies(effect -> {
+            assertThat(effect.kind()).isEqualTo("block_place");
+            assertThat(effect.observedBefore()).containsEntry("block", "minecraft:air");
+            assertThat(effect.observedAfter()).isEmpty();
+            assertThat(effect.verification())
+                    .isEqualTo(AgentActionStore.Verification.UNKNOWN);
+            assertThat(effect.clientTick()).isEqualTo(2L);
+            assertThat(effect.worldRevision()).isEqualTo(2L);
+        });
+        assertThat(attempt.drainEffectDeltas()).isEmpty();
     }
 
     @Test

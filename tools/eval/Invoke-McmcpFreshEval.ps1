@@ -21,7 +21,7 @@ param(
     [string]$TokenPath,
 
     [Parameter(Mandatory)]
-    [ValidateSet('short-regression', 'full-cycle', 'hard-building-copy')]
+    [ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy')]
     [string]$PromptProfile,
 
     [string]$Endpoint = 'http://127.0.0.1:8765/mcp',
@@ -51,6 +51,10 @@ $EvaluationProfiles = [ordered]@{
         prompt = 'チェストに小麦の種と鍬が入っています。これを取り出し、この畑の区画にある耕作可能な土をすべて耕して、すべてに小麦の種を植えてください。成熟後はすべて収穫して植え直す工程を、小麦を1スタック（64個）以上所持するまで繰り返してください。'
         timeout_minutes = 30
     }
+    'warehouse-smelt' = [ordered]@{
+        prompt = '近くの材料チェストから生の鉄1個と石炭1個を取り出し、かまどで鉄インゴット1個に精錬し、完成品用の空の樽へ収納してください。終了時はプレイヤーのインベントリ、材料チェスト、かまどを空にしてください。'
+        timeout_minutes = 30
+    }
     'hard-building-copy' = [ordered]@{
         prompt = 'チェストの材料を自由に加工して、近くにある屋根付きの木造建築を見本に、羊毛の上へ同じ建築をコピーしてください。'
         timeout_minutes = 90
@@ -72,8 +76,8 @@ $AuthExpirySafetyMargin = [TimeSpan]::FromMinutes(5)
 $MinimumMcpRequestIntervalMilliseconds = 60
 $ExpectedMcmcpServerName = 'mcmcp'
 $ExpectedMcmcpServerVersion = '0.1.0'
-$ExpectedCatalogFileSha256 = '4d13589339212fe36e84acf97c9cc8aba5c5ef27a871fb03ce5602257877ddbc'
-$ExpectedToolSurfaceSha256 = '728cf22ecd1f1eb3e023644bc52a3d6ed00e2bb41e37671b74579d53889745ec'
+$ExpectedCatalogFileSha256 = 'd8ef8e905b077a4dd2c6c484574f95c7d0b6248f531a8124a3e29cec5a5b8dc0'
+$ExpectedToolSurfaceSha256 = '613a953fe28d5df3848caddd1e4883d3a4344fcd87ab9aff0b00196f0c974238'
 $AllowedTools = @(
     'agent_get_state',
     'agent_get_observation',

@@ -11,6 +11,9 @@ import dev.aod.mcmcp.routine.SafeConstructionBlockPolicy;
 import dev.aod.mcmcp.routine.SafePlacementSupportPolicy;
 
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
 
@@ -38,6 +41,9 @@ public final class KnownConstructionAttempt implements AutoCloseable {
     private long finalVerificationAfterTick = -1L;
     private long finalVerificationAfterRevision;
     private boolean closed;
+    private final ArrayList<EffectDelta> pendingEffects = new ArrayList<>(2);
+    private boolean currentActionConfirmed;
+    private boolean currentUnknownRecorded;
 
     public KnownConstructionAttempt(
             ApplyBlockPlanPort port,
@@ -214,6 +220,8 @@ public final class KnownConstructionAttempt implements AutoCloseable {
                 || action.leaseExpiresAtClientTick() != deadlineTick) {
             return fail("construction_adapter_contract");
         }
+        currentActionConfirmed = false;
+        currentUnknownRecorded = false;
         releasePreparationStrict();
         phase = Phase.CONFIRMING;
         return result(Status.RUNNING, "construction_confirming");
@@ -237,6 +245,18 @@ public final class KnownConstructionAttempt implements AutoCloseable {
                         : SafeConstructionBlockPolicy
                                 .placementStateMatchesFinalStableProperties(
                                         child.expectedAfter(), after)).isPresent()) {
+            var liveAfter = evidence.liveStateAfter().orElseThrow();
+            int affectedBlocks = request.breakOnly()
+                    ? 1 : request.placementCellCount(currentIndex);
+            pendingEffects.add(new EffectDelta(
+                    request.breakOnly() ? "block_break" : "block_place",
+                    blockSubject(child.target()),
+                    blockObservation(child.expectedBefore(), affectedBlocks),
+                    blockObservation(liveAfter, affectedBlocks),
+                    AgentActionStore.Verification.CONFIRMED,
+                    evidence.clientTick(),
+                    evidence.observationRevision()));
+            currentActionConfirmed = true;
             completed[currentIndex] = true;
             confirmedEntries++;
             phase = Phase.RELEASING_CONFIRMED;
@@ -258,6 +278,8 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         int confirmedDelta = request.breakOnly() ? 1 : request.placementCellCount(currentIndex);
         currentIndex = -1;
         child = null;
+        currentActionConfirmed = false;
+        currentUnknownRecorded = false;
         phase = Phase.PREFLIGHT;
         return result(Status.RUNNING, "construction_entry_confirmed", confirmedDelta);
     }
@@ -292,9 +314,8 @@ public final class KnownConstructionAttempt implements AutoCloseable {
     }
 
     private TickResult fail(String evidence) {
-        TickResult result = result(Status.FAILED, evidence);
         close();
-        return result;
+        return result(Status.FAILED, evidence);
     }
 
     private TickResult result(Status status, String evidence) {
@@ -308,7 +329,15 @@ public final class KnownConstructionAttempt implements AutoCloseable {
                 request.breakOnly() ? 0 : confirmedDelta,
                 request.breakOnly() ? confirmedDelta : 0,
                 completedCount(),
-                confirmedEntries);
+                confirmedEntries,
+                drainEffectDeltas());
+    }
+
+    public List<EffectDelta> drainEffectDeltas() {
+        if (pendingEffects.isEmpty()) return List.of();
+        List<EffectDelta> drained = List.copyOf(pendingEffects);
+        pendingEffects.clear();
+        return drained;
     }
 
     private int completedCount() {
@@ -330,10 +359,42 @@ public final class KnownConstructionAttempt implements AutoCloseable {
     @Override
     public void close() {
         if (closed) return;
+        recordUnknownDispatchedEffect();
         releaseActionStrict();
         releasePreparationStrict();
         invokeAdapter(AdapterCall.RETIRE_PLAN, () -> port.retire(request.plan()));
         closed = true;
+    }
+
+    private void recordUnknownDispatchedEffect() {
+        if (action == null || child == null || currentActionConfirmed || currentUnknownRecorded) {
+            return;
+        }
+        int affectedBlocks = request.breakOnly()
+                ? 1 : request.placementCellCount(currentIndex);
+        pendingEffects.add(new EffectDelta(
+                request.breakOnly() ? "block_break" : "block_place",
+                blockSubject(child.target()),
+                blockObservation(child.expectedBefore(), affectedBlocks),
+                Map.of(),
+                AgentActionStore.Verification.UNKNOWN,
+                Math.max(lastTick, action.issuedClientTick()),
+                action.issuedObservationRevision()));
+        currentUnknownRecorded = true;
+    }
+
+    private static String blockSubject(dev.aod.mcmcp.routine.BlockTarget target) {
+        return "block:" + target.dimension() + ":"
+                + target.x() + "," + target.y() + "," + target.z();
+    }
+
+    private static Map<String, Object> blockObservation(
+            dev.aod.mcmcp.routine.BlockStateFingerprint state, int affectedBlocks) {
+        var observation = new LinkedHashMap<String, Object>();
+        observation.put("block", state.blockId());
+        observation.put("properties", state.properties());
+        observation.put("affected_blocks", affectedBlocks);
+        return observation;
     }
 
     private void releasePreparationStrict() {
@@ -416,7 +477,8 @@ public final class KnownConstructionAttempt implements AutoCloseable {
             int placedDelta,
             int brokenDelta,
             int completedEntries,
-            int confirmedEntries) {
+            int confirmedEntries,
+            List<EffectDelta> effects) {
         public TickResult {
             Objects.requireNonNull(status, "status");
             Objects.requireNonNull(evidence, "evidence");
@@ -429,6 +491,30 @@ public final class KnownConstructionAttempt implements AutoCloseable {
                     || confirmedEntries > KnownConstructionRequest.MAX_ENTRIES
                     || confirmedEntries > completedEntries) {
                 throw new IllegalArgumentException("invalid construction progress counters");
+            }
+            effects = List.copyOf(Objects.requireNonNull(effects, "effects"));
+            if (effects.size() > 2) {
+                throw new IllegalArgumentException("too many construction effect deltas");
+            }
+        }
+    }
+
+    public record EffectDelta(
+            String kind,
+            String subject,
+            Map<String, Object> observedBefore,
+            Map<String, Object> observedAfter,
+            AgentActionStore.Verification verification,
+            long clientTick,
+            long worldRevision) {
+        public EffectDelta {
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(subject, "subject");
+            observedBefore = Map.copyOf(Objects.requireNonNull(observedBefore, "observedBefore"));
+            observedAfter = Map.copyOf(Objects.requireNonNull(observedAfter, "observedAfter"));
+            Objects.requireNonNull(verification, "verification");
+            if (clientTick < 0 || worldRevision < 0) {
+                throw new IllegalArgumentException("effect clocks must be non-negative");
             }
         }
     }

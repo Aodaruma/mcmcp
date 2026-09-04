@@ -2675,6 +2675,26 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "additionalProperties": false,
+        "$defs": {
+          "effectObservation": {
+            "type": "object",
+            "description": "Bounded semantic observation only; raw menu slots, payloads, credentials, and secrets are never present.",
+            "additionalProperties": false,
+            "properties": {
+              "block": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 192},
+              "properties": {
+                "type": "object",
+                "maxProperties": 32,
+                "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"},
+                "additionalProperties": {"type": "string", "pattern": "^[a-z0-9_.:/,+\\-= ]*$", "maxLength": 192}
+              },
+              "affected_blocks": {"type": "integer", "minimum": 1, "maximum": 2},
+              "source_count": {"type": "integer", "minimum": 0, "maximum": 2304},
+              "destination_count": {"type": "integer", "minimum": 0, "maximum": 2304},
+              "transferred": {"type": "integer", "minimum": 1, "maximum": 64}
+            }
+          }
+        },
         "properties": {
           "schema_version": {"const": 1},
           "action_id": {
@@ -2690,7 +2710,7 @@
     {
       "name": "agent_get_action",
       "title": "Get MCMCP Action",
-      "description": "Returns bounded progress, a policy-filtered trace, and the bounded canonical JSON source/hash for one explicit action handle. source is audit data, not replay authority. template is identical only when no opaque reference exists; otherwise every opaque ref and its coupled recipe fingerprint are null, ready_for_agent_start_action=false, and reference_requirements says how to refresh them. Opaque refs are never declared live by this off-client-thread read and must always be refreshed before cloning. wait_timeout_ms is an optional integer from 0 through 25000; zero or omission returns immediately, otherwise it waits off the Minecraft client thread until terminal or timeout.",
+      "description": "Returns bounded progress, a policy-filtered trace, an append-only effect ledger, terminal partial/resume metadata, and the bounded canonical JSON source/hash for one explicit action handle. A confirmed effect has server-derived before/after evidence; unknown means a mutation was dispatched without a confirmed after-state and requires reobservation, never blind replay. source is audit data, not replay authority. template is identical only when no opaque reference exists; otherwise every opaque ref and its coupled recipe fingerprint are null, ready_for_agent_start_action=false, and reference_requirements says how to refresh them. Opaque refs are never declared live by this off-client-thread read and must always be refreshed before cloning. wait_timeout_ms is an optional integer from 0 through 25000; zero or omission returns immediately, otherwise it waits off the Minecraft client thread until terminal or timeout.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -2791,6 +2811,47 @@
               "required": ["tick", "event", "detail"]
             }
           },
+          "effects": {
+            "type": "array",
+            "description": "Append-only bounded ledger recorded at authoritative observation/ACK points. An unknown entry means a mutation was dispatched but its after-state was not confirmed; it must never be replayed blindly.",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "seq": {"type": "integer", "minimum": 1, "maximum": 64},
+                "node_id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"},
+                "kind": {"enum": ["block_place", "block_break", "container_take", "container_store"]},
+                "subject": {"type": "string", "pattern": "^[a-z0-9_.:/,+-]{1,192}$"},
+                "observed_before": {"$ref": "#/$defs/effectObservation"},
+                "observed_after": {"$ref": "#/$defs/effectObservation"},
+                "verification": {"enum": ["confirmed", "qualified", "unknown"]},
+                "client_tick": {"type": "integer", "minimum": 0},
+                "world_revision": {"type": "integer", "minimum": 0}
+              },
+              "required": ["seq", "node_id", "kind", "subject", "observed_before", "observed_after", "verification", "client_tick", "world_revision"]
+            }
+          },
+          "partial": {
+            "description": "Null while non-terminal. Every terminal result carries bounded interruption/resume metadata derived from the live ledger, never reconstructed after completion.",
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "has_confirmed_effects": {"type": "boolean"},
+                  "interrupted_node_id": {
+                    "type": ["string", "null"],
+                    "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                  },
+                  "remaining_node_upper_bound": {"type": "integer", "minimum": 0, "maximum": 256},
+                  "resume_requires_reobservation": {"type": "boolean"}
+                },
+                "required": ["has_confirmed_effects", "interrupted_node_id", "remaining_node_upper_bound", "resume_requires_reobservation"]
+              }
+            ]
+          },
           "source": {
             "type": "object",
             "description": "Canonical normalized Action DSL accepted for this action. It contains only caller-submitted, parser-recognized fields and never reflects secrets, hidden state, raw slots, or runtime-only data.",
@@ -2842,7 +2903,7 @@
             }
           }
         },
-        "required": ["schema_version", "action_id", "state", "progress", "failure", "trace", "source", "template", "reference_requirements"]
+        "required": ["schema_version", "action_id", "state", "progress", "failure", "trace", "effects", "partial", "source", "template", "reference_requirements"]
       }
     },
     {

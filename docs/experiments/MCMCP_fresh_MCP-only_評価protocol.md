@@ -2,7 +2,7 @@
 
 ## 目的
 
-選択したprompt profileのproduction prompt **だけ**を新規のephemeral Codex threadへ渡し、MCMCPの公開5 toolsだけで遂行できるかを比較する。runnerは任意文字列を受け取らず、次の厳格な3 profileだけを許可する。
+選択したprompt profileのproduction prompt **だけ**を新規のephemeral Codex threadへ渡し、MCMCPの公開5 toolsだけで遂行できるかを比較する。runnerは任意文字列を受け取らず、次の厳格な4 profileだけを許可する。
 
 `full-cycle`は製品受入の主profileである。
 
@@ -12,6 +12,10 @@
 
 > チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか
 
+`warehouse-smelt`は、storage→workstation→storageの最小倉庫タスクを検証するprofileである。
+
+> 近くの材料チェストから生の鉄1個と石炭1個を取り出し、かまどで鉄インゴット1個に精錬し、完成品用の空の樽へ収納してください。終了時はプレイヤーのインベントリ、材料チェスト、かまどを空にしてください。
+
 `hard-building-copy`は、材料加工を含む建築copyの高難易度profileである。
 
 > チェストの材料を自由に加工して、近くにある屋根付きの木造建築を見本に、羊毛の上へ同じ建築をコピーしてください。
@@ -20,7 +24,9 @@
 
 `hard-building-copy`のproduction goalは、見本建築を変更せず、羊毛で指定された領域に、airによる開口部を含む同一の完全BlockState配置を再現することである。合格にはsource/destinationの完全state差分、craft/smeltした材料の証拠、inventory収支、全Action terminalを一致させる。
 
-deadlineはprofileに固定し、`short-regression` / `full-cycle`は30分、`hard-building-copy`だけは90分とする。callerによる上書きや延長は認めない。
+`warehouse-smelt`のproduction goalは、材料chestのraw iron 1個とcoal 1個を通常GUIで取り出し、空のcold furnaceでiron ingot 1個へ精錬し、default componentsの完成品だけを空のoutput barrelへ通常GUIで格納することである。run terminal後にworldをSave and Quitし、source / furnace / playerが空、outputがiron ingot 1個だけ、fixture workspaceのblockが不変であることをoffline oracleで確定する。
+
+deadlineはprofileに固定し、`short-regression` / `full-cycle` / `warehouse-smelt`は30分、`hard-building-copy`だけは90分とする。callerによる上書きや延長は認めない。
 
 対象は `gpt-5.6-sol/high` を先行し、必要に応じて同じ golden baseline を復元して `gpt-5.6-luna/xhigh`、`gpt-5.6-luna/high` を別runで評価する。session、観測、action historyをモデル間で共有しない。
 
@@ -34,7 +40,7 @@ deadlineはprofileに固定し、`short-regression` / `full-cycle`は30分、`ha
 4. `agent_get_action`
 5. `agent_cancel_action`
 
-container/passage操作は公開Action DSLの`open_known_passage`、`inspect_known_container`、`take_known_container_stack`を`agent_start_action`から使う。test harness、任意command、raw inputは使わない。
+container/passage/workstation操作は公開Action DSLの`open_known_passage`、`inspect_known_container`、`take_known_container_stack`、`store_known_container_stack`、`smelt_known_recipe`を`agent_start_action`から使う。test harness、任意command、raw inputは使わない。
 
 runnerは`codex-cli 0.146.1`をscript内定数で固定し、callerによるversion overrideを認めず、`codex app-server --stdio --strict-config`を起動する。0.146.1のapp-server/dynamic toolsはUNSTABLE APIであるため、CLI更新時は生成schemaと監査を先に更新する。永続`~/.codex/config.toml`へMCMCPを登録せず、app-serverのexperimental `dynamicTools`に上記5 schemasを渡し、`item/tool/call`をrunnerがMCP 2026-07-28へ直接forwardする。これはMCP登録が利用できない場合についてユーザーが許可したfallbackであり、モデル自身によるHTTP直叩きではない。
 
@@ -59,7 +65,7 @@ runnerはclean cwdからfilesystem rootまでの全祖先とisolated `CODEX_HOME
 2. `tools/list`
 3. `tools/call` / `agent_get_state`
 
-`agent_start_action`や`agent_cancel_action`はpreflightで呼ばない。各HTTP requestはliteral `127.0.0.1`だけへ`-NoProxy -MaximumRedirection 0`で送り、UTF-8 JSON Content-Type、JSON-RPC 2.0、request/response IDの型と値、result/errorの排他的存在を検査する。`server/discover`は`resultType=complete`、`supportedVersions=[2026-07-28]`、`capabilities.tools.listChanged=false`、`ttlMs=0`、`cacheScope=private`、serverInfo=`mcmcp/0.1.0`とsemantic exactで一致させる。`tools/list`は`docs/MCMCP_MCP_Tool_Catalog.json`のraw SHA-256 `4d13589339212fe36e84acf97c9cc8aba5c5ef27a871fb03ce5602257877ddbc`とsemantic tool surface SHA-256 `728cf22ecd1f1eb3e023644bc52a3d6ed00e2bb41e37671b74579d53889745ec`をscript内定数へpinし、full resultと固定5件の名前、description、inputSchemaをexact比較してからdynamicToolsへ変換する。
+`agent_start_action`や`agent_cancel_action`はpreflightで呼ばない。各HTTP requestはliteral `127.0.0.1`だけへ`-NoProxy -MaximumRedirection 0`で送り、UTF-8 JSON Content-Type、JSON-RPC 2.0、request/response IDの型と値、result/errorの排他的存在を検査する。`server/discover`は`resultType=complete`、`supportedVersions=[2026-07-28]`、`capabilities.tools.listChanged=false`、`ttlMs=0`、`cacheScope=private`、serverInfo=`mcmcp/0.1.0`とsemantic exactで一致させる。`tools/list`は`docs/MCMCP_MCP_Tool_Catalog.json`のraw SHA-256 `d8ef8e905b077a4dd2c6c484574f95c7d0b6248f531a8124a3e29cec5a5b8dc0`とsemantic tool surface SHA-256 `613a953fe28d5df3848caddd1e4883d3a4344fcd87ab9aff0b00196f0c974238`をscript内定数へpinし、full resultと固定5件の名前、description、inputSchemaをexact比較してからdynamicToolsへ変換する。
 
 `agent_get_state`は`isError`の存在とBoolean型、`resultType=complete`、serverInfo、TextContent/structuredContent型を検証する。さらに`control.mode=ready`、unpaused、world/observationあり、inventory空、`omnidirectional_rays_per_tick=512`、`observation.record_counts.visible_entity=0`、actionがnullまたはterminalでなければT0へ進まない。各baselineはvisible entity 0を開始条件とし、1件でもあれば作業領域の落下item等による開始条件汚染として扱う。state body、座標、fixture知識はartifactへ保存せず、各判定のBooleanだけを残す。thread作成成功後にも同じreadinessを再取得し、8判定が全てtrueであることを記録する。
 
@@ -176,6 +182,22 @@ pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
 
 短い依頼の回帰runは同じbaselineを復元して`-PromptProfile short-regression`を明示する。Luna runはbaselineを毎回復元してからmodel/effort、profile、空artifact directoryだけを変える。
 
+warehouse E2Eはdev-only fixtureの`mcmcp.fixture.phase5.mode=warehouse_smelt`（Gradle実行では`-PmcmcpFixturePhase5Mode=warehouse_smelt`）でT0前だけ初期化し、MCPを手動ONにしてから通常runnerの固定profileを使う。
+
+```powershell
+pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
+  -Model gpt-5.6-sol -ReasoningEffort high `
+  -PromptProfile warehouse-smelt `
+  -BaselineId '<warehouse_smelt fixture baseline ID>' `
+  -ArtifactDirectory '<repo外の空directory>\warehouse-smelt' `
+  -TokenPath '<MCMCP tokenの絶対path>'
+
+# runner terminal後にSave and Quitし、Minecraftがworldを閉じてから実行
+pwsh -NoProfile -File .\tools\eval\Invoke-McmcpWarehouseSmeltOfflineOracle.ps1 `
+  -WorldDirectory '<closed world directory>' `
+  -EvaluationArtifactDirectory '<repo外の空directory>\warehouse-smelt'
+```
+
 高難易度建築copy runは専用baselineを復元し、固定90分の`hard-building-copy`を明示する。
 
 ```powershell
@@ -218,6 +240,7 @@ pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
 - `audit.json`: fail-closed自動監査結果とprofileから決定した`evaluator_timeout_seconds`
 - `audit-stderr.log`: audit process stderr
 - `manifest.json`: model/effort/baseline、prompt hash、T0、profile固定の`evaluator_timeout_seconds`、Codex version、git状態、runner / launcher / monitor script hash、isolation/secret状態、lease ID hash、acquire / terminal時刻、固定terminal reason、inputs released / input owner none / all Action terminalのBoolean proof
+- `offline-warehouse-smelt-oracle.json` (`warehouse-smelt`のみ): world closeとevaluation terminalを先に検証し、source / furnace / player / output、完成品component、workspace全cellを照合した結果
 - `live-monitor.log`: visible monitorを使ったrunだけに生成し、Terminalへ表示した安全な公開行をprefixなしで同じ順序・同じ本文のまま保存
 
 monitor境界は、raw / summary deltaがopt-outされartifactにも存在しないこと、completed summaryとpublic commentaryだけを採用すること、runner / module / self-test / launcher / hostの固定hash、monitor prefix / event allowlist / 制御文字guard、Terminal表示と`live-monitor.log`の完全一致self-testで証明する。opt-out対象のprivate reasoning notificationが到達した場合はraw writerより前にrunをfail closedさせ、Bearer、access token、account ID、evaluation lease IDの完全一致もraw / bridge / final message / stderr / preflight / manifest / live monitorの各書込み前に拒否する。
@@ -236,7 +259,7 @@ monitor境界は、raw / summary deltaがopt-outされartifactにも存在しな
 - runner、monitor host、visible childのprocess lifecycleはevent-drivenで、周期poll eventがなく、runner終了後のbounded wait内にvisible childが終了し同じexit codeを伝播する。
 - 禁止tool/item/request/notification、未知event/client_send、壊れたJSONL、orphan、重複、turn terminal後のresponse/server request/notificationを含む全messageをfail closedにする。
 
-dynamic requestが0件でも、trace構造とturn正常完了はprotocol上validになり得る。ただし自動監査は理由の意味を保証できないため、能力不足の具体的理由が最終agentMessageにあることを条件付きmanual reviewへ必ず出し、任意の短文を課題成功とは扱わない。監査は0件/成功/domain error/deadline拒否件数をreportし、課題達成可否とは分離する。deadline拒否が1件以上なら、lease terminal proofに加えてMCMCP action auditでも全Actionがterminalであることを確認するmanual reviewを必須にする。runnerはモデルがcancelしないActionを自動cancelしない。evaluation-turn終了時のpriority stopは安全解放であり、production成功へ算入しない。自動監査だけではgame内の達成を証明できないため、MCMCP action auditと突き合わせ、全actionがterminalかつfixture外への危険な副作用がないことを実験ノートで判定する。畑profileは小麦64個と再播種、`hard-building-copy`はsource/destinationのairを含む完全state差分、craft/smelt evidence、inventory収支を追加で確認する。失敗runへ追加入力して直さず、artifactを保全してbaselineからやり直す。
+dynamic requestが0件でも、trace構造とturn正常完了はprotocol上validになり得る。ただし自動監査は理由の意味を保証できないため、能力不足の具体的理由が最終agentMessageにあることを条件付きmanual reviewへ必ず出し、任意の短文を課題成功とは扱わない。監査は0件/成功/domain error/deadline拒否件数をreportし、課題達成可否とは分離する。deadline拒否が1件以上なら、lease terminal proofに加えてMCMCP action auditでも全Actionがterminalであることを確認するmanual reviewを必須にする。runnerはモデルがcancelしないActionを自動cancelしない。evaluation-turn終了時のpriority stopは安全解放であり、production成功へ算入しない。自動監査だけではgame内の達成を証明できないため、MCMCP action auditと突き合わせ、全actionがterminalかつfixture外への危険な副作用がないことを実験ノートで判定する。畑profileは小麦64個と再播種、`warehouse-smelt`はclosed-world oracleによるsource / furnace / playerの空、outputのcomponent-exact ingot 1個、workspace不変、`hard-building-copy`はsource/destinationのairを含む完全state差分、craft/smelt evidence、inventory収支を追加で確認する。失敗runへ追加入力して直さず、artifactを保全してbaselineからやり直す。
 
 ## 変更時の検証
 

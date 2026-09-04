@@ -24,6 +24,14 @@ public final class KnownContainerAttempt implements AutoCloseable {
     private int recordedInteractions;
     private List<ItemCount> pendingSuccessItems;
     private boolean closed;
+    private final ArrayList<EffectDelta> pendingEffects = new ArrayList<>(1);
+    private boolean transferConfirmed;
+    private boolean unknownTransferRecorded;
+    private boolean potentialTransferDispatched;
+    private int latestSourceBefore = -1;
+    private int latestDestinationBefore = -1;
+    private long latestEffectClientTick;
+    private long latestEffectWorldRevision;
 
     public KnownContainerAttempt(
             PhaseFivePort port,
@@ -73,7 +81,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
                     || attempt.hardDeadlineClientTick() != deadlineClientTick) {
                 return fail("container_begin_contract", 0);
             }
-            return TickResult.running(0);
+            return running(0);
         }
 
         PhaseFiveEvidence evidence = Objects.requireNonNull(
@@ -85,6 +93,8 @@ public final class KnownContainerAttempt implements AutoCloseable {
             return fail("container_evidence_contract", 0);
         }
         lastObservationRevision = evidence.observationRevision();
+        captureTransferEvidence(
+                evidence.clientTick(), evidence.observationRevision(), evidence.basis());
         final int delta;
         try {
             delta = recordInteractions(evidence.basis());
@@ -95,12 +105,19 @@ public final class KnownContainerAttempt implements AutoCloseable {
         return switch (evidence) {
             case PhaseFiveEvidence.Pending ignored -> {
                 port.maintain(attempt);
-                yield TickResult.running(delta);
+                yield running(delta);
             }
             case PhaseFiveEvidence.ServerConfirmed confirmed -> {
                 if (!confirmed.result().goalVerified()
                         || confirmed.result().verifiedUnits() < request.expectedUnits()) {
                     yield fail("container_postcondition_unconfirmed", delta);
+                }
+                try {
+                    recordConfirmedTransfer(
+                            confirmed.clientTick(), confirmed.observationRevision(),
+                            confirmed.result().basis());
+                } catch (IllegalStateException invalidEffect) {
+                    yield fail("container_effect_contract", delta);
                 }
                 pendingSuccessItems = itemCounts(confirmed.result().basis());
                 yield releasePendingSuccess(delta);
@@ -121,10 +138,10 @@ public final class KnownContainerAttempt implements AutoCloseable {
                     ? 0 : captureInteractionDeltaStrict(Long.MAX_VALUE);
             port.retire(request);
             closed = true;
-            return TickResult.succeeded(Math.addExact(interactionDelta, releaseDelta), items);
+            return succeeded(Math.addExact(interactionDelta, releaseDelta), items);
         } catch (RuntimeException | LinkageError releaseFailure) {
             if (releaseStatus() == ReleaseStatus.PROGRESSING) {
-                return TickResult.running(interactionDelta);
+                return running(interactionDelta);
             }
             throw releaseFailure;
         }
@@ -132,7 +149,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
 
     private TickResult fail(String evidence, int interactionDelta) {
         // The runtime retains this terminal intent until its shared release fence confirms cleanup.
-        return TickResult.failed(evidence, interactionDelta);
+        return failed(evidence, interactionDelta);
     }
 
     private int recordInteractions(Map<String, Object> basis) {
@@ -165,6 +182,8 @@ public final class KnownContainerAttempt implements AutoCloseable {
             throw new IllegalStateException("container release evidence contract changed");
         }
         lastObservationRevision = evidence.observationRevision();
+        captureTransferEvidence(
+                evidence.clientTick(), evidence.observationRevision(), evidence.basis());
         return recordInteractions(evidence.basis());
     }
 
@@ -192,9 +211,123 @@ public final class KnownContainerAttempt implements AutoCloseable {
     @Override
     public void close() {
         if (closed) return;
+        captureFinalTransferEvidence();
+        recordUnknownTransfer();
         if (attempt != null) port.release(attempt);
         port.retire(request);
         closed = true;
+    }
+
+    public List<EffectDelta> drainEffectDeltas() {
+        if (pendingEffects.isEmpty()) return List.of();
+        List<EffectDelta> drained = List.copyOf(pendingEffects);
+        pendingEffects.clear();
+        return drained;
+    }
+
+    private TickResult running(int delta) {
+        return new TickResult(Status.RUNNING, null, delta, List.of(), drainEffectDeltas());
+    }
+
+    private TickResult succeeded(int delta, List<ItemCount> items) {
+        return new TickResult(Status.SUCCEEDED, null, delta, items, drainEffectDeltas());
+    }
+
+    private TickResult failed(String evidence, int delta) {
+        return new TickResult(
+                Status.FAILED, Objects.requireNonNull(evidence, "evidence"),
+                delta, List.of(), drainEffectDeltas());
+    }
+
+    private void captureFinalTransferEvidence() {
+        if (attempt == null || !"transfer_items".equals(request.kind())) return;
+        try {
+            PhaseFiveEvidence evidence = Objects.requireNonNull(port.evidence(attempt));
+            captureTransferEvidence(
+                    evidence.clientTick(), evidence.observationRevision(), evidence.basis());
+            if (evidence instanceof PhaseFiveEvidence.ServerConfirmed confirmed
+                    && confirmed.result().goalVerified()
+                    && confirmed.result().verifiedUnits() >= request.expectedUnits()) {
+                recordConfirmedTransfer(
+                        confirmed.clientTick(), confirmed.observationRevision(),
+                        confirmed.result().basis());
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // Unknown means exactly that the post-dispatch state could not be read safely.
+        }
+    }
+
+    private void captureTransferEvidence(
+            long clientTick, long worldRevision, Map<String, Object> basis) {
+        if (!"transfer_items".equals(request.kind())) return;
+        int clicks = nonNegativeInt(basis.get("container_clicks"));
+        if (clicks > 0) potentialTransferDispatched = true;
+        latestSourceBefore = optionalNonNegativeInt(basis.get("source_before"), latestSourceBefore);
+        latestDestinationBefore = optionalNonNegativeInt(
+                basis.get("destination_before"), latestDestinationBefore);
+        latestEffectClientTick = clientTick;
+        latestEffectWorldRevision = worldRevision;
+    }
+
+    private void recordConfirmedTransfer(
+            long clientTick, long worldRevision, Map<String, Object> basis) {
+        if (!"transfer_items".equals(request.kind()) || transferConfirmed) return;
+        if (!basis.containsKey("transferred") && !potentialTransferDispatched) {
+            transferConfirmed = true;
+            return;
+        }
+        int transferred = requiredNonNegativeInt(basis, "transferred");
+        if (transferred == 0) {
+            transferConfirmed = true;
+            return;
+        }
+        int sourceBefore = requiredNonNegativeInt(basis, "source_count_before");
+        int sourceAfter = requiredNonNegativeInt(basis, "source_count_after");
+        int destinationBefore = requiredNonNegativeInt(basis, "destination_count_before");
+        int destinationAfter = requiredNonNegativeInt(basis, "destination_count_after");
+        if (sourceBefore - sourceAfter != transferred
+                || destinationAfter - destinationBefore != transferred) {
+            throw new IllegalStateException("confirmed transfer counts are inconsistent");
+        }
+        pendingEffects.add(new EffectDelta(
+                Map.of("source_count", sourceBefore, "destination_count", destinationBefore),
+                Map.of("source_count", sourceAfter, "destination_count", destinationAfter,
+                        "transferred", transferred),
+                AgentActionStore.Verification.CONFIRMED,
+                clientTick,
+                worldRevision));
+        transferConfirmed = true;
+    }
+
+    private void recordUnknownTransfer() {
+        if (!"transfer_items".equals(request.kind())
+                || !potentialTransferDispatched || transferConfirmed || unknownTransferRecorded) {
+            return;
+        }
+        var before = new java.util.LinkedHashMap<String, Object>();
+        if (latestSourceBefore >= 0) before.put("source_count", latestSourceBefore);
+        if (latestDestinationBefore >= 0) {
+            before.put("destination_count", latestDestinationBefore);
+        }
+        pendingEffects.add(new EffectDelta(
+                before,
+                Map.of(),
+                AgentActionStore.Verification.UNKNOWN,
+                latestEffectClientTick,
+                latestEffectWorldRevision));
+        unknownTransferRecorded = true;
+    }
+
+    private static int optionalNonNegativeInt(Object value, int fallback) {
+        if (value == null) return fallback;
+        return nonNegativeInt(value);
+    }
+
+    private static int requiredNonNegativeInt(Map<String, Object> basis, String key) {
+        if (!basis.containsKey(key)) {
+            throw new IllegalStateException("container effect count is absent");
+        }
+        return nonNegativeInt(basis.get(key));
     }
 
     private void requireOpen() {
@@ -250,26 +383,34 @@ public final class KnownContainerAttempt implements AutoCloseable {
             Status status,
             String evidence,
             int interactionDelta,
-            List<ItemCount> items) {
+            List<ItemCount> items,
+            List<EffectDelta> effects) {
         public TickResult {
             Objects.requireNonNull(status, "status");
             if (interactionDelta < 0 || interactionDelta > 8) {
                 throw new IllegalArgumentException("interaction delta is outside the action bound");
             }
             items = List.copyOf(Objects.requireNonNull(items, "items"));
+            effects = List.copyOf(Objects.requireNonNull(effects, "effects"));
+            if (effects.size() > 1) {
+                throw new IllegalArgumentException("too many container effect deltas");
+            }
         }
+    }
 
-        private static TickResult running(int delta) {
-            return new TickResult(Status.RUNNING, null, delta, List.of());
-        }
-
-        private static TickResult succeeded(int delta, List<ItemCount> items) {
-            return new TickResult(Status.SUCCEEDED, null, delta, items);
-        }
-
-        private static TickResult failed(String evidence, int delta) {
-            return new TickResult(Status.FAILED,
-                    Objects.requireNonNull(evidence, "evidence"), delta, List.of());
+    public record EffectDelta(
+            Map<String, Object> observedBefore,
+            Map<String, Object> observedAfter,
+            AgentActionStore.Verification verification,
+            long clientTick,
+            long worldRevision) {
+        public EffectDelta {
+            observedBefore = Map.copyOf(Objects.requireNonNull(observedBefore, "observedBefore"));
+            observedAfter = Map.copyOf(Objects.requireNonNull(observedAfter, "observedAfter"));
+            Objects.requireNonNull(verification, "verification");
+            if (clientTick < 0 || worldRevision < 0) {
+                throw new IllegalArgumentException("effect clocks must be non-negative");
+            }
         }
     }
 }

@@ -114,6 +114,7 @@ final class FixtureCommands {
                         .then(phase5("recipes", FixturePhase5Mode.RECIPES))
                         .then(phase5("craft", FixturePhase5Mode.CRAFT))
                         .then(phase5("smelt", FixturePhase5Mode.SMELT))
+                        .then(phase5("warehouse_smelt", FixturePhase5Mode.WAREHOUSE_SMELT))
                         .then(phase5("brew", FixturePhase5Mode.BREW))
                         .then(phase5("redstone", FixturePhase5Mode.REDSTONE))
                         .then(phase5("transfer", FixturePhase5Mode.TRANSFER))

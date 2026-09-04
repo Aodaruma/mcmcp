@@ -17,6 +17,8 @@ ActionはLLMがテキストとして生成・複製・編集できる厳格なJS
 
 `agent_get_action`はstate、progress、failure、traceに加え、投入済みprogramのbounded canonical JSONとSHA-256、ref redaction済みclone template、ref更新箇所を返す。opaque refを含むsourceは監査用であり、template側では該当refと対応するrecipe fingerprintを`null`化してblind replayを拒否する。`agent_get_state`も全opcode manifest、ref descriptor、current grant、`MISSING_CAPABILITY` guidanceを返す。いずれも固定5 Toolのままである。残るproduction Job拡張は次である。
 
+Action単位のaggregate effect ledgerは最初のproduction sliceまで実装済みである。constructionのserver-confirmed place / breakと、Vanilla container transferのfull readbackで確定したbefore / afterだけをappendし、dispatch後にafter-stateを確認できないものは`verification=unknown`として残す。terminal時は`partial`に確認済みeffectの有無、割込みnode、残りnode上限、再観測要否を返す。Job checkpointへの累積・item消費全般・attack等への拡張は未実装である。
+
 - worst-case costとeffect footprint
 - 必要なopaque refと同意scope
 - validate / dry-run結果
@@ -105,7 +107,7 @@ opcodeごとの説明文だけに依存せず、MCMCPは次の共通descriptor�
 2. canonical planと累積budgetの提示
 3. 1 Action分を予約
 4. JIT安全確認後に実行
-5. effect ledgerとpostconditionをcheckpointへ確定
+5. Action effect ledgerを各primitiveへ拡張し、postconditionとともにcheckpointへ累積
 6. 必要なら再観測・再計画
 7. 次のActionへ進む、または安全に中断
 8. cleanupと最終検証を行いJobをterminalにする

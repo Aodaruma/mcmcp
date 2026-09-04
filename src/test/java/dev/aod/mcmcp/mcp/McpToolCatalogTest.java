@@ -1317,6 +1317,8 @@ class McpToolCatalogTest {
                             "blocks_placed", 0, "ticks", 0),
                     "failure", null,
                     "trace", List.of(),
+                    "effects", List.of(),
+                    "partial", null,
                     "source", Map.of(
                             "media_type", "application/vnd.mcmcp.action-dsl+json;version=1",
                             "canonical_json", "{}",

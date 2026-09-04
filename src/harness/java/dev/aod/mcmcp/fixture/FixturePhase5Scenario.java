@@ -44,6 +44,8 @@ final class FixturePhase5Scenario {
     static final BlockPos CRAFTING_TABLE = new BlockPos(195, 200, 194);
     static final BlockPos FURNACE = new BlockPos(196, 200, 194);
     static final BlockPos BREWING_STAND = new BlockPos(197, 200, 194);
+    static final BlockPos WAREHOUSE_SOURCE_CHEST = CRAFTING_TABLE;
+    static final BlockPos WAREHOUSE_OUTPUT_BARREL = BREWING_STAND;
     static final BlockPos REDSTONE_LAMP_TARGET = new BlockPos(201, 200, 194);
     static final BlockPos REDSTONE_LEVER_TARGET = new BlockPos(202, 200, 194);
     static final BlockPos TRANSFER_BARREL = new BlockPos(199, 200, 194);
@@ -152,6 +154,9 @@ final class FixturePhase5Scenario {
     private static final List<ContainerEntry> TRANSFER_CONTENTS = List.of(
             new ContainerEntry(0, Items.COBBLESTONE, 12),
             new ContainerEntry(8, Items.OAK_LOG, 4));
+    private static final List<ContainerEntry> WAREHOUSE_SOURCE_CONTENTS = List.of(
+            new ContainerEntry(0, Items.RAW_IRON, 1),
+            new ContainerEntry(8, Items.COAL, 1));
     private static final List<ContainerEntry> GENERALIZATION_CHEST_WEST_CONTENTS = List.of(
             new ContainerEntry(0, Items.COBBLESTONE, 12));
     private static final List<ContainerEntry> GENERALIZATION_CHEST_EAST_CONTENTS = List.of(
@@ -195,6 +200,8 @@ final class FixturePhase5Scenario {
         } else if (mode == FixturePhase5Mode.GENERALIZATION) {
             applyGeneralizationLayout(context.level());
             configureGeneralizationChest(context.level());
+        } else if (mode == FixturePhase5Mode.WAREHOUSE_SMELT) {
+            resetWarehouseSmeltWorkspace(context.level());
         } else {
             resetStatefulWorkstations(context.level());
             applyLayout(context.level());
@@ -210,7 +217,8 @@ final class FixturePhase5Scenario {
         resetKnownRecipes(context);
         if (mode == FixturePhase5Mode.RECIPES || mode == FixturePhase5Mode.CRAFT) {
             context.player().awardRecipesByKey(KNOWN_RECIPE_KEYS);
-        } else if (mode == FixturePhase5Mode.SMELT) {
+        } else if (mode == FixturePhase5Mode.SMELT
+                || mode == FixturePhase5Mode.WAREHOUSE_SMELT) {
             context.player().awardRecipesByKey(List.of(
                     recipeKey("iron_ingot_from_smelting_raw_iron")));
         }
@@ -248,6 +256,16 @@ final class FixturePhase5Scenario {
                     + " chest=" + position(GENERALIZATION_CHEST_WEST)
                     + ";" + position(GENERALIZATION_CHEST_EAST)
                     + " selected_slot=" + mode.selectedSlot()));
+            return;
+        }
+        if (mode == FixturePhase5Mode.WAREHOUSE_SMELT) {
+            output.accept(Component.literal("phase5.mode=warehouse_smelt"
+                    + " source=" + position(WAREHOUSE_SOURCE_CHEST)
+                    + " furnace=" + position(FURNACE)
+                    + " output=" + position(WAREHOUSE_OUTPUT_BARREL)
+                    + " source_items=minecraft:raw_iron*1;minecraft:coal*1"
+                    + " player_inventory=empty output_inventory=empty selected_slot="
+                    + mode.selectedSlot()));
             return;
         }
 
@@ -345,6 +363,14 @@ final class FixturePhase5Scenario {
         }
         result.put(GENERALIZATION_WIRE_OBSERVATION_PEDESTAL,
                 Blocks.SMOOTH_STONE.defaultBlockState());
+        return Map.copyOf(result);
+    }
+
+    static Map<BlockPos, BlockState> warehouseSmeltLayout() {
+        var result = emptyWorkspace();
+        result.put(WAREHOUSE_SOURCE_CHEST, combinedSupplyChestState());
+        result.put(FURNACE, Blocks.FURNACE.defaultBlockState());
+        result.put(WAREHOUSE_OUTPUT_BARREL, barrelState());
         return Map.copyOf(result);
     }
 
@@ -460,6 +486,18 @@ final class FixturePhase5Scenario {
         // pre-layout cleanup. The production evaluation starts only after this final pass.
         return discardItemEntities(
                 level, AABB.encapsulatingFullBlocks(WORKSPACE_MIN, WORKSPACE_MAX));
+    }
+
+    private static void resetWarehouseSmeltWorkspace(ServerLevel level) {
+        // The explicit replacement resets residual burn/cook state from an earlier run.
+        FixtureArena.setBlock(level, FURNACE, Blocks.AIR.defaultBlockState());
+        warehouseSmeltLayout().forEach((position, state) ->
+                FixtureArena.setBlock(level, position, state));
+        configureContainer(level, WAREHOUSE_SOURCE_CHEST,
+                WAREHOUSE_SOURCE_CONTENTS, "warehouse source chest");
+        configureContainer(level, WAREHOUSE_OUTPUT_BARREL,
+                List.of(), "warehouse output barrel");
+        configureFurnace(level);
     }
 
     static void verifyTreeGate(
@@ -649,6 +687,9 @@ final class FixturePhase5Scenario {
                 player.getInventory().setItem(0, new ItemStack(Items.RAW_IRON));
                 player.getInventory().setItem(1, new ItemStack(Items.COAL));
             }
+            case WAREHOUSE_SMELT -> {
+                // Supplies and the completed product must cross ordinary container GUIs.
+            }
             case BREW -> {
                 var water = BuiltInRegistries.POTION.get(
                                 Identifier.fromNamespaceAndPath("minecraft", "water"))
@@ -727,7 +768,8 @@ final class FixturePhase5Scenario {
     private static Pose pose(FixturePhase5Mode mode) {
         return switch (mode) {
             case RECIPES, CRAFT -> new Pose(195.5D, 200.0D, 196.5D, 180.0F, 25.0F);
-            case SMELT -> new Pose(196.5D, 200.0D, 196.5D, 180.0F, 25.0F);
+            case SMELT, WAREHOUSE_SMELT ->
+                    new Pose(196.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case BREW -> new Pose(197.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case REDSTONE -> new Pose(201.5D, 200.0D, 193.5D, 0.0F, 25.0F);
             case TRANSFER -> new Pose(199.5D, 200.0D, 196.5D, 180.0F, 25.0F);

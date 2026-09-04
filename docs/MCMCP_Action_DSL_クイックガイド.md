@@ -20,6 +20,8 @@
 
 Action本文は通常のJSONなので、LLMは`agent_get_action.source.canonical_json`から投入済みの正規化済み本文とSHA-256を取得し、複製・編集できます。sourceは監査用であり再実行権限ではありません。opaque refを含まない場合だけ`template.ready_for_agent_start_action=true`となります。含む場合、templateではrefと対応するrecipe fingerprintが`null`化され、`reference_requirements`が置換箇所・取得Tool・取得元pathを示します。refの現在有効性を履歴取得側で推測せず常に`refresh_required`とするため、再観測・再取得後に埋め直してください。
 
+同じ応答の`effects`は、実行中に観測・ACKできた変更を順番に残す上限64件のledgerです。`confirmed`はserver由来のbefore / afterを確認済み、`unknown`はmutation dispatch後のafter-stateを確定できなかったことを意味します。`unknown`を成功扱いしたりblind replayしたりせず、必ず再観測してください。`partial`は非terminal中は`null`、terminal後は割込みnodeと未実行node上限、再観測要否を返します。
+
 利用可能な全opcodeは`agent_get_state.policy.action_dsl.available_operations`にあり、必要capability、opaque ref field、現在のローカルgrantとの差分を機械可読に返します。`MISSING_CAPABILITY`時は同じ場所のguidanceに従い、必要値を`program.capabilities`へ宣言します。ローカル側のgrant不足は`control.granted_capabilities`と`locally_missing_capabilities`で区別します。公開Toolは引き続き5件です。
 
 近傍の敵対mob判定は助言ではなくruntimeの安全条件であり、現状では該当するとActionが失敗・再計画へ進み、Agent入力が解放されます。mob trap向けには、敵対mobの「存在」だけをローカルユーザー発行のscoped `consent_ref`で限定解除し、被弾、接触、projectile、health低下等は解除しない設計です。この同意経路が実装されるまでは従来どおりfail closedです。

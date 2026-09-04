@@ -2413,6 +2413,32 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 "tick", entry.tick(),
                 "event", entry.event(),
                 "detail", entry.detail())).toList());
+        result.put("effects", snapshot.effects().stream().map(effect -> {
+            var payload = new LinkedHashMap<String, Object>();
+            payload.put("seq", effect.seq());
+            payload.put("node_id", effect.nodeId());
+            payload.put("kind", effect.kind());
+            payload.put("subject", effect.subject());
+            payload.put("observed_before", effect.observedBefore());
+            payload.put("observed_after", effect.observedAfter());
+            payload.put("verification", effect.verification().wireName());
+            payload.put("client_tick", effect.clientTick());
+            payload.put("world_revision", effect.worldRevision());
+            return Map.copyOf(payload);
+        }).toList());
+        Map<String, Object> partialPayload = null;
+        if (snapshot.partial() != null) {
+            var partial = snapshot.partial();
+            var payload = new LinkedHashMap<String, Object>();
+            payload.put("has_confirmed_effects", partial.hasConfirmedEffects());
+            payload.put("interrupted_node_id", partial.interruptedNodeId());
+            payload.put("remaining_node_upper_bound", partial.remainingNodeUpperBound());
+            payload.put(
+                    "resume_requires_reobservation",
+                    partial.resumeRequiresReobservation());
+            partialPayload = payload;
+        }
+        result.put("partial", partialPayload);
         result.put("source", snapshot.source().sourcePayload());
         result.put("template", snapshot.source().templatePayload());
         result.put(
@@ -3578,8 +3604,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 return;
             }
 
-            long correctionRevision = reconciliationSignals.bindAndSnapshot(
-                    minecraft.level, session.worldSessionId()).positionCorrectionRevision();
+            var currentReconciliation = reconciliationSignals.bindAndSnapshot(
+                    minecraft.level, session.worldSessionId());
+            agentExecution.latestWorldRevision = currentReconciliation.worldRevision();
+            long correctionRevision = currentReconciliation.positionCorrectionRevision();
             if (correctionRevision > agentExecution.positionCorrectionRevision) {
                 long previousCorrectionRevision = agentExecution.positionCorrectionRevision;
                 agentExecution.positionCorrectionRevision = correctionRevision;
@@ -5119,6 +5147,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         KnownContainerAttempt.TickResult result =
                 agentExecution.containerAttempt.tick(session.clientTick());
+        recordContainerEffects(
+                action.actionId(), agentExecution.primitive, result.effects());
         for (int count = 0; count < result.interactionDelta(); count++) {
             agentActions.recordInteraction(action.actionId());
         }
@@ -5245,6 +5275,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         KnownConstructionAttempt.TickResult result =
                 agentExecution.constructionAttempt.tick(session.clientTick());
+        recordConstructionEffects(action.actionId(), result.effects());
         for (int count = 0; count < result.placedDelta(); count++) {
             agentActions.recordBlockPlace(action.actionId());
         }
@@ -5271,6 +5302,56 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 advanceAgentProgram(
                         minecraft, agentActions.get(action.actionId()).progress());
             }
+        }
+    }
+
+    private void recordConstructionEffects(
+            UUID actionId, List<KnownConstructionAttempt.EffectDelta> effects) {
+        for (var effect : effects) {
+            agentActions.recordEffect(
+                    actionId,
+                    effect.kind(),
+                    effect.subject(),
+                    effect.observedBefore(),
+                    effect.observedAfter(),
+                    effect.verification(),
+                    effect.clientTick(),
+                    agentExecution.latestWorldRevision);
+        }
+    }
+
+    private void recordContainerEffects(
+            UUID actionId,
+            ActionDsl.Node primitive,
+            List<KnownContainerAttempt.EffectDelta> effects) {
+        if (effects.isEmpty()) return;
+        final String kind;
+        final ActionDsl.Position target;
+        final String item;
+        if (primitive instanceof ActionDsl.TakeKnownContainerStack take) {
+            kind = "container_take";
+            target = take.target();
+            item = take.item();
+        } else if (primitive instanceof ActionDsl.StoreKnownContainerStack store) {
+            kind = "container_store";
+            target = store.target();
+            item = store.item();
+        } else {
+            throw new IllegalStateException(
+                    "container transfer effect has no transfer primitive");
+        }
+        String subject = "container:" + target.dimension() + ":"
+                + target.x() + "," + target.y() + "," + target.z() + "/" + item;
+        for (var effect : effects) {
+            agentActions.recordEffect(
+                    actionId,
+                    kind,
+                    subject,
+                    effect.observedBefore(),
+                    effect.observedAfter(),
+                    effect.verification(),
+                    effect.clientTick(),
+                    agentExecution.latestWorldRevision);
         }
     }
 
@@ -7879,6 +7960,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     for (int count = 0; count < releasedInteractions; count++) {
                         agentActions.recordInteraction(agentExecution.actionId);
                     }
+                    recordContainerEffects(
+                            agentExecution.actionId,
+                            agentExecution.primitive,
+                            container.drainEffectDeltas());
                 } catch (RuntimeException | LinkageError failure) {
                     closed = false;
                     McmcpMod.LOGGER.error(
@@ -7910,12 +7995,23 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
         }
         if (agentExecution.constructionAttempt != null) {
+            KnownConstructionAttempt construction = agentExecution.constructionAttempt;
             try {
-                agentExecution.constructionAttempt.close();
+                construction.close();
                 agentExecution.constructionAttempt = null;
             } catch (RuntimeException | LinkageError failure) {
                 closed = false;
                 McmcpMod.LOGGER.error("MCMCP known-construction release failed", failure);
+            } finally {
+                try {
+                    recordConstructionEffects(
+                            agentExecution.actionId,
+                            construction.drainEffectDeltas());
+                } catch (RuntimeException | LinkageError failure) {
+                    closed = false;
+                    McmcpMod.LOGGER.error(
+                            "MCMCP known-construction effect capture failed", failure);
+                }
             }
         }
         if (agentExecution.pillarUpAttempt != null) {
@@ -10564,6 +10660,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private boolean replanHeartbeatPending;
         private boolean goalPreempted;
         private long positionCorrectionRevision;
+        private long latestWorldRevision;
         private int positionCorrections;
         private AgentActionStore.Progress occurrenceBaseline;
         private ActionDslCompiler.Cost occurrenceLimit;

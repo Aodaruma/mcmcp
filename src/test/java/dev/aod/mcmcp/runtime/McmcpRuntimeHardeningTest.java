@@ -182,6 +182,58 @@ class McmcpRuntimeHardeningTest {
         assertThat(((Map<?, ?>) payload.get("template")).get("ready_for_agent_start_action"))
                 .isEqualTo(true);
         assertThat(payload.get("reference_requirements")).isEqualTo(List.of());
+        assertThat(payload.get("effects")).isEqualTo(List.of());
+        assertThat(payload.get("partial")).isNull();
+    }
+
+    @Test
+    void actionPayloadPublishesTheBoundedEffectLedgerAndTerminalPartialMetadata() {
+        UUID actionId = UUID.randomUUID();
+        var progress = new AgentActionStore.Progress(
+                AgentActionStore.Phase.FINISHED,
+                null,
+                0,
+                1,
+                0.0D,
+                0.0D,
+                0,
+                0,
+                1,
+                3,
+                false);
+        var effect = new AgentActionStore.Effect(
+                1,
+                "place",
+                "block_place",
+                "block:minecraft:overworld:1,64,2",
+                Map.of("block", "minecraft:air"),
+                Map.of("block", "minecraft:stone"),
+                AgentActionStore.Verification.CONFIRMED,
+                3L,
+                9L);
+        var payload = McmcpRuntime.actionPayload(new AgentActionStore.Snapshot(
+                actionId,
+                AgentActionStore.State.FAILED,
+                progress,
+                new AgentActionStore.Failure(
+                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                        true,
+                        List.of("suffix_stopped")),
+                List.of(),
+                actionSource(),
+                List.of(effect),
+                new AgentActionStore.Partial(true, "place", 1, true)));
+
+        assertThat((List<?>) payload.get("effects")).singleElement().satisfies(raw -> {
+            var mapped = (Map<?, ?>) raw;
+            assertThat(mapped.get("verification")).isEqualTo("confirmed");
+            assertThat(mapped.get("world_revision")).isEqualTo(9L);
+            assertThat(mapped.containsKey("slot")).isFalse();
+            assertThat(mapped.containsKey("raw_payload")).isFalse();
+            assertThat(mapped.containsKey("secret")).isFalse();
+        });
+        assertThat(((Map<?, ?>) payload.get("partial")).get(
+                "resume_requires_reobservation")).isEqualTo(true);
     }
 
     @Test

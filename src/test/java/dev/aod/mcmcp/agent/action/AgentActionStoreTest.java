@@ -7,6 +7,7 @@ import dev.aod.mcmcp.agent.dsl.ActionDslSource;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -134,6 +135,58 @@ class AgentActionStoreTest {
         store.recordBlockBreak(accepted.actionId());
 
         assertThat(store.get(accepted.actionId()).progress().blocksBroken()).isOne();
+    }
+
+    @Test
+    void retainsBoundedEffectsAndDescribesAnInterruptedPartialAction() {
+        var store = new AgentActionStore();
+        var accepted = store.start(program(), source(), Instant.EPOCH);
+        store.markRunning(accepted.actionId());
+        store.beginNode(accepted.actionId(), "hold");
+        store.recordEffect(
+                accepted.actionId(),
+                "block_place",
+                "block:minecraft:overworld:1,64,2",
+                Map.of("block", "minecraft:air"),
+                Map.of("block", "minecraft:stone"),
+                AgentActionStore.Verification.CONFIRMED,
+                12L,
+                7L);
+        store.fail(accepted.actionId(), new AgentActionStore.Failure(
+                AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                true,
+                java.util.List.of("suffix_stopped")));
+
+        var snapshot = store.get(accepted.actionId());
+        assertThat(snapshot.effects()).singleElement().satisfies(effect -> {
+            assertThat(effect.seq()).isOne();
+            assertThat(effect.nodeId()).isEqualTo("hold");
+            assertThat(effect.verification())
+                    .isEqualTo(AgentActionStore.Verification.CONFIRMED);
+            assertThat(effect.clientTick()).isEqualTo(12L);
+            assertThat(effect.worldRevision()).isEqualTo(7L);
+        });
+        assertThat(snapshot.partial()).isEqualTo(new AgentActionStore.Partial(
+                true, "hold", 1, true));
+    }
+
+    @Test
+    void rejectsSecretSlotAndRawPayloadShapesFromTheEffectLedger() {
+        var store = new AgentActionStore();
+        var accepted = store.start(program(), source(), Instant.EPOCH);
+        store.markRunning(accepted.actionId());
+        store.beginNode(accepted.actionId(), "hold");
+
+        assertThatThrownBy(() -> store.recordEffect(
+                accepted.actionId(),
+                "container_take",
+                "container:minecraft:overworld:1,64,2/minecraft:stone",
+                Map.of("raw_slot_payload", "forbidden"),
+                Map.of(),
+                AgentActionStore.Verification.UNKNOWN,
+                1L,
+                1L)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(store.get(accepted.actionId()).effects()).isEmpty();
     }
 
     @Test

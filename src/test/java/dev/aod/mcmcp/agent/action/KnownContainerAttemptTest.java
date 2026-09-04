@@ -106,6 +106,53 @@ class KnownContainerAttemptTest {
         assertThat(port.retires).isOne();
     }
 
+    @Test
+    void recordsOnlyTheExactServerConfirmedContainerTransferCounts() {
+        var port = new FakePort();
+        port.exactTransfer = true;
+        var operation = new KnownContainerAttempt(port, request(), 1, 101);
+        port.tick = 1;
+        operation.tick(1);
+        port.tick = 2;
+        operation.tick(2);
+        port.tick = 3;
+
+        var result = operation.tick(3);
+
+        assertThat(result.status()).isEqualTo(KnownContainerAttempt.Status.SUCCEEDED);
+        assertThat(result.effects()).singleElement().satisfies(effect -> {
+            assertThat(effect.observedBefore()).containsExactlyInAnyOrderEntriesOf(
+                    Map.of("source_count", 12, "destination_count", 3));
+            assertThat(effect.observedAfter()).containsExactlyInAnyOrderEntriesOf(
+                    Map.of("source_count", 7, "destination_count", 8, "transferred", 5));
+            assertThat(effect.verification())
+                    .isEqualTo(AgentActionStore.Verification.CONFIRMED);
+            assertThat(effect.clientTick()).isEqualTo(3L);
+            assertThat(effect.worldRevision()).isEqualTo(2L);
+        });
+    }
+
+    @Test
+    void closingAnUnconfirmedTransferDispatchRecordsUnknownWithoutAnAfterCount() {
+        var port = new FakePort();
+        port.exactTransfer = true;
+        port.holdPending = true;
+        var operation = new KnownContainerAttempt(port, request(), 1, 101);
+        port.tick = 1;
+        operation.tick(1);
+        port.tick = 2;
+        operation.tick(2);
+
+        operation.close();
+
+        assertThat(operation.drainEffectDeltas()).singleElement().satisfies(effect -> {
+            assertThat(effect.verification())
+                    .isEqualTo(AgentActionStore.Verification.UNKNOWN);
+            assertThat(effect.observedAfter()).isEmpty();
+        });
+        assertThat(operation.drainEffectDeltas()).isEmpty();
+    }
+
     private static PhaseFiveRequest request() {
         var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
         return new PhaseFiveRequest(
@@ -127,6 +174,8 @@ class KnownContainerAttemptTest {
         private boolean releaseAddsInteraction;
         private boolean releasePending;
         private boolean releaseConfirmed;
+        private boolean exactTransfer;
+        private boolean holdPending;
 
         @Override
         public PhaseFiveFrame observe(PhaseFiveRequest request) {
@@ -144,7 +193,7 @@ class KnownContainerAttemptTest {
         @Override
         public void maintain(PhaseFiveAttempt attempt) {
             maintained = true;
-            interactions = Math.max(interactions, 1);
+            interactions = Math.max(interactions, exactTransfer ? 2 : 1);
         }
 
         @Override
@@ -156,14 +205,22 @@ class KnownContainerAttemptTest {
                     "release_pending", releasePending,
                     "release_confirmed", releaseConfirmed,
                     "release_fault", false);
-            if (!maintained) {
+            if (!maintained || holdPending) {
                 return new PhaseFiveEvidence.Pending(attempt.attemptId(), tick, 1, basis);
             }
             var items = List.of(
                     Map.of("item", "minecraft:iron_hoe", "count", 1),
                     Map.of("item", "minecraft:wheat_seeds", "count", 64));
-            var result = new PhaseFiveResult(
-                    0, true, Map.of("available_source_items", items), List.of());
+            var resultBasis = new java.util.LinkedHashMap<String, Object>();
+            resultBasis.put("available_source_items", items);
+            if (exactTransfer) {
+                resultBasis.put("source_count_before", 12);
+                resultBasis.put("source_count_after", 7);
+                resultBasis.put("destination_count_before", 3);
+                resultBasis.put("destination_count_after", 8);
+                resultBasis.put("transferred", 5);
+            }
+            var result = new PhaseFiveResult(0, true, resultBasis, List.of());
             return new PhaseFiveEvidence.ServerConfirmed(
                     attempt.attemptId(), tick, 2, result, basis);
         }

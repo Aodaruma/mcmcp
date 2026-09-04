@@ -6,7 +6,10 @@ import dev.aod.mcmcp.agent.dsl.ActionDslSource;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -15,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 /** Synchronized one-active-plus-one-terminal action state machine. */
 public final class AgentActionStore {
     public static final int TRACE_LIMIT = 256;
+    public static final int EFFECT_LIMIT = 64;
     public static final int MAX_RECORDED_TICKS = 15_200;
     public static final double MAX_RECORDED_DISTANCE = 48.0D;
     public static final double MAX_RECORDED_CAMERA_DEGREES = 1_080.0D;
@@ -281,6 +285,38 @@ public final class AgentActionStore {
         action.blocksPlaced++;
     }
 
+    /** Records one bounded, already-sanitized effect at the observation/ACK point. */
+    public synchronized void recordEffect(
+            UUID actionId,
+            String kind,
+            String subject,
+            Map<String, Object> observedBefore,
+            Map<String, Object> observedAfter,
+            Verification verification,
+            long clientTick,
+            long worldRevision) {
+        Mutable action = running(actionId);
+        if (action.currentNodeId == null) {
+            throw new IllegalStateException("No action node is active");
+        }
+        if (action.effects.size() >= EFFECT_LIMIT) {
+            throw new IllegalStateException("Action effect record limit exceeded");
+        }
+        long nextSequence = action.effectSequence + 1L;
+        Effect effect = new Effect(
+                nextSequence,
+                action.currentNodeId,
+                kind,
+                subject,
+                observedBefore,
+                observedAfter,
+                verification,
+                clientTick,
+                worldRevision);
+        action.effects.add(effect);
+        action.effectSequence = nextSequence;
+    }
+
     public synchronized void setPhase(UUID actionId, Phase phase, String detail) {
         Mutable action = running(actionId);
         action.phase = Objects.requireNonNull(phase, "phase");
@@ -472,19 +508,161 @@ public final class AgentActionStore {
         }
     }
 
+    public enum Verification {
+        CONFIRMED("confirmed"),
+        QUALIFIED("qualified"),
+        UNKNOWN("unknown");
+
+        private final String wireName;
+
+        Verification(String wireName) {
+            this.wireName = wireName;
+        }
+
+        public String wireName() {
+            return wireName;
+        }
+    }
+
+    public record Effect(
+            long seq,
+            String nodeId,
+            String kind,
+            String subject,
+            Map<String, Object> observedBefore,
+            Map<String, Object> observedAfter,
+            Verification verification,
+            long clientTick,
+            long worldRevision) {
+        public Effect {
+            if (seq < 1 || seq > EFFECT_LIMIT) {
+                throw new IllegalArgumentException("Invalid effect sequence");
+            }
+            requireNodeId(nodeId);
+            if (kind == null || !kind.matches("[a-z][a-z0-9_]{0,63}")) {
+                throw new IllegalArgumentException("Invalid effect kind");
+            }
+            if (subject == null || subject.isBlank() || subject.length() > 192
+                    || !subject.matches("[a-z0-9_.:/,+-]+")) {
+                throw new IllegalArgumentException("Invalid effect subject");
+            }
+            observedBefore = boundedObservation(observedBefore);
+            observedAfter = boundedObservation(observedAfter);
+            Objects.requireNonNull(verification, "verification");
+            if (clientTick < 0 || worldRevision < 0) {
+                throw new IllegalArgumentException("Effect clocks must be non-negative");
+            }
+        }
+
+        private static Map<String, Object> boundedObservation(Map<String, Object> source) {
+            Objects.requireNonNull(source, "observation");
+            if (source.size() > 16) {
+                throw new IllegalArgumentException("Effect observation is too large");
+            }
+            var output = new LinkedHashMap<String, Object>();
+            source.forEach((key, value) -> {
+                if (key == null || !key.matches("[a-z][a-z0-9_]{0,63}")
+                        || key.contains("secret") || key.contains("token")
+                        || key.contains("credential") || key.contains("slot")
+                        || key.contains("raw") || key.contains("payload")) {
+                    throw new IllegalArgumentException("Invalid effect observation key");
+                }
+                output.put(key, boundedObservationValue(value, 0));
+            });
+            return Collections.unmodifiableMap(output);
+        }
+
+        private static Object boundedObservationValue(Object value, int depth) {
+            if (value == null || value instanceof Boolean) return value;
+            if (value instanceof String string) {
+                if (string.length() > 192 || !string.matches("[a-z0-9_.:/,+\\-= ]*")) {
+                    throw new IllegalArgumentException("Invalid effect observation string");
+                }
+                return string;
+            }
+            if (value instanceof Number number) {
+                double finite = number.doubleValue();
+                if (!Double.isFinite(finite)) {
+                    throw new IllegalArgumentException("Invalid effect observation number");
+                }
+                return value;
+            }
+            if (value instanceof Map<?, ?> map && depth == 0 && map.size() <= 32) {
+                var nested = new LinkedHashMap<String, Object>();
+                map.forEach((key, nestedValue) -> {
+                    if (!(key instanceof String stringKey)
+                            || !stringKey.matches("[a-z][a-z0-9_]{0,63}")) {
+                        throw new IllegalArgumentException("Invalid nested effect key");
+                    }
+                    nested.put(stringKey, boundedObservationValue(nestedValue, 1));
+                });
+                return Collections.unmodifiableMap(nested);
+            }
+            throw new IllegalArgumentException("Invalid effect observation value");
+        }
+    }
+
+    public record Partial(
+            boolean hasConfirmedEffects,
+            String interruptedNodeId,
+            int remainingNodeUpperBound,
+            boolean resumeRequiresReobservation) {
+        public Partial {
+            if (interruptedNodeId != null) requireNodeId(interruptedNodeId);
+            if (remainingNodeUpperBound < 0 || remainingNodeUpperBound > 256) {
+                throw new IllegalArgumentException("Invalid remaining node bound");
+            }
+        }
+    }
+
     public record Snapshot(
             UUID actionId,
             State state,
             Progress progress,
             Failure failure,
             List<Trace> trace,
-            ActionDslSource source) {
+            ActionDslSource source,
+            List<Effect> effects,
+            Partial partial) {
         public Snapshot {
             Objects.requireNonNull(actionId, "actionId");
             Objects.requireNonNull(state, "state");
             Objects.requireNonNull(progress, "progress");
             trace = List.copyOf(trace);
             Objects.requireNonNull(source, "source");
+            effects = List.copyOf(effects);
+            if (effects.size() > EFFECT_LIMIT) {
+                throw new IllegalArgumentException("Too many action effects");
+            }
+            if (state.terminal() != (partial != null)) {
+                throw new IllegalArgumentException(
+                        "Partial result is required exactly for terminal actions");
+            }
+        }
+
+        public Snapshot(
+                UUID actionId,
+                State state,
+                Progress progress,
+                Failure failure,
+                List<Trace> trace,
+                ActionDslSource source) {
+            this(
+                    actionId,
+                    state,
+                    progress,
+                    failure,
+                    trace,
+                    source,
+                    List.of(),
+                    state.terminal()
+                            ? new Partial(
+                                    false,
+                                    null,
+                                    Math.max(0, progress.totalNodeUpperBound()
+                                            - progress.executedNodes()),
+                                    false)
+                            : null);
         }
     }
 
@@ -506,6 +684,7 @@ public final class AgentActionStore {
         private final ActionDslSource source;
         private final long confirmationDeadlineNanos;
         private final ArrayDeque<Trace> trace = new ArrayDeque<>(TRACE_LIMIT);
+        private final ArrayList<Effect> effects = new ArrayList<>(EFFECT_LIMIT);
         private State state = State.UNCONFIRMED;
         private Phase phase = Phase.QUEUED;
         private String currentNodeId;
@@ -519,6 +698,8 @@ public final class AgentActionStore {
         private boolean motionOverflowed;
         private Failure failure;
         private String endReason;
+        private long effectSequence;
+        private String interruptedNodeId;
 
         private Mutable(
                 UUID id,
@@ -537,6 +718,7 @@ public final class AgentActionStore {
             }
             state = terminal;
             phase = Phase.FINISHED;
+            interruptedNodeId = currentNodeId;
             currentNodeId = null;
             failure = terminalFailure;
             endReason = terminal == State.SUCCEEDED
@@ -565,7 +747,22 @@ public final class AgentActionStore {
                     blocksPlaced,
                     ticks,
                     motionOverflowed);
-            return new Snapshot(id, state, progress, failure, new ArrayList<>(trace), source);
+            Partial partial = null;
+            if (state.terminal()) {
+                boolean confirmed = effects.stream()
+                        .anyMatch(effect -> effect.verification() == Verification.CONFIRMED);
+                int remaining = Math.max(
+                        0, program.executedNodesUpperBound() - executedNodes);
+                partial = new Partial(
+                        confirmed,
+                        interruptedNodeId,
+                        remaining,
+                        state != State.SUCCEEDED
+                                && (!effects.isEmpty() || interruptedNodeId != null));
+            }
+            return new Snapshot(
+                    id, state, progress, failure, new ArrayList<>(trace), source,
+                    new ArrayList<>(effects), partial);
         }
     }
 }
