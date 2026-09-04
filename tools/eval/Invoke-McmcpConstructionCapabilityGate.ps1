@@ -895,19 +895,11 @@ function Get-OrNavigateToVisibleSurface {
             $dz = ([double](Get-ObjectProperty $target 'z') + 0.5) -
                 [double](Get-ObjectProperty $player 'z')
             $surfaceDistance = [Math]::Sqrt($dx * $dx + $dy * $dy + $dz * $dz)
-            # A visible surface is already sufficient evidence for the dedicated
-            # approach_known_surface primitive.  Requiring direct interaction
-            # range here caused the outer helper to keep selecting generic
-            # traversability edges (including unnecessary step-ups) instead of
-            # letting that semantic primitive choose a reachable interaction
-            # anchor around the observed block.
-            Add-GateEvent -Event 'visible_surface_delivered_for_semantic_approach' `
-                -Detail ([ordered]@{
+            if ($surfaceDistance -le 4.0) { return $surface }
+            Add-GateEvent -Event 'visible_surface_outside_interaction_range' -Detail ([ordered]@{
                     block = $Block; attempt = $attempt
                     distance = [Math]::Round($surfaceDistance, 3)
-                    directly_within_four_blocks = $surfaceDistance -le 4.0
                 })
-            return $surface
         }
         if ($attempt -eq $MaximumApproaches) { break }
         $world = Get-ObjectProperty $state 'world'
