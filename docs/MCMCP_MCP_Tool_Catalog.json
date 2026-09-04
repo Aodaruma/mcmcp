@@ -2185,7 +2185,7 @@
           },
           "fishingSplashCondition": {
             "type": "object",
-            "description": "Wake on an actual client playback start for the exact Vanilla bobber splash at or after since_tick, inside the declared finite AABB and within two blocks of the local player's currently owned bobber. since_tick is a lower bound, not a five-second age cap; max_ticks is additionally limited to 900 so the 1200-tick fishing_session_ref remains usable.",
+            "description": "Wake on an accepted current ClientLevel position-sound event for the exact Vanilla bobber splash at or after since_tick, inside the declared finite AABB and within two blocks of the local player's currently owned bobber. This remains independent of audio-device playback. since_tick is a lower bound, not a five-second age cap; max_ticks is additionally limited to 900 so the 1200-tick fishing_session_ref remains usable.",
             "additionalProperties": false,
             "properties": {
               "type": {"const": "sound_clue"},

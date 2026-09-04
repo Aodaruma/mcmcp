@@ -27,7 +27,11 @@
 | 精錬 | 合格 | `20260905-3a57b18-smelt-r1` |
 | 醸造 | 合格 | `20260905-3a57b18-brew-r1` |
 | 丸石生成 | 合格 | `20260905-9ff0af0-cobble-r15`。8個を9試行で回収し、1 drop喪失をbounded retryで回復 |
-| 釣り | 継続 | castは成功。旧audio-source hookではheadless環境のsplash音を観測できず、level sound eventへ変更した。自然なsplashからloot取得までの再試験が残る |
+| 釣り | online合格・offline継続 | `20260905-0a74cb6-fishing-r11`。自然なsplashを536 ticksで検知し、reel後4 poll以内にloot 1個を受動回収。3 / 3 Action terminal、入力解放を確認。Save and Quit後の独立oracleとfresh baselineからの2回目が残る |
+
+Fishing r1〜r10では、旧audio-source hook、cast/wait/reelのbudget、source-waterのray witness、45秒の有限wait、reel直後のloot飛翔時間を順に分離した。r11はlevel sound event版で自然splashからloot取得まで初めてonline完走した。直前r10の「reel成功直後にはinventoryにも可視entityにもlootがない」というfalse negativeは、reel後最大2秒のbounded settleを入れて解消した。r11ではsettle 4 pollでinventoryへ直接入り、追加collectは不要だった。
+
+r11 artifactには`gate-events.jsonl`、`gate-result.json`、`external-oracle-manifest.json`があるが、worldを閉じた後の`offline-fishing-oracle.json`は取得していない。そのためrod damage、残留bobber / item、pool全cell不変をonline結果だけで最終合格へ昇格させない。runnerはcast後の失敗・timeout・cancelでも保持中のsingle-use `fishing_session_ref`を一度だけreel cleanupし、bobber消失を確認してから入力解放する。通常reelとcleanup reelはいずれもconfirmed effectのbobber `true -> false`とrod damage `+1`を要求する。Vanilla treasureの`minecraft:enchanted_book`も正当なlootとして扱う。
 
 ### fixture切替時の死亡事故と修正
 

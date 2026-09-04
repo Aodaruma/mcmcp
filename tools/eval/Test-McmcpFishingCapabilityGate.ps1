@@ -89,6 +89,18 @@ function New-MockFishingTerminal {
             }
             verification = 'confirmed'; client_tick = 101L; world_revision = 20L
         })
+    } elseif ($Op -ceq 'reel_known_fishing_session') {
+        $effects = @([pscustomobject]@{
+            seq = 1; node_id = 'reel_line'; kind = 'fishing_reel'
+            subject = 'minecraft:fishing_bobber'
+            observed_before = [pscustomobject]@{
+                bobber_present = $true; rod_damage = 0; inventory_count = 1
+            }
+            observed_after = [pscustomobject]@{
+                bobber_present = $false; rod_damage = 1; inventory_count = 1
+            }
+            verification = 'confirmed'; client_tick = 103L; world_revision = 20L
+        })
     }
     [pscustomobject]@{
         schema_version = 1
@@ -138,6 +150,8 @@ Assert-True ($reelRequest.program.body[0].op -ceq 'reel_known_fishing_session' -
     $reelRequest.program.body[0].fishing_session_ref -ceq ('f_' + ('a' * 22)) -and
     $reelRequest.budget.max_interactions -eq 2) `
     'reel builder changed the opaque session reference'
+Assert-True ($script:FishingLootItems -ccontains 'minecraft:enchanted_book') `
+    'Vanilla enchanted-book fishing treasure is missing from the gate allowlist'
 
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null
@@ -222,6 +236,89 @@ try {
         Assert-True (Test-Path -LiteralPath (Join-Path $artifactDirectory $name)) `
             "missing artifact $name"
     }
+
+    # A terminal wait failure after a successful cast must use the retained opaque session once
+    # to reel the owned bobber before releasing the runner. This exercises the shared finally path
+    # used by timeout, cancellation, transport failure, and assertion failure.
+    $script:GateEvents = [Collections.Generic.List[object]]::new()
+    $script:ActiveActionId = $null
+    $script:MockStage = 0
+    $script:MockPending = $null
+    $script:CleanupBobberPresent = $false
+    Add-GateEvent -Event 'fixed_five_surface_verified' -Detail ([ordered]@{
+            protocol_version = $script:ProtocolVersion; tools = @($script:AllowedTools)
+        })
+    $script:ToolTransport = {
+        param($Tool, $Arguments)
+        switch ($Tool) {
+            'agent_get_state' { New-MockFishingState -Stage $script:MockStage }
+            'agent_get_observation' {
+                $kind = [string]@($Arguments.kinds)[0]
+                $records = if ($kind -ceq 'visible_surface') {
+                    @(New-MockFishingSurface)
+                } elseif ($kind -ceq 'visible_entity' -and $script:CleanupBobberPresent) {
+                    @([pscustomobject]@{
+                        kind = 'visible_entity'; entity_type = 'minecraft:fishing_bobber'
+                        position = [pscustomobject]@{
+                            dimension = 'minecraft:overworld'; x = 199; y = 202; z = 200
+                        }
+                    })
+                } else { @() }
+                [pscustomobject]@{
+                    schema_version = 1
+                    frame_id = 'obs-' + ([long]$script:MockStage).ToString('x16')
+                    frame_completed_tick = 100L + $script:MockStage
+                    visible_entities_truncated = $false; records = $records
+                    next_cursor = $null; sampling_coverage = 1
+                }
+            }
+            'agent_start_action' {
+                $script:MockPending = [string]$Arguments.program.body[0].op
+                $number = $script:MockStage + 1
+                [pscustomobject]@{
+                    schema_version = 1
+                    action_id = '550e8400-e29b-41d4-a716-' + $number.ToString('000000000000')
+                    state = 'queued'
+                }
+            }
+            'agent_get_action' {
+                $terminal = New-MockFishingTerminal -Op $script:MockPending
+                if ($script:MockPending -ceq 'cast_known_fishing_rod') {
+                    $script:CleanupBobberPresent = $true
+                } elseif ($script:MockPending -ceq 'wait_until') {
+                    $terminal.state = 'failed'
+                    $terminal.failure = [pscustomobject]@{
+                        code = 'CONDITION_TIMEOUT'; recoverable = $true; evidence = @('condition_timeout')
+                    }
+                } elseif ($script:MockPending -ceq 'reel_known_fishing_session') {
+                    $script:CleanupBobberPresent = $false
+                }
+                $script:MockStage++
+                $script:MockPending = $null
+                $terminal
+            }
+            'agent_cancel_action' { throw 'terminal wait failure should not need active cancellation' }
+            default { throw "unexpected fishing cleanup mock tool: $Tool" }
+        }
+    }
+    $expectedFailure = $null
+    try {
+        [void](Invoke-McmcpFishingCapabilityGate)
+    } catch {
+        $expectedFailure = $_
+    }
+    Assert-True ($null -ne $expectedFailure -and
+        $expectedFailure.Exception.Message -match 'CONDITION_TIMEOUT') `
+        "wait failure was not preserved after fishing cleanup: $($expectedFailure.Exception.Message)"
+    Assert-True (-not $script:CleanupBobberPresent) `
+        'failure cleanup left the owned bobber present'
+    Assert-True (@($script:GateEvents | Where-Object {
+                $_.event -ceq 'fishing_cleanup_reel_started'
+            }).Count -eq 1 -and
+        @($script:GateEvents | Where-Object {
+                $_.event -ceq 'fishing_cleanup_reel_completed'
+            }).Count -eq 1) `
+        'failure cleanup did not submit exactly one bounded reel'
 } finally {
     if (Test-Path -LiteralPath $artifactDirectory) {
         Remove-Item -LiteralPath $artifactDirectory -Recurse -Force

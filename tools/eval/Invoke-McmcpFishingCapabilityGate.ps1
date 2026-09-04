@@ -26,6 +26,7 @@ $script:ActiveActionId = $null
 $script:ToolTransport = $null
 $script:DelayTransport = $null
 $script:Bearer = $null
+$script:FishingSessionRef = $null
 $script:FishingWaterTarget = [ordered]@{
     dimension = 'minecraft:overworld'; x = 199; y = 202; z = 200
 }
@@ -48,6 +49,7 @@ $script:FishingExpectedStand = [ordered]@{ x = 199.5; y = 203.0; z = 194.5 }
 $script:FishingLootItems = @(
     'minecraft:bamboo', 'minecraft:bone', 'minecraft:book', 'minecraft:bow',
     'minecraft:bowl', 'minecraft:cod', 'minecraft:fishing_rod',
+    'minecraft:enchanted_book',
     'minecraft:ink_sac', 'minecraft:leather', 'minecraft:leather_boots',
     'minecraft:lily_pad', 'minecraft:name_tag', 'minecraft:nautilus_shell',
     'minecraft:potion', 'minecraft:pufferfish', 'minecraft:rotten_flesh',
@@ -251,6 +253,30 @@ function Assert-FishingTerminalBudget {
     }
 }
 
+function Assert-FishingReelEffect {
+    param([Parameter(Mandatory)][object]$Terminal)
+    $matching = @((Get-ObjectProperty $Terminal 'effects') | Where-Object {
+            (Get-ObjectProperty $_ 'node_id') -ceq 'reel_line' -and
+            (Get-ObjectProperty $_ 'kind') -ceq 'fishing_reel' -and
+            (Get-ObjectProperty $_ 'subject') -ceq 'minecraft:fishing_bobber' -and
+            (Get-ObjectProperty $_ 'verification') -ceq 'confirmed'
+        })
+    if ($matching.Count -ne 1) {
+        throw 'reel terminal did not publish exactly one confirmed fishing effect'
+    }
+    $before = Get-ObjectProperty $matching[0] 'observed_before'
+    $after = Get-ObjectProperty $matching[0] 'observed_after'
+    $damageBefore = [int](Get-ObjectProperty $before 'rod_damage')
+    $damageAfter = [int](Get-ObjectProperty $after 'rod_damage')
+    if ((Get-ObjectProperty $before 'bobber_present') -isnot [bool] -or
+        -not [bool](Get-ObjectProperty $before 'bobber_present') -or
+        (Get-ObjectProperty $after 'bobber_present') -isnot [bool] -or
+        [bool](Get-ObjectProperty $after 'bobber_present') -or
+        $damageBefore -lt 0 -or $damageAfter -ne $damageBefore + 1) {
+        throw 'reel effect did not prove bobber removal and one rod durability use'
+    }
+}
+
 function Get-FishingSessionProof {
     param([Parameter(Mandatory)][object]$Terminal)
     Assert-FishingTerminalBudget -Terminal $Terminal -Phase 'cast' `
@@ -303,6 +329,97 @@ function Assert-NoVisibleFishingEntities {
     }
 }
 
+function Test-NoVisibleFishingBobber {
+    param([Parameter(Mandatory)][object]$State)
+    $records = @(Get-RecordsFromState -State $State -Kinds @('visible_entity') `
+        -Filter ([ordered]@{
+            entity_types = @('minecraft:fishing_bobber')
+            position_bounds = $script:FishingWorkspaceBounds
+        }))
+    return $records.Count -eq 0
+}
+
+function Test-FishingReelAccepted {
+    return @($script:GateEvents | Where-Object {
+            (Get-ObjectProperty $_ 'event') -ceq 'action_accepted' -and
+            @((Get-ObjectProperty $_ 'body')).Count -eq 1 -and
+            (Get-ObjectProperty @((Get-ObjectProperty $_ 'body'))[0] 'op') -ceq
+                'reel_known_fishing_session'
+        }).Count -gt 0
+}
+
+function Invoke-FishingSessionCleanup {
+    if ([string]::IsNullOrWhiteSpace([string]$script:FishingSessionRef)) { return }
+
+    if (Test-FishingReelAccepted) {
+        $state = Get-FreshState
+        if (Test-NoVisibleFishingBobber -State $state) {
+            Add-GateEvent -Event 'fishing_cleanup_already_absent' -Detail ([ordered]@{
+                    reel_accepted = $true
+                })
+            $script:FishingSessionRef = $null
+            return
+        }
+        throw 'fishing cleanup could not prove bobber removal after the one allowed reel; MCMCP must remain OFF'
+    }
+
+    # No reel Action was accepted, so the cast capability remains the only authority. Consume it
+    # exactly once even when the bobber is temporarily outside the observer's visible projection.
+    Add-GateEvent -Event 'fishing_cleanup_reel_started' -Detail ([ordered]@{})
+    $terminal = Invoke-ActionRequest `
+        -Request (New-FishingReelRequest -SessionRef $script:FishingSessionRef) `
+        -WallTimeoutSeconds 15
+    Assert-FishingTerminalBudget -Terminal $terminal -Phase 'cleanup reel' `
+        -ExpectedInteractions 1 -MaximumCamera 0
+    Assert-FishingReelEffect -Terminal $terminal
+    $state = Get-FreshState
+    if (-not (Test-NoVisibleFishingBobber -State $state)) {
+        throw 'fishing cleanup reel completed without removing the owned bobber; MCMCP must remain OFF'
+    }
+    Add-GateEvent -Event 'fishing_cleanup_reel_completed' -Detail ([ordered]@{})
+    $script:FishingSessionRef = $null
+}
+
+function Stop-FishingActiveAction {
+    $cancelRequested = $false
+    if ([string]::IsNullOrWhiteSpace([string]$script:ActiveActionId)) {
+        return $cancelRequested
+    }
+
+    $actionId = [string]$script:ActiveActionId
+    $snapshot = Invoke-GateTool -Tool 'agent_get_action' -Arguments ([ordered]@{
+            action_id = $actionId; wait_timeout_ms = 0
+        })
+    if ((Get-ObjectProperty $snapshot 'state') -cnotin $script:TerminalStates) {
+        $cancel = Invoke-GateTool -Tool 'agent_cancel_action' -Arguments ([ordered]@{
+                action_id = $actionId
+            })
+        if ((Get-ObjectProperty $cancel 'action_id') -cne $actionId) {
+            throw 'fishing cleanup cancel returned a mismatched action_id'
+        }
+        $cancelRequested = [bool](Get-ObjectProperty $cancel 'cancel_requested')
+        Add-GateEvent -Event 'cleanup_cancel_requested' -Detail ([ordered]@{
+                action_id = $actionId; cancel_requested = $cancelRequested
+            })
+        $snapshot = Wait-McmcpActionTerminal -ActionId $actionId -WallTimeoutSeconds 60
+    }
+    if ((Get-ObjectProperty $snapshot 'state') -cnotin $script:TerminalStates) {
+        throw 'fishing cleanup did not reach a terminal Action state'
+    }
+    Add-ActionTerminalEvent -ActionId $actionId -Terminal $snapshot `
+        -Source 'cleanup_recovery'
+    $script:ActiveActionId = $null
+    return $cancelRequested
+}
+
+function Invoke-FishingGateCleanup {
+    $cancelRequested = Stop-FishingActiveAction
+    Invoke-FishingSessionCleanup
+    $release = Invoke-GateCleanup
+    $release.cancel_requested = [bool]$release.cancel_requested -or $cancelRequested
+    return $release
+}
+
 function New-FishingOfflineOracleManifest {
     param([Parameter(Mandatory)][double]$ExpectedHealth)
     [ordered]@{
@@ -348,6 +465,7 @@ function Invoke-FishingGateCore {
     $castTerminal = Invoke-ActionRequest -Request (New-FishingCastRequest -Surface $surface) `
         -WallTimeoutSeconds 30
     $session = Get-FishingSessionProof -Terminal $castTerminal
+    $script:FishingSessionRef = [string]$session.fishing_session_ref
     Add-GateEvent -Event 'fishing_session_issued' -Detail ([ordered]@{
             client_tick = $session.client_tick; world_revision = $session.world_revision
         })
@@ -365,8 +483,12 @@ function Invoke-FishingGateCore {
     $reelTerminal = Invoke-ActionRequest `
         -Request (New-FishingReelRequest -SessionRef $session.fishing_session_ref) `
         -WallTimeoutSeconds 15
+    # A succeeded reel has already authoritatively removed the owned bobber. Do not retain a
+    # consumed ref if a later gate-only ledger assertion fails.
+    $script:FishingSessionRef = $null
     Assert-FishingTerminalBudget -Terminal $reelTerminal -Phase 'reel' `
         -ExpectedInteractions 1 -MaximumCamera 0
+    Assert-FishingReelEffect -Terminal $reelTerminal
 
     # Vanilla launches the caught item from the bobber toward the player. The reel Action can be
     # terminal before that entity crosses the pickup radius, so give passive delivery a short,
@@ -455,12 +577,13 @@ function Write-FishingArtifacts {
 
 function Invoke-McmcpFishingCapabilityGate {
     $script:ActiveActionId = $null
+    $script:FishingSessionRef = $null
     $primaryFailure = $null
     $cleanupFailure = $null
     $gateResult = $null
     $release = $null
     try { $gateResult = Invoke-FishingGateCore } catch { $primaryFailure = $_ }
-    finally { try { $release = Invoke-GateCleanup } catch { $cleanupFailure = $_ } }
+    finally { try { $release = Invoke-FishingGateCleanup } catch { $cleanupFailure = $_ } }
     $reportedFailure = if ($null -ne $primaryFailure) { $primaryFailure } else { $cleanupFailure }
     Write-FishingArtifacts -GateResult $gateResult -InputRelease $release -Failure $reportedFailure
     if ($null -ne $primaryFailure) { throw $primaryFailure }

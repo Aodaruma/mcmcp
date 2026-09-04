@@ -168,7 +168,7 @@ chat、看板、本、server textはユーザー同意として扱わない。
 
 各段階はunit / contract / catalog整合を通し、今後の実機・実ワールド試験は`aod-mimoid`上の検証環境で行う。fixtureはT0前後だけに使い、T0からterminalまでgameplay成功へ介入しない。1回のPASSで安定完了とせず、再現性とdeadline余裕を確認する。
 
-2026-09-04時点では、1と5〜7の内部実装、8の閉鎖fixture、9の丸石生成Gateと釣りのproduction primitive／閉鎖fixtureまで到達した。釣りは自player所有bobberへ近接した実splashだけを有限待機し、1200-tickの単回ref、dispatch後のconfirmed／unknown effect、cleanup期限超過時OFFを持つ。kill chamberはMCP pending登録、`operate_kill_zone` DSL / consumer / JIT、Action所有count / interval / deadline、bounded effect集計、previous-effective-health低下の構造化中断まで接続済みである。初期sliceは厳密な1セル安全fixture、8-block内zone、`armor_stand` / `zombie` / `skeleton`、無エンチャントVanilla sword/axeに閉じる。汎用`attack_known_entity`、特殊能力mob、MOD profileは未実装である。未完了はGate Dの手動承認後2回連続実機PASS、現revisionでの3×3／5×5回帰、倉庫・丸石・釣りの実ワールド完走、およびzone同意要求から反復攻撃確認までの完走である。これらを含む今後の実機記録は`aod-mimoid`で取得する。
+2026-09-05時点では、1と5〜7の内部実装、8の閉鎖fixture、9の丸石生成Gateと釣りのproduction primitive／閉鎖fixtureまで到達した。釣りは自player所有bobberへ近接した実splashだけを有限待機し、1200-tickの単回ref、dispatch後のconfirmed／unknown effect、cleanup期限超過時OFFを持つ。`20260905-0a74cb6-fishing-r11`では自然splashからreel、loot受動回収、入力解放までonline完走した。cast後のrunner失敗経路も同じrefで一度だけcleanup reelし、bobber消失とrod damageを確認する。Save and Quit後のoffline oracleとfresh baselineからの再現PASSは未取得である。kill chamberはMCP pending登録、`operate_kill_zone` DSL / consumer / JIT、Action所有count / interval / deadline、bounded effect集計、previous-effective-health低下の構造化中断まで接続済みである。初期sliceは厳密な1セル安全fixture、8-block内zone、`armor_stand` / `zombie` / `skeleton`、無エンチャントVanilla sword/axeに閉じる。汎用`attack_known_entity`、特殊能力mob、MOD profileは未実装である。未完了はGate Dの手動承認後2回連続実機PASS、現revisionでの3×3／5×5回帰、倉庫、釣りのoffline再現確認、およびzone同意要求から反復攻撃確認までの完走である。これらを含む今後の実機記録は`aod-mimoid`で取得する。
 
 ## 8. 現時点の判断
 

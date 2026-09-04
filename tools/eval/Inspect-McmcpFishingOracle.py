@@ -58,6 +58,7 @@ FISHING_LOOT_IDS = frozenset(
         "minecraft:bow",
         "minecraft:bowl",
         "minecraft:cod",
+        "minecraft:enchanted_book",
         "minecraft:fishing_rod",
         "minecraft:ink_sac",
         "minecraft:leather",

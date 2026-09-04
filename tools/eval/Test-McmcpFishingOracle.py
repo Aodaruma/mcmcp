@@ -56,6 +56,11 @@ assert summary["primary_rod_damage"] == 1
 assert summary["primary_rod_enchanted"] is False
 assert summary["loot_item_count"] == 1
 assert summary["unexpected_inventory"] == []
+enchanted_book = oracle.inventory_summary(
+    [primary, {"Slot": 1, "id": "minecraft:enchanted_book", "count": 1}]
+)
+assert enchanted_book["loot_item_count"] == 1
+assert enchanted_book["unexpected_inventory"] == []
 
 rod_loot = oracle.inventory_summary(
     [
