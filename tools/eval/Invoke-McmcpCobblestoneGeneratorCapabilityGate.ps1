@@ -101,10 +101,10 @@ function Assert-CobblePlayerState {
 function Get-OnlyGeneratedCobblestoneSurface {
     param([Parameter(Mandatory)][object]$State, [switch]$AllowMissing)
 
-    # The player stands immediately north for deterministic Vanilla pickup, so bind the exact
-    # player-facing surface instead of accepting an omnidirectional top-face record.
+    # face_known_position aims at the block center from the elevated north-side eye position,
+    # which deterministically intersects the top face before the north face.
     $records = @(Get-VisibleSurfaceRecords -State $State -Block 'minecraft:cobblestone' `
-        -Bounds $script:CobbleTargetBounds -Faces @('north') -AllowMissing:$AllowMissing)
+        -Bounds $script:CobbleTargetBounds -Faces @('up') -AllowMissing:$AllowMissing)
     if ($records.Count -eq 0 -and $AllowMissing) { return $null }
     $unique = [ordered]@{}
     foreach ($record in $records) {

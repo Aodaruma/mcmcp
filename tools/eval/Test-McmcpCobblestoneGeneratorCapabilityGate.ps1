@@ -28,7 +28,7 @@ function New-MockCobblestoneSurface {
         position = [pscustomobject]@{
             dimension = 'minecraft:overworld'; x = 199; y = 201; z = 200
         }
-        face = 'north'
+        face = 'up'
         block = 'minecraft:cobblestone'
         state = [pscustomobject]@{
             block = 'minecraft:cobblestone'; properties = [pscustomobject]@{}
@@ -420,7 +420,7 @@ Assert-True ($emptyRecords.Count -eq 0) `
     'a Windows PowerShell null materialization was not treated as an empty page'
 $emptySurfaces = @(Get-VisibleSurfaceRecords -State (New-MockCobblestoneState `
             -CobblestoneCount 0) -Block 'minecraft:cobblestone' `
-        -Bounds $script:CobbleTargetBounds -Faces @('north') -AllowMissing)
+        -Bounds $script:CobbleTargetBounds -Faces @('up') -AllowMissing)
 Assert-True ($emptySurfaces.Count -eq 0) `
     'an allowed missing surface emitted a null pipeline element'
 $script:ToolTransport = $null
