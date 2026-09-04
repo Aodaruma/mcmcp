@@ -28,6 +28,10 @@ class AutomationUiSnapshotTest {
         assertThat(AutomationUiSnapshot.resolve(
                 true, control.snapshot(session), true, null).state())
                 .isEqualTo(AutomationUiSnapshot.State.EVALUATING);
+        var pending = AutomationUiSnapshot.resolve(
+                true, control.snapshot(session), true, true, "minecraft:zombie", null);
+        assertThat(pending.state()).isEqualTo(AutomationUiSnapshot.State.CONSENT_PENDING);
+        assertThat(pending.detail()).isEqualTo("minecraft:zombie");
 
         assertThat(control.beginAction(session)).isTrue();
         assertThat(AutomationUiSnapshot.resolve(

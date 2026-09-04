@@ -26,7 +26,7 @@ Action本文は通常のJSONなので、LLMは`agent_get_action.source.canonical
 
 汎用破壊の最初の閉じたprimitiveは`break_known_block`です。`target`、`face`、完全な`expected_state`をcurrentな`visible_surface`からそのままコピーし、`tool_item`、`expected_drop`、`minimum_inventory_count`を宣言します。現時点の許可組合せは、oak/birch log＋対応するlog drop＋Vanilla axe、またはcobblestone＋`minecraft:iron_pickaxe`＋cobblestoneだけです。成功にはserver ACK、authoritative air、同期待dropのserver-synchronized inventory増加と絶対目標到達が必要です。`repeat`内には置けず、次の破壊は再観測して新しいActionにします。
 
-近傍の敵対mob判定は助言ではなくruntimeの安全条件であり、現状では該当するとActionが失敗・再計画へ進み、Agent入力が解放されます。mob trap向けには、敵対mobの「存在」だけをローカルユーザー発行のscoped `consent_ref`で限定解除し、被弾、接触、projectile、health低下等は解除しない設計です。この同意経路が実装されるまでは従来どおりfail closedです。
+近傍の敵対mob判定は助言ではなくruntimeの安全条件であり、現状では該当するとActionが失敗・再計画へ進み、Agent入力が解放されます。mob trap向けには、敵対mobの「存在」だけをローカルユーザー発行のscoped `consent_ref`で限定解除し、被弾、接触、projectile、health低下等は解除しない設計です。`agent_get_state.entity_attack_consent`には`none | pending | granted`の状態が常に現れ、pending登録と同時に非pauseの専用確認画面を開き、緑の専用表示と入力隔離を維持します。許可はその画面のGrantボタンへの物理左クリックだけで、keyboard activation、MCP、chat、Action引数、packetからは発行できません。Cancel、Esc、画面close/replace、OFF、world/session変更、endpoint fault、shutdownで必ず破棄されます。この保証範囲はMCP / Action / chat / packetからgrant経路へ到達不能であることまでで、同時ロードされた別MODやOS-level input injectionに対する物理入力の真正性までは証明しません。攻撃consumerは未実装のため、現段階では`granted`も攻撃能力を与えず、従来どおりfail closedです。
 
 ## 観測を絞る
 

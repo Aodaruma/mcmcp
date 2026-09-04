@@ -49,6 +49,7 @@ import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.agent.safety.MinecraftRecoveryGovernor;
 import dev.aod.mcmcp.McmcpMod;
 import dev.aod.mcmcp.client.AgentInputState;
+import dev.aod.mcmcp.client.AutomationIndicatorController;
 import dev.aod.mcmcp.client.McmcpClientConfig;
 import dev.aod.mcmcp.client.MultiplayerAllowlist;
 import dev.aod.mcmcp.construction.SafeConstructionBlocks;
@@ -68,6 +69,8 @@ import dev.aod.mcmcp.observation.WorldMemory;
 import dev.aod.mcmcp.safety.EvaluationTurnGuard;
 import dev.aod.mcmcp.safety.InputReleaseController;
 import dev.aod.mcmcp.safety.LocalArmingState;
+import dev.aod.mcmcp.safety.ScopedEntityAttackConsentStore;
+import dev.aod.mcmcp.safety.ScopedEntityAttackConsentUiBridge;
 import dev.aod.mcmcp.routine.ActionBounds;
 import dev.aod.mcmcp.routine.ApplyBlockPlanOperation;
 import dev.aod.mcmcp.routine.ApplyBlockPlanRequest;
@@ -224,6 +227,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
     private final KnownMenuOperationRefs knownMenuOperationRefs = new KnownMenuOperationRefs();
     private final FishingSessionRefs fishingSessionRefs = new FishingSessionRefs();
+    private final ScopedEntityAttackConsentStore entityAttackConsent =
+            new ScopedEntityAttackConsentStore();
     private final LocalArmingState arming = new LocalArmingState();
     private final InputReleaseController inputRelease = new InputReleaseController();
     private final EvaluationTurnGuard evaluationTurns = new EvaluationTurnGuard();
@@ -268,6 +273,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private long knownTraversabilityRevision;
     private boolean soundPlaybackTruncated;
     private long pauseStartedAtNanos;
+    private AutomationIndicatorController entityAttackConsentUi;
 
     private UUID voiceRoutineId;
 
@@ -612,6 +618,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     public void emergencyStopFromLocalKey(Minecraft minecraft) {
         assertClientThread(minecraft);
+        entityAttackConsent.clear();
         if (anyActive()) {
             terminateActiveEvaluationOnClient(
                     minecraft, EvaluationTurnControl.ReleaseReason.LOCAL_ESCAPE);
@@ -628,16 +635,134 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     public AutomationUiSnapshot automationUiSnapshot() {
         var session = sessions.snapshot();
         var lock = arming.snapshot(session.worldSessionId());
+        var consent = entityAttackConsentSnapshot(session, lock);
         return AutomationUiSnapshot.resolve(
                 localControlAvailable(Minecraft.getInstance(), session),
                 lock,
                 evaluationTurns.snapshot(session.worldSessionId()).active(),
+                consent.state() == ScopedEntityAttackConsentStore.State.PENDING,
+                consent.scope() == null ? null : consent.scope().entityType(),
                 endpointFaultCode);
+    }
+
+    /** Bootstrap-only local presentation binding; the runtime never exposes the grant sink. */
+    public void installEntityAttackConsentUi(AutomationIndicatorController controller) {
+        Objects.requireNonNull(controller, "controller");
+        if (entityAttackConsentUi != null && entityAttackConsentUi != controller) {
+            throw new IllegalStateException("entity attack consent UI is already installed");
+        }
+        entityAttackConsentUi = controller;
+    }
+
+    /** Future internal admission hook; not mapped to an MCP Tool or public command. */
+    ScopedEntityAttackConsentStore.RequestResult requestEntityAttackConsentForCanonicalAction(
+            String actionBindingHash,
+            ScopedEntityAttackConsentStore.Scope scope) {
+        Objects.requireNonNull(scope, "scope");
+        var minecraft = Minecraft.getInstance();
+        assertClientThread(minecraft);
+        var session = sessions.snapshot();
+        var lock = arming.snapshot(session.worldSessionId());
+        if (shutdown
+                || endpointFaultCode != null
+                || !localControlAvailable(minecraft, session)
+                || lock.mode() != LocalArmingState.Mode.READY
+                || !Objects.equals(session.dimension(), scope.dimension())
+                || automationActivityPending()
+                || minecraft.gui.screen() != null
+                || entityAttackConsentUi == null) {
+            throw new IllegalStateException("entity attack consent admission is not ready");
+        }
+        var sessionId = Objects.requireNonNull(session.worldSessionId(), "worldSessionId");
+        var result = entityAttackConsent.request(
+                sessionId,
+                actionBindingHash,
+                scope,
+                session.clientTick());
+        if (result == ScopedEntityAttackConsentStore.RequestResult.REGISTERED) {
+            try {
+                entityAttackConsentUi.openEntityAttackConsentPrompt(
+                        scope,
+                        new EntityAttackConsentPromptSink(sessionId, actionBindingHash, scope));
+            } catch (RuntimeException | LinkageError failure) {
+                entityAttackConsent.clear();
+                throw failure;
+            }
+        }
+        return result;
+    }
+
+    private final class EntityAttackConsentPromptSink
+            implements AutomationIndicatorController.EntityAttackConsentPromptSink {
+        private final UUID sessionId;
+        private final String actionBindingHash;
+        private final ScopedEntityAttackConsentStore.Scope scope;
+        private boolean terminal;
+
+        private EntityAttackConsentPromptSink(
+                UUID sessionId,
+                String actionBindingHash,
+                ScopedEntityAttackConsentStore.Scope scope) {
+            this.sessionId = Objects.requireNonNull(sessionId, "sessionId");
+            this.actionBindingHash = Objects.requireNonNull(actionBindingHash, "actionBindingHash");
+            this.scope = Objects.requireNonNull(scope, "scope");
+        }
+
+        @Override
+        public boolean grantFromPhysicalPrimaryClick() {
+            var minecraft = Minecraft.getInstance();
+            assertClientThread(minecraft);
+            if (terminal || !pending()) {
+                terminal = true;
+                entityAttackConsent.clear();
+                return false;
+            }
+            var session = sessions.snapshot();
+            boolean granted = ScopedEntityAttackConsentUiBridge
+                    .grantFromPhysicalPromptClick(
+                            entityAttackConsent, sessionId, session.clientTick());
+            terminal = true;
+            if (!granted) {
+                entityAttackConsent.clear();
+                return false;
+            }
+            overlay(minecraft, "MCMCP: 指定対象への1回の攻撃を許可しました");
+            return true;
+        }
+
+        @Override
+        public void cancel() {
+            var minecraft = Minecraft.getInstance();
+            assertClientThread(minecraft);
+            if (terminal) {
+                return;
+            }
+            terminal = true;
+            entityAttackConsent.clear();
+            emergencyStopFromLocalKey(minecraft);
+        }
+
+        @Override
+        public boolean pending() {
+            var minecraft = Minecraft.getInstance();
+            assertClientThread(minecraft);
+            if (terminal) {
+                return false;
+            }
+            var session = sessions.snapshot();
+            var control = arming.snapshot(session.worldSessionId());
+            var snapshot = entityAttackConsentSnapshot(session, control);
+            return snapshot.state() == ScopedEntityAttackConsentStore.State.PENDING
+                    && sessionId.equals(session.worldSessionId())
+                    && actionBindingHash.equals(snapshot.actionBindingHash())
+                    && scope.equals(snapshot.scope());
+        }
     }
 
     /** May be called by the endpoint lifecycle worker; client-thread cleanup uses the priority lane. */
     public void reportEndpointFault(String code) {
         endpointFaultCode = sanitizeLocalCode(code);
+        entityAttackConsent.clear();
         inbox.requestEmergencyStop("endpoint_fault");
         evaluationTurns.snapshot(publishedSession.worldSessionId()).activeLease()
                 .ifPresent(lease -> requestEvaluationReleaseFromAnyThread(
@@ -651,6 +776,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     /** Uses the same priority lane as Esc so a UI stop releases every owned input inline. */
     public void disableAutomationFromUi(Minecraft minecraft) {
         assertClientThread(minecraft);
+        entityAttackConsent.clear();
         if (anyActive()) {
             terminateActiveEvaluationOnClient(
                     minecraft, EvaluationTurnControl.ReleaseReason.LOCAL_UI_DISABLED);
@@ -782,6 +908,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void clearAgentSessionState() {
+        entityAttackConsent.clear();
         recoveryDescent.reset();
         agentObservationFrames.clear();
         deliveredAgentEvidence.clear();
@@ -840,6 +967,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.CLIENT_SHUTDOWN);
         shutdown = true;
+        entityAttackConsent.clear();
         clearAgentSessionState();
         sessions.stopping();
         inbox.shutdown(minecraft, sessions.snapshot());
@@ -2558,6 +2686,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         minecraft.isMultiplayerServer() && multiplayerPolicyAllows(minecraft),
                         McmcpClientConfig.visualRadiusBlocks(),
                         McmcpClientConfig.raysPerTick()));
+        result.put(
+                "entity_attack_consent",
+                entityAttackConsentPayload(entityAttackConsentSnapshot(session, lock)));
         if (!arguments.isEmpty()) {
             requireReady(session);
             result.put("recipe_query", getRecipes(minecraft, session, arguments));
@@ -2765,11 +2896,56 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         result.put("world", world);
         result.put("inventory", List.copyOf(inventory));
         result.put("standard_potions", List.copyOf(standardPotions));
+        result.put(
+                "entity_attack_consent",
+                entityAttackConsentPayload(ScopedEntityAttackConsentStore.Snapshot.none()));
         result.put("recipe_query", null);
         result.put("policy", policy);
         result.put("observation", null);
         result.put("action", null);
         return result;
+    }
+
+    static Map<String, Object> entityAttackConsentPayload(
+            ScopedEntityAttackConsentStore.Snapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        var result = new LinkedHashMap<String, Object>();
+        result.put("state", snapshot.state().name().toLowerCase(Locale.ROOT));
+        result.put("action_binding_hash", snapshot.actionBindingHash());
+        if (snapshot.scope() == null) {
+            result.put("scope", null);
+        } else {
+            var scope = snapshot.scope();
+            var bounds = scope.bounds();
+            result.put("scope", Map.of(
+                    "dimension", scope.dimension(),
+                    "bounds", Map.of(
+                            "min_x", bounds.minX(),
+                            "min_y", bounds.minY(),
+                            "min_z", bounds.minZ(),
+                            "max_x", bounds.maxX(),
+                            "max_y", bounds.maxY(),
+                            "max_z", bounds.maxZ()),
+                    "entity_ref", scope.entityRef(),
+                    "entity_type", scope.entityType()));
+        }
+        boolean granted = snapshot.state() == ScopedEntityAttackConsentStore.State.GRANTED;
+        result.put("consent_ref", granted ? snapshot.consentRef() : null);
+        result.put("valid_before_tick", granted ? snapshot.validBeforeClientTick() : null);
+        return result;
+    }
+
+    private ScopedEntityAttackConsentStore.Snapshot entityAttackConsentSnapshot(
+            WorldSessionTracker.Snapshot session,
+            LocalArmingState.Snapshot control) {
+        if (shutdown
+                || endpointFaultCode != null
+                || !session.worldReady()
+                || control.mode() == LocalArmingState.Mode.OFF) {
+            entityAttackConsent.clear();
+            return ScopedEntityAttackConsentStore.Snapshot.none();
+        }
+        return entityAttackConsent.snapshot(session.worldSessionId(), session.clientTick());
     }
 
     private record StandardPotionKey(String item, String potion)
@@ -8791,6 +8967,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private boolean closeAgentControl(Minecraft minecraft, String lockReason) {
         pendingAgentReturnReady = false;
+        entityAttackConsent.clear();
         boolean inputsReleased = releaseAgentControl(minecraft);
         arming.lock(lockReason);
         return inputsReleased;
@@ -9432,6 +9609,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void requestSafetyStop(String reason) {
+        entityAttackConsent.clear();
         inbox.requestEmergencyStop(reason);
     }
 
@@ -9439,6 +9617,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         Objects.requireNonNull(reason, "reason");
         var minecraft = Minecraft.getInstance();
         assertClientThread(minecraft);
+        entityAttackConsent.clear();
         runPriorityEventStopIfRequired(
                 automationActivityPending(),
                 () -> inbox.requestEmergencyStop(reason),

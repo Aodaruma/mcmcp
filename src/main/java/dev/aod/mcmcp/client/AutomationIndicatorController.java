@@ -3,11 +3,13 @@ package dev.aod.mcmcp.client;
 import dev.aod.mcmcp.McmcpMod;
 import dev.aod.mcmcp.runtime.AutomationUiSnapshot;
 import dev.aod.mcmcp.runtime.McmcpRuntime;
+import dev.aod.mcmcp.safety.ScopedEntityAttackConsentStore;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.ChatScreen;
+import net.minecraft.client.gui.screens.ConfirmScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.InputWithModifiers;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -35,11 +37,13 @@ public final class AutomationIndicatorController {
     private static final int BACKGROUND = 0xD0101010;
     private static final int EXECUTION_BORDER_COLOR = 0xFFFFFF00;
     private static final int EVALUATION_BORDER_COLOR = 0xFF42D9F5;
+    private static final int CONSENT_BORDER_COLOR = 0xFF55E88A;
     private static final int EXECUTION_BORDER_WIDTH = 2;
 
     private static final int OFF_COLOR = 0xFFB8B8B8;
     private static final int READY_COLOR = 0xFFFFA928;
     private static final int EVALUATING_COLOR = 0xFF42D9F5;
+    private static final int CONSENT_PENDING_COLOR = 0xFF55E88A;
     private static final int AGENT_COLOR = 0xFF45A7FF;
     private static final int RECOVERING_COLOR = 0xFFC17AFF;
     private static final int FAULT_COLOR = 0xFFFF5555;
@@ -52,6 +56,7 @@ public final class AutomationIndicatorController {
 
     public AutomationIndicatorController(McmcpRuntime runtime) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
+        runtime.installEntityAttackConsentUi(this);
     }
 
     public void onRegisterGuiLayers(RegisterGuiLayersEvent event) {
@@ -92,6 +97,44 @@ public final class AutomationIndicatorController {
                 new MouseButtonEvent(mouseX, mouseY, buttonInfo), false);
     }
 
+    /** Dispatches only a physical primary click into the dedicated consent prompt. */
+    public boolean dispatchConsentPromptPrimaryClick(
+            Minecraft minecraft, MouseButtonInfo buttonInfo) {
+        Objects.requireNonNull(minecraft, "minecraft");
+        Objects.requireNonNull(buttonInfo, "buttonInfo");
+        if (buttonInfo.button() != 0
+                || !(minecraft.gui.screen() instanceof EntityAttackConsentScreen prompt)) {
+            return false;
+        }
+        return prompt.dispatchPhysicalPrimaryClick(
+                minecraft.mouseHandler.getScaledXPos(minecraft.getWindow()),
+                minecraft.mouseHandler.getScaledYPos(minecraft.getWindow()));
+    }
+
+    /** Physical Esc path while the dedicated consent screen owns input. */
+    public boolean cancelConsentPromptFromPhysicalEscape(Minecraft minecraft) {
+        Objects.requireNonNull(minecraft, "minecraft");
+        if (!(minecraft.gui.screen() instanceof EntityAttackConsentScreen prompt)) {
+            return false;
+        }
+        prompt.cancelAndClose();
+        return true;
+    }
+
+    /** Runtime-only presentation hook; the sink itself remains held by this controller. */
+    public void openEntityAttackConsentPrompt(
+            ScopedEntityAttackConsentStore.Scope scope,
+            EntityAttackConsentPromptSink sink) {
+        Objects.requireNonNull(scope, "scope");
+        Objects.requireNonNull(sink, "sink");
+        var minecraft = Minecraft.getInstance();
+        if (!minecraft.isSameThread() || minecraft.gui.screen() != null) {
+            sink.cancel();
+            throw new IllegalStateException("entity attack consent screen is not available");
+        }
+        minecraft.setScreenAndShow(new EntityAttackConsentScreen(scope.entityType(), sink));
+    }
+
     private void renderHud(GuiGraphicsExtractor graphics, net.minecraft.client.DeltaTracker delta) {
         var minecraft = Minecraft.getInstance();
         var snapshot = runtime.automationUiSnapshot();
@@ -103,6 +146,8 @@ public final class AutomationIndicatorController {
 
         if (executionBorderVisible(snapshot.state())) {
             drawExecutionBorder(graphics);
+        } else if (consentBorderVisible(snapshot.state())) {
+            drawConsentBorder(graphics);
         } else if (evaluationBorderVisible(snapshot.state())) {
             drawEvaluationBorder(graphics);
         }
@@ -156,6 +201,7 @@ public final class AutomationIndicatorController {
         return switch (state) {
             case OFF -> canEnable ? PressAction.ENABLE : PressAction.NONE;
             case READY, EVALUATING, AGENT, RECOVERING -> PressAction.DISABLE;
+            case CONSENT_PENDING -> PressAction.NONE;
             case FAULT -> PressAction.NONE;
         };
     }
@@ -188,6 +234,8 @@ public final class AutomationIndicatorController {
                     : Component.translatable("gui.mcmcp.automation.off_unavailable");
             case READY -> Component.translatable("gui.mcmcp.automation.ready");
             case EVALUATING -> Component.translatable("gui.mcmcp.automation.evaluating");
+            case CONSENT_PENDING ->
+                    Component.translatable("gui.mcmcp.automation.consent_pending");
             case AGENT -> Component.translatable("gui.mcmcp.automation.agent");
             case RECOVERING -> Component.translatable("gui.mcmcp.automation.recovering");
             case FAULT -> Component.translatable("gui.mcmcp.automation.fault");
@@ -203,6 +251,9 @@ public final class AutomationIndicatorController {
                     Component.translatable("gui.mcmcp.automation.tooltip.disable");
             case EVALUATING ->
                     Component.translatable("gui.mcmcp.automation.tooltip.evaluating");
+            case CONSENT_PENDING -> Component.translatable(
+                    "gui.mcmcp.automation.tooltip.consent_pending",
+                    snapshot.detail() == null ? "entity" : snapshot.detail());
             case FAULT -> Component.translatable(
                     "gui.mcmcp.automation.tooltip.fault",
                     snapshot.detail() == null ? "internal_error" : snapshot.detail());
@@ -218,12 +269,20 @@ public final class AutomationIndicatorController {
         return state == AutomationUiSnapshot.State.EVALUATING;
     }
 
+    static boolean consentBorderVisible(AutomationUiSnapshot.State state) {
+        return state == AutomationUiSnapshot.State.CONSENT_PENDING;
+    }
+
     private static void drawExecutionBorder(GuiGraphicsExtractor graphics) {
         drawBorder(graphics, EXECUTION_BORDER_COLOR);
     }
 
     private static void drawEvaluationBorder(GuiGraphicsExtractor graphics) {
         drawBorder(graphics, EVALUATION_BORDER_COLOR);
+    }
+
+    private static void drawConsentBorder(GuiGraphicsExtractor graphics) {
+        drawBorder(graphics, CONSENT_BORDER_COLOR);
     }
 
     private static void drawBorder(GuiGraphicsExtractor graphics, int color) {
@@ -279,6 +338,11 @@ public final class AutomationIndicatorController {
                 graphics.fill(x + 6, y + 12, x + 8, y + 14, color);
                 graphics.fill(x + 9, y + 12, x + 11, y + 14, color);
             }
+            case CONSENT_PENDING -> {
+                graphics.outline(x + 2, y + 2, 12, 12, color);
+                graphics.fill(x + 7, y + 4, x + 9, y + 10, color);
+                graphics.fill(x + 7, y + 12, x + 9, y + 14, color);
+            }
             case AGENT -> {
                 graphics.fill(x + 3, y + 7, x + 11, y + 10, color);
                 graphics.fill(x + 9, y + 4, x + 12, y + 13, color);
@@ -312,6 +376,7 @@ public final class AutomationIndicatorController {
             case OFF -> OFF_COLOR;
             case READY -> READY_COLOR;
             case EVALUATING -> EVALUATING_COLOR;
+            case CONSENT_PENDING -> CONSENT_PENDING_COLOR;
             case AGENT -> AGENT_COLOR;
             case RECOVERING -> RECOVERING_COLOR;
             case FAULT -> FAULT_COLOR;
@@ -327,6 +392,7 @@ public final class AutomationIndicatorController {
                 font.width(Component.translatable("gui.mcmcp.automation.off_unavailable")),
                 font.width(Component.translatable("gui.mcmcp.automation.ready")),
                 font.width(Component.translatable("gui.mcmcp.automation.evaluating")),
+                font.width(Component.translatable("gui.mcmcp.automation.consent_pending")),
                 font.width(Component.translatable("gui.mcmcp.automation.agent")),
                 font.width(Component.translatable("gui.mcmcp.automation.recovering")),
                 font.width(Component.translatable("gui.mcmcp.automation.fault")));
@@ -357,6 +423,105 @@ public final class AutomationIndicatorController {
         ENABLE,
         DISABLE,
         NONE
+    }
+
+    /** Capability instance is created by the runtime and retained only by the local prompt. */
+    public interface EntityAttackConsentPromptSink {
+        boolean grantFromPhysicalPrimaryClick();
+
+        void cancel();
+
+        boolean pending();
+    }
+
+    private static final class EntityAttackConsentScreen extends ConfirmScreen {
+        private final EntityAttackConsentPromptSink sink;
+        private boolean terminal;
+
+        private EntityAttackConsentScreen(
+                String entityType,
+                EntityAttackConsentPromptSink sink) {
+            super(
+                    ignored -> { },
+                    Component.translatable("gui.mcmcp.entity_attack_consent.title"),
+                    Component.translatable(
+                            "gui.mcmcp.entity_attack_consent.message", entityType),
+                    Component.translatable("gui.mcmcp.entity_attack_consent.grant"),
+                    Component.translatable("gui.mcmcp.entity_attack_consent.cancel"));
+            this.sink = Objects.requireNonNull(sink, "sink");
+        }
+
+        private boolean dispatchPhysicalPrimaryClick(double mouseX, double mouseY) {
+            if (terminal) {
+                return false;
+            }
+            if (yesButton != null && yesButton.visible && yesButton.active
+                    && yesButton.isMouseOver(mouseX, mouseY)) {
+                if (sink.grantFromPhysicalPrimaryClick()) {
+                    terminal = true;
+                    super.onClose();
+                } else {
+                    cancelAndClose();
+                }
+                return true;
+            }
+            if (noButton != null && noButton.visible && noButton.active
+                    && noButton.isMouseOver(mouseX, mouseY)) {
+                cancelAndClose();
+                return true;
+            }
+            return false;
+        }
+
+        private void cancelAndClose() {
+            if (!terminal) {
+                terminal = true;
+                sink.cancel();
+            }
+            super.onClose();
+        }
+
+        @Override
+        public boolean keyPressed(net.minecraft.client.input.KeyEvent event) {
+            if (event.isEscape()) {
+                cancelAndClose();
+            }
+            // Selection keys must never activate the Grant button.
+            return true;
+        }
+
+        @Override
+        public boolean shouldCloseOnEsc() {
+            return false;
+        }
+
+        @Override
+        public boolean isPauseScreen() {
+            return false;
+        }
+
+        @Override
+        public void tick() {
+            super.tick();
+            if (!terminal && !sink.pending()) {
+                terminal = true;
+                super.onClose();
+            }
+        }
+
+        @Override
+        public void onClose() {
+            cancelAndClose();
+        }
+
+        @Override
+        public void removed() {
+            if (!terminal) {
+                terminal = true;
+                sink.cancel();
+            }
+            super.removed();
+        }
     }
 
     private static final class IndicatorButton extends Button.Plain {
@@ -429,6 +594,8 @@ public final class AutomationIndicatorController {
                             getBottom());
             if (executionBorderVisible(state)) {
                 drawExecutionBorder(graphics);
+            } else if (consentBorderVisible(state)) {
+                drawConsentBorder(graphics);
             } else if (evaluationBorderVisible(state)) {
                 drawEvaluationBorder(graphics);
             }

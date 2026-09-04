@@ -145,6 +145,20 @@ class ScopedEntityAttackConsentStoreTest {
                 .containsExactly("dimension", "bounds", "entityRef", "entityType");
     }
 
+    @Test
+    void safetyPackageBridgeMintsTheGrantWithoutExposingTheCapabilityConstructor() {
+        var store = deterministicStore();
+        store.request(SESSION, HASH, SCOPE, 0);
+
+        assertThat(ScopedEntityAttackConsentUiBridge
+                .grantFromPhysicalPromptClick(store, SESSION, 1)).isTrue();
+        assertThat(store.snapshot(SESSION, 1).state())
+                .isEqualTo(ScopedEntityAttackConsentStore.State.GRANTED);
+        assertThat(ScopedEntityAttackConsentStore.LocalUiGrantCapability.class
+                .getDeclaredConstructors()).allMatch(constructor ->
+                        !java.lang.reflect.Modifier.isPublic(constructor.getModifiers()));
+    }
+
     private static void assertBindingMismatchDoesNotConsume(ConsumeAttempt mismatch) {
         var granted = grantedAtOne();
         assertThat(mismatch.consume(granted.store(), granted.ref())).isFalse();

@@ -14,7 +14,7 @@ import java.util.Objects;
 
 /**
  * Keeps physical input out of vanilla while EVALUATING/AGENT/RECOVERING owns control.
- * Mouse movement itself remains available so the Screen status button is reachable.
+ * Mouse movement itself remains available so local Screen controls are reachable.
  */
 public final class InputIsolationController {
     private static volatile InputIsolationController installed;
@@ -60,15 +60,23 @@ public final class InputIsolationController {
             event.setCanceled(true);
             return;
         }
-        if (!isolatesPhysicalInput(runtime.automationUiSnapshot().state())) {
+        var state = runtime.automationUiSnapshot().state();
+        boolean isolated = isolatesPhysicalInput(state);
+        boolean consentClick = state == AutomationUiSnapshot.State.CONSENT_PENDING
+                && event.getAction() == InputConstants.PRESS
+                && button == 0;
+        if (!isolated && !consentClick) {
             return;
         }
 
         if (event.getAction() == InputConstants.PRESS && button >= 0) {
             swallowedMouseButtons.set(button);
             if (button == 0) {
-                indicator.dispatchPrimaryClick(
-                        Minecraft.getInstance(), event.getMouseButtonInfo());
+                var minecraft = Minecraft.getInstance();
+                if (!indicator.dispatchConsentPromptPrimaryClick(
+                        minecraft, event.getMouseButtonInfo())) {
+                    indicator.dispatchPrimaryClick(minecraft, event.getMouseButtonInfo());
+                }
             }
         }
         event.setCanceled(true);
@@ -105,7 +113,11 @@ public final class InputIsolationController {
         return switch (decision) {
             case PASS, BLOCK -> decision.cancelsVanilla();
             case EMERGENCY_STOP -> {
-                current.runtime.emergencyStopFromLocalKey(minecraft);
+                if (current.runtime.automationUiSnapshot().state()
+                        != AutomationUiSnapshot.State.CONSENT_PENDING
+                        || !current.indicator.cancelConsentPromptFromPhysicalEscape(minecraft)) {
+                    current.runtime.emergencyStopFromLocalKey(minecraft);
+                }
                 yield decision.cancelsVanilla();
             }
         };
@@ -132,7 +144,8 @@ public final class InputIsolationController {
         Objects.requireNonNull(state, "state");
         if (key == InputConstants.KEY_ESCAPE && action == InputConstants.PRESS) {
             return switch (state) {
-                case EVALUATING, AGENT, RECOVERING -> KeyDecision.EMERGENCY_STOP;
+                case EVALUATING, CONSENT_PENDING, AGENT, RECOVERING ->
+                        KeyDecision.EMERGENCY_STOP;
                 case OFF, READY, FAULT -> KeyDecision.PASS;
             };
         }
@@ -144,7 +157,7 @@ public final class InputIsolationController {
     static boolean isolatesPhysicalInput(AutomationUiSnapshot.State state) {
         Objects.requireNonNull(state, "state");
         return switch (state) {
-            case EVALUATING, AGENT, RECOVERING -> true;
+            case EVALUATING, CONSENT_PENDING, AGENT, RECOVERING -> true;
             case OFF, READY, FAULT -> false;
         };
     }

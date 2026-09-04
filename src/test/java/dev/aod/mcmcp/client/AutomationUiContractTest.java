@@ -26,6 +26,7 @@ class AutomationUiContractTest {
                 AutomationUiSnapshot.State.OFF,
                 AutomationUiSnapshot.State.READY,
                 AutomationUiSnapshot.State.EVALUATING,
+                AutomationUiSnapshot.State.CONSENT_PENDING,
                 AutomationUiSnapshot.State.FAULT))
                 .allMatch(state -> !AutomationIndicatorController.executionBorderVisible(state));
 
@@ -74,6 +75,7 @@ class AutomationUiContractTest {
         assertThat(List.of(
                 AutomationUiSnapshot.State.OFF,
                 AutomationUiSnapshot.State.READY,
+                AutomationUiSnapshot.State.CONSENT_PENDING,
                 AutomationUiSnapshot.State.AGENT,
                 AutomationUiSnapshot.State.RECOVERING,
                 AutomationUiSnapshot.State.FAULT))
@@ -93,6 +95,57 @@ class AutomationUiContractTest {
                 "extractContents")))
                 .contains("dev/aod/mcmcp/client/AutomationIndicatorController"
                         + "#drawEvaluationBorder");
+    }
+
+    @Test
+    void pendingConsentHasItsOwnBorderAndTranslatedGrantPrompt() throws Exception {
+        assertThat(AutomationIndicatorController.consentBorderVisible(
+                AutomationUiSnapshot.State.CONSENT_PENDING)).isTrue();
+        for (String language : List.of("en_us", "ja_jp")) {
+            try (var stream = getClass().getResourceAsStream(
+                    "/assets/mcmcp/lang/" + language + ".json")) {
+                assertThat(stream).isNotNull();
+                var translations = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+                assertThat(translations)
+                        .contains("gui.mcmcp.automation.consent_pending")
+                        .contains("gui.mcmcp.automation.tooltip.consent_pending")
+                        .contains("gui.mcmcp.entity_attack_consent.title")
+                        .contains("gui.mcmcp.entity_attack_consent.message")
+                        .contains("gui.mcmcp.entity_attack_consent.grant")
+                        .contains("gui.mcmcp.entity_attack_consent.cancel");
+            }
+        }
+    }
+
+    @Test
+    void pendingConsentOpensALocalScreenAndOnlyItsPhysicalDispatchCanGrant()
+            throws Exception {
+        var controller = classNode(
+                "/dev/aod/mcmcp/client/AutomationIndicatorController.class");
+        assertThat(invocations(method(controller, "openEntityAttackConsentPrompt")))
+                .contains("net/minecraft/client/Minecraft#setScreenAndShow");
+
+        var prompt = classNode(
+                "/dev/aod/mcmcp/client/AutomationIndicatorController$EntityAttackConsentScreen.class");
+        assertThat(prompt.superName).isEqualTo("net/minecraft/client/gui/screens/ConfirmScreen");
+        assertThat(invocations(method(prompt, "dispatchPhysicalPrimaryClick")))
+                .contains("dev/aod/mcmcp/client/AutomationIndicatorController"
+                        + "$EntityAttackConsentPromptSink#grantFromPhysicalPrimaryClick");
+        assertThat(invocations(method(prompt, "keyPressed")))
+                .doesNotContain("dev/aod/mcmcp/client/AutomationIndicatorController"
+                        + "$EntityAttackConsentPromptSink#grantFromPhysicalPrimaryClick")
+                .doesNotContain("net/minecraft/client/gui/components/Button#onPress");
+        assertThat(invocations(method(prompt, "removed")))
+                .contains("dev/aod/mcmcp/client/AutomationIndicatorController"
+                        + "$EntityAttackConsentPromptSink#cancel");
+
+        var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
+        assertThat(invocations(method(
+                runtime, "requestEntityAttackConsentForCanonicalAction")))
+                .contains("dev/aod/mcmcp/client/AutomationIndicatorController"
+                        + "#openEntityAttackConsentPrompt");
+        assertThat(runtime.methods).noneMatch(candidate -> candidate.name.equals(
+                "grantEntityAttackConsentFromPhysicalStatusButtonClick"));
     }
 
     @Test
@@ -140,6 +193,8 @@ class AutomationUiContractTest {
                 "/dev/aod/mcmcp/client/InputIsolationController.class");
         assertThat(invocations(method(controller, "onMouseButton")))
                 .contains(
+                        "dev/aod/mcmcp/client/AutomationIndicatorController"
+                                + "#dispatchConsentPromptPrimaryClick",
                         "dev/aod/mcmcp/client/AutomationIndicatorController"
                                 + "#dispatchPrimaryClick",
                         "net/neoforged/neoforge/client/event/InputEvent$MouseButton$Pre"

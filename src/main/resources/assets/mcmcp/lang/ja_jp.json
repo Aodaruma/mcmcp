@@ -3,6 +3,7 @@
   "gui.mcmcp.automation.off_unavailable": "MCP操作: OFF / 未準備",
   "gui.mcmcp.automation.ready": "MCP操作: ON / 待機中",
   "gui.mcmcp.automation.evaluating": "MCP操作: ON / 推論中",
+  "gui.mcmcp.automation.consent_pending": "MCP操作: 攻撃確認中",
   "gui.mcmcp.automation.agent": "MCP操作: ON / 実行中",
   "gui.mcmcp.automation.recovering": "MCP操作: ON / 緊急回避中",
   "gui.mcmcp.automation.fault": "MCP操作: FAULT",
@@ -11,6 +12,11 @@
   "gui.mcmcp.automation.tooltip.enable": "クリックするとMCP操作をONにし、1 Actionを待機します",
   "gui.mcmcp.automation.tooltip.disable": "クリックすると現在の操作を停止し、MCP操作をOFFにします",
   "gui.mcmcp.automation.tooltip.evaluating": "推論中はMinecraft入力をロックします。クリックで停止してOFFにします",
+  "gui.mcmcp.automation.tooltip.consent_pending": "%s への1回の攻撃を、専用確認画面で許可または拒否してください",
+  "gui.mcmcp.entity_attack_consent.title": "MCMCP 攻撃許可",
+  "gui.mcmcp.entity_attack_consent.message": "%s への1回の攻撃を許可しますか？ 被弾などの解除不能な安全条件は維持されます。",
+  "gui.mcmcp.entity_attack_consent.grant": "1回の攻撃を許可",
+  "gui.mcmcp.entity_attack_consent.cancel": "拒否して停止",
   "gui.mcmcp.automation.tooltip.unavailable": "ワールドとプレイヤーの準備完了後にONにできます",
   "gui.mcmcp.automation.tooltip.fault": "内部異常のためMCP操作は無効です: %s"
 }

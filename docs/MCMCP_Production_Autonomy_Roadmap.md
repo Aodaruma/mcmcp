@@ -153,7 +153,7 @@ chat、看板、本、server textはユーザー同意として扱わない。
 
 各段階はunit / contract / catalog整合を通し、ローカル`MCMCP-Validation`でMCP-only実ワールド試験を行う。fixtureはT0前後だけに使い、T0からterminalまでgameplay成功へ介入しない。1回のPASSで安定完了とせず、再現性とdeadline余裕を確認する。
 
-2026-09-04時点では、1と5〜7の内部実装、8の閉鎖fixture、9の丸石生成Gateと釣りのproduction primitive／閉鎖fixtureまで到達した。釣りは自player所有bobberへ近接した実splashだけを有限待機し、1200-tickの単回ref、dispatch後のconfirmed／unknown effect、cleanup期限超過時OFFを持つ。kill chamberはworld session、Action hash、範囲、entity ref、entity typeへ束縛した10秒・単回の同意Storeと境界テストまで実装したが、ローカルUI、観測、Action DSL、攻撃executorへは未接続である。未完了はGate Dのローカル手動承認後2回連続実機PASS、現revisionでの3×3／5×5回帰、倉庫・丸石・釣りのローカル実ワールド完走、およびkill chamberのUIから攻撃確認までの完走である。
+2026-09-04時点では、1と5〜7の内部実装、8の閉鎖fixture、9の丸石生成Gateと釣りのproduction primitive／閉鎖fixtureまで到達した。釣りは自player所有bobberへ近接した実splashだけを有限待機し、1200-tickの単回ref、dispatch後のconfirmed／unknown effect、cleanup期限超過時OFFを持つ。kill chamberはworld session、Action hash、範囲、entity ref、entity typeへ束縛した10秒・単回の同意Store、policy-visible entity ref、Runtime所有、専用確認画面のGrantボタンへの物理左クリックだけがgrantできるlocal UI bridge、`agent_get_state`のread-only状態公開まで実装した。pending登録時は通常gameplayから非pause確認画面を開いて専用表示と入力隔離を維持し、Cancel、Esc緊急停止、画面close/replace、OFF、world/session変更、endpoint fault、shutdownで破棄する。MCPからのpending登録、Action DSL、攻撃executorは未接続なので、現時点のgrantは攻撃能力を追加しない。未完了はGate Dのローカル手動承認後2回連続実機PASS、現revisionでの3×3／5×5回帰、倉庫・丸石・釣りのローカル実ワールド完走、およびkill chamberの同意要求から攻撃確認までの完走である。
 
 ## 8. 現時点の判断
 

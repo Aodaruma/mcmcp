@@ -749,6 +749,7 @@ class McpToolCatalogTest {
                 .getAsJsonObject("properties").getAsJsonObject("max_interactions")
                 .get("const").getAsInt()).isEqualTo(16);
         assertThat(state.getAsJsonObject("properties").has("standard_potions")).isTrue();
+        assertThat(state.getAsJsonObject("properties").has("entity_attack_consent")).isTrue();
         assertThat(enumValues(state.getAsJsonObject("properties")
                         .getAsJsonObject("standard_potions").getAsJsonObject("items")
                         .getAsJsonObject("properties"), "potion"))

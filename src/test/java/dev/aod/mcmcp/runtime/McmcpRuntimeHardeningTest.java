@@ -40,6 +40,8 @@ import dev.aod.mcmcp.routine.StationaryBreakPort;
 import dev.aod.mcmcp.routine.StationaryBreakRequest;
 import dev.aod.mcmcp.routine.UseItemOnBlockRequest;
 import dev.aod.mcmcp.safety.LocalArmingState;
+import dev.aod.mcmcp.safety.ScopedEntityAttackConsentStore;
+import dev.aod.mcmcp.safety.ScopedEntityAttackConsentUiBridge;
 import dev.aod.mcmcp.voice.VoiceChatSafetyController;
 import org.junit.jupiter.api.Test;
 import net.minecraft.world.level.block.Blocks;
@@ -1237,7 +1239,8 @@ class McmcpRuntimeHardeningTest {
 
         assertThat(state.keySet()).containsExactly(
                 "schema_version", "control", "world", "inventory",
-                "standard_potions", "recipe_query", "policy", "observation", "action");
+                "standard_potions", "entity_attack_consent", "recipe_query",
+                "policy", "observation", "action");
         assertThat(state).containsEntry("schema_version", 1)
                 .containsEntry("world", null)
                 .containsEntry("inventory", List.of())
@@ -1245,6 +1248,14 @@ class McmcpRuntimeHardeningTest {
                 .containsEntry("recipe_query", null)
                 .containsEntry("observation", null)
                 .containsEntry("action", null);
+        var consent = (Map<?, ?>) state.get("entity_attack_consent");
+        assertThat(consent.keySet().stream().map(Object::toString).toList()).containsExactly(
+                "state", "action_binding_hash", "scope", "consent_ref", "valid_before_tick");
+        assertThat(consent.get("state")).isEqualTo("none");
+        assertThat(consent.get("action_binding_hash")).isNull();
+        assertThat(consent.get("scope")).isNull();
+        assertThat(consent.get("consent_ref")).isNull();
+        assertThat(consent.get("valid_before_tick")).isNull();
         var control = (Map<?, ?>) state.get("control");
         assertThat(control.get("mode")).isEqualTo("ready");
         assertThat(control.get("ready_expires_at")).isNull();
@@ -1262,6 +1273,31 @@ class McmcpRuntimeHardeningTest {
         assertThat(((Map<?, ?>) actionDsl.get("missing_capability_guidance")).get("code"))
                 .isEqualTo("MISSING_CAPABILITY");
         assertThat((List<?>) actionDsl.get("reference_descriptors")).hasSize(4);
+    }
+
+    @Test
+    void grantedEntityAttackConsentPayloadExposesOnlyItsBoundScopeAndFiniteRef() {
+        var store = new ScopedEntityAttackConsentStore();
+        var session = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        var scope = new ScopedEntityAttackConsentStore.Scope(
+                "minecraft:overworld",
+                new ScopedEntityAttackConsentStore.Bounds(0, 60, 0, 4, 64, 4),
+                "abcdefghijklmnopqrstuvwx",
+                "minecraft:zombie");
+        String hash = "sha256:" + "1".repeat(64);
+        store.request(session, hash, scope, 10);
+        assertThat(ScopedEntityAttackConsentUiBridge
+                .grantFromPhysicalPromptClick(store, session, 11)).isTrue();
+
+        var payload = McmcpRuntime.entityAttackConsentPayload(store.snapshot(session, 11));
+
+        assertThat(payload.get("state")).isEqualTo("granted");
+        assertThat(payload.get("action_binding_hash")).isEqualTo(hash);
+        assertThat(payload.get("consent_ref")).asString().hasSize(24);
+        assertThat(payload.get("valid_before_tick")).isEqualTo(211L);
+        var payloadScope = (Map<?, ?>) payload.get("scope");
+        assertThat(payloadScope.get("entity_type")).isEqualTo("minecraft:zombie");
+        assertThat(payloadScope.get("entity_ref")).isEqualTo("abcdefghijklmnopqrstuvwx");
     }
 
     @Test

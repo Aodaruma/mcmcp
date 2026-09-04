@@ -9,7 +9,7 @@ import java.util.UUID;
  * Local-UI-issued, single-use consent for one canonically bound semantic entity attack.
  *
  * <p>The MCP side may register one bounded request, but only a non-replayable
- * {@link LocalUiGrantCapability} minted by the in-game status-button adapter can turn it into
+ * {@link LocalUiGrantCapability} minted by the dedicated local confirmation Screen can turn it into
  * authority.
  * Chat, books, signs, server packets, Action fields, and ordinary runtime code cannot mint that
  * token. This consent can waive only the named target's hostile-presence gate; damage, contact,
@@ -196,7 +196,7 @@ public final class ScopedEntityAttackConsentStore {
      * Single-use authority object for the future physical-local-UI adapter.
      *
      * <p>Construction is package-private, so MCP, Action, runtime, chat, and server-facing code
-     * cannot mint it. The eventual status-button adapter must live behind a tiny safety-package
+     * cannot mint it. The local confirmation Screen adapter must live behind a tiny safety-package
      * bridge rather than widening this constructor or adding a boolean grant parameter.</p>
      */
     public static final class LocalUiGrantCapability {

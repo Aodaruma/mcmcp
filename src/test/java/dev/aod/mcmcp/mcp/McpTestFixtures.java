@@ -23,6 +23,12 @@ final class McpTestFixtures {
                 "world", nullValue(),
                 "inventory", List.of(),
                 "standard_potions", List.of(),
+                "entity_attack_consent", Map.of(
+                        "state", "none",
+                        "action_binding_hash", nullValue(),
+                        "scope", nullValue(),
+                        "consent_ref", nullValue(),
+                        "valid_before_tick", nullValue()),
                 "recipe_query", nullValue(),
                 "policy", Map.ofEntries(
                         Map.entry("profile", "survival_omnidirectional"),

@@ -61,6 +61,15 @@ class AutomationIndicatorControllerTest {
     }
 
     @Test
+    void pendingConsentDisablesTheOrdinaryStatusButton() {
+        assertThat(AutomationIndicatorController.pressAction(
+                AutomationUiSnapshot.State.CONSENT_PENDING, true))
+                .isEqualTo(AutomationIndicatorController.PressAction.NONE);
+        assertThat(AutomationIndicatorController.buttonActive(
+                AutomationUiSnapshot.State.CONSENT_PENDING, true)).isFalse();
+    }
+
+    @Test
     void enablingRequiresAReadyWorldAndALivePlayer() {
         assertThat(AutomationIndicatorController.canEnable(true, true, true, true)).isTrue();
         assertThat(AutomationIndicatorController.canEnable(false, true, true, true)).isFalse();

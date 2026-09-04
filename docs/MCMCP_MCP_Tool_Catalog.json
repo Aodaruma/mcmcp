@@ -12,7 +12,7 @@
     {
       "name": "agent_get_state",
       "title": "Get MCMCP State",
-      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. control.granted_capabilities reports the current local lease; policy.action_dsl exposes all available opcode descriptors, opaque-reference refresh contracts, and machine-readable MISSING_CAPABILITY guidance without adding another Tool. Pass no arguments for state only. To search client-known recipe displays, use {\"query\":{\"kind\":\"result_item\",\"item\":\"minecraft:stick\"},\"max_results\":16} or {\"query\":{\"kind\":\"result_tag\",\"tag\":\"minecraft:planks\"},\"max_results\":16}; the bounded result appears in recipe_query. inventory keeps item-ID totals; standard_potions separately validates component-exact unmodified Vanilla singleton potion stacks and groups them by item+potion across inventory slots, so brewing inputs and outputs are distinguishable without exposing custom components or impossible overstacks. merchant_offers is present only while the exact current merchant screen has a fresh same-session/container/open-revision server packet; it exposes typed item/count facts and registered stored-enchantment IDs+levels, never raw slots, components, NBT, lore, or display text. known_menu is present only for an exact current server-synchronized accepted Menu profile: Vanilla generic_9x1..9x6, or the version/hash/class-fixed Sophisticated Backpacks 3.25.90 normal backpack storage profile. Copy one single-use operation_ref into operate_known_menu and never infer raw slots or GUI coordinates; valid_through_client_tick is only the outer deadline and any exact-menu context change invalidates it earlier. Open upgrade/extra slots, inaccessible or oversized stacks, and insufficient full-stack capacity are omitted. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. Recipe data comes only from displays synchronized into the current client recipe book. It never scans hidden world data.",
+      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. control.granted_capabilities reports the current local lease; entity_attack_consent reports none/pending/granted local consent and exposes its short-lived ref only after a physical primary click on the dedicated local confirmation screen. It does not itself register consent or add a Tool. policy.action_dsl exposes all available opcode descriptors, opaque-reference refresh contracts, and machine-readable MISSING_CAPABILITY guidance without adding another Tool. Pass no arguments for state only. To search client-known recipe displays, use {\"query\":{\"kind\":\"result_item\",\"item\":\"minecraft:stick\"},\"max_results\":16} or {\"query\":{\"kind\":\"result_tag\",\"tag\":\"minecraft:planks\"},\"max_results\":16}; the bounded result appears in recipe_query. inventory keeps item-ID totals; standard_potions separately validates component-exact unmodified Vanilla singleton potion stacks and groups them by item+potion across inventory slots, so brewing inputs and outputs are distinguishable without exposing custom components or impossible overstacks. merchant_offers is present only while the exact current merchant screen has a fresh same-session/container/open-revision server packet; it exposes typed item/count facts and registered stored-enchantment IDs+levels, never raw slots, components, NBT, lore, or display text. known_menu is present only for an exact current server-synchronized accepted Menu profile: Vanilla generic_9x1..9x6, or the version/hash/class-fixed Sophisticated Backpacks 3.25.90 normal backpack storage profile. Copy one single-use operation_ref into operate_known_menu and never infer raw slots or GUI coordinates; valid_through_client_tick is only the outer deadline and any exact-menu context change invalidates it earlier. Open upgrade/extra slots, inaccessible or oversized stacks, and insufficient full-stack capacity are omitted. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. Recipe data comes only from displays synchronized into the current client recipe book. It never scans hidden world data.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -392,6 +392,78 @@
               "required": ["item", "potion", "count"]
             }
           },
+          "entity_attack_consent": {
+            "type": "object",
+            "description": "Read-only summary of one runtime-owned entity-attack consent. pending is not authority. Registration opens a dedicated local confirmation screen; only a physical primary click on its Grant button can move it to granted. Cancel, Esc/emergency stop, screen close/replacement, OFF, world/session change, endpoint fault, and shutdown clear it. MCP, Action, chat, and packet paths cannot reach grant; co-loaded mods and OS-level input injection are outside the physical-authenticity guarantee. The future attack consumer must still enforce every non-waivable hard safety gate.",
+            "additionalProperties": false,
+            "properties": {
+              "state": {"enum": ["none", "pending", "granted"]},
+              "action_binding_hash": {
+                "type": ["string", "null"],
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "scope": {
+                "oneOf": [
+                  {"type": "null"},
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "dimension": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 128},
+                      "bounds": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "min_x": {"type": "number"},
+                          "min_y": {"type": "number"},
+                          "min_z": {"type": "number"},
+                          "max_x": {"type": "number"},
+                          "max_y": {"type": "number"},
+                          "max_z": {"type": "number"}
+                        },
+                        "required": ["min_x", "min_y", "min_z", "max_x", "max_y", "max_z"]
+                      },
+                      "entity_ref": {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"},
+                      "entity_type": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 128}
+                    },
+                    "required": ["dimension", "bounds", "entity_ref", "entity_type"]
+                  }
+                ]
+              },
+              "consent_ref": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]{24}$"},
+              "valid_before_tick": {"type": ["integer", "null"], "minimum": 0, "maximum": 9223372036854775807}
+            },
+            "required": ["state", "action_binding_hash", "scope", "consent_ref", "valid_before_tick"],
+            "oneOf": [
+              {
+                "properties": {
+                  "state": {"const": "none"},
+                  "action_binding_hash": {"type": "null"},
+                  "scope": {"type": "null"},
+                  "consent_ref": {"type": "null"},
+                  "valid_before_tick": {"type": "null"}
+                }
+              },
+              {
+                "properties": {
+                  "state": {"const": "pending"},
+                  "action_binding_hash": {"type": "string"},
+                  "scope": {"type": "object"},
+                  "consent_ref": {"type": "null"},
+                  "valid_before_tick": {"type": "null"}
+                }
+              },
+              {
+                "properties": {
+                  "state": {"const": "granted"},
+                  "action_binding_hash": {"type": "string"},
+                  "scope": {"type": "object"},
+                  "consent_ref": {"type": "string"},
+                  "valid_before_tick": {"type": "integer"}
+                }
+              }
+            ]
+          },
           "merchant_offers": {
             "type": "object",
             "description": "Optional exact-current-screen projection. Omitted unless the visible MerchantScreen, player menu, world session, container ID, and open-packet revision all match the latest inbound merchant-offers packet.",
@@ -633,7 +705,7 @@
             ]
           }
         },
-        "required": ["schema_version", "control", "world", "inventory", "standard_potions", "recipe_query", "policy", "observation", "action"]
+        "required": ["schema_version", "control", "world", "inventory", "standard_potions", "entity_attack_consent", "recipe_query", "policy", "observation", "action"]
       }
     },
     {

@@ -3,6 +3,7 @@
   "gui.mcmcp.automation.off_unavailable": "MCP control: OFF / not ready",
   "gui.mcmcp.automation.ready": "MCP control: ON / ready",
   "gui.mcmcp.automation.evaluating": "MCP control: ON / reasoning",
+  "gui.mcmcp.automation.consent_pending": "MCP control: attack confirmation",
   "gui.mcmcp.automation.agent": "MCP control: ON / running",
   "gui.mcmcp.automation.recovering": "MCP control: ON / recovering",
   "gui.mcmcp.automation.fault": "MCP control: FAULT",
@@ -11,6 +12,11 @@
   "gui.mcmcp.automation.tooltip.enable": "Click to enable MCP control for one Action",
   "gui.mcmcp.automation.tooltip.disable": "Click to stop the current operation and turn MCP control off",
   "gui.mcmcp.automation.tooltip.evaluating": "Minecraft input is locked while reasoning. Click to stop and turn control off",
+  "gui.mcmcp.automation.tooltip.consent_pending": "Use the dedicated confirmation screen to grant or deny one attack on %s",
+  "gui.mcmcp.entity_attack_consent.title": "MCMCP attack permission",
+  "gui.mcmcp.entity_attack_consent.message": "Allow one attack on %s? Damage and other hard safety checks remain active.",
+  "gui.mcmcp.entity_attack_consent.grant": "Grant one attack",
+  "gui.mcmcp.entity_attack_consent.cancel": "Deny and stop",
   "gui.mcmcp.automation.tooltip.unavailable": "MCP control can be enabled after the world and player are ready",
   "gui.mcmcp.automation.tooltip.fault": "MCP control is disabled because of an internal fault: %s"
 }

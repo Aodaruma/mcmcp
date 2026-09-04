@@ -25,6 +25,16 @@ public record AutomationUiSnapshot(
             LocalArmingState.Snapshot control,
             boolean evaluationActive,
             String faultCode) {
+        return resolve(worldReady, control, evaluationActive, false, null, faultCode);
+    }
+
+    public static AutomationUiSnapshot resolve(
+            boolean worldReady,
+            LocalArmingState.Snapshot control,
+            boolean evaluationActive,
+            boolean entityAttackConsentPending,
+            String consentEntityType,
+            String faultCode) {
         Objects.requireNonNull(control, "control");
         if (faultCode != null) {
             return new AutomationUiSnapshot(State.FAULT, worldReady, faultCode);
@@ -33,9 +43,11 @@ public record AutomationUiSnapshot(
             case OFF -> new AutomationUiSnapshot(
                     State.OFF, worldReady, control.lastLockReason());
             case READY -> new AutomationUiSnapshot(
-                    evaluationActive ? State.EVALUATING : State.READY,
+                    entityAttackConsentPending
+                            ? State.CONSENT_PENDING
+                            : evaluationActive ? State.EVALUATING : State.READY,
                     worldReady,
-                    null);
+                    entityAttackConsentPending ? consentEntityType : null);
             case AGENT -> new AutomationUiSnapshot(State.AGENT, worldReady, null);
             case RECOVERING -> new AutomationUiSnapshot(State.RECOVERING, worldReady, null);
         };
@@ -45,6 +57,7 @@ public record AutomationUiSnapshot(
         OFF,
         READY,
         EVALUATING,
+        CONSENT_PENDING,
         AGENT,
         RECOVERING,
         FAULT

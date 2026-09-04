@@ -104,6 +104,7 @@ class InputIsolationContractTest {
     void onlyEvaluatingAgentAndRecoveringOwnPhysicalInput() {
         for (var state : List.of(
                 AutomationUiSnapshot.State.EVALUATING,
+                AutomationUiSnapshot.State.CONSENT_PENDING,
                 AutomationUiSnapshot.State.AGENT,
                 AutomationUiSnapshot.State.RECOVERING)) {
             assertThat(InputIsolationController.isolatesPhysicalInput(state)).isTrue();
