@@ -1067,6 +1067,17 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void knownBlockBreakEffectsMatchThePublishedSchema() {
+        var observationSchema = new McpToolCatalog().outputSchema("agent_get_action")
+                .getAsJsonObject("$defs").getAsJsonObject("effectObservation");
+        var before = JsonParser.parseString("""
+                {"block":"minecraft:cobblestone","properties":{},
+                 "expected_drop":"minecraft:cobblestone","minimum_inventory_count":8}
+                """);
+        assertThat(CatalogSchemaValidator.matches(observationSchema, before)).isTrue();
+    }
+
+    @Test
     void catalogClosesAndBoundsCropMaturityWaits() {
         var schema = new McpToolCatalog().inputSchema("agent_start_action");
         var request = schema.getAsJsonArray("examples").get(0).getAsJsonObject().deepCopy();
