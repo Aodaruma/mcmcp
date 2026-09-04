@@ -124,6 +124,7 @@ neoForge {
                         'combined_wheat', 'tree', 'sleep', 'survey', 'generalization',
                         'cobblestone_generator',
                         'fishing',
+                        'kill_zone',
                         'iron_farm', 'reset'
                 ]
                 if (!supportedModes.contains(requestedMode)) {

@@ -149,6 +149,7 @@ public final class ActionDslParser {
             case "collect_visible_item_batch" -> collectVisibleItemBatch(object, path);
             case "cast_known_fishing_rod" -> castKnownFishingRod(object, path);
             case "reel_known_fishing_session" -> reelKnownFishingSession(object, path);
+            case "operate_kill_zone" -> operateKillZone(object, path);
             case "wait_ticks" -> waitTicks(object, path);
             case "wait_until" -> waitUntil(object, path);
             case "if" -> conditional(object, path);
@@ -771,6 +772,38 @@ public final class ActionDslParser {
                 string(source.get("rod_item"), path + ".rod_item"));
     }
 
+    private static ActionDsl.OperateKillZone operateKillZone(
+            JsonObject source, String path) {
+        Set<String> fields = Set.of(
+                "id", "op", "target_kill_zone_bounds", "entity_type_allowlist",
+                "main_hand_item", "consent_ref", "max_attacks",
+                "minimum_interval_ticks", "max_operation_duration_ticks");
+        exactKeys(source, path, fields, fields);
+        JsonArray rawTypes = array(
+                source.get("entity_type_allowlist"), path + ".entity_type_allowlist");
+        var types = new ArrayList<String>(rawTypes.size());
+        for (int index = 0; index < rawTypes.size(); index++) {
+            types.add(string(rawTypes.get(index),
+                    path + ".entity_type_allowlist[" + index + "]"));
+        }
+        JsonElement rawConsent = source.get("consent_ref");
+        Optional<String> consent = rawConsent == null || rawConsent.isJsonNull()
+                ? Optional.empty()
+                : Optional.of(string(rawConsent, path + ".consent_ref"));
+        return new ActionDsl.OperateKillZone(
+                string(source.get("id"), path + ".id"),
+                worldBounds(source.get("target_kill_zone_bounds"),
+                        path + ".target_kill_zone_bounds"),
+                types,
+                string(source.get("main_hand_item"), path + ".main_hand_item"),
+                consent,
+                integer(source.get("max_attacks"), path + ".max_attacks"),
+                longInteger(source.get("minimum_interval_ticks"),
+                        path + ".minimum_interval_ticks"),
+                longInteger(source.get("max_operation_duration_ticks"),
+                        path + ".max_operation_duration_ticks"));
+    }
+
     private static ActionDsl.WaitUntil waitUntil(JsonObject source, String path) {
         exactKeys(source, path, Set.of("id", "op", "condition", "max_ticks"),
                 Set.of("id", "op", "condition", "max_ticks"));
@@ -971,6 +1004,7 @@ public final class ActionDslParser {
             case "block_place" -> ActionDsl.Capability.BLOCK_PLACE;
             case "inventory_transfer" -> ActionDsl.Capability.INVENTORY_TRANSFER;
             case "item_use" -> ActionDsl.Capability.ITEM_USE;
+            case "entity_attack" -> ActionDsl.Capability.ENTITY_ATTACK;
             default -> throw invalid("Unsupported capability at " + path + ": " + value);
         };
     }

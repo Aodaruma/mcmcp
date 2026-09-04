@@ -16,6 +16,34 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AgentActionStoreTest {
     @Test
+    void effectRingEvictionPreservesSequenceAndConfirmedAggregate() {
+        var store = new AgentActionStore();
+        var accepted = store.start(program(), source(), Instant.EPOCH);
+        store.markRunning(accepted.actionId());
+        store.beginNode(accepted.actionId(), "hold");
+        for (int sequence = 1; sequence <= 65; sequence++) {
+            store.recordEffect(
+                    accepted.actionId(), "entity_attack", "refhash:" + "a".repeat(64),
+                    Map.of("health", 20), Map.of("health", 19),
+                    sequence == 1 ? AgentActionStore.Verification.CONFIRMED
+                            : AgentActionStore.Verification.UNKNOWN,
+                    sequence, 1L);
+        }
+        store.fail(accepted.actionId(), new AgentActionStore.Failure(
+                AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
+                false, java.util.List.of("health_decreased")));
+
+        var snapshot = store.get(accepted.actionId());
+        assertThat(snapshot.effects()).hasSize(64);
+        assertThat(snapshot.effects().getFirst().seq()).isEqualTo(2L);
+        assertThat(snapshot.effects().getLast().seq()).isEqualTo(65L);
+        assertThat(snapshot.partial().hasConfirmedEffects()).isTrue();
+        assertThat(snapshot.effectAggregate()).isEqualTo(
+                new AgentActionStore.EffectAggregate(65L, 64, 1L, 0L, 64L,
+                        65L, 1L, 64L));
+    }
+
+    @Test
     void reservedActionCannotRunUntilDeliveryIsConfirmedAndOtherwiseExpires() {
         var store = new AgentActionStore();
         var reserved = store.reserve(program(), source(), Instant.EPOCH, 100L);

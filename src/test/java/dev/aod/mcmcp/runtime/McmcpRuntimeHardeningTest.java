@@ -68,6 +68,34 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 
 class McmcpRuntimeHardeningTest {
     @Test
+    void armorStandServerHitEventConfirmsWithoutHealthLoss() {
+        assertThat(McmcpRuntime.armorStandHitEventAdvanced(0L, 42L)).isTrue();
+        assertThat(McmcpRuntime.armorStandHitEventAdvanced(42L, 42L)).isFalse();
+        assertThat(McmcpRuntime.armorStandHitEventAdvanced(Long.MIN_VALUE, 42L)).isFalse();
+    }
+
+    @Test
+    void killZoneInteractionLimitDoesNotClosePendingEffectBeforeItsDeadline() {
+        long dispatchTick = 100L;
+        long effectDeadline = dispatchTick
+                + ActionDslCompiler.KILL_ZONE_EFFECT_RESERVE_TICKS;
+        // Reaching max_interactions=1 stops another dispatch, but is not a hard deadline.
+        assertThat(McmcpRuntime.killZonePendingMustClose(
+                dispatchTick + 1L, effectDeadline, false)).isFalse();
+        assertThat(McmcpRuntime.killZonePendingMustClose(
+                effectDeadline, effectDeadline, false)).isTrue();
+        assertThat(McmcpRuntime.killZonePendingMustClose(
+                dispatchTick + 1L, effectDeadline, true)).isTrue();
+    }
+
+    @Test
+    void killZoneHealthFenceDetectsDamageAfterRecovery() {
+        assertThat(McmcpRuntime.healthDecreased(16.0F, 0.0F, 20.0F, 0.0F)).isFalse();
+        assertThat(McmcpRuntime.healthDecreased(20.0F, 0.0F, 18.0F, 0.0F)).isTrue();
+        assertThat(McmcpRuntime.healthDecreased(20.0F, 4.0F, 20.0F, 2.0F)).isTrue();
+    }
+
+    @Test
     void actionInputReleaseRetriesBoundedlyAndRequiresConfirmedSuccess() {
         var attempts = new AtomicInteger();
         assertThat(McmcpRuntime.boundedActionInputRelease(
@@ -185,6 +213,8 @@ class McmcpRuntimeHardeningTest {
                 .isEqualTo(true);
         assertThat(payload.get("reference_requirements")).isEqualTo(List.of());
         assertThat(payload.get("effects")).isEqualTo(List.of());
+        assertThat(((Map<?, ?>) payload.get("effect_aggregate")).get("total_effects"))
+                .isEqualTo(0L);
         assertThat(payload.get("partial")).isNull();
     }
 
@@ -236,6 +266,8 @@ class McmcpRuntimeHardeningTest {
         });
         assertThat(((Map<?, ?>) payload.get("partial")).get(
                 "resume_requires_reobservation")).isEqualTo(true);
+        assertThat(((Map<?, ?>) payload.get("effect_aggregate")).get("confirmed_effects"))
+                .isEqualTo(1L);
     }
 
     @Test
@@ -1269,10 +1301,10 @@ class McmcpRuntimeHardeningTest {
         assertThat(policy.get("max_blocks_broken")).isEqualTo(8);
         assertThat(policy.get("max_interactions")).isEqualTo(16);
         var actionDsl = (Map<?, ?>) policy.get("action_dsl");
-        assertThat((List<?>) actionDsl.get("available_operations")).hasSize(34);
+        assertThat((List<?>) actionDsl.get("available_operations")).hasSize(35);
         assertThat(((Map<?, ?>) actionDsl.get("missing_capability_guidance")).get("code"))
                 .isEqualTo("MISSING_CAPABILITY");
-        assertThat((List<?>) actionDsl.get("reference_descriptors")).hasSize(4);
+        assertThat((List<?>) actionDsl.get("reference_descriptors")).hasSize(5);
     }
 
     @Test
@@ -1286,6 +1318,7 @@ class McmcpRuntimeHardeningTest {
                 List.of("minecraft:zombie", "minecraft:skeleton"),
                 "minecraft:iron_axe",
                 "sha256:" + "3".repeat(64),
+                "sha256:" + "4".repeat(64),
                 ScopedEntityAttackConsentStore.AttackSideEffectProfile.VANILLA_SINGLE_TARGET,
                 100,
                 10,

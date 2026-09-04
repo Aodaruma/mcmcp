@@ -259,6 +259,12 @@ public final class ScopedEntityAttackConsentStore {
             double zGap = Math.max(0.0D, Math.max(other.minZ - maxZ, minZ - other.maxZ));
             return Math.sqrt(xGap * xGap + yGap * yGap + zGap * zGap);
         }
+
+        public boolean contains(double innerMinX, double innerMinY, double innerMinZ,
+                                double innerMaxX, double innerMaxY, double innerMaxZ) {
+            return innerMinX >= minX && innerMinY >= minY && innerMinZ >= minZ
+                    && innerMaxX <= maxX && innerMaxY <= maxY && innerMaxZ <= maxZ;
+        }
     }
 
     /**
@@ -275,6 +281,7 @@ public final class ScopedEntityAttackConsentStore {
             List<String> entityTypeAllowlist,
             String mainHandItem,
             String attackProfileFingerprint,
+            String structureFingerprint,
             AttackSideEffectProfile attackSideEffectProfile,
             int maxAttacks,
             long minimumIntervalTicks,
@@ -309,6 +316,7 @@ public final class ScopedEntityAttackConsentStore {
             entityTypeAllowlist = List.copyOf(normalizedTypes);
             requireResourceLocation(mainHandItem, "mainHandItem");
             requireHash(attackProfileFingerprint, "attackProfileFingerprint");
+            requireHash(structureFingerprint, "structureFingerprint");
             Objects.requireNonNull(attackSideEffectProfile, "attackSideEffectProfile");
             if (maxAttacks < 1 || maxAttacks > MAX_ATTACKS
                     || minimumIntervalTicks < MIN_MINIMUM_INTERVAL_TICKS

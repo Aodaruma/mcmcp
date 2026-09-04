@@ -29,11 +29,16 @@ public final class ActionDslValidator {
     public static final int MAX_PREDICATE_OPERANDS = 4;
     public static final int MAX_REQUEST_BYTES = 64 * 1024;
     public static final int MAX_ACTION_TICKS = 15_000;
+    public static final int MAX_KILL_ZONE_TICKS = 36_000;
+    public static final int MAX_KILL_ZONE_OPERATION_TICKS =
+            MAX_KILL_ZONE_TICKS - ActionDslCompiler.KILL_ZONE_EFFECT_RESERVE_TICKS;
     public static final int MAX_FISHING_SOUND_WAIT_TICKS = 900;
     public static final long MAX_ACTION_DURATION_MILLIS = MAX_ACTION_TICKS * 50L;
+    public static final long MAX_KILL_ZONE_DURATION_MILLIS = MAX_KILL_ZONE_TICKS * 50L;
     public static final int MAX_ACTION_CAMERA_DEGREES = 720;
     public static final int MAX_BLOCKS_BROKEN = 8;
     public static final int MAX_INTERACTIONS = 16;
+    public static final int MAX_KILL_ZONE_ATTACKS = 2_048;
     public static final int MAX_BLOCKS_PLACED = 8;
     public static final int MAX_MUTATION_BATCH_TARGETS = 8;
     public static final int MAX_BLOCK_PLAN_ENTRIES = 8;
@@ -106,7 +111,9 @@ public final class ActionDslValidator {
         if (program.capabilities().size() > ActionDsl.Capability.values().length) {
             throw invalid("program.capabilities contains too many values");
         }
-        validateRequestBudget(request.budget());
+        boolean killZoneOnly = program.body().size() == 1
+                && program.body().getFirst() instanceof ActionDsl.OperateKillZone;
+        validateRequestBudget(request.budget(), killZoneOnly);
 
         if (program.body().isEmpty() || program.body().size() > MAX_TOP_LEVEL_NODES) {
             throw invalid("program.body must contain 1.." + MAX_TOP_LEVEL_NODES + " nodes");
@@ -121,6 +128,9 @@ public final class ActionDslValidator {
         validateExclusiveNode(program.body(),
                 node -> node instanceof ActionDsl.CastKnownFishingRod,
                 "cast_known_fishing_rod must be the only top-level Action node");
+        validateExclusiveNode(program.body(),
+                node -> node instanceof ActionDsl.OperateKillZone,
+                "operate_kill_zone must be the only top-level Action node");
         var walk = new Walk();
         int executed = walkSequence(program.body(), 1, walk, "program.body");
         if (walk.sourceNodes > MAX_SOURCE_NODES) {
@@ -143,17 +153,26 @@ public final class ActionDslValidator {
     }
 
     static void validateRequestBudget(ActionDsl.Budget budget) {
+        validateRequestBudget(budget, false);
+    }
+
+    private static void validateRequestBudget(ActionDsl.Budget budget, boolean killZoneOnly) {
         Objects.requireNonNull(budget, "budget");
-        requireRange(budget.maxDurationMillis(), 100, MAX_ACTION_DURATION_MILLIS,
+        requireRange(budget.maxDurationMillis(), 100,
+                killZoneOnly ? MAX_KILL_ZONE_DURATION_MILLIS : MAX_ACTION_DURATION_MILLIS,
                 "budget.max_duration_ms");
-        requireRange(budget.maxTicks(), 2, MAX_ACTION_TICKS, "budget.max_ticks");
+        requireRange(budget.maxTicks(), 2,
+                killZoneOnly ? MAX_KILL_ZONE_TICKS : MAX_ACTION_TICKS,
+                "budget.max_ticks");
         requireFiniteRange(
                 budget.maxDistanceBlocks(), 0, NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
                 "budget.max_distance_blocks");
         requireFiniteRange(
                 budget.maxCameraDegrees(), 0, MAX_ACTION_CAMERA_DEGREES,
                 "budget.max_camera_degrees");
-        requireRange(budget.maxInteractions(), 0, MAX_INTERACTIONS, "budget.max_interactions");
+        requireRange(budget.maxInteractions(), 0,
+                killZoneOnly ? MAX_KILL_ZONE_ATTACKS : MAX_INTERACTIONS,
+                "budget.max_interactions");
         requireRange(budget.maxBlocksBroken(), 0, MAX_BLOCKS_BROKEN,
                 "budget.max_blocks_broken");
         requireRange(budget.maxBlocksPlaced(), 0, MAX_BLOCKS_PLACED,
@@ -708,6 +727,40 @@ public final class ActionDslValidator {
             requirePattern(reel.fishingSessionRef(), OPAQUE_REFERENCE,
                     path + ".fishing_session_ref");
             walk.requiredCapabilities.add(ActionDsl.Capability.ITEM_USE);
+            return 1;
+        }
+        if (node instanceof ActionDsl.OperateKillZone operation) {
+            validateWorldBounds(operation.targetKillZoneBounds(),
+                    path + ".target_kill_zone_bounds");
+            var bounds = operation.targetKillZoneBounds();
+            if (bounds.max().x() - bounds.min().x() > 32.0D
+                    || bounds.max().y() - bounds.min().y() > 16.0D
+                    || bounds.max().z() - bounds.min().z() > 32.0D) {
+                throw invalid(path + ".target_kill_zone_bounds is not local");
+            }
+            requireSequenceSize(operation.entityTypeAllowlist(), 1,
+                    dev.aod.mcmcp.safety.ScopedEntityAttackConsentStore.MAX_ENTITY_TYPES,
+                    path + ".entity_type_allowlist");
+            var distinctTypes = new HashSet<String>();
+            for (int index = 0; index < operation.entityTypeAllowlist().size(); index++) {
+                String type = operation.entityTypeAllowlist().get(index);
+                requireResourceLocation(type, path + ".entity_type_allowlist[" + index + "]");
+                if ("minecraft:player".equals(type) || !distinctTypes.add(type)) {
+                    throw invalid(path + ".entity_type_allowlist contains a player or duplicate");
+                }
+            }
+            requireResourceLocation(operation.mainHandItem(), path + ".main_hand_item");
+            operation.consentRef().ifPresent(ref -> requirePattern(
+                    ref, OPAQUE_REFERENCE, path + ".consent_ref"));
+            requireRange(operation.maxAttacks(), 1, MAX_KILL_ZONE_ATTACKS,
+                    path + ".max_attacks");
+            requireRange(operation.minimumIntervalTicks(),
+                    dev.aod.mcmcp.safety.ScopedEntityAttackConsentStore.MIN_MINIMUM_INTERVAL_TICKS,
+                    dev.aod.mcmcp.safety.ScopedEntityAttackConsentStore.MAX_MINIMUM_INTERVAL_TICKS,
+                    path + ".minimum_interval_ticks");
+            requireRange(operation.maxOperationDurationTicks(), 1, MAX_KILL_ZONE_OPERATION_TICKS,
+                    path + ".max_operation_duration_ticks");
+            walk.requiredCapabilities.add(ActionDsl.Capability.ENTITY_ATTACK);
             return 1;
         }
         if (node instanceof ActionDsl.WaitTicks wait) {

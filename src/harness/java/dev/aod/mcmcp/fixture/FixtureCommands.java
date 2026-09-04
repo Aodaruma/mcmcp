@@ -145,6 +145,13 @@ final class FixtureCommands {
                         .then(Commands.literal("fishing_oracle")
                                 .executes(context -> execute(context.getSource(),
                                         FixtureFishingScenario::sendOracle)))
+                        .then(phase5("kill_zone", FixturePhase5Mode.KILL_ZONE))
+                        .then(Commands.literal("kill_zone_status")
+                                .executes(context -> execute(context.getSource(),
+                                        FixtureKillZoneScenario::sendStatus)))
+                        .then(Commands.literal("kill_zone_oracle")
+                                .executes(context -> execute(context.getSource(),
+                                        FixtureKillZoneScenario::sendOracle)))
                         .then(phase5("iron_farm", FixturePhase5Mode.IRON_FARM))
                         .then(Commands.literal("verify_tree")
                                 .executes(context -> execute(

@@ -17,6 +17,7 @@ class FixturePhase5AutorunConfigTest {
                         "combined_wheat", "tree", "sleep", "survey", "generalization",
                         "cobblestone_generator",
                         "fishing",
+                        "kill_zone",
                         "iron_farm", "reset");
 
         for (FixturePhase5Mode mode : FixturePhase5Mode.values()) {

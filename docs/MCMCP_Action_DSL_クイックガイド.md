@@ -36,7 +36,7 @@ side-effect profileをitem IDだけから推測せず、trusted Runtimeが実sta
 
 同意UIにはstation / kill zone、許可mob types、main-hand item、攻撃回数、最小間隔、期限を表示し、Grantボタンへの物理左クリックだけを許可経路にします。keyboard activation、MCP、chat、Action引数、packetからは発行できず、Cancel、Esc、画面close/replace、OFF、world/session変更、endpoint fault、shutdownで破棄します。この保証範囲はMCP / Action / chat / packetからgrant経路へ到達不能であることまでで、同時ロードされた別MODやOS-level input injectionに対する物理入力の真正性までは証明しません。
 
-現行Storeはzone scope、policy hash、2400-tickのGrant後猶予、binding mismatch非消費、Action開始時single-consumeへ置換済みです。ただし、MCPからのpending登録、優先する`operate_kill_zone` DSL / consumer / JIT、Action所有のattack count / interval / deadline budget、構造化health reportは未実装です。汎用`attack_known_entity`もまだ未実装であり、現段階では`granted`も攻撃能力を与えず従来どおりfail closedです。今後の実機・実ワールド検証は`aod-mimoid`で行います。
+`operate_kill_zone`のproduction初期sliceは接続済みです。`consent_ref:null`の初回送信はActionを予約せず`AWAITING_CONSENT`だけを返し、物理Grant後の同一policy再送・delivery確認後にrefを一度だけconsumeします。初期fixtureは1セルの閉鎖station（full-cubeのsupport/roof/三面壁、zone側は下段full cube＋上段top slabの半ブロックslit）へ限定し、zone全体もplayerの8-block hazard volume内に収めます。対象型は`armor_stand`、`zombie`、`skeleton`、武器は必要耐久を残した無エンチャントVanilla sword/axeだけです。consumerはカメラを動かさずcurrent crosshair targetのみをfresh observationからJIT選択します。汎用`attack_known_entity`と特殊能力mob / MOD攻撃profileは未実装で、実機・実ワールド検証は`aod-mimoid`で行います。
 
 ## 観測を絞る
 

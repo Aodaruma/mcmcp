@@ -24,6 +24,50 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ActionDslTest {
     @Test
+    void killZoneIsTopLevelOnlyAndItsCostComesFromTheOperation() {
+        JsonObject json = JsonParser.parseString("""
+                {"schema_version":1,"program":{"dsl_version":1,
+                 "capabilities":["entity_attack"],"body":[{
+                   "id":"farm","op":"operate_kill_zone",
+                   "target_kill_zone_bounds":{"dimension":"minecraft:overworld",
+                     "min":{"x":2,"y":64,"z":0},"max":{"x":4,"y":67,"z":2}},
+                   "entity_type_allowlist":["minecraft:zombie"],
+                   "main_hand_item":"minecraft:iron_axe","consent_ref":null,
+                   "max_attacks":2048,"minimum_interval_ticks":10,
+                   "max_operation_duration_ticks":35990}]},
+                 "budget":{"max_duration_ms":1800000,"max_ticks":36000,
+                   "max_distance_blocks":0,"max_camera_degrees":0,
+                   "max_interactions":2048,"max_blocks_broken":0,"max_blocks_placed":0}}
+                """).getAsJsonObject();
+
+        ActionDsl.Request parsed = ActionDslParser.parse(json);
+        assertThat(((ActionDsl.OperateKillZone) parsed.program().body().getFirst()).consentRef())
+                .isEmpty();
+        var compiled = ActionDslCompiler.compile(
+                parsed, ignored -> Optional.empty(), Set.of(ActionDsl.Capability.ENTITY_ATTACK));
+        assertThat(compiled.worstCaseCost()).isEqualTo(
+                new ActionDslCompiler.Cost(1_800_000, 36_000, 0, 0, 2_048, 0, 0));
+
+        JsonObject nested = json.deepCopy();
+        JsonObject repeat = new JsonObject();
+        repeat.addProperty("id", "loop");
+        repeat.addProperty("op", "repeat");
+        repeat.addProperty("count", 1);
+        repeat.add("body", nested.getAsJsonObject("program").getAsJsonArray("body"));
+        nested.getAsJsonObject("program").add("body", array(repeat));
+        assertCode(nested, ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject inflatedWait = JsonParser.parseString("""
+                {"schema_version":1,"program":{"dsl_version":1,"capabilities":[],
+                 "body":[{"id":"hold","op":"wait_ticks","ticks":1}]},
+                 "budget":{"max_duration_ms":1800000,"max_ticks":36000,
+                  "max_distance_blocks":0,"max_camera_degrees":0,"max_interactions":2048,
+                  "max_blocks_broken":0,"max_blocks_placed":0}}
+                """).getAsJsonObject();
+        assertCode(inflatedWait, ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
     void defaultHardLimitPreservesThePublishedSevenHundredTwentyDegreeCameraBudget() {
         ActionDsl.Request request = ActionDslParser.parse(request(
                 capabilities("camera"),

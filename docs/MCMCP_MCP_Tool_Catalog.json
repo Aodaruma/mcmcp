@@ -285,9 +285,9 @@
               "granted_capabilities": {
                 "type": "array",
                 "minItems": 0,
-                "maxItems": 7,
+                "maxItems": 8,
                 "uniqueItems": true,
-                "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use"]}
+                "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use", "entity_attack"]}
               }
             },
             "required": ["mode", "ready_expires_at", "game_paused", "granted_capabilities"]
@@ -394,7 +394,7 @@
           },
           "entity_attack_consent": {
             "type": "object",
-            "description": "Read-only summary of one runtime-owned bounded kill-zone operation consent. pending is not authority. One physical primary click on the dedicated local Grant button creates a 2400-tick (2-minute), single-consume start token for exactly one finite operate_kill_zone Action; it is not a reusable per-attack or cross-Action bearer lease. The Action-owned operation duration starts only after token consumption and is capped separately at 36000 ticks (30 minutes). Its policy permits repeated attacks on newly spawned mobs only while the runtime-derived player station, disjoint kill zone, entity-type allowlist, exact attack-effect stack profile, finite count, minimum interval, world, and operation duration all match. Per-target entity_ref is deliberately not in this scope. The internal stack fingerprint is never exposed. Cancel, Esc/emergency stop, screen close/replacement, OFF, world/session change, endpoint fault, or shutdown clears unconsumed start authority. The future consumer must JIT prove fresh target ref, whole target AABB containment, current LOS, reach, cooldown, collision/support, collateral safety for sweep profiles, and every non-waivable gate before each dispatch. A health decrease revokes the running Action authority and must terminate with structured SAFETY_INTERRUPTED facts including health_before, health_current, delta, and reason.",
+            "description": "Read-only summary of one runtime-owned bounded kill-zone operation consent. pending is not authority. One physical primary click on the dedicated local Grant button creates a 2400-tick (2-minute), single-consume start token for exactly one finite operate_kill_zone Action; it is not a reusable per-attack or cross-Action bearer lease. The Action-owned dispatch duration starts only after token consumption and is capped at 35990 ticks; the enclosing 36000-tick Action reservation keeps the final 10-tick effect-confirmation window inside the hard limit. Its policy permits repeated attacks on newly spawned mobs only while the runtime-derived player station, disjoint kill zone, entity-type allowlist, exact attack-effect stack profile, finite count, minimum interval, world, and operation duration all match. Per-target entity_ref is deliberately not in this scope. The internal stack and strict safety-cell structure fingerprints are never exposed. The consumer JIT proves fresh target ref, whole target AABB containment, current LOS, reach, crosshair, cooldown, structure, collateral safety, and every non-waivable gate before each dispatch. Cancel, Esc/emergency stop, screen close/replacement, OFF, world/session change, endpoint fault, shutdown, or effective-health decrease revokes authority.",
             "additionalProperties": false,
             "properties": {
               "state": {"enum": ["none", "pending", "granted"]},
@@ -455,9 +455,10 @@
                       "side_effect_profile": {"enum": ["vanilla_single_target", "vanilla_sweep", "adapter_single_target", "adapter_bounded_aoe"]},
                       "max_attacks": {"type": "integer", "minimum": 1, "maximum": 2048},
                       "minimum_interval_ticks": {"type": "integer", "minimum": 10, "maximum": 1200},
-                      "max_operation_duration_ticks": {"type": "integer", "minimum": 1, "maximum": 36000}
+                      "max_operation_duration_ticks": {"type": "integer", "minimum": 1, "maximum": 35990},
+                      "structure_bound": {"const": true}
                     },
-                    "required": ["dimension", "player_station_bounds", "target_kill_zone_bounds", "entity_type_allowlist", "main_hand", "side_effect_profile", "max_attacks", "minimum_interval_ticks", "max_operation_duration_ticks"]
+                    "required": ["dimension", "player_station_bounds", "target_kill_zone_bounds", "entity_type_allowlist", "main_hand", "side_effect_profile", "structure_bound", "max_attacks", "minimum_interval_ticks", "max_operation_duration_ticks"]
                   }
                 ]
               },
@@ -585,15 +586,15 @@
                   "max_repeat_count": {"const": 16},
                   "allowed_capabilities": {
                     "type": "array",
-                    "minItems": 7,
-                    "maxItems": 7,
+                    "minItems": 8,
+                    "maxItems": 8,
                     "uniqueItems": true,
-                    "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use"]}
+                    "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use", "entity_attack"]}
                   },
                   "available_operations": {
                     "type": "array",
-                    "minItems": 34,
-                    "maxItems": 34,
+                    "minItems": 35,
+                    "maxItems": 35,
                     "items": {
                       "type": "object",
                       "additionalProperties": false,
@@ -602,13 +603,13 @@
                         "version": {"const": 1},
                         "required_capabilities": {
                           "type": "array", "minItems": 0, "maxItems": 3, "uniqueItems": true,
-                          "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use"]}
+                          "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use", "entity_attack"]}
                         },
                         "capability_rule": {"enum": ["fixed", "union_of_descendants"]},
                         "locally_granted": {"type": "boolean"},
                         "locally_missing_capabilities": {
                           "type": "array", "minItems": 0, "maxItems": 3, "uniqueItems": true,
-                          "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use"]}
+                          "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use", "entity_attack"]}
                         },
                         "reference_fields": {
                           "type": "array",
@@ -619,8 +620,8 @@
                             "additionalProperties": false,
                             "properties": {
                               "path": {"type": "string", "minLength": 1, "maxLength": 160},
-                              "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref"]},
-                              "requirement": {"enum": ["required", "one_of_inline_source", "required_with_fingerprint"]},
+                              "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref", "kill_zone_consent_ref"]},
+                              "requirement": {"enum": ["required", "one_of_inline_source", "required_with_fingerprint", "required_after_physical_grant"]},
                               "replay_policy": {"const": "refresh_required"}
                             },
                             "required": ["path", "kind", "requirement", "replay_policy"]
@@ -632,13 +633,13 @@
                   },
                   "reference_descriptors": {
                     "type": "array",
-                    "minItems": 4,
-                    "maxItems": 4,
+                    "minItems": 5,
+                    "maxItems": 5,
                     "items": {
                       "type": "object",
                       "additionalProperties": false,
                       "properties": {
-                        "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref"]},
+                        "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref", "kill_zone_consent_ref"]},
                         "issued_by": {"enum": ["agent_get_state", "agent_get_observation", "agent_get_action"]},
                         "source_path": {"type": "string", "minLength": 1, "maxLength": 160},
                         "consumer_operations": {
@@ -1107,7 +1108,7 @@
     {
       "name": "agent_start_action",
       "title": "Start MCMCP Action",
-"description": "Runs one validated Action DSL v1 program while in-game MCP operation is enabled. Choose Action boundaries from current evidence: combine nodes only when every later node is admissible now or has an explicitly supported dependency proof. Batch 2..8 targets within one crop stage; when a mutation creates new drops or newly exposed surfaces, finish, reobserve, then start the next Action. apply_known_block_plan is the bounded exception for explicitly declared earlier-entry placement dependencies. Put wait_until immediately after its plant node when growth must be awaited. Copy traversability.navigation_target verbatim into navigate_to_known.target; never derive, floor, round, or copy continuous traversability.from/to coordinates. When you have a visible block but no safe feet coordinate, copy visible_surface.position and block verbatim into approach_known_surface; the runtime selects a known interaction-range navigation cell, then finish the Action and reobserve before mutation. For a later stationary dry bottom oak/cobblestone stair plan whose directional placement context is not reachable from the current pose, copy the same anchor/transform/entries into the movement-only approach_known_placement; entries require placement_state_ref plus current UP support expected_state, and the node must be the only top-level node. It selects one known stand cell for every entry, then finish and reobserve before apply_known_block_plan. collect_visible_item and collect_visible_item_batch targets are the only continuous positions: copy visible_entity.position and displayed_item without rounding. Use collect_visible_item_batch for 2..8 current drops instead of one Action per item. For building copy, use only visible_surface records whose placement_item is non-null: prefer placement_state_ref, or copy state verbatim into source_state and placement_item into item. For construction clear, copy the complete current target state into expected_before; after terminal fresh-air verification, reobserve before a separate apply_known_block_plan replacement Action. Never convert state properties yourself. Construction requires every support to be within 40 total yaw+pitch degrees of the admitted heading; when it is not, copy one unexpired delivered visible support's position, face, and block verbatim into face_known_block_face immediately before the plan, or split the plan. This camera-only recovery can use older evidence within its TTL; every later mutation separately requires current evidence. For crafting, query agent_get_state recipes first, copy one current recipe_ref and fingerprint into craft_known_recipe.recipe_ref and recipe_fingerprint, and use one current visible minecraft:crafting_table. For smelting, copy one current furnace-family recipe_ref and fingerprint, the visible station state, and one default-component fuel into smelt_known_recipe, and set max_smelts to the exact current input-stack count 1..64; this exact-stack node must be the final top-level node outside if/repeat. For a known Menu operation, copy one current operation_ref into operate_known_menu; this node must be the final top-level node outside if/repeat. For brewing, use own-inventory standard_potions evidence and one current visible minecraft:brewing_stand; brew_known_potion_batch accepts one catalog-fixed standard Vanilla one-step recipe for 1..3 bottles and must be the final top-level node outside if/repeat. For an exact generic break, copy target, face, and complete expected_state from one current visible_surface into break_known_block; only the catalog-declared block/tool/drop triples are accepted, success also requires expected_drop inventory growth to minimum_inventory_count, and repeat is forbidden. For Redstone, apply_known_redstone_spec supports only the stationary one-lever identity slices declared by its schema: one direct lamp, the fixed two-lamp fan-out, or the fixed one-dust straight identity; the straight-wire slice requires current visible minecraft:glass UP supports under its lamp, dust, and lever; do not infer variable-length or bent wire or arbitrary logic. The envelope is {schema_version:1,program:{dsl_version:1,name?:string,capabilities:string[],body:node[]},budget:{max_duration_ms,max_ticks,max_distance_blocks,max_camera_degrees,max_interactions,max_blocks_broken,max_blocks_placed}}. Every node needs a unique id matching ^[a-z][a-z0-9_-]{0,31}$ and one exact op. Frequent exact signatures are navigate_to_known:{id,op,target,tolerance}; approach_known_surface:{id,op,target,expected_block}; approach_known_placement:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}; face_known_block_face:{id,op,target,face,expected_block}; break_known_block:{id,op,target,face,expected_state,tool_item,expected_drop,minimum_inventory_count}; open_known_passage/inspect_known_container:{id,op,target,expected_block}; take_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}; store_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_container_count}; craft_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},max_crafts}; smelt_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},fuel:{item,stack_policy},max_smelts}; operate_known_menu:{id,op,operation_ref}; brew_known_potion_batch:{id,op,target,expected_block,input:{item,potion,count},ingredient_item,fuel_item,expected_output:{item,potion,count}}; till_known_batch:{id,op,targets:[position],expected_block,hoe_item}; plant_known_wheat_batch:{id,op,targets:[{target,support}],seed_item}; harvest_known_wheat_batch:{id,op,targets:[position]}; apply_known_block_plan:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}; clear_known_block_plan:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,expected_before}]}; pillar_up_known:{id,op,support,expected_support,placement_state_ref}; apply_known_redstone_spec:{id,op,anchor,rotation,components:[{id,role,block}],truth_table:[{inputs:{input},outputs:{output}}],footprint:{x,y,z},timing:{settle_ticks}}; collect_visible_item_batch:{id,op,targets:[{displayed_item,target}]}; cast_known_fishing_rod:{id,op,hand,rod_item,target,face,expected_state}; reel_known_fishing_session:{id,op,fishing_session_ref,hand,rod_item}. apply_known_block_plan entries and pillar_up_known each select placement_state_ref or legacy source_state plus item as an exact one-of. Both support.expected_state and support.dependency_entry_id are required nullable fields and exactly one must be non-null. Exact ops are navigate_to_known, approach_known_surface, approach_known_placement, face_known_position, face_known_block_face, break_known_face, break_known_block, till_known_block, till_known_batch, plant_known_wheat, plant_known_wheat_batch, harvest_known_wheat, harvest_known_wheat_batch, apply_known_block_plan, clear_known_block_plan, pillar_up_known, apply_known_redstone_spec, open_known_fence_gate, open_known_passage, inspect_known_container, take_known_container_stack, store_known_container_stack, craft_known_recipe, smelt_known_recipe, operate_known_menu, brew_known_potion_batch, collect_visible_item, collect_visible_item_batch, cast_known_fishing_rod, reel_known_fishing_session, wait_ticks, wait_until, if, and repeat; use the exact inputSchema fields and no aliases. Required capabilities are navigate/approach_known_surface/approach_known_placement/collect=movement; face_known_position/face_known_block_face=camera; break/harvest/clear_known_block_plan=camera+block_break; till/open=camera+block_interact; plant/apply_known_block_plan=camera+block_place; pillar_up_known=movement+camera+block_place; apply_known_redstone_spec=camera+block_interact+block_place; operate_known_menu=inventory_transfer; cast_known_fishing_rod=camera+item_use; reel_known_fishing_session=item_use; inspect/take/store/craft/smelt/brew=camera+inventory_transfer. For cast_known_fishing_rod reserve 4000 ms, 80 ticks, its currently proved camera delta, and 2 interactions; for reel_known_fishing_session reserve 4000 ms, 80 ticks, and 2 interactions, with zero movement, camera, breaks, and placements. For each inspect/take/store/craft reserve at least 30000 ms, 600 ticks, 360 camera degrees, and its schema-stated interactions; craft reserves exactly 1+4*max_crafts interactions. For operate_known_menu reserve at least 30000 ms, 600 ticks, and 1 interaction; distance, camera, breaks, and placements are zero. For smelt reserve 2200+200*max_smelts ticks, 50 times that many milliseconds, up to 540 camera degrees for aim plus view restoration, and 7 interactions. For brew reserve at least 70000 ms, 1400 ticks, up to 540 camera degrees for aim plus view restoration, and 16 interactions; distance, breaks, and placements are zero. For approach_known_placement reserve a normal navigation budget up to 30000 ms, 600 ticks, and 32 distance blocks with zero camera/interactions/breaks/placements. For each apply_known_block_plan entry reserve 15000 ms, 300 ticks, 80 camera degrees, and one placement; an 8-entry plan therefore needs 120000 ms, 2400 ticks, 640 camera degrees, and 8 placements with zero movement, interactions, and breaks. clear_known_block_plan uses the same per-entry time and camera bound with one break instead of one placement. For pillar_up_known reserve 15000 ms, 300 ticks, 2 distance blocks, 360 camera degrees, and one placement; interactions and breaks are zero. For apply_known_redstone_spec reserve 100*(component_count+2) + 3*settle_ticks ticks, 50 times that many milliseconds, 720 camera degrees, 2 interactions, and component_count placements; distance and breaks are zero. For another 8-target mutation batch, reserve 120000 ms, 2400 ticks, up to the 720 camera-degree policy maximum, and 8 interactions/breaks/placements as applicable. Targets always execute in submitted order; if that order costs more than 720 camera degrees, split it into smaller batches instead of reordering at runtime. take/store stack_policy is exactly default_components_only or item_id_any_components; craft/smelt goal.stack_policy and smelt fuel.stack_policy are exactly default_components_only. Use observed coordinates and policy maxima when unsure of an adequate budget. PROGRAM_BUDGET_UNPROVABLE reports all insufficient budget component names without echoing submitted values.",
+"description": "Runs one validated Action DSL v1 program while in-game MCP operation is enabled. Choose Action boundaries from current evidence: combine nodes only when every later node is admissible now or has an explicitly supported dependency proof. Batch 2..8 targets within one crop stage; when a mutation creates new drops or newly exposed surfaces, finish, reobserve, then start the next Action. apply_known_block_plan is the bounded exception for explicitly declared earlier-entry placement dependencies. Put wait_until immediately after its plant node when growth must be awaited. Copy traversability.navigation_target verbatim into navigate_to_known.target; never derive, floor, round, or copy continuous traversability.from/to coordinates. When you have a visible block but no safe feet coordinate, copy visible_surface.position and block verbatim into approach_known_surface; the runtime selects a known interaction-range navigation cell, then finish the Action and reobserve before mutation. For a later stationary dry bottom oak/cobblestone stair plan whose directional placement context is not reachable from the current pose, copy the same anchor/transform/entries into the movement-only approach_known_placement; entries require placement_state_ref plus current UP support expected_state, and the node must be the only top-level node. It selects one known stand cell for every entry, then finish and reobserve before apply_known_block_plan. collect_visible_item and collect_visible_item_batch targets are the only continuous positions: copy visible_entity.position and displayed_item without rounding. Use collect_visible_item_batch for 2..8 current drops instead of one Action per item. For building copy, use only visible_surface records whose placement_item is non-null: prefer placement_state_ref, or copy state verbatim into source_state and placement_item into item. For construction clear, copy the complete current target state into expected_before; after terminal fresh-air verification, reobserve before a separate apply_known_block_plan replacement Action. Never convert state properties yourself. Construction requires every support to be within 40 total yaw+pitch degrees of the admitted heading; when it is not, copy one unexpired delivered visible support's position, face, and block verbatim into face_known_block_face immediately before the plan, or split the plan. This camera-only recovery can use older evidence within its TTL; every later mutation separately requires current evidence. For crafting, query agent_get_state recipes first, copy one current recipe_ref and fingerprint into craft_known_recipe.recipe_ref and recipe_fingerprint, and use one current visible minecraft:crafting_table. For smelting, copy one current furnace-family recipe_ref and fingerprint, the visible station state, and one default-component fuel into smelt_known_recipe, and set max_smelts to the exact current input-stack count 1..64; this exact-stack node must be the final top-level node outside if/repeat. For a known Menu operation, copy one current operation_ref into operate_known_menu; this node must be the final top-level node outside if/repeat. For brewing, use own-inventory standard_potions evidence and one current visible minecraft:brewing_stand; brew_known_potion_batch accepts one catalog-fixed standard Vanilla one-step recipe for 1..3 bottles and must be the final top-level node outside if/repeat. For an exact generic break, copy target, face, and complete expected_state from one current visible_surface into break_known_block; only the catalog-declared block/tool/drop triples are accepted, success also requires expected_drop inventory growth to minimum_inventory_count, and repeat is forbidden. For Redstone, apply_known_redstone_spec supports only the stationary one-lever identity slices declared by its schema: one direct lamp, the fixed two-lamp fan-out, or the fixed one-dust straight identity; the straight-wire slice requires current visible minecraft:glass UP supports under its lamp, dust, and lever; do not infer variable-length or bent wire or arbitrary logic. The envelope is {schema_version:1,program:{dsl_version:1,name?:string,capabilities:string[],body:node[]},budget:{max_duration_ms,max_ticks,max_distance_blocks,max_camera_degrees,max_interactions,max_blocks_broken,max_blocks_placed}}. Every node needs a unique id matching ^[a-z][a-z0-9_-]{0,31}$ and one exact op. Frequent exact signatures are navigate_to_known:{id,op,target,tolerance}; approach_known_surface:{id,op,target,expected_block}; approach_known_placement:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}; face_known_block_face:{id,op,target,face,expected_block}; break_known_block:{id,op,target,face,expected_state,tool_item,expected_drop,minimum_inventory_count}; open_known_passage/inspect_known_container:{id,op,target,expected_block}; take_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}; store_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_container_count}; craft_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},max_crafts}; smelt_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},fuel:{item,stack_policy},max_smelts}; operate_known_menu:{id,op,operation_ref}; brew_known_potion_batch:{id,op,target,expected_block,input:{item,potion,count},ingredient_item,fuel_item,expected_output:{item,potion,count}}; till_known_batch:{id,op,targets:[position],expected_block,hoe_item}; plant_known_wheat_batch:{id,op,targets:[{target,support}],seed_item}; harvest_known_wheat_batch:{id,op,targets:[position]}; apply_known_block_plan:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}; clear_known_block_plan:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,expected_before}]}; pillar_up_known:{id,op,support,expected_support,placement_state_ref}; apply_known_redstone_spec:{id,op,anchor,rotation,components:[{id,role,block}],truth_table:[{inputs:{input},outputs:{output}}],footprint:{x,y,z},timing:{settle_ticks}}; collect_visible_item_batch:{id,op,targets:[{displayed_item,target}]}; cast_known_fishing_rod:{id,op,hand,rod_item,target,face,expected_state}; reel_known_fishing_session:{id,op,fishing_session_ref,hand,rod_item}; operate_kill_zone:{id,op,target_kill_zone_bounds,entity_type_allowlist,main_hand_item,consent_ref,max_attacks,minimum_interval_ticks,max_operation_duration_ticks}. apply_known_block_plan entries and pillar_up_known each select placement_state_ref or legacy source_state plus item as an exact one-of. Both support.expected_state and support.dependency_entry_id are required nullable fields and exactly one must be non-null. Exact ops are navigate_to_known, approach_known_surface, approach_known_placement, face_known_position, face_known_block_face, break_known_face, break_known_block, till_known_block, till_known_batch, plant_known_wheat, plant_known_wheat_batch, harvest_known_wheat, harvest_known_wheat_batch, apply_known_block_plan, clear_known_block_plan, pillar_up_known, apply_known_redstone_spec, open_known_fence_gate, open_known_passage, inspect_known_container, take_known_container_stack, store_known_container_stack, craft_known_recipe, smelt_known_recipe, operate_known_menu, brew_known_potion_batch, collect_visible_item, collect_visible_item_batch, cast_known_fishing_rod, reel_known_fishing_session, operate_kill_zone, wait_ticks, wait_until, if, and repeat; use the exact inputSchema fields and no aliases. Required capabilities are navigate/approach_known_surface/approach_known_placement/collect=movement; face_known_position/face_known_block_face=camera; break/harvest/clear_known_block_plan=camera+block_break; till/open=camera+block_interact; plant/apply_known_block_plan=camera+block_place; pillar_up_known=movement+camera+block_place; apply_known_redstone_spec=camera+block_interact+block_place; operate_known_menu=inventory_transfer; cast_known_fishing_rod=camera+item_use; reel_known_fishing_session=item_use; operate_kill_zone=entity_attack; inspect/take/store/craft/smelt/brew=camera+inventory_transfer. The schema-wide 36000-tick, 1800000-ms, and 2048-interaction maxima are accepted only for one top-level operate_kill_zone; every other Action retains the 15000-tick, 750000-ms, and 16-interaction limits. For operate_kill_zone set budget.max_ticks to max_operation_duration_ticks+10, budget.max_duration_ms to 50 times that tick budget, max_interactions to max_attacks, and every motion, camera, break, and place budget to zero; the reserved final 10 ticks reconcile the last dispatched effect and do not authorize another attack. For cast_known_fishing_rod reserve 4000 ms, 80 ticks, its currently proved camera delta, and 2 interactions; for reel_known_fishing_session reserve 4000 ms, 80 ticks, and 2 interactions, with zero movement, camera, breaks, and placements. For each inspect/take/store/craft reserve at least 30000 ms, 600 ticks, 360 camera degrees, and its schema-stated interactions; craft reserves exactly 1+4*max_crafts interactions. For operate_known_menu reserve at least 30000 ms, 600 ticks, and 1 interaction; distance, camera, breaks, and placements are zero. For smelt reserve 2200+200*max_smelts ticks, 50 times that many milliseconds, up to 540 camera degrees for aim plus view restoration, and 7 interactions. For brew reserve at least 70000 ms, 1400 ticks, up to 540 camera degrees for aim plus view restoration, and 16 interactions; distance, breaks, and placements are zero. For approach_known_placement reserve a normal navigation budget up to 30000 ms, 600 ticks, and 32 distance blocks with zero camera/interactions/breaks/placements. For each apply_known_block_plan entry reserve 15000 ms, 300 ticks, 80 camera degrees, and one placement; an 8-entry plan therefore needs 120000 ms, 2400 ticks, 640 camera degrees, and 8 placements with zero movement, interactions, and breaks. clear_known_block_plan uses the same per-entry time and camera bound with one break instead of one placement. For pillar_up_known reserve 15000 ms, 300 ticks, 2 distance blocks, 360 camera degrees, and one placement; interactions and breaks are zero. For apply_known_redstone_spec reserve 100*(component_count+2) + 3*settle_ticks ticks, 50 times that many milliseconds, 720 camera degrees, 2 interactions, and component_count placements; distance and breaks are zero. For another 8-target mutation batch, reserve 120000 ms, 2400 ticks, up to the 720 camera-degree policy maximum, and 8 interactions/breaks/placements as applicable. Targets always execute in submitted order; if that order costs more than 720 camera degrees, split it into smaller batches instead of reordering at runtime. take/store stack_policy is exactly default_components_only or item_id_any_components; craft/smelt goal.stack_policy and smelt fuel.stack_policy are exactly default_components_only. Use observed coordinates and policy maxima when unsure of an adequate budget. PROGRAM_BUDGET_UNPROVABLE reports all insufficient budget component names without echoing submitted values.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1174,6 +1175,26 @@
               "z": {"type": "number", "minimum": -30000000, "maximum": 30000000}
             },
             "required": ["dimension", "x", "y", "z"]
+          },
+          "worldPoint": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {"type": "number", "minimum": -30000000, "maximum": 30000000},
+              "y": {"type": "number", "minimum": -2048, "maximum": 2048},
+              "z": {"type": "number", "minimum": -30000000, "maximum": 30000000}
+            },
+            "required": ["x", "y", "z"]
+          },
+          "worldBounds": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dimension": {"$ref": "#/$defs/resourceLocation"},
+              "min": {"$ref": "#/$defs/worldPoint"},
+              "max": {"$ref": "#/$defs/worldPoint"}
+            },
+            "required": ["dimension", "min", "max"]
           },
           "nodeId": {
             "type": "string",
@@ -2118,6 +2139,31 @@
             },
             "required": ["id", "op", "fishing_session_ref", "hand", "rod_item"]
           },
+          "operateKillZoneNode": {
+            "type": "object",
+            "description": "The operate_kill_zone opcode is a top-level-only finite kill-zone operation. Submit consent_ref:null first to register the local physical prompt without reserving an Action. After Grant, resend the identical canonical policy with the fresh ref. The initial production geometry is a strict one-cell safety enclosure: full support and roof, three full two-block walls, and a zone-facing full lower block plus exact top slab above it, leaving a half-block-height eye-to-body slit. The runtime never moves the camera; only the fresh LivingEntity currently under the crosshair can be attacked.",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "operate_kill_zone"},
+              "target_kill_zone_bounds": {"$ref": "#/$defs/worldBounds"},
+              "entity_type_allowlist": {
+                "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true,
+                "items": {"enum": ["minecraft:armor_stand", "minecraft:zombie", "minecraft:skeleton"]}
+              },
+              "main_hand_item": {"$ref": "#/$defs/resourceLocation"},
+              "consent_ref": {
+                "oneOf": [
+                  {"type": "null"},
+                  {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"}
+                ]
+              },
+              "max_attacks": {"type": "integer", "minimum": 1, "maximum": 2048},
+              "minimum_interval_ticks": {"type": "integer", "minimum": 10, "maximum": 1200},
+              "max_operation_duration_ticks": {"type": "integer", "minimum": 1, "maximum": 35990}
+            },
+            "required": ["id", "op", "target_kill_zone_bounds", "entity_type_allowlist", "main_hand_item", "consent_ref", "max_attacks", "minimum_interval_ticks", "max_operation_duration_ticks"]
+          },
           "waitNode": {
             "type": "object",
             "additionalProperties": false,
@@ -2232,6 +2278,7 @@
               {"$ref": "#/$defs/collectVisibleItemBatchNode"},
               {"$ref": "#/$defs/castKnownFishingRodNode"},
               {"$ref": "#/$defs/reelKnownFishingSessionNode"},
+              {"$ref": "#/$defs/operateKillZoneNode"},
               {"$ref": "#/$defs/waitNode"},
               {"$ref": "#/$defs/waitUntilNode"},
               {"$ref": "#/$defs/ifNode"},
@@ -2253,9 +2300,9 @@
               "capabilities": {
                 "type": "array",
                 "minItems": 0,
-                "maxItems": 7,
+                "maxItems": 8,
                 "uniqueItems": true,
-                "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use"]}
+                "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use", "entity_attack"]}
               },
               "body": {
                 "type": "array",
@@ -2270,11 +2317,11 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "max_duration_ms": {"type": "integer", "minimum": 100, "maximum": 750000},
-              "max_ticks": {"type": "integer", "minimum": 2, "maximum": 15000},
+              "max_duration_ms": {"type": "integer", "minimum": 100, "maximum": 1800000},
+              "max_ticks": {"type": "integer", "minimum": 2, "maximum": 36000},
               "max_distance_blocks": {"type": "number", "minimum": 0, "maximum": 32, "description": "Public distance budget, capped at 32. Route search first reserves 1.5*sqrt(6) for bounded start-pose uncertainty, then charges 1.5 times centerline edge length plus 1.5 per vertical edge. A flat cardinal route is therefore at most 18 edges; routes with vertical edges are shorter."},
               "max_camera_degrees": {"type": "number", "minimum": 0, "maximum": 720},
-              "max_interactions": {"type": "integer", "minimum": 0, "maximum": 16},
+              "max_interactions": {"type": "integer", "minimum": 0, "maximum": 2048},
               "max_blocks_broken": {"type": "integer", "minimum": 0, "maximum": 8},
               "max_blocks_placed": {"type": "integer", "minimum": 0, "maximum": 8}
             },
@@ -2871,24 +2918,37 @@
       },
       "outputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "schema_version": {"const": 1},
-          "action_id": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "schema_version": {"const": 1},
+              "action_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+              "state": {"const": "queued"},
+              "accepted_at": {"type": "string", "format": "date-time"}
+            },
+            "required": ["schema_version", "action_id", "state", "accepted_at"]
           },
-          "state": {"const": "queued"},
-          "accepted_at": {"type": "string", "format": "date-time"}
-        },
-        "required": ["schema_version", "action_id", "state", "accepted_at"]
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "schema_version": {"const": 1},
+              "state": {"const": "AWAITING_CONSENT"},
+              "policy_binding_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+              "action_reserved": {"const": false},
+              "input_acquired": {"const": false}
+            },
+            "required": ["schema_version", "state", "policy_binding_hash", "action_reserved", "input_acquired"]
+          }
+        ]
       }
     },
     {
       "name": "agent_get_action",
       "title": "Get MCMCP Action",
-      "description": "Returns bounded progress, a policy-filtered trace, an append-only effect ledger, terminal partial/resume metadata, and the bounded canonical JSON source/hash for one explicit action handle. A confirmed effect has server-derived before/after evidence; unknown means a mutation was dispatched without a confirmed after-state and requires reobservation, never blind replay. source is audit data, not replay authority. template is identical only when no opaque reference exists; otherwise every opaque ref and its coupled recipe fingerprint are null, ready_for_agent_start_action=false, and reference_requirements says how to refresh them. Opaque refs are never declared live by this off-client-thread read and must always be refreshed before cloning. wait_timeout_ms is an optional integer from 0 through 25000; zero or omission returns immediately, otherwise it waits off the Minecraft client thread until terminal or timeout.",
+      "description": "Returns bounded progress, a policy-filtered trace, a bounded latest-effect ring (monotonic seq; earlier entries may be evicted) with terminal aggregate, terminal partial/resume metadata, and the bounded canonical JSON source/hash for one explicit action handle. A confirmed effect has server-derived before/after evidence; unknown means a mutation was dispatched without a confirmed after-state and requires reobservation, never blind replay. source is audit data, not replay authority. template is identical only when no opaque reference exists; otherwise every opaque ref and its coupled recipe fingerprint are null, ready_for_agent_start_action=false, and reference_requirements says how to refresh them. Opaque refs are never declared live by this off-client-thread read and must always be refreshed before cloning. wait_timeout_ms is an optional integer from 0 through 25000; zero or omission returns immediately, otherwise it waits off the Minecraft client thread until terminal or timeout.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -2930,6 +2990,23 @@
               "fishing_session_ref": {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"},
               "rod_damage": {"type": "integer", "minimum": -1, "maximum": 2147483647},
               "inventory_count": {"type": "integer", "minimum": 0, "maximum": 2304}
+              ,"entity_type": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 128}
+              ,"health": {"type": "number"}
+              ,"health_before": {"type": "number"}
+              ,"health_current": {"type": "number"}
+              ,"health_delta": {"type": "number"}
+              ,"absorption_before": {"type": "number"}
+              ,"absorption_current": {"type": "number"}
+              ,"effective_health_before": {"type": "number"}
+              ,"effective_health_previous": {"type": "number"}
+              ,"effective_health_current": {"type": "number"}
+              ,"outcome": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"}
+              ,"reason": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"}
+              ,"completion_reason": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"}
+              ,"max_attacks": {"type": "integer", "minimum": 1, "maximum": 2048}
+              ,"dispatched_attacks": {"type": "integer", "minimum": 0, "maximum": 2048}
+              ,"confirmed_attacks": {"type": "integer", "minimum": 0, "maximum": 2048}
+              ,"unknown_attacks": {"type": "integer", "minimum": 0, "maximum": 2048}
             }
           }
         },
@@ -2953,10 +3030,10 @@
               "total_node_upper_bound": {"type": "integer", "minimum": 1, "maximum": 256},
               "distance_travelled": {"type": "number", "minimum": 0, "maximum": 48},
               "camera_degrees": {"type": "number", "minimum": 0, "maximum": 1080},
-              "interactions": {"type": "integer", "minimum": 0, "maximum": 16},
+              "interactions": {"type": "integer", "minimum": 0, "maximum": 2048},
               "blocks_broken": {"type": "integer", "minimum": 0, "maximum": 12},
               "blocks_placed": {"type": "integer", "minimum": 0, "maximum": 16},
-              "ticks": {"type": "integer", "minimum": 0, "maximum": 15200}
+              "ticks": {"type": "integer", "minimum": 0, "maximum": 36200}
             },
             "required": ["phase", "current_node_id", "executed_nodes", "total_node_upper_bound", "distance_travelled", "camera_degrees", "interactions", "blocks_broken", "blocks_placed", "ticks"]
           },
@@ -2978,6 +3055,7 @@
                       "SAFETY_RECOVERED",
                       "RECOVERY_EXHAUSTED",
                       "SERVER_DENIED_OR_DESYNC",
+                      "SAFETY_INTERRUPTED",
                       "CONDITION_TIMEOUT",
                       "PREDICATE_UNAVAILABLE",
                       "CAPABILITY_DENIED",
@@ -3003,7 +3081,7 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "tick": {"type": "integer", "minimum": 0, "maximum": 15200},
+                "tick": {"type": "integer", "minimum": 0, "maximum": 36200},
                 "event": {"type": "string", "pattern": "^[A-Z0-9_]+$", "maxLength": 64},
                 "detail": {"type": "string", "maxLength": 256}
               },
@@ -3012,15 +3090,15 @@
           },
           "effects": {
             "type": "array",
-            "description": "Append-only bounded ledger recorded at authoritative observation/ACK points. An unknown entry means a mutation was dispatched but its after-state was not confirmed; it must never be replayed blindly.",
+            "description": "Bounded latest-effect ring recorded at authoritative observation/ACK points. Sequence numbers remain monotonic when earlier entries are evicted. An unknown entry means a mutation was dispatched but its after-state was not confirmed; it must never be replayed blindly.",
             "maxItems": 64,
             "items": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "seq": {"type": "integer", "minimum": 1, "maximum": 64},
+                "seq": {"type": "integer", "minimum": 1, "maximum": 2050},
                 "node_id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"},
-                "kind": {"enum": ["block_place", "block_break", "container_take", "container_store", "fishing_cast", "fishing_reel"]},
+                "kind": {"enum": ["block_place", "block_break", "container_take", "container_store", "fishing_cast", "fishing_reel", "entity_attack", "kill_zone_summary", "safety_interrupted"]},
                 "subject": {"type": "string", "pattern": "^[a-z0-9_.:/,+-]{1,192}$"},
                 "observed_before": {"$ref": "#/$defs/effectObservation"},
                 "observed_after": {"$ref": "#/$defs/effectObservation"},
@@ -3030,6 +3108,22 @@
               },
               "required": ["seq", "node_id", "kind", "subject", "observed_before", "observed_after", "verification", "client_tick", "world_revision"]
             }
+          },
+          "effect_aggregate": {
+            "type": "object",
+            "description": "Fixed-size lifetime aggregate that remains complete when older effect-ring entries are evicted.",
+            "additionalProperties": false,
+            "properties": {
+              "total_effects": {"type": "integer", "minimum": 0, "maximum": 2050},
+              "retained_effects": {"type": "integer", "minimum": 0, "maximum": 64},
+              "confirmed_effects": {"type": "integer", "minimum": 0, "maximum": 2050},
+              "qualified_effects": {"type": "integer", "minimum": 0, "maximum": 2050},
+              "unknown_effects": {"type": "integer", "minimum": 0, "maximum": 2050},
+              "dispatched_attacks": {"type": "integer", "minimum": 0, "maximum": 2048},
+              "confirmed_attacks": {"type": "integer", "minimum": 0, "maximum": 2048},
+              "unknown_attacks": {"type": "integer", "minimum": 0, "maximum": 2048}
+            },
+            "required": ["total_effects", "retained_effects", "confirmed_effects", "qualified_effects", "unknown_effects", "dispatched_attacks", "confirmed_attacks", "unknown_attacks"]
           },
           "partial": {
             "description": "Null while non-terminal. Every terminal result carries bounded interruption/resume metadata derived from the live ledger, never reconstructed after completion.",
@@ -3089,7 +3183,7 @@
               "additionalProperties": false,
               "properties": {
                 "path": {"type": "string", "minLength": 1, "maxLength": 512},
-                "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref"]},
+                "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref", "kill_zone_consent_ref"]},
                 "coupled_paths": {
                   "type": "array", "minItems": 0, "maxItems": 1,
                   "items": {"type": "string", "minLength": 1, "maxLength": 512}
@@ -3102,7 +3196,7 @@
             }
           }
         },
-        "required": ["schema_version", "action_id", "state", "progress", "failure", "trace", "effects", "partial", "source", "template", "reference_requirements"]
+        "required": ["schema_version", "action_id", "state", "progress", "failure", "trace", "effects", "effect_aggregate", "partial", "source", "template", "reference_requirements"]
       }
     },
     {

@@ -123,6 +123,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.MerchantScreen;
 import net.minecraft.client.resources.sounds.SoundInstance;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -132,7 +133,12 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Enemy;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.BedItem;
@@ -142,6 +148,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.projectile.FishingHook;
 import net.minecraft.world.item.SolidBucketItem;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.Blocks;
@@ -149,6 +156,7 @@ import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
@@ -207,7 +215,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     /** Expanded only when a phase has passed its gate. */
     private static final Set<String> AVAILABLE_CAPABILITIES =
             Set.of("movement", "camera", "block_break", "block_interact", "block_place",
-                    "inventory_transfer", "item_use");
+                    "inventory_transfer", "item_use", "entity_attack");
 
     private final String modVersion;
     private final String neoForgeVersion;
@@ -670,7 +678,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || !localControlAvailable(minecraft, session)
                 || lock.mode() != LocalArmingState.Mode.READY
                 || !Objects.equals(session.dimension(), scope.dimension())
-                || automationActivityPending()
+                || agentActions.active().isPresent()
+                || routines.activeRoutineId().isPresent()
                 || minecraft.gui.screen() != null
                 || entityAttackConsentUi == null) {
             throw new IllegalStateException("entity attack consent admission is not ready");
@@ -1969,6 +1978,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (snapshot.control().capabilities().contains("item_use")) {
             allowed.add(ActionDsl.Capability.ITEM_USE);
         }
+        if (snapshot.control().capabilities().contains("entity_attack")) {
+            allowed.add(ActionDsl.Capability.ENTITY_ATTACK);
+        }
         ActionDslCompiler.CompiledProgram program = ActionDslCompiler.compile(
                 request, this::admissionPrimitiveCost, allowed);
         Optional<ActionDsl.Node> initialPrimitive = firstPrimitive(
@@ -2056,6 +2068,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return !(node instanceof ActionDsl.WaitTicks
                 || node instanceof ActionDsl.OperateKnownMenu
                 || node instanceof ActionDsl.ReelKnownFishingSession
+                || node instanceof ActionDsl.OperateKillZone
                 || node instanceof ActionDsl.WaitUntil wait
                         && wait.condition() instanceof ActionDsl.SoundClueCondition);
     }
@@ -2141,6 +2154,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         ? ActionDslCompiler.KNOWN_MENU_OPERATION_INTERACTIONS
                 : node instanceof ActionDsl.BrewKnownPotionBatch
                         ? ActionDslCompiler.KNOWN_BREWING_INTERACTIONS : 0L;
+        if (node instanceof ActionDsl.OperateKillZone operation) {
+            return Optional.of(ActionDslCompiler.intrinsicKillZoneCost(operation));
+        }
         long breaks = node instanceof ActionDsl.BreakKnownFace
                         || node instanceof ActionDsl.BreakKnownBlock
                         || node instanceof ActionDsl.HarvestKnownWheat
@@ -2223,6 +2239,42 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     Map.of());
         }
         requireLiveCall(context, "agent_start_action");
+        ActionDsl.OperateKillZone killZone = soleKillZone(prepared.program().request().program());
+        KillZoneAdmission killZoneAdmission = null;
+        if (killZone != null) {
+            killZoneAdmission = requireKillZoneAdmission(
+                    minecraft, session, prepared.source(), killZone);
+            if (killZone.consentRef().isEmpty()) {
+                var request = requestEntityAttackConsentForCanonicalAction(
+                        killZoneAdmission.policyBindingHash(), killZoneAdmission.scope());
+                if (request != ScopedEntityAttackConsentStore.RequestResult.REGISTERED
+                        && request != ScopedEntityAttackConsentStore.RequestResult.ALREADY_PENDING) {
+                    throw new RuntimeInvocationException(
+                            "consent_unavailable",
+                            "Another kill-zone consent request is active or the request clock changed.",
+                            true,
+                            Map.of("request_result", request.name().toLowerCase(Locale.ROOT)));
+                }
+                return Map.of(
+                        "schema_version", 1,
+                        "state", "AWAITING_CONSENT",
+                        "policy_binding_hash", killZoneAdmission.policyBindingHash(),
+                        "action_reserved", false,
+                        "input_acquired", false);
+            }
+            var consent = entityAttackConsent.snapshot(
+                    session.worldSessionId(), session.clientTick());
+            if (consent.state() != ScopedEntityAttackConsentStore.State.GRANTED
+                    || !killZoneAdmission.policyBindingHash().equals(consent.policyBindingHash())
+                    || !killZoneAdmission.scope().equals(consent.scope())
+                    || !killZone.consentRef().orElseThrow().equals(consent.consentRef())) {
+                throw new RuntimeInvocationException(
+                        "consent_binding_mismatch",
+                        "The consent ref is missing, expired, or bound to a different kill-zone policy.",
+                        true,
+                        Map.of());
+            }
+        }
         if (!arming.beginAction(session.worldSessionId())) {
             throw new RuntimeInvocationException(
                     "mcp_operation_disabled",
@@ -2238,7 +2290,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     prepared.source(),
                     Instant.now(),
                     System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
-            pendingAgentAdmission = new PendingAgentAdmission(accepted.actionId(), prepared);
+            pendingAgentAdmission = new PendingAgentAdmission(
+                    accepted.actionId(), prepared, killZoneAdmission);
             requireLiveCall(context, "agent_start_action");
         } catch (RuntimeException | LinkageError failure) {
             if (accepted == null) {
@@ -2255,6 +2308,286 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 "action_id", accepted.actionId().toString(),
                 "state", "queued",
                 "accepted_at", accepted.acceptedAt().toString());
+    }
+
+    private static ActionDsl.OperateKillZone soleKillZone(ActionDsl.Program program) {
+        return program.body().size() == 1
+                        && program.body().getFirst() instanceof ActionDsl.OperateKillZone operation
+                ? operation : null;
+    }
+
+    private KillZoneAdmission requireKillZoneAdmission(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            ActionDslSource source,
+            ActionDsl.OperateKillZone operation) {
+        assertClientThread(minecraft);
+        var player = Objects.requireNonNull(minecraft.player, "player");
+        var level = Objects.requireNonNull(minecraft.level, "level");
+        if (!session.worldReady()
+                || !session.dimension().equals(operation.targetKillZoneBounds().dimension())
+                || !player.onGround()
+                || player.isCreative() || player.isSpectator()
+                || minecraft.gameMode == null
+                || minecraft.gui.screen() != null) {
+            throw new RuntimeInvocationException(
+                    "unsafe_state", "Kill-zone consent requires a grounded survival player with no Screen.",
+                    true, Map.of());
+        }
+        String heldItem = BuiltInRegistries.ITEM.getKey(
+                player.getMainHandItem().getItem()).toString();
+        if (!operation.mainHandItem().equals(heldItem)) {
+            throw new RuntimeInvocationException(
+                    "target_changed", "The declared main-hand item is not currently held.",
+                    true, Map.of());
+        }
+        AttackProfile profile = requireKnownAttackProfile(player.getMainHandItem());
+        if (player.getMainHandItem().isDamageableItem()
+                && player.getMainHandItem().getMaxDamage()
+                        - player.getMainHandItem().getDamageValue() < operation.maxAttacks()) {
+            throw new RuntimeInvocationException(
+                    "unsupported_attack_profile",
+                    "The unenchanted weapon needs at least max_attacks remaining durability.",
+                    false, Map.of());
+        }
+        AABB box = player.getBoundingBox();
+        var station = new ScopedEntityAttackConsentStore.Bounds(
+                box.minX - 0.125D, box.minY - 0.0625D, box.minZ - 0.125D,
+                box.maxX + 0.125D, box.maxY + 0.125D, box.maxZ + 0.125D);
+        var raw = operation.targetKillZoneBounds();
+        var zone = new ScopedEntityAttackConsentStore.Bounds(
+                raw.min().x(), raw.min().y(), raw.min().z(),
+                raw.max().x(), raw.max().y(), raw.max().z());
+        requireKillZoneBarrier(
+                level, player, station, zone, operation.entityTypeAllowlist());
+        String structure = killZoneStructureFingerprint(level, station, zone);
+        var scope = new ScopedEntityAttackConsentStore.Scope(
+                session.dimension(),
+                station,
+                zone,
+                operation.entityTypeAllowlist(),
+                heldItem,
+                profile.fingerprint(),
+                structure,
+                profile.sideEffects(),
+                operation.maxAttacks(),
+                operation.minimumIntervalTicks(),
+                operation.maxOperationDurationTicks());
+        var binding = new StringBuilder(source.consentBindingSha256());
+        appendIdentity(binding, scope.toString());
+        return new KillZoneAdmission(sha256Identity(binding), scope);
+    }
+
+    private static AttackProfile requireKnownAttackProfile(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            throw new RuntimeInvocationException(
+                    "unsupported_attack_profile", "The main hand has no supported attack item.",
+                    false, Map.of());
+        }
+        String item = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+        boolean sword = item.matches("minecraft:(wooden|stone|copper|iron|golden|diamond|netherite)_sword");
+        boolean axe = item.matches("minecraft:(wooden|stone|copper|iron|golden|diamond|netherite)_axe");
+        if (!sword && !axe) {
+            throw new RuntimeInvocationException(
+                    "unsupported_attack_profile",
+                    "Only audited Vanilla swords and axes are supported; MOD profiles need an adapter.",
+                    false, Map.of());
+        }
+        var canonical = new StringBuilder(item);
+        for (var entry : stack.getComponentsPatch().entrySet()) {
+            if (entry.getKey() != DataComponents.DAMAGE
+                    && entry.getKey() != DataComponents.ENCHANTMENTS) {
+                throw new RuntimeInvocationException(
+                        "unsupported_attack_profile",
+                        "The held stack has an unaudited attack-relevant component patch.",
+                        false, Map.of());
+            }
+        }
+        if (!stack.getEnchantments().isEmpty()) {
+            throw new RuntimeInvocationException(
+                    "unsupported_attack_profile",
+                    "The initial production slice accepts only unenchanted Vanilla swords and axes.",
+                    false, Map.of());
+        }
+        return new AttackProfile(
+                sha256Identity(canonical),
+                sword
+                        ? ScopedEntityAttackConsentStore.AttackSideEffectProfile.VANILLA_SWEEP
+                        : ScopedEntityAttackConsentStore.AttackSideEffectProfile.VANILLA_SINGLE_TARGET);
+    }
+
+    private static String killZoneStructureFingerprint(
+            net.minecraft.client.multiplayer.ClientLevel level,
+            ScopedEntityAttackConsentStore.Bounds station,
+            ScopedEntityAttackConsentStore.Bounds zone) {
+        int minX = Mth.floor(Math.min(station.minX(), zone.minX())) - 1;
+        int minY = Mth.floor(Math.min(station.minY(), zone.minY())) - 1;
+        int minZ = Mth.floor(Math.min(station.minZ(), zone.minZ())) - 1;
+        int maxX = Mth.ceil(Math.max(station.maxX(), zone.maxX())) + 1;
+        int maxY = Mth.ceil(Math.max(station.maxY(), zone.maxY())) + 1;
+        int maxZ = Mth.ceil(Math.max(station.maxZ(), zone.maxZ())) + 1;
+        long cells = Math.multiplyExact(
+                Math.multiplyExact((long) maxX - minX + 1L, (long) maxY - minY + 1L),
+                (long) maxZ - minZ + 1L);
+        if (cells > 8_192L) {
+            throw new RuntimeInvocationException(
+                    "unsupported_kill_zone", "The structure witness exceeds 8192 loaded cells.",
+                    false, Map.of());
+        }
+        var canonical = new StringBuilder();
+        for (int y = minY; y <= maxY; y++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                for (int x = minX; x <= maxX; x++) {
+                    var pos = new BlockPos(x, y, z);
+                    if (!level.isLoaded(pos)) {
+                        throw new RuntimeInvocationException(
+                                "target_unknown", "Every structure witness cell must be loaded.",
+                                true, Map.of());
+                    }
+                    BlockState state = level.getBlockState(pos);
+                    appendIdentity(canonical, x + "," + y + "," + z);
+                    appendIdentity(canonical,
+                            BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
+                    state.getValues()
+                            .map(value -> value.property().getName() + "=" + value.valueName())
+                            .sorted()
+                            .forEach(value -> appendIdentity(canonical, value));
+                    state.getCollisionShape(level, pos).toAabbs().stream()
+                            .map(box -> box.minX + "," + box.minY + "," + box.minZ + ","
+                                    + box.maxX + "," + box.maxY + "," + box.maxZ)
+                            .sorted()
+                            .forEach(value -> appendIdentity(canonical, value));
+                    var fluid = state.getFluidState();
+                    appendIdentity(canonical, fluid.isEmpty() ? "empty"
+                            : BuiltInRegistries.FLUID.getKey(fluid.getType()).toString()
+                                    + ":" + fluid.getAmount() + ":" + fluid.isSource());
+                }
+            }
+        }
+        return sha256Identity(canonical);
+    }
+
+    private static void requireKillZoneBarrier(
+            net.minecraft.client.multiplayer.ClientLevel level,
+            Player player,
+            ScopedEntityAttackConsentStore.Bounds station,
+            ScopedEntityAttackConsentStore.Bounds zone,
+            List<String> allowedTypes) {
+        Set<String> auditedTypes = Set.of(
+                "minecraft:armor_stand",
+                "minecraft:zombie",
+                "minecraft:skeleton");
+        if (!auditedTypes.containsAll(allowedTypes)) {
+            throw unsafeKillZone(
+                    "The initial fixture accepts only audited armor-stand and basic zombie/skeleton types.");
+        }
+        AABB playerBox = player.getBoundingBox();
+        AABB safetyVolume = playerBox.inflate(8.0D);
+        if (zone.minX() < safetyVolume.minX || zone.minY() < safetyVolume.minY
+                || zone.minZ() < safetyVolume.minZ || zone.maxX() > safetyVolume.maxX
+                || zone.maxY() > safetyVolume.maxY || zone.maxZ() > safetyVolume.maxZ) {
+            throw unsafeKillZone(
+                    "The complete kill zone must remain inside the eight-block hazard volume.");
+        }
+        int cellX = Mth.floor((playerBox.minX + playerBox.maxX) * 0.5D);
+        int cellY = Mth.floor(playerBox.minY + 1.0e-5D);
+        int cellZ = Mth.floor((playerBox.minZ + playerBox.maxZ) * 0.5D);
+        if (Mth.floor(playerBox.minX) != Mth.floor(playerBox.maxX - 1.0e-5D)
+                || Mth.floor(playerBox.minZ) != Mth.floor(playerBox.maxZ - 1.0e-5D)) {
+            throw unsafeKillZone("The player must stand wholly inside one safety-cell column.");
+        }
+
+        double dx = (zone.minX() + zone.maxX()) * 0.5D - player.getX();
+        double dz = (zone.minZ() + zone.maxZ()) * 0.5D - player.getZ();
+        int frontX = cellX;
+        int frontZ = cellZ;
+        if (Math.abs(dx) >= Math.abs(dz) && dx > 0.0D && zone.minX() >= cellX + 2.0D) {
+            frontX++;
+        } else if (Math.abs(dx) >= Math.abs(dz) && dx < 0.0D
+                && zone.maxX() <= cellX - 1.0D) {
+            frontX--;
+        } else if (Math.abs(dz) > Math.abs(dx) && dz > 0.0D
+                && zone.minZ() >= cellZ + 2.0D) {
+            frontZ++;
+        } else if (Math.abs(dz) > Math.abs(dx) && dz < 0.0D
+                && zone.maxZ() <= cellZ - 1.0D) {
+            frontZ--;
+        } else {
+            throw unsafeKillZone(
+                    "The kill zone must lie wholly beyond one cardinal face of the safety cell.");
+        }
+
+        BlockPos front = new BlockPos(frontX, cellY, frontZ);
+        if (!exactFullCollisionCube(level, front)) {
+            throw unsafeKillZone(
+                    "The attack face lower block must be a full collision cube.");
+        }
+        int[][] sides = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (int[] side : sides) {
+            BlockPos low = new BlockPos(cellX + side[0], cellY, cellZ + side[1]);
+            if (!low.equals(front) && !exactFullCollisionCube(level, low)) {
+                throw unsafeKillZone("The other three lower safety-cell walls must be full cubes.");
+            }
+            if (low.equals(front)) {
+                if (!exactCollisionBox(
+                        level, low.above(), new AABB(0, 0.5D, 0, 1, 1, 1))) {
+                    throw unsafeKillZone(
+                            "The attack face requires an exact upper top slab over its half-block slit.");
+                }
+            } else if (!exactFullCollisionCube(level, low.above())) {
+                throw unsafeKillZone("Every upper safety-cell wall must be a full cube.");
+            }
+        }
+        if (!exactFullCollisionCube(level, new BlockPos(cellX, cellY - 1, cellZ))
+                || !exactFullCollisionCube(level, new BlockPos(cellX, cellY + 2, cellZ))) {
+            throw unsafeKillZone("The safety cell requires a full-cube support and roof.");
+        }
+        for (String allowedType : allowedTypes) {
+            Identifier id = Identifier.tryParse(allowedType);
+            var type = id == null ? null
+                    : BuiltInRegistries.ENTITY_TYPE.get(id).map(Holder::value).orElse(null);
+            if (type == null || type.getDimensions().height() <= 1.0F) {
+                throw unsafeKillZone(
+                        "Every allowed entity type must be taller than the fixed one-block opening.");
+            }
+        }
+    }
+
+    private static RuntimeInvocationException unsafeKillZone(String message) {
+        return new RuntimeInvocationException(
+                "unsafe_kill_zone", message, false, Map.of());
+    }
+
+    private static boolean exactFullCollisionCube(
+            net.minecraft.client.multiplayer.ClientLevel level, BlockPos pos) {
+        return exactCollisionBox(level, pos, new AABB(0, 0, 0, 1, 1, 1));
+    }
+
+    private static boolean exactCollisionBox(
+            net.minecraft.client.multiplayer.ClientLevel level,
+            BlockPos pos,
+            AABB expected) {
+        if (!level.isLoaded(pos)) return false;
+        List<AABB> boxes = level.getBlockState(pos).getCollisionShape(level, pos).toAabbs();
+        return boxes.size() == 1 && boxes.getFirst().equals(expected);
+    }
+
+    private record AttackProfile(
+            String fingerprint,
+            ScopedEntityAttackConsentStore.AttackSideEffectProfile sideEffects) {
+        private AttackProfile {
+            Objects.requireNonNull(fingerprint, "fingerprint");
+            Objects.requireNonNull(sideEffects, "sideEffects");
+        }
+    }
+
+    private record KillZoneAdmission(
+            String policyBindingHash,
+            ScopedEntityAttackConsentStore.Scope scope) {
+        private KillZoneAdmission {
+            Objects.requireNonNull(policyBindingHash, "policyBindingHash");
+            Objects.requireNonNull(scope, "scope");
+        }
     }
 
     private static boolean sameAdmissionSession(
@@ -2569,6 +2902,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             payload.put("world_revision", effect.worldRevision());
             return Map.copyOf(payload);
         }).toList());
+        var aggregate = snapshot.effectAggregate();
+        result.put("effect_aggregate", Map.of(
+                "total_effects", aggregate.totalEffects(),
+                "retained_effects", aggregate.retainedEffects(),
+                "confirmed_effects", aggregate.confirmedEffects(),
+                "qualified_effects", aggregate.qualifiedEffects(),
+                "unknown_effects", aggregate.unknownEffects(),
+                "dispatched_attacks", aggregate.dispatchedAttacks(),
+                "confirmed_attacks", aggregate.confirmedAttacks(),
+                "unknown_attacks", aggregate.unknownAttacks()));
         Map<String, Object> partialPayload = null;
         if (snapshot.partial() != null) {
             var partial = snapshot.partial();
@@ -2934,6 +3277,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     Map.entry(
                             "side_effect_profile",
                             scope.attackSideEffectProfile().name().toLowerCase(Locale.ROOT)),
+                    Map.entry("structure_bound", true),
                     Map.entry("max_attacks", scope.maxAttacks()),
                     Map.entry("minimum_interval_ticks", scope.minimumIntervalTicks()),
                     Map.entry(
@@ -3776,6 +4120,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             "admission_changed_before_execution");
                     return;
                 }
+                KillZoneAdmission killAuthorization = pending.killZoneAdmission();
+                KillZoneAdmission currentKillAuthorization = null;
+                if (killAuthorization != null) {
+                    ActionDsl.OperateKillZone operation = Objects.requireNonNull(
+                            soleKillZone(action.program().request().program()),
+                            "kill-zone operation");
+                    currentKillAuthorization = requireKillZoneAdmission(
+                            minecraft, session, pending.prepared().source(), operation);
+                }
                 long startedAtNanos = System.nanoTime();
                 var nextExecution = new AgentExecution(
                         action,
@@ -3792,11 +4145,47 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 .positionCorrectionRevision());
                 agentActions.markRunning(action.actionId());
                 agentExecution = nextExecution;
+                if (killAuthorization != null) {
+                    boolean consumed = currentKillAuthorization.equals(killAuthorization)
+                            && entityAttackConsent.consumeExactForActionStart(
+                                    Objects.requireNonNull(soleKillZone(
+                                                    action.program().request().program()))
+                                            .consentRef().orElseThrow(),
+                                    session.worldSessionId(),
+                                    currentKillAuthorization.policyBindingHash(),
+                                    currentKillAuthorization.scope(),
+                                    session.clientTick());
+                    if (!consumed) {
+                        failAgentAction(
+                                AgentActionStore.FailureCode.CAPABILITY_DENIED,
+                                true,
+                                "kill_zone_consent_not_consumed");
+                        return;
+                    }
+                    agentExecution.killZone = new KillZoneExecution(
+                            Objects.requireNonNull(
+                                    soleKillZone(action.program().request().program())),
+                            killAuthorization.scope(),
+                            session.clientTick(),
+                            minecraft.player.getHealth(),
+                            minecraft.player.getAbsorptionAmount());
+                    if (!advanceAgentProgram(
+                            minecraft, agentActions.get(action.actionId()).progress())) {
+                        return;
+                    }
+                }
                 agentControlOwnershipEpoch = Math.incrementExact(agentControlOwnershipEpoch);
                 pendingAgentAdmission = null;
                 if (paused) {
                     pauseStartedAtNanos = startedAtNanos;
                 }
+            }
+            if (agentExecution.killZone != null
+                    && minecraft.player != null
+                    && killZoneHealthDecreased(agentExecution.killZone, minecraft.player)) {
+                safetyInterruptKillZone(
+                        minecraft, session, action, agentExecution.killZone, "health_decreased");
+                return;
             }
             if (paused) {
                 releaseAgentInputsForHold(minecraft, "pause_input_release_failed");
@@ -3856,6 +4245,17 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 return;
             }
             var recovery = tickAgentRecovery(minecraft, session, now);
+            if (agentExecution.killZone != null
+                    && recovery.state() != MinecraftRecoveryGovernor.State.IDLE
+                    && recovery.state() != MinecraftRecoveryGovernor.State.REPLAN_REQUIRED) {
+                safetyInterruptKillZone(
+                        minecraft,
+                        session,
+                        action,
+                        agentExecution.killZone,
+                        recovery.reason().name().toLowerCase(Locale.ROOT));
+                return;
+            }
             switch (recovery.state()) {
                 case RECOVERING, PAUSED -> {
                     agentActions.recordTick(action.actionId());
@@ -3883,6 +4283,48 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     return;
                 }
                 case IDLE, REPLAN_REQUIRED -> { }
+            }
+
+            // The ordinary recovery governor remains authoritative for every hard hazard. Only
+            // the later generic local visible-hostile REPLAN is replaced by zone-scoped proofs.
+            if (agentExecution.killZone != null) {
+                var killBudget = action.program().effectiveBudget();
+                var killUsed = agentActions.get(action.actionId()).progress();
+                long durationLimit = Duration.ofMillis(killBudget.maxDurationMillis()).toNanos();
+                if (killUsed.distanceTravelled() > 0.0D
+                        || killUsed.cameraDegrees() > 0.0D
+                        || killUsed.blocksBroken() > 0
+                        || killUsed.blocksPlaced() > 0
+                        || killUsed.motionOverflowed()) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                            false,
+                            "kill_zone_stationary_contract");
+                    return;
+                }
+                long elapsedNanos = activeElapsedNanos(agentExecution, now);
+                boolean hardDeadlineReached = elapsedNanos >= durationLimit
+                        || killUsed.ticks() >= killBudget.maxTicks();
+                long effectReserveNanos = Duration.ofMillis(
+                        ActionDslCompiler.KILL_ZONE_EFFECT_RESERVE_TICKS * 50L).toNanos();
+                boolean newDispatchBudgetReached = elapsedNanos
+                                >= Math.max(0L, durationLimit - effectReserveNanos)
+                        || killUsed.ticks() >= killBudget.maxTicks()
+                                - ActionDslCompiler.KILL_ZONE_EFFECT_RESERVE_TICKS
+                        || killUsed.interactions() >= killBudget.maxInteractions();
+                if (hardDeadlineReached) {
+                    tickKillZone(minecraft, session, action, true, true);
+                    return;
+                }
+                var used = agentActions.get(action.actionId()).progress();
+                if (agentExecution.primitive == null
+                        && !advanceAgentProgram(minecraft, used)) {
+                    return;
+                }
+                agentActions.recordTick(action.actionId());
+                tickKillZone(
+                        minecraft, session, action, false, newDispatchBudgetReached);
+                return;
             }
 
             var usedBeforeTick = agentActions.get(action.actionId()).progress();
@@ -4331,6 +4773,404 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     /** Returns false when the action became terminal while advancing control nodes. */
+    private void tickKillZone(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action,
+            boolean actionHardDeadlineReached,
+            boolean newDispatchBudgetReached) {
+        KillZoneExecution operation = Objects.requireNonNull(agentExecution.killZone, "killZone");
+        var player = Objects.requireNonNull(minecraft.player, "player");
+        var level = Objects.requireNonNull(minecraft.level, "level");
+        long tick = session.clientTick();
+
+        String hazard = killZoneHardHazard(minecraft, player, operation);
+        if (hazard != null) {
+            safetyInterruptKillZone(minecraft, session, action, operation, hazard);
+            return;
+        }
+
+        AttackProfile currentProfile;
+        try {
+            currentProfile = requireKnownAttackProfile(player.getMainHandItem());
+        } catch (RuntimeInvocationException changed) {
+            safetyInterruptKillZone(
+                    minecraft, session, action, operation, "attack_profile_changed");
+            return;
+        }
+        if (!operation.scope.mainHandItem().equals(
+                        BuiltInRegistries.ITEM.getKey(player.getMainHandItem().getItem()).toString())
+                || !operation.scope.attackProfileFingerprint().equals(currentProfile.fingerprint())
+                || operation.scope.attackSideEffectProfile() != currentProfile.sideEffects()) {
+            safetyInterruptKillZone(minecraft, session, action, operation, "attack_profile_changed");
+            return;
+        }
+
+        if (operation.pending != null) {
+            KillZoneAttackAttempt attempt = operation.pending;
+            LivingEntity target = attempt.target;
+            boolean armorStandHit = armorStandHitConfirmed(attempt);
+            boolean confirmed = armorStandHit || target.getHealth() < attempt.healthBefore
+                    || (!target.isAlive() && target.getHealth() <= 0.0F);
+            if (confirmed) {
+                operation.confirmedAttacks++;
+                recordKillZoneAttackEffect(
+                        session, action, attempt, AgentActionStore.Verification.CONFIRMED,
+                        target.getHealth(), armorStandHit ? "armor_stand_hit_event"
+                                : target.isAlive() ? "health_decreased" : "dead");
+                operation.pending = null;
+            } else if (target.isRemoved() || killZonePendingMustClose(
+                    tick, attempt.effectDeadlineTick, actionHardDeadlineReached)) {
+                operation.unknownAttacks++;
+                operation.noRetryEntityIds.add(target.getUUID());
+                recordKillZoneAttackEffect(
+                        session, action, attempt, AgentActionStore.Verification.UNKNOWN,
+                        target.getHealth(), target.isRemoved()
+                                ? "despawned_or_unloaded"
+                                : actionHardDeadlineReached
+                                        ? "action_budget_deadline" : "effect_timeout");
+                operation.pending = null;
+            } else {
+                return;
+            }
+        }
+
+        boolean durationComplete = actionHardDeadlineReached || newDispatchBudgetReached
+                || tick - operation.startedAtClientTick
+                >= operation.scope.maxOperationDurationTicks();
+        boolean countComplete = operation.dispatchedAttacks >= operation.scope.maxAttacks();
+        if (durationComplete || countComplete) {
+            finishKillZone(minecraft, session, action, operation,
+                    actionHardDeadlineReached ? "action_budget_reached"
+                            : countComplete ? "attack_limit_reached"
+                            : newDispatchBudgetReached ? "dispatch_budget_reached"
+                            : "duration_reached");
+            return;
+        }
+        if (operation.lastDispatchTick != Long.MIN_VALUE
+                && tick - operation.lastDispatchTick < operation.scope.minimumIntervalTicks()) {
+            return;
+        }
+        if (player.getAttackStrengthScale(0.0F) < 0.99F) {
+            return;
+        }
+
+        KillZoneTarget target = currentKillZoneTarget(minecraft, session, operation);
+        if (target == null) return;
+        if (!killZoneStructureFingerprint(
+                        level,
+                        operation.scope.playerStationBounds(),
+                        operation.scope.targetKillZoneBounds())
+                .equals(operation.scope.structureFingerprint())) {
+            safetyInterruptKillZone(minecraft, session, action, operation, "structure_changed");
+            return;
+        }
+        if (!killZoneCollateralSafe(level, player, target.entity(), operation.scope)) {
+            safetyInterruptKillZone(minecraft, session, action, operation, "collateral_not_proved");
+            return;
+        }
+
+        // Reserve before semantic dispatch. Unknown outcomes and exceptions never return this slot.
+        operation.dispatchedAttacks++;
+        operation.lastDispatchTick = tick;
+        float healthBefore = target.entity().getHealth();
+        long armorStandLastHitBefore = armorStandLastHit(target.entity());
+        try {
+            minecraft.gameMode.attack(player, target.entity());
+            player.swing(InteractionHand.MAIN_HAND);
+            agentActions.recordInteraction(action.actionId());
+        } catch (RuntimeException | LinkageError dispatchFailure) {
+            operation.unknownAttacks++;
+            operation.noRetryEntityIds.add(target.entity().getUUID());
+            var synthetic = new KillZoneAttackAttempt(
+                    target.entity(), target.entityRef(), healthBefore,
+                    armorStandLastHitBefore, tick);
+            recordKillZoneAttackEffect(
+                    session, action, synthetic, AgentActionStore.Verification.UNKNOWN,
+                    target.entity().getHealth(), "dispatch_exception");
+            throw dispatchFailure;
+        }
+        operation.pending = new KillZoneAttackAttempt(
+                target.entity(), target.entityRef(), healthBefore,
+                armorStandLastHitBefore, tick);
+    }
+
+    private String killZoneHardHazard(
+            Minecraft minecraft, Player player, KillZoneExecution operation) {
+        float health = player.getHealth();
+        float effectiveHealth = effectiveHealth(player);
+        if (!player.isAlive() || player.isCreative() || player.isSpectator()) return "player_mode_or_life";
+        if (effectiveHealth < operation.lastEffectiveHealth) return "health_decreased";
+        if (health < MIN_SAFE_STAY_HEALTH) return "health_floor";
+        if (player.hurtTime > 0) return "active_damage";
+        if (player.isOnFire()) return "on_fire";
+        if (player.fallDistance > 0.0F || !player.onGround()) return "fall_or_support";
+        if (player.getAirSupply() < player.getMaxAirSupply()) return "air_loss";
+        if (player.isPassenger() || player.isInWater() || player.isInLava()
+                || player.isFallFlying() || player.getAbilities().flying) return "unsupported_locomotion";
+        if (minecraft.gui.screen() != null) return "screen_open";
+        AABB box = player.getBoundingBox();
+        if (!operation.scope.playerStationBounds().contains(
+                box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)) return "station_departed";
+        if (!minecraft.level.noCollision(player, box.deflate(1.0e-5D))) return "player_collision";
+        if (player.getDeltaMovement().lengthSqr() > 0.01D) return "unexpected_motion";
+        AABB safety = box.inflate(8.0D);
+        if (!minecraft.level.getEntities(player, safety,
+                entity -> entity instanceof Projectile && entity.isAlive()).isEmpty()) {
+            return "projectile_present";
+        }
+        if (!minecraft.level.getEntities(player, box.inflate(0.125D),
+                entity -> entity instanceof LivingEntity && entity.isAlive()).isEmpty()) {
+            return "living_contact";
+        }
+        for (Entity entity : minecraft.level.getEntities(player, safety,
+                entity -> entity.isAlive() && (entity instanceof Enemy
+                        || entity instanceof Mob mob && mob.getTarget() == player))) {
+            if (!(entity instanceof LivingEntity living)
+                    || !operation.scope.entityTypeAllowlist().contains(entityType(entity))
+                    || !wholeBoxInside(operation.scope.targetKillZoneBounds(), living.getBoundingBox())) {
+                return "hostile_outside_policy";
+            }
+            if (living.hasLineOfSight(player)) return "hostile_has_player_los";
+        }
+        return null;
+    }
+
+    private KillZoneTarget currentKillZoneTarget(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            KillZoneExecution operation) {
+        if (!(minecraft.hitResult instanceof EntityHitResult hit)
+                || !(hit.getEntity() instanceof LivingEntity target)
+                || target instanceof Player
+                || !target.isAlive()
+                || operation.noRetryEntityIds.contains(target.getUUID())
+                || !operation.scope.entityTypeAllowlist().contains(entityType(target))
+                || !wholeBoxInside(operation.scope.targetKillZoneBounds(), target.getBoundingBox())
+                || target.getBoundingBox().getYsize() <= 1.0D
+                || !clearKillZoneCrosshairRay(minecraft, hit)
+                || target instanceof Mob mob
+                        && (mob instanceof Enemy || mob.getTarget() == minecraft.player)
+                        && target.hasLineOfSight(minecraft.player)
+                || !minecraft.player.isWithinEntityInteractionRange(target, 0.0D)) {
+            return null;
+        }
+        Optional<ObservationFrame> frame = agentObservationFrames.latestFrame();
+        if (frame.isEmpty() || frame.orElseThrow().visibleEntitiesTruncated()
+                || !session.dimension().equals(frame.orElseThrow().dimension().value())
+                || session.clientTick() < frame.orElseThrow().frameCompletedTick()
+                || session.clientTick() - frame.orElseThrow().frameCompletedTick() > 2L) {
+            return null;
+        }
+        for (ObservationRecord record : frame.orElseThrow().records()) {
+            if (!(record instanceof ObservationRecord.VisibleEntity visible)
+                    || visible.entityRef() == null
+                    || visible.observedTick() + 2L < session.clientTick()
+                    || !visible.entityType().value().equals(entityType(target))) continue;
+            Optional<Entity> resolved = observations.resolveLoadedEntityRefIdentity(
+                    minecraft, session.clientTick(), session.worldSessionId(), session.dimension(),
+                    visible.entityRef(), minecraft.player.entityInteractionRange() + 1.0D);
+            if (resolved.orElse(null) == target) {
+                return new KillZoneTarget(target, visible.entityRef());
+            }
+        }
+        return null;
+    }
+
+    private static boolean clearKillZoneCrosshairRay(
+            Minecraft minecraft, EntityHitResult hit) {
+        Vec3 eye = minecraft.player.getEyePosition();
+        Vec3 hitLocation = hit.getLocation();
+        if (!hit.getEntity().getBoundingBox().inflate(1.0e-5D).contains(hitLocation)
+                || eye.distanceToSqr(hitLocation) < 1.0e-8D) {
+            return false;
+        }
+        HitResult obstruction = minecraft.level.clip(new ClipContext(
+                eye,
+                hitLocation,
+                ClipContext.Block.COLLIDER,
+                ClipContext.Fluid.NONE,
+                minecraft.player));
+        return obstruction.getType() == HitResult.Type.MISS;
+    }
+
+    private static boolean killZoneCollateralSafe(
+            net.minecraft.client.multiplayer.ClientLevel level,
+            Player player,
+            LivingEntity target,
+            ScopedEntityAttackConsentStore.Scope scope) {
+        if (scope.attackSideEffectProfile()
+                == ScopedEntityAttackConsentStore.AttackSideEffectProfile.VANILLA_SINGLE_TARGET) {
+            return true;
+        }
+        if (scope.attackSideEffectProfile()
+                != ScopedEntityAttackConsentStore.AttackSideEffectProfile.VANILLA_SWEEP) {
+            return false;
+        }
+        AABB effects = target.getBoundingBox().inflate(1.0D, 0.25D, 1.0D);
+        for (LivingEntity candidate : level.getEntitiesOfClass(
+                LivingEntity.class, effects, Entity::isAlive)) {
+            if (candidate == player
+                    || candidate instanceof Player
+                    || !scope.entityTypeAllowlist().contains(entityType(candidate))
+                    || !wholeBoxInside(scope.targetKillZoneBounds(), candidate.getBoundingBox())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void recordKillZoneAttackEffect(
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action,
+            KillZoneAttackAttempt attempt,
+            AgentActionStore.Verification verification,
+            float healthAfter,
+            String outcome) {
+        long revision = reconciliationSignals.bindAndSnapshot(
+                Objects.requireNonNull(Minecraft.getInstance().level, "level"),
+                session.worldSessionId()).worldRevision();
+        agentActions.recordEffect(
+                action.actionId(),
+                "entity_attack",
+                "refhash:" + sha256Identity(new StringBuilder(attempt.entityRef))
+                        .substring("sha256:".length()),
+                Map.of("entity_type", entityType(attempt.target), "health", attempt.healthBefore),
+                Map.of("health", healthAfter, "outcome", outcome),
+                verification,
+                session.clientTick(),
+                revision);
+    }
+
+    private void finishKillZone(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action,
+            KillZoneExecution operation,
+            String reason) {
+        if (operation.confirmedAttacks < 1) {
+            failAgentAction(
+                    AgentActionStore.FailureCode.CONDITION_TIMEOUT,
+                    true,
+                    "kill_zone_no_confirmed_attack");
+            return;
+        }
+        long revision = reconciliationSignals.bindAndSnapshot(
+                Objects.requireNonNull(minecraft.level, "level"),
+                session.worldSessionId()).worldRevision();
+        agentActions.recordEffect(
+                action.actionId(), "kill_zone_summary", "operation",
+                Map.of("max_attacks", operation.scope.maxAttacks()),
+                Map.of(
+                        "dispatched_attacks", operation.dispatchedAttacks,
+                        "confirmed_attacks", operation.confirmedAttacks,
+                        "unknown_attacks", operation.unknownAttacks,
+                        "completion_reason", reason),
+                AgentActionStore.Verification.CONFIRMED,
+                session.clientTick(), revision);
+        agentActions.completeNode(action.actionId());
+        agentExecution.primitive = null;
+        advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
+    }
+
+    private void safetyInterruptKillZone(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action,
+            KillZoneExecution operation,
+            String reason) {
+        AgentInputState.global().releaseAttack();
+        closePendingKillZoneEffectForTerminal(reason);
+        float current = minecraft.player == null ? 0.0F : minecraft.player.getHealth();
+        float currentAbsorption = minecraft.player == null
+                ? 0.0F : minecraft.player.getAbsorptionAmount();
+        float currentEffective = current + currentAbsorption;
+        long revision = minecraft.level == null ? 0L : reconciliationSignals.bindAndSnapshot(
+                minecraft.level, session.worldSessionId()).worldRevision();
+        agentActions.recordEffect(
+                action.actionId(), "safety_interrupted", "player",
+                Map.of(
+                        "health_before", operation.lastHealth,
+                        "absorption_before", operation.lastAbsorption,
+                        "effective_health_before", operation.lastEffectiveHealth,
+                        "effective_health_previous", operation.lastEffectiveHealth),
+                Map.of(
+                        "health_current", current,
+                        "absorption_current", currentAbsorption,
+                        "effective_health_current", currentEffective,
+                        "health_delta", currentEffective - operation.lastEffectiveHealth,
+                        "dispatched_attacks", operation.dispatchedAttacks,
+                        "confirmed_attacks", operation.confirmedAttacks,
+                        "unknown_attacks", operation.unknownAttacks,
+                        "reason", reason),
+                AgentActionStore.Verification.CONFIRMED,
+                session.clientTick(), revision);
+        failAgentAction(
+                AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
+                false,
+                reason);
+    }
+
+    private static boolean wholeBoxInside(
+            ScopedEntityAttackConsentStore.Bounds bounds, AABB box) {
+        return bounds.contains(
+                box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
+    }
+
+    private static String entityType(Entity entity) {
+        return BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString();
+    }
+
+    private static float effectiveHealth(Player player) {
+        return player.getHealth() + player.getAbsorptionAmount();
+    }
+
+    private static long armorStandLastHit(LivingEntity target) {
+        return target instanceof ArmorStand stand ? stand.lastHit : Long.MIN_VALUE;
+    }
+
+    static boolean armorStandHitEventAdvanced(long before, long after) {
+        return before != Long.MIN_VALUE && after > before;
+    }
+
+    static boolean killZonePendingMustClose(
+            long currentTick, long effectDeadlineTick, boolean actionHardDeadlineReached) {
+        return actionHardDeadlineReached || currentTick >= effectDeadlineTick;
+    }
+
+    private static boolean armorStandHitConfirmed(KillZoneAttackAttempt attempt) {
+        return armorStandHitEventAdvanced(
+                attempt.armorStandLastHitBefore, armorStandLastHit(attempt.target));
+    }
+
+    static boolean healthDecreased(
+            float previousHealth,
+            float previousAbsorption,
+            float currentHealth,
+            float currentAbsorption) {
+        return currentHealth < previousHealth
+                || currentAbsorption < previousAbsorption
+                || currentHealth + currentAbsorption
+                        < previousHealth + previousAbsorption;
+    }
+
+    private static boolean killZoneHealthDecreased(
+            KillZoneExecution operation, Player player) {
+        float currentHealth = player.getHealth();
+        float currentAbsorption = player.getAbsorptionAmount();
+        if (healthDecreased(
+                operation.lastHealth,
+                operation.lastAbsorption,
+                currentHealth,
+                currentAbsorption)) {
+            return true;
+        }
+        operation.lastHealth = currentHealth;
+        operation.lastAbsorption = currentAbsorption;
+        operation.lastEffectiveHealth = currentHealth + currentAbsorption;
+        return false;
+    }
+
     private boolean advanceAgentProgram(
             Minecraft minecraft, AgentActionStore.Progress occurrenceBaseline) {
         ActionProgramCursor.Advance advance = agentExecution.cursor.next(policySnapshot(minecraft));
@@ -7306,7 +8146,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
-    private record PendingAgentAdmission(UUID actionId, PreparedAgentAction prepared) {
+    private record PendingAgentAdmission(
+            UUID actionId,
+            PreparedAgentAction prepared,
+            KillZoneAdmission killZoneAdmission) {
         private PendingAgentAdmission {
             Objects.requireNonNull(actionId, "actionId");
             Objects.requireNonNull(prepared, "prepared");
@@ -8752,6 +9595,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             releaseAgentControl(Minecraft.getInstance());
             return;
         }
+        closePendingKillZoneEffectForTerminal(evidence);
         var terminal = PendingAgentTerminal.failure(
                 active.orElseThrow().actionId(),
                 new AgentActionStore.Failure(code, recoverable, List.of(evidence)));
@@ -8763,6 +9607,37 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (publishAgentTerminal(terminal)) {
             returnControlReady();
         }
+    }
+
+    private void closePendingKillZoneEffectForTerminal(String reason) {
+        if (agentExecution == null || agentExecution.killZone == null
+                || agentExecution.killZone.pending == null) return;
+        KillZoneExecution operation = agentExecution.killZone;
+        KillZoneAttackAttempt attempt = operation.pending;
+        operation.pending = null;
+        boolean armorStandHit = armorStandHitConfirmed(attempt);
+        boolean confirmed = armorStandHit || attempt.target.getHealth() < attempt.healthBefore
+                || (!attempt.target.isAlive() && attempt.target.getHealth() <= 0.0F);
+        if (confirmed) operation.confirmedAttacks++;
+        else {
+            operation.unknownAttacks++;
+            operation.noRetryEntityIds.add(attempt.target.getUUID());
+        }
+        var session = sessions.snapshot();
+        agentActions.recordEffect(
+                agentExecution.actionId,
+                "entity_attack",
+                "refhash:" + sha256Identity(new StringBuilder(attempt.entityRef))
+                        .substring("sha256:".length()),
+                Map.of("entity_type", entityType(attempt.target), "health", attempt.healthBefore),
+                Map.of(
+                        "health", attempt.target.getHealth(),
+                        "outcome", armorStandHit ? "armor_stand_hit_event"
+                                : confirmed ? "terminal_confirmed" : "terminal_unknown"),
+                confirmed ? AgentActionStore.Verification.CONFIRMED
+                        : AgentActionStore.Verification.UNKNOWN,
+                Math.max(0L, session.clientTick()),
+                Math.max(0L, agentExecution.latestWorldRevision));
     }
 
     private void finishAgentControlReady(Minecraft minecraft) {
@@ -8796,6 +9671,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private boolean releaseAgentControl(Minecraft minecraft) {
+        closePendingKillZoneEffectForTerminal("control_release");
         // Stateful menu/view cleanup advances at most once per client tick. Do not mistake that
         // bounded asynchronous progress for a failed same-tick input-release command.
         AgentCleanupProgress stateful = advanceStatefulAgentCleanupOncePerClientTick(minecraft);
@@ -11409,6 +12285,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private KnownConstructionAttempt constructionAttempt;
         private KnownPillarUpAttempt pillarUpAttempt;
         private KnownRedstoneIdentityAttempt redstoneAttempt;
+        private KillZoneExecution killZone;
         private int pickupInventoryBefore = -1;
         private long pickupArrivalTick = -1L;
         private NavCell pickupCell;
@@ -11443,6 +12320,77 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         "positionCorrectionRevision must be non-negative");
             }
             this.positionCorrectionRevision = positionCorrectionRevision;
+        }
+    }
+
+    /** Runtime-only authority copied from the consumed consent; never serialized as a bearer. */
+    private static final class KillZoneExecution {
+        private static final long EFFECT_DEADLINE_TICKS = 10L;
+
+        private final ActionDsl.OperateKillZone operation;
+        private final ScopedEntityAttackConsentStore.Scope scope;
+        private final long startedAtClientTick;
+        private final float healthBaseline;
+        private final float absorptionBaseline;
+        private final float effectiveHealthBaseline;
+        private float lastHealth;
+        private float lastAbsorption;
+        private float lastEffectiveHealth;
+        private final Set<UUID> noRetryEntityIds = new LinkedHashSet<>();
+        private long lastDispatchTick = Long.MIN_VALUE;
+        private int dispatchedAttacks;
+        private int confirmedAttacks;
+        private int unknownAttacks;
+        private KillZoneAttackAttempt pending;
+
+        private KillZoneExecution(
+                ActionDsl.OperateKillZone operation,
+                ScopedEntityAttackConsentStore.Scope scope,
+                long startedAtClientTick,
+                float healthBaseline,
+                float absorptionBaseline) {
+            this.operation = Objects.requireNonNull(operation, "operation");
+            this.scope = Objects.requireNonNull(scope, "scope");
+            if (startedAtClientTick < 0L || !Float.isFinite(healthBaseline)
+                    || !Float.isFinite(absorptionBaseline)) {
+                throw new IllegalArgumentException("Invalid kill-zone execution baseline");
+            }
+            this.startedAtClientTick = startedAtClientTick;
+            this.healthBaseline = healthBaseline;
+            this.absorptionBaseline = absorptionBaseline;
+            effectiveHealthBaseline = healthBaseline + absorptionBaseline;
+            lastHealth = healthBaseline;
+            lastAbsorption = absorptionBaseline;
+            lastEffectiveHealth = effectiveHealthBaseline;
+        }
+    }
+
+    private static final class KillZoneAttackAttempt {
+        private final LivingEntity target;
+        private final String entityRef;
+        private final float healthBefore;
+        private final long armorStandLastHitBefore;
+        private final long effectDeadlineTick;
+
+        private KillZoneAttackAttempt(
+                LivingEntity target,
+                String entityRef,
+                float healthBefore,
+                long armorStandLastHitBefore,
+                long dispatchTick) {
+            this.target = Objects.requireNonNull(target, "target");
+            this.entityRef = Objects.requireNonNull(entityRef, "entityRef");
+            this.healthBefore = healthBefore;
+            this.armorStandLastHitBefore = armorStandLastHitBefore;
+            effectDeadlineTick = Math.addExact(
+                    dispatchTick, KillZoneExecution.EFFECT_DEADLINE_TICKS);
+        }
+    }
+
+    private record KillZoneTarget(LivingEntity entity, String entityRef) {
+        private KillZoneTarget {
+            Objects.requireNonNull(entity, "entity");
+            Objects.requireNonNull(entityRef, "entityRef");
         }
     }
 

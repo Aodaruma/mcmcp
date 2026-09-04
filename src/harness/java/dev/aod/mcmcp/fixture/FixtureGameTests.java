@@ -17,8 +17,11 @@ import net.minecraft.gametest.framework.TestEnvironmentDefinition;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.Container;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
@@ -56,6 +59,10 @@ final class FixtureGameTests {
     private static final Identifier COBBLESTONE_GENERATOR_TEST_ID =
             id("cobblestone_generator_fixture");
     private static final Identifier FISHING_TEST_ID = id("fishing_open_water_fixture");
+    private static final Identifier KILL_ZONE_ARMOR_STAND_TEST_ID =
+            id("kill_zone_armor_stand_hit_fixture");
+    private static final Identifier KILL_ZONE_GEOMETRY_TEST_ID =
+            id("kill_zone_geometry_fixture");
     private static final Identifier ENVIRONMENT_ID = id("fixture_environment");
 
     private static final DeferredRegister<Consumer<GameTestHelper>> TEST_FUNCTIONS =
@@ -90,6 +97,14 @@ final class FixtureGameTests {
             TEST_FUNCTIONS.register(
                     "fishing_open_water_fixture",
                     () -> FixtureGameTests::runFishingOpenWaterFixture);
+    private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> KILL_ZONE_ARMOR_STAND_FIXTURE =
+            TEST_FUNCTIONS.register(
+                    "kill_zone_armor_stand_hit_fixture",
+                    () -> FixtureGameTests::runKillZoneArmorStandHitFixture);
+    private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> KILL_ZONE_GEOMETRY_FIXTURE =
+            TEST_FUNCTIONS.register(
+                    "kill_zone_geometry_fixture",
+                    () -> FixtureGameTests::runKillZoneGeometryFixture);
 
     private FixtureGameTests() {
     }
@@ -126,6 +141,85 @@ final class FixtureGameTests {
                 new FunctionGameTestInstance(COBBLESTONE_GENERATOR_FIXTURE.getKey(), data));
         event.registerTest(FISHING_TEST_ID,
                 new FunctionGameTestInstance(FISHING_OPEN_WATER_FIXTURE.getKey(), data));
+        event.registerTest(KILL_ZONE_ARMOR_STAND_TEST_ID,
+                new FunctionGameTestInstance(KILL_ZONE_ARMOR_STAND_FIXTURE.getKey(), data));
+        event.registerTest(KILL_ZONE_GEOMETRY_TEST_ID,
+                new FunctionGameTestInstance(KILL_ZONE_GEOMETRY_FIXTURE.getKey(), data));
+    }
+
+    private static void runKillZoneGeometryFixture(GameTestHelper helper) {
+        var layout = FixtureKillZoneScenario.layout();
+        assertFullCollisionFixtureState(helper, layout,
+                FixtureKillZoneScenario.FRONT_LOWER, "front lower");
+        BlockState frontUpper = layout.get(FixtureKillZoneScenario.FRONT_UPPER);
+        List<AABB> upperBoxes = frontUpper.getCollisionShape(
+                EmptyBlockGetter.INSTANCE, BlockPos.ZERO).toAabbs();
+        AABB upperBox = upperBoxes.size() == 1 ? upperBoxes.getFirst() : null;
+        if (!frontUpper.is(Blocks.SMOOTH_STONE_SLAB)
+                || frontUpper.getValue(BlockStateProperties.SLAB_TYPE) != SlabType.TOP
+                || frontUpper.getValue(BlockStateProperties.WATERLOGGED)
+                || upperBox == null
+                || upperBox.minX != 0.0D || upperBox.minY != 0.5D || upperBox.minZ != 0.0D
+                || upperBox.maxX != 1.0D || upperBox.maxY != 1.0D || upperBox.maxZ != 1.0D) {
+            helper.fail(Component.literal(
+                    "Kill-zone front upper is not the exact top-slab collision window"));
+            return;
+        }
+        for (BlockPos side : new BlockPos[] {
+                FixtureKillZoneScenario.PLAYER_FEET.north(),
+                FixtureKillZoneScenario.PLAYER_FEET.west(),
+                FixtureKillZoneScenario.PLAYER_FEET.east()}) {
+            assertFullCollisionFixtureState(helper, layout, side, "side lower");
+            assertFullCollisionFixtureState(helper, layout, side.above(), "side upper");
+        }
+        assertFullCollisionFixtureState(helper, layout,
+                FixtureKillZoneScenario.PLAYER_FEET.below(), "player support");
+        assertFullCollisionFixtureState(helper, layout,
+                FixtureKillZoneScenario.PLAYER_FEET.above(2), "player roof");
+        assertFullCollisionFixtureState(helper, layout,
+                FixtureKillZoneScenario.TARGET_FEET.below(), "target support");
+        if (layout.containsKey(FixtureKillZoneScenario.PLAYER_FEET)
+                || layout.containsKey(FixtureKillZoneScenario.PLAYER_FEET.above())
+                || layout.containsKey(FixtureKillZoneScenario.TARGET_FEET)) {
+            helper.fail(Component.literal("Kill-zone occupied cells are not open at T0"));
+            return;
+        }
+        helper.succeed();
+    }
+
+    private static void assertFullCollisionFixtureState(
+            GameTestHelper helper,
+            java.util.Map<BlockPos, BlockState> layout,
+            BlockPos position,
+            String label) {
+        BlockState state = layout.get(position);
+        if (state == null || !Block.isShapeFullBlock(
+                state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO))) {
+            helper.fail(Component.literal("Kill-zone " + label
+                    + " is not a full collision block at " + position));
+        }
+    }
+
+    private static void runKillZoneArmorStandHitFixture(GameTestHelper helper) {
+        var target = helper.spawn(EntityTypes.ARMOR_STAND, new BlockPos(2, 1, 2));
+        var player = helper.makeMockServerPlayer(GameType.SURVIVAL);
+        player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.STONE_SWORD));
+        helper.runAfterDelay(10L, () -> {
+            long lastHitBefore = target.lastHit;
+            float healthBefore = target.getHealth();
+            player.attack(target);
+            helper.runAfterDelay(1L, () -> {
+                if (target.lastHit <= lastHitBefore) {
+                    helper.fail(Component.literal("Armor stand hit event did not advance lastHit"));
+                    return;
+                }
+                if (target.getHealth() != healthBefore || !target.isAlive()) {
+                    helper.fail(Component.literal("First armor stand hit unexpectedly changed health"));
+                    return;
+                }
+                helper.succeed();
+            });
+        });
     }
 
     private static void runFishingOpenWaterFixture(GameTestHelper helper) {

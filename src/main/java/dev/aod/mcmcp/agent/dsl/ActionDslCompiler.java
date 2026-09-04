@@ -18,10 +18,10 @@ import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.PROGRAM_BUDGET_UNP
 /** Component-wise worst-case compiler for one already closed Action DSL v1 tree. */
 public final class ActionDslCompiler {
     public static final ActionDsl.Budget PHASE_ONE_HARD_LIMIT = new ActionDsl.Budget(
-            ActionDslValidator.MAX_ACTION_DURATION_MILLIS,
-            ActionDslValidator.MAX_ACTION_TICKS, NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
+            ActionDslValidator.MAX_KILL_ZONE_DURATION_MILLIS,
+            ActionDslValidator.MAX_KILL_ZONE_TICKS, NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
             ActionDslValidator.MAX_ACTION_CAMERA_DEGREES,
-            ActionDslValidator.MAX_INTERACTIONS,
+            ActionDslValidator.MAX_KILL_ZONE_ATTACKS,
             ActionDslValidator.MAX_BLOCKS_BROKEN,
             ActionDslValidator.MAX_BLOCKS_PLACED);
     private static final long NOMINAL_TICK_MILLIS = 50;
@@ -41,6 +41,7 @@ public final class ActionDslCompiler {
             KNOWN_MENU_OPERATION_TICKS * NOMINAL_TICK_MILLIS;
     public static final long KNOWN_MENU_OPERATION_INTERACTIONS = 1L;
     public static final long KNOWN_FISHING_TICKS = 80L;
+    public static final int KILL_ZONE_EFFECT_RESERVE_TICKS = 10;
     public static final long KNOWN_FISHING_DURATION_MILLIS =
             KNOWN_FISHING_TICKS * NOMINAL_TICK_MILLIS;
     public static final long KNOWN_CRAFTING_TICKS =
@@ -112,6 +113,11 @@ public final class ActionDslCompiler {
         }
         if (node instanceof ActionDsl.ReelKnownFishingSession) {
             Cost cost = intrinsicKnownFishingReelCost();
+            primitiveCostBounds.put(node.id(), cost);
+            return cost;
+        }
+        if (node instanceof ActionDsl.OperateKillZone operation) {
+            Cost cost = intrinsicKillZoneCost(operation);
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }
@@ -294,6 +300,21 @@ public final class ActionDslCompiler {
         return new Cost(
                 multiplyExact(ticks, NOMINAL_TICK_MILLIS),
                 ticks, 0, 0, 0, 0, 0);
+    }
+
+    /** Exact finite reservation for a top-level kill-zone operation. */
+    public static Cost intrinsicKillZoneCost(ActionDsl.OperateKillZone operation) {
+        Objects.requireNonNull(operation, "operation");
+        long totalTicks = Math.addExact(
+                operation.maxOperationDurationTicks(), KILL_ZONE_EFFECT_RESERVE_TICKS);
+        return new Cost(
+                Math.multiplyExact(totalTicks, NOMINAL_TICK_MILLIS),
+                totalTicks,
+                0.0D,
+                0.0D,
+                operation.maxAttacks(),
+                0L,
+                0L);
     }
 
     public static Cost intrinsicKnownFishingReelCost() {

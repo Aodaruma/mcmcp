@@ -54,7 +54,7 @@ final class McpTestFixtures {
                                 "max_repeat_count", 16,
                                 "allowed_capabilities", List.of(
                                         "block_break", "block_interact", "block_place", "camera",
-                                        "inventory_transfer", "item_use", "movement"),
+                                        "entity_attack", "inventory_transfer", "item_use", "movement"),
                                 "available_operations",
                                 ActionDslOperationManifest.operationPayload(java.util.Set.of()),
                                 "reference_descriptors",

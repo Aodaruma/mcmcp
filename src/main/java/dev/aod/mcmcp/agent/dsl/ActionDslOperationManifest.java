@@ -72,6 +72,11 @@ public final class ActionDslOperationManifest {
                     "reel_known_fishing_session",
                     caps("item_use"),
                     ref("/fishing_session_ref", "fishing_session_ref", "required")),
+            fixed(
+                    ActionDsl.OperateKillZone.class,
+                    "operate_kill_zone",
+                    caps("entity_attack"),
+                    ref("/consent_ref", "kill_zone_consent_ref", "required_after_physical_grant")),
             fixed(ActionDsl.WaitTicks.class, "wait_ticks", caps()),
             fixed(ActionDsl.WaitUntil.class, "wait_until", caps()),
             inherited(ActionDsl.If.class, "if"),
@@ -149,7 +154,13 @@ public final class ActionDslOperationManifest {
                         "agent_get_action",
                         "/effects/*/observed_after/fishing_session_ref",
                         List.of("reel_known_fishing_session"),
-                        "single_use_owned_bobber_world_session_and_1200_tick_ttl"));
+                        "single_use_owned_bobber_world_session_and_1200_tick_ttl"),
+                referenceDescriptor(
+                        "kill_zone_consent_ref",
+                        "agent_get_state",
+                        "/entity_attack_consent/consent_ref",
+                        List.of("operate_kill_zone"),
+                        "single_consume_exact_policy_and_world_session_with_2400_tick_start_ttl"));
     }
 
     public static Map<String, Object> missingCapabilityGuidance() {

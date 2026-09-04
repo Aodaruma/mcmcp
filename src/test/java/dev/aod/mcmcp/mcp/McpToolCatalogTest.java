@@ -240,6 +240,9 @@ class McpToolCatalogTest {
                 .contains("face_known_position/face_known_block_face=camera")
                 .contains("operate_known_menu=inventory_transfer")
                 .contains("For operate_known_menu reserve at least 30000 ms, 600 ticks, and 1 interaction")
+                .contains("operate_kill_zone=entity_attack")
+                .contains("max_operation_duration_ticks+10")
+                .contains("accepted only for one top-level operate_kill_zone")
                 .contains("use the exact inputSchema fields and no aliases");
 
         var definitions = schema.getAsJsonObject("$defs");
@@ -251,7 +254,9 @@ class McpToolCatalogTest {
                 .map(node -> node.getAsJsonObject("properties")
                         .getAsJsonObject("op").get("const").getAsString())
                 .toList();
-        assertThat(description).contains(opcodes.toArray(String[]::new));
+        assertThat(description + definitions.getAsJsonObject("operateKillZoneNode")
+                        .get("description").getAsString())
+                .contains(opcodes.toArray(String[]::new));
 
         assertThat(schema.getAsJsonArray("examples").asList())
                 .allSatisfy(example -> assertThat(CatalogSchemaValidator.matches(schema, example))
@@ -743,7 +748,7 @@ class McpToolCatalogTest {
 
         assertThat(schema.getAsJsonObject("properties").getAsJsonObject("budget")
                 .getAsJsonObject("properties").getAsJsonObject("max_interactions")
-                .get("maximum").getAsInt()).isEqualTo(16);
+                .get("maximum").getAsInt()).isEqualTo(2_048);
         var state = catalog.outputSchema("agent_get_state");
         assertThat(state.getAsJsonObject("properties").getAsJsonObject("policy")
                 .getAsJsonObject("properties").getAsJsonObject("max_interactions")
@@ -755,8 +760,10 @@ class McpToolCatalogTest {
         assertThat(entityConsent.get("description").getAsString())
                 .contains("bounded kill-zone")
                 .contains("newly spawned mobs")
-                .contains("SAFETY_INTERRUPTED")
-                .contains("health_before");
+                .contains("effective-health decrease revokes authority");
+        assertThat(catalog.outputSchema("agent_get_action")
+                .getAsJsonObject("$defs").getAsJsonObject("effectObservation")
+                .getAsJsonObject("properties").has("health_before")).isTrue();
         var consentProperties = entityConsent.getAsJsonObject("properties");
         assertThat(consentProperties.has("policy_binding_hash")).isTrue();
         assertThat(consentProperties.has("action_binding_hash")).isFalse();
@@ -778,7 +785,17 @@ class McpToolCatalogTest {
         assertThat(catalog.outputSchema("agent_get_action")
                 .getAsJsonObject("properties").getAsJsonObject("progress")
                 .getAsJsonObject("properties").getAsJsonObject("interactions")
-                .get("maximum").getAsInt()).isEqualTo(16);
+                .get("maximum").getAsInt()).isEqualTo(2_048);
+        var actionOutput = catalog.outputSchema("agent_get_action");
+        assertThat(actionOutput.getAsJsonObject("properties")
+                .getAsJsonObject("effect_aggregate")
+                .getAsJsonObject("properties")
+                .getAsJsonObject("dispatched_attacks")
+                .get("maximum").getAsInt()).isEqualTo(2_048);
+        assertThat(actionOutput.getAsJsonObject("properties")
+                .getAsJsonObject("trace").getAsJsonObject("items")
+                .getAsJsonObject("properties").getAsJsonObject("tick")
+                .get("maximum").getAsInt()).isEqualTo(36_200);
     }
 
     @Test
@@ -982,16 +999,17 @@ class McpToolCatalogTest {
                         JsonParser.parseString("\"block_interact\""),
                         JsonParser.parseString("\"block_place\""),
                         JsonParser.parseString("\"inventory_transfer\""),
-                        JsonParser.parseString("\"item_use\""));
+                        JsonParser.parseString("\"item_use\""),
+                        JsonParser.parseString("\"entity_attack\""));
         var actionDsl = state.getAsJsonObject()
                 .getAsJsonObject("policy")
                 .getAsJsonObject("action_dsl");
-        assertThat(actionDsl.getAsJsonArray("available_operations")).hasSize(34);
-        assertThat(actionDsl.getAsJsonArray("reference_descriptors")).hasSize(4);
+        assertThat(actionDsl.getAsJsonArray("available_operations")).hasSize(35);
+        assertThat(actionDsl.getAsJsonArray("reference_descriptors")).hasSize(5);
         assertThat(actionDsl.getAsJsonObject("missing_capability_guidance")
                 .get("code").getAsString()).isEqualTo("MISSING_CAPABILITY");
         assertThat(state.getAsJsonObject().getAsJsonObject("control")
-                .getAsJsonArray("granted_capabilities")).hasSize(7);
+                .getAsJsonArray("granted_capabilities")).hasSize(8);
     }
 
     @Test
@@ -1371,6 +1389,15 @@ class McpToolCatalogTest {
                     "failure", null,
                     "trace", List.of(),
                     "effects", List.of(),
+                    "effect_aggregate", Map.of(
+                            "total_effects", 0,
+                            "retained_effects", 0,
+                            "confirmed_effects", 0,
+                            "qualified_effects", 0,
+                            "unknown_effects", 0,
+                            "dispatched_attacks", 0,
+                            "confirmed_attacks", 0,
+                            "unknown_attacks", 0),
                     "partial", null,
                     "source", Map.of(
                             "media_type", "application/vnd.mcmcp.action-dsl+json;version=1",

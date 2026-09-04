@@ -126,12 +126,14 @@ class ScopedEntityAttackConsentStoreTest {
                 "minecraft:overworld", bounds(0, 60, 0, 1.6, 62.5, 1),
                 bounds(3, 60, 0, 4, 64, 2), List.of("minecraft:zombie"),
                 "minecraft:iron_axe", PROFILE_FINGERPRINT,
+                PROFILE_FINGERPRINT,
                 ScopedEntityAttackConsentStore.AttackSideEffectProfile.VANILLA_SINGLE_TARGET,
                 1, 10, 100)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new ScopedEntityAttackConsentStore.Scope(
                 "minecraft:overworld", bounds(0, 60, 0, 1, 62.5, 1),
                 bounds(1.4, 60, 0, 4, 64, 2), List.of("minecraft:zombie"),
                 "minecraft:iron_axe", PROFILE_FINGERPRINT,
+                PROFILE_FINGERPRINT,
                 ScopedEntityAttackConsentStore.AttackSideEffectProfile.VANILLA_SINGLE_TARGET,
                 1, 10, 100)).isInstanceOf(IllegalArgumentException.class);
     }
@@ -142,6 +144,7 @@ class ScopedEntityAttackConsentStoreTest {
                 "minecraft:overworld", bounds(0, 60, 0, 1, 62.5, 1),
                 bounds(2, 60, 0, 4, 64, 2), List.of("examplemod:mob"),
                 "examplemod:cleaver", PROFILE_FINGERPRINT,
+                PROFILE_FINGERPRINT,
                 ScopedEntityAttackConsentStore.AttackSideEffectProfile.ADAPTER_SINGLE_TARGET,
                 32, 20, 6_000);
         assertThat(adapted.mainHandItem()).isEqualTo("examplemod:cleaver");
@@ -188,6 +191,7 @@ class ScopedEntityAttackConsentStoreTest {
                 bounds(2, 60, 0, 4, 64, 2),
                 types,
                 "minecraft:iron_axe",
+                PROFILE_FINGERPRINT,
                 PROFILE_FINGERPRINT,
                 ScopedEntityAttackConsentStore.AttackSideEffectProfile.VANILLA_SINGLE_TARGET,
                 maxAttacks,

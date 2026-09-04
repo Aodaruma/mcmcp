@@ -129,6 +129,41 @@ public final class MinecraftObservationService {
                         .filter(entity -> visibility.entity(minecraft, entity, maxDistance).visible()));
     }
 
+    /** Resolves an opaque identity for an exact crosshair target validated by the caller. */
+    public Optional<Entity> resolveLoadedEntityRefIdentity(
+            Minecraft minecraft,
+            long clientTick,
+            UUID worldSessionId,
+            String dimension,
+            String entityRef,
+            double maxDistance) {
+        Objects.requireNonNull(minecraft, "minecraft");
+        Objects.requireNonNull(worldSessionId, "worldSessionId");
+        Objects.requireNonNull(dimension, "dimension");
+        Objects.requireNonNull(entityRef, "entityRef");
+        if (!minecraft.isSameThread()) {
+            throw new IllegalStateException("entity reference resolution must run on the client thread");
+        }
+        if (!Double.isFinite(maxDistance) || maxDistance <= 0.0D
+                || maxDistance > MAX_ENTITY_DISTANCE) {
+            throw new IllegalArgumentException("maxDistance is outside the observable entity range");
+        }
+        var level = minecraft.level;
+        var player = minecraft.player;
+        if (level == null || player == null
+                || !dimension.equals(level.dimension().identifier().toString())) {
+            return Optional.empty();
+        }
+        double maximumDistanceSquared = maxDistance * maxDistance;
+        return memory.resolveEntityRef(entityRef, clientTick, worldSessionId, dimension)
+                .flatMap(resolved -> Optional.ofNullable(level.getEntity(resolved.internalUuid()))
+                        .filter(entity -> !(entity instanceof Player))
+                        .filter(entity -> entity.isAlive() && !entity.isRemoved())
+                        .filter(entity -> player.distanceToSqr(entity) <= maximumDistanceSquared)
+                        .filter(entity -> resolved.type().equals(
+                                BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString())));
+    }
+
     /** Captures all requested snapshot scopes in the supplied client tick. */
     public Map<String, Object> getSnapshot(
             Minecraft minecraft, long clientTick, Map<String, Object> arguments) {

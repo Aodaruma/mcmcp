@@ -19,11 +19,12 @@ import java.util.concurrent.TimeUnit;
 public final class AgentActionStore {
     public static final int TRACE_LIMIT = 256;
     public static final int EFFECT_LIMIT = 64;
-    public static final int MAX_RECORDED_TICKS = 15_200;
+    public static final int MAX_RECORDED_TICKS = 36_200;
     public static final double MAX_RECORDED_DISTANCE = 48.0D;
     public static final double MAX_RECORDED_CAMERA_DEGREES = 1_080.0D;
     public static final int MAX_RECORDED_BLOCKS_BROKEN = 12;
-    public static final int MAX_RECORDED_INTERACTIONS = 16;
+    public static final int MAX_RECORDED_INTERACTIONS = 2_048;
+    public static final long MAX_EFFECT_SEQUENCE = MAX_RECORDED_INTERACTIONS + 2L;
     public static final int MAX_RECORDED_BLOCKS_PLACED = 16;
     public static final int MAX_TERMINAL_WAIT_MILLIS = 25_000;
 
@@ -300,7 +301,7 @@ public final class AgentActionStore {
             throw new IllegalStateException("No action node is active");
         }
         if (action.effects.size() >= EFFECT_LIMIT) {
-            throw new IllegalStateException("Action effect record limit exceeded");
+            action.effects.remove(0);
         }
         long nextSequence = action.effectSequence + 1L;
         Effect effect = new Effect(
@@ -315,6 +316,17 @@ public final class AgentActionStore {
                 worldRevision);
         action.effects.add(effect);
         action.effectSequence = nextSequence;
+        if (verification == Verification.CONFIRMED) action.confirmedEffectCount++;
+        if (verification == Verification.QUALIFIED) action.qualifiedEffectCount++;
+        if (verification == Verification.UNKNOWN) action.unknownEffectCount++;
+        if ("entity_attack".equals(kind)) {
+            action.dispatchedAttackCount++;
+            if (verification == Verification.CONFIRMED) action.confirmedAttackCount++;
+            if (verification == Verification.UNKNOWN) action.unknownAttackCount++;
+        }
+        if (verification == Verification.CONFIRMED) {
+            action.hasConfirmedEffects = true;
+        }
     }
 
     public synchronized void setPhase(UUID actionId, Phase phase, String detail) {
@@ -439,6 +451,7 @@ public final class AgentActionStore {
         SAFETY_RECOVERED,
         RECOVERY_EXHAUSTED,
         SERVER_DENIED_OR_DESYNC,
+        SAFETY_INTERRUPTED,
         CONDITION_TIMEOUT,
         PREDICATE_UNAVAILABLE,
         CAPABILITY_DENIED,
@@ -535,7 +548,7 @@ public final class AgentActionStore {
             long clientTick,
             long worldRevision) {
         public Effect {
-            if (seq < 1 || seq > EFFECT_LIMIT) {
+            if (seq < 1 || seq > MAX_EFFECT_SEQUENCE) {
                 throw new IllegalArgumentException("Invalid effect sequence");
             }
             requireNodeId(nodeId);
@@ -615,6 +628,32 @@ public final class AgentActionStore {
         }
     }
 
+    public record EffectAggregate(
+            long totalEffects,
+            int retainedEffects,
+            long confirmedEffects,
+            long qualifiedEffects,
+            long unknownEffects,
+            long dispatchedAttacks,
+            long confirmedAttacks,
+            long unknownAttacks) {
+        public EffectAggregate {
+            if (totalEffects < 0 || totalEffects > MAX_EFFECT_SEQUENCE
+                    || retainedEffects < 0 || retainedEffects > EFFECT_LIMIT
+                    || confirmedEffects < 0 || qualifiedEffects < 0 || unknownEffects < 0
+                    || confirmedEffects + qualifiedEffects + unknownEffects != totalEffects
+                    || dispatchedAttacks < 0 || dispatchedAttacks > MAX_RECORDED_INTERACTIONS
+                    || confirmedAttacks < 0 || unknownAttacks < 0
+                    || confirmedAttacks + unknownAttacks > dispatchedAttacks) {
+                throw new IllegalArgumentException("Invalid effect aggregate");
+            }
+        }
+
+        public static EffectAggregate empty() {
+            return new EffectAggregate(0L, 0, 0L, 0L, 0L, 0L, 0L, 0L);
+        }
+    }
+
     public record Snapshot(
             UUID actionId,
             State state,
@@ -623,6 +662,7 @@ public final class AgentActionStore {
             List<Trace> trace,
             ActionDslSource source,
             List<Effect> effects,
+            EffectAggregate effectAggregate,
             Partial partial) {
         public Snapshot {
             Objects.requireNonNull(actionId, "actionId");
@@ -631,6 +671,7 @@ public final class AgentActionStore {
             trace = List.copyOf(trace);
             Objects.requireNonNull(source, "source");
             effects = List.copyOf(effects);
+            Objects.requireNonNull(effectAggregate, "effectAggregate");
             if (effects.size() > EFFECT_LIMIT) {
                 throw new IllegalArgumentException("Too many action effects");
             }
@@ -638,6 +679,19 @@ public final class AgentActionStore {
                 throw new IllegalArgumentException(
                         "Partial result is required exactly for terminal actions");
             }
+        }
+
+        public Snapshot(
+                UUID actionId,
+                State state,
+                Progress progress,
+                Failure failure,
+                List<Trace> trace,
+                ActionDslSource source,
+                List<Effect> effects,
+                Partial partial) {
+            this(actionId, state, progress, failure, trace, source, effects,
+                    aggregateOf(effects), partial);
         }
 
         public Snapshot(
@@ -655,6 +709,7 @@ public final class AgentActionStore {
                     trace,
                     source,
                     List.of(),
+                    EffectAggregate.empty(),
                     state.terminal()
                             ? new Partial(
                                     false,
@@ -663,6 +718,22 @@ public final class AgentActionStore {
                                             - progress.executedNodes()),
                                     false)
                             : null);
+        }
+
+        private static EffectAggregate aggregateOf(List<Effect> effects) {
+            long confirmed = effects.stream()
+                    .filter(effect -> effect.verification() == Verification.CONFIRMED).count();
+            long qualified = effects.stream()
+                    .filter(effect -> effect.verification() == Verification.QUALIFIED).count();
+            long unknown = effects.stream()
+                    .filter(effect -> effect.verification() == Verification.UNKNOWN).count();
+            long attacks = effects.stream().filter(effect -> "entity_attack".equals(effect.kind())).count();
+            long confirmedAttacks = effects.stream().filter(effect -> "entity_attack".equals(effect.kind())
+                    && effect.verification() == Verification.CONFIRMED).count();
+            long unknownAttacks = effects.stream().filter(effect -> "entity_attack".equals(effect.kind())
+                    && effect.verification() == Verification.UNKNOWN).count();
+            return new EffectAggregate(effects.size(), effects.size(), confirmed, qualified, unknown,
+                    attacks, confirmedAttacks, unknownAttacks);
         }
     }
 
@@ -699,6 +770,13 @@ public final class AgentActionStore {
         private Failure failure;
         private String endReason;
         private long effectSequence;
+        private boolean hasConfirmedEffects;
+        private long confirmedEffectCount;
+        private long qualifiedEffectCount;
+        private long unknownEffectCount;
+        private long dispatchedAttackCount;
+        private long confirmedAttackCount;
+        private long unknownAttackCount;
         private String interruptedNodeId;
 
         private Mutable(
@@ -749,12 +827,10 @@ public final class AgentActionStore {
                     motionOverflowed);
             Partial partial = null;
             if (state.terminal()) {
-                boolean confirmed = effects.stream()
-                        .anyMatch(effect -> effect.verification() == Verification.CONFIRMED);
                 int remaining = Math.max(
                         0, program.executedNodesUpperBound() - executedNodes);
                 partial = new Partial(
-                        confirmed,
+                        hasConfirmedEffects,
                         interruptedNodeId,
                         remaining,
                         state != State.SUCCEEDED
@@ -762,7 +838,17 @@ public final class AgentActionStore {
             }
             return new Snapshot(
                     id, state, progress, failure, new ArrayList<>(trace), source,
-                    new ArrayList<>(effects), partial);
+                    new ArrayList<>(effects),
+                    new EffectAggregate(
+                            effectSequence,
+                            effects.size(),
+                            confirmedEffectCount,
+                            qualifiedEffectCount,
+                            unknownEffectCount,
+                            dispatchedAttackCount,
+                            confirmedAttackCount,
+                            unknownAttackCount),
+                    partial);
         }
     }
 }

@@ -51,6 +51,7 @@ public final class ActionDsl {
             BrewKnownPotionBatch,
             CollectVisibleItem, CollectVisibleItemBatch,
             CastKnownFishingRod, ReelKnownFishingSession,
+            OperateKillZone,
             WaitTicks, WaitUntil, If, Repeat {
         String id();
     }
@@ -644,6 +645,26 @@ public final class ActionDsl {
         }
     }
 
+    /** Runs one physically approved, finite, stationary hostile-mob kill-zone operation. */
+    public record OperateKillZone(
+            String id,
+            WorldBounds targetKillZoneBounds,
+            List<String> entityTypeAllowlist,
+            String mainHandItem,
+            Optional<String> consentRef,
+            int maxAttacks,
+            long minimumIntervalTicks,
+            long maxOperationDurationTicks) implements Node {
+        public OperateKillZone {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(targetKillZoneBounds, "targetKillZoneBounds");
+            entityTypeAllowlist = List.copyOf(
+                    Objects.requireNonNull(entityTypeAllowlist, "entityTypeAllowlist"));
+            Objects.requireNonNull(mainHandItem, "mainHandItem");
+            Objects.requireNonNull(consentRef, "consentRef");
+        }
+    }
+
     public record WaitTicks(String id, int ticks) implements Node {
         public WaitTicks {
             Objects.requireNonNull(id, "id");
@@ -731,7 +752,8 @@ public final class ActionDsl {
         BLOCK_INTERACT("block_interact"),
         BLOCK_PLACE("block_place"),
         INVENTORY_TRANSFER("inventory_transfer"),
-        ITEM_USE("item_use");
+        ITEM_USE("item_use"),
+        ENTITY_ATTACK("entity_attack");
 
         private final String wireName;
 

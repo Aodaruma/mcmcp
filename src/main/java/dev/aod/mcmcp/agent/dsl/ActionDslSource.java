@@ -30,20 +30,25 @@ public final class ActionDslSource {
 
     private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final Set<String> OPAQUE_REFERENCE_FIELDS = Set.of(
-            "operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref");
+            "operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref",
+            "consent_ref");
 
     private final String canonicalJson;
     private final String sha256;
+    private final String consentBindingSha256;
     private final String templateJson;
     private final List<ReferenceRequirement> referenceRequirements;
 
     private ActionDslSource(
             String canonicalJson,
             String sha256,
+            String consentBindingSha256,
             String templateJson,
             List<ReferenceRequirement> referenceRequirements) {
         this.canonicalJson = requireBounded(canonicalJson, "canonical source");
         this.sha256 = Objects.requireNonNull(sha256, "sha256");
+        this.consentBindingSha256 = Objects.requireNonNull(
+                consentBindingSha256, "consentBindingSha256");
         this.templateJson = requireBounded(templateJson, "canonical template");
         this.referenceRequirements = List.copyOf(
                 Objects.requireNonNull(referenceRequirements, "referenceRequirements"));
@@ -66,7 +71,12 @@ public final class ActionDslSource {
             redactedPaths.addAll(requirement.coupledPaths());
         }
         String template = canonicalJson(source, redactedPaths);
-        return new ActionDslSource(canonical, sha256(canonical), template, requirements);
+        return new ActionDslSource(
+                canonical,
+                sha256(canonical),
+                consentBindingSha256(source),
+                template,
+                requirements);
     }
 
     public String canonicalJson() {
@@ -75,6 +85,19 @@ public final class ActionDslSource {
 
     public String sha256() {
         return sha256;
+    }
+
+    public String consentBindingSha256() {
+        return consentBindingSha256;
+    }
+
+    /** Stable consent binding which deliberately excludes only the not-yet-issued consent ref. */
+    public static String consentBindingSha256(JsonObject source) {
+        Objects.requireNonNull(source, "source");
+        ActionDslParser.parse(source);
+        var redacted = new LinkedHashSet<String>();
+        collectNamedPaths(source, "", "consent_ref", redacted);
+        return sha256(canonicalJson(source, redacted));
     }
 
     public String templateJson() {
@@ -142,6 +165,24 @@ public final class ActionDslSource {
         }
     }
 
+    private static void collectNamedPaths(
+            JsonElement value, String path, String field, Set<String> result) {
+        if (value == null || value.isJsonNull() || value.isJsonPrimitive()) return;
+        if (value.isJsonArray()) {
+            JsonArray array = value.getAsJsonArray();
+            for (int index = 0; index < array.size(); index++) {
+                collectNamedPaths(array.get(index), path + "/" + index, field, result);
+            }
+            return;
+        }
+        JsonObject object = value.getAsJsonObject();
+        for (String name : object.keySet()) {
+            String childPath = path + "/" + pointerToken(name);
+            if (field.equals(name)) result.add(childPath);
+            collectNamedPaths(object.get(name), childPath, field, result);
+        }
+    }
+
     private static ReferenceRequirement requirement(
             String field, String path, JsonObject object, String objectPath) {
         return switch (field) {
@@ -173,6 +214,12 @@ public final class ActionDslSource {
                     List.of(),
                     "agent_get_action",
                     "/effects/*/observed_after/fishing_session_ref");
+            case "consent_ref" -> new ReferenceRequirement(
+                    path,
+                    "kill_zone_consent_ref",
+                    List.of(),
+                    "agent_get_state",
+                    "/entity_attack_consent/consent_ref");
             default -> throw new IllegalArgumentException("Unknown opaque reference field");
         };
     }

@@ -185,6 +185,10 @@ final class FixturePhase5Scenario {
             FixtureFishingScenario.prepare(context, output);
             return;
         }
+        if (mode == FixturePhase5Mode.KILL_ZONE) {
+            FixtureKillZoneScenario.prepare(context, output);
+            return;
+        }
         if (mode == FixturePhase5Mode.RESET) {
             FixtureArena.load(context);
             resetKnownRecipes(context);
@@ -742,6 +746,8 @@ final class FixturePhase5Scenario {
                     throw new IllegalArgumentException("cobblestone_generator has separate inventory setup");
             case FISHING ->
                     throw new IllegalArgumentException("fishing has separate inventory setup");
+            case KILL_ZONE ->
+                    throw new IllegalArgumentException("kill_zone has separate inventory setup");
             case IRON_FARM, RESET ->
                     throw new IllegalArgumentException(mode.wireName() + " has separate inventory setup");
         }
@@ -795,6 +801,8 @@ final class FixturePhase5Scenario {
                     throw new IllegalArgumentException("cobblestone_generator has a separate pose");
             case FISHING ->
                     throw new IllegalArgumentException("fishing has a separate pose");
+            case KILL_ZONE ->
+                    throw new IllegalArgumentException("kill_zone has a separate pose");
             case IRON_FARM, RESET ->
                     throw new IllegalArgumentException(mode.wireName() + " has a separate pose");
         };
