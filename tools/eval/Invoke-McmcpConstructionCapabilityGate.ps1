@@ -742,7 +742,9 @@ function Get-VisibleSurfaceRecords {
     if ($null -ne $Faces) { $filter.faces = @($Faces) }
     $records = @(Get-RecordsFromState -State $State -Kinds @('visible_surface') -Filter $filter)
     if ($records.Count -eq 0) {
-        if ($AllowMissing) { return $null }
+        # A bare return emits no pipeline object. `return $null` becomes a one-element null array
+        # under Windows PowerShell when a caller wraps this helper in @(...).
+        if ($AllowMissing) { return }
         throw "no visible $Block surface was delivered in the gate bounds"
     }
     foreach ($record in $records) {

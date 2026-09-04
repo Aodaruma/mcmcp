@@ -166,6 +166,11 @@ $emptyRecords = @(Get-RecordsFromState -State (New-MockCobblestoneState `
             -CobblestoneCount 0) -Kinds @('visible_surface') -Filter $null)
 Assert-True ($emptyRecords.Count -eq 0) `
     'a Windows PowerShell null materialization was not treated as an empty page'
+$emptySurfaces = @(Get-VisibleSurfaceRecords -State (New-MockCobblestoneState `
+            -CobblestoneCount 0) -Block 'minecraft:cobblestone' `
+        -Bounds $script:CobbleTargetBounds -Faces @('north') -AllowMissing)
+Assert-True ($emptySurfaces.Count -eq 0) `
+    'an allowed missing surface emitted a null pipeline element'
 $script:ToolTransport = $null
 
 $script:GateEvents = [Collections.Generic.List[object]]::new()
