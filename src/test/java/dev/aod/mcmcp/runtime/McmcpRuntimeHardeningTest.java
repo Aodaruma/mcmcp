@@ -1250,9 +1250,9 @@ class McmcpRuntimeHardeningTest {
                 .containsEntry("action", null);
         var consent = (Map<?, ?>) state.get("entity_attack_consent");
         assertThat(consent.keySet().stream().map(Object::toString).toList()).containsExactly(
-                "state", "action_binding_hash", "scope", "consent_ref", "valid_before_tick");
+                "state", "policy_binding_hash", "scope", "consent_ref", "valid_before_tick");
         assertThat(consent.get("state")).isEqualTo("none");
-        assertThat(consent.get("action_binding_hash")).isNull();
+        assertThat(consent.get("policy_binding_hash")).isNull();
         assertThat(consent.get("scope")).isNull();
         assertThat(consent.get("consent_ref")).isNull();
         assertThat(consent.get("valid_before_tick")).isNull();
@@ -1281,9 +1281,15 @@ class McmcpRuntimeHardeningTest {
         var session = UUID.fromString("00000000-0000-0000-0000-000000000001");
         var scope = new ScopedEntityAttackConsentStore.Scope(
                 "minecraft:overworld",
-                new ScopedEntityAttackConsentStore.Bounds(0, 60, 0, 4, 64, 4),
-                "abcdefghijklmnopqrstuvwx",
-                "minecraft:zombie");
+                new ScopedEntityAttackConsentStore.Bounds(0, 60, 0, 1, 62.5, 1),
+                new ScopedEntityAttackConsentStore.Bounds(2, 60, 0, 4, 64, 2),
+                List.of("minecraft:zombie", "minecraft:skeleton"),
+                "minecraft:iron_axe",
+                "sha256:" + "3".repeat(64),
+                ScopedEntityAttackConsentStore.AttackSideEffectProfile.VANILLA_SINGLE_TARGET,
+                100,
+                10,
+                600);
         String hash = "sha256:" + "1".repeat(64);
         store.request(session, hash, scope, 10);
         assertThat(ScopedEntityAttackConsentUiBridge
@@ -1292,12 +1298,22 @@ class McmcpRuntimeHardeningTest {
         var payload = McmcpRuntime.entityAttackConsentPayload(store.snapshot(session, 11));
 
         assertThat(payload.get("state")).isEqualTo("granted");
-        assertThat(payload.get("action_binding_hash")).isEqualTo(hash);
+        assertThat(payload.get("policy_binding_hash")).isEqualTo(hash);
         assertThat(payload.get("consent_ref")).asString().hasSize(24);
-        assertThat(payload.get("valid_before_tick")).isEqualTo(211L);
+        assertThat(payload.get("valid_before_tick")).isEqualTo(2_411L);
         var payloadScope = (Map<?, ?>) payload.get("scope");
-        assertThat(payloadScope.get("entity_type")).isEqualTo("minecraft:zombie");
-        assertThat(payloadScope.get("entity_ref")).isEqualTo("abcdefghijklmnopqrstuvwx");
+        assertThat(payloadScope.get("entity_type_allowlist"))
+                .isEqualTo(List.of("minecraft:skeleton", "minecraft:zombie"));
+        assertThat(payloadScope.get("max_attacks")).isEqualTo(100);
+        assertThat(payloadScope.get("max_operation_duration_ticks")).isEqualTo(600L);
+        assertThat(payloadScope.containsKey("entity_ref")).isFalse();
+        assertThat(payloadScope.containsKey("component_fingerprint")).isFalse();
+        assertThat(payloadScope.containsKey("attack_invariant_fingerprint")).isFalse();
+        assertThat(payloadScope.containsKey("attack_profile_fingerprint")).isFalse();
+        var mainHand = (Map<?, ?>) payloadScope.get("main_hand");
+        assertThat(mainHand.get("item")).isEqualTo("minecraft:iron_axe");
+        assertThat(mainHand.get("attack_effects_bound")).isEqualTo(true);
+        assertThat(mainHand.containsKey("component_fingerprint")).isFalse();
     }
 
     @Test

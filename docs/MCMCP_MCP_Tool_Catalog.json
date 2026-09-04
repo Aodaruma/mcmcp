@@ -394,11 +394,11 @@
           },
           "entity_attack_consent": {
             "type": "object",
-            "description": "Read-only summary of one runtime-owned entity-attack consent. pending is not authority. Registration opens a dedicated local confirmation screen; only a physical primary click on its Grant button can move it to granted. Cancel, Esc/emergency stop, screen close/replacement, OFF, world/session change, endpoint fault, and shutdown clear it. MCP, Action, chat, and packet paths cannot reach grant; co-loaded mods and OS-level input injection are outside the physical-authenticity guarantee. The future attack consumer must still enforce every non-waivable hard safety gate.",
+            "description": "Read-only summary of one runtime-owned bounded kill-zone operation consent. pending is not authority. One physical primary click on the dedicated local Grant button creates a 2400-tick (2-minute), single-consume start token for exactly one finite operate_kill_zone Action; it is not a reusable per-attack or cross-Action bearer lease. The Action-owned operation duration starts only after token consumption and is capped separately at 36000 ticks (30 minutes). Its policy permits repeated attacks on newly spawned mobs only while the runtime-derived player station, disjoint kill zone, entity-type allowlist, exact attack-effect stack profile, finite count, minimum interval, world, and operation duration all match. Per-target entity_ref is deliberately not in this scope. The internal stack fingerprint is never exposed. Cancel, Esc/emergency stop, screen close/replacement, OFF, world/session change, endpoint fault, or shutdown clears unconsumed start authority. The future consumer must JIT prove fresh target ref, whole target AABB containment, current LOS, reach, cooldown, collision/support, collateral safety for sweep profiles, and every non-waivable gate before each dispatch. A health decrease revokes the running Action authority and must terminate with structured SAFETY_INTERRUPTED facts including health_before, health_current, delta, and reason.",
             "additionalProperties": false,
             "properties": {
               "state": {"enum": ["none", "pending", "granted"]},
-              "action_binding_hash": {
+              "policy_binding_hash": {
                 "type": ["string", "null"],
                 "pattern": "^sha256:[0-9a-f]{64}$"
               },
@@ -410,7 +410,7 @@
                     "additionalProperties": false,
                     "properties": {
                       "dimension": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 128},
-                      "bounds": {
+                      "player_station_bounds": {
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
@@ -423,22 +423,53 @@
                         },
                         "required": ["min_x", "min_y", "min_z", "max_x", "max_y", "max_z"]
                       },
-                      "entity_ref": {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"},
-                      "entity_type": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 128}
+                      "target_kill_zone_bounds": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "min_x": {"type": "number"},
+                          "min_y": {"type": "number"},
+                          "min_z": {"type": "number"},
+                          "max_x": {"type": "number"},
+                          "max_y": {"type": "number"},
+                          "max_z": {"type": "number"}
+                        },
+                        "required": ["min_x", "min_y", "min_z", "max_x", "max_y", "max_z"]
+                      },
+                      "entity_type_allowlist": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 16,
+                        "uniqueItems": true,
+                        "items": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 128, "not": {"const": "minecraft:player"}}
+                      },
+                      "main_hand": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "item": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 128},
+                          "attack_effects_bound": {"const": true}
+                        },
+                        "required": ["item", "attack_effects_bound"]
+                      },
+                      "side_effect_profile": {"enum": ["vanilla_single_target", "vanilla_sweep", "adapter_single_target", "adapter_bounded_aoe"]},
+                      "max_attacks": {"type": "integer", "minimum": 1, "maximum": 2048},
+                      "minimum_interval_ticks": {"type": "integer", "minimum": 10, "maximum": 1200},
+                      "max_operation_duration_ticks": {"type": "integer", "minimum": 1, "maximum": 36000}
                     },
-                    "required": ["dimension", "bounds", "entity_ref", "entity_type"]
+                    "required": ["dimension", "player_station_bounds", "target_kill_zone_bounds", "entity_type_allowlist", "main_hand", "side_effect_profile", "max_attacks", "minimum_interval_ticks", "max_operation_duration_ticks"]
                   }
                 ]
               },
               "consent_ref": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]{24}$"},
               "valid_before_tick": {"type": ["integer", "null"], "minimum": 0, "maximum": 9223372036854775807}
             },
-            "required": ["state", "action_binding_hash", "scope", "consent_ref", "valid_before_tick"],
+            "required": ["state", "policy_binding_hash", "scope", "consent_ref", "valid_before_tick"],
             "oneOf": [
               {
                 "properties": {
                   "state": {"const": "none"},
-                  "action_binding_hash": {"type": "null"},
+                  "policy_binding_hash": {"type": "null"},
                   "scope": {"type": "null"},
                   "consent_ref": {"type": "null"},
                   "valid_before_tick": {"type": "null"}
@@ -447,7 +478,7 @@
               {
                 "properties": {
                   "state": {"const": "pending"},
-                  "action_binding_hash": {"type": "string"},
+                  "policy_binding_hash": {"type": "string"},
                   "scope": {"type": "object"},
                   "consent_ref": {"type": "null"},
                   "valid_before_tick": {"type": "null"}
@@ -456,7 +487,7 @@
               {
                 "properties": {
                   "state": {"const": "granted"},
-                  "action_binding_hash": {"type": "string"},
+                  "policy_binding_hash": {"type": "string"},
                   "scope": {"type": "object"},
                   "consent_ref": {"type": "string"},
                   "valid_before_tick": {"type": "integer"}

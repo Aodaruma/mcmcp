@@ -749,7 +749,28 @@ class McpToolCatalogTest {
                 .getAsJsonObject("properties").getAsJsonObject("max_interactions")
                 .get("const").getAsInt()).isEqualTo(16);
         assertThat(state.getAsJsonObject("properties").has("standard_potions")).isTrue();
-        assertThat(state.getAsJsonObject("properties").has("entity_attack_consent")).isTrue();
+        var entityConsent = state.getAsJsonObject("properties")
+                .getAsJsonObject("entity_attack_consent");
+        assertThat(entityConsent).isNotNull();
+        assertThat(entityConsent.get("description").getAsString())
+                .contains("bounded kill-zone")
+                .contains("newly spawned mobs")
+                .contains("SAFETY_INTERRUPTED")
+                .contains("health_before");
+        var consentProperties = entityConsent.getAsJsonObject("properties");
+        assertThat(consentProperties.has("policy_binding_hash")).isTrue();
+        assertThat(consentProperties.has("action_binding_hash")).isFalse();
+        assertThat(consentProperties.has("remaining_attacks")).isFalse();
+        assertThat(consentProperties.has("next_attack_not_before_tick")).isFalse();
+        var consentScope = consentProperties.getAsJsonObject("scope")
+                .getAsJsonArray("oneOf").get(1).getAsJsonObject()
+                .getAsJsonObject("properties");
+        assertThat(consentScope.keySet()).contains(
+                "player_station_bounds", "target_kill_zone_bounds",
+                "entity_type_allowlist", "main_hand", "max_attacks",
+                "minimum_interval_ticks", "max_operation_duration_ticks");
+        assertThat(consentScope.has("entity_ref")).isFalse();
+        assertThat(consentScope.toString()).doesNotContain("component_fingerprint");
         assertThat(enumValues(state.getAsJsonObject("properties")
                         .getAsJsonObject("standard_potions").getAsJsonObject("items")
                         .getAsJsonObject("properties"), "potion"))

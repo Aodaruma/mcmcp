@@ -1,23 +1,31 @@
 package dev.aod.mcmcp.safety;
 
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Local-UI-issued, single-use consent for one canonically bound semantic entity attack.
+ * Local-UI-issued, single-consume authority to start one finite kill-zone operation.
  *
- * <p>The MCP side may register one bounded request, but only a non-replayable
- * {@link LocalUiGrantCapability} minted by the dedicated local confirmation Screen can turn it into
- * authority.
- * Chat, books, signs, server packets, Action fields, and ordinary runtime code cannot mint that
- * token. This consent can waive only the named target's hostile-presence gate; damage, contact,
- * projectile, fire, fall, health, world, and reconciliation gates remain hard safety gates.</p>
+ * <p>The physical grant is not a reusable per-attack bearer lease. A future
+ * {@code operate_kill_zone} consumer must consume it once at Action start, copy the approved count,
+ * interval, duration, and spatial policy into Action-owned state, and reserve each subsequent
+ * dispatch against that finite state. This permits newly spawned mobs without one click per mob
+ * while preventing the grant ref from being replayed across Actions.</p>
  */
 public final class ScopedEntityAttackConsentStore {
     public static final long PENDING_TTL_TICKS = 1_200L;
-    public static final long GRANTED_TTL_TICKS = 200L;
+    public static final long GRANTED_TTL_TICKS = 2_400L;
+    public static final long MAX_OPERATION_DURATION_TICKS = 36_000L;
+    public static final int MAX_ATTACKS = 2_048;
+    public static final int MAX_ENTITY_TYPES = 16;
+    public static final long MIN_MINIMUM_INTERVAL_TICKS = 10L;
+    public static final long MAX_MINIMUM_INTERVAL_TICKS = 1_200L;
+    public static final double MIN_STATION_TO_KILL_ZONE_GAP = 0.5D;
 
     private final SecureRandom random;
     private Pending pending;
@@ -33,36 +41,36 @@ public final class ScopedEntityAttackConsentStore {
         this.random = Objects.requireNonNull(random, "random");
     }
 
-    /** Registers exactly one user-visible request; a different live request cannot replace it. */
+    /** Registers exactly one user-visible policy request; another live policy cannot replace it. */
     public synchronized RequestResult request(
             UUID worldSessionId,
-            String actionBindingHash,
+            String policyBindingHash,
             Scope scope,
             long clientTick) {
         Objects.requireNonNull(worldSessionId, "worldSessionId");
-        requireHash(actionBindingHash);
+        requireHash(policyBindingHash, "policyBindingHash");
         Objects.requireNonNull(scope, "scope");
         if (!advance(clientTick)) {
             return RequestResult.TICK_REJECTED;
         }
         if (granted != null) {
-            return granted.matches(worldSessionId, actionBindingHash, scope)
+            return granted.matches(worldSessionId, policyBindingHash, scope)
                     ? RequestResult.ALREADY_GRANTED : RequestResult.BUSY;
         }
         if (pending != null) {
-            return pending.matches(worldSessionId, actionBindingHash, scope)
+            return pending.matches(worldSessionId, policyBindingHash, scope)
                     ? RequestResult.ALREADY_PENDING : RequestResult.BUSY;
         }
         pending = new Pending(
                 worldSessionId,
-                actionBindingHash,
+                policyBindingHash,
                 scope,
                 clientTick,
                 deadline(clientTick, PENDING_TTL_TICKS));
         return RequestResult.REGISTERED;
     }
 
-    /** Mints authority only from a token created by the local physical-click handler. */
+    /** Mints start authority only from the dedicated local physical-click handler. */
     public synchronized boolean grantFromPhysicalUiClick(
             LocalUiGrantCapability click,
             UUID worldSessionId,
@@ -80,7 +88,7 @@ public final class ScopedEntityAttackConsentStore {
         granted = new Granted(
                 Base64.getUrlEncoder().withoutPadding().encodeToString(bytes),
                 pending.worldSessionId(),
-                pending.actionBindingHash(),
+                pending.policyBindingHash(),
                 pending.scope(),
                 clientTick,
                 deadline(clientTick, GRANTED_TTL_TICKS));
@@ -88,22 +96,27 @@ public final class ScopedEntityAttackConsentStore {
         return true;
     }
 
-    /** Atomically verifies and consumes the exact grant at the final client-thread commit fence. */
-    public synchronized boolean consumeExact(
+    /**
+     * Atomically consumes the exact grant once to start one finite Action.
+     * The future consumer must derive the station bounds and attack profile from trusted live state
+     * before registration, then JIT enforce the approved policy and all hard safety gates during the
+     * Action. A false result never grants partial authority.
+     */
+    public synchronized boolean consumeExactForActionStart(
             String consentRef,
             UUID worldSessionId,
-            String actionBindingHash,
+            String policyBindingHash,
             Scope scope,
             long clientTick) {
         Objects.requireNonNull(consentRef, "consentRef");
         Objects.requireNonNull(worldSessionId, "worldSessionId");
-        requireHash(actionBindingHash);
+        requireHash(policyBindingHash, "policyBindingHash");
         Objects.requireNonNull(scope, "scope");
         if (!advance(clientTick)
                 || granted == null
                 || clientTick < granted.grantedAtTick()
                 || !granted.reference().equals(consentRef)
-                || !granted.matches(worldSessionId, actionBindingHash, scope)) {
+                || !granted.matches(worldSessionId, policyBindingHash, scope)) {
             return false;
         }
         granted = null;
@@ -117,7 +130,7 @@ public final class ScopedEntityAttackConsentStore {
         if (granted != null && granted.worldSessionId().equals(worldSessionId)) {
             return new Snapshot(
                     State.GRANTED,
-                    granted.actionBindingHash(),
+                    granted.policyBindingHash(),
                     granted.scope(),
                     granted.reference(),
                     granted.expiresAtTick());
@@ -125,15 +138,15 @@ public final class ScopedEntityAttackConsentStore {
         if (pending != null && pending.worldSessionId().equals(worldSessionId)) {
             return new Snapshot(
                     State.PENDING,
-                    pending.actionBindingHash(),
+                    pending.policyBindingHash(),
                     pending.scope(),
                     null,
-                    pending.expiresAtTick());
+                    null);
         }
         return Snapshot.none();
     }
 
-    /** World, OFF, emergency-stop, and shutdown boundaries revoke every outstanding request. */
+    /** World, OFF, emergency-stop, fault, and shutdown boundaries revoke all start authority. */
     public synchronized void clear() {
         pending = null;
         granted = null;
@@ -172,9 +185,16 @@ public final class ScopedEntityAttackConsentStore {
         }
     }
 
-    private static void requireHash(String value) {
+    private static void requireHash(String value, String field) {
         if (value == null || !value.matches("sha256:[0-9a-f]{64}")) {
-            throw new IllegalArgumentException("action binding hash must be SHA-256");
+            throw new IllegalArgumentException(field + " must be SHA-256");
+        }
+    }
+
+    private static void requireResourceLocation(String value, String field) {
+        if (value == null || value.length() > 128
+                || !value.matches("[a-z0-9_.-]+:[a-z0-9_./-]+")) {
+            throw new IllegalArgumentException(field + " must be a registered resource location");
         }
     }
 
@@ -192,13 +212,7 @@ public final class ScopedEntityAttackConsentStore {
         GRANTED
     }
 
-    /**
-     * Single-use authority object for the future physical-local-UI adapter.
-     *
-     * <p>Construction is package-private, so MCP, Action, runtime, chat, and server-facing code
-     * cannot mint it. The local confirmation Screen adapter must live behind a tiny safety-package
-     * bridge rather than widening this constructor or adding a boolean grant parameter.</p>
-     */
+    /** Single-use capability object minted only through the safety-package UI bridge. */
     public static final class LocalUiGrantCapability {
         private boolean consumed;
 
@@ -232,59 +246,123 @@ public final class ScopedEntityAttackConsentStore {
                         "consent bounds must be finite, ordered, and local");
             }
         }
+
+        private boolean interiorOverlaps(Bounds other) {
+            return minX < other.maxX && maxX > other.minX
+                    && minY < other.maxY && maxY > other.minY
+                    && minZ < other.maxZ && maxZ > other.minZ;
+        }
+
+        private double separationFrom(Bounds other) {
+            double xGap = Math.max(0.0D, Math.max(other.minX - maxX, minX - other.maxX));
+            double yGap = Math.max(0.0D, Math.max(other.minY - maxY, minY - other.maxY));
+            double zGap = Math.max(0.0D, Math.max(other.minZ - maxZ, minZ - other.maxZ));
+            return Math.sqrt(xGap * xGap + yGap * yGap + zGap * zGap);
+        }
     }
 
+    /**
+     * Approved finite-operation policy. The future runtime must derive playerStationBounds from the
+     * grant-time player AABB/support and derive attackSideEffectProfile plus
+     * attackProfileFingerprint from the exact held stack through a declared adapter. The fingerprint
+     * excludes durability damage so Mending and equivalent same-profile stack replacement remain
+     * usable; item disappearance, breakage, or attack-profile drift terminates the Action.
+     */
     public record Scope(
             String dimension,
-            Bounds bounds,
-            String entityRef,
-            String entityType) {
+            Bounds playerStationBounds,
+            Bounds targetKillZoneBounds,
+            List<String> entityTypeAllowlist,
+            String mainHandItem,
+            String attackProfileFingerprint,
+            AttackSideEffectProfile attackSideEffectProfile,
+            int maxAttacks,
+            long minimumIntervalTicks,
+            long maxOperationDurationTicks) {
         public Scope {
-            Objects.requireNonNull(bounds, "bounds");
-            if (dimension == null || dimension.isBlank() || dimension.length() > 128
-                    || !dimension.matches("[a-z0-9_.-]+:[a-z0-9_./-]+")
-                    || entityRef == null || !entityRef.matches("[A-Za-z0-9_-]{24}")
-                    || entityType == null
-                    || !entityType.matches("[a-z0-9_.-]+:[a-z0-9_./-]+")) {
-                throw new IllegalArgumentException("invalid entity attack consent scope");
+            requireResourceLocation(dimension, "dimension");
+            Objects.requireNonNull(playerStationBounds, "playerStationBounds");
+            Objects.requireNonNull(targetKillZoneBounds, "targetKillZoneBounds");
+            if (playerStationBounds.maxX() - playerStationBounds.minX() > 1.5D
+                    || playerStationBounds.maxY() - playerStationBounds.minY() > 2.75D
+                    || playerStationBounds.maxZ() - playerStationBounds.minZ() > 1.5D
+                    || playerStationBounds.interiorOverlaps(targetKillZoneBounds)
+                    || playerStationBounds.separationFrom(targetKillZoneBounds)
+                            < MIN_STATION_TO_KILL_ZONE_GAP) {
+                throw new IllegalArgumentException(
+                        "player station must be tight and separated from the kill zone");
+            }
+            Objects.requireNonNull(entityTypeAllowlist, "entityTypeAllowlist");
+            if (entityTypeAllowlist.isEmpty()
+                    || entityTypeAllowlist.size() > MAX_ENTITY_TYPES) {
+                throw new IllegalArgumentException("entity type allowlist must be small and non-empty");
+            }
+            var normalizedTypes = new ArrayList<>(entityTypeAllowlist);
+            normalizedTypes.forEach(type -> requireResourceLocation(type, "entityTypeAllowlist"));
+            if (normalizedTypes.contains("minecraft:player")) {
+                throw new IllegalArgumentException("players can never be attack-consent targets");
+            }
+            if (new HashSet<>(normalizedTypes).size() != normalizedTypes.size()) {
+                throw new IllegalArgumentException("entity type allowlist cannot contain duplicates");
+            }
+            normalizedTypes.sort(String::compareTo);
+            entityTypeAllowlist = List.copyOf(normalizedTypes);
+            requireResourceLocation(mainHandItem, "mainHandItem");
+            requireHash(attackProfileFingerprint, "attackProfileFingerprint");
+            Objects.requireNonNull(attackSideEffectProfile, "attackSideEffectProfile");
+            if (maxAttacks < 1 || maxAttacks > MAX_ATTACKS
+                    || minimumIntervalTicks < MIN_MINIMUM_INTERVAL_TICKS
+                    || minimumIntervalTicks > MAX_MINIMUM_INTERVAL_TICKS
+                    || maxOperationDurationTicks < 1L
+                    || maxOperationDurationTicks > MAX_OPERATION_DURATION_TICKS) {
+                throw new IllegalArgumentException("attack count, interval, or duration is out of range");
             }
         }
+    }
+
+    public enum AttackSideEffectProfile {
+        VANILLA_SINGLE_TARGET,
+        VANILLA_SWEEP,
+        ADAPTER_SINGLE_TARGET,
+        ADAPTER_BOUNDED_AOE
     }
 
     public record Snapshot(
             State state,
-            String actionBindingHash,
+            String policyBindingHash,
             Scope scope,
             String consentRef,
-            long validBeforeClientTick) {
+            Long validBeforeClientTick) {
         public Snapshot {
             Objects.requireNonNull(state, "state");
             boolean none = state == State.NONE;
-            if (none != (actionBindingHash == null)
+            boolean grantedState = state == State.GRANTED;
+            if (none != (policyBindingHash == null)
                     || none != (scope == null)
-                    || (state == State.GRANTED) != (consentRef != null)
-                    || (none ? validBeforeClientTick != 0L : validBeforeClientTick <= 0L)) {
+                    || grantedState != (consentRef != null)
+                    || grantedState != (validBeforeClientTick != null)
+                    || (grantedState && validBeforeClientTick <= 0L)) {
                 throw new IllegalArgumentException("inconsistent consent snapshot");
             }
             if (!none) {
-                requireHash(actionBindingHash);
+                requireHash(policyBindingHash, "policyBindingHash");
             }
         }
 
         public static Snapshot none() {
-            return new Snapshot(State.NONE, null, null, null, 0L);
+            return new Snapshot(State.NONE, null, null, null, null);
         }
     }
 
     private record Pending(
             UUID worldSessionId,
-            String actionBindingHash,
+            String policyBindingHash,
             Scope scope,
             long requestedAtTick,
             long expiresAtTick) {
         private boolean matches(UUID session, String hash, Scope candidate) {
             return worldSessionId.equals(session)
-                    && actionBindingHash.equals(hash)
+                    && policyBindingHash.equals(hash)
                     && scope.equals(candidate);
         }
     }
@@ -292,13 +370,13 @@ public final class ScopedEntityAttackConsentStore {
     private record Granted(
             String reference,
             UUID worldSessionId,
-            String actionBindingHash,
+            String policyBindingHash,
             Scope scope,
             long grantedAtTick,
             long expiresAtTick) {
         private boolean matches(UUID session, String hash, Scope candidate) {
             return worldSessionId.equals(session)
-                    && actionBindingHash.equals(hash)
+                    && policyBindingHash.equals(hash)
                     && scope.equals(candidate);
         }
     }

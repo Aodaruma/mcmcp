@@ -112,7 +112,9 @@ class AutomationUiContractTest {
                         .contains("gui.mcmcp.entity_attack_consent.title")
                         .contains("gui.mcmcp.entity_attack_consent.message")
                         .contains("gui.mcmcp.entity_attack_consent.grant")
-                        .contains("gui.mcmcp.entity_attack_consent.cancel");
+                        .contains("gui.mcmcp.entity_attack_consent.cancel")
+                        .doesNotContain("Grant one attack")
+                        .doesNotContain("1回の攻撃を許可");
             }
         }
     }

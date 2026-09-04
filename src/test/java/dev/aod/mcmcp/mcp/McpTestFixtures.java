@@ -25,7 +25,7 @@ final class McpTestFixtures {
                 "standard_potions", List.of(),
                 "entity_attack_consent", Map.of(
                         "state", "none",
-                        "action_binding_hash", nullValue(),
+                        "policy_binding_hash", nullValue(),
                         "scope", nullValue(),
                         "consent_ref", nullValue(),
                         "valid_before_tick", nullValue()),

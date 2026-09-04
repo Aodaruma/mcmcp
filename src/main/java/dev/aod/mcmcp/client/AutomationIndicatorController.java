@@ -132,7 +132,7 @@ public final class AutomationIndicatorController {
             sink.cancel();
             throw new IllegalStateException("entity attack consent screen is not available");
         }
-        minecraft.setScreenAndShow(new EntityAttackConsentScreen(scope.entityType(), sink));
+        minecraft.setScreenAndShow(new EntityAttackConsentScreen(scope, sink));
     }
 
     private void renderHud(GuiGraphicsExtractor graphics, net.minecraft.client.DeltaTracker delta) {
@@ -439,16 +439,35 @@ public final class AutomationIndicatorController {
         private boolean terminal;
 
         private EntityAttackConsentScreen(
-                String entityType,
+                ScopedEntityAttackConsentStore.Scope scope,
                 EntityAttackConsentPromptSink sink) {
             super(
                     ignored -> { },
                     Component.translatable("gui.mcmcp.entity_attack_consent.title"),
                     Component.translatable(
-                            "gui.mcmcp.entity_attack_consent.message", entityType),
+                            "gui.mcmcp.entity_attack_consent.message",
+                            scope.dimension(),
+                            boundsSummary(scope.playerStationBounds()),
+                            boundsSummary(scope.targetKillZoneBounds()),
+                            String.join(", ", scope.entityTypeAllowlist()),
+                            scope.mainHandItem(),
+                            scope.attackSideEffectProfile()
+                                    .name().toLowerCase(java.util.Locale.ROOT),
+                            scope.maxAttacks(),
+                            scope.minimumIntervalTicks(),
+                            ScopedEntityAttackConsentStore.GRANTED_TTL_TICKS,
+                            scope.maxOperationDurationTicks()),
                     Component.translatable("gui.mcmcp.entity_attack_consent.grant"),
                     Component.translatable("gui.mcmcp.entity_attack_consent.cancel"));
             this.sink = Objects.requireNonNull(sink, "sink");
+        }
+
+        private static String boundsSummary(ScopedEntityAttackConsentStore.Bounds bounds) {
+            return String.format(
+                    java.util.Locale.ROOT,
+                    "[%.1f, %.1f, %.1f]-[%.1f, %.1f, %.1f]",
+                    bounds.minX(), bounds.minY(), bounds.minZ(),
+                    bounds.maxX(), bounds.maxY(), bounds.maxZ());
         }
 
         private boolean dispatchPhysicalPrimaryClick(double mouseX, double mouseY) {

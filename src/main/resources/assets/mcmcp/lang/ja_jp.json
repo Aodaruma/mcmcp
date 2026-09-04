@@ -12,10 +12,10 @@
   "gui.mcmcp.automation.tooltip.enable": "クリックするとMCP操作をONにし、1 Actionを待機します",
   "gui.mcmcp.automation.tooltip.disable": "クリックすると現在の操作を停止し、MCP操作をOFFにします",
   "gui.mcmcp.automation.tooltip.evaluating": "推論中はMinecraft入力をロックします。クリックで停止してOFFにします",
-  "gui.mcmcp.automation.tooltip.consent_pending": "%s への1回の攻撃を、専用確認画面で許可または拒否してください",
+  "gui.mcmcp.automation.tooltip.consent_pending": "%s を対象とする範囲付き反復攻撃ポリシーを専用画面で確認してください",
   "gui.mcmcp.entity_attack_consent.title": "MCMCP 攻撃許可",
-  "gui.mcmcp.entity_attack_consent.message": "%s への1回の攻撃を許可しますか？ 被弾などの解除不能な安全条件は維持されます。",
-  "gui.mcmcp.entity_attack_consent.grant": "1回の攻撃を許可",
+  "gui.mcmcp.entity_attack_consent.message": "ディメンション %s、待機範囲 %s、攻撃範囲 %s、対象 %s、メインハンド %s、攻撃特性 %s、最大 %s 回、最短間隔 %s tick。%s tick以内に開始し、運転上限は開始後 %s tickです。被弾などの解除不能な安全条件は維持されます。",
+  "gui.mcmcp.entity_attack_consent.grant": "範囲付き反復攻撃を許可",
   "gui.mcmcp.entity_attack_consent.cancel": "拒否して停止",
   "gui.mcmcp.automation.tooltip.unavailable": "ワールドとプレイヤーの準備完了後にONにできます",
   "gui.mcmcp.automation.tooltip.fault": "内部異常のためMCP操作は無効です: %s"

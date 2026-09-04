@@ -641,7 +641,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 lock,
                 evaluationTurns.snapshot(session.worldSessionId()).active(),
                 consent.state() == ScopedEntityAttackConsentStore.State.PENDING,
-                consent.scope() == null ? null : consent.scope().entityType(),
+                consent.scope() == null
+                        ? null
+                        : String.join(", ", consent.scope().entityTypeAllowlist()),
                 endpointFaultCode);
     }
 
@@ -656,7 +658,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     /** Future internal admission hook; not mapped to an MCP Tool or public command. */
     ScopedEntityAttackConsentStore.RequestResult requestEntityAttackConsentForCanonicalAction(
-            String actionBindingHash,
+            String policyBindingHash,
             ScopedEntityAttackConsentStore.Scope scope) {
         Objects.requireNonNull(scope, "scope");
         var minecraft = Minecraft.getInstance();
@@ -676,14 +678,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var sessionId = Objects.requireNonNull(session.worldSessionId(), "worldSessionId");
         var result = entityAttackConsent.request(
                 sessionId,
-                actionBindingHash,
+                policyBindingHash,
                 scope,
                 session.clientTick());
         if (result == ScopedEntityAttackConsentStore.RequestResult.REGISTERED) {
             try {
                 entityAttackConsentUi.openEntityAttackConsentPrompt(
                         scope,
-                        new EntityAttackConsentPromptSink(sessionId, actionBindingHash, scope));
+                        new EntityAttackConsentPromptSink(sessionId, policyBindingHash, scope));
             } catch (RuntimeException | LinkageError failure) {
                 entityAttackConsent.clear();
                 throw failure;
@@ -695,16 +697,17 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final class EntityAttackConsentPromptSink
             implements AutomationIndicatorController.EntityAttackConsentPromptSink {
         private final UUID sessionId;
-        private final String actionBindingHash;
+        private final String policyBindingHash;
         private final ScopedEntityAttackConsentStore.Scope scope;
         private boolean terminal;
 
         private EntityAttackConsentPromptSink(
                 UUID sessionId,
-                String actionBindingHash,
+                String policyBindingHash,
                 ScopedEntityAttackConsentStore.Scope scope) {
             this.sessionId = Objects.requireNonNull(sessionId, "sessionId");
-            this.actionBindingHash = Objects.requireNonNull(actionBindingHash, "actionBindingHash");
+            this.policyBindingHash = Objects.requireNonNull(
+                    policyBindingHash, "policyBindingHash");
             this.scope = Objects.requireNonNull(scope, "scope");
         }
 
@@ -726,7 +729,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 entityAttackConsent.clear();
                 return false;
             }
-            overlay(minecraft, "MCMCP: 指定対象への1回の攻撃を許可しました");
+            overlay(minecraft, "MCMCP: 範囲付き反復攻撃の開始を2分間許可しました");
             return true;
         }
 
@@ -754,7 +757,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             var snapshot = entityAttackConsentSnapshot(session, control);
             return snapshot.state() == ScopedEntityAttackConsentStore.State.PENDING
                     && sessionId.equals(session.worldSessionId())
-                    && actionBindingHash.equals(snapshot.actionBindingHash())
+                    && policyBindingHash.equals(snapshot.policyBindingHash())
                     && scope.equals(snapshot.scope());
         }
     }
@@ -2911,28 +2914,47 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         Objects.requireNonNull(snapshot, "snapshot");
         var result = new LinkedHashMap<String, Object>();
         result.put("state", snapshot.state().name().toLowerCase(Locale.ROOT));
-        result.put("action_binding_hash", snapshot.actionBindingHash());
+        result.put("policy_binding_hash", snapshot.policyBindingHash());
         if (snapshot.scope() == null) {
             result.put("scope", null);
         } else {
             var scope = snapshot.scope();
-            var bounds = scope.bounds();
-            result.put("scope", Map.of(
-                    "dimension", scope.dimension(),
-                    "bounds", Map.of(
-                            "min_x", bounds.minX(),
-                            "min_y", bounds.minY(),
-                            "min_z", bounds.minZ(),
-                            "max_x", bounds.maxX(),
-                            "max_y", bounds.maxY(),
-                            "max_z", bounds.maxZ()),
-                    "entity_ref", scope.entityRef(),
-                    "entity_type", scope.entityType()));
+            result.put("scope", Map.ofEntries(
+                    Map.entry("dimension", scope.dimension()),
+                    Map.entry(
+                            "player_station_bounds",
+                            entityAttackConsentBoundsPayload(scope.playerStationBounds())),
+                    Map.entry(
+                            "target_kill_zone_bounds",
+                            entityAttackConsentBoundsPayload(scope.targetKillZoneBounds())),
+                    Map.entry("entity_type_allowlist", scope.entityTypeAllowlist()),
+                    Map.entry("main_hand", Map.of(
+                            "item", scope.mainHandItem(),
+                            "attack_effects_bound", true)),
+                    Map.entry(
+                            "side_effect_profile",
+                            scope.attackSideEffectProfile().name().toLowerCase(Locale.ROOT)),
+                    Map.entry("max_attacks", scope.maxAttacks()),
+                    Map.entry("minimum_interval_ticks", scope.minimumIntervalTicks()),
+                    Map.entry(
+                            "max_operation_duration_ticks",
+                            scope.maxOperationDurationTicks())));
         }
         boolean granted = snapshot.state() == ScopedEntityAttackConsentStore.State.GRANTED;
         result.put("consent_ref", granted ? snapshot.consentRef() : null);
         result.put("valid_before_tick", granted ? snapshot.validBeforeClientTick() : null);
         return result;
+    }
+
+    private static Map<String, Double> entityAttackConsentBoundsPayload(
+            ScopedEntityAttackConsentStore.Bounds bounds) {
+        return Map.of(
+                "min_x", bounds.minX(),
+                "min_y", bounds.minY(),
+                "min_z", bounds.minZ(),
+                "max_x", bounds.maxX(),
+                "max_y", bounds.maxY(),
+                "max_z", bounds.maxZ());
     }
 
     private ScopedEntityAttackConsentStore.Snapshot entityAttackConsentSnapshot(

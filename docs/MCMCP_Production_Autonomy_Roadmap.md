@@ -123,7 +123,7 @@ production仕様では、安全条件を次の2層に分ける。
 ### 解除できないhard gate
 
 - dead、world / session変更、desync、unexpected screen
-- health floor未満、継続被ダメージ
+- health floor未満、health低下、継続被ダメージ
 - 接触攻撃、projectile、炎上、lava、fall、suffocation、air不足
 - 対象外entityの接近や、許可領域外への危険拡大
 
@@ -131,9 +131,24 @@ production仕様では、安全条件を次の2層に分ける。
 
 - 指定した作業領域内に、指定分類の敵対mobが「存在・可視」であることだけ
 
-同意はDSLのbooleanにしない。ローカルUIまたは認証済みplayer操作がopaque `consent_ref`を発行し、world session、Job / Action hash、作業領域、許可op、mob分類、entity ref、距離、期限、health floor、最大許容damageへ束縛する。最初sliceは1対象の1回のsemantic attackだけを許可し、複数回攻撃を1つの同意に含めない。
+同意はDSLのbooleanにせず、mob TTの場所と運転条件へ束縛したzone-scoped attack leaseとする。ローカル専用UIでの1回の物理Grantがopaque `consent_ref`を発行し、次を改変不能なscopeとして保持する。
 
-指示がない場合、LLMはmutation開始前にユーザーへ確認する。実行中に予期しない敵対mobが現れた場合は、危険入力を解放して安全checkpointまたは有限retreatへ移り、`AWAITING_CONSENT`を返す。無期限にその場で棒立ちにはしない。mob TTでは期待された敵対mobの存在だけを許可し、被弾、接触、projectile、health低下は引き続きhard gateとする。
+- world sessionとdimension
+- Grant時の実player位置とsupportからRuntimeが導出するtightなstation boundsと、攻撃対象が存在してよいkill-zone bounds。LLMはstation boundsを任意指定できない
+- mob type allowlistと、trusted Runtimeがmain-handのexact stackから導出した宣言済みattack-side-effect profile、およびitem ID・enchantments・攻撃効果に関係する不変componentsの内部fingerprint
+- policy hashと`operate_kill_zone` Action、および所有Jobがあればそのcanonical hash
+- 物理Grant後に同じActionを再送・開始できる2400 active client tick（約2分）のref有効期限
+- Action開始後の最大攻撃数、最小攻撃間隔、運転期限（上限は約30分）
+
+production初期sliceでは、`consent_ref`を複数Actionが持ち回るbearer leaseにしない。最初のAction要求が同意待ちになった後、物理Grantから2400 active client tick以内に、`consent_ref`以外が同じpolicy / Action hashへ束縛された要求を再送できる。hash計算では発行前に存在しない`consent_ref` fieldだけを除外し、zone、types、item profile、count、interval、運転期限等を変更した要求は安全にrejectする。ただしbinding mismatchだけではrefをconsume / revokeせず、元の正しいbindingを2分以内に再送できる。1つの有限な`operate_kill_zone` Actionが開始時にrefをsingle-consumeし、そのAction内部だけで後から湧いた複数mobへ最大N回の攻撃を反復する。一体ごとの再同意は不要だが、Actionがterminal / cancelになった後に同じrefを再利用することもできない。2分はActionを開始するための猶予であり、single-consume成功後に始まる最長約30分の運転期限とは別に管理する。
+
+`entity_ref`はleaseのscopeとhashへ含めず、各攻撃の直前にfreshな可視観測から解決し、誤射防止とeffect追跡だけに使う。side-effect profileはitem IDから推測せず、trusted Runtimeがexact stackを宣言済みprofile table / adapterへ照合して導出する。未知のMOD武器やdata-driven profileはadapter追加まで拒否する。main-handのraw NBT / componentsや内部fingerprintはwire / UIへ出さず、UIにはsanitizedなitem IDと攻撃effect profileへ束縛済みであることだけを表示する。耐久damageはfingerprintから除外し、攻撃による増加もMending / repairによる減少も許可する。同じitem IDと攻撃effect profileを持つstackへの交換も安全上は許可し、武器の破損・消失またはprofile変化でActionとleaseを終了する。最大攻撃数、間隔、期限はRuntimeが一元管理し、攻撃枠はdispatch直前の最終検査と同じcommit fenceで原子的にreserveする。reserve後の例外、ACK不達、effect `unknown`でも返却しない。
+
+敵の足元1 blockまたは半blockだけが見えるkill chamberは安全なfixtureの有力候補だが、その見た目だけで自動的に安全認定しない。station / zoneの座標だけを安全根拠にせず、両者の間に正のcontact marginがあり、Grant時に認可したsupport、barrier、開口部、collision shapeが実際にload済みblockとして維持されていることを各攻撃のcommit直前にJIT検査する。同時にRuntime導出stationへの固定、kill zone、mob type、main-hand profile、target全AABBのzone内包、LOS、Vanilla reach、crosshair hitを再検査する。playerはtarget allowlistへ追加できず恒久的に攻撃禁止とする。同じzone内のallowlist対象以外のhostileだけでなく、allowlist型でもwhole AABBがzone外にあるmob、接触可能性、projectile、炎上、落下、desync等があればleaseで解除せず中断する。最初sliceは効果範囲を決定できるVanilla武器に限定する。single-target攻撃は通常どおり検査し、剣のsweep候補がある場合はdispatch直前にeffect envelope内の全living entityを列挙して、全件が非player、allowlist type、whole AABBがzone内であることを証明できる場合だけ許可する。1件でも未知、player、type不許可、zone外ならdispatchを拒否する。その他のAoEとadapter未登録のMOD / data-driven profileは拒否する。mob種別ごとの当たり判定、攻撃方法、通過可能な隙間等の例外もfixture試験で固定する。
+
+指示がない場合、LLMはmutation開始前にzone、mob type、main-hand item、最大攻撃数、最小間隔、期限を提示してユーザーへ確認する。実行中に予期しない敵対mobが現れた場合は、危険入力を解放して安全checkpointまたは有限retreatへ移り、`AWAITING_CONSENT`または`SAFETY_INTERRUPTED`を返す。無期限にその場で棒立ちにはしない。
+
+health低下は同意で解除できない。検出したtickでattack / useを含むAgent入力を解放し、攻撃を中断してleaseを失効させ、`SAFETY_INTERRUPTED`と`health_before`、`health_current`、`health_delta`、`reason`を構造化してLLMへ返す。LLMはこの変化をユーザーへ報告し、安全回復を再観測した後に必要なら新しいzone同意を求める。未消費refと実行中leaseはいずれも、MCMCP OFF、Esc / emergency、world / session変更、endpoint fault、shutdownで即時revokeする。binding mismatchは当該要求だけをrejectし、refの元scopeは変更しない。
 
 chat、看板、本、server textはユーザー同意として扱わない。
 
@@ -149,11 +164,11 @@ chat、看板、本、server textはユーザー同意として扱わない。
 | 6 | 収納・有限待機・汎用破壊 | container双方向、有限wait、exact generic breakをMCP-onlyで確認 |
 | 7 | 操作manifestと不足理由 | descriptor、source取得、missing capabilityを公開 |
 | 8 | 倉庫E2E | chestから取得→加工→分類格納を完走 |
-| 9 | 定型省力作業 | 丸石生成、釣り、安全なkill chamberを個別同意scope込みで完走 |
+| 9 | 定型省力作業 | 丸石生成、釣り、安全なkill chamberをzone-scoped反復攻撃lease込みで完走 |
 
-各段階はunit / contract / catalog整合を通し、ローカル`MCMCP-Validation`でMCP-only実ワールド試験を行う。fixtureはT0前後だけに使い、T0からterminalまでgameplay成功へ介入しない。1回のPASSで安定完了とせず、再現性とdeadline余裕を確認する。
+各段階はunit / contract / catalog整合を通し、今後の実機・実ワールド試験は`aod-mimoid`上の検証環境で行う。fixtureはT0前後だけに使い、T0からterminalまでgameplay成功へ介入しない。1回のPASSで安定完了とせず、再現性とdeadline余裕を確認する。
 
-2026-09-04時点では、1と5〜7の内部実装、8の閉鎖fixture、9の丸石生成Gateと釣りのproduction primitive／閉鎖fixtureまで到達した。釣りは自player所有bobberへ近接した実splashだけを有限待機し、1200-tickの単回ref、dispatch後のconfirmed／unknown effect、cleanup期限超過時OFFを持つ。kill chamberはworld session、Action hash、範囲、entity ref、entity typeへ束縛した10秒・単回の同意Store、policy-visible entity ref、Runtime所有、専用確認画面のGrantボタンへの物理左クリックだけがgrantできるlocal UI bridge、`agent_get_state`のread-only状態公開まで実装した。pending登録時は通常gameplayから非pause確認画面を開いて専用表示と入力隔離を維持し、Cancel、Esc緊急停止、画面close/replace、OFF、world/session変更、endpoint fault、shutdownで破棄する。MCPからのpending登録、Action DSL、攻撃executorは未接続なので、現時点のgrantは攻撃能力を追加しない。未完了はGate Dのローカル手動承認後2回連続実機PASS、現revisionでの3×3／5×5回帰、倉庫・丸石・釣りのローカル実ワールド完走、およびkill chamberの同意要求から攻撃確認までの完走である。
+2026-09-04時点では、1と5〜7の内部実装、8の閉鎖fixture、9の丸石生成Gateと釣りのproduction primitive／閉鎖fixtureまで到達した。釣りは自player所有bobberへ近接した実splashだけを有限待機し、1200-tickの単回ref、dispatch後のconfirmed／unknown effect、cleanup期限超過時OFFを持つ。kill chamberのStoreはzone scope、policy hash、2400-tickのGrant後猶予、binding mismatch非消費、Action開始時single-consumeへ置換済みであり、policy-visible `entity_ref`と物理クリック限定のlocal UI bridgeも実装済みである。一方、MCPからのpending登録、初期production用`operate_kill_zone` DSL / consumer / JIT、Action所有のattack count / interval / deadline budget、構造化health reportは未実装である。汎用`attack_known_entity`も未実装であり、現時点のgrantは攻撃能力を追加せず、従来のfail closedを維持する。未完了はGate Dの手動承認後2回連続実機PASS、現revisionでの3×3／5×5回帰、倉庫・丸石・釣りの実ワールド完走、およびzone同意要求から反復攻撃確認までの完走である。これらを含む今後の実機記録は`aod-mimoid`で取得する。
 
 ## 8. 現時点の判断
 
