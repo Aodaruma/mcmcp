@@ -65,7 +65,19 @@ public final class McmcpToolRegistry {
             JsonObject arguments,
             RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation)
             throws UnknownToolException {
+        return prepareCall(
+                name, arguments, evaluationLeaseExpectation,
+                RuntimeCallContext.ElicitationInput.unsupported());
+    }
+
+    PreparedCall prepareCall(
+            String name,
+            JsonObject arguments,
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation,
+            RuntimeCallContext.ElicitationInput elicitationInput)
+            throws UnknownToolException {
         Objects.requireNonNull(evaluationLeaseExpectation, "evaluationLeaseExpectation");
+        Objects.requireNonNull(elicitationInput, "elicitationInput");
         if (!catalog.contains(name)) {
             throw new UnknownToolException();
         }
@@ -78,13 +90,14 @@ public final class McmcpToolRegistry {
                     true), null, evaluationLeaseExpectation);
         }
 
-        return dispatch(name, command(name, arguments), evaluationLeaseExpectation);
+        return dispatch(name, command(name, arguments), evaluationLeaseExpectation, elicitationInput);
     }
 
     private PreparedCall dispatch(
             String toolName,
             McpRuntimePort.RuntimeCommand command,
-            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation) {
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation,
+            RuntimeCallContext.ElicitationInput elicitationInput) {
         boolean terminalWait = isTerminalWait(command);
         if (terminalWait && !terminalWaitAdmission.tryAcquire()) {
             return serverBusyCall(
@@ -92,7 +105,7 @@ public final class McmcpToolRegistry {
                     evaluationLeaseExpectation);
         }
         try {
-            return dispatchAdmitted(toolName, command, evaluationLeaseExpectation);
+            return dispatchAdmitted(toolName, command, evaluationLeaseExpectation, elicitationInput);
         } finally {
             if (terminalWait) {
                 terminalWaitAdmission.release();
@@ -103,9 +116,10 @@ public final class McmcpToolRegistry {
     private PreparedCall dispatchAdmitted(
             String toolName,
             McpRuntimePort.RuntimeCommand command,
-            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation) {
+            RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation,
+            RuntimeCallContext.ElicitationInput elicitationInput) {
         RuntimeCallContext context = RuntimeCallContext.withTimeout(
-                effectiveDispatchTimeout(command), evaluationLeaseExpectation);
+                effectiveDispatchTimeout(command), evaluationLeaseExpectation, elicitationInput);
         var future = runtimePort.submit(command, context).toCompletableFuture();
         McpRuntimePort.RuntimeReply reply;
         try {

@@ -131,16 +131,16 @@ production仕様では、安全条件を次の2層に分ける。
 
 - 指定した作業領域内に、指定分類の敵対mobが「存在・可視」であることだけ
 
-同意はDSLのbooleanにせず、mob TTの場所と運転条件へ束縛したzone-scoped attack leaseとする。ローカル専用UIでの1回の物理Grantがopaque `consent_ref`を発行し、次を改変不能なscopeとして保持する。
+同意はDSLのbooleanにせず、mob TTの場所と運転条件へ束縛したzone-scoped attack leaseとする。MCP 2026-07-28 form elicitation対応clientでは、最初のTool応答を`input_required`としてMCP client側でユーザーに確認し、accepted retryを同じ有限Actionへ束縛する。対応clientではMinecraft内の確認画面・同意待ち枠・入力lockを表示しない。非対応clientだけ、ローカル専用UIの物理Grantとopaque `consent_ref`へfallbackする。いずれも次を改変不能なscopeとして保持する。
 
 - world sessionとdimension
 - Grant時の実player位置とsupportからRuntimeが導出するtightなstation boundsと、攻撃対象が存在してよいkill-zone bounds。LLMはstation boundsを任意指定できない
 - mob type allowlistと、trusted Runtimeがmain-handのexact stackから導出した宣言済みattack-side-effect profile、およびitem ID・enchantments・攻撃効果に関係する不変componentsの内部fingerprint
 - policy hashと`operate_kill_zone` Action、および所有Jobがあればそのcanonical hash
-- 物理Grant後に同じActionを再送・開始できる2400 active client tick（約2分）のref有効期限
+- 未回答requestとfallback Grant後の開始猶予は3600 active client tick（約3分）。OFF、Esc、world変更等では期限前でも失効
 - Action開始後の最大攻撃数、最小攻撃間隔、運転期限（上限は約30分）
 
-production初期sliceでは、`consent_ref`を複数Actionが持ち回るbearer leaseにしない。最初のAction要求が同意待ちになった後、物理Grantから2400 active client tick以内に、`consent_ref`以外が同じpolicy / Action hashへ束縛された要求を再送できる。hash計算では発行前に存在しない`consent_ref` fieldだけを除外し、zone、types、item profile、count、interval、運転期限等を変更した要求は安全にrejectする。ただしbinding mismatchだけではrefをconsume / revokeせず、元の正しいbindingを2分以内に再送できる。1つの有限な`operate_kill_zone` Actionが開始時にrefをsingle-consumeし、そのAction内部だけで後から湧いた複数mobへ最大N回の攻撃を反復する。一体ごとの再同意は不要だが、Actionがterminal / cancelになった後に同じrefを再利用することもできない。2分はActionを開始するための猶予であり、single-consume成功後に始まる最長約30分の運転期限とは別に管理する。
+production初期sliceでは、同意を複数Actionが持ち回るbearer leaseにしない。MCP経路はcurrent requestのclient capabilityを毎回確認し、Runtimeが生成したランダムchallenge、world session、exact policy hash / scope、channel、3分期限をpendingへ束縛する。HTTP `requestState`はchallengeとpolicy hashをprocess-local HMACで封印し、accepted retryでもtool引数から承認値を受け取らない。Action responseの配送確認後、execution直前のfresh admissionが同じ場合だけsingle-consumeする。fallbackでは物理Grantから3分以内に同じpolicy / Actionをfresh `consent_ref`付きで再送する。zone、types、item profile、count、interval、運転期限等を変更した要求はrejectする。1つの有限な`operate_kill_zone` Action内部だけで、後から湧いた複数mobへ最大N回の攻撃を反復する。一体ごとの再同意は不要で、terminal / cancel後の再利用もできない。継続作業では運転期限を通常3分以上またはポーション等の作業窓に合わせ、最大回数達成やhard safety gateで早期終了する。
 
 `entity_ref`はleaseのscopeとhashへ含めず、各攻撃の直前にfreshな可視観測から解決し、誤射防止とeffect追跡だけに使う。side-effect profileはitem IDから推測せず、trusted Runtimeがexact stackを宣言済みprofile table / adapterへ照合して導出する。未知のMOD武器やdata-driven profileはadapter追加まで拒否する。main-handのraw NBT / componentsや内部fingerprintはwire / UIへ出さず、UIにはsanitizedなitem IDと攻撃effect profileへ束縛済みであることだけを表示する。耐久damageはfingerprintから除外し、攻撃による増加もMending / repairによる減少も許可する。同じitem IDと攻撃effect profileを持つstackへの交換も安全上は許可し、武器の破損・消失またはprofile変化でActionとleaseを終了する。最大攻撃数、間隔、期限はRuntimeが一元管理し、攻撃枠はdispatch直前の最終検査と同じcommit fenceで原子的にreserveする。reserve後の例外、ACK不達、effect `unknown`でも返却しない。
 

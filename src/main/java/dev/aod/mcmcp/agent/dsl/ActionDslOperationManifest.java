@@ -160,7 +160,7 @@ public final class ActionDslOperationManifest {
                         "agent_get_state",
                         "/entity_attack_consent/consent_ref",
                         List.of("operate_kill_zone"),
-                        "single_consume_exact_policy_and_world_session_with_2400_tick_start_ttl"));
+                        "single_consume_exact_policy_and_world_session_with_3600_tick_start_ttl"));
     }
 
     public static Map<String, Object> missingCapabilityGuidance() {

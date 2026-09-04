@@ -394,7 +394,7 @@
           },
           "entity_attack_consent": {
             "type": "object",
-            "description": "Read-only summary of one runtime-owned bounded kill-zone operation consent. pending is not authority. One physical primary click on the dedicated local Grant button creates a 2400-tick (2-minute), single-consume start token for exactly one finite operate_kill_zone Action; it is not a reusable per-attack or cross-Action bearer lease. The Action-owned dispatch duration starts only after token consumption and is capped at 35990 ticks; the enclosing 36000-tick Action reservation keeps the final 10-tick effect-confirmation window inside the hard limit. Its policy permits repeated attacks on newly spawned mobs only while the runtime-derived player station, disjoint kill zone, entity-type allowlist, exact attack-effect stack profile, finite count, minimum interval, world, and operation duration all match. Per-target entity_ref is deliberately not in this scope. The internal stack and strict safety-cell structure fingerprints are never exposed. The consumer JIT proves fresh target ref, whole target AABB containment, current LOS, reach, crosshair, cooldown, structure, collateral safety, and every non-waivable gate before each dispatch. Cancel, Esc/emergency stop, screen close/replacement, OFF, world/session change, endpoint fault, shutdown, or effective-health decrease revokes authority.",
+            "description": "Read-only summary of one runtime-owned bounded kill-zone consent. Pending is never attack authority. MCP 2026-07-28 clients declaring form elicitation receive client-side input_required approval with no Minecraft prompt or consent input lock; unsupported clients fall back to the local physical Grant screen and a 3600-tick (3-minute), single-consume start token. Each path is bound to exactly one finite operate_kill_zone Action, not one entity and not a reusable cross-Action lease. The Action-owned duration starts only after approval consumption and is capped at 35990 ticks; sustained jobs should normally request at least 3600 ticks or a potion/equipment window. Current targets and newly spawned mobs matching the approved types may be attacked until the finite count, operation deadline, or a hard safety gate ends the Action. Per-target entity_ref is deliberately excluded. The consumer JIT proves fresh target, whole AABB containment, LOS, reach, crosshair, cooldown, structure, collateral safety, and effective health before every dispatch. Decline, cancel, Esc/emergency stop, OFF, world/session change, endpoint fault, shutdown, or effective-health decrease revokes authority.",
             "additionalProperties": false,
             "properties": {
               "state": {"enum": ["none", "pending", "granted"]},
@@ -2141,7 +2141,7 @@
           },
           "operateKillZoneNode": {
             "type": "object",
-            "description": "The operate_kill_zone opcode is a top-level-only finite kill-zone operation. Submit consent_ref:null first to register the local physical prompt without reserving an Action. After Grant, resend the identical canonical policy with the fresh ref. The initial production geometry is a strict one-cell safety enclosure: full support and roof, three full two-block walls, and a zone-facing full lower block plus exact top slab above it, leaving a half-block-height eye-to-body slit. The runtime never moves the camera; only the fresh LivingEntity currently under the crosshair can be attacked.",
+            "description": "The operate_kill_zone opcode is a top-level-only finite kill-zone operation. With MCP form elicitation, consent_ref:null requests client-side user approval and the accepted retry starts the same bound Action without an in-game prompt. Clients without form elicitation fall back to the local physical prompt and fresh ref flow. The scope covers current and later matching entities in the zone, never one specific entity. For sustained farms, choose an operation duration matching the requested work window (normally at least 3600 ticks, or a potion/equipment window); max_attacks and every hard safety gate may end it earlier. The initial production geometry is a strict one-cell safety enclosure: full support and roof, three full two-block walls, and a zone-facing full lower block plus exact top slab above it, leaving a half-block-height eye-to-body slit. The runtime never moves the camera; only a fresh matching LivingEntity currently under the crosshair can be attacked.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
@@ -2937,10 +2937,22 @@
               "schema_version": {"const": 1},
               "state": {"const": "AWAITING_CONSENT"},
               "policy_binding_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+              "approval_request_state": {
+                "oneOf": [
+                  {"type": "null"},
+                  {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"}
+                ]
+              },
+              "approval_scope_summary": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "Runtime-derived, human-readable dimension, target kill-zone bounds, and player station bounds used by the approval prompt."
+              },
               "action_reserved": {"const": false},
               "input_acquired": {"const": false}
             },
-            "required": ["schema_version", "state", "policy_binding_hash", "action_reserved", "input_acquired"]
+            "required": ["schema_version", "state", "policy_binding_hash", "approval_request_state", "approval_scope_summary", "action_reserved", "input_acquired"]
           }
         ]
       }

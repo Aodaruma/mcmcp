@@ -14,7 +14,7 @@
   "gui.mcmcp.automation.tooltip.evaluating": "Minecraft input is locked while reasoning. Click to stop and turn control off",
   "gui.mcmcp.automation.tooltip.consent_pending": "Use the dedicated screen to review the bounded repeated-attack policy for %s",
   "gui.mcmcp.entity_attack_consent.title": "MCMCP attack permission",
-  "gui.mcmcp.entity_attack_consent.message": "Dimension %s; station %s; kill zone %s; mobs %s; main hand %s; attack profile %s; up to %s attacks, at least %s ticks apart. Start within %s ticks; operation limit %s ticks. Damage and other hard safety checks remain active.",
+  "gui.mcmcp.entity_attack_consent.message": "Allow a bounded kill-zone operation. Location: %s / station %s / kill zone %s. Allowed types (not specific entities): %s. Weapon: %s (%s). Up to %s attacks, at least %s ticks apart, start within %s ticks, operation limit %s ticks. Damage and all hard safety checks remain active.",
   "gui.mcmcp.entity_attack_consent.grant": "Grant bounded attacks",
   "gui.mcmcp.entity_attack_consent.cancel": "Deny and stop",
   "gui.mcmcp.automation.tooltip.unavailable": "MCP control can be enabled after the world and player are ready",

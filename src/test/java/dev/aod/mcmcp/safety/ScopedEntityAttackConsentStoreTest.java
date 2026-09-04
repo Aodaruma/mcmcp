@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.safety;
 
+import dev.aod.mcmcp.mcp.RuntimeCallContext;
 import org.junit.jupiter.api.Test;
 
 import java.security.SecureRandom;
@@ -29,7 +30,7 @@ class ScopedEntityAttackConsentStoreTest {
         assertThat(granted.state()).isEqualTo(ScopedEntityAttackConsentStore.State.GRANTED);
         assertThat(granted.policyBindingHash()).isEqualTo(HASH);
         assertThat(granted.consentRef()).hasSize(24);
-        assertThat(granted.validBeforeClientTick()).isEqualTo(2_420L);
+        assertThat(granted.validBeforeClientTick()).isEqualTo(3_620L);
         assertThat(granted.scope().entityTypeAllowlist())
                 .containsExactly("minecraft:skeleton", "minecraft:zombie");
         assertThat(granted.scope().maxAttacks()).isEqualTo(256);
@@ -79,12 +80,19 @@ class ScopedEntityAttackConsentStoreTest {
     }
 
     @Test
-    void pendingAndStartTokenExpireAtTheirExactExclusiveBoundaries() {
+    void pendingAndStartTokenExpireAtTheirThreeMinuteBoundaries() {
         var pending = deterministicStore();
         pending.request(SESSION, HASH, SCOPE, 10);
         assertThat(pending.snapshot(
+                SESSION, 10 + ScopedEntityAttackConsentStore.PENDING_TTL_TICKS - 1L).state())
+                .isEqualTo(ScopedEntityAttackConsentStore.State.PENDING);
+        assertThat(pending.snapshot(
                 SESSION, 10 + ScopedEntityAttackConsentStore.PENDING_TTL_TICKS).state())
                 .isEqualTo(ScopedEntityAttackConsentStore.State.NONE);
+        assertThat(pending.request(
+                SESSION, OTHER_HASH, SCOPE,
+                10 + ScopedEntityAttackConsentStore.PENDING_TTL_TICKS))
+                .isEqualTo(ScopedEntityAttackConsentStore.RequestResult.REGISTERED);
 
         var granted = grantedAtOne();
         assertThat(granted.store().consumeExactForActionStart(
@@ -93,6 +101,71 @@ class ScopedEntityAttackConsentStoreTest {
         assertThat(granted.store().snapshot(
                 SESSION, 1 + ScopedEntityAttackConsentStore.GRANTED_TTL_TICKS).state())
                 .isEqualTo(ScopedEntityAttackConsentStore.State.NONE);
+    }
+
+    @Test
+    void transportApprovalConsumesOnlyTheExactPendingPolicyWithoutABearerRef() {
+        var store = deterministicStore();
+        store.request(
+                SESSION, HASH, SCOPE,
+                ScopedEntityAttackConsentStore.Channel.TRANSPORT, 10);
+        var pending = store.snapshot(SESSION, 10);
+        assertThat(pending.channel())
+                .isEqualTo(ScopedEntityAttackConsentStore.Channel.TRANSPORT);
+        assertThat(pending.approvalRequestState()).hasSize(24);
+        assertThat(pending.consentRef()).isNull();
+
+        assertThat(ScopedEntityAttackConsentTransportBridge.consumeApprovedPending(
+                store, accepted(pending.approvalRequestState()),
+                SESSION, OTHER_HASH, SCOPE, 11)).isFalse();
+        assertThat(ScopedEntityAttackConsentTransportBridge.consumeApprovedPending(
+                store, accepted("x".repeat(24)), SESSION, HASH, SCOPE, 11)).isFalse();
+        assertThat(store.snapshot(SESSION, 11).state())
+                .isEqualTo(ScopedEntityAttackConsentStore.State.PENDING);
+        var approval = accepted(pending.approvalRequestState());
+        assertThat(ScopedEntityAttackConsentTransportBridge.consumeApprovedPending(
+                store, approval, SESSION, HASH, SCOPE, 12)).isTrue();
+        assertThat(ScopedEntityAttackConsentTransportBridge.consumeApprovedPending(
+                store, approval, SESSION, HASH, SCOPE, 12)).isFalse();
+        assertThat(store.snapshot(SESSION, 12).state())
+                .isEqualTo(ScopedEntityAttackConsentStore.State.NONE);
+        assertThat(ScopedEntityAttackConsentTransportBridge.ResponseCapability.class
+                .getDeclaredConstructors()).allMatch(constructor ->
+                        !java.lang.reflect.Modifier.isPublic(constructor.getModifiers()));
+        assertThatThrownBy(() -> ScopedEntityAttackConsentTransportBridge
+                .bindTransportResponse(RuntimeCallContext.ElicitationInput.awaitingResponse()))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void transportDeclineClearsOnlyTheExactChallengeAndPolicy() {
+        var store = deterministicStore();
+        store.request(
+                SESSION, HASH, SCOPE,
+                ScopedEntityAttackConsentStore.Channel.TRANSPORT, 10);
+        String challenge = store.snapshot(SESSION, 10).approvalRequestState();
+
+        assertThat(ScopedEntityAttackConsentTransportBridge.rejectPending(
+                store, rejected("x".repeat(24)), SESSION, HASH, SCOPE, 11)).isFalse();
+        assertThat(store.snapshot(SESSION, 11).state())
+                .isEqualTo(ScopedEntityAttackConsentStore.State.PENDING);
+        assertThat(ScopedEntityAttackConsentTransportBridge.rejectPending(
+                store, rejected(challenge), SESSION, HASH, SCOPE, 12)).isTrue();
+        assertThat(store.snapshot(SESSION, 12).state())
+                .isEqualTo(ScopedEntityAttackConsentStore.State.NONE);
+    }
+
+    @Test
+    void localAndTransportPendingChannelsCannotReplaceEachOther() {
+        var store = deterministicStore();
+        store.request(SESSION, HASH, SCOPE, 0);
+        assertThat(store.snapshot(SESSION, 0).channel())
+                .isEqualTo(ScopedEntityAttackConsentStore.Channel.LOCAL_UI);
+        assertThat(store.snapshot(SESSION, 0).approvalRequestState()).isNull();
+        assertThat(store.request(
+                SESSION, HASH, SCOPE,
+                ScopedEntityAttackConsentStore.Channel.TRANSPORT, 1))
+                .isEqualTo(ScopedEntityAttackConsentStore.RequestResult.BUSY);
     }
 
     @Test
@@ -208,6 +281,25 @@ class ScopedEntityAttackConsentStoreTest {
 
     private static ScopedEntityAttackConsentStore deterministicStore() {
         return new ScopedEntityAttackConsentStore(new SecureRandom(new byte[]{1, 2, 3}));
+    }
+
+    private static ScopedEntityAttackConsentTransportBridge.ResponseCapability accepted(
+            String requestState) {
+        return response(requestState, RuntimeCallContext.ResponseAction.ACCEPT, true);
+    }
+
+    private static ScopedEntityAttackConsentTransportBridge.ResponseCapability rejected(
+            String requestState) {
+        return response(requestState, RuntimeCallContext.ResponseAction.DECLINE, false);
+    }
+
+    private static ScopedEntityAttackConsentTransportBridge.ResponseCapability response(
+            String requestState,
+            RuntimeCallContext.ResponseAction action,
+            boolean approved) {
+        return ScopedEntityAttackConsentTransportBridge.bindTransportResponse(
+                new RuntimeCallContext.ElicitationInput(
+                        true, requestState, action, approved));
     }
 
     @FunctionalInterface

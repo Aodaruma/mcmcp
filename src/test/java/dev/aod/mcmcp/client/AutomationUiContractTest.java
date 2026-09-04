@@ -143,7 +143,10 @@ class AutomationUiContractTest {
 
         var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
         assertThat(invocations(method(
-                runtime, "requestEntityAttackConsentForCanonicalAction")))
+                runtime,
+                "requestEntityAttackConsentForCanonicalAction",
+                "(Ljava/lang/String;Ldev/aod/mcmcp/safety/ScopedEntityAttackConsentStore$Scope;Z)"
+                        + "Ldev/aod/mcmcp/safety/ScopedEntityAttackConsentStore$RequestResult;")))
                 .contains("dev/aod/mcmcp/client/AutomationIndicatorController"
                         + "#openEntityAttackConsentPrompt");
         assertThat(runtime.methods).noneMatch(candidate -> candidate.name.equals(
@@ -225,6 +228,12 @@ class AutomationUiContractTest {
     private static MethodNode method(ClassNode node, String name) {
         return node.methods.stream()
                 .filter(method -> method.name.equals(name))
+                .findFirst().orElseThrow();
+    }
+
+    private static MethodNode method(ClassNode node, String name, String descriptor) {
+        return node.methods.stream()
+                .filter(method -> method.name.equals(name) && method.desc.equals(descriptor))
                 .findFirst().orElseThrow();
     }
 

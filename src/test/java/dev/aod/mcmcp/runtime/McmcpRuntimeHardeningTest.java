@@ -42,6 +42,7 @@ import dev.aod.mcmcp.routine.UseItemOnBlockRequest;
 import dev.aod.mcmcp.safety.LocalArmingState;
 import dev.aod.mcmcp.safety.ScopedEntityAttackConsentStore;
 import dev.aod.mcmcp.safety.ScopedEntityAttackConsentUiBridge;
+import dev.aod.mcmcp.mcp.RuntimeCallContext;
 import dev.aod.mcmcp.voice.VoiceChatSafetyController;
 import org.junit.jupiter.api.Test;
 import net.minecraft.world.level.block.Blocks;
@@ -67,6 +68,59 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 class McmcpRuntimeHardeningTest {
+    private static final String KILL_ZONE_POLICY_HASH = "sha256:" + "a".repeat(64);
+
+    @Test
+    void transportPendingConsentNeverEnablesTheInGameConsentUiState() {
+        assertThat(McmcpRuntime.localEntityAttackConsentPending(
+                ScopedEntityAttackConsentStore.State.PENDING,
+                ScopedEntityAttackConsentStore.Channel.LOCAL_UI)).isTrue();
+        assertThat(McmcpRuntime.localEntityAttackConsentPending(
+                ScopedEntityAttackConsentStore.State.PENDING,
+                ScopedEntityAttackConsentStore.Channel.TRANSPORT)).isFalse();
+        assertThat(McmcpRuntime.localEntityAttackConsentPending(
+                ScopedEntityAttackConsentStore.State.NONE, null)).isFalse();
+    }
+
+    @Test
+    void killZoneElicitationClassifiesOnlyExplicitlyConfirmedAcceptanceAsApproved() {
+        assertThat(McmcpRuntime.killZoneElicitationDecision(
+                RuntimeCallContext.ElicitationInput.unsupported()))
+                .isEqualTo(McmcpRuntime.KillZoneElicitationDecision.FALLBACK_LOCAL_UI);
+        assertThat(McmcpRuntime.killZoneElicitationDecision(
+                RuntimeCallContext.ElicitationInput.awaitingResponse()))
+                .isEqualTo(
+                        McmcpRuntime.KillZoneElicitationDecision.AWAITING_TRANSPORT_RESPONSE);
+        assertThat(McmcpRuntime.killZoneElicitationDecision(
+                new RuntimeCallContext.ElicitationInput(
+                        true,
+                        KILL_ZONE_POLICY_HASH,
+                        RuntimeCallContext.ResponseAction.ACCEPT,
+                        true)))
+                .isEqualTo(McmcpRuntime.KillZoneElicitationDecision.TRANSPORT_APPROVED);
+        assertThat(McmcpRuntime.killZoneElicitationDecision(
+                new RuntimeCallContext.ElicitationInput(
+                        true,
+                        KILL_ZONE_POLICY_HASH,
+                        RuntimeCallContext.ResponseAction.ACCEPT,
+                        false)))
+                .isEqualTo(McmcpRuntime.KillZoneElicitationDecision.REJECTED);
+        assertThat(McmcpRuntime.killZoneElicitationDecision(
+                new RuntimeCallContext.ElicitationInput(
+                        true,
+                        KILL_ZONE_POLICY_HASH,
+                        RuntimeCallContext.ResponseAction.DECLINE,
+                        false)))
+                .isEqualTo(McmcpRuntime.KillZoneElicitationDecision.REJECTED);
+        assertThat(McmcpRuntime.killZoneElicitationDecision(
+                new RuntimeCallContext.ElicitationInput(
+                        true,
+                        "sha256:" + "b".repeat(64),
+                        RuntimeCallContext.ResponseAction.CANCEL,
+                        false)))
+                .isEqualTo(McmcpRuntime.KillZoneElicitationDecision.REJECTED);
+    }
+
     @Test
     void armorStandServerHitEventConfirmsWithoutHealthLoss() {
         assertThat(McmcpRuntime.armorStandHitEventAdvanced(0L, 42L)).isTrue();
@@ -1340,7 +1394,7 @@ class McmcpRuntimeHardeningTest {
         assertThat(payload.get("state")).isEqualTo("granted");
         assertThat(payload.get("policy_binding_hash")).isEqualTo(hash);
         assertThat(payload.get("consent_ref")).asString().hasSize(24);
-        assertThat(payload.get("valid_before_tick")).isEqualTo(2_411L);
+        assertThat(payload.get("valid_before_tick")).isEqualTo(3_611L);
         var payloadScope = (Map<?, ?>) payload.get("scope");
         assertThat(payloadScope.get("entity_type_allowlist"))
                 .isEqualTo(List.of("minecraft:skeleton", "minecraft:zombie"));

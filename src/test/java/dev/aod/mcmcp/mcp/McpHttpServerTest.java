@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -83,6 +84,120 @@ class McpHttpServerTest {
                 .startsWith("application/json");
         assertThat(call.headers().firstValue("Mcp-Session-Id")).isEmpty();
         assertThat(call.body()).doesNotContain(McpTestFixtures.TOKEN);
+    }
+
+    @Test
+    void modernFormElicitationCarriesKillZoneApprovalWithoutMinecraftPrompt() throws Exception {
+        var seen = new AtomicReference<RuntimeCallContext.ElicitationInput>();
+        String binding = "sha256:" + "a".repeat(64);
+        McpRuntimePort runtime = (command, context) -> {
+            if (!command.toolName().equals("agent_start_action")) {
+                return CompletableFuture.completedFuture(
+                        McpRuntimePort.RuntimeReply.success(Map.of("schema_version", 1)));
+            }
+            seen.set(context.elicitationInput());
+            if (context.elicitationInput().acceptedAndConfirmed()) {
+                return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of(
+                        "schema_version", 1,
+                        "action_id", "00000000-0000-4000-8000-000000000001",
+                        "state", "queued",
+                        "accepted_at", "2026-09-05T00:00:00Z")));
+            }
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of(
+                    "schema_version", 1,
+                    "state", "AWAITING_CONSENT",
+                    "policy_binding_hash", binding,
+                    "approval_request_state", "r_" + "b".repeat(22),
+                    "approval_scope_summary",
+                            "ディメンション minecraft:overworld、対象区域 X=2.000〜3.000 / "
+                                    + "Y=60.000〜62.000 / Z=0.000〜1.000、待機位置 "
+                                    + "X=0.100〜0.900 / Y=60.000〜61.900 / Z=0.100〜0.900",
+                    "action_reserved", false,
+                    "input_acquired", false)));
+        };
+        start(runtime, config("mrtr-kill-zone").rateLimit(100, 100).build());
+
+        JsonObject arguments = JsonParser.parseString("""
+                {"schema_version":1,"program":{"dsl_version":1,
+                 "capabilities":["entity_attack"],"body":[{
+                   "id":"operate","op":"operate_kill_zone",
+                   "target_kill_zone_bounds":{"dimension":"minecraft:overworld",
+                     "min":{"x":2,"y":60,"z":0},
+                     "max":{"x":3,"y":62,"z":1}},
+                   "entity_type_allowlist":["minecraft:armor_stand"],
+                   "main_hand_item":"minecraft:iron_sword","consent_ref":null,
+                   "max_attacks":12,"minimum_interval_ticks":10,
+                   "max_operation_duration_ticks":3600}]},
+                 "budget":{"max_duration_ms":180500,"max_ticks":3610,
+                   "max_distance_blocks":0,"max_camera_degrees":0,"max_interactions":12,
+                   "max_blocks_broken":0,"max_blocks_placed":0}}
+                """).getAsJsonObject();
+        JsonObject first = metaParams();
+        JsonObject capabilities = first.getAsJsonObject("_meta")
+                .getAsJsonObject("io.modelcontextprotocol/clientCapabilities");
+        JsonObject elicitation = new JsonObject();
+        elicitation.add("form", new JsonObject());
+        capabilities.add("elicitation", elicitation);
+        first.addProperty("name", "agent_start_action");
+        first.add("arguments", arguments);
+
+        HttpResponse<String> initial = send(request(
+                "tools/call", "agent_start_action", first, McpTestFixtures.TOKEN));
+        JsonObject required = json(initial).getAsJsonObject("result");
+        assertThat(required.get("resultType").getAsString())
+                .withFailMessage(initial.body()).isEqualTo("input_required");
+        assertThat(required.getAsJsonObject("_meta").toString()).contains("mcmcp");
+        assertThat(required.has("structuredContent")).isFalse();
+        String requestState = required.get("requestState").getAsString();
+        assertThat(requestState).startsWith("kz1.").doesNotContain(binding);
+        JsonObject inputRequest = required.getAsJsonObject("inputRequests")
+                .getAsJsonObject("kill_zone_operation_approval");
+        assertThat(inputRequest.get("method").getAsString()).isEqualTo("elicitation/create");
+        assertThat(inputRequest.getAsJsonObject("params").get("message").getAsString())
+                .contains("特定個体の指定ではありません", "防具立て", "鉄の剣",
+                        "上限12回", "最短間隔10tick", "最長180秒",
+                        "ディメンション minecraft:overworld", "対象区域 X=2.000〜3.000",
+                        "待機位置 X=0.100〜0.900")
+                .doesNotContain("armor_stand");
+        assertThat(seen.get().formSupported()).isTrue();
+        assertThat(seen.get().responded()).isFalse();
+
+        JsonObject retry = first.deepCopy();
+        retry.addProperty("requestState", requestState);
+        JsonObject content = new JsonObject();
+        content.addProperty("approve", true);
+        JsonObject approval = new JsonObject();
+        approval.addProperty("action", "accept");
+        approval.add("content", content);
+        JsonObject responses = new JsonObject();
+        responses.add("kill_zone_operation_approval", approval);
+        retry.add("inputResponses", responses);
+
+        JsonObject tampered = retry.deepCopy();
+        tampered.addProperty(
+                "requestState",
+                requestState.substring(0, requestState.length() - 1)
+                        + (requestState.endsWith("A") ? "B" : "A"));
+        assertThat(send(requestWithId(
+                2, "tools/call", "agent_start_action", tampered,
+                McpTestFixtures.TOKEN)).statusCode()).isEqualTo(400);
+
+        JsonObject capabilityRemoved = retry.deepCopy();
+        capabilityRemoved.getAsJsonObject("_meta")
+                .getAsJsonObject("io.modelcontextprotocol/clientCapabilities")
+                .remove("elicitation");
+        assertThat(send(requestWithId(
+                3, "tools/call", "agent_start_action", capabilityRemoved,
+                McpTestFixtures.TOKEN)).statusCode()).isEqualTo(400);
+
+        HttpResponse<String> accepted = send(requestWithId(
+                4, "tools/call", "agent_start_action", retry, McpTestFixtures.TOKEN));
+        JsonObject completed = json(accepted).getAsJsonObject("result");
+        assertThat(completed.get("resultType").getAsString()).isEqualTo("complete");
+        assertThat(completed.getAsJsonObject("structuredContent").get("state").getAsString())
+                .isEqualTo("queued");
+        assertThat(seen.get().acceptedAndConfirmed()).isTrue();
+        assertThat(seen.get().requestState()).isEqualTo("r_" + "b".repeat(22));
     }
 
     @Test
@@ -519,6 +634,18 @@ class McpHttpServerTest {
     private HttpRequest request(String method, String name, JsonObject params, String token) {
         return rawPost(requestBody(method, params), method, name, token,
                 "application/json", "application/json, text/event-stream", McpHttpServer.PROTOCOL_VERSION);
+    }
+
+    private HttpRequest requestWithId(
+            int id, String method, String name, JsonObject params, String token) {
+        JsonObject body = new JsonObject();
+        body.addProperty("jsonrpc", "2.0");
+        body.addProperty("id", id);
+        body.addProperty("method", method);
+        body.add("params", params);
+        return rawPost(body.toString(), method, name, token,
+                "application/json", "application/json, text/event-stream",
+                McpHttpServer.PROTOCOL_VERSION);
     }
 
     private HttpRequest rawPost(

@@ -9,17 +9,15 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Local-UI-issued, single-consume authority to start one finite kill-zone operation.
+ * Channel-bound, single-consume authority to start one finite kill-zone operation.
  *
- * <p>The physical grant is not a reusable per-attack bearer lease. A future
- * {@code operate_kill_zone} consumer must consume it once at Action start, copy the approved count,
- * interval, duration, and spatial policy into Action-owned state, and reserve each subsequent
- * dispatch against that finite state. This permits newly spawned mobs without one click per mob
- * while preventing the grant ref from being replayed across Actions.</p>
+ * <p>A local physical grant uses a short-lived bearer reference. An MCP form response instead
+ * consumes its pending challenge immediately before execution and never creates a bearer. Both
+ * paths approve one Action-owned finite policy rather than individual attacks.</p>
  */
 public final class ScopedEntityAttackConsentStore {
-    public static final long PENDING_TTL_TICKS = 1_200L;
-    public static final long GRANTED_TTL_TICKS = 2_400L;
+    public static final long PENDING_TTL_TICKS = 3_600L;
+    public static final long GRANTED_TTL_TICKS = 3_600L;
     public static final long MAX_OPERATION_DURATION_TICKS = 36_000L;
     public static final int MAX_ATTACKS = 2_048;
     public static final int MAX_ENTITY_TYPES = 16;
@@ -47,9 +45,20 @@ public final class ScopedEntityAttackConsentStore {
             String policyBindingHash,
             Scope scope,
             long clientTick) {
+        return request(worldSessionId, policyBindingHash, scope, Channel.LOCAL_UI, clientTick);
+    }
+
+    /** Registers one channel-bound request; transport requests receive a fresh opaque challenge. */
+    public synchronized RequestResult request(
+            UUID worldSessionId,
+            String policyBindingHash,
+            Scope scope,
+            Channel channel,
+            long clientTick) {
         Objects.requireNonNull(worldSessionId, "worldSessionId");
         requireHash(policyBindingHash, "policyBindingHash");
         Objects.requireNonNull(scope, "scope");
+        Objects.requireNonNull(channel, "channel");
         if (!advance(clientTick)) {
             return RequestResult.TICK_REJECTED;
         }
@@ -58,13 +67,15 @@ public final class ScopedEntityAttackConsentStore {
                     ? RequestResult.ALREADY_GRANTED : RequestResult.BUSY;
         }
         if (pending != null) {
-            return pending.matches(worldSessionId, policyBindingHash, scope)
+            return pending.matches(worldSessionId, policyBindingHash, scope, channel)
                     ? RequestResult.ALREADY_PENDING : RequestResult.BUSY;
         }
         pending = new Pending(
                 worldSessionId,
                 policyBindingHash,
                 scope,
+                channel,
+                channel == Channel.TRANSPORT ? newOpaqueReference() : null,
                 clientTick,
                 deadline(clientTick, PENDING_TTL_TICKS));
         return RequestResult.REGISTERED;
@@ -80,13 +91,13 @@ public final class ScopedEntityAttackConsentStore {
         if (!click.consumeOnce() || !advance(clientTick)) {
             return false;
         }
-        if (pending == null || !pending.worldSessionId().equals(worldSessionId)) {
+        if (pending == null
+                || pending.channel() != Channel.LOCAL_UI
+                || !pending.worldSessionId().equals(worldSessionId)) {
             return false;
         }
-        byte[] bytes = new byte[18];
-        random.nextBytes(bytes);
         granted = new Granted(
-                Base64.getUrlEncoder().withoutPadding().encodeToString(bytes),
+                newOpaqueReference(),
                 pending.worldSessionId(),
                 pending.policyBindingHash(),
                 pending.scope(),
@@ -98,7 +109,7 @@ public final class ScopedEntityAttackConsentStore {
 
     /**
      * Atomically consumes the exact grant once to start one finite Action.
-     * The future consumer must derive the station bounds and attack profile from trusted live state
+     * The consumer must derive the station bounds and attack profile from trusted live state
      * before registration, then JIT enforce the approved policy and all hard safety gates during the
      * Action. A false result never grants partial authority.
      */
@@ -123,6 +134,64 @@ public final class ScopedEntityAttackConsentStore {
         return true;
     }
 
+    /**
+     * Atomically consumes a matching pending request after a trusted MCP transport response.
+     * This path never creates a bearer reference and is deliberately distinct from both tool
+     * arguments and the local physical-click capability.
+     */
+    synchronized boolean consumePendingFromTransportApproval(
+            ScopedEntityAttackConsentTransportBridge.ResponseCapability approval,
+            String approvalRequestState,
+            UUID worldSessionId,
+            String policyBindingHash,
+            Scope scope,
+            long clientTick) {
+        Objects.requireNonNull(approval, "approval");
+        Objects.requireNonNull(approvalRequestState, "approvalRequestState");
+        Objects.requireNonNull(worldSessionId, "worldSessionId");
+        requireHash(policyBindingHash, "policyBindingHash");
+        Objects.requireNonNull(scope, "scope");
+        if (!approval.consumeApprovedOnce()
+                || !advance(clientTick)
+                || pending == null
+                || clientTick < pending.requestedAtTick()
+                || pending.channel() != Channel.TRANSPORT
+                || !approvalRequestState.equals(pending.approvalRequestState())
+                || !pending.matches(
+                        worldSessionId, policyBindingHash, scope, Channel.TRANSPORT)) {
+            return false;
+        }
+        pending = null;
+        return true;
+    }
+
+    /** Clears only the exact transport request answered with decline/cancel/no approval. */
+    synchronized boolean rejectPendingFromTransportResponse(
+            ScopedEntityAttackConsentTransportBridge.ResponseCapability response,
+            String approvalRequestState,
+            UUID worldSessionId,
+            String policyBindingHash,
+            Scope scope,
+            long clientTick) {
+        Objects.requireNonNull(response, "response");
+        Objects.requireNonNull(approvalRequestState, "approvalRequestState");
+        Objects.requireNonNull(worldSessionId, "worldSessionId");
+        requireHash(policyBindingHash, "policyBindingHash");
+        Objects.requireNonNull(scope, "scope");
+        if (!response.consumeRejectedOnce()
+                || !advance(clientTick)
+                || pending == null
+                || clientTick < pending.requestedAtTick()
+                || pending.channel() != Channel.TRANSPORT
+                || !approvalRequestState.equals(pending.approvalRequestState())
+                || !pending.matches(
+                        worldSessionId, policyBindingHash, scope, Channel.TRANSPORT)) {
+            return false;
+        }
+        pending = null;
+        return true;
+    }
+
     public synchronized Snapshot snapshot(UUID worldSessionId, long clientTick) {
         if (!advance(clientTick) || worldSessionId == null) {
             return Snapshot.none();
@@ -133,7 +202,9 @@ public final class ScopedEntityAttackConsentStore {
                     granted.policyBindingHash(),
                     granted.scope(),
                     granted.reference(),
-                    granted.expiresAtTick());
+                    granted.expiresAtTick(),
+                    Channel.LOCAL_UI,
+                    null);
         }
         if (pending != null && pending.worldSessionId().equals(worldSessionId)) {
             return new Snapshot(
@@ -141,7 +212,9 @@ public final class ScopedEntityAttackConsentStore {
                     pending.policyBindingHash(),
                     pending.scope(),
                     null,
-                    null);
+                    null,
+                    pending.channel(),
+                    pending.approvalRequestState());
         }
         return Snapshot.none();
     }
@@ -179,6 +252,12 @@ public final class ScopedEntityAttackConsentStore {
         return clientTick > Long.MAX_VALUE - ttl ? Long.MAX_VALUE : clientTick + ttl;
     }
 
+    private String newOpaqueReference() {
+        byte[] bytes = new byte[18];
+        random.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
     private static void requireTick(long clientTick) {
         if (clientTick < 0L) {
             throw new IllegalArgumentException("clientTick must be non-negative");
@@ -210,6 +289,11 @@ public final class ScopedEntityAttackConsentStore {
         NONE,
         PENDING,
         GRANTED
+    }
+
+    public enum Channel {
+        LOCAL_UI,
+        TRANSPORT
     }
 
     /** Single-use capability object minted only through the safety-package UI bridge. */
@@ -340,15 +424,21 @@ public final class ScopedEntityAttackConsentStore {
             String policyBindingHash,
             Scope scope,
             String consentRef,
-            Long validBeforeClientTick) {
+            Long validBeforeClientTick,
+            Channel channel,
+            String approvalRequestState) {
         public Snapshot {
             Objects.requireNonNull(state, "state");
             boolean none = state == State.NONE;
             boolean grantedState = state == State.GRANTED;
+            boolean transportPending = state == State.PENDING && channel == Channel.TRANSPORT;
             if (none != (policyBindingHash == null)
                     || none != (scope == null)
+                    || none != (channel == null)
+                    || (grantedState && channel != Channel.LOCAL_UI)
                     || grantedState != (consentRef != null)
                     || grantedState != (validBeforeClientTick != null)
+                    || transportPending != (approvalRequestState != null)
                     || (grantedState && validBeforeClientTick <= 0L)) {
                 throw new IllegalArgumentException("inconsistent consent snapshot");
             }
@@ -358,7 +448,7 @@ public final class ScopedEntityAttackConsentStore {
         }
 
         public static Snapshot none() {
-            return new Snapshot(State.NONE, null, null, null, null);
+            return new Snapshot(State.NONE, null, null, null, null, null, null);
         }
     }
 
@@ -366,12 +456,16 @@ public final class ScopedEntityAttackConsentStore {
             UUID worldSessionId,
             String policyBindingHash,
             Scope scope,
+            Channel channel,
+            String approvalRequestState,
             long requestedAtTick,
             long expiresAtTick) {
-        private boolean matches(UUID session, String hash, Scope candidate) {
+        private boolean matches(
+                UUID session, String hash, Scope candidate, Channel candidateChannel) {
             return worldSessionId.equals(session)
                     && policyBindingHash.equals(hash)
-                    && scope.equals(candidate);
+                    && scope.equals(candidate)
+                    && channel == candidateChannel;
         }
     }
 

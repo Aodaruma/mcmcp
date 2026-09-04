@@ -18,6 +18,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
@@ -31,6 +32,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 /**
  * JDK-only MCP Streamable HTTP endpoint. The normative stateless 2026-07-28
@@ -51,6 +54,8 @@ public final class McpHttpServer implements AutoCloseable {
     private static final String PROTOCOL_META = "io.modelcontextprotocol/protocolVersion";
     private static final String CLIENT_CAPABILITIES_META = "io.modelcontextprotocol/clientCapabilities";
     private static final String CLIENT_INFO_META = "io.modelcontextprotocol/clientInfo";
+    private static final String KILL_ZONE_APPROVAL_INPUT = "kill_zone_operation_approval";
+    private static final String KILL_ZONE_STATE_PREFIX = "kz1";
     private static final Gson GSON = new GsonBuilder()
             .disableHtmlEscaping()
             .serializeNulls()
@@ -69,6 +74,7 @@ public final class McpHttpServer implements AutoCloseable {
     private final TokenBucketRateLimiter rateLimiter;
     private final TokenBucketRateLimiter evaluationControlRateLimiter;
     private final Semaphore admission;
+    private final byte[] elicitationStateKey = new byte[32];
     private final boolean conformanceAuthenticationBypass;
     private volatile State state = State.NEW;
     private HttpServer server;
@@ -90,6 +96,7 @@ public final class McpHttpServer implements AutoCloseable {
         rateLimiter = new TokenBucketRateLimiter(config.rateLimitBurst(), config.rateLimitPerSecond());
         evaluationControlRateLimiter = new TokenBucketRateLimiter(8, 4.0D);
         admission = new Semaphore(config.maxConcurrentRequests());
+        new SecureRandom().nextBytes(elicitationStateKey);
         this.conformanceAuthenticationBypass = conformanceAuthenticationBypass;
     }
 
@@ -774,7 +781,8 @@ public final class McpHttpServer implements AutoCloseable {
             Headers headers,
             RuntimeCallContext.EvaluationLeaseExpectation evaluationLeaseExpectation)
             throws IOException {
-        if (!params.keySet().equals(Set.of("_meta", "name", "arguments"))
+        if (!Set.of("_meta", "name", "arguments", "inputResponses", "requestState")
+                    .containsAll(params.keySet())
                 || !params.has("name") || !params.get("name").isJsonPrimitive()
                 || !params.getAsJsonPrimitive("name").isString()
                 || !params.has("arguments") || !params.get("arguments").isJsonObject()) {
@@ -792,13 +800,33 @@ public final class McpHttpServer implements AutoCloseable {
             sendJson(exchange, 400, headerMismatch(id));
             return;
         }
+        RuntimeCallContext.ElicitationInput elicitationInput;
+        try {
+            elicitationInput = elicitationInput(params, name);
+        } catch (IllegalArgumentException failure) {
+            sendJson(exchange, 400, jsonRpcError(
+                    id, -32602, "Invalid params", "InvalidInputResponses"));
+            return;
+        }
         try {
             var prepared = tools.prepareCall(
                     name,
                     params.getAsJsonObject("arguments"),
-                    evaluationLeaseExpectation);
+                    evaluationLeaseExpectation,
+                    elicitationInput);
+            JsonObject response = prepared.response();
+            if (elicitationInput.formSupported() && awaitingKillZoneConsent(response)) {
+                response = killZoneInputRequired(
+                        response.getAsJsonObject("structuredContent")
+                                .get("policy_binding_hash").getAsString(),
+                        response.getAsJsonObject("structuredContent")
+                                .get("approval_request_state").getAsString(),
+                        response.getAsJsonObject("structuredContent")
+                                .get("approval_scope_summary").getAsString(),
+                        params.getAsJsonObject("arguments"));
+            }
             try {
-                sendJson(exchange, 200, jsonRpcResult(id, prepared.response()));
+                sendJson(exchange, 200, jsonRpcResult(id, response));
             } catch (IOException failure) {
                 tools.abandonDelivery(prepared);
                 throw failure;
@@ -807,6 +835,218 @@ public final class McpHttpServer implements AutoCloseable {
         } catch (McmcpToolRegistry.UnknownToolException failure) {
             sendJson(exchange, 200, jsonRpcError(id, -32602, "Unknown tool", "UnknownTool"));
         }
+    }
+
+    private RuntimeCallContext.ElicitationInput elicitationInput(
+            JsonObject params, String toolName) {
+        boolean formSupported = supportsFormElicitation(params.getAsJsonObject("_meta"));
+        boolean hasResponses = params.has("inputResponses");
+        boolean hasState = params.has("requestState");
+        if (hasResponses != hasState || (hasResponses && !formSupported)
+                || (hasResponses && !"agent_start_action".equals(toolName))) {
+            throw new IllegalArgumentException("invalid elicitation retry");
+        }
+        if (!hasResponses) {
+            return formSupported
+                    ? RuntimeCallContext.ElicitationInput.awaitingResponse()
+                    : RuntimeCallContext.ElicitationInput.unsupported();
+        }
+        if (!params.get("inputResponses").isJsonObject()
+                || !params.get("requestState").isJsonPrimitive()
+                || !params.getAsJsonPrimitive("requestState").isString()) {
+            throw new IllegalArgumentException("invalid elicitation response shape");
+        }
+        String requestState = verifyAndExtractKillZoneRequestState(
+                params.get("requestState").getAsString());
+        JsonObject responses = params.getAsJsonObject("inputResponses");
+        if (!responses.keySet().equals(Set.of(KILL_ZONE_APPROVAL_INPUT))
+                || !responses.get(KILL_ZONE_APPROVAL_INPUT).isJsonObject()) {
+            throw new IllegalArgumentException("invalid elicitation response key");
+        }
+        JsonObject response = responses.getAsJsonObject(KILL_ZONE_APPROVAL_INPUT);
+        String action = stringValue(response.get("action"));
+        RuntimeCallContext.ResponseAction responseAction = switch (action) {
+            case "accept" -> RuntimeCallContext.ResponseAction.ACCEPT;
+            case "decline" -> RuntimeCallContext.ResponseAction.DECLINE;
+            case "cancel" -> RuntimeCallContext.ResponseAction.CANCEL;
+            default -> throw new IllegalArgumentException("invalid response action");
+        };
+        boolean confirmed = false;
+        if (responseAction == RuntimeCallContext.ResponseAction.ACCEPT) {
+            if (!response.keySet().equals(Set.of("action", "content"))
+                    || !response.get("content").isJsonObject()) {
+                throw new IllegalArgumentException("accepted response needs content");
+            }
+            JsonObject content = response.getAsJsonObject("content");
+            if (!content.keySet().equals(Set.of("approve"))
+                    || !content.get("approve").isJsonPrimitive()
+                    || !content.getAsJsonPrimitive("approve").isBoolean()) {
+                throw new IllegalArgumentException("invalid approval content");
+            }
+            confirmed = content.get("approve").getAsBoolean();
+        } else if (!response.keySet().equals(Set.of("action"))) {
+            throw new IllegalArgumentException("declined response cannot carry content");
+        }
+        return new RuntimeCallContext.ElicitationInput(
+                true, requestState, responseAction, confirmed);
+    }
+
+    private static boolean supportsFormElicitation(JsonObject meta) {
+        JsonElement capabilities = meta.get(CLIENT_CAPABILITIES_META);
+        if (capabilities == null || !capabilities.isJsonObject()) {
+            return false;
+        }
+        JsonElement elicitation = capabilities.getAsJsonObject().get("elicitation");
+        if (elicitation == null || !elicitation.isJsonObject()) {
+            return false;
+        }
+        JsonObject modes = elicitation.getAsJsonObject();
+        return modes.size() == 0 || modes.has("form") && modes.get("form").isJsonObject();
+    }
+
+    private static boolean awaitingKillZoneConsent(JsonObject response) {
+        if (!response.has("structuredContent")
+                || !response.get("structuredContent").isJsonObject()) {
+            return false;
+        }
+        JsonObject structured = response.getAsJsonObject("structuredContent");
+        return "AWAITING_CONSENT".equals(stringValue(structured.get("state")))
+                && stringValue(structured.get("policy_binding_hash")) != null;
+    }
+
+    private JsonObject killZoneInputRequired(
+            String policyBindingHash,
+            String approvalRequestState,
+            String approvalScopeSummary,
+            JsonObject arguments) {
+        JsonObject result = new JsonObject();
+        result.addProperty("resultType", "input_required");
+        result.add("_meta", tools.serverMeta());
+        JsonObject request = new JsonObject();
+        request.addProperty("method", "elicitation/create");
+        JsonObject requestParams = new JsonObject();
+        requestParams.addProperty("mode", "form");
+        requestParams.addProperty(
+                "message", killZoneApprovalMessage(arguments, approvalScopeSummary));
+        JsonObject approve = new JsonObject();
+        approve.addProperty("type", "boolean");
+        approve.addProperty("title", "この反復攻撃を許可する");
+        approve.addProperty(
+                "description",
+                "特定の一体ではなく、同じ安全区域へ現在または後から入る対象を処理します。");
+        approve.addProperty("default", false);
+        JsonObject properties = new JsonObject();
+        properties.add("approve", approve);
+        JsonObject schema = new JsonObject();
+        schema.addProperty("type", "object");
+        schema.add("properties", properties);
+        var required = new com.google.gson.JsonArray();
+        required.add("approve");
+        schema.add("required", required);
+        schema.addProperty("additionalProperties", false);
+        requestParams.add("requestedSchema", schema);
+        request.add("params", requestParams);
+        JsonObject requests = new JsonObject();
+        requests.add(KILL_ZONE_APPROVAL_INPUT, request);
+        result.add("inputRequests", requests);
+        result.addProperty(
+                "requestState",
+                signKillZoneRequestState(policyBindingHash, approvalRequestState));
+        return result;
+    }
+
+    private String signKillZoneRequestState(
+            String policyBindingHash, String approvalRequestState) {
+        if (policyBindingHash == null
+                || !policyBindingHash.matches("sha256:[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("invalid policy binding hash");
+        }
+        if (approvalRequestState == null
+                || !approvalRequestState.matches("[A-Za-z0-9_-]{24}")) {
+            throw new IllegalArgumentException("invalid approval request state");
+        }
+        String hex = policyBindingHash.substring("sha256:".length());
+        String payload = KILL_ZONE_STATE_PREFIX + "." + approvalRequestState + "." + hex;
+        return payload + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(
+                hmac(payload));
+    }
+
+    private String verifyAndExtractKillZoneRequestState(String requestState) {
+        String[] parts = requestState == null ? new String[0] : requestState.split("\\.", -1);
+        if (parts.length != 4 || !KILL_ZONE_STATE_PREFIX.equals(parts[0])
+                || !parts[1].matches("[A-Za-z0-9_-]{24}")
+                || !parts[2].matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("invalid request state");
+        }
+        byte[] supplied;
+        try {
+            supplied = Base64.getUrlDecoder().decode(parts[3]);
+        } catch (IllegalArgumentException failure) {
+            throw new IllegalArgumentException("invalid request state", failure);
+        }
+        byte[] expected = hmac(parts[0] + "." + parts[1] + "." + parts[2]);
+        if (!MessageDigest.isEqual(expected, supplied)) {
+            throw new IllegalArgumentException("invalid request state signature");
+        }
+        return parts[1];
+    }
+
+    private byte[] hmac(String payload) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(elicitationStateKey, "HmacSHA256"));
+            return mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
+        } catch (java.security.GeneralSecurityException failure) {
+            throw new IllegalStateException("HMAC-SHA256 is unavailable", failure);
+        }
+    }
+
+    private static String killZoneApprovalMessage(
+            JsonObject arguments, String approvalScopeSummary) {
+        try {
+            JsonObject program = arguments.getAsJsonObject("program");
+            JsonObject node = program.getAsJsonArray("body").get(0).getAsJsonObject();
+            int attacks = node.get("max_attacks").getAsInt();
+            long intervalTicks = node.get("minimum_interval_ticks").getAsLong();
+            long ticks = node.get("max_operation_duration_ticks").getAsLong();
+            long seconds = Math.max(1L, (ticks + 19L) / 20L);
+            String weapon = friendlyMinecraftId(node.get("main_hand_item").getAsString());
+            var types = new java.util.ArrayList<String>();
+            for (JsonElement type : node.getAsJsonArray("entity_type_allowlist")) {
+                types.add(friendlyMinecraftId(type.getAsString()));
+            }
+            return "Minecraftの安全なキルゾーンで反復攻撃を行います。\n許可区域: "
+                    + approvalScopeSummary + "\n"
+                    + "対象種別は" + String.join("・", types) + "（特定個体の指定ではありません）、"
+                    + "使用武器は" + weapon + "です。区域へ現在または後から入る対象へ、"
+                    + "上限" + attacks + "回・最短間隔" + intervalTicks + "tick・最長"
+                    + seconds + "秒で動作します。範囲、武器、体力、対象種別を攻撃ごとに再検査します。";
+        } catch (RuntimeException failure) {
+            return "Minecraftの安全なキルゾーンで、有限回の反復攻撃を許可します。\n許可区域: "
+                    + approvalScopeSummary + "\n"
+                    + "範囲、武器、体力、対象種別は攻撃ごとに再検査されます。";
+        }
+    }
+
+    private static String friendlyMinecraftId(String id) {
+        return switch (id) {
+            case "minecraft:armor_stand" -> "防具立て";
+            case "minecraft:zombie" -> "ゾンビ";
+            case "minecraft:skeleton" -> "スケルトン";
+            case "minecraft:wooden_sword" -> "木の剣";
+            case "minecraft:stone_sword" -> "石の剣";
+            case "minecraft:iron_sword" -> "鉄の剣";
+            case "minecraft:golden_sword" -> "金の剣";
+            case "minecraft:diamond_sword" -> "ダイヤモンドの剣";
+            case "minecraft:netherite_sword" -> "ネザライトの剣";
+            case "minecraft:wooden_axe" -> "木の斧";
+            case "minecraft:stone_axe" -> "石の斧";
+            case "minecraft:iron_axe" -> "鉄の斧";
+            case "minecraft:golden_axe" -> "金の斧";
+            case "minecraft:diamond_axe" -> "ダイヤモンドの斧";
+            case "minecraft:netherite_axe" -> "ネザライトの斧";
+            default -> id;
+        };
     }
 
     private static boolean isCodexLegacyCandidate(Headers headers, String method) {

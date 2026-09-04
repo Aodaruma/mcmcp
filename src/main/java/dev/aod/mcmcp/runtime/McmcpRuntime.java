@@ -70,6 +70,7 @@ import dev.aod.mcmcp.safety.EvaluationTurnGuard;
 import dev.aod.mcmcp.safety.InputReleaseController;
 import dev.aod.mcmcp.safety.LocalArmingState;
 import dev.aod.mcmcp.safety.ScopedEntityAttackConsentStore;
+import dev.aod.mcmcp.safety.ScopedEntityAttackConsentTransportBridge;
 import dev.aod.mcmcp.safety.ScopedEntityAttackConsentUiBridge;
 import dev.aod.mcmcp.routine.ActionBounds;
 import dev.aod.mcmcp.routine.ApplyBlockPlanOperation;
@@ -169,6 +170,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -649,15 +651,25 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var session = sessions.snapshot();
         var lock = arming.snapshot(session.worldSessionId());
         var consent = entityAttackConsentSnapshot(session, lock);
+        boolean localConsentPending = localEntityAttackConsentPending(
+                consent.state(), consent.channel());
         return AutomationUiSnapshot.resolve(
                 localControlAvailable(Minecraft.getInstance(), session),
                 lock,
                 evaluationTurns.snapshot(session.worldSessionId()).active(),
-                consent.state() == ScopedEntityAttackConsentStore.State.PENDING,
-                consent.scope() == null
+                localConsentPending,
+                !localConsentPending
                         ? null
                         : String.join(", ", consent.scope().entityTypeAllowlist()),
                 endpointFaultCode);
+    }
+
+    static boolean localEntityAttackConsentPending(
+            ScopedEntityAttackConsentStore.State state,
+            ScopedEntityAttackConsentStore.Channel channel) {
+        Objects.requireNonNull(state, "state");
+        return state == ScopedEntityAttackConsentStore.State.PENDING
+                && channel == ScopedEntityAttackConsentStore.Channel.LOCAL_UI;
     }
 
     /** Bootstrap-only local presentation binding; the runtime never exposes the grant sink. */
@@ -673,6 +685,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     ScopedEntityAttackConsentStore.RequestResult requestEntityAttackConsentForCanonicalAction(
             String policyBindingHash,
             ScopedEntityAttackConsentStore.Scope scope) {
+        return requestEntityAttackConsentForCanonicalAction(policyBindingHash, scope, true);
+    }
+
+    private ScopedEntityAttackConsentStore.RequestResult
+            requestEntityAttackConsentForCanonicalAction(
+                    String policyBindingHash,
+                    ScopedEntityAttackConsentStore.Scope scope,
+                    boolean openLocalPrompt) {
         Objects.requireNonNull(scope, "scope");
         var minecraft = Minecraft.getInstance();
         assertClientThread(minecraft);
@@ -686,7 +706,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || agentActions.active().isPresent()
                 || routines.activeRoutineId().isPresent()
                 || minecraft.gui.screen() != null
-                || entityAttackConsentUi == null) {
+                || openLocalPrompt && entityAttackConsentUi == null) {
             throw new IllegalStateException("entity attack consent admission is not ready");
         }
         var sessionId = Objects.requireNonNull(session.worldSessionId(), "worldSessionId");
@@ -694,8 +714,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 sessionId,
                 policyBindingHash,
                 scope,
+                openLocalPrompt
+                        ? ScopedEntityAttackConsentStore.Channel.LOCAL_UI
+                        : ScopedEntityAttackConsentStore.Channel.TRANSPORT,
                 session.clientTick());
-        if (result == ScopedEntityAttackConsentStore.RequestResult.REGISTERED) {
+        if (openLocalPrompt
+                && result == ScopedEntityAttackConsentStore.RequestResult.REGISTERED) {
             try {
                 entityAttackConsentUi.openEntityAttackConsentPrompt(
                         scope,
@@ -743,7 +767,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 entityAttackConsent.clear();
                 return false;
             }
-            overlay(minecraft, "MCMCP: 範囲付き反復攻撃の開始を2分間許可しました");
+            overlay(minecraft, "MCMCP: 範囲付き反復攻撃の開始を3分間許可しました");
             return true;
         }
 
@@ -770,6 +794,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             var control = arming.snapshot(session.worldSessionId());
             var snapshot = entityAttackConsentSnapshot(session, control);
             return snapshot.state() == ScopedEntityAttackConsentStore.State.PENDING
+                    && snapshot.channel() == ScopedEntityAttackConsentStore.Channel.LOCAL_UI
                     && sessionId.equals(session.worldSessionId())
                     && policyBindingHash.equals(snapshot.policyBindingHash())
                     && scope.equals(snapshot.scope());
@@ -2251,38 +2276,93 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         requireLiveCall(context, "agent_start_action");
         ActionDsl.OperateKillZone killZone = soleKillZone(prepared.program().request().program());
         KillZoneAdmission killZoneAdmission = null;
+        ScopedEntityAttackConsentTransportBridge.ResponseCapability transportApproval = null;
         if (killZone != null) {
             killZoneAdmission = requireKillZoneAdmission(
                     minecraft, session, prepared.source(), killZone);
             if (killZone.consentRef().isEmpty()) {
-                var request = requestEntityAttackConsentForCanonicalAction(
-                        killZoneAdmission.policyBindingHash(), killZoneAdmission.scope());
-                if (request != ScopedEntityAttackConsentStore.RequestResult.REGISTERED
-                        && request != ScopedEntityAttackConsentStore.RequestResult.ALREADY_PENDING) {
-                    throw new RuntimeInvocationException(
-                            "consent_unavailable",
-                            "Another kill-zone consent request is active or the request clock changed.",
-                            true,
-                            Map.of("request_result", request.name().toLowerCase(Locale.ROOT)));
+                KillZoneElicitationDecision decision = killZoneElicitationDecision(
+                        context.elicitationInput());
+                if (decision == KillZoneElicitationDecision.TRANSPORT_APPROVED
+                        || decision == KillZoneElicitationDecision.REJECTED) {
+                    var consent = entityAttackConsent.snapshot(
+                            session.worldSessionId(), session.clientTick());
+                    if (consent.state() != ScopedEntityAttackConsentStore.State.PENDING
+                            || consent.channel()
+                                    != ScopedEntityAttackConsentStore.Channel.TRANSPORT
+                            || !Objects.equals(
+                                    context.elicitationInput().requestState(),
+                                    consent.approvalRequestState())
+                            || !killZoneAdmission.policyBindingHash()
+                                    .equals(consent.policyBindingHash())
+                            || !killZoneAdmission.scope().equals(consent.scope())) {
+                        throw new RuntimeInvocationException(
+                                "consent_binding_mismatch",
+                                "No matching pending kill-zone policy exists for this response.",
+                                true,
+                                Map.of());
+                    }
+                    var responseCapability = ScopedEntityAttackConsentTransportBridge
+                            .bindTransportResponse(context.elicitationInput());
+                    if (decision == KillZoneElicitationDecision.REJECTED) {
+                        boolean rejected = ScopedEntityAttackConsentTransportBridge.rejectPending(
+                                entityAttackConsent,
+                                responseCapability,
+                                Objects.requireNonNull(session.worldSessionId(), "worldSessionId"),
+                                killZoneAdmission.policyBindingHash(),
+                                killZoneAdmission.scope(),
+                                session.clientTick());
+                        if (!rejected) {
+                            throw new RuntimeInvocationException(
+                                    "consent_binding_mismatch",
+                                    "The pending transport response was already handled or revoked.",
+                                    true,
+                                    Map.of());
+                        }
+                        throw new RuntimeInvocationException(
+                                "capability_denied",
+                                "The kill-zone operation was not approved by the user.",
+                                false,
+                                Map.of());
+                    }
+                    transportApproval = responseCapability;
+                } else {
+                    boolean openLocalPrompt =
+                            decision == KillZoneElicitationDecision.FALLBACK_LOCAL_UI;
+                    var request = requestEntityAttackConsentForCanonicalAction(
+                            killZoneAdmission.policyBindingHash(),
+                            killZoneAdmission.scope(),
+                            openLocalPrompt);
+                    if (request != ScopedEntityAttackConsentStore.RequestResult.REGISTERED
+                            && request
+                                    != ScopedEntityAttackConsentStore.RequestResult.ALREADY_PENDING) {
+                        throw new RuntimeInvocationException(
+                                "consent_unavailable",
+                                "Another kill-zone consent request is active or the request clock changed.",
+                                true,
+                                Map.of("request_result", request.name().toLowerCase(Locale.ROOT)));
+                    }
+                    var pending = entityAttackConsent.snapshot(
+                            session.worldSessionId(), session.clientTick());
+                    return awaitingKillZoneConsentPayload(
+                            killZoneAdmission.policyBindingHash(),
+                            openLocalPrompt ? null : pending.approvalRequestState(),
+                            killZoneAdmission.scope());
                 }
-                return Map.of(
-                        "schema_version", 1,
-                        "state", "AWAITING_CONSENT",
-                        "policy_binding_hash", killZoneAdmission.policyBindingHash(),
-                        "action_reserved", false,
-                        "input_acquired", false);
             }
-            var consent = entityAttackConsent.snapshot(
-                    session.worldSessionId(), session.clientTick());
-            if (consent.state() != ScopedEntityAttackConsentStore.State.GRANTED
-                    || !killZoneAdmission.policyBindingHash().equals(consent.policyBindingHash())
-                    || !killZoneAdmission.scope().equals(consent.scope())
-                    || !killZone.consentRef().orElseThrow().equals(consent.consentRef())) {
-                throw new RuntimeInvocationException(
-                        "consent_binding_mismatch",
-                        "The consent ref is missing, expired, or bound to a different kill-zone policy.",
-                        true,
-                        Map.of());
+            if (transportApproval == null) {
+                var consent = entityAttackConsent.snapshot(
+                        session.worldSessionId(), session.clientTick());
+                if (consent.state() != ScopedEntityAttackConsentStore.State.GRANTED
+                        || !killZoneAdmission.policyBindingHash().equals(consent.policyBindingHash())
+                        || !killZoneAdmission.scope().equals(consent.scope())
+                        || !killZone.consentRef().orElseThrow().equals(consent.consentRef())) {
+                    throw new RuntimeInvocationException(
+                            "consent_binding_mismatch",
+                            "The consent ref is missing, expired, or bound to a different kill-zone policy.",
+                            true,
+                            Map.of());
+                }
             }
         }
         if (!arming.beginAction(session.worldSessionId())) {
@@ -2301,7 +2381,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     Instant.now(),
                     System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
             pendingAgentAdmission = new PendingAgentAdmission(
-                    accepted.actionId(), prepared, killZoneAdmission);
+                    accepted.actionId(), prepared, killZoneAdmission,
+                    transportApproval);
             requireLiveCall(context, "agent_start_action");
         } catch (RuntimeException | LinkageError failure) {
             if (accepted == null) {
@@ -2324,6 +2405,58 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return program.body().size() == 1
                         && program.body().getFirst() instanceof ActionDsl.OperateKillZone operation
                 ? operation : null;
+    }
+
+    static KillZoneElicitationDecision killZoneElicitationDecision(
+            RuntimeCallContext.ElicitationInput elicitation) {
+        Objects.requireNonNull(elicitation, "elicitation");
+        if (!elicitation.formSupported()) {
+            return KillZoneElicitationDecision.FALLBACK_LOCAL_UI;
+        }
+        if (!elicitation.responded()) {
+            return KillZoneElicitationDecision.AWAITING_TRANSPORT_RESPONSE;
+        }
+        return elicitation.acceptedAndConfirmed()
+                ? KillZoneElicitationDecision.TRANSPORT_APPROVED
+                : KillZoneElicitationDecision.REJECTED;
+    }
+
+    enum KillZoneElicitationDecision {
+        FALLBACK_LOCAL_UI,
+        AWAITING_TRANSPORT_RESPONSE,
+        TRANSPORT_APPROVED,
+        REJECTED
+    }
+
+    private static Map<String, Object> awaitingKillZoneConsentPayload(
+            String policyBindingHash,
+            String approvalRequestState,
+            ScopedEntityAttackConsentStore.Scope scope) {
+        var payload = new LinkedHashMap<String, Object>();
+        payload.put("schema_version", 1);
+        payload.put("state", "AWAITING_CONSENT");
+        payload.put("policy_binding_hash", policyBindingHash);
+        payload.put("approval_request_state", approvalRequestState);
+        payload.put("approval_scope_summary", killZoneApprovalScopeSummary(scope));
+        payload.put("action_reserved", false);
+        payload.put("input_acquired", false);
+        return Collections.unmodifiableMap(payload);
+    }
+
+    private static String killZoneApprovalScopeSummary(
+            ScopedEntityAttackConsentStore.Scope scope) {
+        Objects.requireNonNull(scope, "scope");
+        return "ディメンション " + scope.dimension()
+                + "、対象区域 " + conciseBounds(scope.targetKillZoneBounds())
+                + "、待機位置 " + conciseBounds(scope.playerStationBounds());
+    }
+
+    private static String conciseBounds(ScopedEntityAttackConsentStore.Bounds bounds) {
+        return String.format(
+                Locale.ROOT,
+                "X=%.3f〜%.3f / Y=%.3f〜%.3f / Z=%.3f〜%.3f",
+                bounds.minX(), bounds.maxX(), bounds.minY(), bounds.maxY(),
+                bounds.minZ(), bounds.maxZ());
     }
 
     private KillZoneAdmission requireKillZoneAdmission(
@@ -4153,18 +4286,38 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         reconciliationSignals.bindAndSnapshot(
                                         minecraft.level, session.worldSessionId())
                                 .positionCorrectionRevision());
-                agentActions.markRunning(action.actionId());
-                agentExecution = nextExecution;
-                if (killAuthorization != null) {
-                    boolean consumed = currentKillAuthorization.equals(killAuthorization)
-                            && entityAttackConsent.consumeExactForActionStart(
-                                    Objects.requireNonNull(soleKillZone(
-                                                    action.program().request().program()))
-                                            .consentRef().orElseThrow(),
+                boolean transportApprovalConsumed = false;
+                if (killAuthorization != null
+                        && pending.transportApproval() != null) {
+                    transportApprovalConsumed = currentKillAuthorization.equals(killAuthorization)
+                            && ScopedEntityAttackConsentTransportBridge.consumeApprovedPending(
+                                    entityAttackConsent,
+                                    pending.transportApproval(),
                                     session.worldSessionId(),
                                     currentKillAuthorization.policyBindingHash(),
                                     currentKillAuthorization.scope(),
                                     session.clientTick());
+                    if (!transportApprovalConsumed) {
+                        failAgentAction(
+                                AgentActionStore.FailureCode.CAPABILITY_DENIED,
+                                true,
+                                "kill_zone_transport_approval_not_consumed");
+                        return;
+                    }
+                }
+                agentActions.markRunning(action.actionId());
+                agentExecution = nextExecution;
+                if (killAuthorization != null) {
+                    boolean consumed = currentKillAuthorization.equals(killAuthorization)
+                            && (transportApprovalConsumed
+                                    || entityAttackConsent.consumeExactForActionStart(
+                                            Objects.requireNonNull(soleKillZone(
+                                                            action.program().request().program()))
+                                                    .consentRef().orElseThrow(),
+                                            session.worldSessionId(),
+                                            currentKillAuthorization.policyBindingHash(),
+                                            currentKillAuthorization.scope(),
+                                            session.clientTick()));
                     if (!consumed) {
                         failAgentAction(
                                 AgentActionStore.FailureCode.CAPABILITY_DENIED,
@@ -8159,10 +8312,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private record PendingAgentAdmission(
             UUID actionId,
             PreparedAgentAction prepared,
-            KillZoneAdmission killZoneAdmission) {
+            KillZoneAdmission killZoneAdmission,
+            ScopedEntityAttackConsentTransportBridge.ResponseCapability transportApproval) {
         private PendingAgentAdmission {
             Objects.requireNonNull(actionId, "actionId");
             Objects.requireNonNull(prepared, "prepared");
+            if (transportApproval != null && killZoneAdmission == null) {
+                throw new IllegalArgumentException(
+                        "transport approval requires a kill-zone admission");
+            }
         }
     }
 
