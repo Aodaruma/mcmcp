@@ -260,10 +260,11 @@ function Assert-NoMinecraftKillZonePrompt {
     }
     if ((Get-ObjectProperty $control 'mode') -cne 'ready' -or
         $actionId -cne $PreviousActionId -or
-        (Get-ObjectProperty $consent 'state') -cne 'none' -or
-        $null -ne (Get-ObjectProperty $consent 'policy_binding_hash') -or
-        $null -ne (Get-ObjectProperty $consent 'scope') -or
-        $null -ne (Get-ObjectProperty $consent 'consent_ref')) {
+        (Get-ObjectProperty $consent 'state') -cne 'pending' -or
+        (Get-ObjectProperty $consent 'policy_binding_hash') -cnotmatch '^sha256:[0-9a-f]{64}$' -or
+        $null -eq (Get-ObjectProperty $consent 'scope') -or
+        $null -ne (Get-ObjectProperty $consent 'consent_ref') -or
+        $null -ne (Get-ObjectProperty $consent 'valid_before_tick')) {
         throw 'MCP form input_required created a Minecraft consent prompt, input lock, or Action'
     }
 }

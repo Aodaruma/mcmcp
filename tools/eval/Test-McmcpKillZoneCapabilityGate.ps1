@@ -255,7 +255,8 @@ $script:ToolTransport = {
     param($Tool, $Arguments)
     switch ($Tool) {
         'agent_get_state' {
-            New-MockKillZoneState -ConsentState 'none'
+            New-MockKillZoneState -ConsentState $(
+                if ($script:MockElicitationCalls -eq 1) { 'pending' } else { 'none' })
         }
         'agent_get_observation' {
             [pscustomobject]@{
