@@ -256,11 +256,14 @@ function Select-StairMatrixFoundation {
     return $candidates[0]
 }
 
-function New-DirectionalStairsActionRequest {
+function New-DirectionalStairsPlanNode {
     param(
         [Parameter(Mandatory)][Collections.IDictionary]$Sources,
         [Parameter(Mandatory)][object]$Foundation,
-        [Parameter(Mandatory)][Collections.IDictionary]$Component
+        [Parameter(Mandatory)][Collections.IDictionary]$Component,
+        [Parameter(Mandatory)][string]$NodeId,
+        [Parameter(Mandatory)]
+        [ValidateSet('apply_known_block_plan', 'approach_known_placement')][string]$Op
     )
 
     $specs = @($script:StairEntries | Where-Object { $_.id -cin @($Component.ids) })
@@ -291,41 +294,46 @@ function New-DirectionalStairsActionRequest {
         }
         $entries.Add($entry)
     }
-    $node = [ordered]@{
-        id = "directional_stairs_$($Component.name)"
-        op = 'apply_known_block_plan'
+    return [ordered]@{
+        id = $NodeId
+        op = $Op
         anchor = $Foundation.anchor
         transform = [ordered]@{ rotation = 90; mirror = 'x' }
         entries = @($entries)
     }
+}
+
+function New-DirectionalStairsActionRequest {
+    param(
+        [Parameter(Mandatory)][Collections.IDictionary]$Sources,
+        [Parameter(Mandatory)][object]$Foundation,
+        [Parameter(Mandatory)][Collections.IDictionary]$Component
+    )
+
+    $node = New-DirectionalStairsPlanNode `
+        -Sources $Sources -Foundation $Foundation -Component $Component `
+        -NodeId "directional_stairs_$($Component.name)" -Op 'apply_known_block_plan'
     return New-ActionRequest -Name "capability_gate_directional_stairs_$($Component.name)" `
         -Capabilities @('camera', 'block_place') -Body @($node) `
         -Budget ([ordered]@{
             max_duration_ms = 75000; max_ticks = 1500
             max_distance_blocks = 0; max_camera_degrees = 400
             max_interactions = 0; max_blocks_broken = 0
-            max_blocks_placed = $entries.Count
+            max_blocks_placed = @($node.entries).Count
         })
 }
 
 function New-DirectionalStairsApproachRequest {
     param(
         [Parameter(Mandatory)][object]$State,
+        [Parameter(Mandatory)][Collections.IDictionary]$Sources,
         [Parameter(Mandatory)][object]$Foundation,
         [Parameter(Mandatory)][Collections.IDictionary]$Component
     )
 
-    $approachSupport = $Foundation.supports[[string]$Component.pivot]
-    $observedTarget = Get-ObjectProperty $approachSupport 'position'
-    $node = [ordered]@{
-        id = "approach_stairs_$($Component.name)"
-        op = 'approach_known_surface'
-        target = $observedTarget
-        expected_block = Get-ObjectProperty $approachSupport 'block'
-    }
-    if (-not [object]::ReferenceEquals($observedTarget, $node.target)) {
-        throw 'Gate D changed the delivery-backed approach target'
-    }
+    $node = New-DirectionalStairsPlanNode `
+        -Sources $Sources -Foundation $Foundation -Component $Component `
+        -NodeId "approach_stairs_$($Component.name)" -Op 'approach_known_placement'
     return New-PrimitiveRequest -Name "approach_stairs_$($Component.name)" `
         -Capabilities @('movement') -Node $node `
         -Distance (Get-PolicyDistanceBudget -State $State) -Camera 0
@@ -636,7 +644,8 @@ function Invoke-DirectionalStairsGateCore {
         $preApproachFoundation = Refresh-StairComponentFoundation `
             -State $preApproachState -Baseline $foundation -Component $component
         $approachRequest = New-DirectionalStairsApproachRequest `
-            -State $preApproachState -Foundation $preApproachFoundation -Component $component
+            -State $preApproachState -Sources $initialSources `
+            -Foundation $preApproachFoundation -Component $component
         $approachTerminal = Invoke-ActionRequest `
             -Request $approachRequest -WallTimeoutSeconds 90
         $maximumApproachDistance = Get-PolicyDistanceBudget -State $preApproachState

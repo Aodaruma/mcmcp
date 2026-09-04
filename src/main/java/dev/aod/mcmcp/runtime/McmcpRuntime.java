@@ -17,7 +17,9 @@ import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.agent.dsl.ActionDslException;
+import dev.aod.mcmcp.agent.dsl.ActionDslOperationManifest;
 import dev.aod.mcmcp.agent.dsl.ActionDslParser;
+import dev.aod.mcmcp.agent.dsl.ActionDslSource;
 import dev.aod.mcmcp.agent.dsl.ActionDslValidator;
 import dev.aod.mcmcp.agent.dsl.PolicySnapshot;
 import dev.aod.mcmcp.agent.dsl.PredicateEvaluator;
@@ -1488,11 +1490,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     "internal_error", "Agent preflight cannot block the client thread", true));
         }
         final ActionDsl.Request request;
+        final ActionDslSource source;
         final PredicateRequirements predicateRequirements;
         final boolean localSafetyRequired;
         try {
-            request = ActionDslParser.parse(GSON.toJsonTree(command.arguments()).getAsJsonObject());
+            var sourceObject = GSON.toJsonTree(command.arguments()).getAsJsonObject();
+            request = ActionDslParser.parse(sourceObject);
             ActionDslValidator.validate(request);
+            source = ActionDslSource.capture(sourceObject);
             predicateRequirements = predicateRequirements(request.program());
             localSafetyRequired = actionAdmissionRequiresLocalSafety(request.program());
         } catch (RuntimeException | LinkageError failure) {
@@ -1510,7 +1515,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 Minecraft.getInstance(),
                                 sessions.snapshot(),
                                 predicateRequirements,
-                                localSafetyRequired)));
+                                localSafetyRequired,
+                                containsRecipeReference(request.program()))));
         final AgentAdmissionSnapshot snapshot;
         try {
             snapshot = capture.get(context.remainingNanos(), TimeUnit.NANOSECONDS);
@@ -1532,7 +1538,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         final PreparedAgentAction prepared;
         try {
             requireLiveCall(context, command.toolName());
-            prepared = prepareAgentAction(request, snapshot, context);
+            prepared = prepareAgentAction(request, source, snapshot, context);
             requireLiveCall(context, command.toolName());
         } catch (RuntimeException | LinkageError failure) {
             return CompletableFuture.completedFuture(mapFailure(failure));
@@ -1717,7 +1723,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             PredicateRequirements predicateRequirements,
-            boolean localSafetyRequired) {
+            boolean localSafetyRequired,
+            boolean recipeReferenceRequired) {
         assertClientThread(minecraft);
         requireReady(session);
         if (agentActions.active().isPresent() || routines.activeRoutineId().isPresent()) {
@@ -1746,6 +1753,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     "The Local Observation Volume does not permit action admission.",
                     true,
                     Map.of());
+        }
+        if (recipeReferenceRequired) {
+            recipeCatalog.refreshFromClient(
+                    minecraft,
+                    Objects.requireNonNull(session.worldSessionId(), "worldSessionId"),
+                    session.clientTick());
         }
         var map = requireAgentMap(session);
         var reconciliation = reconciliationSignals.bindAndSnapshot(
@@ -1794,6 +1807,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private PreparedAgentAction prepareAgentAction(
             ActionDsl.Request request,
+            ActionDslSource source,
             AgentAdmissionSnapshot snapshot,
             RuntimeCallContext context) {
         validatePredicateAvailability(request.program(), snapshot.predicateSnapshot());
@@ -1843,7 +1857,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         } catch (AgentPrimitivePlanner.PlanningException failure) {
             throw planningFailure(failure);
         }
-        return new PreparedAgentAction(snapshot, program, analysis, initialPrimitive);
+        return new PreparedAgentAction(snapshot, program, source, analysis, initialPrimitive);
     }
 
     private AgentPrimitivePlanner.Analysis analyzePrimitive(
@@ -1879,6 +1893,24 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private static Optional<ActionDsl.Node> firstPrimitive(
             ActionDsl.Program program, PolicySnapshot snapshot) {
         return Optional.ofNullable(new ActionProgramCursor(program).next(snapshot).primitive());
+    }
+
+    private static boolean containsRecipeReference(ActionDsl.Program program) {
+        return program.body().stream().anyMatch(McmcpRuntime::containsRecipeReference);
+    }
+
+    private static boolean containsRecipeReference(ActionDsl.Node node) {
+        if (node instanceof ActionDsl.CraftKnownRecipe
+                || node instanceof ActionDsl.SmeltKnownRecipe) {
+            return true;
+        }
+        if (node instanceof ActionDsl.If conditional) {
+            return conditional.thenBranch().stream().anyMatch(McmcpRuntime::containsRecipeReference)
+                    || conditional.elseBranch().stream()
+                            .anyMatch(McmcpRuntime::containsRecipeReference);
+        }
+        return node instanceof ActionDsl.Repeat repeat
+                && repeat.body().stream().anyMatch(McmcpRuntime::containsRecipeReference);
     }
 
     private static boolean requiresWorldPlanning(ActionDsl.Node node) {
@@ -2060,6 +2092,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             requireLiveCall(context, "agent_start_action");
             accepted = agentActions.reserve(
                     prepared.program(),
+                    prepared.source(),
                     Instant.now(),
                     System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
             pendingAgentAdmission = new PendingAgentAdmission(accepted.actionId(), prepared);
@@ -2349,7 +2382,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
-    private static Map<String, Object> actionPayload(AgentActionStore.Snapshot snapshot) {
+    static Map<String, Object> actionPayload(AgentActionStore.Snapshot snapshot) {
         var progress = snapshot.progress();
         var progressPayload = new LinkedHashMap<String, Object>();
         progressPayload.put("phase", progress.phase().wireName());
@@ -2380,6 +2413,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 "tick", entry.tick(),
                 "event", entry.event(),
                 "detail", entry.detail())).toList());
+        result.put("source", snapshot.source().sourcePayload());
+        result.put("template", snapshot.source().templatePayload());
+        result.put(
+                "reference_requirements",
+                snapshot.source().referenceRequirementPayload());
         return result;
     }
 
@@ -2576,7 +2614,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             "count", source.getCount(),
                             "damage", source.getDamageValue(),
                             "max_damage", source.getMaxDamage()),
-                    "expected_inventory_count", expected));
+                    "expected_inventory_count", expected,
+                    "valid_through_client_tick", deadline));
         }
         var payload = new LinkedHashMap<String, Object>();
         payload.put("profile_id", context.profile().profileId());
@@ -2642,14 +2681,25 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         // Kept nullable for MCP clients written against schema version 1; READY no longer expires.
         control.put("ready_expires_at", null);
         control.put("game_paused", paused);
+        control.put("granted_capabilities", lock.capabilities().stream().sorted().toList());
 
-        var actionDsl = Map.<String, Object>of(
-                "version", 1,
-                "max_ast_depth", 4,
-                "max_source_nodes", 64,
-                "max_executed_nodes", 256,
-                "max_repeat_count", 16,
+        var actionDsl = new LinkedHashMap<String, Object>();
+        actionDsl.put("version", 1);
+        actionDsl.put("max_ast_depth", 4);
+        actionDsl.put("max_source_nodes", 64);
+        actionDsl.put("max_executed_nodes", 256);
+        actionDsl.put("max_repeat_count", 16);
+        actionDsl.put(
                 "allowed_capabilities", AVAILABLE_CAPABILITIES.stream().sorted().toList());
+        actionDsl.put(
+                "available_operations",
+                ActionDslOperationManifest.operationPayload(lock.capabilities()));
+        actionDsl.put(
+                "reference_descriptors",
+                ActionDslOperationManifest.referenceDescriptorPayload());
+        actionDsl.put(
+                "missing_capability_guidance",
+                ActionDslOperationManifest.missingCapabilityGuidance());
         var policy = Map.<String, Object>ofEntries(
                 Map.entry("profile", "survival_omnidirectional"),
                 Map.entry("multiplayer_enabled", multiplayerEnabled),
@@ -6617,11 +6667,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private record PreparedAgentAction(
             AgentAdmissionSnapshot snapshot,
             ActionDslCompiler.CompiledProgram program,
+            ActionDslSource source,
             AgentPrimitivePlanner.Analysis analysis,
             Optional<ActionDsl.Node> initialPrimitive) {
         private PreparedAgentAction {
             Objects.requireNonNull(snapshot, "snapshot");
             Objects.requireNonNull(program, "program");
+            Objects.requireNonNull(source, "source");
             Objects.requireNonNull(analysis, "analysis");
             Objects.requireNonNull(initialPrimitive, "initialPrimitive");
         }

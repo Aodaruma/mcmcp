@@ -3,6 +3,7 @@ package dev.aod.mcmcp.agent.action;
 import com.google.gson.JsonParser;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.agent.dsl.ActionDslParser;
+import dev.aod.mcmcp.agent.dsl.ActionDslSource;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -16,7 +17,7 @@ class AgentActionStoreTest {
     @Test
     void reservedActionCannotRunUntilDeliveryIsConfirmedAndOtherwiseExpires() {
         var store = new AgentActionStore();
-        var reserved = store.reserve(program(), Instant.EPOCH, 100L);
+        var reserved = store.reserve(program(), source(), Instant.EPOCH, 100L);
 
         assertThat(store.get(reserved.actionId()).state())
                 .isEqualTo(AgentActionStore.State.UNCONFIRMED);
@@ -28,12 +29,12 @@ class AgentActionStoreTest {
         assertThat(store.get(reserved.actionId()).state()).isEqualTo(AgentActionStore.State.QUEUED);
 
         store.cancel(reserved.actionId());
-        var abandoned = store.reserve(program(), Instant.EPOCH, 200L);
+        var abandoned = store.reserve(program(), source(), Instant.EPOCH, 200L);
         assertThat(store.abandonUnconfirmed(abandoned.actionId(), "socket_closed")).isTrue();
         assertThat(store.get(abandoned.actionId()).failure().code())
                 .isEqualTo(AgentActionStore.FailureCode.DELIVERY_UNCONFIRMED);
 
-        var expired = store.reserve(program(), Instant.EPOCH, 300L);
+        var expired = store.reserve(program(), source(), Instant.EPOCH, 300L);
         assertThat(store.expireUnconfirmed(300L)).isTrue();
         assertThat(store.get(expired.actionId()).state()).isEqualTo(AgentActionStore.State.FAILED);
     }
@@ -41,8 +42,8 @@ class AgentActionStoreTest {
     @Test
     void enforcesOneActiveActionAndRetainsOnlyThePreviousTerminalAction() {
         var store = new AgentActionStore();
-        var first = store.start(program(), Instant.EPOCH);
-        assertThatThrownBy(() -> store.start(program(), Instant.EPOCH))
+        var first = store.start(program(), source(), Instant.EPOCH);
+        assertThatThrownBy(() -> store.start(program(), source(), Instant.EPOCH))
                 .isInstanceOf(AgentActionStore.BusyException.class);
 
         store.markRunning(first.actionId());
@@ -50,14 +51,14 @@ class AgentActionStoreTest {
         store.recordTick(first.actionId());
         store.completeNode(first.actionId());
         store.succeed(first.actionId());
-        var second = store.start(program(), Instant.EPOCH.plusSeconds(1));
+        var second = store.start(program(), source(), Instant.EPOCH.plusSeconds(1));
 
         assertThat(store.get(first.actionId()).state()).isEqualTo(AgentActionStore.State.SUCCEEDED);
         assertThat(store.get(second.actionId()).state()).isEqualTo(AgentActionStore.State.QUEUED);
         assertThat(store.cancel(second.actionId()).cancelRequested()).isTrue();
         assertThat(store.cancel(second.actionId()).cancelRequested()).isFalse();
 
-        var third = store.start(program(), Instant.EPOCH.plusSeconds(2));
+        var third = store.start(program(), source(), Instant.EPOCH.plusSeconds(2));
         assertThatThrownBy(() -> store.get(first.actionId()))
                 .isInstanceOf(AgentActionStore.NotFoundException.class);
         assertThat(store.get(second.actionId()).state()).isEqualTo(AgentActionStore.State.CANCELLED);
@@ -67,7 +68,7 @@ class AgentActionStoreTest {
     @Test
     void permitsTerminalTraceAtTheRecordedTickLimitButNeverExceedsIt() {
         var store = new AgentActionStore();
-        var accepted = store.start(program(), Instant.EPOCH);
+        var accepted = store.start(program(), source(), Instant.EPOCH);
         store.markRunning(accepted.actionId());
         for (int tick = 0; tick < AgentActionStore.MAX_RECORDED_TICKS; tick++) {
             store.recordTick(accepted.actionId());
@@ -90,7 +91,7 @@ class AgentActionStoreTest {
     @Test
     void saturatesMotionFromExternalCorrectionsAtThePublicSchemaBoundary() {
         var store = new AgentActionStore();
-        var accepted = store.start(program(), Instant.EPOCH);
+        var accepted = store.start(program(), source(), Instant.EPOCH);
         store.markRunning(accepted.actionId());
 
         store.recordMotion(accepted.actionId(), Double.MAX_VALUE, Double.MAX_VALUE);
@@ -106,7 +107,7 @@ class AgentActionStoreTest {
     @Test
     void passiveFarmlandSettlingIsAuditedWithoutInflatingInputDistance() {
         var store = new AgentActionStore();
-        var accepted = store.start(program(), Instant.EPOCH);
+        var accepted = store.start(program(), source(), Instant.EPOCH);
         store.markRunning(accepted.actionId());
 
         store.recordMotion(accepted.actionId(), 0.0D, 0.0D);
@@ -127,7 +128,7 @@ class AgentActionStoreTest {
     @Test
     void countsOnlyExplicitlyRecordedServerConfirmedBreaks() {
         var store = new AgentActionStore();
-        var accepted = store.start(program(), Instant.EPOCH);
+        var accepted = store.start(program(), source(), Instant.EPOCH);
         store.markRunning(accepted.actionId());
 
         store.recordBlockBreak(accepted.actionId());
@@ -138,7 +139,7 @@ class AgentActionStoreTest {
     @Test
     void boundedTerminalWaitWakesOnCancellationAndTimesOutWithCurrentShape() throws Exception {
         var store = new AgentActionStore();
-        var accepted = store.start(program(), Instant.EPOCH);
+        var accepted = store.start(program(), source(), Instant.EPOCH);
         Thread canceller = Thread.ofPlatform().start(() -> {
             try {
                 Thread.sleep(50L);
@@ -153,7 +154,7 @@ class AgentActionStoreTest {
         canceller.join();
         assertThat(terminal.state()).isEqualTo(AgentActionStore.State.CANCELLED);
 
-        var next = store.start(program(), Instant.EPOCH.plusSeconds(1));
+        var next = store.start(program(), source(), Instant.EPOCH.plusSeconds(1));
         var timedOut = store.awaitTerminal(next.actionId(), 10);
         assertThat(timedOut.state()).isEqualTo(AgentActionStore.State.QUEUED);
         assertThat(timedOut.actionId()).isEqualTo(next.actionId());
@@ -162,7 +163,7 @@ class AgentActionStoreTest {
     @Test
     void terminalWaitBoundsAndUnknownHandlesFailClosed() {
         var store = new AgentActionStore();
-        var accepted = store.start(program(), Instant.EPOCH);
+        var accepted = store.start(program(), source(), Instant.EPOCH);
 
         assertThatThrownBy(() -> store.awaitTerminal(
                 accepted.actionId(), AgentActionStore.MAX_TERMINAL_WAIT_MILLIS + 1))
@@ -174,7 +175,7 @@ class AgentActionStoreTest {
     @Test
     void clearingStoreReleasesTerminalWaitAsNotFound() throws Exception {
         var store = new AgentActionStore();
-        var accepted = store.start(program(), Instant.EPOCH);
+        var accepted = store.start(program(), source(), Instant.EPOCH);
         var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
         Thread waiter = Thread.ofPlatform().start(() -> {
             try {
@@ -197,7 +198,16 @@ class AgentActionStoreTest {
     }
 
     private static ActionDslCompiler.CompiledProgram program() {
-        var request = ActionDslParser.parse(JsonParser.parseString("""
+        var request = ActionDslParser.parse(requestJson());
+        return ActionDslCompiler.compile(request, ignored -> java.util.Optional.empty(), Set.of());
+    }
+
+    private static ActionDslSource source() {
+        return ActionDslSource.capture(requestJson());
+    }
+
+    private static com.google.gson.JsonObject requestJson() {
+        return JsonParser.parseString("""
                 {
                   "schema_version": 1,
                   "program": {
@@ -215,7 +225,6 @@ class AgentActionStoreTest {
                     "max_blocks_placed": 0
                   }
                 }
-                """).getAsJsonObject());
-        return ActionDslCompiler.compile(request, ignored -> java.util.Optional.empty(), Set.of());
+                """).getAsJsonObject();
     }
 }

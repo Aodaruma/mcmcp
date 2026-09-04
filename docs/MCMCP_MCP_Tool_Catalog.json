@@ -12,7 +12,7 @@
     {
       "name": "agent_get_state",
       "title": "Get MCMCP State",
-      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. Pass no arguments for state only. To search client-known recipe displays, use {\"query\":{\"kind\":\"result_item\",\"item\":\"minecraft:stick\"},\"max_results\":16} or {\"query\":{\"kind\":\"result_tag\",\"tag\":\"minecraft:planks\"},\"max_results\":16}; the bounded result appears in recipe_query. inventory keeps item-ID totals; standard_potions separately validates component-exact unmodified Vanilla singleton potion stacks and groups them by item+potion across inventory slots, so brewing inputs and outputs are distinguishable without exposing custom components or impossible overstacks. merchant_offers is present only while the exact current merchant screen has a fresh same-session/container/open-revision server packet; it exposes typed item/count facts and registered stored-enchantment IDs+levels, never raw slots, components, NBT, lore, or display text. known_menu is present only for an exact current server-synchronized accepted Menu profile: Vanilla generic_9x1..9x6, or the version/hash/class-fixed Sophisticated Backpacks 3.25.90 normal backpack storage profile. Copy one single-use operation_ref into operate_known_menu and never infer raw slots or GUI coordinates; open upgrade/extra slots, inaccessible or oversized stacks, and insufficient full-stack capacity are omitted. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. Recipe data comes only from displays synchronized into the current client recipe book. It never scans hidden world data.",
+      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. control.granted_capabilities reports the current local lease; policy.action_dsl exposes all available opcode descriptors, opaque-reference refresh contracts, and machine-readable MISSING_CAPABILITY guidance without adding another Tool. Pass no arguments for state only. To search client-known recipe displays, use {\"query\":{\"kind\":\"result_item\",\"item\":\"minecraft:stick\"},\"max_results\":16} or {\"query\":{\"kind\":\"result_tag\",\"tag\":\"minecraft:planks\"},\"max_results\":16}; the bounded result appears in recipe_query. inventory keeps item-ID totals; standard_potions separately validates component-exact unmodified Vanilla singleton potion stacks and groups them by item+potion across inventory slots, so brewing inputs and outputs are distinguishable without exposing custom components or impossible overstacks. merchant_offers is present only while the exact current merchant screen has a fresh same-session/container/open-revision server packet; it exposes typed item/count facts and registered stored-enchantment IDs+levels, never raw slots, components, NBT, lore, or display text. known_menu is present only for an exact current server-synchronized accepted Menu profile: Vanilla generic_9x1..9x6, or the version/hash/class-fixed Sophisticated Backpacks 3.25.90 normal backpack storage profile. Copy one single-use operation_ref into operate_known_menu and never infer raw slots or GUI coordinates; valid_through_client_tick is only the outer deadline and any exact-menu context change invalidates it earlier. Open upgrade/extra slots, inaccessible or oversized stacks, and insufficient full-stack capacity are omitted. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. Recipe data comes only from displays synchronized into the current client recipe book. It never scans hidden world data.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -259,9 +259,10 @@
                       },
                       "required": ["item", "count", "damage", "max_damage"]
                     },
-                    "expected_inventory_count": {"type": "integer", "minimum": 1, "maximum": 2147483647}
+                    "expected_inventory_count": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+                    "valid_through_client_tick": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807}
                   },
-                  "required": ["operation_ref", "kind", "stack", "expected_inventory_count"]
+                  "required": ["operation_ref", "kind", "stack", "expected_inventory_count", "valid_through_client_tick"]
                 }
               }
             },
@@ -280,9 +281,16 @@
                 "format": "date-time",
                 "description": "Schema v1 compatibility field; always null because READY does not expire"
               },
-              "game_paused": {"type": "boolean"}
+              "game_paused": {"type": "boolean"},
+              "granted_capabilities": {
+                "type": "array",
+                "minItems": 0,
+                "maxItems": 6,
+                "uniqueItems": true,
+                "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer"]}
+              }
             },
-            "required": ["mode", "ready_expires_at", "game_paused"]
+            "required": ["mode", "ready_expires_at", "game_paused", "granted_capabilities"]
           },
           "world": {
             "oneOf": [
@@ -478,9 +486,82 @@
                     "maxItems": 6,
                     "uniqueItems": true,
                     "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer"]}
+                  },
+                  "available_operations": {
+                    "type": "array",
+                    "minItems": 31,
+                    "maxItems": 31,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "op": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+                        "version": {"const": 1},
+                        "required_capabilities": {
+                          "type": "array", "minItems": 0, "maxItems": 3, "uniqueItems": true,
+                          "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer"]}
+                        },
+                        "capability_rule": {"enum": ["fixed", "union_of_descendants"]},
+                        "locally_granted": {"type": "boolean"},
+                        "locally_missing_capabilities": {
+                          "type": "array", "minItems": 0, "maxItems": 3, "uniqueItems": true,
+                          "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer"]}
+                        },
+                        "reference_fields": {
+                          "type": "array",
+                          "minItems": 0,
+                          "maxItems": 1,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "path": {"type": "string", "minLength": 1, "maxLength": 160},
+                              "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref"]},
+                              "requirement": {"enum": ["required", "one_of_inline_source", "required_with_fingerprint"]},
+                              "replay_policy": {"const": "refresh_required"}
+                            },
+                            "required": ["path", "kind", "requirement", "replay_policy"]
+                          }
+                        }
+                      },
+                      "required": ["op", "version", "required_capabilities", "capability_rule", "locally_granted", "locally_missing_capabilities", "reference_fields"]
+                    }
+                  },
+                  "reference_descriptors": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref"]},
+                        "issued_by": {"enum": ["agent_get_state", "agent_get_observation"]},
+                        "source_path": {"type": "string", "minLength": 1, "maxLength": 160},
+                        "consumer_operations": {
+                          "type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": true,
+                          "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}
+                        },
+                        "validity": {"type": "string", "minLength": 1, "maxLength": 128},
+                        "replay_policy": {"const": "always_refresh_before_clone"}
+                      },
+                      "required": ["kind", "issued_by", "source_path", "consumer_operations", "validity", "replay_policy"]
+                    }
+                  },
+                  "missing_capability_guidance": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "code": {"const": "MISSING_CAPABILITY"},
+                      "declare_in": {"const": "/program/capabilities"},
+                      "required_capabilities_from": {"const": "/policy/action_dsl/available_operations/*/required_capabilities"},
+                      "current_grants_from": {"const": "/control/granted_capabilities"},
+                      "suggested_next_step": {"type": "string", "minLength": 1, "maxLength": 256}
+                    },
+                    "required": ["code", "declare_in", "required_capabilities_from", "current_grants_from", "suggested_next_step"]
                   }
                 },
-                "required": ["version", "max_ast_depth", "max_source_nodes", "max_executed_nodes", "max_repeat_count", "allowed_capabilities"]
+                "required": ["version", "max_ast_depth", "max_source_nodes", "max_executed_nodes", "max_repeat_count", "allowed_capabilities", "available_operations", "reference_descriptors", "missing_capability_guidance"]
               }
             },
             "required": ["profile", "multiplayer_enabled", "max_duration_ms", "max_ticks", "max_distance_blocks", "max_camera_degrees", "max_blocks_broken", "max_interactions", "max_blocks_placed", "omnidirectional_visual_radius_blocks", "local_observation_radius_blocks", "omnidirectional_direction_count", "omnidirectional_rays_per_tick", "max_recent_sound_clues", "sound_clue_ttl_ticks", "action_dsl"]
@@ -2609,7 +2690,7 @@
     {
       "name": "agent_get_action",
       "title": "Get MCMCP Action",
-      "description": "Returns bounded progress and a policy-filtered trace for one explicit action handle. wait_timeout_ms is an optional integer from 0 through 25000; zero or omission returns immediately, otherwise it waits off the Minecraft client thread until terminal or timeout.",
+      "description": "Returns bounded progress, a policy-filtered trace, and the bounded canonical JSON source/hash for one explicit action handle. source is audit data, not replay authority. template is identical only when no opaque reference exists; otherwise every opaque ref and its coupled recipe fingerprint are null, ready_for_agent_start_action=false, and reference_requirements says how to refresh them. Opaque refs are never declared live by this off-client-thread read and must always be refreshed before cloning. wait_timeout_ms is an optional integer from 0 through 25000; zero or omission returns immediately, otherwise it waits off the Minecraft client thread until terminal or timeout.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -2709,9 +2790,59 @@
               },
               "required": ["tick", "event", "detail"]
             }
+          },
+          "source": {
+            "type": "object",
+            "description": "Canonical normalized Action DSL accepted for this action. It contains only caller-submitted, parser-recognized fields and never reflects secrets, hidden state, raw slots, or runtime-only data.",
+            "additionalProperties": false,
+            "properties": {
+              "media_type": {"const": "application/vnd.mcmcp.action-dsl+json;version=1"},
+              "canonical_json": {"type": "string", "minLength": 1, "maxLength": 131072},
+              "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+              "contains_opaque_refs": {"type": "boolean"},
+              "replayable": {"type": "boolean", "description": "False whenever the retained source contains any opaque reference; use the redacted template and refresh every reference instead."}
+            },
+            "required": ["media_type", "canonical_json", "sha256", "contains_opaque_refs", "replayable"]
+          },
+          "template": {
+            "type": "object",
+            "description": "Safe clone template. Any opaque references and coupled recipe fingerprint are JSON null until replaced from a fresh producer result, making the template intentionally invalid for agent_start_action while blocked.",
+            "additionalProperties": false,
+            "properties": {
+              "media_type": {"const": "application/vnd.mcmcp.action-dsl+json;version=1"},
+              "canonical_json": {"type": "string", "minLength": 1, "maxLength": 131072},
+              "ready_for_agent_start_action": {"type": "boolean"},
+              "blocked_by": {
+                "oneOf": [
+                  {"type": "null"},
+                  {"const": "FRESH_REFERENCE_REQUIRED"}
+                ]
+              }
+            },
+            "required": ["media_type", "canonical_json", "ready_for_agent_start_action", "blocked_by"]
+          },
+          "reference_requirements": {
+            "type": "array",
+            "maxItems": 512,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {"type": "string", "minLength": 1, "maxLength": 512},
+                "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref"]},
+                "coupled_paths": {
+                  "type": "array", "minItems": 0, "maxItems": 1,
+                  "items": {"type": "string", "minLength": 1, "maxLength": 512}
+                },
+                "refresh_tool": {"enum": ["agent_get_state", "agent_get_observation"]},
+                "source_path": {"type": "string", "minLength": 1, "maxLength": 160},
+                "status": {"const": "refresh_required"}
+              },
+              "required": ["path", "kind", "coupled_paths", "refresh_tool", "source_path", "status"]
+            }
           }
         },
-        "required": ["schema_version", "action_id", "state", "progress", "failure", "trace"]
+        "required": ["schema_version", "action_id", "state", "progress", "failure", "trace", "source", "template", "reference_requirements"]
       }
     },
     {

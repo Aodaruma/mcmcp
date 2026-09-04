@@ -31,6 +31,8 @@ class FixturePhase3AutorunConfigTest {
         assertThat(FixturePhase3AutorunConfig.Mode.MUTATIONS.selectedSlot()).isZero();
         assertThat(FixturePhase3AutorunConfig.Mode.WATERLOGGED.selectedSlot()).isEqualTo(7);
         assertThat(FixturePhase3AutorunConfig.Mode.DIRECTIONAL_STAIRS.selectedSlot()).isEqualTo(7);
+        assertThat(FixturePhase3AutorunConfig.Mode.DIRECTIONAL_STAIRS_MATRIX.selectedSlot())
+                .isEqualTo(7);
         assertThat(FixturePhase3AutorunConfig.Mode.HOPPER.selectedSlot()).isEqualTo(7);
         assertThat(FixturePhase3AutorunConfig.Mode.SHORTAGE.selectedSlot()).isEqualTo(1);
         assertThat(FixturePhase3AutorunConfig.Mode.DIVERGENCE.selectedSlot()).isZero();
@@ -44,6 +46,7 @@ class FixturePhase3AutorunConfigTest {
                         FixturePhase3AutorunConfig.Mode.MUTATIONS,
                         FixturePhase3AutorunConfig.Mode.WATERLOGGED,
                         FixturePhase3AutorunConfig.Mode.DIRECTIONAL_STAIRS,
+                        FixturePhase3AutorunConfig.Mode.DIRECTIONAL_STAIRS_MATRIX,
                         FixturePhase3AutorunConfig.Mode.HOPPER,
                         FixturePhase3AutorunConfig.Mode.SHORTAGE,
                         FixturePhase3AutorunConfig.Mode.DIVERGENCE,

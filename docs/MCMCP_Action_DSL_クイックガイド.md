@@ -18,7 +18,9 @@
 
 `batch`はMCP往復を減らしますが、hiddenな対象を自動探索する高水準Actionではありません。対象は先行するpolicy-visibleな観測から明示し、runtimeは提出順を変えず、途中で証明できない対象があれば未開始suffixを実行しません。
 
-Action本文は通常のJSONなので、LLMが手元のprogramを複製・編集して再提出できます。ただし、現時点の`agent_get_action`はstate、progress、failure、traceだけを返し、過去に投入したprogram本文をMCMCPから取得してcloneする機能はまだありません。失効し得るopaque refを含むprogramを再利用する場合は、必ず再観測してrefを置き換えます。canonical source、program hash、validate / dry-run、ref refresh理由を同じ固定5 Toolから取得する導線はproduction Jobとともに追加予定です。
+Action本文は通常のJSONなので、LLMは`agent_get_action.source.canonical_json`から投入済みの正規化済み本文とSHA-256を取得し、複製・編集できます。sourceは監査用であり再実行権限ではありません。opaque refを含まない場合だけ`template.ready_for_agent_start_action=true`となります。含む場合、templateではrefと対応するrecipe fingerprintが`null`化され、`reference_requirements`が置換箇所・取得Tool・取得元pathを示します。refの現在有効性を履歴取得側で推測せず常に`refresh_required`とするため、再観測・再取得後に埋め直してください。
+
+利用可能な全opcodeは`agent_get_state.policy.action_dsl.available_operations`にあり、必要capability、opaque ref field、現在のローカルgrantとの差分を機械可読に返します。`MISSING_CAPABILITY`時は同じ場所のguidanceに従い、必要値を`program.capabilities`へ宣言します。ローカル側のgrant不足は`control.granted_capabilities`と`locally_missing_capabilities`で区別します。公開Toolは引き続き5件です。
 
 近傍の敵対mob判定は助言ではなくruntimeの安全条件であり、現状では該当するとActionが失敗・再計画へ進み、Agent入力が解放されます。mob trap向けには、敵対mobの「存在」だけをローカルユーザー発行のscoped `consent_ref`で限定解除し、被弾、接触、projectile、health低下等は解除しない設計です。この同意経路が実装されるまでは従来どおりfail closedです。
 
@@ -39,7 +41,7 @@ Action本文は通常のJSONなので、LLMが手元のprogramを複製・編集
 
 村人の取引画面を現在開いており、そのScreen・world session・container ID・open packet revisionと最新のserver取引packetがすべて一致する間だけ、`agent_get_state.merchant_offers`が現れます。各取引はitem ID / count、使用回数、在庫切れ、merchant level / XPを返し、エンチャント本は登録済みstored enchantmentのIDとlevelだけを返します。raw slot、component / NBT、lore、表示文字列、解決不能なenchantment IDは返しません。このread pathは画面を開く、取引する、職業ブロックを壊す・置く、厳選を自動反復する操作を行いません。
 
-現在開いているserver同期済みのVanilla `generic_9x1`〜`generic_9x6`純storage画面、または固定version/hash検証済みのSophisticated Backpacks通常storage画面では、`agent_get_state.known_menu`に短寿命・single-useの`operation_ref`が現れます。各operationは表示された1 stack全量をstorageからplayer inventoryへ移すものだけで、raw slot番号、GUI座標、component / NBTは返しません。inventoryに全量の空きがないstack、通常最大数を超えるstack、inaccessible slotは候補から除外されます。
+現在開いているserver同期済みのVanilla `generic_9x1`〜`generic_9x6`純storage画面、または固定version/hash検証済みのSophisticated Backpacks通常storage画面では、`agent_get_state.known_menu`に短寿命・single-useの`operation_ref`が現れます。`valid_through_client_tick`は外側の期限であり、それ以前でもscreen、container state、profile、packet revisionの変化で失効します。各operationは表示された1 stack全量をstorageからplayer inventoryへ移すものだけで、raw slot番号、GUI座標、component / NBTは返しません。inventoryに全量の空きがないstack、通常最大数を超えるstack、inaccessible slotは候補から除外されます。
 
 ## 座標を変換しない
 

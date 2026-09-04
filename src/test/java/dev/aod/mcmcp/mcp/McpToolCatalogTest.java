@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.mcp;
 
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
@@ -200,7 +201,7 @@ class McpToolCatalogTest {
         assertThat(stateDescription)
                 .contains("Sophisticated Backpacks 3.25.90")
                 .contains("version/hash/class-fixed")
-                .contains("open upgrade/extra slots")
+                .contains("Open upgrade/extra slots")
                 .contains("inaccessible or oversized stacks");
     }
 
@@ -470,6 +471,8 @@ class McpToolCatalogTest {
         assertThat(operation.get("additionalProperties").getAsBoolean()).isFalse();
         assertThat(operation.getAsJsonObject("properties").getAsJsonObject("operation_ref")
                 .get("pattern").getAsString()).isEqualTo("^[A-Za-z0-9_-]{24}$");
+        assertThat(operation.getAsJsonArray("required").asList().stream()
+                .map(JsonElement::getAsString)).contains("valid_through_client_tick");
         assertThat(operation.getAsJsonObject("properties").getAsJsonObject("stack")
                 .get("additionalProperties").getAsBoolean()).isFalse();
     }
@@ -957,6 +960,39 @@ class McpToolCatalogTest {
                         JsonParser.parseString("\"block_interact\""),
                         JsonParser.parseString("\"block_place\""),
                         JsonParser.parseString("\"inventory_transfer\""));
+        var actionDsl = state.getAsJsonObject()
+                .getAsJsonObject("policy")
+                .getAsJsonObject("action_dsl");
+        assertThat(actionDsl.getAsJsonArray("available_operations")).hasSize(31);
+        assertThat(actionDsl.getAsJsonArray("reference_descriptors")).hasSize(3);
+        assertThat(actionDsl.getAsJsonObject("missing_capability_guidance")
+                .get("code").getAsString()).isEqualTo("MISSING_CAPABILITY");
+        assertThat(state.getAsJsonObject().getAsJsonObject("control")
+                .getAsJsonArray("granted_capabilities")).hasSize(6);
+    }
+
+    @Test
+    void actionHistorySchemaBoundsCanonicalSourceAndForcesOpaqueReferenceRefresh() {
+        var catalog = new McpToolCatalog();
+        var output = catalog.outputSchema("agent_get_action");
+        var properties = output.getAsJsonObject("properties");
+
+        assertThat(properties.getAsJsonObject("source")
+                .getAsJsonObject("properties")
+                .getAsJsonObject("canonical_json")
+                .get("maxLength").getAsInt())
+                .isEqualTo(dev.aod.mcmcp.agent.dsl.ActionDslSource.MAX_CANONICAL_JSON_CHARS);
+        assertThat(properties.getAsJsonObject("template").get("description").getAsString())
+                .contains("intentionally invalid", "fresh producer result");
+        assertThat(properties.getAsJsonObject("reference_requirements")
+                .getAsJsonObject("items")
+                .getAsJsonObject("properties")
+                .getAsJsonObject("status")
+                .get("const").getAsString()).isEqualTo("refresh_required");
+        assertThat(output.getAsJsonArray("required").asList().stream()
+                .map(JsonElement::getAsString))
+                .contains("source", "template", "reference_requirements");
+        assertThat(catalog.listResult().getAsJsonArray("tools")).hasSize(5);
     }
 
     @Test
@@ -1280,7 +1316,19 @@ class McpToolCatalogTest {
                             "interactions", 0, "blocks_broken", 0,
                             "blocks_placed", 0, "ticks", 0),
                     "failure", null,
-                    "trace", List.of());
+                    "trace", List.of(),
+                    "source", Map.of(
+                            "media_type", "application/vnd.mcmcp.action-dsl+json;version=1",
+                            "canonical_json", "{}",
+                            "sha256", "sha256:" + "0".repeat(64),
+                            "contains_opaque_refs", false,
+                            "replayable", true),
+                    "template", nullableMap(
+                            "media_type", "application/vnd.mcmcp.action-dsl+json;version=1",
+                            "canonical_json", "{}",
+                            "ready_for_agent_start_action", true,
+                            "blocked_by", null),
+                    "reference_requirements", List.of());
             case McpRuntimePort.CancelAction ignored -> Map.of(
                     "schema_version", 1,
                     "action_id", "550e8400-e29b-41d4-a716-446655440000",

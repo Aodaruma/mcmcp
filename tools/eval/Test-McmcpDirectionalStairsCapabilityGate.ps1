@@ -220,16 +220,18 @@ $script:ToolTransport = {
             $submitted = $Arguments.program.body[0]
             $pivot = @($targetDefinitions | Where-Object {
                     $_.id -ceq [string]$expected.pivot
-                })[0]
+            })[0]
             if ($isApproach) {
                 if ($Arguments.program.body.Count -ne 1 -or
-                    $submitted.op -cne 'approach_known_surface' -or
+                    $submitted.op -cne 'approach_known_placement' -or
                     $submitted.id -cne "approach_stairs_$($expected.name)" -or
                     $submitted.id.Length -gt 32 -or
-                    $submitted.expected_block -cne 'minecraft:smooth_stone' -or
-                    [int]$submitted.target.x -ne [int]$pivot.x -or
-                    [int]$submitted.target.y -ne ([int]$pivot.y - 1) -or
-                    [int]$submitted.target.z -ne [int]$pivot.z) {
+                    $submitted.entries.Count -ne $expectedCount -or
+                    $submitted.transform.rotation -ne 90 -or
+                    $submitted.transform.mirror -cne 'x' -or
+                    [int]$submitted.anchor.x -ne 202 -or
+                    [int]$submitted.anchor.y -ne 200 -or
+                    [int]$submitted.anchor.z -ne 194) {
                     throw 'mock received an invalid Gate D approach Action'
                 }
             } elseif ($isFace) {
@@ -316,17 +318,17 @@ $componentFoundation = Refresh-StairComponentFoundation `
 $request = New-DirectionalStairsActionRequest `
     -Sources $sources -Foundation $componentFoundation -Component $component
 $approachRequest = New-DirectionalStairsApproachRequest `
-    -State $initial -Foundation $componentFoundation -Component $component
+    -State $initial -Sources $sources -Foundation $componentFoundation -Component $component
 $faceRequest = New-DirectionalStairsFaceRequest `
     -Foundation $componentFoundation -Component $component
 $approachNode = $approachRequest.program.body[0]
 $faceNode = $faceRequest.program.body[0]
 $node = $request.program.body[0]
-Assert-True ($approachNode.op -ceq 'approach_known_surface' -and
-    $approachNode.target.x -eq 202 -and $approachNode.target.y -eq 199 -and
-    $approachNode.target.z -eq 194 -and
-    $approachNode.expected_block -ceq 'minecraft:smooth_stone') `
-    'gate did not approach the delivered pivot support'
+Assert-True ($approachNode.op -ceq 'approach_known_placement' -and
+    (ConvertTo-CompactJson $approachNode.anchor) -ceq (ConvertTo-CompactJson $node.anchor) -and
+    (ConvertTo-CompactJson $approachNode.transform) -ceq (ConvertTo-CompactJson $node.transform) -and
+    (ConvertTo-CompactJson $approachNode.entries) -ceq (ConvertTo-CompactJson $node.entries)) `
+    'gate did not reuse the exact delivered plan context for placement approach'
 Assert-True ($approachRequest.program.capabilities.Count -eq 1 -and
     $approachRequest.program.capabilities[0] -ceq 'movement' -and
     $approachRequest.budget.max_duration_ms -eq 30000 -and

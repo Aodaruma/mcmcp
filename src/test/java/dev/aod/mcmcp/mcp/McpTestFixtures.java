@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.mcp;
 
+import dev.aod.mcmcp.agent.dsl.ActionDslOperationManifest;
+
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -16,7 +18,8 @@ final class McpTestFixtures {
                 "control", Map.of(
                         "mode", "off",
                         "ready_expires_at", nullValue(),
-                        "game_paused", false),
+                        "game_paused", false,
+                        "granted_capabilities", List.of()),
                 "world", nullValue(),
                 "inventory", List.of(),
                 "standard_potions", List.of(),
@@ -45,7 +48,13 @@ final class McpTestFixtures {
                                 "max_repeat_count", 16,
                                 "allowed_capabilities", List.of(
                                         "block_break", "block_interact", "block_place", "camera",
-                                        "inventory_transfer", "movement")))),
+                                        "inventory_transfer", "movement"),
+                                "available_operations",
+                                ActionDslOperationManifest.operationPayload(java.util.Set.of()),
+                                "reference_descriptors",
+                                ActionDslOperationManifest.referenceDescriptorPayload(),
+                                "missing_capability_guidance",
+                                ActionDslOperationManifest.missingCapabilityGuidance()))),
                 "observation", nullValue(),
                 "action", nullValue());
     }

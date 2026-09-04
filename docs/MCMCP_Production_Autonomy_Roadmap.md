@@ -15,13 +15,10 @@ MCMCPの目標は、農業や建築などの固定高位Actionを増やすこと
 
 ActionはLLMがテキストとして生成・複製・編集できる厳格なJSON DSLである。templateも同じDSLを使い、特権を持たない。
 
-現在の制約は、`agent_get_action`がstate、progress、failure、traceだけを返し、投入済みprogram本文を返さないことである。このため、LLMが手元に保持するJSONは編集できるが、「過去のActionをMCMCPから取得してcloneする」ことはまだできない。実装時は次を固定5 Toolのまま追加する。
+`agent_get_action`はstate、progress、failure、traceに加え、投入済みprogramのbounded canonical JSONとSHA-256、ref redaction済みclone template、ref更新箇所を返す。opaque refを含むsourceは監査用であり、template側では該当refと対応するrecipe fingerprintを`null`化してblind replayを拒否する。`agent_get_state`も全opcode manifest、ref descriptor、current grant、`MISSING_CAPABILITY` guidanceを返す。いずれも固定5 Toolのままである。残るproduction Job拡張は次である。
 
-- canonical normalized programとprogram hash
 - worst-case costとeffect footprint
 - 必要なopaque refと同意scope
-- refの失効状態とrefresh方法
-- `agent_get_action`からのboundedなsource取得
 - validate / dry-run結果
 
 sourceを返す場合も、Bearer、内部slot、hidden state、raw Tool payloadは含めない。expired refを含むprogramは`replayable=false`とし、再観測・再取得が必要なfieldを構造化して示す。

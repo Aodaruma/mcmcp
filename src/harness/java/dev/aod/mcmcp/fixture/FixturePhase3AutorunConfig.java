@@ -27,6 +27,7 @@ record FixturePhase3AutorunConfig(Mode mode) {
             case "mutations" -> Mode.MUTATIONS;
             case "waterlogged" -> Mode.WATERLOGGED;
             case "directional_stairs" -> Mode.DIRECTIONAL_STAIRS;
+            case "directional_stairs_matrix" -> Mode.DIRECTIONAL_STAIRS_MATRIX;
             case "hopper" -> Mode.HOPPER;
             case "shortage" -> Mode.SHORTAGE;
             case "divergence" -> Mode.DIVERGENCE;
@@ -55,6 +56,7 @@ record FixturePhase3AutorunConfig(Mode mode) {
         MUTATIONS(0),
         WATERLOGGED(7),
         DIRECTIONAL_STAIRS(7),
+        DIRECTIONAL_STAIRS_MATRIX(7),
         HOPPER(7),
         SHORTAGE(1),
         DIVERGENCE(0),
@@ -75,7 +77,8 @@ record FixturePhase3AutorunConfig(Mode mode) {
         boolean phase4() {
             return switch (this) {
                 case ALL_SATISFIED, MUTATIONS, WATERLOGGED, DIRECTIONAL_STAIRS,
-                        HOPPER, SHORTAGE, DIVERGENCE, HIDDEN, BUILD_RUNNER -> true;
+                        DIRECTIONAL_STAIRS_MATRIX, HOPPER, SHORTAGE, DIVERGENCE, HIDDEN,
+                        BUILD_RUNNER -> true;
                 case NAVIGATE, BREAK, PLACE, LEVER, COW, RESET, CREATIVE_CAPTURE -> false;
             };
         }

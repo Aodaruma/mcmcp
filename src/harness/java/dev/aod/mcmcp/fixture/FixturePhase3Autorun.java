@@ -238,7 +238,7 @@ final class FixturePhase3Autorun {
                                 "MCMCP creative capture fixture: {}", component.getString()));
             } else if (config.mode().phase4()) {
                 FixturePhase4Scenario.prepare(
-                        revalidated.context(), phase4ScenarioMode(config.mode()),
+                        revalidated.context(), ScenarioRouting.phase4(config.mode()),
                         component -> LOGGER.info("MCMCP Phase 4 fixture: {}", component.getString()));
             } else {
                 FixturePhase3Scenario.prepare(revalidated.context(), scenarioMode(config.mode()),
@@ -278,26 +278,33 @@ final class FixturePhase3Autorun {
             case COW -> FixturePhase3Scenario.Mode.COW;
             case RESET -> FixturePhase3Scenario.Mode.RESET;
             case ALL_SATISFIED, MUTATIONS, WATERLOGGED, DIRECTIONAL_STAIRS,
-                    HOPPER, SHORTAGE, DIVERGENCE, HIDDEN, BUILD_RUNNER, CREATIVE_CAPTURE ->
+                    DIRECTIONAL_STAIRS_MATRIX, HOPPER, SHORTAGE, DIVERGENCE, HIDDEN,
+                    BUILD_RUNNER, CREATIVE_CAPTURE ->
                     throw new IllegalArgumentException("Phase 4 mode cannot use the Phase 3 scenario");
         };
     }
 
-    private static FixturePhase4Scenario.Mode phase4ScenarioMode(
-            FixturePhase3AutorunConfig.Mode mode) {
-        return switch (mode) {
-            case ALL_SATISFIED -> FixturePhase4Scenario.Mode.ALL_SATISFIED;
-            case MUTATIONS -> FixturePhase4Scenario.Mode.MUTATIONS;
-            case WATERLOGGED -> FixturePhase4Scenario.Mode.WATERLOGGED;
-            case DIRECTIONAL_STAIRS -> FixturePhase4Scenario.Mode.DIRECTIONAL_STAIRS;
-            case HOPPER -> FixturePhase4Scenario.Mode.HOPPER;
-            case SHORTAGE -> FixturePhase4Scenario.Mode.SHORTAGE;
-            case DIVERGENCE -> FixturePhase4Scenario.Mode.DIVERGENCE;
-            case HIDDEN -> FixturePhase4Scenario.Mode.HIDDEN;
-            case BUILD_RUNNER -> FixturePhase4Scenario.Mode.BUILD_RUNNER;
-            case NAVIGATE, BREAK, PLACE, LEVER, COW, RESET, CREATIVE_CAPTURE ->
-                    throw new IllegalArgumentException("Phase 3 mode cannot use the Phase 4 scenario");
-        };
+    static final class ScenarioRouting {
+        private ScenarioRouting() {}
+
+        static FixturePhase4Scenario.Mode phase4(FixturePhase3AutorunConfig.Mode mode) {
+            return switch (mode) {
+                case ALL_SATISFIED -> FixturePhase4Scenario.Mode.ALL_SATISFIED;
+                case MUTATIONS -> FixturePhase4Scenario.Mode.MUTATIONS;
+                case WATERLOGGED -> FixturePhase4Scenario.Mode.WATERLOGGED;
+                case DIRECTIONAL_STAIRS -> FixturePhase4Scenario.Mode.DIRECTIONAL_STAIRS;
+                case DIRECTIONAL_STAIRS_MATRIX ->
+                        FixturePhase4Scenario.Mode.DIRECTIONAL_STAIRS_MATRIX;
+                case HOPPER -> FixturePhase4Scenario.Mode.HOPPER;
+                case SHORTAGE -> FixturePhase4Scenario.Mode.SHORTAGE;
+                case DIVERGENCE -> FixturePhase4Scenario.Mode.DIVERGENCE;
+                case HIDDEN -> FixturePhase4Scenario.Mode.HIDDEN;
+                case BUILD_RUNNER -> FixturePhase4Scenario.Mode.BUILD_RUNNER;
+                case NAVIGATE, BREAK, PLACE, LEVER, COW, RESET, CREATIVE_CAPTURE ->
+                        throw new IllegalArgumentException(
+                                "Phase 3 mode cannot use the Phase 4 scenario");
+            };
+        }
     }
 
     private enum Stage {

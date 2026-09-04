@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.agent.action;
 
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler.CompiledProgram;
+import dev.aod.mcmcp.agent.dsl.ActionDslSource;
 
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -25,8 +26,9 @@ public final class AgentActionStore {
     private Mutable latest;
     private Snapshot previousTerminal;
 
-    public synchronized Accepted start(CompiledProgram program, Instant acceptedAt) {
-        Accepted accepted = reserve(program, acceptedAt, Long.MAX_VALUE);
+    public synchronized Accepted start(
+            CompiledProgram program, ActionDslSource source, Instant acceptedAt) {
+        Accepted accepted = reserve(program, source, acceptedAt, Long.MAX_VALUE);
         latest.state = State.QUEUED;
         latest.phase = Phase.QUEUED;
         latest.trace(0, "QUEUED", "Action accepted");
@@ -34,8 +36,12 @@ public final class AgentActionStore {
     }
 
     public synchronized Accepted reserve(
-            CompiledProgram program, Instant acceptedAt, long confirmationDeadlineNanos) {
+            CompiledProgram program,
+            ActionDslSource source,
+            Instant acceptedAt,
+            long confirmationDeadlineNanos) {
         Objects.requireNonNull(program, "program");
+        Objects.requireNonNull(source, "source");
         Objects.requireNonNull(acceptedAt, "acceptedAt");
         if (latest != null && !latest.state.terminal()) {
             throw new BusyException();
@@ -43,7 +49,7 @@ public final class AgentActionStore {
         if (latest != null) {
             previousTerminal = latest.snapshot();
         }
-        latest = new Mutable(UUID.randomUUID(), program, confirmationDeadlineNanos);
+        latest = new Mutable(UUID.randomUUID(), program, source, confirmationDeadlineNanos);
         latest.trace(0, "UNCONFIRMED", "Action reserved pending HTTP delivery");
         return new Accepted(latest.id, acceptedAt);
     }
@@ -471,12 +477,14 @@ public final class AgentActionStore {
             State state,
             Progress progress,
             Failure failure,
-            List<Trace> trace) {
+            List<Trace> trace,
+            ActionDslSource source) {
         public Snapshot {
             Objects.requireNonNull(actionId, "actionId");
             Objects.requireNonNull(state, "state");
             Objects.requireNonNull(progress, "progress");
             trace = List.copyOf(trace);
+            Objects.requireNonNull(source, "source");
         }
     }
 
@@ -495,6 +503,7 @@ public final class AgentActionStore {
     private static final class Mutable {
         private final UUID id;
         private final CompiledProgram program;
+        private final ActionDslSource source;
         private final long confirmationDeadlineNanos;
         private final ArrayDeque<Trace> trace = new ArrayDeque<>(TRACE_LIMIT);
         private State state = State.UNCONFIRMED;
@@ -511,9 +520,14 @@ public final class AgentActionStore {
         private Failure failure;
         private String endReason;
 
-        private Mutable(UUID id, CompiledProgram program, long confirmationDeadlineNanos) {
+        private Mutable(
+                UUID id,
+                CompiledProgram program,
+                ActionDslSource source,
+                long confirmationDeadlineNanos) {
             this.id = id;
             this.program = program;
+            this.source = source;
             this.confirmationDeadlineNanos = confirmationDeadlineNanos;
         }
 
@@ -551,7 +565,7 @@ public final class AgentActionStore {
                     blocksPlaced,
                     ticks,
                     motionOverflowed);
-            return new Snapshot(id, state, progress, failure, new ArrayList<>(trace));
+            return new Snapshot(id, state, progress, failure, new ArrayList<>(trace), source);
         }
     }
 }

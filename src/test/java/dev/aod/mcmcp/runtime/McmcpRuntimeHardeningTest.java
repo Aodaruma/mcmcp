@@ -1,11 +1,13 @@
 package dev.aod.mcmcp.runtime;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonParser;
 import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
+import dev.aod.mcmcp.agent.dsl.ActionDslSource;
 import dev.aod.mcmcp.agent.navigation.DeterministicAStar;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilityMap;
 import dev.aod.mcmcp.agent.navigation.NavCell;
@@ -106,7 +108,8 @@ class McmcpRuntimeHardeningTest {
                 new McmcpRuntime.PendingAgentTerminal(
                         actionId, McmcpRuntime.AgentTerminalKind.SUCCESS, null),
                 new AgentActionStore.Snapshot(
-                        actionId, AgentActionStore.State.SUCCEEDED, progress, null, List.of())))
+                        actionId, AgentActionStore.State.SUCCEEDED, progress, null, List.of(),
+                        actionSource())))
                 .isTrue();
         assertThat(McmcpRuntime.terminalMatchesSnapshot(
                 new McmcpRuntime.PendingAgentTerminal(
@@ -117,7 +120,7 @@ class McmcpRuntimeHardeningTest {
                                 AgentActionStore.FailureCode.CANCELLED_BY_CLIENT,
                                 true,
                                 List.of("client_request")),
-                        List.of())))
+                        List.of(), actionSource())))
                 .isTrue();
         var failureIntent = new McmcpRuntime.PendingAgentTerminal(
                 actionId, McmcpRuntime.AgentTerminalKind.FAILURE, expectedFailure);
@@ -131,20 +134,54 @@ class McmcpRuntimeHardeningTest {
                 failureIntent,
                 new AgentActionStore.Snapshot(
                         actionId, AgentActionStore.State.FAILED, progress,
-                        expectedFailure, List.of())))
+                        expectedFailure, List.of(), actionSource())))
                 .isTrue();
         assertThat(McmcpRuntime.terminalMatchesSnapshot(
                 failureIntent,
                 new AgentActionStore.Snapshot(
                         actionId, AgentActionStore.State.FAILED, progress,
-                        replacementFailure, List.of())))
+                        replacementFailure, List.of(), actionSource())))
                 .isFalse();
         assertThat(McmcpRuntime.terminalMatchesSnapshot(
                 failureIntent,
                 new AgentActionStore.Snapshot(
                         actionId, AgentActionStore.State.CANCELLED, progress,
-                        expectedFailure, List.of())))
+                        expectedFailure, List.of(), actionSource())))
                 .isFalse();
+    }
+
+    @Test
+    void actionPayloadReturnsOnlyBoundedCanonicalSourceAndSafeTemplateMetadata() {
+        var source = actionSource();
+        var progress = new AgentActionStore.Progress(
+                AgentActionStore.Phase.QUEUED,
+                null,
+                0,
+                1,
+                0.0D,
+                0.0D,
+                0,
+                0,
+                0,
+                0,
+                false);
+        var payload = McmcpRuntime.actionPayload(new AgentActionStore.Snapshot(
+                UUID.randomUUID(),
+                AgentActionStore.State.QUEUED,
+                progress,
+                null,
+                List.of(),
+                source));
+
+        var sourcePayload = (Map<?, ?>) payload.get("source");
+        assertThat(sourcePayload.get("canonical_json")).isEqualTo(source.canonicalJson());
+        assertThat(sourcePayload.get("sha256")).isEqualTo(source.sha256());
+        assertThat(sourcePayload.containsKey("program")).isFalse();
+        assertThat(sourcePayload.containsKey("runtime")).isFalse();
+        assertThat(sourcePayload.containsKey("secret")).isFalse();
+        assertThat(((Map<?, ?>) payload.get("template")).get("ready_for_agent_start_action"))
+                .isEqualTo(true);
+        assertThat(payload.get("reference_requirements")).isEqualTo(List.of());
     }
 
     @Test
@@ -1160,6 +1197,7 @@ class McmcpRuntimeHardeningTest {
         assertThat(control.get("mode")).isEqualTo("ready");
         assertThat(control.get("ready_expires_at")).isNull();
         assertThat(control.get("game_paused")).isEqualTo(false);
+        assertThat(control.get("granted_capabilities")).isEqualTo(List.of("movement"));
         var policy = (Map<?, ?>) state.get("policy");
         assertThat(policy.get("profile")).isEqualTo("survival_omnidirectional");
         assertThat(policy.get("max_duration_ms")).isEqualTo(750_000);
@@ -1167,6 +1205,11 @@ class McmcpRuntimeHardeningTest {
         assertThat(policy.get("max_distance_blocks")).isEqualTo(32);
         assertThat(policy.get("max_blocks_broken")).isEqualTo(8);
         assertThat(policy.get("max_interactions")).isEqualTo(16);
+        var actionDsl = (Map<?, ?>) policy.get("action_dsl");
+        assertThat((List<?>) actionDsl.get("available_operations")).hasSize(31);
+        assertThat(((Map<?, ?>) actionDsl.get("missing_capability_guidance")).get("code"))
+                .isEqualTo("MISSING_CAPABILITY");
+        assertThat((List<?>) actionDsl.get("reference_descriptors")).hasSize(3);
     }
 
     @Test
@@ -2315,6 +2358,20 @@ class McmcpRuntimeHardeningTest {
                         "phase", Map.of("id", "foundation", "index", 1, "total", 2),
                         "entries", List.of(entry))),
                 boundsMap(0, 30, allowBreak));
+    }
+
+    private static ActionDslSource actionSource() {
+        return ActionDslSource.capture(JsonParser.parseString("""
+                {
+                  "schema_version":1,
+                  "program":{"dsl_version":1,"capabilities":[],"body":[
+                    {"id":"hold","op":"wait_ticks","ticks":1}
+                  ]},
+                  "budget":{"max_duration_ms":100,"max_ticks":2,
+                    "max_distance_blocks":0,"max_camera_degrees":0,
+                    "max_interactions":0,"max_blocks_broken":0,"max_blocks_placed":0}
+                }
+                """).getAsJsonObject());
     }
 
     @SuppressWarnings("unchecked")
