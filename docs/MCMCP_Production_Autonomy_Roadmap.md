@@ -131,7 +131,7 @@ production仕様では、安全条件を次の2層に分ける。
 
 - 指定した作業領域内に、指定分類の敵対mobが「存在・可視」であることだけ
 
-同意はDSLのbooleanにしない。ローカルUIまたは認証済みplayer操作がopaque `consent_ref`を発行し、world session、Job / Action hash、作業領域、許可op、mob分類、距離、期限、使用回数、health floor、最大許容damageへ束縛する。
+同意はDSLのbooleanにしない。ローカルUIまたは認証済みplayer操作がopaque `consent_ref`を発行し、world session、Job / Action hash、作業領域、許可op、mob分類、entity ref、距離、期限、health floor、最大許容damageへ束縛する。最初sliceは1対象の1回のsemantic attackだけを許可し、複数回攻撃を1つの同意に含めない。
 
 指示がない場合、LLMはmutation開始前にユーザーへ確認する。実行中に予期しない敵対mobが現れた場合は、危険入力を解放して安全checkpointまたは有限retreatへ移り、`AWAITING_CONSENT`を返す。無期限にその場で棒立ちにはしない。mob TTでは期待された敵対mobの存在だけを許可し、被弾、接触、projectile、health低下は引き続きhard gateとする。
 
@@ -153,7 +153,7 @@ chat、看板、本、server textはユーザー同意として扱わない。
 
 各段階はunit / contract / catalog整合を通し、ローカル`MCMCP-Validation`でMCP-only実ワールド試験を行う。fixtureはT0前後だけに使い、T0からterminalまでgameplay成功へ介入しない。1回のPASSで安定完了とせず、再現性とdeadline余裕を確認する。
 
-2026-09-04時点では、1と5〜7の内部実装、8の閉鎖fixture、9の丸石生成Gateと釣りのproduction primitive／閉鎖fixtureまで到達した。釣りは自player所有bobberへ近接した実splashだけを有限待機し、1200-tickの単回ref、dispatch後のconfirmed／unknown effect、cleanup期限超過時OFFを持つ。未完了はGate Dのローカル手動承認後2回連続実機PASS、現revisionでの3×3／5×5回帰、倉庫・丸石・釣りのローカル実ワールド完走、およびkill chamber向けscoped consentである。
+2026-09-04時点では、1と5〜7の内部実装、8の閉鎖fixture、9の丸石生成Gateと釣りのproduction primitive／閉鎖fixtureまで到達した。釣りは自player所有bobberへ近接した実splashだけを有限待機し、1200-tickの単回ref、dispatch後のconfirmed／unknown effect、cleanup期限超過時OFFを持つ。kill chamberはworld session、Action hash、範囲、entity ref、entity typeへ束縛した10秒・単回の同意Storeと境界テストまで実装したが、ローカルUI、観測、Action DSL、攻撃executorへは未接続である。未完了はGate Dのローカル手動承認後2回連続実機PASS、現revisionでの3×3／5×5回帰、倉庫・丸石・釣りのローカル実ワールド完走、およびkill chamberのUIから攻撃確認までの完走である。
 
 ## 8. 現時点の判断
 
