@@ -472,6 +472,11 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
                 BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString(), properties);
     }
 
+    /** Canonical full-state encoding shared with Action packet-adjacent policy checks. */
+    public static BlockStateFingerprint fingerprintForPolicy(BlockState state) {
+        return fingerprint(Objects.requireNonNull(state, "state"));
+    }
+
     @SuppressWarnings("deprecation") // Minecraft exposes replaceability without a world context here.
     private static ObservedContext observedContext(
             net.minecraft.client.multiplayer.ClientLevel level,

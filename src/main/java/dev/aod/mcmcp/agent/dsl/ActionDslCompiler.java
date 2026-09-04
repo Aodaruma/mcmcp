@@ -151,6 +151,7 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.FaceKnownPosition
                 || node instanceof ActionDsl.FaceKnownBlockFace
                 || node instanceof ActionDsl.BreakKnownFace
+                || node instanceof ActionDsl.BreakKnownBlock
                 || node instanceof ActionDsl.TillKnownBlock
                 || node instanceof ActionDsl.TillKnownBatch
                 || node instanceof ActionDsl.PlantKnownWheat
@@ -174,13 +175,14 @@ public final class ActionDslCompiler {
                 throw unprovable("A primitive worst-case cost is unavailable");
             }
             Cost cost = resolved.get();
-            if (node instanceof ActionDsl.BreakKnownFace) {
+            if (node instanceof ActionDsl.BreakKnownFace
+                    || node instanceof ActionDsl.BreakKnownBlock) {
                 if (cost.distanceBlocks() != 0
                         || cost.interactions() != 0
                         || cost.blocksBroken() != 1
                         || cost.blocksPlaced() != 0) {
                     throw unprovable(
-                            "break_known_face must consume exactly one break and no movement, interaction, or place");
+                            "known block break must consume exactly one break and no movement, interaction, or place");
                 }
             } else if (node instanceof ActionDsl.TillKnownBlock) {
                 requireMutationCost(cost, 1, 0, 0, "till_known_block");

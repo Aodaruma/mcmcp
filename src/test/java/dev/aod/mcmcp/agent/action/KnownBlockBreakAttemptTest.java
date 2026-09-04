@@ -30,9 +30,17 @@ class KnownBlockBreakAttemptTest {
 
         port.evidence = new PredictionEvidence(
                 7, true, true, Optional.of(state("minecraft:air")), 13, 2);
+        port.goalCount = 1;
         assertThat(attempt.tick(13, false)).isEqualTo(KnownBlockBreakAttempt.TickResult.SUCCEEDED);
         assertThat(port.released).isTrue();
         assertThat(port.retired).isTrue();
+        assertThat(attempt.drainEffectDeltas()).singleElement().satisfies(effect -> {
+            assertThat(effect.verification()).isEqualTo(AgentActionStore.Verification.CONFIRMED);
+            assertThat(effect.observedBefore()).containsEntry("block", "minecraft:oak_log");
+            assertThat(effect.observedAfter())
+                    .containsEntry("block", "minecraft:air")
+                    .containsEntry("inventory_count", 1);
+        });
     }
 
     @Test
@@ -48,6 +56,9 @@ class KnownBlockBreakAttemptTest {
         assertThat(attempt.active()).isFalse();
         assertThat(port.releaseCalls).isEqualTo(2);
         assertThat(port.retireCalls).isEqualTo(2);
+        assertThat(attempt.drainEffectDeltas()).singleElement()
+                .satisfies(effect -> assertThat(effect.verification())
+                        .isEqualTo(AgentActionStore.Verification.UNKNOWN));
     }
 
     private static StationaryBreakRequest request() {
@@ -73,9 +84,13 @@ class KnownBlockBreakAttemptTest {
         private int releaseCalls;
         private int retireCalls;
         private int releaseFailuresRemaining;
+        private int goalCount;
 
         @Override public StationaryBreakFrame observe(StationaryBreakRequest request) {
-            throw new UnsupportedOperationException();
+            return new StationaryBreakFrame(
+                    evidence.clientTick(), evidence.observationRevision(),
+                    Optional.of(state("minecraft:oak_log")), goalCount, true,
+                    true, true, true, true, true, true, true);
         }
 
         @Override public AttackAttempt beginAttack(

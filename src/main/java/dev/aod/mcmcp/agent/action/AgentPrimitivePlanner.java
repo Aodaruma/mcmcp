@@ -403,6 +403,43 @@ public final class AgentPrimitivePlanner {
         return new MutationAim(target.target(), target.face(), rayHit(surface));
     }
 
+    public static KnownSurface requireKnownBreakSurface(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.BreakKnownBlock target,
+            long surfaceBarrierWorldRevision) {
+        var required = new KnownSurface(
+                target.target(), target.face(), target.expectedState().block());
+        ObservationRecord.VisibleSurface surface = knownSurfaceRecord(
+                map, latestFrame, required, surfaceBarrierWorldRevision)
+                .orElseThrow(() -> new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Break target face is not current matching visible-surface evidence"));
+        if (!exactObservedState(surface, target.expectedState())) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Break target requires delivered matching complete-state evidence");
+        }
+        return required;
+    }
+
+    public static MutationAim requireKnownBreakAim(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.BreakKnownBlock target,
+            long surfaceBarrierWorldRevision) {
+        KnownSurface required = requireKnownBreakSurface(
+                map, latestFrame, target, surfaceBarrierWorldRevision);
+        ObservationRecord.VisibleSurface surface = knownSurfaceRecord(
+                map, latestFrame, required, surfaceBarrierWorldRevision).orElseThrow();
+        if (surface.rayHit() == null) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Break target face lacks an exact visible ray witness");
+        }
+        return new MutationAim(target.target(), target.face(), rayHit(surface));
+    }
+
     public static boolean knownSurface(
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
@@ -878,6 +915,35 @@ public final class AgentPrimitivePlanner {
             return distinct(output);
         }
         if (node instanceof ActionDsl.BreakKnownFace block) {
+            long surfaceBarrier = surfaceBarrierWorldRevision(
+                    map, surfaceRevisionBarrier, block.target());
+            var required = requireKnownBreakSurface(
+                    map, latestFrame, block, surfaceBarrier);
+            var surface = knownSurfaceRecord(
+                    map, latestFrame, required, surfaceBarrier).orElseThrow();
+            knownSurfaces.add(required);
+            Vec3 point = rayHit(surface);
+            MutationAim candidate = new MutationAim(block.target(), block.face(), point);
+            MutationAim previous = mutationAims.putIfAbsent(node.id(), candidate);
+            if (previous != null && !previous.equals(candidate)) {
+                throw new PlanningException(
+                        Code.PROGRAM_BUDGET_UNPROVABLE,
+                        "Break node resolves to more than one aim witness");
+            }
+            ActionDslCompiler.Cost worst = null;
+            var output = new ArrayList<Pose>(input.size());
+            for (Pose pose : input) {
+                work.poseTransition();
+                requireBreakPose(pose, surface, point);
+                Aim aim = aim(pose, point);
+                AimError aimError = aimError(pose, point, aim);
+                worst = maximum(worst, breakCost(pose, block, point, cameraLimit));
+                output.add(pose.aimed(aim, aimError));
+            }
+            merge(costs, node.id(), Objects.requireNonNull(worst, "break cost"));
+            return distinct(output);
+        }
+        if (node instanceof ActionDsl.BreakKnownBlock block) {
             long surfaceBarrier = surfaceBarrierWorldRevision(
                     map, surfaceRevisionBarrier, block.target());
             var required = requireKnownBreakSurface(
@@ -2513,6 +2579,33 @@ public final class AgentPrimitivePlanner {
     public static ActionDslCompiler.Cost breakCost(
             Pose pose,
             ActionDsl.BreakKnownFace target,
+            Vec3 point,
+            float maxCameraDegreesPerTick) {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(point, "point");
+        var aim = aim(pose, point);
+        var error = aimError(pose, point, aim);
+        double camera = withCameraQuantizationReserve(
+                angularError(pose.yaw(), pose.pitch(), aim.yaw(), aim.pitch())
+                        + pose.orientationErrorDegrees() + error.totalDegrees());
+        long aimTicks = Math.max(
+                1L, (long) Math.ceil(camera / maxCameraDegreesPerTick));
+        long boundedTicks = Math.addExact(
+                aimTicks,
+                Math.addExact(BREAK_REOBSERVATION_TICKS, BREAK_TICK_UPPER_BOUND));
+        return new ActionDslCompiler.Cost(
+                Math.multiplyExact(boundedTicks, TICK_MILLIS),
+                boundedTicks,
+                0.0D,
+                camera,
+                0,
+                1,
+                0);
+    }
+
+    public static ActionDslCompiler.Cost breakCost(
+            Pose pose,
+            ActionDsl.BreakKnownBlock target,
             Vec3 point,
             float maxCameraDegreesPerTick) {
         Objects.requireNonNull(target, "target");

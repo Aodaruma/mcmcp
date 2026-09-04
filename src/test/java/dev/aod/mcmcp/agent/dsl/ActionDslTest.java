@@ -631,6 +631,42 @@ class ActionDslTest {
     }
 
     @Test
+    void parsesExactGenericBreakAndRejectsUnauditedTriples() {
+        JsonObject exact = breakKnownBlock("mine");
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera", "block_break"),
+                array(exact),
+                budget(30_000, 600, 0, 360, 0, 1, 0)));
+
+        ActionDsl.BreakKnownBlock breaking =
+                (ActionDsl.BreakKnownBlock) request.program().body().getFirst();
+        assertThat(breaking.expectedState())
+                .isEqualTo(new ActionDsl.BlockStateSpec("minecraft:cobblestone", Map.of()));
+        assertThat(breaking.toolItem()).isEqualTo("minecraft:iron_pickaxe");
+        assertThat(breaking.expectedDrop()).isEqualTo("minecraft:cobblestone");
+        assertThat(breaking.minimumInventoryCount()).isEqualTo(17);
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(
+                        ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_BREAK);
+
+        exact.addProperty("tool_item", "minecraft:diamond_pickaxe");
+        assertThatThrownBy(() -> ActionDslParser.parse(request(
+                capabilities("camera", "block_break"), array(exact),
+                budget(30_000, 600, 0, 360, 0, 1, 0))))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(ActionDslException.Code.INVALID_ARGUMENT);
+
+        assertThatThrownBy(() -> ActionDslParser.parse(request(
+                capabilities("camera", "block_break"),
+                array(repeat("retry", 2, array(breakKnownBlock("mine")))),
+                budget(60_000, 1_200, 0, 720, 0, 2, 0))))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE);
+    }
+
+    @Test
     void parsesAndCompilesClosedWheatMutations() {
         JsonArray body = array(
                 tillKnownBlock("till"),
@@ -1696,6 +1732,17 @@ class ActionDslTest {
         node.addProperty("face", "west");
         node.addProperty("expected_block", "minecraft:oak_log");
         node.addProperty("tool_item", "minecraft:iron_axe");
+        return node;
+    }
+
+    private static JsonObject breakKnownBlock(String id) {
+        JsonObject node = baseNode(id, "break_known_block");
+        node.add("target", position());
+        node.addProperty("face", "west");
+        node.add("expected_state", blockState("minecraft:cobblestone"));
+        node.addProperty("tool_item", "minecraft:iron_pickaxe");
+        node.addProperty("expected_drop", "minecraft:cobblestone");
+        node.addProperty("minimum_inventory_count", 17);
         return node;
     }
 

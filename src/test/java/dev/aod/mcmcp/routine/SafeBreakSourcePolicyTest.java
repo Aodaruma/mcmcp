@@ -71,4 +71,20 @@ class SafeBreakSourcePolicyTest {
                 .isInstanceOf(SafeBreakSourcePolicy.UnsafeBreakSourceException.class)
                 .hasMessage(SafeBreakSourcePolicy.REJECTION_MESSAGE);
     }
+
+    @Test
+    void genericBreakAllowsOnlyAuditedBlockToolDropTriples() {
+        assertThat(SafeBreakSourcePolicy.allowsKnownBlockCombination(
+                "minecraft:cobblestone", "minecraft:iron_pickaxe", "minecraft:cobblestone"))
+                .isTrue();
+        assertThat(SafeBreakSourcePolicy.allowsKnownBlockCombination(
+                "minecraft:oak_log", "minecraft:diamond_axe", "minecraft:oak_log"))
+                .isTrue();
+        assertThat(SafeBreakSourcePolicy.allowsKnownBlockCombination(
+                "minecraft:cobblestone", "minecraft:diamond_pickaxe", "minecraft:cobblestone"))
+                .isFalse();
+        assertThat(SafeBreakSourcePolicy.allowsKnownBlockCombination(
+                "minecraft:stone", "minecraft:iron_pickaxe", "minecraft:cobblestone"))
+                .isFalse();
+    }
 }

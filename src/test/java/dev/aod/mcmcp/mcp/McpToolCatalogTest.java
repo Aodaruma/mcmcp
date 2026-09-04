@@ -963,7 +963,7 @@ class McpToolCatalogTest {
         var actionDsl = state.getAsJsonObject()
                 .getAsJsonObject("policy")
                 .getAsJsonObject("action_dsl");
-        assertThat(actionDsl.getAsJsonArray("available_operations")).hasSize(31);
+        assertThat(actionDsl.getAsJsonArray("available_operations")).hasSize(32);
         assertThat(actionDsl.getAsJsonArray("reference_descriptors")).hasSize(3);
         assertThat(actionDsl.getAsJsonObject("missing_capability_guidance")
                 .get("code").getAsString()).isEqualTo("MISSING_CAPABILITY");

@@ -3,6 +3,7 @@ package dev.aod.mcmcp.agent.dsl;
 import dev.aod.mcmcp.agent.navigation.NavigationDistanceBudget;
 import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.redstone.RedstoneSpec;
+import dev.aod.mcmcp.routine.SafeBreakSourcePolicy;
 
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -283,6 +284,33 @@ public final class ActionDslValidator {
             if (!VANILLA_AXES.contains(breakKnownFace.toolItem())) {
                 throw invalid(path + ".tool_item must be an exact vanilla axe item id");
             }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
+            return 1;
+        }
+        if (node instanceof ActionDsl.BreakKnownBlock block) {
+            validatePosition(block.target(), path + ".target");
+            if (!walk.breakTargets.add(block.target())) {
+                throw unprovable("A break target cannot occur more than once: "
+                        + block.target());
+            }
+            validateBlockState(block.expectedState(), path + ".expected_state");
+            if (!SafeBreakSourcePolicy.allowsKnownBlockCombination(
+                    block.expectedState().block(), block.toolItem(), block.expectedDrop())) {
+                throw invalid(path
+                        + " block/tool/drop combination is outside the closed safe allowlist");
+            }
+            if (BREAKABLE_LOGS.contains(block.expectedState().block())) {
+                if (!block.expectedState().properties().keySet().equals(Set.of("axis"))
+                        || !Set.of("x", "y", "z").contains(
+                                block.expectedState().properties().get("axis"))) {
+                    throw invalid(path + ".expected_state must be one complete log state");
+                }
+            } else if (!block.expectedState().properties().isEmpty()) {
+                throw invalid(path + ".expected_state must be one complete cobblestone state");
+            }
+            requireRange(block.minimumInventoryCount(), 1, 2_304,
+                    path + ".minimum_inventory_count");
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
             return 1;
@@ -689,6 +717,7 @@ public final class ActionDslValidator {
     private static boolean containsWorldMutation(List<ActionDsl.Node> nodes) {
         for (var node : nodes) {
             if (node instanceof ActionDsl.BreakKnownFace
+                    || node instanceof ActionDsl.BreakKnownBlock
                     || node instanceof ActionDsl.TillKnownBlock
                     || node instanceof ActionDsl.TillKnownBatch
                     || node instanceof ActionDsl.PlantKnownWheat

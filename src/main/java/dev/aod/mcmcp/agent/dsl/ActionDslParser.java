@@ -125,6 +125,7 @@ public final class ActionDslParser {
             case "face_known_position" -> face(object, path);
             case "face_known_block_face" -> faceKnownBlockFace(object, path);
             case "break_known_face" -> breakKnownFace(object, path);
+            case "break_known_block" -> breakKnownBlock(object, path);
             case "till_known_block" -> tillKnownBlock(object, path);
             case "till_known_batch" -> tillKnownBatch(object, path);
             case "plant_known_wheat" -> plantKnownWheat(object, path);
@@ -218,6 +219,23 @@ public final class ActionDslParser {
                 blockFace(string(source.get("face"), path + ".face"), path + ".face"),
                 string(source.get("expected_block"), path + ".expected_block"),
                 string(source.get("tool_item"), path + ".tool_item"));
+    }
+
+    private static ActionDsl.BreakKnownBlock breakKnownBlock(JsonObject source, String path) {
+        exactKeys(source, path,
+                Set.of("id", "op", "target", "face", "expected_state", "tool_item",
+                        "expected_drop", "minimum_inventory_count"),
+                Set.of("id", "op", "target", "face", "expected_state", "tool_item",
+                        "expected_drop", "minimum_inventory_count"));
+        return new ActionDsl.BreakKnownBlock(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                blockFace(string(source.get("face"), path + ".face"), path + ".face"),
+                blockStateSpec(source.get("expected_state"), path + ".expected_state"),
+                string(source.get("tool_item"), path + ".tool_item"),
+                string(source.get("expected_drop"), path + ".expected_drop"),
+                integer(source.get("minimum_inventory_count"),
+                        path + ".minimum_inventory_count"));
     }
 
     private static ActionDsl.TillKnownBlock tillKnownBlock(JsonObject source, String path) {

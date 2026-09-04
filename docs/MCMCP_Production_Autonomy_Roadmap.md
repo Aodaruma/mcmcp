@@ -33,7 +33,7 @@ sourceを返す場合も、Bearer、内部slot、hidden state、raw Tool payload
 |---|---|
 | 移動 | `navigate_to_known`, `approach_known_surface`, `approach_known_placement` |
 | 視線 | `face_known_position`, `face_known_block_face` |
-| 破壊・収穫 | `break_known_face`, `harvest_known_wheat`, `harvest_known_wheat_batch`, `clear_known_block_plan` |
+| 破壊・収穫 | `break_known_face`, `break_known_block`, `harvest_known_wheat`, `harvest_known_wheat_batch`, `clear_known_block_plan` |
 | block使用 | `till_known_block`, `till_known_batch`, `open_known_fence_gate`, `open_known_passage` |
 | 設置 | `plant_known_wheat`, `plant_known_wheat_batch`, `apply_known_block_plan`, `pillar_up_known` |
 | 回路 | `apply_known_redstone_spec` |

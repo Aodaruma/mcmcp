@@ -22,6 +22,7 @@ Phase 1のControl / Navigation MVPを終え、Phase 2の最初のsliceである�
 - multiplayerは既定OFFで、`config/mcmcp/allowed-servers.json`の閉じたschemaに完全一致する接続先だけをローカル判定します。サーバーへの確認通信は行いません。
 - DSL例は[`docs/action-templates/`](docs/action-templates/)に置き、custom programと同じ検証経路を通します。
 - `break_known_face`は宣言したblock・面・axeを直前再検証し、Vanilla prediction ACKとauthoritative airが揃った場合だけ成功・破壊数を記録します。
+- `break_known_block`はcurrentな可視面の完全BlockState、tool、期待drop、絶対inventory目標を宣言し、閉じた安全表（oak/birch log＋Vanilla axe、cobblestone＋iron pickaxe）だけを有限attack leaseで破壊します。成功にはACK・authoritative air・実inventory増加がすべて必要です。
 - 最初の木こりgateは地上から届く3段の既知oak幹に限定し、隠れた幹の探索、drop回収保証、植林はまだ対象外です。
 - 2026-08-27、Prismの単一検証profileでAction `32a87494-4768-445a-a142-3b688566bbbb`が`SUCCEEDED`（3 blocks、73 ticks、camera 59.63°）。fixtureも`phase5.tree.gate=PASS`（柵・支持面・player位置を保持、axe damage 3）を確認しました。
 - full-block 1段分の上下移動edge自動生成は未実装です。該当経路は推測せず`TARGET_UNKNOWN`または`NO_KNOWN_PATH`でfail-closedにします。

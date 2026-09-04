@@ -37,7 +37,7 @@ public final class ActionDsl {
 
     public sealed interface Node permits NavigateToKnown, ApproachKnownSurface,
             ApproachKnownPlacement,
-            FaceKnownPosition, FaceKnownBlockFace, BreakKnownFace,
+            FaceKnownPosition, FaceKnownBlockFace, BreakKnownFace, BreakKnownBlock,
             TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
             HarvestKnownWheat, HarvestKnownWheatBatch, ApplyKnownBlockPlan,
             ClearKnownBlockPlan, PillarUpKnown,
@@ -131,6 +131,28 @@ public final class ActionDsl {
             Objects.requireNonNull(face, "face");
             Objects.requireNonNull(expectedBlock, "expectedBlock");
             Objects.requireNonNull(toolItem, "toolItem");
+        }
+    }
+
+    /**
+     * Breaks one exact, policy-approved visible block and confirms both the authoritative air
+     * transition and the declared inventory pickup postcondition.
+     */
+    public record BreakKnownBlock(
+            String id,
+            Position target,
+            BlockFace face,
+            BlockStateSpec expectedState,
+            String toolItem,
+            String expectedDrop,
+            int minimumInventoryCount) implements Node {
+        public BreakKnownBlock {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(face, "face");
+            Objects.requireNonNull(expectedState, "expectedState");
+            Objects.requireNonNull(toolItem, "toolItem");
+            Objects.requireNonNull(expectedDrop, "expectedDrop");
         }
     }
 

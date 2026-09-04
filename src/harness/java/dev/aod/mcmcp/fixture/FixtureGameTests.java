@@ -53,6 +53,8 @@ final class FixtureGameTests {
     private static final Identifier PASSAGE_TEST_ID = id("passage_shapes_fixture");
     private static final Identifier IRON_FARM_TEST_ID = id("iron_farm_lab_fixture");
     private static final Identifier STEP_UP_TEST_ID = id("adjacent_step_up_fixture");
+    private static final Identifier COBBLESTONE_GENERATOR_TEST_ID =
+            id("cobblestone_generator_fixture");
     private static final Identifier ENVIRONMENT_ID = id("fixture_environment");
 
     private static final DeferredRegister<Consumer<GameTestHelper>> TEST_FUNCTIONS =
@@ -79,6 +81,10 @@ final class FixtureGameTests {
     private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> ADJACENT_STEP_UP_FIXTURE =
             TEST_FUNCTIONS.register(
                     "adjacent_step_up_fixture", () -> FixtureGameTests::runAdjacentStepUpFixture);
+    private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> COBBLESTONE_GENERATOR_FIXTURE =
+            TEST_FUNCTIONS.register(
+                    "cobblestone_generator_fixture",
+                    () -> FixtureGameTests::runCobblestoneGeneratorFixture);
 
     private FixtureGameTests() {
     }
@@ -111,6 +117,56 @@ final class FixtureGameTests {
                 new FunctionGameTestInstance(IRON_FARM_LAB_FIXTURE.getKey(), data));
         event.registerTest(STEP_UP_TEST_ID,
                 new FunctionGameTestInstance(ADJACENT_STEP_UP_FIXTURE.getKey(), data));
+        event.registerTest(COBBLESTONE_GENERATOR_TEST_ID,
+                new FunctionGameTestInstance(COBBLESTONE_GENERATOR_FIXTURE.getKey(), data));
+    }
+
+    private static void runCobblestoneGeneratorFixture(GameTestHelper helper) {
+        BlockPos waterSource = new BlockPos(1, 2, 2);
+        BlockPos waterDrop = new BlockPos(2, 1, 2);
+        BlockPos waterChannel = waterDrop.above();
+        BlockPos generated = new BlockPos(3, 2, 2);
+        BlockPos lavaSource = new BlockPos(4, 2, 2);
+
+        for (int x = 0; x <= 5; x++) {
+            for (int z = 0; z <= 4; z++) {
+                helper.setBlock(new BlockPos(x, 0, z), Blocks.BEDROCK);
+                helper.setBlock(new BlockPos(x, 1, z), Blocks.SMOOTH_STONE);
+            }
+        }
+        helper.setBlock(waterDrop, Blocks.AIR);
+        for (int x = 1; x <= 4; x++) {
+            if (x != generated.getX()) {
+                helper.setBlock(new BlockPos(x, 2, 1), Blocks.GLASS);
+            }
+            helper.setBlock(new BlockPos(x, 2, 3), Blocks.GLASS);
+        }
+        helper.setBlock(new BlockPos(0, 2, 2), Blocks.GLASS);
+        helper.setBlock(new BlockPos(5, 2, 2), Blocks.GLASS);
+        helper.setBlock(waterChannel, Blocks.AIR);
+        helper.setBlock(generated, Blocks.COBBLESTONE);
+        helper.setBlock(waterSource, Blocks.WATER);
+        helper.setBlock(lavaSource, Blocks.LAVA);
+
+        helper.runAfterDelay(10L, () -> {
+            var level = helper.getLevel();
+            if (!level.getFluidState(helper.absolutePos(waterSource)).isSource()
+                    || !level.getFluidState(helper.absolutePos(lavaSource)).isSource()
+                    || level.getFluidState(helper.absolutePos(waterChannel)).isEmpty()) {
+                helper.fail(Component.literal(
+                        "Cobblestone fixture sources/channel were not real Vanilla fluids"));
+                return;
+            }
+            level.destroyBlock(helper.absolutePos(generated), false);
+            helper.succeedWhen(() -> {
+                helper.assertBlockPresent(Blocks.COBBLESTONE, generated);
+                if (!level.getFluidState(helper.absolutePos(waterSource)).isSource()
+                        || !level.getFluidState(helper.absolutePos(lavaSource)).isSource()) {
+                    helper.fail(Component.literal(
+                            "Cobblestone regeneration consumed a source fluid"));
+                }
+            });
+        });
     }
 
     private static void runAdjacentStepUpFixture(GameTestHelper helper) {

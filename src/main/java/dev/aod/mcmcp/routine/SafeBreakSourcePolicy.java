@@ -32,6 +32,12 @@ public final class SafeBreakSourcePolicy {
             "minecraft:spruce_log",
             "minecraft:stone",
             "minecraft:wheat");
+    private static final Set<String> GENERIC_LOG_IDS = Set.of(
+            "minecraft:oak_log", "minecraft:birch_log");
+    private static final Set<String> VANILLA_AXES = Set.of(
+            "minecraft:wooden_axe", "minecraft:stone_axe", "minecraft:copper_axe",
+            "minecraft:iron_axe", "minecraft:golden_axe", "minecraft:diamond_axe",
+            "minecraft:netherite_axe");
 
     private SafeBreakSourcePolicy() {
     }
@@ -80,6 +86,25 @@ public final class SafeBreakSourcePolicy {
     public static void requireLiveState(BlockState state, boolean liveBlockEntityPresent) {
         if (!allowsLiveState(state, liveBlockEntityPresent)) {
             throw new UnsafeBreakSourceException();
+        }
+    }
+
+    /** Closed v1 combinations exposed by {@code break_known_block}. */
+    public static boolean allowsKnownBlockCombination(
+            String blockId, String toolItemId, String expectedDropItemId) {
+        if (GENERIC_LOG_IDS.contains(blockId)) {
+            return blockId.equals(expectedDropItemId) && VANILLA_AXES.contains(toolItemId);
+        }
+        return "minecraft:cobblestone".equals(blockId)
+                && "minecraft:iron_pickaxe".equals(toolItemId)
+                && "minecraft:cobblestone".equals(expectedDropItemId);
+    }
+
+    public static void requireKnownBlockCombination(
+            String blockId, String toolItemId, String expectedDropItemId) {
+        if (!allowsKnownBlockCombination(blockId, toolItemId, expectedDropItemId)) {
+            throw new IllegalArgumentException(
+                    "break block/tool/drop combination is outside the closed safe allowlist");
         }
     }
 

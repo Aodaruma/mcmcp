@@ -177,6 +177,10 @@ final class FixturePhase5Scenario {
             FixtureIronFarmScenario.prepare(context, output);
             return;
         }
+        if (mode == FixturePhase5Mode.COBBLESTONE_GENERATOR) {
+            FixtureCobblestoneGeneratorScenario.prepare(context, output);
+            return;
+        }
         if (mode == FixturePhase5Mode.RESET) {
             FixtureArena.load(context);
             resetKnownRecipes(context);
@@ -730,6 +734,8 @@ final class FixturePhase5Scenario {
                 player.getInventory().setItem(3, new ItemStack(Items.REDSTONE));
                 player.getInventory().setItem(4, new ItemStack(Items.SMOOTH_STONE));
             }
+            case COBBLESTONE_GENERATOR ->
+                    throw new IllegalArgumentException("cobblestone_generator has separate inventory setup");
             case IRON_FARM, RESET ->
                     throw new IllegalArgumentException(mode.wireName() + " has separate inventory setup");
         }
@@ -779,6 +785,8 @@ final class FixturePhase5Scenario {
             case SLEEP -> new Pose(193.5D, 200.0D, 204.5D, -90.0F, 18.0F);
             case SURVEY -> new Pose(200.5D, 200.0D, 204.5D, -90.0F, 12.0F);
             case GENERALIZATION -> new Pose(205.5D, 200.0D, 200.5D, 90.0F, 0.0F);
+            case COBBLESTONE_GENERATOR ->
+                    throw new IllegalArgumentException("cobblestone_generator has a separate pose");
             case IRON_FARM, RESET ->
                     throw new IllegalArgumentException(mode.wireName() + " has a separate pose");
         };

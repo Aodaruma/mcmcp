@@ -744,6 +744,7 @@ Action DSL v1の制御構造:
 | wait_ticks | なし | 1〜15,000 active tickの有限待機。安全gateとAction全体deadlineは継続する |
 | wait_until | なし | 開始時にpolicy-visibleなwheat surfaceだった明示座標を認可し、その座標のlive成熟を最大1〜15,000 active tick待機 |
 | break_known_face | camera, block_break | 宣言した可視・既知のoak / birch幹1個を、指定したVanilla axeで通常入力から破壊 |
+| break_known_block | camera, block_break | currentな可視面からコピーした完全BlockStateを、監査済みblock/tool/drop組合せだけで破壊し、ACK・air・期待dropのinventory増加を確認 |
 | till_known_block | camera, block_interact | 可視・既知のdirt / grass_block / dirt_path 1個を、指定したVanilla hoeの通常useでfarmlandへ変換 |
 | till_known_batch | camera, block_interact | 1〜8個の相異なる可視・既知blockを、共通の`expected_block`とVanilla hoeで入力順に耕す |
 | plant_known_wheat | camera, block_place | 可視・既知のfarmland直上のairへwheat_seedsを通常useで植え、age=0を確認 |
@@ -767,6 +768,8 @@ Action DSL v1の制御構造:
 | collect_visible_item_batch | movement | 2〜8件の可視item witnessをlisted orderで同じ安全検証経路へ展開し、失敗時は未開始suffixを実行しない |
 
 `break_known_face`は指定faceのblock中央へ固定照準せず、そのfaceを実際に観測したray hitへ解析的に照準し、開始直前にも同じfaceのtargeted raycastを要求する。
+
+`break_known_block`も同じdelivery-backed ray、有限attack lease、Vanilla prediction ACK、authoritative air経路を再利用するが、block IDだけでなく`visible_surface.state`からコピーした完全な`expected_state`をpacket隣接で再確認する。V1の安全表はoak/birch log＋同種drop＋Vanilla axe、およびcobblestone＋iron pickaxe＋cobblestoneだけである。成功には`expected_drop`のserver-synchronized inventoryが開始時より増え、かつ`minimum_inventory_count`へ到達することも必要とする。ACK前に中断した可能性のある破壊はeffect ledgerへ`unknown`、ACKとauthoritative airを確認した破壊は、drop postcondition未達でAction自体が失敗しても`confirmed`として記録する。world mutationなので`repeat`内を拒否し、staleな可視証拠を次の破壊へ再利用しない。
 
 semantic action、stationary break、block plan、Phase 5 world adapterで共有するuniversal safety gateは、OS window focusとVanillaのmouse grabを許可条件へ含めない。評価中に別terminalへfocusを移した場合やmouse captureが一時的に外れた場合でも、それだけでpreflight / JITを失敗させない。一方、Minecraftの実pause、予期しないScreen / overlay、Survival mode、生存とhealth・被弾・炎上、policy-visibleな近傍threat、primitiveごとの位置・向き・slot・使用状態を含むstationary条件、serverのposition / rotation / motion / inventory / block mutation reconciliationは従来どおり検証し、操作直前の再検証を省略しない。Screenの不一致はこのmutation dispatchを許可しない条件であり、それだけでcontrolをOFFにするglobal stopとは区別する。universal safetyの変化は`CONTROL_CONTEXT_CHANGED`または`mutation_safety_changed`、対象block自体の不一致は`mutation_precondition_changed`として分離し、入力値を診断へ反射しない。
 

@@ -122,6 +122,7 @@ neoForge {
                 def supportedModes = [
                         'recipes', 'craft', 'smelt', 'warehouse_smelt', 'brew', 'redstone', 'transfer', 'crop',
                         'combined_wheat', 'tree', 'sleep', 'survey', 'generalization',
+                        'cobblestone_generator',
                         'iron_farm', 'reset'
                 ]
                 if (!supportedModes.contains(requestedMode)) {

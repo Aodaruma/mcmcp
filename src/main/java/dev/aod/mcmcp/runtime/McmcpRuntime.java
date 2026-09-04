@@ -2000,6 +2000,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 : node instanceof ActionDsl.BrewKnownPotionBatch
                         ? ActionDslCompiler.KNOWN_BREWING_INTERACTIONS : 0L;
         long breaks = node instanceof ActionDsl.BreakKnownFace
+                        || node instanceof ActionDsl.BreakKnownBlock
                         || node instanceof ActionDsl.HarvestKnownWheat
                 ? 1L : 0L;
         if (node instanceof ActionDsl.HarvestKnownWheatBatch batch) {
@@ -3916,7 +3917,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (agentExecution.primitiveExecutor.active()
                     && (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition
                             || agentExecution.primitive instanceof ActionDsl.FaceKnownBlockFace
-                            || agentExecution.primitive instanceof ActionDsl.BreakKnownFace)) {
+                            || isKnownBreak(agentExecution.primitive))) {
                 var faceReconciliation = reconciliationSignals.bindAndSnapshot(
                         Objects.requireNonNull(minecraft.level, "level"),
                         session.worldSessionId());
@@ -3932,22 +3933,32 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             new AgentPrimitivePlanner.KnownSurface(
                                     face.target(), face.face(), face.expectedBlock()));
                 } else {
-                    var block = (ActionDsl.BreakKnownFace) agentExecution.primitive;
+                    var block = agentExecution.primitive;
                     faceEvidenceCurrent = AgentPrimitivePlanner.knownSurface(
                             map,
                             agentPlanningFrame(),
                             new AgentPrimitivePlanner.KnownSurface(
-                                    block.target(), block.face(), block.expectedBlock()),
-                            faceSurfaceBarrier.applyAsLong(block.target()));
+                                    breakTarget(block), breakFace(block), breakBlockId(block)),
+                            faceSurfaceBarrier.applyAsLong(breakTarget(block)));
+                    if (faceEvidenceCurrent && block instanceof ActionDsl.BreakKnownBlock exact) {
+                        try {
+                            AgentPrimitivePlanner.requireKnownBreakSurface(
+                                    map, agentPlanningFrame(), exact,
+                                    faceSurfaceBarrier.applyAsLong(exact.target()));
+                        } catch (AgentPrimitivePlanner.PlanningException unavailable) {
+                            faceEvidenceCurrent = false;
+                        }
+                    }
                 }
                 if (!faceEvidenceCurrent) {
                     requestAgentReplan(actionTick, "face_target_reobservation");
                     return;
                 }
             }
-            if (agentExecution.primitive instanceof ActionDsl.BreakKnownFace block
+            if (isKnownBreak(agentExecution.primitive)
                     && agentExecution.breakAimComplete) {
-                tickAgentBreak(minecraft, session, action, map, block, actionTick);
+                tickAgentBreak(
+                        minecraft, session, action, map, agentExecution.primitive, actionTick);
                 return;
             }
             if (!agentExecution.primitiveExecutor.active()
@@ -4012,7 +4023,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     }
                 }
                 case SUCCEEDED -> {
-                    if (agentExecution.primitive instanceof ActionDsl.BreakKnownFace) {
+                    if (isKnownBreak(agentExecution.primitive)) {
                         agentExecution.breakAimComplete = true;
                         agentExecution.replanning = false;
                         agentExecution.replanNotBeforeTick = 0L;
@@ -4611,12 +4622,61 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 - progressBeforeTick.blocksBroken()));
                 int toolSlot = findDurableHotbarTool(
                         player, block.toolItem(), remainingBreaks);
-                if (toolSlot < 0 || !inventoryCanReceiveKnownLogs(
+                if (toolSlot < 0 || !inventoryCanReceiveKnownBreakDrops(
                         player, action.program())) {
                     failAgentAction(
                             AgentActionStore.FailureCode.WORLD_CHANGED,
                             true,
                             toolSlot < 0 ? "required_axe_unavailable" : "inventory_full");
+                    return false;
+                }
+                player.getInventory().setSelectedSlot(toolSlot);
+                agentExecution.agentSelectedSlot = toolSlot;
+                agentExecution.primitiveExecutor.beginFace(
+                        new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
+                                map.worldSessionId(), map.worldRevision(),
+                                block.target(), breakAim.point().x,
+                                breakAim.point().y, breakAim.point().z, true),
+                        aimTicks);
+            } else if (agentExecution.primitive instanceof ActionDsl.BreakKnownBlock block) {
+                AgentPrimitivePlanner.MutationAim breakAim =
+                        AgentPrimitivePlanner.requireKnownBreakAim(
+                                map,
+                                agentPlanningFrame(),
+                                block,
+                                surfaceRevisionBarrier.applyAsLong(block.target()));
+                cost = AgentPrimitivePlanner.breakCost(
+                        playerPose(player, map.dimension()),
+                        block,
+                        breakAim.point(),
+                        McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
+                long aimTicks = breakAimTicks(cost);
+                cost = breakExecutionCost(cost, agentExecution.replanning);
+                if (!fitsRemainingBudget(
+                        progressBeforeTick,
+                        action.program().effectiveBudget(),
+                        cost,
+                        activeElapsedNanos(agentExecution, System.nanoTime()))
+                        || !fitsOccurrenceRemaining(
+                                progressBeforeTick, agentExecution, cost)) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                            false,
+                            "break_known_block");
+                    return false;
+                }
+                int remainingBreaks = Math.toIntExact(Math.max(
+                        1L,
+                        action.program().worstCaseCost().blocksBroken()
+                                - progressBeforeTick.blocksBroken()));
+                int toolSlot = findDurableHotbarTool(
+                        player, block.toolItem(), remainingBreaks);
+                if (toolSlot < 0 || !inventoryCanReceiveKnownBreakDrops(
+                        player, action.program())) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.WORLD_CHANGED,
+                            true,
+                            toolSlot < 0 ? "required_tool_unavailable" : "inventory_full");
                     return false;
                 }
                 player.getInventory().setSelectedSlot(toolSlot);
@@ -4924,7 +4984,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             WorldSessionTracker.Snapshot session,
             AgentActionStore.Active action,
             KnownTraversabilitySnapshot map,
-            ActionDsl.BreakKnownFace block,
+            ActionDsl.Node block,
             long actionTick) {
         var player = Objects.requireNonNull(minecraft.player, "player");
         if (agentExecution.blockBreakAttempt == null) {
@@ -4932,7 +4992,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     Objects.requireNonNull(minecraft.level, "level"),
                     session.worldSessionId());
             long surfaceBarrierWorldRevision = surfaceRevisionBarrier(map, reconciliation)
-                    .applyAsLong(block.target());
+                    .applyAsLong(breakTarget(block));
             if (!breakTargetStateMatches(minecraft, block)) {
                 failAgentAction(
                         AgentActionStore.FailureCode.WORLD_CHANGED,
@@ -4944,7 +5004,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             map,
                             agentPlanningFrame(),
                             new AgentPrimitivePlanner.KnownSurface(
-                                    block.target(), block.face(), block.expectedBlock()),
+                                    breakTarget(block), breakFace(block), breakBlockId(block)),
                             surfaceBarrierWorldRevision)
                     || !breakSourceControlled(minecraft, block)) {
                 requestAgentReplan(actionTick, "break_target_reobservation");
@@ -4952,16 +5012,33 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             try {
                 var target = new BlockTarget(
-                        block.target().dimension(),
-                        block.target().x(),
-                        block.target().y(),
-                        block.target().z());
+                        breakTarget(block).dimension(),
+                        breakTarget(block).x(),
+                        breakTarget(block).y(),
+                        breakTarget(block).z());
                 var expected = stationaryBreakPort.captureExpectedSource(
-                        target, Set.of(block.expectedBlock()));
+                        target, Set.of(breakBlockId(block)));
+                if (block instanceof ActionDsl.BreakKnownBlock exact) {
+                    var declared = new BlockStateFingerprint(
+                            exact.expectedState().block(), exact.expectedState().properties());
+                    if (!expected.equals(declared)) {
+                        requestAgentReplan(actionTick, "break_precondition_changed");
+                        return;
+                    }
+                    SafeBreakSourcePolicy.requireKnownBlockCombination(
+                            exact.expectedState().block(),
+                            exact.toolItem(),
+                            exact.expectedDrop());
+                }
+                int minimumInventoryCount = block instanceof ActionDsl.BreakKnownBlock exact
+                        ? exact.minimumInventoryCount()
+                        : Math.min(2_304, Math.addExact(
+                                inventoryItemCount(player, breakExpectedDrop(block)), 1));
                 var request = new StationaryBreakRequest(
                         target,
                         expected,
-                        new StationaryBreakGoal(block.expectedBlock(), 1),
+                        new StationaryBreakGoal(
+                                breakExpectedDrop(block), minimumInventoryCount),
                         Math.addExact(
                                 session.clientTick(),
                                 AgentPrimitivePlanner.BREAK_TICK_UPPER_BOUND),
@@ -4988,6 +5065,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         try {
             result = agentExecution.blockBreakAttempt.tick(
                     session.clientTick(), breakSourceControlled(minecraft, block));
+            recordBreakEffects(
+                    action.actionId(), breakTarget(block),
+                    agentExecution.blockBreakAttempt.drainEffectDeltas());
         } catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error("MCMCP known-face break confirmation failed", failure);
             failAgentAction(
@@ -5014,6 +5094,25 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 advanceAgentProgram(
                         minecraft, agentActions.get(action.actionId()).progress());
             }
+        }
+    }
+
+    private void recordBreakEffects(
+            UUID actionId,
+            ActionDsl.Position target,
+            List<KnownBlockBreakAttempt.EffectDelta> effects) {
+        String subject = "block:" + target.dimension() + ":"
+                + target.x() + "," + target.y() + "," + target.z();
+        for (var effect : effects) {
+            agentActions.recordEffect(
+                    actionId,
+                    "block_break",
+                    subject,
+                    effect.observedBefore(),
+                    effect.observedAfter(),
+                    effect.verification(),
+                    effect.clientTick(),
+                    effect.worldRevision());
         }
     }
 
@@ -6386,7 +6485,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     static long agentReplanWindowTicks(ActionDsl.Node primitive) {
-        return primitive instanceof ActionDsl.BreakKnownFace
+        return isKnownBreak(primitive)
                 ? AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS
                 : 20L;
     }
@@ -7145,12 +7244,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             Minecraft minecraft,
             ActionDslCompiler.CompiledProgram program,
             Optional<ActionDsl.Node> initialPrimitive) {
-        if (initialPrimitive.filter(ActionDsl.BreakKnownFace.class::isInstance).isEmpty()) {
+        if (initialPrimitive.filter(McmcpRuntime::isKnownBreak).isEmpty()) {
             return true;
         }
         var player = minecraft.player;
         if (player == null) return false;
-        var breaks = new ArrayList<ActionDsl.BreakKnownFace>();
+        var breaks = new ArrayList<ActionDsl.Node>();
         collectBreakNodes(program.request().program().body(), breaks);
         if (breaks.isEmpty()) return true;
         if (!player.isAlive() || player.isDeadOrDying() || player.isUsingItem()
@@ -7164,18 +7263,53 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         int requiredDurability = Math.toIntExact(program.worstCaseCost().blocksBroken());
         // ponytail: mixed-tool branches use one conservative worst-path allowance per tool.
         for (var block : breaks) {
-            if (findDurableHotbarTool(player, block.toolItem(), requiredDurability) < 0) {
+            if (findDurableHotbarTool(player, breakToolItem(block), requiredDurability) < 0) {
                 return false;
             }
         }
-        return inventoryCanReceiveKnownLogs(player, program);
+        return inventoryCanReceiveKnownBreakDrops(player, program);
+    }
+
+    private static boolean isKnownBreak(ActionDsl.Node node) {
+        return node instanceof ActionDsl.BreakKnownFace
+                || node instanceof ActionDsl.BreakKnownBlock;
+    }
+
+    private static ActionDsl.Position breakTarget(ActionDsl.Node node) {
+        if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.target();
+        if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.target();
+        throw new IllegalArgumentException("node is not a known break");
+    }
+
+    private static ActionDsl.BlockFace breakFace(ActionDsl.Node node) {
+        if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.face();
+        if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.face();
+        throw new IllegalArgumentException("node is not a known break");
+    }
+
+    private static String breakBlockId(ActionDsl.Node node) {
+        if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.expectedBlock();
+        if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.expectedState().block();
+        throw new IllegalArgumentException("node is not a known break");
+    }
+
+    private static String breakToolItem(ActionDsl.Node node) {
+        if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.toolItem();
+        if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.toolItem();
+        throw new IllegalArgumentException("node is not a known break");
+    }
+
+    private static String breakExpectedDrop(ActionDsl.Node node) {
+        if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.expectedBlock();
+        if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.expectedDrop();
+        throw new IllegalArgumentException("node is not a known break");
     }
 
     private static void collectBreakNodes(
-            List<ActionDsl.Node> nodes, List<ActionDsl.BreakKnownFace> output) {
+            List<ActionDsl.Node> nodes, List<ActionDsl.Node> output) {
         for (var node : nodes) {
-            if (node instanceof ActionDsl.BreakKnownFace block) {
-                output.add(block);
+            if (isKnownBreak(node)) {
+                output.add(node);
             } else if (node instanceof ActionDsl.If conditional) {
                 collectBreakNodes(conditional.thenBranch(), output);
                 collectBreakNodes(conditional.elseBranch(), output);
@@ -7203,14 +7337,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return -1;
     }
 
-    private static boolean inventoryCanReceiveKnownLogs(
+    private static boolean inventoryCanReceiveKnownBreakDrops(
             net.minecraft.client.player.LocalPlayer player,
             ActionDslCompiler.CompiledProgram program) {
-        var breaks = new ArrayList<ActionDsl.BreakKnownFace>();
+        var breaks = new ArrayList<ActionDsl.Node>();
         collectBreakNodes(program.request().program().body(), breaks);
-        var logItems = new LinkedHashSet<String>();
-        breaks.forEach(block -> logItems.add(block.expectedBlock()));
-        if (logItems.isEmpty()) return true;
+        var dropItems = new LinkedHashSet<String>();
+        breaks.forEach(block -> dropItems.add(breakExpectedDrop(block)));
+        if (dropItems.isEmpty()) return true;
         int requiredPerType = Math.toIntExact(program.worstCaseCost().blocksBroken());
         var inventory = player.getInventory();
         int emptySlots = 0;
@@ -7218,7 +7352,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (inventory.getItem(slot).isEmpty()) emptySlots++;
         }
         int newStacksNeeded = 0;
-        for (String itemId : logItems) {
+        for (String itemId : dropItems) {
             int existingCapacity = 0;
             for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
                 var stack = inventory.getItem(slot);
@@ -7235,7 +7369,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private static boolean breakSourceControlled(
-            Minecraft minecraft, ActionDsl.BreakKnownFace block) {
+            Minecraft minecraft, ActionDsl.Node block) {
         var player = minecraft.player;
         var level = minecraft.level;
         var gameMode = minecraft.gameMode;
@@ -7246,17 +7380,17 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || player.isInWater() || player.isInLava()
                 || player.isFallFlying() || player.getAbilities().flying
                 || gameMode.getPlayerMode() != GameType.SURVIVAL
-                || !block.target().dimension().equals(
+                || !breakTarget(block).dimension().equals(
                         level.dimension().identifier().toString())) {
             return false;
         }
         var position = new BlockPos(
-                block.target().x(), block.target().y(), block.target().z());
+                breakTarget(block).x(), breakTarget(block).y(), breakTarget(block).z());
         if (!level.isLoaded(position)
                 || !(minecraft.hitResult instanceof BlockHitResult hit)
                 || hit.getType() != HitResult.Type.BLOCK
                 || !hit.getBlockPos().equals(position)
-                || hit.getDirection() != Direction.valueOf(block.face().name())
+                || hit.getDirection() != Direction.valueOf(breakFace(block).name())
                 || !player.isWithinBlockInteractionRange(position, 0.0D)
                 || !level.getWorldBorder().isWithinBounds(position)
                 || player.blockActionRestricted(level, position, gameMode.getPlayerMode())) {
@@ -7265,35 +7399,50 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var state = level.getBlockState(position);
         var blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
         float destroyProgress = state.getDestroyProgress(player, level, position);
-        if (!block.expectedBlock().equals(blockId)
+        if (!breakBlockId(block).equals(blockId)
                 || !SafeBreakSourcePolicy.allowsLiveState(
                         state, level.getBlockEntity(position) != null)
                 || destroyProgress <= 0.0F
                 || destroyProgress * StationaryBreakRequest.MAX_ATTACK_LEASE_TICKS < 1.0F) {
             return false;
         }
+        if (block instanceof ActionDsl.BreakKnownBlock exact) {
+            var live = MinecraftStationaryBreakPort.fingerprintForPolicy(state);
+            if (!new BlockStateFingerprint(
+                            exact.expectedState().block(), exact.expectedState().properties())
+                    .equals(live)
+                    || !SafeBreakSourcePolicy.allowsKnownBlockCombination(
+                            exact.expectedState().block(), exact.toolItem(), exact.expectedDrop())) {
+                return false;
+            }
+        }
         int selected = player.getInventory().getSelectedSlot();
         if (selected < 0 || selected >= Inventory.getSelectionSize()) return false;
         var tool = player.getInventory().getItem(selected);
         return !tool.isEmpty()
-                && block.toolItem().equals(
+                && breakToolItem(block).equals(
                         BuiltInRegistries.ITEM.getKey(tool.getItem()).toString())
                 && tool.isDamageableItem()
                 && tool.getMaxDamage() - tool.getDamageValue() >= 1;
     }
 
     private static boolean breakTargetStateMatches(
-            Minecraft minecraft, ActionDsl.BreakKnownFace block) {
+            Minecraft minecraft, ActionDsl.Node block) {
         var level = minecraft.level;
-        if (level == null || !block.target().dimension().equals(
+        if (level == null || !breakTarget(block).dimension().equals(
                 level.dimension().identifier().toString())) {
             return false;
         }
         var position = new BlockPos(
-                block.target().x(), block.target().y(), block.target().z());
-        return level.isLoaded(position)
-                && block.expectedBlock().equals(BuiltInRegistries.BLOCK.getKey(
-                        level.getBlockState(position).getBlock()).toString());
+                breakTarget(block).x(), breakTarget(block).y(), breakTarget(block).z());
+        if (!level.isLoaded(position)) return false;
+        var state = level.getBlockState(position);
+        if (!breakBlockId(block).equals(
+                BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString())) return false;
+        return !(block instanceof ActionDsl.BreakKnownBlock exact)
+                || new BlockStateFingerprint(
+                        exact.expectedState().block(), exact.expectedState().properties())
+                        .equals(MinecraftStationaryBreakPort.fingerprintForPolicy(state));
     }
 
     static void validatePredicateAvailability(
@@ -7556,7 +7705,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         && used.cameraDegrees() >= budget.maxCameraDegrees()
                 || primitive instanceof ActionDsl.FaceKnownBlockFace
                         && used.cameraDegrees() >= budget.maxCameraDegrees()
-                || primitive instanceof ActionDsl.BreakKnownFace
+                || isKnownBreak(primitive)
                         && used.cameraDegrees() >= budget.maxCameraDegrees();
     }
 
@@ -7926,12 +8075,26 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             McmcpMod.LOGGER.error("MCMCP Action DSL input release failed", failure);
         }
         if (agentExecution.blockBreakAttempt != null) {
+            KnownBlockBreakAttempt breaking = agentExecution.blockBreakAttempt;
             try {
-                agentExecution.blockBreakAttempt.close();
+                breaking.close();
                 agentExecution.blockBreakAttempt = null;
             } catch (RuntimeException | LinkageError failure) {
                 closed = false;
                 McmcpMod.LOGGER.error("MCMCP known-face break release failed", failure);
+            } finally {
+                try {
+                    if (isKnownBreak(agentExecution.primitive)) {
+                        recordBreakEffects(
+                                agentExecution.actionId,
+                                breakTarget(agentExecution.primitive),
+                                breaking.drainEffectDeltas());
+                    }
+                } catch (RuntimeException | LinkageError failure) {
+                    closed = false;
+                    McmcpMod.LOGGER.error(
+                            "MCMCP known-block break effect capture failed", failure);
+                }
             }
         }
         if (agentExecution.blockMutationAttempt != null) {

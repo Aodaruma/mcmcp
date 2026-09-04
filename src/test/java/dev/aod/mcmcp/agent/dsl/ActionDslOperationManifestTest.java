@@ -22,6 +22,7 @@ class ActionDslOperationManifestTest {
                         "face_known_position",
                         "face_known_block_face",
                         "break_known_face",
+                        "break_known_block",
                         "till_known_block",
                         "till_known_batch",
                         "plant_known_wheat",

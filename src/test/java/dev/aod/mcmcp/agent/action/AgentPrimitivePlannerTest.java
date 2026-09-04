@@ -1716,6 +1716,37 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void genericBreakRequiresDeliveredCompleteStateRatherThanBlockIdAlone() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var target = new ActionDsl.Position(DIMENSION, 3, 65, 0);
+        var block = new ActionDsl.BreakKnownBlock(
+                "mine", target, ActionDsl.BlockFace.WEST,
+                new ActionDsl.BlockStateSpec("minecraft:cobblestone", Map.of()),
+                "minecraft:iron_pickaxe", "minecraft:cobblestone", 1);
+        var program = new ActionDsl.Program(
+                1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_BREAK),
+                List.of(block));
+        var exactFrame = frame(List.of(surfaceWithState(
+                target, ObservationRecord.Face.WEST, "minecraft:cobblestone", Map.of(), 0)));
+
+        var analysis = AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                Optional.of(exactFrame), 4.5F);
+        assertThat(analysis.mutationAims()).containsKey("mine");
+        assertThat(analysis.primitiveCosts().get("mine").blocksBroken()).isOne();
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                Optional.of(frame(target, ObservationRecord.Face.WEST,
+                        "minecraft:cobblestone", 0)), 4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+    }
+
+    @Test
     void wheatMutationCostsUseTheSelectedSurfaceAngleAndPreferUpForTilling() {
         UUID session = UUID.randomUUID();
         var map = map(session).snapshot().orElseThrow();

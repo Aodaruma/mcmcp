@@ -130,6 +130,14 @@ final class FixtureCommands {
                         .then(phase5("sleep", FixturePhase5Mode.SLEEP))
                         .then(phase5("survey", FixturePhase5Mode.SURVEY))
                         .then(phase5("generalization", FixturePhase5Mode.GENERALIZATION))
+                        .then(phase5("cobblestone_generator",
+                                FixturePhase5Mode.COBBLESTONE_GENERATOR))
+                        .then(Commands.literal("cobblestone_generator_status")
+                                .executes(context -> execute(context.getSource(),
+                                        FixtureCobblestoneGeneratorScenario::sendStatus)))
+                        .then(Commands.literal("cobblestone_generator_oracle")
+                                .executes(context -> execute(context.getSource(),
+                                        FixtureCobblestoneGeneratorScenario::sendOracle)))
                         .then(phase5("iron_farm", FixturePhase5Mode.IRON_FARM))
                         .then(Commands.literal("verify_tree")
                                 .executes(context -> execute(

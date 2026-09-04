@@ -24,6 +24,8 @@ Action本文は通常のJSONなので、LLMは`agent_get_action.source.canonical
 
 利用可能な全opcodeは`agent_get_state.policy.action_dsl.available_operations`にあり、必要capability、opaque ref field、現在のローカルgrantとの差分を機械可読に返します。`MISSING_CAPABILITY`時は同じ場所のguidanceに従い、必要値を`program.capabilities`へ宣言します。ローカル側のgrant不足は`control.granted_capabilities`と`locally_missing_capabilities`で区別します。公開Toolは引き続き5件です。
 
+汎用破壊の最初の閉じたprimitiveは`break_known_block`です。`target`、`face`、完全な`expected_state`をcurrentな`visible_surface`からそのままコピーし、`tool_item`、`expected_drop`、`minimum_inventory_count`を宣言します。現時点の許可組合せは、oak/birch log＋対応するlog drop＋Vanilla axe、またはcobblestone＋`minecraft:iron_pickaxe`＋cobblestoneだけです。成功にはserver ACK、authoritative air、同期待dropのserver-synchronized inventory増加と絶対目標到達が必要です。`repeat`内には置けず、次の破壊は再観測して新しいActionにします。
+
 近傍の敵対mob判定は助言ではなくruntimeの安全条件であり、現状では該当するとActionが失敗・再計画へ進み、Agent入力が解放されます。mob trap向けには、敵対mobの「存在」だけをローカルユーザー発行のscoped `consent_ref`で限定解除し、被弾、接触、projectile、health低下等は解除しない設計です。この同意経路が実装されるまでは従来どおりfail closedです。
 
 ## 観測を絞る
