@@ -111,11 +111,13 @@ $targetDefinitions = @(
     }
 )
 $targetRecords = @($targetDefinitions | ForEach-Object {
-        New-Surface -Block 'minecraft:oak_stairs' `
+        $record = New-Surface -Block 'minecraft:oak_stairs' `
             -Position (New-Position $_.x $_.y $_.z) `
             -State (New-StairState $_.facing $_.shape) -Face 'up' `
             -PlacementItem 'minecraft:oak_stairs' `
             -PlacementStateRef ('psr_' + ('8' * 32))
+        $record | Add-Member -NotePropertyName gate_id -NotePropertyValue $_.id
+        $record
     })
 
 function New-MockStairsState {
@@ -138,7 +140,9 @@ function New-MockStairsState {
         standard_potions = @()
         recipe_query = $null
         policy = [pscustomobject]@{ max_distance_blocks = 32 }
-        observation = [pscustomobject]@{ latest_frame_id = 'obs-1234567890abcdef' }
+        observation = [pscustomobject]@{
+            latest_frame_id = 'obs-{0:x16}' -f $script:MockFrameCounter
+        }
         action = $null
     }
 }
@@ -146,7 +150,7 @@ function New-MockStairsState {
 function Select-MockObservationRecords {
     param([Parameter(Mandatory)][object]$Arguments)
     $all = @($sourceRecords) + @($supportRecords)
-    if ($script:ActionCompleted) { $all += @($targetRecords) }
+    $all += @($targetRecords | Where-Object { $_.gate_id -cin @($script:PlacedIds) })
     $filter = Get-ObjectProperty $Arguments 'filter'
     if ($null -eq $filter) { return $all }
     $ids = @((Get-ObjectProperty $filter 'block_ids'))
@@ -172,67 +176,131 @@ function Select-MockObservationRecords {
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null
 $script:ActionCompleted = $false
-$actionId = '550e8400-e29b-41d4-a716-446655440070'
+$script:ActionSequence = 0
+$script:MockActions = @{}
+$script:PlacedIds = @()
+$script:MockFrameCounter = 1
+$actionIds = @(
+    '550e8400-e29b-41d4-a716-446655440070'
+    '550e8400-e29b-41d4-a716-446655440071'
+    '550e8400-e29b-41d4-a716-446655440072'
+    '550e8400-e29b-41d4-a716-446655440073'
+    '550e8400-e29b-41d4-a716-446655440074'
+    '550e8400-e29b-41d4-a716-446655440075'
+    '550e8400-e29b-41d4-a716-446655440076'
+    '550e8400-e29b-41d4-a716-446655440077'
+    '550e8400-e29b-41d4-a716-446655440078'
+)
 Add-GateEvent -Event 'fixed_five_surface_verified' -Detail ([ordered]@{
         protocol_version = $script:ProtocolVersion; tools = @($script:AllowedTools)
     })
 $script:ToolTransport = {
     param($Tool, $Arguments)
     switch ($Tool) {
-        'agent_get_state' { New-MockStairsState -Completed:$script:ActionCompleted }
+        'agent_get_state' {
+            $script:MockFrameCounter++
+            New-MockStairsState -Completed:$script:ActionCompleted
+        }
         'agent_get_observation' {
             [pscustomobject]@{
-                schema_version = 1; frame_id = 'obs-1234567890abcdef'
+                schema_version = 1
+                frame_id = 'obs-{0:x16}' -f $script:MockFrameCounter
                 frame_completed_tick = 10L; visible_entities_truncated = $false
                 records = @(Select-MockObservationRecords -Arguments $Arguments)
                 next_cursor = $null; sampling_coverage = 1
             }
         }
         'agent_start_action' {
-            $face = $Arguments.program.body[0]
-            $submitted = $Arguments.program.body[1]
-            if ($face.op -cne 'face_known_position' -or
-                $face.target.x -ne 202 -or $face.target.y -ne 199 -or
-                $face.target.z -ne 194) {
-                throw 'mock received an invalid Gate D pre-aim'
-            }
-            if ($submitted.op -cne 'apply_known_block_plan' -or
-                $submitted.entries.Count -ne 5 -or
+            $componentIndex = [Math]::Floor($script:ActionSequence / 3)
+            $phase = $script:ActionSequence % 3
+            $isApproach = $phase -eq 0
+            $isFace = $phase -eq 1
+            $expected = $script:StairComponents[$componentIndex]
+            $expectedCount = @($expected.ids).Count
+            $submitted = $Arguments.program.body[0]
+            $pivot = @($targetDefinitions | Where-Object {
+                    $_.id -ceq [string]$expected.pivot
+                })[0]
+            if ($isApproach) {
+                if ($Arguments.program.body.Count -ne 1 -or
+                    $submitted.op -cne 'approach_known_surface' -or
+                    $submitted.id -cne "approach_stairs_$($expected.name)" -or
+                    $submitted.id.Length -gt 32 -or
+                    $submitted.expected_block -cne 'minecraft:smooth_stone' -or
+                    [int]$submitted.target.x -ne [int]$pivot.x -or
+                    [int]$submitted.target.y -ne ([int]$pivot.y - 1) -or
+                    [int]$submitted.target.z -ne [int]$pivot.z) {
+                    throw 'mock received an invalid Gate D approach Action'
+                }
+            } elseif ($isFace) {
+                if ($Arguments.program.body.Count -ne 1 -or
+                    $submitted.op -cne 'face_known_block_face' -or
+                    $submitted.id -cne "face_directional_stairs_$($expected.name)" -or
+                    $submitted.expected_block -cne 'minecraft:smooth_stone' -or
+                    $submitted.face -cne 'up' -or
+                    [int]$submitted.target.x -ne [int]$pivot.x -or
+                    [int]$submitted.target.y -ne ([int]$pivot.y - 1) -or
+                    [int]$submitted.target.z -ne [int]$pivot.z) {
+                    throw 'mock received an invalid Gate D face Action'
+                }
+            } elseif ($Arguments.program.body.Count -ne 1 -or
+                $submitted.op -cne 'apply_known_block_plan' -or
+                $submitted.id -cne "directional_stairs_$($expected.name)" -or
+                $submitted.entries.Count -ne $expectedCount -or
                 $submitted.transform.rotation -ne 90 -or
                 $submitted.transform.mirror -cne 'x') {
-                throw 'mock received an invalid Gate D Action'
+                throw 'mock received an invalid Gate D build Action'
             }
+            $actionId = $actionIds[$script:ActionSequence]
+            $script:MockActions[$actionId] = [pscustomobject]@{
+                kind = if ($isApproach) { 'approach' } elseif ($isFace) { 'face' } else { 'build' }
+                count = if ($isApproach -or $isFace) { 0 } else { $expectedCount }
+                node = $submitted.id
+                ids = if ($isApproach -or $isFace) { @() } else { @($expected.ids) }
+            }
+            $script:ActionSequence++
             [pscustomobject]@{ schema_version = 1; action_id = $actionId; state = 'queued' }
         }
         'agent_get_action' {
-            $script:ActionCompleted = $true
+            $actionId = [string](Get-ObjectProperty $Arguments 'action_id')
+            $action = $script:MockActions[$actionId]
+            if ($null -eq $action) { throw 'mock received an unknown Gate D action id' }
+            if ($script:ActionSequence -eq ($script:StairComponents.Count * 3) -and
+                $actionId -ceq $actionIds[-1]) { $script:ActionCompleted = $true }
+            if ($action.kind -ceq 'build') {
+                $script:PlacedIds = @($script:PlacedIds) + @($action.ids) | Select-Object -Unique
+            }
+            $count = [int]$action.count
+            $nodeId = [string]$action.node
+            $isApproach = $action.kind -ceq 'approach'
+            $isFace = $action.kind -ceq 'face'
             [pscustomobject]@{
                 schema_version = 1; action_id = $actionId; state = 'succeeded'
                 progress = [pscustomobject]@{
-                    executed_nodes = 2; total_node_upper_bound = 2
-                    distance_travelled = 0; camera_degrees = 360; interactions = 0
-                    blocks_broken = 0; blocks_placed = 5
+                    executed_nodes = 1; total_node_upper_bound = 1
+                    distance_travelled = if ($isApproach) { 3.25 } else { 0 }
+                    camera_degrees = if ($isApproach) { 0 } elseif ($isFace) { 30 } else { 160 }
+                    interactions = 0
+                    blocks_broken = 0; blocks_placed = $count
                 }
                 failure = $null
-                trace = @(
-                    [pscustomobject]@{
-                        tick = 0; event = 'NODE_STARTED'; detail = 'face_directional_stairs_matrix'
-                    }
-                    [pscustomobject]@{
-                        tick = 8; event = 'NODE_COMPLETED'; detail = 'face_directional_stairs_matrix'
-                    }
-                    [pscustomobject]@{
-                        tick = 8; event = 'NODE_STARTED'; detail = 'directional_stairs_matrix'
-                    }
-                    [pscustomobject]@{
-                        tick = 300; event = 'NODE_EVIDENCE'
-                        detail = 'construction_complete=5,server_confirmed=5'
-                    }
-                    [pscustomobject]@{
-                        tick = 300; event = 'NODE_COMPLETED'; detail = 'directional_stairs_matrix'
-                    }
-                    [pscustomobject]@{ tick = 300; event = 'SUCCEEDED'; detail = 'succeeded' }
-                )
+                trace = if ($isApproach -or $isFace) {
+                    @(
+                        [pscustomobject]@{ tick = 0; event = 'NODE_STARTED'; detail = $nodeId }
+                        [pscustomobject]@{ tick = 8; event = 'NODE_COMPLETED'; detail = $nodeId }
+                        [pscustomobject]@{ tick = 8; event = 'SUCCEEDED'; detail = 'succeeded' }
+                    )
+                } else {
+                    @(
+                        [pscustomobject]@{ tick = 8; event = 'NODE_STARTED'; detail = $nodeId }
+                        [pscustomobject]@{
+                            tick = 300; event = 'NODE_EVIDENCE'
+                            detail = "construction_complete=$count,server_confirmed=$count"
+                        }
+                        [pscustomobject]@{ tick = 300; event = 'NODE_COMPLETED'; detail = $nodeId }
+                        [pscustomobject]@{ tick = 300; event = 'SUCCEEDED'; detail = 'succeeded' }
+                    )
+                }
             }
         }
         default { throw "unexpected Gate D mock tool: $Tool" }
@@ -242,34 +310,55 @@ $script:ToolTransport = {
 $initial = New-MockStairsState -Completed:$false
 $sources = Get-DirectionalStairSources -State $initial
 $foundation = Select-StairMatrixFoundation -State $initial
-$request = New-DirectionalStairsActionRequest -Sources $sources -Foundation $foundation
-$faceNode = $request.program.body[0]
-$node = $request.program.body[1]
-Assert-True ($faceNode.op -ceq 'face_known_position' -and
+$component = $script:StairComponents[1]
+$componentFoundation = Refresh-StairComponentFoundation `
+    -State $initial -Baseline $foundation -Component $component
+$request = New-DirectionalStairsActionRequest `
+    -Sources $sources -Foundation $componentFoundation -Component $component
+$approachRequest = New-DirectionalStairsApproachRequest `
+    -State $initial -Foundation $componentFoundation -Component $component
+$faceRequest = New-DirectionalStairsFaceRequest `
+    -Foundation $componentFoundation -Component $component
+$approachNode = $approachRequest.program.body[0]
+$faceNode = $faceRequest.program.body[0]
+$node = $request.program.body[0]
+Assert-True ($approachNode.op -ceq 'approach_known_surface' -and
+    $approachNode.target.x -eq 202 -and $approachNode.target.y -eq 199 -and
+    $approachNode.target.z -eq 194 -and
+    $approachNode.expected_block -ceq 'minecraft:smooth_stone') `
+    'gate did not approach the delivered pivot support'
+Assert-True ($approachRequest.program.capabilities.Count -eq 1 -and
+    $approachRequest.program.capabilities[0] -ceq 'movement' -and
+    $approachRequest.budget.max_duration_ms -eq 30000 -and
+    $approachRequest.budget.max_ticks -eq 600 -and
+    $approachRequest.budget.max_distance_blocks -eq 32 -and
+    $approachRequest.budget.max_camera_degrees -eq 0 -and
+    $approachRequest.budget.max_interactions -eq 0 -and
+    $approachRequest.budget.max_blocks_broken -eq 0 -and
+    $approachRequest.budget.max_blocks_placed -eq 0) `
+    'approach Action is not bounded to movement-only policy limits'
+Assert-True ($faceNode.op -ceq 'face_known_block_face' -and
     $faceNode.target.x -eq 202 -and $faceNode.target.y -eq 199 -and
-    $faceNode.target.z -eq 194) 'gate did not pre-aim at the observed matrix midpoint'
+    $faceNode.target.z -eq 194 -and $faceNode.face -ceq 'up' -and
+    $faceNode.expected_block -ceq 'minecraft:smooth_stone') `
+    'gate did not pre-aim at the delivered support face'
 Assert-True ($node.op -ceq 'apply_known_block_plan') `
     'gate did not use the normal construction Action'
 Assert-True ($node.transform.rotation -eq 90 -and $node.transform.mirror -ceq 'x') `
     'rotation/mirror contract changed'
-Assert-True ($node.entries.Count -eq 5) 'plan does not contain exactly five stairs'
-Assert-True ($node.entries[0].placement_state_ref -ceq $northStraightRef) `
-    'straight placement reference was transformed'
-Assert-True ($node.entries[1].placement_state_ref -ceq $northInnerRef) `
+Assert-True ($node.entries.Count -eq 2) 'inner component does not contain exactly two stairs'
+Assert-True ($node.entries[0].placement_state_ref -ceq $northInnerRef) `
     'inner placement reference was transformed'
-Assert-True ($node.entries[3].placement_state_ref -ceq $northOuterRef) `
-    'outer placement reference was transformed'
-Assert-True ($node.entries[2].placement_state_ref -ceq $westStraightRef -and
-    $node.entries[4].placement_state_ref -ceq $westStraightRef) `
+Assert-True ($node.entries[1].placement_state_ref -ceq $westStraightRef) `
     'companion placement reference changed'
 Assert-True ($request.budget.max_duration_ms -eq 75000 -and
     $request.budget.max_ticks -eq 1500 -and
-    $request.budget.max_camera_degrees -eq 440 -and
-    $request.budget.max_blocks_placed -eq 5 -and
+    $request.budget.max_camera_degrees -eq 400 -and
+    $request.budget.max_blocks_placed -eq 2 -and
     $request.budget.max_distance_blocks -eq 0) `
     'five-entry construction budget is not exact'
 foreach ($entry in $node.entries) {
-    $support = $foundation.supports[$entry.id]
+    $support = $componentFoundation.supports[$entry.id]
     Assert-True ([object]::ReferenceEquals(
             (Get-ObjectProperty $support 'position'), $entry.support.position)) `
         "support position was transformed for $($entry.id)"
@@ -278,18 +367,48 @@ foreach ($entry in $node.entries) {
         "support state was transformed for $($entry.id)"
 }
 
-$validTerminal = & $script:ToolTransport 'agent_get_action' ([ordered]@{})
-[void](Assert-DirectionalStairsTerminalProof -Terminal $validTerminal)
+$script:MockActions[$actionIds[0]] = [pscustomobject]@{
+    kind = 'approach'; count = 0; node = 'approach_stairs_inner'; ids = @()
+}
+$validApproachTerminal = & $script:ToolTransport 'agent_get_action' `
+    ([ordered]@{ action_id = $actionIds[0] })
+$approachProof = Assert-DirectionalStairsApproachTerminalProof `
+    -Terminal $validApproachTerminal -MaximumDistance 32
+Assert-True ($approachProof.proof_scope -ceq 'succeeded_terminal_and_movement_budget_only' -and
+    -not [bool]$approachProof.reach_inferred_from_distance -and
+    [bool]$approachProof.fresh_support_admission_required) `
+    'approach distance was incorrectly represented as interaction-reach proof'
+$movingCamera = $validApproachTerminal.PSObject.Copy()
+$movingCamera.progress = $validApproachTerminal.progress.PSObject.Copy()
+$movingCamera.progress.camera_degrees = 1
+Assert-Throws { Assert-DirectionalStairsApproachTerminalProof `
+        -Terminal $movingCamera -MaximumDistance 32 } `
+    'camera motion was accepted in the movement-only approach Action'
+
+$script:MockActions[$actionIds[0]] = [pscustomobject]@{
+    kind = 'build'; count = 2; node = 'directional_stairs_inner'
+    ids = @('inner_corner', 'inner_companion')
+}
+$validTerminal = & $script:ToolTransport 'agent_get_action' `
+    ([ordered]@{ action_id = $actionIds[0] })
+[void](Assert-DirectionalStairsTerminalProof -Terminal $validTerminal `
+        -ExpectedPlacements 2 -ExpectedNodeId 'directional_stairs_inner')
 $emptyTrace = $validTerminal.PSObject.Copy()
 $emptyTrace.trace = @()
-Assert-Throws { Assert-DirectionalStairsTerminalProof -Terminal $emptyTrace } `
+Assert-Throws { Assert-DirectionalStairsTerminalProof -Terminal $emptyTrace `
+        -ExpectedPlacements 2 -ExpectedNodeId 'directional_stairs_inner' } `
     'empty trace was accepted as server acknowledgement proof'
 $wrongCount = $validTerminal.PSObject.Copy()
 $wrongCount.progress = $validTerminal.progress.PSObject.Copy()
 $wrongCount.progress.blocks_placed = 4
-Assert-Throws { Assert-DirectionalStairsTerminalProof -Terminal $wrongCount } `
+Assert-Throws { Assert-DirectionalStairsTerminalProof -Terminal $wrongCount `
+        -ExpectedPlacements 2 -ExpectedNodeId 'directional_stairs_inner' } `
     'four placements were accepted as Gate D completion'
 $script:ActionCompleted = $false
+$script:ActionSequence = 0
+$script:MockActions = @{}
+$script:PlacedIds = @()
+$script:MockFrameCounter = 1
 
 try {
     $result = Invoke-McmcpDirectionalStairsCapabilityGate
@@ -297,8 +416,20 @@ try {
         'Gate D did not pass'
     Assert-True ([bool]$result.gate_result.lifecycle.accepted_equals_terminal) `
         'accepted==terminal was not proven'
-    Assert-True ($result.gate_result.terminal_proof.server_confirmed_placements -eq 5) `
-        'server acknowledgement count was not retained'
+    Assert-True ($result.gate_result.lifecycle.accepted -eq 9 -and
+        $result.gate_result.lifecycle.fresh_observation_barriers -eq 6 -and
+        $result.gate_result.approach_terminal_proof.Count -eq 3 -and
+        $result.gate_result.face_terminal_proof.Count -eq 3) `
+        'Gate D did not prove all three approach/face/build lifecycle trios'
+    Assert-True (@($result.gate_result.approach_terminal_proof | Where-Object {
+                [bool]$_.reach_inferred_from_distance -or
+                -not [bool]$_.fresh_support_admission_required -or
+                $_.proof_scope -cne 'succeeded_terminal_and_movement_budget_only'
+            }).Count -eq 0) `
+        'Gate D promoted approach distance into an unsupported reach guarantee'
+    Assert-True ((@($result.gate_result.terminal_proof | ForEach-Object {
+                    $_.server_confirmed_placements }) | Measure-Object -Sum).Sum -eq 5) `
+        'server acknowledgement counts do not sum to five'
     Assert-True ($result.gate_result.inventory_delta -eq -5) `
         'inventory delta was not exactly -5'
     Assert-True ($result.gate_result.exact_targets.Count -eq 5) `

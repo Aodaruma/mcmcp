@@ -36,13 +36,15 @@ public final class ActionDsl {
     }
 
     public sealed interface Node permits NavigateToKnown, ApproachKnownSurface,
-            FaceKnownPosition, BreakKnownFace,
+            ApproachKnownPlacement,
+            FaceKnownPosition, FaceKnownBlockFace, BreakKnownFace,
             TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
             HarvestKnownWheat, HarvestKnownWheatBatch, ApplyKnownBlockPlan,
             ClearKnownBlockPlan, PillarUpKnown,
             ApplyKnownRedstoneSpec,
             OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
+            StoreKnownContainerStack,
             CraftKnownRecipe,
             SmeltKnownRecipe,
             OperateKnownMenu,
@@ -73,6 +75,23 @@ public final class ActionDsl {
     }
 
     /**
+     * Moves to one policy-known safe feet cell from which every entry in a later stationary
+     * placement plan has a reachable support ray and a settlement-safe placement heading.
+     */
+    public record ApproachKnownPlacement(
+            String id,
+            Position anchor,
+            BlockPlanTransform transform,
+            List<BlockPlanEntry> entries) implements Node {
+        public ApproachKnownPlacement {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(anchor, "anchor");
+            Objects.requireNonNull(transform, "transform");
+            entries = List.copyOf(Objects.requireNonNull(entries, "entries"));
+        }
+    }
+
+    /**
      * Turns toward a policy-delivered coordinate so a later observation can refresh its rays.
      * This node changes only the camera; every later interaction still needs current evidence.
      */
@@ -80,6 +99,23 @@ public final class ActionDsl {
         public FaceKnownPosition {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
+        }
+    }
+
+    /**
+     * Turns toward the center of one exact block face backed by unexpired delivered evidence.
+     * This node changes only the camera and never authorizes a block interaction or mutation.
+     */
+    public record FaceKnownBlockFace(
+            String id,
+            Position target,
+            BlockFace face,
+            String expectedBlock) implements Node {
+        public FaceKnownBlockFace {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(face, "face");
+            Objects.requireNonNull(expectedBlock, "expectedBlock");
         }
     }
 
@@ -421,6 +457,23 @@ public final class ActionDsl {
             String stackPolicy,
             int minimumInventoryCount) implements Node {
         public TakeKnownContainerStack {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(expectedBlock, "expectedBlock");
+            Objects.requireNonNull(item, "item");
+            Objects.requireNonNull(stackPolicy, "stackPolicy");
+        }
+    }
+
+    /** Moves at most one whole matching stack into a visible vanilla chest/barrel. */
+    public record StoreKnownContainerStack(
+            String id,
+            Position target,
+            String expectedBlock,
+            String item,
+            String stackPolicy,
+            int minimumContainerCount) implements Node {
+        public StoreKnownContainerStack {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(expectedBlock, "expectedBlock");

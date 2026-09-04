@@ -121,7 +121,9 @@ public final class ActionDslParser {
         return switch (operation) {
             case "navigate_to_known" -> navigate(object, path);
             case "approach_known_surface" -> approachKnownSurface(object, path);
+            case "approach_known_placement" -> approachKnownPlacement(object, path);
             case "face_known_position" -> face(object, path);
+            case "face_known_block_face" -> faceKnownBlockFace(object, path);
             case "break_known_face" -> breakKnownFace(object, path);
             case "till_known_block" -> tillKnownBlock(object, path);
             case "till_known_batch" -> tillKnownBatch(object, path);
@@ -137,6 +139,7 @@ public final class ActionDslParser {
             case "open_known_passage" -> openKnownPassage(object, path);
             case "inspect_known_container" -> inspectKnownContainer(object, path);
             case "take_known_container_stack" -> takeKnownContainerStack(object, path);
+            case "store_known_container_stack" -> storeKnownContainerStack(object, path);
             case "craft_known_recipe" -> craftKnownRecipe(object, path);
             case "smelt_known_recipe" -> smeltKnownRecipe(object, path);
             case "operate_known_menu" -> operateKnownMenu(object, path);
@@ -170,11 +173,39 @@ public final class ActionDslParser {
                 string(source.get("expected_block"), path + ".expected_block"));
     }
 
+    private static ActionDsl.ApproachKnownPlacement approachKnownPlacement(
+            JsonObject source, String path) {
+        exactKeys(source, path, Set.of("id", "op", "anchor", "transform", "entries"),
+                Set.of("id", "op", "anchor", "transform", "entries"));
+        JsonArray values = array(source.get("entries"), path + ".entries");
+        var entries = new ArrayList<ActionDsl.BlockPlanEntry>(values.size());
+        for (int index = 0; index < values.size(); index++) {
+            entries.add(blockPlanEntry(values.get(index), path + ".entries[" + index + "]"));
+        }
+        return new ActionDsl.ApproachKnownPlacement(
+                string(source.get("id"), path + ".id"),
+                position(source.get("anchor"), path + ".anchor"),
+                blockPlanTransform(source.get("transform"), path + ".transform"),
+                entries);
+    }
+
     private static ActionDsl.FaceKnownPosition face(JsonObject source, String path) {
         exactKeys(source, path, Set.of("id", "op", "target"), Set.of("id", "op", "target"));
         return new ActionDsl.FaceKnownPosition(
                 string(source.get("id"), path + ".id"),
                 position(source.get("target"), path + ".target"));
+    }
+
+    private static ActionDsl.FaceKnownBlockFace faceKnownBlockFace(
+            JsonObject source, String path) {
+        exactKeys(source, path,
+                Set.of("id", "op", "target", "face", "expected_block"),
+                Set.of("id", "op", "target", "face", "expected_block"));
+        return new ActionDsl.FaceKnownBlockFace(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                blockFace(string(source.get("face"), path + ".face"), path + ".face"),
+                string(source.get("expected_block"), path + ".expected_block"));
     }
 
     private static ActionDsl.BreakKnownFace breakKnownFace(JsonObject source, String path) {
@@ -539,6 +570,23 @@ public final class ActionDslParser {
                 string(source.get("stack_policy"), path + ".stack_policy"),
                 integer(source.get("minimum_inventory_count"),
                         path + ".minimum_inventory_count"));
+    }
+
+    private static ActionDsl.StoreKnownContainerStack storeKnownContainerStack(
+            JsonObject source, String path) {
+        exactKeys(source, path,
+                Set.of("id", "op", "target", "expected_block", "item",
+                        "stack_policy", "minimum_container_count"),
+                Set.of("id", "op", "target", "expected_block", "item",
+                        "stack_policy", "minimum_container_count"));
+        return new ActionDsl.StoreKnownContainerStack(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                string(source.get("expected_block"), path + ".expected_block"),
+                string(source.get("item"), path + ".item"),
+                string(source.get("stack_policy"), path + ".stack_policy"),
+                integer(source.get("minimum_container_count"),
+                        path + ".minimum_container_count"));
     }
 
     private static ActionDsl.CraftKnownRecipe craftKnownRecipe(

@@ -44,7 +44,7 @@ class ActionDslTest {
     void parsesEveryNormativeCatalogExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
-        assertThat(examples).hasSize(15);
+        assertThat(examples).hasSize(17);
         for (int index = 0; index < examples.size(); index++) {
             ActionDsl.Request parsed = ActionDslParser.parse(examples.get(index).getAsJsonObject());
             assertThat(parsed.schemaVersion()).isEqualTo(1);
@@ -127,6 +127,104 @@ class ActionDslTest {
         assertCode(request(
                         capabilities("movement"), node, budget(30_000, 600, 32, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
+    void placementApproachIsMovementOnlyOpaqueAndExclusive() {
+        JsonObject node = approachKnownPlacement("approach_stairs", 2);
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("movement"), node, budget(30_000, 600, 32, 0)));
+
+        assertThat(request.program().body()).singleElement().satisfies(value -> {
+            var approach = (ActionDsl.ApproachKnownPlacement) value;
+            assertThat(approach.entries()).hasSize(2);
+            assertThat(approach.entries()).allSatisfy(entry -> {
+                assertThat(entry.sourceState()).isEmpty();
+                assertThat(entry.item()).isEmpty();
+                assertThat(entry.placementStateRef()).isPresent();
+                assertThat(entry.support().face()).isEqualTo(ActionDsl.BlockFace.UP);
+                assertThat(entry.support().expectedState()).isPresent();
+                assertThat(entry.support().dependencyEntryId()).isEmpty();
+            });
+        });
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactly(ActionDsl.Capability.MOVEMENT);
+        var movement = new ActionDslCompiler.Cost(1_000, 20, 3, 0, 0, 0, 0);
+        assertThat(ActionDslCompiler.compile(
+                        request,
+                        ignored -> Optional.of(movement),
+                        Set.of(ActionDsl.Capability.MOVEMENT))
+                .primitiveCostBounds()).containsEntry("approach_stairs", movement);
+
+        JsonObject inline = approachKnownPlacement("inline", 1);
+        JsonObject inlineEntry = inline.getAsJsonArray("entries").get(0).getAsJsonObject();
+        inlineEntry.remove("placement_state_ref");
+        inlineEntry.add("source_state", blockState("minecraft:oak_stairs"));
+        inlineEntry.addProperty("item", "minecraft:oak_stairs");
+        assertCode(request(capabilities("movement"), inline, budget(30_000, 600, 32, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject dependency = approachKnownPlacement("dependency", 1);
+        JsonObject support = dependency.getAsJsonArray("entries").get(0)
+                .getAsJsonObject().getAsJsonObject("support");
+        support.add("expected_state", JsonNull.INSTANCE);
+        support.addProperty("dependency_entry_id", "entry_0");
+        assertCode(request(
+                        capabilities("movement"), dependency, budget(30_000, 600, 32, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        assertCode(request(
+                        capabilities("movement"),
+                        array(approachKnownPlacement("nested", 1), waitNode("wait", 1)),
+                        budget(30_000, 600, 32, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
+    void faceKnownBlockFaceHasAnExactCameraOnlyWireContract() {
+        JsonObject node = faceKnownBlockFace("look_at_west_face");
+        ActionDsl.Request request = ActionDslParser.parse(request(
+                capabilities("camera"), node, budget(30_000, 600, 0, 180)));
+
+        assertThat(request.program().body()).singleElement().satisfies(value -> {
+            var face = (ActionDsl.FaceKnownBlockFace) value;
+            assertThat(face.target()).isEqualTo(new ActionDsl.Position(
+                    "minecraft:overworld", 10, 64, 10));
+            assertThat(face.face()).isEqualTo(ActionDsl.BlockFace.WEST);
+            assertThat(face.expectedBlock()).isEqualTo("minecraft:oak_stairs");
+        });
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactly(ActionDsl.Capability.CAMERA);
+
+        var cost = new ActionDslCompiler.Cost(100, 2, 0, 45, 0, 0, 0);
+        assertThat(ActionDslCompiler.compile(
+                        request, ignored -> Optional.of(cost),
+                        Set.of(ActionDsl.Capability.CAMERA))
+                .primitiveCostBounds()).containsEntry("look_at_west_face", cost);
+
+        JsonObject extra = faceKnownBlockFace("extra");
+        extra.addProperty("ray_hit", "forbidden");
+        assertCode(request(capabilities("camera"), extra, budget(30_000, 600, 0, 180)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+
+        JsonObject invalidBlock = faceKnownBlockFace("invalid_block");
+        invalidBlock.addProperty("expected_block", "oak_stairs");
+        assertCode(request(
+                        capabilities("camera"), invalidBlock, budget(30_000, 600, 0, 180)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        assertCode(request(
+                        capabilities(), faceKnownBlockFace("missing_camera"),
+                        budget(30_000, 600, 0, 180)),
+                ActionDslException.Code.CAPABILITY_DENIED);
+
+        assertThatThrownBy(() -> ActionDslCompiler.compile(
+                        request,
+                        ignored -> Optional.of(
+                                new ActionDslCompiler.Cost(100, 2, 1, 45, 0, 0, 0)),
+                        Set.of(ActionDsl.Capability.CAMERA)))
+                .isInstanceOf(ActionDslException.class)
+                .extracting(failure -> ((ActionDslException) failure).code())
+                .isEqualTo(ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE);
     }
 
     @Test
@@ -683,11 +781,26 @@ class ActionDslTest {
         take.addProperty("item", "minecraft:wheat_seeds");
         take.addProperty("stack_policy", "default_components_only");
         take.addProperty("minimum_inventory_count", 64);
+        JsonObject store = baseNode("store", "store_known_container_stack");
+        store.add("target", position());
+        store.addProperty("expected_block", "minecraft:barrel");
+        store.addProperty("item", "minecraft:wheat");
+        store.addProperty("stack_policy", "default_components_only");
+        store.addProperty("minimum_container_count", 128);
 
         ActionDsl.Request request = ActionDslParser.parse(request(
                 capabilities("camera", "block_interact", "inventory_transfer"),
-                array(open, inspect, take),
-                budget(600_000, 12_000, 0, 360, 5, 0, 0)));
+                array(open, inspect, take, store),
+                budget(600_000, 12_000, 0, 360, 8, 0, 0)));
+
+        assertThat(request.program().body().getLast())
+                .isEqualTo(new ActionDsl.StoreKnownContainerStack(
+                        "store",
+                        new ActionDsl.Position("minecraft:overworld", 10, 64, 10),
+                        "minecraft:barrel",
+                        "minecraft:wheat",
+                        "default_components_only",
+                        128));
 
         assertThat(ActionDslValidator.validate(request).requiredCapabilities())
                 .containsExactlyInAnyOrder(
@@ -698,10 +811,17 @@ class ActionDslTest {
                 request,
                 node -> Optional.of(new ActionDslCompiler.Cost(
                         1_000, 20, 0, 30,
-                        node instanceof ActionDsl.TakeKnownContainerStack ? 3 : 1,
+                        node instanceof ActionDsl.TakeKnownContainerStack
+                                || node instanceof ActionDsl.StoreKnownContainerStack ? 3 : 1,
                         0, 0)),
                 request.program().capabilities());
-        assertThat(compiled.worstCaseCost().interactions()).isEqualTo(5);
+        assertThat(compiled.worstCaseCost().interactions()).isEqualTo(8);
+
+        store.addProperty("minimum_container_count", 0);
+        assertThatThrownBy(() -> ActionDslValidator.validate(ActionDslParser.parse(request(
+                capabilities("camera", "inventory_transfer"), store,
+                budget(30_000, 600, 0, 360, 3, 0, 0)))))
+                .isInstanceOf(ActionDslException.class);
 
         open.addProperty("expected_block", "minecraft:iron_door");
         assertThatThrownBy(() -> ActionDslValidator.validate(ActionDslParser.parse(request(
@@ -1129,7 +1249,7 @@ class ActionDslTest {
 
     @Test
     void rejectsOpenOrUnboundedCropMaturityWaits() {
-        assertCode(request(capabilities(), waitNode("legacy_wait", 201),
+        assertCode(request(capabilities(), waitNode("legacy_wait", 15_001),
                         budget(750_000, 15_000, 0, 0)),
                 ActionDslException.Code.INVALID_ARGUMENT);
 
@@ -1529,9 +1649,44 @@ class ActionDslTest {
         return node;
     }
 
+    private static JsonObject approachKnownPlacement(String id, int count) {
+        JsonObject node = baseNode(id, "approach_known_placement");
+        node.add("anchor", position(10, 64, 10));
+        JsonObject transform = new JsonObject();
+        transform.addProperty("rotation", 0);
+        transform.addProperty("mirror", "none");
+        node.add("transform", transform);
+        JsonArray entries = new JsonArray();
+        for (int index = 0; index < count; index++) {
+            JsonObject entry = new JsonObject();
+            entry.addProperty("id", "entry_" + index);
+            entry.add("offset", offset(index, 0, 0));
+            entry.addProperty(
+                    "placement_state_ref",
+                    "psr_" + String.format("%032x", index + 1));
+            JsonObject support = new JsonObject();
+            support.add("position", position(10 + index, 63, 10));
+            support.addProperty("face", "up");
+            support.add("expected_state", blockState("minecraft:stone"));
+            support.add("dependency_entry_id", JsonNull.INSTANCE);
+            entry.add("support", support);
+            entries.add(entry);
+        }
+        node.add("entries", entries);
+        return node;
+    }
+
     private static JsonObject face(String id) {
         JsonObject node = baseNode(id, "face_known_position");
         node.add("target", position());
+        return node;
+    }
+
+    private static JsonObject faceKnownBlockFace(String id) {
+        JsonObject node = baseNode(id, "face_known_block_face");
+        node.add("target", position());
+        node.addProperty("face", "west");
+        node.addProperty("expected_block", "minecraft:oak_stairs");
         return node;
     }
 

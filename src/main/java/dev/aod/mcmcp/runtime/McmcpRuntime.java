@@ -1873,7 +1873,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private static AgentPrimitivePlanner.Analysis emptyPrimitiveAnalysis() {
         return new AgentPrimitivePlanner.Analysis(
-                Map.of(), Map.of(), Set.of(), Set.of(), Map.of(), Map.of());
+                Map.of(), Map.of(), Set.of(), Set.of(), Set.of(), Map.of(), Map.of());
     }
 
     private static Optional<ActionDsl.Node> firstPrimitive(
@@ -1884,6 +1884,47 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private static boolean requiresWorldPlanning(ActionDsl.Node node) {
         return !(node instanceof ActionDsl.WaitTicks
                 || node instanceof ActionDsl.OperateKnownMenu);
+    }
+
+    static AgentPrimitivePlanner.ApproachPlan requireRuntimeApproachPlan(
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            AgentPrimitivePlanner.Pose startPose,
+            ActionDsl.ApproachKnownSurface approach,
+            Optional<ObservationFrame> planningFrame,
+            long surfaceBarrierWorldRevision) {
+        AgentPrimitivePlanner.requireKnownSurface(
+                map,
+                planningFrame,
+                approach.target(),
+                approach.expectedBlock(),
+                surfaceBarrierWorldRevision);
+        return AgentPrimitivePlanner.requireApproachPlan(
+                map,
+                pathfinder,
+                startPose,
+                approach.target(),
+                approach.expectedBlock(),
+                planningFrame,
+                surfaceBarrierWorldRevision);
+    }
+
+    static AgentPrimitivePlanner.ApproachPlan requireRuntimeKnownPlacementApproachPlan(
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            AgentPrimitivePlanner.Pose startPose,
+            ActionDsl.ApproachKnownPlacement approach,
+            Optional<ObservationFrame> planningFrame,
+            ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier,
+            PlacementStateResolver placementStates) {
+        return AgentPrimitivePlanner.requireKnownPlacementApproachPlan(
+                map,
+                pathfinder,
+                startPose,
+                approach,
+                planningFrame,
+                surfaceRevisionBarrier,
+                placementStates);
     }
 
     static boolean actionAdmissionRequiresLocalSafety(ActionDsl.Program program) {
@@ -1917,6 +1958,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 : node instanceof ActionDsl.TillKnownBatch batch
                         ? batch.targets().size()
                 : node instanceof ActionDsl.TakeKnownContainerStack ? 3L
+                : node instanceof ActionDsl.StoreKnownContainerStack ? 3L
                 : node instanceof ActionDsl.CraftKnownRecipe craft
                         ? ActionDslCompiler.knownCraftInteractions(craft.maxCrafts())
                 : node instanceof ActionDsl.SmeltKnownRecipe
@@ -2116,6 +2158,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                         currentPlanningFrame,
                                         target,
                                         currentSurfaceRevisionBarrier.applyAsLong(target)))
+                && prepared.analysis().knownFacingSurfaces().stream().allMatch(surface ->
+                        AgentPrimitivePlanner.knownFacingSurface(
+                                currentMap, currentPlanningFrame, surface))
                 && prepared.analysis().knownSurfaces().stream().allMatch(surface ->
                         AgentPrimitivePlanner.knownSurface(
                                 currentMap,
@@ -3760,6 +3805,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
             if (agentExecution.primitive instanceof ActionDsl.InspectKnownContainer
                     || agentExecution.primitive instanceof ActionDsl.TakeKnownContainerStack
+                    || agentExecution.primitive instanceof ActionDsl.StoreKnownContainerStack
                     || agentExecution.primitive instanceof ActionDsl.CraftKnownRecipe
                     || agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe
                     || agentExecution.primitive instanceof ActionDsl.OperateKnownMenu) {
@@ -3791,6 +3837,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             KnownTraversabilitySnapshot map = requireAgentMap(session);
             if (agentExecution.primitiveExecutor.active()
                     && (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition
+                            || agentExecution.primitive instanceof ActionDsl.FaceKnownBlockFace
                             || agentExecution.primitive instanceof ActionDsl.BreakKnownFace)) {
                 var faceReconciliation = reconciliationSignals.bindAndSnapshot(
                         Objects.requireNonNull(minecraft.level, "level"),
@@ -3800,6 +3847,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 if (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition face) {
                     faceEvidenceCurrent = AgentPrimitivePlanner.knownFacingTarget(
                             map, agentPlanningFrame(), face.target());
+                } else if (agentExecution.primitive instanceof ActionDsl.FaceKnownBlockFace face) {
+                    faceEvidenceCurrent = AgentPrimitivePlanner.knownFacingSurface(
+                            map,
+                            agentPlanningFrame(),
+                            new AgentPrimitivePlanner.KnownSurface(
+                                    face.target(), face.face(), face.expectedBlock()));
                 } else {
                     var block = (ActionDsl.BreakKnownFace) agentExecution.primitive;
                     faceEvidenceCurrent = AgentPrimitivePlanner.knownSurface(
@@ -4303,19 +4356,18 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 }
                 agentExecution.primitiveExecutor.beginNavigate(route, navigate.tolerance());
             } else if (agentExecution.primitive instanceof ActionDsl.ApproachKnownSurface approach) {
-                AgentPrimitivePlanner.requireKnownSurface(
-                        map,
-                        agentPlanningFrame(),
-                        approach.target(),
-                        approach.expectedBlock(),
-                        surfaceRevisionBarrier.applyAsLong(approach.target()));
+                Optional<ObservationFrame> approachFrame = agentPlanningFrame();
+                long approachSurfaceBarrier =
+                        surfaceRevisionBarrier.applyAsLong(approach.target());
+                var pose = playerPose(player, map.dimension());
                 AgentPrimitivePlanner.ApproachPlan plan =
-                        AgentPrimitivePlanner.requireApproachPlan(
+                        requireRuntimeApproachPlan(
                                 map,
                                 agentPathfinder,
-                                playerCell(player, map.dimension()),
-                                approach.target());
-                var pose = playerPose(player, map.dimension());
+                                pose,
+                                approach,
+                                approachFrame,
+                                approachSurfaceBarrier);
                 cost = agentExecution.replanning
                         ? AgentPrimitivePlanner.navigationReplanCost(plan.route(), pose)
                         : AgentPrimitivePlanner.navigationCost(plan.route(), pose);
@@ -4348,6 +4400,50 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     return false;
                 }
                 agentExecution.primitiveExecutor.beginNavigate(plan.route(), 0.25D);
+            } else if (agentExecution.primitive
+                    instanceof ActionDsl.ApproachKnownPlacement approach) {
+                var pose = playerPose(player, map.dimension());
+                AgentPrimitivePlanner.ApproachPlan plan =
+                        requireRuntimeKnownPlacementApproachPlan(
+                                map,
+                                agentPathfinder,
+                                pose,
+                                approach,
+                                agentPlanningFrame(),
+                                surfaceRevisionBarrier,
+                                deliveredAgentEvidence::resolvePlacementState);
+                cost = agentExecution.replanning
+                        ? AgentPrimitivePlanner.navigationReplanCost(plan.route(), pose)
+                        : AgentPrimitivePlanner.navigationCost(plan.route(), pose);
+                if (agentExecution.replanning) {
+                    String evidence = replannedRouteBudgetFailure(
+                            progressBeforeTick,
+                            agentExecution.occurrenceBaseline,
+                            agentExecution.occurrenceLimit,
+                            action.program().effectiveBudget(),
+                            cost,
+                            activeElapsedNanos(agentExecution, System.nanoTime()));
+                    if (evidence != null) {
+                        failAgentAction(
+                                AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                                false,
+                                evidence);
+                        return false;
+                    }
+                } else if (!fitsRemainingBudget(
+                                progressBeforeTick,
+                                action.program().effectiveBudget(),
+                                cost,
+                                activeElapsedNanos(agentExecution, System.nanoTime()))
+                        || !fitsOccurrenceRemaining(
+                                progressBeforeTick, agentExecution, cost)) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                            false,
+                            "approach_known_placement");
+                    return false;
+                }
+                agentExecution.primitiveExecutor.beginNavigate(plan.route(), 0.25D);
             } else if (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition face) {
                 var target = AgentPrimitivePlanner.requireKnownFaceTarget(
                         map,
@@ -4372,6 +4468,35 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             AgentActionStore.FailureCode.BUDGET_EXCEEDED,
                             false,
                             "primitive_face_target");
+                    return false;
+                }
+                agentExecution.primitiveExecutor.beginFace(target, cost.ticks());
+            } else if (agentExecution.primitive instanceof ActionDsl.FaceKnownBlockFace face) {
+                var target = AgentPrimitivePlanner.requireKnownBlockFaceTarget(
+                        map,
+                        agentPlanningFrame(),
+                        face);
+                cost = AgentPrimitivePlanner.faceCost(
+                        playerPose(player, map.dimension()),
+                        face,
+                        McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
+                if (!fitsRemainingBudget(
+                        progressBeforeTick,
+                        action.program().effectiveBudget(),
+                        cost,
+                        activeElapsedNanos(agentExecution, System.nanoTime()))) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                            false,
+                            "face_block_target");
+                    return false;
+                }
+                if (!fitsOccurrenceRemaining(
+                        progressBeforeTick, agentExecution, cost)) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                            false,
+                            "primitive_face_block_target");
                     return false;
                 }
                 agentExecution.primitiveExecutor.beginFace(target, cost.ticks());
@@ -4962,6 +5087,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     var take = (ActionDsl.TakeKnownContainerStack) agentExecution.primitive;
                     agentActions.recordNodeEvidence(
                             action.actionId(), "container_transfer=" + take.item());
+                } else if (agentExecution.primitive instanceof ActionDsl.StoreKnownContainerStack) {
+                    var store = (ActionDsl.StoreKnownContainerStack) agentExecution.primitive;
+                    agentActions.recordNodeEvidence(
+                            action.actionId(), "container_store=" + store.item());
                 } else if (agentExecution.primitive instanceof ActionDsl.CraftKnownRecipe craft) {
                     agentActions.recordNodeEvidence(
                             action.actionId(), "craft_complete=" + craft.goalItem());
@@ -5059,7 +5188,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     request.entries().size(), (long) KnownConstructionAttempt.TICKS_PER_ENTRY);
             long deadline = Math.addExact(session.clientTick(), ticks);
             agentExecution.constructionAttempt = new KnownConstructionAttempt(
-                    applyBlockPlanPort, request, session.clientTick(), deadline);
+                    applyBlockPlanPort, request, session.clientTick(), deadline,
+                    (call, stepIndex, failure) -> McmcpMod.LOGGER.error(
+                            "MCMCP known-construction adapter failed: call={}, step_index={}",
+                            call, stepIndex, failure));
         }
         KnownConstructionAttempt.TickResult result =
                 agentExecution.constructionAttempt.tick(session.clientTick());
@@ -5795,19 +5927,25 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         String expectedBlock;
         String item;
         String stackPolicy;
-        int minimumInventoryCount;
+        int minimumDestinationCount;
         if (primitive instanceof ActionDsl.InspectKnownContainer inspect) {
             position = inspect.target();
             expectedBlock = inspect.expectedBlock();
             item = "minecraft:air";
             stackPolicy = "item_id_any_components";
-            minimumInventoryCount = 0;
+            minimumDestinationCount = 0;
         } else if (primitive instanceof ActionDsl.TakeKnownContainerStack take) {
             position = take.target();
             expectedBlock = take.expectedBlock();
             item = take.item();
             stackPolicy = take.stackPolicy();
-            minimumInventoryCount = take.minimumInventoryCount();
+            minimumDestinationCount = take.minimumInventoryCount();
+        } else if (primitive instanceof ActionDsl.StoreKnownContainerStack store) {
+            position = store.target();
+            expectedBlock = store.expectedBlock();
+            item = store.item();
+            stackPolicy = store.stackPolicy();
+            minimumDestinationCount = store.minimumContainerCount();
         } else {
             throw new IllegalArgumentException("node is not a known container operation");
         }
@@ -5833,10 +5971,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 "properties", state.properties());
         var parameters = new LinkedHashMap<String, Object>();
         parameters.put("container", Map.of("target", targetMap, "expected_state", stateMap));
-        parameters.put("direction", "container_to_player");
+        parameters.put("direction", knownContainerTransferDirection(primitive));
         parameters.put("stack", Map.of("item", item, "stack_policy", stackPolicy));
         parameters.put("goal", Map.of(
-                "minimum_destination_count", minimumInventoryCount));
+                "minimum_destination_count", minimumDestinationCount));
         parameters.put("max_transfer_count", 64);
         parameters.put("max_stack_moves", 1);
         parameters.put("retain_view_on_release", true);
@@ -5846,7 +5984,19 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var bounds = new PhaseFiveBounds(
                 target.dimension(), target, target, 0, 20, false);
         return new PhaseFiveRequest(
-                "transfer_items", parameters, bounds, minimumInventoryCount, "items");
+                "transfer_items", parameters, bounds, minimumDestinationCount, "items");
+    }
+
+    static String knownContainerTransferDirection(ActionDsl.Node primitive) {
+        Objects.requireNonNull(primitive, "primitive");
+        if (primitive instanceof ActionDsl.StoreKnownContainerStack) {
+            return "player_to_container";
+        }
+        if (primitive instanceof ActionDsl.InspectKnownContainer
+                || primitive instanceof ActionDsl.TakeKnownContainerStack) {
+            return "container_to_player";
+        }
+        throw new IllegalArgumentException("node is not a known container operation");
     }
 
     private static PhaseFiveRequest withInventoryAim(
@@ -6117,6 +6267,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             long occurrenceTickLimit) {
         long observationDeadline = Math.addExact(actionTick, agentReplanWindowTicks(primitive));
         if (!(primitive instanceof ActionDsl.NavigateToKnown)
+                && !(primitive instanceof ActionDsl.ApproachKnownSurface)
+                && !(primitive instanceof ActionDsl.ApproachKnownPlacement)
                 && !(primitive instanceof ActionDsl.CollectVisibleItem)) {
             return observationDeadline;
         }
@@ -7259,11 +7411,17 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return used.motionOverflowed()
                 || primitive instanceof ActionDsl.NavigateToKnown
                         && used.distanceTravelled() >= budget.maxDistanceBlocks()
+                || primitive instanceof ActionDsl.ApproachKnownSurface
+                        && used.distanceTravelled() >= budget.maxDistanceBlocks()
+                || primitive instanceof ActionDsl.ApproachKnownPlacement
+                        && used.distanceTravelled() >= budget.maxDistanceBlocks()
                 || primitive instanceof ActionDsl.CollectVisibleItem
                         && used.distanceTravelled() >= budget.maxDistanceBlocks()
                 || primitive instanceof ActionDsl.CollectVisibleItemBatch
                         && used.distanceTravelled() >= budget.maxDistanceBlocks()
                 || primitive instanceof ActionDsl.FaceKnownPosition
+                        && used.cameraDegrees() >= budget.maxCameraDegrees()
+                || primitive instanceof ActionDsl.FaceKnownBlockFace
                         && used.cameraDegrees() >= budget.maxCameraDegrees()
                 || primitive instanceof ActionDsl.BreakKnownFace
                         && used.cameraDegrees() >= budget.maxCameraDegrees();

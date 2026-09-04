@@ -324,16 +324,94 @@ class AgentPrimitivePlannerTest {
                 map.snapshot().orElseThrow(),
                 new DeterministicAStar(),
                 pose,
-                Optional.of(frame(List.of(surfaceWithState(
+                Optional.of(frame(List.of(
+                        surfaceWithState(
+                                new ActionDsl.Position(DIMENSION, 2, 64, 0),
+                                ObservationRecord.Face.UP,
+                                "minecraft:oak_log",
+                                Map.of("axis", "x"),
+                                0L),
+                        surfaceWithState(
+                                support,
+                                ObservationRecord.Face.UP,
+                                "minecraft:oak_log",
+                                Map.of("axis", "y"),
+                                0L)))),
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .hasMessage("Construction support requires the delivered exact face and block state");
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                pose,
+                Optional.of(frame(List.of(surfaceWithStateAtEye(
                         support,
                         ObservationRecord.Face.UP,
                         "minecraft:oak_log",
-                        Map.of("axis", "y"),
-                        0L)))),
+                        Map.of("axis", "x"),
+                        0L,
+                        4.0D,
+                        65.62D,
+                        0.5D)))),
                 4.5F))
                 .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
-                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
-                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+                .hasMessage("Construction support requires the delivered exact face and block state; "
+                        + "matching surface evidence exists, but its ray witness "
+                        + "is not valid from the current pose");
+    }
+
+    @Test
+    void knownBlockPlanReportsMatchingSupportRayOutsideCurrentPoseReach() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        var support = new ActionDsl.Position(DIMENSION, 0, 64, 6);
+        var target = new ActionDsl.Position(DIMENSION, 0, 65, 6);
+        var state = new ActionDsl.BlockStateSpec(
+                "minecraft:oak_log", Map.of("axis", "x"));
+        var plan = new ActionDsl.ApplyKnownBlockPlan(
+                "copy",
+                target,
+                new ActionDsl.BlockPlanTransform(
+                        ActionDsl.BlockPlanRotation.DEGREES_0,
+                        ActionDsl.BlockPlanMirror.NONE),
+                List.of(new ActionDsl.BlockPlanEntry(
+                        "cell",
+                        new ActionDsl.Offset(0, 0, 0),
+                        state,
+                        "minecraft:oak_log",
+                        new ActionDsl.PlacementSupport(
+                                support,
+                                ActionDsl.BlockFace.UP,
+                                Optional.of(state),
+                                Optional.empty()))));
+        var program = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_PLACE),
+                List.of(plan));
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                pose,
+                Optional.of(frame(List.of(surfaceWithStateAtEye(
+                        support,
+                        ObservationRecord.Face.UP,
+                        "minecraft:oak_log",
+                        Map.of("axis", "x"),
+                        0L,
+                        0.5D,
+                        65.62D,
+                        0.5D)))),
+                4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .hasMessage("Construction support requires the delivered exact face and block state; "
+                        + "matching surface evidence exists, but its ray witness "
+                        + "is not valid from the current pose");
     }
 
     @Test
@@ -797,13 +875,192 @@ class AgentPrimitivePlannerTest {
                 .extracting(AgentPrimitivePlanner.KnownSurface::position)
                 .containsExactly(target);
         AgentPrimitivePlanner.ApproachPlan plan = AgentPrimitivePlanner.requireApproachPlan(
-                map.snapshot().orElseThrow(), new DeterministicAStar(), start, target);
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(
+                        start, 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F),
+                target,
+                "minecraft:dirt",
+                Optional.of(frame(
+                        target, ObservationRecord.Face.WEST, "minecraft:dirt", 0L)),
+                0L);
         assertThat(plan.anchor()).isEqualTo(cell(4));
         assertThat(plan.route().cells()).containsExactly(
                 cell(0), cell(1), cell(2), cell(3), cell(4));
         assertThat(analysis.worstCase(approach).map(ActionDslCompiler.Cost::ticks))
                 .contains(plan.route().tickUpperBound()
                         + AgentPrimitivePlanner.NAVIGATION_REPLAN_RESERVE_TICKS);
+    }
+
+    @Test
+    void surfaceApproachUsesDeliveredRayAndArrivalErrorInsteadOfNearestBlockAabb() {
+        UUID session = UUID.randomUUID();
+        NavCell start = new NavCell(DIMENSION, 0, 64, 5);
+        NavCell aabbOnly = new NavCell(DIMENSION, 0, 64, 4);
+        NavCell raySafe = new NavCell(DIMENSION, 0, 64, 3);
+        var map = map(session);
+        map.observe(confirmed(session, start, aabbOnly));
+        map.observe(confirmed(session, aabbOnly, raySafe));
+        var target = new ActionDsl.Position(DIMENSION, 0, 63, 0);
+        var up = surface(
+                target, ObservationRecord.Face.UP, "minecraft:stone", null, 0L);
+        var north = surface(
+                target, ObservationRecord.Face.NORTH, "minecraft:stone", null, 0L);
+        var startPose = new AgentPrimitivePlanner.Pose(
+                start, 0.5D, 64.0D, 5.5D, 1.62D, 0.0F, 0.0F);
+
+        AgentPrimitivePlanner.ApproachPlan plan = AgentPrimitivePlanner.requireApproachPlan(
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                startPose,
+                target,
+                "minecraft:stone",
+                Optional.of(frame(List.of(up, north))),
+                0L);
+        AgentPrimitivePlanner.ApproachPlan reversed = AgentPrimitivePlanner.requireApproachPlan(
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                startPose,
+                target,
+                "minecraft:stone",
+                Optional.of(frame(List.of(north, up))),
+                0L);
+
+        assertThat(plan.anchor()).isEqualTo(raySafe);
+        assertThat(plan.route().cells()).containsExactly(start, aabbOnly, raySafe);
+        assertThat(reversed.anchor()).isEqualTo(plan.anchor());
+        assertThat(reversed.route()).isEqualTo(plan.route());
+
+        var deliveredWithoutRay = new ObservationRecord.VisibleSurface(
+                up.position(),
+                up.face(),
+                up.block(),
+                up.shapeClass(),
+                up.cropMature(),
+                up.eyeOrigin(),
+                up.observedTick(),
+                up.worldRevision());
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requireApproachPlan(
+                        map.snapshot().orElseThrow(),
+                        new DeterministicAStar(),
+                        startPose,
+                        target,
+                        "minecraft:stone",
+                        Optional.of(frame(List.of(deliveredWithoutRay))),
+                        0L))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .hasMessage("Approach target requires a current delivered ray witness");
+    }
+
+    @Test
+    void placementApproachChoosesOneDeterministicCellForEveryTransformedStair() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        for (int x = 0; x < 4; x++) {
+            map.observe(confirmed(session, cell(x), cell(x + 1)));
+        }
+        var firstSupport = new ActionDsl.Position(DIMENSION, 5, 63, 0);
+        var secondSupport = new ActionDsl.Position(DIMENSION, 5, 63, 1);
+        var approach = placementApproach(firstSupport, secondSupport);
+        var startPose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+        var first = surfaceWithState(
+                firstSupport, ObservationRecord.Face.UP, "minecraft:stone", Map.of(), 0L);
+        var second = surfaceWithState(
+                secondSupport, ObservationRecord.Face.UP, "minecraft:stone", Map.of(), 0L);
+        PlacementStateResolver resolver = ignored -> Optional.of(stairState("north"));
+
+        AgentPrimitivePlanner.ApproachPlan plan =
+                AgentPrimitivePlanner.requireKnownPlacementApproachPlan(
+                        map.snapshot().orElseThrow(),
+                        new DeterministicAStar(),
+                        startPose,
+                        approach,
+                        Optional.of(frame(List.of(first, second))),
+                        ignored -> 0L,
+                        resolver);
+        AgentPrimitivePlanner.ApproachPlan reversed =
+                AgentPrimitivePlanner.requireKnownPlacementApproachPlan(
+                        map.snapshot().orElseThrow(),
+                        new DeterministicAStar(),
+                        startPose,
+                        approach,
+                        Optional.of(frame(List.of(second, first))),
+                        ignored -> 0L,
+                        resolver);
+
+        assertThat(plan.anchor()).isEqualTo(cell(2));
+        assertThat(plan.route().cells()).containsExactly(cell(0), cell(1), cell(2));
+        assertThat(reversed).isEqualTo(plan);
+
+        var program = new ActionDsl.Program(
+                1,
+                Optional.empty(),
+                Set.of(ActionDsl.Capability.MOVEMENT),
+                List.of(approach));
+        var analysis = AgentPrimitivePlanner.analyze(
+                program,
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                startPose,
+                Optional.of(frame(List.of(second, first))),
+                4.5F,
+                map.snapshot().orElseThrow().worldRevision(),
+                ignored -> 0L,
+                () -> true,
+                resolver);
+        assertThat(analysis.worstCase(approach).map(ActionDslCompiler.Cost::distanceBlocks))
+                .contains(3.0D);
+        assertThat(analysis.knownSurfaces())
+                .extracting(AgentPrimitivePlanner.KnownSurface::position)
+                .containsExactlyInAnyOrder(firstSupport, secondSupport);
+    }
+
+    @Test
+    void placementApproachFailsClosedWhenNoCellCanSatisfyEveryFacing() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        for (int x = 0; x < 4; x++) {
+            map.observe(confirmed(session, cell(x), cell(x + 1)));
+        }
+        var firstSupport = new ActionDsl.Position(DIMENSION, 5, 63, 0);
+        var secondSupport = new ActionDsl.Position(DIMENSION, 5, 63, 1);
+        var approach = placementApproach(firstSupport, secondSupport);
+        var evidence = Optional.of(frame(List.of(
+                surfaceWithState(
+                        firstSupport, ObservationRecord.Face.UP,
+                        "minecraft:stone", Map.of(), 0L),
+                surfaceWithState(
+                        secondSupport, ObservationRecord.Face.UP,
+                        "minecraft:stone", Map.of(), 0L))));
+        PlacementStateResolver incompatible = ref -> Optional.of(
+                stairState(ref.endsWith("1") ? "north" : "south"));
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requireKnownPlacementApproachPlan(
+                        map.snapshot().orElseThrow(),
+                        new DeterministicAStar(),
+                        new AgentPrimitivePlanner.Pose(
+                                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F),
+                        approach,
+                        evidence,
+                        ignored -> 0L,
+                        incompatible))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.NO_KNOWN_PATH);
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requireKnownPlacementApproachPlan(
+                        map.snapshot().orElseThrow(),
+                        new DeterministicAStar(),
+                        new AgentPrimitivePlanner.Pose(
+                                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F),
+                        approach,
+                        evidence,
+                        ignored -> 0L,
+                        PlacementStateResolver.none()))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
     }
 
     @Test
@@ -1291,6 +1548,74 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void blockFaceRecoveryUsesExactDeliveredSurfaceIdentityAndFaceCenter() {
+        UUID session = UUID.randomUUID();
+        var map = map(session);
+        var target = new ActionDsl.Position(DIMENSION, 3, 65, 0);
+        var face = new ActionDsl.FaceKnownBlockFace(
+                "face", target, ActionDsl.BlockFace.WEST, "minecraft:oak_stairs");
+        var required = new AgentPrimitivePlanner.KnownSurface(
+                target, ActionDsl.BlockFace.WEST, "minecraft:oak_stairs");
+        var oldFrame = frame(
+                target, ObservationRecord.Face.WEST, "minecraft:oak_stairs", 0L);
+        map.advanceWorldRevision(1L, List.of(), List.of());
+        var currentMap = map.snapshot().orElseThrow();
+
+        assertThat(AgentPrimitivePlanner.knownFacingSurface(
+                currentMap, Optional.of(oldFrame), required)).isTrue();
+        assertThat(AgentPrimitivePlanner.knownSurface(
+                currentMap, Optional.of(oldFrame), required)).isFalse();
+
+        var admitted = AgentPrimitivePlanner.requireKnownBlockFaceTarget(
+                currentMap, Optional.of(oldFrame), face);
+        Vec3 aim = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
+                target, ActionDsl.BlockFace.WEST);
+        assertThat(admitted.worldSessionId()).isEqualTo(session);
+        assertThat(admitted.worldRevision()).isEqualTo(1L);
+        assertThat(admitted.allowNewerWorldRevision()).isTrue();
+        assertThat(admitted.aimX()).isEqualTo(aim.x);
+        assertThat(admitted.aimY()).isEqualTo(aim.y);
+        assertThat(admitted.aimZ()).isEqualTo(aim.z);
+
+        var pose = new AgentPrimitivePlanner.Pose(
+                cell(0), 0.5D, 64.0D, 0.5D, 1.62D, 0.0F, 0.0F);
+        var program = new ActionDsl.Program(
+                1, Optional.empty(), Set.of(ActionDsl.Capability.CAMERA), List.of(face));
+        var analysis = AgentPrimitivePlanner.analyze(
+                program, currentMap, new DeterministicAStar(), pose,
+                Optional.of(oldFrame), 4.5F);
+        assertThat(analysis.knownFacingSurfaces()).containsExactly(required);
+        assertThat(analysis.knownSurfaces()).isEmpty();
+        assertThat(analysis.knownTargets()).isEmpty();
+        assertThat(analysis.worstCase(face)).contains(
+                AgentPrimitivePlanner.faceCost(pose, face, 4.5F));
+
+        assertThat(AgentPrimitivePlanner.knownFacingSurface(
+                currentMap,
+                Optional.of(frame(
+                        target, ObservationRecord.Face.EAST,
+                        "minecraft:oak_stairs", 0L)),
+                required)).isFalse();
+        assertThat(AgentPrimitivePlanner.knownFacingSurface(
+                currentMap,
+                Optional.of(frame(
+                        target, ObservationRecord.Face.WEST,
+                        "minecraft:stone", 0L)),
+                required)).isFalse();
+        assertThat(AgentPrimitivePlanner.knownFacingSurface(
+                currentMap,
+                Optional.of(frame(
+                        target, ObservationRecord.Face.WEST,
+                        "minecraft:oak_stairs", 2L)),
+                required)).isFalse();
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requireKnownBlockFaceTarget(
+                currentMap, Optional.empty(), face))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+    }
+
+    @Test
     void visibleItemCollectionRejectsWrongOrUnreachableObservationEvidence() {
         UUID session = UUID.randomUUID();
         var map = map(session);
@@ -1683,6 +2008,9 @@ class AgentPrimitivePlannerTest {
                                 "inspect", chest, "minecraft:chest"),
                         new ActionDsl.TakeKnownContainerStack(
                                 "take", chest, "minecraft:chest", "minecraft:wheat_seeds",
+                                "default_components_only", 64),
+                        new ActionDsl.StoreKnownContainerStack(
+                                "store", chest, "minecraft:chest", "minecraft:wheat",
                                 "default_components_only", 64)));
 
         var analysis = AgentPrimitivePlanner.analyze(
@@ -1698,9 +2026,12 @@ class AgentPrimitivePlannerTest {
         assertThat(analysis.primitiveCosts().get("open").interactions()).isOne();
         assertThat(analysis.primitiveCosts().get("inspect").interactions()).isOne();
         assertThat(analysis.primitiveCosts().get("take").interactions()).isEqualTo(3);
+        assertThat(analysis.primitiveCosts().get("store").interactions()).isEqualTo(3);
         assertThat(analysis.primitiveCosts().get("take").ticks())
                 .isEqualTo(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
-        assertThat(analysis.mutationAims()).containsKeys("open", "inspect", "take");
+        assertThat(analysis.primitiveCosts().get("store").ticks())
+                .isEqualTo(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND);
+        assertThat(analysis.mutationAims()).containsKeys("open", "inspect", "take", "store");
 
         assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
                 program, map, new DeterministicAStar(),
@@ -2278,6 +2609,52 @@ class AgentPrimitivePlannerTest {
 
     private static ActionDsl.NavigateToKnown navigate(String id, NavCell target) {
         return new ActionDsl.NavigateToKnown(id, position(target), 0.75D);
+    }
+
+    private static ActionDsl.ApproachKnownPlacement placementApproach(
+            ActionDsl.Position firstSupport, ActionDsl.Position secondSupport) {
+        var stone = new ActionDsl.BlockStateSpec("minecraft:stone", Map.of());
+        return new ActionDsl.ApproachKnownPlacement(
+                "approach_stairs",
+                new ActionDsl.Position(DIMENSION, 5, 64, 0),
+                new ActionDsl.BlockPlanTransform(
+                        ActionDsl.BlockPlanRotation.DEGREES_90,
+                        ActionDsl.BlockPlanMirror.NONE),
+                List.of(
+                        new ActionDsl.BlockPlanEntry(
+                                "first",
+                                new ActionDsl.Offset(0, 0, 0),
+                                Optional.empty(),
+                                Optional.empty(),
+                                Optional.of("psr_00000000000000000000000000000001"),
+                                new ActionDsl.PlacementSupport(
+                                        firstSupport,
+                                        ActionDsl.BlockFace.UP,
+                                        Optional.of(stone),
+                                        Optional.empty())),
+                        new ActionDsl.BlockPlanEntry(
+                                "second",
+                                new ActionDsl.Offset(1, 0, 0),
+                                Optional.empty(),
+                                Optional.empty(),
+                                Optional.of("psr_00000000000000000000000000000002"),
+                                new ActionDsl.PlacementSupport(
+                                        secondSupport,
+                                        ActionDsl.BlockFace.UP,
+                                        Optional.of(stone),
+                                        Optional.empty()))));
+    }
+
+    private static PlacementStateResolver.PlacementState stairState(String facing) {
+        return new PlacementStateResolver.PlacementState(
+                new ObservationRecord.BlockStateView(
+                        new ObservationValues.ResourceId("minecraft:oak_stairs"),
+                        Map.of(
+                                "facing", facing,
+                                "half", "bottom",
+                                "shape", "straight",
+                                "waterlogged", "false")),
+                new ObservationValues.ResourceId("minecraft:oak_stairs"));
     }
 
     private static ActionDsl.Position position(NavCell cell) {

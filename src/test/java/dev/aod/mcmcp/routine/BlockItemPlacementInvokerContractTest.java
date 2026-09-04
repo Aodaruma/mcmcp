@@ -200,6 +200,49 @@ class BlockItemPlacementInvokerContractTest {
     }
 
     @Test
+    void exactPlacementPredictionUsesTheAlignedLiveHitAndIsRepeatedAtDispatch() throws Exception {
+        String port = "dev/aod/mcmcp/routine/MinecraftApplyBlockPlanPort#";
+        String aligned =
+                "dev/aod/mcmcp/routine/MinecraftApplyBlockPlanPort$ControlOwnership#aligned";
+        String exact = port + "exactPlacementCandidateMatches";
+        String placementState =
+                "dev/aod/mcmcp/mixin/client/BlockItemPlacementInvoker#"
+                        + "mcmcp$invokeGetPlacementState";
+
+        assertThat(invocations(
+                "/dev/aod/mcmcp/routine/MinecraftApplyBlockPlanPort.class",
+                "beginPreparation"))
+                .doesNotContain(exact, placementState);
+        assertThat(invocations(
+                "/dev/aod/mcmcp/routine/MinecraftApplyBlockPlanPort.class",
+                "maintainPreparation"))
+                .containsSubsequence(aligned, exact);
+        assertThat(invocations(
+                "/dev/aod/mcmcp/routine/MinecraftApplyBlockPlanPort.class",
+                "exactPlacementCandidateMatches"))
+                .containsSubsequence(port + "actualBlockHit", placementState);
+        assertThat(invocations(
+                "/dev/aod/mcmcp/routine/MinecraftApplyBlockPlanPort.class",
+                "dispatchPlace"))
+                .contains(placementState);
+    }
+
+    @Test
+    void exhaustedPlacementContextsReturnATypedReplanFailure() {
+        var placement = MinecraftApplyBlockPlanPort.preparationCandidateExhaustedFailure(
+                ApplyBlockPlanChildStage.PLACE);
+        assertThat(placement.code()).isEqualTo("PLACEMENT_CONTEXT_UNAVAILABLE");
+        assertThat(placement.category()).isEqualTo(RoutineFailure.Category.PRECONDITION);
+        assertThat(placement.recovery()).isEqualTo(RoutineFailure.Recovery.REPLAN);
+        assertThat(placement.requiresUser()).isFalse();
+
+        var breaking = MinecraftApplyBlockPlanPort.preparationCandidateExhaustedFailure(
+                ApplyBlockPlanChildStage.BREAK);
+        assertThat(breaking.code()).isEqualTo("AIM_RAYCAST_UNAVAILABLE");
+        assertThat(breaking.recovery()).isEqualTo(RoutineFailure.Recovery.REPLAN);
+    }
+
+    @Test
     void phaseFourBreakUsesTheSharedPacketBoundarySourcePolicy() {
         assertThat(SafeBreakSourcePolicy.allowsLiveState(
                 Blocks.STONE.defaultBlockState(), false)).isTrue();

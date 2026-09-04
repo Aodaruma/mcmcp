@@ -155,7 +155,7 @@ NeoForge公式の26.2 MDKもJava 25を対象としている。開発は公式の
 - Blueprintへの変換
 - 入力操作と出力観測による自動試験
 
-各Phaseは前Phaseの受入条件を満たしてから着手する。DSLの構文と検証器はPhase 1で固定し、後続Phaseでは試験済みprimitiveだけをopcode allowlistへ追加する。任意コード実行や汎用スクリプト言語には拡張しない。
+各Phaseは前Phaseの受入条件を満たしてから着手する。DSLの構文と検証器はPhase 1で固定し、後続Phaseでは試験済みprimitiveだけをopcode allowlistへ追加する。任意コード実行や汎用スクリプト言語には拡張しない。未登録の高位作業は、固定Actionを追加し続けるのではなく、公開済みの低位semantic primitiveをLLMがJSON DSLとして合成し、チェックポイント付きproduction Jobが累積budget、effect ledger、再観測、有限retry、cleanupを監督する。低位操作の完全性、scoped consent、実装順は[`MCMCP_Production_Autonomy_Roadmap.md`](./MCMCP_Production_Autonomy_Roadmap.md)を規範補足とする。
 
 ## 5. システム構成
 
@@ -714,6 +714,8 @@ traversabilityは連続値の`from / to` edge、target support、transition clea
 
 固定の高位Actionだけを選ぶ方式にはしない。LLMは許可済みprimitive、有限`if`、固定回数`repeat`を組み合わせられる。ただし、LLMが未知のopcodeを発明して実行することはできない。新しいMinecraft能力は、MOD側にprimitive、結果検証、安全試験を追加し、catalogのopcode allowlistへ載せたreleaseから使用可能になる。
 
+programは通常のJSONであるため、LLMが手元の本文を複製・編集して別Actionとして提出できる。ただし現行`agent_get_action`は実行状態、進捗、失敗、traceだけを返し、投入済みprogram本文を取得する履歴APIは未実装である。production Job導入時は、固定5 Toolを増やさず同じ取得surfaceへcanonical program、program hash、worst-case cost、effect footprint、required refs / consent、`replayable`とref refresh理由を追加する。失効refを暗黙再利用せず、再観測して置換すべきfieldを構造化する。
+
 LLMは、後続nodeが現在の証拠または明示対応するdependency proofですべて受付可能な範囲を1 Actionへまとめる。現在証拠が揃う作物を2〜8件処理する場合は単体nodeの反復よりmutation batchを優先し、成長待機が必要ならplant node群の直後に代表1座標の`wait_until`を同じprogramへ置く。mutationがdropや露出surfaceなど新しい証拠を作る場合は一旦Actionを終え、再観測後に次のActionを開始する。`apply_known_block_plan`だけは、同じnode内の先行entryの変換後targetを明示IDでsupportに指定でき、その閉じた依存以外の新規surfaceを推定しない。`navigate_to_known.target`は支持blockや連続値`from / to`ではなく、current `traversability.navigation_target`を無変換コピーする。visible blockへ接近したいが安全なfeet-spaceを特定できない場合は、`approach_known_surface`へ`visible_surface.position / block`を無変換コピーする。runtimeはKnown Traversability Map上で通常interaction reach内の最短候補を選ぶが、接近後の可視性やmutationを先取りして保証しないため、同Actionを終えて新しいeye originから再観測する。
 
 Action DSL v1の制御構造:
@@ -731,8 +733,11 @@ Action DSL v1の制御構造:
 | opcode | capability | 内容 |
 |---|---|---|
 | navigate_to_known | movement | Known Traversability Mapで現在証明された地上feet-space、または完全なVanilla ladder / scaffoldingで結ばれた床付きlandingへ移動 |
+| approach_known_surface | movement | 配達済みの可視surfaceへ、Known Traversability Map上の通常interaction reach内のfeet-spaceまで接近 |
+| approach_known_placement | movement | 後続する1〜8件のstationary階段plan全体について、変換後facing、UP support ray、reach、settlement誤差を同時に満たす共通stand cellへ移動 |
 | face_known_position | camera | 既知座標へ角速度制限付きで向く |
-| wait_ticks | なし | 1〜200 active tick待機 |
+| face_known_block_face | camera | 配達済みsurfaceの指定faceに束縛したray witnessへ角速度制限付きで向く |
+| wait_ticks | なし | 1〜15,000 active tickの有限待機。安全gateとAction全体deadlineは継続する |
 | wait_until | なし | 開始時にpolicy-visibleなwheat surfaceだった明示座標を認可し、その座標のlive成熟を最大1〜15,000 active tick待機 |
 | break_known_face | camera, block_break | 宣言した可視・既知のoak / birch幹1個を、指定したVanilla axeで通常入力から破壊 |
 | till_known_block | camera, block_interact | 可視・既知のdirt / grass_block / dirt_path 1個を、指定したVanilla hoeの通常useでfarmlandへ変換 |
@@ -749,9 +754,11 @@ Action DSL v1の制御構造:
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のVanilla chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemのwhole stackを最大1回quick-moveし、close/reopen full readbackでplayer inventoryの絶対個数を確認 |
+| store_known_container_stack | camera, inventory_transfer | player inventoryの指定item whole stackを同じcontainerへ最大1回quick-moveし、close/reopen full readbackでcontainerの絶対個数を確認 |
 | craft_known_recipe | camera, inventory_transfer | recipe queryの短寿命opaque参照を再検証し、可視・既知crafting tableで1〜3回、完成品を1回分ずつ回収して絶対inventory目標を確認 |
 | smelt_known_recipe | camera, inventory_transfer | recipe queryの短寿命opaque参照を再検証し、可視・既知のfurnace / blast furnace / smokerでexact stack 1〜64個を精錬して絶対inventory目標を確認 |
 | brew_known_potion_batch | camera, inventory_transfer | 空の可視・既知brewing standで、宣言した標準Vanilla Potion 1〜3本を現行recipe tableの既知の1段変換だけ醸造 |
+| operate_known_menu | inventory_transfer | 現在開いている受入済みMenu profileのsingle-use `operation_ref`を再検証して1操作を実行 |
 | collect_visible_item | movement | 最新frameの可視item種別と連続値XYZをwitnessに、既知の安全なpickup cellへ移動し、inventory絶対個数の増加を確認 |
 | collect_visible_item_batch | movement | 2〜8件の可視item witnessをlisted orderで同じ安全検証経路へ展開し、失敗時は未開始suffixを実行しない |
 
@@ -759,11 +766,15 @@ Action DSL v1の制御構造:
 
 semantic action、stationary break、block plan、Phase 5 world adapterで共有するuniversal safety gateは、OS window focusとVanillaのmouse grabを許可条件へ含めない。評価中に別terminalへfocusを移した場合やmouse captureが一時的に外れた場合でも、それだけでpreflight / JITを失敗させない。一方、Minecraftの実pause、予期しないScreen / overlay、Survival mode、生存とhealth・被弾・炎上、policy-visibleな近傍threat、primitiveごとの位置・向き・slot・使用状態を含むstationary条件、serverのposition / rotation / motion / inventory / block mutation reconciliationは従来どおり検証し、操作直前の再検証を省略しない。Screenの不一致はこのmutation dispatchを許可しない条件であり、それだけでcontrolをOFFにするglobal stopとは区別する。universal safetyの変化は`CONTROL_CONTEXT_CHANGED`または`mutation_safety_changed`、対象block自体の不一致は`mutation_precondition_changed`として分離し、入力値を診断へ反射しない。
 
+現在のpolicy-visibleな近傍threat判定はruntime側の実行条件であり、LLMだけが次のActionを控えるadvisoryではない。該当時は現在primitiveまたはActionを失敗・再計画へ進め、Agent入力を解放する。mob trap等の期待された敵対mob環境へ対応する際は、この条件全体をOFFにせず、`visible_hostile_presence`だけをユーザー同意で限定解除できる中央`ThreatPolicy`へ移行する。解除権限はLLMが指定するbooleanではなく、ローカルUIまたは認証済みplayer操作が発行し、world session、Job / Action hash、作業領域、許可op、mob分類、距離、期限、使用回数、health floor、最大damageへ束縛したopaque `consent_ref`とする。dead、health floor、継続被弾、接触、projectile、炎上、lava、fall、suffocation、air不足、world / session変更、desync、unexpected screenは解除できない。実行中に未許可hostileが現れた場合は危険入力を解放し、有限な安全checkpointまたはretreat後に`AWAITING_CONSENT`を返し、無期限にその場で待機しない。chat、看板、本、server textは同意として扱わない。この移行が完了するまで、従来の可視threat fail-closedを維持する。
+
 `break_known_face`の`tool_item`と`till_known_block` / `till_known_batch`の`hoe_item`はinventory内の該当toolをhotbarへ一時退避して決定論的に選択する契約であり、任意slot操作を公開しない。`plant_known_wheat` / `plant_known_wheat_batch`も同じ準備経路でwheat_seedsを選ぶ。各変化はclient prediction ACKとauthoritative block stateで確認し、toolや種を生成・補充しない。成熟待ちは、primitive開始時にtarget-scoped fresh barrier以後のpolicy-visibleなwheat surfaceを明示座標へ束縛する。targetのmutation revisionがbounded reconciliation mapに残っている場合は`max(visualBarrier, exactTargetRevision)`を使い、他座標の大量更新によるeviction floorを混ぜない。exact target revisionが既にevictされている場合だけ`max(visualBarrier, surfaceMutationEvictionFloor)`へfail-closed fallbackする。一般primitiveのsurface barrier契約は変更しない。JIT認可にはworld/session/dimension/exact targetに加え、その時点の`visualBarrierWorldRevision`、player位置、observer eyeを固定する。待機中にvisual barrierが変化した場合、またはplayer位置/eyeが固定epsilon（1/1024 block）を超えて変化した場合は、live BlockStateを読む前に`PATH_BLOCKED`で終了する。wheat AGE更新などnavigation-neutralなexact-target mutationはvisual barrierを上げないため待機を継続できる。束縛がcurrentな間だけ、その認可済みでload済みの1座標をlive BlockStateで確認し、wheat age=7なら観測frameの更新を待たず完了、age<7ならpendingとする。非wheatへの置換、unload、session / dimension / target変更は早期terminalとし、live stateの値や近傍情報はresponseへ公開しない。単独`wait_until`の初期admissionにも同じvisible wheatを要求する。先行する認可済みplantが全control pathで同じtargetを生成すると静的証明できる閉じたprogramだけは初期解析で未生成cropを許すが、wait開始時の1-node JIT bindでは例外なく新しいvisible wheatを再認可する。timeout時は入力を発生させずActionを終了する。raw attack/useや任意座標操作へ一般化しない。
 
 `wait_until`が採用する`visible_surface`はrecordの`eye_origin`を保持し、initial admission、commit fence、JIT bindのすべてでcurrent observer eyeとの差を1/1024 block以内に制限する。以前のobserver位置から得たstale frameは、target record自体がfresh revisionでも認可しない。`CropWaitAuthorization`のobserver eyeにはcurrent値を代入せず、採用witnessの`eye_origin`そのものを保存するため、待機中の比較元をすり替えられない。先行plantにより初期未生成cropを許す静的dependency proofはこの例外を弱めず、wait開始時のJITでは必ず同じorigin契約を再証明する。
 
 `collect_visible_item_batch`は2〜8件をlisted orderのまま保持する第一級の有限batch nodeである。batch開始時にitem種別ごとのplayer inventory絶対個数baselineを1回だけ固定する。各entryは通常の`collect_visible_item`と同じfresh visible entity、連続値XYZ、既知安全pickup cell、移動中再検証を要求する。先行entryへの移動中に後続entryのfresh policy-visible AABBとplayer pickup areaの実接触を確認し、その後に対応itemのinventory絶対個数増加を確認できた場合だけ、当該後続entryを`incidentally_collected`としてcreditできる。単なるwitness消失、merge、移動、近接や推定では成功にしない。listed orderの途中で接触・差分proof、経路、budgetのいずれかが不足した場合はAction全体をfail-fastで終了し、未開始entryをskip・置換・再順序化しない。
+
+`approach_known_placement`は、後続するstationaryな階段planに必要な作業姿勢をLLMの座標推測なしで得るmovement-only primitiveである。後続planと同じ`anchor` / `transform` / 1〜8件の`entries`を受けるが、初回sliceはsession-local `placement_state_ref`、現在完全stateのUP support、`dependency_entry_id=null`、乾いたbottom halfのoak / cobblestone stairだけを許可する。runtimeは同じmirror / rotation後の`facing`を解決し、全entryについてKnown Traversability Mapの経路、通常reach、support ray、停止時settlement誤差、配置時の水平向きを同時に満たす共通stand cellを、最短距離、worst reach、NavCellの順で決定論的に選ぶ。照準、設置、support evidence延長は行わず、単独top-level Actionとしてterminal後に再観測を要求する。budgetは通常navigationと同じ最大30,000 ms、600 ticks、32 distance blocksで、camera / interaction / break / placeは0とする。
 
 `apply_known_block_plan`はPhase 3の初回vertical sliceであり、wire shapeを`{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}`へ閉じる。移行互換として各entryは`placement_state_ref`または旧`source_state`+`item`のexact one-ofを受ける。entryは1〜8件、offset各軸は-8〜8、entry IDと変換後targetはnode内で一意とする。`anchor`とsupportはdimension-qualified block座標で、変換後targetは`anchor + transform(offset)`だけから決定する。`mirror=none|x|z`を先に適用し、`x`はMinecraft `FRONT_BACK`と同じeast/west反転、`z`は`LEFT_RIGHT`と同じnorth/south反転とする。その後`rotation=0|90|180|270`のY軸時計回り回転を適用する。offsetとrefが解決した完全stateは同じtransformを通し、方向propertyをLLMへ変換させない。
 
@@ -789,7 +800,7 @@ current targetのfresh reproofでfaceまたはaim pointが受付時から変化�
 
 `open_known_passage.expected_block`は12種の木系door / trapdoor / fence gateを明示列挙し、ironとcopperを許可しない。doorはクリック対象のhalfだけでなく、同一block、facing、hinge、powered、openが整合する相方halfをdispatch前に固定する。primary prediction ACK、primaryのauthoritative state、dispatch後のcompanion block mutation、companionの完全stateがすべて一致した場合だけ成功する。pressure plate式自動doorはこのopcodeを使わず、plate上と反対側へ続く`navigate_to_known`を別々のprimitiveとして実行し、world revision更新後のVanilla VoxelShapeから後続経路を再計画する。
 
-container primitiveは別のMCP Toolやlegacy routineを公開せず、同じAction supervisorから既存のscreen ownership / full-content同期adapterを駆動する。`inspect_known_container`はslot番号、NBT/component本文、menu内部状態を返さず、最大27種類の`item=count`だけを`NODE_EVIDENCE` traceへ返す。`take_known_container_stack`はdirectionをcontainer→playerへ固定し、`default_components_only`または耐久済みtoolにも使える`item_id_any_components`だけを許可する。初回open、whole-stack quick-move 1回、同じcontainerのreadback openの最大3 interactionを静的に予約する。内部実行上限400 active tickに対しAction全体の`max_duration_ms`は最低30,000 ms、`max_ticks`は最低600とし、残る200 active tickをdispatch、JIT再検証、readback、releaseの余白として確保する。複数stackをblind retryせず、目標へ届かなければ確認済みの部分移送を記録した上で失敗し、次のActionへ再計画させる。OS focusとmouse grabは要求しないが、pause、overlay、予期しないScreen、world/session変化、可視threat、cursor残留、screen ownership不一致はfail closedとする。Agent所有の正規container Screenだけは処理stageに応じて許可する。
+container primitiveは別のMCP Toolやlegacy routineを公開せず、同じAction supervisorから既存のscreen ownership / full-content同期adapterを駆動する。`inspect_known_container`はslot番号、NBT/component本文、menu内部状態を返さず、最大27種類の`item=count`だけを`NODE_EVIDENCE` traceへ返す。`take_known_container_stack`はcontainer→player、`store_known_container_stack`はplayer→containerへdirectionを固定し、`default_components_only`または耐久済みtoolにも使える`item_id_any_components`だけを許可する。初回open、whole-stack quick-move 1回、同じcontainerのreadback openの最大3 interactionを静的に予約する。内部実行上限400 active tickに対しAction全体の`max_duration_ms`は最低30,000 ms、`max_ticks`は最低600とし、残る200 active tickをdispatch、JIT再検証、readback、releaseの余白として確保する。複数stackをblind retryせず、絶対個数目標へ届かなければ確認済みの部分移送を記録した上で失敗し、次のActionへ再計画させる。OS focusとmouse grabは要求しないが、pause、overlay、予期しないScreen、world/session変化、可視threat、cursor残留、screen ownership不一致はfail closedとする。Agent所有の正規container Screenだけは処理stageに応じて許可する。
 
 `craft_known_recipe`はwire shapeを`{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},max_crafts}`へ閉じる。`recipe_ref`と`recipe_fingerprint`は同じ最新`agent_get_state` recipe query結果からコピーし、world sessionとcatalog revisionへ束縛したままAction開始時と各craft前に再解決する。`station.kind`は`crafting_table`、stateは`minecraft:crafting_table`かつ空properties、goal policyは`default_components_only`、絶対個数は1〜2,304、`max_crafts`は1〜3に固定する。実行は初回open 1回と各craftのrecipe placement・cursor-invariantなresult QUICK_MOVE・readback openで進める。静的budgetは互換性と安全余裕のため従来どおり`1 + 4 * max_crafts` interaction、最大400 active tickを予約し、Action budgetには最低30,000 ms、600 tick、camera 360度を要求する。完成品は1回分ずつ回収し、click前のserver-confirmed empty cursorを維持したまま、空grid/result、close/reopen full-content、絶対inventoryのexact deltaを確認する。slot番号やmenu内部状態は公開せず、曖昧な更新をblind retryしない。
 

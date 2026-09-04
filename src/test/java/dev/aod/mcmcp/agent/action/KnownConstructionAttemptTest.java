@@ -371,6 +371,55 @@ class KnownConstructionAttemptTest {
         assertThat(port.retired).isTrue();
     }
 
+    @Test
+    void adapterDiagnosticsIdentifyPreflightObserveWithoutChangingPublicEvidence() {
+        var request = request(1);
+        var port = new FakePort(request);
+        var failure = new IllegalStateException("private adapter detail");
+        port.observeFailure = failure;
+        var diagnostics = new java.util.ArrayList<AdapterDiagnostic>();
+        var attempt = new KnownConstructionAttempt(
+                port, request, 1, 301,
+                (call, stepIndex, cause) -> diagnostics.add(
+                        new AdapterDiagnostic(call, stepIndex, cause)));
+
+        var result = attempt.tick(1);
+
+        assertThat(result.status()).isEqualTo(KnownConstructionAttempt.Status.FAILED);
+        assertThat(result.evidence()).isEqualTo("construction_adapter_failed");
+        assertThat(diagnostics).containsExactly(new AdapterDiagnostic(
+                KnownConstructionAttempt.AdapterCall.PREFLIGHT_OBSERVE, -1, failure));
+        assertThat(port.retired).isTrue();
+    }
+
+    @Test
+    void adapterDiagnosticsIdentifyPreparationAndIgnoreSinkFailure() {
+        var request = request(1);
+        var port = new FakePort(request);
+        var failure = new IllegalStateException("private preparation detail");
+        port.beginPreparationFailure = failure;
+        var diagnostics = new java.util.ArrayList<AdapterDiagnostic>();
+        var attempt = new KnownConstructionAttempt(
+                port, request, 1, 301,
+                (call, stepIndex, cause) -> {
+                    diagnostics.add(new AdapterDiagnostic(call, stepIndex, cause));
+                    throw new IllegalStateException("diagnostic sink failed");
+                });
+
+        var result = attempt.tick(1);
+
+        assertThat(result.status()).isEqualTo(KnownConstructionAttempt.Status.FAILED);
+        assertThat(result.evidence()).isEqualTo("construction_adapter_failed");
+        assertThat(diagnostics).containsExactly(new AdapterDiagnostic(
+                KnownConstructionAttempt.AdapterCall.BEGIN_PREPARATION, 0, failure));
+        assertThat(port.retired).isTrue();
+    }
+
+    private record AdapterDiagnostic(
+            KnownConstructionAttempt.AdapterCall call,
+            int stepIndex,
+            Throwable failure) { }
+
     private static KnownConstructionRequest request(int count) {
         var entries = new java.util.ArrayList<ApplyBlockPlanStep>();
         for (int index = 0; index < count; index++) {
@@ -450,6 +499,8 @@ class KnownConstructionAttemptTest {
         private boolean deferSecondAimUntilFirstConfirmation;
         private boolean omitCompletedCells;
         private boolean safetyChangeOnPreparation;
+        private RuntimeException observeFailure;
+        private RuntimeException beginPreparationFailure;
         private boolean retired;
         private ApplyBlockPlanChildAction activeChild;
         private ApplyBlockPlanPreparationAttempt preparation;
@@ -464,6 +515,7 @@ class KnownConstructionAttemptTest {
 
         @Override
         public ApplyBlockPlanFrame observe(ApplyBlockPlanRequest plan) {
+            if (observeFailure != null) throw observeFailure;
             KnownConstructionRequest request = Objects.requireNonNull(requests.get(plan));
             var cells = new LinkedHashMap<BlockTarget, ApplyBlockPlanCellObservation>();
             for (int index = 0; index < request.entries().size(); index++) {
@@ -491,6 +543,7 @@ class KnownConstructionAttemptTest {
                 ApplyBlockPlanChildAction child,
                 long deadline) {
             beginPreparationCalls++;
+            if (beginPreparationFailure != null) throw beginPreparationFailure;
             if (safetyChangeOnPreparation) {
                 throw new ConstructionSafetyChangedException();
             }

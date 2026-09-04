@@ -1033,8 +1033,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 long worldRevision,
                 ActionDsl.Position target,
                 ActionDsl.BlockFace face) {
-            // Callers must revalidate the target's position-specific surface barrier before
-            // every tick; this flag only prevents unrelated neutral revisions from restarting aim.
+            // Callers must revalidate the admitted delivered evidence before every tick; this
+            // flag only prevents unrelated world revisions from restarting camera-only aim.
             Vec3 aim = blockFaceAimPoint(target, face);
             return new KnownFaceTarget(
                     worldSessionId, worldRevision, target, aim.x, aim.y, aim.z, true);

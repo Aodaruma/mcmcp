@@ -304,13 +304,6 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 minecraft, child.requiredItemId(), attempt.attemptId());
         try {
             ownership.selectOwnedSlot(minecraft);
-            if (child.stage() == ApplyBlockPlanChildStage.PLACE) {
-                candidates = exactPlacementCandidates(minecraft, request, child, candidates);
-                if (candidates.isEmpty()) {
-                    throw new IllegalStateException(
-                            "no placement candidate produces the exact requested state");
-                }
-            }
         } catch (RuntimeException | LinkageError failure) {
             ownership.close(minecraft);
             throw failure;
@@ -351,14 +344,16 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             active.ownership.selectOwnedSlot(requireMinecraft());
             AimCandidate candidate = active.candidates.get(active.candidateIndex);
             active.ownership.turnToward(requireMinecraft(), candidate.point());
-            if (active.ownership.aligned(requireMinecraft(), candidate.point())
-                    && !actualHitMatches(requireMinecraft(), active.child, candidate, false)) {
+            boolean aligned = active.ownership.aligned(requireMinecraft(), candidate.point());
+            boolean candidateReady = aligned
+                    && actualHitMatches(requireMinecraft(), active.child, candidate, false)
+                    && (active.child.stage() != ApplyBlockPlanChildStage.PLACE
+                            || exactPlacementCandidateMatches(
+                                    requireMinecraft(), active.request, active.child, candidate));
+            if (aligned && !candidateReady) {
                 active.candidateIndex++;
                 if (active.candidateIndex >= active.candidates.size()) {
-                    active.failure = failure("AIM_RAYCAST_UNAVAILABLE",
-                            RoutineFailure.Category.PRECONDITION,
-                            RoutineFailure.Recovery.REPLAN, Map.of("aim_aligned", true),
-                            Map.of("aim_aligned", false));
+                    active.failure = preparationCandidateExhaustedFailure(active.child.stage());
                 }
             }
         } catch (RuntimeException | LinkageError drift) {
@@ -403,7 +398,10 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 active.ownership.requireUndisturbed(minecraft);
                 var candidate = active.candidates.get(active.candidateIndex);
                 aligned = active.ownership.aligned(minecraft, candidate.point())
-                        && actualHitMatches(minecraft, active.child, candidate, true);
+                        && actualHitMatches(minecraft, active.child, candidate, true)
+                        && (active.child.stage() != ApplyBlockPlanChildStage.PLACE
+                                || exactPlacementCandidateMatches(
+                                        minecraft, active.request, active.child, candidate));
                 var level = Objects.requireNonNull(minecraft.level);
                 replaceable = level.getBlockState(blockPos(active.child.target())).canBeReplaced();
             } catch (RuntimeException | LinkageError drift) {
@@ -1031,54 +1029,44 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         }
     }
 
-    private List<AimCandidate> exactPlacementCandidates(
+    private boolean exactPlacementCandidateMatches(
             Minecraft minecraft,
             ApplyBlockPlanRequest request,
             ApplyBlockPlanChildAction child,
-            List<AimCandidate> candidates) {
+            AimCandidate candidate) {
         var player = Objects.requireNonNull(minecraft.player);
         ItemStack stack = player.getMainHandItem();
         String required = child.requiredItemId().orElseThrow();
         if (!required.equals(registryItemId(stack)) || !eligibleBlockStack(stack)) {
-            return List.of();
+            return false;
         }
         var item = (BlockItem) stack.getItem();
         var level = Objects.requireNonNull(minecraft.level);
         if (!horizontalNeighborMutationsContained(
                 request,
                 position -> level.isLoaded(position) ? level.getBlockState(position) : null)) {
-            return List.of();
+            return false;
         }
-        var exact = new ArrayList<AimCandidate>();
-        for (AimCandidate candidate : candidates) {
-            var hit = new BlockHitResult(
-                    candidate.point(), candidate.face(), candidate.hitBlock(), false);
-            var context = item.updatePlacementContext(new BlockPlaceContext(
-                    new UseOnContext(player, InteractionHand.MAIN_HAND, hit)));
-            if (context == null || !context.canPlace()
-                    || !context.getClickedPos().equals(blockPos(child.target()))) {
-                continue;
-            }
-            BlockState predicted = ((BlockItemPlacementInvoker) (Object) item)
-                    .mcmcp$invokeGetPlacementState(context);
-            if (predicted == null || !supportedPlacementFootprint(
-                        level,
-                        context.getClickedPos(), predicted)
-                    || !SafeConstructionBlockPolicy.placementStateMatchesFinalStableProperties(
-                            child.expectedAfter(), fingerprint(predicted))
-                    || !derivedPlacementDifferenceHasPlannedCause(
-                            request, child.target(), child.expectedAfter(), predicted,
-                            position -> level.isLoaded(position)
-                                    ? level.getBlockState(position) : null)) {
-                continue;
-            }
-            if (child.supportWitness().isPresent()
-                    && !SafeConstructionBlockPolicy.allowsPlacementState(predicted, false)) {
-                continue;
-            }
-            exact.add(candidate);
+        var hit = actualBlockHit(minecraft, candidate);
+        if (hit.isEmpty()) return false;
+        var context = item.updatePlacementContext(new BlockPlaceContext(
+                new UseOnContext(player, InteractionHand.MAIN_HAND, hit.orElseThrow())));
+        if (context == null || !context.canPlace()
+                || !context.getClickedPos().equals(blockPos(child.target()))) {
+            return false;
         }
-        return List.copyOf(exact);
+        BlockState predicted = ((BlockItemPlacementInvoker) (Object) item)
+                .mcmcp$invokeGetPlacementState(context);
+        return predicted != null && supportedPlacementFootprint(
+                    level, context.getClickedPos(), predicted)
+                && SafeConstructionBlockPolicy.placementStateMatchesFinalStableProperties(
+                        child.expectedAfter(), fingerprint(predicted))
+                && derivedPlacementDifferenceHasPlannedCause(
+                        request, child.target(), child.expectedAfter(), predicted,
+                        position -> level.isLoaded(position)
+                                ? level.getBlockState(position) : null)
+                && (child.supportWitness().isEmpty()
+                        || SafeConstructionBlockPolicy.allowsPlacementState(predicted, false));
     }
 
     private static boolean allowsSafePlacementSupport(
@@ -1873,6 +1861,22 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 RoutineFailure.Recovery.REPLAN,
                 Map.of("inside_world_border", true, "step_index", child.stepIndex()),
                 Map.of("inside_world_border", false, "step_index", child.stepIndex()));
+    }
+
+    static RoutineFailure preparationCandidateExhaustedFailure(
+            ApplyBlockPlanChildStage stage) {
+        Objects.requireNonNull(stage, "stage");
+        if (stage == ApplyBlockPlanChildStage.PLACE) {
+            return failure("PLACEMENT_CONTEXT_UNAVAILABLE",
+                    RoutineFailure.Category.PRECONDITION,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("exact_placement_context", true),
+                    Map.of("exact_placement_context", false));
+        }
+        return failure("AIM_RAYCAST_UNAVAILABLE",
+                RoutineFailure.Category.PRECONDITION,
+                RoutineFailure.Recovery.REPLAN,
+                Map.of("aim_aligned", true), Map.of("aim_aligned", false));
     }
 
     private static Optional<BlockStateFingerprint> currentFingerprint(BlockSample sample) {

@@ -12,6 +12,7 @@ import dev.aod.mcmcp.routine.SafePlacementSupportPolicy;
 
 import java.util.LinkedHashMap;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
  * Tick-driven internal executor for one ordered, stationary construction suffix.
@@ -25,6 +26,7 @@ public final class KnownConstructionAttempt implements AutoCloseable {
     private final ApplyBlockPlanPort port;
     private final KnownConstructionRequest request;
     private final long deadlineTick;
+    private final AdapterFailureSink adapterFailureSink;
     private final boolean[] completed;
     private Phase phase = Phase.PREFLIGHT;
     private ApplyBlockPlanChildAction child;
@@ -42,8 +44,19 @@ public final class KnownConstructionAttempt implements AutoCloseable {
             KnownConstructionRequest request,
             long admittedClientTick,
             long deadlineTick) {
+        this(port, request, admittedClientTick, deadlineTick, AdapterFailureSink.noop());
+    }
+
+    public KnownConstructionAttempt(
+            ApplyBlockPlanPort port,
+            KnownConstructionRequest request,
+            long admittedClientTick,
+            long deadlineTick,
+            AdapterFailureSink adapterFailureSink) {
         this.port = Objects.requireNonNull(port, "port");
         this.request = Objects.requireNonNull(request, "request");
+        this.adapterFailureSink = Objects.requireNonNull(
+                adapterFailureSink, "adapterFailureSink");
         if (admittedClientTick < 0L || deadlineTick <= admittedClientTick) {
             throw new IllegalArgumentException("deadline must follow a non-negative admission tick");
         }
@@ -90,7 +103,9 @@ public final class KnownConstructionAttempt implements AutoCloseable {
 
     private TickResult preflight(long clientTick) {
         var frame = Objects.requireNonNull(
-                port.observe(request.plan()), "adapter returned no construction frame");
+                invokeAdapter(AdapterCall.PREFLIGHT_OBSERVE,
+                        () -> port.observe(request.plan())),
+                "adapter returned no construction frame");
         if (frame.clientTick() != clientTick) {
             return fail("construction_adapter_contract");
         }
@@ -158,7 +173,8 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         currentIndex = next;
         child = ApplyBlockPlanChildAction.first(next, request.entries().get(next));
         preparation = Objects.requireNonNull(
-                port.beginPreparation(request.plan(), child, deadlineTick),
+                invokeAdapter(AdapterCall.BEGIN_PREPARATION,
+                        () -> port.beginPreparation(request.plan(), child, deadlineTick)),
                 "adapter returned no construction preparation");
         if (preparation.stepIndex() != next
                 || preparation.issuedClientTick() != clientTick
@@ -171,7 +187,8 @@ public final class KnownConstructionAttempt implements AutoCloseable {
 
     private TickResult prepare() {
         var evidence = Objects.requireNonNull(
-                port.preparationEvidence(preparation),
+                invokeAdapter(AdapterCall.PREPARATION_EVIDENCE,
+                        () -> port.preparationEvidence(preparation)),
                 "adapter returned no construction preparation evidence");
         if (!preparation.attemptId().equals(evidence.attemptId())) {
             return fail("construction_adapter_contract");
@@ -180,7 +197,8 @@ public final class KnownConstructionAttempt implements AutoCloseable {
             return fail(failureCode(evidence.failure()));
         }
         if (!evidence.prepared()) {
-            port.maintainPreparation(preparation);
+            invokeAdapter(AdapterCall.MAINTAIN_PREPARATION,
+                    () -> port.maintainPreparation(preparation));
             return result(Status.RUNNING, "construction_preparing");
         }
         if (evidence.liveState().filter(child.expectedBefore()::equals).isEmpty()
@@ -188,7 +206,9 @@ public final class KnownConstructionAttempt implements AutoCloseable {
             return fail("construction_precondition_changed");
         }
         action = Objects.requireNonNull(
-                port.dispatchPrepared(request.plan(), child, preparation, deadlineTick),
+                invokeAdapter(AdapterCall.DISPATCH_PREPARED,
+                        () -> port.dispatchPrepared(
+                                request.plan(), child, preparation, deadlineTick)),
                 "adapter returned no construction action");
         if (action.stepIndex() != currentIndex
                 || action.leaseExpiresAtClientTick() != deadlineTick) {
@@ -201,7 +221,9 @@ public final class KnownConstructionAttempt implements AutoCloseable {
 
     private TickResult confirm() {
         var evidence = Objects.requireNonNull(
-                port.actionEvidence(action), "adapter returned no construction evidence");
+                invokeAdapter(AdapterCall.ACTION_EVIDENCE,
+                        () -> port.actionEvidence(action)),
+                "adapter returned no construction evidence");
         if (!action.attemptId().equals(evidence.attemptId())) {
             return fail("construction_adapter_contract");
         }
@@ -220,7 +242,7 @@ public final class KnownConstructionAttempt implements AutoCloseable {
             phase = Phase.RELEASING_CONFIRMED;
             return releaseConfirmed();
         }
-        port.maintainAction(action);
+        invokeAdapter(AdapterCall.MAINTAIN_ACTION, () -> port.maintainAction(action));
         return result(Status.RUNNING, "construction_confirming");
     }
 
@@ -242,7 +264,9 @@ public final class KnownConstructionAttempt implements AutoCloseable {
 
     private TickResult finalVerify(long clientTick) {
         var frame = Objects.requireNonNull(
-                port.observe(request.plan()), "adapter returned no construction frame");
+                invokeAdapter(AdapterCall.FINAL_OBSERVE,
+                        () -> port.observe(request.plan())),
+                "adapter returned no construction frame");
         if (frame.clientTick() != clientTick
                 || frame.observationRevision() < finalVerificationAfterRevision) {
             return fail("construction_adapter_contract");
@@ -308,20 +332,47 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         if (closed) return;
         releaseActionStrict();
         releasePreparationStrict();
-        port.retire(request.plan());
+        invokeAdapter(AdapterCall.RETIRE_PLAN, () -> port.retire(request.plan()));
         closed = true;
     }
 
     private void releasePreparationStrict() {
         if (preparation == null) return;
-        port.releasePreparation(preparation);
+        invokeAdapter(AdapterCall.RELEASE_PREPARATION,
+                () -> port.releasePreparation(preparation));
         preparation = null;
     }
 
     private void releaseActionStrict() {
         if (action == null) return;
-        port.releaseAction(action);
+        invokeAdapter(AdapterCall.RELEASE_ACTION, () -> port.releaseAction(action));
         action = null;
+    }
+
+    private <T> T invokeAdapter(AdapterCall call, Supplier<T> invocation) {
+        Objects.requireNonNull(call, "call");
+        Objects.requireNonNull(invocation, "invocation");
+        try {
+            return invocation.get();
+        } catch (RuntimeException | LinkageError failure) {
+            reportAdapterFailure(call, failure);
+            throw failure;
+        }
+    }
+
+    private void invokeAdapter(AdapterCall call, Runnable invocation) {
+        invokeAdapter(call, () -> {
+            invocation.run();
+            return null;
+        });
+    }
+
+    private void reportAdapterFailure(AdapterCall call, Throwable failure) {
+        try {
+            adapterFailureSink.onFailure(call, currentIndex, failure);
+        } catch (RuntimeException | LinkageError ignored) {
+            // Diagnostics must never change the public fail-closed result or cleanup path.
+        }
     }
 
     private void requireOpen() {
@@ -334,6 +385,29 @@ public final class KnownConstructionAttempt implements AutoCloseable {
 
     private enum Phase {
         PREFLIGHT, PREPARING, CONFIRMING, RELEASING_CONFIRMED, FINAL_VERIFY
+    }
+
+    public enum AdapterCall {
+        PREFLIGHT_OBSERVE,
+        BEGIN_PREPARATION,
+        PREPARATION_EVIDENCE,
+        MAINTAIN_PREPARATION,
+        DISPATCH_PREPARED,
+        ACTION_EVIDENCE,
+        MAINTAIN_ACTION,
+        FINAL_OBSERVE,
+        RELEASE_PREPARATION,
+        RELEASE_ACTION,
+        RETIRE_PLAN
+    }
+
+    @FunctionalInterface
+    public interface AdapterFailureSink {
+        void onFailure(AdapterCall call, int stepIndex, Throwable failure);
+
+        static AdapterFailureSink noop() {
+            return (call, stepIndex, failure) -> { };
+        }
     }
 
     public record TickResult(

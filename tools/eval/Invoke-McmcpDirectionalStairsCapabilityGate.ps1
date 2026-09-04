@@ -90,6 +90,17 @@ $script:StairEntries = @(
         }
     }
 )
+$script:StairComponents = @(
+    [ordered]@{
+        name = 'outer'; ids = @('outer_corner', 'outer_companion')
+        pivot = 'outer_companion'
+    }
+    [ordered]@{
+        name = 'inner'; ids = @('inner_corner', 'inner_companion')
+        pivot = 'inner_corner'
+    }
+    [ordered]@{ name = 'straight'; ids = @('straight'); pivot = 'straight' }
+)
 
 function Get-McpMeta {
     [ordered]@{
@@ -248,11 +259,16 @@ function Select-StairMatrixFoundation {
 function New-DirectionalStairsActionRequest {
     param(
         [Parameter(Mandatory)][Collections.IDictionary]$Sources,
-        [Parameter(Mandatory)][object]$Foundation
+        [Parameter(Mandatory)][object]$Foundation,
+        [Parameter(Mandatory)][Collections.IDictionary]$Component
     )
 
+    $specs = @($script:StairEntries | Where-Object { $_.id -cin @($Component.ids) })
+    if ($specs.Count -ne @($Component.ids).Count) {
+        throw "Gate D component has an unknown or duplicate entry: $($Component.name)"
+    }
     $entries = [Collections.Generic.List[object]]::new()
-    foreach ($spec in $script:StairEntries) {
+    foreach ($spec in $specs) {
         $support = $Foundation.supports[$spec.id]
         $ref = $Sources.refs[$spec.source_role]
         $entry = [ordered]@{
@@ -275,26 +291,93 @@ function New-DirectionalStairsActionRequest {
         }
         $entries.Add($entry)
     }
-    $aimSupport = $Foundation.supports['inner_corner']
-    $faceNode = [ordered]@{
-        id = 'face_directional_stairs_matrix'
-        op = 'face_known_position'
-        target = Get-ObjectProperty $aimSupport 'position'
-    }
     $node = [ordered]@{
-        id = 'directional_stairs_matrix'
+        id = "directional_stairs_$($Component.name)"
         op = 'apply_known_block_plan'
         anchor = $Foundation.anchor
         transform = [ordered]@{ rotation = 90; mirror = 'x' }
         entries = @($entries)
     }
-    return New-ActionRequest -Name 'capability_gate_directional_stairs_matrix' `
-        -Capabilities @('camera', 'block_place') -Body @($faceNode, $node) `
+    return New-ActionRequest -Name "capability_gate_directional_stairs_$($Component.name)" `
+        -Capabilities @('camera', 'block_place') -Body @($node) `
         -Budget ([ordered]@{
             max_duration_ms = 75000; max_ticks = 1500
-            max_distance_blocks = 0; max_camera_degrees = 440
-            max_interactions = 0; max_blocks_broken = 0; max_blocks_placed = 5
+            max_distance_blocks = 0; max_camera_degrees = 400
+            max_interactions = 0; max_blocks_broken = 0
+            max_blocks_placed = $entries.Count
         })
+}
+
+function New-DirectionalStairsApproachRequest {
+    param(
+        [Parameter(Mandatory)][object]$State,
+        [Parameter(Mandatory)][object]$Foundation,
+        [Parameter(Mandatory)][Collections.IDictionary]$Component
+    )
+
+    $approachSupport = $Foundation.supports[[string]$Component.pivot]
+    $observedTarget = Get-ObjectProperty $approachSupport 'position'
+    $node = [ordered]@{
+        id = "approach_stairs_$($Component.name)"
+        op = 'approach_known_surface'
+        target = $observedTarget
+        expected_block = Get-ObjectProperty $approachSupport 'block'
+    }
+    if (-not [object]::ReferenceEquals($observedTarget, $node.target)) {
+        throw 'Gate D changed the delivery-backed approach target'
+    }
+    return New-PrimitiveRequest -Name "approach_stairs_$($Component.name)" `
+        -Capabilities @('movement') -Node $node `
+        -Distance (Get-PolicyDistanceBudget -State $State) -Camera 0
+}
+
+function New-DirectionalStairsFaceRequest {
+    param(
+        [Parameter(Mandatory)][object]$Foundation,
+        [Parameter(Mandatory)][Collections.IDictionary]$Component
+    )
+
+    $aimSupport = $Foundation.supports[[string]$Component.pivot]
+    $node = [ordered]@{
+        id = "face_directional_stairs_$($Component.name)"
+        op = 'face_known_block_face'
+        target = Get-ObjectProperty $aimSupport 'position'
+        face = Get-ObjectProperty $aimSupport 'face'
+        expected_block = Get-ObjectProperty $aimSupport 'block'
+    }
+    return New-PrimitiveRequest -Name "face_directional_stairs_$($Component.name)" `
+        -Capabilities @('camera') -Node $node -Duration 10000 -Ticks 200 `
+        -Distance 0 -Camera 80
+}
+
+function Refresh-StairComponentFoundation {
+    param(
+        [Parameter(Mandatory)][object]$State,
+        [Parameter(Mandatory)][object]$Baseline,
+        [Parameter(Mandatory)][Collections.IDictionary]$Component
+    )
+
+    $records = @(Get-VisibleSurfaceRecords -State $State -Block 'minecraft:smooth_stone' `
+        -Bounds $script:StairSupportBounds -Faces @('up'))
+    $byKey = [ordered]@{}
+    foreach ($record in @(Get-UniqueRecordsByPosition -Records $records)) {
+        $byKey[(Get-BlockPositionKey (Get-ObjectProperty $record 'position'))] = $record
+    }
+    $supports = [ordered]@{}
+    foreach ($id in @($Component.ids)) {
+        $baselineSupport = $Baseline.supports[[string]$id]
+        $key = Get-BlockPositionKey (Get-ObjectProperty $baselineSupport 'position')
+        if (-not $byKey.Contains($key)) {
+            throw "Gate D component support is not freshly visible: $id at $key"
+        }
+        $fresh = $byKey[$key]
+        if ((ConvertTo-CompactJson (Get-ObjectProperty $fresh 'state')) -cne
+                (ConvertTo-CompactJson (Get-ObjectProperty $baselineSupport 'state'))) {
+            throw "Gate D component support changed before placement: $id at $key"
+        }
+        $supports[[string]$id] = $fresh
+    }
+    return [pscustomobject]@{ anchor = $Baseline.anchor; supports = $supports }
 }
 
 function Get-ExpectedStairTargets {
@@ -325,8 +408,12 @@ function Assert-ExactFinalStairTargets {
     $records = @(Get-VisibleSurfaceRecords -State $State -Block 'minecraft:oak_stairs' `
         -Bounds $script:StairTargetBounds -Faces $null)
     $unique = @(Get-UniqueRecordsByPosition -Records $records)
+    $expectedKeys = @($Expected | ForEach-Object { Get-BlockPositionKey $_.position })
+    $unique = @($unique | Where-Object {
+            (Get-BlockPositionKey (Get-ObjectProperty $_ 'position')) -cin $expectedKeys
+        })
     if ($unique.Count -ne $Expected.Count) {
-        throw "Gate D final visible target count mismatch; expected=$($Expected.Count) actual=$($unique.Count)"
+        throw "Gate D component visible target count mismatch; expected=$($Expected.Count) actual=$($unique.Count)"
     }
     $byKey = [ordered]@{}
     foreach ($record in $unique) {
@@ -361,51 +448,131 @@ function Assert-DirectionalStairsFixedFive {
 }
 
 function Assert-DirectionalStairsLifecycle {
+    $events = @($script:GateEvents)
     $accepted = @($script:GateEvents | Where-Object {
             (Get-ObjectProperty $_ 'event') -ceq 'action_accepted'
         })
     $terminal = @($script:GateEvents | Where-Object {
             (Get-ObjectProperty $_ 'event') -ceq 'action_terminal'
         })
-    if ($accepted.Count -ne 1 -or $terminal.Count -ne 1 -or
-        (Get-ObjectProperty $accepted[0] 'action_id') -cne
-            (Get-ObjectProperty $terminal[0] 'action_id') -or
-        (Get-ObjectProperty $terminal[0] 'state') -cne 'succeeded') {
-        throw 'Gate D Action lifecycle is not exactly accepted==succeeded-terminal'
+    $expectedActions = $script:StairComponents.Count * 3
+    if ($accepted.Count -ne $expectedActions -or $terminal.Count -ne $expectedActions) {
+        throw 'Gate D does not have exactly one approach/face/build lifecycle trio per component'
+    }
+    for ($index = 0; $index -lt $expectedActions; $index++) {
+        if ((Get-ObjectProperty $accepted[$index] 'action_id') -cne
+                (Get-ObjectProperty $terminal[$index] 'action_id') -or
+            (Get-ObjectProperty $terminal[$index] 'state') -cne 'succeeded') {
+            throw "Gate D component lifecycle mismatch at index $index"
+        }
+    }
+    $barriers = @($events | Where-Object {
+            (Get-ObjectProperty $_ 'event') -ceq 'observation_frame_advanced'
+        })
+    if ($barriers.Count -ne $script:StairComponents.Count * 2) {
+        throw 'Gate D does not have exactly two fresh-observation barriers per component'
+    }
+    for ($componentIndex = 0; $componentIndex -lt $script:StairComponents.Count; $componentIndex++) {
+        $base = $componentIndex * 3
+        foreach ($transition in @(
+                [ordered]@{ terminal = $terminal[$base]; accepted = $accepted[$base + 1] },
+                [ordered]@{ terminal = $terminal[$base + 1]; accepted = $accepted[$base + 2] }
+            )) {
+            $terminalIndex = [Array]::IndexOf($events, $transition.terminal)
+            $acceptedIndex = [Array]::IndexOf($events, $transition.accepted)
+            $between = @($barriers | Where-Object {
+                    $barrierIndex = [Array]::IndexOf($events, $_)
+                    $barrierIndex -gt $terminalIndex -and $barrierIndex -lt $acceptedIndex
+                })
+            if ($terminalIndex -lt 0 -or $acceptedIndex -lt 0 -or $between.Count -ne 1) {
+                throw "Gate D lifecycle lacks a fresh observation before component phase $base"
+            }
+        }
     }
     return [ordered]@{
-        accepted = 1; terminal = 1
-        action_id = Get-ObjectProperty $accepted[0] 'action_id'
+        accepted = $accepted.Count; terminal = $terminal.Count
+        action_ids = @($accepted | ForEach-Object { Get-ObjectProperty $_ 'action_id' })
         accepted_equals_terminal = $true
+        fresh_observation_barriers = $barriers.Count
     }
 }
 
-function Assert-DirectionalStairsTerminalProof {
+function Assert-DirectionalStairsApproachTerminalProof {
+    param(
+        [Parameter(Mandatory)][object]$Terminal,
+        [Parameter(Mandatory)][double]$MaximumDistance
+    )
+
+    $progress = Get-ObjectProperty $Terminal 'progress'
+    $distance = [double](Get-ObjectProperty $progress 'distance_travelled')
+    if ((Get-ObjectProperty $Terminal 'state') -cne 'succeeded' -or
+        $null -ne (Get-ObjectProperty $Terminal 'failure') -or
+        [int](Get-ObjectProperty $progress 'executed_nodes') -ne 1 -or
+        [int](Get-ObjectProperty $progress 'total_node_upper_bound') -ne 1 -or
+        $distance -lt 0 -or $distance -gt $MaximumDistance -or
+        [double](Get-ObjectProperty $progress 'camera_degrees') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'interactions') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'blocks_broken') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'blocks_placed') -ne 0) {
+        throw 'Gate D approach terminal violates the movement-only policy budget'
+    }
+    return [ordered]@{
+        distance_travelled = $distance
+        maximum_distance = $MaximumDistance
+        proof_scope = 'succeeded_terminal_and_movement_budget_only'
+        reach_inferred_from_distance = $false
+        fresh_support_admission_required = $true
+    }
+}
+
+function Assert-DirectionalStairsFaceTerminalProof {
     param([Parameter(Mandatory)][object]$Terminal)
+
+    $progress = Get-ObjectProperty $Terminal 'progress'
+    if ((Get-ObjectProperty $Terminal 'state') -cne 'succeeded' -or
+        $null -ne (Get-ObjectProperty $Terminal 'failure') -or
+        [int](Get-ObjectProperty $progress 'executed_nodes') -ne 1 -or
+        [int](Get-ObjectProperty $progress 'total_node_upper_bound') -ne 1 -or
+        [double](Get-ObjectProperty $progress 'distance_travelled') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'interactions') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'blocks_broken') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'blocks_placed') -ne 0 -or
+        [double](Get-ObjectProperty $progress 'camera_degrees') -gt 80) {
+        throw 'Gate D face terminal violates the camera-only budget'
+    }
+    return [ordered]@{ camera_degrees = Get-ObjectProperty $progress 'camera_degrees' }
+}
+
+function Assert-DirectionalStairsTerminalProof {
+    param(
+        [Parameter(Mandatory)][object]$Terminal,
+        [Parameter(Mandatory)][int]$ExpectedPlacements,
+        [Parameter(Mandatory)][string]$ExpectedNodeId
+    )
 
     if ((Get-ObjectProperty $Terminal 'state') -cne 'succeeded' -or
         $null -ne (Get-ObjectProperty $Terminal 'failure')) {
         throw 'Gate D terminal is not succeeded without failure'
     }
     $progress = Get-ObjectProperty $Terminal 'progress'
-    if ([int](Get-ObjectProperty $progress 'executed_nodes') -ne 2 -or
-        [int](Get-ObjectProperty $progress 'total_node_upper_bound') -ne 2 -or
+    if ([int](Get-ObjectProperty $progress 'executed_nodes') -ne 1 -or
+        [int](Get-ObjectProperty $progress 'total_node_upper_bound') -ne 1 -or
         [double](Get-ObjectProperty $progress 'distance_travelled') -ne 0 -or
         [int](Get-ObjectProperty $progress 'interactions') -ne 0 -or
         [int](Get-ObjectProperty $progress 'blocks_broken') -ne 0 -or
-        [int](Get-ObjectProperty $progress 'blocks_placed') -ne 5 -or
-        [double](Get-ObjectProperty $progress 'camera_degrees') -gt 440) {
+        [int](Get-ObjectProperty $progress 'blocks_placed') -ne $ExpectedPlacements -or
+        [double](Get-ObjectProperty $progress 'camera_degrees') -gt 400) {
         throw 'Gate D terminal progress violates the stationary five-placement budget'
     }
     $trace = @((Get-ObjectProperty $Terminal 'trace'))
     $evidence = @($trace | Where-Object {
             (Get-ObjectProperty $_ 'event') -ceq 'NODE_EVIDENCE' -and
             (Get-ObjectProperty $_ 'detail') -ceq
-                'construction_complete=5,server_confirmed=5'
+                "construction_complete=$ExpectedPlacements,server_confirmed=$ExpectedPlacements"
         })
     $completed = @($trace | Where-Object {
             (Get-ObjectProperty $_ 'event') -ceq 'NODE_COMPLETED' -and
-            (Get-ObjectProperty $_ 'detail') -ceq 'directional_stairs_matrix'
+            (Get-ObjectProperty $_ 'detail') -ceq $ExpectedNodeId
         })
     if ($evidence.Count -ne 1 -or $completed.Count -ne 1 -or
         [Array]::IndexOf($trace, $completed[0]) -le [Array]::IndexOf($trace, $evidence[0])) {
@@ -414,7 +581,7 @@ function Assert-DirectionalStairsTerminalProof {
     return [ordered]@{
         completion_evidence = Get-ObjectProperty $evidence[0] 'detail'
         completed_node = Get-ObjectProperty $completed[0] 'detail'
-        server_confirmed_placements = 5
+        server_confirmed_placements = $ExpectedPlacements
     }
 }
 
@@ -458,39 +625,65 @@ function Invoke-DirectionalStairsGateCore {
     $initial = Get-FreshState
     $inventoryBefore = Get-InventoryCount -State $initial -Item 'minecraft:oak_stairs'
     if ($inventoryBefore -ne 8) { throw "Gate D fixture requires 8 oak stairs; found=$inventoryBefore" }
-    $sources = Get-DirectionalStairSources -State $initial
+    $initialSources = Get-DirectionalStairSources -State $initial
     $foundation = Select-StairMatrixFoundation -State $initial
     $expectedTargets = @(Get-ExpectedStairTargets -Foundation $foundation)
-    $request = New-DirectionalStairsActionRequest -Sources $sources -Foundation $foundation
-    $terminal = Invoke-ActionRequest -Request $request -WallTimeoutSeconds 150
+    $approachProofs = [Collections.Generic.List[object]]::new()
+    $faceProofs = [Collections.Generic.List[object]]::new()
+    $terminalProofs = [Collections.Generic.List[object]]::new()
+    foreach ($component in $script:StairComponents) {
+        $preApproachState = Get-FreshState
+        $preApproachFoundation = Refresh-StairComponentFoundation `
+            -State $preApproachState -Baseline $foundation -Component $component
+        $approachRequest = New-DirectionalStairsApproachRequest `
+            -State $preApproachState -Foundation $preApproachFoundation -Component $component
+        $approachTerminal = Invoke-ActionRequest `
+            -Request $approachRequest -WallTimeoutSeconds 90
+        $maximumApproachDistance = Get-PolicyDistanceBudget -State $preApproachState
+        $approachProofs.Add((Assert-DirectionalStairsApproachTerminalProof `
+                    -Terminal $approachTerminal -MaximumDistance $maximumApproachDistance))
+        $approachBarrierState = Get-FreshState
+        $approachBarrier = Get-ObservationFrameId -State $approachBarrierState
+        $preFaceState = Wait-ForObservationFrameAdvance -PreviousFrameId $approachBarrier
+        $preFaceFoundation = Refresh-StairComponentFoundation `
+            -State $preFaceState -Baseline $foundation -Component $component
+        $faceRequest = New-DirectionalStairsFaceRequest `
+            -Foundation $preFaceFoundation -Component $component
+        $faceTerminal = Invoke-ActionRequest -Request $faceRequest -WallTimeoutSeconds 30
+        $faceProofs.Add((Assert-DirectionalStairsFaceTerminalProof -Terminal $faceTerminal))
+        $faceBarrierState = Get-FreshState
+        $faceBarrier = Get-ObservationFrameId -State $faceBarrierState
+        $componentState = Wait-ForObservationFrameAdvance -PreviousFrameId $faceBarrier
+        $componentFoundation = Refresh-StairComponentFoundation `
+            -State $componentState -Baseline $foundation -Component $component
+        $request = New-DirectionalStairsActionRequest `
+            -Sources $initialSources -Foundation $componentFoundation -Component $component
+        $terminal = Invoke-ActionRequest -Request $request -WallTimeoutSeconds 150
+        $terminalProofs.Add((Assert-DirectionalStairsTerminalProof `
+                    -Terminal $terminal -ExpectedPlacements @($component.ids).Count `
+                    -ExpectedNodeId "directional_stairs_$($component.name)"))
+        $componentFinal = Get-FreshState
+        $componentExpected = @($expectedTargets | Where-Object {
+                $_.id -cin @($component.ids)
+            })
+        Assert-ExactFinalStairTargets -State $componentFinal -Expected $componentExpected
+    }
 
     $final = Get-FreshState
     $inventoryAfter = Get-InventoryCount -State $final -Item 'minecraft:oak_stairs'
     if ($inventoryAfter -ne 3) { throw "Gate D inventory delta is not exactly -5; after=$inventoryAfter" }
-    Assert-ExactFinalStairTargets -State $final -Expected $expectedTargets
-    $finalSources = Get-DirectionalStairSources -State $final
-    foreach ($source in $sources.records) {
-        $key = Get-BlockPositionKey (Get-ObjectProperty $source 'position')
-        $match = @($finalSources.records | Where-Object {
-                (Get-BlockPositionKey (Get-ObjectProperty $_ 'position')) -ceq $key
-            })
-        if ($match.Count -ne 1 -or
-            (ConvertTo-CompactJson (Get-ObjectProperty $match[0] 'state')) -cne
-                (ConvertTo-CompactJson (Get-ObjectProperty $source 'state'))) {
-            throw "Gate D source changed at $key"
-        }
-    }
     $lifecycle = Assert-DirectionalStairsLifecycle
-    $terminalProof = Assert-DirectionalStairsTerminalProof -Terminal $terminal
     $oracle = New-DirectionalStairsOracle `
-        -Targets $expectedTargets -Sources $sources.records
+        -Targets $expectedTargets -Sources $initialSources.records
     return [ordered]@{
         gate = 'building-gate-d-directional-stairs'
         fixture_precondition = '/mcmcp_fixture phase4 directional_stairs_matrix'
         fixed_five_surface = $fixedFive
-        normal_player_action = 'face_known_position + apply_known_block_plan'
+        normal_player_action = 'three observation-derived approach + face + component block-plan trios'
         lifecycle = $lifecycle
-        terminal_proof = $terminalProof
+        approach_terminal_proof = @($approachProofs)
+        face_terminal_proof = @($faceProofs)
+        terminal_proof = @($terminalProofs)
         placement_identity = 'delivery_backed_placement_state_ref'
         placement_state_refs_copied_verbatim = $true
         support_evidence_copied_verbatim = $true

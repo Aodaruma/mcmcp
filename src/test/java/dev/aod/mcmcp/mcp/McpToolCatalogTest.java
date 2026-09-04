@@ -221,7 +221,9 @@ class McpToolCatalogTest {
                 .contains("never derive, floor, round")
                 .contains("collect_visible_item_batch for 2..8 current drops")
                 .contains("navigate_to_known:{id,op,target,tolerance}")
+                .contains("face_known_block_face:{id,op,target,face,expected_block}")
                 .contains("take_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}")
+                .contains("store_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_container_count}")
                 .contains("craft_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:")
                 .contains("smelt_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:")
                 .contains("operate_known_menu:{id,op,operation_ref}")
@@ -233,6 +235,8 @@ class McpToolCatalogTest {
                 .contains("100*(component_count+2) + 3*settle_ticks ticks")
                 .contains("up to the 720 camera-degree policy maximum")
                 .contains("split it into smaller batches instead of reordering at runtime")
+                .contains("face_known_position, face_known_block_face")
+                .contains("face_known_position/face_known_block_face=camera")
                 .contains("operate_known_menu=inventory_transfer")
                 .contains("For operate_known_menu reserve at least 30000 ms, 600 ticks, and 1 interaction")
                 .contains("use the exact inputSchema fields and no aliases");
@@ -258,10 +262,96 @@ class McpToolCatalogTest {
                 .contains("take_known_container_stack", "operate_known_menu");
 
         assertThat(description)
-                .contains("take stack_policy is exactly default_components_only")
+                .contains("take/store stack_policy is exactly default_components_only")
                 .contains("or item_id_any_components")
                 .contains("craft/smelt goal.stack_policy")
                 .contains("smelt fuel.stack_policy are exactly default_components_only");
+    }
+
+    @Test
+    void catalogAdmitsOnlyTheClosedKnownBlockFaceCameraNodeShape() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var request = JsonParser.parseString("""
+                {
+                  "schema_version":1,
+                  "program":{
+                    "dsl_version":1,
+                    "capabilities":["camera"],
+                    "body":[{
+                      "id":"face_support",
+                      "op":"face_known_block_face",
+                      "target":{"dimension":"minecraft:overworld","x":2,"y":64,"z":3},
+                      "face":"up",
+                      "expected_block":"minecraft:smooth_stone"
+                    }]
+                  },
+                  "budget":{
+                    "max_duration_ms":10000,"max_ticks":200,
+                    "max_distance_blocks":0,"max_camera_degrees":80,
+                    "max_interactions":0,"max_blocks_broken":0,"max_blocks_placed":0
+                  }
+                }
+                """).getAsJsonObject();
+
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+
+        var missingFace = request.deepCopy();
+        missingFace.getAsJsonObject("program").getAsJsonArray("body")
+                .get(0).getAsJsonObject().remove("face");
+        assertThat(CatalogSchemaValidator.matches(schema, missingFace)).isFalse();
+
+        var invalidFace = request.deepCopy();
+        invalidFace.getAsJsonObject("program").getAsJsonArray("body")
+                .get(0).getAsJsonObject().addProperty("face", "diagonal");
+        assertThat(CatalogSchemaValidator.matches(schema, invalidFace)).isFalse();
+
+        var invalidBlock = request.deepCopy();
+        invalidBlock.getAsJsonObject("program").getAsJsonArray("body")
+                .get(0).getAsJsonObject().addProperty("expected_block", "Smooth Stone");
+        assertThat(CatalogSchemaValidator.matches(schema, invalidBlock)).isFalse();
+
+        var extraField = request.deepCopy();
+        extraField.getAsJsonObject("program").getAsJsonArray("body")
+                .get(0).getAsJsonObject().addProperty("raw_hit_point", true);
+        assertThat(CatalogSchemaValidator.matches(schema, extraField)).isFalse();
+    }
+
+    @Test
+    void placementApproachCatalogIsMovementOnlyOpaqueAndExclusiveByContract() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var definition = schema.getAsJsonObject("$defs")
+                .getAsJsonObject("approachKnownPlacementNode");
+
+        assertThat(definition.getAsJsonObject("properties").getAsJsonObject("op")
+                .get("const").getAsString()).isEqualTo("approach_known_placement");
+        assertThat(definition.get("description").getAsString())
+                .contains("Movement-only", "dry bottom oak/cobblestone stair")
+                .contains("only top-level node", "reobserve")
+                .contains("zero camera/interactions/breaks/placements");
+
+        var example = schema.getAsJsonArray("examples").asList().stream()
+                .map(value -> value.getAsJsonObject())
+                .filter(value -> value.getAsJsonObject("program").get("name").getAsString()
+                        .equals("approach_known_placement"))
+                .findFirst().orElseThrow();
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
+
+        var inline = example.deepCopy();
+        var entry = inline.getAsJsonObject("program").getAsJsonArray("body")
+                .get(0).getAsJsonObject().getAsJsonArray("entries")
+                .get(0).getAsJsonObject();
+        entry.remove("placement_state_ref");
+        entry.add("source_state", JsonParser.parseString(
+                "{\"block\":\"minecraft:oak_stairs\",\"properties\":{}}"));
+        entry.addProperty("item", "minecraft:oak_stairs");
+        assertThat(CatalogSchemaValidator.matches(schema, inline)).isFalse();
+
+        var sideSupport = example.deepCopy();
+        sideSupport.getAsJsonObject("program").getAsJsonArray("body")
+                .get(0).getAsJsonObject().getAsJsonArray("entries")
+                .get(0).getAsJsonObject().getAsJsonObject("support")
+                .addProperty("face", "north");
+        assertThat(CatalogSchemaValidator.matches(schema, sideSupport)).isFalse();
     }
 
     @Test
@@ -476,6 +566,8 @@ class McpToolCatalogTest {
                 .get("description").getAsString()).contains("30000 ms", "600 ticks", "360 camera");
         assertThat(definitions.getAsJsonObject("takeContainerStackNode")
                 .get("description").getAsString()).contains("30000 ms", "600 ticks", "360 camera");
+        assertThat(definitions.getAsJsonObject("storeContainerStackNode")
+                .get("description").getAsString()).contains("30000 ms", "600 ticks", "360 camera");
 
         var containerExamples = schema.getAsJsonArray("examples").asList().stream()
                 .map(example -> example.getAsJsonObject())
@@ -484,11 +576,12 @@ class McpToolCatalogTest {
                             .getAsJsonArray("body").get(0).getAsJsonObject()
                             .get("op").getAsString();
                     return op.equals("inspect_known_container")
-                            || op.equals("take_known_container_stack");
+                            || op.equals("take_known_container_stack")
+                            || op.equals("store_known_container_stack");
                 })
                 .toList();
 
-        assertThat(containerExamples).hasSize(2).allSatisfy(example -> {
+        assertThat(containerExamples).hasSize(3).allSatisfy(example -> {
             var budget = example.getAsJsonObject("budget");
             assertThat(budget.get("max_duration_ms").getAsLong()).isEqualTo(30_000L);
             assertThat(budget.get("max_ticks").getAsLong()).isEqualTo(600L)

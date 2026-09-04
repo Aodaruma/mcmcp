@@ -147,7 +147,9 @@ public final class ActionDslCompiler {
         }
         if (node instanceof ActionDsl.NavigateToKnown
                 || node instanceof ActionDsl.ApproachKnownSurface
+                || node instanceof ActionDsl.ApproachKnownPlacement
                 || node instanceof ActionDsl.FaceKnownPosition
+                || node instanceof ActionDsl.FaceKnownBlockFace
                 || node instanceof ActionDsl.BreakKnownFace
                 || node instanceof ActionDsl.TillKnownBlock
                 || node instanceof ActionDsl.TillKnownBatch
@@ -159,6 +161,7 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.OpenKnownPassage
                 || node instanceof ActionDsl.InspectKnownContainer
                 || node instanceof ActionDsl.TakeKnownContainerStack
+                || node instanceof ActionDsl.StoreKnownContainerStack
                 || node instanceof ActionDsl.CraftKnownRecipe
                 || node instanceof ActionDsl.SmeltKnownRecipe
                 || node instanceof ActionDsl.OperateKnownMenu
@@ -201,6 +204,8 @@ public final class ActionDslCompiler {
                 requireMutationCost(cost, 1, 0, 0, "inspect_known_container");
             } else if (node instanceof ActionDsl.TakeKnownContainerStack) {
                 requireMutationCost(cost, 3, 0, 0, "take_known_container_stack");
+            } else if (node instanceof ActionDsl.StoreKnownContainerStack) {
+                requireMutationCost(cost, 3, 0, 0, "store_known_container_stack");
             } else if (node instanceof ActionDsl.CraftKnownRecipe craft) {
                 requireMutationCost(
                         cost, knownCraftInteractions(craft.maxCrafts()), 0, 0,
@@ -240,8 +245,10 @@ public final class ActionDslCompiler {
                     || cost.blocksPlaced() != 0) {
                 throw unprovable("Non-breaking primitive cost contains an interaction, break, or place");
             }
-            if (node instanceof ActionDsl.FaceKnownPosition && cost.distanceBlocks() != 0) {
-                throw unprovable("face_known_position cannot consume movement distance");
+            if ((node instanceof ActionDsl.FaceKnownPosition
+                    || node instanceof ActionDsl.FaceKnownBlockFace)
+                    && cost.distanceBlocks() != 0) {
+                throw unprovable("face primitives cannot consume movement distance");
             }
             primitiveCostBounds.put(node.id(), cost);
             return cost;

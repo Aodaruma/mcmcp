@@ -18,6 +18,10 @@
 
 `batch`はMCP往復を減らしますが、hiddenな対象を自動探索する高水準Actionではありません。対象は先行するpolicy-visibleな観測から明示し、runtimeは提出順を変えず、途中で証明できない対象があれば未開始suffixを実行しません。
 
+Action本文は通常のJSONなので、LLMが手元のprogramを複製・編集して再提出できます。ただし、現時点の`agent_get_action`はstate、progress、failure、traceだけを返し、過去に投入したprogram本文をMCMCPから取得してcloneする機能はまだありません。失効し得るopaque refを含むprogramを再利用する場合は、必ず再観測してrefを置き換えます。canonical source、program hash、validate / dry-run、ref refresh理由を同じ固定5 Toolから取得する導線はproduction Jobとともに追加予定です。
+
+近傍の敵対mob判定は助言ではなくruntimeの安全条件であり、現状では該当するとActionが失敗・再計画へ進み、Agent入力が解放されます。mob trap向けには、敵対mobの「存在」だけをローカルユーザー発行のscoped `consent_ref`で限定解除し、被弾、接触、projectile、health低下等は解除しない設計です。この同意経路が実装されるまでは従来どおりfail closedです。
+
 ## 観測を絞る
 
 `agent_get_observation.filter`は、既にpolicy-visibleな同一frameから不要なrecordを削るdelivery-only filterです。record kindに適用可能な複数条件はANDで適用され、観測範囲やAction認可を拡張しません。
@@ -43,6 +47,7 @@
 |---|---|---|---|
 | 移動 | `traversability.navigation_target` | `navigate_to_known.target` | `from` / `to`のfloor・round、surfaceから立ち位置を推測 |
 | visible blockへの接近 | `visible_surface.position`と`block` | `approach_known_surface.target`と`expected_block` | block座標からfeet-spaceを推測、接近後の再観測を省略 |
+| 方向付き階段planへの接近 | 後続planと同じ`anchor` / `transform` / `entries` | `approach_known_placement` | stand cellやyawをLLMで推測、接近後の再観測を省略 |
 | block操作 | `visible_surface.position` | 各block nodeの`target` / `support` | block座標を中心座標へ変換 |
 | 建築copy state | `visible_surface.placement_state_ref`（推奨）または同recordの`state`と`placement_item` | plan entry / `pillar_up_known`の`placement_state_ref`または`source_state`+`item` | refとinline identityの併記、`facing`、`axis`、`rotation`等をLLM側で変換 |
 | drop回収 | `visible_entity.position`と`displayed_item` | collect nodeの連続値`target` | XYZのround、非公開entity IDの追加 |
@@ -59,8 +64,10 @@ dropが通常の物理移動で少しずれ、古いpickup cellだけが使え�
 
 - `navigate_to_known`: `{id,op,target,tolerance}`
 - `approach_known_surface`: `{id,op,target,expected_block}`
+- `approach_known_placement`: `{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}`
 - `inspect_known_container`: `{id,op,target,expected_block}`
 - `take_known_container_stack`: `{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}`
+- `store_known_container_stack`: `{id,op,target,expected_block,item,stack_policy,minimum_container_count}`
 - `craft_known_recipe`: `{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},max_crafts}`
 - `smelt_known_recipe`: `{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},fuel:{item,stack_policy},max_smelts}`
 - `operate_known_menu`: `{id,op,operation_ref}`
@@ -74,6 +81,12 @@ dropが通常の物理移動で少しずれ、古いpickup cellだけが使え�
 - `collect_visible_item_batch`: `{id,op,targets:[{displayed_item,target}]}`
 
 全nodeには一意の`id`が必要です。正規opcode、他の必須field、enum、上限、capabilityはcatalogの`inputSchema`をそのまま使い、aliasを推測しません。
+
+`store_known_container_stack`は、現在可視で通常reach内にあるVanilla chest / barrelへ、player inventoryの一致する1 stack全量を通常のQUICK_MOVEで格納します。`minimum_container_count`は格納先における絶対個数であり、成功前にclose / reopenしてserver同期された全slotとplayer inventoryの差分、空cursor、他stack不変を再確認します。部分量や複数stackを一度に移さず、必要ならActionを区切って再観測します。
+
+`wait_ticks`は1〜15,000 client ticksの有限待機です。待機中もAction deadline、Esc、MCP OFF、world / screen / health / threat等の安全gateを維持し、条件を無視するsleepにはなりません。状態条件を待つ場合は、待機後に必ず再観測してから次のmutationを開始します。
+
+`approach_known_placement`は、後続するstationaryな方向付き階段planに必要な立ち位置をruntimeが選ぶmovement-only Actionです。初回sliceは`placement_state_ref`で示した乾いたbottom halfのoak / cobblestone stair、現在stateが見えている真下support、`face=up`だけを1〜8件扱います。後続`apply_known_block_plan`と同じ`anchor` / `transform` / `entries`を使い、全entryについて既知経路、settlement誤差、通常reach、支持面ray、変換後`facing`を同時に満たす共通stand cellを決定論的に選びます。照準・設置・support証拠の延長は行いません。このnodeは単独top-level Actionにし、terminal後に必ず再観測してからplanを提出します。
 
 ## 建築コピーの最小slice
 
@@ -90,7 +103,7 @@ dropが通常の物理移動で少しずれ、古いpickup cellだけが使え�
 - 既存blockをsupportにする: `state != null`である最新`visible_surface.state`を`expected_state`へコピーし、`dependency_entry_id=null`
 - 同じplanの先行entryをsupportにする: `expected_state=null`、`dependency_entry_id`へ先行entry IDを指定し、`position`をその先行entryの変換後targetと一致させる
 
-既存supportは、`placement_item != null`のcopy可能block、または`minecraft:dirt` / `minecraft:grass_block` / `minecraft:obsidian`だけを使えます。全supportはAction開始時のheadingからyawとpitchの合計40度以内である必要があります。この判定は観測rayの偶然の端点ではなく、宣言したsupport面の中心を使います。向きが合わない場合は、同じ最新frameの可視supportをtargetにした`face_known_position`をplan直前へ置くか、planを小さく分割します。
+既存supportは、`placement_item != null`のcopy可能block、または`minecraft:dirt` / `minecraft:grass_block` / `minecraft:obsidian`だけを使えます。全supportはAction開始時のheadingからyawとpitchの合計40度以内である必要があります。この判定は観測rayの偶然の端点ではなく、宣言したsupport面の中心を使います。向きが合わない場合は、同じ有効な可視supportのposition、face、blockを無変換コピーした`face_known_block_face`をplan直前へ置くか、planを小さく分割します。後続mutationは別途current evidenceを要求します。
 
 entry IDと変換後targetはplan内で一意、処理順は`entries`の入力順です。開始時点で既にtargetが完成stateでもskipせず失敗します。その場合は未設置suffixだけで新しいplanを作り、既設blockを最新観測済み`expected_state` supportとして扱います。NBT、fluid、gravity block、container、portal、command blockは扱いません。`apply_known_block_plan`自体は既存blockを破壊せず、置換は前述のclear→再観測→別Actionのapplyに分けます。途中失敗時は未開始suffixを実行せず、完了済み設置だけをtraceに残します。
 

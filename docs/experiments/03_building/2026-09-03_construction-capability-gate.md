@@ -251,6 +251,24 @@ r2後の独立レビューでは、将来の任意形状足場に対し「1 bloc
 
 r4のstep-up失敗時点では、playerをground target中心へ寄せても上段targetのcurrent traversabilityが0件だった。下降recordは同じ足場に対して配達されているため、次の修正対象はrunnerの座標推測ではなく、製品observer / navigation policyが安全な隣接1-block step-upをpolicy-visibleにすることである。証跡は`F:\mcmcp-testlab\20260902-hard-building-v1\eval-artifacts\20260904-gate-c-r1`から`r4`に保存した。
 
+## Gate D 方向性階段 remote r12-r18
+
+Gate Dは、観測で得たoak stairのopaque `placement_state_ref`をmirror=x、rotation=90で変換し、straight、inner corner、outer cornerの計5 blockを通常player Actionだけで複製する試験である。r12-r18はいずれも`aod-mimoid` Dockerで実施し、失敗後も公開input解放と全Action terminalを確認した。r18終了時はSave and Quit後にcontainerを停止した。
+
+| Run | 到達点 | 最初の問題・結論 |
+|---|---|---|
+| r12 | 配置0 | 直接上のair cellをface対象にしており、exact target evidenceを得られなかった |
+| r13 | 配置0 | 新しい`face_known_block_face`をrunnerが使ったが、配備catalogにschemaがなく受付拒否 |
+| r14 | face成功、配置0 | 支持面のexact evidenceは得たが、現在poseからray witnessが4.5 block射程外 |
+| r15 | Action開始前 | approach node idが32文字上限を超過 |
+| r16 | approach約1.04 block、face成功、配置0 | approachがAABB距離だけを使い、移動後の実ray witness射程を保証していなかった |
+| r17 | approach約1.04 block、face成功、plan受付、配置0 | planは受付されたがtick 1でgeneric `construction_adapter_failed`。診断情報不足 |
+| r18 | r17と同じくplan受付、配置0 | 診断sink追加版（jar SHA-256 `9FA01761...88E9`）で`BEGIN_PREPARATION`の`no placement candidate produces the exact requested state`を確定 |
+
+r17-r18の根因は階段の隣接`shape`ではなく、配置時のplayer水平向きである。最終pose `(201.548, 200, 196.476)`からouter支持面を見るyawはNORTHだが、変換後の最初の階段は`facing=EAST`を要求する。vanilla stairは配置contextの水平向きから`facing`を決めるため、幾何学的なreach候補は存在してもexact placement predictionは全候補を拒否した。cornerを先に置いて一時的に`shape=straight`となる差は既に計画隣接blockによる最終確定として許可されており、今回の根因ではない。
+
+次回はrunner専用座標を足すのではなく、opaque `placement_state_ref`と支持面から要求headingを製品側で解決するheading-aware approachを実装する。候補stand cellはknown traversability、実ray witness、settlement誤差、要求facing象限を同時に満たす必要がある。またexact placement predictionをcamera回転前ではなくalignment後の実yawで再評価し、候補枯渇をgeneric adapter exceptionではなく安定したplacement-context failureへ分類する。r18 artifactは`F:\mcmcp-testlab\20260902-hard-building-v1\eval-artifacts\20260904-stairs-r18-diagnostic`、内部stackはinstanceの`logs\latest.log`へ保存した。r18のblock placement counterは0であり、Gate Dはまだ未合格である。
+
 ## Gate B `wall-5x5`再現・追加実施手順（既存remote環境の例）
 
 状態は**実worldで2回完全合格済み**である。以下はr25 / r27を再現する手順であり、mockの99 Actionをliveの固定値にはしない。実際のAction数は観測由来の接近・reslice・drop回収方式によって変わる。また、以下は既存`aod-mimoid`環境を再利用する場合の例であり、次回の実world検証hostを固定しない。実施時はその時点のユーザー指定hostに従い、local PCの場合はlocal用reset / instance pathへ読み替える。

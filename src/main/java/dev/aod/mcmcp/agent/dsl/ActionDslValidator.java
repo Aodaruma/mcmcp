@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.CAPABILITY_DENIED;
@@ -110,7 +111,11 @@ public final class ActionDslValidator {
         }
         validateTerminalOwnedMenuPlacement(program.body());
         validateTerminalClearPlacement(program.body());
-        validateExclusivePillarPlacement(program.body());
+        validateExclusiveNode(program.body(), node -> node instanceof ActionDsl.PillarUpKnown,
+                "pillar_up_known must be the only top-level Action node");
+        validateExclusiveNode(program.body(),
+                node -> node instanceof ActionDsl.ApproachKnownPlacement,
+                "approach_known_placement must be the only top-level Action node");
         var walk = new Walk();
         int executed = walkSequence(program.body(), 1, walk, "program.body");
         if (walk.sourceNodes > MAX_SOURCE_NODES) {
@@ -204,8 +209,65 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.MOVEMENT);
             return 1;
         }
+        if (node instanceof ActionDsl.ApproachKnownPlacement approach) {
+            validatePosition(approach.anchor(), path + ".anchor");
+            requireSequenceSize(
+                    approach.entries(), 1, MAX_BLOCK_PLAN_ENTRIES, path + ".entries");
+            var entryIds = new HashSet<String>();
+            var distinctTargets = new HashSet<ActionDsl.Position>();
+            for (int index = 0; index < approach.entries().size(); index++) {
+                ActionDsl.BlockPlanEntry entry = approach.entries().get(index);
+                String entryPath = path + ".entries[" + index + "]";
+                Objects.requireNonNull(entry, entryPath);
+                requirePattern(entry.id(), NODE_ID, entryPath + ".id");
+                if (!entryIds.add(entry.id())) {
+                    throw invalid(path + ".entries must contain unique ids");
+                }
+                validateOffset(entry.offset(), entryPath + ".offset");
+                ActionDsl.Position target = transformedTarget(
+                        approach.anchor(), approach.transform(), entry.offset());
+                validatePosition(target, entryPath + ".offset");
+                if (!distinctTargets.add(target)) {
+                    throw invalid(path + ".entries must produce distinct transformed targets");
+                }
+                if (entry.sourceState().isPresent() || entry.item().isPresent()
+                        || entry.placementStateRef().isEmpty()) {
+                    throw invalid(entryPath + " must use placement_state_ref");
+                }
+                requirePattern(entry.placementStateRef().orElseThrow(),
+                        PLACEMENT_STATE_REF, entryPath + ".placement_state_ref");
+
+                ActionDsl.PlacementSupport support = entry.support();
+                validatePosition(support.position(), entryPath + ".support.position");
+                if (!approach.anchor().dimension().equals(support.position().dimension())) {
+                    throw invalid(entryPath + ".support.position must use the anchor dimension");
+                }
+                if (support.face() != ActionDsl.BlockFace.UP) {
+                    throw invalid(entryPath + ".support.face must be up");
+                }
+                if (support.expectedState().isEmpty()
+                        || support.dependencyEntryId().isPresent()) {
+                    throw invalid(entryPath
+                            + ".support must use expected_state and null dependency_entry_id");
+                }
+                validateBlockState(support.expectedState().orElseThrow(),
+                        entryPath + ".support.expected_state");
+                if (!relative(support.position(), support.face()).equals(target)) {
+                    throw invalid(entryPath
+                            + ".support face must point from support position to target");
+                }
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.MOVEMENT);
+            return 1;
+        }
         if (node instanceof ActionDsl.FaceKnownPosition face) {
             validatePosition(face.target(), path + ".target");
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            return 1;
+        }
+        if (node instanceof ActionDsl.FaceKnownBlockFace face) {
+            validatePosition(face.target(), path + ".target");
+            requireResourceLocation(face.expectedBlock(), path + ".expected_block");
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             return 1;
         }
@@ -487,6 +549,21 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
             return 1;
         }
+        if (node instanceof ActionDsl.StoreKnownContainerStack store) {
+            validatePosition(store.target(), path + ".target");
+            if (!KNOWN_CONTAINERS.contains(store.expectedBlock())) {
+                throw invalid(path + ".expected_block must be minecraft:chest or minecraft:barrel");
+            }
+            requirePattern(store.item(), RESOURCE_LOCATION, path + ".item");
+            if (!STACK_POLICIES.contains(store.stackPolicy())) {
+                throw invalid(path + ".stack_policy is unsupported");
+            }
+            requireRange(store.minimumContainerCount(), 1, 2_304,
+                    path + ".minimum_container_count");
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
+            return 1;
+        }
         if (node instanceof ActionDsl.CraftKnownRecipe craft) {
             requirePattern(craft.recipeRef(), OPAQUE_REFERENCE, path + ".recipe_ref");
             requirePattern(craft.recipeFingerprint(), SHA256_FINGERPRINT,
@@ -583,7 +660,7 @@ public final class ActionDslValidator {
             return 1;
         }
         if (node instanceof ActionDsl.WaitTicks wait) {
-            requireRange(wait.ticks(), 1, 200, path + ".ticks");
+            requireRange(wait.ticks(), 1, MAX_ACTION_TICKS, path + ".ticks");
             return 1;
         }
         if (node instanceof ActionDsl.WaitUntil wait) {
@@ -626,6 +703,7 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.OpenKnownPassage
                     || node instanceof ActionDsl.InspectKnownContainer
                     || node instanceof ActionDsl.TakeKnownContainerStack
+                    || node instanceof ActionDsl.StoreKnownContainerStack
                     || node instanceof ActionDsl.CraftKnownRecipe
                     || node instanceof ActionDsl.SmeltKnownRecipe
                     || node instanceof ActionDsl.OperateKnownMenu
@@ -694,23 +772,25 @@ public final class ActionDslValidator {
                 && repeat.body().stream().anyMatch(ActionDslValidator::containsConstructionClear);
     }
 
-    private static void validateExclusivePillarPlacement(List<ActionDsl.Node> body) {
-        boolean contains = body.stream().anyMatch(ActionDslValidator::containsPillarPlacement);
-        if (contains && (body.size() != 1 || !(body.getFirst() instanceof ActionDsl.PillarUpKnown))) {
-            throw invalid("pillar_up_known must be the only top-level Action node");
+    private static void validateExclusiveNode(
+            List<ActionDsl.Node> body, Predicate<ActionDsl.Node> matches, String diagnostic) {
+        boolean contains = body.stream().anyMatch(node -> containsMatching(node, matches));
+        if (contains && (body.size() != 1 || !matches.test(body.getFirst()))) {
+            throw invalid(diagnostic);
         }
     }
 
-    private static boolean containsPillarPlacement(ActionDsl.Node node) {
-        if (node instanceof ActionDsl.PillarUpKnown) return true;
+    private static boolean containsMatching(
+            ActionDsl.Node node, Predicate<ActionDsl.Node> matches) {
+        if (matches.test(node)) return true;
         if (node instanceof ActionDsl.If conditional) {
             return conditional.thenBranch().stream()
-                    .anyMatch(ActionDslValidator::containsPillarPlacement)
+                    .anyMatch(child -> containsMatching(child, matches))
                     || conditional.elseBranch().stream()
-                            .anyMatch(ActionDslValidator::containsPillarPlacement);
+                            .anyMatch(child -> containsMatching(child, matches));
         }
         return node instanceof ActionDsl.Repeat repeat
-                && repeat.body().stream().anyMatch(ActionDslValidator::containsPillarPlacement);
+                && repeat.body().stream().anyMatch(child -> containsMatching(child, matches));
     }
 
     private static void validatePredicate(ActionDsl.Predicate predicate, String path) {

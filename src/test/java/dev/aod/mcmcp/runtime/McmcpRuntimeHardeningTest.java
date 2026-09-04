@@ -6,7 +6,12 @@ import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
+import dev.aod.mcmcp.agent.navigation.DeterministicAStar;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilityMap;
+import dev.aod.mcmcp.agent.navigation.NavCell;
+import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
+import dev.aod.mcmcp.agent.observation.ObservationFrame;
+import dev.aod.mcmcp.agent.observation.ObservationValues;
 import dev.aod.mcmcp.agent.safety.ObservationRecord;
 import dev.aod.mcmcp.brewing.StandardPotionStackSpec;
 import dev.aod.mcmcp.routine.ActionBounds;
@@ -205,6 +210,63 @@ class McmcpRuntimeHardeningTest {
     }
 
     @Test
+    void runtimeSurfaceApproachUsesCurrentRayWitnessAndActualEyeHeight() {
+        UUID session = UUID.randomUUID();
+        String dimensionId = "minecraft:overworld";
+        var start = new NavCell(dimensionId, 0, 64, 4);
+        var aabbOnly = new NavCell(dimensionId, 0, 64, 3);
+        var raySafe = new NavCell(dimensionId, 0, 64, 2);
+        var map = new KnownTraversabilityMap();
+        map.startSession(session, dimensionId, 0L);
+        map.observe(confirmedEdge(session, start, aabbOnly));
+        map.observe(confirmedEdge(session, aabbOnly, raySafe));
+
+        var target = new ActionDsl.Position(dimensionId, 0, 66, 0);
+        var approach = new ActionDsl.ApproachKnownSurface(
+                "approach", target, "minecraft:stone");
+        var dimension = new ObservationValues.ResourceId(dimensionId);
+        var deliveredSurface = new dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleSurface(
+                new ObservationValues.BlockPosition(dimension, 0, 66, 0),
+                dev.aod.mcmcp.agent.observation.ObservationRecord.Face.UP,
+                new ObservationValues.ResourceId("minecraft:stone"),
+                dev.aod.mcmcp.agent.observation.ObservationRecord.ShapeClass.OPAQUE,
+                null,
+                new ObservationValues.WorldPosition(dimension, 0.5D, 67.0D, 0.55D),
+                new ObservationValues.WorldPosition(dimension, 0.5D, 65.27D, 4.5D),
+                1L,
+                0L);
+        var frame = new ObservationFrame(
+                "obs-0000000000000001",
+                dimension,
+                1L,
+                16,
+                false,
+                List.of(deliveredSurface));
+        var pose = new AgentPrimitivePlanner.Pose(
+                start, 0.5D, 64.0D, 4.5D, 1.27D, 0.0F, 0.0F);
+
+        var plan = McmcpRuntime.requireRuntimeApproachPlan(
+                map.snapshot().orElseThrow(),
+                new DeterministicAStar(),
+                pose,
+                approach,
+                Optional.of(frame),
+                0L);
+
+        assertThat(plan.anchor()).isEqualTo(aabbOnly);
+        assertThat(plan.route().cells()).containsExactly(start, aabbOnly);
+        assertThatThrownBy(() -> McmcpRuntime.requireRuntimeApproachPlan(
+                        map.snapshot().orElseThrow(),
+                        new DeterministicAStar(),
+                        pose,
+                        approach,
+                        Optional.empty(),
+                        0L))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .hasMessageContaining("current matching visible-surface evidence");
+    }
+
+    @Test
     void visibleItemPickupRequiresAnAbsoluteInventoryIncrease() {
         assertThat(McmcpRuntime.pickupInventoryIncreased(10, 11)).isTrue();
         assertThat(McmcpRuntime.pickupInventoryIncreased(10, 10)).isFalse();
@@ -275,6 +337,11 @@ class McmcpRuntimeHardeningTest {
         assertThat(McmcpRuntime.primitiveReobservationTicks(
                 new ActionDsl.FaceKnownPosition("face", support)))
                 .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
+        assertThat(McmcpRuntime.primitiveReobservationTicks(
+                new ActionDsl.FaceKnownBlockFace(
+                        "face_surface", support, ActionDsl.BlockFace.UP,
+                        "minecraft:stone")))
+                .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
         assertThat(McmcpRuntime.structuralPrimitiveCost(
                 new ActionDsl.OpenKnownFenceGate("open_gate", support))).contains(
                         new ActionDslCompiler.Cost(0, 0, 0, 0, 1, 0, 0));
@@ -287,6 +354,21 @@ class McmcpRuntimeHardeningTest {
                         "take", support, "minecraft:chest", "minecraft:wheat_seeds",
                         "default_components_only", 64))).contains(
                         new ActionDslCompiler.Cost(0, 0, 0, 0, 3, 0, 0));
+        assertThat(McmcpRuntime.structuralPrimitiveCost(
+                new ActionDsl.StoreKnownContainerStack(
+                        "store", support, "minecraft:barrel", "minecraft:wheat",
+                        "default_components_only", 64))).contains(
+                        new ActionDslCompiler.Cost(0, 0, 0, 0, 3, 0, 0));
+        assertThat(McmcpRuntime.knownContainerTransferDirection(
+                new ActionDsl.StoreKnownContainerStack(
+                        "store", support, "minecraft:barrel", "minecraft:wheat",
+                        "default_components_only", 64)))
+                .isEqualTo("player_to_container");
+        assertThat(McmcpRuntime.knownContainerTransferDirection(
+                new ActionDsl.TakeKnownContainerStack(
+                        "take", support, "minecraft:chest", "minecraft:wheat_seeds",
+                        "default_components_only", 64)))
+                .isEqualTo("container_to_player");
         assertThat(McmcpRuntime.structuralPrimitiveCost(
                 new ActionDsl.CraftKnownRecipe(
                         "craft", "abcdefghijklmnopqrstuvwx", "sha256:" + "a".repeat(64),
@@ -453,6 +535,7 @@ class McmcpRuntimeHardeningTest {
                 Map.of("wait", ActionDslCompiler.intrinsicWaitCost(20)),
                 Map.of(),
                 Set.of(),
+                Set.of(),
                 Set.of(new AgentPrimitivePlanner.KnownSurface(
                         target, ActionDsl.BlockFace.UP, "minecraft:wheat", null, witnessEye)),
                 Map.of(),
@@ -464,6 +547,7 @@ class McmcpRuntimeHardeningTest {
         var staleOriginAnalysis = new AgentPrimitivePlanner.Analysis(
                 Map.of("wait", ActionDslCompiler.intrinsicWaitCost(20)),
                 Map.of(),
+                Set.of(),
                 Set.of(),
                 Set.of(new AgentPrimitivePlanner.KnownSurface(
                         target,
@@ -721,7 +805,20 @@ class McmcpRuntimeHardeningTest {
         assertThat(McmcpRuntime.motionBudgetExhausted(
                 used, budget, new ActionDsl.NavigateToKnown("move", target, 0.75D))).isTrue();
         assertThat(McmcpRuntime.motionBudgetExhausted(
+                used,
+                budget,
+                new ActionDsl.ApproachKnownSurface(
+                        "approach_surface", target, "minecraft:stone"))).isTrue();
+        assertThat(McmcpRuntime.motionBudgetExhausted(
+                used, budget, placementApproach(target))).isTrue();
+        assertThat(McmcpRuntime.motionBudgetExhausted(
                 used, budget, new ActionDsl.FaceKnownPosition("face", target))).isTrue();
+        assertThat(McmcpRuntime.motionBudgetExhausted(
+                used,
+                budget,
+                new ActionDsl.FaceKnownBlockFace(
+                        "face_surface", target, ActionDsl.BlockFace.UP,
+                        "minecraft:stone"))).isTrue();
         assertThat(McmcpRuntime.motionBudgetExhausted(
                 used, budget, new ActionDsl.WaitTicks("hold", 1))).isFalse();
         var move = new ActionDsl.NavigateToKnown("move", target, 0.75D);
@@ -774,6 +871,9 @@ class McmcpRuntimeHardeningTest {
     void navigationReplanCanUseItsAdmittedOccurrenceTicks() {
         var target = new ActionDsl.Position("minecraft:overworld", 1, 64, 1);
         var navigate = new ActionDsl.NavigateToKnown("move", target, 0.75D);
+        var approachSurface = new ActionDsl.ApproachKnownSurface(
+                "approach_surface", target, "minecraft:stone");
+        var approachPlacement = placementApproach(target);
         var face = new ActionDsl.FaceKnownPosition("face", target);
         var collect = new ActionDsl.CollectVisibleItem(
                 "collect",
@@ -794,6 +894,10 @@ class McmcpRuntimeHardeningTest {
 
         assertThat(McmcpRuntime.agentReplanDeadlineTick(navigate, 2, 0, 38))
                 .isEqualTo(39);
+        assertThat(McmcpRuntime.agentReplanDeadlineTick(approachSurface, 2, 0, 38))
+                .isEqualTo(39);
+        assertThat(McmcpRuntime.agentReplanDeadlineTick(approachPlacement, 2, 0, 38))
+                .isEqualTo(39);
         assertThat(McmcpRuntime.agentReplanDeadlineTick(collect, 2, 0, 38))
                 .isEqualTo(39);
         assertThat(McmcpRuntime.replanDeadlineReached(38, 39)).isFalse();
@@ -809,6 +913,30 @@ class McmcpRuntimeHardeningTest {
         assertThat(McmcpRuntime.repeatedPositionCorrection(7, 8, 0)).isFalse();
         assertThat(McmcpRuntime.repeatedPositionCorrection(7, 9, 0)).isTrue();
         assertThat(McmcpRuntime.repeatedPositionCorrection(8, 9, 1)).isTrue();
+    }
+
+    private static ActionDsl.ApproachKnownPlacement placementApproach(
+            ActionDsl.Position target) {
+        var support = new ActionDsl.Position(
+                target.dimension(), target.x(), target.y() - 1, target.z());
+        return new ActionDsl.ApproachKnownPlacement(
+                "approach_placement",
+                target,
+                new ActionDsl.BlockPlanTransform(
+                        ActionDsl.BlockPlanRotation.DEGREES_0,
+                        ActionDsl.BlockPlanMirror.NONE),
+                List.of(new ActionDsl.BlockPlanEntry(
+                        "entry",
+                        new ActionDsl.Offset(0, 0, 0),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.of("psr_00000000000000000000000000000001"),
+                        new ActionDsl.PlacementSupport(
+                                support,
+                                ActionDsl.BlockFace.UP,
+                                Optional.of(new ActionDsl.BlockStateSpec(
+                                        "minecraft:stone", Map.of())),
+                                Optional.empty()))));
     }
 
     @Test
@@ -2145,6 +2273,23 @@ class McmcpRuntimeHardeningTest {
                 0,
                 ticks,
                 false);
+    }
+
+    private static TraversabilityEdge confirmedEdge(
+            UUID session, NavCell from, NavCell to) {
+        return new TraversabilityEdge(
+                session,
+                new TraversabilityEdge.Key(from, to),
+                TraversabilityEdge.Status.CONFIRMED,
+                TraversabilityEdge.TargetSupport.CONFIRMED,
+                TraversabilityEdge.Clearance.CONFIRMED,
+                TraversabilityEdge.Transition.CONFIRMED,
+                TraversabilityEdge.Fluid.NONE,
+                TraversabilityEdge.Hazard.NONE,
+                TraversabilityEdge.Provenance.LOCAL_VOLUME,
+                from,
+                1L,
+                0L);
     }
 
     private static Map<String, Object> applyPlanArguments(

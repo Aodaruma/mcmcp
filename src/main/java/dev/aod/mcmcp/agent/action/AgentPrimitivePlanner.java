@@ -60,6 +60,8 @@ public final class AgentPrimitivePlanner {
     private static final double APPROACH_REACH_BLOCKS = 4.25D;
     private static final double APPROACH_EYE_HEIGHT = 1.62D;
     private static final double APPROACH_TOLERANCE = 0.25D;
+    private static final double PLACEMENT_HEADING_RESERVE_DEGREES =
+            0.75D + CAMERA_QUANTIZATION_RESERVE_DEGREES;
     private static final double MAX_BREAK_EYE_ORIGIN_DRIFT = 0.125D;
     public static final double WAIT_WITNESS_EYE_EPSILON_BLOCKS = 1.0D / 1024.0D;
     private static final double FARMLAND_SETTLING_BLOCKS = 1.0D / 16.0D;
@@ -200,6 +202,7 @@ public final class AgentPrimitivePlanner {
         var costs = new LinkedHashMap<String, ActionDslCompiler.Cost>();
         var routeDependencies = new LinkedHashMap<TraversabilityEdge.Key, TraversabilityEdge>();
         var knownTargets = new LinkedHashSet<ActionDsl.Position>();
+        var knownFacingSurfaces = new LinkedHashSet<KnownSurface>();
         var knownSurfaces = new LinkedHashSet<KnownSurface>();
         var mutationAims = new LinkedHashMap<String, MutationAim>();
         var mutationBatchPlans = new LinkedHashMap<String, MutationBatchPlan>();
@@ -218,6 +221,7 @@ public final class AgentPrimitivePlanner {
                 costs,
                 routeDependencies,
                 knownTargets,
+                knownFacingSurfaces,
                 knownSurfaces,
                 mutationAims,
                 mutationBatchPlans,
@@ -226,7 +230,7 @@ public final class AgentPrimitivePlanner {
                 placementStates,
                 work);
         return new Analysis(
-                costs, routeDependencies, knownTargets, knownSurfaces,
+                costs, routeDependencies, knownTargets, knownFacingSurfaces, knownSurfaces,
                 mutationAims, mutationBatchPlans);
     }
 
@@ -261,6 +265,43 @@ public final class AgentPrimitivePlanner {
         }
         return new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
                 map.worldSessionId(), map.worldRevision(), target, true);
+    }
+
+    public static MinecraftActionPrimitiveExecutor.KnownFaceTarget requireKnownBlockFaceTarget(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.FaceKnownBlockFace target) {
+        Objects.requireNonNull(target, "target");
+        KnownSurface required = new KnownSurface(
+                target.target(), target.face(), target.expectedBlock());
+        if (!knownFacingSurface(map, latestFrame, required)) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Face block target requires delivered matching surface evidence");
+        }
+        return MinecraftActionPrimitiveExecutor.KnownFaceTarget.forBlockFaceRevisionWindow(
+                map.worldSessionId(), map.worldRevision(), target.target(), target.face());
+    }
+
+    /**
+     * Camera-only recovery may reuse an unexpired delivered surface identity.
+     * Mutation admission remains separately fenced by {@link #knownSurface}.
+     */
+    public static boolean knownFacingSurface(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            KnownSurface required) {
+        Objects.requireNonNull(map, "map");
+        Objects.requireNonNull(latestFrame, "latestFrame");
+        Objects.requireNonNull(required, "required");
+        if (!map.dimension().equals(required.position().dimension())) return false;
+        return latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(map.dimension()))
+                .flatMap(frame -> frame.records().stream())
+                .filter(ObservationRecord.VisibleSurface.class::isInstance)
+                .map(ObservationRecord.VisibleSurface.class::cast)
+                .filter(surface -> surface.worldRevision() <= map.worldRevision())
+                .anyMatch(surface -> matches(surface, required));
     }
 
     /**
@@ -468,7 +509,7 @@ public final class AgentPrimitivePlanner {
             java.util.function.Predicate<ObservationRecord.VisibleSurface> allowed,
             String failure) {
         requireSurfaceBarrierWorldRevision(map, surfaceBarrierWorldRevision);
-        return latestFrame.stream()
+        List<ObservationRecord.VisibleSurface> matchingSurfaces = latestFrame.stream()
                 .filter(frame -> frame.dimension().value().equals(map.dimension()))
                 .flatMap(frame -> frame.records().stream())
                 .filter(ObservationRecord.VisibleSurface.class::isInstance)
@@ -477,6 +518,11 @@ public final class AgentPrimitivePlanner {
                         && surface.worldRevision() <= map.worldRevision())
                 .filter(surface -> matches(surface, position, block))
                 .filter(allowed)
+                .toList();
+        if (matchingSurfaces.isEmpty()) {
+            throw new PlanningException(Code.TARGET_UNKNOWN, failure);
+        }
+        return matchingSurfaces.stream()
                 .filter(surface -> surface.rayHit() != null
                         && poses.stream().allMatch(pose -> mutationSurfaceValid(pose, surface)))
                 .sorted(java.util.Comparator
@@ -492,7 +538,11 @@ public final class AgentPrimitivePlanner {
                                 Boolean.TRUE.equals(surface.cropMature()) ? true : null),
                         rayHit(surface)))
                 .findFirst()
-                .orElseThrow(() -> new PlanningException(Code.TARGET_UNKNOWN, failure));
+                .orElseThrow(() -> new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        failure
+                                + "; matching surface evidence exists, but its ray witness "
+                                + "is not valid from the current pose"));
     }
 
     /**
@@ -655,6 +705,7 @@ public final class AgentPrimitivePlanner {
             Map<String, ActionDslCompiler.Cost> costs,
             Map<TraversabilityEdge.Key, TraversabilityEdge> routeDependencies,
             Set<ActionDsl.Position> knownTargets,
+            Set<KnownSurface> knownFacingSurfaces,
             Set<KnownSurface> knownSurfaces,
             Map<String, MutationAim> mutationAims,
             Map<String, MutationBatchPlan> mutationBatchPlans,
@@ -668,7 +719,7 @@ public final class AgentPrimitivePlanner {
             states = analyzeNode(
                     node, states, map, pathfinder, latestFrame,
                     visualBarrierWorldRevision, surfaceRevisionBarrier, cameraLimit,
-                    costs, routeDependencies, knownTargets, knownSurfaces,
+                    costs, routeDependencies, knownTargets, knownFacingSurfaces, knownSurfaces,
                     mutationAims, mutationBatchPlans, routeCache,
                     waitsBackedByPriorPlant, placementStates, work);
         }
@@ -687,6 +738,7 @@ public final class AgentPrimitivePlanner {
             Map<String, ActionDslCompiler.Cost> costs,
             Map<TraversabilityEdge.Key, TraversabilityEdge> routeDependencies,
             Set<ActionDsl.Position> knownTargets,
+            Set<KnownSurface> knownFacingSurfaces,
             Set<KnownSurface> knownSurfaces,
             Map<String, MutationAim> mutationAims,
             Map<String, MutationBatchPlan> mutationBatchPlans,
@@ -745,12 +797,46 @@ public final class AgentPrimitivePlanner {
             for (Pose pose : input) {
                 work.poseTransition();
                 ApproachPlan plan = requireApproachPlan(
-                        map, pathfinder, pose.cell(), approach.target(), work);
+                        map,
+                        pathfinder,
+                        pose,
+                        approach.target(),
+                        approach.expectedBlock(),
+                        latestFrame,
+                        surfaceBarrier,
+                        work);
                 addRouteDependencies(map, plan.route(), routeDependencies);
                 worst = maximum(worst, navigationCost(plan.route(), pose));
                 output.add(pose.at(plan.anchor(), APPROACH_TOLERANCE));
             }
             merge(costs, node.id(), Objects.requireNonNull(worst, "approach cost"));
+            return distinct(output);
+        }
+        if (node instanceof ActionDsl.ApproachKnownPlacement approach) {
+            List<PlacementApproachRequirement> requirements =
+                    requirePlacementApproachRequirements(
+                            map,
+                            latestFrame,
+                            approach,
+                            surfaceRevisionBarrier,
+                            placementStates);
+            for (PlacementApproachRequirement requirement : requirements) {
+                knownSurfaces.add(new KnownSurface(
+                        requirement.support().position(),
+                        requirement.support().face(),
+                        requirement.support().expectedState().orElseThrow().block()));
+            }
+            ActionDslCompiler.Cost worst = null;
+            var output = new ArrayList<Pose>(input.size());
+            for (Pose pose : input) {
+                work.poseTransition();
+                ApproachPlan plan = requireKnownPlacementApproachPlan(
+                        map, pathfinder, pose, requirements, work);
+                addRouteDependencies(map, plan.route(), routeDependencies);
+                worst = maximum(worst, navigationCost(plan.route(), pose));
+                output.add(pose.at(plan.anchor(), APPROACH_TOLERANCE));
+            }
+            merge(costs, node.id(), Objects.requireNonNull(worst, "placement approach cost"));
             return distinct(output);
         }
         if (node instanceof ActionDsl.FaceKnownPosition face) {
@@ -763,6 +849,29 @@ public final class AgentPrimitivePlanner {
                 Aim aim = aim(pose, face.target());
                 AimError aimError = aimError(pose, face.target(), aim);
                 worst = maximum(worst, faceCost(pose, face.target(), cameraLimit));
+                output.add(pose.aimed(aim, aimError));
+            }
+            merge(costs, node.id(), Objects.requireNonNull(worst, "camera cost"));
+            return distinct(output);
+        }
+        if (node instanceof ActionDsl.FaceKnownBlockFace face) {
+            KnownSurface required = new KnownSurface(
+                    face.target(), face.face(), face.expectedBlock());
+            if (!knownFacingSurface(map, latestFrame, required)) {
+                throw new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Face block target requires delivered matching surface evidence");
+            }
+            knownFacingSurfaces.add(required);
+            Vec3 point = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
+                    face.target(), face.face());
+            ActionDslCompiler.Cost worst = null;
+            var output = new ArrayList<Pose>(input.size());
+            for (Pose pose : input) {
+                work.poseTransition();
+                Aim aim = aim(pose, point);
+                AimError aimError = aimError(pose, point, aim);
+                worst = maximum(worst, faceCost(pose, point, cameraLimit));
                 output.add(pose.aimed(aim, aimError));
             }
             merge(costs, node.id(), Objects.requireNonNull(worst, "camera cost"));
@@ -1099,6 +1208,17 @@ public final class AgentPrimitivePlanner {
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims,
                     work, surface, 3);
         }
+        if (node instanceof ActionDsl.StoreKnownContainerStack store) {
+            MutationSurface surface = requireMutationSurface(
+                    map, latestFrame, input, store.target(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, store.target()),
+                    store.expectedBlock(),
+                    value -> true,
+                    "Container target requires a current matching visible surface");
+            return analyzeContainer(
+                    node, input, cameraLimit, costs, knownSurfaces, mutationAims,
+                    work, surface, 3);
+        }
         if (node instanceof ActionDsl.CraftKnownRecipe craft) {
             MutationSurface surface = requireMutationSurface(
                     map, latestFrame, input, craft.target(),
@@ -1170,7 +1290,7 @@ public final class AgentPrimitivePlanner {
                     latestFrame, visualBarrierWorldRevision,
                     surfaceRevisionBarrier, cameraLimit,
                     costs, routeDependencies,
-                    knownTargets, knownSurfaces, mutationAims,
+                    knownTargets, knownFacingSurfaces, knownSurfaces, mutationAims,
                     mutationBatchPlans, routeCache,
                     waitsBackedByPriorPlant, placementStates, work));
             output.addAll(analyzeSequence(
@@ -1178,7 +1298,7 @@ public final class AgentPrimitivePlanner {
                     latestFrame, visualBarrierWorldRevision,
                     surfaceRevisionBarrier, cameraLimit,
                     costs, routeDependencies,
-                    knownTargets, knownSurfaces, mutationAims,
+                    knownTargets, knownFacingSurfaces, knownSurfaces, mutationAims,
                     mutationBatchPlans, routeCache,
                     waitsBackedByPriorPlant, placementStates, work));
             return distinct(output);
@@ -1191,7 +1311,7 @@ public final class AgentPrimitivePlanner {
                     latestFrame, visualBarrierWorldRevision,
                     surfaceRevisionBarrier, cameraLimit,
                     costs, routeDependencies,
-                    knownTargets, knownSurfaces, mutationAims,
+                    knownTargets, knownFacingSurfaces, knownSurfaces, mutationAims,
                     mutationBatchPlans, routeCache,
                     waitsBackedByPriorPlant, placementStates, work);
         }
@@ -1789,17 +1909,29 @@ public final class AgentPrimitivePlanner {
     private static ActionDsl.BlockStateSpec transformedState(
             ActionDsl.BlockPlanTransform transform,
             ActionDsl.BlockStateSpec source) {
+        return transformedFullState(
+                transform,
+                source,
+                "construction.clear.expected_before",
+                "Construction clear expected_before must be one complete safe state");
+    }
+
+    private static ActionDsl.BlockStateSpec transformedFullState(
+            ActionDsl.BlockPlanTransform transform,
+            ActionDsl.BlockStateSpec source,
+            String path,
+            String failure) {
         try {
             BlockStateView state = BlockPlanStateTransformer.transformFull(
                     new BlockStateView(source.block(), source.properties()),
                     new BlockPlan.Transform(
                             transform.rotation().degrees(), transform.mirror().wireName()),
-                    "construction.clear.expected_before");
+                    path);
             return new ActionDsl.BlockStateSpec(state.block(), state.properties());
         } catch (RuntimeException rejected) {
             throw new PlanningException(
                     Code.TARGET_UNKNOWN,
-                    "Construction clear expected_before must be one complete safe state");
+                    failure);
         }
     }
 
@@ -1918,13 +2050,299 @@ public final class AgentPrimitivePlanner {
         }
     }
 
-    /** Selects a deterministic policy-known navigation cell near an observed block. */
+    /**
+     * Selects one known stand cell that can serve every entry of the stationary placement plan.
+     * The opaque placement identities and support witnesses are re-resolved at runtime.
+     */
+    public static ApproachPlan requireKnownPlacementApproachPlan(
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            Pose startPose,
+            ActionDsl.ApproachKnownPlacement approach,
+            Optional<ObservationFrame> latestFrame,
+            ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier,
+            PlacementStateResolver placementStates) {
+        Objects.requireNonNull(approach, "approach");
+        List<PlacementApproachRequirement> requirements =
+                requirePlacementApproachRequirements(
+                        map,
+                        latestFrame,
+                        approach,
+                        surfaceRevisionBarrier,
+                        placementStates);
+        return requireKnownPlacementApproachPlan(
+                map, pathfinder, startPose, requirements, null);
+    }
+
+    private static List<PlacementApproachRequirement> requirePlacementApproachRequirements(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.ApproachKnownPlacement approach,
+            ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier,
+            PlacementStateResolver placementStates) {
+        Objects.requireNonNull(map, "map");
+        Objects.requireNonNull(latestFrame, "latestFrame");
+        Objects.requireNonNull(approach, "approach");
+        Objects.requireNonNull(surfaceRevisionBarrier, "surfaceRevisionBarrier");
+        Objects.requireNonNull(placementStates, "placementStates");
+        var requirements = new ArrayList<PlacementApproachRequirement>(
+                approach.entries().size());
+        for (int index = 0; index < approach.entries().size(); index++) {
+            ActionDsl.BlockPlanEntry entry = approach.entries().get(index);
+            if (entry.placementStateRef().isEmpty()
+                    || entry.sourceState().isPresent()
+                    || entry.item().isPresent()) {
+                throw new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Placement approach entries require an opaque placement_state_ref");
+            }
+            ActionDsl.PlacementSupport support = entry.support();
+            if (support.face() != ActionDsl.BlockFace.UP
+                    || support.expectedState().isEmpty()
+                    || support.dependencyEntryId().isPresent()) {
+                throw new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Placement approach supports require current exact UP-face evidence");
+            }
+            ActionDsl.Position target = transformedTarget(
+                    approach.anchor(), approach.transform(), entry.offset());
+            if (!directlyAbove(target, support.position())) {
+                throw new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Placement approach support must be directly below its transformed target");
+            }
+
+            ConstructionSource source = requireConstructionSource(
+                    map, latestFrame, entry, placementStates);
+            requireDryBottomStair(source.state());
+            ActionDsl.BlockStateSpec transformed = transformedFullState(
+                    approach.transform(),
+                    source.state(),
+                    "construction.approach.entries[" + index + "].placement_state_ref",
+                    "Placement approach requires one complete transformable stair state");
+            requireDryBottomStair(transformed);
+            String facing = transformed.properties().get("facing");
+
+            ActionDsl.BlockStateSpec expectedSupport = support.expectedState().orElseThrow();
+            long barrier = surfaceBarrierWorldRevision(
+                    map, surfaceRevisionBarrier, support.position());
+            List<Vec3> rayWitnesses = latestFrame.stream()
+                    .filter(frame -> frame.dimension().value().equals(map.dimension()))
+                    .flatMap(frame -> frame.records().stream())
+                    .filter(ObservationRecord.VisibleSurface.class::isInstance)
+                    .map(ObservationRecord.VisibleSurface.class::cast)
+                    .filter(surface -> surface.worldRevision() >= barrier
+                            && surface.worldRevision() <= map.worldRevision())
+                    .filter(surface -> matches(
+                            surface, support.position(), expectedSupport.block()))
+                    .filter(surface -> surface.face() == ObservationRecord.Face.UP
+                            && exactObservedState(surface, expectedSupport)
+                            && surface.rayHit() != null)
+                    .map(AgentPrimitivePlanner::rayHit)
+                    .sorted(java.util.Comparator
+                            .comparingDouble((Vec3 point) -> point.x)
+                            .thenComparingDouble(point -> point.y)
+                            .thenComparingDouble(point -> point.z))
+                    .toList();
+            if (rayWitnesses.isEmpty()) {
+                throw new PlanningException(
+                        Code.TARGET_UNKNOWN,
+                        "Placement approach support requires a current delivered exact UP-face ray witness");
+            }
+            requirements.add(new PlacementApproachRequirement(
+                    support, facing, rayWitnesses));
+        }
+        return List.copyOf(requirements);
+    }
+
+    private static void requireDryBottomStair(ActionDsl.BlockStateSpec state) {
+        if (!("minecraft:oak_stairs".equals(state.block())
+                        || "minecraft:cobblestone_stairs".equals(state.block()))
+                || !state.properties().keySet().equals(
+                        Set.of("facing", "half", "shape", "waterlogged"))
+                || !"bottom".equals(state.properties().get("half"))
+                || !"false".equals(state.properties().get("waterlogged"))) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Placement approach is limited to complete dry bottom oak/cobblestone stairs");
+        }
+    }
+
+    private static ApproachPlan requireKnownPlacementApproachPlan(
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            Pose startPose,
+            List<PlacementApproachRequirement> requirements,
+            PlanningWork work) {
+        Objects.requireNonNull(map, "map");
+        Objects.requireNonNull(pathfinder, "pathfinder");
+        Objects.requireNonNull(startPose, "startPose");
+        if (requirements.isEmpty()
+                || !map.dimension().equals(startPose.cell().dimension())) {
+            throw new PlanningException(
+                    Code.NO_KNOWN_PATH,
+                    "Placement approach is outside the current known map");
+        }
+
+        var cells = new java.util.TreeSet<NavCell>();
+        cells.add(startPose.cell());
+        for (TraversabilityEdge edge : map.edges().values()) {
+            if (edge.traversable()) {
+                cells.add(edge.key().from());
+                cells.add(edge.key().to());
+            }
+        }
+
+        ApproachPlan best = null;
+        double bestDistance = Double.POSITIVE_INFINITY;
+        double bestWorstReach = Double.POSITIVE_INFINITY;
+        for (NavCell candidate : cells) {
+            Pose settled = startPose.at(candidate, APPROACH_TOLERANCE);
+            double worstReach = 0.0D;
+            boolean valid = true;
+            for (PlacementApproachRequirement requirement : requirements) {
+                double reach = requirement.rayWitnesses().stream()
+                        .mapToDouble(witness -> approachRayReachSquared(
+                                candidate, witness, startPose.eyeHeight()))
+                        .min()
+                        .orElseThrow();
+                if (reach > MAX_BREAK_REACH_BLOCKS * MAX_BREAK_REACH_BLOCKS
+                        || !placementHeadingSafe(
+                                settled,
+                                supportFaceCenter(
+                                        requirement.support().position(),
+                                        requirement.support().face()),
+                                requirement.facing())) {
+                    valid = false;
+                    break;
+                }
+                worstReach = Math.max(worstReach, reach);
+            }
+            if (!valid) continue;
+
+            DeterministicAStar.SearchResult result = work == null
+                    ? pathfinder.findRoute(map, startPose.cell(), candidate)
+                    : pathfinder.findRoute(
+                            map,
+                            startPose.cell(),
+                            candidate,
+                            work::canContinue,
+                            work::routeExpansion);
+            if (result.route().isEmpty()) continue;
+            RoutePlan route = result.route().orElseThrow();
+            boolean better = route.distanceBlocks() < bestDistance - 1.0e-9D
+                    || Math.abs(route.distanceBlocks() - bestDistance) <= 1.0e-9D
+                            && (worstReach < bestWorstReach - 1.0e-9D
+                                    || Math.abs(worstReach - bestWorstReach) <= 1.0e-9D
+                                            && (best == null
+                                                    || candidate.compareTo(best.anchor()) < 0));
+            if (better) {
+                best = new ApproachPlan(route, candidate);
+                bestDistance = route.distanceBlocks();
+                bestWorstReach = worstReach;
+            }
+        }
+        if (best == null) {
+            throw new PlanningException(
+                    Code.NO_KNOWN_PATH,
+                    "No common known stand cell satisfies every placement state, ray reach, and heading");
+        }
+        return best;
+    }
+
+    private static boolean placementHeadingSafe(
+            Pose settled, Vec3 supportPoint, String facing) {
+        Aim nominal = aim(settled, supportPoint);
+        double facingCenter = switch (facing) {
+            case "south" -> 0.0D;
+            case "west" -> 90.0D;
+            case "north" -> 180.0D;
+            case "east" -> -90.0D;
+            default -> throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Placement approach stair facing is invalid");
+        };
+        double nominalError = Math.abs(Mth.wrapDegrees(nominal.yaw() - facingCenter));
+        return nominalError
+                + aimError(settled, supportPoint, nominal).yawDegrees()
+                + PLACEMENT_HEADING_RESERVE_DEGREES < 45.0D;
+    }
+
+    /**
+     * Legacy geometry-only helper retained for API compatibility.
+     * Product Action admission uses the delivery-backed {@link Pose} overload below.
+     */
     public static ApproachPlan requireApproachPlan(
             KnownTraversabilitySnapshot map,
             DeterministicAStar pathfinder,
             NavCell start,
             ActionDsl.Position target) {
-        return requireApproachPlan(map, pathfinder, start, target, null);
+        return requireApproachPlan(
+                map, pathfinder, start, target, null, APPROACH_EYE_HEIGHT, null);
+    }
+
+    /**
+     * Selects an approach cell which remains within mutation reach of at least one current,
+     * delivery-backed ray witness even at the admitted navigation settlement error. Reach is
+     * safe for both the current eye height and standing height because navigation input cleanup
+     * may release a crouched pose before arrival.
+     */
+    public static ApproachPlan requireApproachPlan(
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            Pose startPose,
+            ActionDsl.Position target,
+            String expectedBlock,
+            Optional<ObservationFrame> latestFrame,
+            long surfaceBarrierWorldRevision) {
+        return requireApproachPlan(
+                map,
+                pathfinder,
+                startPose,
+                target,
+                expectedBlock,
+                latestFrame,
+                surfaceBarrierWorldRevision,
+                null);
+    }
+
+    private static ApproachPlan requireApproachPlan(
+            KnownTraversabilitySnapshot map,
+            DeterministicAStar pathfinder,
+            Pose startPose,
+            ActionDsl.Position target,
+            String expectedBlock,
+            Optional<ObservationFrame> latestFrame,
+            long surfaceBarrierWorldRevision,
+            PlanningWork work) {
+        Objects.requireNonNull(startPose, "startPose");
+        Objects.requireNonNull(expectedBlock, "expectedBlock");
+        Objects.requireNonNull(latestFrame, "latestFrame");
+        requireSurfaceBarrierWorldRevision(map, surfaceBarrierWorldRevision);
+        List<Vec3> rayWitnesses = latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(map.dimension()))
+                .flatMap(frame -> frame.records().stream())
+                .filter(ObservationRecord.VisibleSurface.class::isInstance)
+                .map(ObservationRecord.VisibleSurface.class::cast)
+                .filter(surface -> surface.worldRevision() >= surfaceBarrierWorldRevision
+                        && surface.worldRevision() <= map.worldRevision())
+                .filter(surface -> matches(surface, target, expectedBlock))
+                .filter(surface -> surface.rayHit() != null)
+                .map(AgentPrimitivePlanner::rayHit)
+                .toList();
+        if (rayWitnesses.isEmpty()) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Approach target requires a current delivered ray witness");
+        }
+        return requireApproachPlan(
+                map,
+                pathfinder,
+                startPose.cell(),
+                target,
+                rayWitnesses,
+                startPose.eyeHeight(),
+                work);
     }
 
     private static ApproachPlan requireApproachPlan(
@@ -1932,6 +2350,8 @@ public final class AgentPrimitivePlanner {
             DeterministicAStar pathfinder,
             NavCell start,
             ActionDsl.Position target,
+            List<Vec3> rayWitnesses,
+            double eyeHeight,
             PlanningWork work) {
         Objects.requireNonNull(map, "map");
         Objects.requireNonNull(pathfinder, "pathfinder");
@@ -1956,8 +2376,16 @@ public final class AgentPrimitivePlanner {
         double bestDistance = Double.POSITIVE_INFINITY;
         double bestReach = Double.POSITIVE_INFINITY;
         for (NavCell candidate : cells) {
-            double reach = approachReachSquared(candidate, target);
-            if (reach > APPROACH_REACH_BLOCKS * APPROACH_REACH_BLOCKS) {
+            double reach = rayWitnesses == null
+                    ? approachReachSquared(candidate, target)
+                    : rayWitnesses.stream()
+                            .mapToDouble(witness ->
+                                    approachRayReachSquared(candidate, witness, eyeHeight))
+                            .min()
+                            .orElseThrow();
+            double reachLimit = rayWitnesses == null
+                    ? APPROACH_REACH_BLOCKS : MAX_BREAK_REACH_BLOCKS;
+            if (reach > reachLimit * reachLimit) {
                 continue;
             }
             DeterministicAStar.SearchResult result = work == null
@@ -2001,6 +2429,27 @@ public final class AgentPrimitivePlanner {
                 + square(eyeZ - closestZ);
     }
 
+    private static double approachRayReachSquared(
+            NavCell cell, Vec3 witness, double eyeHeight) {
+        return Math.max(
+                approachRayReachSquaredAtEyeHeight(cell, witness, eyeHeight),
+                approachRayReachSquaredAtEyeHeight(
+                        cell, witness, APPROACH_EYE_HEIGHT));
+    }
+
+    private static double approachRayReachSquaredAtEyeHeight(
+            NavCell cell, Vec3 witness, double eyeHeight) {
+        double eyeX = cell.x() + 0.5D;
+        double eyeY = cell.y() + eyeHeight;
+        double eyeZ = cell.z() + 0.5D;
+        double horizontal = Math.hypot(witness.x - eyeX, witness.z - eyeZ)
+                + APPROACH_TOLERANCE;
+        double vertical = Math.max(
+                Math.abs(witness.y - eyeY),
+                Math.abs(witness.y - (eyeY + NAVIGATION_VERTICAL_ERROR_ABOVE)));
+        return square(horizontal) + square(vertical);
+    }
+
     public static ActionDslCompiler.Cost faceCost(
             Pose pose, ActionDsl.Position target, float maxCameraDegreesPerTick) {
         Objects.requireNonNull(pose, "pose");
@@ -2009,6 +2458,35 @@ public final class AgentPrimitivePlanner {
         }
         Aim aim = aim(pose, Objects.requireNonNull(target, "target"));
         AimError aimError = aimError(pose, target, aim);
+        return faceCost(pose, aim, aimError, maxCameraDegreesPerTick);
+    }
+
+    public static ActionDslCompiler.Cost faceCost(
+            Pose pose, ActionDsl.FaceKnownBlockFace target, float maxCameraDegreesPerTick) {
+        Objects.requireNonNull(target, "target");
+        return faceCost(
+                pose,
+                MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
+                        target.target(), target.face()),
+                maxCameraDegreesPerTick);
+    }
+
+    private static ActionDslCompiler.Cost faceCost(
+            Pose pose, Vec3 target, float maxCameraDegreesPerTick) {
+        Objects.requireNonNull(pose, "pose");
+        if (!Float.isFinite(maxCameraDegreesPerTick) || maxCameraDegreesPerTick <= 0.0F) {
+            throw new IllegalArgumentException("camera limit must be positive");
+        }
+        Aim aim = aim(pose, Objects.requireNonNull(target, "target"));
+        AimError aimError = aimError(pose, target, aim);
+        return faceCost(pose, aim, aimError, maxCameraDegreesPerTick);
+    }
+
+    private static ActionDslCompiler.Cost faceCost(
+            Pose pose,
+            Aim aim,
+            AimError aimError,
+            float maxCameraDegreesPerTick) {
         double camera = withCameraQuantizationReserve(
                 angularError(pose.yaw(), pose.pitch(), aim.yaw(), aim.pitch())
                         + pose.orientationErrorDegrees()
@@ -2838,6 +3316,7 @@ public final class AgentPrimitivePlanner {
             Map<String, ActionDslCompiler.Cost> primitiveCosts,
             Map<TraversabilityEdge.Key, TraversabilityEdge> routeDependencies,
             Set<ActionDsl.Position> knownTargets,
+            Set<KnownSurface> knownFacingSurfaces,
             Set<KnownSurface> knownSurfaces,
             Map<String, MutationAim> mutationAims,
             Map<String, MutationBatchPlan> mutationBatchPlans) {
@@ -2846,6 +3325,8 @@ public final class AgentPrimitivePlanner {
             routeDependencies = Map.copyOf(
                     Objects.requireNonNull(routeDependencies, "routeDependencies"));
             knownTargets = Set.copyOf(Objects.requireNonNull(knownTargets, "knownTargets"));
+            knownFacingSurfaces = Set.copyOf(
+                    Objects.requireNonNull(knownFacingSurfaces, "knownFacingSurfaces"));
             knownSurfaces = Set.copyOf(Objects.requireNonNull(knownSurfaces, "knownSurfaces"));
             mutationAims = Map.copyOf(Objects.requireNonNull(mutationAims, "mutationAims"));
             mutationBatchPlans = Map.copyOf(
@@ -2981,6 +3462,20 @@ public final class AgentPrimitivePlanner {
         private MutationSurface {
             Objects.requireNonNull(surface, "surface");
             Objects.requireNonNull(point, "point");
+        }
+    }
+
+    private record PlacementApproachRequirement(
+            ActionDsl.PlacementSupport support,
+            String facing,
+            List<Vec3> rayWitnesses) {
+        private PlacementApproachRequirement {
+            Objects.requireNonNull(support, "support");
+            Objects.requireNonNull(facing, "facing");
+            rayWitnesses = List.copyOf(Objects.requireNonNull(rayWitnesses, "rayWitnesses"));
+            if (rayWitnesses.isEmpty()) {
+                throw new IllegalArgumentException("placement approach requires a ray witness");
+            }
         }
     }
 
