@@ -338,6 +338,12 @@ final class FixtureArena {
         setBlock(level, blockPos, state, MUTATION_FLAGS);
     }
 
+    /** Writes replacement-fixture T0 without letting removed fluids refill later cells mid-pass. */
+    static void setBlockWithoutNeighborUpdates(
+            ServerLevel level, BlockPos blockPos, BlockState state) {
+        setBlock(level, blockPos, state, PAIRED_BLOCK_FLAGS);
+    }
+
     static void setPairedBlocks(
             ServerLevel level,
             BlockPos firstPosition,

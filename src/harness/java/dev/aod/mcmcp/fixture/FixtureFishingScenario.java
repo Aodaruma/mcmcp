@@ -28,6 +28,7 @@ final class FixtureFishingScenario {
     static final BlockPos WATER_MAX = new BlockPos(204, 202, 205);
     static final BlockPos OPEN_WATER_CENTER = new BlockPos(199, 202, 200);
     static final BlockPos PLAYER_FEET = new BlockPos(199, 203, 194);
+    static final BlockPos REPLACEMENT_STAGING_FEET = new BlockPos(193, 200, 193);
     static final int EXPECTED_SOURCE_WATER_CELLS = 11 * 11 * 3;
     static final int EXPECTED_OPEN_AIR_CELLS = 11 * 11 * 2;
     private static final List<BlockPos> OWNED_BLOCKS = ownedBlocks();
@@ -71,6 +72,7 @@ final class FixtureFishingScenario {
      */
     static void rollbackForReplacement(FixtureSecurity.Context context) {
         FixtureArena.requireInitialized(context.level());
+        stagePlayerForReplacement(context);
         ServerPlayer player = context.player();
         retireOwnedBobber(player);
         discardWorkspaceEntities(context.level(), player);
@@ -78,6 +80,7 @@ final class FixtureFishingScenario {
         if (player.fishing != null
                 || hasWorkspaceEntities(context.level(), player)
                 || !workspaceIsClear(context.level())) {
+            // The player remains on the out-of-volume safety cell if cleanup fails closed.
             throw new IllegalStateException("fishing fixture replacement cleanup was incomplete");
         }
     }
@@ -204,8 +207,32 @@ final class FixtureFishingScenario {
 
     private static void clearWorkspace(ServerLevel level) {
         for (BlockPos position : OWNED_BLOCKS) {
-            FixtureArena.setBlock(level, position, Blocks.AIR.defaultBlockState());
+            FixtureArena.setBlockWithoutNeighborUpdates(
+                    level, position, Blocks.AIR.defaultBlockState());
         }
+    }
+
+    private static void stagePlayerForReplacement(FixtureSecurity.Context context) {
+        BlockPos support = REPLACEMENT_STAGING_FEET.below();
+        // This is the arena's ordinary floor/air baseline, not persistent staging debris. Later
+        // fixtures may overwrite it as part of their own declared layout.
+        FixtureArena.setBlock(
+                context.level(), support, Blocks.SMOOTH_STONE.defaultBlockState());
+        FixtureArena.setBlock(
+                context.level(), REPLACEMENT_STAGING_FEET, Blocks.AIR.defaultBlockState());
+        FixtureArena.setBlock(
+                context.level(), REPLACEMENT_STAGING_FEET.above(), Blocks.AIR.defaultBlockState());
+        if (!context.player().teleportTo(
+                context.level(),
+                REPLACEMENT_STAGING_FEET.getX() + 0.5D,
+                REPLACEMENT_STAGING_FEET.getY(),
+                REPLACEMENT_STAGING_FEET.getZ() + 0.5D,
+                Set.<Relative>of(), 0.0F, 0.0F, false)) {
+            throw new IllegalStateException(
+                    "fishing fixture could not stage the player before replacement cleanup");
+        }
+        context.player().setDeltaMovement(0.0D, 0.0D, 0.0D);
+        context.player().resetFallDistance();
     }
 
     private static boolean workspaceIsClear(ServerLevel level) {
