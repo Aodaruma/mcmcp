@@ -121,6 +121,25 @@ Assert-True ($request.budget.max_blocks_broken -eq 1 -and
     'request budget is not a stationary single break'
 Assert-True ($script:CobbleMaximumAttempts -eq 16) 'attempt cap is not exactly sixteen'
 
+$generatorRequest = New-KnownCobblestoneGeneratorRequest -Surface $surface
+$generatorNode = $generatorRequest.program.body[0]
+Assert-True ($generatorNode.op -ceq 'operate_known_cobblestone_generator' -and
+    [object]::ReferenceEquals($surface.position, $generatorNode.target) -and
+    [object]::ReferenceEquals($surface.state, $generatorNode.expected_state)) `
+    'known generator request did not retain its exact delivered target evidence'
+Assert-True ($generatorNode.minimum_inventory_count -eq 8 -and
+    $generatorNode.max_breaks -eq 8 -and
+    $generatorNode.regeneration_wait_ticks -eq 100 -and
+    $generatorNode.max_operation_duration_ticks -eq 3600) `
+    'known generator request does not expose the finite eight-break acceptance slice'
+Assert-True ($generatorRequest.program.capabilities.Count -eq 1 -and
+    $generatorRequest.program.capabilities[0] -ceq 'block_break' -and
+    $generatorRequest.budget.max_ticks -eq 3600 -and
+    $generatorRequest.budget.max_duration_ms -eq 180000 -and
+    $generatorRequest.budget.max_blocks_broken -eq 8 -and
+    $generatorRequest.budget.max_camera_degrees -eq 0) `
+    'known generator request budget or capability declaration is not closed'
+
 function New-MockBreakTerminal {
     param(
         [ValidateRange(1, 8)][int]$MinimumInventoryCount,
@@ -161,6 +180,59 @@ function New-MockBreakTerminal {
                 verification = $Verification
                 client_tick = 100L + $Attempt; world_revision = 20L + $Attempt
             })
+        partial = [pscustomobject]@{
+            has_confirmed_effects = $true; interrupted_node_id = $null
+            remaining_node_upper_bound = 0; resume_requires_reobservation = $false
+        }
+        source = [pscustomobject]@{}
+        template = [pscustomobject]@{}
+        reference_requirements = @()
+    }
+}
+
+function New-MockKnownGeneratorTerminal {
+    $effects = [Collections.Generic.List[object]]::new()
+    for ($cycle = 1; $cycle -le 8; $cycle++) {
+        $effects.Add([pscustomobject]@{
+                seq = $cycle
+                node_id = 'operate_cobblestone_generator'
+                kind = 'block_break'
+                subject = 'block:minecraft:overworld:199,201,200'
+                observed_before = [pscustomobject]@{
+                    block = 'minecraft:cobblestone'
+                    properties = [pscustomobject]@{}
+                    cycle = $cycle
+                }
+                observed_after = [pscustomobject]@{
+                    block = 'minecraft:air'
+                    properties = [pscustomobject]@{}
+                    inventory_count = $cycle
+                }
+                verification = 'confirmed'
+                client_tick = 100L + 5L * $cycle
+                world_revision = 20L + $cycle
+            })
+    }
+    [pscustomobject]@{
+        schema_version = 1
+        action_id = '550e8400-e29b-41d4-a716-000000000001'
+        state = 'succeeded'
+        progress = [pscustomobject]@{
+            executed_nodes = 1; total_node_upper_bound = 1
+            distance_travelled = 0; camera_degrees = 0
+            interactions = 0; blocks_broken = 8; blocks_placed = 0
+        }
+        failure = $null
+        trace = @(
+            [pscustomobject]@{
+                tick = 0; event = 'NODE_STARTED'; detail = 'operate_cobblestone_generator'
+            },
+            [pscustomobject]@{
+                tick = 40; event = 'NODE_COMPLETED'; detail = 'operate_cobblestone_generator'
+            },
+            [pscustomobject]@{ tick = 40; event = 'SUCCEEDED'; detail = 'succeeded' }
+        )
+        effects = @($effects)
         partial = [pscustomobject]@{
             has_confirmed_effects = $true; interrupted_node_id = $null
             remaining_node_upper_bound = 0; resume_requires_reobservation = $false
@@ -325,6 +397,22 @@ Assert-True ($emptySurfaces.Count -eq 0) `
     'an allowed missing surface emitted a null pipeline element'
 $script:ToolTransport = $null
 
+$knownGeneratorProofs = @(Assert-KnownCobblestoneGeneratorTerminal `
+        -Terminal (New-MockKnownGeneratorTerminal))
+Assert-True ($knownGeneratorProofs.Count -eq 8 -and
+    $knownGeneratorProofs[7].inventory_count -eq 8) `
+    'known generator terminal did not retain eight cycle checkpoints'
+$movingKnownGenerator = New-MockKnownGeneratorTerminal
+$movingKnownGenerator.progress.distance_travelled = 0.1
+Assert-Throws { Assert-KnownCobblestoneGeneratorTerminal `
+        -Terminal $movingKnownGenerator } `
+    'moving known generator terminal was accepted'
+$unknownKnownGenerator = New-MockKnownGeneratorTerminal
+$unknownKnownGenerator.effects[4].verification = 'unknown'
+Assert-Throws { Assert-KnownCobblestoneGeneratorTerminal `
+        -Terminal $unknownKnownGenerator } `
+    'unknown known-generator checkpoint was accepted'
+
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null
 $script:MockCompleted = 0
@@ -393,7 +481,23 @@ $script:ToolTransport = {
             $submitted = $Arguments.program.body[0]
             $script:MockActionSequence++
             $script:MockPendingActionSequence = $script:MockActionSequence
-            if ($submitted.op -ceq 'break_known_block') {
+            if ($submitted.op -ceq 'operate_known_cobblestone_generator') {
+                if ($submitted.id -cne 'operate_cobblestone_generator' -or
+                    [int]$submitted.minimum_inventory_count -ne 8 -or
+                    [int]$submitted.max_breaks -ne 8 -or
+                    [int]$submitted.regeneration_wait_ticks -ne 100 -or
+                    [int]$submitted.max_operation_duration_ticks -ne 3600 -or
+                    $submitted.target.x -ne 199 -or $submitted.target.y -ne 201 -or
+                    $submitted.target.z -ne 200 -or
+                    $Arguments.program.capabilities.Count -ne 1 -or
+                    $Arguments.program.capabilities[0] -cne 'block_break' -or
+                    [int]$Arguments.budget.max_blocks_broken -ne 8 -or
+                    [int]$Arguments.budget.max_camera_degrees -ne 0) {
+                    throw 'mock received a stale or malformed known generator Action'
+                }
+                $script:MockPendingKind = 'known_generator'
+                $script:MockPendingMinimum = 8
+            } elseif ($submitted.op -ceq 'break_known_block') {
                 $expected = $script:MockCompleted + 1
                 if ([int]$submitted.minimum_inventory_count -ne $expected -or
                     $submitted.target.x -ne 199 -or $submitted.target.y -ne 201 -or
@@ -434,7 +538,12 @@ $script:ToolTransport = {
             $actionSequence = $script:MockPendingActionSequence
             $script:MockPendingKind = $null
             $script:MockPendingMinimum = 0
-            if ($kind -ceq 'collect') {
+            if ($kind -ceq 'known_generator') {
+                $script:MockCompleted = 8
+                $script:MockLooseMode = 'none'
+                $script:MockLooseDrop = $false
+                New-MockKnownGeneratorTerminal
+            } elseif ($kind -ceq 'collect') {
                 $before = $script:MockCompleted
                 $script:MockCompleted = $minimum
                 $script:MockLooseMode = 'none'
@@ -481,55 +590,36 @@ try {
     $result = Invoke-McmcpCobblestoneGeneratorCapabilityGate
     Assert-True ($result.gate_result.gate -ceq 'phase9-cobblestone-generator') `
         'gate result name is wrong'
-    Assert-True ($result.gate_result.lifecycle.accepted -eq 10 -and
-        $result.gate_result.lifecycle.terminal -eq 10 -and
-        $result.gate_result.lifecycle.unique_frame_ids -eq 9 -and
+    Assert-True ($result.gate_result.lifecycle.accepted -eq 1 -and
+        $result.gate_result.lifecycle.terminal -eq 1 -and
         $result.gate_result.lifecycle.successful_pickups -eq 8 -and
-        $result.gate_result.lifecycle.lost_drops -eq 1 -and
-        $result.gate_result.lifecycle.recovered_loose_drops -eq 2 -and
-        $result.gate_result.lifecycle.active_collection_actions -eq 1 -and
-        $result.gate_result.lifecycle.delayed_passive_pickups -eq 1 -and
-        $result.gate_result.lifecycle.total_attempts -eq 9 -and
-        $result.gate_result.lifecycle.total_actions -eq 10 -and
-        $result.gate_result.lifecycle.expected_pickaxe_damage -eq 9) `
-        'lost, recovered, and directly picked-up break lifecycles were not proven'
+        $result.gate_result.lifecycle.confirmed_break_effects -eq 8 -and
+        $result.gate_result.lifecycle.total_actions -eq 1 -and
+        $result.gate_result.lifecycle.expected_pickaxe_damage -eq 8) `
+        'one finite known-generator Action lifecycle was not proven'
     Assert-True ($result.gate_result.terminal_effects.Count -eq 8) `
         'eight confirmed break effects were not retained'
     Assert-True ($result.gate_result.online_oracle.cobblestone_delta -eq 8) `
         'online inventory oracle is not +8'
-    Assert-True ($result.gate_result.total_attempts -eq 9 -and
-        $result.gate_result.lost_drops -eq 1 -and
-        $result.gate_result.recovered_loose_drops -eq 2 -and
-        $result.gate_result.active_collection_actions -eq 1 -and
-        $result.gate_result.delayed_passive_pickups -eq 1 -and
-        $result.gate_result.maximum_attempts -eq 16 -and
-        $result.gate_result.expected_pickaxe_damage -eq 9 -and
-        $result.gate_result.lost_drop_effects.Count -eq 1 -and
-        $result.gate_result.recovered_drop_effects.Count -eq 2) `
-        'attempt, lost-drop, or pickaxe-damage accounting is wrong'
+    Assert-True ($result.gate_result.total_attempts -eq 8 -and
+        $result.gate_result.maximum_attempts -eq 8 -and
+        $result.gate_result.expected_pickaxe_damage -eq 8 -and
+        $result.gate_result.action_boundary -ceq
+            'one_finite_operate_known_cobblestone_generator_action' -and
+        $result.gate_result.lost_drop_effects.Count -eq 0 -and
+        $result.gate_result.recovered_drop_effects.Count -eq 0) `
+        'finite known-generator attempt or effect accounting is wrong'
     Assert-True ($result.gate_result.external_oracle.player.health -eq 20.0) `
         'offline oracle did not bind the observed health baseline'
-    Assert-True ($result.gate_result.external_oracle.player.iron_pickaxe_damage -eq 9 -and
-        $result.gate_result.external_oracle.total_attempts -eq 9 -and
-        $result.gate_result.external_oracle.maximum_attempts -eq 16 -and
-        $result.gate_result.external_oracle.lost_drops -eq 1 -and
-        $result.gate_result.external_oracle.recovered_loose_drops -eq 2 -and
-        $result.gate_result.external_oracle.active_collection_actions -eq 1 -and
-        $result.gate_result.external_oracle.delayed_passive_pickups -eq 1 -and
-        $result.gate_result.external_oracle.inspector_arguments[1] -ceq '9') `
+    Assert-True ($result.gate_result.external_oracle.player.iron_pickaxe_damage -eq 8 -and
+        $result.gate_result.external_oracle.total_attempts -eq 8 -and
+        $result.gate_result.external_oracle.maximum_attempts -eq 8 -and
+        $result.gate_result.external_oracle.lost_drops -eq 0 -and
+        $result.gate_result.external_oracle.recovered_loose_drops -eq 0 -and
+        $result.gate_result.external_oracle.active_collection_actions -eq 0 -and
+        $result.gate_result.external_oracle.delayed_passive_pickups -eq 0 -and
+        $result.gate_result.external_oracle.inspector_arguments[1] -ceq '8') `
         'offline oracle did not bind attempts to pickaxe damage'
-    $delayedSuccessSettlements = @($script:GateEvents | Where-Object {
-            $_.event -ceq 'cobblestone_pickup_settled' -and
-            $_.phase -ceq 'attempt 1 pickup reobservation' -and
-            [int]$_.polls -gt 1
-        })
-    $recoveryModes = @($result.gate_result.recovered_drop_effects | ForEach-Object {
-            [string]$_.pickup_mode
-        } | Sort-Object)
-    Assert-True ($delayedSuccessSettlements.Count -eq 1 -and
-        ($recoveryModes -join ',') -ceq
-            'delayed_passive_pickup,delivery_backed_collect_visible_item') `
-        'mock did not exercise delayed success convergence and both failed-break recoveries'
     Assert-True ([bool]$result.input_release.control_ready -and
         [bool]$result.input_release.all_actions_terminal) `
         'input release was not proven'

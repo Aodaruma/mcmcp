@@ -33,6 +33,8 @@ Fishing r1〜r10では、旧audio-source hook、cast/wait/reelのbudget、source
 
 r11 artifactには`gate-events.jsonl`、`gate-result.json`、`external-oracle-manifest.json`があるが、worldを閉じた後の`offline-fishing-oracle.json`は取得していない。そのためrod damage、残留bobber / item、pool全cell不変をonline結果だけで最終合格へ昇格させない。runnerはcast後の失敗・timeout・cancelでも保持中のsingle-use `fishing_session_ref`を一度だけreel cleanupし、bobber消失を確認してから入力解放する。通常reelとcleanup reelはいずれもconfirmed effectのbobber `true -> false`とrod damage `+1`を要求する。Vanilla treasureの`minecraft:enchanted_book`も正当なlootとして扱う。
 
+丸石生成の上表artifactは、旧runnerが`break_known_block`を1回ずつ再観測して8個集めた記録である。後続実装に合わせ、`Invoke-McmcpCobblestoneGeneratorCapabilityGate.ps1`は現在、同じfixtureと公開5 Toolだけを使い、`operate_known_cobblestone_generator`を1 Action（絶対inventory目標8、`max_breaks=8`、再生成待ち100 ticks、上限3600 ticks）で試す。各8 cycleのconfirmed effect、移動・視点・interactionが0、最終inventory 8、pickaxe damage 8、入力解放を合格条件とする。runner mockは合格済みだが、この新Actionによる実ワールド再試験結果はまだ記録していない。
+
 ### fixture切替時の死亡事故と修正
 
 Fishingの11×11×3水槽を後続fixtureへ置換するcleanupで、player直下を先に消去した後、残留水の即時検査が失敗して後続layoutを作らないまま例外終了した。このためplayerが落下死した。意図されたfixture動作ではなく、試験ハーネスの順序不具合である。
