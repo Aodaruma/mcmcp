@@ -40,12 +40,12 @@ final class FixturePhase4Scenario {
     static final List<BlockPos> BUILD_RUNNER_SECOND_COLUMN = List.of(
             ORIGIN.offset(3, 0, 1), ORIGIN.offset(3, 1, 1));
     static final int BUILD_RUNNER_COBBLESTONE_COUNT = 8;
-    // Keep the camera one block west of the inner pair so its south companion
-    // does not fully occlude the inner-corner source from policy-visible rays.
-    static final BlockPos STAIRS_MATRIX_PLAYER_SUPPORT = new BlockPos(200, 199, 197);
-    static final BlockPos STAIRS_MATRIX_STRAIGHT_SOURCE = new BlockPos(199, 203, 192);
-    static final BlockPos STAIRS_MATRIX_INNER_SOURCE = new BlockPos(201, 203, 192);
-    static final BlockPos STAIRS_MATRIX_INNER_COMPANION = new BlockPos(201, 203, 193);
+    static final BlockPos STAIRS_MATRIX_PLAYER_SUPPORT = new BlockPos(201, 199, 197);
+    static final BlockPos STAIRS_MATRIX_STRAIGHT_SOURCE = new BlockPos(201, 203, 192);
+    // Keep both corner pairs oblique and symmetric from the fixture camera. A
+    // companion directly in front of its corner would legitimately occlude it.
+    static final BlockPos STAIRS_MATRIX_INNER_SOURCE = new BlockPos(199, 203, 192);
+    static final BlockPos STAIRS_MATRIX_INNER_COMPANION = new BlockPos(199, 203, 193);
     static final BlockPos STAIRS_MATRIX_OUTER_SOURCE = new BlockPos(203, 203, 193);
     static final BlockPos STAIRS_MATRIX_OUTER_COMPANION = new BlockPos(203, 203, 192);
     static final List<BlockPos> STAIRS_MATRIX_SOURCES = List.of(
