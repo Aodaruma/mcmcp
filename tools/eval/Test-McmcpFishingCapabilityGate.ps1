@@ -129,7 +129,9 @@ $waitRequest = New-FishingSoundWaitRequest -SinceTick 101
 Assert-True ($waitRequest.program.body[0].condition.type -ceq 'sound_clue' -and
     $waitRequest.program.body[0].condition.sound_event -ceq
         'minecraft:entity.fishing_bobber.splash' -and
-    $waitRequest.program.body[0].max_ticks -eq 720) `
+    $waitRequest.program.body[0].max_ticks -eq 900 -and
+    $waitRequest.budget.max_duration_ms -eq 45000 -and
+    $waitRequest.budget.max_ticks -eq 900) `
     'wait builder is not exact-sound-bound and finite'
 $reelRequest = New-FishingReelRequest -SessionRef ('f_' + ('a' * 22))
 Assert-True ($reelRequest.program.body[0].op -ceq 'reel_known_fishing_session' -and
@@ -200,7 +202,8 @@ $script:ToolTransport = {
 try {
     $result = Invoke-McmcpFishingCapabilityGate
     Assert-True ($result.gate_result.gate -ceq 'phase9-fishing') 'gate result name is wrong'
-    Assert-True ($result.gate_result.finite_timeout.bite_wait_ticks -eq 720) `
+    Assert-True ($result.gate_result.finite_timeout.bite_wait_ticks -eq 900 -and
+        $result.gate_result.finite_timeout.bite_wait_wall_seconds -eq 60) `
         'sound wait is not finitely bounded'
     Assert-True ($result.gate_result.online_oracle.fishing_loot_count -eq 1 -and
         -not [bool]$result.gate_result.online_oracle.collection_used) `

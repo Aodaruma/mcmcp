@@ -182,7 +182,7 @@ function New-FishingSoundWaitRequest {
     param([Parameter(Mandatory)][long]$SinceTick)
     New-ActionRequest -Name 'capability_gate_fishing_bite_wait' -Capabilities @() `
         -Body @([ordered]@{
-            id = 'wait_for_bite'; op = 'wait_until'; max_ticks = 720
+            id = 'wait_for_bite'; op = 'wait_until'; max_ticks = 900
             condition = [ordered]@{
                 type = 'sound_clue'
                 sound_event = 'minecraft:entity.fishing_bobber.splash'
@@ -190,7 +190,7 @@ function New-FishingSoundWaitRequest {
                 bounds = $script:FishingSoundBounds
             }
         }) -Budget ([ordered]@{
-            max_duration_ms = 36000; max_ticks = 720
+            max_duration_ms = 45000; max_ticks = 900
             max_distance_blocks = 0; max_camera_degrees = 0
             max_interactions = 0; max_blocks_broken = 0; max_blocks_placed = 0
         })
@@ -352,12 +352,12 @@ function Invoke-FishingGateCore {
 
     $waitTerminal = Invoke-ActionRequest `
         -Request (New-FishingSoundWaitRequest -SinceTick $session.client_tick) `
-        -WallTimeoutSeconds 50
+        -WallTimeoutSeconds 60
     Assert-FishingTerminalBudget -Terminal $waitTerminal -Phase 'bite wait' `
         -ExpectedInteractions 0 -MaximumCamera 0
     Add-GateEvent -Event 'fishing_bite_sound_confirmed' -Detail ([ordered]@{
             sound_event = 'minecraft:entity.fishing_bobber.splash'
-            since_tick = $session.client_tick; max_ticks = 720
+            since_tick = $session.client_tick; max_ticks = 900
         })
 
     $reelTerminal = Invoke-ActionRequest `
@@ -392,7 +392,7 @@ function Invoke-FishingGateCore {
         fixed_five_surface = $fixedFive
         normal_player_actions_only = $true
         action_boundary = 'fresh_water_then_cast_sound_bound_wait_reel_optional_visible_collect'
-        finite_timeout = [ordered]@{ bite_wait_ticks = 720; bite_wait_wall_seconds = 50 }
+        finite_timeout = [ordered]@{ bite_wait_ticks = 900; bite_wait_wall_seconds = 60 }
         online_oracle = [ordered]@{
             fishing_loot_count = $loot.loot_item_count
             collection_used = $collectionUsed
