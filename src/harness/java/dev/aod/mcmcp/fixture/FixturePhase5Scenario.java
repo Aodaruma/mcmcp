@@ -169,6 +169,10 @@ final class FixturePhase5Scenario {
             FixtureSecurity.Context context,
             FixturePhase5Mode mode,
             Consumer<Component> output) {
+        // Fishing owns a larger water volume than the other arena fixtures. Retire it before
+        // any successor writes its smaller T0 layout, otherwise the remaining source-water ring
+        // can flow back into the successor workspace on later Vanilla fluid ticks.
+        FixtureFishingScenario.rollbackForReplacement(context);
         if (mode == FixturePhase5Mode.IRON_FARM) {
             FixtureCombinedWheatScenario.rollbackForReplacement(context);
             FixturePhase2Scenario.stop();

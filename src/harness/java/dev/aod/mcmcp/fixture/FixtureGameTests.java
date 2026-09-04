@@ -297,6 +297,49 @@ final class FixtureGameTests {
     }
 
     private static void runFishingOpenWaterFixture(GameTestHelper helper) {
+        // Replacement cleanup iterates this exact owned set. Keep its coverage closed and prove
+        // that it encloses the smaller cobblestone successor which exposed the water-leak bug.
+        var owned = new java.util.HashSet<>(FixtureFishingScenario.ownedBlocks());
+        int expectedOwned = (FixtureFishingScenario.WORKSPACE_MAX.getX()
+                - FixtureFishingScenario.WORKSPACE_MIN.getX() + 1)
+                * (FixtureFishingScenario.WORKSPACE_MAX.getY()
+                - FixtureFishingScenario.WORKSPACE_MIN.getY() + 1)
+                * (FixtureFishingScenario.WORKSPACE_MAX.getZ()
+                - FixtureFishingScenario.WORKSPACE_MIN.getZ() + 1);
+        if (owned.size() != expectedOwned) {
+            helper.fail(Component.literal(
+                    "Fishing replacement ownership does not cover each workspace block exactly once"));
+            return;
+        }
+        for (int x = FixtureFishingScenario.WORKSPACE_MIN.getX();
+                x <= FixtureFishingScenario.WORKSPACE_MAX.getX(); x++) {
+            for (int y = FixtureFishingScenario.WORKSPACE_MIN.getY();
+                    y <= FixtureFishingScenario.WORKSPACE_MAX.getY(); y++) {
+                for (int z = FixtureFishingScenario.WORKSPACE_MIN.getZ();
+                        z <= FixtureFishingScenario.WORKSPACE_MAX.getZ(); z++) {
+                    if (!owned.contains(new BlockPos(x, y, z))) {
+                        helper.fail(Component.literal(
+                                "Fishing replacement ownership has a workspace hole"));
+                        return;
+                    }
+                }
+            }
+        }
+        for (int x = FixtureCobblestoneGeneratorScenario.WORKSPACE_MIN.getX();
+                x <= FixtureCobblestoneGeneratorScenario.WORKSPACE_MAX.getX(); x++) {
+            for (int y = FixtureCobblestoneGeneratorScenario.WORKSPACE_MIN.getY();
+                    y <= FixtureCobblestoneGeneratorScenario.WORKSPACE_MAX.getY(); y++) {
+                for (int z = FixtureCobblestoneGeneratorScenario.WORKSPACE_MIN.getZ();
+                        z <= FixtureCobblestoneGeneratorScenario.WORKSPACE_MAX.getZ(); z++) {
+                    if (!owned.contains(new BlockPos(x, y, z))) {
+                        helper.fail(Component.literal(
+                                "Fishing replacement ownership does not enclose cobblestone workspace"));
+                        return;
+                    }
+                }
+            }
+        }
+
         // Vanilla FishingHook evaluates a 5x5 area at offsets y=-1..2 from the bobber:
         // two source-water layers followed by two air layers are the closed valid shape.
         for (int x = 0; x < 5; x++) {

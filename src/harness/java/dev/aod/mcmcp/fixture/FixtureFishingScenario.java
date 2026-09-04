@@ -15,6 +15,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -29,6 +30,7 @@ final class FixtureFishingScenario {
     static final BlockPos PLAYER_FEET = new BlockPos(199, 203, 194);
     static final int EXPECTED_SOURCE_WATER_CELLS = 11 * 11 * 3;
     static final int EXPECTED_OPEN_AIR_CELLS = 11 * 11 * 2;
+    private static final List<BlockPos> OWNED_BLOCKS = ownedBlocks();
 
     private FixtureFishingScenario() {
     }
@@ -41,21 +43,6 @@ final class FixtureFishingScenario {
         FixtureArena.requireInitialized(context.level());
 
         ServerLevel level = context.level();
-        if (context.player().fishing != null) {
-            context.player().fishing.discard();
-        }
-        if (context.player().fishing != null) {
-            throw new IllegalStateException("fishing fixture could not retire the prior owned bobber");
-        }
-        discardWorkspaceEntities(level, context.player());
-        for (int x = WORKSPACE_MIN.getX(); x <= WORKSPACE_MAX.getX(); x++) {
-            for (int y = WORKSPACE_MIN.getY(); y <= WORKSPACE_MAX.getY(); y++) {
-                for (int z = WORKSPACE_MIN.getZ(); z <= WORKSPACE_MAX.getZ(); z++) {
-                    FixtureArena.setBlock(level, new BlockPos(x, y, z),
-                            Blocks.AIR.defaultBlockState());
-                }
-            }
-        }
         for (var entry : layout().entrySet()) {
             FixtureArena.setBlock(level, entry.getKey(), entry.getValue());
         }
@@ -74,6 +61,37 @@ final class FixtureFishingScenario {
                 + " open_air_cells=" + EXPECTED_OPEN_AIR_CELLS
                 + " loot_goal=one_vanilla_fishing_loot"
                 + " fixture_tick_mutation=none"));
+    }
+
+    /**
+     * Removes every object owned by this fixture before the replacement fixture writes T0.
+     * This is deliberately called by the Phase 5 dispatcher for every target mode, including a
+     * fresh fishing setup, so source water outside a smaller successor workspace cannot flow back
+     * into that successor after its own preparation has completed.
+     */
+    static void rollbackForReplacement(FixtureSecurity.Context context) {
+        FixtureArena.requireInitialized(context.level());
+        ServerPlayer player = context.player();
+        retireOwnedBobber(player);
+        discardWorkspaceEntities(context.level(), player);
+        clearWorkspace(context.level());
+        if (player.fishing != null
+                || hasWorkspaceEntities(context.level(), player)
+                || !workspaceIsClear(context.level())) {
+            throw new IllegalStateException("fishing fixture replacement cleanup was incomplete");
+        }
+    }
+
+    static List<BlockPos> ownedBlocks() {
+        var result = new java.util.ArrayList<BlockPos>();
+        for (int x = WORKSPACE_MIN.getX(); x <= WORKSPACE_MAX.getX(); x++) {
+            for (int y = WORKSPACE_MIN.getY(); y <= WORKSPACE_MAX.getY(); y++) {
+                for (int z = WORKSPACE_MIN.getZ(); z <= WORKSPACE_MAX.getZ(); z++) {
+                    result.add(new BlockPos(x, y, z));
+                }
+            }
+        }
+        return List.copyOf(result);
     }
 
     /** Complete non-air baseline; every other workspace cell is required to be air. */
@@ -175,13 +193,50 @@ final class FixtureFishingScenario {
         context.player().resetFallDistance();
     }
 
+    private static void retireOwnedBobber(ServerPlayer player) {
+        if (player.fishing != null) {
+            player.fishing.discard();
+        }
+        if (player.fishing != null) {
+            throw new IllegalStateException("fishing fixture could not retire the prior owned bobber");
+        }
+    }
+
+    private static void clearWorkspace(ServerLevel level) {
+        for (BlockPos position : OWNED_BLOCKS) {
+            FixtureArena.setBlock(level, position, Blocks.AIR.defaultBlockState());
+        }
+    }
+
+    private static boolean workspaceIsClear(ServerLevel level) {
+        return OWNED_BLOCKS.stream().allMatch(position -> level.getBlockState(position).isAir());
+    }
+
     private static void discardWorkspaceEntities(ServerLevel level, ServerPlayer player) {
-        AABB bounds = AABB.encapsulatingFullBlocks(WORKSPACE_MIN, WORKSPACE_MAX);
+        AABB bounds = workspaceBounds();
+        var stale = new java.util.ArrayList<Entity>();
         for (Entity entity : level.getAllEntities()) {
-            if (entity != player && entity.isAlive() && bounds.contains(entity.position())) {
-                entity.discard();
+            if (entity != player && !entity.isRemoved()
+                    && bounds.intersects(entity.getBoundingBox())) {
+                stale.add(entity);
             }
         }
+        stale.forEach(Entity::discard);
+    }
+
+    private static boolean hasWorkspaceEntities(ServerLevel level, ServerPlayer player) {
+        AABB bounds = workspaceBounds();
+        for (Entity entity : level.getAllEntities()) {
+            if (entity != player && !entity.isRemoved()
+                    && bounds.intersects(entity.getBoundingBox())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static AABB workspaceBounds() {
+        return AABB.encapsulatingFullBlocks(WORKSPACE_MIN, WORKSPACE_MAX);
     }
 
     private static int ownedBobberCount(ServerLevel level) {
