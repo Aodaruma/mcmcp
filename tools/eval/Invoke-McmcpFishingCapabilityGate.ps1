@@ -206,7 +206,9 @@ function New-FishingReelRequest {
         }) -Budget ([ordered]@{
             max_duration_ms = 4000; max_ticks = 80
             max_distance_blocks = 0; max_camera_degrees = 0
-            max_interactions = 1; max_blocks_broken = 0; max_blocks_placed = 0
+            # Admission reserves a conservative two-interaction bound even though a successful
+            # reel reports the single actual item-use interaction below.
+            max_interactions = 2; max_blocks_broken = 0; max_blocks_placed = 0
         })
 }
 

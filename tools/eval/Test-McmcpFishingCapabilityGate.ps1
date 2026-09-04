@@ -135,7 +135,8 @@ Assert-True ($waitRequest.program.body[0].condition.type -ceq 'sound_clue' -and
     'wait builder is not exact-sound-bound and finite'
 $reelRequest = New-FishingReelRequest -SessionRef ('f_' + ('a' * 22))
 Assert-True ($reelRequest.program.body[0].op -ceq 'reel_known_fishing_session' -and
-    $reelRequest.program.body[0].fishing_session_ref -ceq ('f_' + ('a' * 22))) `
+    $reelRequest.program.body[0].fishing_session_ref -ceq ('f_' + ('a' * 22)) -and
+    $reelRequest.budget.max_interactions -eq 2) `
     'reel builder changed the opaque session reference'
 
 $script:GateEvents = [Collections.Generic.List[object]]::new()
