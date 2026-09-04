@@ -6,7 +6,6 @@ import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -19,16 +18,6 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class KnownMenuProfileSupportTest {
-    @BeforeAll
-    static void bindStoneComponents() {
-        var holder = Items.STONE.builtInRegistryHolder();
-        if (!holder.areComponentsBound()) {
-            holder.bindComponents(DataComponentMap.builder()
-                    .set(DataComponents.MAX_STACK_SIZE, 64)
-                    .build());
-        }
-    }
-
     @Test
     void genericPureStorageProfilesAreVersionedContentAddressedAndBounded() {
         var profiles = KnownMenuProfileSupport.profiles();
@@ -108,26 +97,38 @@ class KnownMenuProfileSupportTest {
             }
         };
 
-        var source = new ItemStack(Items.STONE, 1);
+        var source = storageStack(1);
         int maximum = source.getMaxStackSize();
         assertThat(KnownMenuProfileSupport.hasFullPlayerCapacity(
                 source, List.of(rejecting, accepting))).isTrue();
 
-        inventory.setItem(0, new ItemStack(Items.STONE, maximum));
+        inventory.setItem(0, storageStack(maximum));
         assertThat(KnownMenuProfileSupport.hasFullPlayerCapacity(
-                new ItemStack(Items.STONE, 1), List.of(rejecting, accepting))).isFalse();
+                storageStack(1), List.of(rejecting, accepting))).isFalse();
 
-        var oversized = new ItemStack(Items.STONE, 1);
+        var oversized = storageStack(1);
         oversized.setCount(maximum + 1);
         assertThat(KnownMenuProfileSupport.isNormalSizedStack(oversized)).isFalse();
         assertThat(KnownMenuProfileSupport.hasFullPlayerCapacity(
                 oversized, List.of(accepting))).isFalse();
 
-        inventory.setItem(0, new ItemStack(Items.STONE, maximum - 4));
+        inventory.setItem(0, storageStack(maximum - 4));
         assertThat(KnownMenuProfileSupport.hasFullDestinationCapacity(
-                new ItemStack(Items.STONE, 4), List.of(accepting))).isTrue();
+                storageStack(4), List.of(accepting))).isTrue();
         assertThat(KnownMenuProfileSupport.hasFullDestinationCapacity(
-                new ItemStack(Items.STONE, 5), List.of(accepting))).isFalse();
+                storageStack(5), List.of(accepting))).isFalse();
+    }
+
+    private static ItemStack storageStack(int count) {
+        var holder = Items.DIRT.builtInRegistryHolder();
+        if (!holder.areComponentsBound()) {
+            holder.bindComponents(DataComponentMap.builder()
+                    .set(DataComponents.MAX_STACK_SIZE, 64)
+                    .build());
+        }
+        var stack = new ItemStack(Items.DIRT);
+        stack.setCount(count);
+        return stack;
     }
 
     public static class ValidContract {
