@@ -78,7 +78,7 @@ enchanted_pickaxe["components"] = {
     "minecraft:enchantments": {"levels": {"minecraft:efficiency": 1}},
 }
 assert oracle.item_enchanted(enchanted_pickaxe)
-assert oracle.close_enough([199.5, 201.0, 198.5], oracle.PLAYER_POSITION)
-assert not oracle.close_enough([199.6, 201.0, 198.5], oracle.PLAYER_POSITION)
+assert oracle.close_enough([199.5, 201.0, 199.5], oracle.PLAYER_POSITION)
+assert not oracle.close_enough([199.6, 201.0, 199.5], oracle.PLAYER_POSITION)
 
 print("MCMCP cobblestone generator offline oracle tests passed.")

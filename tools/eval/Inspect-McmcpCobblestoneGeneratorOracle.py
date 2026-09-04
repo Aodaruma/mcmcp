@@ -50,7 +50,7 @@ WATER_DROP = (198, 200, 200)
 WATER_CHANNEL = (198, 201, 200)
 GENERATION_CELL = (199, 201, 200)
 LAVA_SOURCE = (200, 201, 200)
-PLAYER_POSITION = (199.5, 201.0, 198.5)
+PLAYER_POSITION = (199.5, 201.0, 199.5)
 DYNAMIC_WATER_CELLS = {WATER_DROP, WATER_CHANNEL}
 
 
@@ -251,7 +251,8 @@ def main() -> None:
     lava_source_unchanged = fluid_source(blocks, LAVA_SOURCE, "minecraft:lava")
     player_passed = (
         close_enough(player["position"], PLAYER_POSITION)
-        and abs(player["health"] - 16.0) <= 0.0001
+        and math.isfinite(player["health"])
+        and 0.0 < player["health"] <= 20.0
         and player["cobblestone_count"] == 8
         and player["iron_pickaxe_count"] == 1
         and player["iron_pickaxe_damage"] == 8

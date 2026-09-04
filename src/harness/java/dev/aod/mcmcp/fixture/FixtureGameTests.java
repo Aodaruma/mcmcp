@@ -330,6 +330,12 @@ final class FixtureGameTests {
     }
 
     private static void runCobblestoneGeneratorFixture(GameTestHelper helper) {
+        if (!FixtureCobblestoneGeneratorScenario.PLAYER_FEET.south()
+                .equals(FixtureCobblestoneGeneratorScenario.GENERATION_CELL)) {
+            helper.fail(Component.literal(
+                    "Cobblestone fixture player must stand directly north of the generated block"));
+            return;
+        }
         BlockPos waterSource = new BlockPos(1, 2, 2);
         BlockPos waterDrop = new BlockPos(2, 1, 2);
         BlockPos waterChannel = waterDrop.above();

@@ -62,7 +62,7 @@ function New-MockCobblestoneState {
             dimension = 'minecraft:overworld'
             client_tick = 100L + $CobblestoneCount
             world_revision = 20L + $CobblestoneCount
-            position = [pscustomobject]@{ x = 199.5; y = 201.0; z = 198.5 }
+            position = [pscustomobject]@{ x = 199.5; y = 201.0; z = 199.5 }
             yaw = 0.0; pitch = 8.0; health = 20.0; absorption = 0.0
             hunger = 17; air = 300; max_air = 300; on_fire = $false
             submerged = $false; status_effects = @()

@@ -36,7 +36,9 @@ final class FixtureCobblestoneGeneratorScenario {
     static final BlockPos WATER_CHANNEL = WATER_DROP.above();
     static final BlockPos GENERATION_CELL = new BlockPos(199, 201, 200);
     static final BlockPos LAVA_SOURCE = new BlockPos(200, 201, 200);
-    static final BlockPos PLAYER_FEET = new BlockPos(199, 201, 198);
+    // Stand directly beside the generated block so every Vanilla drop spawn offset intersects
+    // the player's pickup-expanded bounding box instead of remaining on top of the replacement.
+    static final BlockPos PLAYER_FEET = new BlockPos(199, 201, 199);
 
     static final List<BlockPos> SOURCE_CELLS = List.of(WATER_SOURCE, LAVA_SOURCE);
     static final List<BlockPos> PROTECTED_CELLS = protectedCells();

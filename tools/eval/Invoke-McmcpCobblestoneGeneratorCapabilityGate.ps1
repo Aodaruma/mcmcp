@@ -42,7 +42,7 @@ $script:CobbleWorkspaceBounds = [ordered]@{
 $script:CobbleExpectedPosition = [ordered]@{
     dimension = 'minecraft:overworld'; x = 199; y = 201; z = 200
 }
-$script:CobbleExpectedStand = [ordered]@{ x = 199.5; y = 201.0; z = 198.5 }
+$script:CobbleExpectedStand = [ordered]@{ x = 199.5; y = 201.0; z = 199.5 }
 $script:CobbleBreakCount = 8
 
 function Get-McpMeta {
