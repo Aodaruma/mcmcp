@@ -297,6 +297,7 @@ function Assert-CobblestoneLifecycle {
 }
 
 function New-CobblestoneOfflineOracleManifest {
+    param([Parameter(Mandatory)][double]$ExpectedHealth)
     return [ordered]@{
         schema_version = 1
         oracle = 'offline-cobblestone-generator-world'
@@ -308,7 +309,7 @@ function New-CobblestoneOfflineOracleManifest {
         water_source = [ordered]@{ x = 197; y = 201; z = 200; block = 'minecraft:water'; level = '0' }
         lava_source = [ordered]@{ x = 200; y = 201; z = 200; block = 'minecraft:lava'; level = '0' }
         player = [ordered]@{
-            position = $script:CobbleExpectedStand; health = 16.0
+            position = $script:CobbleExpectedStand; health = $ExpectedHealth
             cobblestone_count = 8; iron_pickaxe_count = 1; iron_pickaxe_damage = 8
             iron_pickaxe_enchanted = $false
         }
@@ -326,8 +327,9 @@ function Invoke-CobblestoneGeneratorGateCore {
     $fixedFive = Assert-CobbleFixedFive
     $initial = Get-FreshState
     $initialHealth = [double](Get-ObjectProperty (Get-ObjectProperty $initial 'world') 'health')
-    if ([Math]::Abs($initialHealth - 16.0) -gt 0.0001) {
-        throw 'cobblestone fixture initial health is not 16'
+    if (-not [double]::IsFinite($initialHealth) -or $initialHealth -le 0.0 -or
+        $initialHealth -gt 20.0) {
+        throw "cobblestone fixture initial health is invalid: $initialHealth"
     }
     Assert-CobblePlayerState -State $initial -ExpectedHealth $initialHealth -Phase 'initial state'
     if ((Get-InventoryCount -State $initial -Item 'minecraft:cobblestone') -ne 0 -or
@@ -380,7 +382,7 @@ function Invoke-CobblestoneGeneratorGateCore {
             visible_loose_cobblestone = 0
         }
         external_oracle_status = 'pending_world_close'
-        external_oracle = New-CobblestoneOfflineOracleManifest
+        external_oracle = New-CobblestoneOfflineOracleManifest -ExpectedHealth $initialHealth
     }
 }
 

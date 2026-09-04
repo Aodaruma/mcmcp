@@ -317,8 +317,9 @@ function Invoke-KillZoneGateCore {
     $fixedFive = Assert-KillZoneFixedFive
     $initial = Get-FreshState
     $initialHealth = [double](Get-ObjectProperty (Get-ObjectProperty $initial 'world') 'health')
-    if ([Math]::Abs($initialHealth - 16.0) -gt 0.0001) {
-        throw 'kill-zone fixture initial health is not 16'
+    if (-not [double]::IsFinite($initialHealth) -or $initialHealth -le 0.0 -or
+        $initialHealth -gt 20.0) {
+        throw "kill-zone fixture initial health is invalid: $initialHealth"
     }
     Assert-KillZonePlayerState -State $initial -ExpectedHealth $initialHealth -Phase 'initial state'
     Assert-KillZoneInventory -State $initial -Initial

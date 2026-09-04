@@ -60,7 +60,7 @@ function New-MockKillZoneState {
             world_revision = 20L; position = [pscustomobject]@{
                 x = 199.5; y = 200.0; z = 197.5
             }
-            yaw = 0.0; pitch = 18.0; health = 16.0; absorption = 0.0
+            yaw = 0.0; pitch = 18.0; health = 20.0; absorption = 0.0
             hunger = 17; air = 300; max_air = 300; on_fire = $false
             submerged = $false; status_effects = @()
         }

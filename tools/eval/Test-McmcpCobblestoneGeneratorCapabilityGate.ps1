@@ -63,7 +63,7 @@ function New-MockCobblestoneState {
             client_tick = 100L + $CobblestoneCount
             world_revision = 20L + $CobblestoneCount
             position = [pscustomobject]@{ x = 199.5; y = 201.0; z = 198.5 }
-            yaw = 0.0; pitch = 8.0; health = 16.0; absorption = 0.0
+            yaw = 0.0; pitch = 8.0; health = 20.0; absorption = 0.0
             hunger = 17; air = 300; max_air = 300; on_fire = $false
             submerged = $false; status_effects = @()
         }
@@ -222,6 +222,8 @@ try {
         'eight confirmed break effects were not retained'
     Assert-True ($result.gate_result.online_oracle.cobblestone_delta -eq 8) `
         'online inventory oracle is not +8'
+    Assert-True ($result.gate_result.external_oracle.player.health -eq 20.0) `
+        'offline oracle did not bind the observed health baseline'
     Assert-True ([bool]$result.input_release.control_ready -and
         [bool]$result.input_release.all_actions_terminal) `
         'input release was not proven'

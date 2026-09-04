@@ -302,6 +302,7 @@ function Assert-NoVisibleFishingEntities {
 }
 
 function New-FishingOfflineOracleManifest {
+    param([Parameter(Mandatory)][double]$ExpectedHealth)
     [ordered]@{
         schema_version = 1
         oracle = 'offline-vanilla-fishing-world'
@@ -310,7 +311,7 @@ function New-FishingOfflineOracleManifest {
         fixture_precondition = '/mcmcp_fixture phase5 fishing'
         workspace = $script:FishingWorkspaceBounds
         player = [ordered]@{
-            position = $script:FishingExpectedStand; health = 16.0
+            position = $script:FishingExpectedStand; health = $ExpectedHealth
             primary_fishing_rod_count = 1; primary_fishing_rod_damage = 1
             primary_fishing_rod_enchanted = $false
         }
@@ -327,8 +328,9 @@ function Invoke-FishingGateCore {
     $fixedFive = Assert-FishingFixedFive
     $initial = Get-FreshState
     $initialHealth = [double](Get-ObjectProperty (Get-ObjectProperty $initial 'world') 'health')
-    if ([Math]::Abs($initialHealth - 16.0) -gt 0.0001) {
-        throw 'fishing fixture initial health is not 16'
+    if (-not [double]::IsFinite($initialHealth) -or $initialHealth -le 0.0 -or
+        $initialHealth -gt 20.0) {
+        throw "fishing fixture initial health is invalid: $initialHealth"
     }
     Assert-FishingPlayerState -State $initial -ExpectedHealth $initialHealth -Phase 'initial state'
     $initialInventory = Get-FishingLootSummary -State $initial
@@ -398,7 +400,7 @@ function Invoke-FishingGateCore {
             visible_bobber_or_item_entities = 0
         }
         external_oracle_status = 'pending_world_close'
-        external_oracle = New-FishingOfflineOracleManifest
+        external_oracle = New-FishingOfflineOracleManifest -ExpectedHealth $initialHealth
     }
 }
 

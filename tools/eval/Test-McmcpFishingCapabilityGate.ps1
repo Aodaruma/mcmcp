@@ -47,7 +47,7 @@ function New-MockFishingState {
             world_revision = 20L; position = [pscustomobject]@{
                 x = 199.5; y = 203.0; z = 194.5
             }
-            yaw = 0.0; pitch = 10.0; health = 16.0; absorption = 0.0
+            yaw = 0.0; pitch = 10.0; health = 20.0; absorption = 0.0
             hunger = 17; air = 300; max_air = 300; on_fire = $false
             submerged = $false; status_effects = @()
         }
@@ -205,6 +205,8 @@ try {
     Assert-True ($result.gate_result.online_oracle.fishing_loot_count -eq 1 -and
         -not [bool]$result.gate_result.online_oracle.collection_used) `
         'online oracle did not prove one directly received loot item'
+    Assert-True ($result.gate_result.external_oracle.player.health -eq 20.0) `
+        'fishing offline oracle did not bind the observed health baseline'
     Assert-True ([bool]$result.input_release.control_ready -and
         [bool]$result.input_release.all_actions_terminal) 'input release was not proven'
     $accepted = @($script:GateEvents | Where-Object event -CEQ 'action_accepted')
