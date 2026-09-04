@@ -1365,7 +1365,7 @@ class McmcpRuntimeHardeningTest {
         assertThat((List<?>) actionDsl.get("available_operations")).hasSize(36);
         assertThat(((Map<?, ?>) actionDsl.get("missing_capability_guidance")).get("code"))
                 .isEqualTo("MISSING_CAPABILITY");
-        assertThat((List<?>) actionDsl.get("reference_descriptors")).hasSize(5);
+        assertThat((List<?>) actionDsl.get("reference_descriptors")).hasSize(6);
     }
 
     @Test

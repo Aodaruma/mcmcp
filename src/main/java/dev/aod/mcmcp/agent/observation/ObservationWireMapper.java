@@ -155,6 +155,14 @@ public final class ObservationWireMapper {
         if (entity.displayedItem() != null) {
             result.put("displayed_item", entity.displayedItem().value());
         }
+        if (entity.containerLabel() != null) {
+            var label = entity.containerLabel();
+            result.put("container_label", map(
+                    "item", label.item().value(),
+                    "container_position", blockPosition(label.containerPosition()),
+                    "container_block", label.containerBlock().value(),
+                    "attachment_face", label.attachmentFace().wireName()));
+        }
         result.put("position", worldPosition(entity.position()));
         result.put("velocity", vector(entity.velocity()));
         result.put("aabb", aabb(entity.aabb()));

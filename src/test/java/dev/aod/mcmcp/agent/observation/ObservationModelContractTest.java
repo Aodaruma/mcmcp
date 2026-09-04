@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.EvidenceProvenance;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.BlockStateView;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.ContainerLabel;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.EntityHazardClass;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.Face;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.Fluid;
@@ -291,6 +292,54 @@ class ObservationModelContractTest {
         assertThat(ObservationWireMapper.record(zombie))
                 .containsEntry("entity_ref", null)
                 .doesNotContainKey("displayed_item");
+    }
+
+    @Test
+    void visibleItemFrameLabelIsSeparateBoundedRoutingEvidence() throws Exception {
+        var label = new ContainerLabel(
+                new ResourceId("minecraft:wheat"),
+                new BlockPosition(DIMENSION, 2, 64, 1),
+                new ResourceId("minecraft:barrel"),
+                Face.SOUTH);
+        var frame = new VisibleEntity(
+                new ResourceId("minecraft:item_frame"),
+                null,
+                "abcdefghijklmnopqrstuvwx",
+                world(2, 64, 2),
+                new Vector(0, 0, 0),
+                new Aabb(1.5, 63.5, 1.9, 2.5, 64.5, 2.1),
+                EntityHazardClass.UNKNOWN,
+                world(0, 65.62, 0),
+                96,
+                7,
+                label);
+
+        Map<String, Object> wire = ObservationWireMapper.record(frame);
+        assertThat(wire)
+                .containsEntry("entity_type", "minecraft:item_frame")
+                .containsEntry("entity_ref", "abcdefghijklmnopqrstuvwx")
+                .doesNotContainKey("displayed_item");
+        assertThat(wire.get("container_label")).isEqualTo(Map.of(
+                "item", "minecraft:wheat",
+                "container_block", "minecraft:barrel",
+                "attachment_face", "south",
+                "container_position", Map.of(
+                        "dimension", "minecraft:overworld", "x", 2, "y", 64, "z", 1)));
+
+        JsonObject catalog = JsonParser.parseString(Files.readString(catalogPath())).getAsJsonObject();
+        JsonObject schema = tool(catalog, "agent_get_observation").getAsJsonObject("outputSchema");
+        var page = new ObservationPage(
+                "obs-0000000000000001", 96, false, List.of(frame), null);
+        assertThat(matches(schema, new GsonBuilder().serializeNulls().create().toJsonTree(
+                ObservationWireMapper.page(page, ignored -> null)))).isTrue();
+
+        assertThatThrownBy(() -> new VisibleEntity(
+                new ResourceId("minecraft:zombie"), null, "abcdefghijklmnopqrstuvwx",
+                world(2, 64, 2), new Vector(0, 0, 0),
+                new Aabb(1.5, 63.5, 1.5, 2.5, 65.5, 2.5),
+                EntityHazardClass.HOSTILE, world(0, 65.62, 0), 96, 7, label))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("containerLabel");
     }
 
     @Test

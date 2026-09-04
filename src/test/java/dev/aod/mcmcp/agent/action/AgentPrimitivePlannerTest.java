@@ -2103,6 +2103,46 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void labeledContainerRequiresTheCurrentDeliveredFrameItemAndTarget() {
+        UUID session = UUID.randomUUID();
+        var map = map(session).snapshot().orElseThrow();
+        var chest = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var ref = "abcdefghijklmnopqrstuvwx";
+        var label = new ActionDsl.RoutingLabel(ref, "minecraft:wheat");
+        var program = new ActionDsl.Program(
+                1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.INVENTORY_TRANSFER),
+                List.of(new ActionDsl.InspectKnownContainer(
+                        "inspect", chest, "minecraft:chest", Optional.of(label))));
+        var records = new java.util.ArrayList<ObservationRecord>();
+        records.add(surface(
+                chest, ObservationRecord.Face.SOUTH, "minecraft:chest", null, 0));
+        records.add(visibleContainerLabel(
+                ref, "minecraft:wheat", chest, "minecraft:chest", 0));
+        var delivered = new ObservationFrame(
+                "obs-0000000000000001", new ObservationValues.ResourceId(DIMENSION),
+                1, 16, false, records);
+
+        assertThatCode(() -> AgentPrimitivePlanner.analyze(
+                program, map, new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                Optional.of(delivered), 4.5F)).doesNotThrowAnyException();
+
+        var wrongItem = new ActionDsl.Program(
+                1, Optional.empty(), program.capabilities(),
+                List.of(new ActionDsl.InspectKnownContainer(
+                        "inspect", chest, "minecraft:chest",
+                        Optional.of(new ActionDsl.RoutingLabel(ref, "minecraft:carrot")))));
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                wrongItem, map, new DeterministicAStar(),
+                new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                Optional.of(delivered), 4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+    }
+
+    @Test
     void knownRecipeCraftUsesTheExistingBoundedContainerPlan() {
         UUID session = UUID.randomUUID();
         var map = map(session).snapshot().orElseThrow();
@@ -2803,6 +2843,35 @@ class AgentPrimitivePlannerTest {
                 new ObservationValues.WorldPosition(dimension, 0.5D, 65.62D, 0.5D),
                 1L,
                 revision);
+    }
+
+    private static ObservationRecord.VisibleEntity visibleContainerLabel(
+            String entityRef,
+            String item,
+            ActionDsl.Position target,
+            String block,
+            long revision) {
+        var dimension = new ObservationValues.ResourceId(target.dimension());
+        return new ObservationRecord.VisibleEntity(
+                new ObservationValues.ResourceId("minecraft:item_frame"),
+                null,
+                entityRef,
+                new ObservationValues.WorldPosition(
+                        dimension, target.x() + 0.5D, target.y() + 0.5D, target.z() + 1.0D),
+                new ObservationValues.Vector(0.0D, 0.0D, 0.0D),
+                new ObservationValues.Aabb(
+                        target.x(), target.y(), target.z() + 0.9D,
+                        target.x() + 1.0D, target.y() + 1.0D, target.z() + 1.1D),
+                ObservationRecord.EntityHazardClass.UNKNOWN,
+                new ObservationValues.WorldPosition(dimension, 0.5D, 65.62D, 0.5D),
+                1L,
+                revision,
+                new ObservationRecord.ContainerLabel(
+                        new ObservationValues.ResourceId(item),
+                        new ObservationValues.BlockPosition(
+                                dimension, target.x(), target.y(), target.z()),
+                        new ObservationValues.ResourceId(block),
+                        ObservationRecord.Face.SOUTH));
     }
 
     private static ObservationFrame entityFrame(ObservationRecord.VisibleEntity entity) {

@@ -1329,6 +1329,9 @@ public final class AgentPrimitivePlanner {
                     surface, 1, 0, 0);
         }
         if (node instanceof ActionDsl.InspectKnownContainer inspect) {
+            requireRoutingLabel(
+                    map, latestFrame, inspect.routingLabel(), inspect.target(),
+                    inspect.expectedBlock(), visualBarrierWorldRevision);
             MutationSurface surface = requireMutationSurface(
                     map, latestFrame, input, inspect.target(),
                     surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, inspect.target()),
@@ -1340,6 +1343,9 @@ public final class AgentPrimitivePlanner {
                     work, surface, 1);
         }
         if (node instanceof ActionDsl.TakeKnownContainerStack take) {
+            requireRoutingLabel(
+                    map, latestFrame, take.routingLabel(), take.target(),
+                    take.expectedBlock(), visualBarrierWorldRevision);
             MutationSurface surface = requireMutationSurface(
                     map, latestFrame, input, take.target(),
                     surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, take.target()),
@@ -1351,6 +1357,9 @@ public final class AgentPrimitivePlanner {
                     work, surface, 3);
         }
         if (node instanceof ActionDsl.StoreKnownContainerStack store) {
+            requireRoutingLabel(
+                    map, latestFrame, store.routingLabel(), store.target(),
+                    store.expectedBlock(), visualBarrierWorldRevision);
             MutationSurface surface = requireMutationSurface(
                     map, latestFrame, input, store.target(),
                     surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, store.target()),
@@ -3245,6 +3254,41 @@ public final class AgentPrimitivePlanner {
                     && floor(position.z()) == target.z();
         }
         return false;
+    }
+
+    private static void requireRoutingLabel(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            Optional<ActionDsl.RoutingLabel> requested,
+            ActionDsl.Position target,
+            String expectedBlock,
+            long visualBarrierWorldRevision) {
+        if (requested.isEmpty()) return;
+        requireVisualBarrierWorldRevision(
+                map, map.worldRevision(), visualBarrierWorldRevision);
+        ActionDsl.RoutingLabel witness = requested.orElseThrow();
+        boolean matched = latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(map.dimension()))
+                .flatMap(frame -> frame.records().stream())
+                .filter(ObservationRecord.VisibleEntity.class::isInstance)
+                .map(ObservationRecord.VisibleEntity.class::cast)
+                .filter(entity -> entity.worldRevision() >= visualBarrierWorldRevision
+                        && entity.worldRevision() <= map.worldRevision())
+                .filter(entity -> witness.entityRef().equals(entity.entityRef()))
+                .map(ObservationRecord.VisibleEntity::containerLabel)
+                .filter(Objects::nonNull)
+                .anyMatch(label -> witness.item().equals(label.item().value())
+                        && expectedBlock.equals(label.containerBlock().value())
+                        && label.containerPosition().dimension().value()
+                                .equals(target.dimension())
+                        && label.containerPosition().x() == target.x()
+                        && label.containerPosition().y() == target.y()
+                        && label.containerPosition().z() == target.z());
+        if (!matched) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Container routing label requires current delivered item-frame evidence");
+        }
     }
 
     private static boolean matches(

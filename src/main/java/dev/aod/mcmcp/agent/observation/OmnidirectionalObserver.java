@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.agent.observation;
 
 import dev.aod.mcmcp.construction.SafeConstructionBlocks;
+import dev.aod.mcmcp.observation.ContainerLabelResolver;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.EntityHazardClass;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.BlockStateView;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.Face;
@@ -479,6 +480,11 @@ public final class OmnidirectionalObserver {
                 var entityType = new ResourceId(
                         BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString());
                 String entityRef = entity instanceof Player ? null : entityRefs.issue(entity);
+                ObservationRecord.ContainerLabel containerLabel = entityRef == null ? null
+                        : ContainerLabelResolver.resolve(level, entity, sample.dimension().value())
+                                .filter(label -> surfaces.containsKey(new SurfaceKey(
+                                        label.containerPosition(), label.attachmentFace())))
+                                .orElse(null);
                 result.add(new VisibleEntity(
                         entityType,
                         displayedItem(entity),
@@ -489,7 +495,8 @@ public final class OmnidirectionalObserver {
                         hazardClass(entity),
                         sample.eyeOrigin(),
                         sample.observedTick(),
-                        sample.worldRevision()));
+                        sample.worldRevision(),
+                        containerLabel));
             } catch (RuntimeException | LinkageError ignored) {
                 // A malformed or custom entity is omitted rather than exposing unvalidated state.
                 truncated = true;

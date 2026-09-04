@@ -65,6 +65,14 @@ class ActionDslOperationManifestTest {
         assertThat(store).containsEntry("locally_granted", false);
         assertThat(store.get("locally_missing_capabilities"))
                 .isEqualTo(java.util.List.of("inventory_transfer"));
+        assertThat((java.util.List<?>) store.get("reference_fields")).singleElement()
+                .satisfies(reference -> {
+                    var fields = (java.util.Map<?, ?>) reference;
+                    assertThat(fields.get("kind")).isEqualTo("container_label_entity_ref");
+                    assertThat(fields.get("requirement"))
+                            .isEqualTo("optional_jit_routing_witness");
+                    assertThat(fields.get("replay_policy")).isEqualTo("refresh_required");
+                });
 
         var craft = payload.stream()
                 .filter(operation -> operation.get("op").equals("craft_known_recipe"))
@@ -80,7 +88,7 @@ class ActionDslOperationManifestTest {
         assertThat(ActionDslOperationManifest.referenceDescriptorPayload())
                 .extracting(descriptor -> descriptor.get("kind"))
                 .containsExactly(
-                        "operation_ref", "placement_state_ref", "recipe_ref",
+                        "container_label_entity_ref", "operation_ref", "placement_state_ref", "recipe_ref",
                         "fishing_session_ref", "kill_zone_consent_ref");
     }
 }

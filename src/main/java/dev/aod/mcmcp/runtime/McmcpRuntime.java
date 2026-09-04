@@ -7881,6 +7881,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         parameters.put("max_camera_degrees_per_tick",
                 McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0D);
         parameters.put("aim_point", inventoryAimPoint(position, inventoryAim));
+        knownContainerRoutingLabel(primitive).ifPresent(label -> parameters.put(
+                "routing_label", Map.of(
+                        "entity_ref", label.entityRef(),
+                        "item", label.item())));
         var bounds = new PhaseFiveBounds(
                 target.dimension(), target, target, 0, 20, false);
         return new PhaseFiveRequest(
@@ -7897,6 +7901,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return "container_to_player";
         }
         throw new IllegalArgumentException("node is not a known container operation");
+    }
+
+    private static Optional<ActionDsl.RoutingLabel> knownContainerRoutingLabel(
+            ActionDsl.Node primitive) {
+        if (primitive instanceof ActionDsl.InspectKnownContainer inspect) {
+            return inspect.routingLabel();
+        }
+        if (primitive instanceof ActionDsl.TakeKnownContainerStack take) {
+            return take.routingLabel();
+        }
+        if (primitive instanceof ActionDsl.StoreKnownContainerStack store) {
+            return store.routingLabel();
+        }
+        return Optional.empty();
     }
 
     private static PhaseFiveRequest withInventoryAim(

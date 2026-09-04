@@ -122,6 +122,12 @@ class KnownMenuProfileSupportTest {
         assertThat(KnownMenuProfileSupport.isNormalSizedStack(oversized)).isFalse();
         assertThat(KnownMenuProfileSupport.hasFullPlayerCapacity(
                 oversized, List.of(accepting))).isFalse();
+
+        inventory.setItem(0, new ItemStack(Items.STONE, maximum - 4));
+        assertThat(KnownMenuProfileSupport.hasFullDestinationCapacity(
+                new ItemStack(Items.STONE, 4), List.of(accepting))).isTrue();
+        assertThat(KnownMenuProfileSupport.hasFullDestinationCapacity(
+                new ItemStack(Items.STONE, 5), List.of(accepting))).isFalse();
     }
 
     public static class ValidContract {

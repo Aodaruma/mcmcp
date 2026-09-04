@@ -492,11 +492,19 @@ public final class ActionDsl {
 
     /** Opens a visible vanilla chest/barrel and returns its server-synchronized item summary. */
     public record InspectKnownContainer(
-            String id, Position target, String expectedBlock) implements Node {
+            String id,
+            Position target,
+            String expectedBlock,
+            Optional<RoutingLabel> routingLabel) implements Node {
         public InspectKnownContainer {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(expectedBlock, "expectedBlock");
+            Objects.requireNonNull(routingLabel, "routingLabel");
+        }
+
+        public InspectKnownContainer(String id, Position target, String expectedBlock) {
+            this(id, target, expectedBlock, Optional.empty());
         }
     }
 
@@ -507,13 +515,26 @@ public final class ActionDsl {
             String expectedBlock,
             String item,
             String stackPolicy,
-            int minimumInventoryCount) implements Node {
+            int minimumInventoryCount,
+            Optional<RoutingLabel> routingLabel) implements Node {
         public TakeKnownContainerStack {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(expectedBlock, "expectedBlock");
             Objects.requireNonNull(item, "item");
             Objects.requireNonNull(stackPolicy, "stackPolicy");
+            Objects.requireNonNull(routingLabel, "routingLabel");
+        }
+
+        public TakeKnownContainerStack(
+                String id,
+                Position target,
+                String expectedBlock,
+                String item,
+                String stackPolicy,
+                int minimumInventoryCount) {
+            this(id, target, expectedBlock, item, stackPolicy, minimumInventoryCount,
+                    Optional.empty());
         }
     }
 
@@ -524,13 +545,34 @@ public final class ActionDsl {
             String expectedBlock,
             String item,
             String stackPolicy,
-            int minimumContainerCount) implements Node {
+            int minimumContainerCount,
+            Optional<RoutingLabel> routingLabel) implements Node {
         public StoreKnownContainerStack {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(expectedBlock, "expectedBlock");
             Objects.requireNonNull(item, "item");
             Objects.requireNonNull(stackPolicy, "stackPolicy");
+            Objects.requireNonNull(routingLabel, "routingLabel");
+        }
+
+        public StoreKnownContainerStack(
+                String id,
+                Position target,
+                String expectedBlock,
+                String item,
+                String stackPolicy,
+                int minimumContainerCount) {
+            this(id, target, expectedBlock, item, stackPolicy, minimumContainerCount,
+                    Optional.empty());
+        }
+    }
+
+    /** A current delivered item-frame label used only to route a container operation. */
+    public record RoutingLabel(String entityRef, String item) {
+        public RoutingLabel {
+            Objects.requireNonNull(entityRef, "entityRef");
+            Objects.requireNonNull(item, "item");
         }
     }
 

@@ -897,6 +897,8 @@ class ActionDslTest {
         JsonObject inspect = baseNode("inspect", "inspect_known_container");
         inspect.add("target", position());
         inspect.addProperty("expected_block", "minecraft:chest");
+        inspect.add("routing_label", JsonParser.parseString(
+                "{\"entity_ref\":\"abcdefghijklmnopqrstuvwx\",\"item\":\"minecraft:wheat\"}"));
         JsonObject take = baseNode("take", "take_known_container_stack");
         take.add("target", position());
         take.addProperty("expected_block", "minecraft:chest");
@@ -909,6 +911,8 @@ class ActionDslTest {
         store.addProperty("item", "minecraft:wheat");
         store.addProperty("stack_policy", "default_components_only");
         store.addProperty("minimum_container_count", 128);
+        store.add("routing_label", JsonParser.parseString(
+                "{\"entity_ref\":\"abcdefghijklmnopqrstuvwx\",\"item\":\"minecraft:wheat\"}"));
 
         ActionDsl.Request request = ActionDslParser.parse(request(
                 capabilities("camera", "block_interact", "inventory_transfer"),
@@ -922,7 +926,9 @@ class ActionDslTest {
                         "minecraft:barrel",
                         "minecraft:wheat",
                         "default_components_only",
-                        128));
+                        128,
+                        Optional.of(new ActionDsl.RoutingLabel(
+                                "abcdefghijklmnopqrstuvwx", "minecraft:wheat"))));
 
         assertThat(ActionDslValidator.validate(request).requiredCapabilities())
                 .containsExactlyInAnyOrder(
@@ -950,6 +956,19 @@ class ActionDslTest {
                 capabilities("camera", "block_interact"), open,
                 budget(1_000, 20, 0, 30, 1, 0, 0)))))
                 .isInstanceOf(ActionDslException.class);
+
+        JsonObject malformed = inspect.deepCopy();
+        malformed.getAsJsonObject("routing_label").addProperty("entity_ref", "raw-uuid");
+        assertCode(request(
+                        capabilities("camera", "inventory_transfer"), malformed,
+                        budget(30_000, 600, 0, 360, 1, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
+        JsonObject widened = inspect.deepCopy();
+        widened.getAsJsonObject("routing_label").addProperty("slot", 0);
+        assertCode(request(
+                        capabilities("camera", "inventory_transfer"), widened,
+                        budget(30_000, 600, 0, 360, 1, 0, 0)),
+                ActionDslException.Code.INVALID_ARGUMENT);
     }
 
     @Test

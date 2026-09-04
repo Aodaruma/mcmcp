@@ -1005,7 +1005,7 @@ class McpToolCatalogTest {
                 .getAsJsonObject("policy")
                 .getAsJsonObject("action_dsl");
         assertThat(actionDsl.getAsJsonArray("available_operations")).hasSize(36);
-        assertThat(actionDsl.getAsJsonArray("reference_descriptors")).hasSize(5);
+        assertThat(actionDsl.getAsJsonArray("reference_descriptors")).hasSize(6);
         assertThat(actionDsl.getAsJsonObject("missing_capability_guidance")
                 .get("code").getAsString()).isEqualTo("MISSING_CAPABILITY");
         assertThat(state.getAsJsonObject().getAsJsonObject("control")
@@ -1146,7 +1146,9 @@ class McpToolCatalogTest {
                   {"id":"take","op":"take_known_container_stack","target":{
                     "dimension":"minecraft:overworld","x":2,"y":64,"z":2},
                    "expected_block":"minecraft:chest","item":"minecraft:wheat_seeds",
-                   "stack_policy":"default_components_only","minimum_inventory_count":64}
+                   "stack_policy":"default_components_only","minimum_inventory_count":64,
+                   "routing_label":{"entity_ref":"abcdefghijklmnopqrstuvwx",
+                     "item":"minecraft:wheat_seeds"}}
                 ]
                 """));
         var budget = request.getAsJsonObject("budget");
@@ -1166,6 +1168,11 @@ class McpToolCatalogTest {
         rawSlot.getAsJsonObject("program").getAsJsonArray("body").get(2)
                 .getAsJsonObject().addProperty("slot", 0);
         assertThat(CatalogSchemaValidator.matches(schema, rawSlot)).isFalse();
+        var rawRoutingRef = request.deepCopy();
+        rawRoutingRef.getAsJsonObject("program").getAsJsonArray("body").get(2)
+                .getAsJsonObject().getAsJsonObject("routing_label")
+                .addProperty("entity_ref", "raw-uuid");
+        assertThat(CatalogSchemaValidator.matches(schema, rawRoutingRef)).isFalse();
         assertThat(new McpToolCatalog().listResult().getAsJsonArray("tools")).hasSize(5);
     }
 

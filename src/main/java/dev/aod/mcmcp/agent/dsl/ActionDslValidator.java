@@ -9,6 +9,7 @@ import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
@@ -622,6 +623,7 @@ public final class ActionDslValidator {
             if (!KNOWN_CONTAINERS.contains(inspect.expectedBlock())) {
                 throw invalid(path + ".expected_block must be minecraft:chest or minecraft:barrel");
             }
+            validateRoutingLabel(inspect.routingLabel(), path);
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
             return 1;
@@ -637,6 +639,7 @@ public final class ActionDslValidator {
             }
             requireRange(take.minimumInventoryCount(), 1, 2_304,
                     path + ".minimum_inventory_count");
+            validateRoutingLabel(take.routingLabel(), path);
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
             return 1;
@@ -652,6 +655,7 @@ public final class ActionDslValidator {
             }
             requireRange(store.minimumContainerCount(), 1, 2_304,
                     path + ".minimum_container_count");
+            validateRoutingLabel(store.routingLabel(), path);
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
             return 1;
@@ -1094,6 +1098,15 @@ public final class ActionDslValidator {
         if (value.length() > 128) {
             throw invalid(path + " must contain at most 128 characters");
         }
+    }
+
+    private static void validateRoutingLabel(
+            Optional<ActionDsl.RoutingLabel> routingLabel, String path) {
+        routingLabel.ifPresent(label -> {
+            requirePattern(label.entityRef(), OPAQUE_REFERENCE,
+                    path + ".routing_label.entity_ref");
+            requireResourceLocation(label.item(), path + ".routing_label.item");
+        });
     }
 
     private static void requirePattern(String value, Pattern pattern, String path) {

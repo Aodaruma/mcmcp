@@ -49,9 +49,21 @@ public final class ActionDslOperationManifest {
                     caps("block_interact", "block_place", "camera")),
             fixed(ActionDsl.OpenKnownFenceGate.class, "open_known_fence_gate", caps("block_interact", "camera")),
             fixed(ActionDsl.OpenKnownPassage.class, "open_known_passage", caps("block_interact", "camera")),
-            fixed(ActionDsl.InspectKnownContainer.class, "inspect_known_container", caps("camera", "inventory_transfer")),
-            fixed(ActionDsl.TakeKnownContainerStack.class, "take_known_container_stack", caps("camera", "inventory_transfer")),
-            fixed(ActionDsl.StoreKnownContainerStack.class, "store_known_container_stack", caps("camera", "inventory_transfer")),
+            fixed(
+                    ActionDsl.InspectKnownContainer.class,
+                    "inspect_known_container",
+                    caps("camera", "inventory_transfer"),
+                    ref("/routing_label/entity_ref", "container_label_entity_ref", "optional_jit_routing_witness")),
+            fixed(
+                    ActionDsl.TakeKnownContainerStack.class,
+                    "take_known_container_stack",
+                    caps("camera", "inventory_transfer"),
+                    ref("/routing_label/entity_ref", "container_label_entity_ref", "optional_jit_routing_witness")),
+            fixed(
+                    ActionDsl.StoreKnownContainerStack.class,
+                    "store_known_container_stack",
+                    caps("camera", "inventory_transfer"),
+                    ref("/routing_label/entity_ref", "container_label_entity_ref", "optional_jit_routing_witness")),
             fixed(
                     ActionDsl.CraftKnownRecipe.class,
                     "craft_known_recipe",
@@ -135,6 +147,13 @@ public final class ActionDslOperationManifest {
 
     public static List<Map<String, Object>> referenceDescriptorPayload() {
         return List.of(
+                referenceDescriptor(
+                        "container_label_entity_ref",
+                        "agent_get_observation",
+                        "/records/*/{entity_ref,container_label}",
+                        List.of("inspect_known_container", "take_known_container_stack",
+                                "store_known_container_stack"),
+                        "optional_current_visible_item_frame_routing_witness_with_jit_recheck"),
                 referenceDescriptor(
                         "operation_ref",
                         "agent_get_state",

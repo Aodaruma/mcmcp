@@ -334,8 +334,13 @@ class MinecraftPhaseFiveInventoryPortTest {
                 .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                         + "#freshServerCursorSnapshot");
         assertThat(invocations(node, "acceptTransferSnapshot"))
-                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
-                        + "#dispatchContainerClick")
+                .containsSubsequence(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#liveMenuMatchesSnapshot",
+                        "dev/aod/mcmcp/runtime/KnownMenuProfileSupport"
+                                + "#hasFullDestinationCapacity",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#dispatchContainerClick")
                 .noneMatch(call -> call.endsWith("#handleContainerInput"));
         assertThat(node.methods.stream()
                 .filter(method -> method.instructions.iterator().hasNext())
@@ -358,6 +363,29 @@ class MinecraftPhaseFiveInventoryPortTest {
                                 + "#closeOwnedMenuClient");
         assertThat(containerInputs(node, "maintainCraftResult"))
                 .containsExactly("QUICK_MOVE");
+    }
+
+    @Test
+    void optionalRoutingLabelIsRecheckedAtAdmissionAndImmediatelyBeforeEachClick()
+            throws Exception {
+        var node = classNode();
+
+        assertThat(invocations(node, "preflight"))
+                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        + "#routingLabelFailure");
+        assertThat(invocations(node, "dispatchExpectedOpen"))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#routingLabelFailure",
+                        "net/minecraft/client/multiplayer/MultiPlayerGameMode#useItemOn");
+        assertThat(invocations(node, "prepareOwnedDispatch"))
+                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        + "#routingLabelFailure");
+        assertThat(invocations(node, "routingLabelFailure"))
+                .contains(
+                        "dev/aod/mcmcp/observation/MinecraftObservationService"
+                                + "#resolveCurrentlyVisibleEntity",
+                        "dev/aod/mcmcp/observation/ContainerLabelResolver#resolve");
     }
 
     @Test

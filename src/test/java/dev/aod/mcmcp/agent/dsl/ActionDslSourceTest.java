@@ -104,6 +104,32 @@ class ActionDslSourceTest {
     }
 
     @Test
+    void redactsContainerRoutingReferenceAndItsCoupledLabelItem() {
+        var source = ActionDslSource.capture(JsonParser.parseString("""
+                {"schema_version":1,"program":{"dsl_version":1,
+                 "capabilities":["camera","inventory_transfer"],"body":[{
+                   "id":"take","op":"take_known_container_stack",
+                   "target":{"dimension":"minecraft:overworld","x":1,"y":2,"z":3},
+                   "expected_block":"minecraft:chest","item":"minecraft:wheat",
+                   "stack_policy":"default_components_only","minimum_inventory_count":64,
+                   "routing_label":{"entity_ref":"abcdefghijklmnopqrstuvwx",
+                     "item":"minecraft:wheat"}}]},
+                 "budget":{"max_duration_ms":30000,"max_ticks":600,
+                   "max_distance_blocks":0,"max_camera_degrees":360,
+                   "max_interactions":3,"max_blocks_broken":0,"max_blocks_placed":0}}
+                """).getAsJsonObject());
+
+        assertThat(source.templateJson())
+                .contains("\"routing_label\":{\"entity_ref\":null,\"item\":null}")
+                .contains("\"item\":\"minecraft:wheat\"");
+        assertThat(source.referenceRequirements()).singleElement().satisfies(requirement -> {
+            assertThat(requirement.kind()).isEqualTo("container_label_entity_ref");
+            assertThat(requirement.coupledPaths())
+                    .containsExactly("/program/body/0/routing_label/item");
+        });
+    }
+
+    @Test
     void rejectsUnknownFieldsBeforeTheyCanBeReflected() {
         var source = JsonParser.parseString("""
                 {"schema_version":1,"secret":"must-not-echo",

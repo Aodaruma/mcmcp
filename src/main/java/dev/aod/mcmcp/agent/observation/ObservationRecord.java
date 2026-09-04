@@ -167,7 +167,8 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
             EntityHazardClass hazardClass,
             WorldPosition eyeOrigin,
             long observedTick,
-            long worldRevision) implements ObservationRecord {
+            long worldRevision,
+            ContainerLabel containerLabel) implements ObservationRecord {
         public VisibleEntity {
             Objects.requireNonNull(entityType, "entityType");
             Objects.requireNonNull(position, "position");
@@ -188,9 +189,35 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
             if (hazardClass == EntityHazardClass.PLAYER && entityRef != null) {
                 throw new IllegalArgumentException("player entities must not expose entityRef");
             }
+            if (containerLabel != null) {
+                boolean itemFrame = "minecraft:item_frame".equals(entityType.value())
+                        || "minecraft:glow_item_frame".equals(entityType.value());
+                if (!itemFrame || displayedItem != null || entityRef == null) {
+                    throw new IllegalArgumentException(
+                            "containerLabel requires an opaque visible item-frame reference");
+                }
+                ObservationValues.requireSameDimension(
+                        position.dimension(), containerLabel.containerPosition().dimension());
+            }
             ObservationValues.requireSameDimension(position.dimension(), eyeOrigin.dimension());
             ObservationValues.requireTick(observedTick, "observedTick");
             ObservationValues.requireTick(worldRevision, "worldRevision");
+        }
+
+        /** Compatibility constructor for visible entities without a container routing label. */
+        public VisibleEntity(
+                ResourceId entityType,
+                ResourceId displayedItem,
+                String entityRef,
+                WorldPosition position,
+                Vector velocity,
+                Aabb aabb,
+                EntityHazardClass hazardClass,
+                WorldPosition eyeOrigin,
+                long observedTick,
+                long worldRevision) {
+            this(entityType, displayedItem, entityRef, position, velocity, aabb, hazardClass,
+                    eyeOrigin, observedTick, worldRevision, null);
         }
 
         /** Compatibility constructor for observations captured before opaque refs are attached. */
@@ -205,7 +232,7 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
                 long observedTick,
                 long worldRevision) {
             this(entityType, displayedItem, null, position, velocity, aabb, hazardClass,
-                    eyeOrigin, observedTick, worldRevision);
+                    eyeOrigin, observedTick, worldRevision, null);
         }
 
         /** Backward-compatible constructor for visible entities that do not render an item stack. */
@@ -219,7 +246,7 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
                 long observedTick,
                 long worldRevision) {
             this(entityType, null, null, position, velocity, aabb, hazardClass,
-                    eyeOrigin, observedTick, worldRevision);
+                    eyeOrigin, observedTick, worldRevision, null);
         }
 
         @Override public ObservationKind kind() { return ObservationKind.VISIBLE_ENTITY; }
@@ -227,6 +254,28 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
         @Override public long oldestObservedTick() { return observedTick; }
         @Override public long newestObservedTick() { return observedTick; }
         public EvidenceProvenance provenance() { return EvidenceProvenance.OMNIDIRECTIONAL_VISUAL; }
+    }
+
+    /** A visible item-frame label directly attached to one supported Vanilla container. */
+    record ContainerLabel(
+            ResourceId item,
+            BlockPosition containerPosition,
+            ResourceId containerBlock,
+            Face attachmentFace) {
+        public ContainerLabel {
+            Objects.requireNonNull(item, "item");
+            Objects.requireNonNull(containerPosition, "containerPosition");
+            Objects.requireNonNull(containerBlock, "containerBlock");
+            Objects.requireNonNull(attachmentFace, "attachmentFace");
+            if ("minecraft:air".equals(item.value())) {
+                throw new IllegalArgumentException("container label item must not be air");
+            }
+            if (!"minecraft:chest".equals(containerBlock.value())
+                    && !"minecraft:barrel".equals(containerBlock.value())) {
+                throw new IllegalArgumentException(
+                        "container label must be attached to a supported container");
+            }
+        }
     }
 
     record Traversability(

@@ -620,8 +620,8 @@
                             "additionalProperties": false,
                             "properties": {
                               "path": {"type": "string", "minLength": 1, "maxLength": 160},
-                              "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref", "kill_zone_consent_ref"]},
-                              "requirement": {"enum": ["required", "one_of_inline_source", "required_with_fingerprint", "required_after_physical_grant"]},
+                              "kind": {"enum": ["container_label_entity_ref", "operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref", "kill_zone_consent_ref"]},
+                              "requirement": {"enum": ["required", "one_of_inline_source", "required_with_fingerprint", "required_after_physical_grant", "optional_jit_routing_witness"]},
                               "replay_policy": {"const": "refresh_required"}
                             },
                             "required": ["path", "kind", "requirement", "replay_policy"]
@@ -633,13 +633,13 @@
                   },
                   "reference_descriptors": {
                     "type": "array",
-                    "minItems": 5,
-                    "maxItems": 5,
+                    "minItems": 6,
+                    "maxItems": 6,
                     "items": {
                       "type": "object",
                       "additionalProperties": false,
                       "properties": {
-                        "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref", "kill_zone_consent_ref"]},
+                        "kind": {"enum": ["container_label_entity_ref", "operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref", "kill_zone_consent_ref"]},
                         "issued_by": {"enum": ["agent_get_state", "agent_get_observation", "agent_get_action"]},
                         "source_path": {"type": "string", "minLength": 1, "maxLength": 160},
                         "consumer_operations": {
@@ -743,7 +743,7 @@
     {
       "name": "agent_get_observation",
       "title": "Get MCMCP Observation",
-      "description": "Returns a stable, paged projection of one policy-filtered omnidirectional frame; it accepts no arbitrary center or radius. Ask for one purpose at a time: crop/chest/gate=visible_surface, drops=visible_entity, route=traversability. Use optional filter to return only relevant block_ids, faces, entity_types, displayed_items, crop_mature, or one inclusive position_bounds; filters applicable to a record kind are ANDed and only remove already-policy-visible records, so they cannot weaken safety evidence or expose hidden state. faces filters visible_surface before the one-face-per-position representative is selected. position_bounds anchors visible_surface at position, visible_entity/hazard/unknown_boundary/sound_clue at floor(position), and traversability at navigation_target. For harvest use {block_ids:[\"minecraft:wheat\"],crop_mature:true}; for drops use {entity_types:[\"minecraft:item\"],displayed_items:[\"minecraft:wheat\",\"minecraft:wheat_seeds\"]}. visible_surface is one representative face per block position and is ordered mature crop, immature crop, then other surfaces, near-first. Every visible_surface includes required nullable state, placement_item, and placement_state_ref fields. state is complete only for the closed construction copy/support and furnace-family target allowlist, plus exact source water used as a fishing cast witness; non-source water and all other blocks remain null so non-rendered properties never cross the visual boundary. A non-null placement_item has a non-null state and session-scoped opaque placement_state_ref. The ref becomes usable only after successful response delivery, survives the 60-second coordinate-evidence TTL, and is cleared at the world-session boundary; target/support/pose evidence remains current and JIT-checked. Use the smallest useful limit. If next_cursor is non-null, either continue that exact frame/kinds/filter query immediately or allow its bounded 60-second lease to expire; abandoning two paged queries makes a third root query SERVER_BUSY. Only static visible_surface coordinate records actually returned may remain planner-usable for at most 60 seconds; dynamic records are never extended. On FRAME_EXPIRED, call agent_get_state and retry with observation.latest_frame_id.",
+      "description": "Returns a stable, paged projection of one policy-filtered omnidirectional frame; it accepts no arbitrary center or radius. Ask for one purpose at a time: crop/chest/gate=visible_surface, drops or item-frame labels=visible_entity, route=traversability. Use optional filter to return only relevant block_ids, faces, entity_types, displayed_items, crop_mature, or one inclusive position_bounds; filters applicable to a record kind are ANDed and only remove already-policy-visible records, so they cannot weaken safety evidence or expose hidden state. Query labels with entity_types=[\"minecraft:item_frame\",\"minecraft:glow_item_frame\"]; a non-empty frame directly attached to a policy-visible single chest/barrel face may include container_label. displayed_items remains exclusive to dropped minecraft:item entities. faces filters visible_surface before the one-face-per-position representative is selected. position_bounds anchors visible_surface at position, visible_entity/hazard/unknown_boundary/sound_clue at floor(position), and traversability at navigation_target. For harvest use {block_ids:[\"minecraft:wheat\"],crop_mature:true}; for drops use {entity_types:[\"minecraft:item\"],displayed_items:[\"minecraft:wheat\",\"minecraft:wheat_seeds\"]}. visible_surface is one representative face per block position and is ordered mature crop, immature crop, then other surfaces, near-first. Every visible_surface includes required nullable state, placement_item, and placement_state_ref fields. state is complete only for the closed construction copy/support and furnace-family target allowlist, plus exact source water used as a fishing cast witness; non-source water and all other blocks remain null so non-rendered properties never cross the visual boundary. A non-null placement_item has a non-null state and session-scoped opaque placement_state_ref. The ref becomes usable only after successful response delivery, survives the 60-second coordinate-evidence TTL, and is cleared at the world-session boundary; target/support/pose evidence remains current and JIT-checked. Use the smallest useful limit. If next_cursor is non-null, either continue that exact frame/kinds/filter query immediately or allow its bounded 60-second lease to expire; abandoning two paged queries makes a third root query SERVER_BUSY. Only static visible_surface coordinate records actually returned may remain planner-usable for at most 60 seconds; dynamic records, including container labels, are never extended. On FRAME_EXPIRED, call agent_get_state and retry with observation.latest_frame_id.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -992,6 +992,18 @@
                 "description": "Present only for a visible minecraft:item entity; registry identity of its rendered non-empty ItemStack. Stack count, components, UUID, owner, pickup delay, and age are intentionally omitted.",
                 "$ref": "#/$defs/resourceLocation"
               },
+              "container_label": {
+                "description": "Present only for a visible non-empty minecraft:item_frame or minecraft:glow_item_frame directly attached to one policy-visible single chest or barrel face. It links the rendered registry item to the exact container block without exposing count, components, NBT, or UUID. Double chests are omitted in this initial slice. Copy the record entity_ref and container_label.item into routing_label; the runtime rechecks the same visible frame, item, attachment, and target before every open or transfer click.",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "item": {"$ref": "#/$defs/resourceLocation"},
+                  "container_position": {"$ref": "#/$defs/blockPosition"},
+                  "container_block": {"enum": ["minecraft:chest", "minecraft:barrel"]},
+                  "attachment_face": {"enum": ["down", "up", "north", "south", "west", "east"]}
+                },
+                "required": ["item", "container_position", "container_block", "attachment_face"]
+              },
               "position": {"$ref": "#/$defs/worldPosition"},
               "velocity": {"$ref": "#/$defs/vector"},
               "aabb": {"$ref": "#/$defs/aabb"},
@@ -1164,6 +1176,16 @@
               "z": {"type": "integer", "minimum": -30000000, "maximum": 30000000}
             },
             "required": ["dimension", "x", "y", "z"]
+          },
+          "routingLabel": {
+            "type": "object",
+            "description": "Optional routing-only witness copied from one current visible_entity with container_label. It never authorizes a transfer by itself; the exact referenced item frame, label item, direct attachment, container target, and LOS are rechecked before every click.",
+            "additionalProperties": false,
+            "properties": {
+              "entity_ref": {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"},
+              "item": {"$ref": "#/$defs/resourceLocation"}
+            },
+            "required": ["entity_ref", "item"]
           },
           "worldPosition": {
             "type": "object",
@@ -1851,19 +1873,20 @@
           },
           "inspectContainerNode": {
             "type": "object",
-            "description": "Open one visible in-reach vanilla chest/barrel and return up to 27 server-synchronized item counts in NODE_EVIDENCE. Reserve at least 600 ticks, 30000 ms, 360 camera degrees, and 1 interaction; this includes Action dispatch/JIT headroom around the bounded 400-tick container attempt.",
+            "description": "Open one visible in-reach vanilla chest/barrel and return up to 27 server-synchronized item counts in NODE_EVIDENCE. routing_label is optional; when supplied, it must be copied from a current visible item-frame container_label and is rechecked before every open click. Reserve at least 600 ticks, 30000 ms, 360 camera degrees, and 1 interaction; this includes Action dispatch/JIT headroom around the bounded 400-tick container attempt.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
               "op": {"const": "inspect_known_container"},
               "target": {"$ref": "#/$defs/position"},
-              "expected_block": {"enum": ["minecraft:chest", "minecraft:barrel"]}
+              "expected_block": {"enum": ["minecraft:chest", "minecraft:barrel"]},
+              "routing_label": {"$ref": "#/$defs/routingLabel"}
             },
             "required": ["id", "op", "target", "expected_block"]
           },
           "takeContainerStackNode": {
             "type": "object",
-            "description": "Move at most one whole matching stack from one visible in-reach vanilla chest/barrel, then close/reopen it for full server readback. Reserve at least 600 ticks, 30000 ms, 360 camera degrees, and 3 interactions; this includes Action dispatch/JIT headroom around the bounded 400-tick container attempt.",
+            "description": "Move at most one whole matching stack from one visible in-reach vanilla chest/barrel, then close/reopen it for full server readback. routing_label is optional; when supplied, the visible item frame is rechecked before both opens and the transfer click. The click is rejected unless the complete source stack fits the destination. Reserve at least 600 ticks, 30000 ms, 360 camera degrees, and 3 interactions; this includes Action dispatch/JIT headroom around the bounded 400-tick container attempt.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
@@ -1872,13 +1895,14 @@
               "expected_block": {"enum": ["minecraft:chest", "minecraft:barrel"]},
               "item": {"$ref": "#/$defs/resourceLocation"},
               "stack_policy": {"enum": ["default_components_only", "item_id_any_components"]},
-              "minimum_inventory_count": {"type": "integer", "minimum": 1, "maximum": 2304}
+              "minimum_inventory_count": {"type": "integer", "minimum": 1, "maximum": 2304},
+              "routing_label": {"$ref": "#/$defs/routingLabel"}
             },
             "required": ["id", "op", "target", "expected_block", "item", "stack_policy", "minimum_inventory_count"]
           },
           "storeContainerStackNode": {
             "type": "object",
-            "description": "Move at most one whole matching stack from the player inventory into one visible in-reach vanilla chest/barrel, then close/reopen it for full server readback. minimum_container_count is an absolute component-policy-matching count in the destination container. Reserve at least 600 ticks, 30000 ms, 360 camera degrees, and 3 interactions; this includes Action dispatch/JIT headroom around the bounded 400-tick container attempt.",
+            "description": "Move at most one whole matching stack from the player inventory into one visible in-reach vanilla chest/barrel, then close/reopen it for full server readback. routing_label is optional; when supplied, the visible item frame is rechecked before both opens and the transfer click. The click is rejected unless the complete source stack fits the destination. minimum_container_count is an absolute component-policy-matching count in the destination container. Reserve at least 600 ticks, 30000 ms, 360 camera degrees, and 3 interactions; this includes Action dispatch/JIT headroom around the bounded 400-tick container attempt.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
@@ -1887,7 +1911,8 @@
               "expected_block": {"enum": ["minecraft:chest", "minecraft:barrel"]},
               "item": {"$ref": "#/$defs/resourceLocation"},
               "stack_policy": {"enum": ["default_components_only", "item_id_any_components"]},
-              "minimum_container_count": {"type": "integer", "minimum": 1, "maximum": 2304}
+              "minimum_container_count": {"type": "integer", "minimum": 1, "maximum": 2304},
+              "routing_label": {"$ref": "#/$defs/routingLabel"}
             },
             "required": ["id", "op", "target", "expected_block", "item", "stack_policy", "minimum_container_count"]
           },
@@ -3217,7 +3242,7 @@
               "additionalProperties": false,
               "properties": {
                 "path": {"type": "string", "minLength": 1, "maxLength": 512},
-                "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref", "kill_zone_consent_ref"]},
+                "kind": {"enum": ["container_label_entity_ref", "operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref", "kill_zone_consent_ref"]},
                 "coupled_paths": {
                   "type": "array", "minItems": 0, "maxItems": 1,
                   "items": {"type": "string", "minLength": 1, "maxLength": 512}

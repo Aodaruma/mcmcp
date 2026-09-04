@@ -282,6 +282,12 @@ public final class KnownMenuProfileSupport {
     }
 
     static boolean hasFullPlayerCapacity(ItemStack source, List<Slot> destinations) {
+        return hasFullDestinationCapacity(source, destinations);
+    }
+
+    /** True only when ordinary quick-move can fit the complete source stack. */
+    public static boolean hasFullDestinationCapacity(
+            ItemStack source, List<Slot> destinations) {
         if (!isNormalSizedStack(source)) return false;
         int remainingCapacity = source.getCount();
         for (Slot destination : destinations) {

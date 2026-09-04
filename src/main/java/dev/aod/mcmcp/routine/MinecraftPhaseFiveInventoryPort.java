@@ -1,10 +1,12 @@
 package dev.aod.mcmcp.routine;
 
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
+import dev.aod.mcmcp.observation.ContainerLabelResolver;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.runtime.ClientPredictionSignals;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals;
 import dev.aod.mcmcp.runtime.ExpectedOpenToken;
+import dev.aod.mcmcp.runtime.KnownMenuProfileSupport;
 import dev.aod.mcmcp.runtime.ScreenOwnershipSignals;
 import dev.aod.mcmcp.runtime.WorldSessionTracker;
 import net.minecraft.client.Minecraft;
@@ -632,6 +634,19 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return;
         }
         int slot = candidate.orElseThrow();
+        ItemStack sourceStack = menu.slots.get(slot).getItem();
+        List<Integer> destinationSlots = transfer.playerToContainer()
+                ? layout.containerSlots() : layout.playerSlots();
+        if (!liveMenuMatchesSnapshot(menu, snapshot)
+                || !KnownMenuProfileSupport.hasFullDestinationCapacity(
+                        sourceStack,
+                        destinationSlots.stream().map(menu.slots::get).toList())) {
+            fail(state, "TRANSFER_FULL_STACK_DESTINATION_CAPACITY_UNAVAILABLE",
+                    RoutineFailure.Category.PRECONDITION,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("whole_stack_capacity", true), Map.of());
+            return;
+        }
         state.beforeSourceCount = source;
         state.beforeDestinationCount = destination;
         state.dispatchedStackCount = snapshot.slots().get(slot).count();
@@ -691,6 +706,13 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 || minecraft.player.containerMenu != menu) {
             fail(state, "OWNED_SCREEN_CLICK_AUTHORITY_LOST", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.REPLAN, Map.of(), Map.of());
+            return -1L;
+        }
+        RoutineFailure routingFailure = routingLabelFailure(
+                minecraft, sessionSupplier.get(), state.parameters);
+        if (routingFailure != null) {
+            state.failure = routingFailure;
+            state.stage = Stage.TERMINAL;
             return -1L;
         }
         long before = packetRevision();
@@ -762,6 +784,12 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         var minecraft = assertClientThread();
         var session = requireSession();
         RoutineFailure failure = ongoingFailure(minecraft, session, state);
+        if (failure != null) {
+            state.failure = failure;
+            state.stage = Stage.TERMINAL;
+            return;
+        }
+        failure = routingLabelFailure(minecraft, session, state.parameters);
         if (failure != null) {
             state.failure = failure;
             state.stage = Stage.TERMINAL;
@@ -946,7 +974,51 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     Map.of("container", "vanilla_chest_or_barrel"),
                     Map.of("block", actual.blockId()));
         }
+        RoutineFailure routingFailure = routingLabelFailure(minecraft, session, parameters);
+        if (routingFailure != null) return routingFailure;
         return null;
+    }
+
+    private RoutineFailure routingLabelFailure(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            ParsedParameters parameters) {
+        Optional<RoutingLabelParameters> requested = parameters.routingLabel();
+        if (requested.isEmpty()) return null;
+        if (session == null || minecraft.level == null) {
+            return routingLabelChanged(requested.orElseThrow());
+        }
+        RoutingLabelParameters witness = requested.orElseThrow();
+        var entity = observations.resolveCurrentlyVisibleEntity(
+                minecraft,
+                session.clientTick(),
+                session.worldSessionId(),
+                session.dimension(),
+                witness.entityRef(),
+                32.0D).orElse(null);
+        var label = entity == null ? null
+                : ContainerLabelResolver.resolve(
+                        minecraft.level, entity, session.dimension()).orElse(null);
+        BlockTarget target = parameters.target();
+        if (label == null
+                || !witness.item().equals(label.item().value())
+                || !parameters.expectedState().blockId().equals(label.containerBlock().value())
+                || !target.dimension().equals(label.containerPosition().dimension().value())
+                || target.x() != label.containerPosition().x()
+                || target.y() != label.containerPosition().y()
+                || target.z() != label.containerPosition().z()) {
+            return routingLabelChanged(witness);
+        }
+        return null;
+    }
+
+    private static RoutineFailure routingLabelChanged(RoutingLabelParameters witness) {
+        return failure(
+                "CONTAINER_ROUTING_LABEL_CHANGED",
+                RoutineFailure.Category.DIVERGENCE,
+                RoutineFailure.Recovery.REPLAN,
+                Map.of("routing_label_item", witness.item()),
+                Map.of());
     }
 
     private static void validateResolvedRecipe(
@@ -1239,7 +1311,20 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                                 "max_camera_degrees_per_tick")
                         : LEGACY_MAX_TURN_PER_TICK,
                 target(map(container.get("target"), "container.target")),
-                state(map(container.get("expected_state"), "container.expected_state")));
+                state(map(container.get("expected_state"), "container.expected_state")),
+                routingLabel(parameters));
+    }
+
+    private static Optional<RoutingLabelParameters> routingLabel(
+            Map<String, Object> parameters) {
+        if (!parameters.containsKey("routing_label")) return Optional.empty();
+        Map<String, Object> label = map(parameters.get("routing_label"), "routing_label");
+        if (!label.keySet().equals(java.util.Set.of("entity_ref", "item"))) {
+            throw new IllegalArgumentException("routing_label has an invalid shape");
+        }
+        return Optional.of(new RoutingLabelParameters(
+                string(label.get("entity_ref"), "routing_label.entity_ref"),
+                string(label.get("item"), "routing_label.item")));
     }
 
     private static void requireDefaultComponents(Map<String, Object> source, String name) {
@@ -1504,6 +1589,19 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             }
         }
         return new MenuLayout(playerSlots, containerSlots);
+    }
+
+    private static boolean liveMenuMatchesSnapshot(
+            AbstractContainerMenu menu,
+            ContainerSyncSignals.ContainerSnapshot snapshot) {
+        if (menu.slots.size() != snapshot.slots().size()) return false;
+        for (int index = 0; index < menu.slots.size(); index++) {
+            if (!ContainerSyncSignals.StackFingerprint.fromServerPacket(
+                    menu.slots.get(index).getItem()).equals(snapshot.slots().get(index))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static int countPlayerItem(
@@ -1787,6 +1885,10 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         default float maxCameraDegreesPerTick() {
             return LEGACY_MAX_TURN_PER_TICK;
         }
+
+        default Optional<RoutingLabelParameters> routingLabel() {
+            return Optional.empty();
+        }
     }
 
     record CraftParameters(
@@ -1830,12 +1932,14 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             boolean retainViewOnRelease,
             double cameraDegreesPerTick,
             BlockTarget target,
-            BlockStateFingerprint expectedState) implements ParsedParameters {
+            BlockStateFingerprint expectedState,
+            Optional<RoutingLabelParameters> routingLabel) implements ParsedParameters {
         TransferParameters {
             Objects.requireNonNull(item, "item");
             Objects.requireNonNull(stackPolicy, "stackPolicy");
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(expectedState, "expectedState");
+            Objects.requireNonNull(routingLabel, "routingLabel");
             if (!"default_components_only".equals(stackPolicy)
                     && !"item_id_any_components".equals(stackPolicy)) {
                 throw new IllegalArgumentException("unsupported transfer stack policy");
@@ -1847,6 +1951,22 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     || cameraDegreesPerTick < 0.1D || cameraDegreesPerTick > 18.0D) {
                 throw new IllegalArgumentException("transfer limits are outside the v1 contract");
             }
+        }
+
+        TransferParameters(
+                boolean playerToContainer,
+                String item,
+                String stackPolicy,
+                int minimumDestinationCount,
+                int maxTransferCount,
+                int maxStackMoves,
+                boolean retainViewOnRelease,
+                double cameraDegreesPerTick,
+                BlockTarget target,
+                BlockStateFingerprint expectedState) {
+            this(playerToContainer, item, stackPolicy, minimumDestinationCount,
+                    maxTransferCount, maxStackMoves, retainViewOnRelease,
+                    cameraDegreesPerTick, target, expectedState, Optional.empty());
         }
 
         @Override
@@ -1866,6 +1986,18 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         @Override
         public float maxCameraDegreesPerTick() {
             return (float) cameraDegreesPerTick;
+        }
+    }
+
+    record RoutingLabelParameters(String entityRef, String item) {
+        RoutingLabelParameters {
+            Objects.requireNonNull(entityRef, "entityRef");
+            Objects.requireNonNull(item, "item");
+            if (!entityRef.matches("[A-Za-z0-9_-]{24}")
+                    || !item.matches("[a-z0-9_.-]+:[a-z0-9_./-]+")
+                    || item.length() > 128) {
+                throw new IllegalArgumentException("invalid routing label");
+            }
         }
     }
 

@@ -593,19 +593,21 @@ public final class ActionDslParser {
 
     private static ActionDsl.InspectKnownContainer inspectKnownContainer(
             JsonObject source, String path) {
-        exactKeys(source, path, Set.of("id", "op", "target", "expected_block"),
+        exactKeys(source, path,
+                Set.of("id", "op", "target", "expected_block", "routing_label"),
                 Set.of("id", "op", "target", "expected_block"));
         return new ActionDsl.InspectKnownContainer(
                 string(source.get("id"), path + ".id"),
                 position(source.get("target"), path + ".target"),
-                string(source.get("expected_block"), path + ".expected_block"));
+                string(source.get("expected_block"), path + ".expected_block"),
+                routingLabel(source, path));
     }
 
     private static ActionDsl.TakeKnownContainerStack takeKnownContainerStack(
             JsonObject source, String path) {
         exactKeys(source, path,
                 Set.of("id", "op", "target", "expected_block", "item",
-                        "stack_policy", "minimum_inventory_count"),
+                        "stack_policy", "minimum_inventory_count", "routing_label"),
                 Set.of("id", "op", "target", "expected_block", "item",
                         "stack_policy", "minimum_inventory_count"));
         return new ActionDsl.TakeKnownContainerStack(
@@ -615,14 +617,15 @@ public final class ActionDslParser {
                 string(source.get("item"), path + ".item"),
                 string(source.get("stack_policy"), path + ".stack_policy"),
                 integer(source.get("minimum_inventory_count"),
-                        path + ".minimum_inventory_count"));
+                        path + ".minimum_inventory_count"),
+                routingLabel(source, path));
     }
 
     private static ActionDsl.StoreKnownContainerStack storeKnownContainerStack(
             JsonObject source, String path) {
         exactKeys(source, path,
                 Set.of("id", "op", "target", "expected_block", "item",
-                        "stack_policy", "minimum_container_count"),
+                        "stack_policy", "minimum_container_count", "routing_label"),
                 Set.of("id", "op", "target", "expected_block", "item",
                         "stack_policy", "minimum_container_count"));
         return new ActionDsl.StoreKnownContainerStack(
@@ -632,7 +635,19 @@ public final class ActionDslParser {
                 string(source.get("item"), path + ".item"),
                 string(source.get("stack_policy"), path + ".stack_policy"),
                 integer(source.get("minimum_container_count"),
-                        path + ".minimum_container_count"));
+                        path + ".minimum_container_count"),
+                routingLabel(source, path));
+    }
+
+    private static Optional<ActionDsl.RoutingLabel> routingLabel(
+            JsonObject source, String path) {
+        if (!source.has("routing_label")) return Optional.empty();
+        JsonObject label = object(
+                source.get("routing_label"), path + ".routing_label",
+                Set.of("entity_ref", "item"), Set.of("entity_ref", "item"));
+        return Optional.of(new ActionDsl.RoutingLabel(
+                string(label.get("entity_ref"), path + ".routing_label.entity_ref"),
+                string(label.get("item"), path + ".routing_label.item")));
     }
 
     private static ActionDsl.CraftKnownRecipe craftKnownRecipe(
