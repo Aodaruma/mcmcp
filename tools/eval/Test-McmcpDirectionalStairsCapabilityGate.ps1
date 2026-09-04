@@ -189,7 +189,13 @@ $script:ToolTransport = {
             }
         }
         'agent_start_action' {
-            $submitted = $Arguments.program.body[0]
+            $face = $Arguments.program.body[0]
+            $submitted = $Arguments.program.body[1]
+            if ($face.op -cne 'face_known_position' -or
+                $face.target.x -ne 202 -or $face.target.y -ne 199 -or
+                $face.target.z -ne 194) {
+                throw 'mock received an invalid Gate D pre-aim'
+            }
             if ($submitted.op -cne 'apply_known_block_plan' -or
                 $submitted.entries.Count -ne 5 -or
                 $submitted.transform.rotation -ne 90 -or
@@ -203,14 +209,20 @@ $script:ToolTransport = {
             [pscustomobject]@{
                 schema_version = 1; action_id = $actionId; state = 'succeeded'
                 progress = [pscustomobject]@{
-                    executed_nodes = 1; total_node_upper_bound = 1
-                    distance_travelled = 0; camera_degrees = 320; interactions = 0
+                    executed_nodes = 2; total_node_upper_bound = 2
+                    distance_travelled = 0; camera_degrees = 360; interactions = 0
                     blocks_broken = 0; blocks_placed = 5
                 }
                 failure = $null
                 trace = @(
                     [pscustomobject]@{
-                        tick = 0; event = 'NODE_STARTED'; detail = 'directional_stairs_matrix'
+                        tick = 0; event = 'NODE_STARTED'; detail = 'face_directional_stairs_matrix'
+                    }
+                    [pscustomobject]@{
+                        tick = 8; event = 'NODE_COMPLETED'; detail = 'face_directional_stairs_matrix'
+                    }
+                    [pscustomobject]@{
+                        tick = 8; event = 'NODE_STARTED'; detail = 'directional_stairs_matrix'
                     }
                     [pscustomobject]@{
                         tick = 300; event = 'NODE_EVIDENCE'
@@ -231,7 +243,11 @@ $initial = New-MockStairsState -Completed:$false
 $sources = Get-DirectionalStairSources -State $initial
 $foundation = Select-StairMatrixFoundation -State $initial
 $request = New-DirectionalStairsActionRequest -Sources $sources -Foundation $foundation
-$node = $request.program.body[0]
+$faceNode = $request.program.body[0]
+$node = $request.program.body[1]
+Assert-True ($faceNode.op -ceq 'face_known_position' -and
+    $faceNode.target.x -eq 202 -and $faceNode.target.y -eq 199 -and
+    $faceNode.target.z -eq 194) 'gate did not pre-aim at the observed matrix midpoint'
 Assert-True ($node.op -ceq 'apply_known_block_plan') `
     'gate did not use the normal construction Action'
 Assert-True ($node.transform.rotation -eq 90 -and $node.transform.mirror -ceq 'x') `
@@ -248,7 +264,7 @@ Assert-True ($node.entries[2].placement_state_ref -ceq $westStraightRef -and
     'companion placement reference changed'
 Assert-True ($request.budget.max_duration_ms -eq 75000 -and
     $request.budget.max_ticks -eq 1500 -and
-    $request.budget.max_camera_degrees -eq 400 -and
+    $request.budget.max_camera_degrees -eq 440 -and
     $request.budget.max_blocks_placed -eq 5 -and
     $request.budget.max_distance_blocks -eq 0) `
     'five-entry construction budget is not exact'

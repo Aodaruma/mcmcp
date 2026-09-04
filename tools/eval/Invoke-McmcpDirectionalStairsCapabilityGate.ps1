@@ -275,6 +275,12 @@ function New-DirectionalStairsActionRequest {
         }
         $entries.Add($entry)
     }
+    $aimSupport = $Foundation.supports['inner_corner']
+    $faceNode = [ordered]@{
+        id = 'face_directional_stairs_matrix'
+        op = 'face_known_position'
+        target = Get-ObjectProperty $aimSupport 'position'
+    }
     $node = [ordered]@{
         id = 'directional_stairs_matrix'
         op = 'apply_known_block_plan'
@@ -282,9 +288,13 @@ function New-DirectionalStairsActionRequest {
         transform = [ordered]@{ rotation = 90; mirror = 'x' }
         entries = @($entries)
     }
-    return New-PrimitiveRequest -Name 'capability_gate_directional_stairs_matrix' `
-        -Capabilities @('camera', 'block_place') -Node $node `
-        -Duration 75000 -Ticks 1500 -Distance 0 -Camera 400 -Placements 5
+    return New-ActionRequest -Name 'capability_gate_directional_stairs_matrix' `
+        -Capabilities @('camera', 'block_place') -Body @($faceNode, $node) `
+        -Budget ([ordered]@{
+            max_duration_ms = 75000; max_ticks = 1500
+            max_distance_blocks = 0; max_camera_degrees = 440
+            max_interactions = 0; max_blocks_broken = 0; max_blocks_placed = 5
+        })
 }
 
 function Get-ExpectedStairTargets {
@@ -378,13 +388,13 @@ function Assert-DirectionalStairsTerminalProof {
         throw 'Gate D terminal is not succeeded without failure'
     }
     $progress = Get-ObjectProperty $Terminal 'progress'
-    if ([int](Get-ObjectProperty $progress 'executed_nodes') -ne 1 -or
-        [int](Get-ObjectProperty $progress 'total_node_upper_bound') -ne 1 -or
+    if ([int](Get-ObjectProperty $progress 'executed_nodes') -ne 2 -or
+        [int](Get-ObjectProperty $progress 'total_node_upper_bound') -ne 2 -or
         [double](Get-ObjectProperty $progress 'distance_travelled') -ne 0 -or
         [int](Get-ObjectProperty $progress 'interactions') -ne 0 -or
         [int](Get-ObjectProperty $progress 'blocks_broken') -ne 0 -or
         [int](Get-ObjectProperty $progress 'blocks_placed') -ne 5 -or
-        [double](Get-ObjectProperty $progress 'camera_degrees') -gt 400) {
+        [double](Get-ObjectProperty $progress 'camera_degrees') -gt 440) {
         throw 'Gate D terminal progress violates the stationary five-placement budget'
     }
     $trace = @((Get-ObjectProperty $Terminal 'trace'))
@@ -478,7 +488,7 @@ function Invoke-DirectionalStairsGateCore {
         gate = 'building-gate-d-directional-stairs'
         fixture_precondition = '/mcmcp_fixture phase4 directional_stairs_matrix'
         fixed_five_surface = $fixedFive
-        normal_player_action = 'apply_known_block_plan'
+        normal_player_action = 'face_known_position + apply_known_block_plan'
         lifecycle = $lifecycle
         terminal_proof = $terminalProof
         placement_identity = 'delivery_backed_placement_state_ref'
