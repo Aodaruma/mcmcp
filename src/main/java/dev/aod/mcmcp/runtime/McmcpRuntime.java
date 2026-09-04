@@ -2128,7 +2128,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 : node instanceof ActionDsl.OperateKnownMenu
                         ? ActionDslCompiler.KNOWN_MENU_OPERATION_DURATION_MILLIS
                 : node instanceof ActionDsl.BrewKnownPotionBatch
-                        ? ActionDslCompiler.KNOWN_BREWING_DURATION_MILLIS : 0L;
+                        ? ActionDslCompiler.KNOWN_BREWING_DURATION_MILLIS
+                : node instanceof ActionDsl.CastKnownFishingRod
+                        ? ActionDslCompiler.KNOWN_FISHING_DURATION_MILLIS : 0L;
         long ticks = node instanceof ActionDsl.CraftKnownRecipe
                 ? ActionDslCompiler.KNOWN_CRAFTING_TICKS
                 : node instanceof ActionDsl.SmeltKnownRecipe smelt
@@ -2136,7 +2138,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 : node instanceof ActionDsl.OperateKnownMenu
                         ? ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS
                 : node instanceof ActionDsl.BrewKnownPotionBatch
-                        ? ActionDslCompiler.KNOWN_BREWING_TICKS : 0L;
+                        ? ActionDslCompiler.KNOWN_BREWING_TICKS
+                : node instanceof ActionDsl.CastKnownFishingRod
+                        ? ActionDslCompiler.KNOWN_FISHING_TICKS : 0L;
         long interactions = node instanceof ActionDsl.TillKnownBlock
                         || node instanceof ActionDsl.OpenKnownFenceGate
                         || node instanceof ActionDsl.OpenKnownPassage
@@ -2153,7 +2157,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 : node instanceof ActionDsl.OperateKnownMenu
                         ? ActionDslCompiler.KNOWN_MENU_OPERATION_INTERACTIONS
                 : node instanceof ActionDsl.BrewKnownPotionBatch
-                        ? ActionDslCompiler.KNOWN_BREWING_INTERACTIONS : 0L;
+                        ? ActionDslCompiler.KNOWN_BREWING_INTERACTIONS
+                : node instanceof ActionDsl.CastKnownFishingRod ? 2L : 0L;
         if (node instanceof ActionDsl.OperateKillZone operation) {
             return Optional.of(ActionDslCompiler.intrinsicKillZoneCost(operation));
         }

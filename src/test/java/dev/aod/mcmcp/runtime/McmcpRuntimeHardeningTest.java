@@ -507,6 +507,13 @@ class McmcpRuntimeHardeningTest {
                         new StandardPotionStackSpec(
                                 "minecraft:potion", "minecraft:awkward", 3))))
                 .contains(new ActionDslCompiler.Cost(70_000, 1_400, 0, 0, 16, 0, 0));
+        assertThat(McmcpRuntime.structuralPrimitiveCost(
+                new ActionDsl.CastKnownFishingRod(
+                        "cast", "main_hand", "minecraft:fishing_rod", support,
+                        ActionDsl.BlockFace.UP,
+                        new ActionDsl.BlockStateSpec(
+                                "minecraft:water", Map.of("level", "0")))))
+                .contains(new ActionDslCompiler.Cost(4_000, 80, 0, 0, 2, 0, 0));
         assertThat(McmcpRuntime.primitiveReobservationTicks(
                 new ActionDsl.OpenKnownFenceGate("open_gate", support)))
                 .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
