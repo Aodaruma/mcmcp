@@ -147,6 +147,8 @@ public final class ActionDslParser {
             case "brew_known_potion_batch" -> brewKnownPotionBatch(object, path);
             case "collect_visible_item" -> collectVisibleItem(object, path);
             case "collect_visible_item_batch" -> collectVisibleItemBatch(object, path);
+            case "cast_known_fishing_rod" -> castKnownFishingRod(object, path);
+            case "reel_known_fishing_session" -> reelKnownFishingSession(object, path);
             case "wait_ticks" -> waitTicks(object, path);
             case "wait_until" -> waitUntil(object, path);
             case "if" -> conditional(object, path);
@@ -743,13 +745,81 @@ public final class ActionDslParser {
                 integer(source.get("ticks"), path + ".ticks"));
     }
 
+    private static ActionDsl.CastKnownFishingRod castKnownFishingRod(
+            JsonObject source, String path) {
+        exactKeys(source, path,
+                Set.of("id", "op", "hand", "rod_item", "target", "face", "expected_state"),
+                Set.of("id", "op", "hand", "rod_item", "target", "face", "expected_state"));
+        return new ActionDsl.CastKnownFishingRod(
+                string(source.get("id"), path + ".id"),
+                string(source.get("hand"), path + ".hand"),
+                string(source.get("rod_item"), path + ".rod_item"),
+                position(source.get("target"), path + ".target"),
+                blockFace(string(source.get("face"), path + ".face"), path + ".face"),
+                blockStateSpec(source.get("expected_state"), path + ".expected_state"));
+    }
+
+    private static ActionDsl.ReelKnownFishingSession reelKnownFishingSession(
+            JsonObject source, String path) {
+        exactKeys(source, path,
+                Set.of("id", "op", "fishing_session_ref", "hand", "rod_item"),
+                Set.of("id", "op", "fishing_session_ref", "hand", "rod_item"));
+        return new ActionDsl.ReelKnownFishingSession(
+                string(source.get("id"), path + ".id"),
+                string(source.get("fishing_session_ref"), path + ".fishing_session_ref"),
+                string(source.get("hand"), path + ".hand"),
+                string(source.get("rod_item"), path + ".rod_item"));
+    }
+
     private static ActionDsl.WaitUntil waitUntil(JsonObject source, String path) {
         exactKeys(source, path, Set.of("id", "op", "condition", "max_ticks"),
                 Set.of("id", "op", "condition", "max_ticks"));
         return new ActionDsl.WaitUntil(
                 string(source.get("id"), path + ".id"),
-                cropMatureCondition(source.get("condition"), path + ".condition"),
+                waitCondition(source.get("condition"), path + ".condition"),
                 integer(source.get("max_ticks"), path + ".max_ticks"));
+    }
+
+    private static ActionDsl.WaitCondition waitCondition(
+            JsonElement value, String path) {
+        JsonObject object = rawObject(value, path);
+        String type = string(required(object, "type", path), path + ".type");
+        if ("crop_mature".equals(type)) {
+            exactKeys(object, path, Set.of("type", "target"), Set.of("type", "target"));
+            return new ActionDsl.CropMatureCondition(
+                    position(object.get("target"), path + ".target"));
+        }
+        if ("sound_clue".equals(type)) {
+            exactKeys(object, path,
+                    Set.of("type", "sound_event", "since_tick", "bounds"),
+                    Set.of("type", "sound_event", "since_tick", "bounds"));
+            if (!"minecraft:entity.fishing_bobber.splash".equals(
+                    string(object.get("sound_event"), path + ".sound_event"))) {
+                throw invalid(path + ".sound_event is unsupported");
+            }
+            return new ActionDsl.SoundClueCondition(
+                    "minecraft:entity.fishing_bobber.splash",
+                    longInteger(object.get("since_tick"), path + ".since_tick"),
+                    worldBounds(object.get("bounds"), path + ".bounds"));
+        }
+        throw invalid("Unsupported wait condition type at " + path + ": " + type);
+    }
+
+    private static ActionDsl.WorldBounds worldBounds(JsonElement value, String path) {
+        JsonObject object = object(value, path, Set.of("dimension", "min", "max"),
+                Set.of("dimension", "min", "max"));
+        return new ActionDsl.WorldBounds(
+                string(object.get("dimension"), path + ".dimension"),
+                worldPoint(object.get("min"), path + ".min"),
+                worldPoint(object.get("max"), path + ".max"));
+    }
+
+    private static ActionDsl.WorldPoint worldPoint(JsonElement value, String path) {
+        JsonObject object = object(value, path, Set.of("x", "y", "z"), Set.of("x", "y", "z"));
+        return new ActionDsl.WorldPoint(
+                number(object.get("x"), path + ".x"),
+                number(object.get("y"), path + ".y"),
+                number(object.get("z"), path + ".z"));
     }
 
     private static ActionDsl.CropMatureCondition cropMatureCondition(
@@ -900,6 +970,7 @@ public final class ActionDslParser {
             case "block_interact" -> ActionDsl.Capability.BLOCK_INTERACT;
             case "block_place" -> ActionDsl.Capability.BLOCK_PLACE;
             case "inventory_transfer" -> ActionDsl.Capability.INVENTORY_TRANSFER;
+            case "item_use" -> ActionDsl.Capability.ITEM_USE;
             default -> throw invalid("Unsupported capability at " + path + ": " + value);
         };
     }

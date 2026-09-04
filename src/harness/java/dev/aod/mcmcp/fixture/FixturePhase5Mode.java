@@ -18,6 +18,7 @@ enum FixturePhase5Mode {
     SURVEY("survey", 0),
     GENERALIZATION("generalization", 0),
     COBBLESTONE_GENERATOR("cobblestone_generator", 0),
+    FISHING("fishing", 0),
     IRON_FARM("iron_farm", 1),
     RESET("reset", 0);
 
@@ -46,6 +47,7 @@ enum FixturePhase5Mode {
             case "survey" -> SURVEY;
             case "generalization" -> GENERALIZATION;
             case "cobblestone_generator" -> COBBLESTONE_GENERATOR;
+            case "fishing" -> FISHING;
             case "iron_farm" -> IRON_FARM;
             case "reset" -> RESET;
             default -> throw new IllegalArgumentException(

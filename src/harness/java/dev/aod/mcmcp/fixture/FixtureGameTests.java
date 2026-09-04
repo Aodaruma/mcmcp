@@ -55,6 +55,7 @@ final class FixtureGameTests {
     private static final Identifier STEP_UP_TEST_ID = id("adjacent_step_up_fixture");
     private static final Identifier COBBLESTONE_GENERATOR_TEST_ID =
             id("cobblestone_generator_fixture");
+    private static final Identifier FISHING_TEST_ID = id("fishing_open_water_fixture");
     private static final Identifier ENVIRONMENT_ID = id("fixture_environment");
 
     private static final DeferredRegister<Consumer<GameTestHelper>> TEST_FUNCTIONS =
@@ -85,6 +86,10 @@ final class FixtureGameTests {
             TEST_FUNCTIONS.register(
                     "cobblestone_generator_fixture",
                     () -> FixtureGameTests::runCobblestoneGeneratorFixture);
+    private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> FISHING_OPEN_WATER_FIXTURE =
+            TEST_FUNCTIONS.register(
+                    "fishing_open_water_fixture",
+                    () -> FixtureGameTests::runFishingOpenWaterFixture);
 
     private FixtureGameTests() {
     }
@@ -119,6 +124,41 @@ final class FixtureGameTests {
                 new FunctionGameTestInstance(ADJACENT_STEP_UP_FIXTURE.getKey(), data));
         event.registerTest(COBBLESTONE_GENERATOR_TEST_ID,
                 new FunctionGameTestInstance(COBBLESTONE_GENERATOR_FIXTURE.getKey(), data));
+        event.registerTest(FISHING_TEST_ID,
+                new FunctionGameTestInstance(FISHING_OPEN_WATER_FIXTURE.getKey(), data));
+    }
+
+    private static void runFishingOpenWaterFixture(GameTestHelper helper) {
+        // Vanilla FishingHook evaluates a 5x5 area at offsets y=-1..2 from the bobber:
+        // two source-water layers followed by two air layers are the closed valid shape.
+        for (int x = 0; x < 5; x++) {
+            for (int z = 0; z < 5; z++) {
+                helper.setBlock(new BlockPos(x, 0, z), Blocks.SEA_LANTERN);
+                helper.setBlock(new BlockPos(x, 1, z), Blocks.WATER);
+                helper.setBlock(new BlockPos(x, 2, z), Blocks.WATER);
+                helper.setBlock(new BlockPos(x, 3, z), Blocks.AIR);
+                helper.setBlock(new BlockPos(x, 4, z), Blocks.AIR);
+            }
+        }
+        helper.runAfterDelay(10L, () -> {
+            for (int x = 0; x < 5; x++) {
+                for (int z = 0; z < 5; z++) {
+                    for (int y = 1; y <= 2; y++) {
+                        BlockPos relative = new BlockPos(x, y, z);
+                        BlockPos absolute = helper.absolutePos(relative);
+                        if (!helper.getLevel().getBlockState(absolute).is(Blocks.WATER)
+                                || !helper.getLevel().getFluidState(absolute).isSource()) {
+                            helper.fail(Component.literal(
+                                    "Fishing fixture open-water layer is not source water"));
+                            return;
+                        }
+                    }
+                    helper.assertBlockPresent(Blocks.AIR, new BlockPos(x, 3, z));
+                    helper.assertBlockPresent(Blocks.AIR, new BlockPos(x, 4, z));
+                }
+            }
+            helper.succeed();
+        });
     }
 
     private static void runCobblestoneGeneratorFixture(GameTestHelper helper) {

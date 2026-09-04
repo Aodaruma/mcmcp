@@ -457,6 +457,20 @@ public final class AgentPrimitivePlanner {
                 map, latestFrame, required, surfaceBarrierWorldRevision).isPresent();
     }
 
+    public static boolean knownExactSurface(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            ActionDsl.Position target,
+            ActionDsl.BlockFace face,
+            ActionDsl.BlockStateSpec expected,
+            long surfaceBarrierWorldRevision) {
+        KnownSurface required = new KnownSurface(target, face, expected.block());
+        return knownSurfaceRecord(
+                map, latestFrame, required, surfaceBarrierWorldRevision)
+                .filter(surface -> exactObservedState(surface, expected))
+                .isPresent();
+    }
+
     public static KnownSurface requireKnownSurface(
             KnownTraversabilitySnapshot map,
             Optional<ObservationFrame> latestFrame,
@@ -706,7 +720,8 @@ public final class AgentPrimitivePlanner {
             } else if (node instanceof ActionDsl.HarvestKnownWheatBatch batch) {
                 present.removeAll(batch.targets());
             } else if (node instanceof ActionDsl.WaitUntil wait) {
-                if (present.contains(wait.condition().target())) {
+                if (wait.condition() instanceof ActionDsl.CropMatureCondition crop
+                        && present.contains(crop.target())) {
                     waitsBackedByPriorPlant.add(wait.id());
                 }
             } else if (node instanceof ActionDsl.If conditional) {
@@ -787,12 +802,13 @@ public final class AgentPrimitivePlanner {
             return input;
         }
         if (node instanceof ActionDsl.WaitUntil wait) {
-            if (!waitsBackedByPriorPlant.contains(wait.id())) {
+            if (wait.condition() instanceof ActionDsl.CropMatureCondition crop
+                    && !waitsBackedByPriorPlant.contains(wait.id())) {
                 long surfaceBarrier = surfaceBarrierWorldRevision(
-                        map, surfaceRevisionBarrier, wait.condition().target());
+                        map, surfaceRevisionBarrier, crop.target());
                 KnownSurface surface = requireKnownWheatWaitSurface(
                         map, latestFrame, input,
-                        wait.condition().target(), surfaceBarrier);
+                        crop.target(), surfaceBarrier);
                 knownSurfaces.add(surface);
             }
             merge(costs, node.id(), ActionDslCompiler.intrinsicWaitCost(wait.maxTicks()));
@@ -942,6 +958,25 @@ public final class AgentPrimitivePlanner {
             }
             merge(costs, node.id(), Objects.requireNonNull(worst, "break cost"));
             return distinct(output);
+        }
+        if (node instanceof ActionDsl.CastKnownFishingRod cast) {
+            MutationSurface surface = requireMutationSurface(
+                    map,
+                    latestFrame,
+                    input,
+                    cast.target(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, cast.target()),
+                    "minecraft:water",
+                    value -> value.face().name().equals(cast.face().name())
+                            && exactObservedState(value, cast.expectedState()),
+                    "Fishing cast requires a current exact source-water face");
+            return analyzeMutation(
+                    node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
+                    surface, 2, 0, 0);
+        }
+        if (node instanceof ActionDsl.ReelKnownFishingSession) {
+            merge(costs, node.id(), ActionDslCompiler.intrinsicKnownFishingReelCost());
+            return input;
         }
         if (node instanceof ActionDsl.BreakKnownBlock block) {
             long surfaceBarrier = surfaceBarrierWorldRevision(

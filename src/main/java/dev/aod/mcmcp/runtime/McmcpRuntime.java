@@ -135,6 +135,9 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.BedItem;
 import net.minecraft.world.item.DoubleHighBlockItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.projectile.FishingHook;
 import net.minecraft.world.item.SolidBucketItem;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.BedBlock;
@@ -201,7 +204,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     /** Expanded only when a phase has passed its gate. */
     private static final Set<String> AVAILABLE_CAPABILITIES =
             Set.of("movement", "camera", "block_break", "block_interact", "block_place",
-                    "inventory_transfer");
+                    "inventory_transfer", "item_use");
 
     private final String modVersion;
     private final String neoForgeVersion;
@@ -220,6 +223,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final ClientRecipeCatalog recipeCatalog = new ClientRecipeCatalog();
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
     private final KnownMenuOperationRefs knownMenuOperationRefs = new KnownMenuOperationRefs();
+    private final FishingSessionRefs fishingSessionRefs = new FishingSessionRefs();
     private final LocalArmingState arming = new LocalArmingState();
     private final InputReleaseController inputRelease = new InputReleaseController();
     private final EvaluationTurnGuard evaluationTurns = new EvaluationTurnGuard();
@@ -784,6 +788,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         soundClues.clear();
         soundPlaybacks.clear();
         soundPlaybackTruncated = false;
+        fishingSessionRefs.clear();
         latestLocalObservation = null;
         knownTraversability.clearWorld();
         knownTraversabilityRevision = 0L;
@@ -1830,6 +1835,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (snapshot.control().capabilities().contains("inventory_transfer")) {
             allowed.add(ActionDsl.Capability.INVENTORY_TRANSFER);
         }
+        if (snapshot.control().capabilities().contains("item_use")) {
+            allowed.add(ActionDsl.Capability.ITEM_USE);
+        }
         ActionDslCompiler.CompiledProgram program = ActionDslCompiler.compile(
                 request, this::admissionPrimitiveCost, allowed);
         Optional<ActionDsl.Node> initialPrimitive = firstPrimitive(
@@ -1915,7 +1923,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private static boolean requiresWorldPlanning(ActionDsl.Node node) {
         return !(node instanceof ActionDsl.WaitTicks
-                || node instanceof ActionDsl.OperateKnownMenu);
+                || node instanceof ActionDsl.OperateKnownMenu
+                || node instanceof ActionDsl.ReelKnownFishingSession
+                || node instanceof ActionDsl.WaitUntil wait
+                        && wait.condition() instanceof ActionDsl.SoundClueCondition);
     }
 
     static AgentPrimitivePlanner.ApproachPlan requireRuntimeApproachPlan(
@@ -3768,7 +3779,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     return;
                 }
                 boolean complete = false;
-                if (agentExecution.primitive instanceof ActionDsl.WaitUntil wait) {
+                if (agentExecution.primitive instanceof ActionDsl.WaitUntil wait
+                        && wait.condition() instanceof ActionDsl.CropMatureCondition) {
                     CropWaitLiveState live = authorizedCropWaitLiveState(
                             minecraft,
                             session,
@@ -3803,6 +3815,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         return;
                     }
                     complete = live == CropWaitLiveState.MATURE;
+                } else if (agentExecution.primitive instanceof ActionDsl.WaitUntil wait
+                        && wait.condition() instanceof ActionDsl.SoundClueCondition sound) {
+                    complete = soundClueMatched(minecraft, sound, session.clientTick());
                 }
                 if (complete || agentExecution.primitive instanceof ActionDsl.WaitTicks
                         && --agentExecution.waitTicksRemaining == 0) {
@@ -3815,8 +3830,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     failAgentAction(
                             AgentActionStore.FailureCode.CONDITION_TIMEOUT,
                             true,
-                            "crop_mature_timeout");
+                            "wait_condition_timeout");
                 }
+                return;
+            }
+            if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod
+                    && agentExecution.fishingAimComplete
+                    || agentExecution.primitive instanceof ActionDsl.ReelKnownFishingSession) {
+                tickAgentFishing(minecraft, session, action);
                 return;
             }
             if (agentExecution.replanning
@@ -3917,7 +3938,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (agentExecution.primitiveExecutor.active()
                     && (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition
                             || agentExecution.primitive instanceof ActionDsl.FaceKnownBlockFace
-                            || isKnownBreak(agentExecution.primitive))) {
+                            || isKnownBreak(agentExecution.primitive)
+                            || agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod)) {
                 var faceReconciliation = reconciliationSignals.bindAndSnapshot(
                         Objects.requireNonNull(minecraft.level, "level"),
                         session.worldSessionId());
@@ -3932,6 +3954,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             agentPlanningFrame(),
                             new AgentPrimitivePlanner.KnownSurface(
                                     face.target(), face.face(), face.expectedBlock()));
+                } else if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod cast) {
+                    faceEvidenceCurrent = AgentPrimitivePlanner.knownExactSurface(
+                            map,
+                            agentPlanningFrame(),
+                            cast.target(),
+                            cast.face(),
+                            cast.expectedState(),
+                            faceSurfaceBarrier.applyAsLong(cast.target()));
                 } else {
                     var block = agentExecution.primitive;
                     faceEvidenceCurrent = AgentPrimitivePlanner.knownSurface(
@@ -4023,6 +4053,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     }
                 }
                 case SUCCEEDED -> {
+                    if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod) {
+                        agentExecution.fishingAimComplete = true;
+                        agentExecution.replanning = false;
+                        agentExecution.replanNotBeforeTick = 0L;
+                        agentExecution.replanDeadlineTick = 0L;
+                        return;
+                    }
                     if (isKnownBreak(agentExecution.primitive)) {
                         agentExecution.breakAimComplete = true;
                         agentExecution.replanning = false;
@@ -4132,6 +4169,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         agentExecution.collectBatchIndex = 0;
         agentExecution.collectBatchEvidence = null;
         agentExecution.cropWaitAuthorization = null;
+        agentExecution.fishingAimComplete = false;
+        agentExecution.fishingAttempt = null;
         agentExecution.primitivePlanDeadlineTick = Math.addExact(
                 occurrenceBaseline.ticks(), primitiveReobservationTicks(advance.primitive()));
         agentExecution.mutationAims.clear();
@@ -4226,6 +4265,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             CropWaitAuthorization cropWaitAuthorization =
                     agentExecution.primitive instanceof ActionDsl.WaitUntil wait
+                            && wait.condition() instanceof ActionDsl.CropMatureCondition
                             ? requireCropWaitAuthorization(
                                     session,
                                     wait,
@@ -4292,7 +4332,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         Objects.requireNonNull(analysis, "analysis");
         Objects.requireNonNull(playerPosition, "playerPosition");
         Objects.requireNonNull(observerEye, "observerEye");
-        ActionDsl.Position target = wait.condition().target();
+        ActionDsl.Position target = ((ActionDsl.CropMatureCondition) wait.condition()).target();
         AgentPrimitivePlanner.KnownSurface visibleWheat = analysis.knownSurfaces().stream()
                 .filter(surface -> surface.position().equals(target)
                         && surface.block().equals("minecraft:wheat")
@@ -4329,7 +4369,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         CropWaitVisibilityState visibility = cropWaitVisibilityState(
                 authorization,
                 session,
-                wait.condition().target(),
+                ((ActionDsl.CropMatureCondition) wait.condition()).target(),
                 reconciliation.visualBarrierWorldRevision(),
                 player.position(),
                 player.getEyePosition());
@@ -4380,6 +4420,50 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (!state.is(Blocks.WHEAT)) return CropWaitLiveState.TARGET_CHANGED;
         return state.getValue(BlockStateProperties.AGE_7) == 7
                 ? CropWaitLiveState.MATURE : CropWaitLiveState.PENDING;
+    }
+
+    private boolean soundClueMatched(
+            Minecraft minecraft, ActionDsl.SoundClueCondition condition, long currentTick) {
+        var player = minecraft.player;
+        FishingHook hook = player == null ? null : player.fishing;
+        if (player == null || !ownedFishingHook(player, hook, null)
+                || !pointInside(condition.bounds(), sessions.snapshot().dimension(),
+                        hook.getX(), hook.getY(), hook.getZ())) {
+            return false;
+        }
+        List<ObservationRecord.SoundClue> nearby = soundClues.snapshot(currentTick).clues()
+                .stream()
+                .filter(clue -> {
+                    double dx = clue.position().x() - hook.getX();
+                    double dy = clue.position().y() - hook.getY();
+                    double dz = clue.position().z() - hook.getZ();
+                    return dx * dx + dy * dy + dz * dz <= 4.0;
+                })
+                .toList();
+        return soundClueMatches(condition, currentTick, nearby);
+    }
+
+    static boolean soundClueMatches(
+            ActionDsl.SoundClueCondition condition,
+            long currentTick,
+            List<ObservationRecord.SoundClue> clues) {
+        if (condition.sinceTick() > currentTick) return false;
+        return clues.stream().anyMatch(clue ->
+                clue.soundEvent().value().equals(condition.soundEvent())
+                        && clue.lastObservedTick() >= condition.sinceTick()
+                        && currentTick >= clue.lastObservedTick()
+                        && currentTick - clue.lastObservedTick() <= SoundClueStore.TTL_TICKS
+                        && pointInside(condition.bounds(), clue.position().dimension().value(),
+                                clue.position().x(), clue.position().y(), clue.position().z()));
+    }
+
+    static boolean pointInside(
+            ActionDsl.WorldBounds bounds, String dimension, double x, double y, double z) {
+        Objects.requireNonNull(bounds, "bounds");
+        return bounds.dimension().equals(dimension)
+                && x >= bounds.min().x() && x <= bounds.max().x()
+                && y >= bounds.min().y() && y <= bounds.max().y()
+                && z >= bounds.min().z() && z <= bounds.max().z();
     }
 
     private static boolean isAgentWait(ActionDsl.Node primitive) {
@@ -4687,6 +4771,26 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 block.target(), breakAim.point().x,
                                 breakAim.point().y, breakAim.point().z, true),
                         aimTicks);
+            } else if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod cast) {
+                if (!exactFishingRodHeld(player, cast.hand(), cast.rodItem())
+                        || player.fishing != null) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.WORLD_CHANGED,
+                            true,
+                            player.fishing == null
+                                    ? "required_fishing_rod_unavailable"
+                                    : "owned_bobber_already_present");
+                    return false;
+                }
+                AgentPrimitivePlanner.MutationAim aim = Objects.requireNonNull(
+                        agentExecution.mutationAims.get(cast.id()), "fishing cast aim");
+                cost = Objects.requireNonNull(
+                        agentExecution.occurrenceLimit, "fishing cast cost");
+                agentExecution.primitiveExecutor.beginFace(
+                        new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
+                                map.worldSessionId(), map.worldRevision(), cast.target(),
+                                aim.point().x, aim.point().y, aim.point().z, true),
+                        Math.max(1L, Math.min(600L, cost.ticks())));
             } else if (isCollectPrimitive(agentExecution.primitive)) {
                 ActionDsl.CollectVisibleItem collect = Objects.requireNonNull(
                         activeCollectTarget(), "active collect target");
@@ -4952,6 +5056,151 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             throw new IllegalArgumentException("pickup inventory counts must be non-negative");
         }
         return current > before;
+    }
+
+    private void tickAgentFishing(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action) {
+        var player = Objects.requireNonNull(minecraft.player, "player");
+        var gameMode = Objects.requireNonNull(minecraft.gameMode, "gameMode");
+        if (agentExecution.fishingAttempt == null) {
+            if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod cast) {
+                if (!exactFishingRodHeld(player, cast.hand(), cast.rodItem())
+                        || player.fishing != null) {
+                    failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true,
+                            "fishing_cast_precondition_changed");
+                    return;
+                }
+                gameMode.useItem(player, fishingHand(cast.hand()));
+                agentActions.recordInteraction(action.actionId());
+                agentExecution.fishingAttempt = FishingAttempt.cast(
+                        cast.hand(), cast.rodItem(), session.clientTick());
+                return;
+            }
+            var reel = (ActionDsl.ReelKnownFishingSession) agentExecution.primitive;
+            FishingSessionRefs.Session granted = fishingSessionRefs.consume(
+                            reel.fishingSessionRef(), session.worldSessionId(),
+                            session.dimension(), session.clientTick())
+                    .orElse(null);
+            FishingHook hook = player.fishing;
+            if (granted == null
+                    || !granted.hand().equals(reel.hand())
+                    || !granted.rodItem().equals(reel.rodItem())
+                    || !exactFishingRodHeld(player, reel.hand(), reel.rodItem())
+                    || !ownedFishingHook(player, hook, granted.bobberId())) {
+                failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true,
+                        "fishing_session_unavailable");
+                return;
+            }
+            ItemStack rod = player.getItemInHand(fishingHand(reel.hand()));
+            gameMode.useItem(player, fishingHand(reel.hand()));
+            agentActions.recordInteraction(action.actionId());
+            agentExecution.fishingAttempt = FishingAttempt.reel(
+                    reel.hand(), reel.rodItem(), granted.bobberId(),
+                    rod.getDamageValue(), inventoryCounts(player), session.clientTick());
+            return;
+        }
+
+        FishingAttempt attempt = agentExecution.fishingAttempt;
+        if (attempt.mode == FishingMode.CAST) {
+            FishingHook hook = player.fishing;
+            if (ownedFishingHook(player, hook, null)) {
+                String reference = fishingSessionRefs.issue(
+                        session.worldSessionId(), session.dimension(), hook.getUUID(),
+                        attempt.hand, attempt.rodItem, session.clientTick());
+                agentActions.recordEffect(
+                        action.actionId(), "fishing_cast", "minecraft:fishing_bobber",
+                        Map.of("hand", attempt.hand, "rod_item", attempt.rodItem,
+                                "bobber_present", false),
+                        Map.of("hand", attempt.hand, "rod_item", attempt.rodItem,
+                                "bobber_present", true, "fishing_session_ref", reference),
+                        AgentActionStore.Verification.CONFIRMED,
+                        session.clientTick(), agentExecution.latestWorldRevision);
+                finishFishingPrimitive(minecraft, action);
+                return;
+            }
+        } else {
+            FishingHook hook = player.fishing;
+            if (hook == null || hook.isRemoved()) {
+                int damageAfter = fishingRodDamage(player, attempt.hand, attempt.rodItem);
+                Map<String, Integer> inventoryAfter = inventoryCounts(player);
+                agentActions.recordEffect(
+                        action.actionId(), "fishing_reel", "minecraft:fishing_bobber",
+                        Map.of("hand", attempt.hand, "rod_damage", attempt.rodDamageBefore,
+                                "inventory_count", totalInventoryCount(attempt.inventoryBefore),
+                                "bobber_present", true),
+                        Map.of("hand", attempt.hand, "rod_damage", damageAfter,
+                                "inventory_count", totalInventoryCount(inventoryAfter),
+                                "bobber_present", false),
+                        AgentActionStore.Verification.CONFIRMED,
+                        session.clientTick(), agentExecution.latestWorldRevision);
+                attempt.effectRecorded = true;
+                finishFishingPrimitive(minecraft, action);
+                return;
+            } else if (!ownedFishingHook(player, hook, attempt.bobberId)) {
+                failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true,
+                        "owned_bobber_changed");
+                return;
+            }
+        }
+        if (session.clientTick() >= attempt.deadlineTick) {
+            failAgentAction(AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC, true,
+                    "fishing_ack_timeout");
+        }
+    }
+
+    private void finishFishingPrimitive(
+            Minecraft minecraft, AgentActionStore.Active action) {
+        agentExecution.fishingAttempt = null;
+        agentExecution.fishingAimComplete = false;
+        closeAgentPrimitiveExecutor();
+        agentActions.completeNode(action.actionId());
+        agentExecution.primitive = null;
+        advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
+    }
+
+    private static InteractionHand fishingHand(String hand) {
+        return "main_hand".equals(hand) ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
+    }
+
+    private static boolean exactFishingRodHeld(
+            net.minecraft.client.player.LocalPlayer player, String hand, String rodItem) {
+        ItemStack stack = player.getItemInHand(fishingHand(hand));
+        return !stack.isEmpty()
+                && rodItem.equals(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString());
+    }
+
+    private static int fishingRodDamage(
+            net.minecraft.client.player.LocalPlayer player, String hand, String rodItem) {
+        ItemStack stack = player.getItemInHand(fishingHand(hand));
+        return !stack.isEmpty()
+                && rodItem.equals(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString())
+                ? stack.getDamageValue() : -1;
+    }
+
+    private static boolean ownedFishingHook(
+            net.minecraft.client.player.LocalPlayer player, FishingHook hook, UUID expectedId) {
+        return hook != null && !hook.isRemoved() && hook.getOwner() == player
+                && (expectedId == null || expectedId.equals(hook.getUUID()));
+    }
+
+    private static Map<String, Integer> inventoryCounts(
+            net.minecraft.client.player.LocalPlayer player) {
+        var counts = new LinkedHashMap<String, Integer>();
+        var inventory = player.getInventory();
+        for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+            ItemStack stack = inventory.getItem(slot);
+            if (!stack.isEmpty()) {
+                counts.merge(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(),
+                        stack.getCount(), Integer::sum);
+            }
+        }
+        return Map.copyOf(counts);
+    }
+
+    private static int totalInventoryCount(Map<String, Integer> counts) {
+        return counts.values().stream().mapToInt(Integer::intValue).sum();
     }
 
     static int pickupOccurrenceBaseline(int existing, int current) {
@@ -7563,6 +7812,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             ClientReconciliationSignals.Snapshot reconciliation) {
         Objects.requireNonNull(primitive, "primitive");
         return primitive instanceof ActionDsl.WaitUntil
+                && ((ActionDsl.WaitUntil) primitive).condition()
+                        instanceof ActionDsl.CropMatureCondition
                 ? waitTargetSurfaceRevisionBarrier(map, reconciliation)
                 : surfaceRevisionBarrier(map, reconciliation);
     }
@@ -8195,8 +8446,90 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 McmcpMod.LOGGER.error("MCMCP known-redstone release failed", failure);
             }
         }
+        if (agentExecution.fishingAttempt != null) {
+            try {
+                if (releaseFishingAttempt(Minecraft.getInstance(), agentExecution.fishingAttempt)) {
+                    agentExecution.fishingAttempt = null;
+                } else {
+                    closed = false;
+                }
+            } catch (RuntimeException | LinkageError failure) {
+                closed = false;
+                McmcpMod.LOGGER.error("MCMCP known-fishing release failed", failure);
+            }
+        }
         agentExecution.breakAimComplete = false;
+        agentExecution.fishingAimComplete = false;
         return closed;
+    }
+
+    private boolean releaseFishingAttempt(Minecraft minecraft, FishingAttempt attempt) {
+        var player = minecraft.player;
+        if (player == null) return true;
+        long tick = sessions.snapshot().clientTick();
+        FishingHook hook = player.fishing;
+        if (hook == null || hook.isRemoved()) {
+            if (attempt.mode == FishingMode.CAST && tick < attempt.deadlineTick) return false;
+            recordUnknownFishingEffect(player, attempt, false, tick);
+            return true;
+        }
+        long cleanupDeadline = attempt.cleanupDispatched
+                ? attempt.cleanupDeadlineTick : attempt.deadlineTick;
+        if (tick > cleanupDeadline) {
+            recordUnknownFishingEffect(player, attempt,
+                    ownedFishingHook(player, hook, attempt.bobberId), tick);
+            fishingSessionRefs.clear();
+            arming.lock("fishing_cleanup_unconfirmed");
+            return true;
+        }
+        if (attempt.mode == FishingMode.REEL && !ownedFishingHook(player, hook, attempt.bobberId)) {
+            return false;
+        }
+        if (!attempt.cleanupDispatched) {
+            if (!exactFishingRodHeld(player, attempt.hand, attempt.rodItem)
+                    || minecraft.gameMode == null) {
+                return false;
+            }
+            minecraft.gameMode.useItem(player, fishingHand(attempt.hand));
+            agentActions.recordInteraction(agentExecution.actionId);
+            attempt.cleanupDispatched = true;
+            attempt.cleanupDeadlineTick = Math.addExact(tick, 20L);
+            return false;
+        }
+        // Returning false keeps terminal publication behind the bounded stateful cleanup fence.
+        return false;
+    }
+
+    private void recordUnknownFishingEffect(
+            net.minecraft.client.player.LocalPlayer player,
+            FishingAttempt attempt,
+            boolean bobberPresent,
+            long clientTick) {
+        if (attempt.effectRecorded || agentExecution == null) return;
+        Map<String, Object> before;
+        Map<String, Object> after;
+        String kind;
+        if (attempt.mode == FishingMode.CAST) {
+            kind = "fishing_cast";
+            before = Map.of("hand", attempt.hand, "rod_item", attempt.rodItem,
+                    "bobber_present", false);
+            after = Map.of("hand", attempt.hand, "rod_item", attempt.rodItem,
+                    "bobber_present", bobberPresent);
+        } else {
+            kind = "fishing_reel";
+            before = Map.of("hand", attempt.hand, "rod_damage", attempt.rodDamageBefore,
+                    "inventory_count", totalInventoryCount(attempt.inventoryBefore),
+                    "bobber_present", true);
+            after = Map.of("hand", attempt.hand,
+                    "rod_damage", fishingRodDamage(player, attempt.hand, attempt.rodItem),
+                    "inventory_count", totalInventoryCount(inventoryCounts(player)),
+                    "bobber_present", bobberPresent);
+        }
+        agentActions.recordEffect(
+                agentExecution.actionId, kind, "minecraft:fishing_bobber",
+                before, after, AgentActionStore.Verification.UNKNOWN,
+                clientTick, agentExecution.latestWorldRevision);
+        attempt.effectRecorded = true;
     }
 
     private boolean closeRecoveryGovernor() {
@@ -8324,7 +8657,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 == KnownContainerAttempt.ReleaseStatus.PROGRESSING
                 || agentExecution.brewingAttempt != null
                         && agentExecution.brewingAttempt.releaseStatus()
-                                == KnownBrewingAttempt.ReleaseStatus.PROGRESSING);
+                                == KnownBrewingAttempt.ReleaseStatus.PROGRESSING
+                || agentExecution.fishingAttempt != null);
     }
 
     private boolean advancePendingAgentReleaseClock() {
@@ -10832,6 +11166,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private final float maxCameraDegreesPerTick;
         private int agentSelectedSlot = -1;
         private boolean breakAimComplete;
+        private boolean fishingAimComplete;
+        private FishingAttempt fishingAttempt;
         private int mutationAimFailures;
         private KnownBlockBreakAttempt blockBreakAttempt;
         private KnownBlockMutationAttempt blockMutationAttempt;
@@ -10886,6 +11222,58 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         "positionCorrectionRevision must be non-negative");
             }
             this.positionCorrectionRevision = positionCorrectionRevision;
+        }
+    }
+
+    private enum FishingMode { CAST, REEL }
+
+    private static final class FishingAttempt {
+        private final FishingMode mode;
+        private final String hand;
+        private final String rodItem;
+        private final UUID bobberId;
+        private final int rodDamageBefore;
+        private final Map<String, Integer> inventoryBefore;
+        private final long deadlineTick;
+        private final long startTick;
+        private boolean effectRecorded;
+        private boolean cleanupDispatched;
+        private long cleanupDeadlineTick;
+
+        private FishingAttempt(
+                FishingMode mode,
+                String hand,
+                String rodItem,
+                UUID bobberId,
+                int rodDamageBefore,
+                Map<String, Integer> inventoryBefore,
+                long startTick) {
+            this.mode = Objects.requireNonNull(mode, "mode");
+            this.hand = Objects.requireNonNull(hand, "hand");
+            this.rodItem = Objects.requireNonNull(rodItem, "rodItem");
+            this.bobberId = bobberId;
+            this.rodDamageBefore = rodDamageBefore;
+            this.inventoryBefore = Map.copyOf(inventoryBefore);
+            this.startTick = startTick;
+            deadlineTick = Math.addExact(startTick, ActionDslCompiler.KNOWN_FISHING_TICKS);
+        }
+
+        private static FishingAttempt cast(String hand, String rodItem, long startTick) {
+            return new FishingAttempt(
+                    FishingMode.CAST, hand, rodItem, null, -1, Map.of(), startTick);
+        }
+
+        private static FishingAttempt reel(
+                String hand,
+                String rodItem,
+                UUID bobberId,
+                int rodDamageBefore,
+                Map<String, Integer> inventoryBefore,
+                long startTick) {
+            return new FishingAttempt(
+                    FishingMode.REEL, hand, rodItem,
+                    Objects.requireNonNull(bobberId, "bobberId"),
+                    rodDamageBefore, inventoryBefore, startTick);
         }
     }
 

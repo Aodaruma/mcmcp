@@ -66,6 +66,12 @@ public final class ActionDslOperationManifest {
             fixed(ActionDsl.BrewKnownPotionBatch.class, "brew_known_potion_batch", caps("camera", "inventory_transfer")),
             fixed(ActionDsl.CollectVisibleItem.class, "collect_visible_item", caps("movement")),
             fixed(ActionDsl.CollectVisibleItemBatch.class, "collect_visible_item_batch", caps("movement")),
+            fixed(ActionDsl.CastKnownFishingRod.class, "cast_known_fishing_rod", caps("camera", "item_use")),
+            fixed(
+                    ActionDsl.ReelKnownFishingSession.class,
+                    "reel_known_fishing_session",
+                    caps("item_use"),
+                    ref("/fishing_session_ref", "fishing_session_ref", "required")),
             fixed(ActionDsl.WaitTicks.class, "wait_ticks", caps()),
             fixed(ActionDsl.WaitUntil.class, "wait_until", caps()),
             inherited(ActionDsl.If.class, "if"),
@@ -137,7 +143,13 @@ public final class ActionDslOperationManifest {
                         "agent_get_state",
                         "/recipe_query/recipes/*/{recipe_ref,fingerprint}",
                         List.of("craft_known_recipe", "smelt_known_recipe"),
-                        "world_session_and_recipe_book_revision_with_exact_fingerprint"));
+                        "world_session_and_recipe_book_revision_with_exact_fingerprint"),
+                referenceDescriptor(
+                        "fishing_session_ref",
+                        "agent_get_action",
+                        "/effects/*/observed_after/fishing_session_ref",
+                        List.of("reel_known_fishing_session"),
+                        "single_use_owned_bobber_world_session_and_1200_tick_ttl"));
     }
 
     public static Map<String, Object> missingCapabilityGuidance() {

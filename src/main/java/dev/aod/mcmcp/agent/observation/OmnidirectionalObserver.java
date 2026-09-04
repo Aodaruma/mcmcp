@@ -480,6 +480,9 @@ public final class OmnidirectionalObserver {
      */
     static BlockStateView policyVisibleBlockState(BlockState state) {
         Objects.requireNonNull(state, "state");
+        if (state.is(Blocks.WATER) && state.getFluidState().isSource()) {
+            return blockStateView(state);
+        }
         String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
         return SafeConstructionBlocks.allowsVisibleState(blockId)
                 && (!SafeConstructionBlocks.allows(blockId)

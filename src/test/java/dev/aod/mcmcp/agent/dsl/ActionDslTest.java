@@ -1266,7 +1266,7 @@ class ActionDslTest {
                 budget(750_000, 15_000, 0, 0)));
 
         ActionDsl.WaitUntil wait = (ActionDsl.WaitUntil) request.program().body().getFirst();
-        assertThat(wait.condition().target()).isEqualTo(new ActionDsl.Position(
+        assertThat(((ActionDsl.CropMatureCondition) wait.condition()).target()).isEqualTo(new ActionDsl.Position(
                 "minecraft:overworld", 10, 65, 10));
         assertThat(wait.maxTicks()).isEqualTo(15_000);
         assertThat(ActionDslValidator.validate(request).requiredCapabilities()).isEmpty();

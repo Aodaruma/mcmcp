@@ -959,16 +959,17 @@ class McpToolCatalogTest {
                         JsonParser.parseString("\"block_break\""),
                         JsonParser.parseString("\"block_interact\""),
                         JsonParser.parseString("\"block_place\""),
-                        JsonParser.parseString("\"inventory_transfer\""));
+                        JsonParser.parseString("\"inventory_transfer\""),
+                        JsonParser.parseString("\"item_use\""));
         var actionDsl = state.getAsJsonObject()
                 .getAsJsonObject("policy")
                 .getAsJsonObject("action_dsl");
-        assertThat(actionDsl.getAsJsonArray("available_operations")).hasSize(32);
-        assertThat(actionDsl.getAsJsonArray("reference_descriptors")).hasSize(3);
+        assertThat(actionDsl.getAsJsonArray("available_operations")).hasSize(34);
+        assertThat(actionDsl.getAsJsonArray("reference_descriptors")).hasSize(4);
         assertThat(actionDsl.getAsJsonObject("missing_capability_guidance")
                 .get("code").getAsString()).isEqualTo("MISSING_CAPABILITY");
         assertThat(state.getAsJsonObject().getAsJsonObject("control")
-                .getAsJsonArray("granted_capabilities")).hasSize(6);
+                .getAsJsonArray("granted_capabilities")).hasSize(7);
     }
 
     @Test
@@ -993,6 +994,36 @@ class McpToolCatalogTest {
                 .map(JsonElement::getAsString))
                 .contains("source", "template", "reference_requirements");
         assertThat(catalog.listResult().getAsJsonArray("tools")).hasSize(5);
+    }
+
+    @Test
+    void fishingEffectsAndTheirRefreshProducerMatchThePublishedSchema() {
+        var catalog = new McpToolCatalog();
+        var output = catalog.outputSchema("agent_get_action");
+        var observationSchema = output.getAsJsonObject("$defs")
+                .getAsJsonObject("effectObservation");
+        var castAfter = JsonParser.parseString("""
+                {"hand":"main_hand","rod_item":"minecraft:fishing_rod",
+                 "bobber_present":true,"fishing_session_ref":"f_0123456789abcdef012345"}
+                """);
+        assertThat(CatalogSchemaValidator.matches(observationSchema, castAfter)).isTrue();
+        var effectKinds = output.getAsJsonObject("properties")
+                .getAsJsonObject("effects").getAsJsonObject("items")
+                .getAsJsonObject("properties").getAsJsonObject("kind").getAsJsonArray("enum");
+        assertThat(effectKinds.asList().stream().map(JsonElement::getAsString))
+                .contains("fishing_cast", "fishing_reel");
+
+        var refreshTools = output.getAsJsonObject("properties")
+                .getAsJsonObject("reference_requirements").getAsJsonObject("items")
+                .getAsJsonObject("properties").getAsJsonObject("refresh_tool")
+                .getAsJsonArray("enum");
+        assertThat(refreshTools).anySatisfy(value ->
+                assertThat(value.getAsString()).isEqualTo("agent_get_action"));
+
+        assertThat(catalog.inputSchema("agent_start_action").getAsJsonObject("$defs")
+                .getAsJsonObject("fishingSplashCondition").get("description").getAsString())
+                .contains("max_ticks is additionally limited to 900")
+                .contains("1200-tick fishing_session_ref");
     }
 
     @Test

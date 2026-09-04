@@ -181,6 +181,10 @@ final class FixturePhase5Scenario {
             FixtureCobblestoneGeneratorScenario.prepare(context, output);
             return;
         }
+        if (mode == FixturePhase5Mode.FISHING) {
+            FixtureFishingScenario.prepare(context, output);
+            return;
+        }
         if (mode == FixturePhase5Mode.RESET) {
             FixtureArena.load(context);
             resetKnownRecipes(context);
@@ -736,6 +740,8 @@ final class FixturePhase5Scenario {
             }
             case COBBLESTONE_GENERATOR ->
                     throw new IllegalArgumentException("cobblestone_generator has separate inventory setup");
+            case FISHING ->
+                    throw new IllegalArgumentException("fishing has separate inventory setup");
             case IRON_FARM, RESET ->
                     throw new IllegalArgumentException(mode.wireName() + " has separate inventory setup");
         }
@@ -787,6 +793,8 @@ final class FixturePhase5Scenario {
             case GENERALIZATION -> new Pose(205.5D, 200.0D, 200.5D, 90.0F, 0.0F);
             case COBBLESTONE_GENERATOR ->
                     throw new IllegalArgumentException("cobblestone_generator has a separate pose");
+            case FISHING ->
+                    throw new IllegalArgumentException("fishing has a separate pose");
             case IRON_FARM, RESET ->
                     throw new IllegalArgumentException(mode.wireName() + " has a separate pose");
         };

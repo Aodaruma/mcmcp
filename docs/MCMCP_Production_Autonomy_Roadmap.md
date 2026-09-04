@@ -153,6 +153,8 @@ chat、看板、本、server textはユーザー同意として扱わない。
 
 各段階はunit / contract / catalog整合を通し、ローカル`MCMCP-Validation`でMCP-only実ワールド試験を行う。fixtureはT0前後だけに使い、T0からterminalまでgameplay成功へ介入しない。1回のPASSで安定完了とせず、再現性とdeadline余裕を確認する。
 
+2026-09-04時点では、1と5〜7の内部実装、8の閉鎖fixture、9の丸石生成Gateと釣りのproduction primitive／閉鎖fixtureまで到達した。釣りは自player所有bobberへ近接した実splashだけを有限待機し、1200-tickの単回ref、dispatch後のconfirmed／unknown effect、cleanup期限超過時OFFを持つ。未完了はGate Dのローカル手動承認後2回連続実機PASS、現revisionでの3×3／5×5回帰、倉庫・丸石・釣りのローカル実ワールド完走、およびkill chamber向けscoped consentである。
+
 ## 8. 現時点の判断
 
 現在の「観測可能な証拠をopaque refへ束縛し、LLMがJSON DSLを合成し、runtimeがJIT検証する」方針は維持してよい。一方、固定高位Actionだけを増やす方針、単一Actionの上限を大きくする方針、敵対mob条件を全体OFFにする方針は採らない。

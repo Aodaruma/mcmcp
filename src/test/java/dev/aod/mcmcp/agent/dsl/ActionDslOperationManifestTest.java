@@ -44,6 +44,8 @@ class ActionDslOperationManifestTest {
                         "brew_known_potion_batch",
                         "collect_visible_item",
                         "collect_visible_item_batch",
+                        "cast_known_fishing_rod",
+                        "reel_known_fishing_session",
                         "wait_ticks",
                         "wait_until",
                         "if",
@@ -75,6 +77,8 @@ class ActionDslOperationManifestTest {
                 .containsEntry("code", "MISSING_CAPABILITY");
         assertThat(ActionDslOperationManifest.referenceDescriptorPayload())
                 .extracting(descriptor -> descriptor.get("kind"))
-                .containsExactly("operation_ref", "placement_state_ref", "recipe_ref");
+                .containsExactly(
+                        "operation_ref", "placement_state_ref", "recipe_ref",
+                        "fishing_session_ref");
     }
 }

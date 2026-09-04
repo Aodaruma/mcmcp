@@ -16,6 +16,7 @@ class FixturePhase5AutorunConfigTest {
                         "recipes", "craft", "smelt", "warehouse_smelt", "brew", "redstone", "transfer", "crop",
                         "combined_wheat", "tree", "sleep", "survey", "generalization",
                         "cobblestone_generator",
+                        "fishing",
                         "iron_farm", "reset");
 
         for (FixturePhase5Mode mode : FixturePhase5Mode.values()) {

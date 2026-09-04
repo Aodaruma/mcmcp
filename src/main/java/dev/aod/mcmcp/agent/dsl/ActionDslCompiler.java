@@ -40,6 +40,9 @@ public final class ActionDslCompiler {
     public static final long KNOWN_MENU_OPERATION_DURATION_MILLIS =
             KNOWN_MENU_OPERATION_TICKS * NOMINAL_TICK_MILLIS;
     public static final long KNOWN_MENU_OPERATION_INTERACTIONS = 1L;
+    public static final long KNOWN_FISHING_TICKS = 80L;
+    public static final long KNOWN_FISHING_DURATION_MILLIS =
+            KNOWN_FISHING_TICKS * NOMINAL_TICK_MILLIS;
     public static final long KNOWN_CRAFTING_TICKS =
             AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND;
     public static final long KNOWN_CRAFTING_DURATION_MILLIS =
@@ -107,6 +110,11 @@ public final class ActionDslCompiler {
         if (node instanceof ActionDsl.WaitUntil wait) {
             return compileWait(node, wait.maxTicks(), primitiveCostBounds);
         }
+        if (node instanceof ActionDsl.ReelKnownFishingSession) {
+            Cost cost = intrinsicKnownFishingReelCost();
+            primitiveCostBounds.put(node.id(), cost);
+            return cost;
+        }
         if (node instanceof ActionDsl.ApplyKnownBlockPlan plan) {
             Cost cost = Objects.requireNonNull(
                     primitiveCosts.worstCase(node), "primitive cost result")
@@ -168,7 +176,8 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.OperateKnownMenu
                 || node instanceof ActionDsl.BrewKnownPotionBatch
                 || node instanceof ActionDsl.CollectVisibleItem
-                || node instanceof ActionDsl.CollectVisibleItemBatch) {
+                || node instanceof ActionDsl.CollectVisibleItemBatch
+                || node instanceof ActionDsl.CastKnownFishingRod) {
             Optional<Cost> resolved = Objects.requireNonNull(
                     primitiveCosts.worstCase(node), "primitive cost result");
             if (resolved.isEmpty()) {
@@ -242,6 +251,8 @@ public final class ActionDslCompiler {
                     throw unprovable(
                             "brew_known_potion_batch has an invalid primitive time bound");
                 }
+            } else if (node instanceof ActionDsl.CastKnownFishingRod) {
+                requireMutationCost(cost, 2, 0, 0, "cast_known_fishing_rod");
             } else if (cost.interactions() != 0
                     || cost.blocksBroken() != 0
                     || cost.blocksPlaced() != 0) {
@@ -283,6 +294,17 @@ public final class ActionDslCompiler {
         return new Cost(
                 multiplyExact(ticks, NOMINAL_TICK_MILLIS),
                 ticks, 0, 0, 0, 0, 0);
+    }
+
+    public static Cost intrinsicKnownFishingReelCost() {
+        return new Cost(
+                KNOWN_FISHING_DURATION_MILLIS,
+                KNOWN_FISHING_TICKS,
+                0,
+                0,
+                2,
+                0,
+                0);
     }
 
     /** Structural bound for the stationary place-only block-plan adapter. */

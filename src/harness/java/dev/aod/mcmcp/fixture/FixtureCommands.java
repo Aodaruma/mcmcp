@@ -138,6 +138,13 @@ final class FixtureCommands {
                         .then(Commands.literal("cobblestone_generator_oracle")
                                 .executes(context -> execute(context.getSource(),
                                         FixtureCobblestoneGeneratorScenario::sendOracle)))
+                        .then(phase5("fishing", FixturePhase5Mode.FISHING))
+                        .then(Commands.literal("fishing_status")
+                                .executes(context -> execute(context.getSource(),
+                                        FixtureFishingScenario::sendStatus)))
+                        .then(Commands.literal("fishing_oracle")
+                                .executes(context -> execute(context.getSource(),
+                                        FixtureFishingScenario::sendOracle)))
                         .then(phase5("iron_farm", FixturePhase5Mode.IRON_FARM))
                         .then(Commands.literal("verify_tree")
                                 .executes(context -> execute(

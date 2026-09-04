@@ -49,7 +49,9 @@ public final class ActionDsl {
             SmeltKnownRecipe,
             OperateKnownMenu,
             BrewKnownPotionBatch,
-            CollectVisibleItem, CollectVisibleItemBatch, WaitTicks, WaitUntil, If, Repeat {
+            CollectVisibleItem, CollectVisibleItemBatch,
+            CastKnownFishingRod, ReelKnownFishingSession,
+            WaitTicks, WaitUntil, If, Repeat {
         String id();
     }
 
@@ -610,6 +612,38 @@ public final class ActionDsl {
         }
     }
 
+    /** Casts only an exact held Vanilla fishing rod toward one fresh visible source-water face. */
+    public record CastKnownFishingRod(
+            String id,
+            String hand,
+            String rodItem,
+            Position target,
+            BlockFace face,
+            BlockStateSpec expectedState) implements Node {
+        public CastKnownFishingRod {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(hand, "hand");
+            Objects.requireNonNull(rodItem, "rodItem");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(face, "face");
+            Objects.requireNonNull(expectedState, "expectedState");
+        }
+    }
+
+    /** Reels one live, world-session-local bobber issued by cast_known_fishing_rod. */
+    public record ReelKnownFishingSession(
+            String id,
+            String fishingSessionRef,
+            String hand,
+            String rodItem) implements Node {
+        public ReelKnownFishingSession {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(fishingSessionRef, "fishingSessionRef");
+            Objects.requireNonNull(hand, "hand");
+            Objects.requireNonNull(rodItem, "rodItem");
+        }
+    }
+
     public record WaitTicks(String id, int ticks) implements Node {
         public WaitTicks {
             Objects.requireNonNull(id, "id");
@@ -618,7 +652,7 @@ public final class ActionDsl {
 
     public record WaitUntil(
             String id,
-            CropMatureCondition condition,
+            WaitCondition condition,
             int maxTicks) implements Node {
         public WaitUntil {
             Objects.requireNonNull(id, "id");
@@ -626,10 +660,35 @@ public final class ActionDsl {
         }
     }
 
-    public record CropMatureCondition(Position target) {
+    public sealed interface WaitCondition permits CropMatureCondition, SoundClueCondition {
+    }
+
+    public record CropMatureCondition(Position target) implements WaitCondition {
         public CropMatureCondition {
             Objects.requireNonNull(target, "target");
         }
+    }
+
+    /** Exact actual-playback clue, bounded in time and world-space by the caller. */
+    public record SoundClueCondition(
+            String soundEvent,
+            long sinceTick,
+            WorldBounds bounds) implements WaitCondition {
+        public SoundClueCondition {
+            Objects.requireNonNull(soundEvent, "soundEvent");
+            Objects.requireNonNull(bounds, "bounds");
+        }
+    }
+
+    public record WorldBounds(String dimension, WorldPoint min, WorldPoint max) {
+        public WorldBounds {
+            Objects.requireNonNull(dimension, "dimension");
+            Objects.requireNonNull(min, "min");
+            Objects.requireNonNull(max, "max");
+        }
+    }
+
+    public record WorldPoint(double x, double y, double z) {
     }
 
     public record If(
@@ -671,7 +730,8 @@ public final class ActionDsl {
         BLOCK_BREAK("block_break"),
         BLOCK_INTERACT("block_interact"),
         BLOCK_PLACE("block_place"),
-        INVENTORY_TRANSFER("inventory_transfer");
+        INVENTORY_TRANSFER("inventory_transfer"),
+        ITEM_USE("item_use");
 
         private final String wireName;
 

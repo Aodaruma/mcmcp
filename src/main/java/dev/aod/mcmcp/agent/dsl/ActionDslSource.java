@@ -30,7 +30,7 @@ public final class ActionDslSource {
 
     private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
     private static final Set<String> OPAQUE_REFERENCE_FIELDS = Set.of(
-            "operation_ref", "placement_state_ref", "recipe_ref");
+            "operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref");
 
     private final String canonicalJson;
     private final String sha256;
@@ -167,6 +167,12 @@ public final class ActionDslSource {
                         "agent_get_state",
                         "/recipe_query/recipes/*/{recipe_ref,fingerprint}");
             }
+            case "fishing_session_ref" -> new ReferenceRequirement(
+                    path,
+                    "fishing_session_ref",
+                    List.of(),
+                    "agent_get_action",
+                    "/effects/*/observed_after/fishing_session_ref");
             default -> throw new IllegalArgumentException("Unknown opaque reference field");
         };
     }

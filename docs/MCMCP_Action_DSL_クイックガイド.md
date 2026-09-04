@@ -39,7 +39,7 @@ Action本文は通常のJSONなので、LLMは`agent_get_action.source.canonical
 
 `position_bounds`は任意center/radius scanではありません。surfaceはblock position、entity等は`floor(position)`、traversabilityは返却済み`navigation_target`を基準に除外します。
 
-各`visible_surface`はrequired nullableな`state`、`placement_item`、`placement_state_ref`を返します。`state={block,properties}`が非nullなのは、閉じた建築copy allowlist、既存support用の`minecraft:dirt` / `minecraft:grass_block` / `minecraft:obsidian`、精錬target用の`minecraft:furnace` / `minecraft:blast_furnace` / `minecraft:smoker`だけで、その場合は登録propertyを省略しない完全なBlockStateです。それ以外は見た目から判別不能なpropertyを渡さないため`state=null`です。`placement_item`が非nullなら三者とも非nullです。`placement_state_ref`は成功配達したstate+itemだけから作るboundedなworld-session内の記憶で、座標surfaceの60秒TTL後も使えますが、target・support・poseの証拠を延長しません。
+各`visible_surface`はrequired nullableな`state`、`placement_item`、`placement_state_ref`を返します。`state={block,properties}`が非nullなのは、閉じた建築copy allowlist、既存support用の`minecraft:dirt` / `minecraft:grass_block` / `minecraft:obsidian`、精錬target用の`minecraft:furnace` / `minecraft:blast_furnace` / `minecraft:smoker`、釣りの照準根拠に使うsource waterだけで、その場合は登録propertyを省略しない完全なBlockStateです。流れるwaterを含むそれ以外は、見た目から判別不能なpropertyを渡さないため`state=null`です。`placement_item`が非nullなら三者とも非nullです。`placement_state_ref`は成功配達したstate+itemだけから作るboundedなworld-session内の記憶で、座標surfaceの60秒TTL後も使えますが、target・support・poseの証拠を延長しません。
 
 `agent_get_state.standard_potions`は、自分のinventory内で標準Vanilla potionとcomponentが完全一致する1本stackだけを検証し、複数slot分を`{item,potion,count}`で集計します。従来の`inventory` item-ID集計も維持されますが、water / awkward / strength等は同じitem IDなので、醸造の宣言には`standard_potions`を使います。custom color / effect / name / lore等を持つstackや不可能な複数本stackは詳細を公開せず、この一覧から除外します。
 
@@ -85,6 +85,8 @@ dropが通常の物理移動で少しずれ、古いpickup cellだけが使え�
 - `clear_known_block_plan`: `{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,expected_before}]}`
 - `pillar_up_known`: `{id,op,support,expected_support,placement_state_ref}`（または旧`source_state`+`item`のexact one-of）
 - `collect_visible_item_batch`: `{id,op,targets:[{displayed_item,target}]}`
+- `cast_known_fishing_rod`: `{id,op,hand,rod_item,target,face,expected_state}`
+- `reel_known_fishing_session`: `{id,op,fishing_session_ref,hand,rod_item}`
 
 全nodeには一意の`id`が必要です。正規opcode、他の必須field、enum、上限、capabilityはcatalogの`inputSchema`をそのまま使い、aliasを推測しません。
 
@@ -145,9 +147,17 @@ Action開始時には醸造台menuの5 item slotがすべて空で、内部のbr
 
 このnodeはAction内で1回だけ、top-level bodyの最後に置きます。`if` / `repeat`内や後続nodeは不許可です。失敗時は未開始suffixを止め、brew開始後にEsc等で中断した場合も成功やrollbackとみなしません。screen / cursor / input ownerの解放を確認してからterminal結果を返します。terminal menu所有中のrecoveryはgameplay interactionを送らないため、Action全体のinteraction上限は16のままです。
 
+## 釣りの最小slice
+
+釣りは任意item useではなく、`cast_known_fishing_rod`と`reel_known_fishing_session`の2操作だけを公開します。castは宣言した手に`minecraft:fishing_rod`があることと、配達済み`visible_surface`から無変換コピーしたsource waterの`target / face / expected_state={block:"minecraft:water",properties:{level:"0"}}`を要求します。現在poseと同じ可視面への照準を実行直前まで再確認し、通常use後に自player所有のbobber生成を確認して初めて、短寿命・world-session-localの`fishing_session_ref`をconfirmed effectへ発行します。これは可視なsource waterへの投射根拠であり、周囲のhidden waterを調べる「宝釣り可能なopen water」保証ではありません。
+
+待機は`wait_until.condition={type:"sound_clue",sound_event:"minecraft:entity.fishing_bobber.splash",since_tick,bounds:{dimension,min,max}}`だけを追加で受理します。`since_tick`はcast以後という下限であり、100 ticks以内という上限ではありません。実再生clueの600 tick TTL、指定AABB、自player所有bobberから2 blocks以内をすべて満たす場合だけ早期wakeし、このconditionの`max_ticks`は900以下です。ref自体は発行後1200 ticksで失効するため、wait終了後も有限余裕を残します。reelはfreshなref、同じ手・竿・所有bobberを再確認して1回だけ通常useし、bobber消失をserver由来のreel完了として確認します。竿durabilityとinventory集計はeffectへ記録しますが、それだけで釣果成功とは呼ばず、上位JobまたはGateが実際のloot増加を確認します。
+
+cast / reelは各4,000 ms、80 ticks、2 interactionsを予約します。2回目はtimeout・Esc等で残ったbobberを通常useで回収するcleanup用であり、raw key / mouseや一般化したitem useは公開しません。cast成功時のrefは生きたbobberを表すためcleanupで回収せず、Action間で保持します。reelまたは中断時はowned bobber消失を確認するまでterminal結果を公開せず、有限cleanupに失敗した場合は安全faultとしてOFFへ移ります。
+
 ## budgetと失敗時の直し方
 
-budgetは成功予想ではなく、worst-caseを収める停止上限です。container操作には少なくとも30秒、600 ticks、camera 360度とschema記載のinteraction数を確保します。`operate_known_menu`は30秒、600 ticks、1 interactionで、distance / camera / break / placementは0です。精錬nodeは`2,200 + 200 * max_smelts` ticks、その50倍のms、camera最大540度、7 interactionsを確保します。醸造node 1回には70秒、1400 ticks、照準と受付済みheadingへの復元を合わせて最大camera 540度、16 interactionsを確保し、distance / break / placementは0とします。直前に`face_known_position`が必要なら、そのnodeのcostは別途加算します。`apply_known_block_plan`は1 entryごとに15秒、300 ticks、camera 80度、1 placement、`clear_known_block_plan`は同じ時間・cameraで1 breakを確保します。8 entryなら120秒、2400 ticks、camera 640度と8 placementsまたは8 breaksです。`pillar_up_known`は15秒、300 ticks、distance 2、camera 360度、1 placementです。他の8-target mutation batchには目安として120秒、2400 ticks、最大720 camera度と、処理に応じた8 interactions / breaks / placementsを確保します。targetは入力順に実行するため、その順序のworst-caseが720 camera度を超える場合はruntimeに並べ替えさせず、小さいbatchへ分割します。
+budgetは成功予想ではなく、worst-caseを収める停止上限です。釣りのcast / reelは各4秒、80 ticks、2 interactionsで、castだけは現在証明された照準camera量も加えます。container操作には少なくとも30秒、600 ticks、camera 360度とschema記載のinteraction数を確保します。`operate_known_menu`は30秒、600 ticks、1 interactionで、distance / camera / break / placementは0です。精錬nodeは`2,200 + 200 * max_smelts` ticks、その50倍のms、camera最大540度、7 interactionsを確保します。醸造node 1回には70秒、1400 ticks、照準と受付済みheadingへの復元を合わせて最大camera 540度、16 interactionsを確保し、distance / break / placementは0とします。直前に`face_known_position`が必要なら、そのnodeのcostは別途加算します。`apply_known_block_plan`は1 entryごとに15秒、300 ticks、camera 80度、1 placement、`clear_known_block_plan`は同じ時間・cameraで1 breakを確保します。8 entryなら120秒、2400 ticks、camera 640度と8 placementsまたは8 breaksです。`pillar_up_known`は15秒、300 ticks、distance 2、camera 360度、1 placementです。他の8-target mutation batchには目安として120秒、2400 ticks、最大720 camera度と、処理に応じた8 interactions / breaks / placementsを確保します。targetは入力順に実行するため、その順序のworst-caseが720 camera度を超える場合はruntimeに並べ替えさせず、小さいbatchへ分割します。
 
 schema違反はcatalog順に最大4件、budget不足は不足component名をまとめて返します。提出値や未知property名は診断へ反射されません。mutationやdrop生成後の`TARGET_UNKNOWN`をfield推測で直すのではなく、Actionを区切って新しいframeを観測してください。
 

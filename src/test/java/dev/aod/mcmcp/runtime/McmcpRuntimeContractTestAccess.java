@@ -18,7 +18,7 @@ public final class McmcpRuntimeContractTestAccess {
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 Set.of(
                         "movement", "camera", "block_break", "block_interact", "block_place",
-                        "inventory_transfer"),
+                        "inventory_transfer", "item_use"),
                 null,
                 1L);
         return McmcpRuntime.statePayload(lock, false, null, List.of());

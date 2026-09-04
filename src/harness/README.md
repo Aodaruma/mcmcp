@@ -86,6 +86,13 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
   cell at `205,201,204` without entering that halo.
   The player starts on the lower ladder landing with three lamps, two levers, one dust, two glass,
   and one smooth-stone block reserved for the one-step pillar smoke test.
+- `/mcmcp_fixture phase5 fishing` — prepares a closed Vanilla fishing gate with an 11×11 pool of
+  three-deep source water, two full air layers above it, a lit non-spawnable floor, and a dry fixed
+  north-shore stand. The Survival player has only one unenchanted damage-0 fishing rod. Existing
+  item entities, bobbers, and other entities in the bounded workspace are removed during T0 setup;
+  after setup there is no fixture listener, RNG override, bite acceleration, loot injection, or
+  world mutation. `fishing_status` is a baseline-only readiness summary and `fishing_oracle` is a
+  post-terminal manual oracle.
 - `/mcmcp_fixture phase5 combined_wheat` — prepares the production-prompt wheat E2E. The player
   starts in Survival with a completely empty inventory, facing a visible and normally reachable
   single chest containing one damage-37 vanilla iron hoe and 64 wheat seeds. A closed oak fence

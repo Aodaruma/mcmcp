@@ -285,9 +285,9 @@
               "granted_capabilities": {
                 "type": "array",
                 "minItems": 0,
-                "maxItems": 6,
+                "maxItems": 7,
                 "uniqueItems": true,
-                "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer"]}
+                "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use"]}
               }
             },
             "required": ["mode", "ready_expires_at", "game_paused", "granted_capabilities"]
@@ -482,15 +482,15 @@
                   "max_repeat_count": {"const": 16},
                   "allowed_capabilities": {
                     "type": "array",
-                    "minItems": 6,
-                    "maxItems": 6,
+                    "minItems": 7,
+                    "maxItems": 7,
                     "uniqueItems": true,
-                    "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer"]}
+                    "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use"]}
                   },
                   "available_operations": {
                     "type": "array",
-                    "minItems": 32,
-                    "maxItems": 32,
+                    "minItems": 34,
+                    "maxItems": 34,
                     "items": {
                       "type": "object",
                       "additionalProperties": false,
@@ -499,13 +499,13 @@
                         "version": {"const": 1},
                         "required_capabilities": {
                           "type": "array", "minItems": 0, "maxItems": 3, "uniqueItems": true,
-                          "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer"]}
+                          "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use"]}
                         },
                         "capability_rule": {"enum": ["fixed", "union_of_descendants"]},
                         "locally_granted": {"type": "boolean"},
                         "locally_missing_capabilities": {
                           "type": "array", "minItems": 0, "maxItems": 3, "uniqueItems": true,
-                          "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer"]}
+                          "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use"]}
                         },
                         "reference_fields": {
                           "type": "array",
@@ -516,7 +516,7 @@
                             "additionalProperties": false,
                             "properties": {
                               "path": {"type": "string", "minLength": 1, "maxLength": 160},
-                              "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref"]},
+                              "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref"]},
                               "requirement": {"enum": ["required", "one_of_inline_source", "required_with_fingerprint"]},
                               "replay_policy": {"const": "refresh_required"}
                             },
@@ -529,14 +529,14 @@
                   },
                   "reference_descriptors": {
                     "type": "array",
-                    "minItems": 3,
-                    "maxItems": 3,
+                    "minItems": 4,
+                    "maxItems": 4,
                     "items": {
                       "type": "object",
                       "additionalProperties": false,
                       "properties": {
-                        "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref"]},
-                        "issued_by": {"enum": ["agent_get_state", "agent_get_observation"]},
+                        "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref"]},
+                        "issued_by": {"enum": ["agent_get_state", "agent_get_observation", "agent_get_action"]},
                         "source_path": {"type": "string", "minLength": 1, "maxLength": 160},
                         "consumer_operations": {
                           "type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": true,
@@ -639,7 +639,7 @@
     {
       "name": "agent_get_observation",
       "title": "Get MCMCP Observation",
-      "description": "Returns a stable, paged projection of one policy-filtered omnidirectional frame; it accepts no arbitrary center or radius. Ask for one purpose at a time: crop/chest/gate=visible_surface, drops=visible_entity, route=traversability. Use optional filter to return only relevant block_ids, faces, entity_types, displayed_items, crop_mature, or one inclusive position_bounds; filters applicable to a record kind are ANDed and only remove already-policy-visible records, so they cannot weaken safety evidence or expose hidden state. faces filters visible_surface before the one-face-per-position representative is selected. position_bounds anchors visible_surface at position, visible_entity/hazard/unknown_boundary/sound_clue at floor(position), and traversability at navigation_target. For harvest use {block_ids:[\"minecraft:wheat\"],crop_mature:true}; for drops use {entity_types:[\"minecraft:item\"],displayed_items:[\"minecraft:wheat\",\"minecraft:wheat_seeds\"]}. visible_surface is one representative face per block position and is ordered mature crop, immature crop, then other surfaces, near-first. Every visible_surface includes required nullable state, placement_item, and placement_state_ref fields. state is complete only for the closed construction copy/support and furnace-family target allowlist and is null for all other blocks so non-rendered properties never cross the visual boundary. A non-null placement_item has a non-null state and session-scoped opaque placement_state_ref. The ref becomes usable only after successful response delivery, survives the 60-second coordinate-evidence TTL, and is cleared at the world-session boundary; target/support/pose evidence remains current and JIT-checked. Use the smallest useful limit. If next_cursor is non-null, either continue that exact frame/kinds/filter query immediately or allow its bounded 60-second lease to expire; abandoning two paged queries makes a third root query SERVER_BUSY. Only static visible_surface coordinate records actually returned may remain planner-usable for at most 60 seconds; dynamic records are never extended. On FRAME_EXPIRED, call agent_get_state and retry with observation.latest_frame_id.",
+      "description": "Returns a stable, paged projection of one policy-filtered omnidirectional frame; it accepts no arbitrary center or radius. Ask for one purpose at a time: crop/chest/gate=visible_surface, drops=visible_entity, route=traversability. Use optional filter to return only relevant block_ids, faces, entity_types, displayed_items, crop_mature, or one inclusive position_bounds; filters applicable to a record kind are ANDed and only remove already-policy-visible records, so they cannot weaken safety evidence or expose hidden state. faces filters visible_surface before the one-face-per-position representative is selected. position_bounds anchors visible_surface at position, visible_entity/hazard/unknown_boundary/sound_clue at floor(position), and traversability at navigation_target. For harvest use {block_ids:[\"minecraft:wheat\"],crop_mature:true}; for drops use {entity_types:[\"minecraft:item\"],displayed_items:[\"minecraft:wheat\",\"minecraft:wheat_seeds\"]}. visible_surface is one representative face per block position and is ordered mature crop, immature crop, then other surfaces, near-first. Every visible_surface includes required nullable state, placement_item, and placement_state_ref fields. state is complete only for the closed construction copy/support and furnace-family target allowlist, plus exact source water used as a fishing cast witness; non-source water and all other blocks remain null so non-rendered properties never cross the visual boundary. A non-null placement_item has a non-null state and session-scoped opaque placement_state_ref. The ref becomes usable only after successful response delivery, survives the 60-second coordinate-evidence TTL, and is cleared at the world-session boundary; target/support/pose evidence remains current and JIT-checked. Use the smallest useful limit. If next_cursor is non-null, either continue that exact frame/kinds/filter query immediately or allow its bounded 60-second lease to expire; abandoning two paged queries makes a third root query SERVER_BUSY. Only static visible_surface coordinate records actually returned may remain planner-usable for at most 60 seconds; dynamic records are never extended. On FRAME_EXPIRED, call agent_get_state and retry with observation.latest_frame_id.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -753,6 +753,27 @@
               "z": {"type": "number", "minimum": -30000000, "maximum": 30000000}
             },
             "required": ["dimension", "x", "y", "z"]
+          },
+          "worldPoint": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {"type": "number", "minimum": -30000000, "maximum": 30000000},
+              "y": {"type": "number", "minimum": -2048, "maximum": 2048},
+              "z": {"type": "number", "minimum": -30000000, "maximum": 30000000}
+            },
+            "required": ["x", "y", "z"]
+          },
+          "worldBounds": {
+            "type": "object",
+            "description": "Ordered continuous AABB in one dimension; runtime additionally limits each axis span to 64 blocks.",
+            "additionalProperties": false,
+            "properties": {
+              "dimension": {"$ref": "#/$defs/resourceLocation"},
+              "min": {"$ref": "#/$defs/worldPoint"},
+              "max": {"$ref": "#/$defs/worldPoint"}
+            },
+            "required": ["dimension", "min", "max"]
           },
           "blockPosition": {
             "type": "object",
@@ -976,7 +997,7 @@
     {
       "name": "agent_start_action",
       "title": "Start MCMCP Action",
-"description": "Runs one validated Action DSL v1 program while in-game MCP operation is enabled. Choose Action boundaries from current evidence: combine nodes only when every later node is admissible now or has an explicitly supported dependency proof. Batch 2..8 targets within one crop stage; when a mutation creates new drops or newly exposed surfaces, finish, reobserve, then start the next Action. apply_known_block_plan is the bounded exception for explicitly declared earlier-entry placement dependencies. Put wait_until immediately after its plant node when growth must be awaited. Copy traversability.navigation_target verbatim into navigate_to_known.target; never derive, floor, round, or copy continuous traversability.from/to coordinates. When you have a visible block but no safe feet coordinate, copy visible_surface.position and block verbatim into approach_known_surface; the runtime selects a known interaction-range navigation cell, then finish the Action and reobserve before mutation. For a later stationary dry bottom oak/cobblestone stair plan whose directional placement context is not reachable from the current pose, copy the same anchor/transform/entries into the movement-only approach_known_placement; entries require placement_state_ref plus current UP support expected_state, and the node must be the only top-level node. It selects one known stand cell for every entry, then finish and reobserve before apply_known_block_plan. collect_visible_item and collect_visible_item_batch targets are the only continuous positions: copy visible_entity.position and displayed_item without rounding. Use collect_visible_item_batch for 2..8 current drops instead of one Action per item. For building copy, use only visible_surface records whose placement_item is non-null: prefer placement_state_ref, or copy state verbatim into source_state and placement_item into item. For construction clear, copy the complete current target state into expected_before; after terminal fresh-air verification, reobserve before a separate apply_known_block_plan replacement Action. Never convert state properties yourself. Construction requires every support to be within 40 total yaw+pitch degrees of the admitted heading; when it is not, copy one unexpired delivered visible support's position, face, and block verbatim into face_known_block_face immediately before the plan, or split the plan. This camera-only recovery can use older evidence within its TTL; every later mutation separately requires current evidence. For crafting, query agent_get_state recipes first, copy one current recipe_ref and fingerprint into craft_known_recipe.recipe_ref and recipe_fingerprint, and use one current visible minecraft:crafting_table. For smelting, copy one current furnace-family recipe_ref and fingerprint, the visible station state, and one default-component fuel into smelt_known_recipe, and set max_smelts to the exact current input-stack count 1..64; this exact-stack node must be the final top-level node outside if/repeat. For a known Menu operation, copy one current operation_ref into operate_known_menu; this node must be the final top-level node outside if/repeat. For brewing, use own-inventory standard_potions evidence and one current visible minecraft:brewing_stand; brew_known_potion_batch accepts one catalog-fixed standard Vanilla one-step recipe for 1..3 bottles and must be the final top-level node outside if/repeat. For an exact generic break, copy target, face, and complete expected_state from one current visible_surface into break_known_block; only the catalog-declared block/tool/drop triples are accepted, success also requires expected_drop inventory growth to minimum_inventory_count, and repeat is forbidden. For Redstone, apply_known_redstone_spec supports only the stationary one-lever identity slices declared by its schema: one direct lamp, the fixed two-lamp fan-out, or the fixed one-dust straight identity; the straight-wire slice requires current visible minecraft:glass UP supports under its lamp, dust, and lever; do not infer variable-length or bent wire or arbitrary logic. The envelope is {schema_version:1,program:{dsl_version:1,name?:string,capabilities:string[],body:node[]},budget:{max_duration_ms,max_ticks,max_distance_blocks,max_camera_degrees,max_interactions,max_blocks_broken,max_blocks_placed}}. Every node needs a unique id matching ^[a-z][a-z0-9_-]{0,31}$ and one exact op. Frequent exact signatures are navigate_to_known:{id,op,target,tolerance}; approach_known_surface:{id,op,target,expected_block}; approach_known_placement:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}; face_known_block_face:{id,op,target,face,expected_block}; break_known_block:{id,op,target,face,expected_state,tool_item,expected_drop,minimum_inventory_count}; open_known_passage/inspect_known_container:{id,op,target,expected_block}; take_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}; store_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_container_count}; craft_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},max_crafts}; smelt_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},fuel:{item,stack_policy},max_smelts}; operate_known_menu:{id,op,operation_ref}; brew_known_potion_batch:{id,op,target,expected_block,input:{item,potion,count},ingredient_item,fuel_item,expected_output:{item,potion,count}}; till_known_batch:{id,op,targets:[position],expected_block,hoe_item}; plant_known_wheat_batch:{id,op,targets:[{target,support}],seed_item}; harvest_known_wheat_batch:{id,op,targets:[position]}; apply_known_block_plan:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}; clear_known_block_plan:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,expected_before}]}; pillar_up_known:{id,op,support,expected_support,placement_state_ref}; apply_known_redstone_spec:{id,op,anchor,rotation,components:[{id,role,block}],truth_table:[{inputs:{input},outputs:{output}}],footprint:{x,y,z},timing:{settle_ticks}}; collect_visible_item_batch:{id,op,targets:[{displayed_item,target}]}. apply_known_block_plan entries and pillar_up_known each select placement_state_ref or legacy source_state plus item as an exact one-of. Both support.expected_state and support.dependency_entry_id are required nullable fields and exactly one must be non-null. Exact ops are navigate_to_known, approach_known_surface, approach_known_placement, face_known_position, face_known_block_face, break_known_face, break_known_block, till_known_block, till_known_batch, plant_known_wheat, plant_known_wheat_batch, harvest_known_wheat, harvest_known_wheat_batch, apply_known_block_plan, clear_known_block_plan, pillar_up_known, apply_known_redstone_spec, open_known_fence_gate, open_known_passage, inspect_known_container, take_known_container_stack, store_known_container_stack, craft_known_recipe, smelt_known_recipe, operate_known_menu, brew_known_potion_batch, collect_visible_item, collect_visible_item_batch, wait_ticks, wait_until, if, and repeat; use the exact inputSchema fields and no aliases. Required capabilities are navigate/approach_known_surface/approach_known_placement/collect=movement; face_known_position/face_known_block_face=camera; break/harvest/clear_known_block_plan=camera+block_break; till/open=camera+block_interact; plant/apply_known_block_plan=camera+block_place; pillar_up_known=movement+camera+block_place; apply_known_redstone_spec=camera+block_interact+block_place; operate_known_menu=inventory_transfer; inspect/take/store/craft/smelt/brew=camera+inventory_transfer. For each inspect/take/store/craft reserve at least 30000 ms, 600 ticks, 360 camera degrees, and its schema-stated interactions; craft reserves exactly 1+4*max_crafts interactions. For operate_known_menu reserve at least 30000 ms, 600 ticks, and 1 interaction; distance, camera, breaks, and placements are zero. For smelt reserve 2200+200*max_smelts ticks, 50 times that many milliseconds, up to 540 camera degrees for aim plus view restoration, and 7 interactions. For brew reserve at least 70000 ms, 1400 ticks, up to 540 camera degrees for aim plus view restoration, and 16 interactions; distance, breaks, and placements are zero. For approach_known_placement reserve a normal navigation budget up to 30000 ms, 600 ticks, and 32 distance blocks with zero camera/interactions/breaks/placements. For each apply_known_block_plan entry reserve 15000 ms, 300 ticks, 80 camera degrees, and one placement; an 8-entry plan therefore needs 120000 ms, 2400 ticks, 640 camera degrees, and 8 placements with zero movement, interactions, and breaks. clear_known_block_plan uses the same per-entry time and camera bound with one break instead of one placement. For pillar_up_known reserve 15000 ms, 300 ticks, 2 distance blocks, 360 camera degrees, and one placement; interactions and breaks are zero. For apply_known_redstone_spec reserve 100*(component_count+2) + 3*settle_ticks ticks, 50 times that many milliseconds, 720 camera degrees, 2 interactions, and component_count placements; distance and breaks are zero. For another 8-target mutation batch, reserve 120000 ms, 2400 ticks, up to the 720 camera-degree policy maximum, and 8 interactions/breaks/placements as applicable. Targets always execute in submitted order; if that order costs more than 720 camera degrees, split it into smaller batches instead of reordering at runtime. take/store stack_policy is exactly default_components_only or item_id_any_components; craft/smelt goal.stack_policy and smelt fuel.stack_policy are exactly default_components_only. Use observed coordinates and policy maxima when unsure of an adequate budget. PROGRAM_BUDGET_UNPROVABLE reports all insufficient budget component names without echoing submitted values.",
+"description": "Runs one validated Action DSL v1 program while in-game MCP operation is enabled. Choose Action boundaries from current evidence: combine nodes only when every later node is admissible now or has an explicitly supported dependency proof. Batch 2..8 targets within one crop stage; when a mutation creates new drops or newly exposed surfaces, finish, reobserve, then start the next Action. apply_known_block_plan is the bounded exception for explicitly declared earlier-entry placement dependencies. Put wait_until immediately after its plant node when growth must be awaited. Copy traversability.navigation_target verbatim into navigate_to_known.target; never derive, floor, round, or copy continuous traversability.from/to coordinates. When you have a visible block but no safe feet coordinate, copy visible_surface.position and block verbatim into approach_known_surface; the runtime selects a known interaction-range navigation cell, then finish the Action and reobserve before mutation. For a later stationary dry bottom oak/cobblestone stair plan whose directional placement context is not reachable from the current pose, copy the same anchor/transform/entries into the movement-only approach_known_placement; entries require placement_state_ref plus current UP support expected_state, and the node must be the only top-level node. It selects one known stand cell for every entry, then finish and reobserve before apply_known_block_plan. collect_visible_item and collect_visible_item_batch targets are the only continuous positions: copy visible_entity.position and displayed_item without rounding. Use collect_visible_item_batch for 2..8 current drops instead of one Action per item. For building copy, use only visible_surface records whose placement_item is non-null: prefer placement_state_ref, or copy state verbatim into source_state and placement_item into item. For construction clear, copy the complete current target state into expected_before; after terminal fresh-air verification, reobserve before a separate apply_known_block_plan replacement Action. Never convert state properties yourself. Construction requires every support to be within 40 total yaw+pitch degrees of the admitted heading; when it is not, copy one unexpired delivered visible support's position, face, and block verbatim into face_known_block_face immediately before the plan, or split the plan. This camera-only recovery can use older evidence within its TTL; every later mutation separately requires current evidence. For crafting, query agent_get_state recipes first, copy one current recipe_ref and fingerprint into craft_known_recipe.recipe_ref and recipe_fingerprint, and use one current visible minecraft:crafting_table. For smelting, copy one current furnace-family recipe_ref and fingerprint, the visible station state, and one default-component fuel into smelt_known_recipe, and set max_smelts to the exact current input-stack count 1..64; this exact-stack node must be the final top-level node outside if/repeat. For a known Menu operation, copy one current operation_ref into operate_known_menu; this node must be the final top-level node outside if/repeat. For brewing, use own-inventory standard_potions evidence and one current visible minecraft:brewing_stand; brew_known_potion_batch accepts one catalog-fixed standard Vanilla one-step recipe for 1..3 bottles and must be the final top-level node outside if/repeat. For an exact generic break, copy target, face, and complete expected_state from one current visible_surface into break_known_block; only the catalog-declared block/tool/drop triples are accepted, success also requires expected_drop inventory growth to minimum_inventory_count, and repeat is forbidden. For Redstone, apply_known_redstone_spec supports only the stationary one-lever identity slices declared by its schema: one direct lamp, the fixed two-lamp fan-out, or the fixed one-dust straight identity; the straight-wire slice requires current visible minecraft:glass UP supports under its lamp, dust, and lever; do not infer variable-length or bent wire or arbitrary logic. The envelope is {schema_version:1,program:{dsl_version:1,name?:string,capabilities:string[],body:node[]},budget:{max_duration_ms,max_ticks,max_distance_blocks,max_camera_degrees,max_interactions,max_blocks_broken,max_blocks_placed}}. Every node needs a unique id matching ^[a-z][a-z0-9_-]{0,31}$ and one exact op. Frequent exact signatures are navigate_to_known:{id,op,target,tolerance}; approach_known_surface:{id,op,target,expected_block}; approach_known_placement:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}; face_known_block_face:{id,op,target,face,expected_block}; break_known_block:{id,op,target,face,expected_state,tool_item,expected_drop,minimum_inventory_count}; open_known_passage/inspect_known_container:{id,op,target,expected_block}; take_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_inventory_count}; store_known_container_stack:{id,op,target,expected_block,item,stack_policy,minimum_container_count}; craft_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},max_crafts}; smelt_known_recipe:{id,op,recipe_ref,recipe_fingerprint,goal:{item,stack_policy,minimum_inventory_count},station:{kind,target,expected_state},fuel:{item,stack_policy},max_smelts}; operate_known_menu:{id,op,operation_ref}; brew_known_potion_batch:{id,op,target,expected_block,input:{item,potion,count},ingredient_item,fuel_item,expected_output:{item,potion,count}}; till_known_batch:{id,op,targets:[position],expected_block,hoe_item}; plant_known_wheat_batch:{id,op,targets:[{target,support}],seed_item}; harvest_known_wheat_batch:{id,op,targets:[position]}; apply_known_block_plan:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}; clear_known_block_plan:{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,expected_before}]}; pillar_up_known:{id,op,support,expected_support,placement_state_ref}; apply_known_redstone_spec:{id,op,anchor,rotation,components:[{id,role,block}],truth_table:[{inputs:{input},outputs:{output}}],footprint:{x,y,z},timing:{settle_ticks}}; collect_visible_item_batch:{id,op,targets:[{displayed_item,target}]}; cast_known_fishing_rod:{id,op,hand,rod_item,target,face,expected_state}; reel_known_fishing_session:{id,op,fishing_session_ref,hand,rod_item}. apply_known_block_plan entries and pillar_up_known each select placement_state_ref or legacy source_state plus item as an exact one-of. Both support.expected_state and support.dependency_entry_id are required nullable fields and exactly one must be non-null. Exact ops are navigate_to_known, approach_known_surface, approach_known_placement, face_known_position, face_known_block_face, break_known_face, break_known_block, till_known_block, till_known_batch, plant_known_wheat, plant_known_wheat_batch, harvest_known_wheat, harvest_known_wheat_batch, apply_known_block_plan, clear_known_block_plan, pillar_up_known, apply_known_redstone_spec, open_known_fence_gate, open_known_passage, inspect_known_container, take_known_container_stack, store_known_container_stack, craft_known_recipe, smelt_known_recipe, operate_known_menu, brew_known_potion_batch, collect_visible_item, collect_visible_item_batch, cast_known_fishing_rod, reel_known_fishing_session, wait_ticks, wait_until, if, and repeat; use the exact inputSchema fields and no aliases. Required capabilities are navigate/approach_known_surface/approach_known_placement/collect=movement; face_known_position/face_known_block_face=camera; break/harvest/clear_known_block_plan=camera+block_break; till/open=camera+block_interact; plant/apply_known_block_plan=camera+block_place; pillar_up_known=movement+camera+block_place; apply_known_redstone_spec=camera+block_interact+block_place; operate_known_menu=inventory_transfer; cast_known_fishing_rod=camera+item_use; reel_known_fishing_session=item_use; inspect/take/store/craft/smelt/brew=camera+inventory_transfer. For cast_known_fishing_rod reserve 4000 ms, 80 ticks, its currently proved camera delta, and 2 interactions; for reel_known_fishing_session reserve 4000 ms, 80 ticks, and 2 interactions, with zero movement, camera, breaks, and placements. For each inspect/take/store/craft reserve at least 30000 ms, 600 ticks, 360 camera degrees, and its schema-stated interactions; craft reserves exactly 1+4*max_crafts interactions. For operate_known_menu reserve at least 30000 ms, 600 ticks, and 1 interaction; distance, camera, breaks, and placements are zero. For smelt reserve 2200+200*max_smelts ticks, 50 times that many milliseconds, up to 540 camera degrees for aim plus view restoration, and 7 interactions. For brew reserve at least 70000 ms, 1400 ticks, up to 540 camera degrees for aim plus view restoration, and 16 interactions; distance, breaks, and placements are zero. For approach_known_placement reserve a normal navigation budget up to 30000 ms, 600 ticks, and 32 distance blocks with zero camera/interactions/breaks/placements. For each apply_known_block_plan entry reserve 15000 ms, 300 ticks, 80 camera degrees, and one placement; an 8-entry plan therefore needs 120000 ms, 2400 ticks, 640 camera degrees, and 8 placements with zero movement, interactions, and breaks. clear_known_block_plan uses the same per-entry time and camera bound with one break instead of one placement. For pillar_up_known reserve 15000 ms, 300 ticks, 2 distance blocks, 360 camera degrees, and one placement; interactions and breaks are zero. For apply_known_redstone_spec reserve 100*(component_count+2) + 3*settle_ticks ticks, 50 times that many milliseconds, 720 camera degrees, 2 interactions, and component_count placements; distance and breaks are zero. For another 8-target mutation batch, reserve 120000 ms, 2400 ticks, up to the 720 camera-degree policy maximum, and 8 interactions/breaks/placements as applicable. Targets always execute in submitted order; if that order costs more than 720 camera degrees, split it into smaller batches instead of reordering at runtime. take/store stack_policy is exactly default_components_only or item_id_any_components; craft/smelt goal.stack_policy and smelt fuel.stack_policy are exactly default_components_only. Use observed coordinates and policy maxima when unsure of an adequate budget. PROGRAM_BUDGET_UNPROVABLE reports all insufficient budget component names without echoing submitted values.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1954,6 +1975,39 @@
             },
             "required": ["id", "op", "targets"]
           },
+          "castKnownFishingRodNode": {
+            "type": "object",
+            "description": "Cast only an exact fishing rod already held in the declared hand toward a fresh delivery-backed visible face of exact source water. The current player pose and ray witness are revalidated immediately before the bounded normal item-use call; arbitrary item use is not exposed. Success requires an owned bobber to appear and returns a short-lived world-session-local fishing_session_ref in the confirmed effect ledger. The node must be the only top-level Action node. This source-water ray is a safe cast witness, not a hidden-neighborhood or treasure-quality open-water guarantee.",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "cast_known_fishing_rod"},
+              "hand": {"enum": ["main_hand", "off_hand"]},
+              "rod_item": {"const": "minecraft:fishing_rod"},
+              "target": {"$ref": "#/$defs/position"},
+              "face": {"enum": ["down", "up", "north", "south", "west", "east"]},
+              "expected_state": {
+                "allOf": [
+                  {"$ref": "#/$defs/completeBlockState"},
+                  {"properties": {"block": {"const": "minecraft:water"}}}
+                ]
+              }
+            },
+            "required": ["id", "op", "hand", "rod_item", "target", "face", "expected_state"]
+          },
+          "reelKnownFishingSessionNode": {
+            "type": "object",
+            "description": "Consume one fresh fishing_session_ref for the exact still-owned bobber and exact held fishing rod/hand, then perform one bounded normal item-use reel. Success requires owned-bobber disappearance plus a rod-durability or aggregate inventory delta; it deliberately does not fix the caught item type. Raw key/mouse and arbitrary item use are not exposed.",
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/nodeId"},
+              "op": {"const": "reel_known_fishing_session"},
+              "fishing_session_ref": {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"},
+              "hand": {"enum": ["main_hand", "off_hand"]},
+              "rod_item": {"const": "minecraft:fishing_rod"}
+            },
+            "required": ["id", "op", "fishing_session_ref", "hand", "rod_item"]
+          },
           "waitNode": {
             "type": "object",
             "additionalProperties": false,
@@ -1973,6 +2027,18 @@
             },
             "required": ["type", "target"]
           },
+          "fishingSplashCondition": {
+            "type": "object",
+            "description": "Wake on an actual client playback start for the exact Vanilla bobber splash at or after since_tick, inside the declared finite AABB and within two blocks of the local player's currently owned bobber. since_tick is a lower bound, not a five-second age cap; max_ticks is additionally limited to 900 so the 1200-tick fishing_session_ref remains usable.",
+            "additionalProperties": false,
+            "properties": {
+              "type": {"const": "sound_clue"},
+              "sound_event": {"const": "minecraft:entity.fishing_bobber.splash"},
+              "since_tick": {"type": "integer", "minimum": 0},
+              "bounds": {"$ref": "#/$defs/worldBounds"}
+            },
+            "required": ["type", "sound_event", "since_tick", "bounds"]
+          },
           "waitUntilNode": {
             "type": "object",
             "description": "At primitive start, target must be a current policy-visible wheat surface under a target-scoped fresh proof: an exact retained target mutation revision is combined with the visual barrier without being invalidated by unrelated mutation evictions; when the exact revision is absent, the global eviction floor applies fail-closed. The adopted visible_surface.eye_origin must match the current JIT observer eye within the fixed epsilon; a stale frame from a previous observer position is rejected. Authorization preserves that witness eye_origin rather than substituting the current eye, and also binds the exact world/session/dimension/target, current visual barrier, and player position. Any visual-barrier advance or observer drift beyond the epsilon terminates before BlockState is read; navigation-neutral wheat AGE updates do not advance that barrier. While the fence remains current, execution reads live BlockState only at that authorized loaded coordinate: immature wheat stays pending, mature wheat completes, and replacement, unload, or world/session change terminates fail-safe without exposing live state.",
@@ -1980,7 +2046,10 @@
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},
               "op": {"const": "wait_until"},
-              "condition": {"$ref": "#/$defs/cropMatureCondition"},
+              "condition": {"oneOf": [
+                {"$ref": "#/$defs/cropMatureCondition"},
+                {"$ref": "#/$defs/fishingSplashCondition"}
+              ]},
               "max_ticks": {"type": "integer", "minimum": 1, "maximum": 15000}
             },
             "required": ["id", "op", "condition", "max_ticks"]
@@ -2051,6 +2120,8 @@
               {"$ref": "#/$defs/brewKnownPotionBatchNode"},
               {"$ref": "#/$defs/collectVisibleItemNode"},
               {"$ref": "#/$defs/collectVisibleItemBatchNode"},
+              {"$ref": "#/$defs/castKnownFishingRodNode"},
+              {"$ref": "#/$defs/reelKnownFishingSessionNode"},
               {"$ref": "#/$defs/waitNode"},
               {"$ref": "#/$defs/waitUntilNode"},
               {"$ref": "#/$defs/ifNode"},
@@ -2072,9 +2143,9 @@
               "capabilities": {
                 "type": "array",
                 "minItems": 0,
-                "maxItems": 6,
+                "maxItems": 7,
                 "uniqueItems": true,
-                "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer"]}
+                "items": {"enum": ["movement", "camera", "block_break", "block_interact", "block_place", "inventory_transfer", "item_use"]}
               },
               "body": {
                 "type": "array",
@@ -2692,26 +2763,6 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "additionalProperties": false,
-        "$defs": {
-          "effectObservation": {
-            "type": "object",
-            "description": "Bounded semantic observation only; raw menu slots, payloads, credentials, and secrets are never present.",
-            "additionalProperties": false,
-            "properties": {
-              "block": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 192},
-              "properties": {
-                "type": "object",
-                "maxProperties": 32,
-                "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"},
-                "additionalProperties": {"type": "string", "pattern": "^[a-z0-9_.:/,+\\-= ]*$", "maxLength": 192}
-              },
-              "affected_blocks": {"type": "integer", "minimum": 1, "maximum": 2},
-              "source_count": {"type": "integer", "minimum": 0, "maximum": 2304},
-              "destination_count": {"type": "integer", "minimum": 0, "maximum": 2304},
-              "transferred": {"type": "integer", "minimum": 1, "maximum": 64}
-            }
-          }
-        },
         "properties": {
           "schema_version": {"const": 1},
           "action_id": {
@@ -2751,6 +2802,27 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "additionalProperties": false,
+        "$defs": {
+          "effectObservation": {
+            "type": "object",
+            "description": "Bounded semantic observation only; raw menu slots, payloads, credentials, and secrets are never present.",
+            "additionalProperties": false,
+            "properties": {
+              "block": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 192},
+              "properties": {"type": "object", "maxProperties": 32, "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"}, "additionalProperties": {"type": "string", "pattern": "^[a-z0-9_.:/,+\\-= ]*$", "maxLength": 192}},
+              "affected_blocks": {"type": "integer", "minimum": 1, "maximum": 2},
+              "source_count": {"type": "integer", "minimum": 0, "maximum": 2304},
+              "destination_count": {"type": "integer", "minimum": 0, "maximum": 2304},
+              "transferred": {"type": "integer", "minimum": 1, "maximum": 64},
+              "hand": {"enum": ["main_hand", "off_hand"]},
+              "rod_item": {"const": "minecraft:fishing_rod"},
+              "bobber_present": {"type": "boolean"},
+              "fishing_session_ref": {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"},
+              "rod_damage": {"type": "integer", "minimum": -1, "maximum": 2147483647},
+              "inventory_count": {"type": "integer", "minimum": 0, "maximum": 2304}
+            }
+          }
+        },
         "properties": {
           "schema_version": {"const": 1},
           "action_id": {
@@ -2838,7 +2910,7 @@
               "properties": {
                 "seq": {"type": "integer", "minimum": 1, "maximum": 64},
                 "node_id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"},
-                "kind": {"enum": ["block_place", "block_break", "container_take", "container_store"]},
+                "kind": {"enum": ["block_place", "block_break", "container_take", "container_store", "fishing_cast", "fishing_reel"]},
                 "subject": {"type": "string", "pattern": "^[a-z0-9_.:/,+-]{1,192}$"},
                 "observed_before": {"$ref": "#/$defs/effectObservation"},
                 "observed_after": {"$ref": "#/$defs/effectObservation"},
@@ -2907,12 +2979,12 @@
               "additionalProperties": false,
               "properties": {
                 "path": {"type": "string", "minLength": 1, "maxLength": 512},
-                "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref"]},
+                "kind": {"enum": ["operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref"]},
                 "coupled_paths": {
                   "type": "array", "minItems": 0, "maxItems": 1,
                   "items": {"type": "string", "minLength": 1, "maxLength": 512}
                 },
-                "refresh_tool": {"enum": ["agent_get_state", "agent_get_observation"]},
+                "refresh_tool": {"enum": ["agent_get_state", "agent_get_observation", "agent_get_action"]},
                 "source_path": {"type": "string", "minLength": 1, "maxLength": 160},
                 "status": {"const": "refresh_required"}
               },

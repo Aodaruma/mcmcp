@@ -29,6 +29,7 @@ public final class ActionDslValidator {
     public static final int MAX_PREDICATE_OPERANDS = 4;
     public static final int MAX_REQUEST_BYTES = 64 * 1024;
     public static final int MAX_ACTION_TICKS = 15_000;
+    public static final int MAX_FISHING_SOUND_WAIT_TICKS = 900;
     public static final long MAX_ACTION_DURATION_MILLIS = MAX_ACTION_TICKS * 50L;
     public static final int MAX_ACTION_CAMERA_DEGREES = 720;
     public static final int MAX_BLOCKS_BROKEN = 8;
@@ -117,6 +118,9 @@ public final class ActionDslValidator {
         validateExclusiveNode(program.body(),
                 node -> node instanceof ActionDsl.ApproachKnownPlacement,
                 "approach_known_placement must be the only top-level Action node");
+        validateExclusiveNode(program.body(),
+                node -> node instanceof ActionDsl.CastKnownFishingRod,
+                "cast_known_fishing_rod must be the only top-level Action node");
         var walk = new Walk();
         int executed = walkSequence(program.body(), 1, walk, "program.body");
         if (walk.sourceNodes > MAX_SOURCE_NODES) {
@@ -687,12 +691,45 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.MOVEMENT);
             return 1;
         }
+        if (node instanceof ActionDsl.CastKnownFishingRod cast) {
+            validateFishingHandAndRod(cast.hand(), cast.rodItem(), path);
+            validatePosition(cast.target(), path + ".target");
+            validateBlockState(cast.expectedState(), path + ".expected_state");
+            if (!"minecraft:water".equals(cast.expectedState().block())
+                    || !"0".equals(cast.expectedState().properties().get("level"))) {
+                throw invalid(path + ".expected_state must be exact source water");
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.ITEM_USE);
+            return 1;
+        }
+        if (node instanceof ActionDsl.ReelKnownFishingSession reel) {
+            validateFishingHandAndRod(reel.hand(), reel.rodItem(), path);
+            requirePattern(reel.fishingSessionRef(), OPAQUE_REFERENCE,
+                    path + ".fishing_session_ref");
+            walk.requiredCapabilities.add(ActionDsl.Capability.ITEM_USE);
+            return 1;
+        }
         if (node instanceof ActionDsl.WaitTicks wait) {
             requireRange(wait.ticks(), 1, MAX_ACTION_TICKS, path + ".ticks");
             return 1;
         }
         if (node instanceof ActionDsl.WaitUntil wait) {
-            validatePosition(wait.condition().target(), path + ".condition.target");
+            if (wait.condition() instanceof ActionDsl.CropMatureCondition crop) {
+                validatePosition(crop.target(), path + ".condition.target");
+            } else {
+                var sound = (ActionDsl.SoundClueCondition) wait.condition();
+                if (!"minecraft:entity.fishing_bobber.splash".equals(sound.soundEvent())) {
+                    throw invalid(path + ".condition.sound_event is unsupported");
+                }
+                requireRange(sound.sinceTick(), 0, Long.MAX_VALUE,
+                        path + ".condition.since_tick");
+                requireResourceLocation(sound.bounds().dimension(),
+                        path + ".condition.bounds.dimension");
+                validateWorldBounds(sound.bounds(), path + ".condition.bounds");
+                requireRange(wait.maxTicks(), 1, MAX_FISHING_SOUND_WAIT_TICKS,
+                        path + ".max_ticks");
+            }
             requireRange(wait.maxTicks(), 1, MAX_ACTION_TICKS, path + ".max_ticks");
             return 1;
         }
@@ -736,7 +773,9 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.CraftKnownRecipe
                     || node instanceof ActionDsl.SmeltKnownRecipe
                     || node instanceof ActionDsl.OperateKnownMenu
-                    || node instanceof ActionDsl.BrewKnownPotionBatch) return true;
+                    || node instanceof ActionDsl.BrewKnownPotionBatch
+                    || node instanceof ActionDsl.CastKnownFishingRod
+                    || node instanceof ActionDsl.ReelKnownFishingSession) return true;
             if (node instanceof ActionDsl.If conditional
                     && (containsWorldMutation(conditional.thenBranch())
                             || containsWorldMutation(conditional.elseBranch()))) return true;
@@ -744,6 +783,32 @@ public final class ActionDslValidator {
                     && containsWorldMutation(repeat.body())) return true;
         }
         return false;
+    }
+
+    private static void validateFishingHandAndRod(String hand, String rodItem, String path) {
+        if (!Set.of("main_hand", "off_hand").contains(hand)) {
+            throw invalid(path + ".hand is unsupported");
+        }
+        if (!"minecraft:fishing_rod".equals(rodItem)) {
+            throw invalid(path + ".rod_item must be minecraft:fishing_rod");
+        }
+    }
+
+    private static void validateWorldBounds(ActionDsl.WorldBounds bounds, String path) {
+        ActionDsl.WorldPoint min = bounds.min();
+        ActionDsl.WorldPoint max = bounds.max();
+        requireFiniteRange(min.x(), -30_000_000, 30_000_000, path + ".min.x");
+        requireFiniteRange(min.y(), -2_048, 2_048, path + ".min.y");
+        requireFiniteRange(min.z(), -30_000_000, 30_000_000, path + ".min.z");
+        requireFiniteRange(max.x(), -30_000_000, 30_000_000, path + ".max.x");
+        requireFiniteRange(max.y(), -2_048, 2_048, path + ".max.y");
+        requireFiniteRange(max.z(), -30_000_000, 30_000_000, path + ".max.z");
+        if (min.x() > max.x() || min.y() > max.y() || min.z() > max.z()
+                || max.x() - min.x() > 64.0D
+                || max.y() - min.y() > 64.0D
+                || max.z() - min.z() > 64.0D) {
+            throw invalid(path + " must be ordered and at most 64 blocks per axis");
+        }
     }
 
     private static void validateTerminalOwnedMenuPlacement(List<ActionDsl.Node> body) {

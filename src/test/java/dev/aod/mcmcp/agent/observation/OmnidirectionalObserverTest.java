@@ -270,6 +270,12 @@ class OmnidirectionalObserverTest {
                 Blocks.OAK_SLAB.defaultBlockState())).isNotNull();
         assertThat(OmnidirectionalObserver.policyVisibleBlockState(
                 Blocks.GLASS_PANE.defaultBlockState())).isNotNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.WATER.defaultBlockState()).properties())
+                .containsEntry("level", "0");
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                Blocks.WATER.defaultBlockState().setValue(
+                        BlockStateProperties.LEVEL, 1))).isNull();
 
         // These blocks carry runtime properties which are not fully distinguishable from their
         // rendered surface. Their block ids remain visible, but complete state stays hidden.
