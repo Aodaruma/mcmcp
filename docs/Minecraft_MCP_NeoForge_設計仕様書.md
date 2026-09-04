@@ -412,7 +412,7 @@ Action(t) =
 - Vanilla crosshair hit result
 - 第7.4節のLocal Observation Volumeで得たsupport、clearance、transition、fluid、hazard
 - 接触、衝突、実移動、採掘、設置、item useの結果
-- 実際に再生開始したposition soundと第7.5節のentity hint
+- current ClientLevelで受理したposition sound eventと第7.5節のentity hint
 - damage eventで通知された原因、直接原因、発生XYZ
 - ユーザーが明示入力した地点、農地、建築box
 - 同じworld session内で上記から得た記憶
@@ -467,7 +467,7 @@ Volumeから外へ出せるのはsupport、clearance、transition、fluid、suff
 
 ### 7.5 position soundとentity hint
 
-`PlaySoundEvent`ではなく、実際の再生開始を示す`PlaySoundSourceEvent`または`PlayStreamingSourceEvent`のposition soundだけを採用する。raw `sound_event`、category、dimension、絶対XYZ、first/last observed tick、age、occurrences、provenanceに加え、event IDから熟練者相当の`entity_hint`をbest-effortで生成し、LLMへ公開する。
+`PlayLevelSoundEvent.AtPosition`をLOWEST priorityで受け、cancelされておらず、levelがcurrent `ClientLevel`と同一であるposition soundだけを採用する。イベントの`Holder<SoundEvent>`、level、audio objectは保持せず、raw event ID、category、絶対XYZだけを即座にimmutable queue valueへ写す。audio source生成より前のlevel eventを使うためmaster volume 0やheadless audio deviceの有無に依存しない一方、実際にユーザーへ聞こえたことの証明とはしない。`AtEntity`は釣りのsplash検出に不要なので対象外とする。raw `sound_event`、category、dimension、絶対XYZ、first/last observed tick、age、occurrences、provenanceに加え、event IDから熟練者相当の`entity_hint`をbest-effortで生成し、LLMへ公開する。
 
 Vanillaの`minecraft:entity.<candidate>.*`は、candidateがclientのEntityType registryに存在すればそのresource locationを`entity_hint`へ入れる。parrot imitationなら発音主体である`minecraft:parrot`、generic/shared/unmappedならnullとする。modded eventも同じ命名規約でregistry照合できる場合だけhintを付ける。raw `sound_event`は変換せず併記するため、LLMは`parrot.imitate.zombie`等の追加意味を自力で判断できる。
 
@@ -479,13 +479,13 @@ Vanillaの`minecraft:entity.<candidate>.*`は、candidateがclientのEntityType 
 | minecraft:entity.parrot.imitate.zombie | minecraft:parrot |
 | minecraft:entity.generic.explode | null |
 
-clueは最大32件、最終観測から600 active ClientTick保持する。同じdimension/event/categoryで、10 tick以内かつEuclidean距離2 block以内の音は1件へ集約する。複数候補があれば距離が最短、`last_observed_tick`が最新、作成順が最古の順で1件を決め、`occurrences`と最新XYZ/tickを更新する。`occurrences`は音の再生回数でありentity数ではない。上限超過で未期限切れclueを捨てた場合、捨てたclueが本来600 tickで失効する時点までframe summaryの`recent_sound_clues_truncated`をtrueにする。world unload、respawn、dimension変更で全消去する。immutable frame内の`age_ticks`はframe完成tickで固定し、page取得時刻では増加させない。
+clueは最大32件、最終観測から600 active ClientTick保持する。同じdimension/event/categoryで、10 tick以内かつEuclidean距離2 block以内の音は1件へ集約する。複数候補があれば距離が最短、`last_observed_tick`が最新、作成順が最古の順で1件を決め、`occurrences`と最新XYZ/tickを更新する。`occurrences`は受理したlevel sound event数であり、可聴再生回数やentity数の証明ではない。上限超過で未期限切れclueを捨てた場合、捨てたclueが本来600 tickで失効する時点までframe summaryの`recent_sound_clues_truncated`をtrueにする。world unload、respawn、dimension変更で全消去する。immutable frame内の`age_ticks`はframe完成tickで固定し、page取得時刻では増加させない。
 
 追加の推定評価fieldは公開しない。`entity_hint`はevent IDの正規化補助であり、実entityの存在証明ではない。`/playsound`やMODでも同じeventを再生できるため、実在・個体数・現在位置の判断はraw ID、鮮度、視覚、damage等を合わせてLLMが行う。
 
 LLMはraw event ID、entity hint、鮮度を視覚・damage情報と合わせて判断できる。ただしsound単独では、entity UUID、個体数、現在位置、通路、洞窟、block、支持面を確定せず、Known Traversability Map、既知target、Local Observation Volumeを更新しない。`navigate_to_sound`や`attack_sound`は作らず、soundだけでMODが移動、攻撃、RECOVER、STOPを開始しない。音源XYZを通常Actionへ使う場合も、別の証拠で既知になったtarget/pathが必要である。Phase 1 DSL predicateにはsoundを追加しない。
 
-relative sound、UI、music、非減衰音、実際に再生開始しなかった音にはworld XYZ clueを作らない。subtitle本文、raw audio、resource-pack file pathも公開しない。
+`AtEntity`、UI、music、cancel済みevent、非current levelのeventにはworld XYZ clueを作らない。subtitle本文、raw audio、resource-pack file pathも公開しない。
 
 ### 7.6 信頼しない文字列
 
@@ -1767,7 +1767,7 @@ if ($LASTEXITCODE -gt 1) { throw 'Dependency scan failed' }
 - 跳躍、落下、遊泳中のsupport欠如を経路崩壊や即時STOPへ誤分類しない
 - glass、pane、ice、leaves、water、slab、stairs、fence、door、custom modelでVISUAL・OUTLINE・COLLIDER・supportを別々に検証
 - unloaded境界とambiguous custom renderはUNKNOWNで、AIRへ昇格しない
-- 再生開始しなかったPlaySoundEventを観測にせず、position soundだけXYZを記録
+- current ClientLevelの非cancel `PlayLevelSoundEvent.AtPosition`だけをXYZ付きで記録し、master volume 0とheadless audio deviceでも同じclueを得る
 - `minecraft:entity.zombie.ambient`、skeleton step、creeper primedはraw ID、XYZ、対応entity hintを返す
 - parrot imitationはparrot hintとraw ID、generic explosionとunknown eventはnull hint、registry照合可能なmodded eventは対応hintを返す
 - 同種近接soundは10 tick・2 block条件で集約し、32件上限、600 tick TTL、world切替消去を守る
@@ -1954,7 +1954,7 @@ repository作成直前に、選択したowner配下で`mcmcp`が作成可能か�
 - [NeoForge ChunkEvent](https://github.com/neoforged/NeoForge/blob/26.2.x/src/main/java/net/neoforged/neoforge/event/level/ChunkEvent.java)
 - [NeoForge Entity documentation](https://docs.neoforged.net/docs/entities/)
 - [NeoForge Sounds](https://docs.neoforged.net/docs/resources/client/sounds/)
-- [NeoForge 26.2 PlaySoundSourceEvent](https://github.com/neoforged/NeoForge/blob/26.2.x/src/client/java/net/neoforged/neoforge/client/event/sound/PlaySoundSourceEvent.java)
+- [NeoForge 26.2 PlayLevelSoundEvent](https://github.com/neoforged/NeoForge/blob/26.2.x/src/main/java/net/neoforged/neoforge/event/PlayLevelSoundEvent.java)
 - [NeoForge 26.2 ClipContext.Block API](https://aldak.netlify.app/javadoc/26.2.x/net/minecraft/world/level/clipcontext.block)
 - [NeoForge 26.2 BlockStateBase API](https://aldak.netlify.app/javadoc/26.2.x/net/minecraft/world/level/block/state/blockbehaviour.blockstatebase)
 - [NeoForge 26.2 CollisionGetter API](https://aldak.netlify.app/javadoc/26.2.x/net/minecraft/world/level/collisiongetter)

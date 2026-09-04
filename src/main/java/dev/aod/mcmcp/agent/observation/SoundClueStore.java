@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Predicate;
 
-/** Bounded session-local aggregation of position sounds which actually began playback. */
+/** Bounded session-local aggregation of accepted client-level position-sound events. */
 public final class SoundClueStore {
     public static final int LIMIT = 32;
     public static final long TTL_TICKS = 600;

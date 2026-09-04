@@ -121,7 +121,6 @@ import dev.aod.mcmcp.voice.VoiceTransmissionGuard;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.MerchantScreen;
-import net.minecraft.client.resources.sounds.SoundInstance;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.Direction;
@@ -130,6 +129,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Mob;
@@ -513,9 +513,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         this.paused = paused;
     }
 
-    /** May be called by NeoForge's audio source thread; it only performs a bounded enqueue. */
-    public void onSoundPlaybackStart(SoundInstance sound) {
-        soundPlaybacks.capturePlaybackStart(sound);
+    /** Accepts only copied position-sound values and performs a bounded enqueue. */
+    public void onPositionSoundEvent(
+            String soundEvent,
+            SoundSource source,
+            double x,
+            double y,
+            double z) {
+        soundPlaybacks.capturePositionSound(soundEvent, source, x, y, z);
     }
 
     public void onPreTick(Minecraft minecraft) {

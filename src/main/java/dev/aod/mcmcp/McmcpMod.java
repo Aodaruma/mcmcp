@@ -24,12 +24,11 @@ import net.neoforged.neoforge.client.event.ClientResourceLoadFinishedEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.MovementInputUpdateEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
-import net.neoforged.neoforge.client.event.sound.PlaySoundSourceEvent;
-import net.neoforged.neoforge.client.event.sound.PlayStreamingSourceEvent;
 import net.neoforged.neoforge.client.event.lifecycle.ClientStartedEvent;
 import net.neoforged.neoforge.client.event.lifecycle.ClientStoppedEvent;
 import net.neoforged.neoforge.client.event.lifecycle.ClientStoppingEvent;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.PlayLevelSoundEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
 import org.slf4j.Logger;
 
@@ -70,8 +69,7 @@ public final class McmcpMod {
         eventBus.addListener(this::onPlayerClone);
         eventBus.addListener(this::onLevelUnload);
         eventBus.addListener(this::onPauseChanged);
-        eventBus.addListener(this::onSoundSourceStarted);
-        eventBus.addListener(this::onStreamingSoundSourceStarted);
+        eventBus.addListener(EventPriority.LOWEST, this::onLevelSoundAtPosition);
         eventBus.addListener(EventPriority.LOWEST, this::onMovementInputUpdate);
         eventBus.addListener(inputIsolation::onMouseButton);
         eventBus.addListener(inputIsolation::onMouseScroll);
@@ -149,12 +147,20 @@ public final class McmcpMod {
         movementInput.apply(agentInput.movementSnapshot(player));
     }
 
-    private void onSoundSourceStarted(PlaySoundSourceEvent event) {
-        runtime.onSoundPlaybackStart(event.getSound());
-    }
-
-    private void onStreamingSoundSourceStarted(PlayStreamingSourceEvent event) {
-        runtime.onSoundPlaybackStart(event.getSound());
+    private void onLevelSoundAtPosition(PlayLevelSoundEvent.AtPosition event) {
+        if (event.isCanceled()
+                || event.getSound() == null
+                || !(event.getLevel() instanceof ClientLevel clientLevel)
+                || clientLevel != Minecraft.getInstance().level) {
+            return;
+        }
+        var position = event.getPosition();
+        runtime.onPositionSoundEvent(
+                event.getSound().value().location().toString(),
+                event.getSource(),
+                position.x(),
+                position.y(),
+                position.z());
     }
 
     private void onScreenOpening(ScreenEvent.Opening event) {

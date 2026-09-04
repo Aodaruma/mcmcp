@@ -3,8 +3,6 @@ package dev.aod.mcmcp.agent.observation;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.SoundCategory;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
 import dev.aod.mcmcp.agent.observation.ObservationValues.WorldPosition;
-import net.minecraft.client.resources.sounds.SoundInstance;
-import net.minecraft.resources.Identifier;
 import net.minecraft.sounds.SoundSource;
 
 import java.util.ArrayList;
@@ -14,11 +12,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 
-/** Moves actual position-sound playback starts onto the client tick thread. */
+/** Moves accepted client-level position-sound values onto the client tick thread. */
 public final class SoundPlaybackQueue {
     public static final int CAPACITY = 256;
 
-    private final ArrayBlockingQueue<Playback> pending;
+    private final ArrayBlockingQueue<PositionSound> pending;
     private final AtomicBoolean overflowed = new AtomicBoolean();
     private final AtomicLong epoch = new AtomicLong();
     private long truncatedThroughTick = -1;
@@ -31,33 +29,28 @@ public final class SoundPlaybackQueue {
         pending = new ArrayBlockingQueue<>(capacity);
     }
 
-    /**
-     * Captures values from a {@code PlaySoundSourceEvent} or
-     * {@code PlayStreamingSourceEvent}; no game objects are retained.
-     */
-    public boolean capturePlaybackStart(SoundInstance sound) {
-        Objects.requireNonNull(sound, "sound");
+    /** Captures primitive values from a client-level position-sound event. */
+    public boolean capturePositionSound(
+            String soundEventId,
+            SoundSource source,
+            double x,
+            double y,
+            double z) {
         long captureEpoch = epoch.get();
-        Identifier identifier = sound.getIdentifier();
-        SoundCategory category = category(sound.getSource());
-        double x = sound.getX();
-        double y = sound.getY();
-        double z = sound.getZ();
-        if (sound.isRelative()
-                || sound.getAttenuation() != SoundInstance.Attenuation.LINEAR
-                || category == null
-                || identifier == null
+        SoundCategory category = category(source);
+        if (category == null
+                || soundEventId == null
                 || !validPosition(x, y, z)) {
             return false;
         }
 
         final ResourceId soundEvent;
         try {
-            soundEvent = new ResourceId(identifier.toString());
+            soundEvent = new ResourceId(soundEventId);
         } catch (IllegalArgumentException exception) {
             return false;
         }
-        if (pending.offer(new Playback(captureEpoch, soundEvent, category, x, y, z))) {
+        if (pending.offer(new PositionSound(captureEpoch, soundEvent, category, x, y, z))) {
             return true;
         }
         overflowed.set(true);
@@ -85,22 +78,22 @@ public final class SoundPlaybackQueue {
                             : tick + SoundClueStore.TTL_TICKS);
         }
 
-        var batch = new ArrayList<Playback>(pending.size());
+        var batch = new ArrayList<PositionSound>(pending.size());
         pending.drainTo(batch);
         long currentEpoch = epoch.get();
         int recorded = 0;
-        for (Playback playback : batch) {
-            if (playback.epoch() != currentEpoch) {
+        for (PositionSound sound : batch) {
+            if (sound.epoch() != currentEpoch) {
                 continue;
             }
             store.record(
-                    playback.soundEvent(),
-                    playback.category(),
+                    sound.soundEvent(),
+                    sound.category(),
                     new WorldPosition(
-                            dimension, playback.x(), playback.y(), playback.z()),
+                            dimension, sound.x(), sound.y(), sound.z()),
                     tick,
                     worldRevision,
-                    SoundClueStore.entityHint(playback.soundEvent(), registeredEntityType));
+                    SoundClueStore.entityHint(sound.soundEvent(), registeredEntityType));
             recorded++;
         }
         return new DrainResult(recorded, tick <= truncatedThroughTick);
@@ -140,7 +133,8 @@ public final class SoundPlaybackQueue {
     public record DrainResult(int recordedPlaybacks, boolean recentSoundCluesTruncated) {
     }
 
-    private record Playback(
+    /** Immutable queue payload containing no level, event, sound, or audio-engine object. */
+    private record PositionSound(
             long epoch,
             ResourceId soundEvent,
             SoundCategory category,
