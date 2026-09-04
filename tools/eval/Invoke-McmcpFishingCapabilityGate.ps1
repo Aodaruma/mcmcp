@@ -328,7 +328,8 @@ function Invoke-FishingGateCore {
     $fixedFive = Assert-FishingFixedFive
     $initial = Get-FreshState
     $initialHealth = [double](Get-ObjectProperty (Get-ObjectProperty $initial 'world') 'health')
-    if (-not [double]::IsFinite($initialHealth) -or $initialHealth -le 0.0 -or
+    if ([double]::IsNaN($initialHealth) -or [double]::IsInfinity($initialHealth) -or
+        $initialHealth -le 0.0 -or
         $initialHealth -gt 20.0) {
         throw "fishing fixture initial health is invalid: $initialHealth"
     }
