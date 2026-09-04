@@ -2651,6 +2651,39 @@ Assert-True ($recoveryRecheckEvents.Count -eq 1 -and
     $recoveryRecheckEvents[0].material_recheck_required) `
     'drop recovery did not retain the failed terminal and material-recheck proof'
 
+# Once a policy-visible surface exists, the semantic surface approach owns the
+# remaining route selection.  The outer discovery helper must not replace it
+# with a generic traversability target merely because the block is farther than
+# four blocks from the player's eyes.
+$semanticApproachState = New-MockState
+$semanticApproachSurface = New-MockSurface `
+    -Block 'minecraft:chest' -X -11 -Y 56 -Z 2
+function Get-FreshState { return $semanticApproachState }
+function Get-VisibleSurface {
+    param(
+        [object]$State, [string]$Block, [object]$Bounds,
+        [AllowNull()][string[]]$Faces,
+        [switch]$ExcludePlayerFeetAbove,
+        [switch]$AllowMissing
+    )
+    return $semanticApproachSurface
+}
+function Get-NearbyTraversabilityRecords {
+    param([object]$State)
+    throw 'generic navigation must not run after a visible surface is delivered'
+}
+$script:GateEvents = [Collections.Generic.List[object]]::new()
+$deliveredSurface = Get-OrNavigateToVisibleSurface `
+    -Block 'minecraft:chest' -Bounds $script:ChestBounds
+$deliveryEvents = @($script:GateEvents | Where-Object {
+        $_.event -ceq 'visible_surface_delivered_for_semantic_approach'
+    })
+Assert-True ([object]::ReferenceEquals($semanticApproachSurface, $deliveredSurface) -and
+    $deliveryEvents.Count -eq 1 -and
+    -not $deliveryEvents[0].directly_within_four_blocks -and
+    $deliveryEvents[0].distance -gt 4.0) `
+    'visible distant surface was not handed to the semantic approach primitive'
+
 $script:ToolTransport = $null
 $script:DelayTransport = $null
 $script:ActiveActionId = $null
