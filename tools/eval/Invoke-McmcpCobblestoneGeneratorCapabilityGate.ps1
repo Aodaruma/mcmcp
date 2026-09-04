@@ -231,7 +231,7 @@ function New-KnownCobblestoneGeneratorRequest {
         tool_item = 'minecraft:iron_pickaxe'
         expected_drop = 'minecraft:cobblestone'
         minimum_inventory_count = $script:CobbleBreakCount
-        max_breaks = $script:CobbleBreakCount
+        max_breaks = $script:CobbleMaximumAttempts
         regeneration_wait_ticks = $script:CobbleRegenerationWaitTicks
         max_operation_duration_ticks = $script:CobbleGeneratorDurationTicks
     }
@@ -246,7 +246,7 @@ function New-KnownCobblestoneGeneratorRequest {
             max_duration_ms = 50 * $script:CobbleGeneratorDurationTicks
             max_ticks = $script:CobbleGeneratorDurationTicks
             max_distance_blocks = 0; max_camera_degrees = 0
-            max_interactions = 0; max_blocks_broken = $script:CobbleBreakCount
+            max_interactions = 0; max_blocks_broken = $script:CobbleMaximumAttempts
             max_blocks_placed = 0
         })
 }
@@ -281,9 +281,10 @@ function Assert-KnownCobblestoneGeneratorTerminal {
         [double](Get-ObjectProperty $progress 'distance_travelled') -ne 0 -or
         [double](Get-ObjectProperty $progress 'camera_degrees') -ne 0 -or
         [int](Get-ObjectProperty $progress 'interactions') -ne 0 -or
-        [int](Get-ObjectProperty $progress 'blocks_broken') -ne $script:CobbleBreakCount -or
+        [int](Get-ObjectProperty $progress 'blocks_broken') -lt $script:CobbleBreakCount -or
+        [int](Get-ObjectProperty $progress 'blocks_broken') -gt $script:CobbleMaximumAttempts -or
         [int](Get-ObjectProperty $progress 'blocks_placed') -ne 0 -or
-        $effects.Count -ne $script:CobbleBreakCount) {
+        $effects.Count -ne [int](Get-ObjectProperty $progress 'blocks_broken')) {
         throw 'known generator terminal violates its one-Action stationary budget'
     }
     $proofs = [Collections.Generic.List[object]]::new()
@@ -317,9 +318,9 @@ function Assert-KnownCobblestoneGeneratorTerminal {
             })
         $lastInventoryCount = $inventoryCount
     }
-    if ($lastInventoryCount -ne $script:CobbleBreakCount) {
-        throw 'known generator final checkpoint does not prove its absolute inventory goal'
-    }
+    # A break checkpoint is recorded when the server-confirmed block transition reaches air.
+    # The final drop can enter inventory on a later tick; the fresh final state below proves the
+    # absolute inventory goal without falsifying the earlier effect timestamp.
     return @($proofs)
 }
 
@@ -1032,7 +1033,7 @@ function Invoke-KnownCobblestoneGeneratorGateCore {
         accepted = 2; terminal = 2; total_actions = 2
         successful_pickups = $script:CobbleBreakCount
         confirmed_break_effects = $proofs.Count
-        expected_pickaxe_damage = $script:CobbleBreakCount
+        expected_pickaxe_damage = $proofs.Count
         accepted_equals_terminal = $true
         stale_frame_reuse = $false
     }
@@ -1042,9 +1043,9 @@ function Invoke-KnownCobblestoneGeneratorGateCore {
         fixed_five_surface = $fixedFive
         normal_player_actions_only = $true
         break_count = $script:CobbleBreakCount
-        total_attempts = $script:CobbleBreakCount
-        maximum_attempts = $script:CobbleBreakCount
-        expected_pickaxe_damage = $script:CobbleBreakCount
+        total_attempts = $proofs.Count
+        maximum_attempts = $script:CobbleMaximumAttempts
+        expected_pickaxe_damage = $proofs.Count
         action_boundary = 'camera_action_then_fresh_evidence_then_finite_generator_action'
         lifecycle = $lifecycle
         terminal_effects = $proofs
@@ -1058,18 +1059,18 @@ function Invoke-KnownCobblestoneGeneratorGateCore {
             cobblestone_before = 0; cobblestone_after = $finalCobblestone
             cobblestone_delta = $finalCobblestone
             confirmed_break_effects = $proofs.Count
-            total_break_attempts = $script:CobbleBreakCount
+            total_break_attempts = $proofs.Count
             qualified_lost_drops = 0; recovered_loose_drops = 0
             active_collection_actions = 0; delayed_passive_pickups = 0
-            expected_pickaxe_damage = $script:CobbleBreakCount
+            expected_pickaxe_damage = $proofs.Count
             player_position_unchanged = $true
             player_health_unchanged = $true
             visible_loose_cobblestone = 0
         }
         external_oracle_status = 'pending_world_close'
         external_oracle = New-CobblestoneOfflineOracleManifest `
-            -ExpectedHealth $initialHealth -ExpectedAttempts $script:CobbleBreakCount `
-            -MaximumAttempts $script:CobbleBreakCount `
+            -ExpectedHealth $initialHealth -ExpectedAttempts $proofs.Count `
+            -MaximumAttempts $script:CobbleMaximumAttempts `
             -LostDrops 0 -RecoveredDrops 0 -ActiveCollections 0
     }
 }

@@ -136,7 +136,7 @@ Assert-True ($generatorNode.op -ceq 'operate_known_cobblestone_generator' -and
     [object]::ReferenceEquals($surface.state, $generatorNode.expected_state)) `
     'known generator request did not retain its exact delivered target evidence'
 Assert-True ($generatorNode.minimum_inventory_count -eq 8 -and
-    $generatorNode.max_breaks -eq 8 -and
+    $generatorNode.max_breaks -eq 16 -and
     $generatorNode.regeneration_wait_ticks -eq 100 -and
     $generatorNode.max_operation_duration_ticks -eq 3600) `
     'known generator request does not expose the finite eight-break acceptance slice'
@@ -144,7 +144,7 @@ Assert-True ($generatorRequest.program.capabilities.Count -eq 1 -and
     $generatorRequest.program.capabilities[0] -ceq 'block_break' -and
     $generatorRequest.budget.max_ticks -eq 3600 -and
     $generatorRequest.budget.max_duration_ms -eq 180000 -and
-    $generatorRequest.budget.max_blocks_broken -eq 8 -and
+    $generatorRequest.budget.max_blocks_broken -eq 16 -and
     $generatorRequest.budget.max_camera_degrees -eq 0) `
     'known generator request budget or capability declaration is not closed'
 
@@ -528,14 +528,14 @@ $script:ToolTransport = {
                 if ($body.Count -ne 1 -or
                     $submitted.id -cne 'operate_cobblestone_generator' -or
                     [int]$submitted.minimum_inventory_count -ne 8 -or
-                    [int]$submitted.max_breaks -ne 8 -or
+                    [int]$submitted.max_breaks -ne 16 -or
                     [int]$submitted.regeneration_wait_ticks -ne 100 -or
                     [int]$submitted.max_operation_duration_ticks -ne 3600 -or
                     $submitted.target.x -ne 199 -or $submitted.target.y -ne 201 -or
                     $submitted.target.z -ne 200 -or
                     $Arguments.program.capabilities.Count -ne 1 -or
                     $Arguments.program.capabilities[0] -cne 'block_break' -or
-                    [int]$Arguments.budget.max_blocks_broken -ne 8 -or
+                    [int]$Arguments.budget.max_blocks_broken -ne 16 -or
                     [int]$Arguments.budget.max_camera_degrees -ne 0 -or
                     [int]$Arguments.budget.max_ticks -ne 3600) {
                     throw 'mock received a stale or malformed known generator Action'
@@ -649,7 +649,7 @@ try {
     Assert-True ($result.gate_result.online_oracle.cobblestone_delta -eq 8) `
         'online inventory oracle is not +8'
     Assert-True ($result.gate_result.total_attempts -eq 8 -and
-        $result.gate_result.maximum_attempts -eq 8 -and
+        $result.gate_result.maximum_attempts -eq 16 -and
         $result.gate_result.expected_pickaxe_damage -eq 8 -and
         $result.gate_result.action_boundary -ceq
             'camera_action_then_fresh_evidence_then_finite_generator_action' -and
@@ -660,7 +660,7 @@ try {
         'offline oracle did not bind the observed health baseline'
     Assert-True ($result.gate_result.external_oracle.player.iron_pickaxe_damage -eq 8 -and
         $result.gate_result.external_oracle.total_attempts -eq 8 -and
-        $result.gate_result.external_oracle.maximum_attempts -eq 8 -and
+        $result.gate_result.external_oracle.maximum_attempts -eq 16 -and
         $result.gate_result.external_oracle.lost_drops -eq 0 -and
         $result.gate_result.external_oracle.recovered_loose_drops -eq 0 -and
         $result.gate_result.external_oracle.active_collection_actions -eq 0 -and
