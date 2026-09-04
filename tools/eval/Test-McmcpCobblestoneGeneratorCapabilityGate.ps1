@@ -121,6 +121,14 @@ Assert-True ($request.budget.max_blocks_broken -eq 1 -and
     'request budget is not a stationary single break'
 Assert-True ($script:CobbleMaximumAttempts -eq 16) 'attempt cap is not exactly sixteen'
 
+$generatorFaceRequest = New-KnownCobblestoneGeneratorFaceRequest -Surface $surface
+$generatorFaceNode = $generatorFaceRequest.program.body[0]
+Assert-True ($generatorFaceNode.op -ceq 'face_known_position' -and
+    [object]::ReferenceEquals($surface.position, $generatorFaceNode.target) -and
+    $generatorFaceRequest.program.capabilities.Count -eq 1 -and
+    $generatorFaceRequest.program.capabilities[0] -ceq 'camera' -and
+    $generatorFaceRequest.budget.max_camera_degrees -eq 360) `
+    'known generator face request is not delivery-backed and camera-only'
 $generatorRequest = New-KnownCobblestoneGeneratorRequest -Surface $surface
 $generatorNode = $generatorRequest.program.body[0]
 Assert-True ($generatorNode.op -ceq 'operate_known_cobblestone_generator' -and
@@ -190,6 +198,26 @@ function New-MockBreakTerminal {
     }
 }
 
+function New-MockKnownGeneratorFaceTerminal {
+    [pscustomobject]@{
+        schema_version = 1
+        action_id = '550e8400-e29b-41d4-a716-000000000001'
+        state = 'succeeded'
+        progress = [pscustomobject]@{
+            executed_nodes = 1; total_node_upper_bound = 1
+            distance_travelled = 0; camera_degrees = 42
+            interactions = 0; blocks_broken = 0; blocks_placed = 0
+        }
+        failure = $null; trace = @(); effects = @()
+        partial = [pscustomobject]@{
+            has_confirmed_effects = $false; interrupted_node_id = $null
+            remaining_node_upper_bound = 0; resume_requires_reobservation = $false
+        }
+        source = [pscustomobject]@{}; template = [pscustomobject]@{}
+        reference_requirements = @()
+    }
+}
+
 function New-MockKnownGeneratorTerminal {
     $effects = [Collections.Generic.List[object]]::new()
     for ($cycle = 1; $cycle -le 8; $cycle++) {
@@ -215,7 +243,7 @@ function New-MockKnownGeneratorTerminal {
     }
     [pscustomobject]@{
         schema_version = 1
-        action_id = '550e8400-e29b-41d4-a716-000000000001'
+        action_id = '550e8400-e29b-41d4-a716-000000000002'
         state = 'succeeded'
         progress = [pscustomobject]@{
             executed_nodes = 1; total_node_upper_bound = 1
@@ -397,6 +425,8 @@ Assert-True ($emptySurfaces.Count -eq 0) `
     'an allowed missing surface emitted a null pipeline element'
 $script:ToolTransport = $null
 
+[void](Assert-KnownCobblestoneGeneratorFaceTerminal `
+        -Terminal (New-MockKnownGeneratorFaceTerminal))
 $knownGeneratorProofs = @(Assert-KnownCobblestoneGeneratorTerminal `
         -Terminal (New-MockKnownGeneratorTerminal))
 Assert-True ($knownGeneratorProofs.Count -eq 8 -and
@@ -478,11 +508,25 @@ $script:ToolTransport = {
             }
         }
         'agent_start_action' {
-            $submitted = $Arguments.program.body[0]
+            $body = @($Arguments.program.body)
+            $submitted = $body[0]
             $script:MockActionSequence++
             $script:MockPendingActionSequence = $script:MockActionSequence
-            if ($submitted.op -ceq 'operate_known_cobblestone_generator') {
-                if ($submitted.id -cne 'operate_cobblestone_generator' -or
+            if ($submitted.op -ceq 'face_known_position') {
+                if ($body.Count -ne 1 -or
+                    $submitted.id -cne 'face_cobblestone_generator' -or
+                    $submitted.target.x -ne 199 -or $submitted.target.y -ne 201 -or
+                    $submitted.target.z -ne 200 -or
+                    $Arguments.program.capabilities.Count -ne 1 -or
+                    $Arguments.program.capabilities[0] -cne 'camera' -or
+                    [int]$Arguments.budget.max_camera_degrees -ne 360) {
+                    throw 'mock received a stale or malformed generator face Action'
+                }
+                $script:MockPendingKind = 'generator_face'
+                $script:MockPendingMinimum = 1
+            } elseif ($submitted.op -ceq 'operate_known_cobblestone_generator') {
+                if ($body.Count -ne 1 -or
+                    $submitted.id -cne 'operate_cobblestone_generator' -or
                     [int]$submitted.minimum_inventory_count -ne 8 -or
                     [int]$submitted.max_breaks -ne 8 -or
                     [int]$submitted.regeneration_wait_ticks -ne 100 -or
@@ -492,7 +536,8 @@ $script:ToolTransport = {
                     $Arguments.program.capabilities.Count -ne 1 -or
                     $Arguments.program.capabilities[0] -cne 'block_break' -or
                     [int]$Arguments.budget.max_blocks_broken -ne 8 -or
-                    [int]$Arguments.budget.max_camera_degrees -ne 0) {
+                    [int]$Arguments.budget.max_camera_degrees -ne 0 -or
+                    [int]$Arguments.budget.max_ticks -ne 3600) {
                     throw 'mock received a stale or malformed known generator Action'
                 }
                 $script:MockPendingKind = 'known_generator'
@@ -538,7 +583,9 @@ $script:ToolTransport = {
             $actionSequence = $script:MockPendingActionSequence
             $script:MockPendingKind = $null
             $script:MockPendingMinimum = 0
-            if ($kind -ceq 'known_generator') {
+            if ($kind -ceq 'generator_face') {
+                New-MockKnownGeneratorFaceTerminal
+            } elseif ($kind -ceq 'known_generator') {
                 $script:MockCompleted = 8
                 $script:MockLooseMode = 'none'
                 $script:MockLooseDrop = $false
@@ -590,13 +637,13 @@ try {
     $result = Invoke-McmcpCobblestoneGeneratorCapabilityGate
     Assert-True ($result.gate_result.gate -ceq 'phase9-cobblestone-generator') `
         'gate result name is wrong'
-    Assert-True ($result.gate_result.lifecycle.accepted -eq 1 -and
-        $result.gate_result.lifecycle.terminal -eq 1 -and
+    Assert-True ($result.gate_result.lifecycle.accepted -eq 2 -and
+        $result.gate_result.lifecycle.terminal -eq 2 -and
         $result.gate_result.lifecycle.successful_pickups -eq 8 -and
         $result.gate_result.lifecycle.confirmed_break_effects -eq 8 -and
-        $result.gate_result.lifecycle.total_actions -eq 1 -and
+        $result.gate_result.lifecycle.total_actions -eq 2 -and
         $result.gate_result.lifecycle.expected_pickaxe_damage -eq 8) `
-        'one finite known-generator Action lifecycle was not proven'
+        'camera then finite known-generator Action lifecycle was not proven'
     Assert-True ($result.gate_result.terminal_effects.Count -eq 8) `
         'eight confirmed break effects were not retained'
     Assert-True ($result.gate_result.online_oracle.cobblestone_delta -eq 8) `
@@ -605,7 +652,7 @@ try {
         $result.gate_result.maximum_attempts -eq 8 -and
         $result.gate_result.expected_pickaxe_damage -eq 8 -and
         $result.gate_result.action_boundary -ceq
-            'one_finite_operate_known_cobblestone_generator_action' -and
+            'camera_action_then_fresh_evidence_then_finite_generator_action' -and
         $result.gate_result.lost_drop_effects.Count -eq 0 -and
         $result.gate_result.recovered_drop_effects.Count -eq 0) `
         'finite known-generator attempt or effect accounting is wrong'

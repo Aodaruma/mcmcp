@@ -199,6 +199,23 @@ function New-CobblestoneBreakRequest {
         })
 }
 
+function New-KnownCobblestoneGeneratorFaceRequest {
+    param([Parameter(Mandatory)][object]$Surface)
+
+    $target = Get-ObjectProperty $Surface 'position'
+    $node = [ordered]@{
+        id = 'face_cobblestone_generator'
+        op = 'face_known_position'
+        target = $target
+    }
+    if (-not [object]::ReferenceEquals($target, $node.target)) {
+        throw 'known generator face request changed its delivery-backed target'
+    }
+    return New-PrimitiveRequest -Name 'capability_gate_face_cobblestone_generator' `
+        -Capabilities @('camera') -Node $node -Duration 15000 -Ticks 300 `
+        -Distance 0 -Camera 360
+}
+
 function New-KnownCobblestoneGeneratorRequest {
     param([Parameter(Mandatory)][object]$Surface)
 
@@ -232,6 +249,24 @@ function New-KnownCobblestoneGeneratorRequest {
             max_interactions = 0; max_blocks_broken = $script:CobbleBreakCount
             max_blocks_placed = 0
         })
+}
+
+function Assert-KnownCobblestoneGeneratorFaceTerminal {
+    param([Parameter(Mandatory)][object]$Terminal)
+
+    $progress = Get-ObjectProperty $Terminal 'progress'
+    if ((Get-ObjectProperty $Terminal 'state') -cne 'succeeded' -or
+        $null -ne (Get-ObjectProperty $Terminal 'failure') -or
+        [int](Get-ObjectProperty $progress 'executed_nodes') -ne 1 -or
+        [int](Get-ObjectProperty $progress 'total_node_upper_bound') -ne 1 -or
+        [double](Get-ObjectProperty $progress 'distance_travelled') -ne 0 -or
+        [double](Get-ObjectProperty $progress 'camera_degrees') -gt 360 -or
+        [int](Get-ObjectProperty $progress 'interactions') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'blocks_broken') -ne 0 -or
+        [int](Get-ObjectProperty $progress 'blocks_placed') -ne 0 -or
+        @((Get-ObjectProperty $Terminal 'effects')).Count -ne 0) {
+        throw 'known generator face terminal violates its camera-only budget'
+    }
 }
 
 function Assert-KnownCobblestoneGeneratorTerminal {
@@ -953,14 +988,24 @@ function Invoke-KnownCobblestoneGeneratorGateCore {
 
     $fresh = Wait-FreshGeneratedCobblestone -PreviousFrameId $null
     Assert-CobblePlayerState -State $fresh.state -ExpectedHealth $initialHealth `
-        -Phase 'known generator admission'
-    $request = New-KnownCobblestoneGeneratorRequest -Surface $fresh.surface
+        -Phase 'known generator face admission'
+    $faceRequest = New-KnownCobblestoneGeneratorFaceRequest -Surface $fresh.surface
+    $faceTerminal = Invoke-ActionRequest -Request $faceRequest -WallTimeoutSeconds 45
+    Assert-KnownCobblestoneGeneratorFaceTerminal -Terminal $faceTerminal
+
+    # Camera completion does not extend mutation evidence. Obtain a later delivered exact
+    # surface and build the standalone generator Action only from that fresh target/state/face.
+    $refaced = Wait-FreshGeneratedCobblestone -PreviousFrameId $fresh.frame_id `
+        -SuppressBreakObservationEvent
+    Assert-CobblePlayerState -State $refaced.state -ExpectedHealth $initialHealth `
+        -Phase 'known generator operation admission'
+    $request = New-KnownCobblestoneGeneratorRequest -Surface $refaced.surface
     $terminal = Invoke-ActionRequest -Request $request -WallTimeoutSeconds 210
     $proofs = @(Assert-KnownCobblestoneGeneratorTerminal -Terminal $terminal)
 
     # The final break may reach its inventory goal before Vanilla recreates the target cell.
     # Rebind the online oracle to a later delivered frame that sees the generator ready again.
-    $finalProof = Wait-FreshGeneratedCobblestone -PreviousFrameId $fresh.frame_id `
+    $finalProof = Wait-FreshGeneratedCobblestone -PreviousFrameId $refaced.frame_id `
         -SuppressBreakObservationEvent
     $final = $finalProof.state
     Assert-CobblePlayerState -State $final -ExpectedHealth $initialHealth -Phase 'final state'
@@ -976,13 +1021,15 @@ function Invoke-KnownCobblestoneGeneratorGateCore {
     $terminalEvents = @($script:GateEvents | Where-Object {
             (Get-ObjectProperty $_ 'event') -ceq 'action_terminal'
         })
-    if ($accepted.Count -ne 1 -or $terminalEvents.Count -ne 1 -or
+    if ($accepted.Count -ne 2 -or $terminalEvents.Count -ne 2 -or
         (Get-ObjectProperty $accepted[0] 'program') -cne
+            'capability_gate_face_cobblestone_generator' -or
+        (Get-ObjectProperty $accepted[1] 'program') -cne
             'capability_gate_operate_known_cobblestone_generator') {
-        throw 'known generator gate must complete as exactly one accepted terminal Action'
+        throw 'known generator gate must complete its face and operation Actions'
     }
     $lifecycle = [ordered]@{
-        accepted = 1; terminal = 1; total_actions = 1
+        accepted = 2; terminal = 2; total_actions = 2
         successful_pickups = $script:CobbleBreakCount
         confirmed_break_effects = $proofs.Count
         expected_pickaxe_damage = $script:CobbleBreakCount
@@ -998,7 +1045,7 @@ function Invoke-KnownCobblestoneGeneratorGateCore {
         total_attempts = $script:CobbleBreakCount
         maximum_attempts = $script:CobbleBreakCount
         expected_pickaxe_damage = $script:CobbleBreakCount
-        action_boundary = 'one_finite_operate_known_cobblestone_generator_action'
+        action_boundary = 'camera_action_then_fresh_evidence_then_finite_generator_action'
         lifecycle = $lifecycle
         terminal_effects = $proofs
         lost_drops = 0
