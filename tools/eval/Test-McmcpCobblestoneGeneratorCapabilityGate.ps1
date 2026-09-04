@@ -36,7 +36,7 @@ function New-MockCobblestoneSurface {
         placement_item = 'minecraft:cobblestone'
         placement_state_ref = 'psr_' + ('a' * 32)
         shape_class = 'opaque'
-        eye_origin = [pscustomobject]@{ x = 199.5; y = 202.62; z = 198.5 }
+        eye_origin = [pscustomobject]@{ x = 199.5; y = 202.62; z = 199.5 }
         observed_tick = 100L + $Revision
         world_revision = $Revision
         provenance = 'visual'
@@ -154,6 +154,19 @@ $moved = New-MockBreakTerminal -Iteration 1
 $moved.progress.distance_travelled = 0.1
 Assert-Throws { Assert-CobblestoneBreakTerminal -Terminal $moved -Iteration 1 } `
     'moving break terminal was accepted'
+
+$script:ToolTransport = {
+    param($Tool, $Arguments)
+    if ($Tool -cne 'agent_get_observation') { throw "unexpected empty-page tool: $Tool" }
+    [pscustomobject]@{
+        frame_id = $Arguments.frame_id; records = $null; next_cursor = $null
+    }
+}
+$emptyRecords = @(Get-RecordsFromState -State (New-MockCobblestoneState `
+            -CobblestoneCount 0) -Kinds @('visible_surface') -Filter $null)
+Assert-True ($emptyRecords.Count -eq 0) `
+    'a Windows PowerShell null materialization was not treated as an empty page'
+$script:ToolTransport = $null
 
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null

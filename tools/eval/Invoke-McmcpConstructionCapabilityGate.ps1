@@ -416,7 +416,11 @@ function Get-RecordsFromState {
         if ((Get-ObjectProperty $page 'frame_id') -cne $frameId) {
             throw 'agent_get_observation returned a mismatched frame'
         }
-        foreach ($record in @(Get-ObjectProperty $page 'records')) { $records.Add($record) }
+        foreach ($record in @(Get-ObjectProperty $page 'records')) {
+            # Windows PowerShell may materialize an empty JSON array as a single null pipeline
+            # value. Treat it as the empty page advertised by the protocol.
+            if ($null -ne $record) { $records.Add($record) }
+        }
         $cursor = Get-ObjectProperty $page 'next_cursor'
     } while ($null -ne $cursor)
     return @($records)
