@@ -6663,9 +6663,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
 
         // Air is the expected neutral regeneration wait. Once cobblestone is present again,
-        // exact target, state, face, reach, and tool are all rechecked before another lease.
-        if (breakTargetStateMatches(minecraft, block)
-                && !breakSourceControlled(minecraft, block)) {
+        // exact target, state, reach, tool, and the operation's unchanged view are rechecked.
+        // The hit face may legitimately flip at the same coordinate as the block regenerates.
+        var generatorSnapshot = agentExecution.cobblestoneGeneratorAttempt.snapshot();
+        if ("execute".equals(generatorSnapshot.phase())
+                && !breakSourceControlled(minecraft, block, false)) {
             failAgentAction(
                     AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
                     true,
@@ -9090,6 +9092,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private static boolean breakSourceControlled(
             Minecraft minecraft, ActionDsl.Node block) {
+        return breakSourceControlled(minecraft, block, true);
+    }
+
+    private static boolean breakSourceControlled(
+            Minecraft minecraft, ActionDsl.Node block, boolean requireDeclaredFace) {
         var player = minecraft.player;
         var level = minecraft.level;
         var gameMode = minecraft.gameMode;
@@ -9110,7 +9117,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || !(minecraft.hitResult instanceof BlockHitResult hit)
                 || hit.getType() != HitResult.Type.BLOCK
                 || !hit.getBlockPos().equals(position)
-                || hit.getDirection() != Direction.valueOf(breakFace(block).name())
+                || requireDeclaredFace
+                        && hit.getDirection() != Direction.valueOf(breakFace(block).name())
                 || !player.isWithinBlockInteractionRange(position, 0.0D)
                 || !level.getWorldBorder().isWithinBounds(position)
                 || player.blockActionRestricted(level, position, gameMode.getPlayerMode())) {

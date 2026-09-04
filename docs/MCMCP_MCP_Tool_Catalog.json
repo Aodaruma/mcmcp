@@ -3047,6 +3047,7 @@
               "fishing_session_ref": {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"},
               "rod_damage": {"type": "integer", "minimum": -1, "maximum": 2147483647},
               "inventory_count": {"type": "integer", "minimum": 0, "maximum": 2304},
+              "cycle": {"type": "integer", "minimum": 1, "maximum": 64},
               "expected_drop": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 192},
               "minimum_inventory_count": {"type": "integer", "minimum": 1, "maximum": 2304}
               ,"entity_type": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 128}

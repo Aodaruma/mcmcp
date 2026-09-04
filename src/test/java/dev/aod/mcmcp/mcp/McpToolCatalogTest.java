@@ -764,6 +764,10 @@ class McpToolCatalogTest {
         assertThat(catalog.outputSchema("agent_get_action")
                 .getAsJsonObject("$defs").getAsJsonObject("effectObservation")
                 .getAsJsonObject("properties").has("health_before")).isTrue();
+        assertThat(catalog.outputSchema("agent_get_action")
+                .getAsJsonObject("$defs").getAsJsonObject("effectObservation")
+                .getAsJsonObject("properties").getAsJsonObject("cycle")
+                .get("maximum").getAsInt()).isEqualTo(64);
         var consentProperties = entityConsent.getAsJsonObject("properties");
         assertThat(consentProperties.has("policy_binding_hash")).isTrue();
         assertThat(consentProperties.has("action_binding_hash")).isFalse();
