@@ -236,6 +236,21 @@ r31は恒久25 / 25、一時足場6 / 6の設置・撤去・回収まで完走�
 
 最終判定は**PASS**。証跡は`F:\mcmcp-testlab\20260902-hard-building-v1\eval-artifacts\20260904-wall-5x5-r31`にあり、`gate-result.json`、`gate-events.jsonl`、`runner-console.log`、before / after、external manifest、offline oracle、offline inventoryを保存した。修正commitは`cd99dfa`である。
 
+## Gate C 2-1仮足場・上下移動 remote r1-r4
+
+Gate Cは恒久blockを置かず、通常player Actionだけで2-1形状のoak-log足場3個を作り、降下、地上からの1段上昇、地上復帰、top-down撤去・全回収を検査する。edge bridgeは安全なcrouch bridge primitiveが未実装なので、runnerは合格を捏造せず`not_expressible_without_safe_crouch_bridge_primitive`として残す。各runは`aod-mimoid`のfresh baselineから開始し、Save and Quit後に[`Compare-McmcpRegionOracle.py`](../../../tools/eval/Compare-McmcpRegionOracle.py)で25,707 cellを独立比較した。
+
+| Run | 到達点 | 最初の問題 | 外部oracle・判定 |
+|---|---|---|---|
+| r1 | 3個設置、降下後、上段1個撤去 | active collect後のcleanup ground復帰を単一Actionで扱い、`route_edge_changed`後のbounded terminalを再sliceできなかった | 下段2個だけ残存。変更2 cell、入力解放PASS。cleanup復帰もfresh exact targetへ最大3 sliceするよう変更 |
+| r2 | r1停止点を越え、上段1個撤去 | dropが直下のowned scaffoldに遮蔽され、通常0.75許容の接近2回ではpickup overlapへ確実に入らなかった | r1と同じ下段2個だけ残存。変更2 cell、入力解放PASS。回収接近だけ0.1許容へ変更 |
+| r3 | 3個を全撤去・全回収、oak log 64→64 | 地上からlow topへのstep-up traversabilityが8 bounded pollで一度も配達されなかった | 変更0 cell、source不変、入力解放PASS。cleanup/material conservationは**PASS**、step-up / edge bridgeが未完了なのでgate全体はINCOMPLETE |
+| r4 | 3個を全撤去・全回収、oak log 64→64。昇降とcleanup復帰を0.1許容へ統一 | 40 bounded pollでもstep-up traversabilityが配達されず、runner待機ではなく製品側の上向きrecord生成不足と判定 | 変更0 cell、source不変、入力解放PASS。cleanup/material conservationは2回連続**PASS**、step-up / edge bridgeは未完了 |
+
+r2後の独立レビューでは、将来の任意形状足場に対し「1 blockを壊すたび必ず1 itemを回収」する台帳は狭すぎると判定した。直下のjob-owned scaffoldが残る間は回収を延期し、全owned scaffold撤去後にcleanup全体のinventory保存則とunion swept boundsで回収するaggregate ledgerが本命である。今回の2-1形状は精密接近で回収できたが、stack merge、複数drop、遮蔽の多い任意規模施工ではaggregate ledgerを別gateで実装・検証する。単にretry回数を増やす方針は採らない。
+
+r4のstep-up失敗時点では、playerをground target中心へ寄せても上段targetのcurrent traversabilityが0件だった。下降recordは同じ足場に対して配達されているため、次の修正対象はrunnerの座標推測ではなく、製品observer / navigation policyが安全な隣接1-block step-upをpolicy-visibleにすることである。証跡は`F:\mcmcp-testlab\20260902-hard-building-v1\eval-artifacts\20260904-gate-c-r1`から`r4`に保存した。
+
 ## Gate B `wall-5x5`再現・追加実施手順（既存remote環境の例）
 
 状態は**実worldで2回完全合格済み**である。以下はr25 / r27を再現する手順であり、mockの99 Actionをliveの固定値にはしない。実際のAction数は観測由来の接近・reslice・drop回収方式によって変わる。また、以下は既存`aod-mimoid`環境を再利用する場合の例であり、次回の実world検証hostを固定しない。実施時はその時点のユーザー指定hostに従い、local PCの場合はlocal用reset / instance pathへ読み替える。

@@ -47,6 +47,7 @@ $script:SourceObservationForbidden = $false
 $script:SourceObservationCount = 0
 $script:ConstructionNavigationTolerance = 0.75
 $script:PillarNavigationTolerance = 0.1
+$script:TemporaryDropRecoveryNavigationTolerance = 0.1
 $script:MaximumScaffoldNavigationSlices = 3
 
 $script:ChestBounds = [ordered]@{
@@ -3358,7 +3359,7 @@ function Invoke-WallGate {
         $lowTopRecord = $lowTopNavigation.record
         $step = Invoke-TemporaryScaffoldNavigation -State $state `
             -NavigationRecord $lowTopRecord `
-            -Tolerance $script:ConstructionNavigationTolerance `
+            -Tolerance $script:PillarNavigationTolerance `
             -Step 'medium_top_to_low_top' -Event 'wall_temporary_build_route_terminal'
         $state = $step.state
         if ($MovementCapabilityOnly) {
@@ -3377,7 +3378,7 @@ function Invoke-WallGate {
         $groundRecord = $groundNavigation.record
         $step = Invoke-TemporaryScaffoldNavigation -State $state `
             -NavigationRecord $groundRecord `
-            -Tolerance $script:ConstructionNavigationTolerance `
+            -Tolerance $script:PillarNavigationTolerance `
             -Step 'low_top_to_ground' -Event 'wall_temporary_build_route_terminal'
         $state = $step.state
         if ($MovementCapabilityOnly) {
@@ -3406,12 +3407,11 @@ function Invoke-WallGate {
             try {
                 $upNavigation = Wait-ForAdjacentScaffoldNavigationRecord `
                     -InitialState $state -TargetColumn $temporaryStaircasePlan.low.target `
-                    -TargetY ([int]$temporaryStaircasePlan.low.target.y + 1) `
-                    -MaximumPolls 8
+                    -TargetY ([int]$temporaryStaircasePlan.low.target.y + 1)
                 $state = $upNavigation.state
                 $upRecord = $upNavigation.record
                 $upRequest = New-NavigationActionRequest -NavigationRecord $upRecord `
-                    -State $state -Tolerance $script:ConstructionNavigationTolerance
+                    -State $state -Tolerance $script:PillarNavigationTolerance
                 $upAttempt = Invoke-ActionRequest -Request $upRequest `
                     -WallTimeoutSeconds 90 -ReturnFailure -ReturnStartDomainError
                 $gateCStepUp.target = Get-ObjectProperty $upRecord 'navigation_target'
@@ -3431,7 +3431,7 @@ function Invoke-WallGate {
                     $state = $returnNavigation.state
                     $returnStep = Invoke-TemporaryScaffoldNavigation -State $state `
                         -NavigationRecord $returnNavigation.record `
-                        -Tolerance $script:ConstructionNavigationTolerance `
+                        -Tolerance $script:PillarNavigationTolerance `
                         -Step 'gate_c_low_top_to_ground' `
                         -Event 'gate_c_step_up_return_terminal'
                     $state = $returnStep.state
@@ -3600,7 +3600,7 @@ function Invoke-WallGate {
             $state = $descentNavigation.state
             $record = $descentNavigation.record
             $routeStep = Invoke-TemporaryScaffoldNavigation -State $state `
-                -NavigationRecord $record -Tolerance $script:ConstructionNavigationTolerance `
+                -NavigationRecord $record -Tolerance $script:PillarNavigationTolerance `
                 -Step $descentStep.name -Event 'wall_temporary_descent_step_terminal'
             $state = $routeStep.state
             $descentRoute.Add([ordered]@{
@@ -3661,11 +3661,21 @@ function Invoke-WallGate {
                     $descentTarget, $descentRequest.program.body[0].target)
                 status = [string](Get-ObjectProperty $descentRecord 'status')
             })
-        $descentTerminal = Invoke-ActionRequest `
-            -Request $descentRequest -WallTimeoutSeconds 90
+        # Active drop collection can leave the player several blocks away from
+        # the cleanup stance.  A valid route may then change shape while the
+        # Action is moving.  Reacquire the same exact policy-delivered target
+        # after the narrow replan signal instead of treating the first bounded
+        # slice as the whole cleanup attempt.
+        $descentStep = Invoke-TemporaryScaffoldNavigation -State $state `
+            -NavigationRecord $descentRecord `
+            -Tolerance $script:PillarNavigationTolerance `
+            -Step "cleanup_ground_$($cleanupIndex + 1)" `
+            -Event 'wall_temporary_cleanup_descent_terminal'
+        $state = $descentStep.state
+        $descentTerminal = $descentStep.terminal
 
         $currentTemporary = Wait-ForCurrentExactTemporarySurface `
-            -InitialState (Get-FreshState) -Position $temporaryPosition `
+            -InitialState $state -Position $temporaryPosition `
             -ExpectedState (Get-ObjectProperty $source 'state') -Faces $null
         $state = $currentTemporary.state
         $temporarySurface = $currentTemporary.surface
@@ -3819,9 +3829,13 @@ function Invoke-WallGate {
                     target_from_current_policy_delivery = $true
                     synthetic_target_allowed = $false
                 })
+            # A normal construction tolerance may stop near the edge of the
+            # adjacent cell, outside the item pickup overlap.  This route
+            # exists only to reconcile one freshly cleared block, so reach the
+            # policy-delivered cell centre tightly.
             $approachResult = Invoke-TemporaryScaffoldNavigation `
                 -State $state -NavigationRecord $approachRecord `
-                -Tolerance $script:ConstructionNavigationTolerance `
+                -Tolerance $script:TemporaryDropRecoveryNavigationTolerance `
                 -Step "cleanup-$($cleanupIndex + 1)-passive-recovery-$($recoveryApproach + 1)" `
                 -Event 'wall_temporary_drop_passive_approach_terminal' `
                 -ReturnAfterResliceableFailure

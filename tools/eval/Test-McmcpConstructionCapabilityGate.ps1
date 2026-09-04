@@ -1206,6 +1206,8 @@ Assert-True ($currentApproachRecords.Count -eq 2 -and
     [object]::ReferenceEquals(
         $approachTarget, (Get-ObjectProperty $selectedRecoveryApproach 'navigation_target'))) `
     'temporary recovery did not prefer the three-dimensionally nearest delivered target'
+Assert-True ($script:TemporaryDropRecoveryNavigationTolerance -eq 0.1) `
+    'temporary recovery navigation is not tight enough to enter item pickup overlap'
 ${function:Get-WallScaffoldTraversabilityRecords} = $savedGetWallScaffoldTraversabilityRecords
 
 # The offline MCA comparison contract enumerates nine unique expected-air
@@ -1552,13 +1554,9 @@ function Invoke-ActionRequest {
         'navigate_to_known' {
             $script:MockWallNavigation++
             $targetKey = Get-BlockPositionKey $node.target
-            if ($node.tolerance -eq $script:PillarNavigationTolerance) {
-                Assert-True ($targetKey -cin $script:MockPillarNavigationTargetKeys) `
-                    'tight pillar navigation did not target a delivered staircase base'
-            } else {
-                Assert-True ($node.tolerance -eq $script:ConstructionNavigationTolerance) `
-                    'construction navigation did not retain its purpose-specific tolerance'
-            }
+            Assert-True ($node.tolerance -eq $script:PillarNavigationTolerance -or
+                $node.tolerance -eq $script:ConstructionNavigationTolerance) `
+                'construction navigation did not retain a purpose-specific tolerance'
             Assert-True (@($script:MockWallTraversability | Where-Object {
                         [object]::ReferenceEquals(
                             $node.target, (Get-ObjectProperty $_ 'navigation_target'))
