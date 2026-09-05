@@ -42,3 +42,13 @@ repeatを含む長いActionで結果を無制限に保存しない。保存件�
 6. 未開封・未同期・所有権不一致から結果を作れないこと、cleanup保留/失敗時に成功と誤表示しないこと、raw NBT・component・隠れたworld情報を含まないことを検証する。
 
 現行監査は変更せず進め、実装する段階で公開契約の詳細を確定してbuild・unit・harness isolation・schema検証を行う。
+
+## 実装結果
+
+利用者から実装・commitの依頼を受け、`include_container_results=true`、`container_results_limit`（1〜8、既定4）、`container_results_cursor`をagent_get_actionへ追加した。オプション省略時の応答形式と短いtraceは維持する。
+
+既存DSLには最大256実行ノードの上限があり、その数の検査結果をすべて保持すれば別のstart_actionオプションや新たな受付制限は不要と判断した。各結果は54種類・item ID128文字・合計3,456個以内、1ページ最大8コンテナで有界。結果はActionの既存履歴と共に保持し、Action内のring evictionは行わない。結果数固定のcursorをAction IDへ結び付け、実行途中に結果が増えても同じページ列を読める。
+
+結果には`result_seq`、`node_id`、Action内実行通番`node_execution`、target、world session、取得tick・packet revision、itemsと件数・truncatedを含む。時刻は後のpoll/cleanupの時刻へ更新せず、server snapshotの取得時点を維持する。raw NBT・component・player inventoryは返さない。終了処理が失敗/保留なら完全結果は取得できない。
+
+検証：unit1,082件（全54品目、3,456個集計、空、後続失敗、全256結果とtrace eviction、履歴失効、cursor snapshot固定・別Action拒否、cleanup retry、schema実payload整合を含む）、harness13件、admin21件、build・harness isolation成功。正本catalogと評価runnerのraw/semantic hashを同期した。新JARの実配置・実ゲーム追試は検証担当タスクへ依頼する。

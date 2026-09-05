@@ -597,7 +597,15 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             evidence.put("destination_count_after", destination);
             evidence.put("transferred", 0);
             evidence.put("full_readback", true);
-            evidence.putAll(availableItemEvidence(snapshot.slots(), sourceSlots, 27));
+            boolean inspection = "minecraft:air".equals(transfer.item())
+                    && !transfer.playerToContainer() && transfer.minimumDestinationCount() == 0;
+            evidence.putAll(availableItemEvidence(snapshot.slots(), sourceSlots, inspection ? 54 : 27));
+            if (inspection) {
+                evidence.put("complete_container_inspection", true);
+                evidence.put("contents_world_session_id", snapshot.worldSessionId().toString());
+                evidence.put("contents_observed_tick", snapshot.receivedTick());
+                evidence.put("contents_packet_revision", snapshot.packetLedgerRevision());
+            }
             succeed(state, destination, evidence);
             return;
         }

@@ -521,7 +521,7 @@ public final class ActionDsl {
         }
     }
 
-    /** Opens a visible vanilla chest/barrel and returns its server-synchronized item summary. */
+    /** Opens a visible vanilla chest/barrel and records its complete server-synchronized item totals. */
     public record InspectKnownContainer(
             String id,
             Position target,

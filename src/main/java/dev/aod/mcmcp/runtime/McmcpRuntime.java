@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.agent.action.ContainerInspection;
+
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import dev.aod.mcmcp.agent.action.AgentActionStore;
@@ -1659,6 +1661,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         try {
             UUID requestedId = actionId(command.arguments());
             int requestedWaitMillis = agentActionWaitTimeoutMillis(command.arguments());
+            var containerQuery = ContainerInspection.Query.parse(command.arguments());
             if (requestedWaitMillis > 0 && Thread.currentThread() == clientThread) {
                 return CompletableFuture.completedFuture(RuntimeReply.failure(
                         "internal_error",
@@ -1674,7 +1677,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             RuntimeReply reply = withEvaluationLeaseFence(
                     context,
                     command.toolName(),
-                    () -> RuntimeReply.success(actionPayload(snapshot)));
+                    () -> RuntimeReply.success(actionPayload(snapshot, containerQuery)));
             return CompletableFuture.completedFuture(reply);
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
@@ -2990,12 +2993,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private Map<String, Object> getAgentAction(Map<String, Object> arguments) {
         agentActionWaitTimeoutMillis(arguments);
-        return actionPayload(agentActions.get(actionId(arguments)));
+        return actionPayload(agentActions.get(actionId(arguments)), ContainerInspection.Query.parse(arguments));
     }
 
     static int agentActionWaitTimeoutMillis(Map<String, Object> arguments) {
         requireAllowedKeys(
-                arguments, "agent_get_action", Set.of("action_id", "wait_timeout_ms"));
+                arguments, "agent_get_action", Set.of("action_id", "wait_timeout_ms",
+                        "include_container_results", "container_results_cursor", "container_results_limit"));
         if (!arguments.containsKey("action_id")) {
             throw new IllegalArgumentException("agent_get_action must contain action_id");
         }
@@ -3127,6 +3131,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         result.put(
                 "reference_requirements",
                 snapshot.source().referenceRequirementPayload());
+        return result;
+    }
+
+    static Map<String, Object> actionPayload(
+            AgentActionStore.Snapshot snapshot, ContainerInspection.Query query) {
+        var result = actionPayload(snapshot);
+        if (query.include()) result.put("container_results", ContainerInspection.page(snapshot, query));
         return result;
     }
 
@@ -7168,8 +7179,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     true,
                     result.evidence());
             case SUCCEEDED -> {
+                KnownContainerAttempt completedContainer = agentExecution.containerAttempt;
                 agentExecution.containerAttempt = null;
-                if (agentExecution.primitive instanceof ActionDsl.InspectKnownContainer) {
+                if (agentExecution.primitive instanceof ActionDsl.InspectKnownContainer inspect) {
+                    agentActions.recordContainerInspection(action.actionId(), inspect.target(),
+                            completedContainer.inspectionContents());
                     agentActions.recordNodeEvidence(
                             action.actionId(), containerItemsTrace(result.items()));
                 } else if (agentExecution.primitive instanceof ActionDsl.TakeKnownContainerStack) {

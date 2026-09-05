@@ -1305,6 +1305,36 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void completeContainerResultsHaveBoundedOptionalQueriesAndActualPayloadMatchesSchema() {
+        var catalog = new McpToolCatalog();
+        var input = JsonParser.parseString("""
+                {"action_id":"550e8400-e29b-41d4-a716-446655440000",
+                "include_container_results":true,"container_results_limit":8}
+                """).getAsJsonObject();
+        assertThat(CatalogSchemaValidator.matches(catalog.inputSchema("agent_get_action"), input)).isTrue();
+        input.addProperty("container_results_limit", 9);
+        assertThat(CatalogSchemaValidator.matches(catalog.inputSchema("agent_get_action"), input)).isFalse();
+        input.addProperty("container_results_limit", 1);
+        input.addProperty("container_results_cursor", "invalid");
+        assertThat(CatalogSchemaValidator.matches(catalog.inputSchema("agent_get_action"), input)).isFalse();
+        var items = java.util.stream.IntStream.range(0, 54).mapToObj(index ->
+                new dev.aod.mcmcp.agent.action.KnownContainerAttempt.ItemCount(
+                        "minecraft:" + "a".repeat(116) + "%02d".formatted(index), 64)).toList();
+        var result = new dev.aod.mcmcp.agent.action.ContainerInspection.Result(1, "inspect", 1,
+                new dev.aod.mcmcp.agent.dsl.ActionDsl.Position("minecraft:overworld", 1, 64, 2),
+                new dev.aod.mcmcp.agent.action.ContainerInspection.Contents(
+                        java.util.UUID.randomUUID(), 5, 7, items));
+        var schema = catalog.outputSchema("agent_get_action").getAsJsonObject("properties")
+                .getAsJsonObject("container_results").getAsJsonObject("properties")
+                .getAsJsonObject("results").getAsJsonObject("items");
+        var payload = new com.google.gson.Gson().toJsonTree(result.payload());
+        assertThat(CatalogSchemaValidator.matches(schema, payload)).isTrue();
+        assertThat(payload.getAsJsonObject().getAsJsonArray("items")).hasSize(54);
+        payload.getAsJsonObject().addProperty("truncated", true);
+        assertThat(CatalogSchemaValidator.matches(schema, payload)).isFalse();
+    }
+
+    @Test
     void keepsOneHttpWorkerAvailableByAdmittingOnlyOneTerminalWait() throws Exception {
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);

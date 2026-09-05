@@ -2,6 +2,7 @@ package dev.aod.mcmcp.agent.action;
 
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler.CompiledProgram;
 import dev.aod.mcmcp.agent.dsl.ActionDslSource;
+import dev.aod.mcmcp.agent.dsl.ActionDsl;
 
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -212,6 +213,18 @@ public final class AgentActionStore {
         action.executedNodes++;
         action.trace(action.ticks, "NODE_COMPLETED", action.currentNodeId);
         action.currentNodeId = null;
+    }
+
+    public synchronized void recordContainerInspection(UUID actionId, ActionDsl.Position target,
+                                                       ContainerInspection.Contents contents) {
+        Mutable action = running(actionId);
+        if (action.currentNodeId == null || action.containerResults.size() >= ContainerInspection.MAX_RESULTS
+                || action.containerResults.stream().anyMatch(result ->
+                        result.nodeExecution() == action.executedNodes + 1)) {
+            throw new IllegalStateException("Container result is outside the node execution bound");
+        }
+        action.containerResults.add(new ContainerInspection.Result(action.containerResults.size() + 1,
+                action.currentNodeId, action.executedNodes + 1, target, contents));
     }
 
     /** Adds one bounded, node-scoped server-derived observation to the existing trace surface. */
@@ -664,7 +677,8 @@ public final class AgentActionStore {
             ActionDslSource source,
             List<Effect> effects,
             EffectAggregate effectAggregate,
-            Partial partial) {
+            Partial partial,
+            List<ContainerInspection.Result> containerResults) {
         public Snapshot {
             Objects.requireNonNull(actionId, "actionId");
             Objects.requireNonNull(state, "state");
@@ -673,6 +687,10 @@ public final class AgentActionStore {
             Objects.requireNonNull(source, "source");
             effects = List.copyOf(effects);
             Objects.requireNonNull(effectAggregate, "effectAggregate");
+            containerResults = List.copyOf(containerResults);
+            if (containerResults.size() > ContainerInspection.MAX_RESULTS) {
+                throw new IllegalArgumentException("Too many container results");
+            }
             if (effects.size() > EFFECT_LIMIT) {
                 throw new IllegalArgumentException("Too many action effects");
             }
@@ -680,6 +698,14 @@ public final class AgentActionStore {
                 throw new IllegalArgumentException(
                         "Partial result is required exactly for terminal actions");
             }
+        }
+
+        public Snapshot(
+                UUID actionId, State state, Progress progress, Failure failure, List<Trace> trace,
+                ActionDslSource source, List<Effect> effects, EffectAggregate effectAggregate,
+                Partial partial) {
+            this(actionId, state, progress, failure, trace, source, effects, effectAggregate,
+                    partial, List.of());
         }
 
         public Snapshot(
@@ -757,6 +783,7 @@ public final class AgentActionStore {
         private final long confirmationDeadlineNanos;
         private final ArrayDeque<Trace> trace = new ArrayDeque<>(TRACE_LIMIT);
         private final ArrayList<Effect> effects = new ArrayList<>(EFFECT_LIMIT);
+        private final ArrayList<ContainerInspection.Result> containerResults = new ArrayList<>();
         private State state = State.UNCONFIRMED;
         private Phase phase = Phase.QUEUED;
         private String currentNodeId;
@@ -849,7 +876,7 @@ public final class AgentActionStore {
                             dispatchedAttackCount,
                             confirmedAttackCount,
                             unknownAttackCount),
-                    partial);
+                    partial, containerResults);
         }
     }
 }

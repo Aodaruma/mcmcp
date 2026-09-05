@@ -19,6 +19,46 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownContainerAttemptTest {
     @Test
+    void fullInspectionPreservesAll54TypesAndOriginalSnapshotAcrossReleaseRetry() {
+        var port = new FakePort();
+        port.completeInspection = true;
+        port.items = java.util.stream.IntStream.range(0, 54).mapToObj(index ->
+                Map.<String, Object>of("item", "minecraft:item_%02d".formatted(index), "count", 64))
+                .toList();
+        var operation = new KnownContainerAttempt(port, request(), 1, 101);
+        for (int tick = 1; tick <= 2; tick++) { port.tick = tick; operation.tick(tick); }
+        port.releaseFailuresRemaining = 1;
+        port.tick = 3;
+        assertThat(operation.tick(3).status()).isEqualTo(KnownContainerAttempt.Status.RUNNING);
+        assertThatThrownBy(operation::inspectionContents).isInstanceOf(IllegalStateException.class);
+        port.items = List.of(); // Later evidence must not replace the captured immutable snapshot.
+        port.tick = 4;
+        assertThat(operation.tick(4).status()).isEqualTo(KnownContainerAttempt.Status.SUCCEEDED);
+        assertThat(operation.inspectionContents().items()).hasSize(54);
+        assertThat(operation.inspectionContents().observedClientTick()).isEqualTo(2);
+        assertThat(operation.inspectionContents().packetRevision()).isEqualTo(2);
+    }
+
+    @Test
+    void missingOrTruncatedInspectionCannotBePublishedAsComplete() {
+        for (boolean markedComplete : new boolean[] {false, true}) {
+            var port = new FakePort();
+            port.completeInspection = markedComplete;
+            port.truncated = true;
+            var operation = new KnownContainerAttempt(port, request(), 1, 101);
+            for (int tick = 1; tick <= 2; tick++) { port.tick = tick; operation.tick(tick); }
+            port.tick = 3;
+            if (markedComplete) {
+                assertThatThrownBy(() -> operation.tick(3)).isInstanceOf(IllegalStateException.class);
+                operation.close();
+            } else {
+                operation.tick(3);
+            }
+            assertThatThrownBy(operation::inspectionContents).isInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    @Test
     void reportsLargeChestTotalsAbovePlayerCapacityAfterConfirmedRelease() {
         for (int count : new int[] {2_305, 3_000, 3_456}) {
             var port = new FakePort();
@@ -209,6 +249,8 @@ class KnownContainerAttemptTest {
         private boolean releaseConfirmed;
         private boolean exactTransfer;
         private boolean holdPending;
+        private boolean completeInspection;
+        private boolean truncated;
 
         @Override
         public PhaseFiveFrame observe(PhaseFiveRequest request) {
@@ -243,6 +285,13 @@ class KnownContainerAttemptTest {
             }
             var resultBasis = new java.util.LinkedHashMap<String, Object>();
             resultBasis.put("available_source_items", items);
+            if (completeInspection) {
+                resultBasis.put("complete_container_inspection", true);
+                resultBasis.put("available_source_items_truncated", truncated);
+                resultBasis.put("contents_world_session_id", "550e8400-e29b-41d4-a716-446655440000");
+                resultBasis.put("contents_observed_tick", 2L);
+                resultBasis.put("contents_packet_revision", 2L);
+            }
             if (exactTransfer) {
                 resultBasis.put("source_count_before", 12);
                 resultBasis.put("source_count_after", 7);

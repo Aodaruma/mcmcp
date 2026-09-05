@@ -23,6 +23,8 @@ public final class KnownContainerAttempt implements AutoCloseable {
     private long lastObservationRevision;
     private int recordedInteractions;
     private List<ItemCount> pendingSuccessItems;
+    private ContainerInspection.Contents pendingInspection;
+    private boolean successReleased;
     private boolean closed;
     private final ArrayList<EffectDelta> pendingEffects = new ArrayList<>(1);
     private boolean transferConfirmed;
@@ -120,6 +122,17 @@ public final class KnownContainerAttempt implements AutoCloseable {
                     yield fail("container_effect_contract", delta);
                 }
                 pendingSuccessItems = itemCounts(confirmed.result().basis());
+                Map<String, Object> basis = confirmed.result().basis();
+                if (Boolean.TRUE.equals(basis.get("complete_container_inspection"))) {
+                    if (!Boolean.FALSE.equals(basis.get("available_source_items_truncated"))) {
+                        throw new IllegalStateException("complete container contents were truncated");
+                    }
+                    pendingInspection = new ContainerInspection.Contents(
+                            UUID.fromString((String) basis.get("contents_world_session_id")),
+                            ((Number) basis.get("contents_observed_tick")).longValue(),
+                            ((Number) basis.get("contents_packet_revision")).longValue(),
+                            pendingSuccessItems);
+                }
                 yield releasePendingSuccess(delta);
             }
             case PhaseFiveEvidence.Inconclusive inconclusive ->
@@ -138,6 +151,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
                     ? 0 : captureInteractionDeltaStrict(Long.MAX_VALUE);
             port.retire(request);
             closed = true;
+            successReleased = true;
             return succeeded(Math.addExact(interactionDelta, releaseDelta), items);
         } catch (RuntimeException | LinkageError releaseFailure) {
             if (releaseStatus() == ReleaseStatus.PROGRESSING) {
@@ -190,6 +204,13 @@ public final class KnownContainerAttempt implements AutoCloseable {
     /** Drains recipe/cursor cleanup usage while the first terminal intent remains retained. */
     public int drainReleaseInteractionDelta() {
         return closed ? 0 : captureInteractionDelta(Long.MAX_VALUE);
+    }
+
+    public ContainerInspection.Contents inspectionContents() {
+        if (!successReleased || pendingInspection == null) {
+            throw new IllegalStateException("complete container inspection is not released");
+        }
+        return pendingInspection;
     }
 
     public ReleaseStatus releaseStatus() {
@@ -351,14 +372,15 @@ public final class KnownContainerAttempt implements AutoCloseable {
     private static List<ItemCount> itemCounts(Map<String, Object> basis) {
         Object raw = basis.get("available_source_items");
         if (raw == null) return List.of();
-        if (!(raw instanceof List<?> list) || list.size() > 27) {
+        if (!(raw instanceof List<?> list) || list.size() > ContainerInspection.MAX_ITEMS) {
             throw new IllegalStateException("container item evidence is invalid");
         }
         var output = new ArrayList<ItemCount>(list.size());
         for (Object entry : list) {
             if (!(entry instanceof Map<?, ?> map)
                     || !(map.get("item") instanceof String item)
-                    || !(map.get("count") instanceof Number count)) {
+                    || !(map.get("count") instanceof Number count)
+                    || count.doubleValue() != count.intValue()) {
                 throw new IllegalStateException("container item evidence is invalid");
             }
             output.add(new ItemCount(item, count.intValue()));

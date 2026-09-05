@@ -270,6 +270,15 @@ class McmcpRuntimeHardeningTest {
         assertThat(((Map<?, ?>) payload.get("effect_aggregate")).get("total_effects"))
                 .isEqualTo(0L);
         assertThat(payload.get("partial")).isNull();
+        assertThat(payload).doesNotContainKey("container_results");
+        var snapshot = new AgentActionStore.Snapshot(UUID.randomUUID(), AgentActionStore.State.QUEUED,
+                progress, null, List.of(), source);
+        var withContents = McmcpRuntime.actionPayload(snapshot,
+                dev.aod.mcmcp.agent.action.ContainerInspection.Query.parse(
+                        Map.of("include_container_results", true)));
+        assertThat(((Map<?, ?>) withContents.get("container_results")).containsKey("results")).isTrue();
+        assertThat(((Map<?, ?>) withContents.get("container_results")).get("snapshot_result_count"))
+                .isEqualTo(0);
     }
 
     @Test

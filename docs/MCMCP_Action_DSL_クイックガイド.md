@@ -85,15 +85,26 @@ dropが通常の物理移動で少しずれ、古いpickup cellだけが使え�
 
 ## チェスト内容の取得先と制限
 
-`inspect_known_container`を単独Actionで実行し、返された`action_id`を`agent_get_action`へ渡します。`state=succeeded`を確認してから、`trace`の`event=NODE_EVIDENCE`、`detail`が`container_items=`で始まる要素を読みます。
+`inspect_known_container`を実行し、返された`action_id`を`agent_get_action`へ渡します。全品目を取得するには、次のオプションを指定します（UUIDは実際のAction IDへ置き換えてください）。
 
-```text
-container_items=minecraft:birch_log:17,minecraft:oak_log:267
+```json
+{
+  "action_id": "550e8400-e29b-41d4-a716-446655440000",
+  "wait_timeout_ms": 25000,
+  "include_container_results": true,
+  "container_results_limit": 4
+}
 ```
 
-これはserverから同期された内容のアイテムID別個数です。inspectはアイテムを転送しないため`effects=[]`が正常で、終了時には所有していた画面を閉じるため`agent_get_state.known_menu`も常設されません。失敗して`NODE_EVIDENCE`がない場合は、内容を取得できたと扱わないでください。
+`container_results.results`に成功した検査ごとの`items: [{item_id, count}]`が返ります。1チェスト最大54種類を全件返し、同じitem IDのstackを合算します。component（耐久値・名前等）の違いは区別しません。`total_item_types`と`returned_item_types`が一致し、`truncated=false`ならその検査結果は完全です。空チェストは成功した結果に`items=[]`・総品目数0が入ります。結果がないことを「空」と扱わないでください。
 
-現行の返却は完全な在庫一覧ではなく短い要約です。内部で最大27種類に制限し、traceのdetailも最大256文字なので、長い一覧は末尾の`,...`で省略されます。内部の種類数上限に達したことを示すフラグは現行traceには出ていないため、`,...`がなくても完全性は保証できません。省略されたアイテムを「存在しない」と判断しないでください。倉庫全体の完全な棚卸しには、別途ページ付きの構造化した検査結果が必要です。
+1ページは1〜8コンテナ（既定4）。`has_more=true`なら、同じAction IDと表示オプションに`container_results_cursor: next_cursorの値`を加えて続けます。cursorは最初のページの結果件数を固定するため、実行途中に増えた結果を見るときはcursorを外して再取得します。`node_id`、Action内の実行通番`node_execution`、検査結果通番`result_seq`でrepeatやbatchを区別できます。
+
+これはserver同期・所有画面のcleanupを確認した取得時点の内容です。`observed_client_tick`と`packet_revision`は取得元のserver snapshotの時刻とpacket ledger revisionで、現在の在庫や再操作の認可ではありません。後続nodeが失敗しても先行検査の成功結果は残ります。inspectは転送しないため`effects=[]`が正常で、終了時に画面を閉じるため`known_menu`も常設されません。
+
+Actionの既存上限256ノードに収まる検査結果をすべて保持し、Action内では省略・破棄しません。ただし履歴は最新Actionと直前のterminalのみです。**次のActionを重ねる前に全ページを取得してください。** 保持終了は`ACTION_NOT_FOUND`、不正なcursorは入力エラーになり、空結果へ置き換えません。
+
+オプション省略時は既存形式のままです。互換用の`trace / NODE_EVIDENCE / container_items=...`は引き続き最大256文字の要約なので、完全な棚卸しには使わないでください。
 ## 頻出nodeの必須field
 
 - `navigate_to_known`: `{id,op,target,tolerance}`

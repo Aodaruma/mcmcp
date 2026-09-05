@@ -686,7 +686,7 @@ Resources、Prompts、Tasks extension、Subscriptions、Sampling、Elicitation�
 | agent_get_state | No | player、inventory集計、policy、DSL capability、Agent状態、最新観測frame概要を取得 |
 | agent_get_observation | No | 最新の全周visual、局所traversability、hazard、sound clueをframe単位でpage取得 |
 | agent_start_action | Yes | READY状態で検証済みAction DSL v1を1件開始 |
-| agent_get_action | No | Action、現在node、resource counter、回避、失敗、traceを取得。任意でterminalまで最大25秒待機 |
+| agent_get_action | No | Action、現在node、resource counter、回避、失敗、traceを取得。任意でterminalまで最大25秒待機。include_container_results=trueで検査済みコンテナの全品目をページ取得 |
 | agent_cancel_action | Yes | actionを冪等にcancel |
 
 raw key、raw mouse、packet、任意commandを操作するToolは公開しない。`agent_start_action`がLLM生成DSLの検証・実行口を兼ねるため、template専用ToolやDSL実行Toolを追加しない。`agent_get_observation`は読み取り専用で、OFF中も使用できる。

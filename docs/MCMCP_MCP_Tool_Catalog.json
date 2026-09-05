@@ -3084,7 +3084,7 @@
     {
       "name": "agent_get_action",
       "title": "Get MCMCP Action",
-      "description": "Returns bounded progress, a policy-filtered trace, a bounded latest-effect ring (monotonic seq; earlier entries may be evicted) with terminal aggregate, terminal partial/resume metadata, and the bounded canonical JSON source/hash for one explicit action handle. A confirmed effect has server-derived before/after evidence; unknown means a mutation was dispatched without a confirmed after-state and requires reobservation, never blind replay. source is audit data, not replay authority. template is identical only when no opaque reference exists; otherwise every opaque ref and its coupled recipe fingerprint are null, ready_for_agent_start_action=false, and reference_requirements says how to refresh them. Opaque refs are never declared live by this off-client-thread read and must always be refreshed before cloning. wait_timeout_ms is an optional integer from 0 through 25000; zero or omission returns immediately, otherwise it waits off the Minecraft client thread until terminal or timeout.",
+      "description": "Returns bounded progress, a policy-filtered trace, a bounded latest-effect ring (monotonic seq; earlier entries may be evicted) with terminal aggregate, terminal partial/resume metadata, and the bounded canonical JSON source/hash for one explicit action handle. A confirmed effect has server-derived before/after evidence; unknown means a mutation was dispatched without a confirmed after-state and requires reobservation, never blind replay. source is audit data, not replay authority. template is identical only when no opaque reference exists; otherwise every opaque ref and its coupled recipe fingerprint are null, ready_for_agent_start_action=false, and reference_requirements says how to refresh them. Opaque refs are never declared live by this off-client-thread read and must always be refreshed before cloning. wait_timeout_ms is an optional integer from 0 through 25000; zero or omission returns immediately, otherwise it waits off the Minecraft client thread until terminal or timeout. Set include_container_results=true to return complete item-ID totals from successful inspect_known_container nodes (up to 54 types per container, component differences aggregated). container_results_limit is 1..8 (default 4); pass next_cursor as container_results_cursor with include_container_results=true for more containers. Cursors freeze a result-count snapshot and are bound to action_id. Each result is immutable server-synchronized evidence published only after owned-menu cleanup; observed_client_tick and packet_revision describe the captured server snapshot, not present inventory or mutation authority. total_item_types, returned_item_types and truncated explicitly report completeness. All successful inspection occurrences (max 256 expanded nodes) are retained without eviction while the Action is retained; the store retains only the latest Action and previous terminal Action. Read all pages before starting further Actions. A missing result is not an empty chest; failed/unconfirmed inspections have no result. An empty verified chest has a result with items=[] and total_item_types=0. During execution, query again without a cursor for newly completed results. trace remains a short, possibly truncated summary; use container_results for complete inventories. Omission/false preserves the legacy output without container_results. Page-only arguments require the option to be true.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -3100,7 +3100,25 @@
             "minimum": 0,
             "maximum": 25000,
             "default": 0
-          }
+          },
+            "include_container_results": {
+              "type": "boolean",
+              "default": false,
+              "description": "Return a page of complete immutable inspection results; omitted/false keeps the legacy output."
+            },
+            "container_results_limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8,
+              "default": 4,
+              "description": "Maximum containers per page; requires include_container_results=true."
+            },
+            "container_results_cursor": {
+              "type": "string",
+              "maxLength": 44,
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9]{1,3}:[0-9]{1,3}$",
+              "description": "Use next_cursor from the same action_id; requires include_container_results=true."
+            }
         },
         "required": ["action_id"]
       },
@@ -3333,7 +3351,182 @@
               },
               "required": ["path", "kind", "coupled_paths", "refresh_tool", "source_path", "status"]
             }
-          }
+          },
+            "container_results": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "results": {
+                  "type": "array",
+                  "maxItems": 8,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "result_seq": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 256
+                      },
+                      "node_id": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                        "maxLength": 32
+                      },
+                      "node_execution": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 256
+                      },
+                      "target": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "dimension": {
+                            "type": "string",
+                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                            "maxLength": 128
+                          },
+                          "x": {
+                            "type": "integer",
+                            "minimum": -30000000,
+                            "maximum": 30000000
+                          },
+                          "y": {
+                            "type": "integer",
+                            "minimum": -2048,
+                            "maximum": 2048
+                          },
+                          "z": {
+                            "type": "integer",
+                            "minimum": -30000000,
+                            "maximum": 30000000
+                          }
+                        },
+                        "required": [
+                          "dimension",
+                          "x",
+                          "y",
+                          "z"
+                        ]
+                      },
+                      "world_session_id": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                      },
+                      "observed_client_tick": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9223372036854775807
+                      },
+                      "packet_revision": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9223372036854775807
+                      },
+                      "items": {
+                        "type": "array",
+                        "maxItems": 54,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "item_id": {
+                              "type": "string",
+                              "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                              "maxLength": 128
+                            },
+                            "count": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 3456
+                            }
+                          },
+                          "required": [
+                            "item_id",
+                            "count"
+                          ]
+                        }
+                      },
+                      "total_item_types": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 54
+                      },
+                      "returned_item_types": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 54
+                      },
+                      "truncated": {
+                        "const": false
+                      }
+                    },
+                    "required": [
+                      "result_seq",
+                      "node_id",
+                      "node_execution",
+                      "target",
+                      "world_session_id",
+                      "observed_client_tick",
+                      "packet_revision",
+                      "items",
+                      "total_item_types",
+                      "returned_item_types",
+                      "truncated"
+                    ]
+                  }
+                },
+                "total_results": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 256
+                },
+                "retained_results": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 256
+                },
+                "snapshot_result_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 256
+                },
+                "returned_results": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 8
+                },
+                "action_terminal": {
+                  "type": "boolean"
+                },
+                "truncated": {
+                  "const": false
+                },
+                "has_more": {
+                  "type": "boolean"
+                },
+                "next_cursor": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 44,
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9]{1,3}:[0-9]{1,3}$"
+                }
+              },
+              "required": [
+                "results",
+                "total_results",
+                "retained_results",
+                "snapshot_result_count",
+                "returned_results",
+                "action_terminal",
+                "truncated",
+                "has_more",
+                "next_cursor"
+              ]
+            }
         },
         "required": ["schema_version", "action_id", "state", "progress", "failure", "trace", "effects", "effect_aggregate", "partial", "source", "template", "reference_requirements"]
       }

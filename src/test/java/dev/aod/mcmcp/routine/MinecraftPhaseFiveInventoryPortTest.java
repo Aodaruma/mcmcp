@@ -73,6 +73,26 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
+    void completeInspectionAggregatesAll54SlotsWithoutPlayerInventoryOrComponentDetails() {
+        var stacks = new java.util.ArrayList<StackFingerprint>();
+        for (int index = 0; index < 54; index++) {
+            stacks.add(stack("minecraft:item_%02d".formatted(index), 64, index));
+        }
+        stacks.add(stack("minecraft:diamond", 64, 999)); // Player slot must not leak into contents.
+        var sourceSlots = java.util.stream.IntStream.range(0, 54).boxed().toList();
+        var evidence = MinecraftPhaseFiveInventoryPort.availableItemEvidence(stacks, sourceSlots, 54);
+        assertThat(evidence).containsEntry("available_source_items_truncated", false);
+        assertThat((List<?>) evidence.get("available_source_items")).hasSize(54)
+                .allSatisfy(item -> assertThat(item).isNotEqualTo(
+                        java.util.Map.of("item", "minecraft:diamond", "count", 64)));
+        var sameId = java.util.stream.IntStream.range(0, 54)
+                .mapToObj(index -> stack("minecraft:stone", 64, index)).toList();
+        assertThat(MinecraftPhaseFiveInventoryPort.availableItemEvidence(sameId, sourceSlots, 54))
+                .containsEntry("available_source_items", List.of(
+                        java.util.Map.of("item", "minecraft:stone", "count", 3456)));
+    }
+
+    @Test
     void transferReadbackRequiresEqualFullStackDecreaseAndIncrease() {
         var confirmed = MinecraftPhaseFiveInventoryPort.verifyTransferReadback(
                 40, 3, 24, 19, 16, 18);

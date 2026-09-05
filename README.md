@@ -36,6 +36,7 @@ Phase 1のControl / Navigation MVPを終え、Phase 2の最初のsliceである�
 - `agent_get_state`の`observation.latest_frame_id`を`agent_get_observation`へ渡します。告知済みframe IDはidle 60秒、最大16件まで保持されます。
 - `visible_surface`はblockごとの代表面に圧縮されます。`filter`で小麦、成熟作物、落下item、単一の整数座標範囲など必要なrecordだけへ絞れます。
 - `navigate_to_known.target`には、連続値`from / to`を丸めず`traversability.navigation_target`をそのまま使います。
+- チェストの全品目は、inspect後に`agent_get_action`へ`include_container_results: true`を指定して取得します。1チェスト最大54種類を省略せず返し、複数チェストの結果はページ分割します。[取得手順](docs/MCMCP_Action_DSL_クイックガイド.md#チェスト内容の取得先と制限)を参照してください。
 - 2〜8対象の農作業はmutation batch、2〜8件の現在可視dropは`collect_visible_item_batch`を優先します。新しい証拠が必要になった時点でActionを区切り、再観測します。
 
 ## Documents
