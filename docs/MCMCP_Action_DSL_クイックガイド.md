@@ -196,6 +196,10 @@ cast / reelは各4,000 ms、80 ticks、2 interactionsを予約します。2回�
 
 ## budgetと失敗時の直し方
 
+額縁などでチェストの照準が遮られる場合、観測された別のray hitを優先します。安全な候補がない`TARGET_UNKNOWN`や`CONTAINER_AIM_OCCLUDED`では、新しいframeを取得し、必要なら可視・通行可能な場所へ再配置してください。額縁の回転・破壊で解決する必要はありません。
+
+バックグラウンドの低FPSでfog値がまだ更新されていないtickでは、visual観測を待機します。描画復帰後に更新が再開し、古いframeが新しい観測として扱われることはありません。描画を完全停止した場合は新しいvisual情報を取得できないため、ゲーム画面の描画を再開してください。
+
 budgetは成功予想ではなく、worst-caseを収める停止上限です。釣りのcast / reelは各4秒、80 ticks、2 interactionsで、castだけは現在証明された照準camera量も加えます。container操作には少なくとも30秒、600 ticks、camera 360度とschema記載のinteraction数を確保します。`operate_known_menu`は30秒、600 ticks、1 interactionで、distance / camera / break / placementは0です。精錬nodeは`2,200 + 200 * max_smelts` ticks、その50倍のms、camera最大540度、7 interactionsを確保します。醸造node 1回には70秒、1400 ticks、照準と受付済みheadingへの復元を合わせて最大camera 540度、16 interactionsを確保し、distance / break / placementは0とします。直前に`face_known_position`が必要なら、そのnodeのcostは別途加算します。`apply_known_block_plan`は1 entryごとに15秒、300 ticks、camera 80度、1 placement、`clear_known_block_plan`は同じ時間・cameraで1 breakを確保します。8 entryなら120秒、2400 ticks、camera 640度と8 placementsまたは8 breaksです。`pillar_up_known`は15秒、300 ticks、distance 2、camera 360度、1 placementです。他の8-target mutation batchには目安として120秒、2400 ticks、最大720 camera度と、処理に応じた8 interactions / breaks / placementsを確保します。targetは入力順に実行するため、その順序のworst-caseが720 camera度を超える場合はruntimeに並べ替えさせず、小さいbatchへ分割します。
 
 schema違反はcatalog順に最大4件、budget不足は不足component名をまとめて返します。提出値や未知property名は診断へ反射されません。mutationやdrop生成後の`TARGET_UNKNOWN`をfield推測で直すのではなく、Actionを区切って新しいframeを観測してください。

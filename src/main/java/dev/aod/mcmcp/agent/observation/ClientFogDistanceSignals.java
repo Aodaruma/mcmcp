@@ -7,6 +7,7 @@ import net.minecraft.world.entity.Entity;
 import java.lang.ref.WeakReference;
 import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalDouble;
 import java.util.WeakHashMap;
 
 /** Fresh renderer-computed fog boundary for the exact level, camera entity and entity tick. */
@@ -27,9 +28,10 @@ public final class ClientFogDistanceSignals {
                 effectiveEnd(fog.environmentalEnd, fog.renderDistanceEnd));
     }
 
-    public static double currentOr(
-            ClientLevel level, Entity cameraEntity, int entityTick, double fallback) {
-        return currentOrIdentity(level, cameraEntity, entityTick, fallback);
+    /** Missing renderer data is not a measured short fog boundary. */
+    public static OptionalDouble current(
+            ClientLevel level, Entity cameraEntity, int entityTick) {
+        return currentIdentity(level, cameraEntity, entityTick);
     }
 
     static void recordIdentity(
@@ -48,20 +50,17 @@ public final class ClientFogDistanceSignals {
         }
     }
 
-    static double currentOrIdentity(
-            Object levelIdentity, Object cameraIdentity, int entityTick, double fallback) {
+    static OptionalDouble currentIdentity(
+            Object levelIdentity, Object cameraIdentity, int entityTick) {
         Objects.requireNonNull(levelIdentity, "levelIdentity");
         Objects.requireNonNull(cameraIdentity, "cameraIdentity");
-        if (!Double.isFinite(fallback) || fallback <= 0.0D) {
-            throw new IllegalArgumentException("fallback must be positive and finite");
-        }
         synchronized (SIGNALS) {
             Signal signal = SIGNALS.get(levelIdentity);
             return signal != null
                     && signal.levelIdentity().get() == levelIdentity
                     && signal.cameraIdentity().get() == cameraIdentity
                     && signal.entityTick() == entityTick
-                    ? signal.distance() : fallback;
+                    ? OptionalDouble.of(signal.distance()) : OptionalDouble.empty();
         }
     }
 

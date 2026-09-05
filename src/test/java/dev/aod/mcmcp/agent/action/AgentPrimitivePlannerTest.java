@@ -2154,6 +2154,8 @@ class AgentPrimitivePlannerTest {
         var records = new java.util.ArrayList<ObservationRecord>();
         records.add(surface(
                 chest, ObservationRecord.Face.SOUTH, "minecraft:chest", null, 0));
+        records.add(surface(
+                chest, ObservationRecord.Face.WEST, "minecraft:chest", null, 0));
         records.add(visibleContainerLabel(
                 ref, "minecraft:wheat", chest, "minecraft:chest", 0));
         var delivered = new ObservationFrame(
@@ -2291,6 +2293,87 @@ class AgentPrimitivePlannerTest {
         assertThat(AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND).isEqualTo(400L);
         assertThat(AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND
                 - AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND).isEqualTo(200L);
+    }
+
+    @Test
+    void inventoryChoosesAnotherDeliveredRayAroundAFrameAndKeepsItsCameraAndFollowingPose() {
+        var map = map(UUID.randomUUID()).snapshot().orElseThrow();
+        var chest = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var program = new ActionDsl.Program(1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.INVENTORY_TRANSFER),
+                List.of(new ActionDsl.InspectKnownContainer("inspect", chest, "minecraft:chest"),
+                        new ActionDsl.FaceKnownPosition("after", chest)));
+        var pose = new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0);
+        var up = surface(chest, ObservationRecord.Face.UP, "minecraft:chest", null, 0);
+        var west = surface(chest, ObservationRecord.Face.WEST, "minecraft:chest", null, 0);
+        var blocker = frameBlocker(0);
+        var frame = new ObservationFrame("obs-0000000000000001",
+                new ObservationValues.ResourceId(DIMENSION), 1, 16, false,
+                List.of(up, west, blocker));
+
+        var actual = AgentPrimitivePlanner.analyze(program, map, new DeterministicAStar(),
+                pose, Optional.of(frame), 4.5F);
+        var onlyClearWitness = AgentPrimitivePlanner.analyze(program, map,
+                new DeterministicAStar(), pose, Optional.of(frame(List.of(west))), 4.5F);
+
+        assertThat(actual.mutationAims().get("inspect"))
+                .isEqualTo(new AgentPrimitivePlanner.MutationAim(chest,
+                        ActionDsl.BlockFace.WEST, new Vec3(3.0D, 64.5D, 0.5D)));
+        // The following node must use the selected witness's output pose, not the rejected UP ray.
+        assertThat(actual.primitiveCosts()).isEqualTo(onlyClearWitness.primitiveCosts());
+        assertThat(actual.knownSurfaces()).isEqualTo(onlyClearWitness.knownSurfaces());
+    }
+
+    @Test
+    void fullyOccludedInventoryWitnessDoesNotInventAnUnobservedAlternative() {
+        var map = map(UUID.randomUUID()).snapshot().orElseThrow();
+        var chest = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var program = new ActionDsl.Program(1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.INVENTORY_TRANSFER),
+                List.of(new ActionDsl.InspectKnownContainer("inspect", chest, "minecraft:chest")));
+        var pose = new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0);
+        var frame = new ObservationFrame("obs-0000000000000001",
+                new ObservationValues.ResourceId(DIMENSION), 1, 16, false,
+                List.of(surface(chest, ObservationRecord.Face.UP, "minecraft:chest", null, 0),
+                        frameBlocker(0)));
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(program, map,
+                new DeterministicAStar(), pose, Optional.of(frame), 4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class)
+                .extracting(failure -> ((AgentPrimitivePlanner.PlanningException) failure).code())
+                .isEqualTo(AgentPrimitivePlanner.Code.TARGET_UNKNOWN);
+    }
+
+    @Test
+    void staleEntityBoundsDoNotOverrideAReobservedContainerWitness() {
+        var map = map(UUID.randomUUID());
+        map.advanceWorldRevision(10L, List.of(), List.of());
+        var chest = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var program = new ActionDsl.Program(1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.INVENTORY_TRANSFER),
+                List.of(new ActionDsl.InspectKnownContainer("inspect", chest, "minecraft:chest")));
+        var pose = new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0);
+        var frame = new ObservationFrame("obs-0000000000000001",
+                new ObservationValues.ResourceId(DIMENSION), 1, 16, false,
+                List.of(surface(chest, ObservationRecord.Face.UP, "minecraft:chest", null, 10),
+                        frameBlocker(0)));
+
+        var actual = AgentPrimitivePlanner.analyze(program, map.snapshot().orElseThrow(),
+                new DeterministicAStar(), pose, Optional.of(frame), 4.5F);
+        assertThat(actual.mutationAims().get("inspect").face())
+                .isEqualTo(ActionDsl.BlockFace.UP);
+    }
+
+    private static ObservationRecord.VisibleEntity frameBlocker(long revision) {
+        var dimension = new ObservationValues.ResourceId(DIMENSION);
+        return new ObservationRecord.VisibleEntity(
+                new ObservationValues.ResourceId("minecraft:item_frame"), null,
+                new ObservationValues.WorldPosition(dimension, 2.9D, 65.25D, 0.5D),
+                new ObservationValues.Vector(0.0D, 0.0D, 0.0D),
+                new ObservationValues.Aabb(2.8D, 65.0D, 0.125D, 3.0D, 65.5D, 0.875D),
+                ObservationRecord.EntityHazardClass.UNKNOWN,
+                new ObservationValues.WorldPosition(dimension, 0.5D, 65.62D, 0.5D),
+                1L, revision);
     }
 
     @Test

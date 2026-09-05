@@ -81,6 +81,61 @@ class OmnidirectionalObserverTest {
     private static final ResourceId DIMENSION = new ResourceId("minecraft:overworld");
 
     @Test
+    void missingFogBetweenLowFpsRendersDoesNotCreateOneBlockFogAndRecoversWithinTheDeadline() {
+        var level = new Object();
+        var camera = new Object();
+        var observer = new OmnidirectionalObserver(16.0D, 256);
+        Optional<ObservationFrame> completed = Optional.empty();
+        var rays = new AtomicInteger();
+
+        for (int tick = 1; tick <= 17; tick++) {
+            if ((tick - 1) % 4 == 0) {
+                ClientFogDistanceSignals.recordIdentity(level, camera, tick, 32.0D);
+            }
+            var fog = ClientFogDistanceSignals.currentIdentity(level, camera, tick);
+            if (fog.isEmpty()) continue;
+            var current = sample(tick, 101L, UnknownBoundaryReason.RADIUS_LIMIT);
+            completed = observer.collectTick(current, (index, direction, actual) -> {
+                rays.incrementAndGet();
+                return miss(direction, actual);
+            }, OmnidirectionalObserver.EntityObservation::empty);
+            if (tick < 17) assertThat(completed).isEmpty();
+        }
+
+        assertThat(rays).hasValue(4 * 256 + 2_048);
+        assertThat(completed.orElseThrow().frameCompletedTick()).isEqualTo(17);
+        assertThat(completed.orElseThrow().records()).hasSize(2_048).allSatisfy(record -> {
+            assertThat(record.newestObservedTick()).isEqualTo(17);
+            assertThat(((UnknownBoundary) record).reason()).isEqualTo(UnknownBoundaryReason.RADIUS_LIMIT);
+        });
+    }
+
+    @Test
+    void longMissingFogGapDiscardsPartialRaysAndUsesTheActualFogOnRecovery() {
+        var observer = new OmnidirectionalObserver(16.0D, 256);
+        observer.collectTick(sample(1, 101, UnknownBoundaryReason.RADIUS_LIMIT),
+                (index, direction, actual) -> new OmnidirectionalObserver.RayTrace(
+                        OmnidirectionalObserver.RayOutcome.HIT, List.of(surface(actual)),
+                        boundary(actual, UnknownBoundaryReason.OPAQUE_OCCLUSION, 1, 65, 0)),
+                OmnidirectionalObserver.EntityObservation::empty);
+        var rays = new AtomicInteger();
+        var fogSample = new OmnidirectionalObserver.TickSample(DIMENSION,
+                new WorldPosition(DIMENSION, 0, 65, 0), 1_000, 101, 101,
+                1.0D, UnknownBoundaryReason.FOG_LIMIT);
+        var completed = observer.collectTick(fogSample, (index, direction, actual) -> {
+            rays.incrementAndGet();
+            assertThat(actual.effectiveRadiusBlocks()).isEqualTo(1.0D);
+            return miss(direction, actual);
+        }, OmnidirectionalObserver.EntityObservation::empty);
+        assertThat(rays).hasValue(2_048);
+        assertThat(completed.orElseThrow().records()).hasSize(2_048).allSatisfy(record -> {
+            assertThat(record.newestObservedTick()).isEqualTo(1_000);
+            assertThat(record).isInstanceOf(UnknownBoundary.class);
+            assertThat(((UnknownBoundary) record).reason()).isEqualTo(UnknownBoundaryReason.FOG_LIMIT);
+        });
+    }
+
+    @Test
     void publishesOnlyAfterEightTicksAtTwoHundredFiftySixRaysPerTick() {
         var observer = new OmnidirectionalObserver(16.0D, 256);
         var entityQueries = new AtomicInteger();

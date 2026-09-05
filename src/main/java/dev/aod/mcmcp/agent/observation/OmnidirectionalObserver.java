@@ -116,6 +116,7 @@ public final class OmnidirectionalObserver {
     private final int raysPerTick;
     private final FrameIdGenerator frameIds;
     private final LinkedHashMap<SurfaceKey, VisibleSurface> surfaces = new LinkedHashMap<>();
+    private final LinkedHashMap<SurfaceKey, ContainerSurfaceWitnesses> containerWitnesses = new LinkedHashMap<>();
     private final LinkedHashMap<BoundaryKey, UnknownBoundary> boundaries = new LinkedHashMap<>();
 
     private ResourceId sessionDimension;
@@ -287,14 +288,20 @@ public final class OmnidirectionalObserver {
                 && sample.observedTick() == lastAcceptedTick) {
             return Optional.empty();
         }
+        int elapsedTicks = 1;
         if (sessionDimension == null
                 || !sessionDimension.equals(sample.dimension())
                 || sample.observedTick() < lastAcceptedTick) {
             clearAccumulation();
             ticksWithoutFrame = 0;
-        } else if (lastVisualRevision >= 0L
-                && sample.visualRevision() != lastVisualRevision) {
-            clearAccumulation();
+        } else {
+            // Missing fog samples skip visual collection. Count those elapsed client ticks
+            // toward the bounded catch-up deadline, without inventing observations for them.
+            elapsedTicks = (int) Math.min(2L * ticksToComplete(),
+                    sample.observedTick() - lastAcceptedTick);
+            if (lastVisualRevision >= 0L && sample.visualRevision() != lastVisualRevision) {
+                clearAccumulation();
+            }
         }
         sessionDimension = sample.dimension();
         lastAcceptedTick = sample.observedTick();
@@ -304,7 +311,8 @@ public final class OmnidirectionalObserver {
         // usual per-tick slice, but after two scan periods reobserve ALL directions on this
         // client tick. Never combine rays across an invalidating visual revision. This bounded
         // catch-up costs at most 2,048 rays and also refreshes entities, local volume and sound.
-        boolean catchUp = ++ticksWithoutFrame >= 2 * ticksToComplete();
+        ticksWithoutFrame += elapsedTicks;
+        boolean catchUp = ticksWithoutFrame >= 2 * ticksToComplete();
         if (catchUp) clearAccumulation();
         int endExclusive = catchUp ? DIRECTION_COUNT
                 : Math.min(DIRECTION_COUNT, nextDirectionIndex + raysPerTick);
@@ -317,10 +325,15 @@ public final class OmnidirectionalObserver {
             for (VisibleSurface surface : trace.surfaces()) {
                 SurfaceKey key = new SurfaceKey(surface.position(), surface.face());
                 if (surfaces.containsKey(key)) {
+                    ContainerSurfaceWitnesses witnesses = containerWitnesses.get(key);
+                    if (witnesses != null) witnesses.add(surface);
                     continue;
                 }
                 if (surfaces.size() < MAX_VISIBLE_SURFACES) {
                     surfaces.put(key, surface);
+                    if (ContainerSurfaceWitnesses.supports(surface)) {
+                        containerWitnesses.put(key, new ContainerSurfaceWitnesses(surface));
+                    }
                 } else if (firstDropped == null) {
                     firstDropped = surface;
                 }
@@ -356,6 +369,7 @@ public final class OmnidirectionalObserver {
             requireEntityMetadata(Objects.requireNonNull(entity, "visible entity"), sample);
         }
         entities.sort(ENTITY_ORDER);
+        containerWitnesses.forEach((key, witnesses) -> surfaces.put(key, witnesses.choose(entities)));
 
         var records = new ArrayList<ObservationRecord>(
                 surfaces.size() + entities.size() + boundaries.size());
@@ -856,6 +870,7 @@ public final class OmnidirectionalObserver {
     private void clearAccumulation() {
         nextDirectionIndex = 0;
         surfaces.clear();
+        containerWitnesses.clear();
         boundaries.clear();
     }
 

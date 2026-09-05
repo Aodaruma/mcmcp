@@ -1931,15 +1931,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || agentObserver == null) return Optional.empty();
         var reconciliation = reconciliationSignals.bindAndSnapshot(
                 minecraft.level, session.worldSessionId());
-        double fogDistance = ClientFogDistanceSignals.currentOr(
-                minecraft.level, minecraft.player, minecraft.player.tickCount, 1.0D);
+        var fogDistance = ClientFogDistanceSignals.current(
+                minecraft.level, minecraft.player, minecraft.player.tickCount);
+        if (fogDistance.isEmpty()) {
+            // Retain the original evidence timestamps/revisions; missing render data cannot
+            // authorize a new ray or refresh a previously delivered surface.
+            return deliveredAgentEvidence.augment(agentObservationFrames.latestFrame());
+        }
         return deliveredAgentEvidence.reobserveForPlanning(agentObservationFrames.latestFrame(), surface -> {
             var position = surface.position();
             long barrier = reconciliation.surfaceBarrierWorldRevision(
                     position.x(), position.y(), position.z());
             if (surface.worldRevision() >= barrier) return Optional.of(surface);
             return agentObserver.reobserveSurface(minecraft.level, minecraft.player, surface,
-                    session.clientTick(), reconciliation.worldRevision(), fogDistance);
+                    session.clientTick(), reconciliation.worldRevision(), fogDistance.getAsDouble());
         });
     }
 
@@ -12724,18 +12729,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     Identifier identifier = Identifier.tryParse(candidate);
                     return identifier != null && BuiltInRegistries.ENTITY_TYPE.get(identifier).isPresent();
                 }).recentSoundCluesTruncated();
-        double fogDistance = ClientFogDistanceSignals.currentOr(
+        var fogDistance = ClientFogDistanceSignals.current(
                 minecraft.level,
                 minecraft.player,
-                minecraft.player.tickCount,
-                1.0D);
+                minecraft.player.tickCount);
+        // Several client ticks may run between renders (for example at background FPS).
+        // Local safety and sound still update above; do not turn absent renderer data into
+        // a fabricated one-block fog frame or redate the previous visual evidence.
+        if (fogDistance.isEmpty()) return;
         agentObserver.tick(
                         minecraft.level,
                         minecraft.player,
                         session.clientTick(),
                         worldRevision,
                         reconciliation.visualRevision(),
-                        fogDistance,
+                        fogDistance.getAsDouble(),
                         entity -> {
                             var position = entity.position();
                             var velocity = entity.getDeltaMovement();

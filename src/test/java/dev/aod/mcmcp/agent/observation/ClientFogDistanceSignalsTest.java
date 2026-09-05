@@ -18,13 +18,35 @@ class ClientFogDistanceSignalsTest {
         var camera = new Object();
         ClientFogDistanceSignals.recordIdentity(level, camera, 10, 3.5D);
 
-        assertThat(ClientFogDistanceSignals.currentOrIdentity(level, camera, 10, 1.0D))
-                .isEqualTo(3.5D);
-        assertThat(ClientFogDistanceSignals.currentOrIdentity(level, camera, 11, 1.0D))
-                .isEqualTo(1.0D);
-        assertThat(ClientFogDistanceSignals.currentOrIdentity(level, new Object(), 10, 1.0D))
-                .isEqualTo(1.0D);
-        assertThat(ClientFogDistanceSignals.currentOrIdentity(
-                new Object(), camera, 10, 1.0D)).isEqualTo(1.0D);
+        assertThat(ClientFogDistanceSignals.currentIdentity(level, camera, 10))
+                .hasValue(3.5D);
+        assertThat(ClientFogDistanceSignals.currentIdentity(level, camera, 11)).isEmpty();
+        assertThat(ClientFogDistanceSignals.currentIdentity(level, camera, 9)).isEmpty();
+        assertThat(ClientFogDistanceSignals.currentIdentity(level, new Object(), 10)).isEmpty();
+        assertThat(ClientFogDistanceSignals.currentIdentity(new Object(), camera, 10)).isEmpty();
+    }
+
+    @Test
+    void missingSamplesStayAbsentUntilANewRendererSampleArrives() {
+        var level = new Object();
+        var camera = new Object();
+        assertThat(ClientFogDistanceSignals.currentIdentity(level, camera, 10)).isEmpty();
+        ClientFogDistanceSignals.recordIdentity(level, camera, 10, 32.0D);
+        for (int tick = 11; tick < 100; tick++) {
+            assertThat(ClientFogDistanceSignals.currentIdentity(level, camera, tick)).isEmpty();
+        }
+        ClientFogDistanceSignals.recordIdentity(level, camera, 100, 8.0D);
+        assertThat(ClientFogDistanceSignals.currentIdentity(level, camera, 100)).hasValue(8.0D);
+    }
+
+    @Test
+    void realShortFogIsPreservedAndCannotBeConfusedWithMissingData() {
+        var level = new Object();
+        var camera = new Object();
+        ClientFogDistanceSignals.recordIdentity(level, camera, 10, 1.0D);
+        assertThat(ClientFogDistanceSignals.currentIdentity(level, camera, 10)).hasValue(1.0D);
+        assertThat(ClientFogDistanceSignals.currentIdentity(level, camera, 11)).isEmpty();
+        ClientFogDistanceSignals.recordIdentity(level, camera, 11, 0.25D);
+        assertThat(ClientFogDistanceSignals.currentIdentity(level, camera, 11)).hasValue(0.25D);
     }
 }

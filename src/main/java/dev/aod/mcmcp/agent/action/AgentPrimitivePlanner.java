@@ -13,6 +13,7 @@ import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.ObservationValues;
+import dev.aod.mcmcp.agent.observation.ContainerAimOcclusion;
 import dev.aod.mcmcp.agent.observation.PlacementStateResolver;
 import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 import dev.aod.mcmcp.observation.BlockPlan;
@@ -611,6 +612,37 @@ public final class AgentPrimitivePlanner {
                         failure
                                 + "; matching surface evidence exists, but its ray witness "
                                 + "is not valid from the current pose"));
+    }
+
+    /** Choose among delivered witnesses before reserving one exact camera path and output pose. */
+    private static MutationSurface requireInventorySurface(
+            KnownTraversabilitySnapshot map,
+            Optional<ObservationFrame> latestFrame,
+            List<Pose> poses,
+            ActionDsl.Position position,
+            long surfaceBarrierWorldRevision,
+            long visualBarrierWorldRevision,
+            String block,
+            String failure) {
+        var entityBounds = latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(map.dimension()))
+                .flatMap(frame -> frame.records().stream())
+                .filter(ObservationRecord.VisibleEntity.class::isInstance)
+                .map(ObservationRecord.VisibleEntity.class::cast)
+                .filter(entity -> entity.dimension().value().equals(position.dimension())
+                        && entity.worldRevision() >= visualBarrierWorldRevision
+                        && entity.worldRevision() <= map.worldRevision())
+                .map(ObservationRecord.VisibleEntity::aabb)
+                .toList();
+        return requireMutationSurface(
+                map, latestFrame, poses, position, surfaceBarrierWorldRevision, block,
+                surface -> surface.rayHit() != null && poses.stream().allMatch(pose -> {
+                    Vec3 eye = new Vec3(pose.x(), pose.y() + pose.eyeHeight(), pose.z());
+                    Vec3 point = rayHit(surface);
+                    return entityBounds.stream().noneMatch(bounds ->
+                            ContainerAimOcclusion.intersects(eye, point, bounds));
+                }),
+                failure + "; no delivered aim witness clear of observed entity bounds");
     }
 
     /**
@@ -1332,11 +1364,11 @@ public final class AgentPrimitivePlanner {
             requireRoutingLabel(
                     map, latestFrame, inspect.routingLabel(), inspect.target(),
                     inspect.expectedBlock(), visualBarrierWorldRevision);
-            MutationSurface surface = requireMutationSurface(
+            MutationSurface surface = requireInventorySurface(
                     map, latestFrame, input, inspect.target(),
                     surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, inspect.target()),
+                    visualBarrierWorldRevision,
                     inspect.expectedBlock(),
-                    value -> true,
                     "Container target requires a current matching visible surface");
             return analyzeContainer(
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims,
@@ -1346,11 +1378,11 @@ public final class AgentPrimitivePlanner {
             requireRoutingLabel(
                     map, latestFrame, take.routingLabel(), take.target(),
                     take.expectedBlock(), visualBarrierWorldRevision);
-            MutationSurface surface = requireMutationSurface(
+            MutationSurface surface = requireInventorySurface(
                     map, latestFrame, input, take.target(),
                     surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, take.target()),
+                    visualBarrierWorldRevision,
                     take.expectedBlock(),
-                    value -> true,
                     "Container target requires a current matching visible surface");
             return analyzeContainer(
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims,
@@ -1360,22 +1392,22 @@ public final class AgentPrimitivePlanner {
             requireRoutingLabel(
                     map, latestFrame, store.routingLabel(), store.target(),
                     store.expectedBlock(), visualBarrierWorldRevision);
-            MutationSurface surface = requireMutationSurface(
+            MutationSurface surface = requireInventorySurface(
                     map, latestFrame, input, store.target(),
                     surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, store.target()),
+                    visualBarrierWorldRevision,
                     store.expectedBlock(),
-                    value -> true,
                     "Container target requires a current matching visible surface");
             return analyzeContainer(
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims,
                     work, surface, 3);
         }
         if (node instanceof ActionDsl.CraftKnownRecipe craft) {
-            MutationSurface surface = requireMutationSurface(
+            MutationSurface surface = requireInventorySurface(
                     map, latestFrame, input, craft.target(),
                     surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, craft.target()),
+                    visualBarrierWorldRevision,
                     craft.expectedState().block(),
-                    value -> true,
                     "Crafting target requires a current visible crafting table surface");
             return analyzeContainer(
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims, work, surface,

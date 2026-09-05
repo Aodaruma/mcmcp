@@ -283,6 +283,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                         && minecraft.player.containerMenu == minecraft.player.inventoryMenu) {
                     if (targetReadyForReopen(minecraft, state.parameters)) {
                         if (selectOpenHand(minecraft, state, tick)) {
+                            state.aimGate = new ContainerAimGate();
                             state.stage = Stage.AIMING_READBACK;
                         }
                     } else if (tick > state.closeDeadlineClientTick) {
@@ -883,12 +884,13 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         var target = state.parameters.target();
         Vec3 point = state.aimPoint;
         state.view.turnToward(minecraft, point);
-        if (state.view.aligned(minecraft, point)
-                && minecraft.hitResult instanceof BlockHitResult hit
-                && hit.getType() == HitResult.Type.BLOCK
-                && !hit.isWorldBorderHit()
-                && hit.getBlockPos().equals(blockPos(target))) {
-            dispatchExpectedOpen(attempt, state, readback);
+        switch (state.aimGate.observe(currentTick(), state.view.aligned(minecraft, point),
+                minecraft.hitResult, blockPos(target))) {
+            case OPEN -> dispatchExpectedOpen(attempt, state, readback);
+            case OCCLUDED -> fail(state, "CONTAINER_AIM_OCCLUDED",
+                    RoutineFailure.Category.PRECONDITION, RoutineFailure.Recovery.REPLAN,
+                    Map.of("exact_target_crosshair", true), Map.of());
+            case WAIT -> { }
         }
     }
 
@@ -1424,13 +1426,10 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     }
 
     private static BlockHitResult exactHit(Minecraft minecraft, BlockTarget target) {
-        if (!(minecraft.hitResult instanceof BlockHitResult hit)
-                || hit.getType() != HitResult.Type.BLOCK
-                || hit.isWorldBorderHit()
-                || !hit.getBlockPos().equals(blockPos(target))) {
+        if (!ContainerAimGate.exactTarget(minecraft.hitResult, blockPos(target))) {
             throw new IllegalArgumentException("current crosshair does not identify the exact target");
         }
-        return hit;
+        return (BlockHitResult) minecraft.hitResult;
     }
 
     private static boolean vanillaStorageContainer(BlockState state) {
@@ -2099,6 +2098,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private final PhaseFiveRequest request;
         private final ParsedParameters parameters;
         private final Vec3 aimPoint;
+        private ContainerAimGate aimGate = new ContainerAimGate();
         private Stage stage = Stage.OPENING_INITIAL;
         private ClientRecipeCatalog.ResolvedRecipe recipe;
         private RoutineFailure failure;
