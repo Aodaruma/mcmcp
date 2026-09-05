@@ -264,6 +264,64 @@ class KnownContainerAttemptTest {
     }
 
     @Test
+    void inconsistentReadbackRetainsObservedCountsWithoutClaimingAMoveOrReflectingUnknownReasons() {
+        for (String reason : List.of("transfer_readback_did_not_confirm_exact_full_stack_move",
+                "unknown private adapter text")) {
+            var port = new FakePort();
+            port.exactTransfer = true;
+            var operation = new KnownContainerAttempt(port, request(), 1, 101);
+            port.tick = 1;
+            operation.tick(1);
+            port.tick = 2;
+            operation.tick(2);
+            port.inconclusiveReason = reason;
+            port.extraBasis = Map.of("open_count", 2, "container_clicks", 1,
+                    "source_before", 64, "destination_before", 0,
+                    "source_after", 64, "destination_after", 64,
+                    "transfer_readback_observed", true);
+            port.tick = 3;
+
+            var result = operation.tick(3);
+            assertThat(result.status()).isEqualTo(KnownContainerAttempt.Status.FAILED);
+            assertThat(result.evidence()).isEqualTo("container_ambiguous");
+            assertThat(result.diagnostics()).containsExactlyElementsOf(
+                    reason.startsWith("transfer_readback_")
+                            ? List.of("container_transfer_readback_mismatch") : List.of());
+            operation.close();
+            assertThat(operation.drainEffectDeltas()).singleElement().satisfies(effect -> {
+                assertThat(effect.verification()).isEqualTo(AgentActionStore.Verification.UNKNOWN);
+                assertThat(effect.observedBefore()).containsExactlyInAnyOrderEntriesOf(
+                        Map.of("source_count", 64, "destination_count", 0));
+                assertThat(effect.observedAfter()).containsExactlyInAnyOrderEntriesOf(
+                        Map.of("source_count", 64, "destination_count", 64));
+                assertThat(effect.observedAfter()).doesNotContainKey("transferred");
+            });
+            assertThat(port.releases).isOne();
+        }
+    }
+
+    @Test
+    void unobservedAfterCountsNeverBecomeEvidenceWhenAClickWasOnlyPredicted() {
+        var port = new FakePort();
+        port.exactTransfer = true;
+        port.holdPending = true;
+        port.extraBasis = Map.of("source_before", 64, "destination_before", 0,
+                "source_after", 0, "destination_after", 64, "transfer_readback_observed", false);
+        var operation = new KnownContainerAttempt(port, request(), 1, 101);
+        port.tick = 1;
+        operation.tick(1);
+        port.tick = 2;
+        operation.tick(2);
+        operation.close();
+
+        assertThat(operation.drainEffectDeltas()).singleElement().satisfies(effect -> {
+            assertThat(effect.verification()).isEqualTo(AgentActionStore.Verification.UNKNOWN);
+            assertThat(effect.observedBefore()).containsEntry("source_count", 64);
+            assertThat(effect.observedAfter()).isEmpty();
+        });
+    }
+
+    @Test
     void closingAnUnconfirmedTransferDispatchRecordsUnknownWithoutAnAfterCount() {
         var port = new FakePort();
         port.exactTransfer = true;
@@ -314,6 +372,8 @@ class KnownContainerAttemptTest {
         private boolean truncated;
         private RoutineFailure observationFailure;
         private RoutineFailure evidenceFailure;
+        private Map<String, Object> extraBasis = Map.of();
+        private String inconclusiveReason;
 
         @Override
         public PhaseFiveFrame observe(PhaseFiveRequest request) {
@@ -336,16 +396,21 @@ class KnownContainerAttemptTest {
 
         @Override
         public PhaseFiveEvidence evidence(PhaseFiveAttempt attempt) {
-            Map<String, Object> basis = Map.of(
+            var basis = new java.util.LinkedHashMap<String, Object>(Map.of(
                     "open_count", Math.min(interactions, 1),
                     "container_clicks", Math.max(0, interactions - 1),
                     "recipe_placements", 0,
                     "release_pending", releasePending,
                     "release_confirmed", releaseConfirmed,
-                    "release_fault", false);
+                    "release_fault", false));
+            basis.putAll(extraBasis);
             if (evidenceFailure != null) {
                 return new PhaseFiveEvidence.Failed(attempt.attemptId(), tick,
                         maintained ? 2 : 1, evidenceFailure, basis);
+            }
+            if (inconclusiveReason != null) {
+                return new PhaseFiveEvidence.Inconclusive(attempt.attemptId(), tick,
+                        maintained ? 2 : 1, PhaseFiveEvidence.Certainty.AMBIGUOUS, inconclusiveReason, basis);
             }
             if (!maintained || holdPending) {
                 return new PhaseFiveEvidence.Pending(attempt.attemptId(), tick, 1, basis);

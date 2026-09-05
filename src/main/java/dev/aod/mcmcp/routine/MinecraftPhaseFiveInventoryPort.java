@@ -46,6 +46,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.DoubleSupplier;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -161,13 +162,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     RoutineFailure.Recovery.USER,
                     Map.of("expected_screen_context", true), Map.of());
         }
-        if ((state.stage == Stage.AIMING_INITIAL || state.stage == Stage.AIMING_READBACK
-                || state.stage == Stage.OPENING_INITIAL || state.stage == Stage.OPENING_READBACK)
-                && (state.openHand == null || !state.openHand.ready(minecraft.player))) {
-            return failure("INVENTORY_SAFE_OPEN_HAND_CHANGED", RoutineFailure.Category.SAFETY,
-                    RoutineFailure.Recovery.REPLAN,
-                    Map.of("side_effect_free_normal_use", true), Map.of());
-        }
+        RoutineFailure handFailure = safeOpenHandFailure(
+                state.stage, () -> state.openHand != null && state.openHand.ready(minecraft.player));
+        if (handFailure != null) return handFailure;
         BlockPos target = blockPos(state.parameters.target());
         if (!minecraft.level.isLoaded(target)
                 || !minecraft.level.getWorldBorder().isWithinBounds(target)
@@ -186,6 +183,17 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return failure("INVENTORY_TARGET_STATE_DIVERGED", RoutineFailure.Category.DIVERGENCE,
                     RoutineFailure.Recovery.REPLAN,
                     Map.of("target_current", true), Map.of());
+        }
+        return null;
+    }
+
+    static RoutineFailure safeOpenHandFailure(Stage stage, BooleanSupplier ready) {
+        // Only a future block-use requires a safe hand. Once dispatched, normal inventory
+        // synchronization may change that stack while the owned full-content readback arrives.
+        if ((stage == Stage.AIMING_INITIAL || stage == Stage.AIMING_READBACK) && !ready.getAsBoolean()) {
+            return failure("INVENTORY_SAFE_OPEN_HAND_CHANGED", RoutineFailure.Category.SAFETY,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("side_effect_free_normal_use", true), Map.of());
         }
         return null;
     }
@@ -562,6 +570,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         int destination = transfer.playerToContainer() ? containerCount : playerCount;
 
         if (state.stage == Stage.OPENING_READBACK) {
+            state.recordTransferReadback(source, destination);
             var readback = verifyTransferReadback(
                     state.beforeSourceCount,
                     state.beforeDestinationCount,
@@ -569,8 +578,6 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     destination,
                     state.dispatchedStackCount,
                     transfer.minimumDestinationCount());
-            state.afterSourceCount = source;
-            state.afterDestinationCount = destination;
             if (!readback.exactMove()) {
                 state.inconclusive = new InconclusiveState(
                         PhaseFiveEvidence.Certainty.AMBIGUOUS,
@@ -657,9 +664,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     Map.of("whole_stack_capacity", true), Map.of());
             return;
         }
-        state.beforeSourceCount = source;
-        state.beforeDestinationCount = destination;
-        state.dispatchedStackCount = snapshot.slots().get(slot).count();
+        state.prepareTransfer(source, destination, snapshot.slots().get(slot).count());
         dispatchContainerClick(
                 attempt, state, menu, slot, ContainerInput.QUICK_MOVE,
                 Stage.AWAITING_CLICK_ACK);
@@ -2095,7 +2100,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         }
     }
 
-    private static final class AttemptState {
+    static final class AttemptState {
         private final PhaseFiveRequest request;
         private final ParsedParameters parameters;
         private final Vec3 aimPoint;
@@ -2112,6 +2117,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private int completedUnits;
         private int beforeSourceCount;
         private int afterSourceCount;
+        private boolean transferReadbackObserved;
         private int beforeDestinationCount;
         private int afterDestinationCount;
         private int dispatchedStackCount;
@@ -2131,10 +2137,23 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private long openHandSelectedClientTick = -1L;
         private ViewLease view;
 
-        private AttemptState(PhaseFiveRequest request, ParsedParameters parameters) {
+        AttemptState(PhaseFiveRequest request, ParsedParameters parameters) {
             this.request = Objects.requireNonNull(request, "request");
             this.parameters = Objects.requireNonNull(parameters, "parameters");
             this.aimPoint = inventoryAimPoint(request, parameters.target());
+        }
+
+        void prepareTransfer(int source, int destination, int stackCount) {
+            beforeSourceCount = source;
+            beforeDestinationCount = destination;
+            dispatchedStackCount = stackCount;
+            transferReadbackObserved = false;
+        }
+
+        void recordTransferReadback(int source, int destination) {
+            afterSourceCount = source;
+            afterDestinationCount = destination;
+            transferReadbackObserved = true;
         }
 
         private boolean terminal() {
@@ -2150,7 +2169,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return parameters.expectedState().toString();
         }
 
-        private Map<String, Object> basis() {
+        Map<String, Object> basis() {
             var basis = new LinkedHashMap<String, Object>();
             basis.put("stage", stage.name().toLowerCase(java.util.Locale.ROOT));
             basis.put("target", targetIdentity());
@@ -2164,13 +2183,17 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             basis.put("release_pending", releasePending);
             basis.put("release_confirmed", releaseConfirmed);
             basis.put("release_fault", releaseFault);
-            if (beforeDestinationCount != 0 || afterDestinationCount != 0) {
-                basis.put("destination_before", beforeDestinationCount);
-                basis.put("destination_after", afterDestinationCount);
-            }
             if (parameters instanceof TransferParameters) {
                 basis.put("source_before", beforeSourceCount);
-                basis.put("source_after", afterSourceCount);
+                basis.put("destination_before", beforeDestinationCount);
+                basis.put("transfer_readback_observed", transferReadbackObserved);
+                if (transferReadbackObserved) {
+                    basis.put("source_after", afterSourceCount);
+                    basis.put("destination_after", afterDestinationCount);
+                }
+            } else if (beforeDestinationCount != 0 || afterDestinationCount != 0) {
+                basis.put("destination_before", beforeDestinationCount);
+                basis.put("destination_after", afterDestinationCount);
             }
             return basis;
         }

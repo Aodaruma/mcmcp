@@ -9,6 +9,9 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import net.minecraft.core.Direction;
+import net.minecraft.core.component.DataComponentMap;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
@@ -103,6 +106,90 @@ class MinecraftPhaseFiveInventoryPortTest {
                 40, 3, 24, 18, 16, 18).exactMove()).isFalse();
         assertThat(MinecraftPhaseFiveInventoryPort.verifyTransferReadback(
                 40, 3, 25, 19, 16, 18).exactMove()).isFalse();
+    }
+
+    @Test
+    void replenishedSourceIsNotAConfirmedTransferEvenWhenDestinationGainedTheWholeStack() {
+        var replenished = MinecraftPhaseFiveInventoryPort.verifyTransferReadback(
+                64, 0, 64, 64, 64, 1);
+        assertThat(replenished.exactMove()).isFalse();
+        assertThat(replenished.goalVerified()).isFalse();
+        var conserved = MinecraftPhaseFiveInventoryPort.verifyTransferReadback(
+                64, 0, 0, 64, 64, 1);
+        assertThat(conserved.exactMove()).isTrue();
+        assertThat(conserved.goalVerified()).isTrue();
+    }
+
+    @Test
+    void transferEvidenceDistinguishesUnreadZeroFromObservedZeroAndResetsBetweenClicks() {
+        var target = new BlockTarget("minecraft:overworld", 147, 66, -300);
+        var parameters = new MinecraftPhaseFiveInventoryPort.TransferParameters(
+                true, "minecraft:torch", "default_components_only", 1, 128, 2,
+                true, 8.0D, target, new BlockStateFingerprint("minecraft:barrel", Map.of()));
+        var state = new MinecraftPhaseFiveInventoryPort.AttemptState(
+                inventoryRequest(target, null), parameters);
+
+        assertThat(state.basis()).containsEntry("source_before", 0)
+                .containsEntry("destination_before", 0)
+                .containsEntry("transfer_readback_observed", false)
+                .doesNotContainKeys("source_after", "destination_after");
+        state.prepareTransfer(64, 0, 64);
+        assertThat(state.basis()).containsEntry("source_before", 64)
+                .containsEntry("destination_before", 0)
+                .containsEntry("transfer_readback_observed", false)
+                .doesNotContainKeys("source_after", "destination_after");
+
+        state.recordTransferReadback(0, 64);
+        assertThat(state.basis()).containsEntry("transfer_readback_observed", true)
+                .containsEntry("source_after", 0).containsEntry("destination_after", 64);
+        state.prepareTransfer(64, 64, 64);
+        assertThat(state.basis()).containsEntry("source_before", 64)
+                .containsEntry("destination_before", 64)
+                .containsEntry("transfer_readback_observed", false)
+                .doesNotContainKeys("source_after", "destination_after");
+        state.recordTransferReadback(64, 128);
+        assertThat(state.basis()).containsEntry("transfer_readback_observed", true)
+                .containsEntry("source_after", 64).containsEntry("destination_after", 128);
+    }
+
+    @Test
+    void refilledTorchHandDoesNotRejectOwnedReadbackButStillRejectsTheNextBlockUse()
+            throws Exception {
+        // An empty opening hand may be filled by normal full-content sync or an auto-refill mod.
+        // The isolated NeoForge JUnit loader does not bind Vanilla item defaults.
+        var holder = Items.TORCH.builtInRegistryHolder();
+        if (!holder.areComponentsBound()) holder.bindComponents(DataComponentMap.EMPTY);
+        boolean safeRefilledHand = MinecraftKnownBrewingPort.safeNormalUseStack(
+                new ItemStack(Items.TORCH, 64));
+        assertThat(safeRefilledHand).isFalse();
+        for (var stage : List.of(MinecraftPhaseFiveInventoryPort.Stage.OPENING_INITIAL,
+                MinecraftPhaseFiveInventoryPort.Stage.OPENING_READBACK)) {
+            assertThat(MinecraftPhaseFiveInventoryPort.safeOpenHandFailure(stage, () -> {
+                throw new AssertionError("a completed block use must not inspect the changed hand");
+            }))
+                    .isNull();
+        }
+        for (var stage : List.of(MinecraftPhaseFiveInventoryPort.Stage.AIMING_INITIAL,
+                MinecraftPhaseFiveInventoryPort.Stage.AIMING_READBACK)) {
+            assertThat(MinecraftPhaseFiveInventoryPort.safeOpenHandFailure(stage, () -> safeRefilledHand)
+                    .code()).isEqualTo("INVENTORY_SAFE_OPEN_HAND_CHANGED");
+            assertThat(MinecraftPhaseFiveInventoryPort.safeOpenHandFailure(stage, () -> true)).isNull();
+        }
+
+        var node = classNode();
+        assertThat(invocations(node, "ongoingFailure")).containsSubsequence(
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$ViewLease#undisturbed",
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#screenContextMatches",
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#safeOpenHandFailure");
+        assertThat(invocations(node, "dispatchExpectedOpen")).containsSubsequence(
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$OpenHandPlan#ready",
+                "net/minecraft/client/multiplayer/MultiPlayerGameMode#useItemOn");
+        assertThat(invocations(node, "acceptTransferSnapshot")).containsSubsequence(
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$AttemptState#recordTransferReadback",
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#verifyTransferReadback");
+        assertThat(invocations(node, "acceptTransferSnapshot")).containsSubsequence(
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$AttemptState#prepareTransfer",
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#dispatchContainerClick");
     }
 
     @Test

@@ -26,6 +26,7 @@
 - semantic / block mutationのuniversal safety gateは、OS window focusとmouse grabを要求しない。一方、Minecraftのpause、予期しないScreen / overlay、Survival、生存・health、可視threat、primitive固有のstationary条件、server reconciliationは省略せず、操作直前まで再検証する。
 - pauseしないChatScreenはworld操作の妨げにしない。共通AgentScreenPolicyを使い、chat本文の読み取り・送信を行わず、container操作時の所有権とmenu一致の検証は維持する。
 - 正規inspectの全品目はserver同期・所有画面cleanup確認後にimmutable結果として保持する。Actionの既存256実行ノード上限内では検査結果を破棄せず、agent_get_actionの明示オプションでコンテナ単位にページングする。trace要約を完全在庫の代用にせず、空・未確認・履歴失効を区別する。履歴結果を未開封コンテナの観測や再操作の認可へ転用しない。
+- containerを開くための安全な手持ちはAIMING中とnormal-use直前に検証する。送信後のOPENINGでは手持ち中身を再検査せず、画面・slot所有権とserver full-content検証を継続する。自動補充等で送り元減少と送り先増加が一致しない場合、転送成功や増殖と断定しない。読み戻し済みのbefore/after個数だけをUNKNOWN effectへ保持し、未読の初期0と観測した0を区別する。次の転送前に読み戻し済みフラグをresetし、blind retryしない。
 - fresh評価ではT0前に内部evaluation-turn leaseを獲得し、推論を含むturn全体でphysical inputを隔離する。推論中はcyan、Action / recovery中はyellowの外縁を表示する。Esc、UI OFF、world変更、shutdown、runner process終了、control stream切断、deadlineでは、Action停止、入力解放確認、lease terminalの順に処理する。Escによる評価runは失敗とするが、安全に解放できた通常EscではMCP ONと`READY`を維持する。
 - 物理入力隔離中はVanillaの`KeyMapping`をreleaseし、隔離のfalling edgeでは現在の物理keyboard状態を同一client tick内に1回再同期する。Agent ownerなしだけを物理入力handoff完了の代用にせず、同tick内のlease取得・解除もruntime処理前後の遷移確認で閉じる。
 - block mutationの成功判定は、作物の`age`やfarmlandの`moisture`等の正当な時間発展を許す意味的postconditionにする。破壊・収穫はblock消失だけで成功とせず、安全経路での物理pickupと対象inventoryの絶対個数増加を確認する。

@@ -33,6 +33,8 @@ public final class KnownContainerAttempt implements AutoCloseable {
     private boolean potentialTransferDispatched;
     private int latestSourceBefore = -1;
     private int latestDestinationBefore = -1;
+    private int latestSourceAfter = -1;
+    private int latestDestinationAfter = -1;
     private long latestEffectClientTick;
     private long latestEffectWorldRevision;
 
@@ -136,9 +138,11 @@ public final class KnownContainerAttempt implements AutoCloseable {
                 }
                 yield releasePendingSuccess(delta);
             }
-            case PhaseFiveEvidence.Inconclusive inconclusive ->
-                    fail("container_" + inconclusive.certainty().name()
-                            .toLowerCase(Locale.ROOT), delta);
+            case PhaseFiveEvidence.Inconclusive inconclusive -> new TickResult(
+                    Status.FAILED, "container_" + inconclusive.certainty().name().toLowerCase(Locale.ROOT),
+                    delta, List.of(), drainEffectDeltas(),
+                    "transfer_readback_did_not_confirm_exact_full_stack_move".equals(inconclusive.reason())
+                            ? List.of("container_transfer_readback_mismatch") : List.of());
             case PhaseFiveEvidence.Failed failed ->
                     fail(failed.failure(), delta);
         };
@@ -304,6 +308,13 @@ public final class KnownContainerAttempt implements AutoCloseable {
         latestSourceBefore = optionalNonNegativeInt(basis.get("source_before"), latestSourceBefore);
         latestDestinationBefore = optionalNonNegativeInt(
                 basis.get("destination_before"), latestDestinationBefore);
+        // Only a validated same-target full-content readback can supply after counts.
+        // In particular, default zeros and local click prediction are not observations.
+        boolean readbackObserved = Boolean.TRUE.equals(basis.get("transfer_readback_observed"));
+        latestSourceAfter = readbackObserved
+                ? requiredNonNegativeInt(basis, "source_after") : -1;
+        latestDestinationAfter = readbackObserved
+                ? requiredNonNegativeInt(basis, "destination_after") : -1;
         latestEffectClientTick = clientTick;
         latestEffectWorldRevision = worldRevision;
     }
@@ -348,9 +359,12 @@ public final class KnownContainerAttempt implements AutoCloseable {
         if (latestDestinationBefore >= 0) {
             before.put("destination_count", latestDestinationBefore);
         }
+        var after = new java.util.LinkedHashMap<String, Object>();
+        if (latestSourceAfter >= 0) after.put("source_count", latestSourceAfter);
+        if (latestDestinationAfter >= 0) after.put("destination_count", latestDestinationAfter);
         pendingEffects.add(new EffectDelta(
                 before,
-                Map.of(),
+                after,
                 AgentActionStore.Verification.UNKNOWN,
                 latestEffectClientTick,
                 latestEffectWorldRevision));
