@@ -183,6 +183,23 @@ class McpHttpServerTest {
                 2, "tools/call", "agent_start_action", tampered,
                 McpTestFixtures.TOKEN)).statusCode()).isEqualTo(400);
 
+        // SHA-256 leaves two unused bits in the last Base64 character. Java's decoder
+        // accepts aliases, so construct one deterministically rather than relying on luck.
+        String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        int lastIndex = alphabet.indexOf(requestState.charAt(requestState.length() - 1));
+        String alias = requestState.substring(0, requestState.length() - 1)
+                + alphabet.charAt(lastIndex | 1);
+        assertThat(Base64.getUrlDecoder().decode(alias.substring(alias.lastIndexOf('.') + 1)))
+                .isEqualTo(Base64.getUrlDecoder().decode(
+                        requestState.substring(requestState.lastIndexOf('.') + 1)));
+        for (String noncanonical : List.of(alias, requestState + "=")) {
+            JsonObject invalidEncoding = retry.deepCopy();
+            invalidEncoding.addProperty("requestState", noncanonical);
+            assertThat(send(requestWithId(
+                    20, "tools/call", "agent_start_action", invalidEncoding,
+                    McpTestFixtures.TOKEN)).statusCode()).isEqualTo(400);
+        }
+
         JsonObject capabilityRemoved = retry.deepCopy();
         capabilityRemoved.getAsJsonObject("_meta")
                 .getAsJsonObject("io.modelcontextprotocol/clientCapabilities")

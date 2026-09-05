@@ -975,7 +975,8 @@ public final class McpHttpServer implements AutoCloseable {
         String[] parts = requestState == null ? new String[0] : requestState.split("\\.", -1);
         if (parts.length != 4 || !KILL_ZONE_STATE_PREFIX.equals(parts[0])
                 || !parts[1].matches("[A-Za-z0-9_-]{24}")
-                || !parts[2].matches("[0-9a-f]{64}")) {
+                || !parts[2].matches("[0-9a-f]{64}")
+                || !parts[3].matches("[A-Za-z0-9_-]{43}")) {
             throw new IllegalArgumentException("invalid request state");
         }
         byte[] supplied;
@@ -983,6 +984,10 @@ public final class McpHttpServer implements AutoCloseable {
             supplied = Base64.getUrlDecoder().decode(parts[3]);
         } catch (IllegalArgumentException failure) {
             throw new IllegalArgumentException("invalid request state", failure);
+        }
+        // Reject alternate spellings whose unused Base64 bits decode to the same signature.
+        if (!Base64.getUrlEncoder().withoutPadding().encodeToString(supplied).equals(parts[3])) {
+            throw new IllegalArgumentException("invalid request state signature encoding");
         }
         byte[] expected = hmac(parts[0] + "." + parts[1] + "." + parts[2]);
         if (!MessageDigest.isEqual(expected, supplied)) {
