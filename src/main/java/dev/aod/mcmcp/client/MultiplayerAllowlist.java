@@ -34,6 +34,12 @@ public final class MultiplayerAllowlist {
         }
     }
 
+    public static boolean sameAddress(String first, String second) {
+        String normalizedFirst = normalize(first);
+        String normalizedSecond = normalize(second);
+        return normalizedFirst != null && normalizedFirst.equals(normalizedSecond);
+    }
+
     /** Remembers one exact server after a physical in-game confirmation. */
     public static boolean remember(Path file, String address) {
         Objects.requireNonNull(file, "file");

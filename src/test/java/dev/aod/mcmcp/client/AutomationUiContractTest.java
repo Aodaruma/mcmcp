@@ -185,6 +185,35 @@ class AutomationUiContractTest {
     }
 
     @Test
+    void multiplayerWarningUsesResponsiveCopyAndOptionalRemembering() throws Exception {
+        String longAddress = "a".repeat(60);
+        assertThat(AutomationIndicatorController.wrapMultiplayerAddress(longAddress))
+                .isEqualTo("a".repeat(28) + "\n" + "a".repeat(28) + "\n" + "a".repeat(4));
+
+        try (var stream = getClass().getResourceAsStream(
+                "/assets/mcmcp/lang/ja_jp.json")) {
+            assertThat(stream).isNotNull();
+            var translations = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            assertThat(translations)
+                    .contains("【警告】このサーバーでMCP操作を許可しますか？")
+                    .contains("次回からこの警告を表示しない")
+                    .contains("\"gui.mcmcp.multiplayer.enable\": \"ONにする\"")
+                    .contains("MOD開発者は一切の責任を負いません")
+                    .doesNotContain("このサーバーを記憶してON");
+        }
+
+        var controller = classNode(
+                "/dev/aod/mcmcp/client/AutomationIndicatorController.class");
+        assertThat(controller.methods.stream()
+                .filter(candidate -> candidate.name.startsWith(
+                        "lambda$enableOrRequestMultiplayerConsent"))
+                .flatMap(candidate -> invocations(candidate).stream())
+                .toList())
+                .contains("dev/aod/mcmcp/runtime/McmcpRuntime"
+                        + "#enableAutomationForCurrentMultiplayerSessionFromUi");
+    }
+
+    @Test
     void statusButtonRequiresAnActiveGameWorld() throws Exception {
         var controller = classNode(
                 "/dev/aod/mcmcp/client/AutomationIndicatorController.class");

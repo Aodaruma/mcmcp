@@ -9,6 +9,15 @@ import java.nio.file.Path;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class MultiplayerAllowlistTest {
+    @Test
+    void comparesNormalizedExactAddresses() {
+        assertThat(MultiplayerAllowlist.sameAddress(
+                " Example.ORG:25565 ", "example.org:25565")).isTrue();
+        assertThat(MultiplayerAllowlist.sameAddress(
+                "example.org", "example.org:25565")).isFalse();
+        assertThat(MultiplayerAllowlist.sameAddress(null, "example.org")).isFalse();
+    }
+
     @TempDir Path temporary;
 
     @Test

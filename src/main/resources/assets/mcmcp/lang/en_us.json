@@ -34,9 +34,12 @@
   "gui.mcmcp.setup.success": "%s setup completed. %s",
   "gui.mcmcp.setup.restart_required": "Restart Codex or Claude Code",
   "gui.mcmcp.setup.failure": "%s setup failed: %s",
-  "gui.mcmcp.multiplayer.title": "Allow MCP control on this server?",
-  "gui.mcmcp.multiplayer.message": "Enable automation on %s. This exact address is remembered and this warning will not appear next time. Check the server rules and obtain administrator permission first.",
-  "gui.mcmcp.multiplayer.remember_and_enable": "Remember this server and enable",
+  "gui.mcmcp.multiplayer.title": "WARNING — Allow MCP control on this server?",
+  "gui.mcmcp.multiplayer.message": "Connected server\n%s\nEnable automation here.\n\nAutomation may violate the rules of some servers.\nCheck the server rules and obtain administrator permission first.\n\n%s\n\nAre you sure you want to continue?",
+  "gui.mcmcp.multiplayer.disclaimer": "The mod developers accept no responsibility for loss or damage caused by automation.",
+  "gui.mcmcp.multiplayer.remember": "Do not show this warning again",
+  "gui.mcmcp.multiplayer.enable": "Enable",
   "gui.mcmcp.multiplayer.cancel": "Cancel",
-  "gui.mcmcp.multiplayer.write_failed": "MCMCP: server permission could not be saved; MCP control remains off"
+  "gui.mcmcp.multiplayer.write_failed": "MCMCP: server permission could not be saved; MCP control remains off",
+  "gui.mcmcp.multiplayer.server_changed": "MCMCP: the connected server changed; MCP control remains off"
 }

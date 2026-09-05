@@ -4,10 +4,14 @@ import dev.aod.mcmcp.McmcpMod;
 import dev.aod.mcmcp.runtime.AutomationUiSnapshot;
 import dev.aod.mcmcp.runtime.McmcpRuntime;
 import dev.aod.mcmcp.safety.ScopedEntityAttackConsentStore;
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Checkbox;
+import net.minecraft.client.gui.components.MultiLineTextWidget;
 import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.layouts.LayoutElement;
 import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.ConfirmScreen;
@@ -231,32 +235,55 @@ public final class AutomationIndicatorController {
         if (server == null) return;
         Screen parent = minecraft.gui.screen();
         String address = server.ip;
-        minecraft.setScreenAndShow(new ConfirmScreen(
-                accepted -> {
+        minecraft.setScreenAndShow(new MultiplayerConsentScreen(
+                address,
+                (accepted, remember) -> {
                     var current = minecraft.getCurrentServer();
                     if (!accepted) {
                         minecraft.setScreenAndShow(parent);
                     } else if (!minecraft.isMultiplayerServer()
                             || current == null
-                            || !address.equalsIgnoreCase(current.ip)
-                            || !MultiplayerAllowlist.remember(allowlist, address)) {
+                            || !MultiplayerAllowlist.sameAddress(address, current.ip)) {
+                        minecraft.setScreenAndShow(parent);
+                        overlay(minecraft, Component.translatable(
+                                "gui.mcmcp.multiplayer.server_changed"));
+                    } else if (remember
+                            && !MultiplayerAllowlist.remember(allowlist, address)) {
                         minecraft.setScreenAndShow(parent);
                         overlay(minecraft, Component.translatable(
                                 "gui.mcmcp.multiplayer.write_failed"));
                     } else {
-                        runtime.enableAutomationFromUi(minecraft);
+                        if (remember) {
+                            runtime.enableAutomationFromUi(minecraft);
+                        } else {
+                            runtime.enableAutomationForCurrentMultiplayerSessionFromUi(
+                                    minecraft, address);
+                        }
                         minecraft.setScreenAndShow(parent);
                     }
-                },
-                Component.translatable("gui.mcmcp.multiplayer.title"),
-                Component.translatable("gui.mcmcp.multiplayer.message", address),
-                Component.translatable("gui.mcmcp.multiplayer.remember_and_enable"),
-                Component.translatable("gui.mcmcp.multiplayer.cancel")));
+                }));
     }
 
     static Path multiplayerAllowlist(Minecraft minecraft) {
         return minecraft.gameDirectory.toPath().toAbsolutePath().normalize()
                 .resolve("config").resolve("mcmcp").resolve("allowed-servers.json");
+    }
+
+    static String wrapMultiplayerAddress(String address) {
+        if (address == null || address.isBlank()) return "?";
+        var wrapped = new StringBuilder(address.length() + address.length() / 28);
+        int column = 0;
+        for (int index = 0; index < address.length(); ) {
+            int codePoint = address.codePointAt(index);
+            if (column == MultiplayerConsentScreen.ADDRESS_LINE_LENGTH) {
+                wrapped.append('\n');
+                column = 0;
+            }
+            wrapped.appendCodePoint(codePoint);
+            index += Character.charCount(codePoint);
+            column++;
+        }
+        return wrapped.toString();
     }
 
     private void openSetupChooser(Screen parent) {
@@ -621,6 +648,110 @@ public final class AutomationIndicatorController {
         ENABLE,
         DISABLE,
         NONE
+    }
+
+    @FunctionalInterface
+    private interface MultiplayerConsentCallback {
+        void accept(boolean accepted, boolean rememberServer);
+    }
+
+    private static final class MultiplayerConsentScreen extends ConfirmScreen {
+        private static final int MAX_CONTENT_WIDTH = 400;
+        private static final int ADDRESS_LINE_LENGTH = 28;
+
+        private final MultiplayerConsentCallback result;
+        private Checkbox rememberCheckbox;
+        private boolean terminal;
+
+        private MultiplayerConsentScreen(
+                String address,
+                MultiplayerConsentCallback result) {
+            super(
+                    ignored -> { },
+                    Component.translatable("gui.mcmcp.multiplayer.title")
+                            .withStyle(ChatFormatting.BOLD, ChatFormatting.RED),
+                    Component.translatable(
+                            "gui.mcmcp.multiplayer.message",
+                            wrapMultiplayerAddress(address),
+                            Component.translatable("gui.mcmcp.multiplayer.disclaimer")
+                                    .withStyle(ChatFormatting.UNDERLINE)),
+                    Component.translatable("gui.mcmcp.multiplayer.enable"),
+                    Component.translatable("gui.mcmcp.multiplayer.cancel"));
+            this.result = Objects.requireNonNull(result, "result");
+        }
+
+        @Override
+        protected LayoutElement addMessage() {
+            return new MultiLineTextWidget(message, font)
+                    .setMaxWidth(Math.min(MAX_CONTENT_WIDTH, Math.max(80, width - 50)))
+                    .setMaxRows(24)
+                    .setCentered(true);
+        }
+
+        @Override
+        protected void addAdditionalText() {
+            rememberCheckbox = layout.addChild(Checkbox.builder(
+                            Component.translatable("gui.mcmcp.multiplayer.remember"),
+                            font)
+                    .maxWidth(Math.min(MAX_CONTENT_WIDTH, Math.max(80, width - 50)))
+                    .build());
+        }
+
+        @Override
+        protected void addButtons(LinearLayout buttons) {
+            int availableWidth = Math.max(80, width - 50);
+            if (availableWidth >= 304) {
+                int buttonWidth = Math.min(150, (availableWidth - 4) / 2);
+                yesButton = buttons.addChild(Button.builder(
+                                yesButtonComponent,
+                                ignored -> complete(true))
+                        .width(buttonWidth)
+                        .build());
+                noButton = buttons.addChild(Button.builder(
+                                noButtonComponent,
+                                ignored -> complete(false))
+                        .width(buttonWidth)
+                        .build());
+                return;
+            }
+            var stacked = LinearLayout.vertical().spacing(4);
+            stacked.defaultCellSetting().alignHorizontallyCenter();
+            int buttonWidth = Math.min(200, availableWidth);
+            yesButton = stacked.addChild(Button.builder(
+                            yesButtonComponent,
+                            ignored -> complete(true))
+                    .width(buttonWidth)
+                    .build());
+            noButton = stacked.addChild(Button.builder(
+                            noButtonComponent,
+                            ignored -> complete(false))
+                    .width(buttonWidth)
+                    .build());
+            buttons.addChild(stacked);
+        }
+
+        @Override
+        public boolean keyPressed(KeyEvent event) {
+            if (event.isEscape()) {
+                complete(false);
+                return true;
+            }
+            return super.keyPressed(event);
+        }
+
+        @Override
+        public void onClose() {
+            complete(false);
+        }
+
+        private void complete(boolean accepted) {
+            if (terminal) return;
+            terminal = true;
+            result.accept(
+                    accepted,
+                    accepted && rememberCheckbox != null && rememberCheckbox.selected());
+        }
+
     }
 
     /** Capability instance is created by the runtime and retained only by the local prompt. */

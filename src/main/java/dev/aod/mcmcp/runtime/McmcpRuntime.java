@@ -293,6 +293,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private volatile boolean paused;
     private volatile Thread clientThread;
     private volatile String endpointFaultCode;
+    private String transientMultiplayerConsentAddress;
     private volatile boolean shutdown;
 
     public McmcpRuntime(String modVersion, String neoForgeVersion) {
@@ -393,6 +394,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     public void onLoggingIn(Minecraft minecraft) {
         assertClientThread(minecraft);
+        transientMultiplayerConsentAddress = null;
         terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
@@ -417,6 +419,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     public void onLevelUnload(Minecraft minecraft) {
         assertClientThread(minecraft);
+        transientMultiplayerConsentAddress = null;
         terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
@@ -443,6 +446,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     public void onLoggingOut(Minecraft minecraft) {
         assertClientThread(minecraft);
+        transientMultiplayerConsentAddress = null;
         terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
@@ -469,6 +473,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     public void onPlayerClone(Minecraft minecraft) {
         assertClientThread(minecraft);
+        transientMultiplayerConsentAddress = null;
         terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
@@ -820,6 +825,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     /** Uses the same priority lane as Esc so a UI stop releases every owned input inline. */
     public void disableAutomationFromUi(Minecraft minecraft) {
         assertClientThread(minecraft);
+        transientMultiplayerConsentAddress = null;
         entityAttackConsent.clear();
         if (anyActive()) {
             terminateActiveEvaluationOnClient(
@@ -862,6 +868,24 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     public boolean enableAutomationFromUi() {
         return enableAutomationFromUi(Minecraft.getInstance());
+    }
+
+    /** Grants only the current armed period; disabling or leaving the level clears it. */
+    public boolean enableAutomationForCurrentMultiplayerSessionFromUi(
+            Minecraft minecraft, String address) {
+        assertClientThread(minecraft);
+        var server = minecraft.getCurrentServer();
+        if (!minecraft.isMultiplayerServer()
+                || server == null
+                || !MultiplayerAllowlist.sameAddress(address, server.ip)) {
+            return false;
+        }
+        transientMultiplayerConsentAddress = address;
+        if (enableAutomationFromUi(minecraft)) {
+            return true;
+        }
+        transientMultiplayerConsentAddress = null;
+        return false;
     }
 
     private static String sanitizeLocalCode(String code) {
@@ -1971,14 +1995,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 reconciliation.positionCorrectionRevision());
     }
 
-    private static boolean multiplayerPolicyAllows(Minecraft minecraft) {
+    private boolean multiplayerPolicyAllows(Minecraft minecraft) {
         if (!minecraft.isMultiplayerServer()) return true;
         var server = minecraft.getCurrentServer();
         return server != null
-                && MultiplayerAllowlist.allows(
-                        minecraft.gameDirectory.toPath()
-                                .resolve("config/mcmcp/allowed-servers.json"),
-                        server.ip);
+                && (MultiplayerAllowlist.sameAddress(
+                                transientMultiplayerConsentAddress, server.ip)
+                        || MultiplayerAllowlist.allows(
+                                minecraft.gameDirectory.toPath()
+                                        .resolve("config/mcmcp/allowed-servers.json"),
+                                server.ip));
     }
 
     private PreparedAgentAction prepareAgentAction(
