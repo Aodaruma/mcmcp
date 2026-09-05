@@ -29,26 +29,22 @@ The illustrated guide is currently in Japanese. No GitHub Release has been publi
 
 ## 対応状況 / Status
 
-チェック済みは記載した範囲で実装済み、未チェックは今後の対応・確認事項です。<br>Checked items are implemented within the stated scope. Unchecked items remain to be added, improved, or verified.
+✅ 実装済み / Implemented　☐ 未対応・改善中 / Pending or in progress
 
-- [x] 周囲のブロック・生き物・落下アイテム・音や、自分の持ち物を確認する。<br>Inspect nearby blocks, entities, dropped items, sounds, and your inventory.
-- [x] 観測済みの安全な経路を移動し、対象へ視点を合わせる。<br>Follow observed safe routes and look toward a target.
-- [x] チェスト・樽の中身を調べ、アイテムを1スタックずつ出し入れする。<br>Inspect chests and barrels, and transfer items one stack at a time.
-- [x] 小麦畑を耕す・種をまく・成熟を待つ・収穫する・落下物を拾う。<br>Till soil, sow wheat, wait for growth, harvest, and collect drops.
-- [x] 対応する原木・丸石を採掘し、既設の丸石製造機を時間・回数を決めて使う。<br>Mine supported logs and cobblestone, and run an existing cobblestone generator with time and cycle limits.
-- [x] 対応レシピをクラフトし、かまど・溶鉱炉・燻製器で精錬する。<br>Craft supported recipes and smelt items in furnaces, blast furnaces, or smokers.
-- [x] 対応ブロックを少数ずつ設置・撤去・回転コピーし、定型のレッドストーン回路を作る。<br>Place, remove, or copy small groups of supported blocks with rotation, and build predefined redstone circuits.
-- [x] 対応する標準ポーションを1段階ずつ醸造する。<br>Brew supported standard potions one recipe step at a time.
-- [x] 釣り竿を投げ、アタリを待って引き上げる。<br>Cast a fishing rod, wait for a bite, and reel it in.
-- [x] 対象と時間を決めて、攻撃・使用などの長押し操作を行う。<br>Hold supported inputs, such as attack or use, with a specified target and duration.
-- [x] 利用者が許可した対応トラップで、回数・時間を限定して攻撃する。<br>Attack in supported, user-approved mob traps with attack and time limits.
-- [x] ゲーム内で接続設定・ON/OFF・緊急停止・マルチプレイ許可を操作する。<br>Manage connection settings, ON/OFF control, emergency stops, and multiplayer permission in-game.
-- [ ] 最初の配布ZIPをGitHub Releaseで公開する。<br>Publish the first distribution ZIP on GitHub Releases.
-- [ ] 額縁付きチェストへのアクセスを安定させ、低FPS時の動作確認を続ける。<br>Improve access to chests with item frames and continue testing at low frame rates.
-- [ ] 未探索の場所の探索や、1ブロックの段差を含む経路への対応を広げる。<br>Expand exploration and navigation, including routes with full-block steps.
-- [ ] 大きな建築を、移動・材料管理・仮設ブロックの撤去まで通して進める。<br>Support larger building jobs with movement, material management, and temporary-block cleanup.
-- [ ] 未対応MODのブロックや作業画面への対応を増やす。<br>Add support for more modded blocks and workstation interfaces.
-- [ ] 複数回の釣りを、終了時の回収まで含めて一括実行する。<br>Run multiple fishing cycles as one job, including cleanup when it ends.
+| 観測・管理<br>Observation & inventory | 作業・建築<br>Tasks & building | 操作・連携<br>Controls & integration |
+| --- | --- | --- |
+| ✅ 周囲観測<br>Surroundings | ✅ 小麦農業<br>Wheat farming | ✅ 長押し操作<br>Bounded input holds |
+| ✅ 安全な移動<br>Known paths | ✅ 原木・丸石採掘<br>Supported mining | ✅ 攻撃機能（対応トラップ）<br>Combat (supported traps) |
+| ✅ 視点操作<br>Camera control | ✅ 丸石製造機<br>Cobblestone generators | ✅ MCP接続・ON/OFF<br>MCP setup & control |
+| ✅ 持ち物確認<br>Inventory inspection | ✅ クラフト・精錬<br>Crafting & smelting | ✅ 緊急停止<br>Emergency stop |
+| ✅ チェスト棚卸し<br>Chest & barrel inspection | ✅ 小規模建築・コピー<br>Small builds & copying | ✅ マルチプレイ<br>Multiplayer support |
+| ✅ アイテム出し入れ<br>Item transfers | ✅ 回路組み立て（定型）<br>Preset redstone circuits | ☐ 追加MOD互換性<br>More mod compatibility |
+| ☐ 未探索エリア・段差移動<br>Exploration & full-block steps | ✅ ポーション醸造<br>Standard potion brewing | ☐ 低FPS時の安定性<br>Low-FPS stability |
+| ☐ 額縁付きチェストの安定性<br>Item-frame chest reliability | ✅ 釣り<br>Fishing | ☐ Release公開<br>Release publication |
+| | ☐ 大規模建築<br>Large building jobs | |
+| | ☐ 連続釣り<br>Multi-cycle fishing | |
+
+対応する対象・操作範囲は[機能詳細](docs/MCMCP_Action_DSL_クイックガイド.md)を参照してください。<br>See the [feature guide (Japanese)](docs/MCMCP_Action_DSL_クイックガイド.md) for supported targets and limits.
 
 ## 質問・不具合 / Questions and issues
 
