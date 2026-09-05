@@ -32,7 +32,7 @@ Phase 1のControl / Navigation MVPを終え、Phase 2の最初のsliceである�
 ## MCP利用の要点
 
 - ゲーム内でMCP操作をONにすると、Action終了後もONを維持します。自動操作を無効にするときはOFFへ切り替えてください。
-
+- **別のアプリを開きながら操作する場合：** Minecraftで **F3＋P**（初期キー設定）を押し、フォーカス喪失時の一時停止が**無効**になった表示を確認してください。有効だと、AIがチェストを閉じた直後にメニューが自動で開き、次の操作が止まることがあります。もう一度押すと元に戻せます。この設定は保存され、通常プレイにも適用されます。手動Escによる緊急停止は引き続き使えます。
 - `agent_get_state`の`observation.latest_frame_id`を`agent_get_observation`へ渡します。告知済みframe IDはidle 60秒、最大16件まで保持されます。
 - `visible_surface`はblockごとの代表面に圧縮されます。`filter`で小麦、成熟作物、落下item、単一の整数座標範囲など必要なrecordだけへ絞れます。
 - `navigate_to_known.target`には、連続値`from / to`を丸めず`traversability.navigation_target`をそのまま使います。
