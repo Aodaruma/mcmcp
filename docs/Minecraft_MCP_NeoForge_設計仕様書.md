@@ -626,6 +626,8 @@ Codex CLI 0.146.1互換経路は、実wire captureと同じ次の並びに限定
 3. `tools/list`: IDあり、`MCP-Protocol-Version: 2025-06-18`、custom MCP headerなし。固定5 Toolの標準resultを返す。`params._meta.progressToken`は許可するが、任意のpaginationやTool追加には使わない。
 4. `tools/call`: IDあり、同protocol header、custom MCP headerなし。`params.name`は固定5 Toolのいずれかとする。`params.arguments`は省略時に空objectとして扱い、存在する場合はobjectかつ別紙schema適合を必須とする。
 
+互換経路の`params._meta`では`progressToken`に加え、Codexが送る`callId` / `itemId` / `threadId`（空白だけでない128文字以下のstring）と`x-codex-turn-metadata`（object）を許可する。これらは通信の付加情報として破棄し、runtimeへ渡さず、responseやlogへ反射しない。内部のsandbox / approval等の申告は操作権限として扱わない。未知の直下fieldと型違反は引き続き拒否し、既存のbody / JSON上限も適用する。
+
 `initialize`に2026 headerを付ける、`server/discover`に2025 versionを付ける、compatibility methodへ`Mcp-Method` / `Mcp-Name`を混ぜる、notificationにIDを付けるなどの経路混同はfail closedにする。互換経路でもBearer、Origin、Host、body、rate-limitに例外を作らず、`Mcp-Session-Id`は発行・受理しない。
 
 MVPで実装するmethod:

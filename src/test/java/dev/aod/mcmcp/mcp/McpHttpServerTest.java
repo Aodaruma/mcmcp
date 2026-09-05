@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -287,6 +288,46 @@ class McpHttpServerTest {
                 McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null));
         assertThat(initializedEmpty.statusCode()).isEqualTo(202);
         assertThat(initializedEmpty.body()).isEmpty();
+    }
+
+    @Test
+    void codexLegacyCallsAcceptCorrelationMetadataWithoutReflectingIt() throws Exception {
+        start(defaultRuntime(), config("codex-correlation").rateLimit(100, 100).build());
+        JsonObject meta = new JsonObject();
+        meta.addProperty("progressToken", 7);
+        meta.addProperty("callId", "private-call-marker");
+        meta.addProperty("itemId", "private-item-marker");
+        meta.addProperty("threadId", "private-thread-marker");
+        JsonObject turn = new JsonObject();
+        turn.addProperty("session_id", "private-session-marker");
+        turn.addProperty("sandbox_mode", "danger-full-access");
+        turn.addProperty("auto_review_enabled", false);
+        meta.add("x-codex-turn-metadata", turn);
+        JsonObject params = new JsonObject();
+        params.addProperty("name", "agent_get_state");
+        params.add("arguments", new JsonObject());
+        params.add("_meta", meta);
+
+        HttpResponse<String> response = send(codexLegacyPost(requestBody("tools/call", params),
+                McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null));
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(json(response).getAsJsonObject("result").get("isError").getAsBoolean()).isFalse();
+        assertThat(response.body()).doesNotContain("private-", "danger-full-access", "auto_review_enabled");
+
+        for (String field : List.of("callId", "itemId", "threadId", "x-codex-turn-metadata")) {
+            JsonObject malformed = params.deepCopy();
+            malformed.getAsJsonObject("_meta").addProperty(field, true);
+            HttpResponse<String> rejected = send(codexLegacyPost(requestBody("tools/call", malformed),
+                    McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null));
+            assertThat(rejected.statusCode()).isEqualTo(400);
+            assertThat(rejected.body()).contains("InvalidToolCall").doesNotContain(field);
+        }
+        JsonObject unknown = params.deepCopy();
+        unknown.getAsJsonObject("_meta").addProperty("unknown-private-marker", "private-value");
+        HttpResponse<String> rejected = send(codexLegacyPost(requestBody("tools/call", unknown),
+                McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null));
+        assertThat(rejected.statusCode()).isEqualTo(400);
+        assertThat(rejected.body()).doesNotContain("private-");
     }
 
     @Test

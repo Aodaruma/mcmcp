@@ -1133,8 +1133,17 @@ public final class McpHttpServer implements AutoCloseable {
             return false;
         }
         JsonObject meta = params.getAsJsonObject("_meta");
-        return Set.of("progressToken").containsAll(meta.keySet())
-                && (!meta.has("progressToken") || validRequestId(meta.get("progressToken")));
+        // Codex attaches correlation data to calls as well as progress tokens.
+        // Accept the known envelope, but never pass it to the runtime or treat
+        // client-reported sandbox/approval fields as execution authority.
+        return Set.of("progressToken", "callId", "itemId", "threadId", "x-codex-turn-metadata")
+                        .containsAll(meta.keySet())
+                && (!meta.has("progressToken") || validRequestId(meta.get("progressToken")))
+                && (!meta.has("callId") || validBoundedString(meta.get("callId")))
+                && (!meta.has("itemId") || validBoundedString(meta.get("itemId")))
+                && (!meta.has("threadId") || validBoundedString(meta.get("threadId")))
+                && (!meta.has("x-codex-turn-metadata")
+                        || meta.get("x-codex-turn-metadata").isJsonObject());
     }
 
     private static boolean validBoundedString(JsonElement value) {
