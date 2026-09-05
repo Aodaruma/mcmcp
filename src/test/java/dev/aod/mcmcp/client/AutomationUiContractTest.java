@@ -169,6 +169,22 @@ class AutomationUiContractTest {
     }
 
     @Test
+    void setupDialogsUseShortCopyAndExposeCancel() throws Exception {
+        try (var stream = getClass().getResourceAsStream(
+                "/assets/mcmcp/lang/ja_jp.json")) {
+            assertThat(stream).isNotNull();
+            var translations = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            assertThat(translations)
+                    .contains("設定するMCPクライアントを選んでください。")
+                    .contains("\"gui.mcmcp.setup.cancel\": \"キャンセル\"")
+                    .contains("%sを追記・更新します。\\n")
+                    .contains("\"gui.mcmcp.setup.confirm\": \"OK\"")
+                    .doesNotContain("Escで戻れます")
+                    .doesNotContain("ローカルhelper");
+        }
+    }
+
+    @Test
     void statusButtonRequiresAnActiveGameWorld() throws Exception {
         var controller = classNode(
                 "/dev/aod/mcmcp/client/AutomationIndicatorController.class");

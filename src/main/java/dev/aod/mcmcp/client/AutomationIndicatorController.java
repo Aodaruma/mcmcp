@@ -8,10 +8,12 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.ConfirmScreen;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.InputWithModifiers;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.input.MouseButtonInfo;
@@ -273,6 +275,55 @@ public final class AutomationIndicatorController {
                 Component.translatable("gui.mcmcp.setup.codex"),
                 Component.translatable("gui.mcmcp.setup.claude_code")) {
             @Override
+            protected void addButtons(LinearLayout buttons) {
+                var options = LinearLayout.vertical().spacing(4);
+                options.defaultCellSetting().alignHorizontallyCenter();
+                int availableWidth = Math.max(80, width - 50);
+                if (availableWidth >= 304) {
+                    int buttonWidth = Math.min(200, (availableWidth - 4) / 2);
+                    var clients = LinearLayout.horizontal().spacing(4);
+                    yesButton = clients.addChild(Button.builder(
+                                    yesButtonComponent,
+                                    ignored -> callback.accept(true))
+                            .width(buttonWidth)
+                            .build());
+                    noButton = clients.addChild(Button.builder(
+                                    noButtonComponent,
+                                    ignored -> callback.accept(false))
+                            .width(buttonWidth)
+                            .build());
+                    options.addChild(clients);
+                } else {
+                    int buttonWidth = Math.min(200, availableWidth);
+                    yesButton = options.addChild(Button.builder(
+                                    yesButtonComponent,
+                                    ignored -> callback.accept(true))
+                            .width(buttonWidth)
+                            .build());
+                    noButton = options.addChild(Button.builder(
+                                    noButtonComponent,
+                                    ignored -> callback.accept(false))
+                            .width(buttonWidth)
+                            .build());
+                }
+                options.addChild(Button.builder(
+                                Component.translatable("gui.mcmcp.setup.cancel"),
+                                ignored -> onClose())
+                        .width(Math.min(200, availableWidth))
+                        .build());
+                buttons.addChild(options);
+            }
+
+            @Override
+            public boolean keyPressed(KeyEvent event) {
+                if (event.isEscape()) {
+                    onClose();
+                    return true;
+                }
+                return super.keyPressed(event);
+            }
+
+            @Override
             public void onClose() {
                 minecraft.setScreenAndShow(parent);
             }
@@ -284,10 +335,8 @@ public final class AutomationIndicatorController {
         var minecraft = Minecraft.getInstance();
         String targetName = target == McpClientAutoConfigurator.Target.CODEX
                 ? "Codex" : "Claude Code";
-        Path configPath = Path.of(System.getProperty("user.home", "."))
-                .resolve(target == McpClientAutoConfigurator.Target.CODEX
-                        ? ".codex/config.toml" : ".claude.json")
-                .toAbsolutePath().normalize();
+        String configPath = target == McpClientAutoConfigurator.Target.CODEX
+                ? ".codex/config.toml" : ".claude.json";
         minecraft.setScreenAndShow(new ConfirmScreen(
                 accepted -> {
                     if (!accepted) {
@@ -311,7 +360,7 @@ public final class AutomationIndicatorController {
                 },
                 Component.translatable("gui.mcmcp.setup.confirm_title", targetName),
                 Component.translatable(
-                        "gui.mcmcp.setup.confirm_message", targetName, configPath),
+                        "gui.mcmcp.setup.confirm_message", configPath),
                 Component.translatable("gui.mcmcp.setup.confirm"),
                 Component.translatable("gui.mcmcp.setup.back")) {
             @Override
