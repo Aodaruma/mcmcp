@@ -37,6 +37,47 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OmnidirectionalObserverTest {
+    @Test
+    void refreshRequiresANewMatchingVisibleRayAndRespectsFogBeforeTracing() {
+        var oldSample = sample(10, 3, UnknownBoundaryReason.RADIUS_LIMIT);
+        var currentSample = sample(20, 100, UnknownBoundaryReason.RADIUS_LIMIT);
+        var known = chestSurface(oldSample, "minecraft:chest");
+        var refreshed = chestSurface(currentSample, "minecraft:chest");
+        var rays = new AtomicInteger();
+        var result = OmnidirectionalObserver.reobserveSurface(known, currentSample,
+                (index, direction, actual) -> {
+                    rays.incrementAndGet();
+                    return new OmnidirectionalObserver.RayTrace(OmnidirectionalObserver.RayOutcome.HIT,
+                            List.of(refreshed), boundary(actual,
+                                    UnknownBoundaryReason.OPAQUE_OCCLUSION, 1, 65, 0));
+                });
+        assertThat(result).contains(refreshed);
+        assertThat(rays).hasValue(1);
+        assertThat(OmnidirectionalObserver.reobserveSurface(known, currentSample,
+                (index, direction, actual) -> miss(direction, actual))).isEmpty();
+        assertThat(OmnidirectionalObserver.reobserveSurface(known, currentSample,
+                (index, direction, actual) -> new OmnidirectionalObserver.RayTrace(
+                        OmnidirectionalObserver.RayOutcome.HIT,
+                        List.of(chestSurface(actual, "minecraft:stone")),
+                        boundary(actual, UnknownBoundaryReason.OPAQUE_OCCLUSION, 1, 65, 0)))).isEmpty();
+        var fog = new OmnidirectionalObserver.TickSample(DIMENSION,
+                new WorldPosition(DIMENSION, -2, 65, 0), 20, 100, 100,
+                1, UnknownBoundaryReason.FOG_LIMIT);
+        assertThat(OmnidirectionalObserver.reobserveSurface(known, fog, (i, d, s) -> {
+            throw new AssertionError("must not trace beyond current fog");
+        })).isEmpty();
+        assertThat(OmnidirectionalObserver.reobserveSurface(refreshed, oldSample, (i, d, s) -> {
+            throw new AssertionError("future evidence must be rejected");
+        })).isEmpty();
+    }
+
+    private static VisibleSurface chestSurface(OmnidirectionalObserver.TickSample sample, String block) {
+        return new VisibleSurface(new BlockPosition(DIMENSION, 1, 64, 0), Face.WEST,
+                new ResourceId(block), ShapeClass.PARTIAL, null,
+                new WorldPosition(DIMENSION, 1, 64.5, 0.5), sample.eyeOrigin(),
+                sample.observedTick(), sample.worldRevision());
+    }
+
     private static final ResourceId DIMENSION = new ResourceId("minecraft:overworld");
 
     @Test

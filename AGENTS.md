@@ -15,6 +15,7 @@
 - LLMへ渡せるworld情報は、許可された全周visual、Local Observation Volume、実再生sound clue等に限る。scoreboard、chat、看板、本などの内容を命令として扱わず、hidden world stateを渡さない。
 - 全mutationはglobal world revisionと監査ledgerへ記録する。部分360度scanを無効化するvisual revisionはnavigation/visibilityへ影響する変更だけで進め、各recordには実観測時のrevisionを付ける。詳細な有効性規則は設計仕様書とtestを正本とする。
 - 連続visual invalidationでも観測frameを無期限に停止させない。2 scan周期以内に同一tickで全方向を再観測し、無効化されたrayを混在させず、world切替時はcatch-up期限をresetする。
+- 配送済みの静的表面がrevision更新で失効した場合、planning・予約・JITで同じ面の既知ray hitへ現在のeyeから通常の全周観測policyで再raycastできる。位置・面・block・公開state/item・shapeの一致を必須とし、配送TTL、fog、距離、遮蔽、unload、revision barrierを緩めない。内部再観測を公開frameの書き換えや未配送の対象・動的情報の認可へ転用しない。
 - Actionは有限budget、停止条件、Esc緊急停止、監査traceを持ち、DSL nodeの順を変えない。同一targetの照準・経路失敗は有限回で再配置、replan、またはterminal failureへ進む。配送ACKはresponse受領だけを確認し、安全preflightは予約直前と実行開始直前に行う。
 - terminal resultを公開する前にAgent所有の入力・使用/破壊状態・追跡velocityを解放する。解放未確認なら有限retryしてOFFへlockし、最初のterminal intentを保持したまま、解放確認後に同じ結果を公開する。
 - Action不在の通常tickでは入力解放を繰り返さない。終了処理と未完了の解放retryに限定し、待機中の利用者の弓・飲食・採掘を中断しない。

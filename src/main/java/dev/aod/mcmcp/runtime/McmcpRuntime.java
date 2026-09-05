@@ -1919,7 +1919,23 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
      * reach, age, commit, and JIT fences; dynamic evidence is never extended by this view.
      */
     private Optional<ObservationFrame> agentPlanningFrame() {
-        return deliveredAgentEvidence.augment(agentObservationFrames.latestFrame());
+        var minecraft = Minecraft.getInstance();
+        assertClientThread(minecraft);
+        var session = sessions.snapshot();
+        if (!session.worldReady() || minecraft.level == null || minecraft.player == null
+                || agentObserver == null) return Optional.empty();
+        var reconciliation = reconciliationSignals.bindAndSnapshot(
+                minecraft.level, session.worldSessionId());
+        double fogDistance = ClientFogDistanceSignals.currentOr(
+                minecraft.level, minecraft.player, minecraft.player.tickCount, 1.0D);
+        return deliveredAgentEvidence.reobserveForPlanning(agentObservationFrames.latestFrame(), surface -> {
+            var position = surface.position();
+            long barrier = reconciliation.surfaceBarrierWorldRevision(
+                    position.x(), position.y(), position.z());
+            if (surface.worldRevision() >= barrier) return Optional.of(surface);
+            return agentObserver.reobserveSurface(minecraft.level, minecraft.player, surface,
+                    session.clientTick(), reconciliation.worldRevision(), fogDistance);
+        });
     }
 
     private AgentAdmissionSnapshot captureAgentAdmission(

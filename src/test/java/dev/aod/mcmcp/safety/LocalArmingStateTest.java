@@ -9,6 +9,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class LocalArmingStateTest {
     @Test
+    void manyCompletedAndRecoveredActionsKeepTheSameCapabilityLeaseUntilExplicitOff() {
+        var state = new LocalArmingState();
+        var session = UUID.randomUUID();
+        var grants = Set.of("camera", "inventory_transfer");
+        state.arm(session, grants);
+        for (int i = 0; i < 100; i++) {
+            assertThat(state.beginAction(session)).isTrue();
+            if (i % 2 == 0) assertThat(state.beginRecovery(session)).isTrue();
+            assertThat(state.completeAction(session)).isTrue();
+            assertThat(state.snapshot(session).mode()).isEqualTo(LocalArmingState.Mode.READY);
+            assertThat(state.snapshot(session).capabilities()).isEqualTo(grants);
+        }
+        state.lock("local_ui_disabled");
+        assertThat(state.completeAction(session)).isFalse();
+        assertThat(state.beginAction(session)).isFalse();
+    }
+
+    @Test
     void readyLeaseReturnsAfterCompletionAndRemainsWorldScoped() {
         var state = new LocalArmingState();
         var session = UUID.randomUUID();

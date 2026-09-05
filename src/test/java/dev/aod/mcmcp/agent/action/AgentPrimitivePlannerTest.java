@@ -11,6 +11,8 @@ import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.ObservationValues;
 import dev.aod.mcmcp.agent.observation.PlacementStateResolver;
+import dev.aod.mcmcp.agent.observation.DeliveredPolicyEvidenceStore;
+import dev.aod.mcmcp.agent.observation.ObservationPage;
 import dev.aod.mcmcp.brewing.StandardPotionStackSpec;
 import dev.aod.mcmcp.redstone.RedstoneSpec;
 import net.minecraft.world.phys.Vec3;
@@ -27,6 +29,41 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AgentPrimitivePlannerTest {
+    @Test
+    void deliveredChestReobservedAfterUnrelatedUpdatesPassesWithoutWeakeningCommitBarrier() {
+        var map = map(UUID.randomUUID());
+        var chest = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var old = surface(chest, ObservationRecord.Face.UP, "minecraft:chest", null, 0);
+        var store = new DeliveredPolicyEvidenceStore();
+        store.recordDelivered(new ObservationPage("obs-0000000000000001", 1, List.of(old), null));
+        var oldFrame = Optional.of(frame(List.of(old)));
+        var program = new ActionDsl.Program(1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.INVENTORY_TRANSFER),
+                List.of(new ActionDsl.InspectKnownContainer("inspect", chest, "minecraft:chest")));
+        var pose = new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0);
+        map.advanceWorldRevision(100, List.of(), List.of());
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(program, map.snapshot().orElseThrow(),
+                new DeterministicAStar(), pose, store.augment(oldFrame), 4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+        var fresh = store.reobserveForPlanning(oldFrame, ignored -> Optional.of(
+                surface(chest, ObservationRecord.Face.UP, "minecraft:chest", null, 100)));
+        var analysis = AgentPrimitivePlanner.analyze(program, map.snapshot().orElseThrow(),
+                new DeterministicAStar(), pose, fresh, 4.5F);
+        var required = analysis.knownSurfaces().iterator().next();
+        assertThat(AgentPrimitivePlanner.knownSurface(map.snapshot().orElseThrow(), fresh, required, 100))
+                .isTrue();
+        assertThatCode(() -> AgentPrimitivePlanner.requireKnownSurface(
+                map.snapshot().orElseThrow(), fresh, chest, "minecraft:chest", 100)).doesNotThrowAnyException();
+        // A later update at reservation/JIT still invalidates that witness until reobserved.
+        map.advanceWorldRevision(101, List.of(), List.of());
+        assertThat(AgentPrimitivePlanner.knownSurface(map.snapshot().orElseThrow(), fresh, required, 101))
+                .isFalse();
+        var hidden = store.reobserveForPlanning(oldFrame, ignored -> Optional.empty());
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(program, map.snapshot().orElseThrow(),
+                new DeterministicAStar(), pose, hidden, 4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+    }
+
     private static final String DIMENSION = "minecraft:overworld";
 
     @Test

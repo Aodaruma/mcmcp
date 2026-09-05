@@ -12,6 +12,34 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class DeliveredPolicyEvidenceStoreTest {
+    @Test
+    void reobservesOnlyDeliveredSurfacesWithoutExtendingDeliveryLifetimeOrDynamicEvidence() {
+        var clock = new AtomicLong();
+        var store = new DeliveredPolicyEvidenceStore(clock::get);
+        var chest = surface(1, 64, 1, "minecraft:chest", 10, 3);
+        var unseen = surface(2, 64, 2, "minecraft:chest", 10, 3);
+        var dynamic = entity(4, 64, 4, 10, 3);
+        store.recordDelivered(new ObservationPage("obs-0000000000000001", 10, List.of(chest), null));
+        var latest = Optional.of(frame("obs-0000000000000002", 10, List.of(chest, unseen, dynamic)));
+        var refreshed = surface(1, 64, 1, "minecraft:chest", 20, 100);
+        var result = store.reobserveForPlanning(latest, known -> {
+            assertThat(known).isEqualTo(chest);
+            return Optional.of(refreshed);
+        }).orElseThrow();
+        assertThat(result.records()).containsExactly(refreshed, dynamic);
+        assertThat(result.frameCompletedTick()).isEqualTo(20);
+        assertThat(latest.orElseThrow().frameCompletedTick()).isEqualTo(10);
+        // Failed visibility retains only the old static-facing witness, never a fresh revision.
+        assertThat(store.reobserveForPlanning(latest, known -> Optional.empty()).orElseThrow().records())
+                .containsExactly(chest, dynamic);
+        assertThat(store.reobserveForPlanning(latest, known -> Optional.of(unseen)).orElseThrow().records())
+                .containsExactly(chest, dynamic);
+        clock.set(DeliveredPolicyEvidenceStore.SURFACE_IDLE_TIMEOUT.toNanos());
+        assertThat(store.reobserveForPlanning(latest, known -> {
+            throw new AssertionError("expired delivery must not trigger a ray");
+        }).orElseThrow().records()).containsExactly(dynamic);
+    }
+
     private static final ObservationValues.ResourceId DIMENSION =
             new ObservationValues.ResourceId("minecraft:overworld");
 

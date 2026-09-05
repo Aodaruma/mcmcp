@@ -12,6 +12,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
+import java.util.function.Function;
 
 /**
  * Bounded, session-local memory of static visual evidence actually delivered to the MCP client.
@@ -200,6 +201,41 @@ public final class DeliveredPolicyEvidenceStore {
                 latest.visibleEntitiesTruncated(),
                 latest.recentSoundCluesTruncated(),
                 records));
+    }
+
+    /** Internal planner view only: refresh delivered keys, never undisclosed surfaces/entities. */
+    public synchronized Optional<ObservationFrame> reobserveForPlanning(
+            Optional<ObservationFrame> latestFrame,
+            Function<ObservationRecord.VisibleSurface, Optional<ObservationRecord.VisibleSurface>> reobserve) {
+        return augment(latestFrame).map(frame -> {
+            var records = new ArrayList<ObservationRecord>();
+            long completedTick = frame.frameCompletedTick();
+            for (ObservationRecord record : frame.records()) {
+                if (record instanceof ObservationRecord.VisibleSurface surface) {
+                    var refreshed = reobserve.apply(surface).filter(current ->
+                            SurfaceKey.of(current).equals(SurfaceKey.of(surface))
+                                    && Objects.equals(current.state(), surface.state())
+                                    && Objects.equals(current.placementItem(), surface.placementItem())
+                                    && current.shapeClass() == surface.shapeClass()
+                                    && current.observedTick() >= surface.observedTick()
+                                    && current.worldRevision() >= surface.worldRevision());
+                    if (refreshed.isPresent()) {
+                        var current = refreshed.orElseThrow();
+                        records.add(current);
+                        completedTick = Math.max(completedTick, current.observedTick());
+                    } else {
+                        // Static facing may still use delivered coordinates. Keep the OLD
+                        // revision so mutation/approach admission cannot mistake failure for freshness.
+                        records.add(surface);
+                    }
+                } else {
+                    records.add(record);
+                }
+            }
+            return new ObservationFrame(frame.frameId(), frame.dimension(), completedTick,
+                    frame.configuredVisualRadiusBlocks(), frame.visibleEntitiesTruncated(),
+                    frame.recentSoundCluesTruncated(), records);
+        });
     }
 
     /**

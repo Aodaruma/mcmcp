@@ -9,7 +9,7 @@
   "gui.mcmcp.automation.fault": "MCP操作: FAULT",
   "gui.mcmcp.automation.agent_notice": "自動操作中 — Escで緊急停止",
   "gui.mcmcp.automation.evaluating_notice": "推論中・入力ロック中 — Escで緊急停止",
-  "gui.mcmcp.automation.tooltip.enable": "クリックするとMCP操作をONにし、1 Actionを待機します",
+  "gui.mcmcp.automation.tooltip.enable": "クリックするとMCP操作をONにします。Action終了後もONを維持します",
   "gui.mcmcp.automation.tooltip.disable": "クリックすると現在の操作を停止し、MCP操作をOFFにします",
   "gui.mcmcp.automation.tooltip.evaluating": "推論中はMinecraft入力をロックします。クリックで停止してOFFにします",
   "gui.mcmcp.automation.tooltip.consent_pending": "%s を対象とする範囲付き反復攻撃ポリシーを専用画面で確認してください",

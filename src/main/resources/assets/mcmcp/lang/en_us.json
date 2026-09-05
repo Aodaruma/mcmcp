@@ -9,7 +9,7 @@
   "gui.mcmcp.automation.fault": "MCP control: FAULT",
   "gui.mcmcp.automation.agent_notice": "Automation active — press Esc to stop",
   "gui.mcmcp.automation.evaluating_notice": "Reasoning; input locked — press Esc to stop",
-  "gui.mcmcp.automation.tooltip.enable": "Click to enable MCP control for one Action",
+  "gui.mcmcp.automation.tooltip.enable": "Click to enable MCP control. Control stays ON after each Action",
   "gui.mcmcp.automation.tooltip.disable": "Click to stop the current operation and turn MCP control off",
   "gui.mcmcp.automation.tooltip.evaluating": "Minecraft input is locked while reasoning. Click to stop and turn control off",
   "gui.mcmcp.automation.tooltip.consent_pending": "Use the dedicated screen to review the bounded repeated-attack policy for %s",

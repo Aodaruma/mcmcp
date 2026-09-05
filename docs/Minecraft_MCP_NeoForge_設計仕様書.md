@@ -430,6 +430,8 @@ Action(t) =
 
 global `world_revision`とは別に、部分的な全周scanを破棄する`visual_revision`を内部で持つ。全block mutationは前者と監査ledgerを進めるが、後者を進めるのはcollision、遮蔽、support、fluid、hazardへ影響するLOCAL mutationとchunk/all失効だけである。wheat age、air↔wheat、farmland moistureのようなnavigation-neutral更新は部分scanを破棄しない。surface evidenceの鮮度下限は「直近LOCAL mutationのglobal revision」「同じBlockPosの直近mutation revision」「boundedな位置別ledgerからevictした最大revision」の最大値とし、対象と無関係なneutral mutationだけでは既知面を失効させない。recordのrevisionがこの下限未満または現在revisionより未来なら拒否する。
 
+更新が多い環境で全周frameの完成からActionの受付・予約・実行開始までに表面が失効した場合、配送済み静的表面だけを内部planning viewで再観測する。現在のeyeから以前のray hitへ通常の全周観測と同じray tracerを使い、現在のfog/radius、load、描画判定、遮蔽を適用する。位置・面・block・公開BlockState・placement item・shapeが一致した表面にだけ実再観測tick/revisionを付ける。再観測に失敗した表面は古いrevisionのまま残し、静的な向き変更の根拠としての従来の用途を維持する。mutation・approachの鮮度下限を通過する根拠としては使用できない。対象は配送メモリ上限2,048面以内で各面1 ray、各rayの訪問cell上限128を維持する。公開frameとそのcursorは変更せず、配送期限も延長しない。新しい対象やentity、ラベル、sound、traversabilityをこの経路で取得・延命せず、以降の鮮度・姿勢・reach・server ACKとmenu所有権の検証は従来通り行う。
+
 ### 7.3 Omnidirectional Visual Observation
 
 観測原点はthird-person cameraではなくplayer eye positionとし、水平360度・上下180度をworld軸固定のdeterministic equal-area ray集合で観測する。方向集合は2,048方向へ固定し、既定は1 ClientTickあたり256方向、8 active tickで1 frameを更新する。ray/tickは64〜512のlocal performance設定内で調整でき、frame所要tickは`ceil(2048 / rays_per_tick)`となる。半径は`min(configured radius, 32 block, current fog distance, loaded boundary)`で、`sampling_coverage=1.0`は予定した全方向を更新済みという意味であり、連続球面の完全走査を意味しない。

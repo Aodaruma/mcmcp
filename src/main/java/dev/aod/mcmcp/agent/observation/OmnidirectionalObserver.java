@@ -214,6 +214,45 @@ public final class OmnidirectionalObserver {
                 () -> observeEntities(level, player, sample, entityRefs));
     }
 
+    /** Reobserves only a previously delivered surface through the ordinary visual policy. */
+    public Optional<VisibleSurface> reobserveSurface(
+            ClientLevel level, LocalPlayer player, VisibleSurface known,
+            long clientTick, long worldRevision, double fogDistanceBlocks) {
+        if (player.level() != level || !Double.isFinite(fogDistanceBlocks)
+                && fogDistanceBlocks != Double.POSITIVE_INFINITY || fogDistanceBlocks <= 0.0D) {
+            return Optional.empty();
+        }
+        var dimension = new ResourceId(level.dimension().identifier().toString());
+        var sample = new TickSample(dimension, worldPosition(dimension, player.getEyePosition()),
+                clientTick, worldRevision, worldRevision,
+                Math.min(configuredRadiusBlocks, fogDistanceBlocks),
+                fogDistanceBlocks < configuredRadiusBlocks
+                        ? UnknownBoundaryReason.FOG_LIMIT : UnknownBoundaryReason.RADIUS_LIMIT);
+        return reobserveSurface(known, sample, (index, direction, current) ->
+                traceMinecraftRay(level, player, direction, current, current.effectiveRadiusBlocks()));
+    }
+
+    static Optional<VisibleSurface> reobserveSurface(
+            VisibleSurface known, TickSample sample, RaySampler sampler) {
+        if (!known.dimension().equals(sample.dimension()) || known.rayHit() == null
+                || known.observedTick() > sample.observedTick()
+                || known.worldRevision() > sample.worldRevision()) return Optional.empty();
+        Vec3 delta = vec3(known.rayHit()).subtract(vec3(sample.eyeOrigin()));
+        double distance = delta.length();
+        if (distance <= 1.0E-6D || distance > sample.effectiveRadiusBlocks()) {
+            return Optional.empty();
+        }
+        var direction = new DirectionVector(delta.x / distance, delta.y / distance, delta.z / distance);
+        RayTrace trace = sampler.trace(0, direction, sample);
+        requireTraceMetadata(trace, sample);
+        return trace.surfaces().stream().filter(current ->
+                current.position().equals(known.position()) && current.face() == known.face()
+                        && current.block().equals(known.block())
+                        && Objects.equals(current.state(), known.state())
+                        && Objects.equals(current.placementItem(), known.placementItem())
+                        && current.shapeClass() == known.shapeClass()).findFirst();
+    }
+
     /** Discards a partial temporal frame, for example after disconnecting from a world. */
     public void reset() {
         clearAccumulation();

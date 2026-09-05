@@ -92,9 +92,10 @@ public final class AutomationIndicatorController {
         indicatorButton = button;
         event.addListener(button);
         if (screen instanceof PauseScreen) {
-            int setupWidth = Math.min(120, Math.max(1, button.getX() - 2 * MIN_LEFT_MARGIN));
-            int setupX = button.getX() - setupWidth - 4;
-            if (setupX >= MIN_LEFT_MARGIN) {
+            int setupWidth = minecraft.font.width(Component.translatable("gui.mcmcp.setup.open"))
+                    + 2 * BUTTON_PADDING;
+            int setupX = button.getX() - setupWidth;
+            {
                 var setup = Button.builder(
                                 Component.translatable("gui.mcmcp.setup.open"),
                                 ignored -> openSetupChooser(screen))
@@ -102,6 +103,8 @@ public final class AutomationIndicatorController {
                         .build();
                 setup.active = runtime.automationUiSnapshot().state()
                         == AutomationUiSnapshot.State.OFF;
+                setup.visible = setupX >= MIN_LEFT_MARGIN;
+                button.setupButton = setup;
                 event.addListener(setup);
             }
         }
@@ -877,6 +880,7 @@ public final class AutomationIndicatorController {
     private static final class IndicatorButton extends Button.Plain {
         private final AutomationIndicatorController controller;
         private final boolean chatScreen;
+        private Button setupButton;
 
         private IndicatorButton(
                 AutomationIndicatorController controller,
@@ -927,6 +931,13 @@ public final class AutomationIndicatorController {
                     getHeight(),
                     McmcpClientConfig.hudOffsetY(),
                     chatScreen));
+            if (setupButton != null) {
+                setupButton.setX(getX() - setupButton.getWidth());
+                setupButton.setY(getY());
+                setupButton.visible = setupButton.getX() >= MIN_LEFT_MARGIN;
+                setupButton.active = controller.runtime.automationUiSnapshot().state()
+                        == AutomationUiSnapshot.State.OFF;
+            }
             extractDefaultSprite(graphics);
             var state = controller.runtime.automationUiSnapshot().state();
             drawIcon(
