@@ -44,6 +44,8 @@ git push origin v0.1.0-rc3
 
 全テスト・harness分離検証・PDF/ZIP生成が成功した後、**draftにせず公開**します。接尾辞付きはPre-release（Latestにはしない）、`v0.1.0`等は正式Releaseです。公開するのはタグpush時だけで、main/PR/手動実行は検証とActions artifact保存に留まります。既存Releaseを無条件に上書きする処理はありません。
 
+`docs/releases/<タグ名>.md`がある場合は、その本文を公開説明に使います。ファイルがなければGitHubの自動生成ノートを使います。
+
 GitHub Actionsの公開jobだけに`contents: write`を付け、build jobはread権限で実行します。タグ名は環境変数として渡し、形式検証後に引用付きで使います。タグを作成・pushする操作そのものが公開のきっかけになります。
 
 手元でタグ形式の成果物だけ検証する場合：

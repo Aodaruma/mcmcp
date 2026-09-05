@@ -101,7 +101,13 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           RELEASE_VERSION="${RELEASE_TAG#v}"
-          args=(--verify-tag --title "MCMCP $RELEASE_TAG" --generate-notes)
+          args=(--verify-tag --title "MCMCP $RELEASE_TAG")
+          notes="docs/releases/$RELEASE_TAG.md"
+          if [[ -f "$notes" ]]; then
+            args+=(--notes-file "$notes")
+          else
+            args+=(--generate-notes)
+          fi
           if [[ "$RELEASE_VERSION" == *-* ]]; then
             args+=(--prerelease --latest=false)
           fi

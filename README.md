@@ -18,9 +18,9 @@ A NeoForge mod that lets you ask AI assistants such as Codex and Claude Code to 
 2. **AIクライアントを接続する** — ワールドに入り、Esc →「MCP接続設定」で設定し、AIクライアントを再起動します。<br>**Connect your AI client** — Enter a world, press Esc, open “MCP接続設定” (MCP connection settings), then restart your AI client after setup.
 3. **操作をONにして依頼する** —「MCP操作」をONにしてゲームへ戻り、まず現在の状態や持ち物の確認を頼みます。<br>**Enable control and ask for help** — Turn on “MCP操作” (MCP control), return to the game, and start by asking about your status or inventory.
 
-導入ガイドは日本語です。GitHub Releaseはまだ未公開で、公開前のビルドは[GitHub Actions](https://github.com/Aodaruma/mcmcp/actions/workflows/release.yml)から取得できます。
+導入ガイドは日本語です。配布用ZIP・JAR・PDFは[Releases](https://github.com/Aodaruma/mcmcp/releases)、開発中のビルドは[GitHub Actions](https://github.com/Aodaruma/mcmcp/actions/workflows/release.yml)を参照してください。
 
-The illustrated guide is currently in Japanese. No GitHub Release has been published yet; development builds are available from [GitHub Actions](https://github.com/Aodaruma/mcmcp/actions/workflows/release.yml).
+The illustrated guide is currently in Japanese. See [Releases](https://github.com/Aodaruma/mcmcp/releases) for distribution ZIPs, JARs, and PDFs, or [GitHub Actions](https://github.com/Aodaruma/mcmcp/actions/workflows/release.yml) for development builds.
 
 > [!NOTE]
 > 操作中は**Escで緊急停止**できます。作業が終わってもONは維持されるため、自動操作を無効にするときはOFFにしてください。マルチプレイではサーバーごとの許可確認があります。<br>Press **Esc to stop an active action**. Control stays ON between actions; switch it OFF to disable automation. Multiplayer control requires confirmation for each server.
