@@ -20,6 +20,64 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownContainerAttemptTest {
     @Test
+    void missingSafeHotbarItemReportsFixedCauseAndRemedyBeforeOrAfterBegin() {
+        for (boolean beforeBegin : new boolean[] {true, false}) {
+            for (String code : List.of("INVENTORY_SAFE_OPEN_HAND_REQUIRED", "INVENTORY_SAFE_OPEN_HAND_UNAVAILABLE")) {
+                var port = new FakePort();
+                var operation = new KnownContainerAttempt(port, request(), 1, 101);
+                var failure = failure(code, Map.of(
+                        "item", "private:item_name", "hotbar", "private inventory",
+                        "remedy", "arbitrary adapter instructions", "crosshair", "entity"));
+                port.tick = 1;
+                if (beforeBegin) {
+                    port.observationFailure = failure;
+                } else {
+                    operation.tick(1);
+                    port.tick = 2;
+                    port.evidenceFailure = failure;
+                }
+                var result = operation.tick(port.tick);
+                assertThat(result.status()).isEqualTo(KnownContainerAttempt.Status.FAILED);
+                assertThat(result.evidence()).isEqualTo(code.toLowerCase(java.util.Locale.ROOT));
+                assertThat(result.diagnostics()).containsExactly(
+                        "safe_open_hand=no_side_effect_free_hotbar_item",
+                        "remedy=prepare_empty_hotbar_slot_or_plain_material_or_safe_mining_tool");
+                assertThat(result.interactionDelta()).isZero();
+                assertThat(result.items()).isEmpty();
+                assertThat(result.effects()).isEmpty();
+                operation.close();
+            }
+        }
+    }
+
+    @Test
+    void unrelatedFailuresCannotInjectSafeHandRemediesOrReflectAdapterDetails() {
+        for (boolean beforeBegin : new boolean[] {true, false}) {
+            for (String code : List.of("OTHER_FAILURE", "INVENTORY_SAFE_OPEN_HAND_CHANGED")) {
+                var port = new FakePort();
+                var operation = new KnownContainerAttempt(port, request(), 1, 101);
+                var failure = failure(code, Map.of(
+                        "safe_open_hand", "no_side_effect_free_hotbar_item",
+                        "remedy", "private instructions", "item", "private:item_name"));
+                port.tick = 1;
+                if (beforeBegin) {
+                    port.observationFailure = failure;
+                } else {
+                    operation.tick(1);
+                    port.tick = 2;
+                    port.evidenceFailure = failure;
+                }
+                var result = operation.tick(port.tick);
+                assertThat(result.evidence()).isEqualTo(code.toLowerCase(java.util.Locale.ROOT));
+                assertThat(result.diagnostics()).isEmpty();
+                assertThat(result.items()).isEmpty();
+                assertThat(result.effects()).isEmpty();
+                operation.close();
+            }
+        }
+    }
+
+    @Test
     void retainsCompatibleAimFailureCodeAndOnlyFixedCrosshairDiagnostics() {
         for (boolean beforeBegin : new boolean[] {true, false}) {
             for (String kind : List.of("entity", "block_other", "miss", "unavailable", "world_border")) {

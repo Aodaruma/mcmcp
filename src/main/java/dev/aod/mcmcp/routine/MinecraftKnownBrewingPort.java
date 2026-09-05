@@ -15,6 +15,7 @@ import net.minecraft.client.gui.screens.inventory.BrewingStandScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
@@ -1691,13 +1692,18 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
     }
 
     /**
-     * Exact base {@link Item} instances have no block-use override. BrewingStandBlock supplies the
-     * normal menu interaction, so these stacks cannot place, ignite, pour, or mutate the target.
+     * Exact base {@link Item} instances (including Vanilla pickaxes and swords) return PASS from
+     * both block-use hooks. Names, damage and enchantments do not change those hooks. Also reject
+     * every component that starts an ordinary Item.use action, including defaults on food/armor;
+     * component equality with a default stack is neither necessary nor proof of harmless use.
+     * Callers still require an exact container hit, no sneaking, and a server-confirmed menu.
      */
     static boolean safeNormalUseStack(ItemStack stack) {
         if (stack.isEmpty() || stack.getItem().getClass() != Item.class) return false;
-        ItemStack defaultStack = new ItemStack(stack.getItem());
-        return ItemStack.isSameItemSameComponents(stack, defaultStack);
+        return !stack.has(DataComponents.CONSUMABLE)
+                && !stack.has(DataComponents.EQUIPPABLE)
+                && !stack.has(DataComponents.BLOCKS_ATTACKS)
+                && !stack.has(DataComponents.KINETIC_WEAPON);
     }
 
     private static boolean targetReadyForOpen(

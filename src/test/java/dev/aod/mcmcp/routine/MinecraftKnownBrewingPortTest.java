@@ -3,10 +3,23 @@ package dev.aod.mcmcp.routine;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.ContainerDataEvidence;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.OpenScreenEvidence;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
+import net.minecraft.core.Holder;
+import net.minecraft.core.HolderSet;
 import net.minecraft.core.component.DataComponentMap;
+import net.minecraft.core.component.DataComponentType;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.EquipmentSlotGroup;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.BlocksAttacks;
+import net.minecraft.world.item.component.Consumable;
+import net.minecraft.world.item.component.KineticWeapon;
+import net.minecraft.world.item.enchantment.Enchantment;
+import net.minecraft.world.item.enchantment.ItemEnchantments;
+import net.minecraft.world.item.equipment.Equippable;
 import net.minecraft.world.level.block.Blocks;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.Opcodes;
@@ -21,6 +34,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -121,12 +135,68 @@ class MinecraftKnownBrewingPortTest {
     }
 
     @Test
-    void fullHotbarFallbackIsClosedToDefaultBaseItems() {
+    void fullHotbarFallbackRejectsEmptyStacksAndItemsWithSpecialUseHooks() {
         assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(
                 testStack(Items.BLAZE_POWDER))).isTrue();
-        assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(
-                testStack(Blocks.STONE.asItem()))).isFalse();
+        for (Item item : List.of(Items.DIAMOND_AXE, Items.DIAMOND_HOE, Items.DIAMOND_SHOVEL,
+                Blocks.STONE.asItem(), Items.BUCKET, Items.WATER_BUCKET, Items.FLINT_AND_STEEL)) {
+            assertThat(item.getClass()).isNotEqualTo(Item.class);
+            assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(testStack(item)))
+                    .as("special use hooks on %s", item).isFalse();
+        }
         assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(ItemStack.EMPTY)).isFalse();
+        var depleted = testStack(Items.BLAZE_POWDER);
+        depleted.setCount(0);
+        assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(depleted)).isFalse();
+    }
+
+    @Test
+    void swordAndPickaxeStaySafeWithNamesDamageAndNonemptyEnchantments() {
+        for (Item item : List.of(Items.DIAMOND_SWORD, Items.DIAMOND_PICKAXE)) {
+            var stack = testStack(item);
+            assertThat(stack.getItem().getClass()).isEqualTo(Item.class);
+            assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(stack)).isTrue();
+            stack.set(DataComponents.CUSTOM_NAME, Component.literal("Named tool"));
+            assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(stack)).isTrue();
+            stack.set(DataComponents.MAX_DAMAGE, 1561);
+            stack.setDamageValue(31);
+            assertThat(stack.getDamageValue()).isEqualTo(31);
+            assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(stack)).isTrue();
+            var enchantment = Holder.direct(new Enchantment(Component.literal("Ordinary tool enchantment"),
+                    Enchantment.definition(HolderSet.direct(item.builtInRegistryHolder()), 1, 3,
+                            Enchantment.constantCost(1), Enchantment.constantCost(10), 1,
+                            EquipmentSlotGroup.MAINHAND), HolderSet.empty(), DataComponentMap.EMPTY));
+            var enchantments = new ItemEnchantments.Mutable(ItemEnchantments.EMPTY);
+            enchantments.set(enchantment, 3);
+            stack.set(DataComponents.ENCHANTMENTS, enchantments.toImmutable());
+            assertThat(stack.get(DataComponents.ENCHANTMENTS).isEmpty()).isFalse();
+            assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(stack)).isTrue();
+        }
+    }
+
+    @Test
+    void eachUseStartingComponentIndependentlyRejectsAnOtherwiseSafeStack() {
+        assertUnsafeUseComponent(DataComponents.CONSUMABLE, Consumable.builder().build());
+        assertUnsafeUseComponent(DataComponents.EQUIPPABLE, Equippable.builder(EquipmentSlot.HEAD).build());
+        assertUnsafeUseComponent(DataComponents.BLOCKS_ATTACKS, new BlocksAttacks(0, 1, List.of(),
+                BlocksAttacks.ItemDamageFunction.DEFAULT, Optional.empty(), Optional.empty(), Optional.empty()));
+        assertUnsafeUseComponent(DataComponents.KINETIC_WEAPON, new KineticWeapon(10, 0,
+                Optional.empty(), Optional.empty(), Optional.empty(), 0, 1, Optional.empty(), Optional.empty()));
+    }
+
+    @Test
+    void baseItemFoodAndArmorAreRejectedWhenUseComponentsComeFromPrototypeDefaults() {
+        // The isolated loader does not bind Vanilla defaults. Model inherited components without
+        // changing the shared registry; neither stack has an explicit component patch.
+        var food = new ItemStack(Holder.direct(Items.APPLE, DataComponentMap.builder()
+                .set(DataComponents.CONSUMABLE, Consumable.builder().build()).build()));
+        var armor = new ItemStack(Holder.direct(Items.DIAMOND_HELMET, DataComponentMap.builder()
+                .set(DataComponents.EQUIPPABLE, Equippable.builder(EquipmentSlot.HEAD).build()).build()));
+        for (var stack : List.of(food, armor)) {
+            assertThat(stack.getItem().getClass()).isEqualTo(Item.class);
+            assertThat(stack.getComponentsPatch().isEmpty()).isTrue();
+            assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(stack)).isFalse();
+        }
     }
 
     @Test
@@ -597,12 +667,19 @@ class MinecraftKnownBrewingPortTest {
         return new StackFingerprint(item, count, hash);
     }
 
-    /** NeoForge's isolated JUnit loader does not bind Vanilla item defaults. */
-    private static ItemStack testStack(Item item) {
-        var holder = item.builtInRegistryHolder();
-        if (!holder.areComponentsBound()) {
-            holder.bindComponents(DataComponentMap.EMPTY);
+    private static <T> void assertUnsafeUseComponent(DataComponentType<T> component, T value) {
+        for (Item item : List.of(Items.BLAZE_POWDER, Items.DIAMOND_SWORD, Items.DIAMOND_PICKAXE)) {
+            var stack = testStack(item);
+            assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(stack)).isTrue();
+            stack.set(component, value);
+            assertThat(stack.has(component)).isTrue();
+            assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(stack))
+                    .as("use component %s on %s", component, item).isFalse();
         }
-        return new ItemStack(item);
+    }
+
+    /** Isolated JUnit has no Vanilla defaults; local prototypes avoid shared registry mutation. */
+    private static ItemStack testStack(Item item) {
+        return new ItemStack(Holder.direct(item, DataComponentMap.EMPTY));
     }
 }
