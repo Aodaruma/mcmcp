@@ -576,9 +576,13 @@ class McpToolCatalogTest {
         assertThat(definitions.getAsJsonObject("inspectContainerNode")
                 .get("description").getAsString()).contains("30000 ms", "600 ticks", "360 camera");
         assertThat(definitions.getAsJsonObject("takeContainerStackNode")
-                .get("description").getAsString()).contains("30000 ms", "600 ticks", "360 camera");
+                .get("description").getAsString()).contains(
+                        "600+60*(max_stacks-1) ticks", "50 times that in ms", "360 camera",
+                        "2+max_stacks interactions", "leaving 200 ticks");
         assertThat(definitions.getAsJsonObject("storeContainerStackNode")
-                .get("description").getAsString()).contains("30000 ms", "600 ticks", "360 camera");
+                .get("description").getAsString()).contains(
+                        "600+60*(max_stacks-1) ticks", "50 times that in ms", "360 camera",
+                        "2+max_stacks interactions", "leaving 200 ticks");
 
         var containerExamples = schema.getAsJsonArray("examples").asList().stream()
                 .map(example -> example.getAsJsonObject())

@@ -5,13 +5,9 @@ import dev.aod.mcmcp.runtime.ContainerSyncSignals;
 import dev.aod.mcmcp.runtime.KnownMenuOperationRefs;
 import dev.aod.mcmcp.runtime.KnownMenuProfileSupport;
 import dev.aod.mcmcp.runtime.WorldSessionTracker;
-import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.network.HashedStack;
-import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
-import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
 
@@ -164,20 +160,10 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
     /** Sends the ordinary server QUICK_MOVE without client changed-slot prediction suppression. */
     private static void dispatchServerConfirmedQuickMove(
             Minecraft minecraft, KnownMenuProfileSupport.Context context, int sourceSlot) {
-        var connection = Objects.requireNonNull(minecraft.getConnection(), "connection");
-        var menu = context.menu();
-        if (!menu.getCarried().isEmpty()
-                || !context.canTransferEntireStack(sourceSlot)) {
+        if (!context.canTransferEntireStack(sourceSlot)) {
             throw new IllegalStateException("known Menu click authority changed");
         }
-        connection.send(new ServerboundContainerClickPacket(
-                menu.containerId,
-                menu.getStateId(),
-                (short) sourceSlot,
-                (byte) 0,
-                ContainerInput.QUICK_MOVE,
-                new Int2ObjectOpenHashMap<>(),
-                HashedStack.create(menu.getCarried(), connection.decoratedHashOpsGenenerator())));
+        KnownMenuTransfers.dispatchServerConfirmedQuickMove(minecraft, context.menu(), sourceSlot);
     }
 
     @Override
@@ -333,14 +319,8 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
                 || !after.get(operation.sourceSlot()).empty()
                 || !context.menu().getCarried().isEmpty()
                 || !context.snapshot().carried().empty()
-                || !immutableSlotsUnchanged(
-                        before, after, operation.sourceSlot(),
-                        context.storageSlots(), context.protectedSlots())) return false;
-        Map<StackKey, Integer> expectedPlayers = multiset(before, context.playerSlots());
-        StackKey moved = StackKey.of(operation.stack());
-        expectedPlayers.merge(moved, operation.stack().count(), Math::addExact);
-        if (!expectedPlayers.equals(multiset(after, context.playerSlots()))) return false;
-
+                || !KnownMenuTransfers.exactWholeStackMove(
+                        before, after, operation.sourceSlot(), context.playerSlots())) return false;
         int exactCount = 0;
         ItemStack expected = operation.exactStack();
         for (int slot : context.playerSlots()) {
@@ -353,32 +333,6 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
                         == Math.addExact(operation.baselineExactComponentPlayerCount(),
                                 operation.stack().count())
                 && exactCount == operation.expectedExactComponentPlayerCount();
-    }
-
-    static boolean immutableSlotsUnchanged(
-            List<ContainerSyncSignals.StackFingerprint> before,
-            List<ContainerSyncSignals.StackFingerprint> after,
-            int sourceSlot,
-            List<Integer> storageSlots,
-            List<Integer> protectedSlots) {
-        if (before.size() != after.size()) return false;
-        for (int slot : storageSlots) {
-            if (slot != sourceSlot && !after.get(slot).equals(before.get(slot))) return false;
-        }
-        for (int slot : protectedSlots) {
-            if (!after.get(slot).equals(before.get(slot))) return false;
-        }
-        return true;
-    }
-
-    private static Map<StackKey, Integer> multiset(
-            List<ContainerSyncSignals.StackFingerprint> slots, List<Integer> indices) {
-        var result = new LinkedHashMap<StackKey, Integer>();
-        for (int slot : indices) {
-            ContainerSyncSignals.StackFingerprint stack = slots.get(slot);
-            if (!stack.empty()) result.merge(StackKey.of(stack), stack.count(), Math::addExact);
-        }
-        return result;
     }
 
     private void maintainRelease(AttemptState state) {
@@ -494,12 +448,6 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
     }
 
     private enum Stage { DISPATCH, AWAIT_UPDATE, AWAIT_CLOSE, RELEASING, TERMINAL }
-
-    private record StackKey(String itemId, int componentsHash) {
-        private static StackKey of(ContainerSyncSignals.StackFingerprint stack) {
-            return new StackKey(stack.itemId(), stack.itemAndComponentsHash());
-        }
-    }
 
     private static final class AttemptState {
         private final PhaseFiveRequest request;

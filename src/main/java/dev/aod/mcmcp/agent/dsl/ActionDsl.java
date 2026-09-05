@@ -539,7 +539,7 @@ public final class ActionDsl {
         }
     }
 
-    /** Moves at most one whole matching stack from a visible vanilla chest/barrel. */
+    /** Moves bounded whole matching stacks from a visible vanilla chest/barrel. */
     public record TakeKnownContainerStack(
             String id,
             Position target,
@@ -547,7 +547,9 @@ public final class ActionDsl {
             String item,
             String stackPolicy,
             int minimumInventoryCount,
-            Optional<RoutingLabel> routingLabel) implements Node {
+            Optional<RoutingLabel> routingLabel,
+            int maxStacks,
+            int maxTransferCount) implements Node {
         public TakeKnownContainerStack {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
@@ -555,6 +557,13 @@ public final class ActionDsl {
             Objects.requireNonNull(item, "item");
             Objects.requireNonNull(stackPolicy, "stackPolicy");
             Objects.requireNonNull(routingLabel, "routingLabel");
+        }
+
+        public TakeKnownContainerStack(String id, Position target, String expectedBlock,
+                String item, String stackPolicy, int minimumInventoryCount,
+                Optional<RoutingLabel> routingLabel) {
+            this(id, target, expectedBlock, item, stackPolicy, minimumInventoryCount,
+                    routingLabel, 1, 64);
         }
 
         public TakeKnownContainerStack(
@@ -569,7 +578,7 @@ public final class ActionDsl {
         }
     }
 
-    /** Moves at most one whole matching stack into a visible vanilla chest/barrel. */
+    /** Moves bounded whole matching stacks into a visible vanilla chest/barrel. */
     public record StoreKnownContainerStack(
             String id,
             Position target,
@@ -577,7 +586,9 @@ public final class ActionDsl {
             String item,
             String stackPolicy,
             int minimumContainerCount,
-            Optional<RoutingLabel> routingLabel) implements Node {
+            Optional<RoutingLabel> routingLabel,
+            int maxStacks,
+            int maxTransferCount) implements Node {
         public StoreKnownContainerStack {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
@@ -585,6 +596,13 @@ public final class ActionDsl {
             Objects.requireNonNull(item, "item");
             Objects.requireNonNull(stackPolicy, "stackPolicy");
             Objects.requireNonNull(routingLabel, "routingLabel");
+        }
+
+        public StoreKnownContainerStack(String id, Position target, String expectedBlock,
+                String item, String stackPolicy, int minimumContainerCount,
+                Optional<RoutingLabel> routingLabel) {
+            this(id, target, expectedBlock, item, stackPolicy, minimumContainerCount,
+                    routingLabel, 1, 64);
         }
 
         public StoreKnownContainerStack(

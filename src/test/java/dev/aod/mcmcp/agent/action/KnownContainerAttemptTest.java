@@ -342,6 +342,65 @@ class KnownContainerAttemptTest {
         assertThat(operation.drainEffectDeltas()).isEmpty();
     }
 
+    @Test
+    void interruptedBatchSeparatesConfirmedPrefixFromUnknownLastClickAndDoesNotDuplicateOnReleaseRetry() {
+        for (boolean readback : List.of(false, true)) {
+            var port = new FakePort();
+            port.holdPending = true;
+            port.releaseFailuresRemaining = 1;
+            var basis = new java.util.LinkedHashMap<String, Object>(Map.of(
+                    "open_count", 2, "container_clicks", 3,
+                    "source_before", 200, "destination_before", 2400,
+                    "confirmed_transfer_count", 128, "confirmed_stack_moves", 2,
+                    "confirmed_source_count", 72, "confirmed_destination_count", 2528,
+                    "transfer_in_flight", true, "pending_stack_count", 64));
+            basis.putAll(Map.of("pending_source_before", 72, "pending_destination_before", 2528,
+                    "transfer_readback_observed", readback, "source_after", 72, "destination_after", 2592));
+            port.extraBasis = basis;
+            port.tick = 1;
+            var operation = new KnownContainerAttempt(port, request(), 1, 101);
+            operation.tick(1);
+            port.tick = 2;
+            assertThat(operation.tick(2).effects()).isEmpty();
+            assertThatThrownBy(operation::close).isInstanceOf(IllegalStateException.class);
+            var effects = operation.drainEffectDeltas();
+            assertThat(effects).hasSize(2);
+            assertThat(effects.get(0).verification()).isEqualTo(AgentActionStore.Verification.CONFIRMED);
+            assertThat(effects.get(0).observedBefore()).containsEntry("source_count", 200);
+            assertThat(effects.get(0).observedAfter()).containsEntry("source_count", 72)
+                    .containsEntry("destination_count", 2528).containsEntry("transferred", 128);
+            assertThat(effects.get(1).verification()).isEqualTo(AgentActionStore.Verification.UNKNOWN);
+            assertThat(effects.get(1).observedBefore()).containsEntry("source_count", 72)
+                    .containsEntry("destination_count", 2528);
+            assertThat(effects.get(1).observedAfter()).doesNotContainKey("transferred");
+            if (readback) assertThat(effects.get(1).observedAfter()).containsEntry("destination_count", 2592);
+            else assertThat(effects.get(1).observedAfter()).isEmpty();
+            operation.close();
+            assertThat(operation.drainEffectDeltas()).isEmpty();
+        }
+    }
+
+    @Test
+    void stoppingBetweenBatchClicksRecordsOnlyConfirmedPrefix() {
+        var port = new FakePort();
+        port.holdPending = true;
+        port.extraBasis = Map.of("container_clicks", 2,
+                "source_before", 200, "destination_before", 0,
+                "confirmed_transfer_count", 128,
+                "confirmed_source_count", 72, "confirmed_destination_count", 128,
+                "transfer_in_flight", false);
+        port.tick = 1;
+        var operation = new KnownContainerAttempt(port, request(), 1, 101);
+        operation.tick(1);
+        port.tick = 2;
+        operation.tick(2);
+        operation.close();
+        assertThat(operation.drainEffectDeltas()).singleElement().satisfies(effect -> {
+            assertThat(effect.verification()).isEqualTo(AgentActionStore.Verification.CONFIRMED);
+            assertThat(effect.observedAfter()).containsEntry("transferred", 128);
+        });
+    }
+
     private static PhaseFiveRequest request() {
         var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
         return new PhaseFiveRequest(

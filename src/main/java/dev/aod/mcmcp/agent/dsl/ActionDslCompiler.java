@@ -230,10 +230,10 @@ public final class ActionDslCompiler {
                 requireMutationCost(cost, 1, 0, 0, "open_known_passage");
             } else if (node instanceof ActionDsl.InspectKnownContainer) {
                 requireMutationCost(cost, 1, 0, 0, "inspect_known_container");
-            } else if (node instanceof ActionDsl.TakeKnownContainerStack) {
-                requireMutationCost(cost, 3, 0, 0, "take_known_container_stack");
-            } else if (node instanceof ActionDsl.StoreKnownContainerStack) {
-                requireMutationCost(cost, 3, 0, 0, "store_known_container_stack");
+            } else if (node instanceof ActionDsl.TakeKnownContainerStack take) {
+                requireContainerTransferCost(cost, take.maxStacks(), "take_known_container_stack");
+            } else if (node instanceof ActionDsl.StoreKnownContainerStack store) {
+                requireContainerTransferCost(cost, store.maxStacks(), "store_known_container_stack");
             } else if (node instanceof ActionDsl.CraftKnownRecipe craft) {
                 requireMutationCost(
                         cost, knownCraftInteractions(craft.maxCrafts()), 0, 0,
@@ -471,6 +471,36 @@ public final class ActionDslCompiler {
                 2,
                 0,
                 placements);
+    }
+
+    /** Initial and final open, plus one QUICK_MOVE per bounded whole stack. */
+    public static long knownContainerTransferInteractions(int maxStacks) {
+        requireContainerStacks(maxStacks);
+        return 2L + maxStacks;
+    }
+
+    public static long knownContainerTransferOperationTicks(int maxStacks) {
+        requireContainerStacks(maxStacks);
+        return AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND + 60L * (maxStacks - 1);
+    }
+
+    public static long knownContainerTransferTicks(int maxStacks) {
+        requireContainerStacks(maxStacks);
+        return AgentPrimitivePlanner.CONTAINER_TICK_UPPER_BOUND + 60L * (maxStacks - 1);
+    }
+
+    private static void requireContainerStacks(int maxStacks) {
+        if (maxStacks < 1 || maxStacks > ActionDslValidator.MAX_CONTAINER_STACKS) {
+            throw new IllegalArgumentException("max stacks is outside the closed Action bound");
+        }
+    }
+
+    private static void requireContainerTransferCost(Cost cost, int maxStacks, String operation) {
+        requireMutationCost(cost, knownContainerTransferInteractions(maxStacks), 0, 0, operation);
+        long ticks = knownContainerTransferTicks(maxStacks);
+        if (cost.ticks() != ticks || cost.durationMillis() != ticks * NOMINAL_TICK_MILLIS) {
+            throw unprovable(operation + " has an invalid primitive time bound");
+        }
     }
 
     /** Initial open plus three operations per craft, with one conservative safety slot. */

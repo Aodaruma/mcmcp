@@ -938,7 +938,7 @@ class ActionDslTest {
         var compiled = ActionDslCompiler.compile(
                 request,
                 node -> Optional.of(new ActionDslCompiler.Cost(
-                        1_000, 20, 0, 30,
+                        30_000, 600, 0, 30,
                         node instanceof ActionDsl.TakeKnownContainerStack
                                 || node instanceof ActionDsl.StoreKnownContainerStack ? 3 : 1,
                         0, 0)),

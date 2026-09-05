@@ -129,7 +129,13 @@ Actionの既存上限256ノードに収まる検査結果をすべて保持し�
 
 全nodeには一意の`id`が必要です。正規opcode、他の必須field、enum、上限、capabilityはcatalogの`inputSchema`をそのまま使い、aliasを推測しません。
 
-`store_known_container_stack`は、現在可視で通常reach内にあるVanilla chest / barrelへ、player inventoryの一致する1 stack全量を通常のQUICK_MOVEで格納します。`minimum_container_count`は格納先における絶対個数であり、成功前にclose / reopenしてserver同期された全slotとplayer inventoryの差分、空cursor、他stack不変を再確認します。部分量や複数stackを一度に移さず、必要ならActionを区切って再観測します。
+`take_known_container_stack` / `store_known_container_stack`は、現在可視で通常reach内にあるVanilla chest / barrelで、同じitem IDのstackをまとめて移せます。任意の`max_stacks`は1〜14（省略時1）、`max_transfer_count`は1〜896（省略時64×max_stacks）です。stackは分割せず、各stack全量が残る予算と移送先に収まる場合だけ移します。最初のserver同期時に対象slotを固定し、各クリックのserver差分を確認してから同じ画面で次へ進み、最後に1回だけ開き直します。
+
+`minimum_inventory_count`（最大2,304）と`minimum_container_count`（最大3,456）は移送先の**絶対個数**です。例えば既に2,464個ある大チェストへ2個を追加する場合、storeのgoalは2,466、今回の`max_transfer_count`は2です。`max_stacks`が2なら予約は660 ticks・33,000 ms・360 camera degrees・4 interactionsです。一般式は`600+60*(max_stacks-1)` ticks、その50倍ms、`2+max_stacks` interactionsです。
+
+途中停止では、serverで移送を確認できた分を`CONFIRMED`、結果不明な最後のクリックを`UNKNOWN`として別々に返します。失敗したActionにも確認済みの移送が含まれるため、effectsを一度だけ反映し、UNKNOWNがある場合は再検査してから計画してください。自動補充や選択外stack・成分の変化を検知した場合、残りのクリックを続けません。
+
+Take/store can move up to 14 whole matching stacks in one owned menu. `max_transfer_count` limits this batch; the minimum count is an absolute destination goal. Each click requires fresh server confirmation, followed by one final reopen. Apply confirmed effects once, and reinspect any unknown result before retrying.
 
 `wait_ticks`は1〜15,000 client ticksの有限待機です。待機中もAction deadline、Esc、MCP OFF、world / screen / health / threat等の安全gateを維持し、条件を無視するsleepにはなりません。状態条件を待つ場合は、待機後に必ず再観測してから次のmutationを開始します。
 

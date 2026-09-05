@@ -52,10 +52,9 @@ import java.util.function.Supplier;
 /**
  * Minecraft 26.2 adapter for the two Phase 5 inventory routines.
  *
- * <p>Every container click is single-shot. Its result is accepted only after the adapter closes
- * the owned screen, reopens the same exact block, and receives a fresh full-content packet.
- * Incremental slot packets may make a recipe result eligible for its one click, but never complete
- * either public routine.</p>
+ * <p>Each container click is single-shot. Transfer batches confirm each whole stack from fresh
+ * server slot updates before the next click. Completion still requires closing the owned screen,
+ * reopening the same exact block, and receiving a fresh full-content packet.</p>
  */
 public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     static final String CRAFT_ITEMS = "craft_items";
@@ -281,7 +280,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         switch (state.stage) {
             case AIMING_INITIAL -> maintainAim(attempt, state, false);
             case AIMING_READBACK -> maintainAim(attempt, state, true);
-            case OPENING_INITIAL, OPENING_READBACK -> acceptOwnedSnapshot(attempt, state, minecraft);
+            case OPENING_INITIAL, OPENING_READBACK, TRANSFER_READY ->
+                    acceptOwnedSnapshot(attempt, state, minecraft);
             case CRAFT_WAIT_RESULT -> maintainCraftResult(attempt, state, minecraft);
             case AWAITING_CLICK_ACK -> maintainClickAck(attempt, state);
             case AWAITING_CLOSE -> {
@@ -568,25 +568,29 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 ? layout.playerSlots() : layout.containerSlots();
         int source = transfer.playerToContainer() ? playerCount : containerCount;
         int destination = transfer.playerToContainer() ? containerCount : playerCount;
+        List<Integer> destinationSlots = transfer.playerToContainer()
+                ? layout.containerSlots() : layout.playerSlots();
 
         if (state.stage == Stage.OPENING_READBACK) {
             state.recordTransferReadback(source, destination);
+            TransferBatch batch = state.transferBatch;
+            boolean exactSlots = batch != null && batch.reconcileReadback(snapshot);
+            state.updateTransferPrefix();
             var readback = verifyTransferReadback(
                     state.beforeSourceCount,
                     state.beforeDestinationCount,
                     source,
                     destination,
-                    state.dispatchedStackCount,
+                    state.completedUnits,
                     transfer.minimumDestinationCount());
-            if (!readback.exactMove()) {
+            if (!exactSlots || !readback.exactMove()
+                    || !liveMenuMatchesSnapshot(menu, snapshot)) {
                 state.inconclusive = new InconclusiveState(
                         PhaseFiveEvidence.Certainty.AMBIGUOUS,
                         "transfer_readback_did_not_confirm_exact_full_stack_move");
                 state.stage = Stage.TERMINAL;
                 return;
             }
-            state.completedUnits = Math.addExact(state.completedUnits, state.dispatchedStackCount);
-            state.completedActions++;
             if (readback.goalVerified()) {
                 succeed(state, destination, Map.of(
                         "source_count_before", state.beforeSourceCount,
@@ -597,7 +601,13 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                         "full_readback", true));
                 return;
             }
-        } else if (destination >= transfer.minimumDestinationCount()) {
+            fail(state, "TRANSFER_BATCH_GOAL_NOT_REACHED", RoutineFailure.Category.PRECONDITION,
+                    RoutineFailure.Recovery.REPLAN,
+                    Map.of("minimum_destination_count", transfer.minimumDestinationCount()),
+                    Map.of("destination_count", destination,
+                            "transferred", state.completedUnits));
+            return;
+        } else if (state.transferBatch == null && destination >= transfer.minimumDestinationCount()) {
             var evidence = new LinkedHashMap<String, Object>();
             evidence.put("source_count_before", source);
             evidence.put("source_count_after", source);
@@ -618,56 +628,77 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return;
         }
 
-        if (state.completedActions >= transfer.maxStackMoves()) {
-            fail(state, "TRANSFER_STACK_LIMIT_EXHAUSTED", RoutineFailure.Category.PRECONDITION,
-                    RoutineFailure.Recovery.REPLAN,
-                    Map.of("maximum_stack_moves", transfer.maxStackMoves(),
-                            "minimum_destination_count", transfer.minimumDestinationCount()),
-                    Map.of("destination_count", destination,
-                            "completed_stack_moves", state.completedActions));
-            return;
+        if (state.transferBatch == null) {
+            // This is an absolute goal ceiling for the real opened menu, including nonstackables.
+            int maximumDestination = KnownMenuTransfers.maximumDestinationCount(
+                    defaultStack(transfer.item()), destinationSlots.stream().map(menu.slots::get).toList());
+            if (transfer.minimumDestinationCount() > maximumDestination) {
+                fail(state, "TRANSFER_DESTINATION_GOAL_EXCEEDS_MENU_CAPACITY",
+                        RoutineFailure.Category.PRECONDITION, RoutineFailure.Recovery.REPLAN,
+                        Map.of("minimum_destination_count", transfer.minimumDestinationCount()),
+                        Map.of("maximum_destination_count", maximumDestination));
+                return;
+            }
+            state.beginTransferBatch(new TransferBatch(snapshot.slots(), sourceSlots, destinationSlots,
+                    transfer.item(), hash, transfer.defaultComponentsOnly(), transfer.maxStackMoves(),
+                    transfer.maxTransferCount(), transfer.minimumDestinationCount() - destination),
+                    source, destination);
         }
-
-        int remaining = transfer.maxTransferCount() - state.completedUnits;
-        if (remaining <= 0) {
-            fail(state, "TRANSFER_LIMIT_EXHAUSTED", RoutineFailure.Category.PRECONDITION,
-                    RoutineFailure.Recovery.REPLAN,
-                    Map.of("minimum_destination_count", transfer.minimumDestinationCount()),
-                    Map.of("destination_count", destination,
-                            "transferred", state.completedUnits));
-            return;
-        }
-        var candidate = chooseTransferSlot(
-                snapshot.slots(), sourceSlots, transfer.item(), hash, remaining,
-                transfer.defaultComponentsOnly());
-        if (candidate.isEmpty()) {
+        TransferBatch batch = state.transferBatch;
+        if (batch.exhausted()) {
+            if (batch.confirmedMoves > 0) {
+                closeForReadback(attempt, state);
+                return;
+            }
             var observed = new LinkedHashMap<String, Object>();
             observed.put("source_count", source);
             observed.putAll(availableItemEvidence(snapshot.slots(), sourceSlots, 27));
             fail(state, "TRANSFER_FULL_STACK_UNAVAILABLE", RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
-                    Map.of("item", transfer.item(), "maximum_remaining", remaining),
+                    Map.of("item", transfer.item(), "maximum_remaining", transfer.maxTransferCount()),
                     observed);
             return;
         }
-        int slot = candidate.orElseThrow();
+        if (!batch.confirmedSlots.equals(snapshot.slots())) {
+            // No click is repeated or newly planned after refills or unrelated slot changes.
+            if (batch.confirmedMoves > 0) closeForReadback(attempt, state);
+            else fail(state, "TRANSFER_INITIAL_SLOTS_CHANGED", RoutineFailure.Category.SAFETY,
+                    RoutineFailure.Recovery.REPLAN, Map.of(), Map.of());
+            return;
+        }
+        int slot = batch.next().slot();
         ItemStack sourceStack = menu.slots.get(slot).getItem();
-        List<Integer> destinationSlots = transfer.playerToContainer()
-                ? layout.containerSlots() : layout.playerSlots();
         if (!liveMenuMatchesSnapshot(menu, snapshot)
                 || !KnownMenuProfileSupport.hasFullDestinationCapacity(
                         sourceStack,
                         destinationSlots.stream().map(menu.slots::get).toList())) {
+            if (batch.confirmedMoves > 0) {
+                closeForReadback(attempt, state);
+                return;
+            }
             fail(state, "TRANSFER_FULL_STACK_DESTINATION_CAPACITY_UNAVAILABLE",
                     RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
                     Map.of("whole_stack_capacity", true), Map.of());
             return;
         }
-        state.prepareTransfer(source, destination, snapshot.slots().get(slot).count());
-        dispatchContainerClick(
-                attempt, state, menu, slot, ContainerInput.QUICK_MOVE,
-                Stage.AWAITING_CLICK_ACK);
+        dispatchTransferClick(attempt, state, menu, snapshot);
+    }
+
+    private void dispatchTransferClick(
+            PhaseFiveAttempt attempt, AttemptState state, AbstractContainerMenu menu,
+            ContainerSyncSignals.ContainerSnapshot snapshot) {
+        if (prepareOwnedDispatch(attempt, state, menu) < 0L
+                || !freshEmptyServerCursorProof(attempt, state)) return;
+        long tick = currentTick();
+        if (!state.transferBatch.beginClick(snapshot, tick)) return;
+        state.transferReadbackObserved = false;
+        state.dispatchedStackCount = state.transferBatch.next().stack().count();
+        // Record the pending click before sending; exceptions must remain UNKNOWN, never retried.
+        state.dispatchedContainerClicks++;
+        state.stage = Stage.AWAITING_CLICK_ACK;
+        KnownMenuTransfers.dispatchServerConfirmedQuickMove(
+                requireMinecraft(), menu, state.transferBatch.next().slot());
     }
 
     private void dispatchRecipePlacement(
@@ -740,6 +771,27 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     private void maintainClickAck(PhaseFiveAttempt attempt, AttemptState state) {
         var proof = freshServerCursorSnapshot(attempt, state);
         if (proof.isEmpty() || !proof.orElseThrow().carried().empty()) {
+            return;
+        }
+        if (state.parameters instanceof TransferParameters transfer) {
+            var snapshot = proof.orElseThrow();
+            Minecraft minecraft = requireMinecraft();
+            if (minecraft.player != null
+                    && liveMenuMatchesSnapshot(minecraft.player.containerMenu, snapshot)
+                    && state.transferBatch.confirm(snapshot)) {
+                state.updateTransferPrefix();
+                if (state.transferBatch.exhausted()
+                        || state.beforeDestinationCount + state.completedUnits
+                                >= transfer.minimumDestinationCount()) {
+                    closeForReadback(attempt, state);
+                } else {
+                    // Dispatch of the next fixed source is deferred to another client tick.
+                    state.stage = Stage.TRANSFER_READY;
+                }
+            } else if (state.transferBatch.ackTimedOut(currentTick())) {
+                // A full reopen may resolve the one outstanding click; never send it again.
+                closeForReadback(attempt, state);
+            }
             return;
         }
         // QUICK_MOVE has no cursor transition and successful prediction has no positive ACK.
@@ -1321,7 +1373,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 integer(parameters.get("max_transfer_count"), "max_transfer_count"),
                 parameters.containsKey("max_stack_moves")
                         ? integer(parameters.get("max_stack_moves"), "max_stack_moves")
-                        : integer(parameters.get("max_transfer_count"), "max_transfer_count"),
+                        : 1,
                 Boolean.TRUE.equals(parameters.get("retain_view_on_release")),
                 parameters.containsKey("max_camera_degrees_per_tick")
                         ? finiteNumber(parameters.get("max_camera_degrees_per_tick"),
@@ -1876,6 +1928,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     enum Stage {
         AIMING_INITIAL,
         OPENING_INITIAL,
+        TRANSFER_READY,
         CRAFT_WAIT_RESULT,
         AWAITING_CLICK_ACK,
         AWAITING_CLOSE,
@@ -1958,9 +2011,10 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     && !"item_id_any_components".equals(stackPolicy)) {
                 throw new IllegalArgumentException("unsupported transfer stack policy");
             }
-            if (minimumDestinationCount < 0 || minimumDestinationCount > 2_304
-                    || maxTransferCount < 1 || maxTransferCount > 2_304
-                    || maxStackMoves < 1 || maxStackMoves > 2_304
+            if (minimumDestinationCount < 0
+                    || minimumDestinationCount > (playerToContainer ? 3_456 : 2_304)
+                    || maxTransferCount < 1 || maxTransferCount > 896
+                    || maxStackMoves < 1 || maxStackMoves > 14
                     || !Double.isFinite(cameraDegreesPerTick)
                     || cameraDegreesPerTick < 0.1D || cameraDegreesPerTick > 18.0D) {
                 throw new IllegalArgumentException("transfer limits are outside the v1 contract");
@@ -2100,6 +2154,84 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         }
     }
 
+    /** Fixed initial sources and per-click server baselines, bounded by the caller's stack/count caps. */
+    static final class TransferBatch {
+        private final List<PlannedTransferStack> plan;
+        private final List<Integer> destinationSlots;
+        private List<ContainerSyncSignals.StackFingerprint> confirmedSlots;
+        private List<ContainerSyncSignals.StackFingerprint> clickBaseline;
+        private long clickRevision;
+        private long confirmedRevision = -1L;
+        private long lastDispatchTick = -1L;
+        private int confirmedMoves;
+        private int confirmedCount;
+
+        TransferBatch(
+                List<ContainerSyncSignals.StackFingerprint> initial,
+                List<Integer> sourceSlots, List<Integer> destinationSlots,
+                String item, int defaultHash, boolean defaultComponentsOnly,
+                int maximumStacks, int maximumCount, int neededCount) {
+            if (maximumStacks < 1 || maximumStacks > 14 || maximumCount < 1 || maximumCount > 896) {
+                throw new IllegalArgumentException("transfer batch limits are outside the contract");
+            }
+            this.confirmedSlots = List.copyOf(initial);
+            this.destinationSlots = List.copyOf(destinationSlots);
+            var selected = new ArrayList<PlannedTransferStack>();
+            int plannedCount = 0;
+            for (int slot : sourceSlots) {
+                if (selected.size() >= maximumStacks || plannedCount >= neededCount) break;
+                var stack = initial.get(slot);
+                if (stack.empty() || !item.equals(stack.itemId())
+                        || (defaultComponentsOnly && stack.itemAndComponentsHash() != defaultHash)
+                        || stack.count() > maximumCount - plannedCount) continue;
+                selected.add(new PlannedTransferStack(slot, stack));
+                plannedCount = Math.addExact(plannedCount, stack.count());
+            }
+            this.plan = List.copyOf(selected);
+        }
+
+        PlannedTransferStack next() { return plan.get(confirmedMoves); }
+        boolean exhausted() { return confirmedMoves >= plan.size(); }
+        boolean inFlight() { return clickBaseline != null; }
+
+        boolean beginClick(ContainerSyncSignals.ContainerSnapshot snapshot, long tick) {
+            if (inFlight() || exhausted() || tick <= lastDispatchTick
+                    || !snapshot.carried().empty()
+                    || snapshot.packetLedgerRevision() < confirmedRevision
+                    || !confirmedSlots.equals(snapshot.slots())
+                    || !next().stack().equals(snapshot.slots().get(next().slot()))) return false;
+            clickBaseline = List.copyOf(snapshot.slots());
+            clickRevision = snapshot.packetLedgerRevision();
+            lastDispatchTick = tick;
+            return true;
+        }
+
+        boolean confirm(ContainerSyncSignals.ContainerSnapshot snapshot) {
+            if (!inFlight() || snapshot.packetLedgerRevision() <= clickRevision
+                    || !snapshot.carried().empty()
+                    || !KnownMenuTransfers.exactWholeStackMove(
+                            clickBaseline, snapshot.slots(), next().slot(), destinationSlots)) return false;
+            confirmedCount = Math.addExact(confirmedCount, next().stack().count());
+            confirmedMoves++;
+            confirmedSlots = List.copyOf(snapshot.slots());
+            confirmedRevision = snapshot.packetLedgerRevision();
+            clickBaseline = null;
+            return true;
+        }
+
+        boolean ackTimedOut(long tick) {
+            return inFlight() && tick - lastDispatchTick >= KnownMenuTransfers.UPDATE_TIMEOUT_TICKS;
+        }
+
+        boolean reconcileReadback(ContainerSyncSignals.ContainerSnapshot snapshot) {
+            if (inFlight()) confirm(snapshot);
+            return !inFlight() && confirmedMoves > 0 && snapshot.carried().empty()
+                    && confirmedSlots.equals(snapshot.slots());
+        }
+    }
+
+    record PlannedTransferStack(int slot, ContainerSyncSignals.StackFingerprint stack) { }
+
     static final class AttemptState {
         private final PhaseFiveRequest request;
         private final ParsedParameters parameters;
@@ -2121,6 +2253,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private int beforeDestinationCount;
         private int afterDestinationCount;
         private int dispatchedStackCount;
+        private TransferBatch transferBatch;
         private int expectedCraftOutputCount;
         private long lastPacketRevision;
         private long closeDeadlineClientTick;
@@ -2150,10 +2283,21 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             transferReadbackObserved = false;
         }
 
+        void beginTransferBatch(TransferBatch batch, int source, int destination) {
+            transferBatch = Objects.requireNonNull(batch, "batch");
+            prepareTransfer(source, destination, 0);
+        }
+
         void recordTransferReadback(int source, int destination) {
             afterSourceCount = source;
             afterDestinationCount = destination;
             transferReadbackObserved = true;
+        }
+
+        void updateTransferPrefix() {
+            if (transferBatch == null) return;
+            completedUnits = transferBatch.confirmedCount;
+            completedActions = transferBatch.confirmedMoves;
         }
 
         private boolean terminal() {
@@ -2187,6 +2331,19 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 basis.put("source_before", beforeSourceCount);
                 basis.put("destination_before", beforeDestinationCount);
                 basis.put("transfer_readback_observed", transferReadbackObserved);
+                basis.put("confirmed_transfer_count", completedUnits);
+                basis.put("confirmed_stack_moves", completedActions);
+                boolean inFlight = transferBatch != null && transferBatch.inFlight();
+                basis.put("transfer_in_flight", inFlight);
+                if (completedActions > 0) {
+                    basis.put("confirmed_source_count", beforeSourceCount - completedUnits);
+                    basis.put("confirmed_destination_count", beforeDestinationCount + completedUnits);
+                }
+                if (inFlight) {
+                    basis.put("pending_source_before", beforeSourceCount - completedUnits);
+                    basis.put("pending_destination_before", beforeDestinationCount + completedUnits);
+                    basis.put("pending_stack_count", transferBatch.next().stack().count());
+                }
                 if (transferReadbackObserved) {
                     basis.put("source_after", afterSourceCount);
                     basis.put("destination_after", afterDestinationCount);

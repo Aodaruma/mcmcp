@@ -648,9 +648,11 @@ public final class ActionDslParser {
             JsonObject source, String path) {
         exactKeys(source, path,
                 Set.of("id", "op", "target", "expected_block", "item",
-                        "stack_policy", "minimum_inventory_count", "routing_label"),
+                        "stack_policy", "minimum_inventory_count", "routing_label",
+                        "max_stacks", "max_transfer_count"),
                 Set.of("id", "op", "target", "expected_block", "item",
                         "stack_policy", "minimum_inventory_count"));
+        int maxStacks = containerMaxStacks(source, path);
         return new ActionDsl.TakeKnownContainerStack(
                 string(source.get("id"), path + ".id"),
                 position(source.get("target"), path + ".target"),
@@ -659,16 +661,21 @@ public final class ActionDslParser {
                 string(source.get("stack_policy"), path + ".stack_policy"),
                 integer(source.get("minimum_inventory_count"),
                         path + ".minimum_inventory_count"),
-                routingLabel(source, path));
+                routingLabel(source, path), maxStacks,
+                source.has("max_transfer_count")
+                        ? integer(source.get("max_transfer_count"), path + ".max_transfer_count")
+                        : 64 * maxStacks);
     }
 
     private static ActionDsl.StoreKnownContainerStack storeKnownContainerStack(
             JsonObject source, String path) {
         exactKeys(source, path,
                 Set.of("id", "op", "target", "expected_block", "item",
-                        "stack_policy", "minimum_container_count", "routing_label"),
+                        "stack_policy", "minimum_container_count", "routing_label",
+                        "max_stacks", "max_transfer_count"),
                 Set.of("id", "op", "target", "expected_block", "item",
                         "stack_policy", "minimum_container_count"));
+        int maxStacks = containerMaxStacks(source, path);
         return new ActionDsl.StoreKnownContainerStack(
                 string(source.get("id"), path + ".id"),
                 position(source.get("target"), path + ".target"),
@@ -677,7 +684,20 @@ public final class ActionDslParser {
                 string(source.get("stack_policy"), path + ".stack_policy"),
                 integer(source.get("minimum_container_count"),
                         path + ".minimum_container_count"),
-                routingLabel(source, path));
+                routingLabel(source, path), maxStacks,
+                source.has("max_transfer_count")
+                        ? integer(source.get("max_transfer_count"), path + ".max_transfer_count")
+                        : 64 * maxStacks);
+    }
+
+    private static int containerMaxStacks(JsonObject source, String path) {
+        int value = source.has("max_stacks")
+                ? integer(source.get("max_stacks"), path + ".max_stacks") : 1;
+        // Bound before computing the dependent default; malformed input cannot overflow it.
+        if (value < 1 || value > ActionDslValidator.MAX_CONTAINER_STACKS) {
+            throw invalid(path + ".max_stacks is outside the bounded range");
+        }
+        return value;
     }
 
     private static Optional<ActionDsl.RoutingLabel> routingLabel(

@@ -2296,6 +2296,40 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void multipleStackTransferAddsOnlyAckTimeAndInteractionsToTheSameAimAndFollowingPose() {
+        var map = map(UUID.randomUUID()).snapshot().orElseThrow();
+        var chest = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var pose = new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0);
+        var observed = Optional.of(frame(chest, ObservationRecord.Face.UP, "minecraft:chest", 0));
+        for (boolean take : new boolean[] {true, false}) {
+            var analyses = new java.util.ArrayList<AgentPrimitivePlanner.Analysis>();
+            for (int stacks : new int[] {1, 14}) {
+                ActionDsl.Node transfer = take
+                        ? new ActionDsl.TakeKnownContainerStack("move", chest, "minecraft:chest",
+                                "minecraft:torch", "default_components_only", 64, Optional.empty(), stacks, 64 * stacks)
+                        : new ActionDsl.StoreKnownContainerStack("move", chest, "minecraft:chest",
+                                "minecraft:torch", "default_components_only", 3_456, Optional.empty(), stacks, 64 * stacks);
+                var program = new ActionDsl.Program(1, Optional.empty(),
+                        Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.INVENTORY_TRANSFER),
+                        List.of(transfer, new ActionDsl.FaceKnownPosition("after", chest)));
+                analyses.add(AgentPrimitivePlanner.analyze(program, map,
+                        new DeterministicAStar(), pose, observed, 4.5F));
+            }
+            var single = analyses.getFirst();
+            var multiple = analyses.getLast();
+            assertThat(multiple.mutationAims()).isEqualTo(single.mutationAims());
+            assertThat(multiple.knownSurfaces()).isEqualTo(single.knownSurfaces());
+            assertThat(multiple.primitiveCosts().get("after")).isEqualTo(single.primitiveCosts().get("after"));
+            var cost = multiple.primitiveCosts().get("move");
+            assertThat(cost.cameraDegrees()).isEqualTo(single.primitiveCosts().get("move").cameraDegrees());
+            assertThat(cost.ticks()).isEqualTo(1_380);
+            assertThat(cost.durationMillis()).isEqualTo(69_000);
+            assertThat(cost.interactions()).isEqualTo(16);
+            assertThat(cost.distanceBlocks()).isZero();
+        }
+    }
+
+    @Test
     void inventoryChoosesAnotherDeliveredRayAroundAFrameAndKeepsItsCameraAndFollowingPose() {
         var map = map(UUID.randomUUID()).snapshot().orElseThrow();
         var chest = new ActionDsl.Position(DIMENSION, 3, 64, 0);

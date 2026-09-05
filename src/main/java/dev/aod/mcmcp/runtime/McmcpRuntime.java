@@ -1710,8 +1710,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return CompletableFuture.completedFuture(mapFailure(failure));
         }
         var fence = publishedSession;
-        // Use the same pre-tick observation phase as execution: after the player tick,
-        // renderer fog still belongs to the previous entity tick and fails closed to 1 block.
+        // Use the same pre-tick observation phase as execution. After the player tick,
+        // the previous renderer fog sample cannot authorize fresh visual evidence.
         var capture = inbox.submitControl(
                 command.toolName(),
                 fence.generation(),
@@ -2212,6 +2212,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         long durationMillis = node instanceof ActionDsl.CraftKnownRecipe
                 ? ActionDslCompiler.KNOWN_CRAFTING_DURATION_MILLIS
+                : node instanceof ActionDsl.TakeKnownContainerStack take
+                        ? ActionDslCompiler.knownContainerTransferTicks(take.maxStacks()) * 50L
+                : node instanceof ActionDsl.StoreKnownContainerStack store
+                        ? ActionDslCompiler.knownContainerTransferTicks(store.maxStacks()) * 50L
                 : node instanceof ActionDsl.SmeltKnownRecipe smelt
                         ? ActionDslCompiler.knownSmeltingDurationMillis(smelt.maxSmelts())
                 : node instanceof ActionDsl.OperateKnownMenu
@@ -2222,6 +2226,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         ? ActionDslCompiler.KNOWN_FISHING_DURATION_MILLIS : 0L;
         long ticks = node instanceof ActionDsl.CraftKnownRecipe
                 ? ActionDslCompiler.KNOWN_CRAFTING_TICKS
+                : node instanceof ActionDsl.TakeKnownContainerStack take
+                        ? ActionDslCompiler.knownContainerTransferTicks(take.maxStacks())
+                : node instanceof ActionDsl.StoreKnownContainerStack store
+                        ? ActionDslCompiler.knownContainerTransferTicks(store.maxStacks())
                 : node instanceof ActionDsl.SmeltKnownRecipe smelt
                         ? ActionDslCompiler.knownSmeltingTicks(smelt.maxSmelts())
                 : node instanceof ActionDsl.OperateKnownMenu
@@ -2237,8 +2245,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 ? 1L
                 : node instanceof ActionDsl.TillKnownBatch batch
                         ? batch.targets().size()
-                : node instanceof ActionDsl.TakeKnownContainerStack ? 3L
-                : node instanceof ActionDsl.StoreKnownContainerStack ? 3L
+                : node instanceof ActionDsl.TakeKnownContainerStack take
+                        ? ActionDslCompiler.knownContainerTransferInteractions(take.maxStacks())
+                : node instanceof ActionDsl.StoreKnownContainerStack store
+                        ? ActionDslCompiler.knownContainerTransferInteractions(store.maxStacks())
                 : node instanceof ActionDsl.CraftKnownRecipe craft
                         ? ActionDslCompiler.knownCraftInteractions(craft.maxCrafts())
                 : node instanceof ActionDsl.SmeltKnownRecipe
@@ -2323,17 +2333,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
         }
-        if (!admissionFenceCurrent(
+        var admissionFailure = admissionFenceFailure(
                 minecraft,
                 session,
                 prepared,
                 LocalArmingState.Mode.READY,
-                captured.control().controlEpoch())) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state",
-                    "The world, local control, pose, observation, or policy changed during preflight.",
-                    true,
-                    Map.of());
+                captured.control().controlEpoch());
+        if (admissionFailure.isPresent()) {
+            throw admissionPreflightFailure(admissionFailure.orElseThrow());
         }
         requireLiveCall(context, "agent_start_action");
         ActionDsl.OperateKillZone killZone = soleKillZone(prepared.program().request().program());
@@ -2804,7 +2811,48 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && Objects.equals(captured.dimension(), current.dimension());
     }
 
-    private boolean admissionFenceCurrent(
+    enum AdmissionFenceFailure {
+        WORLD_SESSION_CHANGED,
+        PLAYER_UNAVAILABLE,
+        CONTROL_MODE_CHANGED,
+        CONTROL_EPOCH_CHANGED,
+        CAPABILITIES_CHANGED,
+        POSE_CHANGED,
+        LOCAL_SAFETY_CHANGED,
+        CAMERA_POLICY_CHANGED,
+        MULTIPLAYER_CONTEXT_CHANGED,
+        MULTIPLAYER_POLICY_CHANGED,
+        OBSERVATION_UNAVAILABLE,
+        POSITION_CORRECTION_CHANGED,
+        POLICY_UNAVAILABLE,
+        POLICY_BRANCH_CHANGED,
+        ROUTE_CHANGED,
+        KNOWN_TARGET_CHANGED,
+        FACING_SURFACE_CHANGED,
+        KNOWN_SURFACE_CHANGED,
+        VISIBLE_ITEM_CHANGED,
+        VISIBLE_BATCH_ITEM_CHANGED,
+        BREAK_PRECONDITION_CHANGED;
+
+        String code() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+
+        String executionEvidence() {
+            return "admission_" + code() + "_before_execution";
+        }
+    }
+
+    static RuntimeException admissionPreflightFailure(AdmissionFenceFailure reason) {
+        return new RuntimeInvocationException(
+                "unsafe_state",
+                "The world, local control, pose, observation, or policy changed during preflight. "
+                        + "Reason: " + Objects.requireNonNull(reason, "reason").code() + ".",
+                true,
+                Map.of("admission_reason", reason.code()));
+    }
+
+    private Optional<AdmissionFenceFailure> admissionFenceFailure(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             PreparedAgentAction prepared,
@@ -2813,22 +2861,38 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var captured = prepared.snapshot();
         var player = minecraft.player;
         var lock = arming.snapshot(session.worldSessionId());
-        if (!sameAdmissionSession(captured.session(), session)
-                || player == null
-                || lock.mode() != expectedMode
-                || lock.controlEpoch() != expectedControlEpoch
-                || !lock.capabilities().equals(captured.control().capabilities())
-                || !playerPose(player, session.dimension()).equals(captured.pose())
-                || captured.localSafetyRequired()
-                        && (captured.localSafety()
-                                != LocalObservationProjector.CurrentSafety.CONTINUE
-                                || localSafety
-                                != LocalObservationProjector.CurrentSafety.CONTINUE)
-                || McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F
-                        != captured.cameraDegreesPerTick()
-                || minecraft.isMultiplayerServer() != captured.multiplayerServer()
-                || multiplayerPolicyAllows(minecraft) != captured.multiplayerAllowed()) {
-            return false;
+        if (!sameAdmissionSession(captured.session(), session)) {
+            return Optional.of(AdmissionFenceFailure.WORLD_SESSION_CHANGED);
+        }
+        if (player == null) {
+            return Optional.of(AdmissionFenceFailure.PLAYER_UNAVAILABLE);
+        }
+        if (lock.mode() != expectedMode) {
+            return Optional.of(AdmissionFenceFailure.CONTROL_MODE_CHANGED);
+        }
+        if (lock.controlEpoch() != expectedControlEpoch) {
+            return Optional.of(AdmissionFenceFailure.CONTROL_EPOCH_CHANGED);
+        }
+        if (!lock.capabilities().equals(captured.control().capabilities())) {
+            return Optional.of(AdmissionFenceFailure.CAPABILITIES_CHANGED);
+        }
+        if (!playerPose(player, session.dimension()).equals(captured.pose())) {
+            return Optional.of(AdmissionFenceFailure.POSE_CHANGED);
+        }
+        if (captured.localSafetyRequired()
+                && (captured.localSafety() != LocalObservationProjector.CurrentSafety.CONTINUE
+                        || localSafety != LocalObservationProjector.CurrentSafety.CONTINUE)) {
+            return Optional.of(AdmissionFenceFailure.LOCAL_SAFETY_CHANGED);
+        }
+        if (McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F
+                != captured.cameraDegreesPerTick()) {
+            return Optional.of(AdmissionFenceFailure.CAMERA_POLICY_CHANGED);
+        }
+        if (minecraft.isMultiplayerServer() != captured.multiplayerServer()) {
+            return Optional.of(AdmissionFenceFailure.MULTIPLAYER_CONTEXT_CHANGED);
+        }
+        if (multiplayerPolicyAllows(minecraft) != captured.multiplayerAllowed()) {
+            return Optional.of(AdmissionFenceFailure.MULTIPLAYER_POLICY_CHANGED);
         }
         final KnownTraversabilitySnapshot currentMap;
         final AdmissionPolicySnapshot currentPredicates;
@@ -2848,20 +2912,28 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             currentMap, currentReconciliation));
             if (currentReconciliation.positionCorrectionRevision()
                     != captured.positionCorrectionRevision()) {
-                return false;
+                return Optional.of(AdmissionFenceFailure.POSITION_CORRECTION_CHANGED);
             }
+        } catch (RuntimeException | LinkageError changed) {
+            return Optional.of(AdmissionFenceFailure.OBSERVATION_UNAVAILABLE);
+        }
+        try {
             currentPredicates = AdmissionPolicySnapshot.capture(
                     policySnapshot(minecraft), captured.predicateRequirements());
             validatePredicateAvailability(
                     prepared.program().request().program(), currentPredicates);
         } catch (RuntimeException | LinkageError changed) {
-            return false;
+            return Optional.of(AdmissionFenceFailure.POLICY_UNAVAILABLE);
         }
         Optional<ObservationFrame> currentPlanningFrame = agentPlanningFrame();
-        return firstPrimitive(prepared.program().request().program(), currentPredicates)
-                        .equals(prepared.initialPrimitive())
-                && routeDependenciesCurrent(currentMap, prepared.analysis().routeDependencies())
-                && prepared.analysis().knownTargets().stream().allMatch(target ->
+        if (!firstPrimitive(prepared.program().request().program(), currentPredicates)
+                .equals(prepared.initialPrimitive())) {
+            return Optional.of(AdmissionFenceFailure.POLICY_BRANCH_CHANGED);
+        }
+        if (!routeDependenciesCurrent(currentMap, prepared.analysis().routeDependencies())) {
+            return Optional.of(AdmissionFenceFailure.ROUTE_CHANGED);
+        }
+        if (!prepared.analysis().knownTargets().stream().allMatch(target ->
                         prepared.initialPrimitive()
                                         .filter(ActionDsl.FaceKnownPosition.class::isInstance)
                                         .isPresent()
@@ -2871,17 +2943,23 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                         currentMap,
                                         currentPlanningFrame,
                                         target,
-                                        currentSurfaceRevisionBarrier.applyAsLong(target)))
-                && prepared.analysis().knownFacingSurfaces().stream().allMatch(surface ->
+                                        currentSurfaceRevisionBarrier.applyAsLong(target)))) {
+            return Optional.of(AdmissionFenceFailure.KNOWN_TARGET_CHANGED);
+        }
+        if (!prepared.analysis().knownFacingSurfaces().stream().allMatch(surface ->
                         AgentPrimitivePlanner.knownFacingSurface(
-                                currentMap, currentPlanningFrame, surface))
-                && prepared.analysis().knownSurfaces().stream().allMatch(surface ->
+                                currentMap, currentPlanningFrame, surface))) {
+            return Optional.of(AdmissionFenceFailure.FACING_SURFACE_CHANGED);
+        }
+        if (!prepared.analysis().knownSurfaces().stream().allMatch(surface ->
                         AgentPrimitivePlanner.knownSurface(
                                 currentMap,
                                 currentPlanningFrame,
                                 surface,
-                                currentSurfaceRevisionBarrier.applyAsLong(surface.position())))
-                && prepared.initialPrimitive()
+                                currentSurfaceRevisionBarrier.applyAsLong(surface.position())))) {
+            return Optional.of(AdmissionFenceFailure.KNOWN_SURFACE_CHANGED);
+        }
+        if (!prepared.initialPrimitive()
                         .filter(ActionDsl.CollectVisibleItem.class::isInstance)
                         .map(ActionDsl.CollectVisibleItem.class::cast)
                         .map(target -> AgentPrimitivePlanner.visibleItemCurrent(
@@ -2892,8 +2970,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 session.clientTick(),
                                 visibleItemEvidenceMaxAgeTicks(
                                         McmcpClientConfig.raysPerTick())))
-                        .orElse(true)
-                && prepared.initialPrimitive()
+                        .orElse(true)) {
+            return Optional.of(AdmissionFenceFailure.VISIBLE_ITEM_CHANGED);
+        }
+        if (!prepared.initialPrimitive()
                         .filter(ActionDsl.CollectVisibleItemBatch.class::isInstance)
                         .map(ActionDsl.CollectVisibleItemBatch.class::cast)
                         .map(batch -> AgentPrimitivePlanner.visibleBatchItemAabbs(
@@ -2905,9 +2985,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                         visibleItemEvidenceMaxAgeTicks(
                                                 McmcpClientConfig.raysPerTick()))
                                 .stream().allMatch(Optional::isPresent))
-                        .orElse(true)
-                && breakProgramPreconditionsCurrent(
-                        minecraft, prepared.program(), prepared.initialPrimitive());
+                        .orElse(true)) {
+            return Optional.of(AdmissionFenceFailure.VISIBLE_BATCH_ITEM_CHANGED);
+        }
+        if (!breakProgramPreconditionsCurrent(
+                minecraft, prepared.program(), prepared.initialPrimitive())) {
+            return Optional.of(AdmissionFenceFailure.BREAK_PRECONDITION_CHANGED);
+        }
+        return Optional.empty();
     }
 
     static boolean routeDependenciesCurrent(
@@ -4321,17 +4406,24 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 }
                 var pending = pendingAgentAdmission;
                 if (pending == null
-                        || !pending.actionId().equals(action.actionId())
-                        || !admissionFenceCurrent(
-                                minecraft,
-                                session,
-                                pending.prepared(),
-                                LocalArmingState.Mode.AGENT,
-                                pending.prepared().snapshot().control().controlEpoch() + 1L)) {
+                        || !pending.actionId().equals(action.actionId())) {
                     failAgentAction(
                             AgentActionStore.FailureCode.WORLD_CHANGED,
                             true,
-                            "admission_changed_before_execution");
+                            "admission_missing_before_execution");
+                    return;
+                }
+                var admissionFailure = admissionFenceFailure(
+                        minecraft,
+                        session,
+                        pending.prepared(),
+                        LocalArmingState.Mode.AGENT,
+                        pending.prepared().snapshot().control().controlEpoch() + 1L);
+                if (admissionFailure.isPresent()) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.WORLD_CHANGED,
+                            true,
+                            admissionFailure.orElseThrow().executionEvidence());
                     return;
                 }
                 KillZoneAdmission killAuthorization = pending.killZoneAdmission();
@@ -7164,6 +7256,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                             .maxSmelts())
                             : knownMenu
                                     ? ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS
+                            : agentExecution.primitive instanceof ActionDsl.TakeKnownContainerStack take
+                                    ? ActionDslCompiler.knownContainerTransferOperationTicks(take.maxStacks())
+                            : agentExecution.primitive instanceof ActionDsl.StoreKnownContainerStack store
+                                    ? ActionDslCompiler.knownContainerTransferOperationTicks(store.maxStacks())
                             : AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND);
             PhaseFivePort port = smelting ? knownFurnacePort
                     : knownMenu ? knownMenuPort : phaseFiveInventoryPort;
@@ -8087,6 +8183,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         String item;
         String stackPolicy;
         int minimumDestinationCount;
+        int maxStacks = 1;
+        int maxTransferCount = 64;
         if (primitive instanceof ActionDsl.InspectKnownContainer inspect) {
             position = inspect.target();
             expectedBlock = inspect.expectedBlock();
@@ -8099,12 +8197,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             item = take.item();
             stackPolicy = take.stackPolicy();
             minimumDestinationCount = take.minimumInventoryCount();
+            maxStacks = take.maxStacks();
+            maxTransferCount = take.maxTransferCount();
         } else if (primitive instanceof ActionDsl.StoreKnownContainerStack store) {
             position = store.target();
             expectedBlock = store.expectedBlock();
             item = store.item();
             stackPolicy = store.stackPolicy();
             minimumDestinationCount = store.minimumContainerCount();
+            maxStacks = store.maxStacks();
+            maxTransferCount = store.maxTransferCount();
         } else {
             throw new IllegalArgumentException("node is not a known container operation");
         }
@@ -8134,8 +8236,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         parameters.put("stack", Map.of("item", item, "stack_policy", stackPolicy));
         parameters.put("goal", Map.of(
                 "minimum_destination_count", minimumDestinationCount));
-        parameters.put("max_transfer_count", 64);
-        parameters.put("max_stack_moves", 1);
+        parameters.put("max_transfer_count", maxTransferCount);
+        parameters.put("max_stack_moves", maxStacks);
         parameters.put("retain_view_on_release", true);
         parameters.put("max_camera_degrees_per_tick",
                 McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0D);
@@ -11767,7 +11869,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 var goal = objectArgument(parameters, "goal");
                 requireExactKeys(goal, "transfer_items goal", Set.of("minimum_destination_count"));
                 expectedUnits = requireRange(
-                        intArgument(goal, "minimum_destination_count"), 0, 2_304,
+                        intArgument(goal, "minimum_destination_count"), 0,
+                        direction.equals("player_to_container") ? 3_456 : 2_304,
                         "minimum_destination_count");
                 requireRange(intArgument(parameters, "max_transfer_count"), 1, 2_304,
                         "max_transfer_count");

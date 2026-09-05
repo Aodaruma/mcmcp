@@ -6,6 +6,7 @@ import dev.aod.mcmcp.routine.RoutineManager;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
+import java.util.HashSet;
 import java.util.concurrent.RejectedExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,6 +38,29 @@ class McmcpRuntimePublicErrorContractTest {
         assertThat(reply.failure().message()).isEqualTo(message);
         assertThat(reply.failure().retryable()).isTrue();
         assertThat(reply.failure().message()).doesNotContain("submitted", "node", "target");
+    }
+
+    @Test
+    void admissionDiagnosticsSurvivePublicMappingWithoutChangingTheSafetyErrorContract() {
+        var messages = new HashSet<String>();
+        var executionEvidence = new HashSet<String>();
+        for (var reason : McmcpRuntime.AdmissionFenceFailure.values()) {
+            var reply = McmcpRuntime.mapFailure(McmcpRuntime.admissionPreflightFailure(reason));
+
+            assertThat(reply.failure().code()).isEqualTo("unsafe_state");
+            assertThat(reply.failure().retryable()).isTrue();
+            assertThat(reply.failure().message())
+                    .startsWith("The world, local control, pose, observation, or policy changed during preflight.")
+                    .endsWith("Reason: " + reason.code() + ".")
+                    .hasSizeLessThan(512);
+            assertThat(reply.failure().details()).containsOnlyKeys("admission_reason")
+                    .containsEntry("admission_reason", reason.code());
+            assertThat(reason.code()).matches("[a-z_]+");
+            assertThat(reason.executionEvidence()).matches("admission_[a-z_]+_before_execution")
+                    .hasSizeLessThan(128);
+            assertThat(messages.add(reply.failure().message())).isTrue();
+            assertThat(executionEvidence.add(reason.executionEvidence())).isTrue();
+        }
     }
 
     private static void assertFailure(Throwable cause, String code) {

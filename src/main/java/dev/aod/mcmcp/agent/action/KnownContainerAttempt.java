@@ -27,7 +27,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
     private ContainerInspection.Contents pendingInspection;
     private boolean successReleased;
     private boolean closed;
-    private final ArrayList<EffectDelta> pendingEffects = new ArrayList<>(1);
+    private final ArrayList<EffectDelta> pendingEffects = new ArrayList<>(2);
     private boolean transferConfirmed;
     private boolean unknownTransferRecorded;
     private boolean potentialTransferDispatched;
@@ -35,6 +35,13 @@ public final class KnownContainerAttempt implements AutoCloseable {
     private int latestDestinationBefore = -1;
     private int latestSourceAfter = -1;
     private int latestDestinationAfter = -1;
+    private boolean batchEvidence;
+    private boolean transferInFlight;
+    private int confirmedPrefix;
+    private int confirmedSourceCount = -1;
+    private int confirmedDestinationCount = -1;
+    private int pendingSourceBefore = -1;
+    private int pendingDestinationBefore = -1;
     private long latestEffectClientTick;
     private long latestEffectWorldRevision;
 
@@ -255,6 +262,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
     public void close() {
         if (closed) return;
         captureFinalTransferEvidence();
+        recordConfirmedPrefix();
         recordUnknownTransfer();
         if (attempt != null) port.release(attempt);
         port.retire(request);
@@ -315,6 +323,29 @@ public final class KnownContainerAttempt implements AutoCloseable {
                 ? requiredNonNegativeInt(basis, "source_after") : -1;
         latestDestinationAfter = readbackObserved
                 ? requiredNonNegativeInt(basis, "destination_after") : -1;
+        if (basis.containsKey("confirmed_transfer_count")) {
+            batchEvidence = true;
+            int prefix = requiredNonNegativeInt(basis, "confirmed_transfer_count");
+            if (prefix < confirmedPrefix || prefix > 896) {
+                throw new IllegalStateException("container confirmed prefix changed");
+            }
+            if (prefix > 0) {
+                int source = requiredNonNegativeInt(basis, "confirmed_source_count");
+                int destination = requiredNonNegativeInt(basis, "confirmed_destination_count");
+                if (latestSourceBefore - source != prefix
+                        || destination - latestDestinationBefore != prefix) {
+                    throw new IllegalStateException("container confirmed prefix is inconsistent");
+                }
+                confirmedSourceCount = source;
+                confirmedDestinationCount = destination;
+            }
+            confirmedPrefix = prefix;
+            transferInFlight = Boolean.TRUE.equals(basis.get("transfer_in_flight"));
+            if (transferInFlight) {
+                pendingSourceBefore = requiredNonNegativeInt(basis, "pending_source_before");
+                pendingDestinationBefore = requiredNonNegativeInt(basis, "pending_destination_before");
+            }
+        }
         latestEffectClientTick = clientTick;
         latestEffectWorldRevision = worldRevision;
     }
@@ -335,7 +366,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
         int sourceAfter = requiredNonNegativeInt(basis, "source_count_after");
         int destinationBefore = requiredNonNegativeInt(basis, "destination_count_before");
         int destinationAfter = requiredNonNegativeInt(basis, "destination_count_after");
-        if (sourceBefore - sourceAfter != transferred
+        if (transferred > 896 || sourceBefore - sourceAfter != transferred
                 || destinationAfter - destinationBefore != transferred) {
             throw new IllegalStateException("confirmed transfer counts are inconsistent");
         }
@@ -349,15 +380,32 @@ public final class KnownContainerAttempt implements AutoCloseable {
         transferConfirmed = true;
     }
 
+    private void recordConfirmedPrefix() {
+        if (transferConfirmed || confirmedPrefix == 0) return;
+        pendingEffects.add(new EffectDelta(
+                Map.of("source_count", latestSourceBefore,
+                        "destination_count", latestDestinationBefore),
+                Map.of("source_count", confirmedSourceCount,
+                        "destination_count", confirmedDestinationCount,
+                        "transferred", confirmedPrefix),
+                AgentActionStore.Verification.CONFIRMED,
+                latestEffectClientTick, latestEffectWorldRevision));
+        // Record the prefix only once, including when release needs another close attempt.
+        transferConfirmed = true;
+    }
+
     private void recordUnknownTransfer() {
         if (!"transfer_items".equals(request.kind())
-                || !potentialTransferDispatched || transferConfirmed || unknownTransferRecorded) {
+                || !potentialTransferDispatched || unknownTransferRecorded
+                || (batchEvidence ? !transferInFlight : transferConfirmed)) {
             return;
         }
         var before = new java.util.LinkedHashMap<String, Object>();
-        if (latestSourceBefore >= 0) before.put("source_count", latestSourceBefore);
-        if (latestDestinationBefore >= 0) {
-            before.put("destination_count", latestDestinationBefore);
+        int sourceBefore = batchEvidence ? pendingSourceBefore : latestSourceBefore;
+        int destinationBefore = batchEvidence ? pendingDestinationBefore : latestDestinationBefore;
+        if (sourceBefore >= 0) before.put("source_count", sourceBefore);
+        if (destinationBefore >= 0) {
+            before.put("destination_count", destinationBefore);
         }
         var after = new java.util.LinkedHashMap<String, Object>();
         if (latestSourceAfter >= 0) after.put("source_count", latestSourceAfter);
@@ -449,13 +497,13 @@ public final class KnownContainerAttempt implements AutoCloseable {
 
         public TickResult {
             Objects.requireNonNull(status, "status");
-            if (interactionDelta < 0 || interactionDelta > 8) {
+            if (interactionDelta < 0 || interactionDelta > 16) {
                 throw new IllegalArgumentException("interaction delta is outside the action bound");
             }
             items = List.copyOf(Objects.requireNonNull(items, "items"));
             effects = List.copyOf(Objects.requireNonNull(effects, "effects"));
             diagnostics = List.copyOf(Objects.requireNonNull(diagnostics, "diagnostics"));
-            if (effects.size() > 1) {
+            if (effects.size() > 2) {
                 throw new IllegalArgumentException("too many container effect deltas");
             }
         }

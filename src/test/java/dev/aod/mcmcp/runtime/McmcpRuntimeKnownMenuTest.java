@@ -77,6 +77,28 @@ class McmcpRuntimeKnownMenuTest {
         }
 
         assertThat(calls)
+                .contains("dev/aod/mcmcp/routine/KnownMenuTransfers#dispatchServerConfirmedQuickMove")
+                .doesNotContain(
+                        "net/minecraft/client/multiplayer/MultiPlayerGameMode#handleContainerInput",
+                        "net/minecraft/world/inventory/AbstractContainerMenu#clicked");
+        // Follow the extracted shared implementation and preserve the server-only packet proof.
+        var shared = new ClassNode();
+        try (var stream = getClass().getResourceAsStream(
+                "/dev/aod/mcmcp/routine/KnownMenuTransfers.class")) {
+            assertThat(stream).isNotNull();
+            new ClassReader(stream).accept(shared, 0);
+        }
+        var sharedDispatch = shared.methods.stream()
+                .filter(candidate -> candidate.name.equals("dispatchServerConfirmedQuickMove"))
+                .findFirst().orElseThrow();
+        calls.clear();
+        for (var instruction : sharedDispatch.instructions) {
+            if (instruction instanceof MethodInsnNode call) {
+                calls.add(call.owner + "#" + call.name);
+            }
+        }
+
+        assertThat(calls)
                 .contains(
                         "net/minecraft/network/HashedStack#create",
                         "net/minecraft/client/multiplayer/ClientPacketListener#send")

@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ContainerEffectSchemaTest {
     @Test
-    void effectCountsAllowDoubleChestCapacityWithoutExpandingTransferOrInputGoals() {
+    void effectCountsAndGoalsRespectDirectionAndBoundedBatchCapacity() {
         var catalog = new McpToolCatalog();
         var observation = catalog.outputSchema("agent_get_action")
                 .getAsJsonObject("$defs").getAsJsonObject("effectObservation");
@@ -35,16 +35,16 @@ class ContainerEffectSchemaTest {
             }
         }
         assertThat(CatalogSchemaValidator.matches(observation,
-                gson.toJsonTree(Map.of("transferred", 64)))).isTrue();
+                gson.toJsonTree(Map.of("transferred", 896)))).isTrue();
         assertThat(CatalogSchemaValidator.matches(observation,
-                gson.toJsonTree(Map.of("transferred", 65)))).isFalse();
+                gson.toJsonTree(Map.of("transferred", 897)))).isFalse();
         var nodes = catalog.inputSchema("agent_start_action").getAsJsonObject("$defs");
         assertThat(nodes.getAsJsonObject("takeContainerStackNode").getAsJsonObject("properties")
                 .getAsJsonObject("minimum_inventory_count").get("maximum").getAsInt())
                 .isEqualTo(2_304);
         assertThat(nodes.getAsJsonObject("storeContainerStackNode").getAsJsonObject("properties")
                 .getAsJsonObject("minimum_container_count").get("maximum").getAsInt())
-                .isEqualTo(2_304);
+                .isEqualTo(3_456);
     }
 
     @Test

@@ -1385,9 +1385,11 @@ public final class AgentPrimitivePlanner {
                     visualBarrierWorldRevision,
                     take.expectedBlock(),
                     "Container target requires a current matching visible surface");
-            return analyzeContainer(
+            return analyzeOwnedMenu(
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims,
-                    work, surface, 3);
+                    work, surface, ActionDslCompiler.knownContainerTransferInteractions(take.maxStacks()),
+                    ActionDslCompiler.knownContainerTransferTicks(take.maxStacks()),
+                    "container", false, Double.POSITIVE_INFINITY);
         }
         if (node instanceof ActionDsl.StoreKnownContainerStack store) {
             requireRoutingLabel(
@@ -1399,9 +1401,11 @@ public final class AgentPrimitivePlanner {
                     visualBarrierWorldRevision,
                     store.expectedBlock(),
                     "Container target requires a current matching visible surface");
-            return analyzeContainer(
+            return analyzeOwnedMenu(
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims,
-                    work, surface, 3);
+                    work, surface, ActionDslCompiler.knownContainerTransferInteractions(store.maxStacks()),
+                    ActionDslCompiler.knownContainerTransferTicks(store.maxStacks()),
+                    "container", false, Double.POSITIVE_INFINITY);
         }
         if (node instanceof ActionDsl.CraftKnownRecipe craft) {
             MutationSurface surface = requireInventorySurface(

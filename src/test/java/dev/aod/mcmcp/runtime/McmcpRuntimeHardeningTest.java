@@ -539,12 +539,17 @@ class McmcpRuntimeHardeningTest {
                 new ActionDsl.TakeKnownContainerStack(
                         "take", support, "minecraft:chest", "minecraft:wheat_seeds",
                         "default_components_only", 64))).contains(
-                        new ActionDslCompiler.Cost(0, 0, 0, 0, 3, 0, 0));
+                        new ActionDslCompiler.Cost(30_000, 600, 0, 0, 3, 0, 0));
         assertThat(McmcpRuntime.structuralPrimitiveCost(
                 new ActionDsl.StoreKnownContainerStack(
                         "store", support, "minecraft:barrel", "minecraft:wheat",
                         "default_components_only", 64))).contains(
-                        new ActionDslCompiler.Cost(0, 0, 0, 0, 3, 0, 0));
+                        new ActionDslCompiler.Cost(30_000, 600, 0, 0, 3, 0, 0));
+        assertThat(McmcpRuntime.structuralPrimitiveCost(
+                new ActionDsl.StoreKnownContainerStack(
+                        "batch", support, "minecraft:chest", "minecraft:wheat",
+                        "default_components_only", 3_456, Optional.empty(), 14, 896))).contains(
+                        new ActionDslCompiler.Cost(69_000, 1_380, 0, 0, 16, 0, 0));
         assertThat(McmcpRuntime.knownContainerTransferDirection(
                 new ActionDsl.StoreKnownContainerStack(
                         "store", support, "minecraft:barrel", "minecraft:wheat",

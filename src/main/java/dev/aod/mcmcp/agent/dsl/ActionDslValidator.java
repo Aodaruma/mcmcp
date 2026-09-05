@@ -46,6 +46,8 @@ public final class ActionDslValidator {
     public static final int MAX_BLOCKS_BROKEN = 8;
     public static final int MAX_COBBLESTONE_GENERATOR_BREAKS = 64;
     public static final int MAX_INTERACTIONS = 16;
+    public static final int MAX_CONTAINER_STACKS = MAX_INTERACTIONS - 2;
+    public static final int MAX_CONTAINER_TRANSFER_COUNT = 64 * MAX_CONTAINER_STACKS;
     public static final int MAX_KILL_ZONE_ATTACKS = 2_048;
     public static final int MAX_BLOCKS_PLACED = 8;
     public static final int MAX_MUTATION_BATCH_TARGETS = 8;
@@ -709,6 +711,9 @@ public final class ActionDslValidator {
             }
             requireRange(take.minimumInventoryCount(), 1, 2_304,
                     path + ".minimum_inventory_count");
+            requireRange(take.maxStacks(), 1, MAX_CONTAINER_STACKS, path + ".max_stacks");
+            requireRange(take.maxTransferCount(), 1, MAX_CONTAINER_TRANSFER_COUNT,
+                    path + ".max_transfer_count");
             validateRoutingLabel(take.routingLabel(), path);
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
@@ -723,8 +728,11 @@ public final class ActionDslValidator {
             if (!STACK_POLICIES.contains(store.stackPolicy())) {
                 throw invalid(path + ".stack_policy is unsupported");
             }
-            requireRange(store.minimumContainerCount(), 1, 2_304,
+            requireRange(store.minimumContainerCount(), 1, 3_456,
                     path + ".minimum_container_count");
+            requireRange(store.maxStacks(), 1, MAX_CONTAINER_STACKS, path + ".max_stacks");
+            requireRange(store.maxTransferCount(), 1, MAX_CONTAINER_TRANSFER_COUNT,
+                    path + ".max_transfer_count");
             validateRoutingLabel(store.routingLabel(), path);
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
