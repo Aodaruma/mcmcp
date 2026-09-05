@@ -49,5 +49,6 @@
 
 ## Development workflow
 
+- 配布は`vMAJOR.MINOR.PATCH`（任意のprerelease接尾辞付き）タグのバージョンをJAR・README・ZIPへ反映する。全検証成功後に非draft Releaseを公開し、接尾辞付きはPre-releaseとする。PDFは`tools/release/`のMarkdown/CSS/固定フォントによる生成を正本とし、TyporaやGUIを必須にしない。MPL-2.0本文・出典・対応ソース取得先を配布物に含め、開発用MODやゲーム設定・認証情報を混入させない。
 - 変更はphase単位で実装し、関連するbuild、unit test、harness isolation、schema/catalog検証を通してから、独立したcommitとして`main`へpushする。
 - 作業treeのユーザー変更を保持し、無関係なファイルや既存instanceを変更しない。設計判断と恒久的な再発防止策はここへ、実験固有の座標・Action ID・結果・時系列は`docs/experiments/`へ記録する。

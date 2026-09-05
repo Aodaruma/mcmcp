@@ -362,8 +362,11 @@ tasks.named('check').configure {
 }
 
 tasks.named('jar', Jar).configure {
+    from('LICENSE') { into 'META-INF' }
+    from('NOTICE.md') { into 'META-INF' }
     manifest {
-        attributes('Automatic-Module-Name': 'dev.aod.mcmcp')
+        attributes('Automatic-Module-Name': 'dev.aod.mcmcp',
+                'Implementation-Version': project.version)
     }
 }
 

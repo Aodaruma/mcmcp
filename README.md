@@ -67,6 +67,16 @@ Prism Launcherと同じJava 25を`JAVA_HOME`へ設定して実行します。
 
 test harnessは別JARとして生成し、singleplayerの複製検証profileだけで使用します。release用MCMCP JARへcommand fixtureを含めません。
 
+## Releases
+
+`v0.1.0-rc3`のようなタグをpushすると、そのタグのバージョンでJAR・画像付きREADME PDF・配布ZIPを自動生成し、GitHub Releaseへ公開します。RC等の接尾辞付きタグは公開Pre-release、通常の`v0.1.0`は正式Releaseです。draftにはしません。main/PRでは同じ検証・配布ビルドを行い、成果物をActionsへ保存します。
+
+PDFはMarkdown・独自CSS・固定した日本語フォントをChromiumで印刷します。Typoraのインストールや画面操作は不要です。[配布・PDF生成手順](tools/release/README.md)を参照してください。
+
+## License
+
+MCMCPのソースコードは[MPL 2.0](LICENSE)で提供します。第三者素材の出典と適用範囲は[NOTICE.md](NOTICE.md)を参照してください。
+
 ## Disclaimer
 
 NOT AN OFFICIAL MINECRAFT MOD. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.

@@ -1,0 +1,42 @@
+/* Original print stylesheet: a restrained Markdown layout, without Typora assets. */
+@font-face {
+  font-family: "MCMCP Guide";
+  src: url("__FONT_URL__") format("truetype");
+  font-weight: 100 900;
+}
+@page { size: A4; margin: 17mm 16mm 18mm; }
+* { box-sizing: border-box; }
+html { color: #24292f; background: white; }
+body { margin: 0; font-family: "MCMCP Guide", sans-serif; font-size: 10pt; line-height: 1.6; }
+main { max-width: 100%; }
+.guide-page + .guide-page { break-before: page; }
+.guide-page > :last-child { margin-bottom: 0; }
+h1, h2, h3 { font-weight: 700; line-height: 1.35; break-after: avoid; }
+h1 { font-size: 22pt; margin: 0 0 14pt; padding-bottom: 8pt; border-bottom: 1px solid #d8dee4; }
+h2 { font-size: 17pt; margin: 16pt 0 10pt; padding-bottom: 5pt; border-bottom: 1px solid #d8dee4; }
+h3 { font-size: 12pt; margin: 13pt 0 7pt; }
+p { margin: 7pt 0; orphans: 3; widows: 3; }
+ul, ol { margin: 7pt 0; padding-left: 20pt; }
+li { margin: 3pt 0; }
+li > p { margin: 3pt 0; }
+strong { font-weight: 700; }
+a { color: #0969da; text-decoration: none; overflow-wrap: anywhere; }
+img { max-width: 100%; height: auto; object-fit: contain; vertical-align: middle; }
+p:has(> img:only-child) { break-inside: avoid; margin: 11pt 0; }
+code { background: #eff1f3; border-radius: 3px; padding: 0 3px; font-size: 9pt;
+       font-family: "MCMCP Guide", monospace; overflow-wrap: anywhere; }
+pre { background: #f6f8fa; padding: 10pt; border-radius: 4pt; break-inside: avoid;
+      white-space: pre-wrap; overflow-wrap: anywhere; font-size: 9pt; line-height: 1.5; }
+pre code { padding: 0; background: transparent; }
+blockquote { margin: 10pt 0; padding: 7pt 11pt; border-left: 3pt solid #0969da;
+             background: #f1f7ff; color: #334155; break-inside: avoid; font-size: 9pt; }
+blockquote p { margin: 2pt 0; }
+table { width: 100%; border-collapse: collapse; font-size: 9pt; margin: 10pt 0; }
+th, td { border: 1px solid #d8dee4; padding: 5pt 7pt; text-align: left; vertical-align: top; }
+th { background: #f1f3f5; font-weight: 700; }
+tbody tr:nth-child(even) { background: #f8f9fa; }
+tr { break-inside: avoid; }
+thead { display: table-header-group; }
+table:has(img) { break-inside: avoid; }
+table img { max-width: none; }
+@media print { * { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
