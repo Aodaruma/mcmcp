@@ -22,10 +22,10 @@ Prismのnative Roaming側とCodexパッケージのLocalCache側の両方につ�
 ## 配布物と範囲
 
 - `docs/MCMCP_配布用README.md`、同名PDF、`docs/assets/readme/` がガイドの正本。
-- ZIPはproduction JAR、README.md、README.pdf、13個のPNGのみを含む。画像リンク・CRC・同梱JARの一致を検査する。
+- ZIPはproduction JAR、README.md、README.pdf、14個のPNG（画面・状態アイコン13個と採用ロゴ1個）のみを含む。画像リンク・CRC・同梱JARの一致を検査する。
 - production JAR SHA-256: `C9B1B5F966BBBB512AB0711A3E81F6EA40DEED95D379F358D2214E753BF7FDDB`
 - ライセンスは別文書で提案し、All Rights Reservedの設定は変更していない。
-- AI生成のロゴはレビュー用の試作に限定し、ソース・MOD・ガイド・ZIPへ組み込んでいない。
+- ロゴは当初レビュー用の試作に限定していた。その後、ユーザーがPhotoshopで調整・合成した版を承認し、README・ガイド・ZIPへ採用した。MOD本体への組み込みは行っていない。
 - 今回は文書・画像の変更であり、ゲームプレイのMCP-only受け入れ試験を実施したという扱いにはしない。修正コードのテスト結果は前の修正コミット481c7b9の記録を参照する。
 
 ## PDFレビューの反映
@@ -37,3 +37,11 @@ Prismのnative Roaming側とCodexパッケージのLocalCache側の両方につ�
 - 初期状態を「デフォルトでOFF」と明記し、MCP接続設定から設定選択画面への遷移と自動設定操作を別々に説明した。
 - CurseForgeの注意書きはNote!の引用枠とし、配布ガイドからchangelogを削除した。
 - Typoraから再出力した最終版は8ページ。目次のページ対応、状態表が分割されないこと、文字・画像・番号の表示を全ページ確認した。Markdown・PDF・ZIPを同期し、production JARは変更していない。
+
+## 採用ロゴとGitHub形式のNote
+
+- ユーザーが調整したPhotoshop文書から、配置と色を維持した1600×1600の透過PNGをPhotoshopの「書き出し形式」で出力した。正本は `docs/assets/readme/mcmcp-logo.png`。元のレイヤー付きPSDは配布ZIPに含めない。
+- リポジトリREADME、導入・接続ガイド、配布ガイドへ同じロゴを掲載し、リポジトリREADMEから画像付きガイドとPDFへリンクした。
+- Typoraの「Github スタイルアラート」が有効であることを確認し、注意書きを `> [!NOTE]` に変更した。GithubテーマでGUIからPDFを再出力し、青いNote枠と表紙ロゴの表示を確認した。
+- PDFは8ページを維持。変更した1・2ページを目視確認し、3〜8ページはPoppler出力のハッシュが前回の確認済み版と一致した。目次のページ番号も変更不要だった。
+- PDF出力後、元のダークテーマへ戻す前にユーザーのEscでcomputer-useが停止した。以降は依頼に従いGUI操作をせず、成果物の同期・ZIP更新を行った。

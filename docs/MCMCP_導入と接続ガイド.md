@@ -1,5 +1,7 @@
 # MCMCP 導入・接続ガイド
 
+<img src="assets/readme/mcmcp-logo.png" width="160" alt="MCMCPロゴ：ロボットとピッケル">
+
 この文書は、MCMCPをMinecraftへ導入し、CodexまたはClaude Codeから利用するまでの手順を説明する。MCMCPはMinecraftクライアント内で動作するため、MinecraftサーバーへのMOD導入は不要である。
 
 ## 1. 必要なもの

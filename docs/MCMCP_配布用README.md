@@ -1,5 +1,7 @@
 # MCMCP NeoForge 導入ガイド
 
+<img src="assets/readme/mcmcp-logo.png" width="160" alt="MCMCPロゴ：ロボットとピッケル">
+
 **Minecraftのプレイヤーを、Codex・Claude Codeから操作するMODです。**
 
 導入は **JARを追加 → MCPクライアントを接続 → 操作をON** の3ステップ。
@@ -51,7 +53,8 @@ MCPサーバーはMinecraft内で動くため、サーバー側MODや別の中�
 
 **更新時：** 古いMCMCP JARを `mods` の外へバックアップしてから差し替えます。
 
-> **Note!** 画面は[CurseForge公式ブログ](https://blog.curseforge.com/how-to-enable-mods-for-a-specific-world-in-minecraft-java/)の参考例です。表示中のDF／Forgeの構成は使わず、**Minecraft 26.2／NeoForge 26.2.0.59** のプロフィールを選んでください。配布ZIPはMODパックのインポート用ではありません。
+> [!NOTE]
+> 画面は[CurseForge公式ブログ](https://blog.curseforge.com/how-to-enable-mods-for-a-specific-world-in-minecraft-java/)の参考例です。表示中のDF／Forgeの構成は使わず、**Minecraft 26.2／NeoForge 26.2.0.59** のプロフィールを選んでください。配布ZIPはMODパックのインポート用ではありません。
 
 <div style="page-break-after: always;"></div>
 

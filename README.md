@@ -1,5 +1,7 @@
 # MCMCP
 
+<img src="docs/assets/readme/mcmcp-logo.png" width="180" alt="MCMCPロゴ：ロボットとピッケル">
+
 Client-only NeoForge mod with an embedded MCP server for bounded Minecraft automation.
 
 MCMCPは、Minecraftのローカルプレイヤーを型付きAction DSLとクライアント側の安全制御を通して操作するNeoForge MODです。MCP serverをMODと同じMinecraft JVM内で動作させ、Minecraft server側のplugin、capability確認、独自通信を必要としません。
@@ -36,6 +38,7 @@ Phase 1のControl / Navigation MVPを終え、Phase 2の最初のsliceである�
 
 ## Documents
 
+- [画像付き導入ガイド](docs/MCMCP_配布用README.md) / [PDF版](docs/MCMCP_配布用README.pdf)
 - [導入・Codex / Claude接続ガイド](docs/MCMCP_導入と接続ガイド.md)
 - [設計・仕様書](docs/Minecraft_MCP_NeoForge_設計仕様書.md)
 - [Action DSLクイックガイド](docs/MCMCP_Action_DSL_クイックガイド.md)
