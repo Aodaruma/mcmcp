@@ -40,7 +40,7 @@ The illustrated guide is currently in Japanese. See [Releases](https://github.co
 | ✅ チェスト棚卸し<br>Chest & barrel inspection | ✅ 小規模建築・コピー<br>Small builds & copying | ✅ マルチプレイ<br>Multiplayer support |
 | ✅ アイテム出し入れ<br>Item transfers | ✅ 回路組み立て（定型）<br>Preset redstone circuits | ☐ 追加MOD互換性<br>More mod compatibility |
 | ☐ 未探索エリア・段差移動<br>Exploration & full-block steps | ✅ ポーション醸造<br>Standard potion brewing | ☐ 低FPS時の安定性<br>Low-FPS stability |
-| ☐ 額縁付きチェストの安定性<br>Item-frame chest reliability | ✅ 釣り<br>Fishing | ☐ Release公開<br>Release publication |
+| ☐ 額縁付きチェストの安定性<br>Item-frame chest reliability | ✅ 釣り<br>Fishing | ✅ Pre-release公開<br>Pre-release publication |
 | | ☐ 大規模建築<br>Large building jobs | |
 | | ☐ 連続釣り<br>Multi-cycle fishing | |
 

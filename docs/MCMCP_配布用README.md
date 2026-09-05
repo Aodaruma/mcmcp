@@ -11,7 +11,7 @@ MCPサーバーはMinecraft内で動くため、サーバー側MODや別の中�
 
 - Minecraft **26.2** / NeoForge **26.2.0.59** / Java **25**
 - Minecraftと同じPCで動作するCodex・Claude CodeなどのMCPクライアント
-- MODの配布版：**0.1.0-SNAPSHOT**（開発版）
+- MODの配布版：**0.1.0-rc.1**
 
 **読み方：** そのまま読む場合は **README.pdf** を開いてください。
 
@@ -48,7 +48,7 @@ MCPサーバーはMinecraft内で動くため、サーバー側MODや別の中�
 
 1. **Minecraftを終了**し、配布ZIPを展開します。
 2. CurseForgeの **Minecraft → My Modpacks** で使うプロフィールを開き、**「⋮」→「Open Folder」**を選びます。
-3. 開いたフォルダーの **`mods`** に、同梱の `mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar` をコピーします。
+3. 開いたフォルダーの **`mods`** に、同梱の `mcmcp-neoforge-26.2-0.1.0-rc.1.jar` をコピーします。
 4. CurseForgeに戻り、**Play** で起動します。
 
 **更新時：** 古いMCMCP JARを `mods` の外へバックアップしてから差し替えます。
@@ -74,7 +74,7 @@ Prismを使っている方はこちらの手順です。CurseForgeで追加済�
 
 1. **Minecraftを終了**し、配布ZIPを展開します。
 2. Prism Launcherで使う起動構成を選び、**「編集」→「Mod」→「ファイルを追加」**へ進みます。
-3. 同梱の `mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar` を追加し、Minecraftを起動します。
+3. 同梱の `mcmcp-neoforge-26.2-0.1.0-rc.1.jar` を追加し、Minecraftを起動します。
 
 **更新時：** 古いMCMCP JARを `mods` の外へバックアップしてから差し替えます。同じMODを2つ入れないでください。既存の設定・認証情報は引き継げます。
 

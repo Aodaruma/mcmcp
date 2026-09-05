@@ -44,3 +44,11 @@ Java 25で`test harnessTest adminBridgeTest verifyHarnessIsolation build`成功�
 ローカルでは`test harnessTest adminBridgeTest verifyHarnessIsolation build`成功。unit 1111件、harness 13件、admin bridge 21件、合計1145件で失敗・skipなし。新規14件には、遠方200体に埋もれる手前の額縁、累積上限とentity part、fog境界、Vanilla角度丸め、既知rayだけの選択、plannerのcamera整合、固定診断と任意データ非反射を含む。独立レビューも実施した。
 
 新しいJARでの同じ失敗位置の再確認は実ゲーム担当へ引き継ぐ。ローカルテストだけでは倉庫での全例解消や安定完了を意味しないため、READMEの「額縁付きチェストの安定性」は未完了のままとする。
+
+## 初回Pre-release公開
+
+利用者の公開指示により、修正commit `ae5d74f`と公開説明commit `a1ab9ef`をpushし、後者へ`v0.1.0-rc.1`の注釈付きタグを作成した。[CI 33970163738](https://github.com/Aodaruma/mcmcp/actions/runs/33970163738)はbuild・releaseとも成功し、[Pre-release](https://github.com/Aodaruma/mcmcp/releases/tag/v0.1.0-rc.1)を非draftで公開した。
+
+公開物4件（ZIP・ZIPのSHA-256・JAR・PDF）をダウンロードしてGitHubのasset digestと照合した。ZIP内23ファイルのallowlist、22件の内部checksum、別添JAR/PDFとZIP内の同一性、バージョン、MPL-2.0と開発用class非混入、タグへのsource URLを確認。公開PDFは全8ページを画像化して表示も確認した。公開説明は日英併記で、額縁付きチェストの実ゲーム再確認が残ることを明記している。
+
+公開JARのSHA-256は`b7add0b75d3c290291b4984bbe19705ba68227d89f678ff89ac80681b776b01c`。実ゲームは今回のコード・公開作業では操作していない。
