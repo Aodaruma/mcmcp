@@ -9,7 +9,7 @@ NOT AN OFFICIAL MINECRAFT MOD. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICR
 
 - Minecraft **26.2** / NeoForge **26.2.0.59** / Java **25**
 - 同じPC上で動作するCodex、Claude CodeなどのMCPクライアント
-- 配布版：**0.1.0-SNAPSHOT / 2026-09-05 ロボットアイコン版**（開発版）
+- 配布版：**0.1.0-SNAPSHOT / 2026-09-05 ロボットアイコン版 r2**（開発版）
 - `mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar`：通常プレイ用MOD本体
 - `README.md`：この導入ガイド
 
@@ -78,6 +78,7 @@ MCMCPで現在の状態と所持品を確認してください。まだ行動は
 ## 今回の変更
 
 - OFFは閉じた目、ON／待機中は開いた目のロボットアイコンに変更しました。推論・実行・緊急回避・確認・異常時は、顔の記号も切り替わります。
+- 緊急回避中と確認中のアイコンに、手動で調整したPNG画像を採用しました。
 - Codexが付加する呼び出しIDなどによって状態取得が拒否される問題の修正を含みます。
 
 開発元・ソースコード：<https://github.com/Aodaruma/mcmcp>

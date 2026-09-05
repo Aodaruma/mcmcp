@@ -352,6 +352,8 @@ Vanillaがsingleplayerを実際にpauseしている間はActionをcancelせず�
 | RECOVERING | 紫色のロボット（顔に盾） | 緊急回避中 |
 | FAULT | 赤色のロボット（顔に「！」） | endpointまたは内部異常 |
 
+緊急回避中は`assets/mcmcp/textures/gui/automation_recovering.png`、確認中は`assets/mcmcp/textures/gui/automation_consent_pending.png`（いずれも16×16、透過PNG）から描画する。画像編集後のJAR再ビルド、または同じパスを持つリソースパックで差し替えられる。共通のHUD背景は画像の外側で描画する。
+
 `EVALUATING`と`FAULT`は6.2のcontrol stateではなく、前者は`READY`へ、後者は`OFF`へ重ねて表示するUI専用presentation stateである。endpoint bind、token初期化、または内部不変条件の異常時はFAULTを優先表示し、実行中Actionがあれば`INTERNAL_ERROR`で終了して入力を解除する。Screen buttonは`MCP操作: FAULT`とし、local error codeはtooltipへ表示する。world参加やONクリックだけでは解除せず、安全なendpoint再初期化に成功するかclientを再起動した場合だけ通常のOFF表示へ戻す。endpointが応答可能なら`agent_get_state.control.mode`は`off`、直前Actionの`end_reason`は`INTERNAL_ERROR`を返す。
 
 evaluation-turn acquire時は「推論中・入力ロック中 — Escで緊急停止」、AGENT開始時は「自動操作中 — Escで緊急停止」という短いoverlay noticeを3秒間だけ出し、その後はiconと外縁だけに戻す。

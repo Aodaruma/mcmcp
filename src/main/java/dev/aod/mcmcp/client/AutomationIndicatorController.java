@@ -6,6 +6,7 @@ import dev.aod.mcmcp.runtime.McmcpRuntime;
 import dev.aod.mcmcp.safety.ScopedEntityAttackConsentStore;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Checkbox;
@@ -37,6 +38,10 @@ public final class AutomationIndicatorController {
 
     private static final Identifier HUD_LAYER = Identifier.fromNamespaceAndPath(
             McmcpMod.MOD_ID, "automation_status");
+    private static final Identifier RECOVERING_ICON = Identifier.fromNamespaceAndPath(
+            McmcpMod.MOD_ID, "textures/gui/automation_recovering.png");
+    private static final Identifier CONSENT_PENDING_ICON = Identifier.fromNamespaceAndPath(
+            McmcpMod.MOD_ID, "textures/gui/automation_consent_pending.png");
     private static final int ICON_SIZE = 16;
     private static final int ICON_TEXT_GAP = 4;
     private static final int MIN_LEFT_MARGIN = 8;
@@ -548,6 +553,14 @@ public final class AutomationIndicatorController {
             int y,
             AutomationUiSnapshot.State state) {
         graphics.fill(x, y, x + ICON_SIZE, y + ICON_SIZE, BACKGROUND);
+        if (state == AutomationUiSnapshot.State.RECOVERING
+                || state == AutomationUiSnapshot.State.CONSENT_PENDING) {
+            Identifier texture = state == AutomationUiSnapshot.State.RECOVERING
+                    ? RECOVERING_ICON : CONSENT_PENDING_ICON;
+            graphics.blit(RenderPipelines.GUI_TEXTURED, texture,
+                    x, y, 0.0F, 0.0F, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
+            return;
+        }
         int color = color(state);
         // Pixel robot: antenna, rounded head, ears and a little neck.
         graphics.fill(x + 6, y + 1, x + 10, y + 2, color);
@@ -577,23 +590,6 @@ public final class AutomationIndicatorController {
                 graphics.fill(x + 6, y + 6, x + 7, y + 12, color);
                 graphics.fill(x + 7, y + 7, x + 9, y + 11, color);
                 graphics.fill(x + 9, y + 8, x + 11, y + 10, color);
-            }
-            case RECOVERING -> {
-                graphics.fill(x + 5, y + 6, x + 11, y + 7, color);
-                graphics.fill(x + 4, y + 6, x + 5, y + 9, color);
-                graphics.fill(x + 11, y + 6, x + 12, y + 9, color);
-                graphics.fill(x + 5, y + 9, x + 6, y + 10, color);
-                graphics.fill(x + 10, y + 9, x + 11, y + 10, color);
-                graphics.fill(x + 6, y + 10, x + 10, y + 11, color);
-                graphics.fill(x + 7, y + 11, x + 9, y + 12, color);
-            }
-            case CONSENT_PENDING -> {
-                graphics.fill(x + 6, y + 6, x + 10, y + 7, color);
-                graphics.fill(x + 5, y + 7, x + 6, y + 8, color);
-                graphics.fill(x + 10, y + 7, x + 11, y + 8, color);
-                graphics.fill(x + 8, y + 8, x + 10, y + 9, color);
-                graphics.fill(x + 7, y + 9, x + 9, y + 10, color);
-                graphics.fill(x + 7, y + 11, x + 9, y + 12, color);
             }
             case FAULT -> {
                 graphics.fill(x + 7, y + 6, x + 9, y + 10, color);
