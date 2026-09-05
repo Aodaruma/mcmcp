@@ -50,6 +50,8 @@ The first in-game attempts were rejected before dispatch despite being within th
 
 One remove/collect/insert round trip succeeded, preserving the frame body and rotation. Removal took 33 ticks and insertion 14 ticks, with one interaction each. Collection was verified through ordinary pickup after MCP navigation and an inventory increase; the dedicated collection action was rejected twice and is not counted as a successful collection test.
 
+候補2ではその後、倉庫の表示変更17か所を完了したとの報告を受けた。作業の区切りで未回収drop・未格納cargoなし、READYを確認。一方、次の額縁で`SAFETY_PRECONDITION / Reason: frame_item_changed`が2回あり、額縁の品目と回転が観測上変わっていなくても、予約時の認可条件で拒否されるケースが残る。候補3へ更新して再確認する。
+
 ### 描画fog欠測の待機 / Waiting for a current fog sample
 
 別の額縁でも照準中14tick・58.5度・interaction0で`frame_front_not_visible`を記録した（Action `4dc5b749-cf81-44ae-8347-138e7a79933b`）。既存adapterはfog欠測と本当の不可視を同じ失敗へ変換していたため、欠測だけを内部`observationPending`で区別する。
@@ -57,3 +59,5 @@ One remove/collect/insert round trip succeeded, preserving the frame body and ro
 欠測中は可視item/rotationの読み取りへ入らず、総400tick・dispatch後ACK60tickを延長せず待つ。サンプル復帰後は従来の正面・半径・LOS・表示一致を再検証する。キャンセルやtimeout時にpendingの既定値をUNKNOWN afterへ使わず、dispatch後の再送もしない。既存の実機拒否が欠測由来だったかは、最終JARでの照準継続を確認して判定する。
 
 準備/dispatch後の欠測からの復帰、元の400/60tick期限、remove/insertのキャンセル、UNKNOWN afterの省略、実LOS拒否、欠測中の可視read非実行を回帰検証した。参照説明の修正と合わせて、unit 1,194件・harness 13件・admin bridge 21件の計1,228件、build/isolationが成功した。
+
+最終候補3（SHA-256 `C751AC8373C6B37838EA2D8C951F039261C0B5189B5C1C6585C15FFA766342B7`）の実ゲームで、W01-C06-L01のoak_sapling除去が29ticks・camera98.36度・1interactionでCONFIRMEDとなった（Action `1d35ee68-30a6-4cb8-a636-8579b785c609`）。空表示・rotation 0・本体残存、正しい`frame_display_entity_ref`と`/records/*/{entity_ref,frame_display}`の案内を確認し、落下した苗木1個も手持ちへ回収済み。照準の継続は確認できたが、以前の各拒否の直接原因まで確定したとは扱わない。
