@@ -7182,7 +7182,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             case FAILED -> failAgentAction(
                     AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
                     true,
-                    result.evidence());
+                    result.evidence(), result.diagnostics().toArray(String[]::new));
             case SUCCEEDED -> {
                 KnownContainerAttempt completedContainer = agentExecution.containerAttempt;
                 agentExecution.containerAttempt = null;
@@ -10300,7 +10300,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void failAgentAction(
-            AgentActionStore.FailureCode code, boolean recoverable, String evidence) {
+            AgentActionStore.FailureCode code, boolean recoverable, String evidence,
+            String... diagnostics) {
         // Do not publish a terminal snapshot while an await worker could still observe an
         // Agent-owned key as pressed. Input release must happen first; READY is published only
         // after the terminal Action snapshot has awakened its waiters.
@@ -10310,9 +10311,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return;
         }
         closePendingKillZoneEffectForTerminal(evidence);
+        var failureEvidence = new ArrayList<String>(1 + diagnostics.length);
+        failureEvidence.add(evidence);
+        failureEvidence.addAll(List.of(diagnostics));
         var terminal = PendingAgentTerminal.failure(
                 active.orElseThrow().actionId(),
-                new AgentActionStore.Failure(code, recoverable, List.of(evidence)));
+                new AgentActionStore.Failure(code, recoverable, failureEvidence));
         if (!releaseAgentControl(Minecraft.getInstance())) {
             rememberPendingAgentTerminal(terminal);
             retainReadyAfterDeferredAgentRelease();

@@ -39,22 +39,24 @@ final class ContainerSurfaceWitnesses {
     }
 
     VisibleSurface choose(List<VisibleEntity> entities) {
-        if (!blocked(first, entities)) return first;
+        if (usable(first, entities)) return first;
         for (VisibleSurface candidate : corners) {
-            if (candidate != null && !blocked(candidate, entities)) return candidate;
+            if (candidate != null && usable(candidate, entities)) return candidate;
         }
         // All rays may be blocked for interaction while the block is still visually observable.
         // Preserve the real sample; the planner and live crosshair gates decide usability.
         return first;
     }
 
-    private static boolean blocked(VisibleSurface surface, List<VisibleEntity> entities) {
-        return entities.stream().filter(entity -> entity.dimension().equals(surface.dimension()))
-                .anyMatch(entity -> ContainerAimOcclusion.intersects(
+    private static boolean usable(VisibleSurface surface, List<VisibleEntity> entities) {
+        return ContainerAimOcclusion.hasSurfaceClearance(surface)
+                && entities.stream().filter(entity -> entity.dimension().equals(surface.dimension()))
+                .noneMatch(entity -> ContainerAimOcclusion.intersects(
                         point(surface.eyeOrigin()), point(surface.rayHit()), entity.aabb()));
     }
 
     private static double score(VisibleSurface surface, int corner) {
+        if (!ContainerAimOcclusion.hasSurfaceClearance(surface)) return Double.POSITIVE_INFINITY;
         var hit = surface.rayHit();
         var block = surface.position();
         double u = switch (surface.face()) {
@@ -65,8 +67,17 @@ final class ContainerSurfaceWitnesses {
             case UP, DOWN -> hit.z() - block.z();
             case NORTH, SOUTH, EAST, WEST -> hit.y() - block.y();
         };
-        double du = u - (corner & 1);
-        double dv = v - ((corner >> 1) & 1);
+        boolean chest = surface.block().value().equals("minecraft:chest");
+        boolean horizontalFace = surface.face() == ObservationRecord.Face.UP
+                || surface.face() == ObservationRecord.Face.DOWN;
+        double lowU = chest ? 0.0625D : 0.0D;
+        double highU = chest ? 0.9375D : 1.0D;
+        double lowV = chest && horizontalFace ? 0.0625D : 0.0D;
+        double highV = chest ? horizontalFace ? 0.9375D : 0.875D : 1.0D;
+        // A slightly inset corner is a ranking preference only. Every chosen point still came
+        // from a real ray, including connected-half points outside these preferred coordinates.
+        double du = u - ((corner & 1) == 0 ? lowU + 0.02D : highU - 0.02D);
+        double dv = v - ((corner & 2) == 0 ? lowV + 0.02D : highV - 0.02D);
         return du * du + dv * dv;
     }
 

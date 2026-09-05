@@ -21,7 +21,7 @@ class ContainerSurfaceWitnessesTest {
             var sample = new OmnidirectionalObserver.TickSample(
                     DIMENSION, EYE, tick, 0, 0, 32, UnknownBoundaryReason.RADIUS_LIMIT);
             result = observer.collectTick(sample, (index, direction, actual) -> {
-                var surface = surface(index == 1 ? 0.0625 : 0.5, actual.observedTick());
+                var surface = surface(index == 1 ? 0.09 : 0.5, actual.observedTick());
                 return new OmnidirectionalObserver.RayTrace(
                         OmnidirectionalObserver.RayOutcome.HIT, List.of(surface),
                         new UnknownBoundary(surface.rayHit(), UnknownBoundaryReason.OPAQUE_OCCLUSION,
@@ -30,7 +30,7 @@ class ContainerSurfaceWitnessesTest {
         }
         var surfaces = result.orElseThrow().records().stream()
                 .filter(VisibleSurface.class::isInstance).map(VisibleSurface.class::cast).toList();
-        assertThat(surfaces).containsExactly(surface(0.0625, 1));
+        assertThat(surfaces).containsExactly(surface(0.09, 1));
         // In particular, selecting the witness must not redate it to the completion tick.
         assertThat(surfaces.getFirst().observedTick()).isEqualTo(1);
         assertThat(result.orElseThrow().frameCompletedTick()).isEqualTo(4);
@@ -53,6 +53,28 @@ class ContainerSurfaceWitnessesTest {
                 new WorldPosition(DIMENSION, 1.0625, 64.0625, 0.0625), EYE, 1, 0);
         witnesses.add(other);
         assertThat(witnesses.choose(List.of(frame(1)))).isSameAs(center);
+    }
+
+    @Test
+    void nullableStateChestPrefersAnActualInsetRayOverTheUnstableOutlineEdge() {
+        var center = surface(0.5, 1);
+        var outlineEdge = surface(0.0625, 1);
+        var inset = surface(0.09, 2);
+        var witnesses = new ContainerSurfaceWitnesses(center);
+        witnesses.add(outlineEdge);
+        witnesses.add(inset);
+
+        assertThat(outlineEdge.state()).isNull();
+        assertThat(witnesses.choose(List.of(frame(2)))).isSameAs(inset);
+        assertThat(witnesses.choose(List.of(frame(2))).observedTick()).isEqualTo(2);
+    }
+
+    @Test
+    void unsafeOnlyOutlineSampleRemainsVisualEvidenceWithoutSynthesizingAnInset() {
+        var outlineEdge = surface(0.0625, 1);
+        var witnesses = new ContainerSurfaceWitnesses(outlineEdge);
+        assertThat(witnesses.choose(List.of())).isSameAs(outlineEdge);
+        assertThat(ContainerAimOcclusion.hasSurfaceClearance(outlineEdge)).isFalse();
     }
 
     private static VisibleSurface surface(double edge, long tick) {

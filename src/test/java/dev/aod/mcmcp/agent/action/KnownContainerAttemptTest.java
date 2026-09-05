@@ -8,6 +8,7 @@ import dev.aod.mcmcp.routine.PhaseFiveFrame;
 import dev.aod.mcmcp.routine.PhaseFivePort;
 import dev.aod.mcmcp.routine.PhaseFiveRequest;
 import dev.aod.mcmcp.routine.PhaseFiveResult;
+import dev.aod.mcmcp.routine.RoutineFailure;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -18,6 +19,66 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownContainerAttemptTest {
+    @Test
+    void retainsCompatibleAimFailureCodeAndOnlyFixedCrosshairDiagnostics() {
+        for (boolean beforeBegin : new boolean[] {true, false}) {
+            for (String kind : List.of("entity", "block_other", "miss", "unavailable", "world_border")) {
+                var port = new FakePort();
+                var operation = new KnownContainerAttempt(port, request(), 1, 101);
+                var failure = failure("CONTAINER_AIM_OCCLUDED", Map.of(
+                        "crosshair", kind, "target", "private coordinates",
+                        "entity_id", "private identity"));
+                port.tick = 1;
+                if (beforeBegin) {
+                    port.observationFailure = failure;
+                } else {
+                    operation.tick(1);
+                    port.tick = 2;
+                    port.evidenceFailure = failure;
+                }
+                var result = operation.tick(port.tick);
+                assertThat(result.status()).isEqualTo(KnownContainerAttempt.Status.FAILED);
+                assertThat(result.evidence()).isEqualTo("container_aim_occluded");
+                assertThat(result.diagnostics()).containsExactly("container_crosshair=" + kind);
+                assertThat(result.interactionDelta()).isZero();
+                assertThat(result.items()).isEmpty();
+                assertThat(result.effects()).isEmpty();
+                operation.close();
+            }
+        }
+    }
+
+    @Test
+    void unknownCrosshairValuesAndOtherFailuresNeverReflectAdditionalAdapterData() {
+        for (Map<String, Object> observed : List.of(
+                Map.<String, Object>of(),
+                Map.<String, Object>of("crosshair", "entity:private-id at private-position"),
+                Map.<String, Object>of("crosshair", Map.of("secret", "private-data")))) {
+            var port = new FakePort();
+            port.tick = 1;
+            port.observationFailure = failure("CONTAINER_AIM_OCCLUDED", observed);
+            var operation = new KnownContainerAttempt(port, request(), 1, 101);
+            var result = operation.tick(1);
+            assertThat(result.evidence()).isEqualTo("container_aim_occluded");
+            assertThat(result.diagnostics()).isEmpty();
+            operation.close();
+        }
+        var port = new FakePort();
+        port.tick = 1;
+        port.observationFailure = failure("OTHER_FAILURE", Map.of("crosshair", "entity"));
+        var operation = new KnownContainerAttempt(port, request(), 1, 101);
+        var result = operation.tick(1);
+        assertThat(result.evidence()).isEqualTo("other_failure");
+        assertThat(result.diagnostics()).isEmpty();
+        operation.close();
+    }
+
+    private static RoutineFailure failure(String code, Map<String, Object> observed) {
+        return new RoutineFailure(RoutineFailure.Category.PRECONDITION, code, false,
+                RoutineFailure.Recovery.REPLAN, RoutineFailure.Scope.STEP, 1,
+                Map.of(), observed, Map.of("private", "must not be reflected"), List.of(), false);
+    }
+
     @Test
     void fullInspectionPreservesAll54TypesAndOriginalSnapshotAcrossReleaseRetry() {
         var port = new FakePort();
@@ -251,10 +312,12 @@ class KnownContainerAttemptTest {
         private boolean holdPending;
         private boolean completeInspection;
         private boolean truncated;
+        private RoutineFailure observationFailure;
+        private RoutineFailure evidenceFailure;
 
         @Override
         public PhaseFiveFrame observe(PhaseFiveRequest request) {
-            return new PhaseFiveFrame(tick, maintained ? 2 : 1, null);
+            return new PhaseFiveFrame(tick, maintained ? 2 : 1, observationFailure);
         }
 
         @Override
@@ -280,6 +343,10 @@ class KnownContainerAttemptTest {
                     "release_pending", releasePending,
                     "release_confirmed", releaseConfirmed,
                     "release_fault", false);
+            if (evidenceFailure != null) {
+                return new PhaseFiveEvidence.Failed(attempt.attemptId(), tick,
+                        maintained ? 2 : 1, evidenceFailure, basis);
+            }
             if (!maintained || holdPending) {
                 return new PhaseFiveEvidence.Pending(attempt.attemptId(), tick, 1, basis);
             }

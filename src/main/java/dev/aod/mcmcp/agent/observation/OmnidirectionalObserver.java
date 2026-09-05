@@ -68,7 +68,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.function.ToDoubleFunction;
 
 /**
  * Builds full-azimuth visual frames without changing or consulting player view state.
@@ -512,19 +514,17 @@ public final class OmnidirectionalObserver {
             VisibleEntityRefIssuer entityRefs) {
         Vec3 eye = vec3(sample.eyeOrigin());
         double radius = sample.effectiveRadiusBlocks();
-        AABB queryBounds = player.getBoundingBox().inflate(radius);
-        var candidates = new ArrayList<Entity>();
+        List<Entity> candidates;
         try {
-            level.getEntities(
-                    EntityTypeTest.forClass(Entity.class),
-                    queryBounds,
-                    entity -> entity != player
-                            && entity.isAlive()
-                            && !entity.isRemoved()
-                            && !entity.isSpectator()
-                            && entity.getBoundingBox().distanceToSqr(eye) <= radius * radius,
-                    candidates,
-                    MAX_NEARBY_ENTITIES + 1);
+            candidates = collectEntityCandidates(radius, player.blockInteractionRange(),
+                    entity -> entity.getBoundingBox().distanceToSqr(eye),
+                    (queryRadius, distanceFilter, destination) -> level.getEntities(
+                            EntityTypeTest.forClass(Entity.class),
+                            player.getBoundingBox().inflate(queryRadius),
+                            entity -> entity != player && entity.isAlive()
+                                    && !entity.isRemoved() && !entity.isSpectator()
+                                    && distanceFilter.test(entity),
+                            destination, MAX_NEARBY_ENTITIES + 1));
         } catch (RuntimeException | LinkageError ignored) {
             return new EntityObservation(List.of(), true);
         }
@@ -568,6 +568,34 @@ public final class OmnidirectionalObserver {
             }
         }
         return new EntityObservation(result, truncated);
+    }
+
+    /** Keep reachable blockers before distant entities can exhaust the bounded visual sample. */
+    static <T> List<T> collectEntityCandidates(
+            double radius, double interactionRange, ToDoubleFunction<T> distanceSquared,
+            EntityCandidateQuery<T> query) {
+        double near = Math.min(radius, interactionRange);
+        double nearSquared = near * near;
+        double radiusSquared = radius * radius;
+        var candidates = new ArrayList<T>(MAX_NEARBY_ENTITIES + 1);
+        query.collect(near, entity -> candidates.size() < MAX_NEARBY_ENTITIES + 1
+                && distanceSquared.applyAsDouble(entity) <= nearSquared, candidates);
+        if (candidates.size() <= MAX_NEARBY_ENTITIES && near < radius) {
+            query.collect(radius, entity -> {
+                if (candidates.size() >= MAX_NEARBY_ENTITIES + 1) return false;
+                double distance = distanceSquared.applyAsDouble(entity);
+                return distance > nearSquared && distance <= radiusSquared;
+            }, candidates);
+        }
+        // Predicates also enforce the cumulative cap: NeoForge appends dragon parts after
+        // the ordinary entity loop, even when that loop has already reached its maximum.
+        // LOS, invisibility and public-record validation still run before any delivery.
+        return candidates;
+    }
+
+    @FunctionalInterface
+    interface EntityCandidateQuery<T> {
+        void collect(double radius, Predicate<T> predicate, List<T> destination);
     }
 
     private static ResourceId displayedItem(Entity entity) {
@@ -670,18 +698,25 @@ public final class OmnidirectionalObserver {
             AABB target,
             TickSample sample) {
         Vec3 eye = vec3(sample.eyeOrigin());
-        for (Vec3 point : aabbSamplePoints(target)) {
+        return hasLineOfSight(target, sample, point -> {
             Vec3 delta = point.subtract(eye);
             double distance = delta.length();
-            if (distance == 0.0D) {
-                return true;
-            }
             var direction = new DirectionVector(
                     delta.x / distance,
                     delta.y / distance,
                     delta.z / distance);
             RayTrace trace = traceMinecraftRay(level, player, direction, sample, distance);
-            if (trace.outcome() == RayOutcome.MISS) {
+            return trace.outcome() == RayOutcome.MISS;
+        });
+    }
+
+    static boolean hasLineOfSight(AABB target, TickSample sample, Predicate<Vec3> clearRay) {
+        Vec3 eye = vec3(sample.eyeOrigin());
+        double radiusSquared = sample.effectiveRadiusBlocks() * sample.effectiveRadiusBlocks();
+        for (Vec3 point : aabbSamplePoints(target)) {
+            double distanceSquared = point.distanceToSqr(eye);
+            if (distanceSquared > radiusSquared) continue;
+            if (distanceSquared == 0.0D || clearRay.test(point)) {
                 return true;
             }
         }

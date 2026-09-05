@@ -889,7 +889,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             case OPEN -> dispatchExpectedOpen(attempt, state, readback);
             case OCCLUDED -> fail(state, "CONTAINER_AIM_OCCLUDED",
                     RoutineFailure.Category.PRECONDITION, RoutineFailure.Recovery.REPLAN,
-                    Map.of("exact_target_crosshair", true), Map.of());
+                    Map.of("exact_target_crosshair", true),
+                    Map.of("crosshair", ContainerAimGate.occlusionKind(minecraft.hitResult)));
             case WAIT -> { }
         }
     }

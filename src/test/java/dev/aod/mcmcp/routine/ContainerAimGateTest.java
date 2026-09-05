@@ -14,6 +14,20 @@ class ContainerAimGateTest {
     private static final Vec3 POINT = new Vec3(164.5D, 67.5D, -300.0D);
 
     @Test
+    void classifiesOcclusionWithoutExposingHitCoordinatesOrIdentity() {
+        HitResult entity = new HitResult(POINT) {
+            @Override public Type getType() { return Type.ENTITY; }
+        };
+        var block = new BlockHitResult(POINT, Direction.NORTH, TARGET.east(), false);
+        assertThat(ContainerAimGate.occlusionKind(entity)).isEqualTo("entity");
+        assertThat(ContainerAimGate.occlusionKind(block)).isEqualTo("block_other");
+        assertThat(ContainerAimGate.occlusionKind(BlockHitResult.miss(
+                POINT, Direction.NORTH, TARGET))).isEqualTo("miss");
+        assertThat(ContainerAimGate.occlusionKind(null)).isEqualTo("unavailable");
+        assertThat(ContainerAimGate.occlusionKind(block.hitBorder())).isEqualTo("world_border");
+    }
+
+    @Test
     void entityInFrontNeverAuthorizesUseAndStopsAfterOneBoundedWait() {
         var gate = new ContainerAimGate();
         HitResult entity = new HitResult(POINT) {

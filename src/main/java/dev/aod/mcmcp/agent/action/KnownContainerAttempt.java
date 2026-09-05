@@ -4,6 +4,7 @@ import dev.aod.mcmcp.routine.PhaseFiveAttempt;
 import dev.aod.mcmcp.routine.PhaseFiveEvidence;
 import dev.aod.mcmcp.routine.PhaseFivePort;
 import dev.aod.mcmcp.routine.PhaseFiveRequest;
+import dev.aod.mcmcp.routine.RoutineFailure;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -68,7 +69,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
         }
         lastObservationRevision = frame.observationRevision();
         if (frame.failure() != null) {
-            return fail(frame.failure().code().toLowerCase(Locale.ROOT),
+            return fail(frame.failure(),
                     captureInteractionDelta(clientTick));
         }
 
@@ -139,7 +140,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
                     fail("container_" + inconclusive.certainty().name()
                             .toLowerCase(Locale.ROOT), delta);
             case PhaseFiveEvidence.Failed failed ->
-                    fail(failed.failure().code().toLowerCase(Locale.ROOT), delta);
+                    fail(failed.failure(), delta);
         };
     }
 
@@ -164,6 +165,23 @@ public final class KnownContainerAttempt implements AutoCloseable {
     private TickResult fail(String evidence, int interactionDelta) {
         // The runtime retains this terminal intent until its shared release fence confirms cleanup.
         return failed(evidence, interactionDelta);
+    }
+
+    private TickResult fail(RoutineFailure failure, int interactionDelta) {
+        List<String> diagnostics = List.of();
+        if ("CONTAINER_AIM_OCCLUDED".equals(failure.code())
+                && failure.observed().get("crosshair") instanceof String kind) {
+            diagnostics = switch (kind) {
+                case "entity" -> List.of("container_crosshair=entity");
+                case "block_other" -> List.of("container_crosshair=block_other");
+                case "miss" -> List.of("container_crosshair=miss");
+                case "unavailable" -> List.of("container_crosshair=unavailable");
+                case "world_border" -> List.of("container_crosshair=world_border");
+                default -> List.of();
+            };
+        }
+        return new TickResult(Status.FAILED, failure.code().toLowerCase(Locale.ROOT),
+                interactionDelta, List.of(), drainEffectDeltas(), diagnostics);
     }
 
     private int recordInteractions(Map<String, Object> basis) {
@@ -408,7 +426,13 @@ public final class KnownContainerAttempt implements AutoCloseable {
             String evidence,
             int interactionDelta,
             List<ItemCount> items,
-            List<EffectDelta> effects) {
+            List<EffectDelta> effects,
+            List<String> diagnostics) {
+        public TickResult(Status status, String evidence, int interactionDelta,
+                List<ItemCount> items, List<EffectDelta> effects) {
+            this(status, evidence, interactionDelta, items, effects, List.of());
+        }
+
         public TickResult {
             Objects.requireNonNull(status, "status");
             if (interactionDelta < 0 || interactionDelta > 8) {
@@ -416,6 +440,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
             }
             items = List.copyOf(Objects.requireNonNull(items, "items"));
             effects = List.copyOf(Objects.requireNonNull(effects, "effects"));
+            diagnostics = List.copyOf(Objects.requireNonNull(diagnostics, "diagnostics"));
             if (effects.size() > 1) {
                 throw new IllegalArgumentException("too many container effect deltas");
             }

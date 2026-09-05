@@ -636,13 +636,14 @@ public final class AgentPrimitivePlanner {
                 .toList();
         return requireMutationSurface(
                 map, latestFrame, poses, position, surfaceBarrierWorldRevision, block,
-                surface -> surface.rayHit() != null && poses.stream().allMatch(pose -> {
+                surface -> ContainerAimOcclusion.hasSurfaceClearance(surface)
+                        && poses.stream().allMatch(pose -> {
                     Vec3 eye = new Vec3(pose.x(), pose.y() + pose.eyeHeight(), pose.z());
                     Vec3 point = rayHit(surface);
                     return entityBounds.stream().noneMatch(bounds ->
                             ContainerAimOcclusion.intersects(eye, point, bounds));
                 }),
-                failure + "; no delivered aim witness clear of observed entity bounds");
+                failure + "; no delivered aim witness clear of observed entity bounds and outline edges");
     }
 
     /**

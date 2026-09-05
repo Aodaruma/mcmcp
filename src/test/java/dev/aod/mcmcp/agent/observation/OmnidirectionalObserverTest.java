@@ -23,6 +23,7 @@ import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.level.block.state.properties.StairsShape;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
@@ -37,6 +38,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OmnidirectionalObserverTest {
+    @Test
+    void entityCrossingTheFogBoundaryCannotUseItsHiddenSamplePointsForLineOfSight() {
+        var fog = new OmnidirectionalObserver.TickSample(DIMENSION,
+                new WorldPosition(DIMENSION, 0, 64, 0), 20, 100, 100,
+                1, UnknownBoundaryReason.FOG_LIMIT);
+        // The bounding box is in range, but all nine sampled points lie beyond the fog.
+        assertThat(OmnidirectionalObserver.hasLineOfSight(
+                new AABB(0.9, 64, -0.1, 3, 64.1, 0.1), fog, point -> {
+                    throw new AssertionError("must not raycast beyond the fog");
+                })).isFalse();
+        var rays = new AtomicInteger();
+        assertThat(OmnidirectionalObserver.hasLineOfSight(
+                new AABB(0.8, 64, -0.1, 2, 64.1, 0.1), fog, point -> {
+                    rays.incrementAndGet();
+                    assertThat(point.distanceToSqr(new Vec3(0, 64, 0))).isLessThanOrEqualTo(1);
+                    return false; // The only in-range part is blocked; hidden points cannot rescue it.
+                })).isFalse();
+        assertThat(rays.get()).isPositive();
+        assertThat(OmnidirectionalObserver.hasLineOfSight(
+                new AABB(0.8, 64, -0.1, 2, 64.1, 0.1), fog, point -> true)).isTrue();
+    }
+
     @Test
     void refreshRequiresANewMatchingVisibleRayAndRespectsFogBeforeTracing() {
         var oldSample = sample(10, 3, UnknownBoundaryReason.RADIUS_LIMIT);

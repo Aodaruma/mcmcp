@@ -2345,6 +2345,34 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void containerPlannerRejectsAnUnstableOutlineWitnessWithoutChangingItsCameraPlan() {
+        var map = map(UUID.randomUUID()).snapshot().orElseThrow();
+        var chest = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var program = new ActionDsl.Program(1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.INVENTORY_TRANSFER),
+                List.of(new ActionDsl.InspectKnownContainer("inspect", chest, "minecraft:chest")));
+        var pose = new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0);
+        var dimension = new ObservationValues.ResourceId(DIMENSION);
+        var unsafeEdge = new ObservationRecord.VisibleSurface(
+                new ObservationValues.BlockPosition(dimension, 3, 64, 0),
+                ObservationRecord.Face.UP, new ObservationValues.ResourceId("minecraft:chest"),
+                ObservationRecord.ShapeClass.PARTIAL, null,
+                new ObservationValues.WorldPosition(dimension, 3.06255D, 64.875D, 0.5D),
+                new ObservationValues.WorldPosition(dimension, 0.5D, 65.62D, 0.5D), 1L, 0L);
+
+        assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(program, map,
+                new DeterministicAStar(), pose, Optional.of(frame(List.of(unsafeEdge))), 4.5F))
+                .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+        var usableWest = surface(chest, ObservationRecord.Face.WEST, "minecraft:chest", null, 0);
+        var alternatives = AgentPrimitivePlanner.analyze(program, map, new DeterministicAStar(),
+                pose, Optional.of(frame(List.of(unsafeEdge, usableWest))), 4.5F);
+        var justWest = AgentPrimitivePlanner.analyze(program, map, new DeterministicAStar(),
+                pose, Optional.of(frame(List.of(usableWest))), 4.5F);
+        assertThat(alternatives.mutationAims()).isEqualTo(justWest.mutationAims());
+        assertThat(alternatives.primitiveCosts()).isEqualTo(justWest.primitiveCosts());
+    }
+
+    @Test
     void staleEntityBoundsDoNotOverrideAReobservedContainerWitness() {
         var map = map(UUID.randomUUID());
         map.advanceWorldRevision(10L, List.of(), List.of());

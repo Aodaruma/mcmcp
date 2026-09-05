@@ -438,6 +438,10 @@ rendererのfog値はlevel・camera entity・entity tickの完全一致を要求�
 
 chest/barrelの同じ可視面では、最初のrayと各隅方向に最も近い実rayを内部で最大5件保持し、frame完成時の可視entity boundsを避ける実rayを優先して1件だけ配送する。候補の位置・eye・tick・revisionは元の観測値のままとし、幾何学的な新しい点を観測として生成しない。全候補がinteractionに遮られていてもblockの実visual情報は残す。container/craftingのplannerは配送済みray候補の中から可視entity boundsに遮られない一点を選び、その一点で既存camera上限と後続姿勢を計算する。候補がなければTARGET_UNKNOWNとして新しい観測や再配置を要求し、liveの通常crosshairと全安全gateの検証を省略しない。照準到達後40 client ticksでexact target hitを確認できなければCONTAINER_AIM_OCCLUDEDで有限終了する。
 
+entity候補は、現在の通常block interaction range内を先に、残りの枠でその外側を収集する。両方のqueryで現在のfog/radiusを上限にし、合計129候補（公開128件＋打切り検出1件）を追加前にも検証する。NeoForgeのentity part追加経路も同じ上限へ含める。公開前の不可視除外と通常LOSを維持し、AABBの一部だけが範囲内でもfog外の確認点へrayを飛ばさない。
+
+角度のfloat化とVanillaの三角関数による照準の微小なずれを避けるため、entity AABBを選択判定時だけ0.01 block広げ、照準面の縁から0.001 block以内の候補を使わない。chestの公開stateがnullでも、通常形状で外縁になり得る座標の細い帯だけを保守的に避ける。4隅方向のランキングは外縁から0.02 block内側を基準にするが、その位置に新しいrayを生成せず、観測した実rayだけを保持する。失敗時の公開evidenceは従来の`container_aim_occluded`を保持し、通常crosshairの固定分類`container_crosshair=entity / block_other / miss / unavailable / world_border`を1件だけ追加する。座標・entity ID・未知のadapter文字列は診断へ追加しない。
+
 観測原点はthird-person cameraではなくplayer eye positionとし、水平360度・上下180度をworld軸固定のdeterministic equal-area ray集合で観測する。方向集合は2,048方向へ固定し、既定は1 ClientTickあたり256方向、8 active tickで1 frameを更新する。ray/tickは64〜512のlocal performance設定内で調整でき、frame所要tickは`ceil(2048 / rays_per_tick)`となる。半径は`min(configured radius, 32 block, current fog distance, loaded boundary)`で、`sampling_coverage=1.0`は予定した全方向を更新済みという意味であり、連続球面の完全走査を意味しない。
 
 visual revision変更では部分rayを破棄するが、再開始を含む未完成tick数は保持する。通常scan周期の2倍（既定16 active tick）に達した場合、そのtickのcurrent player eye・fog・world revisionで2,048方向を一括再観測して完成させる。失効rayを再利用せず、通常の遮蔽・半径・record上限を維持する。catch-upの上限は1 tickにつき2,048 rayで、完了・world reset・dimension変更・tick巻き戻りでは未完成counterをリセットする。局所経路、hazard、entity、音もこの完成frameへ新しい値を合成する。通常ray/tick設定は平常時の分割量であり、catch-upの単一tick負荷は別途実環境で確認する。

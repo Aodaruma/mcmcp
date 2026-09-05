@@ -30,5 +30,17 @@ final class ContainerAimGate {
                 && hit.getBlockPos().equals(target);
     }
 
+    /** Fixed classification only: never expose the hit position or entity identity. */
+    static String occlusionKind(HitResult crosshair) {
+        if (crosshair == null) return "unavailable";
+        return switch (crosshair.getType()) {
+            case ENTITY -> "entity";
+            case MISS -> "miss";
+            case BLOCK -> crosshair instanceof BlockHitResult hit
+                    ? hit.isWorldBorderHit() ? "world_border" : "block_other"
+                    : "unavailable";
+        };
+    }
+
     enum Decision { WAIT, OPEN, OCCLUDED }
 }
