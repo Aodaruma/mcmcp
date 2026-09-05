@@ -49,3 +49,19 @@
 - control queueのmapped completionにも取消・受付中断時のrollbackを引き継ぎ、途中放棄した予約が必ず破棄される回帰テストを追加した。
 - test 1070件、harnessTest 13件、adminBridgeTest 21件、verifyHarnessIsolationとbuild成功。追加修正JAR SHA-256: 3D64F7BD22DB1D1432264D04E9D6E895C614D1E64B2EE8E5D24F5ED473B14653 。実ゲームでの反映・追試は次の再起動待ち。
 - OFF/ONのメニューは実画面で隙間なく右揃えになることを確認して撮影済み。ボタン枠・番号だけの画像を更新した。
+
+## 音を含む内部frameの整合性
+
+- 3D64F7版では再観測が進み、公開MCPが INVALID_ARGUMENT / Sound age must be fixed at frame completion を返した。現在tick1428に対する配送面tick1426から内部frameの完了tickを進めた際、元のSoundClueのageを保持したことが原因だった。受付前に拒否され、Actionは生成されていない。
+- 内部frameのみ、元のlastObservedTickを保持して音の経過時間を再計算し、600 ticksを超えた音は除去する。新しい音を追加せず、既存の音の観測時刻・revision・配送frameを書き換えない。
+- 音が残る場合と期限切れの場合、公開frameが不変であることを回帰テストに追加。test1071件、harnessTest13件、adminBridgeTest21件、build/isolation成功。
+- 最終JAR SHA-256: FEBE730A4436C58F558080DBDA763F213D61EC470A46C967D22BE967C9732F58 。通常終了を確認してPrismの通常・検証profileへ反映した。
+
+## 最終版の実ゲーム追試結果
+
+- FEBE730A版で公開MCPのみを使い、左手前の同じチェストを2回連続inspectした。再arm・転送・移動・破壊・設置は行っていない。
+- 1回目 82bc705f-0b7e-4fc8-a3dd-484f95819931: succeeded、15 ticks、camera 51.5304度、interaction1。
+- 2回目 3e7f04f5-0eee-4c5b-ae27-15f2ef826065: succeeded、7 ticks、camera0度、interaction1。
+- 両方ともdistance0、blocks_broken0、blocks_placed0、effects0。読み取った内容はbirch_log17、dark_oak_log38、oak_log267、oak_sapling3で一致した。
+- 各Action後にcontrol.mode=ready、ready_expires_at=null、全8 capabilitiesを確認。最終state tick1866/rev18842、位置(161.06573533742582,64,-298.7557547080176)、health20で、ゲームは接続したままON待機に戻した。
+- approachの移動自体は利用者の検証範囲外のため実行せず、同じ表面認可の回帰テストで確認している。

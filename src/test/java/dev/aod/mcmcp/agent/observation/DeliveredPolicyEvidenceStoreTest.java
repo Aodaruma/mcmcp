@@ -40,6 +40,28 @@ class DeliveredPolicyEvidenceStoreTest {
         }).orElseThrow().records()).containsExactly(dynamic);
     }
 
+    @Test
+    void refreshedCompositeAgesExistingSoundsAndExpiresOldOnesWithoutRenewingPlayback() {
+        var store = new DeliveredPolicyEvidenceStore();
+        var chest = surface(1, 64, 1, "minecraft:chest", 601, 3);
+        var sound = new ObservationRecord.SoundClue(
+                new ObservationValues.ResourceId("minecraft:entity.zombie.ambient"),
+                ObservationRecord.SoundCategory.HOSTILE, chest.eyeOrigin(),
+                600, 600, 1, 1, null, 3);
+        var expired = new ObservationRecord.SoundClue(sound.soundEvent(), sound.category(),
+                sound.position(), 1, 1, 600, 1, null, 3);
+        store.recordDelivered(new ObservationPage("obs-0000000000000001", 601, List.of(chest), null));
+        var latest = frame("obs-0000000000000002", 601, List.of(chest, sound, expired));
+        var result = store.reobserveForPlanning(Optional.of(latest), known ->
+                Optional.of(surface(1, 64, 1, "minecraft:chest", 621, 100))).orElseThrow();
+        assertThat(result.records()).hasSize(2);
+        var aged = (ObservationRecord.SoundClue) result.records().get(1);
+        assertThat(aged.ageTicks()).isEqualTo(21);
+        assertThat(aged.lastObservedTick()).isEqualTo(600);
+        assertThat(aged.worldRevision()).isEqualTo(3);
+        assertThat(latest.records()).containsExactly(chest, sound, expired);
+    }
+
     private static final ObservationValues.ResourceId DIMENSION =
             new ObservationValues.ResourceId("minecraft:overworld");
 

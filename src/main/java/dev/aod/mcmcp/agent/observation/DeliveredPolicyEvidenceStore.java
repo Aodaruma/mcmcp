@@ -232,6 +232,22 @@ public final class DeliveredPolicyEvidenceStore {
                     records.add(record);
                 }
             }
+            // Composite completion advanced; age existing sounds without pretending they
+            // were heard again, and discard those now outside the ordinary 600-tick TTL.
+            var iterator = records.listIterator();
+            while (iterator.hasNext()) {
+                if (iterator.next() instanceof ObservationRecord.SoundClue sound) {
+                    long age = completedTick - sound.lastObservedTick();
+                    if (age > 600) {
+                        iterator.remove();
+                    } else {
+                        iterator.set(new ObservationRecord.SoundClue(sound.soundEvent(),
+                                sound.category(), sound.position(), sound.firstObservedTick(),
+                                sound.lastObservedTick(), (int) age, sound.occurrences(),
+                                sound.entityHint(), sound.worldRevision()));
+                    }
+                }
+            }
             return new ObservationFrame(frame.frameId(), frame.dimension(), completedTick,
                     frame.configuredVisualRadiusBlocks(), frame.visibleEntitiesTruncated(),
                     frame.recentSoundCluesTruncated(), records);

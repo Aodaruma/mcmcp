@@ -31,6 +31,8 @@ Phase 1のControl / Navigation MVPを終え、Phase 2の最初のsliceである�
 
 ## MCP利用の要点
 
+- ゲーム内でMCP操作をONにすると、Action終了後もONを維持します。自動操作を無効にするときはOFFへ切り替えてください。
+
 - `agent_get_state`の`observation.latest_frame_id`を`agent_get_observation`へ渡します。告知済みframe IDはidle 60秒、最大16件まで保持されます。
 - `visible_surface`はblockごとの代表面に圧縮されます。`filter`で小麦、成熟作物、落下item、単一の整数座標範囲など必要なrecordだけへ絞れます。
 - `navigate_to_known.target`には、連続値`from / to`を丸めず`traversability.navigation_target`をそのまま使います。
