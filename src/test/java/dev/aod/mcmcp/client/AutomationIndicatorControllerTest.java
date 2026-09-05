@@ -7,6 +7,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AutomationIndicatorControllerTest {
     @Test
+    void statusButtonIsVisibleOnlyWhileAPlayerWorldIsActive() {
+        assertThat(AutomationIndicatorController.statusButtonVisible(true, true)).isTrue();
+        assertThat(AutomationIndicatorController.statusButtonVisible(false, true)).isFalse();
+        assertThat(AutomationIndicatorController.statusButtonVisible(true, false)).isFalse();
+        assertThat(AutomationIndicatorController.statusButtonVisible(false, false)).isFalse();
+    }
+
+    @Test
     void menuButtonUsesTheCurrentLabelAndClampsToTheScreen() {
         assertThat(AutomationIndicatorController.menuButtonWidth(320, 8, 60))
                 .isEqualTo(96);

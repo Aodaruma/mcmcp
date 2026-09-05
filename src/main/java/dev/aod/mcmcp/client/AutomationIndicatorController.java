@@ -65,12 +65,22 @@ public final class AutomationIndicatorController {
 
     public void onScreenInit(ScreenEvent.Init.Post event) {
         var screen = event.getScreen();
+        var minecraft = Minecraft.getInstance();
+        if (!statusButtonVisible(minecraft.level != null, minecraft.player != null)) {
+            indicatorScreen = null;
+            indicatorButton = null;
+            return;
+        }
         int width = menuButtonWidth(screen.width);
         var button = new IndicatorButton(
                 this, screen.width, screen.height, width, screen instanceof ChatScreen);
         indicatorScreen = screen;
         indicatorButton = button;
         event.addListener(button);
+    }
+
+    static boolean statusButtonVisible(boolean worldLoaded, boolean playerPresent) {
+        return worldLoaded && playerPresent;
     }
 
     /**

@@ -169,16 +169,18 @@ class AutomationUiContractTest {
     }
 
     @Test
-    void everyScreenGetsTheStatusButtonWithoutAWorldGuard() throws Exception {
+    void statusButtonRequiresAnActiveGameWorld() throws Exception {
         var controller = classNode(
                 "/dev/aod/mcmcp/client/AutomationIndicatorController.class");
         var init = method(controller, "onScreenInit");
         assertThat(invocations(init))
                 .contains(
                         "net/neoforged/neoforge/client/event/ScreenEvent$Init$Post#getScreen",
+                        "net/minecraft/client/Minecraft#getInstance",
+                        "dev/aod/mcmcp/client/AutomationIndicatorController#statusButtonVisible",
                         "net/neoforged/neoforge/client/event/ScreenEvent$Init$Post#addListener");
         assertThat(init.instructions)
-                .noneMatch(instruction -> instruction instanceof JumpInsnNode);
+                .anyMatch(instruction -> instruction instanceof JumpInsnNode);
         assertThat(init.instructions)
                 .anyMatch(instruction -> instruction instanceof TypeInsnNode type
                         && type.desc.equals("net/minecraft/client/gui/screens/ChatScreen"));

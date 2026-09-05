@@ -36,6 +36,7 @@ Phase 1のControl / Navigation MVPを終え、Phase 2の最初のsliceである�
 
 ## Documents
 
+- [導入・Codex / Claude接続ガイド](docs/MCMCP_導入と接続ガイド.md)
 - [設計・仕様書](docs/Minecraft_MCP_NeoForge_設計仕様書.md)
 - [Action DSLクイックガイド](docs/MCMCP_Action_DSL_クイックガイド.md)
 - [MCP Tool Catalog](docs/MCMCP_MCP_Tool_Catalog.json)
