@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.routine;
 
 import dev.aod.mcmcp.agent.observation.OmnidirectionalObserver;
+import dev.aod.mcmcp.agent.observation.ClientFogDistanceSignals;
 import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.client.McmcpClientConfig;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
@@ -78,13 +79,17 @@ public final class MinecraftFrameItemPort implements FrameItemPort {
         if (activeRequest != request) return failed(clientTick, "frame_request_authority_changed");
         String failure = safetyFailure(minecraft, session, request, clientTick);
         if (failure != null) return failed(clientTick, failure);
+        return withCurrentFog(clientTick, () -> prepareVisible(request, clientTick, minecraft));
+    }
+
+    private Frame prepareVisible(Request request, long clientTick, Minecraft minecraft) {
         var resolved = observations.resolveLoadedEntityRefIdentity(minecraft, clientTick,
                 request.worldSessionId(), request.dimension(), request.entityRef(), MAX_VISIBLE_DISTANCE);
         if (resolved.isEmpty() || !(resolved.orElseThrow() instanceof ItemFrame frame)
                 || !supportedFrame(frame)) return failed(clientTick, "frame_reference_unavailable");
         if (target != null && target != frame) return failed(clientTick, "frame_identity_changed");
         target = frame;
-        failure = displayFailure(request, clientTick, true);
+        String failure = displayFailure(request, clientTick, true);
         if (failure != null) return failed(clientTick, failure);
         if (selectedSlot < 0) {
             selectedSlot = chooseHotbar(playerIdentity, request);
@@ -112,8 +117,8 @@ public final class MinecraftFrameItemPort implements FrameItemPort {
         }
         String failure = safetyFailure(minecraft, sessionSupplier.get(), request, clientTick);
         if (failure != null) return failed(clientTick, failure);
-        failure = displayFailure(request, clientTick, false);
-        return sample(clientTick, false, failure);
+        return withCurrentFog(clientTick, () ->
+                sample(clientTick, false, displayFailure(request, clientTick, false)));
     }
 
     @Override
@@ -121,6 +126,7 @@ public final class MinecraftFrameItemPort implements FrameItemPort {
         Minecraft minecraft = requireMinecraft();
         if (released || activeRequest != request || dispatched || readyTick != clientTick
                 || safetyFailure(minecraft, sessionSupplier.get(), request, clientTick) != null
+                || ClientFogDistanceSignals.current(levelIdentity, playerIdentity, playerIdentity.tickCount).isEmpty()
                 || displayFailure(request, clientTick, true) != null
                 || !handReady(request) || !exactCrosshair(minecraft, target)) {
             throw new IllegalStateException("frame dispatch authority changed");
@@ -316,6 +322,19 @@ public final class MinecraftFrameItemPort implements FrameItemPort {
                         && exactConsumedStack(inventoryBefore.get(selectedSlot), selectedPayload.stack())
                         && exactInventoryConsumption(
                         inventoryBefore, inventory(playerIdentity), selectedSlot));
+    }
+
+    private Frame withCurrentFog(long tick, Supplier<Frame> visibleRead) {
+        boolean available = ClientFogDistanceSignals.current(
+                levelIdentity, playerIdentity, playerIdentity.tickCount).isPresent();
+        long worldRevision = reconciliations.bindAndSnapshot(
+                levelIdentity, activeRequest.worldSessionId()).worldRevision();
+        return observeWithCurrentFog(available, tick, worldRevision, visibleRead);
+    }
+
+    static Frame observeWithCurrentFog(boolean available, long tick, long worldRevision,
+                                      Supplier<Frame> visibleRead) {
+        return available ? visibleRead.get() : Frame.pendingObservation(tick, worldRevision);
     }
 
     private Frame failed(long tick, String failure) {

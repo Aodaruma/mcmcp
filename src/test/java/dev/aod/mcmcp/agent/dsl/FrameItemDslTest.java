@@ -25,6 +25,13 @@ class FrameItemDslTest {
                     .isEqualTo(parsed);
             // Opaque refs must be stripped from a replay template, as for existing opaque operations.
             assertThat(canonical.templateJson()).doesNotContain("abcdefghijklmnopqrstuvwx");
+            assertThat(canonical.templateJson()).contains("minecraft:stone");
+            assertThat(canonical.referenceRequirements()).singleElement().satisfies(reference -> {
+                assertThat(reference.kind()).isEqualTo("frame_display_entity_ref");
+                assertThat(reference.path()).isEqualTo("/program/body/0/entity_ref");
+                assertThat(reference.sourcePath()).isEqualTo("/records/*/{entity_ref,frame_display}");
+                assertThat(reference.coupledPaths()).isEmpty();
+            });
             source.getAsJsonObject("budget").addProperty("max_interactions", 0);
             var underfunded = ActionDslParser.parse(source);
             assertThatThrownBy(() -> ActionDslCompiler.compile(underfunded,

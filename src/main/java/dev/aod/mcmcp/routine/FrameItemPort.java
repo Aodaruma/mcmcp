@@ -43,5 +43,21 @@ public interface FrameItemPort {
                  boolean bodyAlive, int rotation, String displayedItem,
                  long packetRevision, boolean serverItemObserved, long itemRevision,
                  String serverItem, long inventoryRevision, int inventoryCount,
-                 boolean inventoryExactChange) { }
+                 boolean inventoryExactChange, boolean observationPending) {
+        public Frame(long clientTick, long worldRevision, boolean ready, String failure,
+                     boolean bodyAlive, int rotation, String displayedItem,
+                     long packetRevision, boolean serverItemObserved, long itemRevision,
+                     String serverItem, long inventoryRevision, int inventoryCount,
+                     boolean inventoryExactChange) {
+            this(clientTick, worldRevision, ready, failure, bodyAlive, rotation, displayedItem,
+                    packetRevision, serverItemObserved, itemRevision, serverItem,
+                    inventoryRevision, inventoryCount, inventoryExactChange, false);
+        }
+
+        /** Missing renderer evidence is neither an empty frame nor an observation of its contents. */
+        public static Frame pendingObservation(long clientTick, long worldRevision) {
+            return new Frame(clientTick, worldRevision, false, null, false, 0, null,
+                    0, false, 0, null, 0, 0, false, true);
+        }
+    }
 }

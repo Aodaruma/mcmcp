@@ -18,6 +18,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class MinecraftFrameItemPortTest {
     @Test
+    void missingFogDoesNotReadDisplayOrInventoryAndFreshFogDoesNotHideARealLosFailure() {
+        var pending = MinecraftFrameItemPort.observeWithCurrentFog(false, 14, 80, () -> {
+            throw new AssertionError("missing fog must not read frame contents, rotation, or inventory");
+        });
+        assertThat(pending.observationPending()).isTrue();
+        assertThat(pending.ready()).isFalse();
+        assertThat(pending.serverItemObserved()).isFalse();
+        assertThat(pending.displayedItem()).isNull();
+        assertThat(pending.failure()).isNull();
+        assertThat(pending.clientTick()).isEqualTo(14);
+        assertThat(pending.worldRevision()).isEqualTo(80);
+        var blocked = new FrameItemPort.Frame(15, 80, false, "frame_front_not_visible", false,
+                0, null, 0, false, 0, null, 0, 0, false);
+        assertThat(MinecraftFrameItemPort.observeWithCurrentFog(true, 15, 80, () -> blocked))
+                .isSameAs(blocked);
+        assertThat(blocked.observationPending()).isFalse();
+    }
+
+    @Test
     void insertRequiresTheSelectedPayloadToLoseExactlyOneWithComponentsPreserved() {
         var before = List.of(stack(64, 7), stack(20, 7), new StackFingerprint("minecraft:apple", 2, 8));
         assertThat(MinecraftFrameItemPort.exactInventoryConsumption(
@@ -79,6 +98,14 @@ class MinecraftFrameItemPortTest {
                 "dev/aod/mcmcp/runtime/HotbarPayloadSyncSignals#bindAndSnapshot",
                 "dev/aod/mcmcp/routine/MinecraftFrameItemPort#exactConsumedStack",
                 "dev/aod/mcmcp/routine/MinecraftFrameItemPort#exactInventoryConsumption");
+        assertThat(calls(node, "prepare")).containsSubsequence(
+                "dev/aod/mcmcp/routine/MinecraftFrameItemPort#safetyFailure",
+                "dev/aod/mcmcp/routine/MinecraftFrameItemPort#withCurrentFog")
+                .noneMatch(call -> call.endsWith("#displayFailure") || call.endsWith("#sample"));
+        assertThat(calls(node, "observe")).containsSubsequence(
+                "dev/aod/mcmcp/routine/MinecraftFrameItemPort#safetyFailure",
+                "dev/aod/mcmcp/routine/MinecraftFrameItemPort#withCurrentFog")
+                .noneMatch(call -> call.endsWith("#displayFailure") || call.endsWith("#sample"));
     }
 
     private static StackFingerprint stack(int count, int hash) {

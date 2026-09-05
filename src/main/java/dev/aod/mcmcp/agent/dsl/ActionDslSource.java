@@ -220,12 +220,18 @@ public final class ActionDslSource {
                     List.of(),
                     "agent_get_state",
                     "/entity_attack_consent/consent_ref");
-            case "entity_ref" -> new ReferenceRequirement(
-                    path,
-                    "container_label_entity_ref",
-                    object.has("item") ? List.of(objectPath + "/item") : List.of(),
-                    "agent_get_observation",
-                    "/records/*/{entity_ref,container_label}");
+            case "entity_ref" -> {
+                boolean frameItem = object.has("op") && Set.of(
+                        "remove_visible_frame_item", "insert_visible_frame_item")
+                        .contains(object.get("op").getAsString());
+                yield new ReferenceRequirement(
+                        path,
+                        frameItem ? "frame_display_entity_ref" : "container_label_entity_ref",
+                        !frameItem && object.has("item") ? List.of(objectPath + "/item") : List.of(),
+                        "agent_get_observation",
+                        frameItem ? "/records/*/{entity_ref,frame_display}"
+                                : "/records/*/{entity_ref,container_label}");
+            }
             default -> throw new IllegalArgumentException("Unknown opaque reference field");
         };
     }

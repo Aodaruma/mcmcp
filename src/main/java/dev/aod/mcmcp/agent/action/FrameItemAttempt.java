@@ -56,7 +56,7 @@ public final class FrameItemAttempt implements AutoCloseable {
                 latest = Objects.requireNonNull(port.prepare(request, clientTick), "frame preparation");
                 if (!validFrame(latest, clientTick)) finish(Status.FAILED, "frame_observation_contract");
                 else if (latest.failure() != null) finish(Status.FAILED, latest.failure());
-                else if (latest.ready()) {
+                else if (!latest.observationPending() && latest.ready()) {
                     if (deadlineTick - clientTick < ACK_TICKS) {
                         finish(Status.FAILED, "frame_ack_budget_unavailable");
                     } else if (!matchesBefore(request, latest)) {
@@ -74,7 +74,11 @@ public final class FrameItemAttempt implements AutoCloseable {
                 latest = Objects.requireNonNull(port.observe(request, clientTick), "frame observation");
                 if (!validFrame(latest, clientTick)) finish(Status.FAILED, "frame_observation_contract");
                 else if (latest.failure() != null) finish(Status.FAILED, latest.failure());
-                else if (!latest.bodyAlive() || latest.rotation() != request.expectedRotation()) {
+                else if (latest.observationPending()) {
+                    if (clientTick - dispatchTick >= ACK_TICKS) {
+                        finish(Status.FAILED, "frame_item_ack_timeout");
+                    }
+                } else if (!latest.bodyAlive() || latest.rotation() != request.expectedRotation()) {
                     finish(Status.FAILED, "frame_body_or_rotation_changed");
                 } else if (matchesAfter(request, before, latest)) {
                     recordEffect(AgentActionStore.Verification.CONFIRMED);
@@ -96,7 +100,7 @@ public final class FrameItemAttempt implements AutoCloseable {
     }
 
     static boolean matchesBefore(FrameItemPort.Request request, FrameItemPort.Frame frame) {
-        return frame.bodyAlive() && frame.rotation() == request.expectedRotation()
+        return !frame.observationPending() && frame.bodyAlive() && frame.rotation() == request.expectedRotation()
                 && (request.mode() == FrameItemPort.Mode.REMOVE
                     ? request.item().equals(frame.displayedItem())
                     : frame.displayedItem() == null && frame.inventoryCount() >= 1);
@@ -105,7 +109,7 @@ public final class FrameItemAttempt implements AutoCloseable {
     static boolean matchesAfter(FrameItemPort.Request request, FrameItemPort.Frame before,
                                 FrameItemPort.Frame after) {
         String expected = request.mode() == FrameItemPort.Mode.REMOVE ? null : request.item();
-        return after.bodyAlive() && after.rotation() == request.expectedRotation()
+        return !after.observationPending() && after.bodyAlive() && after.rotation() == request.expectedRotation()
                 && after.serverItemObserved() && after.itemRevision() > before.packetRevision()
                 && Objects.equals(expected, after.serverItem())
                 && Objects.equals(expected, after.displayedItem())
@@ -166,7 +170,7 @@ public final class FrameItemAttempt implements AutoCloseable {
         observedBefore.put("rotation", before.rotation());
         observedBefore.put("body_alive", before.bodyAlive());
         var observedAfter = new LinkedHashMap<String, Object>();
-        if (latest != null && latest != before && latest.failure() == null) {
+        if (latest != null && latest != before && !latest.observationPending() && latest.failure() == null) {
             observedAfter.put("body_alive", latest.bodyAlive());
             observedAfter.put("rotation", latest.rotation());
             if (latest.serverItemObserved() && latest.itemRevision() > before.packetRevision()) {
@@ -175,7 +179,7 @@ public final class FrameItemAttempt implements AutoCloseable {
         }
         if (request.mode() == FrameItemPort.Mode.INSERT) {
             observedBefore.put("inventory_count", before.inventoryCount());
-            if (latest != null && latest != before && latest.failure() == null
+            if (latest != null && latest != before && !latest.observationPending() && latest.failure() == null
                     && latest.inventoryRevision() > before.inventoryRevision()) {
                 observedAfter.put("inventory_count", latest.inventoryCount());
             }

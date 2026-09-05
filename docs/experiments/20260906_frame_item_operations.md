@@ -36,3 +36,24 @@ The first in-game attempts were rejected before dispatch despite being within th
 追加修正では、そのActionの対象refだけを現在のfog/LOSで再観測し、配送済みのtype/ref/位置/AABB/item/rotation/aim点が完全一致する場合だけ内部planningのrevisionを更新する。元の配送tick・60秒期限・公開frameは変更せず、container_labelも再認可しない。拒否時は未配送・期限・非可視・表示変更・revision等の固定理由を返す。
 
 同じtick/revisionの回帰、元tick+101での再拒否、欠測・表示変更・壁時計期限・未配送の拒否・対象primitive限定を追加した。追加cleanupと内部格納上限を含む統合検証でunit 1,189件・harness 13件・admin bridge 21件、計1,223件、build/isolationが成功した。
+
+### 実ゲームの1往復 / In-game round trip
+
+候補2（SHA-256 `58E561AFDB7883421D781D64C554512DB3FA2646BF6475FA1839610AD3A6441F`）ではpreflightを通過した。最初は2tick・camera4.5度・interaction0で`frame_front_not_visible`となったが、1ブロック横へ近づいてから次の一往復が成功した。最初の拒否がfog欠測か実LOSかは断定できない。
+
+- remove `61605de7-5a98-43fc-9d8d-978a3ceb22f8`：33ticks・1interaction、深層岩→空をCONFIRMED。
+- fresh観測で`frame_display.item:null`を確認。旧品は観測済み足場へのMCP navigation後、所持0→1で回収確認。
+- insert `a21afcc2-b0bc-494d-acd8-c1a35c8f9e49`：14ticks・1interaction、空→深層岩、所持1→0をCONFIRMED。
+- 額縁本体は残り、rotation 2を維持。MCPはREADYへ復帰した。
+
+旧品回収に使おうとした`collect_visible_item`は、fresh観測後も2回`TARGET_UNKNOWN`で拒否された。専用回収操作の成功とは扱わず、今回はnavigationによる通常pickupと所持品差で確認した。結果の`reference_requirements`がcontainer_labelを案内する誤りも見つかり、frame_displayを案内し、cloneで意味上のitem条件を保持するよう修正した。
+
+One remove/collect/insert round trip succeeded, preserving the frame body and rotation. Removal took 33 ticks and insertion 14 ticks, with one interaction each. Collection was verified through ordinary pickup after MCP navigation and an inventory increase; the dedicated collection action was rejected twice and is not counted as a successful collection test.
+
+### 描画fog欠測の待機 / Waiting for a current fog sample
+
+別の額縁でも照準中14tick・58.5度・interaction0で`frame_front_not_visible`を記録した（Action `4dc5b749-cf81-44ae-8347-138e7a79933b`）。既存adapterはfog欠測と本当の不可視を同じ失敗へ変換していたため、欠測だけを内部`observationPending`で区別する。
+
+欠測中は可視item/rotationの読み取りへ入らず、総400tick・dispatch後ACK60tickを延長せず待つ。サンプル復帰後は従来の正面・半径・LOS・表示一致を再検証する。キャンセルやtimeout時にpendingの既定値をUNKNOWN afterへ使わず、dispatch後の再送もしない。既存の実機拒否が欠測由来だったかは、最終JARでの照準継続を確認して判定する。
+
+準備/dispatch後の欠測からの復帰、元の400/60tick期限、remove/insertのキャンセル、UNKNOWN afterの省略、実LOS拒否、欠測中の可視read非実行を回帰検証した。参照説明の修正と合わせて、unit 1,194件・harness 13件・admin bridge 21件の計1,228件、build/isolationが成功した。

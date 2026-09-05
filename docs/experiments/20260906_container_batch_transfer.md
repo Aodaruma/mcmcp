@@ -39,6 +39,8 @@ The DSL accepted a destination goal of 2,466, but the internal request still rej
 
 修正後の統合検証はunit 1,189件・harness 13件・admin bridge 21件、計1,223件、build/isolationが成功した。実ゲームでの2,466目標の再確認は次JAR引き渡し後に行う。
 
+候補2の実ゲームで、独立inspectによる送り元2個・大チェスト2,464個の確認後、take2→store2→再inspectにより大チェスト2,466個・手持ち0個を確認した。store Actionは`b2c1f7ec-677e-41b2-9721-8f0bd5ee904c`でCONFIRMED、cleanupも正常にREADYへ戻った。
+
 ### 初回まとめ移送 / Initial batch verification
 
 境界値、旧入力互換、DSL往復変換、静的予算、複数stackと端数、成分混在、選択外変更、補充、fresh packet revision、部分確定とUNKNOWN、cleanup再試行の回帰テストを追加した。`test` 1,135件・`harnessTest` 13件・`adminBridgeTest` 21件、計1,169件が成功し、`verifyHarnessIsolation`と`build`も通過した。

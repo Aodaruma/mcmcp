@@ -10,6 +10,99 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FrameItemAttemptTest {
     @Test
+    void missingFogBeforeAndAfterDispatchWaitsForFreshVisibilityWithoutInventingContents() {
+        var port = new FakePort(FrameItemPort.Frame.pendingObservation(0, 5));
+        var attempt = attempt(port, FrameItemPort.Mode.INSERT);
+        assertThat(attempt.tick(0).status()).isEqualTo(FrameItemAttempt.Status.RUNNING);
+        assertThat(attempt.tick(1).status()).isEqualTo(FrameItemAttempt.Status.RUNNING);
+        assertThat(port.dispatches).isZero();
+        assertThat(attempt.drainEffectDeltas()).isEmpty();
+        port.next = frame(null, 2, 10, 8, 20, 64, false);
+        assertThat(attempt.tick(2).status()).isEqualTo(FrameItemAttempt.Status.RUNNING);
+        assertThat(attempt.drainInteractionDelta()).isEqualTo(1);
+        port.next = FrameItemPort.Frame.pendingObservation(0, 6);
+        assertThat(attempt.tick(3).status()).isEqualTo(FrameItemAttempt.Status.RUNNING);
+        assertThat(attempt.drainEffectDeltas()).isEmpty();
+        port.next = frame("minecraft:stone", 2, 11, 11, 21, 63, true);
+        assertThat(attempt.tick(4).status()).isEqualTo(FrameItemAttempt.Status.SUCCEEDED);
+        assertThat(port.dispatches).isEqualTo(1);
+        assertThat(attempt.drainInteractionDelta()).isZero();
+        assertThat(attempt.drainEffectDeltas()).singleElement()
+                .extracting(FrameItemAttempt.EffectDelta::verification)
+                .isEqualTo(AgentActionStore.Verification.CONFIRMED);
+    }
+
+    @Test
+    void missingFogDoesNotExtendPreparationDeadlineOrTheOriginalSixtyTickAckWindow() {
+        var preparing = new FakePort(FrameItemPort.Frame.pendingObservation(0, 5));
+        var preparation = attempt(preparing, FrameItemPort.Mode.REMOVE);
+        assertThat(preparation.tick(0).status()).isEqualTo(FrameItemAttempt.Status.RUNNING);
+        assertThat(preparation.tick(399).status()).isEqualTo(FrameItemAttempt.Status.RUNNING);
+        var deadline = preparation.tick(400);
+        assertThat(deadline.status()).isEqualTo(FrameItemAttempt.Status.FAILED);
+        assertThat(deadline.evidence()).isEqualTo("frame_deadline");
+        assertThat(preparing.dispatches).isZero();
+        assertThat(preparation.drainEffectDeltas()).isEmpty();
+
+        var waiting = new FakePort(frame(null, 2, 10, 8, 20, 64, false));
+        var dispatched = attempt(waiting, FrameItemPort.Mode.INSERT);
+        dispatched.tick(0);
+        waiting.next = FrameItemPort.Frame.pendingObservation(0, 6);
+        assertThat(dispatched.tick(1).status()).isEqualTo(FrameItemAttempt.Status.RUNNING);
+        assertThat(dispatched.tick(59).status()).isEqualTo(FrameItemAttempt.Status.RUNNING);
+        var timeout = dispatched.tick(60);
+        assertThat(timeout.status()).isEqualTo(FrameItemAttempt.Status.FAILED);
+        assertThat(timeout.evidence()).isEqualTo("frame_item_ack_timeout");
+        assertThat(waiting.dispatches).isEqualTo(1);
+        var effect = dispatched.drainEffectDeltas().getFirst();
+        assertThat(effect.verification()).isEqualTo(AgentActionStore.Verification.UNKNOWN);
+        assertThat(effect.observedBefore()).containsEntry("inventory_count", 64);
+        assertThat(effect.observedAfter()).isEmpty();
+        waiting.next = frame("minecraft:stone", 2, 11, 11, 21, 63, true);
+        assertThat(dispatched.tick(61).status()).isEqualTo(FrameItemAttempt.Status.FAILED);
+        assertThat(dispatched.drainEffectDeltas()).isEmpty();
+    }
+
+    @Test
+    void cancellationDuringMissingFogKeepsOnlyAnActuallyDispatchedUnknownEffect() {
+        for (var mode : FrameItemPort.Mode.values()) {
+            for (boolean dispatchFirst : new boolean[]{false, true}) {
+                String initialItem = mode == FrameItemPort.Mode.REMOVE ? "minecraft:stone" : null;
+                var port = new FakePort(dispatchFirst ? frame(initialItem, 2, 10, 8, 20, 64, false)
+                        : FrameItemPort.Frame.pendingObservation(0, 5));
+                var attempt = attempt(port, mode);
+                attempt.tick(0);
+                port.next = FrameItemPort.Frame.pendingObservation(0, 6);
+                attempt.tick(1);
+                attempt.close();
+                assertThat(attempt.releaseStatus()).isEqualTo(FrameItemAttempt.ReleaseStatus.CONFIRMED);
+                assertThat(port.dispatches).isEqualTo(dispatchFirst ? 1 : 0);
+                assertThat(attempt.drainInteractionDelta()).isEqualTo(dispatchFirst ? 1 : 0);
+                var effects = attempt.drainEffectDeltas();
+                if (dispatchFirst) {
+                    assertThat(effects).hasSize(1);
+                    assertThat(effects.getFirst().verification()).isEqualTo(AgentActionStore.Verification.UNKNOWN);
+                    assertThat(effects.getFirst().observedAfter()).isEmpty();
+                } else assertThat(effects).isEmpty();
+            }
+        }
+    }
+
+    @Test
+    void freshFogWithAnActualVisibilityFailureStillStopsBeforeDispatch() {
+        var port = new FakePort(FrameItemPort.Frame.pendingObservation(0, 5));
+        var attempt = attempt(port, FrameItemPort.Mode.REMOVE);
+        assertThat(attempt.tick(0).status()).isEqualTo(FrameItemAttempt.Status.RUNNING);
+        port.next = new FrameItemPort.Frame(0, 5, false, "frame_front_not_visible", true,
+                2, "minecraft:stone", 10, true, 8, "minecraft:stone", 20, 64, false);
+        var result = attempt.tick(1);
+        assertThat(result.status()).isEqualTo(FrameItemAttempt.Status.FAILED);
+        assertThat(result.evidence()).isEqualTo("frame_front_not_visible");
+        assertThat(port.dispatches).isZero();
+        assertThat(attempt.drainEffectDeltas()).isEmpty();
+    }
+
+    @Test
     void removeRequiresFreshItemFieldAckAndNeverClaimsDropCollection() {
         var port = new FakePort(frame("minecraft:stone", 2, 10, 8, 20, 64, false));
         var attempt = attempt(port, FrameItemPort.Mode.REMOVE);
@@ -181,7 +274,7 @@ class FrameItemAttemptTest {
             return new Frame(tick, next.worldRevision(), next.ready(), next.failure(), next.bodyAlive(),
                     next.rotation(), next.displayedItem(), next.packetRevision(), next.serverItemObserved(),
                     next.itemRevision(), next.serverItem(), next.inventoryRevision(), next.inventoryCount(),
-                    next.inventoryExactChange());
+                    next.inventoryExactChange(), next.observationPending());
         }
     }
 }
