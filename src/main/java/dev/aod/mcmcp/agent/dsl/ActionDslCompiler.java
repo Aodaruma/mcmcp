@@ -17,6 +17,8 @@ import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.PROGRAM_BUDGET_UNP
 
 /** Component-wise worst-case compiler for one already closed Action DSL v1 tree. */
 public final class ActionDslCompiler {
+    public static final long FRAME_ITEM_TICKS = 400L;
+    public static final long FRAME_ITEM_DURATION_MILLIS = 20_000L;
     public static final ActionDsl.Budget PHASE_ONE_HARD_LIMIT = new ActionDsl.Budget(
             ActionDslValidator.MAX_BOUNDED_INPUT_DURATION_MILLIS,
             ActionDslValidator.MAX_BOUNDED_INPUT_TICKS,
@@ -188,6 +190,8 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.InspectKnownContainer
                 || node instanceof ActionDsl.TakeKnownContainerStack
                 || node instanceof ActionDsl.StoreKnownContainerStack
+                || node instanceof ActionDsl.RemoveVisibleFrameItem
+                || node instanceof ActionDsl.InsertVisibleFrameItem
                 || node instanceof ActionDsl.CraftKnownRecipe
                 || node instanceof ActionDsl.SmeltKnownRecipe
                 || node instanceof ActionDsl.OperateKnownMenu
@@ -234,6 +238,13 @@ public final class ActionDslCompiler {
                 requireContainerTransferCost(cost, take.maxStacks(), "take_known_container_stack");
             } else if (node instanceof ActionDsl.StoreKnownContainerStack store) {
                 requireContainerTransferCost(cost, store.maxStacks(), "store_known_container_stack");
+            } else if (node instanceof ActionDsl.RemoveVisibleFrameItem
+                    || node instanceof ActionDsl.InsertVisibleFrameItem) {
+                requireMutationCost(cost, 1, 0, 0, "visible_frame_item");
+                if (cost.ticks() != FRAME_ITEM_TICKS || cost.durationMillis() != FRAME_ITEM_DURATION_MILLIS
+                        || cost.cameraDegrees() > 360) {
+                    throw unprovable("visible frame item has an invalid primitive bound");
+                }
             } else if (node instanceof ActionDsl.CraftKnownRecipe craft) {
                 requireMutationCost(
                         cost, knownCraftInteractions(craft.maxCrafts()), 0, 0,

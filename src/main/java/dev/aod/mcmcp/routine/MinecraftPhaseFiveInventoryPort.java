@@ -342,7 +342,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         if (!state.releaseConfirmed) {
             throw new IllegalStateException(state.releaseFault
                     ? "inventory release failed closed"
-                    : "inventory release remains unconfirmed");
+                    : "inventory release remains unconfirmed", state.releaseFaultCause);
         }
     }
 
@@ -1135,7 +1135,12 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         }
         if (tick > state.releaseDeadlineTick) {
             state.releaseFault = true;
-            return;
+            // A timeout is not proof that an owned menu/input was released. Keep the owner,
+            // but allow late server evidence or a manual/context close to make cleanup provable.
+            // An unchanged failed boundary cannot trigger an unbounded stream of close attempts.
+            var boundary = releaseBoundary(minecraft, screens.snapshot(), causalBarrierStatus(state));
+            if (!releaseBoundaryChanged(state.expiredReleaseBoundary, boundary)) return;
+            state.expiredReleaseBoundary = boundary;
         }
         try {
             ScreenOwnershipSignals.Snapshot screen = screens.snapshot();
@@ -1146,6 +1151,12 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     releaseOwnedMenu(attempt, state, minecraft);
                 }
                 case EXPECTING_OPEN_PACKET, EXPECTING_SCREEN, EXPECTING_FULL_CONTENT, FAILED -> {
+                    // cancelRoutine may retire an already-closed failed screen and clear its
+                    // ledger. Preserve its exact-owner empty-cursor proof before that transition.
+                    state.cursorReleaseConfirmed |= releaseCursorProofMatches(
+                            attempt.attemptId(),
+                            screen.expectedOpen() == null ? null : screen.expectedOpen().routineId(),
+                            screen.lastServerCursorProven(), screen.lastServerCursorEmpty());
                     var decision = cancelScreenAuthority(attempt, state);
                     if (!decision.authorityMatched()) {
                         state.releaseFault = true;
@@ -1168,7 +1179,32 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             }
         } catch (RuntimeException | LinkageError releaseFailure) {
             state.releaseFault = true;
+            if (state.releaseFaultCause == null) state.releaseFaultCause = releaseFailure;
         }
+    }
+
+    static boolean releaseBoundaryChanged(List<?> previous, List<?> current) {
+        return previous == null || !previous.equals(Objects.requireNonNull(current));
+    }
+
+    static boolean releaseCursorProofMatches(
+            UUID expectedOwner, UUID observedOwner, boolean serverProven, boolean serverEmpty) {
+        return expectedOwner != null && expectedOwner.equals(observedOwner)
+                && serverProven && serverEmpty;
+    }
+
+    private static List<Object> releaseBoundary(
+            Minecraft minecraft, ScreenOwnershipSignals.Snapshot screen,
+            ScreenOwnershipSignals.CausalBarrierStatus causalBarrier) {
+        var player = minecraft.player;
+        return java.util.Arrays.asList(
+                minecraft.level, player, minecraft.gui.screen(),
+                player == null ? null : player.containerMenu,
+                screen.phase(), screen.packetLedgerRevision(), causalBarrier,
+                player == null ? null : player.inventoryMenu.getCarried().isEmpty(),
+                player == null ? null : player.getInventory().getSelectedSlot(),
+                player == null ? null : player.getYRot(),
+                player == null ? null : player.getXRot());
     }
 
     private ScreenOwnershipSignals.CleanupDecision cancelScreenAuthority(
@@ -1239,6 +1275,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         }
         state.releaseConfirmed = true;
         state.releasePending = false;
+        state.releaseFault = false;
         state.stage = Stage.TERMINAL;
     }
 
@@ -2264,6 +2301,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private boolean releasePending;
         private boolean releaseConfirmed;
         private boolean releaseFault;
+        private Throwable releaseFaultCause;
+        private List<Object> expiredReleaseBoundary;
         private ClientPredictionSignals.PredictionAttempt openPrediction;
         private PlayerBaseline baseline;
         private OpenHandPlan openHand;

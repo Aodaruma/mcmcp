@@ -44,6 +44,8 @@ class ActionDslOperationManifestTest {
                         "smelt_known_recipe",
                         "operate_known_menu",
                         "brew_known_potion_batch",
+                        "remove_visible_frame_item",
+                        "insert_visible_frame_item",
                         "collect_visible_item",
                         "collect_visible_item_batch",
                         "cast_known_fishing_rod",
@@ -89,6 +91,7 @@ class ActionDslOperationManifestTest {
         assertThat(ActionDslOperationManifest.referenceDescriptorPayload())
                 .extracting(descriptor -> descriptor.get("kind"))
                 .containsExactly(
+                        "frame_display_entity_ref",
                         "container_label_entity_ref", "operation_ref", "placement_state_ref", "recipe_ref",
                         "fishing_session_ref", "kill_zone_consent_ref");
     }

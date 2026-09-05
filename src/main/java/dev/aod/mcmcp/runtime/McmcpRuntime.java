@@ -8,6 +8,7 @@ import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.action.ActionProgramCursor;
 import dev.aod.mcmcp.agent.action.CollectBatchEvidence;
+import dev.aod.mcmcp.agent.action.FrameItemAttempt;
 import dev.aod.mcmcp.agent.action.KnownBlockBreakAttempt;
 import dev.aod.mcmcp.agent.action.KnownBlockMutationAttempt;
 import dev.aod.mcmcp.agent.action.KnownBrewingAttempt;
@@ -69,6 +70,8 @@ import dev.aod.mcmcp.observation.BlockPosition;
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.observation.WorldMemory;
+import dev.aod.mcmcp.routine.FrameItemPort;
+import dev.aod.mcmcp.routine.MinecraftFrameItemPort;
 import dev.aod.mcmcp.safety.EvaluationTurnGuard;
 import dev.aod.mcmcp.safety.InputReleaseController;
 import dev.aod.mcmcp.safety.LocalArmingState;
@@ -253,6 +256,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final MinecraftStationaryBreakPort stationaryBreakPort;
     private final ClientReconciliationSignals reconciliationSignals;
     private final MinecraftSemanticActionPort semanticActionPort;
+    private final MinecraftFrameItemPort frameItemPort;
     private final MinecraftApplyBlockPlanPort applyBlockPlanPort;
     private final MinecraftPillarUpPort pillarUpPort;
     private final MinecraftKnownBrewingPort knownBrewingPort;
@@ -270,6 +274,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private RoutineWallClockDeadline activeRoutineDeadline;
     private AgentExecution agentExecution;
     private boolean pendingAgentInputRelease;
+    private boolean agentInputReleaseFaultLogged;
     private boolean pendingAgentReturnReady;
     private long agentControlOwnershipEpoch;
     private long lastStatefulAgentCleanupClientTick = Long.MIN_VALUE;
@@ -317,6 +322,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 observations,
                 ClientPredictionSignals.global(),
                 reconciliationSignals);
+        frameItemPort = new MinecraftFrameItemPort(
+                Minecraft::getInstance, sessions::snapshot, observations,
+                FrameDisplaySyncSignals.global());
         applyBlockPlanPort = new MinecraftApplyBlockPlanPort(
                 Minecraft::getInstance,
                 sessions::snapshot,
@@ -570,11 +578,19 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         // remains pending or fails closed. Drain it before any ordinary world/action work.
         inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
         if (!pendingReleaseCompleted || pendingAgentInputRelease) {
+            // Cancellation still needs a client-thread reply while the exact cleanup owner is
+            // retained. New actions remain denied by the active-action/admission fences.
+            inbox.drainControlsPreTick(sessions.snapshot());
             publishSession();
             return;
         }
         try {
             synchronizeWorld(minecraft);
+            var frameSession = sessions.snapshot();
+            if (frameSession.worldReady() && minecraft.level != null) {
+                FrameDisplaySyncSignals.global().bindAndSnapshot(
+                        minecraft.level, frameSession.worldSessionId());
+            }
             trackRecoveryDescent(minecraft);
             if (!pendingReleaseClockAdvanced) {
                 sessions.tick();
@@ -969,6 +985,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void clearPhaseFivePortSessions() {
+        clearAutomationPortSession("frame_item", frameItemPort::clearSession);
         clearAutomationPortSession("finite_plan", finitePlanPort::clearSession);
         clearAutomationPortSession("known_brewing", knownBrewingPort::clearSession);
         clearAutomationPortSession("known_furnace", knownFurnacePort::clearSession);
@@ -980,6 +997,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void clearAgentSessionState() {
+        FrameDisplaySyncSignals.global().clear();
         entityAttackConsent.clear();
         recoveryDescent.reset();
         agentObservationFrames.clear();
@@ -1956,7 +1974,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             boolean recipeReferenceRequired) {
         assertClientThread(minecraft);
         requireReady(session);
-        if (agentActions.active().isPresent() || routines.activeRoutineId().isPresent()) {
+        if (pendingAgentInputRelease || agentExecution != null
+                || agentActions.active().isPresent() || routines.activeRoutineId().isPresent()) {
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
         }
@@ -2071,6 +2090,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         Optional<ActionDsl.Node> initialPrimitive = firstPrimitive(
                 request.program(), snapshot.predicateSnapshot());
         final AgentPrimitivePlanner.Analysis analysis;
+        final Optional<AgentPrimitivePlanner.FrameItemAim> frameItemAim;
         try {
             analysis = initialPrimitive
                     .filter(McmcpRuntime::requiresWorldPlanning)
@@ -2090,10 +2110,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     .orElseGet(McmcpRuntime::emptyPrimitiveAnalysis);
             initialPrimitive.flatMap(analysis::worstCase).ifPresent(cost ->
                     ActionDslCompiler.requireWithinBudget(cost, program.effectiveBudget()));
+            frameItemAim = initialPrimitive.filter(McmcpRuntime::isFrameItemPrimitive)
+                    .map(primitive -> AgentPrimitivePlanner.requireFrameItemAim(
+                            snapshot.map(), snapshot.pose(), snapshot.frame(), primitive,
+                            snapshot.visualBarrierWorldRevision()));
+            if (frameItemAim.isPresent()
+                    && !frameItemEvidenceFresh(frameItemAim.orElseThrow(), snapshot.session().clientTick())) {
+                throw new RuntimeInvocationException("target_unknown",
+                        "Frame display evidence expired.", true, Map.of());
+            }
         } catch (AgentPrimitivePlanner.PlanningException failure) {
             throw planningFailure(failure);
         }
-        return new PreparedAgentAction(snapshot, program, source, analysis, initialPrimitive);
+        return new PreparedAgentAction(
+                snapshot, program, source, analysis, initialPrimitive, frameItemAim);
     }
 
     private AgentPrimitivePlanner.Analysis analyzePrimitive(
@@ -2207,6 +2237,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
+        if (isFrameItemPrimitive(node)) {
+            return Optional.of(new ActionDslCompiler.Cost(
+                    ActionDslCompiler.FRAME_ITEM_DURATION_MILLIS,
+                    ActionDslCompiler.FRAME_ITEM_TICKS, 0.0D, 360.0D, 1L, 0L, 0L));
+        }
         if (node instanceof ActionDsl.HoldBoundedInputs hold) {
             return Optional.of(ActionDslCompiler.intrinsicBoundedInputCost(hold));
         }
@@ -2329,7 +2364,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             RuntimeCallContext context) {
         assertClientThread(minecraft);
         var captured = prepared.snapshot();
-        if (agentActions.active().isPresent() || routines.activeRoutineId().isPresent()) {
+        if (pendingAgentInputRelease || agentExecution != null
+                || agentActions.active().isPresent() || routines.activeRoutineId().isPresent()) {
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
         }
@@ -2832,6 +2868,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         KNOWN_SURFACE_CHANGED,
         VISIBLE_ITEM_CHANGED,
         VISIBLE_BATCH_ITEM_CHANGED,
+        FRAME_ITEM_CHANGED,
         BREAK_PRECONDITION_CHANGED;
 
         String code() {
@@ -2926,6 +2963,19 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return Optional.of(AdmissionFenceFailure.POLICY_UNAVAILABLE);
         }
         Optional<ObservationFrame> currentPlanningFrame = agentPlanningFrame();
+        if (prepared.frameItemAim().isPresent()) {
+            try {
+                var currentAim = AgentPrimitivePlanner.requireFrameItemAim(
+                        currentMap, playerPose(player, session.dimension()), currentPlanningFrame,
+                        prepared.initialPrimitive().orElseThrow(), currentVisualBarrierWorldRevision);
+                if (!frameItemEvidenceFresh(currentAim, session.clientTick())
+                        || !sameFrameItemAuthorization(prepared.frameItemAim().orElseThrow(), currentAim)) {
+                    return Optional.of(AdmissionFenceFailure.FRAME_ITEM_CHANGED);
+                }
+            } catch (RuntimeException unavailable) {
+                return Optional.of(AdmissionFenceFailure.FRAME_ITEM_CHANGED);
+            }
+        }
         if (!firstPrimitive(prepared.program().request().program(), currentPredicates)
                 .equals(prepared.initialPrimitive())) {
             return Optional.of(AdmissionFenceFailure.POLICY_BRANCH_CHANGED);
@@ -4470,6 +4520,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 }
                 agentActions.markRunning(action.actionId());
                 agentExecution = nextExecution;
+                agentInputReleaseFaultLogged = false;
+                agentExecution.frameItemAim = pending.prepared().frameItemAim().orElse(null);
                 if (killAuthorization != null) {
                     boolean consumed = currentKillAuthorization.equals(killAuthorization)
                             && (transportApprovalConsumed
@@ -4515,11 +4567,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             if (paused) {
                 releaseAgentInputsForHold(minecraft, "pause_input_release_failed");
-                if (agentExecution.primitive instanceof ActionDsl.HoldBoundedInputs) {
+                if (agentExecution.primitive instanceof ActionDsl.HoldBoundedInputs
+                        || isFrameItemPrimitive(agentExecution.primitive)) {
                     failAgentAction(
                             AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
                             true,
-                            "bounded_input_screen_open");
+                            isFrameItemPrimitive(agentExecution.primitive)
+                                    ? "frame_item_screen_open" : "bounded_input_screen_open");
                 }
                 return;
             }
@@ -4896,6 +4950,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     || agentExecution.primitive instanceof ActionDsl.OpenKnownFenceGate
                     || agentExecution.primitive instanceof ActionDsl.OpenKnownPassage) {
                 tickAgentBlockMutation(minecraft, session, action, actionTick);
+                return;
+            }
+
+            if (isFrameItemPrimitive(agentExecution.primitive)) {
+                tickAgentFrameItem(minecraft, session, action);
                 return;
             }
 
@@ -5677,6 +5736,18 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 agentExecution.occurrenceLimit = cost;
             }
             agentExecution.mutationAims.putAll(analysis.mutationAims());
+            if (isFrameItemPrimitive(agentExecution.primitive)) {
+                var currentAim = AgentPrimitivePlanner.requireFrameItemAim(
+                        map, playerPose(player, session.dimension()), agentPlanningFrame(),
+                        agentExecution.primitive, visualBarrierWorldRevision);
+                if (!frameItemEvidenceFresh(currentAim, session.clientTick())
+                        || !sameFrameItemAuthorization(agentExecution.frameItemAim, currentAim)) {
+                    failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED,
+                            false, "frame_item_authorization_changed");
+                    return false;
+                }
+                agentExecution.frameItemAim = currentAim;
+            }
             Optional.ofNullable(analysis.mutationBatchPlans().get(agentExecution.primitive.id()))
                     .ifPresent(plan -> agentExecution.mutationBatchPlan = plan);
             agentExecution.cropWaitAuthorization = cropWaitAuthorization;
@@ -5688,6 +5759,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             return true;
         } catch (AgentPrimitivePlanner.PlanningException unavailable) {
+            if (isFrameItemPrimitive(agentExecution.primitive)) {
+                failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED,
+                        false, "frame_item_authorization_unavailable");
+                return false;
+            }
             if (!releaseAgentInputsForHold(minecraft, "jit_replan_input_release_failed")) {
                 return false;
             }
@@ -5862,6 +5938,30 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private static boolean isAgentWait(ActionDsl.Node primitive) {
         return primitive instanceof ActionDsl.WaitTicks || primitive instanceof ActionDsl.WaitUntil;
+    }
+
+    static boolean isFrameItemPrimitive(ActionDsl.Node primitive) {
+        return primitive instanceof ActionDsl.RemoveVisibleFrameItem
+                || primitive instanceof ActionDsl.InsertVisibleFrameItem;
+    }
+
+    static boolean frameItemEvidenceFresh(AgentPrimitivePlanner.FrameItemAim aim, long currentTick) {
+        return aim != null && aim.observedTick() <= currentTick && currentTick - aim.observedTick() <= 100;
+    }
+
+    /** Fresh delivery can advance its clocks but cannot replace the admitted frame or aim. */
+    static boolean sameFrameItemAuthorization(
+            AgentPrimitivePlanner.FrameItemAim expected,
+            AgentPrimitivePlanner.FrameItemAim current) {
+        return expected != null && current != null
+                && expected.entityRef().equals(current.entityRef())
+                && expected.entityType().equals(current.entityType())
+                && expected.expectedItem().equals(current.expectedItem())
+                && expected.insertedItem().equals(current.insertedItem())
+                && expected.rotation() == current.rotation()
+                && expected.aimPoint().equals(current.aimPoint())
+                && current.observedTick() >= expected.observedTick()
+                && current.worldRevision() >= expected.worldRevision();
     }
 
     private boolean beginAgentPrimitive(
@@ -7236,6 +7336,61 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
+    private void tickAgentFrameItem(
+            Minecraft minecraft,
+            WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action) {
+        if (agentExecution.frameItemAttempt == null) {
+            var aim = Objects.requireNonNull(agentExecution.frameItemAim, "admitted frame item aim");
+            boolean remove = agentExecution.primitive instanceof ActionDsl.RemoveVisibleFrameItem;
+            var request = new FrameItemPort.Request(
+                    remove ? FrameItemPort.Mode.REMOVE : FrameItemPort.Mode.INSERT,
+                    aim.entityRef(),
+                    (remove ? aim.expectedItem() : aim.insertedItem()).orElseThrow(),
+                    aim.rotation(), session.worldSessionId(), session.dimension(),
+                    new FrameItemPort.AimPoint(aim.aimPoint().x, aim.aimPoint().y, aim.aimPoint().z),
+                    agentExecution.maxCameraDegreesPerTick);
+            agentExecution.frameItemAttempt = new FrameItemAttempt(
+                    frameItemPort, request, session.clientTick(),
+                    Math.addExact(session.clientTick(), ActionDslCompiler.FRAME_ITEM_TICKS));
+        }
+        FrameItemAttempt attempt = agentExecution.frameItemAttempt;
+        FrameItemAttempt.TickResult result;
+        try {
+            result = attempt.tick(session.clientTick());
+        } finally {
+            recordFrameItemUsage(action.actionId(), attempt);
+        }
+        switch (result.status()) {
+            case RUNNING -> { }
+            case FAILED -> failAgentAction(
+                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                    false, result.evidence());
+            case SUCCEEDED -> {
+                agentExecution.frameItemAttempt = null;
+                agentActions.recordNodeEvidence(action.actionId(), "frame_display_server_confirmed");
+                agentActions.completeNode(action.actionId());
+                agentExecution.primitive = null;
+                advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
+            }
+        }
+    }
+
+    private void recordFrameItemUsage(UUID actionId, FrameItemAttempt attempt) {
+        int interactions = attempt.drainInteractionDelta();
+        for (int count = 0; count < interactions; count++) {
+            agentActions.recordInteraction(actionId);
+        }
+        var aim = Objects.requireNonNull(agentExecution.frameItemAim, "admitted frame item aim");
+        String kind = agentExecution.primitive instanceof ActionDsl.RemoveVisibleFrameItem
+                ? "frame_item_remove" : "frame_item_insert";
+        for (var effect : attempt.drainEffectDeltas()) {
+            agentActions.recordEffect(actionId, kind, aim.entityType(),
+                    effect.observedBefore(), effect.observedAfter(), effect.verification(),
+                    effect.clientTick(), effect.worldRevision());
+        }
+    }
+
     private void tickAgentContainer(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
@@ -8508,6 +8663,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void requestAgentReplan(long actionTick, String reason) {
+        if (isFrameItemPrimitive(agentExecution.primitive)) {
+            failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED,
+                    false, "frame_item_replan_required");
+            return;
+        }
         closeAgentPrimitiveExecutor();
         if (!releaseAgentInputsForHold(
                 Minecraft.getInstance(), "replan_input_release_failed")) {
@@ -8898,13 +9058,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             ActionDslCompiler.CompiledProgram program,
             ActionDslSource source,
             AgentPrimitivePlanner.Analysis analysis,
-            Optional<ActionDsl.Node> initialPrimitive) {
+            Optional<ActionDsl.Node> initialPrimitive,
+            Optional<AgentPrimitivePlanner.FrameItemAim> frameItemAim) {
         private PreparedAgentAction {
             Objects.requireNonNull(snapshot, "snapshot");
             Objects.requireNonNull(program, "program");
             Objects.requireNonNull(source, "source");
             Objects.requireNonNull(analysis, "analysis");
             Objects.requireNonNull(initialPrimitive, "initialPrimitive");
+            Objects.requireNonNull(frameItemAim, "frameItemAim");
         }
     }
 
@@ -10214,6 +10376,25 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 McmcpMod.LOGGER.error("MCMCP known-block mutation release failed", failure);
             }
         }
+        if (agentExecution.frameItemAttempt != null) {
+            FrameItemAttempt frameItem = agentExecution.frameItemAttempt;
+            try {
+                frameItem.close();
+                agentExecution.frameItemAttempt = null;
+            } catch (RuntimeException | LinkageError failure) {
+                closed = false;
+                if (frameItem.releaseStatus() != FrameItemAttempt.ReleaseStatus.PROGRESSING) {
+                    McmcpMod.LOGGER.error("MCMCP frame-item release failed", failure);
+                }
+            } finally {
+                try {
+                    recordFrameItemUsage(agentExecution.actionId, frameItem);
+                } catch (RuntimeException | LinkageError failure) {
+                    closed = false;
+                    McmcpMod.LOGGER.error("MCMCP frame-item effect capture failed", failure);
+                }
+            }
+        }
         if (agentExecution.containerAttempt != null) {
             KnownContainerAttempt container = agentExecution.containerAttempt;
             try {
@@ -10222,7 +10403,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             } catch (RuntimeException | LinkageError failure) {
                 closed = false;
                 if (container.releaseStatus()
-                        != KnownContainerAttempt.ReleaseStatus.PROGRESSING) {
+                        != KnownContainerAttempt.ReleaseStatus.PROGRESSING
+                        && !agentExecution.containerReleaseFaultLogged) {
+                    agentExecution.containerReleaseFaultLogged = true;
                     McmcpMod.LOGGER.error("MCMCP known-container release failed", failure);
                 }
             } finally {
@@ -10508,12 +10691,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             pendingAgentReturnReady = false;
             arming.lock("agent_input_release_failed");
-            McmcpMod.LOGGER.error(
-                    "MCMCP terminal input cleanup remained unconfirmed after {} attempts; "
-                            + "the owner and local control lock were retained",
-                    MAX_ACTION_INPUT_RELEASE_ATTEMPTS);
+            if (!agentInputReleaseFaultLogged) {
+                agentInputReleaseFaultLogged = true;
+                McmcpMod.LOGGER.error(
+                        "MCMCP terminal input cleanup remained unconfirmed after {} attempts; "
+                                + "the owner and local control lock were retained",
+                        MAX_ACTION_INPUT_RELEASE_ATTEMPTS);
+            }
             return false;
         }
+        agentInputReleaseFaultLogged = false;
         try {
             restoreAgentSelectedSlot(minecraft);
         } catch (RuntimeException | LinkageError failure) {
@@ -10546,7 +10733,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private boolean statefulMenuReleaseProgressing() {
         return agentExecution != null && (
-                agentExecution.containerAttempt != null
+                agentExecution.frameItemAttempt != null
+                        && agentExecution.frameItemAttempt.releaseStatus()
+                                == FrameItemAttempt.ReleaseStatus.PROGRESSING
+                || agentExecution.containerAttempt != null
                         && agentExecution.containerAttempt.releaseStatus()
                                 == KnownContainerAttempt.ReleaseStatus.PROGRESSING
                 || agentExecution.brewingAttempt != null
@@ -12792,6 +12982,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return false;
         }
         return switch (mutation.kind()) {
+            case ENTITY_DISPLAY -> false;
             case ALL -> true;
             case CHUNK -> (cell.x() >> 4) == mutation.x() && (cell.z() >> 4) == mutation.z();
             case BLOCK -> Math.abs((long) cell.x() - mutation.x()) <= 1L
@@ -13124,6 +13315,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private long cobblestoneGeneratorCheckpoint;
         private boolean cobblestoneGeneratorUnknownRecorded;
         private KnownBlockMutationAttempt blockMutationAttempt;
+        private FrameItemAttempt frameItemAttempt;
+        private AgentPrimitivePlanner.FrameItemAim frameItemAim;
         private AgentPrimitivePlanner.MutationBatchPlan mutationBatchPlan;
         private int mutationBatchIndex;
         private ActionDsl.Node mutationBatchTarget;
@@ -13137,6 +13330,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private ActionDsl.Position tillSettlingTarget;
         private long tillSettlingDeadlineTick;
         private KnownContainerAttempt containerAttempt;
+        private boolean containerReleaseFaultLogged;
         private KnownBrewingAttempt brewingAttempt;
         private KnownConstructionAttempt constructionAttempt;
         private KnownPillarUpAttempt pillarUpAttempt;

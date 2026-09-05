@@ -205,6 +205,32 @@ class McmcpRuntimeEvaluationTurnContractTest {
     }
 
     @Test
+    void retainedCleanupDrainsCancellationBeforeItsEarlyReturnWithoutTickingGameplay() throws Exception {
+        var callsBeforePendingReturn = new ArrayList<String>();
+        boolean afterReleaseRetry = false;
+        for (var instruction : method(classNode(), "onPreTick").instructions) {
+            if (instruction instanceof MethodInsnNode call) {
+                if (call.name.equals("retryPendingAgentInputRelease")) afterReleaseRetry = true;
+                if (afterReleaseRetry) callsBeforePendingReturn.add(call.owner + "#" + call.name);
+            }
+            if (afterReleaseRetry && instruction.getOpcode() == Opcodes.RETURN) break;
+        }
+        assertThat(callsBeforePendingReturn).containsSubsequence(
+                "dev/aod/mcmcp/runtime/McmcpRuntime#retryPendingAgentInputRelease",
+                "dev/aod/mcmcp/runtime/ClientCommandInbox#drainEmergencyStopPreTick",
+                "dev/aod/mcmcp/runtime/ClientCommandInbox#drainControlsPreTick",
+                "dev/aod/mcmcp/runtime/McmcpRuntime#publishSession");
+        assertThat(callsBeforePendingReturn).doesNotContain(
+                "dev/aod/mcmcp/runtime/McmcpRuntime#tickActiveRoutine",
+                "dev/aod/mcmcp/runtime/McmcpRuntime#tickAgentAction");
+        for (String admission : List.of("captureAgentAdmission", "commitAgentAction")) {
+            assertThat(fieldAccesses(method(classNode(), admission))).contains(
+                    "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentInputRelease",
+                    "dev/aod/mcmcp/runtime/McmcpRuntime#agentExecution");
+        }
+    }
+
+    @Test
     void terminalSuccessCannotBeOverwrittenByLateControlQueueInvalidation()
             throws Exception {
         var runtime = classNode();

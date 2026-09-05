@@ -1450,6 +1450,27 @@ public final class AgentPrimitivePlanner {
                     true,
                     KnownBrewingRequest.MAX_ONE_WAY_CAMERA_DEGREES);
         }
+        if (node instanceof ActionDsl.RemoveVisibleFrameItem || node instanceof ActionDsl.InsertVisibleFrameItem) {
+            ActionDslCompiler.Cost worst = null;
+            var output = new ArrayList<Pose>(input.size());
+            for (Pose pose : input) {
+                work.poseTransition();
+                var frameAim = requireFrameItemAim(map, pose, latestFrame, node, visualBarrierWorldRevision);
+                var camera = faceCost(pose, frameAim.aimPoint(), cameraLimit);
+                if (camera.cameraDegrees() > 360 || camera.ticks() > ActionDslCompiler.FRAME_ITEM_TICKS - 100) {
+                    throw new ActionDslException(ActionDslException.Code.PROGRAM_BUDGET_UNPROVABLE,
+                            "Frame camera cannot fit its bounded attempt");
+                }
+                var cost = new ActionDslCompiler.Cost(
+                        ActionDslCompiler.FRAME_ITEM_DURATION_MILLIS, ActionDslCompiler.FRAME_ITEM_TICKS,
+                        0, camera.cameraDegrees(), 1, 0, 0);
+                worst = maximum(worst, cost);
+                var heading = aim(pose, frameAim.aimPoint());
+                output.add(pose.aimed(heading, aimError(pose, frameAim.aimPoint(), heading)));
+            }
+            merge(costs, node.id(), Objects.requireNonNull(worst));
+            return distinct(output);
+        }
         if (node instanceof ActionDsl.CollectVisibleItem collect) {
             ObservationRecord.VisibleEntity entity = requireVisibleItem(
                     map, latestFrame, collect, visualBarrierWorldRevision);
@@ -3564,6 +3585,83 @@ public final class AgentPrimitivePlanner {
                     yErrorBelow + additional,
                     yErrorAbove,
                     orientationErrorDegrees);
+        }
+    }
+
+    /** Resolves only a delivered front-face witness; no guessed position or container label is used. */
+    public static FrameItemAim requireFrameItemAim(
+            KnownTraversabilitySnapshot map, Pose pose, Optional<ObservationFrame> latestFrame,
+            ActionDsl.Node node, long visualBarrierWorldRevision) {
+        String ref;
+        Optional<String> expected;
+        Optional<String> inserted;
+        if (node instanceof ActionDsl.RemoveVisibleFrameItem remove) {
+            ref = remove.entityRef();
+            expected = Optional.of(remove.expectedItem());
+            inserted = Optional.empty();
+        } else if (node instanceof ActionDsl.InsertVisibleFrameItem insert) {
+            ref = insert.entityRef();
+            expected = Optional.empty();
+            inserted = Optional.of(insert.item());
+        } else {
+            throw new IllegalArgumentException("node is not a frame item operation");
+        }
+        requireVisualBarrierWorldRevision(map, map.worldRevision(), visualBarrierWorldRevision);
+        var candidates = latestFrame.stream()
+                .filter(frame -> frame.dimension().value().equals(map.dimension()))
+                .flatMap(frame -> frame.records().stream()
+                        .filter(record -> record.newestObservedTick() <= frame.frameCompletedTick()
+                                && frame.frameCompletedTick() - record.newestObservedTick() <= 100))
+                .filter(ObservationRecord.VisibleEntity.class::isInstance)
+                .map(ObservationRecord.VisibleEntity.class::cast)
+                .filter(entity -> ref.equals(entity.entityRef()))
+                .filter(entity -> Set.of("minecraft:item_frame", "minecraft:glow_item_frame")
+                        .contains(entity.entityType().value()))
+                .filter(entity -> entity.frameDisplay() != null)
+                .filter(entity -> entity.worldRevision() >= visualBarrierWorldRevision
+                        && entity.worldRevision() <= map.worldRevision())
+                .filter(entity -> expected.equals(Optional.ofNullable(entity.frameDisplay().item())
+                        .map(ObservationValues.ResourceId::value)))
+                .toList();
+        if (candidates.size() != 1) {
+            throw new PlanningException(Code.TARGET_UNKNOWN,
+                    "Frame requires one current matching front-face display witness");
+        }
+        var entity = candidates.getFirst();
+        var display = entity.frameDisplay();
+        var point = display.aimPoint();
+        var eye = new Vec3(pose.x(), pose.y() + pose.eyeHeight(), pose.z());
+        var observedEye = entity.eyeOrigin();
+        if (!point.dimension().value().equals(map.dimension())
+                || eye.distanceTo(new Vec3(observedEye.x(), observedEye.y(), observedEye.z()))
+                        > MAX_BREAK_EYE_ORIGIN_DRIFT) {
+            throw new PlanningException(Code.TARGET_UNKNOWN,
+                    "Frame display was not observed from the current interaction pose");
+        }
+        var aimPoint = new Vec3(point.x(), point.y(), point.z());
+        double poseError = Math.hypot(pose.horizontalPositionError(),
+                Math.max(pose.yErrorBelow(), pose.yErrorAbove()));
+        if (eye.distanceTo(aimPoint) + poseError > 3.0D) {
+            throw new PlanningException(Code.TARGET_UNKNOWN,
+                    "Frame display is outside the bounded normal entity reach");
+        }
+        return new FrameItemAim(ref, entity.entityType().value(), expected, inserted,
+                display.rotation(), aimPoint, entity.observedTick(), entity.worldRevision());
+    }
+
+    public record FrameItemAim(String entityRef, String entityType, Optional<String> expectedItem,
+            Optional<String> insertedItem, int rotation, Vec3 aimPoint, long observedTick, long worldRevision) {
+        public FrameItemAim {
+            Objects.requireNonNull(entityRef);
+            Objects.requireNonNull(entityType);
+            Objects.requireNonNull(expectedItem);
+            Objects.requireNonNull(insertedItem);
+            Objects.requireNonNull(aimPoint);
+            if (expectedItem.isPresent() == insertedItem.isPresent()
+                    || rotation < 0 || rotation > 7 || observedTick < 0 || worldRevision < 0
+                    || !Double.isFinite(aimPoint.x) || !Double.isFinite(aimPoint.y) || !Double.isFinite(aimPoint.z)) {
+                throw new IllegalArgumentException("invalid frame item aim");
+            }
         }
     }
 

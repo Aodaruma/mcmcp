@@ -15,6 +15,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ClientReconciliationSignalsTest {
     @Test
+    void entityDisplayMutationAdvancesTheAuditClockWithoutInvalidatingBlockVisualOrSurfaceEvidence() {
+        var channel = new ClientReconciliationSignals.SessionChannel();
+        channel.bindAndSnapshot(UUID.randomUUID());
+        channel.entityDisplayMutation();
+        var after = channel.snapshot();
+        assertThat(after.worldRevision()).isOne();
+        assertThat(after.visualRevision()).isZero();
+        assertThat(after.visualBarrierWorldRevision()).isZero();
+        assertThat(after.surfaceBarrierWorldRevision(1, 64, 1)).isZero();
+        assertThat(after.worldMutations()).singleElement().satisfies(mutation -> {
+            assertThat(mutation.kind()).isEqualTo(ClientReconciliationSignals.WorldMutation.Kind.ENTITY_DISPLAY);
+            assertThat(mutation.navigationImpact()).isEqualTo(ClientReconciliationSignals.NavigationImpact.NONE);
+        });
+    }
+
+    @Test
     void waitBarrierPrefersExactTargetRevisionAndFallsBackWhenItIsAbsent() {
         UUID session = UUID.randomUUID();
         var target = new BlockPos(1, 65, 1);

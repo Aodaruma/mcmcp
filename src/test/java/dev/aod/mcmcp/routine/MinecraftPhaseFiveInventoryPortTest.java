@@ -30,6 +30,41 @@ class MinecraftPhaseFiveInventoryPortTest {
     private static final int DEFAULT_HASH = 41;
 
     @Test
+    void expiredReleaseRetriesOnlyWhenObservableCleanupEvidenceChanges() {
+        var waiting = List.of("same-menu", ScreenOwnershipSignals.Phase.FAILED, 42L,
+                ScreenOwnershipSignals.CausalBarrierStatus.WAITING_ACK);
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseBoundaryChanged(null, waiting)).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseBoundaryChanged(waiting, List.copyOf(waiting)))
+                .isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseBoundaryChanged(waiting,
+                List.of("same-menu", ScreenOwnershipSignals.Phase.FAILED, 43L,
+                        ScreenOwnershipSignals.CausalBarrierStatus.WAITING_ACK))).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseBoundaryChanged(waiting,
+                List.of("same-menu", ScreenOwnershipSignals.Phase.FAILED, 42L,
+                        ScreenOwnershipSignals.CausalBarrierStatus.ACKNOWLEDGED))).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseBoundaryChanged(waiting,
+                List.of("closed", ScreenOwnershipSignals.Phase.IDLE, 42L,
+                        ScreenOwnershipSignals.CausalBarrierStatus.WAITING_ACK))).isTrue();
+    }
+
+    @Test
+    void retiringFailedScreenPreservesOnlyExactOwnerServerEmptyCursorProof() {
+        var owner = java.util.UUID.randomUUID();
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseCursorProofMatches(owner, owner, true, true))
+                .isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseCursorProofMatches(owner, owner, false, true))
+                .isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseCursorProofMatches(owner, owner, true, false))
+                .isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseCursorProofMatches(
+                owner, java.util.UUID.randomUUID(), true, true)).isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseCursorProofMatches(owner, null, true, true))
+                .isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.releaseCursorProofMatches(null, null, true, true))
+                .isFalse();
+    }
+
+    @Test
     void fullStackSelectionIgnoresCustomComponentsAndRespectsRemainingCap() {
         var stacks = List.of(
                 stack("minecraft:stone", 32, 99),

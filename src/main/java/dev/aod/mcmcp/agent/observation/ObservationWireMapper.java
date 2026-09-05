@@ -155,6 +155,13 @@ public final class ObservationWireMapper {
         if (entity.displayedItem() != null) {
             result.put("displayed_item", entity.displayedItem().value());
         }
+        if (entity.frameDisplay() != null) {
+            var display = entity.frameDisplay();
+            result.put("frame_display", map(
+                    "item", display.item() == null ? null : display.item().value(),
+                    "rotation", display.rotation(),
+                    "aim_point", worldPosition(display.aimPoint())));
+        }
         if (entity.containerLabel() != null) {
             var label = entity.containerLabel();
             result.put("container_label", map(

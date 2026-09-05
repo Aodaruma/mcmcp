@@ -32,3 +32,5 @@ The batch fixes its source slots from the initial server snapshot. Every ordinar
 境界値、旧入力互換、DSL往復変換、静的予算、複数stackと端数、成分混在、選択外変更、補充、fresh packet revision、部分確定とUNKNOWN、cleanup再試行の回帰テストを追加した。`test` 1,135件・`harnessTest` 13件・`adminBridgeTest` 21件、計1,169件が成功し、`verifyHarnessIsolation`と`build`も通過した。
 
 `0.1.0-rc.2-SNAPSHOT` JARのSHA-256は`B8C4E411966A7208F31DF3225C1C14AB8389C24731277AB634BFAEE988793DBA`。実ゲームの再検証は別の倉庫整理タスクへ固定コピーを引き渡して行う。開封前の持続拒否は根因未確定のため、同JARに固定reasonを追加した（[診断記録](20260906_container_preflight_diagnostics.md)）。
+
+実ゲーム担当から、`polished_diorite` 108個の2stack take（Action `b5f404c3-9617-45e3-927d-da42a02cd40a`）が52ticks・4interactionsで成功し、続くstoreも108個CONFIRMED、個人所持差分0との報告を受けた。記録上の全54収納・117 item IDsの照合でも個数差0だった（最終再inspectは未了）。その後、`deepslate`12個のstore（Action `b172beaa-04b9-41d7-a842-09dacfb07026`）ではtick60/interactions1で終了処理が停止し、操作OFF・cleanup失敗の反復が発生したため整理を中断した。まとめ移送の機能確認と終了処理の安定性は区別し、後者を修正してから再開する。

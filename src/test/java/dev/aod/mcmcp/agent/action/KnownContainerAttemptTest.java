@@ -188,6 +188,31 @@ class KnownContainerAttemptTest {
     }
 
     @Test
+    void faultedCleanupRetainsOwnerUntilLateEvidenceConfirmsRelease() {
+        var port = new FakePort();
+        var operation = new KnownContainerAttempt(port, request(), 1, 101);
+        port.tick = 1;
+        operation.tick(1);
+        port.releaseFailuresRemaining = 4;
+        port.extraBasis = Map.of("release_fault", true);
+
+        for (int retry = 0; retry < 4; retry++) {
+            assertThatThrownBy(operation::close).hasMessage("container release failed once");
+            assertThat(operation.releaseStatus()).isEqualTo(KnownContainerAttempt.ReleaseStatus.FAULT);
+            assertThat(port.retires).isZero();
+        }
+
+        port.extraBasis = Map.of();
+        operation.close();
+        assertThat(operation.releaseStatus()).isEqualTo(KnownContainerAttempt.ReleaseStatus.CONFIRMED);
+        assertThat(port.retires).isOne();
+        operation.close();
+        assertThat(port.releases).isEqualTo(5);
+        assertThat(port.retires).isOne();
+        assertThat(operation.drainReleaseInteractionDelta()).isZero();
+    }
+
+    @Test
     void cleanupUsageRemainsDrainableWhileReleaseIsRetried() {
         var port = new FakePort();
         var operation = new KnownContainerAttempt(port, request(), 1, 101);

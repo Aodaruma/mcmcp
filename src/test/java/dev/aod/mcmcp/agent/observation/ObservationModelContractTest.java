@@ -379,6 +379,42 @@ class ObservationModelContractTest {
     }
 
     @Test
+    void frameDisplaySeparatesVisibleEmptyFramesFromUnknownAndKeepsItemEntitiesUnchanged() throws Exception {
+        JsonObject catalog = JsonParser.parseString(Files.readString(catalogPath())).getAsJsonObject();
+        JsonObject schema = tool(catalog, "agent_get_observation").getAsJsonObject("outputSchema");
+        for (String type : List.of("minecraft:item_frame", "minecraft:glow_item_frame")) {
+            for (int rotation : List.of(0, 7)) {
+                var display = new ObservationRecord.FrameDisplay(
+                        rotation == 0 ? null : new ResourceId("minecraft:wheat"), rotation, world(2, 64, 2));
+                var frame = new VisibleEntity(new ResourceId(type), null, "abcdefghijklmnopqrstuvwx",
+                        world(2, 64, 2), new Vector(0, 0, 0),
+                        new Aabb(1.5, 63.5, 1.5, 2.5, 65.5, 2.5), EntityHazardClass.UNKNOWN,
+                        world(0, 65.62, 0), 96, 7, null, display);
+                var wire = ObservationWireMapper.record(frame);
+                assertThat(wire).containsKey("frame_display").doesNotContainKeys("displayed_item", "container_label");
+                var projected = (Map<?, ?>) wire.get("frame_display");
+                assertThat(projected.get("item")).isEqualTo(rotation == 0 ? null : "minecraft:wheat");
+                assertThat(projected.get("rotation")).isEqualTo(rotation);
+                assertThat(projected.get("aim_point")).isEqualTo(Map.of(
+                        "dimension", "minecraft:overworld", "x", 2.0, "y", 64.0, "z", 2.0));
+                var page = new ObservationPage("obs-0000000000000001", 96, false, List.of(frame), null);
+                assertThat(matches(schema, new GsonBuilder().serializeNulls().create().toJsonTree(
+                        ObservationWireMapper.page(page, ignored -> null)))).isTrue();
+            }
+        }
+        var display = new ObservationRecord.FrameDisplay(null, 0, world(2, 64, 2));
+        assertThatThrownBy(() -> new VisibleEntity(new ResourceId("minecraft:zombie"), null,
+                "abcdefghijklmnopqrstuvwx", world(2, 64, 2), new Vector(0, 0, 0),
+                new Aabb(1, 63, 1, 3, 66, 3), EntityHazardClass.HOSTILE,
+                world(0, 65.62, 0), 96, 7, null, display))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("frameDisplay");
+        assertThatThrownBy(() -> new ObservationRecord.FrameDisplay(null, 8, world(2, 64, 2)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ObservationRecord.FrameDisplay(new ResourceId("minecraft:air"), 0, world(2, 64, 2)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void entityReferenceRejectsRawOrMalformedIdentityAndNeverAttachesToPlayers() {
         assertThatThrownBy(() -> new VisibleEntity(
                 new ResourceId("minecraft:zombie"),

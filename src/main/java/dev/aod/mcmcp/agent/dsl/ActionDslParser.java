@@ -143,6 +143,8 @@ public final class ActionDslParser {
             case "open_known_passage" -> openKnownPassage(object, path);
             case "inspect_known_container" -> inspectKnownContainer(object, path);
             case "take_known_container_stack" -> takeKnownContainerStack(object, path);
+            case "remove_visible_frame_item" -> removeVisibleFrameItem(object, path);
+            case "insert_visible_frame_item" -> insertVisibleFrameItem(object, path);
             case "store_known_container_stack" -> storeKnownContainerStack(object, path);
             case "craft_known_recipe" -> craftKnownRecipe(object, path);
             case "smelt_known_recipe" -> smeltKnownRecipe(object, path);
@@ -642,6 +644,24 @@ public final class ActionDslParser {
                 position(source.get("target"), path + ".target"),
                 string(source.get("expected_block"), path + ".expected_block"),
                 routingLabel(source, path));
+    }
+
+    private static ActionDsl.RemoveVisibleFrameItem removeVisibleFrameItem(JsonObject source, String path) {
+        var fields = Set.of("id", "op", "entity_ref", "expected_item");
+        exactKeys(source, path, fields, fields);
+        return new ActionDsl.RemoveVisibleFrameItem(
+                string(source.get("id"), path + ".id"),
+                string(source.get("entity_ref"), path + ".entity_ref"),
+                string(source.get("expected_item"), path + ".expected_item"));
+    }
+
+    private static ActionDsl.InsertVisibleFrameItem insertVisibleFrameItem(JsonObject source, String path) {
+        var fields = Set.of("id", "op", "entity_ref", "item");
+        exactKeys(source, path, fields, fields);
+        return new ActionDsl.InsertVisibleFrameItem(
+                string(source.get("id"), path + ".id"),
+                string(source.get("entity_ref"), path + ".entity_ref"),
+                string(source.get("item"), path + ".item"));
     }
 
     private static ActionDsl.TakeKnownContainerStack takeKnownContainerStack(

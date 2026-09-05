@@ -168,7 +168,8 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
             WorldPosition eyeOrigin,
             long observedTick,
             long worldRevision,
-            ContainerLabel containerLabel) implements ObservationRecord {
+            ContainerLabel containerLabel,
+            FrameDisplay frameDisplay) implements ObservationRecord {
         public VisibleEntity {
             Objects.requireNonNull(entityType, "entityType");
             Objects.requireNonNull(position, "position");
@@ -189,9 +190,17 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
             if (hazardClass == EntityHazardClass.PLAYER && entityRef != null) {
                 throw new IllegalArgumentException("player entities must not expose entityRef");
             }
+            boolean itemFrame = "minecraft:item_frame".equals(entityType.value())
+                    || "minecraft:glow_item_frame".equals(entityType.value());
+            if (frameDisplay != null && (!itemFrame || entityRef == null)) {
+                throw new IllegalArgumentException(
+                        "frameDisplay requires an opaque visible item-frame reference");
+            }
+            if (frameDisplay != null) {
+                ObservationValues.requireSameDimension(
+                        position.dimension(), frameDisplay.aimPoint().dimension());
+            }
             if (containerLabel != null) {
-                boolean itemFrame = "minecraft:item_frame".equals(entityType.value())
-                        || "minecraft:glow_item_frame".equals(entityType.value());
                 if (!itemFrame || displayedItem != null || entityRef == null) {
                     throw new IllegalArgumentException(
                             "containerLabel requires an opaque visible item-frame reference");
@@ -202,6 +211,16 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
             ObservationValues.requireSameDimension(position.dimension(), eyeOrigin.dimension());
             ObservationValues.requireTick(observedTick, "observedTick");
             ObservationValues.requireTick(worldRevision, "worldRevision");
+        }
+
+        /** Compatibility constructor for observations without visible frame-display evidence. */
+        public VisibleEntity(
+                ResourceId entityType, ResourceId displayedItem, String entityRef,
+                WorldPosition position, Vector velocity, Aabb aabb, EntityHazardClass hazardClass,
+                WorldPosition eyeOrigin, long observedTick, long worldRevision,
+                ContainerLabel containerLabel) {
+            this(entityType, displayedItem, entityRef, position, velocity, aabb, hazardClass,
+                    eyeOrigin, observedTick, worldRevision, containerLabel, null);
         }
 
         /** Compatibility constructor for visible entities without a container routing label. */
@@ -254,6 +273,19 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
         @Override public long oldestObservedTick() { return observedTick; }
         @Override public long newestObservedTick() { return observedTick; }
         public EvidenceProvenance provenance() { return EvidenceProvenance.OMNIDIRECTIONAL_VISUAL; }
+    }
+
+    /** Rendered front-face content only; a null item means the visible frame is empty. */
+    record FrameDisplay(ResourceId item, int rotation, WorldPosition aimPoint) {
+        public FrameDisplay {
+            Objects.requireNonNull(aimPoint, "aimPoint");
+            if (item != null && "minecraft:air".equals(item.value())) {
+                throw new IllegalArgumentException("an empty frame display uses null");
+            }
+            if (rotation < 0 || rotation > 7) {
+                throw new IllegalArgumentException("frame rotation must be between 0 and 7");
+            }
+        }
     }
 
     /** A visible item-frame label directly attached to one supported Vanilla container. */

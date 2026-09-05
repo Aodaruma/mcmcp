@@ -784,8 +784,10 @@ Action DSL v1の制御構造:
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のVanilla chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
-| take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemのwhole stackを最大1回quick-moveし、close/reopen full readbackでplayer inventoryの絶対個数を確認 |
-| store_known_container_stack | camera, inventory_transfer | player inventoryの指定item whole stackを同じcontainerへ最大1回quick-moveし、close/reopen full readbackでcontainerの絶対個数を確認 |
+| take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemを最大14 whole stacks・896個まで移し、各server ACKと最後1回のfull readbackでplayerの絶対個数を確認 |
+| store_known_container_stack | camera, inventory_transfer | playerの指定itemを同じcontainerへ最大14 whole stacks・896個まで移し、各server ACKと最後1回のfull readbackでcontainerの絶対個数を確認 |
+| remove_visible_frame_item | camera, entity_attack | 配送済みの正面額縁と表示itemをJIT再確認し、空手の通常攻撃1回で表示除去をserver確認。drop回収は別Action |
+| insert_visible_frame_item | camera, item_use | 配送済みの正面空額縁へhotbar itemを1個挿入し、server表示ACKと選択slot1個減少を確認 |
 | craft_known_recipe | camera, inventory_transfer | recipe queryの短寿命opaque参照を再検証し、可視・既知crafting tableで1〜3回、完成品を1回分ずつ回収して絶対inventory目標を確認 |
 | smelt_known_recipe | camera, inventory_transfer | recipe queryの短寿命opaque参照を再検証し、可視・既知のfurnace / blast furnace / smokerでexact stack 1〜64個を精錬して絶対inventory目標を確認 |
 | brew_known_potion_batch | camera, inventory_transfer | 空の可視・既知brewing standで、宣言した標準Vanilla Potion 1〜3本を現行recipe tableの既知の1段変換だけ醸造 |

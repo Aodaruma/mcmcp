@@ -2,7 +2,12 @@ package dev.aod.mcmcp.mixin.client;
 
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.runtime.ClientReconciliationSignals;
+import dev.aod.mcmcp.runtime.FrameDisplaySyncSignals;
+import dev.aod.mcmcp.runtime.HotbarPayloadSyncSignals;
+import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
+import dev.aod.mcmcp.runtime.ScreenOwnershipSignals;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.protocol.game.ClientboundContainerSetContentPacket;
@@ -13,10 +18,13 @@ import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
 import net.minecraft.network.protocol.game.ClientboundSetPlayerInventoryPacket;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -24,9 +32,31 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /** Required inbound packet evidence for finite actions which do not have a block ACK. */
 @Mixin(ClientPacketListener.class)
 public abstract class ClientPacketListenerMixin {
+    @Shadow private ClientLevel level;
+
     @Inject(method = "clearLevel", at = @At("HEAD"), require = 1, expect = 1)
     private void mcmcp$closeReconciliationLevel(CallbackInfo callback) {
         ClientReconciliationSignals.global().closeLevel(Minecraft.getInstance().level);
+        FrameDisplaySyncSignals.global().closeLevel(this.level);
+        HotbarPayloadSyncSignals.global().closeLevel(this.level);
+    }
+
+    @Inject(method = "handleSetEntityData", at = @At("TAIL"), require = 1, expect = 1)
+    private void mcmcp$frameDisplayPacket(
+            ClientboundSetEntityDataPacket packet, CallbackInfo callback) {
+        if (this.level == Minecraft.getInstance().level) {
+            FrameDisplaySyncSignals.global().onEntityData(
+                    this.level, packet, ScreenOwnershipSignals.global().currentTick());
+        }
+    }
+
+    @Inject(method = "handleRemoveEntities", at = @At("TAIL"), require = 1, expect = 1)
+    private void mcmcp$removedFrameEntities(
+            ClientboundRemoveEntitiesPacket packet, CallbackInfo callback) {
+        if (this.level != Minecraft.getInstance().level) return;
+        for (int entityId : packet.getEntityIds()) {
+            FrameDisplaySyncSignals.global().remove(this.level, entityId);
+        }
     }
 
     @Inject(method = "handleLevelChunkWithLight", at = @At("TAIL"), require = 1, expect = 1)
@@ -92,6 +122,11 @@ public abstract class ClientPacketListenerMixin {
             return;
         }
         int selected = minecraft.player.getInventory().getSelectedSlot();
+        if (this.level == minecraft.level) {
+            HotbarPayloadSyncSignals.global().onSlot(this.level, packet.slot(),
+                    StackFingerprint.fromServerPacket(packet.contents()),
+                    ScreenOwnershipSignals.global().currentTick());
+        }
         rememberInventory("player_inventory", packet.slot(), packet.slot() == selected);
     }
 
@@ -110,6 +145,11 @@ public abstract class ClientPacketListenerMixin {
             Slot slot = menu.slots.get(packet.getSlot());
             relevant = slot.container == minecraft.player.getInventory()
                     && slot.getContainerSlot() == minecraft.player.getInventory().getSelectedSlot();
+            if (this.level == minecraft.level && slot.container == minecraft.player.getInventory()) {
+                HotbarPayloadSyncSignals.global().onSlot(this.level, slot.getContainerSlot(),
+                        StackFingerprint.fromServerPacket(packet.getItem()),
+                        ScreenOwnershipSignals.global().currentTick());
+            }
         }
         rememberInventory("container_slot", packet.getSlot(), relevant);
     }
@@ -123,6 +163,17 @@ public abstract class ClientPacketListenerMixin {
         }
         boolean relevant = minecraft.player.containerMenu == minecraft.player.inventoryMenu
                 && packet.containerId() == minecraft.player.inventoryMenu.containerId;
+        if (relevant && this.level == minecraft.level
+                && packet.items().size() == minecraft.player.inventoryMenu.slots.size()) {
+            for (int index = 0; index < packet.items().size(); index++) {
+                Slot slot = minecraft.player.inventoryMenu.slots.get(index);
+                if (slot.container == minecraft.player.getInventory()) {
+                    HotbarPayloadSyncSignals.global().onSlot(this.level, slot.getContainerSlot(),
+                            StackFingerprint.fromServerPacket(packet.items().get(index)),
+                            ScreenOwnershipSignals.global().currentTick());
+                }
+            }
+        }
         rememberInventory("container_content", -1, relevant);
     }
 

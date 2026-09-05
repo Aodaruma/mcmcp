@@ -84,6 +84,10 @@ public final class ActionDslOperationManifest {
                     caps("inventory_transfer"),
                     ref("/operation_ref", "operation_ref", "required")),
             fixed(ActionDsl.BrewKnownPotionBatch.class, "brew_known_potion_batch", caps("camera", "inventory_transfer")),
+            fixed(ActionDsl.RemoveVisibleFrameItem.class, "remove_visible_frame_item", caps("camera", "entity_attack"),
+                    ref("/entity_ref", "frame_display_entity_ref", "required")),
+            fixed(ActionDsl.InsertVisibleFrameItem.class, "insert_visible_frame_item", caps("camera", "item_use"),
+                    ref("/entity_ref", "frame_display_entity_ref", "required")),
             fixed(ActionDsl.CollectVisibleItem.class, "collect_visible_item", caps("movement")),
             fixed(ActionDsl.CollectVisibleItemBatch.class, "collect_visible_item_batch", caps("movement")),
             fixed(ActionDsl.CastKnownFishingRod.class, "cast_known_fishing_rod", caps("camera", "item_use")),
@@ -151,6 +155,12 @@ public final class ActionDslOperationManifest {
 
     public static List<Map<String, Object>> referenceDescriptorPayload() {
         return List.of(
+                referenceDescriptor(
+                        "frame_display_entity_ref",
+                        "agent_get_observation",
+                        "/records/*/{entity_ref,frame_display}",
+                        List.of("remove_visible_frame_item", "insert_visible_frame_item"),
+                        "current_visible_front_face_with_item_rotation_and_jit_recheck"),
                 referenceDescriptor(
                         "container_label_entity_ref",
                         "agent_get_observation",

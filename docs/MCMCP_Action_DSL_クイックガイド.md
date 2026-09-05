@@ -133,9 +133,25 @@ Actionの既存上限256ノードに収まる検査結果をすべて保持し�
 
 `minimum_inventory_count`（最大2,304）と`minimum_container_count`（最大3,456）は移送先の**絶対個数**です。例えば既に2,464個ある大チェストへ2個を追加する場合、storeのgoalは2,466、今回の`max_transfer_count`は2です。`max_stacks`が2なら予約は660 ticks・33,000 ms・360 camera degrees・4 interactionsです。一般式は`600+60*(max_stacks-1)` ticks、その50倍ms、`2+max_stacks` interactionsです。
 
+移送のgoalとeffect個数は指定した`stack_policy`に一致するstackだけを数えます。一方、inspectと通常inventory一覧は成分を区別しないitem ID合計です。ID合計で整理台帳を管理する場合は`item_id_any_components`を使用してください（移送時の成分は維持します）。`default_components_only`のeffect個数でID合計全体を上書きすると、名前付き・耐久値違い等の残量を消してしまいます。
+
 途中停止では、serverで移送を確認できた分を`CONFIRMED`、結果不明な最後のクリックを`UNKNOWN`として別々に返します。失敗したActionにも確認済みの移送が含まれるため、effectsを一度だけ反映し、UNKNOWNがある場合は再検査してから計画してください。自動補充や選択外stack・成分の変化を検知した場合、残りのクリックを続けません。
 
-Take/store can move up to 14 whole matching stacks in one owned menu. `max_transfer_count` limits this batch; the minimum count is an absolute destination goal. Each click requires fresh server confirmation, followed by one final reopen. Apply confirmed effects once, and reinspect any unknown result before retrying.
+Take/store can move up to 14 whole matching stacks in one owned menu. `max_transfer_count` limits this batch; the minimum count is an absolute destination goal. Each click requires fresh server confirmation, followed by one final reopen. Apply confirmed effects once, and reinspect any unknown result before retrying. Transfer counts follow `stack_policy`, while inspection totals combine every component variant of an item ID. Use `item_id_any_components` for an item-ID ledger; never overwrite that total with a `default_components_only` count.
+
+### 額縁の表示品 / Item-frame display
+
+正面が見えるVanilla額縁・輝く額縁には、`visible_entity.frame_display`として`item`、`rotation`、`aim_point`が表示されます。`item:null`は観測した空の額縁、`frame_display`自体がない場合は未確認です。大チェストに付いた額縁でも、`container_label`とは独立して扱えます。
+
+表示品の差し替えは次の順で行います。各frame操作は**単独Action**で、400 ticks・20,000 ms・360 camera degrees・1 interactionを予約し、movement/breaks/placementsは0です。
+
+1. 現在の`entity_ref`と表示品を`remove_visible_frame_item`の`entity_ref` / `expected_item`へコピーします。空のhotbar slotを選び、通常攻撃を1回だけ行います。成功は「同じ額縁の表示が空になった」ことの確認です。
+2. 再観測し、落ちた旧アイテムを既存の`collect_visible_item`で回収します。表示を外せたことだけで回収済みとは扱いません。
+3. 空の額縁を再観測し、`insert_visible_frame_item`の`entity_ref`と新しい`item`を指定します。既存hotbarから1個を入れ、serverの表示更新と在庫1個減少を確認します。同IDで異なる成分のhotbar候補がある場合は選択を拒否します。
+
+元の表示回転は維持し、空でない額縁への挿入や空の額縁への攻撃は実行しません。結果不明の操作を再送しないでください。他プレイヤーが同時に変更すると、通常のserver操作との競合により本体破壊や回転が起こる可能性があるため、変更後の状態を確認して停止します。server側の設定等で旧品が落ちない場合もあります。
+
+Frame changes use three separate steps: remove the observed item, reobserve and collect its drop, then insert one hotbar item into the newly observed empty frame. Removal success does not imply collection. Each frame Action sends at most one normal interaction, preserves the observed rotation, and requires fresh server confirmation. Missing display evidence is unknown, not empty. Never blindly retry an unknown result; concurrent players can still race an ordinary server interaction.
 
 `wait_ticks`は1〜15,000 client ticksの有限待機です。待機中もAction deadline、Esc、MCP OFF、world / screen / health / threat等の安全gateを維持し、条件を無視するsleepにはなりません。状態条件を待つ場合は、待機後に必ず再観測してから次のmutationを開始します。
 

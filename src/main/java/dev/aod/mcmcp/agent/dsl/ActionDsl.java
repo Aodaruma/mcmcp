@@ -47,6 +47,7 @@ public final class ActionDsl {
             OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
             StoreKnownContainerStack,
+            RemoveVisibleFrameItem, InsertVisibleFrameItem,
             CraftKnownRecipe,
             SmeltKnownRecipe,
             OperateKnownMenu,
@@ -575,6 +576,24 @@ public final class ActionDsl {
                 int minimumInventoryCount) {
             this(id, target, expectedBlock, item, stackPolicy, minimumInventoryCount,
                     Optional.empty());
+        }
+    }
+
+    /** Removes one displayed item from a visible Vanilla frame; pickup is a separate Action. */
+    public record RemoveVisibleFrameItem(String id, String entityRef, String expectedItem) implements Node {
+        public RemoveVisibleFrameItem {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(entityRef, "entityRef");
+            Objects.requireNonNull(expectedItem, "expectedItem");
+        }
+    }
+
+    /** Inserts one held item into a currently visible empty Vanilla frame without rotating it. */
+    public record InsertVisibleFrameItem(String id, String entityRef, String item) implements Node {
+        public InsertVisibleFrameItem {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(entityRef, "entityRef");
+            Objects.requireNonNull(item, "item");
         }
     }
 

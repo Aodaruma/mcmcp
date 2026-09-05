@@ -136,6 +136,9 @@ public final class ActionDslValidator {
         }
         validateTerminalOwnedMenuPlacement(program.body());
         validateTerminalClearPlacement(program.body());
+        validateExclusiveNode(program.body(), node -> node instanceof ActionDsl.RemoveVisibleFrameItem
+                        || node instanceof ActionDsl.InsertVisibleFrameItem,
+                "frame item operation must be the only top-level Action node");
         validateExclusiveNode(program.body(), node -> node instanceof ActionDsl.PillarUpKnown,
                 "pillar_up_known must be the only top-level Action node");
         validateExclusiveNode(program.body(),
@@ -810,6 +813,26 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
             return 1;
         }
+        if (node instanceof ActionDsl.RemoveVisibleFrameItem remove) {
+            requirePattern(remove.entityRef(), OPAQUE_REFERENCE, path + ".entity_ref");
+            requireResourceLocation(remove.expectedItem(), path + ".expected_item");
+            if ("minecraft:air".equals(remove.expectedItem())) {
+                throw invalid(path + ".expected_item must not be air");
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.ENTITY_ATTACK);
+            return 1;
+        }
+        if (node instanceof ActionDsl.InsertVisibleFrameItem insert) {
+            requirePattern(insert.entityRef(), OPAQUE_REFERENCE, path + ".entity_ref");
+            requireResourceLocation(insert.item(), path + ".item");
+            if ("minecraft:air".equals(insert.item())) {
+                throw invalid(path + ".item must not be air");
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.ITEM_USE);
+            return 1;
+        }
         if (node instanceof ActionDsl.CollectVisibleItem collect) {
             validateWorldPosition(collect.target(), path + ".target");
             requireResourceLocation(collect.displayedItem(), path + ".displayed_item");
@@ -950,6 +973,8 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.InspectKnownContainer
                     || node instanceof ActionDsl.TakeKnownContainerStack
                     || node instanceof ActionDsl.StoreKnownContainerStack
+                    || node instanceof ActionDsl.RemoveVisibleFrameItem
+                    || node instanceof ActionDsl.InsertVisibleFrameItem
                     || node instanceof ActionDsl.CraftKnownRecipe
                     || node instanceof ActionDsl.SmeltKnownRecipe
                     || node instanceof ActionDsl.OperateKnownMenu

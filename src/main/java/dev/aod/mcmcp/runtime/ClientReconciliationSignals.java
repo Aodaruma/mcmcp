@@ -93,6 +93,11 @@ public final class ClientReconciliationSignals {
         record(level, SessionChannel::worldMutation);
     }
 
+    /** Rendered entity content changes advance the audit clock without invalidating block rays. */
+    public void onEntityDisplayMutation(ClientLevel level) {
+        record(level, SessionChannel::entityDisplayMutation);
+    }
+
     public void onBlockMutation(ClientLevel level, BlockPos position) {
         Objects.requireNonNull(position, "position");
         record(level, channel -> channel.unknownBlockMutation(position));
@@ -245,13 +250,17 @@ public final class ClientReconciliationSignals {
             }
             Objects.requireNonNull(kind, "kind");
             Objects.requireNonNull(navigationImpact, "navigationImpact");
-            if (kind != Kind.BLOCK && navigationImpact != NavigationImpact.LOCAL) {
+            if (kind != Kind.BLOCK && kind != Kind.ENTITY_DISPLAY
+                    && navigationImpact != NavigationImpact.LOCAL) {
                 throw new IllegalArgumentException(
                         "chunk/all mutations must remain navigation-relevant");
             }
+            if (kind == Kind.ENTITY_DISPLAY && navigationImpact != NavigationImpact.NONE) {
+                throw new IllegalArgumentException("entity display mutations do not change block navigation");
+            }
         }
 
-        public enum Kind { BLOCK, CHUNK, ALL }
+        public enum Kind { BLOCK, CHUNK, ALL, ENTITY_DISPLAY }
     }
 
     public enum NavigationImpact { LOCAL, NONE }
@@ -333,6 +342,10 @@ public final class ClientReconciliationSignals {
 
         void worldMutation() {
             worldMutation(WorldMutation.Kind.ALL, 0, 0, 0);
+        }
+
+        void entityDisplayMutation() {
+            worldMutation(WorldMutation.Kind.ENTITY_DISPLAY, 0, 0, 0, NavigationImpact.NONE);
         }
 
         void worldMutation(WorldMutation.Kind kind, int x, int y, int z) {

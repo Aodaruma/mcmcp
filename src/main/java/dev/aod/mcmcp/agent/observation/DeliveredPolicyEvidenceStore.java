@@ -18,15 +18,19 @@ import java.util.function.Function;
  * Bounded, session-local memory of static visual evidence actually delivered to the MCP client.
  *
  * <p>This is not a hidden-world cache. Only {@link ObservationRecord.VisibleSurface} records from
- * successful {@code agent_get_observation} pages enter the store. Dynamic entities, hazards,
- * traversability, sounds, unknown boundaries, and records on undisclosed pages are never retained
- * here. Copyable state/item identities receive opaque session refs only after delivery
+ * successful {@code agent_get_observation} pages enter the static store. Frame-display identity
+ * witnesses are retained separately only to gate matching current entities after delivery; they
+ * never fill a sampling gap or extend a dynamic record's lifetime. Other dynamic entities, hazards,
+ * traversability, sounds, unknown boundaries, and records on undisclosed pages are not retained.
+ * Copyable state/item identities receive opaque session refs only after delivery
  * confirmation; unlike coordinate evidence, those identities have no time TTL. Runtime admission
  * still applies the current session, visual-revision, exact-target, observer-pose, reach, commit,
  * JIT, ray, and server-acknowledgement fences.</p>
  */
 public final class DeliveredPolicyEvidenceStore {
     public static final int MAX_RETAINED_SURFACES = 2_048;
+    public static final int MAX_RETAINED_FRAME_DISPLAYS = 128;
+    public static final long FRAME_DISPLAY_DELIVERY_MAX_AGE_TICKS = 100;
     public static final int MAX_RETAINED_PLACEMENT_STATES = 512;
     public static final Duration SURFACE_IDLE_TIMEOUT = Duration.ofSeconds(60);
     public static final int MAX_PENDING_DELIVERIES = 16;
@@ -35,6 +39,7 @@ public final class DeliveredPolicyEvidenceStore {
     private final LongSupplier nanoTime;
     private final Supplier<UUID> receiptIds;
     private final LinkedHashMap<SurfaceKey, Entry> surfaces = new LinkedHashMap<>();
+    private final LinkedHashMap<String, FrameAuthorization> frameDisplays = new LinkedHashMap<>();
     private final LinkedHashMap<UUID, PendingDelivery> pending = new LinkedHashMap<>();
     private final LinkedHashMap<PlacementStateKey, String> placementRefs =
             new LinkedHashMap<>();
@@ -144,6 +149,17 @@ public final class DeliveredPolicyEvidenceStore {
 
     private void recordDelivered(ObservationPage page, long now) {
         for (ObservationRecord record : page.records()) {
+            if (record instanceof ObservationRecord.VisibleEntity entity
+                    && entity.frameDisplay() != null) {
+                FrameAuthorization previous = frameDisplays.get(entity.entityRef());
+                if (previous == null || previous.entity().observedTick() <= entity.observedTick()) {
+                    frameDisplays.remove(entity.entityRef());
+                    frameDisplays.put(entity.entityRef(), new FrameAuthorization(entity, now));
+                    while (frameDisplays.size() > MAX_RETAINED_FRAME_DISPLAYS) {
+                        frameDisplays.remove(frameDisplays.keySet().iterator().next());
+                    }
+                }
+            }
             if (!(record instanceof ObservationRecord.VisibleSurface surface)) {
                 continue;
             }
@@ -183,6 +199,8 @@ public final class DeliveredPolicyEvidenceStore {
                     current.add(key);
                     records.add(dynamicView(delivered.surface(), surface));
                 }
+            } else if (record instanceof ObservationRecord.VisibleEntity entity) {
+                records.add(authorizeFrameDisplay(entity, latest.frameCompletedTick()));
             } else {
                 records.add(record);
             }
@@ -236,7 +254,12 @@ public final class DeliveredPolicyEvidenceStore {
             // were heard again, and discard those now outside the ordinary 600-tick TTL.
             var iterator = records.listIterator();
             while (iterator.hasNext()) {
-                if (iterator.next() instanceof ObservationRecord.SoundClue sound) {
+                ObservationRecord record = iterator.next();
+                if (record instanceof ObservationRecord.VisibleEntity entity) {
+                    // Static refresh may advance the composite clock. It never renews the
+                    // delivery authorization or timestamps of a dynamic frame display.
+                    iterator.set(authorizeFrameDisplay(entity, completedTick));
+                } else if (record instanceof ObservationRecord.SoundClue sound) {
                     long age = completedTick - sound.lastObservedTick();
                     if (age > 600) {
                         iterator.remove();
@@ -252,6 +275,31 @@ public final class DeliveredPolicyEvidenceStore {
                     frame.configuredVisualRadiusBlocks(), frame.visibleEntitiesTruncated(),
                     frame.recentSoundCluesTruncated(), records);
         });
+    }
+
+    private ObservationRecord.VisibleEntity authorizeFrameDisplay(
+            ObservationRecord.VisibleEntity current, long completedTick) {
+        if (current.frameDisplay() == null) return current;
+        FrameAuthorization authorization = frameDisplays.get(current.entityRef());
+        if (authorization != null) {
+            var delivered = authorization.entity();
+            long age = completedTick - delivered.observedTick();
+            if (age >= 0 && age <= FRAME_DISPLAY_DELIVERY_MAX_AGE_TICKS
+                    && current.observedTick() >= delivered.observedTick()
+                    && current.worldRevision() >= delivered.worldRevision()
+                    && current.entityRef().equals(delivered.entityRef())
+                    && current.entityType().equals(delivered.entityType())
+                    && current.position().equals(delivered.position())
+                    && current.aabb().equals(delivered.aabb())
+                    && current.frameDisplay().equals(delivered.frameDisplay())) {
+                return current;
+            }
+        }
+        return new ObservationRecord.VisibleEntity(
+                current.entityType(), current.displayedItem(), current.entityRef(),
+                current.position(), current.velocity(), current.aabb(), current.hazardClass(),
+                current.eyeOrigin(), current.observedTick(), current.worldRevision(),
+                current.containerLabel(), null);
     }
 
     /**
@@ -280,6 +328,7 @@ public final class DeliveredPolicyEvidenceStore {
     /** Clears the complete evidence boundary at a world-session transition. */
     public synchronized void clear() {
         surfaces.clear();
+        frameDisplays.clear();
         pending.clear();
         placementRefs.clear();
         placementStates.clear();
@@ -331,6 +380,8 @@ public final class DeliveredPolicyEvidenceStore {
     }
 
     private void purgeExpired(long now) {
+        frameDisplays.values().removeIf(entry ->
+                elapsed(now, entry.deliveredAtNanos()) >= SURFACE_IDLE_TIMEOUT.toNanos());
         long timeout = SURFACE_IDLE_TIMEOUT.toNanos();
         surfaces.entrySet().removeIf(entry -> elapsed(now, entry.getValue().deliveredNanos())
                 >= timeout);
@@ -338,6 +389,8 @@ public final class DeliveredPolicyEvidenceStore {
         pending.entrySet().removeIf(entry -> elapsed(now, entry.getValue().preparedNanos())
                 >= pendingTimeout);
     }
+
+    private record FrameAuthorization(ObservationRecord.VisibleEntity entity, long deliveredAtNanos) { }
 
     private static long elapsed(long now, long start) {
         return now - start;

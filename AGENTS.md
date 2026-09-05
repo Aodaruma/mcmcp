@@ -21,6 +21,7 @@
 - 配送済みの静的表面がrevision更新で失効した場合、planning・予約・JITで同じ面の既知ray hitへ現在のeyeから通常の全周観測policyで再raycastできる。位置・面・block・公開state/item・shapeの一致を必須とし、配送TTL、fog、距離、遮蔽、unload、revision barrierを緩めない。内部再観測を公開frameの書き換えや未配送の対象・動的情報の認可へ転用しない。
 - Actionは有限budget、停止条件、Esc緊急停止、監査traceを持ち、DSL nodeの順を変えない。同一targetの照準・経路失敗は有限回で再配置、replan、またはterminal failureへ進む。配送ACKはresponse受領だけを確認し、安全preflightは予約直前と実行開始直前に行う。
 - terminal resultを公開する前にAgent所有の入力・使用/破壊状態・追跡velocityを解放する。解放未確認なら有限retryしてOFFへlockし、最初のterminal intentを保持したまま、解放確認後に同じ結果を公開する。
+- container cleanupの期限切れは所有権を破棄する証拠にしない。期限後は新しいserver ACKまたは画面・menu・cursor・操作境界の変化がある場合だけ既存の解放証拠を再検証し、同じ失敗境界でcloseを反復しない。FAILED画面の破棄前に同一ownerのserver空cursor証拠を保持する。cleanup待機中もcancel要求へ応答し、新規Actionを拒否したまま、元例外と初回faultを記録する。
 - Action不在の通常tickでは入力解放を繰り返さない。終了処理と未完了の解放retryに限定し、待機中の利用者の弓・飲食・採掘を中断しない。
 - UIでONにした操作leaseは自動失効させない。通常Actionの成功・失敗と実行中のEscは入力を解放して`READY`へ戻し、MCP ONは維持する。`READY`中のEscは通常の画面操作とし、明示UI OFF、world境界、shutdown、入力解放安全faultだけが`OFF`へ遷移できる。
 - semantic / block mutationのuniversal safety gateは、OS window focusとmouse grabを要求しない。一方、Minecraftのpause、予期しないScreen / overlay、Survival、生存・health、可視threat、primitive固有のstationary条件、server reconciliationは省略せず、操作直前まで再検証する。
@@ -28,6 +29,7 @@
 - 正規inspectの全品目はserver同期・所有画面cleanup確認後にimmutable結果として保持する。Actionの既存256実行ノード上限内では検査結果を破棄せず、agent_get_actionの明示オプションでコンテナ単位にページングする。trace要約を完全在庫の代用にせず、空・未確認・履歴失効を区別する。履歴結果を未開封コンテナの観測や再操作の認可へ転用しない。
 - containerを開くための安全な手持ちはAIMING中とnormal-use直前に検証する。送信後のOPENINGでは手持ち中身を再検査せず、画面・slot所有権とserver full-content検証を継続する。自動補充等で送り元減少と送り先増加が一致しない場合、転送成功や増殖と断定しない。読み戻し済みのbefore/after個数だけをUNKNOWN effectへ保持し、未読の初期0と観測した0を区別する。次の転送前に読み戻し済みフラグをresetし、blind retryしない。
 - containerまとめ移送は初回server snapshotのsource slot・item/componentsで計画を固定し、最大14 whole stacks / 896個に制限する。各通常QUICK_MOVEのfresh server slot差分を待ち、次tick以降に全slot・成分・全量容量・残予算・所有権を再検証して次へ進む。最終readback openはbatch全体で1回とし、途中停止時は確認済みprefixと未確認の末尾clickを別effectにする。補充stackの再選択、未知結果の再送、cleanup retryでのeffect重複をしない。絶対goalと今回移送量を混同せず、take goalは2,304、store goalは3,456と実menu容量で制限する。
+- 額縁表示品のremove/insertは単独Actionの各1回操作に限定する。正面fog/LOSを通ったframe_displayを配送ACKで認可し、ref/type/位置/AABB/item/rotation/aim点が一致する最新観測でだけ使用する。静的表面の再観測で動的entityのTTLを延長しない。通常reach/crosshair、空手remove・空表示insert、同一frame本体・回転不変、packet由来の表示ACK（insertは選択slotの1個消費ACKも）を確認する。表示除去とdrop回収を混同せず、回収は再観測後に別Actionで行う。未知結果や再計画でattack/useを再送しない。
 - fresh評価ではT0前に内部evaluation-turn leaseを獲得し、推論を含むturn全体でphysical inputを隔離する。推論中はcyan、Action / recovery中はyellowの外縁を表示する。Esc、UI OFF、world変更、shutdown、runner process終了、control stream切断、deadlineでは、Action停止、入力解放確認、lease terminalの順に処理する。Escによる評価runは失敗とするが、安全に解放できた通常EscではMCP ONと`READY`を維持する。
 - 物理入力隔離中はVanillaの`KeyMapping`をreleaseし、隔離のfalling edgeでは現在の物理keyboard状態を同一client tick内に1回再同期する。Agent ownerなしだけを物理入力handoff完了の代用にせず、同tick内のlease取得・解除もruntime処理前後の遷移確認で閉じる。
 - block mutationの成功判定は、作物の`age`やfarmlandの`moisture`等の正当な時間発展を許す意味的postconditionにする。破壊・収穫はblock消失だけで成功とせず、安全経路での物理pickupと対象inventoryの絶対個数増加を確認する。

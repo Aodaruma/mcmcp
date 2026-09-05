@@ -13,6 +13,7 @@
     "client.EntityAgentCollisionMixin",
     "client.FogRendererMixin",
     "client.EntityCollisionInvoker",
+    "client.ItemFrameDataAccessor",
     "client.KeyboardHandlerMixin",
     "client.LivingEntityAgentMovementMixin",
     "client.LocalPlayerMovementTickMixin",

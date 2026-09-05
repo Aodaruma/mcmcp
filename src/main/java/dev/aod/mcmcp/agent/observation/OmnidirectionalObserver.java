@@ -22,6 +22,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.NeutralMob;
@@ -398,7 +399,7 @@ public final class OmnidirectionalObserver {
         return Optional.of(completed);
     }
 
-    private RayTrace traceMinecraftRay(
+    private static RayTrace traceMinecraftRay(
             ClientLevel level,
             LocalPlayer player,
             DirectionVector direction,
@@ -545,7 +546,20 @@ public final class OmnidirectionalObserver {
                 var entityType = new ResourceId(
                         BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString());
                 String entityRef = entity instanceof Player ? null : entityRefs.issue(entity);
-                ObservationRecord.ContainerLabel containerLabel = entityRef == null ? null
+                ObservationRecord.FrameDisplay frameDisplay = null;
+                if (entityRef != null && entity instanceof ItemFrame frame
+                        && ("minecraft:item_frame".equals(entityType.value())
+                                || "minecraft:glow_item_frame".equals(entityType.value()))) {
+                    var aim = frameDisplayAim(box, frame.getDirection(), sample,
+                            point -> clearEntityRay(level, player, sample, point));
+                    if (aim.isPresent()) {
+                        // Read content only after the displayed face passes the visual policy.
+                        frameDisplay = new ObservationRecord.FrameDisplay(
+                                frame.getItem().isEmpty() ? null : displayedItem(frame.getItem()),
+                                frame.getRotation(), worldPosition(sample.dimension(), aim.orElseThrow()));
+                    }
+                }
+                ObservationRecord.ContainerLabel containerLabel = frameDisplay == null ? null
                         : ContainerLabelResolver.resolve(level, entity, sample.dimension().value())
                                 .filter(label -> surfaces.containsKey(new SurfaceKey(
                                         label.containerPosition(), label.attachmentFace())))
@@ -561,7 +575,8 @@ public final class OmnidirectionalObserver {
                         sample.eyeOrigin(),
                         sample.observedTick(),
                         sample.worldRevision(),
-                        containerLabel));
+                        containerLabel,
+                        frameDisplay));
             } catch (RuntimeException | LinkageError ignored) {
                 // A malformed or custom entity is omitted rather than exposing unvalidated state.
                 truncated = true;
@@ -697,17 +712,66 @@ public final class OmnidirectionalObserver {
             LocalPlayer player,
             AABB target,
             TickSample sample) {
+        return hasLineOfSight(target, sample,
+                point -> clearEntityRay(level, player, sample, point));
+    }
+
+    private static boolean clearEntityRay(
+            ClientLevel level, LocalPlayer player, TickSample sample, Vec3 point) {
+        Vec3 delta = point.subtract(vec3(sample.eyeOrigin()));
+        double distance = delta.length();
+        if (distance == 0.0D) return true;
+        var direction = new DirectionVector(
+                delta.x / distance, delta.y / distance, delta.z / distance);
+        return traceMinecraftRay(level, player, direction, sample, distance).outcome()
+                == RayOutcome.MISS;
+    }
+
+    /** JIT view for an already resolved frame; delivery/ref authority remains the caller's gate. */
+    public static Optional<ObservationRecord.FrameDisplay> currentFrameDisplay(
+            ClientLevel level, LocalPlayer player, ItemFrame frame,
+            long clientTick, long worldRevision, double configuredRadiusBlocks) {
+        if (level == null || player == null || frame == null || player.level() != level
+                || frame.level() != level || frame.isRemoved() || !frame.isAlive()
+                || frame.isInvisibleTo(player) || !Double.isFinite(configuredRadiusBlocks)
+                || configuredRadiusBlocks < MIN_RADIUS_BLOCKS
+                || configuredRadiusBlocks > MAX_RADIUS_BLOCKS) return Optional.empty();
+        String type = BuiltInRegistries.ENTITY_TYPE.getKey(frame.getType()).toString();
+        if (!"minecraft:item_frame".equals(type) && !"minecraft:glow_item_frame".equals(type)) {
+            return Optional.empty();
+        }
+        var fog = ClientFogDistanceSignals.current(level, player, player.tickCount);
+        if (fog.isEmpty()) return Optional.empty();
+        var dimension = new ResourceId(level.dimension().identifier().toString());
+        var sample = new TickSample(dimension, worldPosition(dimension, player.getEyePosition()),
+                clientTick, worldRevision, worldRevision,
+                Math.min(configuredRadiusBlocks, fog.getAsDouble()),
+                fog.getAsDouble() < configuredRadiusBlocks
+                        ? UnknownBoundaryReason.FOG_LIMIT : UnknownBoundaryReason.RADIUS_LIMIT);
+        return frameDisplayAim(frame.getBoundingBox(), frame.getDirection(), sample,
+                point -> clearEntityRay(level, player, sample, point)).map(point ->
+                new ObservationRecord.FrameDisplay(
+                        frame.getItem().isEmpty() ? null : displayedItem(frame.getItem()),
+                        frame.getRotation(), worldPosition(dimension, point)));
+    }
+
+    /** Seeing a frame's edge or back does not disclose its displayed item or rotation. */
+    static Optional<Vec3> frameDisplayAim(
+            AABB box, Direction facing, TickSample sample, Predicate<Vec3> clearRay) {
+        Vec3 center = box.getCenter();
+        Vec3 normal = new Vec3(facing.getStepX(), facing.getStepY(), facing.getStepZ());
+        double depth = switch (facing.getAxis()) {
+            case X -> box.getXsize();
+            case Y -> box.getYsize();
+            case Z -> box.getZsize();
+        };
+        Vec3 front = center.add(normal.scale(depth * 0.5D));
         Vec3 eye = vec3(sample.eyeOrigin());
-        return hasLineOfSight(target, sample, point -> {
-            Vec3 delta = point.subtract(eye);
-            double distance = delta.length();
-            var direction = new DirectionVector(
-                    delta.x / distance,
-                    delta.y / distance,
-                    delta.z / distance);
-            RayTrace trace = traceMinecraftRay(level, player, direction, sample, distance);
-            return trace.outcome() == RayOutcome.MISS;
-        });
+        boolean visible = eye.subtract(front).dot(normal) > 0.0D
+                && front.distanceToSqr(eye)
+                        <= sample.effectiveRadiusBlocks() * sample.effectiveRadiusBlocks()
+                && clearRay.test(front);
+        return visible ? Optional.of(front) : Optional.empty();
     }
 
     static boolean hasLineOfSight(AABB target, TickSample sample, Predicate<Vec3> clearRay) {
