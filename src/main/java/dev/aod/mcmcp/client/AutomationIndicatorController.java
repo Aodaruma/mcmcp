@@ -10,6 +10,7 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.gui.screens.ConfirmScreen;
+import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.InputWithModifiers;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -20,6 +21,7 @@ import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 
 import java.time.Duration;
+import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
@@ -53,6 +55,7 @@ public final class AutomationIndicatorController {
     private IndicatorButton indicatorButton;
     private AutomationUiSnapshot.State lastObservedState = AutomationUiSnapshot.State.OFF;
     private long agentNoticeDeadlineNanos;
+    private boolean setupNoticeShown;
 
     public AutomationIndicatorController(McmcpRuntime runtime) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
@@ -77,10 +80,36 @@ public final class AutomationIndicatorController {
         indicatorScreen = screen;
         indicatorButton = button;
         event.addListener(button);
+        if (screen instanceof PauseScreen) {
+            int setupWidth = Math.min(120, Math.max(1, button.getX() - 2 * MIN_LEFT_MARGIN));
+            int setupX = button.getX() - setupWidth - 4;
+            if (setupX >= MIN_LEFT_MARGIN) {
+                var setup = Button.builder(
+                                Component.translatable("gui.mcmcp.setup.open"),
+                                ignored -> openSetupChooser(screen))
+                        .bounds(setupX, button.getY(), setupWidth, BUTTON_HEIGHT)
+                        .build();
+                setup.active = runtime.automationUiSnapshot().state()
+                        == AutomationUiSnapshot.State.OFF;
+                event.addListener(setup);
+            }
+        }
     }
 
     static boolean statusButtonVisible(boolean worldLoaded, boolean playerPresent) {
         return worldLoaded && playerPresent;
+    }
+
+    public void onWorldJoined(Minecraft minecraft) {
+        Objects.requireNonNull(minecraft, "minecraft");
+        if (setupNoticeShown || minecraft.player == null) return;
+        setupNoticeShown = true;
+        Path userHome = Path.of(System.getProperty("user.home", "."));
+        if (!McpClientAutoConfigurator.anyClientConfigured(
+                userHome, McmcpClientConfig.port())) {
+            minecraft.player.sendOverlayMessage(
+                    Component.translatable("gui.mcmcp.setup.first_notice"));
+        }
     }
 
     /**
@@ -181,11 +210,121 @@ public final class AutomationIndicatorController {
     private void press(IndicatorButton button) {
         var snapshot = runtime.automationUiSnapshot();
         switch (pressAction(snapshot.state(), canEnable(Minecraft.getInstance(), snapshot))) {
-            case ENABLE -> runtime.enableAutomationFromUi();
+            case ENABLE -> enableOrRequestMultiplayerConsent();
             case DISABLE -> runtime.disableAutomationFromUi();
             case NONE -> { }
         }
         refresh(button, System.nanoTime());
+    }
+
+    private void enableOrRequestMultiplayerConsent() {
+        var minecraft = Minecraft.getInstance();
+        var server = minecraft.getCurrentServer();
+        Path allowlist = multiplayerAllowlist(minecraft);
+        if (!minecraft.isMultiplayerServer()
+                || server != null && MultiplayerAllowlist.allows(allowlist, server.ip)) {
+            runtime.enableAutomationFromUi(minecraft);
+            return;
+        }
+        if (server == null) return;
+        Screen parent = minecraft.gui.screen();
+        String address = server.ip;
+        minecraft.setScreenAndShow(new ConfirmScreen(
+                accepted -> {
+                    var current = minecraft.getCurrentServer();
+                    if (!accepted) {
+                        minecraft.setScreenAndShow(parent);
+                    } else if (!minecraft.isMultiplayerServer()
+                            || current == null
+                            || !address.equalsIgnoreCase(current.ip)
+                            || !MultiplayerAllowlist.remember(allowlist, address)) {
+                        minecraft.setScreenAndShow(parent);
+                        overlay(minecraft, Component.translatable(
+                                "gui.mcmcp.multiplayer.write_failed"));
+                    } else {
+                        runtime.enableAutomationFromUi(minecraft);
+                        minecraft.setScreenAndShow(parent);
+                    }
+                },
+                Component.translatable("gui.mcmcp.multiplayer.title"),
+                Component.translatable("gui.mcmcp.multiplayer.message", address),
+                Component.translatable("gui.mcmcp.multiplayer.remember_and_enable"),
+                Component.translatable("gui.mcmcp.multiplayer.cancel")));
+    }
+
+    static Path multiplayerAllowlist(Minecraft minecraft) {
+        return minecraft.gameDirectory.toPath().toAbsolutePath().normalize()
+                .resolve("config").resolve("mcmcp").resolve("allowed-servers.json");
+    }
+
+    private void openSetupChooser(Screen parent) {
+        var minecraft = Minecraft.getInstance();
+        if (runtime.automationUiSnapshot().state() != AutomationUiSnapshot.State.OFF) {
+            overlay(minecraft, Component.translatable("gui.mcmcp.setup.disable_first"));
+            return;
+        }
+        minecraft.setScreenAndShow(new ConfirmScreen(
+                codex -> openSetupConfirmation(
+                        codex ? McpClientAutoConfigurator.Target.CODEX
+                                : McpClientAutoConfigurator.Target.CLAUDE_CODE,
+                        parent),
+                Component.translatable("gui.mcmcp.setup.title"),
+                Component.translatable("gui.mcmcp.setup.choose"),
+                Component.translatable("gui.mcmcp.setup.codex"),
+                Component.translatable("gui.mcmcp.setup.claude_code")) {
+            @Override
+            public void onClose() {
+                minecraft.setScreenAndShow(parent);
+            }
+        });
+    }
+
+    private void openSetupConfirmation(
+            McpClientAutoConfigurator.Target target, Screen parent) {
+        var minecraft = Minecraft.getInstance();
+        String targetName = target == McpClientAutoConfigurator.Target.CODEX
+                ? "Codex" : "Claude Code";
+        Path configPath = Path.of(System.getProperty("user.home", "."))
+                .resolve(target == McpClientAutoConfigurator.Target.CODEX
+                        ? ".codex/config.toml" : ".claude.json")
+                .toAbsolutePath().normalize();
+        minecraft.setScreenAndShow(new ConfirmScreen(
+                accepted -> {
+                    if (!accepted) {
+                        openSetupChooser(parent);
+                        return;
+                    }
+                    var result = McpClientAutoConfigurator.configure(
+                            target,
+                            minecraft.gameDirectory.toPath(),
+                            Path.of(System.getProperty("user.home", ".")),
+                            McmcpClientConfig.port());
+                    minecraft.setScreenAndShow(parent);
+                    overlay(minecraft, Component.translatable(
+                            result.success()
+                                    ? "gui.mcmcp.setup.success"
+                                    : "gui.mcmcp.setup.failure",
+                            targetName,
+                            result.success()
+                                    ? Component.translatable("gui.mcmcp.setup.restart_required")
+                                    : result.code()));
+                },
+                Component.translatable("gui.mcmcp.setup.confirm_title", targetName),
+                Component.translatable(
+                        "gui.mcmcp.setup.confirm_message", targetName, configPath),
+                Component.translatable("gui.mcmcp.setup.confirm"),
+                Component.translatable("gui.mcmcp.setup.back")) {
+            @Override
+            public void onClose() {
+                openSetupChooser(parent);
+            }
+        });
+    }
+
+    private static void overlay(Minecraft minecraft, Component message) {
+        if (minecraft.player != null) {
+            minecraft.player.sendOverlayMessage(message);
+        }
     }
 
     private void refresh(IndicatorButton button, long nowNanos) {

@@ -19,6 +19,7 @@ class McmcpClientConfigTest {
                         "hud_offset_x",
                         "hud_offset_y");
         assertThat(values).doesNotContainKey("ready_timeout_seconds");
+        assertThat(values).doesNotContainKey("multiplayer_default");
         assertThat(((ModConfigSpec.BooleanValue) values.get("endpoint_enabled")).getDefault())
                 .isEqualTo(true);
         assertThat(((ModConfigSpec.IntValue) values.get("port")).getDefault())

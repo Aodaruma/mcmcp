@@ -1974,8 +1974,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private static boolean multiplayerPolicyAllows(Minecraft minecraft) {
         if (!minecraft.isMultiplayerServer()) return true;
         var server = minecraft.getCurrentServer();
-        return McmcpClientConfig.multiplayerDefault()
-                && server != null
+        return server != null
                 && MultiplayerAllowlist.allows(
                         minecraft.gameDirectory.toPath()
                                 .resolve("config/mcmcp/allowed-servers.json"),

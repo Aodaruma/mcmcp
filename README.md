@@ -19,7 +19,7 @@ Phase 1のControl / Navigation MVPを終え、Phase 2の最初のsliceである�
 - Actionは内部で`UNCONFIRMED`として予約され、HTTP responseの送信成功後にだけconfirmされます。未confirm中と実行直前再検証の合格前は入力を出しません。
 - 溶岩、溺水、危険落下は安全状態が連続確認されるまでrecovery latchを維持し、cactus、wither rose、成長済みsweet berry bushを`contact_damage`として扱います。
 - program全体に加え、repeatやreplanをまたぐ各logical primitive occurrenceにも静的cost上限を適用します。
-- multiplayerは既定OFFで、`config/mcmcp/allowed-servers.json`の閉じたschemaに完全一致する接続先だけをローカル判定します。サーバーへの確認通信は行いません。
+- multiplayerは既定OFFで、ゲーム内警告を物理承認した正確な接続先だけをローカルallowlistへ記憶します。テキスト設定やサーバーへの確認通信は行いません。
 - DSL例は[`docs/action-templates/`](docs/action-templates/)に置き、custom programと同じ検証経路を通します。
 - `break_known_face`は宣言したblock・面・axeを直前再検証し、Vanilla prediction ACKとauthoritative airが揃った場合だけ成功・破壊数を記録します。
 - `break_known_block`はcurrentな可視面の完全BlockState、tool、期待drop、絶対inventory目標を宣言し、閉じた安全表（oak/birch log＋Vanilla axe、cobblestone＋iron pickaxe）だけを有限attack leaseで破壊します。成功にはACK・authoritative air・実inventory増加がすべて必要です。

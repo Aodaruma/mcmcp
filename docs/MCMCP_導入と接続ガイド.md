@@ -33,16 +33,24 @@ minecraft\config\mcmcp\mcp-token
 
 1. Minecraftでワールドまたはサーバーへ入る。
 2. `Esc`でポーズメニューを開く。
-3. 右下の「MCP操作: OFF」をクリックし、「ON / 待機中」にする。
-4. CodexまたはClaudeへ作業を依頼する。
+3. 初回は「MCP接続設定」を押し、「Codexを自動設定」または「Claude Codeを自動設定」を選ぶ。
+4. 表示された変更先を確認して「確認して設定」を押し、対象のMCPクライアントを再起動する。
+5. 右下の「MCP操作: OFF」をクリックし、「ON / 待機中」にする。
+6. CodexまたはClaudeへ作業を依頼する。
 
 タイトル画面、ワールド選択画面、サーバー選択画面には操作ボタンを表示しない。ワールドに入っている間は、ポーズメニュー、チャット、インベントリなどの画面にボタンを表示する。通常の一人称画面では右下の状態アイコンで稼働状態を確認できる。
 
 作業を止める場合は、ゲーム内ボタンをもう一度押してOFFにする。実行中のAction、保持中のキー、左右クリックはすべて解除される。
 
-## 4. Bearer tokenを準備する
+自動設定では、Codexの`~/.codex/config.toml`またはClaude Codeの`~/.claude.json`を更新する。既存ファイルは初回だけ`.mcmcp.bak`へ退避し、別の接続先として手動設定済みの`mcmcp`項目は上書きしない。token自体は設定ファイルへ複製せず、MCMCPが登録するローカルheader helperが接続時にowner-onlyのtokenファイルから読み取る。
+
+## 4. Bearer tokenについて
 
 MCPクライアントは`mcp-token`の内容をBearer tokenとして使用する。tokenを画面、チャット、スクリーンショット、共有ログへ貼らない。
+
+tokenは起動ごとに変わらない。プロファイルごとの初回起動時に一度だけ生成され、`mcp-token`を削除しない限り同じ値が再利用される。通常は前節の自動設定を使えば、tokenを読んだり環境変数へ登録したりする必要はない。
+
+以下は自動設定を使えない場合だけの手動手順である。
 
 Windows PowerShellでは、Prismインスタンスの実際のパスへ置き換えて次を実行する。`Get-Content`の結果は画面へ出力せず、そのままユーザー環境変数へ保存する。
 
@@ -123,19 +131,9 @@ Claude Desktopで利用するには、将来的にローカルDXTまたはstdio-
 
 ## 7. マルチプレイで使う場合
 
-マルチプレイは既定で無効である。利用するサーバーの規約と管理者の許可を確認したうえで、Minecraftを終了してから`minecraft\config\mcmcp-client.toml`を次のように変更する。
+テキストファイルの編集は不要である。許可されていないマルチプレイサーバーで「MCP操作: OFF」を押すと、現在の正確な接続先を示す警告画面が開く。サーバー規約と管理者の許可を確認して「このサーバーを記憶してON」を押すと、そのアドレスだけがローカルに保存され、次回から同じ警告は表示されない。
 
-```toml
-multiplayer_default = true
-```
-
-さらに`minecraft\config\mcmcp\allowed-servers.json`を作成し、Minecraftのサーバー一覧へ登録したアドレスをport込みで完全一致させる。
-
-```json
-{"schema_version":1,"servers":["example.org:25565"]}
-```
-
-ワイルドカード、port省略、余分なJSON propertyは使用できない。各接続sessionで、ワールドに入った後にゲーム内ボタンを押してONにする必要がある。
+許可はワイルドカードや他サーバーへ広がらない。保存先は`minecraft\config\mcmcp\allowed-servers.json`であり、許可を取り消したい場合はMinecraftを終了してこのファイルを削除する。各接続sessionで、ワールドに入った後にゲーム内ボタンを押してONにする必要がある。
 
 ## 8. 最初の確認
 
@@ -158,6 +156,7 @@ MCMCPで現在の状態だけを確認してください。まだ行動は開始
 - 接続拒否: Minecraftが起動中か、`mcmcp-client.toml`の`endpoint_enabled=true`とportを確認する。
 - `401 Unauthorized`: 環境変数のtokenが現在の`mcp-token`と一致しているか確認し、MCPクライアントを再起動する。
 - タイトル画面にボタンがない: 正常。ワールドへ入ってから`Esc`を押す。
+- 初回案内が出ない: Prism LauncherだけでなくMinecraftのワールドへ入り、`Esc`メニューの「MCP接続設定」を確認する。
 - ボタンが押せない: world/playerの準備、死亡画面、multiplayer設定、allowlistを確認する。
 - port競合: Minecraftを終了し、`mcmcp-client.toml`の`port`とMCPクライアント側URLを同じ空きportへ変更する。
 - ツールが見えない: Minecraftを先に起動してからCodex/Claude Codeを再起動し、`/mcp`を確認する。

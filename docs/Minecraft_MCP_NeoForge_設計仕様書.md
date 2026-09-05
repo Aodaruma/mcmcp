@@ -572,7 +572,7 @@ JDK 25標準のHttpServerとMinecraft同梱Gsonでclean-room実装する。Sprin
 
 ### 8.2 security
 
-- 初回起動時に256-bit bearer tokenをSecureRandomで生成
+- プロファイルの初回起動時に256-bit bearer tokenをSecureRandomで生成し、以後は同じowner-onlyファイルを再利用する。通常起動ではrotateしない
 - Authorization headerを全MCP requestで必須化
 - tokenはconstant-time比較
 - tokenをURL、chat、log、MCP resultへ出さない
@@ -1424,7 +1424,7 @@ client-only構成では、サーバーが本MODを許可していることを技
 
 - singleplayer: 利用可能
 - multiplayer: 無効
-- multiplayerを使う場合: ユーザーが接続先をローカルallowlistへ明示登録し、接続sessionごとにScreenからON
+- multiplayerを使う場合: Screen上の警告で現在の接続先を明示確認してローカルallowlistへ保存し、接続sessionごとにScreenからON
 
 allowlistは許可を証明するものではなく、誤操作防止だけを目的とする。サーバー規約の確認責任はユーザーにある。
 
@@ -1434,7 +1434,7 @@ allowlistは許可を証明するものではなく、誤操作防止だけを�
 {"schema_version":1,"servers":["example.org:25565"]}
 ~~~
 
-root propertyは`schema_version`と`servers`だけ、versionは1、fileは16 KiB以下、entryは最大64件の文字列とする。各entryは前後空白除去・小文字化後255文字以下かつcontrol文字なしでなければならず、現在の接続addressとportを含めた文字列の完全一致だけを許可する。wildcard、DNS展開、port補完、未知property、壊れたJSON、欠損fileはすべて不許可とする。利用にはこの一致に加えて`multiplayer_default=true`とsessionごとのScreen上ONが必要である。
+root propertyは`schema_version`と`servers`だけ、versionは1、fileは16 KiB以下、entryは最大64件の文字列とする。各entryは前後空白除去・小文字化後255文字以下かつcontrol文字なしでなければならず、現在の接続addressとportを含めた文字列の完全一致だけを許可する。wildcard、DNS展開、port補完、未知property、壊れたJSON、欠損fileはすべて不許可とする。欠損fileはScreen上の物理確認からだけ作成し、利用にはこの完全一致とsessionごとのScreen上ONが必要である。
 
 MODは次を行わない。
 
@@ -1482,7 +1482,7 @@ Spring、Jetty、Netty追加、SQLite、DI container、独自event busは導入�
 
 ### 12.3 設定
 
-次のlocal設定を使用する。TOMLとtokenは初回起動時に生成し、`allowed-servers.json`はmultiplayerを明示許可する利用者だけが上記schemaで作成する。欠損時はfail-closedとする。
+次のlocal設定を使用する。TOMLとtokenは初回起動時に生成し、`allowed-servers.json`はmultiplayer警告を物理操作で承認した場合だけMODが上記schemaで作成する。欠損時はfail-closedとする。
 
 ~~~text
 minecraft/config/mcmcp-client.toml
@@ -1503,11 +1503,10 @@ client config:
 - emergency_block_placement
 - emergency_block_break
 - recovery_max_ticks / distance / camera_degrees / interactions / placements / breaks
-- multiplayer_default
 
 MVPではrecovery各値の設定可能な上限を200 ticks、16 blocks、360 degrees、8 interactions、8 placements、4 breaksとする。Goal上限との合算が`agent_get_action`の固定出力schema（12,200 ticks、48 blocks、1,080 degrees、12 breaks、16 placements）を越えないことをconfig境界で保証する。interactionはAction上限16に対し、現行recovery executorがinteractionをdispatchせず使用量0である不変条件を別途検査し、公開counterも16へ閉じる。
 
-tokenはconfig screenへ平文表示しない。ローカルclient commandまたはMods画面のbuttonから、MCP接続設定をclipboardへコピーできるようにする。
+tokenはconfig screen、clipboard、Codex / Claude Code設定へ平文表示・複製しない。ワールド内のEscメニューから明示確認付きの自動設定を行い、各client公式のdynamic header helperにowner-only token fileを接続する。既存設定は初回だけbackupし、管理外の同名entryは上書きしない。
 
 ### 12.4 Prism導入
 

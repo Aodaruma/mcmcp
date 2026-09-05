@@ -115,6 +115,7 @@ public final class McmcpMod {
     private void onLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
         AgentMovementInput.install(event.getPlayer(), Minecraft.getInstance().options);
         runtime.onLoggingIn(Minecraft.getInstance());
+        automationIndicator.onWorldJoined(Minecraft.getInstance());
     }
 
     private void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {

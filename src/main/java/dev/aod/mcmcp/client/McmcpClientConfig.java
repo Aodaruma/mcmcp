@@ -103,10 +103,6 @@ public final class McmcpClientConfig {
                     DEFAULT_RECOVERY_MAX_BREAKS,
                     0,
                     DEFAULT_RECOVERY_MAX_BREAKS);
-    private static final ModConfigSpec.BooleanValue MULTIPLAYER_DEFAULT = BUILDER
-            .comment("Default local policy for multiplayer automation; no server handshake is used")
-            .define("multiplayer_default", false);
-
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     private McmcpClientConfig() { }
@@ -205,5 +201,4 @@ public final class McmcpClientConfig {
     public static int recoveryMaxInteractions() { return RECOVERY_MAX_INTERACTIONS.get(); }
     public static int recoveryMaxPlacements() { return RECOVERY_MAX_PLACEMENTS.get(); }
     public static int recoveryMaxBreaks() { return RECOVERY_MAX_BREAKS.get(); }
-    public static boolean multiplayerDefault() { return MULTIPLAYER_DEFAULT.get(); }
 }
