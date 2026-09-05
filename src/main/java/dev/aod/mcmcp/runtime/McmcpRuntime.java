@@ -1707,7 +1707,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return CompletableFuture.completedFuture(mapFailure(failure));
         }
         var fence = publishedSession;
-        var capture = inbox.submit(
+        // Use the same pre-tick observation phase as execution: after the player tick,
+        // renderer fog still belongs to the previous entity tick and fails closed to 1 block.
+        var capture = inbox.submitControl(
                 command.toolName(),
                 fence.generation(),
                 context.deadlineNanos(),
@@ -1754,7 +1756,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 sessions.snapshot(),
                                 prepared,
                                 context)));
-        return inbox.submitMapped(
+        return inbox.submitControlMapped(
                 command.toolName(),
                 snapshot.session().generation(),
                 context.deadlineNanos(),

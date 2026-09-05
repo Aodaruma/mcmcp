@@ -148,7 +148,9 @@ public final class ClientCommandInbox {
 
     /**
      * Enqueues bounded cancellation/control work for the next pre-tick, ahead of reads.
-     * Starts remain on the post-tick queue so they validate against a freshly picked target.
+     * Agent admission/reservation also use this lane, after observation collection and before
+     * the player tick advances beyond the renderer's exact-tick fog evidence. Reservation
+     * emits no input; confirmed execution separately checks its current target before dispatch.
      */
     public <T> CompletableFuture<T> submitControl(
             String name,
@@ -197,9 +199,23 @@ public final class ClientCommandInbox {
             long deadlineNanos,
             Callable<T> action,
             Function<Throwable, T> failureMapper) {
+        return submitControlMapped(name, expectedWorldGeneration, deadlineNanos, action,
+                failureMapper, () -> false, ignored -> { });
+    }
+
+    <T> CompletableFuture<T> submitControlMapped(
+            String name,
+            long expectedWorldGeneration,
+            long deadlineNanos,
+            Callable<T> action,
+            Function<Throwable, T> failureMapper,
+            BooleanSupplier completionAbandoned,
+            Consumer<T> onAbandonedCompletion) {
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(action, "action");
         Objects.requireNonNull(failureMapper, "failureMapper");
+        Objects.requireNonNull(completionAbandoned, "completionAbandoned");
+        Objects.requireNonNull(onAbandonedCompletion, "onAbandonedCompletion");
         var result = new CompletableFuture<T>();
         synchronized (admissionGate) {
             if (!accepting) {
@@ -208,7 +224,7 @@ public final class ClientCommandInbox {
             }
             var command = new PendingCommand<>(
                     name, expectedWorldGeneration, safetyEpoch.get(), deadlineNanos,
-                    action, result, failureMapper, () -> false, ignored -> { }, nanoTime);
+                    action, result, failureMapper, completionAbandoned, onAbandonedCompletion, nanoTime);
             if (!controlQueue.offer(command)) {
                 return CompletableFuture.completedFuture(
                         failureMapper.apply(new RejectedExecutionException(

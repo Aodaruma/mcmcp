@@ -19,6 +19,26 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ClientCommandInboxTest {
     @Test
+    void preTickReservationRollsBackWhenItsCallerAbandonsDuringCommit() {
+        var inbox = new ClientCommandInbox(4, new InputReleaseController(), new LocalArmingState());
+        var abandoned = new AtomicBoolean();
+        var rolledBack = new AtomicReference<String>();
+        var queued = inbox.submitControlMapped(
+                "agent_start_action", 1, Long.MAX_VALUE,
+                () -> {
+                    abandoned.set(true);
+                    return "reserved-action";
+                },
+                failure -> "abandoned", abandoned::get, rolledBack::set);
+
+        inbox.drainNormal(1, 10);
+        assertThat(queued).isNotDone();
+        inbox.drainControls(1, 10);
+        assertThat(queued.join()).isEqualTo("abandoned");
+        assertThat(rolledBack).hasValue("reserved-action");
+    }
+
+    @Test
     void successfulPhysicalEscReturnsAnActiveLeaseToReady() {
         var arming = new LocalArmingState();
         var session = UUID.randomUUID();

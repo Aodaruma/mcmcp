@@ -40,3 +40,12 @@
 - 操作ボタンが現在のラベル幅へ縮んだ後も接続設定が初期位置に残るため、2つの間に余白が生じていた。接続設定も文字幅に合わせ、操作ボタンの左へ隙間なく追従させた。画面右端のHUDオフセットは維持する。
 - ON後は複数Actionを続けられる実装に合わせ、日本語・英語の古い「1 Action」ツールチップを修正した。
 - 利用者の終了連絡後、元JARを .codex-temp/chest-fix-backups へ保存して通常・検証Prismプロフィールを更新。ネイティブとCodex LocalCache経由の双方で同じSHA-256を確認した（ファイルの仮想化により同じ実体を参照）。
+
+## 再起動後の追試と受付タイミングの追加修正
+
+- 15AC9D版で同じ座標を再観測してもTARGET_UNKNOWNが再現。tick1656/rev12085に対し配送面tick1651/rev12024、再配送tick2867/rev24103でも拒否された。Actionは予約されず、操作はREADYを維持した。
+- 再観測の追加だけでは不十分だった。受付・予約はpost-tickのread queueで動いていたが、霧のsignalはrendererと同じentity tickだけを許可する。player tick進行後はfallbackの1 blockになり、約3 block離れた面を更新できない。
+- 受付snapshotと予約を既存のpre-tick control queueへ移動。通常の観測収集直後、player tick進行前に再観測する。霧のtick一致・距離制限、配送確認前の入力禁止、実行JITは維持する。
+- control queueのmapped completionにも取消・受付中断時のrollbackを引き継ぎ、途中放棄した予約が必ず破棄される回帰テストを追加した。
+- test 1070件、harnessTest 13件、adminBridgeTest 21件、verifyHarnessIsolationとbuild成功。追加修正JAR SHA-256: 3D64F7BD22DB1D1432264D04E9D6E895C614D1E64B2EE8E5D24F5ED473B14653 。実ゲームでの反映・追試は次の再起動待ち。
+- OFF/ONのメニューは実画面で隙間なく右揃えになることを確認して撮影済み。ボタン枠・番号だけの画像を更新した。
