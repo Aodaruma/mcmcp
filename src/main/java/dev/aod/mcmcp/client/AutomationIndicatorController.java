@@ -549,51 +549,29 @@ public final class AutomationIndicatorController {
             AutomationUiSnapshot.State state) {
         graphics.fill(x, y, x + ICON_SIZE, y + ICON_SIZE, BACKGROUND);
         int color = color(state);
-        switch (state) {
-            case OFF -> drawRing(graphics, x, y, color);
-            case READY -> {
-                drawRing(graphics, x, y, color);
-                graphics.fill(x + 7, y + 4, x + 9, y + 9, color);
-                graphics.fill(x + 8, y + 8, x + 12, y + 10, color);
-            }
-            case EVALUATING -> {
-                graphics.fill(x + 3, y + 4, x + 13, y + 6, color);
-                graphics.fill(x + 5, y + 6, x + 11, y + 8, color);
-                graphics.fill(x + 7, y + 8, x + 9, y + 11, color);
-                graphics.fill(x + 6, y + 12, x + 8, y + 14, color);
-                graphics.fill(x + 9, y + 12, x + 11, y + 14, color);
-            }
-            case CONSENT_PENDING -> {
-                graphics.outline(x + 2, y + 2, 12, 12, color);
-                graphics.fill(x + 7, y + 4, x + 9, y + 10, color);
-                graphics.fill(x + 7, y + 12, x + 9, y + 14, color);
-            }
-            case AGENT -> {
-                graphics.fill(x + 3, y + 7, x + 11, y + 10, color);
-                graphics.fill(x + 9, y + 4, x + 12, y + 13, color);
-                graphics.fill(x + 12, y + 6, x + 14, y + 11, color);
-            }
-            case RECOVERING -> {
-                graphics.fill(x + 3, y + 3, x + 13, y + 5, color);
-                graphics.fill(x + 3, y + 5, x + 5, y + 10, color);
-                graphics.fill(x + 11, y + 5, x + 13, y + 10, color);
-                graphics.fill(x + 5, y + 10, x + 11, y + 12, color);
-                graphics.fill(x + 7, y + 12, x + 9, y + 14, color);
-            }
-            case FAULT -> {
-                graphics.outline(x + 2, y + 2, 12, 12, color);
-                graphics.fill(x + 7, y + 4, x + 9, y + 10, color);
-                graphics.fill(x + 7, y + 12, x + 9, y + 14, color);
-            }
+        if (state == AutomationUiSnapshot.State.FAULT) {
+            graphics.outline(x + 2, y + 2, 12, 12, color);
+            graphics.fill(x + 7, y + 4, x + 9, y + 10, color);
+            graphics.fill(x + 7, y + 12, x + 9, y + 14, color);
+            return;
         }
-    }
 
-    private static void drawRing(
-            GuiGraphicsExtractor graphics, int x, int y, int color) {
-        graphics.fill(x + 6, y + 3, x + 10, y + 5, color);
-        graphics.fill(x + 4, y + 5, x + 6, y + 11, color);
-        graphics.fill(x + 10, y + 5, x + 12, y + 11, color);
-        graphics.fill(x + 6, y + 11, x + 10, y + 13, color);
+        // Pixel robot: antenna, rounded head, ears and a little neck.
+        graphics.fill(x + 6, y + 1, x + 10, y + 2, color);
+        graphics.fill(x + 7, y + 2, x + 9, y + 4, color);
+        graphics.fill(x + 3, y + 4, x + 13, y + 14, color);
+        graphics.fill(x + 2, y + 5, x + 14, y + 13, color);
+        graphics.fill(x + 1, y + 7, x + 15, y + 11, color);
+        graphics.fill(x + 6, y + 14, x + 10, y + 15, color);
+        graphics.fill(x + 3, y + 5, x + 13, y + 13, 0xFF20262D);
+
+        // Closed lids while OFF; every enabled state has two open eyes.
+        int eyeTop = state == AutomationUiSnapshot.State.OFF ? 8 : 6;
+        graphics.fill(x + 4, y + eyeTop, x + 7, y + 9, color);
+        graphics.fill(x + 9, y + eyeTop, x + 12, y + 9, color);
+        graphics.fill(x + 5, y + 10, x + 6, y + 11, color);
+        graphics.fill(x + 6, y + 11, x + 10, y + 12, color);
+        graphics.fill(x + 10, y + 10, x + 11, y + 11, color);
     }
 
     private static int color(AutomationUiSnapshot.State state) {

@@ -340,15 +340,16 @@ Vanillaがsingleplayerを実際にpauseしている間はActionをcancelせず�
 
 ### 6.5 HUDとScreen操作
 
-ゲーム中、右下には16 × 16 pxの非interactiveな状態iconだけを表示する。文字列、座標、token、常設panelは表示しない。ON/OFF操作はScreen表示中のbuttonだけで行う。状態は色だけに依存せず、輪郭も変える。
+ゲーム中、右下には16 × 16 pxの非interactiveな状態iconだけを表示する。文字列、座標、token、常設panelは表示しない。ON/OFF操作はScreen表示中のbuttonだけで行う。ON/OFFは色だけに依存せず、ロボットの目の開閉でも区別する。ON中の詳細状態は状態色、既存の外縁表示、Screen上の状態文で示す。
 
 | 状態 | icon表現 | 意味 |
 |---|---|---|
-| OFF | 灰色の空円 | MCP変更操作を拒否 |
-| READY | 橙色の時計 | ON、Action待機中 |
-| EVALUATING | cyanの砂時計 | ON、evaluation-turnの推論中・入力隔離中 |
-| AGENT | 青色の矢印 | DSL実行中 |
-| RECOVERING | 紫色の盾 | 緊急回避中 |
+| OFF | 灰色のロボット（閉じた目） | MCP変更操作を拒否 |
+| READY | 橙色のロボット（開いた目） | ON、Action待機中 |
+| EVALUATING | cyanのロボット（開いた目） | ON、evaluation-turnの推論中・入力隔離中 |
+| CONSENT_PENDING | 緑色のロボット（開いた目） | 攻撃確認中 |
+| AGENT | 青色のロボット（開いた目） | DSL実行中 |
+| RECOVERING | 紫色のロボット（開いた目） | 緊急回避中 |
 | FAULT | 赤色の感嘆符 | endpointまたは内部異常 |
 
 `EVALUATING`と`FAULT`は6.2のcontrol stateではなく、前者は`READY`へ、後者は`OFF`へ重ねて表示するUI専用presentation stateである。endpoint bind、token初期化、または内部不変条件の異常時はFAULTを優先表示し、実行中Actionがあれば`INTERNAL_ERROR`で終了して入力を解除する。Screen buttonは`MCP操作: FAULT`とし、local error codeはtooltipへ表示する。world参加やONクリックだけでは解除せず、安全なendpoint再初期化に成功するかclientを再起動した場合だけ通常のOFF表示へ戻す。endpointが応答可能なら`agent_get_state.control.mode`は`off`、直前Actionの`end_reason`は`INTERNAL_ERROR`を返す。
