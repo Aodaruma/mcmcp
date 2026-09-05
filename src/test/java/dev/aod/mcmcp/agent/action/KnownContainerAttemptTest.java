@@ -19,6 +19,36 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownContainerAttemptTest {
     @Test
+    void reportsLargeChestTotalsAbovePlayerCapacityAfterConfirmedRelease() {
+        for (int count : new int[] {2_305, 3_000, 3_456}) {
+            var port = new FakePort();
+            port.items = List.of(Map.of("item", "minecraft:cobblestone", "count", count));
+            var operation = new KnownContainerAttempt(port, request(), 1, 101);
+            port.tick = 1;
+            operation.tick(1);
+            port.tick = 2;
+            operation.tick(2);
+            port.tick = 3;
+            var result = operation.tick(3);
+            assertThat(result.status()).isEqualTo(KnownContainerAttempt.Status.SUCCEEDED);
+            assertThat(result.items()).containsExactly(
+                    new KnownContainerAttempt.ItemCount("minecraft:cobblestone", count));
+            assertThat(result.interactionDelta()).isOne();
+            assertThat(result.effects()).isEmpty();
+            assertThat(port.releases).isOne();
+            assertThat(port.retires).isOne();
+        }
+    }
+
+    @Test
+    void aggregateStillRejectsCountsOutsideSupportedDoubleChestCapacity() {
+        assertThatThrownBy(() -> new KnownContainerAttempt.ItemCount("minecraft:stone", 0))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new KnownContainerAttempt.ItemCount("minecraft:stone", 3_457))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void exposesOnlyServerConfirmedItemsAndAccountsForTheActualOpen() {
         var port = new FakePort();
         var operation = new KnownContainerAttempt(port, request(), 1, 101);
@@ -164,6 +194,9 @@ class KnownContainerAttemptTest {
     }
 
     private static final class FakePort implements PhaseFivePort {
+        private List<Map<String, Object>> items = List.of(
+                Map.of("item", "minecraft:iron_hoe", "count", 1),
+                Map.of("item", "minecraft:wheat_seeds", "count", 64));
         private long tick;
         private PhaseFiveAttempt attempt;
         private boolean maintained;
@@ -208,9 +241,6 @@ class KnownContainerAttemptTest {
             if (!maintained || holdPending) {
                 return new PhaseFiveEvidence.Pending(attempt.attemptId(), tick, 1, basis);
             }
-            var items = List.of(
-                    Map.of("item", "minecraft:iron_hoe", "count", 1),
-                    Map.of("item", "minecraft:wheat_seeds", "count", 64));
             var resultBasis = new java.util.LinkedHashMap<String, Object>();
             resultBasis.put("available_source_items", items);
             if (exactTransfer) {

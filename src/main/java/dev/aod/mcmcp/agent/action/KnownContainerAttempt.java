@@ -373,7 +373,9 @@ public final class KnownContainerAttempt implements AutoCloseable {
     public record ItemCount(String item, int count) {
         public ItemCount {
             Objects.requireNonNull(item, "item");
-            if (count < 1 || count > 2_304) {
+            // This is a container aggregate, not the 36-slot player inventory limit.
+            // The supported double chest has 54 ordinary stacks of up to 64 items.
+            if (count < 1 || count > 54 * 64) {
                 throw new IllegalArgumentException("item count is outside the bounded range");
             }
         }
