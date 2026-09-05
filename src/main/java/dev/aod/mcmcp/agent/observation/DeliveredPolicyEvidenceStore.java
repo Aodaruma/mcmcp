@@ -20,7 +20,8 @@ import java.util.function.Function;
  * <p>This is not a hidden-world cache. Only {@link ObservationRecord.VisibleSurface} records from
  * successful {@code agent_get_observation} pages enter the static store. Frame-display identity
  * witnesses are retained separately only to gate matching current entities after delivery; they
- * never fill a sampling gap or extend a dynamic record's lifetime. Other dynamic entities, hazards,
+ * never fill a sampling gap or renew the original delivery lease. Actual target-only front rays
+ * may refresh an internal planning record within that lease. Other dynamic entities, hazards,
  * traversability, sounds, unknown boundaries, and records on undisclosed pages are not retained.
  * Copyable state/item identities receive opaque session refs only after delivery
  * confirmation; unlike coordinate evidence, those identities have no time TTL. Runtime admission
@@ -225,6 +226,17 @@ public final class DeliveredPolicyEvidenceStore {
     public synchronized Optional<ObservationFrame> reobserveForPlanning(
             Optional<ObservationFrame> latestFrame,
             Function<ObservationRecord.VisibleSurface, Optional<ObservationRecord.VisibleSurface>> reobserve) {
+        return reobserveForPlanning(latestFrame, reobserve,
+                latestFrame.map(ObservationFrame::frameCompletedTick).orElse(0L),
+                entity -> Optional.empty());
+    }
+
+    /** Actual current rays may refresh one admitted frame, without renewing its delivery lease. */
+    public synchronized Optional<ObservationFrame> reobserveForPlanning(
+            Optional<ObservationFrame> latestFrame,
+            Function<ObservationRecord.VisibleSurface, Optional<ObservationRecord.VisibleSurface>> reobserve,
+            long currentTick,
+            Function<ObservationRecord.VisibleEntity, Optional<ObservationRecord.VisibleEntity>> reobserveFrame) {
         return augment(latestFrame).map(frame -> {
             var records = new ArrayList<ObservationRecord>();
             long completedTick = frame.frameCompletedTick();
@@ -246,6 +258,21 @@ public final class DeliveredPolicyEvidenceStore {
                         // revision so mutation/approach admission cannot mistake failure for freshness.
                         records.add(surface);
                     }
+                } else if (record instanceof ObservationRecord.VisibleEntity entity) {
+                    var authorized = authorizeFrameDisplay(entity, currentTick);
+                    var refreshed = authorized.frameDisplay() == null ? Optional.<ObservationRecord.VisibleEntity>empty()
+                            : reobserveFrame.apply(authorized).filter(current ->
+                                    sameDisplayedFrame(current, authorized)
+                                            && current.observedTick() == currentTick
+                                            && current.observedTick() >= authorized.observedTick()
+                                            && current.worldRevision() >= authorized.worldRevision());
+                    if (refreshed.isPresent()) {
+                        var current = refreshed.orElseThrow();
+                        records.add(current);
+                        completedTick = Math.max(completedTick, current.observedTick());
+                    } else {
+                        records.add(authorized);
+                    }
                 } else {
                     records.add(record);
                 }
@@ -256,8 +283,7 @@ public final class DeliveredPolicyEvidenceStore {
             while (iterator.hasNext()) {
                 ObservationRecord record = iterator.next();
                 if (record instanceof ObservationRecord.VisibleEntity entity) {
-                    // Static refresh may advance the composite clock. It never renews the
-                    // delivery authorization or timestamps of a dynamic frame display.
+                    // Composite refresh never renews the original frame delivery lease.
                     iterator.set(authorizeFrameDisplay(entity, completedTick));
                 } else if (record instanceof ObservationRecord.SoundClue sound) {
                     long age = completedTick - sound.lastObservedTick();
@@ -287,11 +313,7 @@ public final class DeliveredPolicyEvidenceStore {
             if (age >= 0 && age <= FRAME_DISPLAY_DELIVERY_MAX_AGE_TICKS
                     && current.observedTick() >= delivered.observedTick()
                     && current.worldRevision() >= delivered.worldRevision()
-                    && current.entityRef().equals(delivered.entityRef())
-                    && current.entityType().equals(delivered.entityType())
-                    && current.position().equals(delivered.position())
-                    && current.aabb().equals(delivered.aabb())
-                    && current.frameDisplay().equals(delivered.frameDisplay())) {
+                    && sameDisplayedFrame(current, delivered)) {
                 return current;
             }
         }
@@ -300,6 +322,38 @@ public final class DeliveredPolicyEvidenceStore {
                 current.position(), current.velocity(), current.aabb(), current.hazardClass(),
                 current.eyeOrigin(), current.observedTick(), current.worldRevision(),
                 current.containerLabel(), null);
+    }
+
+    private static boolean sameDisplayedFrame(
+            ObservationRecord.VisibleEntity current, ObservationRecord.VisibleEntity delivered) {
+        return Objects.equals(current.entityRef(), delivered.entityRef())
+                && current.entityType().equals(delivered.entityType())
+                && current.position().equals(delivered.position())
+                && current.aabb().equals(delivered.aabb())
+                && Objects.equals(current.frameDisplay(), delivered.frameDisplay());
+    }
+
+    public enum FrameDisplayRejection { NOT_DELIVERED, DELIVERY_EXPIRED, NOT_VISIBLE, DISPLAY_CHANGED }
+
+    /** Fixed, non-reflective diagnostics for a single frame requested by the closed DSL. */
+    public synchronized Optional<FrameDisplayRejection> frameDisplayRejection(
+            String entityRef, Optional<ObservationFrame> currentFrame, long currentTick) {
+        FrameAuthorization authorization = frameDisplays.get(entityRef);
+        if (authorization == null) return Optional.of(FrameDisplayRejection.NOT_DELIVERED);
+        long age = currentTick - authorization.entity().observedTick();
+        if (age < 0 || age > FRAME_DISPLAY_DELIVERY_MAX_AGE_TICKS
+                || elapsed(nanoTime.getAsLong(), authorization.deliveredAtNanos()) >= SURFACE_IDLE_TIMEOUT.toNanos()) {
+            return Optional.of(FrameDisplayRejection.DELIVERY_EXPIRED);
+        }
+        var current = currentFrame.stream().flatMap(frame -> frame.records().stream())
+                .filter(ObservationRecord.VisibleEntity.class::isInstance)
+                .map(ObservationRecord.VisibleEntity.class::cast)
+                .filter(entity -> entityRef.equals(entity.entityRef())).findFirst();
+        if (current.isEmpty() || current.orElseThrow().frameDisplay() == null) {
+            return Optional.of(FrameDisplayRejection.NOT_VISIBLE);
+        }
+        return sameDisplayedFrame(current.orElseThrow(), authorization.entity())
+                ? Optional.empty() : Optional.of(FrameDisplayRejection.DISPLAY_CHANGED);
     }
 
     /**

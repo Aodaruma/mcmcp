@@ -29,6 +29,18 @@ The batch fixes its source slots from the initial server snapshot. Every ordinar
 
 ## 検証 / Validation
 
+### 実ゲームで見つかった内部上限 / Internal goal limit found in game
+
+大チェストの丸石2,464個へ2個を足す目標2,466で、DSL受理後のtick1に`PhaseFiveRequest`の旧2,304上限が例外となった（Action `c30e0921-0664-4da6-a2b5-60aa8394c756`、interaction/effectなし）。送り元からのtake2だけが適用され、2個は後で確認付きstoreにより送り元へ戻された。
+
+内部requestも`transfer_items`かつ`player_to_container`だけ3,456を許可するよう揃えた。take・他操作は2,304のままにし、未知directionで上限を広げない。目標2,466と3,456がRoutine経由でserver確認後に完了するテスト、および上限超過・他direction/操作の拒否テストを追加した。
+
+The DSL accepted a destination goal of 2,466, but the internal request still rejected values above 2,304 before dispatch. The internal ceiling now matches 3,456 only for transfers into containers; player destinations and other operations retain their existing limits.
+
+修正後の統合検証はunit 1,189件・harness 13件・admin bridge 21件、計1,223件、build/isolationが成功した。実ゲームでの2,466目標の再確認は次JAR引き渡し後に行う。
+
+### 初回まとめ移送 / Initial batch verification
+
 境界値、旧入力互換、DSL往復変換、静的予算、複数stackと端数、成分混在、選択外変更、補充、fresh packet revision、部分確定とUNKNOWN、cleanup再試行の回帰テストを追加した。`test` 1,135件・`harnessTest` 13件・`adminBridgeTest` 21件、計1,169件が成功し、`verifyHarnessIsolation`と`build`も通過した。
 
 `0.1.0-rc.2-SNAPSHOT` JARのSHA-256は`B8C4E411966A7208F31DF3225C1C14AB8389C24731277AB634BFAEE988793DBA`。実ゲームの再検証は別の倉庫整理タスクへ固定コピーを引き渡して行う。開封前の持続拒否は根因未確定のため、同JARに固定reasonを追加した（[診断記録](20260906_container_preflight_diagnostics.md)）。

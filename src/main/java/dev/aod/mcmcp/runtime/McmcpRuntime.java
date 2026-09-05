@@ -1742,7 +1742,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 sessions.snapshot(),
                                 predicateRequirements,
                                 localSafetyRequired,
-                                containsRecipeReference(request.program()))));
+                                containsRecipeReference(request.program()),
+                                request.program())));
         final AgentAdmissionSnapshot snapshot;
         try {
             snapshot = capture.get(context.remainingNanos(), TimeUnit.NANOSECONDS);
@@ -1939,9 +1940,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     /**
      * Planner view containing the current frame plus only static surfaces that were actually
      * returned to the MCP client. Every consumer still applies its ordinary revision, pose,
-     * reach, age, commit, and JIT fences; dynamic evidence is never extended by this view.
+     * reach, age, commit, and JIT fences. Actual target-frame rays may refresh its internal
+     * record, but neither its original delivery lease nor the public frame is extended.
      */
     private Optional<ObservationFrame> agentPlanningFrame() {
+        return agentPlanningFrame(null);
+    }
+
+    private Optional<ObservationFrame> agentPlanningFrame(ActionDsl.Node primitive) {
         var minecraft = Minecraft.getInstance();
         assertClientThread(minecraft);
         var session = sessions.snapshot();
@@ -1956,6 +1962,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             // authorize a new ray or refresh a previously delivered surface.
             return deliveredAgentEvidence.augment(agentObservationFrames.latestFrame());
         }
+        String frameRef = frameItemTargetRef(primitive);
         return deliveredAgentEvidence.reobserveForPlanning(agentObservationFrames.latestFrame(), surface -> {
             var position = surface.position();
             long barrier = reconciliation.surfaceBarrierWorldRevision(
@@ -1963,7 +1970,26 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (surface.worldRevision() >= barrier) return Optional.of(surface);
             return agentObserver.reobserveSurface(minecraft.level, minecraft.player, surface,
                     session.clientTick(), reconciliation.worldRevision(), fogDistance.getAsDouble());
+        }, session.clientTick(), known -> {
+            if (frameRef == null || !frameRef.equals(known.entityRef())
+                    || known.worldRevision() >= reconciliation.visualBarrierWorldRevision()) {
+                return Optional.empty();
+            }
+            return observations.resolveLoadedEntityRefIdentity(minecraft, session.clientTick(),
+                            session.worldSessionId(), session.dimension(), frameRef,
+                            McmcpClientConfig.visualRadiusBlocks())
+                    .filter(net.minecraft.world.entity.decoration.ItemFrame.class::isInstance)
+                    .map(net.minecraft.world.entity.decoration.ItemFrame.class::cast)
+                    .flatMap(frame -> OmnidirectionalObserver.reobserveFrameEntity(
+                            minecraft.level, minecraft.player, frame, known, session.clientTick(),
+                            reconciliation.worldRevision(), McmcpClientConfig.visualRadiusBlocks()));
         });
+    }
+
+    static String frameItemTargetRef(ActionDsl.Node primitive) {
+        if (primitive instanceof ActionDsl.RemoveVisibleFrameItem remove) return remove.entityRef();
+        if (primitive instanceof ActionDsl.InsertVisibleFrameItem insert) return insert.entityRef();
+        return null;
     }
 
     private AgentAdmissionSnapshot captureAgentAdmission(
@@ -1971,7 +1997,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             WorldSessionTracker.Snapshot session,
             PredicateRequirements predicateRequirements,
             boolean localSafetyRequired,
-            boolean recipeReferenceRequired) {
+            boolean recipeReferenceRequired,
+            ActionDsl.Program program) {
         assertClientThread(minecraft);
         requireReady(session);
         if (pendingAgentInputRelease || agentExecution != null
@@ -2024,12 +2051,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var player = Objects.requireNonNull(minecraft.player, "player");
         var predicateSnapshot = AdmissionPolicySnapshot.capture(
                 policySnapshot(minecraft), predicateRequirements);
+        var singlePrimitive = program.body().size() == 1 ? program.body().getFirst() : null;
+        String frameRef = frameItemTargetRef(singlePrimitive);
+        if (frameRef != null) {
+            deliveredAgentEvidence.frameDisplayRejection(
+                    frameRef, agentObservationFrames.latestFrame(), session.clientTick()).ifPresent(reason -> {
+                        throw new RuntimeInvocationException("target_unknown",
+                                "Frame witness rejected: " + reason.name().toLowerCase(Locale.ROOT), true, Map.of());
+                    });
+        }
         return new AgentAdmissionSnapshot(
                 session,
                 lock,
                 map,
                 playerPose(player, session.dimension()),
-                agentPlanningFrame(),
+                agentPlanningFrame(singlePrimitive),
                 localSafety,
                 localSafetyRequired,
                 predicateRequirements,
@@ -2962,7 +2998,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         } catch (RuntimeException | LinkageError changed) {
             return Optional.of(AdmissionFenceFailure.POLICY_UNAVAILABLE);
         }
-        Optional<ObservationFrame> currentPlanningFrame = agentPlanningFrame();
+        Optional<ObservationFrame> currentPlanningFrame = agentPlanningFrame(
+                prepared.initialPrimitive().orElse(null));
         if (prepared.frameItemAim().isPresent()) {
             try {
                 var currentAim = AgentPrimitivePlanner.requireFrameItemAim(
@@ -5684,13 +5721,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     session.worldSessionId());
             long visualBarrierWorldRevision = visualBarrierWorldRevision(map, reconciliation);
             boolean worldPlanning = requiresWorldPlanning(agentExecution.primitive);
+            var planningFrame = worldPlanning ? agentPlanningFrame(agentExecution.primitive) : Optional.<ObservationFrame>empty();
             var analysis = worldPlanning
                     ? analyzePrimitive(
                             action.program().request().program(),
                             agentExecution.primitive,
                             map,
                             playerPose(player, session.dimension()),
-                            agentPlanningFrame(),
+                            planningFrame,
                             McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
                             visualBarrierWorldRevision,
                             primitiveSurfaceRevisionBarrier(
@@ -5738,7 +5776,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             agentExecution.mutationAims.putAll(analysis.mutationAims());
             if (isFrameItemPrimitive(agentExecution.primitive)) {
                 var currentAim = AgentPrimitivePlanner.requireFrameItemAim(
-                        map, playerPose(player, session.dimension()), agentPlanningFrame(),
+                        map, playerPose(player, session.dimension()), planningFrame,
                         agentExecution.primitive, visualBarrierWorldRevision);
                 if (!frameItemEvidenceFresh(currentAim, session.clientTick())
                         || !sameFrameItemAuthorization(agentExecution.frameItemAim, currentAim)) {

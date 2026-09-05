@@ -633,6 +633,11 @@ public final class ScreenOwnershipSignals {
         Transition onOpenScreen(ContainerSyncSignals.OpenScreenEvidence evidence) {
             Objects.requireNonNull(evidence, "evidence");
             latestLedgerRevision = evidence.packetLedgerRevision();
+            if (everOwned && evidence.packetLedgerRevision() != openLedgerRevision) {
+                // Even a reused container id is a different screen authority after another open.
+                lastServerCursorProven = false;
+                lastServerCursorEmpty = false;
+            }
             if (!active()) {
                 return Transition.irrelevant();
             }
@@ -691,6 +696,7 @@ public final class ScreenOwnershipSignals {
                 ContainerSyncSignals.RecordResult result, boolean liveScreenMatches) {
             Objects.requireNonNull(result, "result");
             latestLedgerRevision = result.snapshot().packetLedgerRevision();
+            refreshRetainedCursorProof(result, liveScreenMatches);
             if (!active()) {
                 return Transition.irrelevant();
             }
@@ -731,6 +737,7 @@ public final class ScreenOwnershipSignals {
                 boolean cursorAuthored) {
             Objects.requireNonNull(result, "result");
             latestLedgerRevision = result.snapshot().packetLedgerRevision();
+            if (cursorAuthored) refreshRetainedCursorProof(result, liveScreenMatches);
             if (!active()) {
                 return Transition.irrelevant();
             }
@@ -998,6 +1005,25 @@ public final class ScreenOwnershipSignals {
             lastServerCursorProven = true;
             lastServerCursorEmpty = content.carried().empty();
             lastServerCursorProofRevision = content.packetLedgerRevision();
+        }
+
+        /** Refresh cleanup evidence without restoring FAILED gameplay authority. */
+        private void refreshRetainedCursorProof(
+                ContainerSyncSignals.RecordResult result, boolean liveScreenMatches) {
+            if (!everOwned || expectedOpen == null
+                    || (phase != Phase.OWNED && phase != Phase.FAILED)
+                    || !result.applied() || !liveScreenMatches) return;
+            var content = result.snapshot().container();
+            var open = result.snapshot().lastOpenScreen();
+            if (content == null || open == null
+                    || !expectedOpen.worldSessionId().equals(boundWorldSessionId)
+                    || !content.worldSessionId().equals(expectedOpen.worldSessionId())
+                    || !open.worldSessionId().equals(expectedOpen.worldSessionId())
+                    || content.containerId() != containerId
+                    || !content.menuTypeId().equals(menuTypeId)
+                    || open.packetLedgerRevision() != openLedgerRevision
+                    || content.packetLedgerRevision() <= lastServerCursorProofRevision) return;
+            recordServerCursorProof(content);
         }
     }
 }

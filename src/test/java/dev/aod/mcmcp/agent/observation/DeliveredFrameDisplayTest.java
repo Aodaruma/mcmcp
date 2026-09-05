@@ -89,6 +89,45 @@ class DeliveredFrameDisplayTest {
     }
 
     @Test
+    void frameRefreshRejectsChangedIdentityAndCannotRenewWallTimeOrUndeliveredEvidence() {
+        var clock = new AtomicLong();
+        var store = new DeliveredPolicyEvidenceStore(clock::get);
+        var original = frame(REF, "minecraft:item_frame", point(2, 64, 2), BOX, DISPLAY, 10);
+        var raw = Optional.of(observation(10, List.of(original)));
+        assertThat(store.frameDisplayRejection(REF, raw, 11))
+                .contains(DeliveredPolicyEvidenceStore.FrameDisplayRejection.NOT_DELIVERED);
+        store.reobserveForPlanning(raw, surface -> Optional.empty(), 11,
+                entity -> { throw new AssertionError("undelivered frame must not be reobserved"); });
+        store.recordDelivered(page(10, original));
+        var changed = List.of(
+                frame(REF, "minecraft:item_frame", point(3, 64, 2), BOX, DISPLAY, 11),
+                frame(REF, "minecraft:item_frame", original.position(), new Aabb(1, 63, 1, 3, 65, 3), DISPLAY, 11),
+                frame(REF, "minecraft:item_frame", original.position(), BOX, new FrameDisplay(null, 3, DISPLAY.aimPoint()), 11),
+                frame(REF, "minecraft:item_frame", original.position(), BOX, new FrameDisplay(DISPLAY.item(), 4, DISPLAY.aimPoint()), 11),
+                frame(REF, "minecraft:item_frame", original.position(), BOX, new FrameDisplay(DISPLAY.item(), 3, point(2.1, 64, 2.03125)), 11));
+        for (var candidate : changed) {
+            var rejected = store.reobserveForPlanning(raw, surface -> Optional.empty(), 11,
+                    entity -> Optional.of(candidate));
+            assertThat(onlyFrame(rejected)).isEqualTo(original);
+            assertThat(store.frameDisplayRejection(REF, Optional.of(observation(11, List.of(candidate))), 11))
+                    .contains(DeliveredPolicyEvidenceStore.FrameDisplayRejection.DISPLAY_CHANGED);
+        }
+        assertThat(store.frameDisplayRejection(REF, Optional.of(observation(11, List.of())), 11))
+                .contains(DeliveredPolicyEvidenceStore.FrameDisplayRejection.NOT_VISIBLE);
+        clock.set(DeliveredPolicyEvidenceStore.SURFACE_IDLE_TIMEOUT.toNanos() - 1);
+        var fresh = frame(REF, "minecraft:item_frame", original.position(), BOX, DISPLAY, 11);
+        var planning = store.reobserveForPlanning(raw, surface -> Optional.empty(), 11,
+                entity -> Optional.of(fresh));
+        assertThat(onlyFrame(planning)).isEqualTo(fresh);
+        clock.incrementAndGet();
+        assertThat(store.frameDisplayRejection(REF, planning, 12))
+                .contains(DeliveredPolicyEvidenceStore.FrameDisplayRejection.DELIVERY_EXPIRED);
+        var expired = store.reobserveForPlanning(planning, surface -> Optional.empty(), 12,
+                entity -> { throw new AssertionError("wall-expired delivery must not be reobserved"); });
+        assertThat(onlyFrame(expired).frameDisplay()).isNull();
+    }
+
+    @Test
     void missingFreshEntityClearExpiryAndCapacityNeverResurrectADeliveredDisplay() {
         var clock = new AtomicLong();
         var store = new DeliveredPolicyEvidenceStore(clock::get);

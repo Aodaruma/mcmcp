@@ -417,6 +417,100 @@ class ScreenOwnershipSignalsTest {
                 .isEqualTo(ScreenOwnershipSignals.Phase.FAILED);
     }
 
+    @Test
+    void failedOwnerAcceptsLateFullCursorProofOnlyForCleanup() {
+        var fixture = ownedFixture(STONE);
+        fixture.core.failIfActive("test_failure");
+        fixture.full(7, MENU, 2, List.of(STONE), EMPTY, 100, true);
+
+        assertThat(fixture.core.snapshot().phase()).isEqualTo(ScreenOwnershipSignals.Phase.FAILED);
+        assertThat(fixture.core.snapshot().owned()).isFalse();
+        assertThat(fixture.core.snapshot().lastServerCursorEmpty()).isTrue();
+        assertThat(fixture.core.cancelRoutine(UUID.randomUUID(),
+                new ScreenOwnershipSignals.MenuView(7, MENU)).authorityMatched()).isFalse();
+        assertThat(fixture.core.cancelRoutine(fixture.routine,
+                new ScreenOwnershipSignals.MenuView(7, MENU)).closeMenuBestEffort()).isTrue();
+    }
+
+    @Test
+    void failedOwnerNeedsCursorAuthoredAckAfterInvalidatedProof() {
+        var fixture = ownedFixture(EMPTY);
+        fixture.core.invalidateServerCursorProof(fixture.routine,
+                fixture.core.snapshot().packetLedgerRevision());
+        fixture.core.failIfActive("test_failure");
+        fixture.core.onIncrementalContent(fixture.channel.slot(7, MENU, 2, 0, STONE, 4), true, false);
+        assertThat(fixture.core.snapshot().lastServerCursorProven()).isFalse();
+        assertThat(fixture.core.cancelRoutine(fixture.routine,
+                new ScreenOwnershipSignals.MenuView(7, MENU)).closeMenuBestEffort()).isFalse();
+
+        fixture.core.onIncrementalContent(fixture.channel.carried(7, MENU, EMPTY, 100), true, true);
+        assertThat(fixture.core.snapshot().phase()).isEqualTo(ScreenOwnershipSignals.Phase.FAILED);
+        assertThat(fixture.core.cancelRoutine(fixture.routine,
+                new ScreenOwnershipSignals.MenuView(7, MENU)).closeMenuBestEffort()).isTrue();
+    }
+
+    @Test
+    void newerNonemptyCursorRevokesFailedOwnersOldEmptyProof() {
+        for (boolean full : List.of(false, true)) {
+            var fixture = ownedFixture(EMPTY);
+            fixture.core.failIfActive("test_failure");
+            if (full) fixture.full(7, MENU, 2, List.of(STONE), STONE, 100, true);
+            else fixture.core.onIncrementalContent(
+                    fixture.channel.carried(7, MENU, STONE, 100), true, true);
+            assertThat(fixture.core.snapshot().lastServerCursorProven()).isTrue();
+            assertThat(fixture.core.snapshot().lastServerCursorEmpty()).isFalse();
+            assertThat(fixture.core.cancelRoutine(fixture.routine,
+                    new ScreenOwnershipSignals.MenuView(7, MENU)).closeMenuBestEffort()).isFalse();
+        }
+    }
+
+    @Test
+    void fullContentThatFailsOpenDeadlineStillRevokesOlderEmptyCursorProof() {
+        var fixture = ownedFixture(EMPTY);
+        assertThat(fixture.full(7, MENU, 2, List.of(STONE), STONE, 100, true).failedNow()).isTrue();
+        assertThat(fixture.core.snapshot().lastServerCursorEmpty()).isFalse();
+        assertThat(fixture.core.cancelRoutine(fixture.routine,
+                new ScreenOwnershipSignals.MenuView(7, MENU)).closeMenuBestEffort()).isFalse();
+    }
+
+    @Test
+    void failedCleanupCannotReplayOlderEmptyProofOrAdoptNeverOwnedScreen() {
+        var fixture = ownedFixture(STONE);
+        fixture.core.failIfActive("test_failure");
+        var olderEmpty = fixture.channel.fullContent(7, MENU, 2, List.of(STONE), EMPTY, 100);
+        fixture.core.onFullContent(olderEmpty, true);
+        fixture.full(7, MENU, 3, List.of(STONE), STONE, 101, true);
+        fixture.core.onFullContent(olderEmpty, true);
+        assertThat(fixture.core.snapshot().lastServerCursorEmpty()).isFalse();
+
+        var unowned = new Fixture(20);
+        unowned.open(7, MENU, 2);
+        unowned.core.failIfActive("test_failure");
+        unowned.full(7, MENU, 1, List.of(STONE), EMPTY, 100, true);
+        assertThat(unowned.core.snapshot().everOwned()).isFalse();
+        assertThat(unowned.core.snapshot().lastServerCursorProven()).isFalse();
+        assertThat(unowned.core.snapshot().phase()).isEqualTo(ScreenOwnershipSignals.Phase.FAILED);
+    }
+
+    @Test
+    void failedCleanupRejectsForeignScreenSessionAndReopenedContainerId() {
+        var fixture = ownedFixture(STONE);
+        fixture.core.failIfActive("test_failure");
+        fixture.full(7, MENU, 2, List.of(STONE), EMPTY, 100, false);
+        assertThat(fixture.core.snapshot().lastServerCursorEmpty()).isFalse();
+
+        var foreign = ownedFixture(EMPTY);
+        var foreignContent = foreign.channel.fullContent(7, MENU, 2, List.of(STONE), EMPTY, 101);
+        fixture.core.onFullContent(foreignContent, true);
+        assertThat(fixture.core.snapshot().lastServerCursorEmpty()).isFalse();
+
+        fixture.open(7, MENU, 102);
+        fixture.full(7, MENU, 3, List.of(STONE), EMPTY, 103, true);
+        assertThat(fixture.core.snapshot().lastServerCursorProven()).isFalse();
+        assertThat(fixture.core.cancelRoutine(fixture.routine,
+                new ScreenOwnershipSignals.MenuView(7, MENU)).closeMenuBestEffort()).isFalse();
+    }
+
     private static Fixture ownedFixture(ContainerSyncSignals.StackFingerprint cursor) {
         return ownedFixture(cursor, 1);
     }

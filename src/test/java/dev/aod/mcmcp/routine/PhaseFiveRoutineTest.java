@@ -63,6 +63,49 @@ class PhaseFiveRoutineTest {
     }
 
     @Test
+    void largeChestStoreGoalsReachTheAdapterAndCompleteAfterServerConfirmation() {
+        for (int goal : List.of(2_466, 3_456)) {
+            var port = new FakePort();
+            var manager = manager(port);
+            var request = new PhaseFiveRequest("transfer_items",
+                    Map.of("direction", "player_to_container"),
+                    new PhaseFiveBounds(DIMENSION, MINIMUM, MAXIMUM, 0, 20, false),
+                    goal, "items");
+            var receipt = manager.startPhaseFive(UUID.randomUUID().toString(), request, 10);
+            runToBegin(manager, port);
+            advance(manager, port);
+            assertThat(manager.getRoutine(receipt.routineId(), 0, 32).state())
+                    .isEqualTo(RoutineState.WAITING);
+            port.result = new PhaseFiveResult(goal, true,
+                    Map.of("source", "fresh_full_server_readback"), List.of());
+            port.mode = Mode.CONFIRMED;
+            advance(manager, port);
+            assertThat(manager.getRoutine(receipt.routineId(), 0, 32).progress())
+                    .isEqualTo(new RoutineProgress(goal, goal, "items"));
+            assertThat(manager.completeFinalization(receipt.routineId(), null, 0, 32).state())
+                    .isEqualTo(RoutineState.SUCCEEDED);
+        }
+    }
+
+    @Test
+    void largerExpectedUnitsAreLimitedToContainerDestinations() {
+        var bounds = new PhaseFiveBounds(DIMENSION, MINIMUM, MAXIMUM, 0, 20, false);
+        assertThatThrownBy(() -> new PhaseFiveRequest("transfer_items",
+                Map.of("direction", "player_to_container"), bounds, 3_457, "items"))
+                .isInstanceOf(IllegalArgumentException.class);
+        for (var parameters : List.of(Map.<String, Object>of(),
+                Map.<String, Object>of("direction", "container_to_player"),
+                Map.<String, Object>of("direction", "unknown"))) {
+            assertThatThrownBy(() -> new PhaseFiveRequest("transfer_items",
+                    parameters, bounds, 2_305, "items"))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(() -> new PhaseFiveRequest("craft_items",
+                Map.of("direction", "player_to_container"), bounds, 2_305, "items"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void pendingAndRetryableFailureNeverDispatchABlindRetry() {
         var port = new FakePort();
         var manager = manager(port);

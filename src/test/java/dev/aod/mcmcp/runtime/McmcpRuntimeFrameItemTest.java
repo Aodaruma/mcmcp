@@ -30,6 +30,16 @@ class McmcpRuntimeFrameItemTest {
     }
 
     @Test
+    void freshFrameRaysAreRequestedOnlyForTheExactFramePrimitive() {
+        assertThat(McmcpRuntime.frameItemTargetRef(
+                new ActionDsl.RemoveVisibleFrameItem("remove", REF, "minecraft:stone"))).isEqualTo(REF);
+        assertThat(McmcpRuntime.frameItemTargetRef(
+                new ActionDsl.InsertVisibleFrameItem("insert", REF, "minecraft:torch"))).isEqualTo(REF);
+        assertThat(McmcpRuntime.frameItemTargetRef(null)).isNull();
+        assertThat(McmcpRuntime.frameItemTargetRef(new ActionDsl.WaitTicks("wait", 1))).isNull();
+    }
+
+    @Test
     void refreshedDeliveryCanAdvanceClocksWithoutChangingTheAuthorizedOperation() {
         var original = aim(REF, "minecraft:item_frame", "minecraft:stone", null, 3, AIM, 10, 4);
         assertThat(McmcpRuntime.sameFrameItemAuthorization(original, original)).isTrue();

@@ -1153,7 +1153,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 case EXPECTING_OPEN_PACKET, EXPECTING_SCREEN, EXPECTING_FULL_CONTENT, FAILED -> {
                     // cancelRoutine may retire an already-closed failed screen and clear its
                     // ledger. Preserve its exact-owner empty-cursor proof before that transition.
-                    state.cursorReleaseConfirmed |= releaseCursorProofMatches(
+                    state.cursorReleaseConfirmed = releaseCursorProofMatches(
                             attempt.attemptId(),
                             screen.expectedOpen() == null ? null : screen.expectedOpen().routineId(),
                             screen.lastServerCursorProven(), screen.lastServerCursorEmpty());
@@ -1236,6 +1236,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
     private void releaseOwnedMenu(
             PhaseFiveAttempt attempt, AttemptState state, Minecraft minecraft) {
+        // While the ledger still owns this menu, only its current cursor proof may authorize close.
+        state.cursorReleaseConfirmed = false;
         var proof = freshServerCursorSnapshot(attempt, state);
         if (proof.isEmpty() || minecraft.player == null) return;
         var snapshot = proof.orElseThrow();

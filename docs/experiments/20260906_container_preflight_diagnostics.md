@@ -30,6 +30,8 @@
 
 予約時は既存 `unsafe_state` → 公開 `SAFETY_PRECONDITION` とrecoverableを維持し、メッセージ末尾へ `Reason: known_surface_changed.` 等を追加する。実行開始直前は既存 `WORLD_CHANGED` を維持し、evidenceへ `admission_known_surface_changed_before_execution` 等を入れる。reasonは固定enum由来で、入力値、座標、例外本文を反射しない。
 
-`McmcpRuntimePublicErrorContractTest` に、全reasonが既存の公開エラー変換を通過して区別でき、メッセージとevidenceの長さが有界であることを確認する回帰テストを追加した。担当agentは `git diff --check` のみ実行し、Gradle・ゲーム操作はしていない。統合担当でcompileJava成功を確認済み、統合testは実行中。
+`McmcpRuntimePublicErrorContractTest` に、全reasonが既存の公開エラー変換を通過して区別でき、メッセージとevidenceの長さが有界であることを確認する回帰テストを追加した。まとめ移送と統合した`a2aed8a`では計1,169件、額縁・cleanupを含む`1473d5b`では計1,212件のテストとbuild/isolation検証が成功した。
+
+再起動後の通常収納操作と全54収納の再inspectでは同じ持続的な拒否は再現していない。再起動や別修正で症状が出なくなったことと根因の特定は区別し、固定reasonによる次回診断を維持する。
 
 次回は差し替え後に最小のinspectを行い、固定reasonから原因を絞る。根因未確定の段階では、fog鮮度、revision、pose、安全条件を緩める変更や盲目的な自動retryを追加しない。

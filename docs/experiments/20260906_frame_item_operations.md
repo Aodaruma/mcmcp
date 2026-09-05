@@ -24,3 +24,15 @@ These standalone operations each send one ordinary interaction. Removal confirms
 DSL入力・capability・単独Action制約、配送認可・期限・静的再観測、正面fog/LOS、packet field別ACKとsession/identityの無効化、1回dispatch・UNKNOWN・cleanup・成分混在・選択外slot保持を回帰テストで確認した。`test` 1,178件・`harnessTest` 13件・`adminBridgeTest` 21件、計1,212件が成功し、`verifyHarnessIsolation`と`build`も通過した。実ゲームでの表示除去・回収・挿入はJAR引き渡し後に別の操作タスクで行う。
 
 All 1,212 automated tests, the production artifact isolation check, and the build passed. In-game removal, collection, and insertion are pending verification by the separate operator task.
+
+### 実ゲームの配送後拒否 / Rejection after observation delivery
+
+`1473d5b`のJARでは、正規Toolで取得した正面の額縁に対するremoveが3回ともdispatch前の`TARGET_UNKNOWN`となった。いずれも額縁への操作は送信されていない。記録例は配送tick2,589 / revision15,123、state tick2,604 / revision15,170で、観測の100tick期限内だった。
+
+単独のage条件や配送ACKの有無だけではなく、full scan後のblock更新によりvisual revision barrierが進むとframe証拠を拒否する経路がある。実機artifactにはbarrier値がないため、この拒否の直接原因と断定せず、同じ条件を回帰テストで再現して、既存の配送済みframeの実再観測と固定分類の診断を追加する。
+
+The first in-game attempts were rejected before dispatch despite being within the observation TTL. A block update after a full scan can invalidate the visual revision barrier; this path is being covered by a regression test and a fresh, strictly matched observation. The recorded game artifact does not include the barrier value, so the exact live cause is not yet established.
+
+追加修正では、そのActionの対象refだけを現在のfog/LOSで再観測し、配送済みのtype/ref/位置/AABB/item/rotation/aim点が完全一致する場合だけ内部planningのrevisionを更新する。元の配送tick・60秒期限・公開frameは変更せず、container_labelも再認可しない。拒否時は未配送・期限・非可視・表示変更・revision等の固定理由を返す。
+
+同じtick/revisionの回帰、元tick+101での再拒否、欠測・表示変更・壁時計期限・未配送の拒否・対象primitive限定を追加した。追加cleanupと内部格納上限を含む統合検証でunit 1,189件・harness 13件・admin bridge 21件、計1,223件、build/isolationが成功した。

@@ -6,6 +6,8 @@ import dev.aod.mcmcp.agent.navigation.DeterministicAStar;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilityMap;
 import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
+import dev.aod.mcmcp.agent.observation.DeliveredPolicyEvidenceStore;
+import dev.aod.mcmcp.agent.observation.ObservationPage;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.ObservationValues;
 import net.minecraft.world.phys.Vec3;
@@ -63,6 +65,45 @@ class FrameItemPlannerTest {
         assertThatThrownBy(() -> AgentPrimitivePlanner.requireFrameItemAim(map.snapshot().orElseThrow(),
                 POSE, frame("minecraft:stone", true, 4, 1, 1, 0), remove, 1))
                 .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+    }
+
+    @Test
+    void confirmedFrameCanCrossAnUnrelatedRevisionBarrierOnlyAfterAnActualMatchingRay() {
+        var map = map();
+        map.advanceWorldRevision(15_170, List.of(), List.of());
+        var snapshot = map.snapshot().orElseThrow();
+        var remove = new ActionDsl.RemoveVisibleFrameItem("remove", REF, "minecraft:stone");
+        var raw = frame("minecraft:stone", true, 2, 2_589, 2_589, 15_123);
+        var store = new DeliveredPolicyEvidenceStore();
+        var receipt = store.prepareDelivery(new ObservationPage("obs-0000000000000001",
+                2_589, raw.orElseThrow().records(), null));
+        assertThat(store.confirmDelivery(receipt)).isTrue();
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requireFrameItemAim(
+                snapshot, POSE, store.augment(raw), remove, 15_170))
+                .hasMessage("Frame witness rejected: visual_revision_outdated");
+
+        // Missing fog, a blocked front ray, or a changed identity cannot advance evidence.
+        var missed = store.reobserveForPlanning(raw, surface -> Optional.empty(), 2_604,
+                entity -> Optional.empty());
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requireFrameItemAim(
+                snapshot, POSE, missed, remove, 15_170))
+                .hasMessage("Frame witness rejected: visual_revision_outdated");
+        var fresh = (ObservationRecord.VisibleEntity) frame("minecraft:stone", true,
+                2, 2_604, 2_604, 15_170).orElseThrow().records().getFirst();
+        var planning = store.reobserveForPlanning(raw, surface -> Optional.empty(), 2_604,
+                entity -> Optional.of(fresh));
+        var aim = AgentPrimitivePlanner.requireFrameItemAim(snapshot, POSE, planning, remove, 15_170);
+        assertThat(aim.observedTick()).isEqualTo(2_604);
+        assertThat(aim.worldRevision()).isEqualTo(15_170);
+        assertThat(raw.orElseThrow().frameCompletedTick()).isEqualTo(2_589);
+        assertThat(raw.orElseThrow().records().getFirst().newestObservedTick()).isEqualTo(2_589);
+
+        // Reobserving successfully does not renew the original delivery's 100-tick lease.
+        var expired = store.reobserveForPlanning(planning, surface -> Optional.empty(), 2_690,
+                entity -> { throw new AssertionError("expired delivery must not be reobserved"); });
+        assertThatThrownBy(() -> AgentPrimitivePlanner.requireFrameItemAim(
+                snapshot, POSE, expired, remove, 15_170))
+                .hasMessage("Frame witness rejected: display_not_authorized");
     }
 
     @Test

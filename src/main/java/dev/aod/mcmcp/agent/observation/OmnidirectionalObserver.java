@@ -755,6 +755,26 @@ public final class OmnidirectionalObserver {
                         frame.getRotation(), worldPosition(dimension, point)));
     }
 
+    /** Fresh visual witness for a known frame. Container routing labels are not reauthorized. */
+    public static Optional<VisibleEntity> reobserveFrameEntity(
+            ClientLevel level, LocalPlayer player, ItemFrame frame, VisibleEntity known,
+            long clientTick, long worldRevision, double configuredRadiusBlocks) {
+        return currentFrameDisplay(level, player, frame, clientTick, worldRevision, configuredRadiusBlocks)
+                .map(display -> {
+                    var dimension = new ResourceId(level.dimension().identifier().toString());
+                    Vec3 position = frame.position();
+                    Vec3 velocity = frame.getDeltaMovement();
+                    AABB box = frame.getBoundingBox();
+                    return new VisibleEntity(new ResourceId(
+                            BuiltInRegistries.ENTITY_TYPE.getKey(frame.getType()).toString()),
+                            null, known.entityRef(), worldPosition(dimension, position),
+                            new Vector(velocity.x, velocity.y, velocity.z),
+                            new Aabb(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ),
+                            hazardClass(frame), worldPosition(dimension, player.getEyePosition()),
+                            clientTick, worldRevision, null, display);
+                });
+    }
+
     /** Seeing a frame's edge or back does not disclose its displayed item or rotation. */
     static Optional<Vec3> frameDisplayAim(
             AABB box, Direction facing, TickSample sample, Predicate<Vec3> clearRay) {

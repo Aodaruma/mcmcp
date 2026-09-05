@@ -55,8 +55,10 @@ public record PhaseFiveRequest(
         if (bounds.allowBreak() != requiresBreak) {
             throw new IllegalArgumentException("allowBreak does not match the routine kind");
         }
-        if (expectedUnits < 0 || expectedUnits > 2_304) {
-            throw new IllegalArgumentException("expected units must be in 0..2304");
+        int maximumExpectedUnits = kind.equals("transfer_items")
+                && "player_to_container".equals(parameters.get("direction")) ? 3_456 : 2_304;
+        if (expectedUnits < 0 || expectedUnits > maximumExpectedUnits) {
+            throw new IllegalArgumentException("expected units must be in 0.." + maximumExpectedUnits);
         }
         Objects.requireNonNull(progressUnit, "progressUnit");
         if (progressUnit.isBlank() || progressUnit.length() > 64) {

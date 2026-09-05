@@ -3609,25 +3609,31 @@ public final class AgentPrimitivePlanner {
         requireVisualBarrierWorldRevision(map, map.worldRevision(), visualBarrierWorldRevision);
         var candidates = latestFrame.stream()
                 .filter(frame -> frame.dimension().value().equals(map.dimension()))
-                .flatMap(frame -> frame.records().stream()
-                        .filter(record -> record.newestObservedTick() <= frame.frameCompletedTick()
-                                && frame.frameCompletedTick() - record.newestObservedTick() <= 100))
+                .flatMap(frame -> frame.records().stream())
                 .filter(ObservationRecord.VisibleEntity.class::isInstance)
                 .map(ObservationRecord.VisibleEntity.class::cast)
                 .filter(entity -> ref.equals(entity.entityRef()))
                 .filter(entity -> Set.of("minecraft:item_frame", "minecraft:glow_item_frame")
                         .contains(entity.entityType().value()))
-                .filter(entity -> entity.frameDisplay() != null)
-                .filter(entity -> entity.worldRevision() >= visualBarrierWorldRevision
-                        && entity.worldRevision() <= map.worldRevision())
-                .filter(entity -> expected.equals(Optional.ofNullable(entity.frameDisplay().item())
-                        .map(ObservationValues.ResourceId::value)))
                 .toList();
         if (candidates.size() != 1) {
             throw new PlanningException(Code.TARGET_UNKNOWN,
-                    "Frame requires one current matching front-face display witness");
+                    "Frame witness rejected: missing_or_ambiguous_observation");
         }
         var entity = candidates.getFirst();
+        long completedTick = latestFrame.orElseThrow().frameCompletedTick();
+        if (entity.observedTick() > completedTick || completedTick - entity.observedTick() > 100) {
+            throw new PlanningException(Code.TARGET_UNKNOWN, "Frame witness rejected: observation_expired");
+        }
+        if (entity.frameDisplay() == null) {
+            throw new PlanningException(Code.TARGET_UNKNOWN, "Frame witness rejected: display_not_authorized");
+        }
+        if (entity.worldRevision() < visualBarrierWorldRevision || entity.worldRevision() > map.worldRevision()) {
+            throw new PlanningException(Code.TARGET_UNKNOWN, "Frame witness rejected: visual_revision_outdated");
+        }
+        if (!expected.equals(Optional.ofNullable(entity.frameDisplay().item()).map(ObservationValues.ResourceId::value))) {
+            throw new PlanningException(Code.TARGET_UNKNOWN, "Frame witness rejected: expected_item_changed");
+        }
         var display = entity.frameDisplay();
         var point = display.aimPoint();
         var eye = new Vec3(pose.x(), pose.y() + pose.eyeHeight(), pose.z());
