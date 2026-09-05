@@ -122,6 +122,35 @@ class ScreenOwnershipSignalsTest {
     }
 
     @Test
+    void expectedMenuMayReplacePassiveChatButStillRequiresFullServerContent() {
+        var fixture = new Fixture(20);
+        fixture.open(7, MENU, 2);
+        fixture.core.allowScreenOpening(7, MENU, 2);
+        assertThat(fixture.core.onPassiveScreenClosing(2).allowed()).isTrue();
+        assertThat(fixture.core.snapshot().phase())
+                .isEqualTo(ScreenOwnershipSignals.Phase.EXPECTING_FULL_CONTENT);
+        assertThat(fixture.core.snapshot().owned()).isFalse();
+        assertThat(fixture.full(7, MENU, 9, List.of(STONE), EMPTY, 3, true).allowed()).isTrue();
+        assertThat(fixture.core.snapshot().owned()).isTrue();
+        assertThat(fixture.core.onScreenClosing(7, MENU).failedNow()).isTrue();
+    }
+
+    @Test
+    void passiveCloseExceptionIsSingleUseSameTickAndOnlyAfterExpectedOpening() {
+        var before = new Fixture(20);
+        assertThat(before.core.onPassiveScreenClosing(2).failedNow()).isTrue();
+        var late = new Fixture(20);
+        late.open(7, MENU, 2);
+        late.core.allowScreenOpening(7, MENU, 2);
+        assertThat(late.core.onPassiveScreenClosing(3).failedNow()).isTrue();
+        var twice = new Fixture(20);
+        twice.open(7, MENU, 2);
+        twice.core.allowScreenOpening(7, MENU, 2);
+        assertThat(twice.core.onPassiveScreenClosing(2).allowed()).isTrue();
+        assertThat(twice.core.onPassiveScreenClosing(2).failedNow()).isTrue();
+    }
+
+    @Test
     void wrongFullContentIdentityMissingScreenAndOutOfOrderSlotAllFailClosed() {
         var wrongContent = new Fixture(20);
         wrongContent.open(7, MENU, 2);

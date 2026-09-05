@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.client.AgentScreenPolicy;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
@@ -325,7 +326,9 @@ public final class ScreenOwnershipSignals {
         var view = menuView(screen);
         synchronized (gate) {
             var transition = view.isEmpty()
-                    ? core.failIfActive("unexpected_screen_closed")
+                    ? screen != null && AgentScreenPolicy.allowsWorldInput(screen)
+                            ? core.onPassiveScreenClosing(clientTick)
+                            : core.failIfActive("unexpected_screen_closed")
                     : core.onScreenClosing(
                             view.orElseThrow().containerId(), view.orElseThrow().menuTypeId());
             return transition.failedNow()
@@ -575,6 +578,7 @@ public final class ScreenOwnershipSignals {
         private String failureReason;
         private boolean cancelBeforeOwnership;
         private boolean screenMaterialized;
+        private long passiveScreenCloseTick = -1;
         private boolean causalCancelRequired;
         private boolean everOwned;
         private boolean lastServerCursorProven;
@@ -668,7 +672,19 @@ public final class ScreenOwnershipSignals {
             }
             phase = Phase.EXPECTING_FULL_CONTENT;
             screenMaterialized = true;
+            passiveScreenCloseTick = tick;
             return Transition.accepted();
+        }
+
+        // NeoForge posts Opening(new menu) before Closing(old chat). This is one
+        // same-tick replacement, not a close of the pending/owned container itself.
+        Transition onPassiveScreenClosing(long tick) {
+            if (!active()) return Transition.irrelevant();
+            if (phase == Phase.EXPECTING_FULL_CONTENT && passiveScreenCloseTick == tick) {
+                passiveScreenCloseTick = -1;
+                return Transition.accepted();
+            }
+            return fail("unexpected_screen_closed");
         }
 
         Transition onFullContent(
@@ -955,6 +971,7 @@ public final class ScreenOwnershipSignals {
         }
 
         private void resetActive() {
+            passiveScreenCloseTick = -1;
             phase = Phase.IDLE;
             expectedOpen = null;
             containerId = -1;

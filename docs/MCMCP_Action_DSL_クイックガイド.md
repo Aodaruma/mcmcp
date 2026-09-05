@@ -83,6 +83,17 @@ dropが通常の物理移動で少しずれ、古いpickup cellだけが使え�
 
 `max_distance_blocks`の公開上限は32です。経路探索は開始cell内の実pose誤差へ`1.5 × √6`（約3.67）を先に確保し、残る約28.33を`1.5 × centerline edge length + 垂直edgeごとに1.5`で数えます。このため平坦なcardinal経路は最大18 edgeで、垂直edgeを含む経路はさらに短くなります。freshな`navigation_target`への単独`navigate_to_known`は、最大値32ならdistance componentだけを理由に静的受付不能にはなりません。
 
+## チェスト内容の取得先と制限
+
+`inspect_known_container`を単独Actionで実行し、返された`action_id`を`agent_get_action`へ渡します。`state=succeeded`を確認してから、`trace`の`event=NODE_EVIDENCE`、`detail`が`container_items=`で始まる要素を読みます。
+
+```text
+container_items=minecraft:birch_log:17,minecraft:oak_log:267
+```
+
+これはserverから同期された内容のアイテムID別個数です。inspectはアイテムを転送しないため`effects=[]`が正常で、終了時には所有していた画面を閉じるため`agent_get_state.known_menu`も常設されません。失敗して`NODE_EVIDENCE`がない場合は、内容を取得できたと扱わないでください。
+
+現行の返却は完全な在庫一覧ではなく短い要約です。内部で最大27種類に制限し、traceのdetailも最大256文字なので、長い一覧は末尾の`,...`で省略されます。内部の種類数上限に達したことを示すフラグは現行traceには出ていないため、`,...`がなくても完全性は保証できません。省略されたアイテムを「存在しない」と判断しないでください。倉庫全体の完全な棚卸しには、別途ページ付きの構造化した検査結果が必要です。
 ## 頻出nodeの必須field
 
 - `navigate_to_known`: `{id,op,target,tolerance}`

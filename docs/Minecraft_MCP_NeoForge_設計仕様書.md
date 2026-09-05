@@ -2004,3 +2004,7 @@ repository作成直前に、選択したowner配下で`mcmcp`が作成可能か�
 - [Existing CraftAgent repository](https://github.com/prskid1000/CraftAgent)
 - [Existing Craftpilot repository](https://github.com/mmmfrieddough/craftpilot)
 - [Minecraft Usage Guidelines](https://www.minecraft.net/en-us/usage-guidelines)
+
+### チャットから期待したコンテナへの画面遷移
+
+NeoForge 26.2の画面切替は新画面のOpeningの後に旧画面のClosingを通知する。通常操作を許可する非pause ChatScreenから、正確なOpenScreen packetに対応したmenuへ切り替わる場合だけ、EXPECTING_FULL_CONTENTへ進んだ同じclient tick内の旧chatのClosingを1回許可する。所有権は同じsession・container ID・menu typeのfull-content packet確認後に限る。期待前・別tick・重複のchat閉鎖、所有済みコンテナの予期しない閉鎖、別menuのopenは引き続き停止する。
