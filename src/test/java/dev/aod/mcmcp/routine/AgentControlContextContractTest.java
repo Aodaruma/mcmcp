@@ -26,8 +26,32 @@ class AgentControlContextContractTest {
                     .noneMatch(call -> call.endsWith("#isMouseGrabbed"))
                     .anyMatch(call -> call.endsWith("#isPaused"))
                     .anyMatch(call -> call.endsWith("#isUsingItem"))
+                    .contains("dev/aod/mcmcp/client/AgentScreenPolicy#allowsWorldInput")
                     .anyMatch(call -> call.endsWith("#getPlayerMode"));
         }
+    }
+
+    @Test
+    void boundedInputAndMenuPreparationUseTheSameChatPolicy() throws Exception {
+        for (var resource : List.of(
+                "/dev/aod/mcmcp/runtime/McmcpRuntime.class",
+                "/dev/aod/mcmcp/client/AgentUseInputChannel.class",
+                "/dev/aod/mcmcp/routine/MinecraftPillarUpPort.class",
+                "/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort.class",
+                "/dev/aod/mcmcp/routine/MinecraftKnownFurnacePort.class",
+                "/dev/aod/mcmcp/routine/MinecraftKnownBrewingPort.class")) {
+            assertThat(invocations(classNode(resource))).as(resource)
+                    .contains("dev/aod/mcmcp/client/AgentScreenPolicy#allowsWorldInput");
+        }
+        var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
+        var boundedSafety = runtime.methods.stream()
+                .filter(method -> method.name.equals("boundedInputUnsafeReason"))
+                .findFirst().orElseThrow();
+        assertThat(java.util.Arrays.stream(boundedSafety.instructions.toArray())
+                .filter(MethodInsnNode.class::isInstance)
+                .map(MethodInsnNode.class::cast)
+                .map(call -> call.owner + "#" + call.name).toList())
+                .contains("dev/aod/mcmcp/client/AgentScreenPolicy#allowsWorldInput");
     }
 
     private static ClassNode classNode(String resource) throws Exception {

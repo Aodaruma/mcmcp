@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals;
 import dev.aod.mcmcp.runtime.KnownMenuOperationRefs;
 import dev.aod.mcmcp.runtime.KnownMenuProfileSupport;
@@ -154,7 +155,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
             return;
         }
         if (state.stage == Stage.AWAIT_CLOSE
-                && minecraft.gui.screen() == null
+                && AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 && minecraft.player.containerMenu == minecraft.player.inventoryMenu) {
             state.latchSuccess();
         }
@@ -389,7 +390,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
             state.publishTerminal();
             return;
         }
-        if (minecraft.gui.screen() == null
+        if (AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 && minecraft.player.containerMenu == minecraft.player.inventoryMenu) {
             state.releaseConfirmed = true;
             state.publishTerminal();

@@ -136,6 +136,62 @@ class OmnidirectionalObserverTest {
     }
 
     @Test
+    void continuousInvalidationPublishesFreshCompleteFramesWithinTwoScanPeriods() {
+        for (int rays : List.of(64, 256, 512)) {
+            var observer = new OmnidirectionalObserver(16.0D, rays);
+            int deadline = 2 * observer.ticksToComplete();
+            var queries = new AtomicInteger();
+            for (long tick = 1; tick <= 3L * deadline; tick++) {
+                var traced = new AtomicInteger();
+                var completed = observer.collectTick(
+                        sample(tick, tick, UnknownBoundaryReason.RADIUS_LIMIT),
+                        (index, direction, actual) -> {
+                            traced.incrementAndGet();
+                            return miss(direction, actual);
+                        },
+                        () -> {
+                            queries.incrementAndGet();
+                            return OmnidirectionalObserver.EntityObservation.empty();
+                        });
+                if (tick % deadline != 0) {
+                    assertThat(completed).isEmpty();
+                    assertThat(traced).hasValue(rays);
+                } else {
+                    long currentTick = tick;
+                    assertThat(traced).hasValue(2_048);
+                    assertThat(completed.orElseThrow().frameCompletedTick()).isEqualTo(tick);
+                    assertThat(completed.orElseThrow().records()).hasSize(2_048)
+                            .allSatisfy(record -> {
+                                assertThat(((UnknownBoundary) record).observedTick()).isEqualTo(currentTick);
+                                assertThat(record.worldRevision()).isEqualTo(currentTick);
+                            });
+                }
+            }
+            assertThat(queries).hasValue(3);
+        }
+    }
+
+    @Test
+    void resetDiscardsTheCatchUpClockAndOldWorldEvidence() {
+        var observer = new OmnidirectionalObserver(16.0D, 256);
+        for (long tick = 1; tick <= 15; tick++) {
+            observer.collectTick(sample(tick, tick, UnknownBoundaryReason.RADIUS_LIMIT),
+                    (index, direction, actual) -> miss(direction, actual),
+                    OmnidirectionalObserver.EntityObservation::empty);
+        }
+        observer.reset();
+        for (long tick = 1; tick <= 8; tick++) {
+            var completed = observer.collectTick(
+                    sample(tick, 99L, UnknownBoundaryReason.RADIUS_LIMIT),
+                    (index, direction, actual) -> miss(direction, actual),
+                    OmnidirectionalObserver.EntityObservation::empty);
+            if (tick < 8) assertThat(completed).isEmpty();
+            else assertThat(completed.orElseThrow().records())
+                    .allMatch(record -> record.worldRevision() == 99L);
+        }
+    }
+
+    @Test
     void surfaceKeyIsPositionAndFaceAndUnknownBoundaryPolicyIsExplicit() {
         var observer = new OmnidirectionalObserver(
                 8.0D,

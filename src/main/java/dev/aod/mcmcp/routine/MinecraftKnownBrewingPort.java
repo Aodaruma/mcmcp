@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.brewing.StandardPotionStackSpec;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
@@ -710,7 +711,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
     private void maintainClose(AttemptState state) {
         Minecraft minecraft = requireMinecraft();
         if (screens.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE
-                || minecraft.gui.screen() != null
+                || !AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 || minecraft.player == null
                 || minecraft.player.containerMenu != minecraft.player.inventoryMenu) {
             return;
@@ -836,7 +837,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                 return;
             }
             if (state.screenOwnedObserved
-                    && (minecraft.gui.screen() != null
+                    && (!AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                     || minecraft.player == null
                     || minecraft.player.containerMenu != minecraft.player.inventoryMenu
                     || !minecraft.player.inventoryMenu.getCarried().isEmpty())) {
@@ -1077,7 +1078,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         if (!basicPlayerSafety(minecraft, null)) {
             return safetyFailure();
         }
-        if (minecraft.gui.screen() != null
+        if (!AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 || minecraft.player.containerMenu != minecraft.player.inventoryMenu
                 || screens.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE) {
             return failure("BREWING_SCREEN_NOT_CLEAR",
@@ -1223,7 +1224,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                 || stage == Stage.AIMING_LOADED_READBACK
                 || stage == Stage.AIMING_FINAL_READBACK) {
             return phase == ScreenOwnershipSignals.Phase.IDLE
-                    && minecraft.gui.screen() == null
+                    && AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                     && minecraft.player != null
                     && minecraft.player.containerMenu == minecraft.player.inventoryMenu;
         }

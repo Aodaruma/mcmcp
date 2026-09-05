@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.observation.MinecraftObservationService.BlockOutcome;
 import dev.aod.mcmcp.observation.MinecraftObservationService.BlockSample;
@@ -193,7 +194,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                                 && activeBlock.blockView.matches(activeBlock.blockViewOwner)
                 : baseline.matches(player);
         boolean controlContextClear = !minecraft.isPaused()
-                && minecraft.gui.screen() == null
+                && AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 && minecraft.gui.overlay() == null
                 && !player.isUsingItem()
                 && stationary
@@ -203,7 +204,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                 && player.getHealth() + 0.001F >= baseline.health()
                 && player.hurtTime == 0 && player.getRemainingFireTicks() <= 0;
         boolean threatClear = visibleThreatClear(minecraft, player, level);
-        boolean screenClear = minecraft.gui.screen() == null
+        boolean screenClear = AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 && player.containerMenu == player.inventoryMenu;
         var recon = reconciliations.bindAndSnapshot(level, session.worldSessionId());
 

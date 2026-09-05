@@ -122,6 +122,7 @@ public final class OmnidirectionalObserver {
     private long lastAcceptedTick = -1L;
     private long lastVisualRevision = -1L;
     private int nextDirectionIndex;
+    private int ticksWithoutFrame;
 
     public OmnidirectionalObserver(double configuredRadiusBlocks, int raysPerTick) {
         this(configuredRadiusBlocks, raysPerTick, OmnidirectionalObserver::randomFrameId);
@@ -216,6 +217,7 @@ public final class OmnidirectionalObserver {
     /** Discards a partial temporal frame, for example after disconnecting from a world. */
     public void reset() {
         clearAccumulation();
+        ticksWithoutFrame = 0;
         sessionDimension = null;
         lastAcceptedTick = -1L;
         lastVisualRevision = -1L;
@@ -248,16 +250,25 @@ public final class OmnidirectionalObserver {
         }
         if (sessionDimension == null
                 || !sessionDimension.equals(sample.dimension())
-                || sample.observedTick() < lastAcceptedTick
-                || lastVisualRevision >= 0L
-                        && sample.visualRevision() != lastVisualRevision) {
+                || sample.observedTick() < lastAcceptedTick) {
+            clearAccumulation();
+            ticksWithoutFrame = 0;
+        } else if (lastVisualRevision >= 0L
+                && sample.visualRevision() != lastVisualRevision) {
             clearAccumulation();
         }
         sessionDimension = sample.dimension();
         lastAcceptedTick = sample.observedTick();
         lastVisualRevision = sample.visualRevision();
 
-        int endExclusive = Math.min(DIRECTION_COUNT, nextDirectionIndex + raysPerTick);
+        // Repeated block updates must not starve the published frame indefinitely. Keep the
+        // usual per-tick slice, but after two scan periods reobserve ALL directions on this
+        // client tick. Never combine rays across an invalidating visual revision. This bounded
+        // catch-up costs at most 2,048 rays and also refreshes entities, local volume and sound.
+        boolean catchUp = ++ticksWithoutFrame >= 2 * ticksToComplete();
+        if (catchUp) clearAccumulation();
+        int endExclusive = catchUp ? DIRECTION_COUNT
+                : Math.min(DIRECTION_COUNT, nextDirectionIndex + raysPerTick);
         List<DirectionVector> directions = OmnidirectionalDirections.all();
         for (int index = nextDirectionIndex; index < endExclusive; index++) {
             RayTrace trace = Objects.requireNonNull(
@@ -328,6 +339,7 @@ public final class OmnidirectionalObserver {
                 false,
                 records);
         clearAccumulation();
+        ticksWithoutFrame = 0;
         return Optional.of(completed);
     }
 

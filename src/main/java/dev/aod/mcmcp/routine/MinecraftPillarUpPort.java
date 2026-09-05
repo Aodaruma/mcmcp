@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.mixin.client.BlockItemPlacementInvoker;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.runtime.ClientPredictionSignals;
@@ -411,7 +412,7 @@ public final class MinecraftPillarUpPort implements PillarUpPort {
             ClientLevel level,
             float initialHealth) {
         return !minecraft.isPaused()
-                && minecraft.gui.screen() == null
+                && AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 && minecraft.gui.overlay() == null
                 && minecraft.getConnection() != null
                 && minecraft.gameMode != null

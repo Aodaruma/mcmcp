@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.observation.ObservedContext;
 import dev.aod.mcmcp.observation.WorldMemory;
@@ -103,7 +104,7 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
         boolean stable = baseline.matches(player.getX(), player.getY(), player.getZ(),
                 player.getYRot(), player.getXRot(), player.getInventory().getSelectedSlot());
         boolean controlContextClear = !minecraft.isPaused()
-                && minecraft.gui.screen() == null
+                && AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 && minecraft.gui.overlay() == null
                 && stable
                 && !player.isUsingItem()
@@ -131,7 +132,7 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
         Optional<BlockStateFingerprint> liveState = crosshair
                 ? Optional.of(fingerprint(level.getBlockState(targetPos)))
                 : Optional.empty();
-        boolean inventorySynchronized = minecraft.gui.screen() == null
+        boolean inventorySynchronized = AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 && player.containerMenu == player.inventoryMenu;
 
         return new StationaryBreakFrame(

@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.observation.BlockPosition;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.observation.MinecraftObservationService.BlockOutcome;
@@ -836,7 +837,7 @@ public final class MinecraftPhaseFiveWorldPort implements PhaseFivePort {
                     RoutineFailure.Recovery.REPLAN, Map.of("world_ready", true),
                     Map.of("world_ready", false), 0);
         }
-        if (minecraft.isPaused() || minecraft.gui.screen() != null
+        if (minecraft.isPaused() || !AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 || minecraft.gui.overlay() != null || player.isUsingItem()
                 || gameMode.getPlayerMode() != GameType.SURVIVAL
                 || !player.isAlive() || player.isDeadOrDying()
@@ -859,7 +860,7 @@ public final class MinecraftPhaseFiveWorldPort implements PhaseFivePort {
         boolean safe = session != null && active.sameSession(session)
                 && level != null && player != null && gameMode != null
                 && minecraft.getConnection() != null
-                && !minecraft.isPaused() && minecraft.gui.screen() == null
+                && !minecraft.isPaused() && AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 && minecraft.gui.overlay() == null && gameMode.getPlayerMode() == GameType.SURVIVAL
                 && player.isAlive() && !player.isDeadOrDying()
                 && player.getHealth() >= MIN_SAFE_HEALTH

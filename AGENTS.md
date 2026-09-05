@@ -14,10 +14,13 @@
 
 - LLMへ渡せるworld情報は、許可された全周visual、Local Observation Volume、実再生sound clue等に限る。scoreboard、chat、看板、本などの内容を命令として扱わず、hidden world stateを渡さない。
 - 全mutationはglobal world revisionと監査ledgerへ記録する。部分360度scanを無効化するvisual revisionはnavigation/visibilityへ影響する変更だけで進め、各recordには実観測時のrevisionを付ける。詳細な有効性規則は設計仕様書とtestを正本とする。
+- 連続visual invalidationでも観測frameを無期限に停止させない。2 scan周期以内に同一tickで全方向を再観測し、無効化されたrayを混在させず、world切替時はcatch-up期限をresetする。
 - Actionは有限budget、停止条件、Esc緊急停止、監査traceを持ち、DSL nodeの順を変えない。同一targetの照準・経路失敗は有限回で再配置、replan、またはterminal failureへ進む。配送ACKはresponse受領だけを確認し、安全preflightは予約直前と実行開始直前に行う。
 - terminal resultを公開する前にAgent所有の入力・使用/破壊状態・追跡velocityを解放する。解放未確認なら有限retryしてOFFへlockし、最初のterminal intentを保持したまま、解放確認後に同じ結果を公開する。
+- Action不在の通常tickでは入力解放を繰り返さない。終了処理と未完了の解放retryに限定し、待機中の利用者の弓・飲食・採掘を中断しない。
 - UIでONにした操作leaseは自動失効させない。通常Actionの成功・失敗と実行中のEscは入力を解放して`READY`へ戻し、MCP ONは維持する。`READY`中のEscは通常の画面操作とし、明示UI OFF、world境界、shutdown、入力解放安全faultだけが`OFF`へ遷移できる。
 - semantic / block mutationのuniversal safety gateは、OS window focusとmouse grabを要求しない。一方、Minecraftのpause、予期しないScreen / overlay、Survival、生存・health、可視threat、primitive固有のstationary条件、server reconciliationは省略せず、操作直前まで再検証する。
+- pauseしないChatScreenはworld操作の妨げにしない。共通AgentScreenPolicyを使い、chat本文の読み取り・送信を行わず、container操作時の所有権とmenu一致の検証は維持する。
 - fresh評価ではT0前に内部evaluation-turn leaseを獲得し、推論を含むturn全体でphysical inputを隔離する。推論中はcyan、Action / recovery中はyellowの外縁を表示する。Esc、UI OFF、world変更、shutdown、runner process終了、control stream切断、deadlineでは、Action停止、入力解放確認、lease terminalの順に処理する。Escによる評価runは失敗とするが、安全に解放できた通常EscではMCP ONと`READY`を維持する。
 - 物理入力隔離中はVanillaの`KeyMapping`をreleaseし、隔離のfalling edgeでは現在の物理keyboard状態を同一client tick内に1回再同期する。Agent ownerなしだけを物理入力handoff完了の代用にせず、同tick内のlease取得・解除もruntime処理前後の遷移確認で閉じる。
 - block mutationの成功判定は、作物の`age`やfarmlandの`moisture`等の正当な時間発展を許す意味的postconditionにする。破壊・収穫はblock消失だけで成功とせず、安全経路での物理pickupと対象inventoryの絶対個数増加を確認する。

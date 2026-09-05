@@ -44,7 +44,8 @@ public final class McmcpClientConfig {
                     1,
                     32);
     private static final ModConfigSpec.IntValue RAYS_PER_TICK = BUILDER
-            .comment("Omnidirectional visual rays sampled per active client tick")
+            .comment("Normal omnidirectional rays per active tick; repeated invalidations trigger"
+                    + " one bounded 2048-ray catch-up within two scan periods")
             .defineInRange(
                     "omnidirectional_rays_per_tick",
                     DEFAULT_RAYS_PER_TICK,

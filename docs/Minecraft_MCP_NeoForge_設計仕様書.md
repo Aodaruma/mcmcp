@@ -392,6 +392,12 @@ leaseがactiveな間は、モデルが推論していてActionがない区間も
 
 物理Escで終わった評価runは失敗とする。ただし入力解放に成功し、同じworldでMCP操作ONが有効なら、Actionを`EMERGENCY_STOP`として通常どおり`READY`へ戻し、UIのON leaseは維持する。UI OFF、world境界、shutdownは従来どおり`OFF`、入力解放を確認できない場合は安全faultとして`OFF`へlockする。runner process終了、stream切断、deadlineも評価を失敗させるが、同じworldと有効なUI許可が残り、入力解放を確認できた場合は`READY`を維持する。正常なturn completionでも、runnerは同じ停止・解放確認gateを明示的に通してからleaseをreleaseし、visible child processを終了する。
 
+### チャット中の継続実行と待機中の手動入力
+
+非pauseのChatScreenはワールド操作を妨げない画面として、入力保持・移動・破壊・設置・設備操作前の共通判定で許可する。チャット本文は読まず送信しない。pause、overlay、その他の画面、health、hazard、対象照準・到達範囲・権限・時間予算は引き続き検査する。コンテナ操作が始まった後のexact Menu / Screen所有権は別の安全条件として維持し、チャットをコンテナの代用にしない。ローカル攻撃承認画面を開くときは既存画面との競合を防ぐ。
+
+Actionがない通常tickは入力操作を行わない。terminal時の入力解放と未完了の解放retryは維持するが、待機中に毎tick `stopUsingItem` / `releaseUsingItem` を呼んではならない。利用者が手動で行う弓の引き絞り、飲食、採掘をMCMCPの待機処理で中断しない。
+
 ## 7. 観測境界
 
 ### 7.1 survival_omnidirectionalの原則
@@ -427,6 +433,8 @@ global `world_revision`とは別に、部分的な全周scanを破棄する`visu
 ### 7.3 Omnidirectional Visual Observation
 
 観測原点はthird-person cameraではなくplayer eye positionとし、水平360度・上下180度をworld軸固定のdeterministic equal-area ray集合で観測する。方向集合は2,048方向へ固定し、既定は1 ClientTickあたり256方向、8 active tickで1 frameを更新する。ray/tickは64〜512のlocal performance設定内で調整でき、frame所要tickは`ceil(2048 / rays_per_tick)`となる。半径は`min(configured radius, 32 block, current fog distance, loaded boundary)`で、`sampling_coverage=1.0`は予定した全方向を更新済みという意味であり、連続球面の完全走査を意味しない。
+
+visual revision変更では部分rayを破棄するが、再開始を含む未完成tick数は保持する。通常scan周期の2倍（既定16 active tick）に達した場合、そのtickのcurrent player eye・fog・world revisionで2,048方向を一括再観測して完成させる。失効rayを再利用せず、通常の遮蔽・半径・record上限を維持する。catch-upの上限は1 tickにつき2,048 rayで、完了・world reset・dimension変更・tick巻き戻りでは未完成counterをリセットする。局所経路、hazard、entity、音もこの完成frameへ新しい値を合成する。通常ray/tick設定は平常時の分割量であり、catch-upの単一tick負荷は別途実環境で確認する。
 
 frameは複数tickのtemporal compositeであり、単一時刻・単一原点の球面snapshotとは表現しない。各visual recordへ、そのrayまたはentity line-of-sightを採った時点の`eye_origin`、`observed_tick`、`world_revision`を付ける。Local Observation Volume由来recordには`observer_position`、sound clueには最終観測時の`world_revision`を付ける。frame responseの`frame_completed_tick`から各recordの鮮度を計算できるようにする。
 

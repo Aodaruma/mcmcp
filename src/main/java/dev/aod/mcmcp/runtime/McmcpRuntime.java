@@ -49,6 +49,7 @@ import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.agent.safety.MinecraftRecoveryGovernor;
 import dev.aod.mcmcp.McmcpMod;
 import dev.aod.mcmcp.client.AgentInputState;
+import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.client.AutomationIndicatorController;
 import dev.aod.mcmcp.client.McmcpClientConfig;
 import dev.aod.mcmcp.client.MultiplayerAllowlist;
@@ -712,7 +713,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || !Objects.equals(session.dimension(), scope.dimension())
                 || agentActions.active().isPresent()
                 || routines.activeRoutineId().isPresent()
-                || minecraft.gui.screen() != null
+                || !AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
+                || openLocalPrompt && minecraft.gui.screen() != null
                 || openLocalPrompt && entityAttackConsentUi == null) {
             throw new IllegalStateException("entity attack consent admission is not ready");
         }
@@ -2506,9 +2508,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || !player.onGround()
                 || player.isCreative() || player.isSpectator()
                 || minecraft.gameMode == null
-                || minecraft.gui.screen() != null) {
+                || !AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())) {
             throw new RuntimeInvocationException(
-                    "unsafe_state", "Kill-zone consent requires a grounded survival player with no Screen.",
+                    "unsafe_state", "Kill-zone consent requires a grounded survival player with no blocking Screen.",
                     true, Map.of());
         }
         String heldItem = BuiltInRegistries.ITEM.getKey(
@@ -4265,7 +4267,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private void tickAgentAction(Minecraft minecraft) {
         var active = agentActions.active();
         if (active.isEmpty()) {
-            releaseAgentControl(minecraft);
+            // Terminal paths already release ownership, and onPreTick retries pending cleanup.
+            // Releasing again while idle would stop the USER's bow/potion use every client tick.
             return;
         }
         var action = active.orElseThrow();
@@ -5135,7 +5138,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (player.getAirSupply() < player.getMaxAirSupply()) return "air_loss";
         if (player.isPassenger() || player.isInWater() || player.isInLava()
                 || player.isFallFlying() || player.getAbilities().flying) return "unsupported_locomotion";
-        if (minecraft.gui.screen() != null) return "screen_open";
+        if (!AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())) return "screen_open";
         AABB box = player.getBoundingBox();
         if (!operation.scope.playerStationBounds().contains(
                 box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)) return "station_departed";
@@ -6728,7 +6731,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (player.isPassenger() || player.isFallFlying() || player.fallDistance > 0.0F) {
             return "unstable_pose";
         }
-        if (minecraft.gui.screen() != null) return "screen_open";
+        if (!AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())) return "screen_open";
         if (minecraft.gui.overlay() != null) return "overlay_open";
         if (screenOwnership.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE) {
             return "screen_owner_active";
@@ -10883,7 +10886,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 player.getHealth(),
                 velocity.x * velocity.x + velocity.z * velocity.z,
                 player.isUsingItem(),
-                minecraft.gui.screen() == null,
+                AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen()),
                 screenOwnership.snapshot().phase() == ScreenOwnershipSignals.Phase.IDLE,
                 visibleThreatClear);
     }

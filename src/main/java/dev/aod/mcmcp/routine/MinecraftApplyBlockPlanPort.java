@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.mixin.client.BlockItemPlacementInvoker;
 import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
@@ -131,7 +132,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
 
         boolean positionHeld = plan.positionMatches(player);
         boolean controlContextClear = !minecraft.isPaused()
-                && minecraft.gui.screen() == null
+                && AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 && minecraft.gui.overlay() == null
                 && !player.isUsingItem()
                 && positionHeld
@@ -141,7 +142,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 && player.getHealth() + 0.001F >= plan.initialHealth
                 && player.hurtTime == 0 && player.getRemainingFireTicks() <= 0;
         boolean threatClear = visibleThreatClear(minecraft, player, level);
-        boolean screenClear = minecraft.gui.screen() == null
+        boolean screenClear = AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 && player.containerMenu == player.inventoryMenu;
 
         var ownedChild = ownedChild(request);
@@ -1383,7 +1384,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             return false;
         }
         boolean controlContextClear = !minecraft.isPaused()
-                && minecraft.gui.screen() == null
+                && AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 && minecraft.gui.overlay() == null
                 && !player.isUsingItem()
                 && plan.positionMatches(player)
@@ -1392,7 +1393,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         boolean healthSafe = alive && player.getHealth() >= MIN_SAFE_HEALTH
                 && player.getHealth() + 0.001F >= plan.initialHealth
                 && player.hurtTime == 0 && player.getRemainingFireTicks() <= 0;
-        boolean screenClear = minecraft.gui.screen() == null
+        boolean screenClear = AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 && player.containerMenu == player.inventoryMenu;
         return controlContextClear && healthSafe && screenClear
                 && visibleThreatClear(minecraft, player, level);

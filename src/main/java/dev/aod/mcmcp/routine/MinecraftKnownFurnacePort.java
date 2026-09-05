@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.runtime.ClientPredictionSignals;
@@ -716,7 +717,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
     private void maintainClose(AttemptState state) {
         Minecraft minecraft = requireMinecraft();
         if (screens.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE
-                || minecraft.gui.screen() != null
+                || !AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 || minecraft.player == null
                 || minecraft.player.containerMenu != minecraft.player.inventoryMenu) {
             return;
@@ -811,7 +812,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
             if (phase == ScreenOwnershipSignals.Phase.CLOSING) return;
             if (screens.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE) return;
             if (state.screenOwnedObserved
-                    && (minecraft.gui.screen() != null
+                    && (!AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                             || minecraft.player == null
                             || minecraft.player.containerMenu != minecraft.player.inventoryMenu
                             || !minecraft.player.inventoryMenu.getCarried().isEmpty())) {
@@ -987,7 +988,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                     Map.of("world_ready", true), Map.of());
         }
         if (!basicPlayerSafety(minecraft, null)) return safetyFailure();
-        if (minecraft.gui.screen() != null
+        if (!AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 || minecraft.player.containerMenu != minecraft.player.inventoryMenu
                 || screens.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE) {
             return failure("FURNACE_SCREEN_NOT_CLEAR", RoutineFailure.Category.SAFETY,
@@ -1150,7 +1151,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                 || stage == Stage.AIMING_LOADED_READBACK
                 || stage == Stage.AIMING_FINAL_READBACK) {
             return phase == ScreenOwnershipSignals.Phase.IDLE
-                    && minecraft.gui.screen() == null
+                    && AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                     && minecraft.player != null
                     && minecraft.player.containerMenu == minecraft.player.inventoryMenu;
         }

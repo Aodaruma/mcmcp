@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
 import dev.aod.mcmcp.observation.ContainerLabelResolver;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
@@ -277,7 +278,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             case AWAITING_CLICK_ACK -> maintainClickAck(attempt, state);
             case AWAITING_CLOSE -> {
                 if (screenState.phase() == ScreenOwnershipSignals.Phase.IDLE
-                        && minecraft.gui.screen() == null
+                        && AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                         && minecraft.player != null
                         && minecraft.player.containerMenu == minecraft.player.inventoryMenu) {
                     if (targetReadyForReopen(minecraft, state.parameters)) {
@@ -928,7 +929,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return failure("INVENTORY_PLAYER_UNSAFE", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.USER, Map.of("safe_survival_player", true), Map.of());
         }
-        if (minecraft.gui.screen() != null
+        if (!AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 || player.containerMenu != player.inventoryMenu
                 || screens.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE) {
             return failure("INVENTORY_SCREEN_NOT_CLEAR", RoutineFailure.Category.SAFETY,
@@ -1154,7 +1155,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         if (player == null || !releaseScreenContextClear(
                 state.screenOwnedObserved,
                 screens.snapshot().phase(),
-                minecraft.gui.screen() == null
+                AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                         && player.containerMenu == player.inventoryMenu
                         && player.inventoryMenu.getCarried().isEmpty()
                         && state.cursorReleaseConfirmed)) {
@@ -1472,7 +1473,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         boolean exactContainer = exactContainerScreen(minecraft, state.parameters.menuTypeId());
         if (state.stage == Stage.AIMING_INITIAL || state.stage == Stage.AIMING_READBACK) {
             return phase == ScreenOwnershipSignals.Phase.IDLE
-                    && minecraft.gui.screen() == null
+                    && AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                     && minecraft.player != null
                     && minecraft.player.containerMenu == minecraft.player.inventoryMenu;
         }
@@ -1481,16 +1482,16 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     || phase == ScreenOwnershipSignals.Phase.EXPECTING_SCREEN
                     || phase == ScreenOwnershipSignals.Phase.EXPECTING_FULL_CONTENT
                     || phase == ScreenOwnershipSignals.Phase.OWNED)
-                    && (minecraft.gui.screen() == null || exactContainer);
+                    && (AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen()) || exactContainer);
         }
         if (state.stage == Stage.AWAITING_CLOSE) {
             if (phase == ScreenOwnershipSignals.Phase.IDLE) {
-                return minecraft.gui.screen() == null
+                return AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                         && minecraft.player != null
                         && minecraft.player.containerMenu == minecraft.player.inventoryMenu;
             }
             return phase == ScreenOwnershipSignals.Phase.CLOSING
-                    && (minecraft.gui.screen() == null || exactContainer);
+                    && (AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen()) || exactContainer);
         }
         return phase == ScreenOwnershipSignals.Phase.OWNED && exactContainer;
     }
