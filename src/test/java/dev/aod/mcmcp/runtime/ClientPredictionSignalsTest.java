@@ -7,6 +7,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ClientPredictionSignalsTest {
     @Test
+    void admissionFailuresExposeOnlyFixedDiagnosticKinds() {
+        assertThat(java.util.Arrays.stream(ClientPredictionSignals.FailureKind.values())
+                .map(ClientPredictionSignals.FailureKind::diagnostic))
+                .containsExactly(
+                        "unregistered", "disabled", "lifecycle_closed", "attempt_limit", "other");
+
+        var disabled = new ClientPredictionSignals.PredictionBridgeException(
+                ClientPredictionSignals.FailureKind.DISABLED, "private adapter detail");
+        assertThat(disabled.kind()).isEqualTo(ClientPredictionSignals.FailureKind.DISABLED);
+        assertThat(disabled.kind().diagnostic()).isEqualTo("disabled");
+        assertThat(new ClientPredictionSignals.PredictionBridgeException("internal").kind())
+                .isEqualTo(ClientPredictionSignals.FailureKind.OTHER);
+    }
+
+    @Test
     void acknowledgementWithoutPredictionCannotConfirm() {
         var latch = new ClientPredictionSignals.ConfirmationLatch<String>(12);
 

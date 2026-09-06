@@ -584,6 +584,25 @@ class McpToolCatalogTest {
                         "600+60*(max_stacks-1) ticks", "50 times that in ms", "360 camera",
                         "2+max_stacks interactions", "leaving 200 ticks");
 
+        for (String node : List.of(
+                "inspectContainerNode", "takeContainerStackNode", "storeContainerStackNode")) {
+            assertThat(definitions.getAsJsonObject(node).get("description").getAsString())
+                    .contains(
+                            "MAIN_HAND",
+                            "doesSneakBypassUse",
+                            "onItemUseFirst",
+                            "IItemExtension defaults false and PASS",
+                            "offhand doesSneakBypassUse hook is also unchanged",
+                            "offhand is never the interaction hand",
+                            "safe_open_hand=no_side_effect_free_main_hand",
+                            "remedy=prepare_plain_material_or_safe_mining_tool_in_hotbar",
+                            "prediction_bridge=unregistered|disabled|lifecycle_closed|attempt_limit")
+                    .doesNotContain(
+                            "no_side_effect_free_hotbar_or_offhand_item",
+                            "prepare_empty_hotbar_or_safe_offhand_item",
+                            "prepare_empty_hotbar_or_plain_material_or_safe_mining_tool");
+        }
+
         var containerExamples = schema.getAsJsonArray("examples").asList().stream()
                 .map(example -> example.getAsJsonObject())
                 .filter(example -> {
