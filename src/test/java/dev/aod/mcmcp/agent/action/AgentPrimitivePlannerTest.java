@@ -628,7 +628,7 @@ class AgentPrimitivePlannerTest {
         var map = map(UUID.randomUUID()).snapshot().orElseThrow();
         var target = new ActionDsl.Position(DIMENSION, 1, 64, 0);
         var tunnel = tunnel(target, ActionDsl.MiningPattern.STRAIGHT, 160);
-        List<List<ObservationRecord>> candidates = List.of(
+        List<List<ObservationRecord.VisibleSurface>> candidates = List.of(
                 List.of(),
                 List.of(surfaceWithState(target, ObservationRecord.Face.EAST,
                         "minecraft:stone", Map.of(), 0)),
