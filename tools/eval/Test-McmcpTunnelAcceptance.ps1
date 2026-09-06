@@ -122,15 +122,25 @@ if ($null -ne $case) {
         'gate did not prove terminal public input release'
 
     foreach ($fixture in @($status, $oracle)) {
-        Require ((Get-Value $fixture 'schema') -ceq 'mcmcp_fixture_tunnel_v1') `
+        $fixtureSchema = $fixture.PSObject.Properties['schema']
+        $fixtureSetup = $fixture.PSObject.Properties['setupId']
+        $fixtureSession = $fixture.PSObject.Properties['worldSessionId']
+        $fixtureMode = $fixture.PSObject.Properties['mode']
+        $fixtureBaselineBlocks = $fixture.PSObject.Properties['baselineBlocks']
+        Require ($null -ne $fixtureSchema -and $fixtureSchema.Value -is [string] -and
+            $fixtureSchema.Value -ceq 'mcmcp_fixture_tunnel_v1') `
             'fixture schema changed'
-        Require ((Get-Value $fixture 'setupId') -ceq $setupId) `
+        Require ($null -ne $fixtureSetup -and $fixtureSetup.Value -is [string] -and
+            $fixtureSetup.Value -ceq $setupId) `
             'fixture setupId does not match the gate run'
-        Require ((Get-Value $fixture 'worldSessionId') -ceq $sessionId) `
+        Require ($null -ne $fixtureSession -and $fixtureSession.Value -is [string] -and
+            $fixtureSession.Value -ceq $sessionId) `
             'fixture world session does not match the public Action run'
-        Require ((Get-Value $fixture 'mode') -ceq $case.wire) `
+        Require ($null -ne $fixtureMode -and $fixtureMode.Value -is [string] -and
+            $fixtureMode.Value -ceq $case.wire) `
             'fixture mode does not match the gate run'
-        Require ((Get-Value $fixture 'baselineBlocks') -eq 22168) `
+        Require ($null -ne $fixtureBaselineBlocks -and $fixtureBaselineBlocks.Value -is [long] -and
+            $fixtureBaselineBlocks.Value -eq 22168) `
             'fixture bounded volume changed'
     }
     foreach ($field in @('auditBounds', 'scenario', 'expectedResult', 'measurement')) {
@@ -151,17 +161,28 @@ if ($null -ne $case) {
         (Get-Value $scenario 'excavationCells') -eq $(if ($mode -ceq 'straight160') { 160 } elseif ($mode -ceq 'branches') { 40 } else { 16 }) -and
         (Get-Value $scenario 'routeMoves') -eq $(if ($mode -ceq 'branches') { 64 } else { $expectedLength })) `
         'fixture scenario does not match the selected profile'
-    $forcedChunks = $status.PSObject.Properties['forcedChunks']
-    Require ((Get-Value $status 'kind') -ceq 'status' -and
-        (Get-Value $status 'ready') -is [bool] -and [bool](Get-Value $status 'ready') -and
-        (Get-Value $status 'baselineMatches') -is [bool] -and
-        [bool](Get-Value $status 'baselineMatches') -and
-        (Get-Value $status 'resourcesActive') -is [bool] -and
-        [bool](Get-Value $status 'resourcesActive') -and
-        (Get-Value $status 'raysPerTick') -eq 512 -and
-        $null -ne $forcedChunks -and $forcedChunks.Value -is [long] -and
-        $forcedChunks.Value -eq 22 -and
-        (Get-Value $status 'fixtureTickMutation') -ceq 'none') `
+    $statusKind = $status.PSObject.Properties['kind']
+    $statusEntities = $status.PSObject.Properties['entities']
+    $statusRays = $status.PSObject.Properties['raysPerTick']
+    $statusChunks = $status.PSObject.Properties['forcedChunks']
+    $statusTickMutation = $status.PSObject.Properties['fixtureTickMutation']
+    $statusReady = $null -ne $statusKind -and $statusKind.Value -is [string] -and
+        $statusKind.Value -ceq 'status' -and
+        $null -ne $statusEntities -and $statusEntities.Value -is [long] -and
+        $statusEntities.Value -eq 0 -and
+        $null -ne $statusRays -and $statusRays.Value -is [long] -and
+        $statusRays.Value -eq 512 -and
+        $null -ne $statusChunks -and $statusChunks.Value -is [long] -and
+        $statusChunks.Value -eq 22 -and
+        $null -ne $statusTickMutation -and $statusTickMutation.Value -is [string] -and
+        $statusTickMutation.Value -ceq 'none'
+    foreach ($flag in @('ready', 'baselineMatches', 'inventoryMatches',
+            'startPoseMatches', 'playerBaselineMatches', 'resourcesActive')) {
+        $property = $status.PSObject.Properties[$flag]
+        $statusReady = $statusReady -and $null -ne $property -and
+            $property.Value -is [bool] -and $property.Value
+    }
+    Require $statusReady `
         'fixture T0 status was not ready and immutable'
     $oracleResources = $oracle.PSObject.Properties['resourcesActive']
     $oracleChunks = $oracle.PSObject.Properties['forcedChunks']

@@ -84,29 +84,41 @@ function Read-TunnelPreRunStatus {
     if ($status -isnot [System.Management.Automation.PSCustomObject]) {
         throw 'tunnel pre-run status artifact must contain one JSON object'
     }
-    $setupId = Get-ObjectProperty $status 'setupId'
-    $sessionId = Get-ObjectProperty $status 'worldSessionId'
+    $schema = $status.PSObject.Properties['schema']
+    $kind = $status.PSObject.Properties['kind']
+    $mode = $status.PSObject.Properties['mode']
+    $setup = $status.PSObject.Properties['setupId']
+    $session = $status.PSObject.Properties['worldSessionId']
+    $baselineBlocks = $status.PSObject.Properties['baselineBlocks']
+    $fixtureTickMutation = $status.PSObject.Properties['fixtureTickMutation']
     $uuid = '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-    if ((Get-ObjectProperty $status 'schema') -cne 'mcmcp_fixture_tunnel_v1' -or
-        (Get-ObjectProperty $status 'kind') -cne 'status' -or
-        (Get-ObjectProperty $status 'mode') -cne ('tunnel_' + $script:TunnelFixtureMode) -or
-        $setupId -isnot [string] -or $setupId -cnotmatch $uuid -or
-        $sessionId -isnot [string] -or $sessionId -cnotmatch $uuid -or
-        (Get-ObjectProperty $status 'baselineBlocks') -ne 22168 -or
-        (Get-ObjectProperty $status 'fixtureTickMutation') -cne 'none') {
+    if ($null -eq $schema -or $schema.Value -isnot [string] -or $schema.Value -cne 'mcmcp_fixture_tunnel_v1' -or
+        $null -eq $kind -or $kind.Value -isnot [string] -or $kind.Value -cne 'status' -or
+        $null -eq $mode -or $mode.Value -isnot [string] -or
+        $mode.Value -cne ('tunnel_' + $script:TunnelFixtureMode) -or
+        $null -eq $setup -or $setup.Value -isnot [string] -or $setup.Value -cnotmatch $uuid -or
+        $null -eq $session -or $session.Value -isnot [string] -or $session.Value -cnotmatch $uuid -or
+        $null -eq $baselineBlocks -or $baselineBlocks.Value -isnot [long] -or
+        $baselineBlocks.Value -ne 22168 -or
+        $null -eq $fixtureTickMutation -or $fixtureTickMutation.Value -isnot [string] -or
+        $fixtureTickMutation.Value -cne 'none') {
         throw 'tunnel pre-run status identity does not match the selected fixture'
     }
+    $setupId = $setup.Value
+    $sessionId = $session.Value
     foreach ($flag in @('ready', 'baselineMatches', 'inventoryMatches',
             'startPoseMatches', 'playerBaselineMatches', 'resourcesActive')) {
-        $value = Get-ObjectProperty $status $flag
-        if ($value -isnot [bool] -or -not $value) {
+        $property = $status.PSObject.Properties[$flag]
+        if ($null -eq $property -or $property.Value -isnot [bool] -or -not $property.Value) {
             throw 'tunnel pre-run status does not prove the untouched ready baseline'
         }
     }
-    if ((Get-ObjectProperty $status 'entities') -ne 0) {
+    $entities = $status.PSObject.Properties['entities']
+    if ($null -eq $entities -or $entities.Value -isnot [long] -or $entities.Value -ne 0) {
         throw 'tunnel pre-run status contains entities'
     }
-    if ((Get-ObjectProperty $status 'raysPerTick') -ne 512) {
+    $raysPerTick = $status.PSObject.Properties['raysPerTick']
+    if ($null -eq $raysPerTick -or $raysPerTick.Value -isnot [long] -or $raysPerTick.Value -ne 512) {
         throw 'tunnel pre-run status does not prove the fixed observation budget'
     }
     $forcedChunks = $status.PSObject.Properties['forcedChunks']

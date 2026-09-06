@@ -258,6 +258,25 @@ try {
         Assert-True $rejected "pre-run artifact accepted invalid $badField"
         $preRunStatus[$badField] = $original
     }
+    $invalidStatusTypes = @(
+        @{ field = 'ready'; value = @($true) },
+        @{ field = 'resourcesActive'; value = @($true) },
+        @{ field = 'raysPerTick'; value = '512' },
+        @{ field = 'raysPerTick'; value = @(512) },
+        @{ field = 'entities'; value = '0' },
+        @{ field = 'entities'; value = @(0) },
+        @{ field = 'baselineBlocks'; value = '22168' },
+        @{ field = 'schema'; value = @('mcmcp_fixture_tunnel_v1') }
+    )
+    foreach ($invalid in $invalidStatusTypes) {
+        $original = $preRunStatus[$invalid.field]
+        $preRunStatus[$invalid.field] = $invalid.value
+        Write-MockStatus
+        $rejected = $false
+        try { [void](Read-TunnelPreRunStatus) } catch { $rejected = $true }
+        Assert-True $rejected "pre-run artifact accepted non-scalar or incorrectly typed $($invalid.field)"
+        $preRunStatus[$invalid.field] = $original
+    }
     foreach ($invalidChunks in @($null, '22', @(22))) {
         $preRunStatus.forcedChunks = $invalidChunks
         Write-MockStatus

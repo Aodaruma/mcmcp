@@ -98,17 +98,33 @@ try {
         $oracle[$invalid.field] = $original
     }
     [IO.File]::WriteAllText($paths.oracle, (ConvertTo-Json $oracle -Depth 30), [Text.UTF8Encoding]::new($false))
-    $status.forcedChunks = 21
-    [IO.File]::WriteAllText($paths.status, (ConvertTo-Json $status -Depth 30), [Text.UTF8Encoding]::new($false))
-    $gate.fixture_status_sha256 = (Get-FileHash -LiteralPath $paths.status -Algorithm SHA256).Hash.ToLowerInvariant()
-    [IO.File]::WriteAllText($paths.gate, (ConvertTo-Json $gate -Depth 30), [Text.UTF8Encoding]::new($false))
-    & (Get-Process -Id $PID).Path -NoProfile -File $checker `
-        -GateResultPath $paths.gate -FixtureStatusPath $paths.status `
-        -FixtureOraclePath $paths.oracle -OutputPath $paths.report
-    if ($LASTEXITCODE -ne 1 -or (Get-Content $paths.report -Raw | ConvertFrom-Json).passed) {
-        throw 'incomplete forced chunk coverage was accepted'
+    $invalidStatus = @(
+        @{ field = 'forcedChunks'; value = 21 },
+        @{ field = 'forcedChunks'; value = '22' },
+        @{ field = 'forcedChunks'; value = @(22) },
+        @{ field = 'resourcesActive'; value = @($true) },
+        @{ field = 'ready'; value = @($true) },
+        @{ field = 'raysPerTick'; value = '512' },
+        @{ field = 'raysPerTick'; value = @(512) },
+        @{ field = 'entities'; value = '0' },
+        @{ field = 'entities'; value = @(0) }
+    )
+    foreach ($invalid in $invalidStatus) {
+        $original = $status[$invalid.field]
+        $status[$invalid.field] = $invalid.value
+        [IO.File]::WriteAllText($paths.status, (ConvertTo-Json $status -Depth 30), [Text.UTF8Encoding]::new($false))
+        $gate.fixture_status_sha256 = (Get-FileHash -LiteralPath $paths.status -Algorithm SHA256).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText($paths.gate, (ConvertTo-Json $gate -Depth 30), [Text.UTF8Encoding]::new($false))
+        & (Get-Process -Id $PID).Path -NoProfile -File $checker `
+            -GateResultPath $paths.gate -FixtureStatusPath $paths.status `
+            -FixtureOraclePath $paths.oracle -OutputPath $paths.report
+        $statusReport = Get-Content -LiteralPath $paths.report -Raw | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 1 -or $statusReport.passed -or
+            $statusReport.violations -cnotcontains 'fixture T0 status was not ready and immutable') {
+            throw "invalid pre-run status evidence was accepted: $($invalid.field)"
+        }
+        $status[$invalid.field] = $original
     }
-    $status.forcedChunks = 22
     $validStatusJson = ConvertTo-Json $status -Depth 30
     foreach ($invalidJson in @(('[' + $validStatusJson + ']'), 'true', 'null')) {
         [IO.File]::WriteAllText($paths.status, $invalidJson, [Text.UTF8Encoding]::new($false))
