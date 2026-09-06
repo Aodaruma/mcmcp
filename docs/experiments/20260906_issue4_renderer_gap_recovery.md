@@ -89,3 +89,16 @@ T0へ到達した低FPS試行を3回すべて消費したため、同じbuildで
 修正では最初のprimitive occurrenceに限り、inspectは400 ticks、take/storeは `400+60*(max_stacks-1)` ticksを下限として、欠測待機のtickとwall timeを600系予約から差し引く。camera、interaction、移動、破壊、設置予算は差し引かない。最小予約では200 ticks / 10,000 msまでが既存headroomに収まり、それを超える場合は操作前にfail closedする。後続node、同じtargetの再出現、`approach_known_surface`、他primitiveには割引を適用しない。compiler予約、container deadline、監査条件、promptは変更しない。
 
 算術境界と本番JIT配線の回帰試験後に新commit/JARを作り、別campaignとして通常1回と低FPS最大3回を最初から実施する。Issue #4 と `release:verification-needed` は新campaignの実機PASSまで維持する。
+
+## 正式受入campaign 2の合格
+
+製品commit `93712ec45c2fcbf644d9cc86565a12edeec4c8bf`、JAR SHA-256 `2F59F227A11FE2F3039A86F53F98811E188A1E5CB369E1AEC4602C2441E76E0D`、baseline `container-inspect-recovery-warehouse-20260906-2f59f227-c2`、`gpt-5.6-sol / high` を固定し、修正後の正式比較を `MCMCP-Validation` で実施した。
+
+- `recovery-normal-run04`: maxFps=120。単独inspectが成功し、audit PASS、`recovery_witness.status=not_exercised`。通常条件の対照として有効。
+- `recovery-low-attempt01`: maxFps=10。最初の単独inspectが同じAction内で成功し、audit PASS、`recovery_witness.status=witnessed`。`dispatch` と `initial_open` の両stageで `missing`、`revalidated`、`recovered` が一致し、違反は0だった。
+
+`recovery-normal-run01` から `03` は、fixtureの明示的なローカル承認を有効にする前に `ready_mode_ok=false` でpreflight停止した。いずれもT0、モデルturn、gameplay callへ到達しておらず、通常条件の正式runにも低FPS試行数にも含めない。
+
+JAR差し替え前とFPS変更時にはMinecraftを停止した。差し替え後にクライアントを起動し、製品modのbootstrapと `warehouse_smelt` fixture生成を起動logで確認した。通常run前は設置JAR hashと保存済みmaxFps=120、低FPS run前はMinecraft停止中にmaxFps=10へ変更して再起動した後、同じ設置JAR hashと保存値10をそれぞれT0直前に照合した。runner内の `runtime_jar_and_fps_verified` は設計どおりfalseのままで、この起動・停止・再起動記録を別のoperator証跡として照合した。
+
+低FPSの肯定証拠を1回目で得たため追加試行は行わなかった。terminal後は全Action terminal、evaluation lease解放、入力ownerなしを確認した。Minecraftを停止し、maxFps=120と `warehouse_smelt` へ復元し、検証用の一時認証ファイルをcontainerとSSH hostから削除した。campaign 2はIssue #4の実機受入PASSとし、Issue #4に対する `release:verification-needed` を解除できる。ほかのrelease blockerが残る間はtagとReleaseへ進まない。
