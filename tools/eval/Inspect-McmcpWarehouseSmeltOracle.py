@@ -244,10 +244,11 @@ def main() -> None:
 
     shared = load_smelt_oracle_module()
     player_source, player_counts = shared.player_inventory(arguments.world)
-    source = shared.furnace_entity(arguments.world, *SOURCE)
-    furnace = shared.furnace_entity(arguments.world, *FURNACE)
-    output = shared.furnace_entity(arguments.world, *OUTPUT)
-    region_rows = shared.REGION.inspect_region(arguments.world, WORKSPACE)
+    dimension = shared.resolve_overworld_dimension(arguments.world)
+    source = shared.furnace_entity(dimension, *SOURCE)
+    furnace = shared.furnace_entity(dimension, *FURNACE)
+    output = shared.furnace_entity(dimension, *OUTPUT)
+    region_rows = shared.REGION.inspect_region(dimension, WORKSPACE)
     result = analyze(player_counts, source, furnace, output, region_rows)
     result["player_source"] = player_source
     serialized = json.dumps(result, ensure_ascii=False, indent=2) + "\n"

@@ -68,10 +68,23 @@ def player_inventory(world: Path) -> tuple[str, dict[str, int]]:
     return str(source), item_counts(inventory)
 
 
-def furnace_entity(world: Path, x: int, y: int, z: int):
-    dimension = world
-    if not (dimension / "region").is_dir():
-        dimension = world / "dimensions" / "minecraft" / "overworld"
+def resolve_overworld_dimension(root_or_dimension: Path) -> Path:
+    candidates = []
+    if (root_or_dimension / "region").is_dir():
+        candidates.append(root_or_dimension)
+    nested = root_or_dimension / "dimensions" / "minecraft" / "overworld"
+    if (nested / "region").is_dir():
+        candidates.append(nested)
+    if len(candidates) != 1:
+        raise SystemExit(
+            "expected exactly one supported overworld region directory under "
+            f"{root_or_dimension}; found {len(candidates)}"
+        )
+    return candidates[0]
+
+
+def furnace_entity(root_or_dimension: Path, x: int, y: int, z: int):
+    dimension = resolve_overworld_dimension(root_or_dimension)
     chunk_x = math.floor(x / 16)
     chunk_z = math.floor(z / 16)
     region_x = math.floor(chunk_x / 32)
