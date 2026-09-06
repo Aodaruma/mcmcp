@@ -90,6 +90,15 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
   cell at `205,201,204` without entering that halo.
   The player starts on the lower ladder landing with three lamps, two levers, one dust, two glass,
   and one smooth-stone block reserved for the one-step pillar smoke test.
+- `/mcmcp_fixture phase5 container_batch_success` — prepares only one vanilla double chest and an
+  empty Survival inventory. Logical source slots 0 and 53 contain 47 and 27 dripstone blocks. A
+  `take_known_container_stack` with absolute goal 74, `max_transfer_count=74`, and `max_stacks=8`
+  must succeed with one confirmed 74-item result.
+- `/mcmcp_fixture phase5 container_batch_partial` — uses the same fixed double chest, pose, and
+  empty inventory, but logical source slots 0 and 53 contain 47 and 64 dripstone blocks. With the
+  same goal and limits, only the 47-stack fits the remaining whole-stack budget; terminal must be
+  failed with `SERVER_DENIED_OR_DESYNC` / `transfer_batch_goal_not_reached`, while the one 47-item
+  confirmed effect, aggregate, and partial metadata remain published.
 - `/mcmcp_fixture phase5 fishing` — prepares a closed Vanilla fishing gate with an 11×11 pool of
   three-deep source water, two full air layers above it, a lit non-spawnable floor, and a dry fixed
   north-shore stand. The Survival player has only one unenchanted damage-0 fishing rod. Existing
@@ -149,6 +158,24 @@ For the combined generalization smoke arena, run:
 This passes only the closed `mcmcp.fixture.phase5.mode` value. After server-authoritative setup and
 client slot synchronization, autorun stops in setup-only state. Open any Screen and press the MCMCP
 status button once before the live test; that explicit UI action is the local authorization.
+
+The container partial-contract modes are independent one-shot baselines. Use a fresh client restart
+for each mode:
+
+```powershell
+.\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=container_batch_success
+.\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=container_batch_partial
+```
+
+Each setup clears the fixed workspace, removes every live non-player entity in that workspace,
+spawns no entity, empties the entire player inventory (including offhand), and reports the exact
+source stacks and expected terminal. Before T0, require a fresh `visible_entity` observation with
+zero records; an unrelated entity visible from outside the workspace means readiness has not been
+met. Do not reuse a world state after either transfer—restart and let the selected autorun rebuild
+the baseline. The partial run is accepted only when the failed wire result retains exactly one
+confirmed 47-item `container_take`, `effect_aggregate.confirmed_effects=1`, and
+`partial.has_confirmed_effects=true` plus `partial.resume_requires_reobservation=true`; the original
+Action must not be replayed.
 
 For the dedicated copper-chest transfer gate, run:
 

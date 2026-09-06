@@ -2041,9 +2041,9 @@
               "expected_block": {"$ref": "#/$defs/knownContainerBlock"},
               "item": {"$ref": "#/$defs/resourceLocation"},
               "stack_policy": {"enum": ["default_components_only", "item_id_any_components"]},
-              "minimum_inventory_count": {"type": "integer", "minimum": 1, "maximum": 2304},
+              "minimum_inventory_count": {"type": "integer", "minimum": 1, "maximum": 2304, "description": "Absolute player-inventory lower bound, not an exact transfer amount. Whole-stack limits can leave a confirmed prefix and then fail with TRANSFER_BATCH_GOAL_NOT_REACHED."},
               "max_stacks": {"type": "integer", "minimum": 1, "maximum": 14},
-              "max_transfer_count": {"type": "integer", "minimum": 1, "maximum": 896},
+              "max_transfer_count": {"type": "integer", "minimum": 1, "maximum": 896, "description": "Ceiling for this whole-stack batch. Stacks are never split to fill the remaining budget."},
               "routing_label": {"$ref": "#/$defs/routingLabel"}
             },
             "required": ["id", "op", "target", "expected_block", "item", "stack_policy", "minimum_inventory_count"]
@@ -2059,9 +2059,9 @@
               "expected_block": {"$ref": "#/$defs/knownContainerBlock"},
               "item": {"$ref": "#/$defs/resourceLocation"},
               "stack_policy": {"enum": ["default_components_only", "item_id_any_components"]},
-              "minimum_container_count": {"type": "integer", "minimum": 1, "maximum": 3456},
+              "minimum_container_count": {"type": "integer", "minimum": 1, "maximum": 3456, "description": "Absolute container lower bound, not an exact transfer amount. Whole-stack limits can leave a confirmed prefix and then fail with TRANSFER_BATCH_GOAL_NOT_REACHED."},
               "max_stacks": {"type": "integer", "minimum": 1, "maximum": 14},
-              "max_transfer_count": {"type": "integer", "minimum": 1, "maximum": 896},
+              "max_transfer_count": {"type": "integer", "minimum": 1, "maximum": 896, "description": "Ceiling for this whole-stack batch. Stacks are never split to fill the remaining budget."},
               "routing_label": {"$ref": "#/$defs/routingLabel"}
             },
             "required": ["id", "op", "target", "expected_block", "item", "stack_policy", "minimum_container_count"]
@@ -3246,7 +3246,7 @@
     {
       "name": "agent_get_action",
       "title": "Get MCMCP Action",
-      "description": "Returns bounded progress, a policy-filtered trace, a bounded latest-effect ring (monotonic seq; earlier entries may be evicted) with terminal aggregate, terminal partial/resume metadata, and the bounded canonical JSON source/hash for one explicit action handle. A confirmed effect has server-derived before/after evidence; unknown means a mutation was dispatched without a confirmed after-state and requires reobservation, never blind replay. source is audit data, not replay authority. template is identical only when no opaque reference exists; otherwise every opaque ref and its coupled recipe fingerprint are null, ready_for_agent_start_action=false, and reference_requirements says how to refresh them. Opaque refs are never declared live by this off-client-thread read and must always be refreshed before cloning. wait_timeout_ms is an optional integer from 0 through 25000; zero or omission returns immediately, otherwise it waits off the Minecraft client thread until terminal or timeout. Set include_container_results=true to return complete item-ID totals from successful inspect_known_container nodes (up to 54 types per container, component differences aggregated). container_results_limit is 1..8 (default 4); pass next_cursor as container_results_cursor with include_container_results=true for more containers. Cursors freeze a result-count snapshot and are bound to action_id. Each result is immutable server-synchronized evidence published only after owned-menu cleanup; observed_client_tick and packet_revision describe the captured server snapshot, not present inventory or mutation authority. total_item_types, returned_item_types and truncated explicitly report completeness. All successful inspection occurrences (max 256 expanded nodes) are retained without eviction while the Action is retained; the store retains only the latest Action and previous terminal Action. Read all pages before starting further Actions. A missing result is not an empty chest; failed/unconfirmed inspections have no result. An empty verified chest has a result with items=[] and total_item_types=0. During execution, query again without a cursor for newly completed results. trace remains a short, possibly truncated summary; use container_results for complete inventories. Omission/false preserves the legacy output without container_results. Page-only arguments require the option to be true.",
+      "description": "Returns bounded progress, a policy-filtered trace, a bounded latest-effect ring (monotonic seq; earlier entries may be evicted) with terminal aggregate, terminal partial/resume metadata, and the bounded canonical JSON source/hash for one explicit action handle. A confirmed effect has server-derived before/after evidence; unknown means a mutation was dispatched without a confirmed after-state and requires reobservation, never blind replay. Failed or cancelled terminal does not roll back confirmed effects: apply each confirmed effect exactly once. recoverable never authorizes replaying the same Action; when partial.resume_requires_reobservation is true, fetch fresh state or observation and plan a new Action. source is audit data, not replay authority. template is identical only when no opaque reference exists; otherwise every opaque ref and its coupled recipe fingerprint are null, ready_for_agent_start_action=false, and reference_requirements says how to refresh them. Opaque refs are never declared live by this off-client-thread read and must always be refreshed before cloning. wait_timeout_ms is an optional integer from 0 through 25000; zero or omission returns immediately, otherwise it waits off the Minecraft client thread until terminal or timeout. Set include_container_results=true to return complete item-ID totals from successful inspect_known_container nodes (up to 54 types per container, component differences aggregated). container_results_limit is 1..8 (default 4); pass next_cursor as container_results_cursor with include_container_results=true for more containers. Cursors freeze a result-count snapshot and are bound to action_id. Each result is immutable server-synchronized evidence published only after owned-menu cleanup; observed_client_tick and packet_revision describe the captured server snapshot, not present inventory or mutation authority. total_item_types, returned_item_types and truncated explicitly report completeness. All successful inspection occurrences (max 256 expanded nodes) are retained without eviction while the Action is retained; the store retains only the latest Action and previous terminal Action. Read all pages before starting further Actions. A missing result is not an empty chest; failed/unconfirmed inspections have no result. An empty verified chest has a result with items=[] and total_item_types=0. During execution, query again without a cursor for newly completed results. trace remains a short, possibly truncated summary; use container_results for complete inventories. Omission/false preserves the legacy output without container_results. Page-only arguments require the option to be true.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -3385,7 +3385,7 @@
                       "INTERNAL_ERROR"
                     ]
                   },
-                  "recoverable": {"type": "boolean"},
+                  "recoverable": {"type": "boolean", "description": "True means fresh observation and replanning may recover. It never authorizes blind replay of the original Action."},
                   "evidence": {
                     "type": "array",
                     "maxItems": 16,
@@ -3424,7 +3424,7 @@
                 "subject": {"type": "string", "pattern": "^[a-z0-9_.:/,+-]{1,192}$"},
                 "observed_before": {"$ref": "#/$defs/effectObservation"},
                 "observed_after": {"$ref": "#/$defs/effectObservation"},
-                "verification": {"enum": ["confirmed", "qualified", "unknown"]},
+                "verification": {"enum": ["confirmed", "qualified", "unknown"], "description": "Independent of terminal state. A confirmed effect remains committed even when the Action later fails or is cancelled and must be applied exactly once."},
                 "client_tick": {"type": "integer", "minimum": 0},
                 "world_revision": {"type": "integer", "minimum": 0}
               },
@@ -3455,13 +3455,13 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "has_confirmed_effects": {"type": "boolean"},
+                  "has_confirmed_effects": {"type": "boolean", "description": "True when this terminal Action has one or more committed confirmed effects, including failed or cancelled Actions."},
                   "interrupted_node_id": {
                     "type": ["string", "null"],
                     "pattern": "^[a-z][a-z0-9_-]{0,31}$"
                   },
                   "remaining_node_upper_bound": {"type": "integer", "minimum": 0, "maximum": 256},
-                  "resume_requires_reobservation": {"type": "boolean"}
+                  "resume_requires_reobservation": {"type": "boolean", "description": "When true, obtain fresh state or observation and plan a new Action. Do this even when every retained effect is confirmed; never replay the original Action blindly."}
                 },
                 "required": ["has_confirmed_effects", "interrupted_node_id", "remaining_node_upper_bound", "resume_requires_reobservation"]
               }

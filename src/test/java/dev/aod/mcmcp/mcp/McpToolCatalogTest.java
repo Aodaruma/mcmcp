@@ -273,6 +273,72 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void containerPartialFailureContractIsDiscoverableFromTheCatalog() {
+        var catalog = new McpToolCatalog();
+        var getActionDescription = catalog.listResult().getAsJsonArray("tools").asList().stream()
+                .map(element -> element.getAsJsonObject())
+                .filter(tool -> tool.get("name").getAsString().equals("agent_get_action"))
+                .findFirst().orElseThrow().get("description").getAsString();
+        assertThat(getActionDescription)
+                .contains("Failed or cancelled terminal does not roll back confirmed effects")
+                .contains("apply each confirmed effect exactly once")
+                .contains("recoverable never authorizes replaying the same Action")
+                .contains("partial.resume_requires_reobservation is true")
+                .contains("fetch fresh state or observation and plan a new Action");
+
+        var definitions = catalog.inputSchema("agent_start_action").getAsJsonObject("$defs");
+        var take = definitions.getAsJsonObject("takeContainerStackNode")
+                .getAsJsonObject("properties");
+        var store = definitions.getAsJsonObject("storeContainerStackNode")
+                .getAsJsonObject("properties");
+
+        assertThat(take.getAsJsonObject("minimum_inventory_count")
+                .get("description").getAsString())
+                .contains("Absolute player-inventory lower bound")
+                .contains("confirmed prefix")
+                .contains("TRANSFER_BATCH_GOAL_NOT_REACHED");
+        assertThat(store.getAsJsonObject("minimum_container_count")
+                .get("description").getAsString())
+                .contains("Absolute container lower bound")
+                .contains("confirmed prefix")
+                .contains("TRANSFER_BATCH_GOAL_NOT_REACHED");
+        assertThat(take.getAsJsonObject("max_transfer_count")
+                .get("description").getAsString())
+                .contains("whole-stack batch")
+                .contains("never split");
+        assertThat(store.getAsJsonObject("max_transfer_count")
+                .get("description").getAsString())
+                .contains("whole-stack batch")
+                .contains("never split");
+
+        var action = catalog.outputSchema("agent_get_action");
+        var properties = action.getAsJsonObject("properties");
+        var failure = properties.getAsJsonObject("failure").getAsJsonArray("oneOf")
+                .get(1).getAsJsonObject().getAsJsonObject("properties");
+        var effect = properties.getAsJsonObject("effects").getAsJsonObject("items")
+                .getAsJsonObject("properties");
+        var partial = properties.getAsJsonObject("partial").getAsJsonArray("oneOf")
+                .get(1).getAsJsonObject().getAsJsonObject("properties");
+
+        assertThat(failure.getAsJsonObject("recoverable").get("description").getAsString())
+                .contains("fresh observation and replanning")
+                .contains("never authorizes blind replay");
+        assertThat(effect.getAsJsonObject("verification").get("description").getAsString())
+                .contains("Independent of terminal state")
+                .contains("fails or is cancelled")
+                .contains("exactly once");
+        assertThat(partial.getAsJsonObject("has_confirmed_effects")
+                .get("description").getAsString())
+                .contains("committed confirmed effects")
+                .contains("failed or cancelled Actions");
+        assertThat(partial.getAsJsonObject("resume_requires_reobservation")
+                .get("description").getAsString())
+                .contains("fresh state or observation")
+                .contains("every retained effect is confirmed")
+                .contains("never replay the original Action blindly");
+    }
+
+    @Test
     void startActionDescriptionExposesTheClosedGrammarAndAValidExample() {
         var catalog = new McpToolCatalog();
         var startTool = catalog.listResult().getAsJsonArray("tools").asList().stream()

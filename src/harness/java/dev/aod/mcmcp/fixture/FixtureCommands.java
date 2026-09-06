@@ -120,6 +120,10 @@ final class FixtureCommands {
                         .then(phase5("brew", FixturePhase5Mode.BREW))
                         .then(phase5("redstone", FixturePhase5Mode.REDSTONE))
                         .then(phase5("transfer", FixturePhase5Mode.TRANSFER))
+                        .then(phase5("container_batch_success",
+                                FixturePhase5Mode.CONTAINER_BATCH_SUCCESS))
+                        .then(phase5("container_batch_partial",
+                                FixturePhase5Mode.CONTAINER_BATCH_PARTIAL))
                         .then(phase5("crop", FixturePhase5Mode.CROP))
                         .then(phase5("combined_wheat", FixturePhase5Mode.COMBINED_WHEAT))
                         .then(Commands.literal("combined_wheat_status")
