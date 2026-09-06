@@ -84,6 +84,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     private final ScreenOwnershipSignals screens;
     private final DoubleSupplier runtimeCameraDegreesPerTick;
     private final ClientPredictionSignals predictions;
+    private final Supplier<InitialOpenWitness> initialOpenWitness;
     private final Map<PhaseFiveAttempt, AttemptState> attempts = new IdentityHashMap<>();
 
     public MinecraftPhaseFiveInventoryPort(
@@ -94,6 +95,19 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             ScreenOwnershipSignals screens,
             DoubleSupplier runtimeCameraDegreesPerTick,
             ClientPredictionSignals predictions) {
+        this(minecraftSupplier, sessionSupplier, recipes, observations, screens,
+                runtimeCameraDegreesPerTick, predictions, () -> InitialOpenWitness.READY);
+    }
+
+    public MinecraftPhaseFiveInventoryPort(
+            Supplier<Minecraft> minecraftSupplier,
+            Supplier<WorldSessionTracker.Snapshot> sessionSupplier,
+            ClientRecipeCatalog recipes,
+            MinecraftObservationService observations,
+            ScreenOwnershipSignals screens,
+            DoubleSupplier runtimeCameraDegreesPerTick,
+            ClientPredictionSignals predictions,
+            Supplier<InitialOpenWitness> initialOpenWitness) {
         this.minecraftSupplier = Objects.requireNonNull(minecraftSupplier, "minecraftSupplier");
         this.sessionSupplier = Objects.requireNonNull(sessionSupplier, "sessionSupplier");
         this.recipes = Objects.requireNonNull(recipes, "recipes");
@@ -102,6 +116,17 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         this.runtimeCameraDegreesPerTick = Objects.requireNonNull(
                 runtimeCameraDegreesPerTick, "runtimeCameraDegreesPerTick");
         this.predictions = Objects.requireNonNull(predictions, "predictions");
+        this.initialOpenWitness = Objects.requireNonNull(initialOpenWitness, "initialOpenWitness");
+    }
+
+    /** The first, still-unsent open only; readback and acknowledged ownership keep their contract. */
+    public enum InitialOpenWitness {
+        READY, RENDERER_EVIDENCE_MISSING, RENDERER_EVIDENCE_TIMEOUT,
+        DELIVERY_EXPIRED, TARGET_NOT_DELIVERED, SURFACE_REOBSERVATION_MISMATCH, SAFETY_CHANGED
+    }
+
+    static InitialOpenWitness initialOpenWitness(Stage stage, Supplier<InitialOpenWitness> witness) {
+        return stage == Stage.AIMING_INITIAL ? Objects.requireNonNull(witness.get()) : InitialOpenWitness.READY;
     }
 
     @Override
@@ -878,6 +903,13 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             fail(state, "CONTAINER_SAFE_OPEN_HAND_NOT_SETTLED", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.REPLAN,
                     Map.of("side_effect_free_normal_use", true), Map.of());
+            return;
+        }
+        var witness = initialOpenWitness(state.stage, initialOpenWitness);
+        if (witness == InitialOpenWitness.RENDERER_EVIDENCE_MISSING) return;
+        if (witness != InitialOpenWitness.READY) {
+            fail(state, witness.name(), RoutineFailure.Category.PRECONDITION,
+                    RoutineFailure.Recovery.REPLAN, Map.of(), Map.of());
             return;
         }
         var parameters = state.parameters;

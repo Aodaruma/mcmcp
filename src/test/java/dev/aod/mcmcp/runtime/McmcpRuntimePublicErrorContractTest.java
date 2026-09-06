@@ -13,6 +13,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McmcpRuntimePublicErrorContractTest {
     @Test
+    void rendererWaitTimeoutHasAFixedDiagnosisButUnrelatedFailuresAreNotReclassified() {
+        var recovery = new SurfacePreflightRecovery(new dev.aod.mcmcp.agent.dsl.ActionDsl.Budget(
+                1000, 20, 0, 0, 0, 0, 0));
+        var timeout = new ClientCommandInbox.CommandTimeoutException("untrusted secret");
+        assertThat(McmcpRuntime.mapAdmissionFailure(timeout, recovery).failure().code()).isEqualTo("server_busy");
+        recovery.evaluate(dev.aod.mcmcp.agent.observation.DeliveredPolicyEvidenceStore.SurfaceLeaseStatus.VALID,
+                10, 0, false);
+        var reply = McmcpRuntime.mapAdmissionFailure(timeout, recovery);
+        assertThat(reply.failure().details()).containsEntry("admission_reason", "renderer_evidence_timeout");
+        assertThat(reply.failure().message()).doesNotContain("untrusted", "secret");
+        assertThat(McmcpRuntime.mapAdmissionFailure(new RejectedExecutionException("full"), recovery)
+                .failure().code()).isEqualTo("server_busy");
+        assertThat(McmcpRuntime.mapAdmissionFailure(
+                new ClientCommandInbox.CommandInvalidatedException("untrusted secret"), recovery)
+                .failure().message()).doesNotContain("renderer", "untrusted", "secret");
+    }
+
+    @Test
     void onlyActiveWorkConflictsUseTaskBusy() {
         assertFailure(new ClientCommandInbox.CommandTimeoutException("read"), "server_busy");
         assertFailure(new RejectedExecutionException("full"), "server_busy");

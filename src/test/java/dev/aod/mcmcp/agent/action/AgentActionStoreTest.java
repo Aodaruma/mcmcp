@@ -16,6 +16,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AgentActionStoreTest {
     @Test
+    void chargesAdmissionWaitAgainstTheSameActionBudgetBeforeStartingTheFirstNode() {
+        var store = new AgentActionStore();
+        var action = store.start(program(), source(), Instant.EPOCH);
+        store.markRunning(action.actionId());
+        store.recordAdmissionTicks(action.actionId(), 1);
+        assertThat(store.get(action.actionId()).progress().ticks()).isEqualTo(1);
+        assertThatThrownBy(() -> store.recordAdmissionTicks(action.actionId(), 1))
+                .isInstanceOf(IllegalArgumentException.class);
+        store.beginNode(action.actionId(), "hold");
+        store.recordTick(action.actionId());
+        assertThat(store.get(action.actionId()).progress().ticks()).isEqualTo(2);
+    }
+
+    @Test
     void effectRingEvictionPreservesSequenceAndConfirmedAggregate() {
         var store = new AgentActionStore();
         var accepted = store.start(program(), source(), Instant.EPOCH);

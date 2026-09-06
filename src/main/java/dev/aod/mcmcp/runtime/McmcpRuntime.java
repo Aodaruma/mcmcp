@@ -364,7 +364,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 observations,
                 screenOwnership,
                 () -> McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0D,
-                ClientPredictionSignals.global());
+                ClientPredictionSignals.global(), this::initialContainerOpenWitness);
         phaseFiveWorldPort = new MinecraftPhaseFiveWorldPort(
                 Minecraft::getInstance,
                 sessions::snapshot,
@@ -1729,6 +1729,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return CompletableFuture.completedFuture(mapFailure(failure));
         }
         var fence = publishedSession;
+        var surfaceRecovery = new SurfacePreflightRecovery(request.budget());
         // Use the same pre-tick observation phase as execution. After the player tick,
         // the previous renderer fog sample cannot authorize fresh visual evidence.
         var capture = inbox.submitControl(
@@ -1744,7 +1745,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 predicateRequirements,
                                 localSafetyRequired,
                                 containsRecipeReference(request.program()),
-                                request.program())));
+                                request.program(), surfaceRecovery)),
+                context::isCancelled, ignored -> { });
         final AgentAdmissionSnapshot snapshot;
         try {
             snapshot = capture.get(context.remainingNanos(), TimeUnit.NANOSECONDS);
@@ -1757,16 +1759,19 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         } catch (TimeoutException failure) {
             capture.cancel(true);
             context.cancel();
+            if (surfaceRecovery.hasWaited()) {
+                return CompletableFuture.completedFuture(mapAdmissionFailure(failure, surfaceRecovery));
+            }
             return CompletableFuture.completedFuture(RuntimeReply.failure(
                     "server_busy", "Agent preflight capture timed out", true));
         } catch (ExecutionException | RuntimeException failure) {
-            return CompletableFuture.completedFuture(mapFailure(failure));
+            return CompletableFuture.completedFuture(mapAdmissionFailure(failure, surfaceRecovery));
         }
 
         final PreparedAgentAction prepared;
         try {
             requireLiveCall(context, command.toolName());
-            prepared = prepareAgentAction(request, source, snapshot, context);
+            prepared = prepareAgentAction(request, source, snapshot, context, surfaceRecovery);
             requireLiveCall(context, command.toolName());
         } catch (RuntimeException | LinkageError failure) {
             return CompletableFuture.completedFuture(mapFailure(failure));
@@ -1784,7 +1789,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 snapshot.session().generation(),
                 context.deadlineNanos(),
                 commit,
-                McmcpRuntime::mapFailure,
+                failure -> mapAdmissionFailure(failure, surfaceRecovery),
                 context::isCancelled,
                 reply -> {
                     if (reply.successful()) {
@@ -1949,6 +1954,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private Optional<ObservationFrame> agentPlanningFrame(ActionDsl.Node primitive) {
+        return agentPlanningFrame(primitive, null);
+    }
+
+    private Optional<ObservationFrame> agentPlanningFrame(ActionDsl.Node primitive,
+            DeliveredPolicyEvidenceStore.SurfaceLease surfaceLease) {
         var minecraft = Minecraft.getInstance();
         assertClientThread(minecraft);
         var session = sessions.snapshot();
@@ -1964,11 +1974,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return deliveredAgentEvidence.augment(agentObservationFrames.latestFrame());
         }
         String frameRef = frameItemTargetRef(primitive);
-        return deliveredAgentEvidence.reobserveForPlanning(agentObservationFrames.latestFrame(), surface -> {
+        var planning = deliveredAgentEvidence.reobserveForPlanning(agentObservationFrames.latestFrame(), surface -> {
             var position = surface.position();
             long barrier = reconciliation.surfaceBarrierWorldRevision(
                     position.x(), position.y(), position.z());
-            if (surface.worldRevision() >= barrier) return Optional.of(surface);
+            if (surface.worldRevision() >= barrier
+                    && (surfaceLease == null || !surfaceLease.targets(surface))) return Optional.of(surface);
             return agentObserver.reobserveSurface(minecraft.level, minecraft.player, surface,
                     session.clientTick(), reconciliation.worldRevision(), fogDistance.getAsDouble());
         }, session.clientTick(), known -> {
@@ -1984,7 +1995,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     .flatMap(frame -> OmnidirectionalObserver.reobserveFrameEntity(
                             minecraft.level, minecraft.player, frame, known, session.clientTick(),
                             reconciliation.worldRevision(), McmcpClientConfig.visualRadiusBlocks()));
-        });
+        }, surface -> surfaceLease != null && surfaceLease.targets(surface));
+        return surfaceLease == null ? planning
+                : deliveredAgentEvidence.restrictToSurfaceLease(planning, surfaceLease);
     }
 
     static String frameItemTargetRef(ActionDsl.Node primitive) {
@@ -1999,7 +2012,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             PredicateRequirements predicateRequirements,
             boolean localSafetyRequired,
             boolean recipeReferenceRequired,
-            ActionDsl.Program program) {
+            ActionDsl.Program program,
+            SurfacePreflightRecovery surfaceRecovery) {
         assertClientThread(minecraft);
         requireReady(session);
         if (pendingAgentInputRelease || agentExecution != null
@@ -2052,7 +2066,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var player = Objects.requireNonNull(minecraft.player, "player");
         var predicateSnapshot = AdmissionPolicySnapshot.capture(
                 policySnapshot(minecraft), predicateRequirements);
-        var singlePrimitive = program.body().size() == 1 ? program.body().getFirst() : null;
+        var singlePrimitive = firstPrimitive(program, predicateSnapshot).orElse(null);
+        surfaceRecovery.capture(singlePrimitive, deliveredAgentEvidence);
+        if (surfaceRecovery.lease() != null && !surfaceRecovery.applies(singlePrimitive)) {
+            throw admissionPreflightFailure(AdmissionFenceFailure.POLICY_BRANCH_CHANGED);
+        }
+        requireSurfaceRecoveryReady(minecraft, session, surfaceRecovery);
         String frameRef = frameItemTargetRef(singlePrimitive);
         if (frameRef != null) {
             deliveredAgentEvidence.frameDisplayRejection(
@@ -2066,7 +2085,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 lock,
                 map,
                 playerPose(player, session.dimension()),
-                agentPlanningFrame(singlePrimitive),
+                agentPlanningFrame(singlePrimitive, surfaceRecovery.lease()),
                 localSafety,
                 localSafetyRequired,
                 predicateRequirements,
@@ -2095,7 +2114,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             ActionDsl.Request request,
             ActionDslSource source,
             AgentAdmissionSnapshot snapshot,
-            RuntimeCallContext context) {
+            RuntimeCallContext context,
+            SurfacePreflightRecovery surfaceRecovery) {
         validatePredicateAvailability(request.program(), snapshot.predicateSnapshot());
         var allowed = EnumSet.noneOf(ActionDsl.Capability.class);
         if (snapshot.control().capabilities().contains("movement")) {
@@ -2124,6 +2144,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         ActionDslCompiler.CompiledProgram program = ActionDslCompiler.compile(
                 request, this::admissionPrimitiveCost, allowed);
+        surfaceRecovery.effectiveBudget(program.effectiveBudget());
         Optional<ActionDsl.Node> initialPrimitive = firstPrimitive(
                 request.program(), snapshot.predicateSnapshot());
         final AgentPrimitivePlanner.Analysis analysis;
@@ -2157,10 +2178,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         "Frame display evidence expired.", true, Map.of());
             }
         } catch (AgentPrimitivePlanner.PlanningException failure) {
+            if (surfaceRecovery.lease() != null
+                    && failure.code() == AgentPrimitivePlanner.Code.TARGET_UNKNOWN) {
+                throw admissionPreflightFailure(AdmissionFenceFailure.SURFACE_REOBSERVATION_MISMATCH);
+            }
             throw planningFailure(failure);
         }
         return new PreparedAgentAction(
-                snapshot, program, source, analysis, initialPrimitive, frameItemAim);
+                snapshot, program, source, analysis, initialPrimitive, frameItemAim, surfaceRecovery);
     }
 
     private AgentPrimitivePlanner.Analysis analyzePrimitive(
@@ -2413,6 +2438,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 LocalArmingState.Mode.READY,
                 captured.control().controlEpoch());
         if (admissionFailure.isPresent()) {
+            if (admissionFailure.orElseThrow() == AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING) {
+                throw new ClientCommandInbox.DeferControl();
+            }
             throw admissionPreflightFailure(admissionFailure.orElseThrow());
         }
         requireLiveCall(context, "agent_start_action");
@@ -2903,6 +2931,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         KNOWN_TARGET_CHANGED,
         FACING_SURFACE_CHANGED,
         KNOWN_SURFACE_CHANGED,
+        RENDERER_EVIDENCE_MISSING,
+        RENDERER_EVIDENCE_TIMEOUT,
+        DELIVERY_EXPIRED,
+        TARGET_NOT_DELIVERED,
+        SURFACE_REOBSERVATION_MISMATCH,
         VISIBLE_ITEM_CHANGED,
         VISIBLE_BATCH_ITEM_CHANGED,
         FRAME_ITEM_CHANGED,
@@ -2924,6 +2957,39 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         + "Reason: " + Objects.requireNonNull(reason, "reason").code() + ".",
                 true,
                 Map.of("admission_reason", reason.code()));
+    }
+
+    static RuntimeReply mapAdmissionFailure(Throwable failure, SurfacePreflightRecovery recovery) {
+        var cause = unwrap(failure);
+        return recovery.hasWaited()
+                && (cause instanceof TimeoutException || cause instanceof ClientCommandInbox.CommandTimeoutException)
+                ? mapFailure(admissionPreflightFailure(AdmissionFenceFailure.RENDERER_EVIDENCE_TIMEOUT))
+                : mapFailure(failure);
+    }
+
+    private Optional<AdmissionFenceFailure> surfaceRecoveryFailure(
+            Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            SurfacePreflightRecovery surfaceRecovery) {
+        var decision = surfaceRecovery.evaluate(deliveredAgentEvidence, session.clientTick(), System.nanoTime(),
+                minecraft.level != null && minecraft.player != null && ClientFogDistanceSignals.current(
+                        minecraft.level, minecraft.player, minecraft.player.tickCount).isPresent());
+        return switch (decision) {
+            case READY -> Optional.empty();
+            case RENDERER_EVIDENCE_MISSING -> Optional.of(AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING);
+            case RENDERER_EVIDENCE_TIMEOUT -> Optional.of(AdmissionFenceFailure.RENDERER_EVIDENCE_TIMEOUT);
+            case DELIVERY_EXPIRED -> Optional.of(AdmissionFenceFailure.DELIVERY_EXPIRED);
+            case TARGET_NOT_DELIVERED -> Optional.of(AdmissionFenceFailure.TARGET_NOT_DELIVERED);
+        };
+    }
+
+    private void requireSurfaceRecoveryReady(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            SurfacePreflightRecovery surfaceRecovery) {
+        surfaceRecoveryFailure(minecraft, session, surfaceRecovery).ifPresent(reason -> {
+            if (reason == AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING) {
+                throw new ClientCommandInbox.DeferControl();
+            }
+            throw admissionPreflightFailure(reason);
+        });
     }
 
     private Optional<AdmissionFenceFailure> admissionFenceFailure(
@@ -2999,8 +3065,17 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         } catch (RuntimeException | LinkageError changed) {
             return Optional.of(AdmissionFenceFailure.POLICY_UNAVAILABLE);
         }
+        if (!firstPrimitive(prepared.program().request().program(), currentPredicates)
+                .equals(prepared.initialPrimitive())) {
+            return Optional.of(AdmissionFenceFailure.POLICY_BRANCH_CHANGED);
+        }
+        if (!routeDependenciesCurrent(currentMap, prepared.analysis().routeDependencies())) {
+            return Optional.of(AdmissionFenceFailure.ROUTE_CHANGED);
+        }
+        var rendererFailure = surfaceRecoveryFailure(minecraft, session, prepared.surfaceRecovery());
+        if (rendererFailure.isPresent()) return rendererFailure;
         Optional<ObservationFrame> currentPlanningFrame = agentPlanningFrame(
-                prepared.initialPrimitive().orElse(null));
+                prepared.initialPrimitive().orElse(null), prepared.surfaceRecovery().lease());
         if (prepared.frameItemAim().isPresent()) {
             try {
                 var currentAim = AgentPrimitivePlanner.requireFrameItemAim(
@@ -3014,13 +3089,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 return Optional.of(AdmissionFenceFailure.FRAME_ITEM_CHANGED);
             }
         }
-        if (!firstPrimitive(prepared.program().request().program(), currentPredicates)
-                .equals(prepared.initialPrimitive())) {
-            return Optional.of(AdmissionFenceFailure.POLICY_BRANCH_CHANGED);
-        }
-        if (!routeDependenciesCurrent(currentMap, prepared.analysis().routeDependencies())) {
-            return Optional.of(AdmissionFenceFailure.ROUTE_CHANGED);
-        }
         if (!prepared.analysis().knownTargets().stream().allMatch(target ->
                         prepared.initialPrimitive()
                                         .filter(ActionDsl.FaceKnownPosition.class::isInstance)
@@ -3032,7 +3100,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                         currentPlanningFrame,
                                         target,
                                         currentSurfaceRevisionBarrier.applyAsLong(target)))) {
-            return Optional.of(AdmissionFenceFailure.KNOWN_TARGET_CHANGED);
+            return Optional.of(prepared.surfaceRecovery().lease() == null
+                    ? AdmissionFenceFailure.KNOWN_TARGET_CHANGED
+                    : AdmissionFenceFailure.SURFACE_REOBSERVATION_MISMATCH);
         }
         if (!prepared.analysis().knownFacingSurfaces().stream().allMatch(surface ->
                         AgentPrimitivePlanner.knownFacingSurface(
@@ -3045,7 +3115,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 currentPlanningFrame,
                                 surface,
                                 currentSurfaceRevisionBarrier.applyAsLong(surface.position())))) {
-            return Optional.of(AdmissionFenceFailure.KNOWN_SURFACE_CHANGED);
+            return Optional.of(prepared.surfaceRecovery().lease() == null
+                    ? AdmissionFenceFailure.KNOWN_SURFACE_CHANGED
+                    : AdmissionFenceFailure.SURFACE_REOBSERVATION_MISMATCH);
         }
         if (!prepared.initialPrimitive()
                         .filter(ActionDsl.CollectVisibleItem.class::isInstance)
@@ -4508,6 +4580,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         LocalArmingState.Mode.AGENT,
                         pending.prepared().snapshot().control().controlEpoch() + 1L);
                 if (admissionFailure.isPresent()) {
+                    if (admissionFailure.orElseThrow() == AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING) {
+                        // Receipt acknowledgement authorizes no input. Retain the original
+                        // admission, delivery lease and elapsed budget until a fresh render.
+                        return;
+                    }
                     failAgentAction(
                             AgentActionStore.FailureCode.WORLD_CHANGED,
                             true,
@@ -4523,7 +4600,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     currentKillAuthorization = requireKillZoneAdmission(
                             minecraft, session, pending.prepared().source(), operation);
                 }
-                long startedAtNanos = System.nanoTime();
+                long startedAtNanos = pending.prepared().surfaceRecovery().executionStartNanos(System.nanoTime());
                 var nextExecution = new AgentExecution(
                         action,
                         session.worldSessionId(),
@@ -4557,7 +4634,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     }
                 }
                 agentActions.markRunning(action.actionId());
+                agentActions.recordAdmissionTicks(action.actionId(),
+                        pending.prepared().surfaceRecovery().consumedTicks(session.clientTick()));
                 agentExecution = nextExecution;
+                agentExecution.surfaceRecovery = pending.prepared().surfaceRecovery();
+                agentExecution.surfaceAdmission = pending.prepared().snapshot();
                 agentInputReleaseFaultLogged = false;
                 agentExecution.frameItemAim = pending.prepared().frameItemAim().orElse(null);
                 if (killAuthorization != null) {
@@ -4593,7 +4674,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 agentControlOwnershipEpoch = Math.incrementExact(agentControlOwnershipEpoch);
                 pendingAgentAdmission = null;
                 if (paused) {
-                    pauseStartedAtNanos = startedAtNanos;
+                    // A pause cannot refund renderer waiting charged before execution began.
+                    pauseStartedAtNanos = System.nanoTime();
                 }
             }
             if (agentExecution.killZone != null
@@ -5715,6 +5797,19 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             AgentActionStore.Progress progress,
             long actionTick) {
         try {
+            var surfaceRecovery = agentExecution.surfaceRecovery;
+            if (surfaceRecovery != null && surfaceRecovery.applies(agentExecution.primitive)) {
+                var rendererFailure = surfaceRecoveryFailure(minecraft, session, surfaceRecovery);
+                if (rendererFailure.isPresent()) {
+                    var reason = rendererFailure.orElseThrow();
+                    if (reason != AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING) {
+                        failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true, reason.code());
+                    } else {
+                        releaseAgentInputsForHold(minecraft, "renderer_wait_input_release_failed");
+                    }
+                    return false;
+                }
+            }
             var player = Objects.requireNonNull(minecraft.player, "player");
             var map = requireAgentMap(session);
             var reconciliation = reconciliationSignals.bindAndSnapshot(
@@ -5722,7 +5817,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     session.worldSessionId());
             long visualBarrierWorldRevision = visualBarrierWorldRevision(map, reconciliation);
             boolean worldPlanning = requiresWorldPlanning(agentExecution.primitive);
-            var planningFrame = worldPlanning ? agentPlanningFrame(agentExecution.primitive) : Optional.<ObservationFrame>empty();
+            var planningFrame = worldPlanning ? agentPlanningFrame(agentExecution.primitive,
+                    surfaceRecovery != null && surfaceRecovery.applies(agentExecution.primitive)
+                            ? surfaceRecovery.lease() : null) : Optional.<ObservationFrame>empty();
             var analysis = worldPlanning
                     ? analyzePrimitive(
                             action.program().request().program(),
@@ -5798,6 +5895,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             return true;
         } catch (AgentPrimitivePlanner.PlanningException unavailable) {
+            if (agentExecution.surfaceRecovery != null
+                    && agentExecution.surfaceRecovery.applies(agentExecution.primitive)
+                    && unavailable.code() == AgentPrimitivePlanner.Code.TARGET_UNKNOWN) {
+                failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true,
+                        AdmissionFenceFailure.SURFACE_REOBSERVATION_MISMATCH.code());
+                return false;
+            }
             if (isFrameItemPrimitive(agentExecution.primitive)) {
                 failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED,
                         false, "frame_item_authorization_unavailable");
@@ -7427,6 +7531,48 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             agentActions.recordEffect(actionId, kind, aim.entityType(),
                     effect.observedBefore(), effect.observedAfter(), effect.verification(),
                     effect.clientTick(), effect.worldRevision());
+        }
+    }
+
+    private MinecraftPhaseFiveInventoryPort.InitialOpenWitness initialContainerOpenWitness() {
+        var execution = agentExecution;
+        var ready = MinecraftPhaseFiveInventoryPort.InitialOpenWitness.READY;
+        var unsafe = MinecraftPhaseFiveInventoryPort.InitialOpenWitness.SAFETY_CHANGED;
+        if (execution == null || execution.surfaceRecovery == null
+                || !execution.surfaceRecovery.applies(execution.primitive)) return ready;
+        var minecraft = Minecraft.getInstance();
+        assertClientThread(minecraft);
+        var session = sessions.snapshot();
+        var captured = execution.surfaceAdmission;
+        var lock = arming.snapshot(session.worldSessionId());
+        if (captured == null || !sameAdmissionSession(captured.session(), session)
+                || minecraft.player != execution.playerIdentity
+                || lock.mode() != LocalArmingState.Mode.AGENT
+                || lock.controlEpoch() != captured.control().controlEpoch() + 1L
+                || !lock.capabilities().equals(captured.control().capabilities())
+                || localSafety != LocalObservationProjector.CurrentSafety.CONTINUE
+                || McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F != captured.cameraDegreesPerTick()
+                || minecraft.isMultiplayerServer() != captured.multiplayerServer()
+                || multiplayerPolicyAllows(minecraft) != captured.multiplayerAllowed()) return unsafe;
+        try {
+            var map = requireAgentMap(session);
+            var reconciliation = reconciliationSignals.bindAndSnapshot(minecraft.level, session.worldSessionId());
+            visualBarrierWorldRevision(map, reconciliation);
+            var decision = surfaceRecoveryFailure(minecraft, session, execution.surfaceRecovery);
+            if (decision.isPresent()) {
+                return MinecraftPhaseFiveInventoryPort.InitialOpenWitness.valueOf(decision.orElseThrow().name());
+            }
+            var target = SurfacePreflightRecovery.target(execution.primitive);
+            AgentPrimitivePlanner.requireKnownSurface(map,
+                    agentPlanningFrame(execution.primitive, execution.surfaceRecovery.lease()),
+                    target.position(), target.block(),
+                    primitiveSurfaceRevisionBarrier(execution.primitive, map, reconciliation)
+                            .applyAsLong(target.position()));
+            return ready;
+        } catch (AgentPrimitivePlanner.PlanningException mismatch) {
+            return MinecraftPhaseFiveInventoryPort.InitialOpenWitness.SURFACE_REOBSERVATION_MISMATCH;
+        } catch (RuntimeException unavailable) {
+            return unsafe;
         }
     }
 
@@ -9098,7 +9244,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             ActionDslSource source,
             AgentPrimitivePlanner.Analysis analysis,
             Optional<ActionDsl.Node> initialPrimitive,
-            Optional<AgentPrimitivePlanner.FrameItemAim> frameItemAim) {
+            Optional<AgentPrimitivePlanner.FrameItemAim> frameItemAim,
+            SurfacePreflightRecovery surfaceRecovery) {
         private PreparedAgentAction {
             Objects.requireNonNull(snapshot, "snapshot");
             Objects.requireNonNull(program, "program");
@@ -13314,6 +13461,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private static final class AgentExecution {
+        private SurfacePreflightRecovery surfaceRecovery;
+        private AgentAdmissionSnapshot surfaceAdmission;
         private final UUID actionId;
         private final UUID worldSessionId;
         private final ActionDslCompiler.CompiledProgram program;

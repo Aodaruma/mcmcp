@@ -6,6 +6,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -13,6 +14,7 @@ import java.util.UUID;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import java.util.function.Function;
+import java.util.function.Predicate;
 
 /**
  * Bounded, session-local memory of static visual evidence actually delivered to the MCP client.
@@ -38,6 +40,7 @@ public final class DeliveredPolicyEvidenceStore {
     public static final Duration PENDING_DELIVERY_TIMEOUT = Duration.ofSeconds(60);
 
     private final LongSupplier nanoTime;
+    private long sessionGeneration;
     private final Supplier<UUID> receiptIds;
     private final LinkedHashMap<SurfaceKey, Entry> surfaces = new LinkedHashMap<>();
     private final LinkedHashMap<String, FrameAuthorization> frameDisplays = new LinkedHashMap<>();
@@ -237,6 +240,16 @@ public final class DeliveredPolicyEvidenceStore {
             Function<ObservationRecord.VisibleSurface, Optional<ObservationRecord.VisibleSurface>> reobserve,
             long currentTick,
             Function<ObservationRecord.VisibleEntity, Optional<ObservationRecord.VisibleEntity>> reobserveFrame) {
+        return reobserveForPlanning(latestFrame, reobserve, currentTick, reobserveFrame, surface -> false);
+    }
+
+    /** Required current rays omit a failed target instead of retaining its old witness. */
+    public synchronized Optional<ObservationFrame> reobserveForPlanning(
+            Optional<ObservationFrame> latestFrame,
+            Function<ObservationRecord.VisibleSurface, Optional<ObservationRecord.VisibleSurface>> reobserve,
+            long currentTick,
+            Function<ObservationRecord.VisibleEntity, Optional<ObservationRecord.VisibleEntity>> reobserveFrame,
+            Predicate<ObservationRecord.VisibleSurface> requireCurrentRay) {
         return augment(latestFrame).map(frame -> {
             var records = new ArrayList<ObservationRecord>();
             long completedTick = frame.frameCompletedTick();
@@ -253,7 +266,7 @@ public final class DeliveredPolicyEvidenceStore {
                         var current = refreshed.orElseThrow();
                         records.add(current);
                         completedTick = Math.max(completedTick, current.observedTick());
-                    } else {
+                    } else if (!requireCurrentRay.test(surface)) {
                         // Static facing may still use delivered coordinates. Keep the OLD
                         // revision so mutation/approach admission cannot mistake failure for freshness.
                         records.add(surface);
@@ -335,6 +348,69 @@ public final class DeliveredPolicyEvidenceStore {
 
     public enum FrameDisplayRejection { NOT_DELIVERED, DELIVERY_EXPIRED, NOT_VISIBLE, DISPLAY_CHANGED }
 
+    public enum SurfaceLeaseStatus { VALID, NOT_DELIVERED, DELIVERY_EXPIRED }
+
+    /** An admission-local copy of original delivery times; internal rays/redelivery cannot renew it. */
+    public static final class SurfaceLease {
+        private final long generation;
+        private final ObservationValues.BlockPosition position;
+        private final List<Entry> entries;
+
+        private SurfaceLease(long generation, ObservationValues.BlockPosition position, List<Entry> entries) {
+            this.generation = generation;
+            this.position = position;
+            this.entries = List.copyOf(entries);
+        }
+
+        public boolean targets(ObservationRecord.VisibleSurface surface) {
+            return position.equals(surface.position());
+        }
+    }
+
+    public synchronized SurfaceLease captureSurfaceLease(
+            ObservationValues.BlockPosition position, ObservationValues.ResourceId block) {
+        // Capture before purge so a just-expired delivery has an explicit fixed diagnosis.
+        return new SurfaceLease(sessionGeneration, Objects.requireNonNull(position, "position"),
+                surfaces.values().stream().filter(entry -> position.equals(entry.surface().position())
+                        && block.equals(entry.surface().block())).toList());
+    }
+
+    public synchronized SurfaceLeaseStatus surfaceLeaseStatus(SurfaceLease lease) {
+        Objects.requireNonNull(lease, "lease");
+        if (lease.generation != sessionGeneration || lease.entries.isEmpty()) {
+            return SurfaceLeaseStatus.NOT_DELIVERED;
+        }
+        long now = nanoTime.getAsLong();
+        if (lease.entries.stream().noneMatch(entry -> unexpired(entry, now))) {
+            return SurfaceLeaseStatus.DELIVERY_EXPIRED;
+        }
+        return lease.entries.stream().anyMatch(entry -> unexpired(entry, now)
+                && surfaces.containsKey(SurfaceKey.of(entry.surface())))
+                ? SurfaceLeaseStatus.VALID : SurfaceLeaseStatus.NOT_DELIVERED;
+    }
+
+    /** No new face delivered during a wait can enlarge an already captured target lease. */
+    public synchronized Optional<ObservationFrame> restrictToSurfaceLease(
+            Optional<ObservationFrame> frame, SurfaceLease lease) {
+        long now = nanoTime.getAsLong();
+        return frame.map(value -> new ObservationFrame(value.frameId(), value.dimension(),
+                value.frameCompletedTick(), value.configuredVisualRadiusBlocks(),
+                value.visibleEntitiesTruncated(), value.recentSoundCluesTruncated(),
+                value.records().stream().filter(record -> !(record instanceof ObservationRecord.VisibleSurface surface)
+                        || !lease.targets(surface)
+                        || lease.generation == sessionGeneration && lease.entries.stream().anyMatch(entry ->
+                                unexpired(entry, now)
+                                        && SurfaceKey.of(entry.surface()).equals(SurfaceKey.of(surface))
+                                        && Objects.equals(entry.surface().state(), surface.state())
+                                        && Objects.equals(entry.surface().placementItem(), surface.placementItem())
+                                        && entry.surface().shapeClass() == surface.shapeClass())).toList()));
+    }
+
+    private static boolean unexpired(Entry entry, long now) {
+        long age = elapsed(now, entry.deliveredNanos());
+        return age >= 0 && age < SURFACE_IDLE_TIMEOUT.toNanos();
+    }
+
     /** Fixed, non-reflective diagnostics for a single frame requested by the closed DSL. */
     public synchronized Optional<FrameDisplayRejection> frameDisplayRejection(
             String entityRef, Optional<ObservationFrame> currentFrame, long currentTick) {
@@ -381,6 +457,7 @@ public final class DeliveredPolicyEvidenceStore {
 
     /** Clears the complete evidence boundary at a world-session transition. */
     public synchronized void clear() {
+        sessionGeneration++;
         surfaces.clear();
         frameDisplays.clear();
         pending.clear();
