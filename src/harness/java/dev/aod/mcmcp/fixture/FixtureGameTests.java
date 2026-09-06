@@ -928,7 +928,8 @@ final class FixtureGameTests {
         assertLayoutState(helper, copperTransfer,
                 FixturePhase5Scenario.COPPER_DESTINATION_CHEST,
                 FixturePhase5Scenario.waxedCopperChestState());
-        if (copperTransfer.size() != 2
+        if (FixturePhase5Scenario.COPPER_SOURCE_CHEST.equals(
+                    FixturePhase5Scenario.COPPER_DESTINATION_CHEST)
                 || !copperTransfer.get(FixturePhase5Scenario.COPPER_SOURCE_CHEST)
                         .getValue(ChestBlock.TYPE).equals(ChestType.SINGLE)
                 || FixturePhase5Scenario.COPPER_TRANSFER_ITEM != Items.RAW_IRON
