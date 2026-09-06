@@ -1,6 +1,8 @@
 package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
+import dev.aod.mcmcp.agent.action.AgentActionStore.RendererRecoveryStage;
+import dev.aod.mcmcp.agent.action.AgentActionStore.RendererRecoverySummary;
 import dev.aod.mcmcp.agent.observation.DeliveredPolicyEvidenceStore;
 import dev.aod.mcmcp.agent.observation.ObservationValues.BlockPosition;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
@@ -21,6 +23,9 @@ final class SurfacePreflightRecovery {
     private volatile boolean waited;
     private long firstWaitTick;
     private long firstWaitNanos;
+    private int missingStages;
+    private int revalidatedStages;
+    private int pendingStages;
 
     SurfacePreflightRecovery(ActionDsl.Budget budget) { this.budget = budget; }
 
@@ -85,4 +90,25 @@ final class SurfacePreflightRecovery {
     long executionStartNanos(long now) { return waited ? firstWaitNanos : now; }
     long consumedTicks(long tick) { return waited ? Math.max(0L, tick - firstWaitTick) : 0L; }
     boolean hasWaited() { return waited; }
+
+    synchronized boolean noteMissing(RendererRecoveryStage stage) {
+        int previous = missingStages;
+        missingStages |= stage.mask();
+        pendingStages |= stage.mask();
+        return previous != missingStages;
+    }
+
+    /** Called only after the stage's complete current-evidence/safety checks have succeeded. */
+    synchronized boolean noteRevalidated(RendererRecoveryStage stage) {
+        if ((pendingStages & stage.mask()) == 0) return false;
+        pendingStages &= ~stage.mask();
+        int previous = revalidatedStages;
+        revalidatedStages |= stage.mask();
+        return previous != revalidatedStages;
+    }
+
+    /** Cumulative history: a later gap never clears a previous revalidation and is not current readiness. */
+    synchronized RendererRecoverySummary summary() {
+        return new RendererRecoverySummary(missingStages, revalidatedStages);
+    }
 }

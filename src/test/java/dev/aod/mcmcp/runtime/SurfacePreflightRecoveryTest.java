@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
+import dev.aod.mcmcp.agent.action.AgentActionStore.RendererRecoveryStage;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilityMap;
 import dev.aod.mcmcp.agent.observation.*;
@@ -40,21 +41,21 @@ class SurfacePreflightRecoveryTest {
     @Test
     void captureCommitAndDispatchEachWaitForTheirOwnFreshRenderWithoutRenewingEvidence() {
         var fixture = new Fixture();
-        var capture = fixture.submit(false);
+        var capture = fixture.submit(RendererRecoveryStage.CAPTURE, false);
         fixture.drain(10, false);
         assertThat(capture).isNotDone();
         assertThat(fixture.rays).hasValue(0);
         fixture.drain(11, true);
         assertThat(capture.join()).isEqualTo("ready");
 
-        var commit = fixture.submit(false);
+        var commit = fixture.submit(RendererRecoveryStage.COMMIT, false);
         fixture.drain(12, false);
         assertThat(commit).isNotDone();
         assertThat(fixture.rays).hasValue(1);
         fixture.drain(13, true);
         assertThat(commit.join()).isEqualTo("ready");
 
-        var dispatch = fixture.submit(true);
+        var dispatch = fixture.submit(RendererRecoveryStage.DISPATCH, true);
         fixture.drain(14, false);
         assertThat(dispatch).isNotDone();
         assertThat(fixture.interactions).hasValue(0);
@@ -67,6 +68,8 @@ class SurfacePreflightRecoveryTest {
         assertThat(fixture.recovery.executionStartNanos(750_000_000)).isEqualTo(500_000_000);
         assertThat(RAW.records()).containsExactly(CHEST);
         assertThat(fixture.store.augment(Optional.of(RAW)).orElseThrow().records()).containsExactly(CHEST);
+        assertThat(fixture.recovery.summary().missingStages()).isEqualTo(1 | 2 | 4);
+        assertThat(fixture.recovery.summary().revalidatedStages()).isEqualTo(1 | 2 | 4);
     }
 
     @Test
@@ -84,6 +87,8 @@ class SurfacePreflightRecoveryTest {
             fixture.drain(13, true);
             assertThat(fixture.interactions).hasValue(0);
             assertThat(fixture.rays).hasValue(2);
+            assertThat(fixture.recovery.summary().missingStages()).isEqualTo(RendererRecoveryStage.CAPTURE.mask());
+            assertThat(fixture.recovery.summary().revalidatedStages()).isZero();
         }
     }
 
@@ -96,6 +101,7 @@ class SurfacePreflightRecoveryTest {
         fixture.drain(11, true);
         assertThatThrownBy(start::join).hasCauseInstanceOf(AgentPrimitivePlanner.PlanningException.class);
         assertThat(fixture.interactions).hasValue(0);
+        assertThat(fixture.recovery.summary().revalidatedStages()).isZero();
     }
 
     @Test
@@ -135,6 +141,25 @@ class SurfacePreflightRecoveryTest {
         assertThat(fixture.recovery.applies(NODE)).isTrue();
     }
 
+    @Test
+    void fogReturningAloneDoesNotMarkRevalidationAndStagesCannotValidateEachOther() {
+        var recovery = new SurfacePreflightRecovery(BUDGET);
+        recovery.evaluate(VALID, 10, 0, false);
+        assertThat(recovery.noteMissing(RendererRecoveryStage.INITIAL_OPEN)).isTrue();
+        assertThat(recovery.evaluate(VALID, 11, 50_000_000L, true)).isEqualTo(READY);
+        assertThat(recovery.summary().revalidatedStages()).isZero();
+        assertThat(recovery.noteRevalidated(RendererRecoveryStage.JIT)).isFalse();
+        assertThat(recovery.noteRevalidated(RendererRecoveryStage.INITIAL_OPEN)).isTrue();
+        for (int repeat = 0; repeat < 1000; repeat++) {
+            assertThat(recovery.noteMissing(RendererRecoveryStage.INITIAL_OPEN)).isFalse();
+        }
+        // Historical "at least once", not current readiness: a later missing interval remains pending.
+        assertThat(recovery.summary().missingStages()).isEqualTo(16);
+        assertThat(recovery.summary().revalidatedStages()).isEqualTo(16);
+        assertThat(recovery.noteRevalidated(RendererRecoveryStage.INITIAL_OPEN)).isFalse();
+        assertThat(recovery.executionStartNanos(1_000_000_000L)).isZero();
+    }
+
     private static final class Fixture {
         private final AtomicLong now = new AtomicLong();
         private final AtomicLong tick = new AtomicLong(10);
@@ -157,9 +182,16 @@ class SurfacePreflightRecoveryTest {
         }
 
         private CompletableFuture<String> submit(boolean dispatch) {
+            return submit(RendererRecoveryStage.CAPTURE, dispatch);
+        }
+
+        private CompletableFuture<String> submit(RendererRecoveryStage stage, boolean dispatch) {
             return inbox.submitControl("agent_start_action", 1, Long.MAX_VALUE, () -> {
                 var decision = recovery.evaluate(store, tick.get(), now.get(), fog.get());
-                if (decision == RENDERER_EVIDENCE_MISSING) throw new ClientCommandInbox.DeferControl();
+                if (decision == RENDERER_EVIDENCE_MISSING) {
+                    recovery.noteMissing(stage);
+                    throw new ClientCommandInbox.DeferControl();
+                }
                 assertThat(decision).isEqualTo(READY);
                 var planning = store.reobserveForPlanning(Optional.of(RAW), known ->
                         SurfaceReobservationFixture.reobserve(known, tick.get(), 65, fogDistance, block, rays),
@@ -167,6 +199,7 @@ class SurfacePreflightRecoveryTest {
                 planning = store.restrictToSurfaceLease(planning, recovery.lease());
                 AgentPrimitivePlanner.requireKnownSurface(map.snapshot().orElseThrow(), planning,
                         NODE.target(), NODE.expectedBlock(), 65);
+                recovery.noteRevalidated(stage);
                 if (dispatch) interactions.incrementAndGet();
                 return "ready";
             });

@@ -254,6 +254,42 @@ public final class AgentActionStore {
         action.ticks = Math.toIntExact(ticks);
     }
 
+    /** Replaces one bounded audit summary; it is evidence of revalidation, never an effect/ACK. */
+    public synchronized void recordRendererRecovery(UUID actionId, RendererRecoverySummary summary) {
+        Mutable action = current(actionId);
+        if (action.state.terminal()) throw new IllegalStateException("Action is already terminal");
+        action.rendererRecovery = Objects.requireNonNull(summary, "summary");
+    }
+
+    public enum RendererRecoveryStage {
+        CAPTURE(1), COMMIT(2), DISPATCH(4), JIT(8), INITIAL_OPEN(16);
+
+        private final int mask;
+        RendererRecoveryStage(int mask) { this.mask = mask; }
+        public int mask() { return mask; }
+    }
+
+    public record RendererRecoverySummary(int missingStages, int revalidatedStages) {
+        public RendererRecoverySummary {
+            if ((missingStages & ~31) != 0 || (revalidatedStages & ~missingStages) != 0) {
+                throw new IllegalArgumentException("Invalid renderer recovery summary");
+            }
+        }
+
+        String detail() {
+            return "missing=" + stages(missingStages) + ";revalidated=" + stages(revalidatedStages);
+        }
+
+        private static String stages(int mask) {
+            if (mask == 0) return "none";
+            var names = new ArrayList<String>(5);
+            for (var stage : RendererRecoveryStage.values()) {
+                if ((mask & stage.mask()) != 0) names.add(stage.name().toLowerCase(java.util.Locale.ROOT));
+            }
+            return String.join(",", names);
+        }
+    }
+
     public synchronized void recordMotion(UUID actionId, double distance, double cameraDegrees) {
         Mutable action = running(actionId);
         action.motionOverflowed |= exceedsBound(
@@ -816,6 +852,7 @@ public final class AgentActionStore {
         private long confirmedAttackCount;
         private long unknownAttackCount;
         private String interruptedNodeId;
+        private RendererRecoverySummary rendererRecovery;
 
         private Mutable(
                 UUID id,
@@ -874,8 +911,14 @@ public final class AgentActionStore {
                         state != State.SUCCEEDED
                                 && (!effects.isEmpty() || interruptedNodeId != null));
             }
+            var snapshotTrace = new ArrayList<>(trace);
+            if (rendererRecovery != null) {
+                // Keep the final summary even when ordinary trace events have filled the ring.
+                if (snapshotTrace.size() == TRACE_LIMIT) snapshotTrace.removeFirst();
+                snapshotTrace.add(new Trace(ticks, "RENDERER_RECOVERY", rendererRecovery.detail()));
+            }
             return new Snapshot(
-                    id, state, progress, failure, new ArrayList<>(trace), source,
+                    id, state, progress, failure, snapshotTrace, source,
                     new ArrayList<>(effects),
                     new EffectAggregate(
                             effectSequence,
