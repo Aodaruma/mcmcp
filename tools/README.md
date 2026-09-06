@@ -2,6 +2,11 @@
 
 ここはproduction MODへ同梱しない、Stage 3/4のlocal development toolです。PowerShell 7.4以上を使います。
 
+## MCP接続診断 / MCP connection diagnostics
+
+通常のCodex・Claude Code接続を優先し、接続確認には[固定MCPクライアント](mcp/README.md)の `-Check` を使います。Toolが登録されていない環境向けのfallbackも同じ実装です。HTTP・JSON-RPC・Toolエラーを区別し、開始IDのないActionを待機しません。<br>
+Prefer native MCP registration in Codex or Claude Code. The [fixed client](mcp/README.md) provides connection diagnostics and a fallback for unavailable tools, distinguishing transport and tool errors without polling missing Action IDs.
+
 ## Build gate runner
 
 ```powershell
