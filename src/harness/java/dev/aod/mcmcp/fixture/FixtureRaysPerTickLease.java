@@ -7,7 +7,7 @@ import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
-/** Reversible, identity-bound observation-rate override for the combined wheat fixture. */
+/** Reversible, identity-bound observation-rate override shared by development fixtures. */
 final class FixtureRaysPerTickLease {
     static final int ACCELERATED_RAYS_PER_TICK = 512;
 
@@ -63,12 +63,13 @@ final class FixtureRaysPerTickLease {
                     accessFactory.get(), "accessFactory returned null");
             Integer savedOverride = acquired.current();
             int savedEffectiveRays = effectiveRaysReader.getAsInt();
-            acquired.set(ACCELERATED_RAYS_PER_TICK);
             access = acquired;
             server = currentServer;
             world = currentWorld;
             originalOverride = savedOverride;
             originalEffectiveRays = savedEffectiveRays;
+            // Retain ownership even if a setter applies the value and then throws.
+            acquired.set(ACCELERATED_RAYS_PER_TICK);
         } else {
             access.set(ACCELERATED_RAYS_PER_TICK);
         }

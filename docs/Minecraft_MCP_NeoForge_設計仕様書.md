@@ -1060,7 +1060,7 @@ agent_get_action:
 }
 ~~~
 
-`progress`のschema上限は通常Actionと、そのActionをpreemptしたrecoveryの累積上限である。したがってdistanceは32 + 16 = 48 block、cameraは720 + 360 = 1,080度、tickは15,000 + 200 = 15,200となる。break / placeは通常Action最大8とrecoveryの4 / 8を合算して、公開counterの上限をbreak 12 / place 16とする。interactionは`brew_known_potion_batch`がActionの16全枚を使うが、このnodeはAction末尾でmenuを所有し、その間はrecovery gameplay interactionをdispatchしない。現行recoveryはmovement / jumpだけでinteraction usage 0であるため、Action budgetと公開counterのinteraction上限をともに16に固定する。この排他条件を崩すrecovery interactionを将来追加する場合は、先にcatalog、DSL hard limit、progress schemaを再設計する。同dimension内のserver correction、teleport、knockbackなど外力で実測値がこの固定契約を越えた場合、公開counterはschema上限へ飽和させると同時に内部overflow latchを立て、Actionをbudget超過として終了する。飽和値を「上限内」と誤認したり、契約外の値を返したりはしない。
+`progress`のschema上限は、専用の長時間nodeとrecoveryを含む公開counterの上限であり、各Actionへその全量を許可するものではない。`excavate_tunnel`対応後はdistance 2,483.5 block、camera 736,880度、break 1,804、tick 1,728,200、interaction 2,048、place 16を最大とする。通常nodeの受付上限32 block / 720度 / 8 break等は維持し、専用nodeはそれぞれのcompiler上界と提出budgetで制限する。現行recoveryはmovement / jumpだけで、未知の破壊を再送しない。同dimension内のserver correction、teleport、knockbackなど外力で実測値が公開上限を越えた場合はcounterを飽和させると同時に内部overflow latchを立て、Actionをbudget超過として終了する。飽和値を「上限内」と誤認したり、契約外の値を返したりはしない。正確なwire上限はcatalog、内部counterは`AgentActionStore`と同期する。
 
 agent_get_stateの返却対象:
 
@@ -2030,3 +2030,17 @@ repository作成直前に、選択したowner配下で`mcmcp`が作成可能か�
 ### チャットから期待したコンテナへの画面遷移
 
 NeoForge 26.2の画面切替は新画面のOpeningの後に旧画面のClosingを通知する。通常操作を許可する非pause ChatScreenから、正確なOpenScreen packetに対応したmenuへ切り替わる場合だけ、EXPECTING_FULL_CONTENTへ進んだ同じclient tick内の旧chatのClosingを1回許可する。所有権は同じsession・container ID・menu typeのfull-content packet確認後に限る。期待前・別tick・重複のchat閉鎖、所有済みコンテナの予期しない閉鎖、別menuのopenは引き続き停止する。
+
+### 有限坑道掘削 / Bounded tunnel excavation
+
+`excavate_tunnel`は単独top-level Actionとして、水平・幅1・高さ2の範囲をMOD内で逐次実行する。入口下段の`target`、水平`face`、完全な`expected_state`、`tool_item`、`length_blocks`を指定する。`pattern`省略時は`straight`、1〜160マスを水平に進む。`branches`は主坑道の`branch_spacing_blocks`（3〜16、既定3）ごとに左右各`branch_length_blocks`（1〜7、既定6）の枝を掘り、そのつど主坑道へ戻る。直線modeには枝設定を受け付けない。開始前に全座標・移動順・最大mutation数を決定する。将来cellの座標列は認可範囲であって観測済み経路ではない。
+
+初回は通常の配送済み観測から、入口面・状態・ray hit・元の期限・現在revision・姿勢を検証する。開始位置は入口面の外側に隣接する足元セルで、中心から水平0.25マス以内、同じ床高さであることを要求する。将来のbreakはこの固定範囲内で新しく実観測された面に限定し、その時点の通常fog/LOS、reach、crosshair、完全な許可state、tool、現在の局所安全を再検証する。`DeliveredPolicyEvidenceStore`へ未配送recordを追加したり、元recordの期限を書き換えたりしない。初回配送leaseが有限坑道全体の長時間観測leaseへ変換されるのではなく、範囲内の新規対象だけに専用の逐次認可規則を適用する。
+
+各breakのserver ACK後に新しい観測を取得し、次の足元・頭上・支持床を現在のLocal Observation Volume等の許可された情報で再検証してから通常入力で1セル進む。未知を空気とせず、壁内の液体を透視しない。液体・危険・falling block・許可外block・道具/容量不足・元deadline・cancel等で停止する。未確認のmutationは再送せず、後続breakと移動も開始しない。入力解放完了より先にterminalを公開しない。
+
+`TunnelGeometry`が固定した異なる足元セル数をC、戻りを含む隣接移動回数をRとする。compiler上界はticks=`600*C + 100*R + 100`、duration_ms=`ticks*50`、distance=`1.5*R + 1.5`、camera=`360*R + 160*C + 360`、break=`2*C`、interaction/place=0。最大shapeは主坑道160・枝7・間隔3でC=902、R=1,644、break=1,804。全工程で元の総予算を共有し、子操作ごとに親の期限を更新しない。この上界は受付用の保守的な値で、実行時間の予測ではない。
+
+坑道の完成と資源獲得を別のpostconditionとして扱う。完成には必要な破壊のserver確認と固定経路の物理通過を要求する。inventory回収はserver同期で確認できた別の証拠だけを記録し、破壊数から回収数を推定しない。失敗/cancel時もconfirmed prefixは保持し、履歴の再実行を許可しない。再開は現在の観測に基づく新規Actionとする。
+
+English: This single-node operation admits a fixed horizontal straight or branching tunnel. Future coordinates define a scope, not observed targets. Each newly exposed block requires fresh normal visibility evidence within that scope, followed by server acknowledgement and safe local movement. The original total budgets and input-release rules apply throughout. Confirmed excavation, travel and inventory collection remain distinct; unknown mutations are never replayed.

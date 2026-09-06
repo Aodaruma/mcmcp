@@ -74,7 +74,8 @@ public record ApplyBlockPlanRequest(
     /** Internal-only selector; public legacy plan parsing always uses SAFE_BREAK_SOURCE. */
     public enum BreakSafety {
         SAFE_BREAK_SOURCE,
-        SAFE_CONSTRUCTION_BLOCK
+        SAFE_CONSTRUCTION_BLOCK,
+        SAFE_TUNNEL_BLOCK
     }
 
     public String kind() {

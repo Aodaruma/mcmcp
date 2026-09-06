@@ -27,6 +27,10 @@ import dev.aod.mcmcp.agent.dsl.ActionDslSource;
 import dev.aod.mcmcp.agent.dsl.ActionDslValidator;
 import dev.aod.mcmcp.agent.dsl.PolicySnapshot;
 import dev.aod.mcmcp.agent.dsl.PredicateEvaluator;
+import dev.aod.mcmcp.agent.mining.ExcavationEngine;
+import dev.aod.mcmcp.agent.mining.ExcavationPort;
+import dev.aod.mcmcp.agent.mining.SafeMiningBlocks;
+import dev.aod.mcmcp.agent.mining.TunnelGeometry;
 import dev.aod.mcmcp.agent.navigation.DeterministicAStar;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilityMap;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
@@ -397,6 +401,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 inputRelease,
                 arming,
                 this::stopActiveRoutineForEmergency);
+        // Publish only a fully constructed runtime to the doubly guarded development fixture.
+        TestHarnessWorldSessionAccess.bind(() -> publishedSession);
     }
 
     public void onResourcesReady() {
@@ -2301,6 +2307,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
+        if (node instanceof ActionDsl.ExcavateTunnel tunnel) {
+            return Optional.of(ActionDslCompiler.intrinsicExcavateTunnelCost(tunnel));
+        }
         if (isFrameItemPrimitive(node)) {
             return Optional.of(new ActionDslCompiler.Cost(
                     ActionDslCompiler.FRAME_ITEM_DURATION_MILLIS,
@@ -4709,6 +4718,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (paused) {
                 releaseAgentInputsForHold(minecraft, "pause_input_release_failed");
                 if (agentExecution.primitive instanceof ActionDsl.HoldBoundedInputs
+                        || agentExecution.primitive instanceof ActionDsl.ExcavateTunnel
                         || isFrameItemPrimitive(agentExecution.primitive)) {
                     failAgentAction(
                             AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
@@ -4735,6 +4745,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             agentExecution.latestWorldRevision = currentReconciliation.worldRevision();
             long correctionRevision = currentReconciliation.positionCorrectionRevision();
             if (correctionRevision > agentExecution.positionCorrectionRevision) {
+                if (agentExecution.primitive instanceof ActionDsl.ExcavateTunnel) {
+                    failAgentAction(AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                            true, "tunnel_position_correction");
+                    return;
+                }
                 long previousCorrectionRevision = agentExecution.positionCorrectionRevision;
                 agentExecution.positionCorrectionRevision = correctionRevision;
                 agentExecution.lastPosition = minecraft.player.position();
@@ -4906,6 +4921,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 agentExecution.replanDeadlineTick = 0L;
             }
             if (movementRejected) {
+                if (agentExecution.primitive instanceof ActionDsl.ExcavateTunnel) {
+                    failAgentAction(AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
+                            true, "tunnel_movement_rejected");
+                    return;
+                }
                 if (agentExecution.primitive != null && agentExecution.occurrenceLimit != null) {
                     requestAgentReplan(actionTick, "unverified_actual_movement");
                 }
@@ -4925,18 +4945,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             actionTick)) {
                 return;
             }
-            if (agentExecution.primitive
-                    instanceof ActionDsl.OperateKnownCobblestoneGenerator
+            if ((agentExecution.primitive instanceof ActionDsl.OperateKnownCobblestoneGenerator
+                            || agentExecution.primitive instanceof ActionDsl.ExcavateTunnel)
                     && (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
                             || localSafety == LocalObservationProjector.CurrentSafety.REPLAN)) {
                 failAgentAction(
                         AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
                         true,
-                        "cobblestone_generator_safety_changed");
+                        agentExecution.primitive instanceof ActionDsl.ExcavateTunnel
+                                ? "tunnel_safety_changed" : "cobblestone_generator_safety_changed");
                 return;
             }
             if (!(agentExecution.primitive instanceof ActionDsl.OperateKnownMenu)
                     && !(agentExecution.primitive instanceof ActionDsl.PillarUpKnown)
+                    && !(agentExecution.primitive instanceof ActionDsl.ExcavateTunnel)
                     && (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
                             || localSafety == LocalObservationProjector.CurrentSafety.REPLAN)) {
                 if (isAgentWait(agentExecution.primitive)) {
@@ -4952,6 +4974,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (agentExecution.primitive
                     instanceof ActionDsl.HoldBoundedInputs hold) {
                 tickAgentBoundedInputHold(minecraft, session, action, hold, false);
+                return;
+            }
+            if (agentExecution.primitive instanceof ActionDsl.ExcavateTunnel tunnel) {
+                tickAgentTunnel(minecraft, session, action, tunnel);
                 return;
             }
             if (agentExecution.primitive
@@ -7739,6 +7765,377 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         minecraft, agentActions.get(action.actionId()).progress());
             }
         }
+    }
+
+    private void tickAgentTunnel(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action, ActionDsl.ExcavateTunnel tunnel) {
+        if (agentExecution.tunnel == null) {
+            agentExecution.tunnel = new TunnelExecution(tunnel, action, session);
+        }
+        var execution = agentExecution.tunnel;
+        ExcavationEngine.TickResult result;
+        try {
+            result = execution.engine.tick(session.clientTick(), System.nanoTime());
+        } finally {
+            recordAgentMotion(action.actionId(), minecraft.player);
+        }
+        recordConstructionEffects(action.actionId(), result.effects());
+        for (int count = 0; count < result.brokenDelta(); count++)
+            agentActions.recordBlockBreak(action.actionId());
+        AgentInputState.global().capMovementValidity(actionMovementDeadline(agentExecution,
+                Duration.ofMillis(action.program().effectiveBudget().maxDurationMillis()).toNanos(),
+                System.nanoTime()));
+        if (result.status() != ExcavationEngine.Status.RUNNING || result.releaseEscalationRequired()) {
+            execution.recordRendererRecoverySummary();
+            agentActions.recordNodeEvidence(action.actionId(),
+                    "tunnel_cells=" + result.completedCells() + ",moves=" + result.completedMoves()
+                            + ",server_confirmed_breaks=" + result.confirmedBreaks()
+                            + ",drop_collection=not_asserted");
+        }
+        if (result.releaseEscalationRequired()) {
+            // Preserve the first intent while handing the unreleased owner to the existing
+            // bounded cleanup/OFF-lock path. A long tunnel budget is not a cleanup retry budget.
+            var intent = execution.engine.pendingTerminalStatus().orElseThrow();
+            PendingAgentTerminal terminal;
+            if (intent == ExcavationEngine.Status.SUCCEEDED) {
+                agentActions.completeNode(action.actionId());
+                terminal = PendingAgentTerminal.success(action.actionId());
+            } else if (intent == ExcavationEngine.Status.CANCELLED) {
+                terminal = PendingAgentTerminal.cancel(action.actionId());
+            } else {
+                terminal = PendingAgentTerminal.failure(action.actionId(), new AgentActionStore.Failure(
+                        AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
+                        List.of("tunnel_" + result.reason().name().toLowerCase(Locale.ROOT))));
+            }
+            if (!releaseAgentControl(minecraft)) {
+                rememberPendingAgentTerminal(terminal);
+                retainReadyAfterDeferredAgentRelease();
+            } else if (publishAgentTerminal(terminal)) {
+                returnControlReady();
+            }
+            return;
+        }
+        if (result.status() == ExcavationEngine.Status.RUNNING) return;
+        if (result.status() == ExcavationEngine.Status.SUCCEEDED) {
+            agentExecution.tunnel = null;
+            agentActions.completeNode(action.actionId());
+            agentExecution.primitive = null;
+            advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
+        } else {
+            failAgentAction(AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
+                    "tunnel_" + result.reason().name().toLowerCase(Locale.ROOT));
+        }
+    }
+
+    /** Scope ownership remains inside this Action; new rays never become delivered evidence. */
+    private final class TunnelExecution implements ExcavationPort {
+        private final ActionDsl.ExcavateTunnel operation;
+        private final AgentActionStore.Active action;
+        private final TunnelGeometry.Plan plan;
+        private final ExcavationEngine engine;
+        private final float initialHealth;
+        private final long deadlineTick;
+        private final long deadlineNanos;
+        private final int toolSlot;
+        private final MinecraftActionPrimitiveExecutor motion;
+        private final ArrayList<KnownConstructionAttempt.EffectDelta> pending = new ArrayList<>();
+        private Witness breaking;
+        private KnownConstructionAttempt construction;
+        private boolean facingBreak;
+        private RoutePlan pendingRoute;
+        private TunnelGeometry.Cell hazardFocus;
+
+        private void recordRendererRecoverySummary() {
+            engine.drainRendererRecoveryEvidence().ifPresent(
+                    detail -> agentActions.recordNodeEvidence(action.actionId(), detail));
+        }
+
+        private TunnelExecution(ActionDsl.ExcavateTunnel operation,
+                AgentActionStore.Active action, WorldSessionTracker.Snapshot session) {
+            this.operation = operation;
+            this.action = action;
+            plan = TunnelGeometry.plan(operation.target(), operation.face(), operation.lengthBlocks(),
+                    operation.pattern() == ActionDsl.MiningPattern.BRANCHES,
+                    operation.branchLengthBlocks(), operation.branchSpacingBlocks());
+            hazardFocus = plan.route().getFirst().head();
+            var player = Objects.requireNonNull(Minecraft.getInstance().player);
+            initialHealth = effectiveHealth(player);
+            toolSlot = findDurableHotbarTool(player, operation.toolItem(), 2);
+            if (toolSlot < 0) throw new IllegalStateException("tunnel tool unavailable");
+            player.getInventory().setSelectedSlot(toolSlot);
+            agentExecution.agentSelectedSlot = toolSlot;
+            motion = new MinecraftActionPrimitiveExecutor(agentExecution.maxCameraDegreesPerTick);
+            var progress = agentActions.get(action.actionId()).progress();
+            var budget = action.program().effectiveBudget();
+            deadlineTick = Math.addExact(session.clientTick(), Math.max(1, budget.maxTicks() - progress.ticks()));
+            long now = System.nanoTime();
+            deadlineNanos = Math.addExact(now, Math.max(1L,
+                    Duration.ofMillis(budget.maxDurationMillis()).toNanos()
+                            - activeElapsedNanos(agentExecution, now)));
+            engine = new ExcavationEngine(plan, this, new ExcavationEngine.Limits(
+                    session.clientTick(), now, deadlineTick, deadlineNanos, plan.maxBreaks(), 200));
+        }
+
+        private long tick() { return sessions.snapshot().clientTick(); }
+        private long revision() { return reconciliationSignals.bindAndSnapshot(
+                Minecraft.getInstance().level, agentExecution.worldSessionId).worldRevision(); }
+
+        @Override public StopReason safety() {
+            var minecraft = Minecraft.getInstance();
+            var player = minecraft.player;
+            var session = sessions.snapshot();
+            if (player == null || minecraft.level == null || player != agentExecution.playerIdentity
+                    || !agentExecution.worldSessionId.equals(session.worldSessionId())
+                    || !plan.startFeet().dimension().equals(session.dimension())) return StopReason.WORLD_CHANGED;
+            if (!player.isAlive() || player.isDeadOrDying() || effectiveHealth(player) < initialHealth
+                    || player.getHealth() < 10.0F || player.hurtTime > 0) return StopReason.HEALTH_CHANGED;
+            if (minecraft.isPaused() || minecraft.gui.overlay() != null
+                    || !AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
+                    || player.containerMenu != player.inventoryMenu || player.isUsingItem()
+                    || minecraft.gameMode == null
+                    || minecraft.gameMode.getPlayerMode() != net.minecraft.world.level.GameType.SURVIVAL)
+                return StopReason.CONTROL_LOST;
+            if (player.isInWater() || player.isInLava() || player.getRemainingFireTicks() > 0
+                    || player.isPassenger() || player.isFallFlying() || player.getAbilities().flying
+                    || localSafety != LocalObservationProjector.CurrentSafety.CONTINUE)
+                return StopReason.SAFETY_CHANGED;
+            var fog = ClientFogDistanceSignals.current(minecraft.level, player, player.tickCount);
+            if (fog.isPresent() && agentObserver.hasVisibleTunnelFluid(minecraft.level, player,
+                    plan, hazardFocus, session.clientTick(), revision(), fog.getAsDouble()))
+                return StopReason.FLUID;
+            if (fog.isPresent()) {
+                var falling = agentObserver.visibleTunnelFallingBlock(minecraft.level, player,
+                        session.clientTick(), revision(), fog.getAsDouble());
+                if (falling.isEmpty()) return StopReason.UNKNOWN_BLOCK;
+                if (falling.orElseThrow()) return StopReason.FALLING_BLOCK;
+            }
+            if (player.getInventory().getSelectedSlot() != toolSlot
+                    || findDurableHotbarTool(player, operation.toolItem(), 2) != toolSlot)
+                return StopReason.TOOL_UNAVAILABLE;
+            // Keep a whole empty slot for unknown ore/drop combinations and enchantments.
+            boolean capacity = false;
+            for (int slot = 0; slot < 36; slot++) capacity |= player.getInventory().getItem(slot).isEmpty();
+            if (!capacity) return StopReason.INVENTORY_FULL;
+            var progress = agentActions.get(action.actionId()).progress();
+            if (System.nanoTime() >= deadlineNanos || tick() >= deadlineTick) return StopReason.DEADLINE;
+            if (progress.motionOverflowed() || occurrenceBudgetExceeded(progress, agentExecution)
+                    || progress.distanceTravelled() > action.program().effectiveBudget().maxDistanceBlocks()
+                    || progress.cameraDegrees() > action.program().effectiveBudget().maxCameraDegrees())
+                return StopReason.BUDGET;
+            return StopReason.NONE;
+        }
+
+        @Override public BlockInspection inspectBlock(TunnelGeometry.Cell cell, long minTick, long minRevision) {
+            if (!plan.containsBlock(cell)) return BlockInspection.stopped(StopReason.TARGET_CHANGED);
+            hazardFocus = cell;
+            var minecraft = Minecraft.getInstance();
+            var fog = ClientFogDistanceSignals.current(minecraft.level, minecraft.player, minecraft.player.tickCount);
+            if (fog.isEmpty()) return BlockInspection.waiting(StopReason.RENDERER_GAP);
+            long currentTick = tick(), currentRevision = revision();
+            if (currentTick < minTick || currentRevision < minRevision)
+                return BlockInspection.waiting(StopReason.UNKNOWN_BLOCK);
+            if (agentObserver.hasVisibleTunnelFluid(minecraft.level, minecraft.player, plan,
+                    cell, currentTick, currentRevision, fog.getAsDouble()))
+                return BlockInspection.stopped(StopReason.FLUID);
+            var observed = agentObserver.observeTunnelCell(minecraft.level, minecraft.player,
+                    plan, cell, currentTick, currentRevision, fog.getAsDouble());
+            if (observed.isEmpty()) return BlockInspection.waiting(StopReason.UNKNOWN_BLOCK);
+            var proof = observed.orElseThrow();
+            if (proof.clear()) return BlockInspection.clear(currentTick, currentRevision);
+            var surface = proof.surface();
+            if (surface.shapeClass() == ObservationRecord.ShapeClass.FLUID)
+                return BlockInspection.stopped(StopReason.FLUID);
+            if (surface.state() == null || !SafeMiningBlocks.allowsState(surface.block().value(),
+                    surface.state().properties())) return BlockInspection.stopped(StopReason.UNSUPPORTED_BLOCK);
+            if (!minecraft.player.isWithinBlockInteractionRange(
+                    new BlockPos(cell.x(), cell.y(), cell.z()), 0.0D))
+                return BlockInspection.stopped(StopReason.UNSAFE_MOVEMENT);
+            return BlockInspection.breakable(new Witness(cell,
+                    ActionDsl.BlockFace.valueOf(surface.face().name()),
+                    new BlockStateFingerprint(surface.block().value(), surface.state().properties()),
+                    currentTick, currentRevision));
+        }
+
+        private boolean breakingStillCurrent() {
+            var current = inspectBlock(breaking.cell(), breaking.observedTick(), breaking.worldRevision());
+            return current.status() == BlockStatus.BREAKABLE
+                    && current.witness().state().equals(breaking.state())
+                    && current.witness().face() == breaking.face();
+        }
+
+        @Override public void beginBreak(Witness witness) {
+            if (breaking != null || construction != null || motion.active())
+                throw new IllegalStateException("tunnel child overlap");
+            breaking = witness;
+            if (safety() != StopReason.NONE || !breakingStillCurrent())
+                throw new IllegalStateException("tunnel witness changed");
+            var minecraft = Minecraft.getInstance();
+            var fog = ClientFogDistanceSignals.current(minecraft.level, minecraft.player, minecraft.player.tickCount);
+            var surface = agentObserver.observeTunnelCell(minecraft.level, minecraft.player, plan,
+                    witness.cell(), tick(), revision(), fog.orElseThrow()).orElseThrow().surface();
+            var point = surface.rayHit();
+            motion.beginFace(new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
+                    agentExecution.worldSessionId, revision(), witness.cell().position(),
+                    point.x(), point.y(), point.z(), true), 100);
+            facingBreak = true;
+        }
+
+        @Override public OperationResult pollBreak() {
+            if (facingBreak) {
+                if (!breakingStillCurrent()) return result(OperationStatus.FAILED, List.of());
+                var result = tickMotion();
+                if (result.status() == MinecraftActionPrimitiveExecutor.Status.RUNNING)
+                    return result(OperationStatus.RUNNING, List.of());
+                if (result.status() != MinecraftActionPrimitiveExecutor.Status.SUCCEEDED)
+                    return result(OperationStatus.FAILED, List.of());
+                facingBreak = false;
+                var cell = breaking.cell();
+                var target = new BlockTarget(cell.dimension(), cell.x(), cell.y(), cell.z());
+                var request = new KnownConstructionRequest(new ApplyBlockPlanRequest("tunnel-cell", 1, 1,
+                        List.of(new ApplyBlockPlanStep("clear", ApplyBlockPlanOperation.BREAK_TO_AIR,
+                                target, breaking.state(), new BlockStateFingerprint("minecraft:air", Map.of()),
+                                Optional.empty(), Optional.empty())),
+                        new ActionBounds(cell.dimension(), target, target, 0, 15, true),
+                        ApplyBlockPlanRequest.BreakSafety.SAFE_TUNNEL_BLOCK));
+                construction = new KnownConstructionAttempt(new TunnelConstructionPort(this), request,
+                        tick(), Math.min(deadlineTick, tick() + KnownConstructionAttempt.TICKS_PER_ENTRY));
+                return result(OperationStatus.RUNNING, List.of());
+            }
+            var result = construction.tick(tick());
+            if (result.status() == KnownConstructionAttempt.Status.RUNNING)
+                return result(OperationStatus.RUNNING, result.effects());
+            construction.close();
+            var effects = new ArrayList<>(result.effects());
+            effects.addAll(construction.drainEffectDeltas());
+            construction = null;
+            breaking = null;
+            return result(result.status() == KnownConstructionAttempt.Status.SUCCEEDED
+                    ? OperationStatus.SUCCEEDED
+                    : effects.stream().anyMatch(effect -> effect.verification() == AgentActionStore.Verification.UNKNOWN)
+                            ? OperationStatus.UNKNOWN : OperationStatus.FAILED, effects);
+        }
+
+        @Override public MoveInspection inspectMove(TunnelGeometry.Cell from, TunnelGeometry.Cell to,
+                long minTick, long minRevision) {
+            if (!from.adjacent(to) || !plan.excavationCells().contains(to))
+                return MoveInspection.stopped(StopReason.UNSAFE_MOVEMENT);
+            hazardFocus = to.head();
+            var map = requireAgentMap(sessions.snapshot());
+            var start = new NavCell(from.dimension(), from.x(), from.y(), from.z());
+            var end = new NavCell(to.dimension(), to.x(), to.y(), to.z());
+            var edge = map.edge(new dev.aod.mcmcp.agent.navigation.TraversabilityEdge.Key(start, end));
+            if (edge.isEmpty() || edge.orElseThrow().observedTick() != tick()
+                    || edge.orElseThrow().observedTick() < minTick
+                    || edge.orElseThrow().worldRevision() < minRevision)
+                return MoveInspection.waiting(StopReason.UNSAFE_MOVEMENT);
+            var proof = edge.orElseThrow();
+            if (proof.status() != dev.aod.mcmcp.agent.navigation.TraversabilityEdge.Status.CONFIRMED
+                    || proof.locomotion() != dev.aod.mcmcp.agent.safety.Locomotion.GROUND)
+                return MoveInspection.stopped(StopReason.UNSAFE_FLOOR);
+            pendingRoute = new RoutePlan(map.worldSessionId(), map.dimension(), map.worldRevision(),
+                    List.of(start, end), List.of(proof), 1.0D, 0, 36L, 1800L);
+            return MoveInspection.ready(proof.observedTick(), proof.worldRevision());
+        }
+
+        @Override public void beginMove(TunnelGeometry.Cell to) {
+            if (safety() != StopReason.NONE || pendingRoute == null || motion.active()
+                    || !pendingRoute.cells().getLast().equals(new NavCell(to.dimension(), to.x(), to.y(), to.z())))
+                throw new IllegalStateException("tunnel movement proof unavailable");
+            motion.beginNavigate(pendingRoute, 0.125D);
+            pendingRoute = null;
+        }
+
+        private MinecraftActionPrimitiveExecutor.TickResult tickMotion() {
+            var progress = agentActions.get(action.actionId()).progress();
+            return motion.tick(Minecraft.getInstance(), requireAgentMap(sessions.snapshot()),
+                    LocalObservationVolume.global(),
+                    remainingDistance(progress, action.program().effectiveBudget(), agentExecution),
+                    remainingCameraDegrees(progress, action.program().effectiveBudget(), agentExecution),
+                    tick(), () -> safety() == StopReason.NONE);
+        }
+
+        @Override public OperationResult pollMove() {
+            var result = tickMotion();
+            return result(switch (result.status()) {
+                case RUNNING -> OperationStatus.RUNNING;
+                case SUCCEEDED -> OperationStatus.SUCCEEDED;
+                default -> OperationStatus.FAILED;
+            }, List.of());
+        }
+
+        private OperationResult result(OperationStatus status, List<KnownConstructionAttempt.EffectDelta> effects) {
+            return new OperationResult(status, tick(), revision(), effects);
+        }
+
+        @Override public boolean release() {
+            boolean closed = true;
+            try { motion.close(); } catch (RuntimeException | LinkageError failure) { closed = false; }
+            if (construction != null) {
+                try { construction.close(); }
+                catch (RuntimeException | LinkageError failure) { closed = false; }
+                finally { pending.addAll(construction.drainEffectDeltas()); }
+                if (closed) construction = null;
+            }
+            return closed;
+        }
+
+        @Override public List<KnownConstructionAttempt.EffectDelta> drainEffects() {
+            var effects = List.copyOf(pending);
+            pending.clear();
+            return effects;
+        }
+    }
+
+    private final class TunnelConstructionPort implements dev.aod.mcmcp.routine.ApplyBlockPlanPort {
+        private final TunnelExecution owner;
+        private boolean suspended;
+        private TunnelConstructionPort(TunnelExecution owner) { this.owner = owner; }
+        private void guard() {
+            if (owner.safety() != ExcavationPort.StopReason.NONE || !owner.breakingStillCurrent())
+                throw new IllegalStateException("tunnel dispatch evidence changed");
+        }
+        @Override public dev.aod.mcmcp.routine.ApplyBlockPlanFrame observe(ApplyBlockPlanRequest request) {
+            return applyBlockPlanPort.observe(request);
+        }
+        @Override public dev.aod.mcmcp.routine.ApplyBlockPlanPreparationAttempt beginPreparation(
+                ApplyBlockPlanRequest request, dev.aod.mcmcp.routine.ApplyBlockPlanChildAction child, long deadline) {
+            guard(); return applyBlockPlanPort.beginPreparation(request, child, deadline);
+        }
+        @Override public void maintainPreparation(dev.aod.mcmcp.routine.ApplyBlockPlanPreparationAttempt attempt) {
+            guard(); applyBlockPlanPort.maintainPreparation(attempt);
+        }
+        @Override public dev.aod.mcmcp.routine.ApplyBlockPlanPreparationEvidence preparationEvidence(
+                dev.aod.mcmcp.routine.ApplyBlockPlanPreparationAttempt attempt) {
+            return applyBlockPlanPort.preparationEvidence(attempt);
+        }
+        @Override public void releasePreparation(dev.aod.mcmcp.routine.ApplyBlockPlanPreparationAttempt attempt) {
+            applyBlockPlanPort.releasePreparation(attempt);
+        }
+        @Override public dev.aod.mcmcp.routine.ApplyBlockPlanActionAttempt dispatchPrepared(
+                ApplyBlockPlanRequest request, dev.aod.mcmcp.routine.ApplyBlockPlanChildAction child,
+                dev.aod.mcmcp.routine.ApplyBlockPlanPreparationAttempt preparation, long deadline) {
+            guard(); return applyBlockPlanPort.dispatchPrepared(request, child, preparation, deadline);
+        }
+        @Override public void maintainAction(dev.aod.mcmcp.routine.ApplyBlockPlanActionAttempt attempt) {
+            var minecraft = Minecraft.getInstance();
+            if (suspended || ClientFogDistanceSignals.current(minecraft.level,
+                    minecraft.player, minecraft.player.tickCount).isEmpty()) {
+                suspended = true;
+                applyBlockPlanPort.suspendActionInput(attempt);
+                return;
+            }
+            // Sent predictions may already be local air before their server acknowledgement.
+            // The original adapter owns that exact ACK wait; the admission state is not reapplied.
+            applyBlockPlanPort.maintainAction(attempt);
+        }
+        @Override public dev.aod.mcmcp.routine.ApplyBlockPlanActionEvidence actionEvidence(
+                dev.aod.mcmcp.routine.ApplyBlockPlanActionAttempt attempt) {
+            return applyBlockPlanPort.actionEvidence(attempt);
+        }
+        @Override public void releaseAction(dev.aod.mcmcp.routine.ApplyBlockPlanActionAttempt attempt) {
+            applyBlockPlanPort.releaseAction(attempt);
+        }
+        @Override public void retire(ApplyBlockPlanRequest request) { applyBlockPlanPort.retire(request); }
     }
 
     private void tickAgentConstruction(
@@ -10582,6 +10979,23 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private boolean closeAgentPrimitiveExecutor() {
         if (agentExecution == null) return true;
         boolean closed = true;
+        if (agentExecution.tunnel != null) {
+            var tunnel = agentExecution.tunnel;
+            try {
+                tunnel.engine.close();
+                if (!tunnel.release()) closed = false;
+                else agentExecution.tunnel = null;
+            } catch (RuntimeException | LinkageError failure) {
+                closed = false;
+                McmcpMod.LOGGER.error("MCMCP tunnel input release failed", failure);
+            } finally {
+                tunnel.recordRendererRecoverySummary();
+                recordConstructionEffects(agentExecution.actionId, tunnel.engine.drainEffects());
+                int confirmed = tunnel.engine.drainBrokenDelta();
+                for (int index = 0; index < confirmed; index++)
+                    agentActions.recordBlockBreak(agentExecution.actionId);
+            }
+        }
         if (!closeBoundedInputHold()) closed = false;
         try {
             agentExecution.primitiveExecutor.close();
@@ -13598,6 +14012,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private boolean containerReleaseFaultLogged;
         private KnownBrewingAttempt brewingAttempt;
         private KnownConstructionAttempt constructionAttempt;
+        private TunnelExecution tunnel;
         private KnownPillarUpAttempt pillarUpAttempt;
         private KnownRedstoneIdentityAttempt redstoneAttempt;
         private KillZoneExecution killZone;

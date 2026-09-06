@@ -26,6 +26,10 @@ enum FixturePhase5Mode {
     FISHING("fishing", 0),
     KILL_ZONE("kill_zone", 0),
     IRON_FARM("iron_farm", 1),
+    TUNNEL_STRAIGHT16("tunnel_straight16", 0),
+    TUNNEL_STRAIGHT160("tunnel_straight160", 0),
+    TUNNEL_BRANCHES("tunnel_branches", 0),
+    TUNNEL_HAZARD("tunnel_hazard", 0),
     RESET("reset", 0);
 
     private final String wireName;
@@ -61,6 +65,10 @@ enum FixturePhase5Mode {
             case "fishing" -> FISHING;
             case "kill_zone" -> KILL_ZONE;
             case "iron_farm" -> IRON_FARM;
+            case "tunnel_straight16" -> TUNNEL_STRAIGHT16;
+            case "tunnel_straight160" -> TUNNEL_STRAIGHT160;
+            case "tunnel_branches" -> TUNNEL_BRANCHES;
+            case "tunnel_hazard" -> TUNNEL_HAZARD;
             case "reset" -> RESET;
             default -> throw new IllegalArgumentException(
                     "unsupported Phase 5 fixture mode: " + sanitize(rawMode));
@@ -73,6 +81,11 @@ enum FixturePhase5Mode {
 
     int selectedSlot() {
         return selectedSlot;
+    }
+
+    boolean tunnel() {
+        return this == TUNNEL_STRAIGHT16 || this == TUNNEL_STRAIGHT160
+                || this == TUNNEL_BRANCHES || this == TUNNEL_HAZARD;
     }
 
     private static String sanitize(String value) {

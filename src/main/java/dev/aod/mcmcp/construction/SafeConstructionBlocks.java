@@ -87,7 +87,8 @@ public final class SafeConstructionBlocks {
      * support, or owned-menu target contracts. Other visible blocks retain only visual identity.
      */
     public static boolean allowsVisibleState(String blockId) {
-        return allows(blockId) || NON_COPY_VISIBLE_STATE_IDS.contains(blockId);
+        return allows(blockId) || NON_COPY_VISIBLE_STATE_IDS.contains(blockId)
+                || dev.aod.mcmcp.agent.mining.SafeMiningBlocks.allows(blockId);
     }
 
     private static Set<String> ids() {

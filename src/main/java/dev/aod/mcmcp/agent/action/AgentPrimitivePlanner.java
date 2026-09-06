@@ -4,6 +4,8 @@ import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.agent.dsl.ActionDslException;
 import dev.aod.mcmcp.agent.dsl.ActionDslValidator;
+import dev.aod.mcmcp.agent.mining.TunnelGeometry;
+import dev.aod.mcmcp.agent.mining.SafeMiningBlocks;
 import dev.aod.mcmcp.agent.navigation.DeterministicAStar;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.NavCell;
@@ -1058,6 +1060,40 @@ public final class AgentPrimitivePlanner {
             merge(costs, node.id(), Objects.requireNonNull(worst, "break cost"));
             return distinct(output);
         }
+        if (node instanceof ActionDsl.ExcavateTunnel operation) {
+            if (!SafeMiningBlocks.allowsState(
+                    operation.expectedState().block(), operation.expectedState().properties())
+                    || !SafeMiningBlocks.allowsTool(operation.toolItem())) {
+                throw new PlanningException(
+                        Code.TARGET_UNKNOWN, "Tunnel entrance state or tool is outside the mining policy");
+            }
+            TunnelGeometry.Plan tunnel = TunnelGeometry.plan(
+                    operation.target(), operation.face(), operation.lengthBlocks(),
+                    operation.pattern() == ActionDsl.MiningPattern.BRANCHES,
+                    operation.branchLengthBlocks(), operation.branchSpacingBlocks());
+            for (Pose pose : input) {
+                work.poseTransition();
+                if (!tunnelEntrancePose(pose, tunnel.startFeet())) {
+                    throw new PlanningException(
+                            Code.TARGET_UNKNOWN,
+                            "Tunnel requires a centered feet cell directly outside its lower entrance face");
+                }
+            }
+            MutationSurface surface = requireMutationSurface(
+                    map, latestFrame, input, operation.target(),
+                    surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, operation.target()),
+                    operation.expectedState().block(),
+                    value -> value.face().name().equals(operation.face().name())
+                            && exactObservedState(value, operation.expectedState()),
+                    "Tunnel entrance requires a current delivered exact lower-wall face and state");
+            knownSurfaces.add(surface.surface());
+            mutationAims.put(node.id(), new MutationAim(
+                    operation.target(), operation.face(), surface.point()));
+            merge(costs, node.id(), ActionDslCompiler.intrinsicExcavateTunnelCost(operation));
+            // Validation makes this the only node. Future cells are scope, never pre-observed
+            // targets or route dependencies; the dedicated executor proves each current frontier.
+            return input;
+        }
         if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
             var block = new ActionDsl.BreakKnownBlock(
                     operation.id(), operation.target(), operation.face(),
@@ -1972,6 +2008,18 @@ public final class AgentPrimitivePlanner {
         }
         merge(costs, node.id(), Objects.requireNonNull(worst, costLabel + " cost"));
         return distinct(output);
+    }
+
+    /** Shared geometric entrance gate; runtime must additionally prove current local safety. */
+    public static boolean tunnelEntrancePose(Pose pose, TunnelGeometry.Cell start) {
+        return pose.cell().dimension().equals(start.dimension())
+                && pose.cell().x() == start.x() && pose.cell().y() == start.y()
+                && pose.cell().z() == start.z()
+                && Math.hypot(pose.x() - start.x() - 0.5D,
+                        pose.z() - start.z() - 0.5D)
+                        + pose.horizontalPositionError() <= 0.25D
+                && Math.abs(pose.y() - start.y())
+                        + Math.max(pose.yErrorBelow(), pose.yErrorAbove()) <= 0.05D;
     }
 
     private static boolean directlyAbove(

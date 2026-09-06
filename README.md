@@ -43,6 +43,7 @@ The illustrated guide is currently in Japanese. See [Releases](https://github.co
 | ☐ 額縁付きチェストの安定性<br>Item-frame chest reliability | ✅ 釣り<br>Fishing | ✅ Pre-release公開<br>Pre-release publication |
 | ✅ 額縁の表示変更<br>Item-frame displays | ☐ 大規模建築<br>Large building jobs | |
 | | ☐ 連続釣り<br>Multi-cycle fishing | |
+| | ☐ 坑道の連続掘進（実機受入待ち）<br>Tunnel excavation (game acceptance pending) | |
 
 対応する対象・操作範囲は[機能詳細](docs/MCMCP_Action_DSL_クイックガイド.md)を参照してください。<br>See the [feature guide (Japanese)](docs/MCMCP_Action_DSL_クイックガイド.md) for supported targets and limits.
 

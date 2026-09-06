@@ -629,6 +629,38 @@ class McpHttpServerTest {
     }
 
     @Test
+    void evaluationTurnDurationAllowsTheFiniteTunnelProfileAndRejectsLargerValues() throws Exception {
+        var runtime = new EvaluationRuntime();
+        start(runtime, config("evaluation-duration-boundary").rateLimit(100, 100).build());
+
+        for (long acceptedDuration : List.of(7_245_000L, 7_260_000L)) {
+            UUID leaseId = UUID.randomUUID();
+            JsonObject acquireBody = new JsonObject();
+            acquireBody.addProperty("lease_id", leaseId.toString());
+            acquireBody.addProperty("runner_pid", ProcessHandle.current().pid());
+            acquireBody.addProperty("max_duration_ms", acceptedDuration);
+            HttpResponse<java.io.InputStream> acquired = client.send(
+                    evaluationRequest("POST", acquireBody, McpTestFixtures.TOKEN, null),
+                    HttpResponse.BodyHandlers.ofInputStream());
+            assertThat(acquired.statusCode()).isEqualTo(200);
+
+            JsonObject releaseBody = new JsonObject();
+            releaseBody.addProperty("lease_id", leaseId.toString());
+            releaseBody.addProperty("reason", "turn_completed");
+            assertThat(send(evaluationRequest(
+                    "DELETE", releaseBody, McpTestFixtures.TOKEN, null)).statusCode()).isEqualTo(200);
+            acquired.body().close();
+        }
+
+        JsonObject oversizedBody = new JsonObject();
+        oversizedBody.addProperty("lease_id", UUID.randomUUID().toString());
+        oversizedBody.addProperty("runner_pid", ProcessHandle.current().pid());
+        oversizedBody.addProperty("max_duration_ms", 7_260_001L);
+        assertThat(send(evaluationRequest(
+                "POST", oversizedBody, McpTestFixtures.TOKEN, null)).statusCode()).isEqualTo(400);
+    }
+
+    @Test
     void evaluationAdmissionRaceIsRecheckedBeforeRuntimeSideEffects() throws Exception {
         var absenceRuntime = new EvaluationRuntime();
         start(absenceRuntime, config("evaluation-absence-race").rateLimit(100, 100).build());

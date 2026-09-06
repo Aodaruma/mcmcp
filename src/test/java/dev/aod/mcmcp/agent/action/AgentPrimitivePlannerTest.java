@@ -601,6 +601,83 @@ class AgentPrimitivePlannerTest {
     }
 
     @Test
+    void longTunnelAdmitsOnlyItsDeliveredEntranceWithoutPretendingFutureCellsAreKnown() {
+        var map = map(UUID.randomUUID()).snapshot().orElseThrow();
+        var target = new ActionDsl.Position(DIMENSION, 1, 64, 0);
+        for (var pattern : ActionDsl.MiningPattern.values()) {
+            for (int length : List.of(16, 160)) {
+                var tunnel = tunnel(target, pattern, length);
+                var analysis = AgentPrimitivePlanner.analyze(
+                        tunnelProgram(tunnel), map, new DeterministicAStar(),
+                        new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                        Optional.of(frame(List.of(surfaceWithState(target,
+                                ObservationRecord.Face.WEST, "minecraft:stone", Map.of(), 0)))), 4.5F);
+                assertThat(analysis.worstCase(tunnel))
+                        .contains(ActionDslCompiler.intrinsicExcavateTunnelCost(tunnel));
+                assertThat(analysis.knownSurfaces()).hasSize(1)
+                        .extracting(AgentPrimitivePlanner.KnownSurface::position).containsExactly(target);
+                assertThat(analysis.knownTargets()).isEmpty();
+                assertThat(analysis.routeDependencies()).isEmpty();
+                assertThat(analysis.mutationAims()).hasSize(1);
+            }
+        }
+    }
+
+    @Test
+    void tunnelRejectsAbsentWrongFaceAndWrongStateEvidence() {
+        var map = map(UUID.randomUUID()).snapshot().orElseThrow();
+        var target = new ActionDsl.Position(DIMENSION, 1, 64, 0);
+        var tunnel = tunnel(target, ActionDsl.MiningPattern.STRAIGHT, 160);
+        List<List<ObservationRecord.VisibleSurface>> candidates = List.of(
+                List.of(),
+                List.of(surfaceWithState(target, ObservationRecord.Face.EAST,
+                        "minecraft:stone", Map.of(), 0)),
+                List.of(surfaceWithState(target, ObservationRecord.Face.WEST,
+                        "minecraft:cobblestone", Map.of(), 0)),
+                List.of(surfaceWithState(target, ObservationRecord.Face.WEST,
+                        "minecraft:stone", Map.of("unexpected", "true"), 0)));
+        for (var records : candidates) {
+            assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                    tunnelProgram(tunnel), map, new DeterministicAStar(),
+                    new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0),
+                    Optional.of(frame(records)), 4.5F))
+                    .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+        }
+    }
+
+    @Test
+    void tunnelRejectsAReachableWallWithoutTheMatchingEntranceFeetPose() {
+        var map = map(UUID.randomUUID()).snapshot().orElseThrow();
+        var target = new ActionDsl.Position(DIMENSION, 1, 64, 0);
+        var tunnel = tunnel(target, ActionDsl.MiningPattern.STRAIGHT, 16);
+        for (var pose : List.of(
+                new AgentPrimitivePlanner.Pose(cell(0), 0.8, 64, 0.5, 1.62, 0, 0),
+                new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64.1, 0.5, 1.62, 0, 0),
+                new AgentPrimitivePlanner.Pose(cell(-1), -0.5, 64, 0.5, 1.62, 0, 0))) {
+            assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                    tunnelProgram(tunnel), map, new DeterministicAStar(), pose,
+                    Optional.of(frame(List.of(surfaceWithStateAtEye(target,
+                            ObservationRecord.Face.WEST, "minecraft:stone", Map.of(), 0,
+                            pose.x(), pose.y() + pose.eyeHeight(), pose.z())))), 4.5F))
+                    .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+        }
+    }
+
+    private static ActionDsl.ExcavateTunnel tunnel(
+            ActionDsl.Position target, ActionDsl.MiningPattern pattern, int length) {
+        boolean branches = pattern == ActionDsl.MiningPattern.BRANCHES;
+        return new ActionDsl.ExcavateTunnel("mine", target, ActionDsl.BlockFace.WEST,
+                new ActionDsl.BlockStateSpec("minecraft:stone", Map.of()),
+                "minecraft:iron_pickaxe", length, pattern, branches ? 6 : 0, branches ? 3 : 0);
+    }
+
+    private static ActionDsl.Program tunnelProgram(ActionDsl.ExcavateTunnel tunnel) {
+        return new ActionDsl.Program(1, Optional.empty(),
+                Set.of(ActionDsl.Capability.MOVEMENT, ActionDsl.Capability.CAMERA,
+                        ActionDsl.Capability.BLOCK_BREAK), List.of(tunnel));
+    }
+
+    @Test
     void redstoneIdentityRequiresCurrentInertLampAndGlassLeverSupports() {
         UUID session = UUID.randomUUID();
         var map = map(session).snapshot().orElseThrow();

@@ -21,7 +21,8 @@ param(
     [string]$ExpectedEffort,
 
     [Parameter(Mandatory, ParameterSetName = 'Audit')]
-    [ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy', 'container-inspect-recovery')]
+    [ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy', 'container-inspect-recovery',
+        'tunnel-straight16', 'tunnel-straight160', 'tunnel-branches', 'tunnel-hazard')]
     [string]$ExpectedPromptProfile,
 
     [Parameter(Mandatory, ParameterSetName = 'SelfTest')]
@@ -32,27 +33,53 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'McmcpRecoveryPreflight.ps1')
 Import-Module (Join-Path $PSScriptRoot 'McmcpRecoveryWitness.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'McmcpTunnelRecoveryWitness.psm1') -Force
 
 $EvaluationProfiles = [ordered]@{
+    'tunnel-straight16' = [ordered]@{
+        prompt = '正面にある石壁の下段を入口として、幅1・高さ2の直線坑道を16マス掘ってください。坑道掘削Actionを1回だけ開始し、完了まで確認してください。'
+        timeout_minutes = 30
+        inventory_profile = 'single_netherite_pickaxe'
+    }
+    'tunnel-straight160' = [ordered]@{
+        prompt = '正面にある石壁の下段を入口として、幅1・高さ2の直線坑道を160マス掘ってください。坑道掘削Actionを1回だけ開始し、完了まで確認してください。'
+        timeout_minutes = 120
+        inventory_profile = 'single_netherite_pickaxe'
+    }
+    'tunnel-branches' = [ordered]@{
+        prompt = '正面にある石壁の下段を入口として、主坑道16マス、枝の長さ3マス、枝の間隔4マスの枝坑道を掘ってください。坑道掘削Actionを1回だけ開始し、完了まで確認してください。'
+        timeout_minutes = 40
+        inventory_profile = 'single_netherite_pickaxe'
+    }
+    'tunnel-hazard' = [ordered]@{
+        prompt = '正面にある石壁の下段を入口として、幅1・高さ2の直線坑道を16マス掘ってください。危険を検出した場合はそのActionを再送せず、確認済みの地点で停止してください。'
+        timeout_minutes = 30
+        inventory_profile = 'single_netherite_pickaxe'
+    }
     'container-inspect-recovery' = [ordered]@{
         prompt = '近くにあるチェスト1つの中身を一度だけ確認し、結果を教えてください。アイテムの出し入れはしないでください。'
         timeout_minutes = 5
+        inventory_profile = 'empty'
     }
     'short-regression' = [ordered]@{
         prompt = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
         timeout_minutes = 30
+        inventory_profile = 'empty'
     }
     'full-cycle' = [ordered]@{
         prompt = 'チェストに小麦の種と鍬が入っています。これを取り出し、この畑の区画にある耕作可能な土をすべて耕して、すべてに小麦の種を植えてください。成熟後はすべて収穫して植え直す工程を、小麦を1スタック（64個）以上所持するまで繰り返してください。'
         timeout_minutes = 30
+        inventory_profile = 'empty'
     }
     'warehouse-smelt' = [ordered]@{
         prompt = '近くの材料チェストから生の鉄1個と石炭1個を取り出し、かまどで鉄インゴット1個に精錬し、完成品用の空の樽へ収納してください。終了時はプレイヤーのインベントリ、材料チェスト、かまどを空にしてください。'
         timeout_minutes = 30
+        inventory_profile = 'empty'
     }
     'hard-building-copy' = [ordered]@{
         prompt = 'チェストの材料を自由に加工して、近くにある屋根付きの木造建築を見本に、羊毛の上へ同じ建築をコピーしてください。'
         timeout_minutes = 90
+        inventory_profile = 'empty'
     }
 }
 $AuditPromptProfile = if ($PSCmdlet.ParameterSetName -eq 'Audit') {
@@ -62,8 +89,9 @@ $AuditPromptProfile = if ($PSCmdlet.ParameterSetName -eq 'Audit') {
 }
 $AuditProfile = $EvaluationProfiles[$AuditPromptProfile]
 $ProductionPrompt = [string]$AuditProfile['prompt']
-$ExpectedCatalogFileSha256 = '68c679e5e14feeca2c3721d62933448e1e84019a3278569881662109debb1f23'
-$ExpectedToolSurfaceSha256 = '1f0b0576c7499b5bbdcab86207d070dbad6b8914d2888bdfd260109b988f2a24'
+$ExpectedInventoryProfile = [string]$AuditProfile['inventory_profile']
+$ExpectedCatalogFileSha256 = '0c36ccfe6c923b61a385c402d2343178a11f3b942ee9d1eba3a4993a748c7544'
+$ExpectedToolSurfaceSha256 = 'a452d7812915c0e3d0d2e51fa9a2ee32e97667469ccde04ebfd7e388fb0cbe67'
 $ExpectedEvaluatorTimeoutSeconds = [int]$AuditProfile['timeout_minutes'] * 60
 $TurnCompletionReserveSeconds = 15
 $MaximumMcpForwardSeconds = 35
@@ -671,12 +699,13 @@ function Invoke-TraceAudit {
         if ($event -ceq 'readiness_check_failed') {
             $readinessNames = @(
                 'ready_mode_ok', 'game_unpaused', 'world_present',
-                'observation_present', 'inventory_empty', 'rays_per_tick_512',
+                'observation_present', 'inventory_profile_matches', 'rays_per_tick_512',
                 'visible_entities_zero', 'action_idle_or_terminal')
             Add-ViolationUnless (Test-ExactPropertySet $record.value @(
                     'sequence', 'utc', 'event', 'phase', 'get_state_ok',
                     'ready_mode_ok', 'game_unpaused', 'world_present',
-                    'observation_present', 'inventory_empty', 'rays_per_tick_512',
+                    'observation_present', 'inventory_empty', 'inventory_profile_matches',
+                    'rays_per_tick_512',
                     'visible_entities_zero', 'action_idle_or_terminal', 'failed_flags',
                     'raw_state_recorded')) `
                 "bridge line $($record.line): readiness failure property set mismatch" $violations
@@ -812,12 +841,16 @@ function Invoke-TraceAudit {
             'preflight parent_mcp_redirects_disabled must be true' $violations
         foreach ($readinessFlag in @(
                 'ready_mode_ok', 'game_unpaused', 'world_present',
-                'observation_present', 'inventory_empty', 'rays_per_tick_512',
+                'observation_present', 'inventory_profile_matches', 'rays_per_tick_512',
                 'visible_entities_zero', 'action_idle_or_terminal')) {
             $value = Get-PropertyValue $preflight $readinessFlag
             Add-ViolationUnless ($value -is [bool] -and $value) `
                 "preflight readiness flag must be true: $readinessFlag" $violations
         }
+        $preflightInventoryEmpty = Get-PropertyValue $preflight 'inventory_empty'
+        Add-ViolationUnless ($preflightInventoryEmpty -is [bool] -and
+            $preflightInventoryEmpty -eq ($ExpectedInventoryProfile -ceq 'empty')) `
+            'preflight inventory-empty proof does not match the fixed profile' $violations
     }
 
     $launcherRecords = @($bridgeRecords | Where-Object {
@@ -924,13 +957,17 @@ function Invoke-TraceAudit {
         foreach ($readinessFlag in @(
                 'preliminary_readiness_passed', 'evaluation_lease_header_bound',
                 'readiness_rechecked', 'ready_mode_ok', 'game_unpaused',
-                'world_present', 'observation_present', 'inventory_empty',
+                'world_present', 'observation_present', 'inventory_profile_matches',
                 'rays_per_tick_512', 'visible_entities_zero',
                 'action_idle_or_terminal')) {
             $value = Get-PropertyValue $t0 $readinessFlag
             Add-ViolationUnless ($value -is [bool] -and $value) `
                 "T0 readiness flag must be true: $readinessFlag" $violations
         }
+        $t0InventoryEmpty = Get-PropertyValue $t0 'inventory_empty'
+        Add-ViolationUnless ($t0InventoryEmpty -is [bool] -and
+            $t0InventoryEmpty -eq ($ExpectedInventoryProfile -ceq 'empty')) `
+            'T0 inventory-empty proof does not match the fixed profile' $violations
     }
 
     $orderedKinds = @($bridgeRecords | Where-Object {
@@ -1526,7 +1563,8 @@ function Invoke-TraceAudit {
                             status = $status
                             success = $success
                             output_sha256 = Get-Sha256 $outputText
-                            output_text = $(if ($AuditPromptProfile -ceq 'container-inspect-recovery') { $outputText } else { $null })
+                            output_text = $(if ($AuditPromptProfile -ceq 'container-inspect-recovery' -or
+                                    $AuditPromptProfile -like 'tunnel-*') { $outputText } else { $null })
                             domain_error_contract_valid = $domainErrorTextValid
                         }
                     }
@@ -1698,6 +1736,7 @@ function Invoke-TraceAudit {
     }
     $validDynamicCalls = 0
     $recoveryCalls = [Collections.Generic.List[object]]::new()
+    $tunnelCalls = [Collections.Generic.List[object]]::new()
     $successfulDynamicCalls = 0
     $domainToolErrorCalls = 0
     $validDeadlineRejections = 0
@@ -1983,6 +2022,14 @@ function Invoke-TraceAudit {
                     output_text = $item.output_text
                 })
             }
+            if ($AuditPromptProfile -like 'tunnel-*') {
+                $tunnelCalls.Add([ordered]@{
+                    tool = $request.tool
+                    arguments = $request.arguments
+                    success = $item.success
+                    output_text = $item.output_text
+                })
+            }
             if ($isDeadlineRejectionLifecycle) {
                 $validDeadlineRejections++
             } elseif ($terminalSuccess) {
@@ -2026,6 +2073,7 @@ function Invoke-TraceAudit {
 
     $manualReviewRequired = [Collections.Generic.List[string]]::new()
     $recoveryWitness = $null
+    $tunnelRendererRecoveryWitness = $null
     if ($AuditPromptProfile -ceq 'container-inspect-recovery') {
         Add-ViolationUnless (Test-McmcpRecoveryPreflight `
             -Record (Get-PropertyValue $t0 'recovery_preflight') `
@@ -2040,6 +2088,15 @@ function Invoke-TraceAudit {
         $manualReviewRequired.Add('製品commitとbuild記録、baseline復元、起動済みJARとFPS設定を別の起動前記録で照合すること。disk attestationだけではruntime一致を証明しない')
         $manualReviewRequired.Add('通常FPS1回とmaxFps=10の1〜3回を同一baseline・製品commit・JAR hashで比較すること。not_exercisedは欠測回復PASSに数えない')
     }
+    if ($AuditPromptProfile -like 'tunnel-*') {
+        if ($violations.Count -eq 0) {
+            $tunnelRendererRecoveryWitness = Get-McmcpTunnelRecoveryWitness `
+                -Calls @($tunnelCalls) -ExpectedProfile $AuditPromptProfile
+            foreach ($violation in @($tunnelRendererRecoveryWitness.violations)) {
+                $violations.Add([string]$violation)
+            }
+        }
+    }
     $manualReviewRequired.Add('agent_start_action の target が先行する正規MCP観測に由来すること')
     $manualReviewRequired.Add('agent_get_action(wait_timeout_ms=25000) をterminalまで反復し、非terminal timeout snapshotをエラー扱いしていないこと')
     if ($AuditPromptProfile -ceq 'hard-building-copy') {
@@ -2048,6 +2105,13 @@ function Invoke-TraceAudit {
     } elseif ($AuditPromptProfile -ceq 'warehouse-smelt') {
         $manualReviewRequired.Add(
             'world終了後のoffline oracleでsource chest、furnace、player inventoryが空、output barrelがdefault-componentsのiron ingot 1個だけ、周辺block不変を裏付けること')
+    } elseif ($AuditPromptProfile -like 'tunnel-*') {
+        $manualReviewRequired.Add(
+            '対応するone-shot tunnel fixtureの起動前baselineと終了後bounded oracleで、掘削範囲、範囲外不変、終点またはhazard停止prefixを照合すること')
+        $manualReviewRequired.Add(
+            'evaluation leaseのterminal receiptでinputs_released、input_owner_none、all_actions_terminal、process_identity_boundがすべてBoolean trueであること')
+        $manualReviewRequired.Add(
+            'tunnel renderer recoveryは固定NODE_EVIDENCEのmissing>0かつrevalidated>0とAction succeededが揃う場合だけwitnessedとし、低FPSまたは成功だけを欠測回復PASSに数えないこと')
     } elseif ($AuditPromptProfile -cne 'container-inspect-recovery') {
         $manualReviewRequired.Add(
             '最終 inventory/observation と action audit が小麦64個を裏付けること')
@@ -2064,6 +2128,7 @@ function Invoke-TraceAudit {
         schema_version = 8
         passed = ($violations.Count -eq 0)
         recovery_witness = $recoveryWitness
+        tunnel_renderer_recovery_witness = $tunnelRendererRecoveryWitness
         prompt_profile = $AuditPromptProfile
         evaluator_timeout_seconds = $ExpectedEvaluatorTimeoutSeconds
         trace_message_count = $traceRecords.Count
@@ -2217,6 +2282,7 @@ function Invoke-AuditSelfTest {
             parent_mcp_redirects_disabled = $true
             ready_mode_ok = $true; game_unpaused = $true; world_present = $true
             observation_present = $true; inventory_empty = $true
+            inventory_profile_matches = $true
             rays_per_tick_512 = $true; visible_entities_zero = $true
             action_idle_or_terminal = $true
         },
@@ -2232,6 +2298,7 @@ function Invoke-AuditSelfTest {
             evaluation_lease_header_bound = $true; readiness_rechecked = $true
             ready_mode_ok = $true; game_unpaused = $true; world_present = $true
             observation_present = $true; inventory_empty = $true
+            inventory_profile_matches = $true
             rays_per_tick_512 = $true; visible_entities_zero = $true
             action_idle_or_terminal = $true
         },
@@ -3152,10 +3219,11 @@ function Invoke-AuditSelfTest {
         world_present = $false
         observation_present = $true
         inventory_empty = $false
+        inventory_profile_matches = $false
         rays_per_tick_512 = $true
         visible_entities_zero = $true
         action_idle_or_terminal = $true
-        failed_flags = @('world_present', 'inventory_empty')
+        failed_flags = @('world_present', 'inventory_profile_matches')
         raw_state_recorded = $false
     }
     $readinessFailureBridge = @($readinessFailureBridge[0..6] +
@@ -3401,6 +3469,68 @@ function Invoke-AuditSelfTest {
             }
             $copy
         })
+
+    $tunnelProfileCases = [Collections.Generic.List[object]]::new()
+    foreach ($tunnelProfileName in @(
+            'tunnel-straight16', 'tunnel-straight160', 'tunnel-branches', 'tunnel-hazard')) {
+        $tunnelPrompt = [string]$EvaluationProfiles[$tunnelProfileName]['prompt']
+        $tunnelTimeoutSeconds =
+            [int]$EvaluationProfiles[$tunnelProfileName]['timeout_minutes'] * 60
+        $tunnelTrace = @($trace | ForEach-Object {
+                $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+                $item = Get-NestedValue $copy 'params.item'
+                if ($null -ne $item -and (Get-PropertyValue $item 'type') -ceq 'userMessage') {
+                    $item.content[0].text = $tunnelPrompt
+                }
+                $copy
+            })
+        $tunnelBridge = @($bridge | ForEach-Object {
+                $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+                if ((Get-PropertyValue $copy 'event') -ceq 'preflight') {
+                    $copy.inventory_empty = $false
+                } elseif ((Get-PropertyValue $copy 'event') -ceq 't0') {
+                    $copy.prompt_profile = $tunnelProfileName
+                    $copy.prompt_sha256 = Get-Sha256 $tunnelPrompt
+                    $copy.timeout_seconds = $tunnelTimeoutSeconds
+                    $copy.inventory_empty = $false
+                } elseif ((Get-PropertyValue $copy 'event') -ceq 'client_send' -and
+                    (Get-PropertyValue $copy 'kind') -ceq 'turn_start') {
+                    $copy.message.params.input[0].text = $tunnelPrompt
+                }
+                $copy
+            })
+        $tunnelProfileCases.Add([ordered]@{
+                name = $tunnelProfileName.Replace('-', '_') + '_valid'
+                trace = $tunnelTrace
+                bridge = $tunnelBridge
+                expected_profile = $tunnelProfileName
+                expected_exit = 0
+                expected_success = 1
+                expected_failure = 0
+                expected_tunnel_recovery = 'not_exercised'
+                required = @()
+                required_manual = @('one-shot tunnel fixture', 'input_owner_none',
+                    'missing>0かつrevalidated>0')
+            })
+        if ($tunnelProfileName -ceq 'tunnel-straight160') {
+            $wrongInventoryBridge = @($tunnelBridge | ForEach-Object {
+                    $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
+                    if ((Get-PropertyValue $copy 'event') -ceq 't0') {
+                        $copy.inventory_empty = $true
+                    }
+                    $copy
+                })
+            $tunnelProfileCases.Add([ordered]@{
+                    name = 'tunnel_straight160_wrong_inventory_proof'
+                    trace = $tunnelTrace
+                    bridge = $wrongInventoryBridge
+                    expected_profile = $tunnelProfileName
+                    expected_exit = 1
+                    expected_tunnel_recovery = $null
+                    required = @('T0 inventory-empty proof does not match the fixed profile')
+                })
+        }
+    }
 
     $cases = @(
         [ordered]@{
@@ -3713,7 +3843,7 @@ function Invoke-AuditSelfTest {
         [ordered]@{
             name = 'readiness_failure'; trace = $trace; bridge = $readinessFailureBridge
             expected_exit = 1
-            required = @('readiness check failed at preflight: world_present, inventory_empty')
+            required = @('readiness check failed at preflight: world_present, inventory_profile_matches')
         },
         [ordered]@{
             name = 'unsafe_readiness_failure'; trace = $trace
@@ -3751,6 +3881,7 @@ function Invoke-AuditSelfTest {
             expected_exit = 1; required = @('JSONL として解析できません')
         }
     )
+    $cases += @($tunnelProfileCases)
 
     try {
         $powerShellExecutable = (Get-Process -Id $PID).Path
@@ -3806,6 +3937,16 @@ function Invoke-AuditSelfTest {
                 $report.recovery_witness.status -cne $case.expected_recovery) {
                 throw "self-test '$($case.name)' recovery witness mismatch"
             }
+            if ($case.Contains('expected_tunnel_recovery')) {
+                if ($null -eq $case.expected_tunnel_recovery) {
+                    if ($null -ne $report.tunnel_renderer_recovery_witness) {
+                        throw "self-test '$($case.name)' retained a witness on an invalid audit"
+                    }
+                } elseif ($report.tunnel_renderer_recovery_witness.status -cne
+                    $case.expected_tunnel_recovery) {
+                    throw "self-test '$($case.name)' tunnel recovery witness mismatch"
+                }
+            }
             foreach ($needle in $case.required) {
                 if (@($report.violations | Where-Object { [string]$_ -like "*$needle*" }).Count -eq 0) {
                     throw "self-test '$($case.name)' missing violation '$needle'"
@@ -3825,6 +3966,10 @@ function Invoke-AuditSelfTest {
         if ([IO.Directory]::Exists($temporaryRoot)) {
             [IO.Directory]::Delete($temporaryRoot, $true)
         }
+    }
+    & $powerShellExecutable -NoProfile -File (Join-Path $PSScriptRoot 'Test-McmcpTunnelRecoveryWitness.ps1')
+    if ($LASTEXITCODE -ne 0) {
+        throw 'tunnel renderer recovery witness self-test failed'
     }
     Write-Host "評価 app-server trace audit self-test: $($cases.Count)/$($cases.Count) passed"
 }
