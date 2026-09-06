@@ -83,8 +83,7 @@ def resolve_overworld_dimension(root_or_dimension: Path) -> Path:
     return candidates[0]
 
 
-def furnace_entity(root_or_dimension: Path, x: int, y: int, z: int):
-    dimension = resolve_overworld_dimension(root_or_dimension)
+def furnace_entity(dimension: Path, x: int, y: int, z: int):
     chunk_x = math.floor(x / 16)
     chunk_z = math.floor(z / 16)
     region_x = math.floor(chunk_x / 32)
@@ -114,7 +113,8 @@ def main() -> None:
     arguments = parser.parse_args()
 
     player_source, inventory = player_inventory(arguments.world)
-    furnace = furnace_entity(arguments.world, arguments.x, arguments.y, arguments.z)
+    dimension = resolve_overworld_dimension(arguments.world)
+    furnace = furnace_entity(dimension, arguments.x, arguments.y, arguments.z)
     station_counts = item_counts(furnace.get("Items", furnace.get("items", [])))
     scoped_inventory = {item: inventory.get(item, 0) for item in SCOPED_ITEMS}
     result = {

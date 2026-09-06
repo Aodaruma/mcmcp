@@ -18,6 +18,15 @@ if spec is None or spec.loader is None:
 oracle = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(oracle)
 
+warehouse_path = Path(__file__).with_name("Inspect-McmcpWarehouseSmeltOracle.py")
+warehouse_spec = importlib.util.spec_from_file_location(
+    "mcmcp_warehouse_smelt_oracle", warehouse_path
+)
+if warehouse_spec is None or warehouse_spec.loader is None:
+    raise SystemExit(f"cannot load warehouse oracle: {warehouse_path}")
+warehouse = importlib.util.module_from_spec(warehouse_spec)
+warehouse_spec.loader.exec_module(warehouse)
+
 
 def rejected(root: Path) -> bool:
     try:
@@ -55,5 +64,43 @@ with tempfile.TemporaryDirectory() as temporary:
         parents=True
     )
     assert rejected(ambiguous)
+
+    class FakeRegion:
+        def __init__(self):
+            self.dimension = None
+
+        def inspect_region(self, dimension, workspace):
+            self.dimension = dimension
+            assert workspace == warehouse.WORKSPACE
+            return ["region"]
+
+    class FakeShared:
+        def __init__(self):
+            self.REGION = FakeRegion()
+            self.entity_calls = []
+
+        def player_inventory(self, world):
+            assert world == modern
+            return "player", {}
+
+        def resolve_overworld_dimension(self, world):
+            assert world == modern
+            return nested
+
+        def furnace_entity(self, dimension, *position):
+            self.entity_calls.append((dimension, position))
+            return {"position": position}
+
+    fake = FakeShared()
+    inspected = warehouse.inspect_world(fake, modern)
+    assert inspected[0:2] == ("player", {})
+    assert [entry[1] for entry in fake.entity_calls] == [
+        warehouse.SOURCE,
+        warehouse.FURNACE,
+        warehouse.OUTPUT,
+    ]
+    assert all(entry[0] == nested for entry in fake.entity_calls)
+    assert fake.REGION.dimension == nested
+    assert inspected[-1] == ["region"]
 
 print("MCMCP smelt oracle path-resolution tests passed.")
