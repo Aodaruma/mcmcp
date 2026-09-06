@@ -32,6 +32,62 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class BlockItemPlacementInvokerContractTest {
     @Test
+    void sameLevelPlayerCloneResetsAttemptsWithoutUnbindingPredictionBridge() throws Exception {
+        String runtime = "/dev/aod/mcmcp/runtime/McmcpRuntime.class";
+        String reset = "dev/aod/mcmcp/runtime/ClientPredictionSignals"
+                + "#resetAttemptsForPlayerClone";
+        String close = "dev/aod/mcmcp/runtime/ClientPredictionSignals#closeLevel";
+
+        assertThat(invocations(runtime, "onPlayerClone"))
+                .contains(reset)
+                .doesNotContain(close);
+        for (String lifecycle : List.of("onLevelUnload", "onLoggingOut", "shutdown")) {
+            assertThat(invocations(runtime, lifecycle)).contains(close).doesNotContain(reset);
+        }
+    }
+
+    @Test
+    void predictionBridgeStateTransitionsKeepCloneResetSeparateFromLevelClosure()
+            throws Exception {
+        String signals = "/dev/aod/mcmcp/runtime/ClientPredictionSignals.class";
+        assertThat(invocations(signals, "resetAttemptsForPlayerClone"))
+                .contains(
+                        "java/util/Map#get",
+                        "dev/aod/mcmcp/runtime/ClientPredictionSignals$LevelChannel#closeAll")
+                .doesNotContain("java/util/Map#remove", "java/util/Set#add");
+        assertThat(invocations(signals, "closeLevel"))
+                .contains(
+                        "java/util/Set#add",
+                        "java/util/Map#remove",
+                        "dev/aod/mcmcp/runtime/ClientPredictionSignals$LevelChannel#closeAll");
+        assertThat(invocations(signals, "onBridgeReady"))
+                .contains("java/util/Set#remove", "java/util/Map#put");
+    }
+
+    @Test
+    void clientLevelDisconnectRetainsTheRequiredPredictionCleanupHook() throws Exception {
+        String resource = "/dev/aod/mcmcp/mixin/client/ClientLevelPredictionMixin.class";
+        var node = new ClassNode();
+        try (var stream = getClass().getResourceAsStream(resource)) {
+            assertThat(stream).isNotNull();
+            new ClassReader(stream).accept(node, 0);
+        }
+        var close = node.methods.stream()
+                .filter(method -> method.name.equals("mcmcp$closePredictionBridge"))
+                .findFirst().orElseThrow();
+        var injection = annotation("Lorg/spongepowered/asm/mixin/injection/Inject;",
+                close.visibleAnnotations, close.invisibleAnnotations);
+        assertThat(injection.values.toString())
+                .contains("disconnect(Lnet/minecraft/network/chat/Component;)V")
+                .contains("require, 1")
+                .contains("expect, 1");
+        assertThat(invocations(resource, close.name))
+                .contains(
+                        "dev/aod/mcmcp/runtime/ClientPredictionSignals#global",
+                        "dev/aod/mcmcp/runtime/ClientPredictionSignals#closeLevel");
+    }
+
+    @Test
     void requiredInvokerTargetsTheExactProtectedMinecraftMethod() throws Exception {
         var node = new ClassNode();
         try (var stream = getClass().getResourceAsStream(

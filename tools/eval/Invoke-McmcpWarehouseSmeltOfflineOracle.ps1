@@ -18,8 +18,7 @@ $ErrorActionPreference = 'Stop'
 
 $world = [IO.Path]::GetFullPath($WorldDirectory)
 $artifact = [IO.Path]::GetFullPath($EvaluationArtifactDirectory)
-if (-not (Test-Path -LiteralPath (Join-Path $world 'level.dat') -PathType Leaf) -or
-    -not (Test-Path -LiteralPath (Join-Path $world 'region') -PathType Container)) {
+if (-not (Test-Path -LiteralPath (Join-Path $world 'level.dat') -PathType Leaf)) {
     throw 'warehouse-smelt oracle requires an exact closed-world directory'
 }
 $manifestPath = Join-Path $artifact 'manifest.json'

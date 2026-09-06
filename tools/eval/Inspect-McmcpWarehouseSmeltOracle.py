@@ -230,6 +230,16 @@ def self_test() -> None:
     print("MCMCP warehouse-smelt offline oracle self-test passed.")
 
 
+def inspect_world(shared, world: Path):
+    player_source, player_counts = shared.player_inventory(world)
+    dimension = shared.resolve_overworld_dimension(world)
+    source = shared.furnace_entity(dimension, *SOURCE)
+    furnace = shared.furnace_entity(dimension, *FURNACE)
+    output = shared.furnace_entity(dimension, *OUTPUT)
+    region_rows = shared.REGION.inspect_region(dimension, WORKSPACE)
+    return player_source, player_counts, source, furnace, output, region_rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("world", type=Path, nargs="?")
@@ -243,11 +253,9 @@ def main() -> None:
         parser.error("world is required unless --self-test is used")
 
     shared = load_smelt_oracle_module()
-    player_source, player_counts = shared.player_inventory(arguments.world)
-    source = shared.furnace_entity(arguments.world, *SOURCE)
-    furnace = shared.furnace_entity(arguments.world, *FURNACE)
-    output = shared.furnace_entity(arguments.world, *OUTPUT)
-    region_rows = shared.REGION.inspect_region(arguments.world, WORKSPACE)
+    player_source, player_counts, source, furnace, output, region_rows = inspect_world(
+        shared, arguments.world
+    )
     result = analyze(player_counts, source, furnace, output, region_rows)
     result["player_source"] = player_source
     serialized = json.dumps(result, ensure_ascii=False, indent=2) + "\n"

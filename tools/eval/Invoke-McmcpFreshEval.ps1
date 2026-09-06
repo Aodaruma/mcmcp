@@ -21,8 +21,16 @@ param(
     [string]$TokenPath,
 
     [Parameter(Mandatory)]
-    [ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy')]
+    [ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy', 'container-inspect-recovery')]
     [string]$PromptProfile,
+
+    # Required only for the recovery regression; paths never enter model input/artifacts.
+    [string]$ProductCommit,
+    [string]$ExpectedBuildJarSha256,
+    [string]$BuildJarPath,
+    [string]$InstalledJarPath,
+    [string]$OptionsPath,
+    [int]$ExpectedMaxFps,
 
     [string]$Endpoint = 'http://127.0.0.1:8765/mcp',
 
@@ -35,6 +43,7 @@ $Utf8NoBom = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $Utf8NoBom
 
 . (Join-Path $PSScriptRoot '../mcp/McmcpTransport.ps1')
+. (Join-Path $PSScriptRoot 'McmcpRecoveryPreflight.ps1')
 
 $monitorModulePath = Join-Path $PSScriptRoot 'McmcpLiveMonitor.psm1'
 $monitorTestPath = Join-Path $PSScriptRoot 'Test-McmcpLiveMonitor.ps1'
@@ -45,6 +54,10 @@ $script:LiveMonitorState = New-McmcpLiveMonitorState -Enabled:$LiveMonitor
 Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'runner_started'
 
 $EvaluationProfiles = [ordered]@{
+    'container-inspect-recovery' = [ordered]@{
+        prompt = '近くにあるチェスト1つの中身を一度だけ確認し、結果を教えてください。アイテムの出し入れはしないでください。'
+        timeout_minutes = 5
+    }
     'short-regression' = [ordered]@{
         prompt = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
         timeout_minutes = 30
@@ -78,8 +91,8 @@ $AuthExpirySafetyMargin = [TimeSpan]::FromMinutes(5)
 $MinimumMcpRequestIntervalMilliseconds = 60
 $ExpectedMcmcpServerName = 'mcmcp'
 $ExpectedMcmcpServerVersion = '0.1.0'
-$ExpectedCatalogFileSha256 = '3f4be7fb8dc3f6e9acad9f8552fba61a6ee2c8a3fd6bbb7d4ada0a807e5c119a'
-$ExpectedToolSurfaceSha256 = '7b149a064e8e1ba3c634fa9032a9b5f6a0dcef48cd09d624b66011da9099e195'
+$ExpectedCatalogFileSha256 = '84f186637696f9e52924fde10b3715543eff22c9218ce72c4f044d22f2cc471c'
+$ExpectedToolSurfaceSha256 = '0293e95f331c22134df8854ff224eef415eb3eb7bb701c3058793c55b704a881'
 $AllowedTools = @(
     'agent_get_state',
     'agent_get_observation',
@@ -1869,6 +1882,7 @@ $script:Terminalizing = $false
 $script:DeadlineRejectionCount = 0
 $script:DeadlineCleanupCancelForwardCount = 0
 $script:ReadinessFailure = $null
+$script:RecoveryPreflight = $null
 $script:EvaluationLeaseId = $null
 $script:EvaluationLeaseIdSha256 = $null
 $script:EvaluationLeaseAcquired = $false
@@ -2217,6 +2231,12 @@ try {
     # acquired lease id header; the earlier preflight/preliminary calls remain
     # intentionally headerless.
     $t0Readiness = Invoke-McmcpReadinessCheck -Phase 'T0'
+    if ($PromptProfile -ceq 'container-inspect-recovery') {
+        $script:RecoveryPreflight = New-McmcpRecoveryPreflight `
+            -ProductCommit $ProductCommit -ExpectedBuildJarSha256 $ExpectedBuildJarSha256 `
+            -BuildJarPath $BuildJarPath -InstalledJarPath $InstalledJarPath `
+            -OptionsPath $OptionsPath -BaselineId $BaselineId -ExpectedMaxFps $ExpectedMaxFps
+    }
     Assert-EvaluationLeaseActiveBeforeT0
     $startedAt = [DateTimeOffset]::UtcNow
     $deadline = $startedAt.Add($EvaluatorTimeout)
@@ -2225,6 +2245,7 @@ try {
             event = 't0'
             utc = $startedAt.ToString('o')
             prompt_profile = $PromptProfile
+            recovery_preflight = $script:RecoveryPreflight
             prompt_sha256 = Get-Sha256 $ProductionPrompt
             timeout_seconds = [int]$EvaluatorTimeout.TotalSeconds
             preliminary_readiness_passed = $null -ne $preliminaryT0Readiness
@@ -2516,8 +2537,9 @@ try {
         }
     }
     $manifest = [ordered]@{
-        schema_version = 8
+        schema_version = 9
         baseline_id = $BaselineId
+        recovery_preflight = $script:RecoveryPreflight
         model = $Model
         reasoning_effort = $ReasoningEffort
         prompt_profile = $PromptProfile
@@ -2569,6 +2591,8 @@ try {
         git_worktree_dirty = $gitWorktreeDirty
         runner_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
         audit_script_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $auditScript).Hash.ToLowerInvariant()
+        recovery_preflight_script_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'McmcpRecoveryPreflight.ps1')).Hash.ToLowerInvariant()
+        recovery_witness_module_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $PSScriptRoot 'McmcpRecoveryWitness.psm1')).Hash.ToLowerInvariant()
         monitor_module_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $monitorModulePath).Hash.ToLowerInvariant()
         monitor_test_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $monitorTestPath).Hash.ToLowerInvariant()
         monitor_launcher_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $monitorLauncherPath).Hash.ToLowerInvariant()

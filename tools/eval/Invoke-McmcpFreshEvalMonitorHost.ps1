@@ -24,6 +24,11 @@ try {
         'Model', 'ReasoningEffort', 'BaselineId', 'ArtifactDirectory',
         'TokenPath', 'PromptProfile', 'Endpoint'
     )
+    $recoveryNames = @('ProductCommit', 'ExpectedBuildJarSha256', 'BuildJarPath',
+        'InstalledJarPath', 'OptionsPath', 'ExpectedMaxFps')
+    if ($parameters.PromptProfile -ceq 'container-inspect-recovery') {
+        $expectedNames += $recoveryNames
+    }
     $actualNames = @($parameters.PSObject.Properties.Name)
     if ($actualNames.Count -ne $expectedNames.Count) {
         throw 'parameter contract mismatch'
@@ -59,6 +64,12 @@ try {
             '-Endpoint', [string]$parameters.Endpoint,
             '-LiveMonitor')) {
         $processStart.ArgumentList.Add($argument)
+    }
+    if ($parameters.PromptProfile -ceq 'container-inspect-recovery') {
+        foreach ($name in $recoveryNames) {
+            $processStart.ArgumentList.Add('-' + $name)
+            $processStart.ArgumentList.Add([string]$parameters.$name)
+        }
     }
 
     $runnerProcess = [Diagnostics.Process]::new()

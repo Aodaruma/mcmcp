@@ -9,6 +9,9 @@ Prefer native MCP registration in Codex or Claude Code. The [fixed client](mcp/R
 
 ## Build gate runner
 
+観測欠測の単独チェスト確認試験は [回復試験ガイド](eval/RECOVERY.md) を参照してください。製品JAR・baseline・FPS条件を記録し、欠測未発生と回復成功を分けて判定します。<br>
+See the [recovery regression guide](eval/RECOVERY.md) for standalone chest inspection, JAR/baseline/FPS evidence and the distinction between an unexercised gap and witnessed recovery.
+
 ```powershell
 # worldへ接続せずclosed manifestだけを検査
 pwsh -File .\tools\run-build-gate.ps1 `

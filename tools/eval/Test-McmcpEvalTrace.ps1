@@ -21,7 +21,7 @@ param(
     [string]$ExpectedEffort,
 
     [Parameter(Mandatory, ParameterSetName = 'Audit')]
-    [ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy')]
+    [ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy', 'container-inspect-recovery')]
     [string]$ExpectedPromptProfile,
 
     [Parameter(Mandatory, ParameterSetName = 'SelfTest')]
@@ -30,8 +30,14 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'McmcpRecoveryPreflight.ps1')
+Import-Module (Join-Path $PSScriptRoot 'McmcpRecoveryWitness.psm1') -Force
 
 $EvaluationProfiles = [ordered]@{
+    'container-inspect-recovery' = [ordered]@{
+        prompt = '近くにあるチェスト1つの中身を一度だけ確認し、結果を教えてください。アイテムの出し入れはしないでください。'
+        timeout_minutes = 5
+    }
     'short-regression' = [ordered]@{
         prompt = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
         timeout_minutes = 30
@@ -56,8 +62,8 @@ $AuditPromptProfile = if ($PSCmdlet.ParameterSetName -eq 'Audit') {
 }
 $AuditProfile = $EvaluationProfiles[$AuditPromptProfile]
 $ProductionPrompt = [string]$AuditProfile['prompt']
-$ExpectedCatalogFileSha256 = '3f4be7fb8dc3f6e9acad9f8552fba61a6ee2c8a3fd6bbb7d4ada0a807e5c119a'
-$ExpectedToolSurfaceSha256 = '7b149a064e8e1ba3c634fa9032a9b5f6a0dcef48cd09d624b66011da9099e195'
+$ExpectedCatalogFileSha256 = '84f186637696f9e52924fde10b3715543eff22c9218ce72c4f044d22f2cc471c'
+$ExpectedToolSurfaceSha256 = '0293e95f331c22134df8854ff224eef415eb3eb7bb701c3058793c55b704a881'
 $ExpectedEvaluatorTimeoutSeconds = [int]$AuditProfile['timeout_minutes'] * 60
 $TurnCompletionReserveSeconds = 15
 $MaximumMcpForwardSeconds = 35
@@ -897,6 +903,7 @@ function Invoke-TraceAudit {
             (Get-PropertyValue -Object $_.value -Name 'event') -eq 't0'
         })
     $t0DeadlineUtc = $null
+    $t0 = $null
     Add-ViolationUnless ($t0Records.Count -eq 1) 'bridge t0 は1件必須です' $violations
     if ($t0Records.Count -eq 1) {
         $t0 = $t0Records[0].value
@@ -1519,6 +1526,7 @@ function Invoke-TraceAudit {
                             status = $status
                             success = $success
                             output_sha256 = Get-Sha256 $outputText
+                            output_text = $(if ($AuditPromptProfile -ceq 'container-inspect-recovery') { $outputText } else { $null })
                             domain_error_contract_valid = $domainErrorTextValid
                         }
                     }
@@ -1689,6 +1697,7 @@ function Invoke-TraceAudit {
         }
     }
     $validDynamicCalls = 0
+    $recoveryCalls = [Collections.Generic.List[object]]::new()
     $successfulDynamicCalls = 0
     $domainToolErrorCalls = 0
     $validDeadlineRejections = 0
@@ -1966,6 +1975,14 @@ function Invoke-TraceAudit {
         }
         if ($violations.Count -eq $violationCountBeforeCall) {
             $validDynamicCalls++
+            if ($AuditPromptProfile -ceq 'container-inspect-recovery') {
+                $recoveryCalls.Add([ordered]@{
+                    tool = $request.tool
+                    arguments = $request.arguments
+                    success = $item.success
+                    output_text = $item.output_text
+                })
+            }
             if ($isDeadlineRejectionLifecycle) {
                 $validDeadlineRejections++
             } elseif ($terminalSuccess) {
@@ -2008,6 +2025,21 @@ function Invoke-TraceAudit {
         $mcpRequestIds.Count) 'duplicate MCP request id in dynamic bridge' $violations
 
     $manualReviewRequired = [Collections.Generic.List[string]]::new()
+    $recoveryWitness = $null
+    if ($AuditPromptProfile -ceq 'container-inspect-recovery') {
+        Add-ViolationUnless (Test-McmcpRecoveryPreflight `
+            -Record (Get-PropertyValue $t0 'recovery_preflight') `
+            -T0Utc ([string](Get-PropertyValue $t0 'utc'))) `
+            'recovery pre-T0 attestation is missing or invalid' $violations
+        if ($violations.Count -eq 0) {
+            $recoveryWitness = Get-McmcpRecoveryWitness -Calls @($recoveryCalls)
+            foreach ($violation in @($recoveryWitness.violations)) {
+                $violations.Add([string]$violation)
+            }
+        }
+        $manualReviewRequired.Add('製品commitとbuild記録、baseline復元、起動済みJARとFPS設定を別の起動前記録で照合すること。disk attestationだけではruntime一致を証明しない')
+        $manualReviewRequired.Add('通常FPS1回とmaxFps=10の1〜3回を同一baseline・製品commit・JAR hashで比較すること。not_exercisedは欠測回復PASSに数えない')
+    }
     $manualReviewRequired.Add('agent_start_action の target が先行する正規MCP観測に由来すること')
     $manualReviewRequired.Add('agent_get_action(wait_timeout_ms=25000) をterminalまで反復し、非terminal timeout snapshotをエラー扱いしていないこと')
     if ($AuditPromptProfile -ceq 'hard-building-copy') {
@@ -2016,7 +2048,7 @@ function Invoke-TraceAudit {
     } elseif ($AuditPromptProfile -ceq 'warehouse-smelt') {
         $manualReviewRequired.Add(
             'world終了後のoffline oracleでsource chest、furnace、player inventoryが空、output barrelがdefault-componentsのiron ingot 1個だけ、周辺block不変を裏付けること')
-    } else {
+    } elseif ($AuditPromptProfile -cne 'container-inspect-recovery') {
         $manualReviewRequired.Add(
             '最終 inventory/observation と action audit が小麦64個を裏付けること')
     }
@@ -2029,8 +2061,9 @@ function Invoke-TraceAudit {
             'deadline-rejected run: Minecraft内の全Actionがterminalであることを別artifactで確認すること')
     }
     $report = [ordered]@{
-        schema_version = 7
+        schema_version = 8
         passed = ($violations.Count -eq 0)
+        recovery_witness = $recoveryWitness
         prompt_profile = $AuditPromptProfile
         evaluator_timeout_seconds = $ExpectedEvaluatorTimeoutSeconds
         trace_message_count = $traceRecords.Count
@@ -3158,6 +3191,117 @@ function Invoke-AuditSelfTest {
         http_status = 429
     }
 
+    # Exercise the entire strict trace -> correlated witness path, not just the module.
+    $recoveryProfilePrompt = [string]$EvaluationProfiles['container-inspect-recovery']['prompt']
+    $recoveryId = '00000000-0000-4000-8000-000000000001'
+    $recoveryTarget = @{ dimension = 'minecraft:overworld'; x = 1; y = 64; z = 2 }
+    $recoveryStartArguments = @{ program = @{ body = @(@{
+        id = 'inspect'; op = 'inspect_known_container'; target = $recoveryTarget
+    }) } }
+    $recoveryStartText = ConvertTo-CompactJson @{
+        schema_version = 1; action_id = $recoveryId; state = 'queued'; accepted_at = '2026-08-28T00:00:00Z'
+    }
+    $recoveryGetArguments = @{ action_id = $recoveryId; include_container_results = $true; wait_timeout_ms = 25000 }
+    $recoveryGetText = ConvertTo-CompactJson @{
+        action_id = $recoveryId; state = 'succeeded'; failure = $null
+        progress = @{ phase = 'finished'; executed_nodes = 1; total_node_upper_bound = 1; interactions = 1 }
+        trace = @(@{ tick = 20; event = 'RENDERER_RECOVERY'; detail = 'missing=capture;revalidated=capture' })
+        container_results = @{
+            results = @(@{
+                result_seq = 1; node_id = 'inspect'; node_execution = 1; target = $recoveryTarget
+                world_session_id = $recoveryId; observed_client_tick = 100; packet_revision = 5
+                items = @(); total_item_types = 0; returned_item_types = 0; truncated = $false
+            })
+            total_results = 1; retained_results = 1; snapshot_result_count = 1; returned_results = 1
+            action_terminal = $true; truncated = $false; has_more = $false; next_cursor = $null
+        }
+    }
+    $recoveryAttestation = @{
+        schema_version = 1; captured_utc = $syntheticUtcBase.ToString('o')
+        product_commit = ('a' * 40); product_commit_source = 'operator_build_record'
+        expected_build_jar_sha256 = ('b' * 64); build_jar_sha256 = ('b' * 64); installed_jar_sha256 = ('b' * 64)
+        baseline_id = 'synthetic-v1'; baseline_source = 'operator_restoration_record'
+        max_fps = 10; max_fps_source = 'options_txt_pre_t0'; jar_files_match = $true
+        same_game_directory = $true; runtime_jar_and_fps_verified = $false
+    }
+    $recoveryTrace = @($trace | ForEach-Object {
+        $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100 -DateKind String
+        $item = Get-NestedValue $copy 'params.item'
+        if ($null -ne $item -and (Get-PropertyValue $item 'type') -ceq 'userMessage') {
+            $item.content[0].text = $recoveryProfilePrompt
+        }
+        if ((Get-NestedValue $copy 'params.callId') -ceq 'call_1') {
+            $copy.params.tool = 'agent_start_action'; $copy.params.arguments = $recoveryStartArguments
+        }
+        if ($null -ne $item -and (Get-PropertyValue $item 'id') -ceq 'call_1') {
+            $item.tool = 'agent_start_action'; $item.arguments = $recoveryStartArguments
+            if ((Get-PropertyValue $copy 'method') -ceq 'item/completed') {
+                $item.contentItems[0].text = $recoveryStartText
+            }
+        }
+        $copy
+        if ((Get-PropertyValue $copy 'method') -ceq 'item/completed' -and
+            (Get-NestedValue $copy 'params.item.id') -ceq 'call_1') {
+            foreach ($original in @($trace | Where-Object {
+                (Get-NestedValue $_ 'params.item.id') -ceq 'call_1' -or
+                (Get-NestedValue $_ 'params.callId') -ceq 'call_1'
+            })) {
+                $extra = ConvertTo-CompactJson $original | ConvertFrom-Json -Depth 100 -DateKind String
+                if ((Get-PropertyValue $extra 'method') -ceq 'item/tool/call') {
+                    $extra.id = 1; $extra.params.callId = 'call_2'
+                    $extra.params.tool = 'agent_get_action'; $extra.params.arguments = $recoveryGetArguments
+                } else {
+                    $extra.params.item.id = 'call_2'; $extra.params.item.tool = 'agent_get_action'
+                    $extra.params.item.arguments = $recoveryGetArguments
+                    if ((Get-PropertyValue $extra 'method') -ceq 'item/completed') {
+                        $extra.params.item.contentItems[0].text = $recoveryGetText
+                    }
+                }
+                $extra
+            }
+        }
+    })
+    $emitted = $syntheticUtcBase.ToUnixTimeMilliseconds()
+    foreach ($entry in $recoveryTrace) {
+        if ((Get-PropertyValue $entry 'method') -cin $AllowedNotifications) {
+            $entry.emittedAtMs = $emitted; $emitted++
+        }
+    }
+    $recoveryBridge = @($bridge | ForEach-Object {
+        $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100 -DateKind String
+        if ($copy.event -ceq 't0') {
+            $copy.prompt_profile = 'container-inspect-recovery'
+            $copy.prompt_sha256 = Get-Sha256 $recoveryProfilePrompt
+            $copy.timeout_seconds = 300
+            $copy | Add-Member -NotePropertyName recovery_preflight -NotePropertyValue $recoveryAttestation
+        } elseif ($copy.event -ceq 'client_send' -and $copy.kind -ceq 'turn_start') {
+            $copy.message.params.input[0].text = $recoveryProfilePrompt
+        }
+        if ((Get-PropertyValue $copy 'call_id') -ceq 'call_1') {
+            $copy.tool = 'agent_start_action'
+            if ($copy.event -ceq 'mcp_forward_started') {
+                $copy.arguments_sha256 = Get-Sha256 (ConvertTo-CompactJson $recoveryStartArguments)
+            } else { $copy.output_sha256 = Get-Sha256 $recoveryStartText }
+        }
+        $copy
+    })
+    foreach ($entry in @($recoveryBridge | Where-Object { (Get-PropertyValue $_ 'call_id') -ceq 'call_1' })) {
+        $extra = ConvertTo-CompactJson $entry | ConvertFrom-Json -Depth 100 -DateKind String
+        $extra.sequence += 3; $extra.utc = $syntheticUtcBase.AddMilliseconds($extra.sequence - 1).ToString('o')
+        $extra.call_id = 'call_2'; $extra.app_request_id = 1; $extra.tool = 'agent_get_action'
+        if ($extra.event -cne 'dynamic_response_sent') { $extra.mcp_request_id = 5 }
+        if ($extra.event -ceq 'mcp_forward_started') {
+            $extra.arguments_sha256 = Get-Sha256 (ConvertTo-CompactJson $recoveryGetArguments)
+            $extra.http_timeout_seconds = 27
+        } else { $extra.output_sha256 = Get-Sha256 $recoveryGetText }
+        $recoveryBridge += $extra
+    }
+    $recoveryMissingAttestation = @($recoveryBridge | ForEach-Object {
+        $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100 -DateKind String
+        if ($copy.event -ceq 't0') { $copy.recovery_preflight = $null }
+        $copy
+    })
+
     $fullCyclePrompt = [string]$EvaluationProfiles['full-cycle']['prompt']
     $fullProfileTrace = @($trace | ForEach-Object {
             $copy = ConvertTo-CompactJson $_ | ConvertFrom-Json -Depth 100
@@ -3259,6 +3403,16 @@ function Invoke-AuditSelfTest {
         })
 
     $cases = @(
+        [ordered]@{
+            name = 'recovery_profile_witnessed'; trace = $recoveryTrace; bridge = $recoveryBridge
+            expected_profile = 'container-inspect-recovery'; expected_exit = 0
+            required = @(); expected_recovery = 'witnessed'
+        },
+        [ordered]@{
+            name = 'recovery_profile_no_attestation'; trace = $recoveryTrace; bridge = $recoveryMissingAttestation
+            expected_profile = 'container-inspect-recovery'; expected_exit = 1
+            required = @('recovery pre-T0 attestation is missing or invalid')
+        },
         [ordered]@{
             name = 'valid'; trace = $trace; bridge = $bridge
             expected_exit = 0; expected_success = 1; expected_failure = 0
@@ -3647,6 +3801,10 @@ function Invoke-AuditSelfTest {
             if ($case.Contains('expected_rejection') -and
                 $report.deadline_rejection_count -ne $case.expected_rejection) {
                 throw "self-test '$($case.name)' deadline rejection count mismatch"
+            }
+            if ($case.Contains('expected_recovery') -and
+                $report.recovery_witness.status -cne $case.expected_recovery) {
+                throw "self-test '$($case.name)' recovery witness mismatch"
             }
             foreach ($needle in $case.required) {
                 if (@($report.violations | Where-Object { [string]$_ -like "*$needle*" }).Count -eq 0) {
