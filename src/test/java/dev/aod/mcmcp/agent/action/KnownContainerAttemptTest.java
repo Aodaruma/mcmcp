@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownContainerAttemptTest {
     @Test
-    void missingSafeHotbarItemReportsFixedCauseAndRemedyBeforeOrAfterBegin() {
+    void missingSafeHandReportsFixedCauseAndRemedyBeforeOrAfterBegin() {
         for (boolean beforeBegin : new boolean[] {true, false}) {
             for (String code : List.of("INVENTORY_SAFE_OPEN_HAND_REQUIRED", "INVENTORY_SAFE_OPEN_HAND_UNAVAILABLE")) {
                 var port = new FakePort();
@@ -40,8 +40,8 @@ class KnownContainerAttemptTest {
                 assertThat(result.status()).isEqualTo(KnownContainerAttempt.Status.FAILED);
                 assertThat(result.evidence()).isEqualTo(code.toLowerCase(java.util.Locale.ROOT));
                 assertThat(result.diagnostics()).containsExactly(
-                        "safe_open_hand=no_side_effect_free_hotbar_item",
-                        "remedy=prepare_empty_hotbar_slot_or_plain_material_or_safe_mining_tool");
+                        "safe_open_hand=no_side_effect_free_hotbar_or_offhand_item",
+                        "remedy=prepare_empty_or_safe_offhand_or_plain_material_or_safe_mining_tool");
                 assertThat(result.interactionDelta()).isZero();
                 assertThat(result.items()).isEmpty();
                 assertThat(result.effects()).isEmpty();
@@ -57,7 +57,7 @@ class KnownContainerAttemptTest {
                 var port = new FakePort();
                 var operation = new KnownContainerAttempt(port, request(), 1, 101);
                 var failure = failure(code, Map.of(
-                        "safe_open_hand", "no_side_effect_free_hotbar_item",
+                        "safe_open_hand", "no_side_effect_free_hotbar_or_offhand_item",
                         "remedy", "private instructions", "item", "private:item_name"));
                 port.tick = 1;
                 if (beforeBegin) {

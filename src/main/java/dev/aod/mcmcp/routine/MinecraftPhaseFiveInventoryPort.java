@@ -1609,14 +1609,32 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
     private static Optional<OpenHandPlan> chooseOpenHand(LocalPlayer player) {
         Objects.requireNonNull(player, "player");
+        var hotbar = new ArrayList<ItemStack>(9);
         for (int slot = 0; slot < 9; slot++) {
-            if (player.getInventory().getItem(slot).isEmpty()) {
+            hotbar.add(player.getInventory().getItem(slot));
+        }
+        return chooseOpenHand(
+                hotbar, player.getOffhandItem(), player.getInventory().getSelectedSlot());
+    }
+
+    static Optional<OpenHandPlan> chooseOpenHand(
+            List<ItemStack> hotbar, ItemStack offhand, int selectedSlot) {
+        Objects.requireNonNull(hotbar, "hotbar");
+        Objects.requireNonNull(offhand, "offhand");
+        if (hotbar.size() != 9 || selectedSlot < 0 || selectedSlot > 8) {
+            throw new IllegalArgumentException("invalid hotbar selection context");
+        }
+        // Prefer hands that remain usable when an inbound QUICK_MOVE fills empty inventory slots.
+        for (int slot = 0; slot < 9; slot++) {
+            if (MinecraftKnownBrewingPort.safeNormalUseStack(hotbar.get(slot))) {
                 return Optional.of(new OpenHandPlan(InteractionHand.MAIN_HAND, slot));
             }
         }
+        if (offhand.isEmpty() || MinecraftKnownBrewingPort.safeNormalUseStack(offhand)) {
+            return Optional.of(new OpenHandPlan(InteractionHand.OFF_HAND, selectedSlot));
+        }
         for (int slot = 0; slot < 9; slot++) {
-            if (MinecraftKnownBrewingPort.safeNormalUseStack(
-                    player.getInventory().getItem(slot))) {
+            if (hotbar.get(slot).isEmpty()) {
                 return Optional.of(new OpenHandPlan(InteractionHand.MAIN_HAND, slot));
             }
         }
@@ -2150,18 +2168,14 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             if (player.getInventory().getSelectedSlot() != selectedSlot) return false;
             ItemStack stack = hand == InteractionHand.OFF_HAND
                     ? player.getOffhandItem() : player.getMainHandItem();
-            return stack.isEmpty()
-                    || hand == InteractionHand.MAIN_HAND
-                    && MinecraftKnownBrewingPort.safeNormalUseStack(stack);
+            return stack.isEmpty() || MinecraftKnownBrewingPort.safeNormalUseStack(stack);
         }
 
         boolean readyAtSlot(LocalPlayer player) {
             ItemStack stack = hand == InteractionHand.OFF_HAND
                     ? player.getOffhandItem()
                     : player.getInventory().getItem(selectedSlot);
-            return stack.isEmpty()
-                    || hand == InteractionHand.MAIN_HAND
-                    && MinecraftKnownBrewingPort.safeNormalUseStack(stack);
+            return stack.isEmpty() || MinecraftKnownBrewingPort.safeNormalUseStack(stack);
         }
     }
 

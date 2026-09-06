@@ -10,7 +10,10 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponentMap;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
@@ -185,6 +188,46 @@ class MinecraftPhaseFiveInventoryPortTest {
                 .containsEntry("transfer_in_flight", false)
                 .containsEntry("transfer_readback_observed", false)
                 .doesNotContainKeys("source_after", "destination_after", "pending_stack_count");
+    }
+
+    @Test
+    void fourteenStackTakeWithOneEmptyHotbarKeepsAStableHandForTheNextContainer() {
+        var hotbar = new ArrayList<ItemStack>();
+        for (int slot = 0; slot < 8; slot++) {
+            hotbar.add(testItemStack(Blocks.COBBLESTONE.asItem(), 64));
+        }
+        hotbar.add(ItemStack.EMPTY);
+
+        var opening = MinecraftPhaseFiveInventoryPort.chooseOpenHand(
+                hotbar, ItemStack.EMPTY, 3).orElseThrow();
+        assertThat(opening.hand()).isEqualTo(InteractionHand.OFF_HAND);
+        assertThat(opening.selectedSlot()).isEqualTo(3);
+
+        var menuSlots = emptySlots(28);
+        for (int slot = 0; slot < 14; slot++) {
+            menuSlots.set(slot, stack("minecraft:cobblestone", 64, DEFAULT_HASH));
+        }
+        var batch = new MinecraftPhaseFiveInventoryPort.TransferBatch(
+                menuSlots,
+                java.util.stream.IntStream.range(0, 14).boxed().toList(),
+                java.util.stream.IntStream.range(14, 28).boxed().toList(),
+                "minecraft:cobblestone", DEFAULT_HASH, true, 14, 896, 896);
+        long revision = 1L;
+        for (int slot = 0; slot < 14; slot++) {
+            assertThat(batch.beginClick(transferSnapshot(menuSlots, revision), 1L + slot * 2L))
+                    .isTrue();
+            menuSlots.set(slot, StackFingerprint.EMPTY);
+            menuSlots.set(14 + slot, stack("minecraft:cobblestone", 64, DEFAULT_HASH));
+            assertThat(batch.confirm(transferSnapshot(menuSlots, ++revision))).isTrue();
+        }
+        assertThat(batch.exhausted()).isTrue();
+
+        // Vanilla may fill the only empty hotbar slot during the maximum inbound batch.
+        hotbar.set(8, testItemStack(Blocks.COBBLESTONE.asItem(), 64));
+        var nextContainer = MinecraftPhaseFiveInventoryPort.chooseOpenHand(
+                hotbar, ItemStack.EMPTY, 3).orElseThrow();
+        assertThat(nextContainer.hand()).isEqualTo(InteractionHand.OFF_HAND);
+        assertThat(nextContainer.selectedSlot()).isEqualTo(3);
     }
 
     @Test
@@ -739,9 +782,7 @@ class MinecraftPhaseFiveInventoryPortTest {
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#visibleThreatClear");
         assertThat(invocations(node, "chooseOpenHand"))
-                .contains("dev/aod/mcmcp/routine/MinecraftKnownBrewingPort"
-                        + "#safeNormalUseStack")
-                .doesNotContain("net/minecraft/client/player/LocalPlayer#getOffhandItem");
+                .contains("net/minecraft/client/player/LocalPlayer#getOffhandItem");
         var brewing = classNode("/dev/aod/mcmcp/routine/MinecraftKnownBrewingPort.class");
         assertThat(invocations(brewing, "chooseOpenHand"))
                 .doesNotContain("net/minecraft/client/player/LocalPlayer#getOffhandItem");
@@ -818,6 +859,10 @@ class MinecraftPhaseFiveInventoryPortTest {
 
     private static StackFingerprint stack(String item, int count, int hash) {
         return new StackFingerprint(item, count, hash);
+    }
+
+    private static ItemStack testItemStack(Item item, int count) {
+        return new ItemStack(Holder.direct(item, DataComponentMap.EMPTY), count);
     }
 
     private static ContainerSnapshot transferSnapshot(List<StackFingerprint> slots, long revision) {

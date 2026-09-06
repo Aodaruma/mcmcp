@@ -183,8 +183,8 @@ public final class KnownContainerAttempt implements AutoCloseable {
         if ("INVENTORY_SAFE_OPEN_HAND_REQUIRED".equals(failure.code())
                 || "INVENTORY_SAFE_OPEN_HAND_UNAVAILABLE".equals(failure.code())) {
             diagnostics = List.of(
-                    "safe_open_hand=no_side_effect_free_hotbar_item",
-                    "remedy=prepare_empty_hotbar_slot_or_plain_material_or_safe_mining_tool");
+                    "safe_open_hand=no_side_effect_free_hotbar_or_offhand_item",
+                    "remedy=prepare_empty_or_safe_offhand_or_plain_material_or_safe_mining_tool");
         } else if ("CONTAINER_AIM_OCCLUDED".equals(failure.code())
                 && failure.observed().get("crosshair") instanceof String kind) {
             diagnostics = switch (kind) {
