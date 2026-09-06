@@ -2227,14 +2227,16 @@ class AgentPrimitivePlannerTest {
                 1, Optional.empty(),
                 Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.INVENTORY_TRANSFER),
                 List.of(new ActionDsl.InspectKnownContainer(
-                        "inspect", chest, "minecraft:chest", Optional.of(label))));
+                        "inspect", chest, "minecraft:waxed_copper_chest", Optional.of(label))));
         var records = new java.util.ArrayList<ObservationRecord>();
         records.add(surface(
-                chest, ObservationRecord.Face.SOUTH, "minecraft:chest", null, 0));
+                chest, ObservationRecord.Face.SOUTH,
+                "minecraft:waxed_copper_chest", null, 0));
         records.add(surface(
-                chest, ObservationRecord.Face.WEST, "minecraft:chest", null, 0));
+                chest, ObservationRecord.Face.WEST,
+                "minecraft:waxed_copper_chest", null, 0));
         records.add(visibleContainerLabel(
-                ref, "minecraft:wheat", chest, "minecraft:chest", 0));
+                ref, "minecraft:wheat", chest, "minecraft:waxed_copper_chest", 0));
         var delivered = new ObservationFrame(
                 "obs-0000000000000001", new ObservationValues.ResourceId(DIMENSION),
                 1, 16, false, records);
@@ -2247,7 +2249,7 @@ class AgentPrimitivePlannerTest {
         var wrongItem = new ActionDsl.Program(
                 1, Optional.empty(), program.capabilities(),
                 List.of(new ActionDsl.InspectKnownContainer(
-                        "inspect", chest, "minecraft:chest",
+                        "inspect", chest, "minecraft:waxed_copper_chest",
                         Optional.of(new ActionDsl.RoutingLabel(ref, "minecraft:carrot")))));
         assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
                 wrongItem, map, new DeterministicAStar(),

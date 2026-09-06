@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.agent.observation;
 
+import dev.aod.mcmcp.routine.KnownContainerPolicy;
 import java.util.Collections;
 import java.util.Locale;
 import java.util.Map;
@@ -302,8 +303,7 @@ public sealed interface ObservationRecord permits ObservationRecord.VisibleSurfa
             if ("minecraft:air".equals(item.value())) {
                 throw new IllegalArgumentException("container label item must not be air");
             }
-            if (!"minecraft:chest".equals(containerBlock.value())
-                    && !"minecraft:barrel".equals(containerBlock.value())) {
+            if (!KnownContainerPolicy.allows(containerBlock.value())) {
                 throw new IllegalArgumentException(
                         "container label must be attached to a supported container");
             }

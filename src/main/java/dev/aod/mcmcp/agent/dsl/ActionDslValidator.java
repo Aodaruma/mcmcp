@@ -5,6 +5,7 @@ import dev.aod.mcmcp.agent.mining.SafeMiningBlocks;
 import dev.aod.mcmcp.agent.mining.TunnelGeometry;
 import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.redstone.RedstoneSpec;
+import dev.aod.mcmcp.routine.KnownContainerPolicy;
 import dev.aod.mcmcp.routine.SafeBreakSourcePolicy;
 
 import java.util.EnumSet;
@@ -84,8 +85,6 @@ public final class ActionDslValidator {
     private static final Set<String> VANILLA_HOES = Set.of(
             "minecraft:wooden_hoe", "minecraft:stone_hoe", "minecraft:iron_hoe",
             "minecraft:golden_hoe", "minecraft:diamond_hoe", "minecraft:netherite_hoe");
-    private static final Set<String> KNOWN_CONTAINERS = Set.of(
-            "minecraft:chest", "minecraft:barrel");
     private static final Set<String> FURNACE_STATIONS = Set.of(
             "furnace", "blast_furnace", "smoker");
     private static final Set<String> STACK_POLICIES = Set.of(
@@ -722,8 +721,8 @@ public final class ActionDslValidator {
         }
         if (node instanceof ActionDsl.InspectKnownContainer inspect) {
             validatePosition(inspect.target(), path + ".target");
-            if (!KNOWN_CONTAINERS.contains(inspect.expectedBlock())) {
-                throw invalid(path + ".expected_block must be minecraft:chest or minecraft:barrel");
+            if (!KnownContainerPolicy.allows(inspect.expectedBlock())) {
+                throw invalid(path + ".expected_block must be an allowlisted vanilla container");
             }
             validateRoutingLabel(inspect.routingLabel(), path);
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
@@ -732,8 +731,8 @@ public final class ActionDslValidator {
         }
         if (node instanceof ActionDsl.TakeKnownContainerStack take) {
             validatePosition(take.target(), path + ".target");
-            if (!KNOWN_CONTAINERS.contains(take.expectedBlock())) {
-                throw invalid(path + ".expected_block must be minecraft:chest or minecraft:barrel");
+            if (!KnownContainerPolicy.allows(take.expectedBlock())) {
+                throw invalid(path + ".expected_block must be an allowlisted vanilla container");
             }
             requirePattern(take.item(), RESOURCE_LOCATION, path + ".item");
             if (!STACK_POLICIES.contains(take.stackPolicy())) {
@@ -751,8 +750,8 @@ public final class ActionDslValidator {
         }
         if (node instanceof ActionDsl.StoreKnownContainerStack store) {
             validatePosition(store.target(), path + ".target");
-            if (!KNOWN_CONTAINERS.contains(store.expectedBlock())) {
-                throw invalid(path + ".expected_block must be minecraft:chest or minecraft:barrel");
+            if (!KnownContainerPolicy.allows(store.expectedBlock())) {
+                throw invalid(path + ".expected_block must be an allowlisted vanilla container");
             }
             requirePattern(store.item(), RESOURCE_LOCATION, path + ".item");
             if (!STACK_POLICIES.contains(store.stackPolicy())) {

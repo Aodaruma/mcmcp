@@ -462,7 +462,7 @@ glassのように視覚を通すが衝突するblock、slab、stairs、fence、t
 
 近傍entityは半径内のbounded query後、eye位置からAABBの複数sample点へのVISUAL line-of-sightでfilterする。1点以上が遮蔽されていなければ正確なEntityType、AABB、XYZ、velocityをvisible recordへ出せる。さらに、この可視判定を通過した非playerだけについて24文字のopaque `entity_ref`を発行する。refはserver側でworld session、dimension、EntityType、内部UUIDへ束縛し、最新の可視観測から100 client tickで解決不能になる。playerでは常にnullとし、raw UUIDは一切公開しない。ref単独は現在可視性・reach・操作許可を証明せず、将来のconsumerもdispatch直前に同じ実entityのalive、type、line-of-sight、通常reachを再検証する。`minecraft:item`のときだけ、実際に描画されるnon-empty ItemStackのregistry item IDを任意field `displayed_item`として併記する。これは落下物の見た目に対するsemantic labelであり、stack count、data component、UUID、owner、pickup delay、age、NBTは公開しない。emptyまたはregistry不明のdisplay stackはidentityを推測せず、そのentity recordを省略して`visible_entities_truncated=true`とする。非ItemEntityへ`displayed_item`を付けることも拒否する。inventory、AI target、壁裏entityは公開しない。sparse rayが小さいentityを偶然外すことは、このentity専用line-of-sightで補う。
 
-可視な`minecraft:item_frame` / `minecraft:glow_item_frame`がnon-empty itemを表示し、その支持blockが同じcompleted frameでpolicy-visibleな単一chestまたはbarrelである場合だけ、`visible_entity.container_label={item,container_position,container_block,attachment_face}`を返せる。`displayed_item`は落下ItemEntity専用のまま流用せず、count、component、NBTも公開しない。double chestは額縁1個から論理container全体との対応を一意に証明できないため、この初期sliceではlabelを返さない。label itemはexact registry IDであり、カテゴリやtagへの推測は行わない。
+可視な`minecraft:item_frame` / `minecraft:glow_item_frame`がnon-empty itemを表示し、その支持blockが同じcompleted frameでpolicy-visibleな単一の木製chest、copper chestまたはbarrelである場合だけ、`visible_entity.container_label={item,container_position,container_block,attachment_face}`を返せる。`displayed_item`は落下ItemEntity専用のまま流用せず、count、component、NBTも公開しない。double chestは額縁1個から論理container全体との対応を一意に証明できないため、この初期sliceではlabelを返さない。label itemはexact registry IDであり、カテゴリやtagへの推測は行わない。
 
 落下物は`collect_visible_item(displayed_item,target)`で1つずつ回収できる。LLMは最新frameの`entity_type=minecraft:item`、`displayed_item`、連続値XYZを丸めずnodeへコピーする。MODはそのwitnessに近い既知かつ安全なTraversability終点NavCellを解析的に選び、既知経路と毎tickのswept-AABB safety gateを通って接近する。pickup候補はVanillaのplayer AABB拡張判定をNavCell上へ有界に近似して絞り、到達可能な候補のうち実行時間が最小の経路を選ぶ。終点では実player AABBを`inflate(1.0, 0.5, 1.0)`した領域とfreshなitem AABBの交差を改めて必須にするため、抽象cellの高さだけで取得可能と断定しない。落下中のentity XYZからYを機械的にfloorしてNavCellを捏造しない。成功条件は対象item IDのinventory絶対個数が当該node occurrence開始時より増えることで、entityの消失だけでは成功にしない。経路中もfreshなvisible witnessと予定pickup cellの交差を再確認する。提出した連続座標から0.75 block以内に同じ`displayed_item`のfresh matching witnessが残る一方、旧pickup cellだけが失効した場合は、入力を即時解放し、旧到着状態とpickup cellを捨て、当該node occurrenceのinventory baselineを保持したまま、最新frame・既知経路・pickup AABB・局所安全性から内部で有界に再bindする。公開recordはentity UUIDを持たないため、別個体やmerge後の同種itemを区別した同一性は主張しない。有効なoccurrence / Action期限は再計画で延長せず、期限内に安全な経路を再証明できない場合、witnessが消滅した場合、0.75 block外へ移動した場合は`PATH_BLOCKED`で終了してLLMへ戻す。到着後は手投げitemの40 tick pickup delayも包含する60 tickだけ確認する。entityの通常移動は`world_revision`を更新しないため、1回のvisual scan周期より古いframeをitem追跡の継続証拠にせず、未知領域や危険領域へ落下物を追わない。
 
@@ -783,7 +783,7 @@ Action DSL v1の制御構造:
 | apply_known_redstone_spec | camera, block_interact, block_place | 固定lever→lamp 1出力、2出力fan-out、または1 dustの直線identityを設置し、live visualでOFF / ON / OFFを試験する。wire版はlamp / dust / leverの可視glass supportとdustの直線shape・power 0 / 15 / 0も完全一致させる |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
-| inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内のVanilla chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
+| inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内の明示allowlist対象Vanilla chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemを最大14 whole stacks・896個まで移し、各server ACKと最後1回のfull readbackでplayerの絶対個数を確認 |
 | store_known_container_stack | camera, inventory_transfer | playerの指定itemを同じcontainerへ最大14 whole stacks・896個まで移し、各server ACKと最後1回のfull readbackでcontainerの絶対個数を確認 |
 | remove_visible_frame_item | camera, entity_attack | 配送済みの正面額縁と表示itemをJIT再確認し、空手の通常攻撃1回で表示除去をserver確認。drop回収は別Action |
@@ -863,6 +863,8 @@ current targetのfresh reproofでfaceまたはaim pointが受付時から変化�
 `open_known_passage.expected_block`は12種の木系door / trapdoor / fence gateを明示列挙し、ironとcopperを許可しない。doorはクリック対象のhalfだけでなく、同一block、facing、hinge、powered、openが整合する相方halfをdispatch前に固定する。primary prediction ACK、primaryのauthoritative state、dispatch後のcompanion block mutation、companionの完全stateがすべて一致した場合だけ成功する。pressure plate式自動doorはこのopcodeを使わず、plate上と反対側へ続く`navigate_to_known`を別々のprimitiveとして実行し、world revision更新後のVanilla VoxelShapeから後続経路を再計画する。
 
 container primitiveは別のMCP Toolやlegacy routineを公開せず、同じAction supervisorから既存のscreen ownership / full-content同期adapterを駆動する。`inspect_known_container`はslot番号、NBT/component本文、menu内部状態を返さず、最大27種類の`item=count`だけを`NODE_EVIDENCE` traceへ返す。`take_known_container_stack`はcontainer→player、`store_known_container_stack`はplayer→containerへdirectionを固定し、`default_components_only`または耐久済みtoolにも使える`item_id_any_components`だけを許可する。任意の`max_stacks`は1〜14（省略時1）、`max_transfer_count`は1〜896（省略時64×max_stacks）とし、このActionで移す量を制限する。初回openと最後のreadback openに加え、whole-stack QUICK_MOVEを最大max_stacks回、計2+max_stacks interactionだけ予約する。source slotとitem/componentsの計画は最初のserver同期snapshotで固定し、補充されたstackを追加しない。各clickの前に全slot・成分・容量・残る個数予算を検証し、freshなserver slot差分を確認してから同じmenuで次のclickへ進む。内部実行は400+60×(max_stacks−1) ticks、Action予約は600+60×(max_stacks−1) ticksとその50倍msとし、200 ticksのdispatch・JIT・release余白を維持する。最後は同じcontainerを1回だけ開き直して全slotを照合する。途中停止時はserver確認済みprefixをCONFIRMED、最後の未確認clickだけをUNKNOWNとして分け、blind retryしない。絶対個数目標に届かなければ確認済み部分移送を記録して失敗し、再観測後に再計画させる。OS focusとmouse grabは要求しないが、pause、overlay、予期しないScreen、world/session変化、可視threat、cursor残留、screen ownership不一致はfail closedとする。Agent所有の正規container Screenだけは処理stageに応じて許可する。
+
+container blockの明示allowlistは`minecraft:chest`、`minecraft:barrel`、およびMinecraft 26.2の8種のcopper chest（`copper_chest` / `exposed_copper_chest` / `weathered_copper_chest` / `oxidized_copper_chest`と各waxed版）だけである。trapped chest、ender chest、shulker box、MOD containerを拒否し、runtime tagやdatapackでこの集合を拡張しない。chest familyは単体を9×3、doubleを9×6として扱うが、block IDと全BlockStateの完全一致を要求する。oxidation / wax状態、facing、waterlogged、single / left / rightの変化、copper golem等によるslot変化はfail closedとし、blind retryせず再観測させる。
 
 上記3 primitiveは任意の`routing_label={entity_ref,item}`を受け取る。値は同じcurrent observationの`visible_entity.entity_ref`と`container_label.item`からコピーする。labelはcontainer操作の権限ではなく経路選択witnessであり、plannerは配達済みframeのsame ref / item / attachment target / blockを要求する。runtimeはadmission、各normal-use open直前、各QUICK_MOVE直前にsame entityの可視性・LOS・item・直接付着先・container identityをJIT再照合し、変化時はクリックせず再計画へ返す。移送クリック前にはserver snapshotとlive menu全slotの一致に加え、移送元whole stack全量が移送先slotsへ収まることを証明し、QUICK_MOVEによる部分移送を許可しない。
 
@@ -989,7 +991,7 @@ templateは`agent_start_action.inputSchema.examples`に掲載し、実装reposit
 - [`break_known_oak_column.json`](action-templates/break_known_oak_column.json): 地上から届く、現在可視な3段oak幹を下から順に破壊する
 - [`wheat_cycle.json`](action-templates/wheat_cycle.json): 2区画をmutation batchで耕し、植え、有限成熟待機後に収穫する
 - [`open_known_passage.json`](action-templates/open_known_passage.json): 可視な木製通路を開く
-- [`inspect_known_container.json`](action-templates/inspect_known_container.json): Vanilla chest / barrelのserver同期済み内容を確認する
+- [`inspect_known_container.json`](action-templates/inspect_known_container.json): 明示allowlist対象のVanilla chest / barrelのserver同期済み内容を確認する
 - [`take_wheat_seeds_stack.json`](action-templates/take_wheat_seeds_stack.json): wheat seedsをwhole stack 1回だけ取得する
 - [`copy_known_oak_beam.json`](action-templates/copy_known_oak_beam.json): 完全なoak log stateを90度回転し、現在supportと先行entry dependencyで2 blockの水平梁を設置する
 - [`brew_awkward_potions.json`](action-templates/brew_awkward_potions.json): 片道cameraが270度以内のheadingから、空の既知brewing standでwater potion 3本をawkward potionへ1段醸造する。超える場合は直前に`face_known_position`とその追加budgetを置く
@@ -1070,7 +1072,7 @@ agent_get_stateの返却対象:
 - 最新immutable observation frameのID、範囲、鮮度、coverage、kind別件数
 - 現在または直近action_idと終了理由
 
-生chunk、遮蔽されたentity、chat、看板、本、world seed、tokenはTool resultへ含めない。例外としてautomation-owned Vanilla chest / barrelを通常useで開いた直後のserver full-content packetから作るbounded item集計だけは、そのActionのtraceへ一時的に返せる。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
+生chunk、遮蔽されたentity、chat、看板、本、world seed、tokenはTool resultへ含めない。例外としてautomation-ownedな明示allowlist対象Vanilla chest / barrelを通常useで開いた直後のserver full-content packetから作るbounded item集計だけは、そのActionのtraceへ一時的に返せる。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
 
 ### 8.6 内部Task state
 

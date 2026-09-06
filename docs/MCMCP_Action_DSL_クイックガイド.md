@@ -131,7 +131,7 @@ Actionの既存上限256ノードに収まる検査結果をすべて保持し�
 
 全nodeには一意の`id`が必要です。正規opcode、他の必須field、enum、上限、capabilityはcatalogの`inputSchema`をそのまま使い、aliasを推測しません。
 
-`take_known_container_stack` / `store_known_container_stack`は、現在可視で通常reach内にあるVanilla chest / barrelで、同じitem IDのstackをまとめて移せます。任意の`max_stacks`は1〜14（省略時1）、`max_transfer_count`は1〜896（省略時64×max_stacks）です。stackは分割せず、各stack全量が残る予算と移送先に収まる場合だけ移します。最初のserver同期時に対象slotを固定し、各クリックのserver差分を確認してから同じ画面で次へ進み、最後に1回だけ開き直します。
+`inspect_known_container` / `take_known_container_stack` / `store_known_container_stack`の`expected_block`は、`minecraft:chest`、`minecraft:barrel`と8種のVanilla copper chest（通常4段階とwaxed 4段階）の明示allowlistです。trapped / ender / shulker / MOD containerや、datapackで追加されたtag要素は対象外です。take / storeは、現在可視で通常reach内にある対象containerで、同じitem IDのstackをまとめて移せます。単体chestは9×3、double chestは9×6として扱います。任意の`max_stacks`は1〜14（省略時1）、`max_transfer_count`は1〜896（省略時64×max_stacks）です。stackは分割せず、各stack全量が残る予算と移送先に収まる場合だけ移します。最初のserver同期時に対象slotを固定し、各クリックのserver差分を確認してから同じ画面で次へ進み、最後に1回だけ開き直します。
 
 `minimum_inventory_count`（最大2,304）と`minimum_container_count`（最大3,456）は移送先の**絶対個数**です。例えば既に2,464個ある大チェストへ2個を追加する場合、storeのgoalは2,466、今回の`max_transfer_count`は2です。`max_stacks`が2なら予約は660 ticks・33,000 ms・360 camera degrees・4 interactionsです。一般式は`600+60*(max_stacks-1)` ticks、その50倍ms、`2+max_stacks` interactionsです。
 
@@ -140,6 +140,8 @@ Actionの既存上限256ノードに収まる検査結果をすべて保持し�
 途中停止では、serverで移送を確認できた分を`CONFIRMED`、結果不明な最後のクリックを`UNKNOWN`として別々に返します。失敗したActionにも確認済みの移送が含まれるため、effectsを一度だけ反映し、UNKNOWNがある場合は再検査してから計画してください。自動補充や選択外stack・成分の変化を検知した場合、残りのクリックを続けません。
 
 Take/store can move up to 14 whole matching stacks in one owned menu. `max_transfer_count` limits this batch; the minimum count is an absolute destination goal. Each click requires fresh server confirmation, followed by one final reopen. Apply confirmed effects once, and reinspect any unknown result before retrying. Transfer counts follow `stack_policy`, while inspection totals combine every component variant of an item ID. Use `item_id_any_components` for an item-ID ledger; never overwrite that total with a `default_components_only` count.
+
+Copper chests use an exact eight-ID Minecraft 26.2 allowlist. A change in block ID, oxidation/wax state, facing, waterlogging, or single/double type fails closed; concurrent copper-golem or other inventory changes stop the batch and require reinspection instead of a blind retry.
 
 ### 額縁の表示品 / Item-frame display
 
