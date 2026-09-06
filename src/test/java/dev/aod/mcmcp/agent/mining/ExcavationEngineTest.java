@@ -23,6 +23,7 @@ class ExcavationEngineTest {
             var engine = engine(plan, port, 100_000, 20);
             var result = run(engine, port);
             assertThat(result.status()).isEqualTo(ExcavationEngine.Status.SUCCEEDED);
+            assertThat(engine.drainRendererRecoveryEvidence()).isEmpty();
             assertThat(result.confirmedBreaks()).isEqualTo(length * 2);
             assertThat(result.completedCells()).isEqualTo(length);
             assertThat(port.breaks).hasSize(length * 2).doesNotHaveDuplicates();
@@ -74,10 +75,135 @@ class ExcavationEngineTest {
         var plan = plan(16, false);
         var port = new FakePort(plan);
         port.gapUntilTick = 6;
-        var result = run(engine(plan, port, 100_000, 20), port);
+        var engine = engine(plan, port, 100_000, 20);
+        var result = run(engine, port);
         assertThat(result.status()).isEqualTo(ExcavationEngine.Status.SUCCEEDED);
         assertThat(port.breaks).hasSize(32).doesNotHaveDuplicates();
         assertThat(port.firstBreakTick).isEqualTo(6);
+        assertThat(engine.rendererRecoverySummary().detail())
+                .isEqualTo("tunnel_renderer_missing=1,revalidated=1,scope=block_probe");
+        assertThat(engine.drainRendererRecoveryEvidence())
+                .contains("tunnel_renderer_missing=1,revalidated=1,scope=block_probe");
+        assertThat(engine.drainRendererRecoveryEvidence()).isEmpty();
+    }
+
+    @Test void recoveryCountsEpisodesAndRequiresTheSameFreshProbeAfterEachGap() {
+        var plan = plan(1, false);
+        var port = new FakePort(plan);
+        var engine = engine(plan, port, 100_000, 20);
+        port.gapUntilTick = 3;
+        step(engine, port);
+        var firstGap = engine.rendererRecoverySummary();
+        assertThat(engine.drainRendererRecoveryEvidence()).isEmpty();
+        engine.tick(port.tick, port.tick); // Reentrant same-tick delivery is not another episode.
+        step(engine, port);
+        assertThat(engine.rendererRecoverySummary()).isEqualTo(firstGap);
+        step(engine, port); // Current BREAKABLE proof, before any server ACK.
+        assertThat(engine.rendererRecoverySummary().revalidated()).isEqualTo(1);
+        assertThat(engine.drainRendererRecoveryEvidence()).isEmpty();
+        assertThat(port.air).isEmpty();
+        step(engine, port); // ACK; the next probe must be observed again.
+        port.gapUntilTick = 7;
+        step(engine, port);
+        assertThat(engine.rendererRecoverySummary().missing()).isEqualTo(2);
+        assertThat(engine.rendererRecoverySummary().revalidated()).isEqualTo(1);
+        step(engine, port);
+        step(engine, port); // Fresh CLEAR of the same head cell.
+        assertThat(engine.rendererRecoverySummary().revalidated()).isEqualTo(2);
+        assertThat(firstGap.missing()).isEqualTo(1);
+        assertThat(firstGap.revalidated()).isZero(); // Earlier snapshots are immutable.
+        assertThat(run(engine, port).status()).isEqualTo(ExcavationEngine.Status.SUCCEEDED);
+        assertThat(port.breaks).hasSize(2).doesNotHaveDuplicates();
+    }
+
+    @Test void unknownStaleMoveAndAckWaitsDoNotBecomeRendererRecoveryEvidence() {
+        for (int mode = 0; mode < 4; mode++) {
+            var plan = plan(1, false);
+            var port = new FakePort(plan);
+            var engine = engine(plan, port, 8, 3);
+            port.unknownUntilTick = mode == 0 ? Long.MAX_VALUE : 0;
+            port.staleAtStart = mode == 1;
+            port.neverAck = mode == 2;
+            port.moveWait = mode == 3;
+            assertThat(run(engine, port).status()).isEqualTo(ExcavationEngine.Status.FAILED);
+            assertThat(engine.rendererRecoverySummary().missing()).isZero();
+            assertThat(engine.rendererRecoverySummary().revalidated()).isZero();
+            assertThat(engine.drainRendererRecoveryEvidence()).isEmpty();
+        }
+    }
+
+    @Test void currentTickProofBeforeTheLastServerRevisionCannotClaimRendererRecovery() {
+        var plan = plan(1, false);
+        var port = new FakePort(plan);
+        var engine = engine(plan, port, 100_000, 3);
+        step(engine, port); // Dispatch head break.
+        step(engine, port); // ACK establishes revision 1.
+        port.gapUntilTick = 4;
+        step(engine, port);
+        port.staleRevisionAfterFirstBreak = true;
+        assertThat(run(engine, port).reason()).isEqualTo(StopReason.OBSERVATION_TIMEOUT);
+        assertThat(engine.rendererRecoverySummary().missing()).isEqualTo(1);
+        assertThat(engine.rendererRecoverySummary().revalidated()).isZero();
+        assertThat(port.breaks).hasSize(1);
+        assertThat(port.moves).isEmpty();
+    }
+
+    @Test void rendererReturnWithoutUsableCurrentProofNeverCountsAsRevalidated() {
+        for (int mode = 0; mode < 5; mode++) {
+            var plan = plan(1, false);
+            var port = new FakePort(plan);
+            var engine = new ExcavationEngine(plan, port, new ExcavationEngine.Limits(
+                    0, 0, 100_000, 100_000, mode == 4 ? 0 : plan.maxBreaks(), 3));
+            port.gapUntilTick = 2;
+            step(engine, port);
+            port.unknownUntilTick = mode == 0 ? Long.MAX_VALUE : 0;
+            port.staleAtStart = mode == 1;
+            port.wrongWitness = mode == 2;
+            port.unsafe = mode == 3 ? StopReason.FLUID : StopReason.NONE;
+            assertThat(run(engine, port).status()).isEqualTo(ExcavationEngine.Status.FAILED);
+            assertThat(engine.rendererRecoverySummary().missing()).isEqualTo(1);
+            assertThat(engine.rendererRecoverySummary().revalidated()).isZero();
+            assertThat(port.breaks).isEmpty();
+            assertThat(port.moves).isEmpty();
+        }
+    }
+
+    @Test void gapHistorySurvivesTimeoutDeadlineAndOuterCancellationWithoutClaimingRecovery() {
+        for (int mode = 0; mode < 4; mode++) {
+            var plan = plan(1, false);
+            var port = new FakePort(plan);
+            var engine = new ExcavationEngine(plan, port, new ExcavationEngine.Limits(
+                    0, 0, mode == 1 ? 3 : 100_000,
+                    mode == 2 ? 3 : 100_000, plan.maxBreaks(), 3));
+            port.gapUntilTick = Long.MAX_VALUE;
+            step(engine, port);
+            if (mode == 3) engine.close(); // Mirrors the outer cancellation/cleanup path.
+            var result = run(engine, port);
+            assertThat(result.reason()).isEqualTo(mode == 0 ? StopReason.OBSERVATION_TIMEOUT
+                    : mode == 3 ? StopReason.CANCELLED : StopReason.DEADLINE);
+            assertThat(engine.rendererRecoverySummary().detail())
+                    .isEqualTo("tunnel_renderer_missing=1,revalidated=0,scope=block_probe");
+            assertThat(engine.drainRendererRecoveryEvidence())
+                    .contains("tunnel_renderer_missing=1,revalidated=0,scope=block_probe");
+            engine.close();
+            assertThat(engine.drainRendererRecoveryEvidence()).isEmpty();
+            assertThat(engine.rendererRecoverySummary().revalidated()).isZero();
+            assertThat(port.breaks).isEmpty();
+            assertThat(port.moves).isEmpty();
+            assertThat(port.released).isTrue();
+        }
+    }
+
+    @Test void recoverySummaryHasOnlyBoundedFixedFieldsAndCannotAssertMoreRecoveriesThanGaps() {
+        var maximum = new ExcavationEngine.RendererRecoverySummary(65_535, 65_535);
+        assertThat(maximum.detail()).hasSizeLessThan(256)
+                .isEqualTo("tunnel_renderer_missing=65535,revalidated=65535,scope=block_probe");
+        assertThatThrownBy(() -> new ExcavationEngine.RendererRecoverySummary(-1, 0))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ExcavationEngine.RendererRecoverySummary(65_536, 0))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ExcavationEngine.RendererRecoverySummary(1, 2))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test void aPermanentGapAndAStalePostAckObservationHaveFiniteStops() {
@@ -364,8 +490,11 @@ class ExcavationEngineTest {
         long revision;
         long firstBreakTick;
         long gapUntilTick;
+        long unknownUntilTick;
         boolean staleAfterFirstBreak;
+        boolean staleRevisionAfterFirstBreak;
         boolean neverAck;
+        boolean moveWait;
         boolean released;
         boolean wrongWitness;
         boolean replaceReturningCell;
@@ -386,8 +515,10 @@ class ExcavationEngineTest {
         @Override public BlockInspection inspectBlock(TunnelGeometry.Cell block, long minTick, long minRevision) {
             assertThat(plan.containsBlock(block)).isTrue();
             if (tick < gapUntilTick) return BlockInspection.waiting(StopReason.RENDERER_GAP);
+            if (tick < unknownUntilTick) return BlockInspection.waiting(StopReason.UNKNOWN_BLOCK);
             if (!air.isEmpty() && stopAfterFirstBreak != StopReason.NONE) return BlockInspection.stopped(stopAfterFirstBreak);
             if (staleAfterFirstBreak && !air.isEmpty()) return BlockInspection.clear(0, 0);
+            if (staleRevisionAfterFirstBreak && !air.isEmpty()) return BlockInspection.clear(tick, 0);
             var lower = block.y() == feet.y() ? block : block.offset(0, -1, 0);
             assertThat(feet.adjacent(lower)).isTrue(); // No probe of the sealed suffix.
             if (air.contains(block) && !(replaceReturningCell && entered.contains(lower))) {
@@ -426,6 +557,7 @@ class ExcavationEngineTest {
 
         @Override public MoveInspection inspectMove(TunnelGeometry.Cell from, TunnelGeometry.Cell to,
                 long minTick, long minRevision) {
+            if (moveWait) return MoveInspection.waiting(StopReason.UNSAFE_MOVEMENT);
             if (moveStop != StopReason.NONE) return MoveInspection.stopped(moveStop);
             assertThat(air).contains(to, to.head());
             assertThat(from).isEqualTo(feet);

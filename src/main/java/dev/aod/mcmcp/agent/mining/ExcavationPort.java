@@ -72,6 +72,7 @@ public interface ExcavationPort {
                     witness.observedTick(), witness.worldRevision(), StopReason.NONE);
         }
 
+        /** RENDERER_GAP means no current renderer sample; unknown/occluded cells use UNKNOWN_BLOCK. */
         public static BlockInspection waiting(StopReason reason) {
             return new BlockInspection(BlockStatus.WAIT, null, -1, -1, reason);
         }

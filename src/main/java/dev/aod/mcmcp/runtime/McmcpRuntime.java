@@ -7784,6 +7784,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 Duration.ofMillis(action.program().effectiveBudget().maxDurationMillis()).toNanos(),
                 System.nanoTime()));
         if (result.status() != ExcavationEngine.Status.RUNNING || result.releaseEscalationRequired()) {
+            execution.recordRendererRecoverySummary();
             agentActions.recordNodeEvidence(action.actionId(),
                     "tunnel_cells=" + result.completedCells() + ",moves=" + result.completedMoves()
                             + ",server_confirmed_breaks=" + result.confirmedBreaks()
@@ -7841,6 +7842,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private boolean facingBreak;
         private RoutePlan pendingRoute;
         private TunnelGeometry.Cell hazardFocus;
+
+        private void recordRendererRecoverySummary() {
+            engine.drainRendererRecoveryEvidence().ifPresent(
+                    detail -> agentActions.recordNodeEvidence(action.actionId(), detail));
+        }
 
         private TunnelExecution(ActionDsl.ExcavateTunnel operation,
                 AgentActionStore.Active action, WorldSessionTracker.Snapshot session) {
@@ -10981,6 +10987,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 closed = false;
                 McmcpMod.LOGGER.error("MCMCP tunnel input release failed", failure);
             } finally {
+                tunnel.recordRendererRecoverySummary();
                 recordConstructionEffects(agentExecution.actionId, tunnel.engine.drainEffects());
                 int confirmed = tunnel.engine.drainBrokenDelta();
                 for (int index = 0; index < confirmed; index++)

@@ -21,6 +21,7 @@ import static dev.aod.mcmcp.agent.mining.ExcavationPort.*;
  */
 public final class ExcavationEngine implements AutoCloseable {
     public static final int MAX_LOCAL_RELEASE_ATTEMPTS = 3;
+    public static final int MAX_RENDERER_RECOVERY_EPISODES = 65_535;
     private final TunnelGeometry.Plan plan;
     private final ExcavationPort port;
     private final Limits limits;
@@ -36,6 +37,10 @@ public final class ExcavationEngine implements AutoCloseable {
     private int confirmedBreaks;
     private int pendingBrokenDelta;
     private int releaseAttempts;
+    private int rendererMissingEpisodes;
+    private int rendererRevalidatedEpisodes;
+    private TunnelGeometry.Cell rendererGapCell;
+    private boolean rendererRecoveryEvidenceDrained;
     private long minObservationTick;
     private long minObservationRevision;
     private long observationWaitStart = -1;
@@ -109,11 +114,18 @@ public final class ExcavationEngine implements AutoCloseable {
         if (observation.status() == BlockStatus.WAIT
                 || observation.observedTick() != tick
                 || !afterBoundary(observation.observedTick(), observation.worldRevision(), tick)) {
+            if (observation.status() == BlockStatus.WAIT
+                    && observation.reason() == StopReason.RENDERER_GAP && rendererGapCell == null) {
+                rendererMissingEpisodes = Math.min(MAX_RENDERER_RECOVERY_EPISODES,
+                        rendererMissingEpisodes + 1);
+                rendererGapCell = cell;
+            }
             waitForObservation(tick);
             return;
         }
         observationWaitStart = -1;
         if (observation.status() == BlockStatus.CLEAR) {
+            rendererRevalidated(cell);
             phase = next;
             return;
         }
@@ -128,6 +140,7 @@ public final class ExcavationEngine implements AutoCloseable {
             stop(Status.FAILED, StopReason.BUDGET);
             return;
         }
+        rendererRevalidated(cell);
         breaking = cell;
         phase = next == Phase.FEET ? Phase.BREAKING_HEAD : Phase.BREAKING_FEET;
         breakDispatches++;
@@ -196,6 +209,26 @@ public final class ExcavationEngine implements AutoCloseable {
 
     private boolean afterBoundary(long observedTick, long revision, long tick) {
         return observedTick >= minObservationTick && observedTick <= tick && revision >= minObservationRevision;
+    }
+
+    private void rendererRevalidated(TunnelGeometry.Cell cell) {
+        if (!cell.equals(rendererGapCell)) return;
+        rendererRevalidatedEpisodes = Math.min(MAX_RENDERER_RECOVERY_EPISODES,
+                rendererRevalidatedEpisodes + 1);
+        rendererGapCell = null;
+    }
+
+    /** Cumulative block-probe history, not current readiness, dispatch, or server ACK evidence. */
+    public RendererRecoverySummary rendererRecoverySummary() {
+        return new RendererRecoverySummary(rendererMissingEpisodes, rendererRevalidatedEpisodes);
+    }
+
+    /** Drain at most once after stopping, including outer cancellation and repeated cleanup. */
+    public Optional<String> drainRendererRecoveryEvidence() {
+        if (terminalIntent == null || rendererMissingEpisodes == 0 || rendererRecoveryEvidenceDrained)
+            return Optional.empty();
+        rendererRecoveryEvidenceDrained = true;
+        return Optional.of(rendererRecoverySummary().detail());
     }
 
     private void record(OperationResult operation, long tick) {
@@ -294,6 +327,21 @@ public final class ExcavationEngine implements AutoCloseable {
 
     public enum Phase { HEAD, FEET, BREAKING_HEAD, BREAKING_FEET, MOVE_READY, MOVING, RELEASING, TERMINAL }
     public enum Status { RUNNING, SUCCEEDED, FAILED, CANCELLED }
+
+    /** One episode spans renderer WAITs until the same probe passes every normal proof gate. */
+    public record RendererRecoverySummary(int missing, int revalidated) {
+        public RendererRecoverySummary {
+            if (missing < 0 || missing > MAX_RENDERER_RECOVERY_EPISODES
+                    || revalidated < 0 || revalidated > missing) {
+                throw new IllegalArgumentException("invalid tunnel renderer recovery summary");
+            }
+        }
+
+        public String detail() {
+            return "tunnel_renderer_missing=" + missing + ",revalidated=" + revalidated
+                    + ",scope=block_probe";
+        }
+    }
 
     public record Limits(long startTick, long startNanos, long hardDeadlineTick,
             long hardDeadlineNanos, int maxBreaks, int observationWaitTicks) {
