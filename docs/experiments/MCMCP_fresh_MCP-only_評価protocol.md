@@ -2,7 +2,7 @@
 
 ## 目的
 
-選択したprompt profileのproduction prompt **だけ**を新規のephemeral Codex threadへ渡し、MCMCPの公開5 toolsだけで遂行できるかを比較する。runnerは任意文字列を受け取らず、次の厳格な4 profileだけを許可する。
+選択したprompt profileのproduction prompt **だけ**を新規のephemeral Codex threadへ渡し、MCMCPの公開5 toolsだけで遂行できるかを比較する。runnerは任意文字列を受け取らず、次の4つの能力評価profileと、別枠の機能回帰 `container-inspect-recovery` だけを許可する。後者の固定prompt・証跡・合否は[回復試験ガイド](../../tools/eval/RECOVERY.md)に定め、モデル能力の比較結果とは分ける。 / The fifth profile is a separate functional regression; see the recovery guide for its fixed prompt and acceptance evidence.
 
 `full-cycle`は製品受入の主profileである。
 
@@ -26,7 +26,7 @@
 
 `warehouse-smelt`のproduction goalは、材料chestのraw iron 1個とcoal 1個を通常GUIで取り出し、空のcold furnaceでiron ingot 1個へ精錬し、default componentsの完成品だけを空のoutput barrelへ通常GUIで格納することである。run terminal後にworldをSave and Quitし、source / furnace / playerが空、outputがiron ingot 1個だけ、fixture workspaceのblockが不変であることをoffline oracleで確定する。
 
-deadlineはprofileに固定し、`short-regression` / `full-cycle` / `warehouse-smelt`は30分、`hard-building-copy`だけは90分とする。callerによる上書きや延長は認めない。
+deadlineはprofileに固定し、`short-regression` / `full-cycle` / `warehouse-smelt`は30分、`hard-building-copy`は90分、機能回帰の `container-inspect-recovery` は5分とする。callerによる上書きや延長は認めない。 / Deadlines are fixed per profile; recovery regression uses five minutes.
 
 対象は `gpt-5.6-sol/high` を先行し、必要に応じて同じ golden baseline を復元して `gpt-5.6-luna/xhigh`、`gpt-5.6-luna/high` を別runで評価する。session、観測、action historyをモデル間で共有しない。
 
