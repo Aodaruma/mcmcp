@@ -232,7 +232,8 @@ $requiredRunnerContracts = @(
         "'item/reasoning/summaryPartAdded'",
         "'item/reasoning/textDelta'",
         "'item/reasoning/summaryTextDelta'",
-        "`$headers['Mcmcp-Evaluation-Lease'] = `$script:EvaluationLeaseId",
+        '$leaseId = if ($script:EvaluationLeaseAcquired) { $script:EvaluationLeaseId } else { $null }',
+        '-EvaluationLeaseId $leaseId -TimeoutSeconds $TimeoutSeconds',
         'EVALUATION_LEASE = $script:EvaluationLeaseId',
         '[Threading.Tasks.Task]::WhenAny',
         '$leaseReady = $leaseTask.IsCompleted',
@@ -269,6 +270,11 @@ foreach ($required in $requiredRunnerContracts) {
     if (-not $runnerText.Contains($required, [StringComparison]::Ordinal)) {
         throw "評価runnerの公開monitor/input lease契約が欠落しています: $required"
     }
+}
+$transportText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../mcp/McmcpTransport.ps1'))
+if (-not $transportText.Contains("`$headers['Mcmcp-Evaluation-Lease'] = `$EvaluationLeaseId",
+        [StringComparison]::Ordinal)) {
+    throw '共有transportの評価lease header転送が欠落しています。'
 }
 $runnerEncoding = $runnerText.IndexOf(
     '[Console]::OutputEncoding = $Utf8NoBom', [StringComparison]::Ordinal)
@@ -379,7 +385,7 @@ if (-not $launcherText.Contains('.WaitForExit()', [StringComparison]::Ordinal) -
     throw 'visible launcherがchild終了連動契約を満たしていません。'
 }
 if (-not $launcherText.Contains(
-        "[ValidateSet('short-regression', 'full-cycle', 'hard-building-copy')]",
+        "[ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy')]",
         [StringComparison]::Ordinal)) {
     throw 'visible launcherがhard-building-copy固定profileを受理しません。'
 }
