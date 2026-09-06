@@ -21,11 +21,11 @@ The reported Claude run is unavailable. This work addresses the architectural ro
 
 ## ローカル検証結果 / Local validation
 
-- 対象コード / Validated code commit: `9af44809699cdc0def9cdf3c0ac6111d70e3f70d`（latest main `805cd5321f907932bf9f53a172c8975dd7014698`を統合）。
+- 対象コード / Validated code commit: `a6f8e8dd7d041252591d413442e2aff7febebe98`（latest main `805cd5321f907932bf9f53a172c8975dd7014698`を統合）。
 - `gradlew test harnessTest adminBridgeTest verifyHarnessIsolation build --console=plain`: **PASS**。unit 1,303、harness 27、admin 21、計1,351件でfailure/error 0。
 - `gradlew runGameTestServer --console=plain`: **15/15 PASS**。固定坑道fixtureの代表90ブロック配置も専用source set内で検証。
 - `Test-McmcpEvalTrace.ps1 -SelfTest`: **71/71 PASS**、`Test-McmcpLiveMonitor.ps1`: **81/81 PASS**。
-- 坑道専用mock: capability gate **PASS**、bounded acceptanceの正常/範囲外変更・別run・status差し替え・実resource欠測/型違い拒否 **PASS**、renderer witness **13/13 PASS**。
+- 坑道専用mock: capability gate **PASS**、bounded acceptanceの正常/範囲外変更・別run・status差し替え・pre-run/post-run resource欠測/型違い拒否 **PASS**、renderer witness **13/13 PASS**。
 - `python -m unittest discover -s tools/mcp -p 'test_*.py' -q`: **14 PASS**。認証不要のmock HTTP試験で、ゲームへは接続していません。
 - catalog raw SHA-256: `0c36ccfe6c923b61a385c402d2343178a11f3b942ee9d1eba3a4993a748c7544`、semantic Tool surface SHA-256: `a452d7812915c0e3d0d2e51fa9a2ee32e97667469ccde04ebfd7e388fb0cbe67`。
 - JAR: `build/libs/mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar`。
