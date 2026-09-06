@@ -7783,11 +7783,36 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         AgentInputState.global().capMovementValidity(actionMovementDeadline(agentExecution,
                 Duration.ofMillis(action.program().effectiveBudget().maxDurationMillis()).toNanos(),
                 System.nanoTime()));
+        if (result.status() != ExcavationEngine.Status.RUNNING || result.releaseEscalationRequired()) {
+            agentActions.recordNodeEvidence(action.actionId(),
+                    "tunnel_cells=" + result.completedCells() + ",moves=" + result.completedMoves()
+                            + ",server_confirmed_breaks=" + result.confirmedBreaks()
+                            + ",drop_collection=not_asserted");
+        }
+        if (result.releaseEscalationRequired()) {
+            // Preserve the first intent while handing the unreleased owner to the existing
+            // bounded cleanup/OFF-lock path. A long tunnel budget is not a cleanup retry budget.
+            var intent = execution.engine.pendingTerminalStatus().orElseThrow();
+            PendingAgentTerminal terminal;
+            if (intent == ExcavationEngine.Status.SUCCEEDED) {
+                agentActions.completeNode(action.actionId());
+                terminal = PendingAgentTerminal.success(action.actionId());
+            } else if (intent == ExcavationEngine.Status.CANCELLED) {
+                terminal = PendingAgentTerminal.cancel(action.actionId());
+            } else {
+                terminal = PendingAgentTerminal.failure(action.actionId(), new AgentActionStore.Failure(
+                        AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
+                        List.of("tunnel_" + result.reason().name().toLowerCase(Locale.ROOT))));
+            }
+            if (!releaseAgentControl(minecraft)) {
+                rememberPendingAgentTerminal(terminal);
+                retainReadyAfterDeferredAgentRelease();
+            } else if (publishAgentTerminal(terminal)) {
+                returnControlReady();
+            }
+            return;
+        }
         if (result.status() == ExcavationEngine.Status.RUNNING) return;
-        agentActions.recordNodeEvidence(action.actionId(),
-                "tunnel_cells=" + result.completedCells() + ",moves=" + result.completedMoves()
-                        + ",server_confirmed_breaks=" + result.confirmedBreaks()
-                        + ",drop_collection=not_asserted");
         if (result.status() == ExcavationEngine.Status.SUCCEEDED) {
             agentExecution.tunnel = null;
             agentActions.completeNode(action.actionId());
