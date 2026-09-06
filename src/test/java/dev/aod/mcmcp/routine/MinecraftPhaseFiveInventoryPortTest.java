@@ -247,7 +247,7 @@ class MinecraftPhaseFiveInventoryPortTest {
         hotbar.add(ItemStack.EMPTY);
 
         var opening = MinecraftPhaseFiveInventoryPort.chooseOpenHand(
-                hotbar, 3).orElseThrow();
+                hotbar, false, 3).orElseThrow();
         assertThat(opening.selectedSlot()).isZero();
         assertThat(MinecraftPhaseFiveInventoryPort.safeKnownMenuOpenStack(hotbar.getFirst()))
                 .isTrue();
@@ -256,8 +256,29 @@ class MinecraftPhaseFiveInventoryPortTest {
         // All fourteen transfer clicks remain available: no parking or hand-swap click is needed.
         hotbar.set(8, testItemStack(Blocks.COBBLESTONE.asItem(), 64));
         var nextContainer = MinecraftPhaseFiveInventoryPort.chooseOpenHand(
-                hotbar, 3).orElseThrow();
+                hotbar, false, 3).orElseThrow();
         assertThat(nextContainer.selectedSlot()).isZero();
+    }
+
+    @Test
+    void emptyMainHandFallbackRejectsOnlyAnUnsafeOffhandSneakBypassHook() {
+        var emptyHotbar = new ArrayList<>(
+                java.util.Collections.nCopies(9, ItemStack.EMPTY));
+        var plainOffhand = testItemStack(Blocks.COBBLESTONE.asItem(), 1);
+
+        assertThat(ItemStack.EMPTY.doesSneakBypassUse(null, null, null)).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.chooseOpenHand(
+                emptyHotbar, ItemStack.EMPTY, 3))
+                .contains(new MinecraftPhaseFiveInventoryPort.OpenHandPlan(0));
+        assertThat(MinecraftPhaseFiveInventoryPort.chooseOpenHand(
+                emptyHotbar, plainOffhand, 3))
+                .contains(new MinecraftPhaseFiveInventoryPort.OpenHandPlan(0));
+        assertThat(MinecraftPhaseFiveInventoryPort.chooseOpenHand(
+                emptyHotbar, false, 3)).isEmpty();
+        assertThat(MinecraftPhaseFiveInventoryPort.safeEmptyMainHandOffhand(
+                false, CustomFirstUseItem.class)).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.safeEmptyMainHandOffhand(
+                false, CustomSneakBypassItem.class)).isFalse();
     }
 
     @Test
@@ -271,7 +292,7 @@ class MinecraftPhaseFiveInventoryPortTest {
         assertThat(MinecraftPhaseFiveInventoryPort.usesDefaultNeoForgeOpenHooks(
                 Blocks.COBBLESTONE.asItem().getClass())).isTrue();
         assertThat(MinecraftPhaseFiveInventoryPort.safeKnownMenuOpenStack(ItemStack.EMPTY))
-                .isTrue();
+                .isFalse();
     }
 
     @Test
@@ -893,7 +914,20 @@ class MinecraftPhaseFiveInventoryPortTest {
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#visibleThreatClear");
         assertThat(invocations(node, "chooseOpenHand"))
-                .doesNotContain("net/minecraft/client/player/LocalPlayer#getOffhandItem");
+                .contains("net/minecraft/client/player/LocalPlayer#getOffhandItem");
+        var openHand = classNode(
+                "/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$OpenHandPlan.class");
+        assertThat(invocations(openHand, "ready"))
+                .containsSubsequence(
+                        "net/minecraft/client/player/LocalPlayer#getMainHandItem",
+                        "net/minecraft/client/player/LocalPlayer#getOffhandItem",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#safeKnownMenuOpenContext");
+        assertThat(invocations(openHand, "readyAtSlot"))
+                .contains(
+                        "net/minecraft/client/player/LocalPlayer#getOffhandItem",
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                                + "#safeKnownMenuOpenContext");
         var brewing = classNode("/dev/aod/mcmcp/routine/MinecraftKnownBrewingPort.class");
         assertThat(invocations(brewing, "chooseOpenHand"))
                 .doesNotContain("net/minecraft/client/player/LocalPlayer#getOffhandItem");

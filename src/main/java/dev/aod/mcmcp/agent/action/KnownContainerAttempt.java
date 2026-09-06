@@ -184,7 +184,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
                 || "INVENTORY_SAFE_OPEN_HAND_UNAVAILABLE".equals(failure.code())) {
             diagnostics = List.of(
                     "safe_open_hand=no_side_effect_free_main_hand",
-                    "remedy=prepare_empty_hotbar_or_plain_material_or_safe_mining_tool");
+                    "remedy=prepare_plain_material_or_safe_mining_tool_in_hotbar");
         } else if ("CONTAINER_OPEN_PREDICTION_UNAVAILABLE".equals(failure.code())
                 && failure.observed().get("prediction_bridge") instanceof String kind) {
             diagnostics = switch (kind) {

@@ -41,7 +41,7 @@ class KnownContainerAttemptTest {
                 assertThat(result.evidence()).isEqualTo(code.toLowerCase(java.util.Locale.ROOT));
                 assertThat(result.diagnostics()).containsExactly(
                         "safe_open_hand=no_side_effect_free_main_hand",
-                        "remedy=prepare_empty_hotbar_or_plain_material_or_safe_mining_tool");
+                        "remedy=prepare_plain_material_or_safe_mining_tool_in_hotbar");
                 assertThat(result.interactionDelta()).isZero();
                 assertThat(result.items()).isEmpty();
                 assertThat(result.effects()).isEmpty();

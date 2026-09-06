@@ -1657,25 +1657,35 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         for (int slot = 0; slot < 9; slot++) {
             hotbar.add(player.getInventory().getItem(slot));
         }
-        return chooseOpenHand(hotbar, player.getInventory().getSelectedSlot());
+        return chooseOpenHand(
+                hotbar, player.getOffhandItem(), player.getInventory().getSelectedSlot());
     }
 
-    static Optional<OpenHandPlan> chooseOpenHand(List<ItemStack> hotbar, int selectedSlot) {
+    static Optional<OpenHandPlan> chooseOpenHand(
+            List<ItemStack> hotbar, ItemStack offhand, int selectedSlot) {
+        Objects.requireNonNull(offhand, "offhand");
+        return chooseOpenHand(hotbar, safeEmptyMainHandOffhand(offhand), selectedSlot);
+    }
+
+    static Optional<OpenHandPlan> chooseOpenHand(
+            List<ItemStack> hotbar, boolean emptyMainHandAllowed, int selectedSlot) {
         Objects.requireNonNull(hotbar, "hotbar");
         if (hotbar.size() != 9 || selectedSlot < 0 || selectedSlot > 8) {
             throw new IllegalArgumentException("invalid hotbar selection context");
         }
-        // NeoForge checks sneak-use bypass and invokes onItemUseFirst before the block. Once both
-        // hooks are proven to be their default implementations, each exact supported block
-        // consumes useWithoutItem before ItemStack.useOn can place or otherwise mutate anything.
+        // NeoForge checks sneak-use bypass and invokes onItemUseFirst before the block. A nonempty
+        // MAIN_HAND with default hooks short-circuits the offhand bypass hook. Empty MAIN_HAND
+        // reports bypass=true, so its offhand bypass hook must also be proven default.
         for (int slot = 0; slot < 9; slot++) {
             if (!hotbar.get(slot).isEmpty() && safeKnownMenuOpenStack(hotbar.get(slot))) {
                 return Optional.of(new OpenHandPlan(slot));
             }
         }
-        for (int slot = 0; slot < 9; slot++) {
-            if (hotbar.get(slot).isEmpty()) {
-                return Optional.of(new OpenHandPlan(slot));
+        if (emptyMainHandAllowed) {
+            for (int slot = 0; slot < 9; slot++) {
+                if (hotbar.get(slot).isEmpty()) {
+                    return Optional.of(new OpenHandPlan(slot));
+                }
             }
         }
         return Optional.empty();
@@ -1683,12 +1693,31 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
     /**
      * Safety proof for an exact known crafting table, chest or barrel interaction. NeoForge calls
-     * sneak-use bypass and {@code onItemUseFirst} before the block; custom overrides are therefore
-     * rejected. The supported Vanilla block then consumes {@code useWithoutItem} before
-     * {@code ItemStack.useOn}.
+     * sneak-use bypass and {@code onItemUseFirst} before the block. Empty MAIN_HAND also evaluates
+     * the offhand sneak-use bypass hook, so that hook must remain default too. The supported
+     * Vanilla block then consumes {@code useWithoutItem} before {@code ItemStack.useOn}.
      */
     static boolean safeKnownMenuOpenStack(ItemStack stack) {
-        return stack.isEmpty() || usesDefaultNeoForgeOpenHooks(stack.getItem().getClass());
+        Objects.requireNonNull(stack, "stack");
+        return !stack.isEmpty() && usesDefaultNeoForgeOpenHooks(stack.getItem().getClass());
+    }
+
+    static boolean safeKnownMenuOpenContext(ItemStack mainHand, ItemStack offhand) {
+        Objects.requireNonNull(mainHand, "mainHand");
+        Objects.requireNonNull(offhand, "offhand");
+        return mainHand.isEmpty()
+                ? safeEmptyMainHandOffhand(offhand) : safeKnownMenuOpenStack(mainHand);
+    }
+
+    static boolean safeEmptyMainHandOffhand(ItemStack offhand) {
+        Objects.requireNonNull(offhand, "offhand");
+        return safeEmptyMainHandOffhand(
+                offhand.isEmpty(), offhand.getItem().getClass());
+    }
+
+    static boolean safeEmptyMainHandOffhand(boolean empty, Class<?> itemType) {
+        Objects.requireNonNull(itemType, "itemType");
+        return empty || usesDefaultNeoForgeSneakBypass(itemType);
     }
 
     static boolean inboundTransferKeepsOpenHandSafe(
@@ -2248,11 +2277,12 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
         boolean ready(LocalPlayer player) {
             if (player.getInventory().getSelectedSlot() != selectedSlot) return false;
-            return safeKnownMenuOpenStack(player.getMainHandItem());
+            return safeKnownMenuOpenContext(player.getMainHandItem(), player.getOffhandItem());
         }
 
         boolean readyAtSlot(LocalPlayer player) {
-            return safeKnownMenuOpenStack(player.getInventory().getItem(selectedSlot));
+            return safeKnownMenuOpenContext(
+                    player.getInventory().getItem(selectedSlot), player.getOffhandItem());
         }
     }
 
