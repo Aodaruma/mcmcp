@@ -12,6 +12,8 @@ enum FixturePhase5Mode {
     BREW("brew", 0),
     REDSTONE("redstone", 0),
     TRANSFER("transfer", 0),
+    CONTAINER_BATCH_SUCCESS("container_batch_success", 0),
+    CONTAINER_BATCH_PARTIAL("container_batch_partial", 0),
     CROP("crop", 1),
     COMBINED_WHEAT("combined_wheat", 0),
     TREE("tree", 0),
@@ -44,6 +46,8 @@ enum FixturePhase5Mode {
             case "brew" -> BREW;
             case "redstone" -> REDSTONE;
             case "transfer" -> TRANSFER;
+            case "container_batch_success" -> CONTAINER_BATCH_SUCCESS;
+            case "container_batch_partial" -> CONTAINER_BATCH_PARTIAL;
             case "crop" -> CROP;
             case "combined_wheat" -> COMBINED_WHEAT;
             case "tree" -> TREE;

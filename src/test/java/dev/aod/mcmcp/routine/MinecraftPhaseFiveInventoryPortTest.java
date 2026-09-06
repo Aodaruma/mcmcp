@@ -358,6 +358,76 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
+    void doubleChestPlanUsesMatchingWholeStacksAcrossAllFiftyFourSourceSlots() {
+        var slots = emptySlots(90);
+        slots.set(0, stack("minecraft:dripstone_block", 47, DEFAULT_HASH));
+        slots.set(53, stack("minecraft:dripstone_block", 27, DEFAULT_HASH));
+        var sourceSlots = java.util.stream.IntStream.range(0, 54).boxed().toList();
+        var destinationSlots = java.util.stream.IntStream.range(54, 90).boxed().toList();
+        var batch = new MinecraftPhaseFiveInventoryPort.TransferBatch(
+                slots, sourceSlots, destinationSlots,
+                "minecraft:dripstone_block", DEFAULT_HASH, true, 8, 74, 74);
+        var state = transferState(false, 74, 74, 8);
+        state.beginTransferBatch(batch, 74, 0);
+
+        assertThat(batch.next().slot()).isZero();
+        assertThat(batch.beginClick(transferSnapshot(slots, 1), 1)).isTrue();
+        slots.set(0, StackFingerprint.EMPTY);
+        slots.set(54, stack("minecraft:dripstone_block", 47, DEFAULT_HASH));
+        assertThat(batch.confirm(transferSnapshot(slots, 2))).isTrue();
+        state.updateTransferPrefix();
+
+        assertThat(batch.next().slot()).isEqualTo(53);
+        assertThat(batch.beginClick(transferSnapshot(slots, 2), 2)).isTrue();
+        slots.set(53, StackFingerprint.EMPTY);
+        slots.set(54, stack("minecraft:dripstone_block", 64, DEFAULT_HASH));
+        slots.set(55, stack("minecraft:dripstone_block", 10, DEFAULT_HASH));
+        assertThat(batch.confirm(transferSnapshot(slots, 3))).isTrue();
+        state.updateTransferPrefix();
+
+        assertThat(batch.exhausted()).isTrue();
+        assertThat(batch.reconcileReadback(transferSnapshot(slots, 4))).isTrue();
+        state.recordTransferReadback(0, 74);
+        assertThat(state.basis()).containsEntry("source_before", 74)
+                .containsEntry("destination_before", 0)
+                .containsEntry("confirmed_transfer_count", 74)
+                .containsEntry("confirmed_stack_moves", 2)
+                .containsEntry("confirmed_source_count", 0)
+                .containsEntry("confirmed_destination_count", 74)
+                .containsEntry("transfer_in_flight", false);
+    }
+
+    @Test
+    void wholeStackCeilingCanLeaveAConfirmedPrefixShortOfTheAbsoluteGoal() {
+        var slots = emptySlots(90);
+        slots.set(0, stack("minecraft:dripstone_block", 47, DEFAULT_HASH));
+        slots.set(53, stack("minecraft:dripstone_block", 64, DEFAULT_HASH));
+        var batch = new MinecraftPhaseFiveInventoryPort.TransferBatch(
+                slots,
+                java.util.stream.IntStream.range(0, 54).boxed().toList(),
+                java.util.stream.IntStream.range(54, 90).boxed().toList(),
+                "minecraft:dripstone_block", DEFAULT_HASH, true, 8, 74, 74);
+        var state = transferState(false, 74, 74, 8);
+        state.beginTransferBatch(batch, 111, 0);
+
+        assertThat(batch.next().slot()).isZero();
+        assertThat(batch.beginClick(transferSnapshot(slots, 1), 1)).isTrue();
+        slots.set(0, StackFingerprint.EMPTY);
+        slots.set(54, stack("minecraft:dripstone_block", 47, DEFAULT_HASH));
+        assertThat(batch.confirm(transferSnapshot(slots, 2))).isTrue();
+        state.updateTransferPrefix();
+
+        assertThat(batch.exhausted()).isTrue();
+        assertThat(batch.reconcileReadback(transferSnapshot(slots, 3))).isTrue();
+        state.recordTransferReadback(64, 47);
+        assertThat(state.basis()).containsEntry("confirmed_transfer_count", 47)
+                .containsEntry("confirmed_stack_moves", 1)
+                .containsEntry("confirmed_source_count", 64)
+                .containsEntry("confirmed_destination_count", 47)
+                .containsEntry("transfer_in_flight", false);
+    }
+
+    @Test
     void prefixAndTheOneUnconfirmedClickRemainSeparateWithoutBlindRetry() {
         var slots = new ArrayList<>(List.of(stack("minecraft:stone", 64, DEFAULT_HASH),
                 stack("minecraft:stone", 64, DEFAULT_HASH), StackFingerprint.EMPTY,

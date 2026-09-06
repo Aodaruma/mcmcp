@@ -512,6 +512,41 @@ class KnownContainerAttemptTest {
         });
     }
 
+    @Test
+    void failedBatchGoalRetainsItsConfirmedPrefixExactlyOnceWithoutAnUnknownEffect() {
+        var port = new FakePort();
+        var operation = new KnownContainerAttempt(port, request(), 1, 101);
+        port.tick = 1;
+        operation.tick(1);
+        port.evidenceFailure = failure("TRANSFER_BATCH_GOAL_NOT_REACHED", Map.of());
+        port.extraBasis = Map.ofEntries(
+                Map.entry("open_count", 2), Map.entry("container_clicks", 1),
+                Map.entry("source_before", 111), Map.entry("destination_before", 0),
+                Map.entry("confirmed_transfer_count", 47),
+                Map.entry("confirmed_stack_moves", 1),
+                Map.entry("confirmed_source_count", 64),
+                Map.entry("confirmed_destination_count", 47),
+                Map.entry("transfer_in_flight", false),
+                Map.entry("transfer_readback_observed", true),
+                Map.entry("source_after", 64), Map.entry("destination_after", 47));
+        port.tick = 2;
+
+        var failed = operation.tick(2);
+        assertThat(failed.status()).isEqualTo(KnownContainerAttempt.Status.FAILED);
+        assertThat(failed.evidence()).isEqualTo("transfer_batch_goal_not_reached");
+        assertThat(failed.effects()).isEmpty();
+
+        operation.close();
+        assertThat(operation.drainEffectDeltas()).singleElement().satisfies(effect -> {
+            assertThat(effect.verification()).isEqualTo(AgentActionStore.Verification.CONFIRMED);
+            assertThat(effect.observedBefore()).containsExactlyInAnyOrderEntriesOf(
+                    Map.of("source_count", 111, "destination_count", 0));
+            assertThat(effect.observedAfter()).containsExactlyInAnyOrderEntriesOf(
+                    Map.of("source_count", 64, "destination_count", 47, "transferred", 47));
+        });
+        assertThat(operation.drainEffectDeltas()).isEmpty();
+    }
+
     private static PhaseFiveRequest request() {
         var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
         return new PhaseFiveRequest(

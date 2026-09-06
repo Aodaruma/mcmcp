@@ -1053,6 +1053,8 @@ final class FixtureGameTests {
             helper.fail(Component.literal(
                     "Generalization double chest contents must cover both vanilla halves"));
         }
+        assertContainerBatchContents(helper, FixturePhase5Mode.CONTAINER_BATCH_SUCCESS, 27);
+        assertContainerBatchContents(helper, FixturePhase5Mode.CONTAINER_BATCH_PARTIAL, 64);
 
         // Install one representative of every state family against the real GameTest level.
         BlockPos cropSupport = new BlockPos(0, 0, 0);
@@ -1122,6 +1124,30 @@ final class FixtureGameTests {
             helper.fail(Component.literal(
                     "Generalization chest pair must expose one vanilla generic_9x6 container"));
         }
+        Container westChest = helper.getBlockEntity(
+                chestWest, net.minecraft.world.level.block.entity.ChestBlockEntity.class);
+        Container eastChest = helper.getBlockEntity(
+                chestEast, net.minecraft.world.level.block.entity.ChestBlockEntity.class);
+        westChest.clearContent();
+        eastChest.clearContent();
+        westChest.setItem(0, new ItemStack(Items.DRIPSTONE_BLOCK, 47));
+        eastChest.setItem(26, new ItemStack(Items.DRIPSTONE_BLOCK, 27));
+        westChest.setChanged();
+        eastChest.setChanged();
+        if (!doubleChest.getItem(0).is(Items.DRIPSTONE_BLOCK)
+                || doubleChest.getItem(0).getCount() != 47
+                || !doubleChest.getItem(53).is(Items.DRIPSTONE_BLOCK)
+                || doubleChest.getItem(53).getCount() != 27) {
+            helper.fail(Component.literal(
+                    "Container batch success fixture must expose logical slots 0=47 and 53=27"));
+        }
+        eastChest.setItem(26, new ItemStack(Items.DRIPSTONE_BLOCK, 64));
+        eastChest.setChanged();
+        if (doubleChest.getItem(0).getCount() != 47
+                || doubleChest.getItem(53).getCount() != 64) {
+            helper.fail(Component.literal(
+                    "Container batch partial fixture must expose logical slots 0=47 and 53=64"));
+        }
 
         BlockPos scaffoldingBase = new BlockPos(4, 1, 4);
         helper.setBlock(scaffoldingBase.below(), Blocks.SMOOTH_STONE);
@@ -1165,6 +1191,26 @@ final class FixtureGameTests {
         }
         outsideItem.discard();
         helper.succeed();
+    }
+
+    private static void assertContainerBatchContents(
+            GameTestHelper helper, FixturePhase5Mode mode, int secondCount) {
+        var layout = FixturePhase5Scenario.containerBatchLayout();
+        assertLayoutState(helper, layout, FixturePhase5Scenario.CONTAINER_BATCH_CHEST_WEST,
+                FixturePhase5Scenario.generalizationChestState(ChestType.RIGHT));
+        assertLayoutState(helper, layout, FixturePhase5Scenario.CONTAINER_BATCH_CHEST_EAST,
+                FixturePhase5Scenario.generalizationChestState(ChestType.LEFT));
+        var west = FixturePhase5Scenario.containerBatchWestContents(mode);
+        var east = FixturePhase5Scenario.containerBatchEastContents(mode);
+        if (west.size() != 1 || west.getFirst().slot() != 0
+                || west.getFirst().item() != Items.DRIPSTONE_BLOCK
+                || west.getFirst().count() != 47
+                || east.size() != 1 || east.getFirst().slot() != 26
+                || east.getFirst().item() != Items.DRIPSTONE_BLOCK
+                || east.getFirst().count() != secondCount) {
+            helper.fail(Component.literal(
+                    mode.wireName() + " double chest contents are not deterministic"));
+        }
     }
 
     private static void runPassageShapesFixture(GameTestHelper helper) {

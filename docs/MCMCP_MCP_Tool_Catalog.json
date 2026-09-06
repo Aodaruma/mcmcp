@@ -2023,9 +2023,9 @@
               "expected_block": {"enum": ["minecraft:chest", "minecraft:barrel"]},
               "item": {"$ref": "#/$defs/resourceLocation"},
               "stack_policy": {"enum": ["default_components_only", "item_id_any_components"]},
-              "minimum_inventory_count": {"type": "integer", "minimum": 1, "maximum": 2304},
+              "minimum_inventory_count": {"type": "integer", "minimum": 1, "maximum": 2304, "description": "Absolute player-inventory lower bound, not an exact transfer amount. Whole-stack limits can leave a confirmed prefix and then fail with TRANSFER_BATCH_GOAL_NOT_REACHED."},
               "max_stacks": {"type": "integer", "minimum": 1, "maximum": 14},
-              "max_transfer_count": {"type": "integer", "minimum": 1, "maximum": 896},
+              "max_transfer_count": {"type": "integer", "minimum": 1, "maximum": 896, "description": "Ceiling for this whole-stack batch. Stacks are never split to fill the remaining budget."},
               "routing_label": {"$ref": "#/$defs/routingLabel"}
             },
             "required": ["id", "op", "target", "expected_block", "item", "stack_policy", "minimum_inventory_count"]
@@ -2041,9 +2041,9 @@
               "expected_block": {"enum": ["minecraft:chest", "minecraft:barrel"]},
               "item": {"$ref": "#/$defs/resourceLocation"},
               "stack_policy": {"enum": ["default_components_only", "item_id_any_components"]},
-              "minimum_container_count": {"type": "integer", "minimum": 1, "maximum": 3456},
+              "minimum_container_count": {"type": "integer", "minimum": 1, "maximum": 3456, "description": "Absolute container lower bound, not an exact transfer amount. Whole-stack limits can leave a confirmed prefix and then fail with TRANSFER_BATCH_GOAL_NOT_REACHED."},
               "max_stacks": {"type": "integer", "minimum": 1, "maximum": 14},
-              "max_transfer_count": {"type": "integer", "minimum": 1, "maximum": 896},
+              "max_transfer_count": {"type": "integer", "minimum": 1, "maximum": 896, "description": "Ceiling for this whole-stack batch. Stacks are never split to fill the remaining budget."},
               "routing_label": {"$ref": "#/$defs/routingLabel"}
             },
             "required": ["id", "op", "target", "expected_block", "item", "stack_policy", "minimum_container_count"]
@@ -3367,7 +3367,7 @@
                       "INTERNAL_ERROR"
                     ]
                   },
-                  "recoverable": {"type": "boolean"},
+                  "recoverable": {"type": "boolean", "description": "True means fresh observation and replanning may recover. It never authorizes blind replay of the original Action."},
                   "evidence": {
                     "type": "array",
                     "maxItems": 16,
@@ -3406,7 +3406,7 @@
                 "subject": {"type": "string", "pattern": "^[a-z0-9_.:/,+-]{1,192}$"},
                 "observed_before": {"$ref": "#/$defs/effectObservation"},
                 "observed_after": {"$ref": "#/$defs/effectObservation"},
-                "verification": {"enum": ["confirmed", "qualified", "unknown"]},
+                "verification": {"enum": ["confirmed", "qualified", "unknown"], "description": "Independent of terminal state. A confirmed effect remains committed even when the Action later fails or is cancelled and must be applied exactly once."},
                 "client_tick": {"type": "integer", "minimum": 0},
                 "world_revision": {"type": "integer", "minimum": 0}
               },
@@ -3437,13 +3437,13 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "has_confirmed_effects": {"type": "boolean"},
+                  "has_confirmed_effects": {"type": "boolean", "description": "True when this terminal Action has one or more committed confirmed effects, including failed or cancelled Actions."},
                   "interrupted_node_id": {
                     "type": ["string", "null"],
                     "pattern": "^[a-z][a-z0-9_-]{0,31}$"
                   },
                   "remaining_node_upper_bound": {"type": "integer", "minimum": 0, "maximum": 256},
-                  "resume_requires_reobservation": {"type": "boolean"}
+                  "resume_requires_reobservation": {"type": "boolean", "description": "When true, obtain fresh state or observation and plan a new Action. Do this even when every retained effect is confirmed; never replay the original Action blindly."}
                 },
                 "required": ["has_confirmed_effects", "interrupted_node_id", "remaining_node_upper_bound", "resume_requires_reobservation"]
               }
