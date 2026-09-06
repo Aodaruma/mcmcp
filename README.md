@@ -56,7 +56,7 @@ For setup problems, see the guide’s [troubleshooting section (Japanese)](docs/
 
 修正への参加は[CONTRIBUTING.md](CONTRIBUTING.md)からどうぞ。Issueで担当と範囲を決め、fork / cloneした環境からPRを送れます。Codex・Claude Code共通の作業ルールは[AGENTS.md](AGENTS.md)、保守・マージ方針は[MAINTENANCE.md](docs/MAINTENANCE.md)にあります。<br>Start with [CONTRIBUTING.md](CONTRIBUTING.md): coordinate on an issue, work in your own fork / clone, and submit a PR. [AGENTS.md](AGENTS.md) applies to Codex and Claude Code; see [MAINTENANCE.md](docs/MAINTENANCE.md) for triage and merge rules.
 
-**[着手できるIssue / Ready issues](https://github.com/Aodaruma/mcmcp/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready)** · **[初めての修正 / Good first issues](https://github.com/Aodaruma/mcmcp/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)**
+**[開発ボード / Project](https://github.com/users/Aodaruma/projects/5)** · **[着手できるIssue / Ready issues](https://github.com/Aodaruma/mcmcp/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready)** · **[初めての修正 / Good first issues](https://github.com/Aodaruma/mcmcp/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)**
 
 <details>
 <summary>ビルド・技術文書・配布手順 / Build, technical docs, and release instructions</summary>

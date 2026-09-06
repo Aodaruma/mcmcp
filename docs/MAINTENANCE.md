@@ -5,6 +5,9 @@ This guide covers issue triage, PR review, verification, and release decisions. 
 
 ## ラベルとProjects / Labels and Projects
 
+**[MCMCP 開発・保守 / Development](https://github.com/users/Aodaruma/projects/5)**を使います。接続先・Status field IDは[project.json](../.github/project.json)に記録しています。公開Issue/PRだけをこのProjectへ配置します。新規追加とラベルに合わせた状態更新は保守の1時間巡回で行い、常時稼働するGitHub側の即時同期とは区別します。  
+Use the linked public project for this repository's public issues and PRs. Connection and Status field IDs are in project.json. Hourly maintenance adds new items and reconciles their status; this is not an instant GitHub-side sync service.
+
 | 分類 / Group | ラベル / Labels | 使い方 / Use |
 | --- | --- | --- |
 | 種別 / Type | `bug`, `enhancement`, `documentation`, `question` | 不具合・改善・文書・質問 / Bug, improvement, documentation, or question. |
