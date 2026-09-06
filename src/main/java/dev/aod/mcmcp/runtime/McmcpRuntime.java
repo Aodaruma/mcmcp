@@ -5862,10 +5862,19 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             "JIT primitive analysis did not produce a cost"));
             long activeElapsedNanos = activeElapsedNanos(
                     agentExecution, System.nanoTime());
+            ActionDslCompiler.Cost remainingCost = surfaceRecovery != null
+                    && surfaceRecovery.applies(agentExecution.primitive)
+                    ? firstRecoveredSurfacePrimitiveRemainingCost(
+                            progress,
+                            agentExecution.occurrenceBaseline.executedNodes() == 0,
+                            agentExecution.primitive,
+                            cost,
+                            activeElapsedNanos)
+                    : firstPrimitiveRemainingCost(progress, cost, activeElapsedNanos);
             if (!fitsRemainingBudget(
                     progress,
                     action.program().effectiveBudget(),
-                    firstPrimitiveRemainingCost(progress, cost, activeElapsedNanos),
+                    remainingCost,
                     activeElapsedNanos)) {
                 failAgentAction(
                         AgentActionStore.FailureCode.BUDGET_EXCEEDED,
@@ -10139,6 +10148,49 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return new ActionDslCompiler.Cost(
                 Math.max(0L, planned.durationMillis() - elapsedMillis),
                 planned.ticks(),
+                planned.distanceBlocks(),
+                planned.cameraDegrees(),
+                planned.interactions(),
+                planned.blocksBroken(),
+                planned.blocksPlaced());
+    }
+
+    /**
+     * Charges renderer waiting against the explicit container headroom without pretending that
+     * the bounded menu attempt itself became shorter. Other recovered surface primitives retain
+     * their complete JIT cost because they do not declare this separate operation reserve.
+     */
+    static ActionDslCompiler.Cost firstRecoveredSurfacePrimitiveRemainingCost(
+            AgentActionStore.Progress used,
+            boolean firstPrimitiveOccurrence,
+            ActionDsl.Node primitive,
+            ActionDslCompiler.Cost planned,
+            long activeElapsedNanos) {
+        Objects.requireNonNull(used, "used");
+        Objects.requireNonNull(primitive, "primitive");
+        Objects.requireNonNull(planned, "planned");
+        if (!firstPrimitiveOccurrence) {
+            return planned;
+        }
+        long operationTicks = switch (primitive) {
+            case ActionDsl.InspectKnownContainer ignored ->
+                    AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND;
+            case ActionDsl.TakeKnownContainerStack take ->
+                    ActionDslCompiler.knownContainerTransferOperationTicks(take.maxStacks());
+            case ActionDsl.StoreKnownContainerStack store ->
+                    ActionDslCompiler.knownContainerTransferOperationTicks(store.maxStacks());
+            default -> -1L;
+        };
+        if (operationTicks < 0L) {
+            return firstPrimitiveRemainingCost(used, planned, activeElapsedNanos);
+        }
+        if (activeElapsedNanos < 0L) return planned;
+        long elapsedMillis = Math.ceilDiv(activeElapsedNanos, 1_000_000L);
+        long operationDurationMillis = Math.multiplyExact(operationTicks, 50L);
+        return new ActionDslCompiler.Cost(
+                Math.max(operationDurationMillis,
+                        Math.max(0L, planned.durationMillis() - elapsedMillis)),
+                Math.max(operationTicks, Math.max(0L, planned.ticks() - used.ticks())),
                 planned.distanceBlocks(),
                 planned.cameraDegrees(),
                 planned.interactions(),
