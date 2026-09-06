@@ -385,9 +385,9 @@ if (-not $launcherText.Contains('.WaitForExit()', [StringComparison]::Ordinal) -
     throw 'visible launcherがchild終了連動契約を満たしていません。'
 }
 if (-not $launcherText.Contains(
-        "[ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy')]",
+        "[ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy', 'container-inspect-recovery')]",
         [StringComparison]::Ordinal)) {
-    throw 'visible launcherがhard-building-copy固定profileを受理しません。'
+    throw 'visible launcherが固定profileを受理しません。'
 }
 
 $passed = 15 + $publicCases.Count + $unsafeCases.Count + $expectedAliases.Count + `

@@ -21,8 +21,15 @@ param(
     [string]$TokenPath,
 
     [Parameter(Mandatory)]
-    [ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy')]
+    [ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy', 'container-inspect-recovery')]
     [string]$PromptProfile,
+
+    [string]$ProductCommit,
+    [string]$ExpectedBuildJarSha256,
+    [string]$BuildJarPath,
+    [string]$InstalledJarPath,
+    [string]$OptionsPath,
+    [int]$ExpectedMaxFps,
 
     [string]$Endpoint = 'http://127.0.0.1:8765/mcp'
 )
@@ -36,7 +43,7 @@ try {
     if (-not (Test-Path -LiteralPath $hostScript -PathType Leaf)) {
         throw 'monitor host missing'
     }
-    $parameterJson = [ordered]@{
+    $parameterValues = [ordered]@{
         Model = $Model
         ReasoningEffort = $ReasoningEffort
         BaselineId = $BaselineId
@@ -44,7 +51,16 @@ try {
         TokenPath = $TokenPath
         PromptProfile = $PromptProfile
         Endpoint = $Endpoint
-    } | ConvertTo-Json -Depth 5 -Compress
+    }
+    if ($PromptProfile -ceq 'container-inspect-recovery') {
+        $parameterValues.ProductCommit = $ProductCommit
+        $parameterValues.ExpectedBuildJarSha256 = $ExpectedBuildJarSha256
+        $parameterValues.BuildJarPath = $BuildJarPath
+        $parameterValues.InstalledJarPath = $InstalledJarPath
+        $parameterValues.OptionsPath = $OptionsPath
+        $parameterValues.ExpectedMaxFps = $ExpectedMaxFps
+    }
+    $parameterJson = $parameterValues | ConvertTo-Json -Depth 5 -Compress
     $encodedParameters = [Convert]::ToBase64String(
         [Text.Encoding]::UTF8.GetBytes($parameterJson))
 
