@@ -11,11 +11,20 @@ $ErrorActionPreference = 'Stop'
 $Utf8NoBom = [Text.UTF8Encoding]::new($false)
 $violations = [Collections.Generic.List[string]]::new()
 
-function Read-JsonObject([string]$Path, [string]$Label) {
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "$Label file is missing" }
-    try { $value = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 100 }
-    catch { throw "$Label is not valid JSON: $($_.Exception.Message)" }
-    if ($null -eq $value -or $value -is [Array]) { throw "$Label must be one JSON object" }
+function Read-JsonObject([string]$Path, [string]$Label, $Sha256 = $null) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or
+        (Get-Item -LiteralPath $Path).Length -gt 65536) {
+        throw "$Label file is missing or exceeds its fixed size limit"
+    }
+    $bytes = [IO.File]::ReadAllBytes([IO.Path]::GetFullPath($Path))
+    if ($bytes.Length -eq 0 -or $bytes.Length -gt 65536) { throw "$Label has an invalid size" }
+    try { $value = [Text.UTF8Encoding]::new($false, $true).GetString($bytes) | ConvertFrom-Json -Depth 100 -NoEnumerate }
+    catch { throw "$Label is not valid UTF-8 JSON" }
+    if ($value -isnot [System.Management.Automation.PSCustomObject]) { throw "$Label must be one JSON object" }
+    if ($null -ne $Sha256) {
+        $Sha256.Value = [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+    }
     return $value
 }
 
@@ -59,7 +68,8 @@ function Compact([object]$Value) {
 }
 
 $gate = Read-JsonObject $GateResultPath 'gate result'
-$status = Read-JsonObject $FixtureStatusPath 'fixture status'
+$statusHash = $null
+$status = Read-JsonObject $FixtureStatusPath 'fixture status' ([ref]$statusHash)
 $oracle = Read-JsonObject $FixtureOraclePath 'fixture oracle'
 $mode = [string](Get-Value $gate 'fixture_mode')
 $cases = [ordered]@{
@@ -85,6 +95,12 @@ Require ($null -ne $case) 'gate fixture_mode is unsupported'
 
 if ($null -ne $case) {
     $setupId = [string](Get-Value $gate 'fixture_setup_id')
+    $sessionId = Get-Value $gate 'world_session_id'
+    Require ($sessionId -is [string] -and
+        $sessionId -cmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') `
+        'gate public world session is invalid'
+    Require ((Get-Value $gate 'fixture_status_sha256') -ceq $statusHash) `
+        'fixture status bytes differ from the artifact read before the Action'
     Require ($setupId -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$') `
         'gate fixture_setup_id is invalid'
     Require ((Get-Value $gate 'schema_version') -eq 1 -and
@@ -100,6 +116,7 @@ if ($null -ne $case) {
         [bool](Get-Value $release 'control_ready') -and
         (Get-Value $release 'all_actions_terminal') -is [bool] -and
         [bool](Get-Value $release 'all_actions_terminal') -and
+        (Get-Value $release 'world_session_id') -ceq $sessionId -and
         (Get-Value $release 'input_owner_directly_exposed') -is [bool] -and
         -not [bool](Get-Value $release 'input_owner_directly_exposed')) `
         'gate did not prove terminal public input release'
@@ -109,6 +126,8 @@ if ($null -ne $case) {
             'fixture schema changed'
         Require ((Get-Value $fixture 'setupId') -ceq $setupId) `
             'fixture setupId does not match the gate run'
+        Require ((Get-Value $fixture 'worldSessionId') -ceq $sessionId) `
+            'fixture world session does not match the public Action run'
         Require ((Get-Value $fixture 'mode') -ceq $case.wire) `
             'fixture mode does not match the gate run'
         Require ((Get-Value $fixture 'baselineBlocks') -eq 22168) `
@@ -132,16 +151,23 @@ if ($null -ne $case) {
         (Get-Value $scenario 'excavationCells') -eq $(if ($mode -ceq 'straight160') { 160 } elseif ($mode -ceq 'branches') { 40 } else { 16 }) -and
         (Get-Value $scenario 'routeMoves') -eq $(if ($mode -ceq 'branches') { 64 } else { $expectedLength })) `
         'fixture scenario does not match the selected profile'
+    $forcedChunks = $status.PSObject.Properties['forcedChunks']
     Require ((Get-Value $status 'kind') -ceq 'status' -and
         (Get-Value $status 'ready') -is [bool] -and [bool](Get-Value $status 'ready') -and
         (Get-Value $status 'baselineMatches') -is [bool] -and
         [bool](Get-Value $status 'baselineMatches') -and
+        (Get-Value $status 'resourcesActive') -is [bool] -and
+        [bool](Get-Value $status 'resourcesActive') -and
+        (Get-Value $status 'raysPerTick') -eq 512 -and
+        $null -ne $forcedChunks -and $forcedChunks.Value -is [long] -and
+        $forcedChunks.Value -eq 22 -and
         (Get-Value $status 'fixtureTickMutation') -ceq 'none') `
         'fixture T0 status was not ready and immutable'
 
     $result = Get-Value $gate 'result'
     $expectedActionState = if ($mode -ceq 'hazard') { 'failed' } else { 'succeeded' }
     Require ((Get-Value $result 'state') -ceq $expectedActionState -and
+        (Get-Value $result 'world_session_id') -ceq $sessionId -and
         (Get-Value $result 'confirmed_breaks') -eq $case.breaks -and
         (Get-Value $result 'completed_cells') -eq $case.action_cells -and
         (Get-Value $result 'completed_moves') -eq $case.moves -and
@@ -191,6 +217,8 @@ $report = [ordered]@{
     passed = $violations.Count -eq 0
     fixture_mode = $mode
     fixture_setup_id = Get-Value $gate 'fixture_setup_id'
+    world_session_id = Get-Value $gate 'world_session_id'
+    fixture_status_sha256 = $statusHash
     violations = @($violations)
 }
 [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($OutputPath)))

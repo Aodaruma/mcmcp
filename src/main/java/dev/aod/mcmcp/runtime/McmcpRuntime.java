@@ -401,6 +401,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 inputRelease,
                 arming,
                 this::stopActiveRoutineForEmergency);
+        // Publish only a fully constructed runtime to the doubly guarded development fixture.
+        TestHarnessWorldSessionAccess.bind(() -> publishedSession);
     }
 
     public void onResourcesReady() {

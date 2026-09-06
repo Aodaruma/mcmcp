@@ -169,6 +169,8 @@ final class FixtureCommands {
                                 .executes(context -> execute(context.getSource(), FixtureTunnelScenario::sendStatus)))
                         .then(Commands.literal("tunnel_oracle")
                                 .executes(context -> execute(context.getSource(), FixtureTunnelScenario::sendOracle)))
+                        .then(Commands.literal("tunnel_finish")
+                                .executes(context -> execute(context.getSource(), FixtureTunnelScenario::finish)))
                         .then(Commands.literal("verify_tree")
                                 .executes(context -> execute(
                                         context.getSource(), FixturePhase5Scenario::verifyTreeGate)))

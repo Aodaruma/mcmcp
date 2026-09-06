@@ -3,9 +3,7 @@ param(
     [Parameter(Mandatory)]
     [ValidateSet('straight16', 'straight160', 'branches', 'hazard')]
     [string]$FixtureMode,
-    [Parameter(Mandatory)]
-    [ValidatePattern('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$')]
-    [string]$FixtureSetupId,
+    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$FixtureStatusPath,
     [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$ArtifactDirectory,
     [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$TokenPath,
     [string]$Endpoint = 'http://127.0.0.1:8765/mcp',
@@ -27,6 +25,8 @@ $Endpoint = $tunnelEndpoint
 $LibraryOnly = $tunnelLibraryOnly
 
 $script:TunnelFixtureMode = $FixtureMode
+$script:TunnelFixtureBinding = $null
+$script:TunnelTerminalWorldSessionId = $null
 $script:TunnelEntrance = [ordered]@{
     dimension = 'minecraft:overworld'; x = 258; y = 200; z = 256
 }
@@ -66,6 +66,77 @@ function Assert-TunnelFixedFive {
     if ($proof.Count -ne 1 -or @((Get-ObjectProperty $proof[0] 'tools')).Count -ne 5) {
         throw 'tunnel gate requires one fixed-five Tool surface proof'
     }
+}
+
+function Read-TunnelPreRunStatus {
+    if (-not (Test-Path -LiteralPath $FixtureStatusPath -PathType Leaf) -or
+        (Get-Item -LiteralPath $FixtureStatusPath).Length -gt 65536) {
+        throw 'tunnel pre-run status artifact is missing or exceeds its fixed size limit'
+    }
+    $bytes = [IO.File]::ReadAllBytes([IO.Path]::GetFullPath($FixtureStatusPath))
+    if ($bytes.Length -eq 0 -or $bytes.Length -gt 65536) {
+        throw 'tunnel pre-run status artifact has an invalid size'
+    }
+    try {
+        $status = [Text.UTF8Encoding]::new($false, $true).GetString($bytes) |
+            ConvertFrom-Json -Depth 40 -NoEnumerate
+    } catch { throw 'tunnel pre-run status artifact is not valid UTF-8 JSON' }
+    if ($status -isnot [System.Management.Automation.PSCustomObject]) {
+        throw 'tunnel pre-run status artifact must contain one JSON object'
+    }
+    $setupId = Get-ObjectProperty $status 'setupId'
+    $sessionId = Get-ObjectProperty $status 'worldSessionId'
+    $uuid = '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    if ((Get-ObjectProperty $status 'schema') -cne 'mcmcp_fixture_tunnel_v1' -or
+        (Get-ObjectProperty $status 'kind') -cne 'status' -or
+        (Get-ObjectProperty $status 'mode') -cne ('tunnel_' + $script:TunnelFixtureMode) -or
+        $setupId -isnot [string] -or $setupId -cnotmatch $uuid -or
+        $sessionId -isnot [string] -or $sessionId -cnotmatch $uuid -or
+        (Get-ObjectProperty $status 'baselineBlocks') -ne 22168 -or
+        (Get-ObjectProperty $status 'fixtureTickMutation') -cne 'none') {
+        throw 'tunnel pre-run status identity does not match the selected fixture'
+    }
+    foreach ($flag in @('ready', 'baselineMatches', 'inventoryMatches',
+            'startPoseMatches', 'playerBaselineMatches', 'resourcesActive')) {
+        $value = Get-ObjectProperty $status $flag
+        if ($value -isnot [bool] -or -not $value) {
+            throw 'tunnel pre-run status does not prove the untouched ready baseline'
+        }
+    }
+    if ((Get-ObjectProperty $status 'entities') -ne 0) {
+        throw 'tunnel pre-run status contains entities'
+    }
+    if ((Get-ObjectProperty $status 'raysPerTick') -ne 512) {
+        throw 'tunnel pre-run status does not prove the fixed observation budget'
+    }
+    $forcedChunks = $status.PSObject.Properties['forcedChunks']
+    if ($null -eq $forcedChunks -or $forcedChunks.Value -isnot [long] -or $forcedChunks.Value -ne 22) {
+        throw 'tunnel pre-run status does not prove the fixed loaded chunk coverage'
+    }
+    return [ordered]@{
+        setup_id = $setupId
+        world_session_id = $sessionId
+        fixture_mode = $script:TunnelFixtureMode
+        status_sha256 = [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+    }
+}
+
+function Get-TunnelSessionState {
+    # The existing public recipe-query basis exposes the actual client world session.
+    # Recipe results are neither used as fixture facts nor recorded in the binding.
+    $state = Invoke-GateTool -Tool 'agent_get_state' -Arguments ([ordered]@{
+            query = [ordered]@{ kind = 'result_item'; item = 'minecraft:stick' }
+            max_results = 1
+        })
+    Assert-ReadyState -State $state -Phase 'tunnel world-session boundary'
+    $basis = Get-ObjectProperty (Get-ObjectProperty $state 'recipe_query') 'basis'
+    $sessionId = Get-ObjectProperty $basis 'world_session_id'
+    if ($null -eq $script:TunnelFixtureBinding -or $sessionId -isnot [string] -or
+        $sessionId -cne $script:TunnelFixtureBinding.world_session_id) {
+        throw 'tunnel public world session does not match the pre-run fixture status'
+    }
+    return $state
 }
 
 function Assert-TunnelInitialState([object]$State) {
@@ -146,6 +217,7 @@ function Wait-TunnelActionTerminal([string]$ActionId, [int]$WallTimeoutSeconds) 
 }
 
 function Invoke-TunnelAction([Collections.IDictionary]$Request) {
+    [void](Get-TunnelSessionState)
     $receipt = Invoke-GateTool -Tool 'agent_start_action' -Arguments $Request
     $actionId = [string](Get-ObjectProperty $receipt 'action_id')
     if ($actionId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' -or
@@ -159,6 +231,13 @@ function Invoke-TunnelAction([Collections.IDictionary]$Request) {
         })
     $terminal = Wait-TunnelActionTerminal -ActionId $actionId `
         -WallTimeoutSeconds $script:TunnelCases[$script:TunnelFixtureMode].wall_timeout
+    $terminalState = Get-TunnelSessionState
+    $terminalAction = Get-ObjectProperty $terminalState 'action'
+    if ((Get-ObjectProperty $terminalAction 'action_id') -cne $actionId -or
+        (Get-ObjectProperty $terminalAction 'state') -cne (Get-ObjectProperty $terminal 'state')) {
+        throw 'tunnel terminal does not belong to the current public world session'
+    }
+    $script:TunnelTerminalWorldSessionId = $script:TunnelFixtureBinding.world_session_id
     $script:ActiveActionId = $null
     Add-ActionTerminalEvent -ActionId $actionId -Terminal $terminal
     return $terminal
@@ -256,6 +335,7 @@ function Assert-TunnelTerminal([object]$Terminal) {
     if ($evidence.Count -ne 1) { throw 'tunnel terminal omitted its exact bounded summary' }
     return [ordered]@{
         action_id = Get-ObjectProperty $Terminal 'action_id'; state = $state
+        world_session_id = $script:TunnelTerminalWorldSessionId
         confirmed_breaks = $expectedBreaks; completed_cells = $case.cells
         completed_moves = $case.moves; bounded_summary = $true
     }
@@ -263,19 +343,29 @@ function Assert-TunnelTerminal([object]$Terminal) {
 
 function Invoke-McmcpTunnelCapabilityGate {
     $script:ActiveActionId = $null
+    $script:TunnelFixtureBinding = $null
+    $script:TunnelTerminalWorldSessionId = $null
     $primaryFailure = $null
     $cleanupFailure = $null
     $result = $null
     $release = $null
     try {
         Assert-TunnelFixedFive
-        $initial = Get-FreshState
+        $script:TunnelFixtureBinding = Read-TunnelPreRunStatus
+        $initial = Get-TunnelSessionState
         Assert-TunnelInitialState $initial
+        Add-GateEvent -Event 'fixture_status_bound' -Detail $script:TunnelFixtureBinding
         $surface = Get-TunnelEntranceSurface $initial
         $terminal = Invoke-TunnelAction (New-TunnelActionRequest $surface)
         $result = Assert-TunnelTerminal $terminal
     } catch { $primaryFailure = $_ } finally {
-        try { $release = Invoke-GateCleanup } catch { $cleanupFailure = $_ }
+        try {
+            $release = Invoke-GateCleanup
+            if ($null -ne $script:TunnelFixtureBinding) {
+                [void](Get-TunnelSessionState)
+                $release.world_session_id = $script:TunnelFixtureBinding.world_session_id
+            }
+        } catch { $cleanupFailure = $_ }
     }
     $failure = if ($null -ne $primaryFailure) { $primaryFailure } else { $cleanupFailure }
     [void][IO.Directory]::CreateDirectory($ArtifactDirectory)
@@ -283,7 +373,9 @@ function Invoke-McmcpTunnelCapabilityGate {
         @($script:GateEvents | ForEach-Object { ConvertTo-CompactJson $_ }), $script:Utf8NoBom)
     $manifest = [ordered]@{
         schema_version = 1; gate = 'tunnel'; fixture_mode = $script:TunnelFixtureMode
-        fixture_setup_id = $FixtureSetupId
+        fixture_setup_id = $(if ($null -ne $script:TunnelFixtureBinding) { $script:TunnelFixtureBinding.setup_id } else { $null })
+        fixture_status_sha256 = $(if ($null -ne $script:TunnelFixtureBinding) { $script:TunnelFixtureBinding.status_sha256 } else { $null })
+        world_session_id = $(if ($null -ne $script:TunnelFixtureBinding) { $script:TunnelFixtureBinding.world_session_id } else { $null })
         status = $(if ($null -eq $failure) { 'passed' } else { 'failed' })
         normal_player_actions_only = $true; result = $result; public_input_release = $release
         fixture_oracle_required = $true

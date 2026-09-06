@@ -206,7 +206,9 @@ warehouse E2Eはdev-only fixtureの`mcmcp.fixture.phase5.mode=warehouse_smelt`�
 
 額縁ラベル経路だけを短く検証する場合は、dev-only fixtureの`label_transfer`を準備し、`Invoke-McmcpWarehouseLabelCapabilityGate.ps1`を使う。これはsource single chestのraw iron 16個をlabel付きtakeし、freshに再取得した別barrelのlabelで全量storeする2 Actionの固定gateである。double chestやカテゴリ分類は扱わない。詳細とremote手順は[`04_workstations/2026-09-05_warehouse-label-transfer-gate.md`](04_workstations/2026-09-05_warehouse-label-transfer-gate.md)を参照する。
 
-坑道profileは対応するdev-only one-shot fixtureを新しいクライアントで起動する。`tunnel_status`のJSONをT0前に保存し、その`setupId`を専用gateへ渡す。通常のモデル評価では同名の`-PromptProfile tunnel-*`を使う。直進160は静的予約時間が約93分25秒のため、120分のprofile期限と121分のevaluation-turn上限を使う。
+坑道profileは対応するdev-only one-shot fixtureを新しいクライアントで起動する。`tunnel_status`のJSONをT0前にUTF-8ファイルへ保存し、そのファイルを専用gateの`-FixtureStatusPath`へ渡す。gateは開始前にファイルを読み、raw SHA-256、`setupId`、mode、ready証拠と`worldSessionId`を検証する。固定のread-onlyレシピqueryが返す公開`recipe_query.basis.world_session_id`を開始前・dispatch直前・Action終端・cleanupで照合する。レシピの内容はfixture判定に使用しない。通常のモデル評価では同名の`-PromptProfile tunnel-*`を使う。直進160は静的予約時間が約93分25秒のため、120分のprofile期限と121分のevaluation-turn上限を使う。
+
+The deterministic gate reads the pre-run status artifact itself. Its byte hash, setup ID, mode and actual client world session must remain consistent through the Action and the post-run oracle. Preserve the exact status file for the acceptance checker; do not substitute or reformat it after dispatch. This parent-operated capability gate is separate from the fresh model run and never injects fixture information into the model.
 
 ```powershell
 .\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=tunnel_straight16
@@ -214,7 +216,7 @@ warehouse E2Eはdev-only fixtureの`mcmcp.fixture.phase5.mode=warehouse_smelt`�
 
 pwsh -NoProfile -File .\tools\eval\Invoke-McmcpTunnelCapabilityGate.ps1 `
   -FixtureMode straight16 `
-  -FixtureSetupId '<statusのsetupId>' `
+  -FixtureStatusPath '<実行前に保存したstatus JSON file>' `
   -ArtifactDirectory '<repo外の空directory>\tunnel-gate' `
   -TokenPath '<MCMCP tokenの絶対path>'
 
@@ -224,9 +226,14 @@ pwsh -NoProfile -File .\tools\eval\Test-McmcpTunnelAcceptance.ps1 `
   -FixtureStatusPath '<status JSON file>' `
   -FixtureOraclePath '<oracle JSON file>' `
   -OutputPath '<tunnel-gate>\tunnel-acceptance.json'
+
+# 受入artifactを保存してcheckerを通した後、ゲーム内で一時資源を復元:
+# /mcmcp_fixture phase5 tunnel_finish
 ```
 
-`FixtureMode`は`straight16`、`straight160`、`branches`、`hazard`のいずれかで、対応する起動modeは`mcmcpFixturePhase5Mode=tunnel_straight16`、`tunnel_straight160`、`tunnel_branches`、`tunnel_hazard`である。危険停止はActionの「安全に通過した3セル」とworld oracleの「掘削済み4列」を区別し、8破壊確認、3移動、床穴手前の最終位置、範囲外変更0を同時に要求する。
+`FixtureMode`は`straight16`、`straight160`、`branches`、`hazard`のいずれかで、対応する起動modeは`mcmcpFixturePhase5Mode=tunnel_straight16`、`tunnel_straight160`、`tunnel_branches`、`tunnel_hazard`である。checkerはgateが開始前に読んだstatusファイルのSHA-256、status/oracleの`setupId`・mode・`worldSessionId`、公開Action終端・cleanupのworld sessionを同時に照合する。IDの手入力だけで別runの記録を結合できない。危険停止はActionの「安全に通過した3セル」とworld oracleの「掘削済み4列」を区別し、8破壊確認、3移動、床穴手前の最終位置、範囲外変更0を同時に要求する。
+
+checker完了後の`tunnel_finish`は、harness-onlyの512 rays/tick overrideと22チャンクのforce-loadを保存前の値へ戻す。status/oracleは読み取り専用なので、oracle保存前にfinishを呼ばない。client・server終了、準備失敗、別fixtureへの置換でも同じ復元処理を使い、復元失敗時は所有ledgerを保持してserver lifecycle内で再試行する。
 
 renderer欠測回復はAction終端の固定`NODE_EVIDENCE`に`missing>0`と同一block probeの`revalidated>0`があり、Actionも成功した場合だけ`witnessed`とする。欠測が起きなければ`not_exercised`であり、低FPSや成功だけを回復PASSに数えない。
 

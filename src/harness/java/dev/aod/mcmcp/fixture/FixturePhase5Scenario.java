@@ -199,6 +199,7 @@ final class FixturePhase5Scenario {
         if (mode.tunnel()) {
             throw new IllegalStateException("tunnel setup is autorun-only; restart with the matching launch mode");
         }
+        FixtureTunnelScenario.restoreForReplacement(context);
         // Fishing owns a larger water volume than the other arena fixtures. Retire it before
         // any successor writes its smaller T0 layout, otherwise the remaining source-water ring
         // can flow back into the successor workspace on later Vanilla fluid ticks.

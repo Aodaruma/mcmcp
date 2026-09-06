@@ -46,7 +46,7 @@ Poll `agent_get_action` for progress and completion. Completion means confirmed 
 
 dev harnessには、直進16マス、直進160マス、主坑道16・枝3・間隔4、4列を掘った後に床穴の手前で止まる危険停止の4モードがあります。各モードは使い捨てクライアントで1回だけ初期化され、通常のMinecraft操作でActionを実行します。実行前の`status`と実行後の`oracle`は同じ`setupId`で結び、掘削範囲外の変更、2段の掘削列、移動数、最終位置、体力を有限範囲で照合します。
 
-The dev harness provides four one-shot modes: straight 16, straight 160, branches 16/3/4, and a floor-gap stop after four excavated columns and three safe moves. Join the pre-run status, public Action result and post-run oracle by `setupId`; the checker rejects changes outside the bounded fixture.
+The dev harness provides four one-shot modes: straight 16, straight 160, branches 16/3/4, and a floor-gap stop after four excavated columns and three safe moves. The gate reads the pre-run status file and binds its SHA-256, `setupId`, mode and `worldSessionId` to the public client session before dispatch and after termination. The checker rejects another run's status or oracle and changes outside the bounded fixture.
 
 ```powershell
 .\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=tunnel_straight16
@@ -55,6 +55,8 @@ The dev harness provides four one-shot modes: straight 16, straight 160, branche
 # ゲーム内で実行前後に読み取り専用で取得
 # /mcmcp_fixture phase5 tunnel_status
 # /mcmcp_fixture phase5 tunnel_oracle
+# 受入結果を保存した後に一時設定とforce-loadを復元
+# /mcmcp_fixture phase5 tunnel_finish
 
 pwsh -NoProfile -File .\tools\eval\Test-McmcpTunnelAcceptance.ps1 `
   -GateResultPath '<gate-result.json>' `
@@ -63,4 +65,6 @@ pwsh -NoProfile -File .\tools\eval\Test-McmcpTunnelAcceptance.ps1 `
   -OutputPath '<tunnel-acceptance.json>'
 ```
 
-`Invoke-McmcpTunnelCapabilityGate.ps1`には`status`が返した`setupId`を`-FixtureSetupId`として渡します。160マスprofileは静的予約が約93分25秒のため、専用の120分評価期限と121分のHTTP上限を使います。欠測回復は`missing>0`かつ同じblock probeの`revalidated>0`をAction終端証跡で確認できた場合だけ成立し、低FPSやAction成功だけでは合格になりません。
+`Invoke-McmcpTunnelCapabilityGate.ps1`には、実行前の`status` JSONファイルを`-FixtureStatusPath`で渡します。gate自身がファイルを読み、SHA-256・`setupId`・mode・`worldSessionId`を固定します。開始前と終端後に公開MCPの`recipe_query.basis.world_session_id`を取得して照合し、別runのstatusやoracleは拒否します。checkerにも同じstatusファイルを渡し、実行後に整形・上書きしないでください。160マスprofileは静的予約が約93分25秒のため、専用の120分評価期限と121分のHTTP上限を使います。欠測回復は`missing>0`かつ同じblock probeの`revalidated>0`をAction終端証跡で確認できた場合だけ成立し、低FPSやAction成功だけでは合格になりません。
+
+受入結果を保存した後は`/mcmcp_fixture phase5 tunnel_finish`を実行してください。坑道fixtureが一時的に設定した512 rays/tickと22チャンクのforce-loadを元の状態へ戻します。元からforce-loadされていたチャンクは維持されます。client・server終了や別fixtureへの置換時にも復元を試み、失敗した項目は所有記録を残してserver lifecycle内で再試行します。

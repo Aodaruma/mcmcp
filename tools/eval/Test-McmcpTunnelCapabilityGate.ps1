@@ -7,8 +7,10 @@ $ErrorActionPreference = 'Stop'
 $runner = Join-Path $PSScriptRoot 'Invoke-McmcpTunnelCapabilityGate.ps1'
 $artifactDirectory = Join-Path ([IO.Path]::GetTempPath()) `
     ('mcmcp-tunnel-gate-' + [Guid]::NewGuid().ToString('N'))
+$fixtureStatusPath = Join-Path $artifactDirectory 'pre-run-status.json'
+$script:FixtureWorldSessionId = '550e8400-e29b-41d4-a716-446655440080'
 . $runner -FixtureMode straight16 -ArtifactDirectory $artifactDirectory `
-    -FixtureSetupId '550e8400-e29b-41d4-a716-446655440090' `
+    -FixtureStatusPath $fixtureStatusPath `
     -TokenPath 'mock-token' -LibraryOnly
 
 function Assert-True {
@@ -34,10 +36,17 @@ function New-MockTunnelState {
         inventory = @([pscustomobject]@{
                 item = 'minecraft:netherite_pickaxe'; count = 1
             })
-        standard_potions = @(); recipe_query = $null
+        standard_potions = @()
+        recipe_query = [pscustomobject]@{
+            basis = [pscustomobject]@{ world_session_id = $script:FixtureWorldSessionId }
+        }
         policy = [pscustomobject]@{ max_distance_blocks = 512 }
         observation = [pscustomobject]@{ latest_frame_id = 'obs-0000000000000001' }
-        action = $null
+        action = $(if ($null -ne $script:Submitted) {
+                [pscustomobject]@{
+                    action_id = '550e8400-e29b-41d4-a716-446655440091'; state = 'succeeded'
+                }
+            } else { $null })
     }
 }
 
@@ -173,6 +182,7 @@ $script:TunnelFixtureMode = 'straight16'
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null
 $script:Submitted = $null
+$script:ChangeSessionOnTerminal = $false
 Add-GateEvent -Event 'fixed_five_surface_verified' -Detail ([ordered]@{
         protocol_version = $script:ProtocolVersion; tools = @($script:AllowedTools)
     })
@@ -180,7 +190,14 @@ $script:DelayTransport = { param($Seconds) }
 $script:ToolTransport = {
     param($Tool, $Arguments)
     switch ($Tool) {
-        'agent_get_state' { New-MockTunnelState -Stage 0 }
+        'agent_get_state' {
+            if ($Arguments.Contains('query')) {
+                Assert-True ($Arguments.query.kind -ceq 'result_item' -and
+                    $Arguments.query.item -ceq 'minecraft:stick' -and $Arguments.max_results -eq 1) `
+                    'session probe changed its bounded read-only public query'
+            }
+            New-MockTunnelState -Stage 0
+        }
         'agent_get_observation' {
             [pscustomobject]@{
                 schema_version = 1; frame_id = 'obs-0000000000000001'
@@ -197,13 +214,76 @@ $script:ToolTransport = {
                 action_id = '550e8400-e29b-41d4-a716-446655440091'; state = 'queued'
             }
         }
-        'agent_get_action' { New-MockTunnelTerminal -Mode 'straight16' }
+        'agent_get_action' {
+            if ($script:ChangeSessionOnTerminal) {
+                $script:FixtureWorldSessionId = '550e8400-e29b-41d4-a716-446655440082'
+            }
+            New-MockTunnelTerminal -Mode 'straight16'
+        }
         'agent_cancel_action' { throw 'mock should not cancel a successful tunnel' }
         default { throw "unexpected tunnel mock tool: $Tool" }
     }
 }
 
 try {
+    [void][IO.Directory]::CreateDirectory($artifactDirectory)
+    $preRunStatus = [ordered]@{
+        schema = 'mcmcp_fixture_tunnel_v1'; kind = 'status'; mode = 'tunnel_straight16'
+        setupId = '550e8400-e29b-41d4-a716-446655440090'
+        worldSessionId = $script:FixtureWorldSessionId; baselineBlocks = 22168
+        ready = $true; baselineMatches = $true; inventoryMatches = $true
+        startPoseMatches = $true; playerBaselineMatches = $true; entities = 0
+        resourcesActive = $true; raysPerTick = 512; forcedChunks = 22
+        fixtureTickMutation = 'none'
+    }
+    function Write-MockStatus {
+        [IO.File]::WriteAllText($fixtureStatusPath,
+            (ConvertTo-Json $preRunStatus -Depth 20), [Text.UTF8Encoding]::new($false))
+    }
+    Write-MockStatus
+    foreach ($badField in @('mode', 'ready', 'setupId', 'worldSessionId', 'resourcesActive', 'raysPerTick', 'forcedChunks')) {
+        $original = $preRunStatus[$badField]
+        $preRunStatus[$badField] = switch ($badField) {
+            'mode' { 'tunnel_straight160' }
+            'ready' { 'true' }
+            'setupId' { '' }
+            'worldSessionId' { 'not-a-session' }
+            'resourcesActive' { $false }
+            'raysPerTick' { 1 }
+            'forcedChunks' { 21 }
+        }
+        Write-MockStatus
+        $rejected = $false
+        try { [void](Read-TunnelPreRunStatus) } catch { $rejected = $true }
+        Assert-True $rejected "pre-run artifact accepted invalid $badField"
+        $preRunStatus[$badField] = $original
+    }
+    foreach ($invalidChunks in @($null, '22', @(22))) {
+        $preRunStatus.forcedChunks = $invalidChunks
+        Write-MockStatus
+        $rejected = $false
+        try { [void](Read-TunnelPreRunStatus) } catch { $rejected = $true }
+        Assert-True $rejected 'forcedChunks accepted non-integer JSON evidence'
+    }
+    $preRunStatus.forcedChunks = 22
+    $nonObjectJson = @('[]', '[1]', '[{}]', '1', 'true', 'null', '"not-a-status"',
+        ('[' + (ConvertTo-Json $preRunStatus -Depth 20 -Compress) + ']'))
+    foreach ($invalidJson in $nonObjectJson) {
+        [IO.File]::WriteAllText($fixtureStatusPath, $invalidJson, [Text.UTF8Encoding]::new($false))
+        $diagnostic = $null
+        try { [void](Read-TunnelPreRunStatus) } catch { $diagnostic = $_.Exception.Message }
+        Assert-True ($diagnostic -ceq 'tunnel pre-run status artifact must contain one JSON object') `
+            'non-object JSON did not fail before property lookup with the fixed diagnostic'
+    }
+    # A real UUID from another run must fail against the public session before any Action.
+    $preRunStatus.worldSessionId = '550e8400-e29b-41d4-a716-446655440081'
+    Write-MockStatus
+    $rejected = $false
+    try { [void](Invoke-McmcpTunnelCapabilityGate) } catch { $rejected = $true }
+    Assert-True ($rejected -and $null -eq $script:Submitted) `
+        'a foreign-run status reached Action dispatch'
+    $preRunStatus.worldSessionId = $script:FixtureWorldSessionId
+    Write-MockStatus
     $tunnelGateResult = Invoke-McmcpTunnelCapabilityGate
     Assert-True ($tunnelGateResult.gate_result.state -ceq 'succeeded' -and
         $tunnelGateResult.gate_result.completed_cells -eq 16 -and
@@ -217,11 +297,32 @@ try {
     Assert-True ($manifest.status -ceq 'passed' -and
         $manifest.fixture_mode -ceq 'straight16' -and
         $manifest.fixture_setup_id -ceq '550e8400-e29b-41d4-a716-446655440090' -and
+        $manifest.world_session_id -ceq $script:FixtureWorldSessionId -and
+        $manifest.result.world_session_id -ceq $script:FixtureWorldSessionId -and
+        $manifest.public_input_release.world_session_id -ceq $script:FixtureWorldSessionId -and
+        $manifest.fixture_status_sha256 -ceq
+            (Get-FileHash -LiteralPath $fixtureStatusPath -Algorithm SHA256).Hash.ToLowerInvariant() -and
         [bool]$manifest.fixture_oracle_required) `
         'gate artifact did not preserve the fixture acceptance requirement'
+    $script:Submitted = $null
+    $script:ChangeSessionOnTerminal = $true
+    $rejected = $false
+    try { [void](Invoke-McmcpTunnelCapabilityGate) } catch { $rejected = $true }
+    Assert-True ($rejected -and $null -ne $script:Submitted) `
+        'world session changed after dispatch but the gate still passed'
+    $driftManifest = Get-Content -LiteralPath (Join-Path $artifactDirectory 'gate-result.json') `
+        -Raw | ConvertFrom-Json
+    Assert-True ($driftManifest.status -ceq 'failed' -and $null -eq $driftManifest.result) `
+        'session drift retained a successful terminal proof'
 } finally {
     if (Test-Path -LiteralPath $artifactDirectory) {
-        Remove-Item -LiteralPath $artifactDirectory -Recurse -Force
+        $cleanupPath = [IO.Path]::GetFullPath($artifactDirectory)
+        if (-not $cleanupPath.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()),
+                [StringComparison]::OrdinalIgnoreCase) -or
+            -not [IO.Path]::GetFileName($cleanupPath).StartsWith('mcmcp-tunnel-gate-', [StringComparison]::Ordinal)) {
+            throw 'mock cleanup path escaped its temporary test directory'
+        }
+        Remove-Item -LiteralPath $cleanupPath -Recurse -Force
     }
 }
 

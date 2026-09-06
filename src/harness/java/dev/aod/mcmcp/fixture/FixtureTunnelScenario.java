@@ -1,6 +1,9 @@
 package dev.aod.mcmcp.fixture;
 
 import com.google.gson.Gson;
+import com.mojang.logging.LogUtils;
+import dev.aod.mcmcp.client.McmcpClientConfig;
+import dev.aod.mcmcp.runtime.TestHarnessWorldSessionAccess;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -12,9 +15,14 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import org.slf4j.Logger;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -22,15 +30,19 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 
-/** Autorun-only baseline. No event listener, regeneration, cleanup tick, or MCP dependency. */
+/** Autorun-only baseline. Lifecycle callbacks restore resources; no running-gameplay fixture writes. */
 final class FixtureTunnelScenario {
     private static final Gson JSON = new Gson();
+    private static final Logger LOGGER = LogUtils.getLogger();
+    private static final FixtureTunnelResources RESOURCES = new FixtureTunnelResources(new FixtureRaysPerTickLease());
+    // Scenario state is guarded by the class monitor; lock order is scenario, then resources.
     private static boolean setupAttempted;
     private static Prepared prepared;
+    private static boolean restorePending;
 
     private FixtureTunnelScenario() { }
 
-    static void prepareAutorun(FixtureSecurity.Context context, FixturePhase5Mode mode,
+    static synchronized void prepareAutorun(FixtureSecurity.Context context, FixturePhase5Mode mode,
             Consumer<Component> output) {
         if (setupAttempted) throw new IllegalStateException("tunnel setup is one-shot; restart the disposable client");
         FixtureSecurity.Decision decision = FixtureSecurity.reauthorize(context);
@@ -40,32 +52,97 @@ final class FixtureTunnelScenario {
             throw new IllegalStateException("tunnel setup requires the matching launch mode");
         if (FixturePhase3AutorunConfig.fromSystemProperties().isPresent())
             throw new IllegalStateException("tunnel setup cannot share another fixture autorun");
+        var session = new FixtureTunnelSession(TestHarnessWorldSessionAccess.currentWorldSessionId());
         // Claim before the first world write: even a failed setup cannot be repeated in this JVM.
         setupAttempted = true;
         FixturePhase2Scenario.stop();
+        FixtureCombinedWheatScenario.rollbackForReplacement(context);
         var plan = FixtureTunnelPlan.forMode(mode);
         var level = context.level();
-        for (int x = FixtureTunnelPlan.MIN.x() >> 4; x <= (FixtureTunnelPlan.MAX.x() >> 4); x++)
-            for (int z = FixtureTunnelPlan.MIN.z() >> 4; z <= (FixtureTunnelPlan.MAX.z() >> 4); z++) {
-                level.setChunkForced(x, z, true);
-                level.getChunk(x, z);
-            }
-        level.getEntities((Entity) null, bounds(), entity -> entity != context.player())
-                .forEach(Entity::discard);
-        for (var entry : plan.baseline().entrySet()) setBounded(level, entry.getKey(), state(entry.getValue()));
-        configurePlayer(context.player());
-        if (!context.player().teleportTo(level, 257.5D, 200.0D, 256.5D, Set.<Relative>of(),
-                -90.0F, 38.0F, false)) throw new IllegalStateException("tunnel start pose was not synchronized");
-        context.player().setDeltaMovement(0, 0, 0);
-        context.player().setYHeadRot(-90.0F);
-        context.player().resetFallDistance();
-        prepared = new Prepared(context, plan, UUID.randomUUID().toString());
-        if (!audit(prepared).baselineMatches() || entityCount(level, context.player()) != 0)
-            throw new IllegalStateException("tunnel baseline did not match its fixed plan");
-        sendStatus(context, output);
+        try {
+            RESOURCES.begin(context.server(), level, new FixtureTunnelResources.ChunkAccess() {
+                @Override public boolean forced(FixtureTunnelResources.Chunk chunk) {
+                    return level.getForceLoadedChunks().contains(ChunkPos.pack(chunk.x(), chunk.z()));
+                }
+                @Override public void setForced(FixtureTunnelResources.Chunk chunk, boolean forced) {
+                    level.setChunkForced(chunk.x(), chunk.z(), forced);
+                }
+            });
+            level.getEntities((Entity) null, bounds(), entity -> entity != context.player())
+                    .forEach(Entity::discard);
+            for (var entry : plan.baseline().entrySet()) setBounded(level, entry.getKey(), state(entry.getValue()));
+            configurePlayer(context.player());
+            if (!context.player().teleportTo(level, 257.5D, 200.0D, 256.5D, Set.<Relative>of(),
+                    -90.0F, 38.0F, false)) throw new IllegalStateException("tunnel start pose was not synchronized");
+            context.player().setDeltaMovement(0, 0, 0);
+            context.player().setYHeadRot(-90.0F);
+            context.player().resetFallDistance();
+            prepared = new Prepared(context, plan, UUID.randomUUID().toString(), session);
+            if (!audit(prepared).baselineMatches() || entityCount(level, context.player()) != 0)
+                throw new IllegalStateException("tunnel baseline did not match its fixed plan");
+            sendStatus(context, output);
+        } catch (RuntimeException failure) {
+            try { restoreResources(); } catch (RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
     }
 
-    static void sendStatus(FixtureSecurity.Context context, Consumer<Component> output) {
+    /** Post-terminal operator action; deliberately separate from the read-only oracle. */
+    static synchronized void finish(FixtureSecurity.Context context, Consumer<Component> output) {
+        requirePrepared(context);
+        RESOURCES.requireOwner(context.server(), context.level());
+        restoreResources();
+        output.accept(Component.literal("{\"schema\":\"mcmcp_fixture_tunnel_v1\",\"kind\":\"finish\",\"resourcesRestored\":true}"));
+    }
+
+    static synchronized void restoreForReplacement(FixtureSecurity.Context context) {
+        RESOURCES.requireOwner(context.server(), context.level());
+        restoreResources();
+    }
+
+    static synchronized void onServerPreTick(ServerTickEvent.Pre event) {
+        if (!RESOURCES.active() || event.getServer() != RESOURCES.server()) return;
+        if (restorePending || prepared == null || !FixtureSecurity.reauthorize(prepared.context).allowed()
+                || !currentSessionMatches())
+            restoreAtLifecycle();
+    }
+
+    private static boolean currentSessionMatches() {
+        try {
+            prepared.session.requireCurrent(TestHarnessWorldSessionAccess.currentWorldSessionId());
+            return true;
+        } catch (RuntimeException | LinkageError unavailable) { return false; }
+    }
+
+    static synchronized void onServerStopping(ServerStoppingEvent event) {
+        if (event.getServer() == RESOURCES.server()) restoreAtLifecycle();
+    }
+
+    static synchronized void onServerStopped(ServerStoppedEvent event) {
+        if (event.getServer() == RESOURCES.server()) restoreAtLifecycle();
+    }
+
+    static synchronized void restoreAfterAutorunFailure() {
+        Object owner = RESOURCES.server();
+        if (owner instanceof net.minecraft.server.MinecraftServer server) {
+            if (server.isSameThread()) restoreAtLifecycle();
+            else server.execute(FixtureTunnelScenario::restoreAtLifecycle);
+        }
+    }
+
+    private static synchronized void restoreResources() {
+        restorePending = true;
+        RESOURCES.restore();
+        prepared = null;
+        restorePending = false;
+    }
+
+    private static synchronized void restoreAtLifecycle() {
+        try { restoreResources(); }
+        catch (RuntimeException exception) { LOGGER.error("Tunnel fixture resource restoration pending", exception); }
+    }
+
+    static synchronized void sendStatus(FixtureSecurity.Context context, Consumer<Component> output) {
         Prepared value = requirePrepared(context);
         var result = base(value, "status");
         boolean baseline = audit(value).baselineMatches();
@@ -82,12 +159,18 @@ final class FixtureTunnelScenario {
         result.put("inventoryMatches", inventory);
         result.put("startPoseMatches", pose);
         result.put("playerBaselineMatches", body);
-        result.put("ready", baseline && entities == 0 && inventory && pose && body);
+        result.put("resourcesActive", RESOURCES.active() && !restorePending);
+        result.put("raysPerTick", McmcpClientConfig.raysPerTick());
+        result.put("originalRaysPerTick", RESOURCES.originalRaysPerTick());
+        result.put("forcedChunks", RESOURCES.pendingChunks());
+        result.put("ready", baseline && entities == 0 && inventory && pose && body
+                && RESOURCES.active() && !restorePending && RESOURCES.pendingChunks() == 22
+                && McmcpClientConfig.raysPerTick() == 512);
         result.put("fixtureTickMutation", "none");
         output.accept(Component.literal(JSON.toJson(result)));
     }
 
-    static void sendOracle(FixtureSecurity.Context context, Consumer<Component> output) {
+    static synchronized void sendOracle(FixtureSecurity.Context context, Consumer<Component> output) {
         Prepared value = requirePrepared(context);
         var audit = audit(value);
         var result = base(value, "oracle");
@@ -111,6 +194,8 @@ final class FixtureTunnelScenario {
         result.put("schema", "mcmcp_fixture_tunnel_v1");
         result.put("kind", kind);
         result.put("setupId", value.setupId);
+        result.put("worldSessionId", value.session.requireCurrent(
+                TestHarnessWorldSessionAccess.currentWorldSessionId()).toString());
         result.put("mode", value.plan.mode().wireName());
         result.put("baselineBlocks", FixtureTunnelPlan.VOLUME_SIZE);
         result.put("measurement", "completedCells/prefixCells count excavated two-block columns, not visited route cells");
@@ -199,5 +284,6 @@ final class FixtureTunnelScenario {
 
     private static BlockPos pos(FixtureTunnelPlan.Cell cell) { return new BlockPos(cell.x(), cell.y(), cell.z()); }
     private static AABB bounds() { return AABB.encapsulatingFullBlocks(pos(FixtureTunnelPlan.MIN), pos(FixtureTunnelPlan.MAX)); }
-    private record Prepared(FixtureSecurity.Context context, FixtureTunnelPlan.Plan plan, String setupId) { }
+    private record Prepared(FixtureSecurity.Context context, FixtureTunnelPlan.Plan plan, String setupId,
+            FixtureTunnelSession session) { }
 }

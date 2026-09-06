@@ -138,6 +138,7 @@ final class FixturePhase5Autorun {
     }
 
     private void onClientStopping(ClientStoppingEvent event) {
+        if (config.mode().tunnel()) FixtureTunnelScenario.restoreAfterAutorunFailure();
         if (pauseOptionChanged) {
             event.getClient().options.pauseOnLostFocus = originalPauseOnLostFocus;
             pauseOptionChanged = false;
@@ -146,6 +147,7 @@ final class FixturePhase5Autorun {
 
     private void fail(String reason, RuntimeException exception) {
         stage = Stage.FAILED;
+        if (config.mode().tunnel()) FixtureTunnelScenario.restoreAfterAutorunFailure();
         if (exception == null) {
             LOGGER.error("MCMCP Phase 5 fixture autorun failed: {}. Local authorization remains unchanged",
                     reason);

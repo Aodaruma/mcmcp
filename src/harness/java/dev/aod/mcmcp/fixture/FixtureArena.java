@@ -59,6 +59,7 @@ final class FixtureArena {
     }
 
     static void load(FixtureSecurity.Context context) {
+        FixtureTunnelScenario.restoreForReplacement(context);
         FixtureCombinedWheatScenario.rollbackForArenaReset(context);
         FixturePhase2Scenario.stop();
         FixturePhase3Scenario.stop(context);
@@ -150,6 +151,7 @@ final class FixtureArena {
     }
 
     static void resetInventoryAndStatus(FixtureSecurity.Context context) {
+        FixtureTunnelScenario.restoreForReplacement(context);
         FixturePhase2Scenario.stop();
         FixturePhase3Scenario.stop(context);
         requireInitialized(context.level());
@@ -157,6 +159,7 @@ final class FixtureArena {
     }
 
     static void preparePhase2(FixtureSecurity.Context context, boolean slowTarget) {
+        FixtureTunnelScenario.restoreForReplacement(context);
         requireInitialized(context.level());
         resetPlayer(context.player());
         if (!context.player().teleportTo(
