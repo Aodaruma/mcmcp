@@ -19,21 +19,24 @@ The reported Claude run is unavailable. This work addresses the architectural ro
 
 ## ローカル検証結果 / Local validation
 
-- 対象コード / Product commit: `7f1320d781bad3d4ae24005fe8192fa461194bb5`（最新base `28ffcc1`の受入記録も統合）。
-- `gradlew test harnessTest adminBridgeTest verifyHarnessIsolation build --console=plain`: **PASS**。unit 1,282、harness 13、admin 21、計1,316件でfailure/error 0。
-- `Test-McmcpEvalTrace.ps1 -SelfTest`: **66/66 PASS**。公開catalogとTool surfaceの固定hashをrunner/監査双方で同期。
+- 対象コード / Validated code commit: `764f51925204e6f02163f85e8a83d97bb8b22f99`（latest main `805cd5321f907932bf9f53a172c8975dd7014698`を統合）。
+- `gradlew test harnessTest adminBridgeTest verifyHarnessIsolation build --console=plain`: **PASS**。unit 1,300、harness 17、admin 21、計1,338件でfailure/error 0。
+- `gradlew runGameTestServer --console=plain`: **15/15 PASS**。固定坑道fixtureの代表90ブロック配置も専用source set内で検証。
+- `Test-McmcpEvalTrace.ps1 -SelfTest`: **71/71 PASS**、`Test-McmcpLiveMonitor.ps1`: **81/81 PASS**。
+- 坑道専用mock: capability gate **PASS**、bounded acceptanceの正常/範囲外変更拒否 **PASS**、renderer witness **13/13 PASS**。
 - `python -m unittest discover -s tools/mcp -p 'test_*.py' -q`: **14 PASS**。認証不要のmock HTTP試験で、ゲームへは接続していません。
+- catalog raw SHA-256: `0c36ccfe6c923b61a385c402d2343178a11f3b942ee9d1eba3a4993a748c7544`、semantic Tool surface SHA-256: `a452d7812915c0e3d0d2e51fa9a2ee32e97667469ccde04ebfd7e388fb0cbe67`。
 - JAR: `build/libs/mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar`。
-- JAR SHA-256: `0F72465683555D828813C48F37AB07AAEB0D2C50C7E64590469040F51AC6B2FF`。
+- JAR SHA-256: `FD9E801BD73F3CE88DA37880F091F4AD84518159B42B48B54BCB1AD6EB1CC189`。
 - 実機での16/160マス完走・枝坑道・性能改善は**未確認**です。新opcodeは回収完了を断定せず、`drop_collection=not_asserted`を記録します。
 
 レビューで採掘後の予測airとACK待機の分離、ACK確認後に中断した場合のcounter保存、可視液体・落下中blockの停止、入力解放が3回未確認の場合の既存deferred cleanup/OFF lockへの移行を補強しました。最初の終了意図と所有権を保持し、解放未確認のterminalを公開しません。
 
-The automated checks above passed. They do not establish live-game completion or measured token savings. The validation JAR contains the new operation, while live acceptance remains pending with maintenance.
+The automated checks above passed. They do not establish live-game completion or measured token savings. The validation JAR contains the new operation and deterministic acceptance support; live acceptance remains pending.
 
 ## 実機受入 / Game acceptance
 
-窓口は保守担当に一本化します。改善担当から通常プロフィールを操作しません。`MCMCP-Validation`または削除可能なcloneで、場所・変更範囲・baseline・復旧手順・対象JAR hashをT0前に記録し、T0後は公開MCPのみで実行します。
+改善担当がこの機能の実装・受入を担当し、保守担当から届くmainのhotfixを都度レビューして取り込みます。`MCMCP-Validation`または削除可能なcloneで、場所・変更範囲・baseline・復旧手順・対象JAR hashをT0前に記録し、T0後は公開MCPのみで実行します。production用Prism JARは実機受入前に置き換えません。
 
 | 条件 / Scenario | 確認 / Check |
 | --- | --- |
@@ -48,4 +51,4 @@ The automated checks above passed. They do not establish live-game completion or
 
 同じbaselineと目的で既存の複数Action方式と比較し、Tool呼出し数、start数、所要時間、完了距離、モデルから取得できる実使用量を記録します。Tool schemaのUTF-8 byte数をtoken数や課金額として扱いません。モデル未指定の推測値で改善率を作りません。
 
-Maintenance owns game acceptance. Compare equivalent baselines using tool calls, action starts, elapsed time, completed distance and actual model usage when available. Schema byte counts are not token or billing measurements. Code/CI success and game acceptance are separate gates; do not publish a release containing this change before acceptance.
+The improvement owner runs game acceptance and incorporates reviewed maintenance hotfixes from main. Compare equivalent baselines using tool calls, action starts, elapsed time, completed distance and actual model usage when available. Schema byte counts are not token or billing measurements. Code/CI success and game acceptance remain separate gates.
