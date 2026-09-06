@@ -244,6 +244,16 @@ public final class AgentActionStore {
         action.ticks++;
     }
 
+    /** Charges pre-dispatch renderer waiting once, before the first node starts. */
+    public synchronized void recordAdmissionTicks(UUID actionId, long ticks) {
+        Mutable action = running(actionId);
+        if (action.ticks != 0 || action.currentNodeId != null || ticks < 0
+                || ticks >= action.program.effectiveBudget().maxTicks() || ticks > MAX_RECORDED_TICKS) {
+            throw new IllegalArgumentException("Invalid admission tick charge");
+        }
+        action.ticks = Math.toIntExact(ticks);
+    }
+
     public synchronized void recordMotion(UUID actionId, double distance, double cameraDegrees) {
         Mutable action = running(actionId);
         action.motionOverflowed |= exceedsBound(

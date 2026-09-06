@@ -322,10 +322,11 @@ public final class ClientCommandInbox {
             int limit,
             long currentGeneration,
             long nowNanos) {
+        var deferred = new ArrayList<PendingCommand<?>>();
         for (int i = 0; i < limit; i++) {
             var command = queue.poll();
             if (command == null) {
-                return;
+                break;
             }
             boolean claimed;
             synchronized (admissionGate) {
@@ -334,9 +335,24 @@ public final class ClientCommandInbox {
             if (claimed) {
                 // Claim is the linearization point. A concurrent stop can now be accepted
                 // immediately and will be processed by the priority lane next tick.
-                command.runClaimed();
+                if (command.runClaimed(queue == controlQueue)) deferred.add(command);
             }
         }
+        // Requeue only after this drain: a renderer gap must not spin eight times in one tick.
+        // Retain the original command, including its stop epoch, cancellation and deadline.
+        synchronized (admissionGate) {
+            for (var command : deferred) {
+                if (command.claimIfCurrent(currentGeneration, safetyEpoch.get(), nanoTime.getAsLong())
+                        && !queue.offer(command)) {
+                    command.completeFailure(new RejectedExecutionException("client control inbox is full"));
+                }
+            }
+        }
+    }
+
+    /** Only a side-effect-free control preflight may request the next pre-tick. */
+    static final class DeferControl extends RuntimeException {
+        DeferControl() { super("renderer_evidence_missing", null, false, false); }
     }
 
     public void shutdown(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
@@ -530,7 +546,8 @@ public final class ClientCommandInbox {
             if (result.isDone()) {
                 return false;
             }
-            if (RuntimeCallContext.deadlineReached(deadlineNanos, nowNanos)) {
+            if (completionAbandoned.getAsBoolean()
+                    || RuntimeCallContext.deadlineReached(deadlineNanos, nowNanos)) {
                 completeFailure(new CommandTimeoutException(name));
                 return false;
             }
@@ -541,13 +558,13 @@ public final class ClientCommandInbox {
             return true;
         }
 
-        private void runClaimed() {
+        private boolean runClaimed(boolean mayDefer) {
             try {
                 // Deadline remains an execution fence after the command has been claimed.
                 if (RuntimeCallContext.deadlineReached(
                         deadlineNanos, nanoTime.getAsLong())) {
                     completeFailure(new CommandTimeoutException(name));
-                    return;
+                    return false;
                 }
                 T value = action.call();
                 if (completionAbandoned.getAsBoolean()
@@ -558,9 +575,13 @@ public final class ClientCommandInbox {
                 } else if (!result.complete(value)) {
                     onAbandonedCompletion.accept(value);
                 }
+            } catch (DeferControl deferred) {
+                if (mayDefer) return true;
+                completeFailure(deferred);
             } catch (Throwable failure) {
                 completeFailure(failure);
             }
+            return false;
         }
 
         private void completeFailure(Throwable failure) {
