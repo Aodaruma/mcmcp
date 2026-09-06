@@ -209,6 +209,17 @@ class McpToolCatalogTest {
     @Test
     void containerPartialFailureContractIsDiscoverableFromTheCatalog() {
         var catalog = new McpToolCatalog();
+        var getActionDescription = catalog.listResult().getAsJsonArray("tools").asList().stream()
+                .map(element -> element.getAsJsonObject())
+                .filter(tool -> tool.get("name").getAsString().equals("agent_get_action"))
+                .findFirst().orElseThrow().get("description").getAsString();
+        assertThat(getActionDescription)
+                .contains("Failed or cancelled terminal does not roll back confirmed effects")
+                .contains("apply each confirmed effect exactly once")
+                .contains("recoverable never authorizes replaying the same Action")
+                .contains("partial.resume_requires_reobservation is true")
+                .contains("fetch fresh state or observation and plan a new Action");
+
         var definitions = catalog.inputSchema("agent_start_action").getAsJsonObject("$defs");
         var take = definitions.getAsJsonObject("takeContainerStackNode")
                 .getAsJsonObject("properties");
