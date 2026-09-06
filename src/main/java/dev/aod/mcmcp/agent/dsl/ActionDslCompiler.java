@@ -2,6 +2,7 @@ package dev.aod.mcmcp.agent.dsl;
 
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.navigation.NavigationDistanceBudget;
+import dev.aod.mcmcp.agent.mining.TunnelGeometry;
 import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 
 import java.util.ArrayList;
@@ -19,13 +20,17 @@ import static dev.aod.mcmcp.agent.dsl.ActionDslException.Code.PROGRAM_BUDGET_UNP
 public final class ActionDslCompiler {
     public static final long FRAME_ITEM_TICKS = 400L;
     public static final long FRAME_ITEM_DURATION_MILLIS = 20_000L;
+    public static final Cost MAX_TUNNEL_COST = tunnelCost(TunnelGeometry.plan(
+            new ActionDsl.Position("minecraft:overworld", 0, 0, 0), ActionDsl.BlockFace.NORTH,
+            TunnelGeometry.MAX_LENGTH_BLOCKS, true, TunnelGeometry.MAX_BRANCH_LENGTH_BLOCKS,
+            TunnelGeometry.MIN_BRANCH_SPACING_BLOCKS));
     public static final ActionDsl.Budget PHASE_ONE_HARD_LIMIT = new ActionDsl.Budget(
             ActionDslValidator.MAX_BOUNDED_INPUT_DURATION_MILLIS,
             ActionDslValidator.MAX_BOUNDED_INPUT_TICKS,
-            NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
-            ActionDslValidator.MAX_ACTION_CAMERA_DEGREES,
+            MAX_TUNNEL_COST.distanceBlocks(),
+            MAX_TUNNEL_COST.cameraDegrees(),
             ActionDslValidator.MAX_KILL_ZONE_ATTACKS,
-            ActionDslValidator.MAX_COBBLESTONE_GENERATOR_BREAKS,
+            MAX_TUNNEL_COST.blocksBroken(),
             ActionDslValidator.MAX_BLOCKS_PLACED);
     private static final long NOMINAL_TICK_MILLIS = 50;
     private static final long BLOCK_PLAN_TICKS_PER_ENTRY = 300;
@@ -126,6 +131,11 @@ public final class ActionDslCompiler {
         }
         if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
             Cost cost = intrinsicCobblestoneGeneratorCost(operation);
+            primitiveCostBounds.put(node.id(), cost);
+            return cost;
+        }
+        if (node instanceof ActionDsl.ExcavateTunnel operation) {
+            Cost cost = intrinsicExcavateTunnelCost(operation);
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }
@@ -337,6 +347,22 @@ public final class ActionDslCompiler {
                 operation.maxAttacks(),
                 0L,
                 0L);
+    }
+
+    /** Shared finite reservation for the exact excavation footprint and branch return route. */
+    public static Cost intrinsicExcavateTunnelCost(ActionDsl.ExcavateTunnel operation) {
+        return tunnelCost(TunnelGeometry.plan(operation.target(), operation.face(), operation.lengthBlocks(),
+                operation.pattern() == ActionDsl.MiningPattern.BRANCHES,
+                operation.branchLengthBlocks(), operation.branchSpacingBlocks()));
+    }
+
+    private static Cost tunnelCost(TunnelGeometry.Plan plan) {
+        long cells = plan.excavationCells().size();
+        long steps = plan.travelBlocks();
+        long ticks = 600L * cells + 100L * steps + 100L;
+        return new Cost(ticks * NOMINAL_TICK_MILLIS, ticks,
+                1.5D * steps + 1.5D, 360.0D * steps + 160.0D * cells + 360.0D,
+                0, plan.maxBreaks(), 0);
     }
 
     /** Exact finite reservation for one top-level stationary cobblestone-generator run. */

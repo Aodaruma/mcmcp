@@ -1,6 +1,8 @@
 package dev.aod.mcmcp.agent.dsl;
 
 import dev.aod.mcmcp.agent.navigation.NavigationDistanceBudget;
+import dev.aod.mcmcp.agent.mining.SafeMiningBlocks;
+import dev.aod.mcmcp.agent.mining.TunnelGeometry;
 import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.redstone.RedstoneSpec;
 import dev.aod.mcmcp.routine.SafeBreakSourcePolicy;
@@ -128,8 +130,10 @@ public final class ActionDslValidator {
                         instanceof ActionDsl.OperateKnownCobblestoneGenerator;
         boolean boundedInputsOnly = program.body().size() == 1
                 && program.body().getFirst() instanceof ActionDsl.HoldBoundedInputs;
+        boolean tunnelOnly = program.body().size() == 1
+                && program.body().getFirst() instanceof ActionDsl.ExcavateTunnel;
         validateRequestBudget(
-                request.budget(), killZoneOnly, cobblestoneGeneratorOnly, boundedInputsOnly);
+                request.budget(), killZoneOnly, cobblestoneGeneratorOnly, boundedInputsOnly, tunnelOnly);
 
         if (program.body().isEmpty() || program.body().size() > MAX_TOP_LEVEL_NODES) {
             throw invalid("program.body must contain 1.." + MAX_TOP_LEVEL_NODES + " nodes");
@@ -156,6 +160,8 @@ public final class ActionDslValidator {
         validateExclusiveNode(program.body(),
                 node -> node instanceof ActionDsl.HoldBoundedInputs,
                 "hold_bounded_inputs must be the only top-level Action node");
+        validateExclusiveNode(program.body(), node -> node instanceof ActionDsl.ExcavateTunnel,
+                "excavate_tunnel must be the only top-level Action node");
         var walk = new Walk();
         int executed = walkSequence(program.body(), 1, walk, "program.body");
         if (walk.sourceNodes > MAX_SOURCE_NODES) {
@@ -178,36 +184,39 @@ public final class ActionDslValidator {
     }
 
     static void validateRequestBudget(ActionDsl.Budget budget) {
-        validateRequestBudget(budget, false, false, false);
+        validateRequestBudget(budget, false, false, false, false);
     }
 
     private static void validateRequestBudget(
             ActionDsl.Budget budget,
             boolean killZoneOnly,
             boolean cobblestoneGeneratorOnly,
-            boolean boundedInputsOnly) {
+            boolean boundedInputsOnly,
+            boolean tunnelOnly) {
         Objects.requireNonNull(budget, "budget");
         boolean longRunningOnly = killZoneOnly || cobblestoneGeneratorOnly;
         requireRange(budget.maxDurationMillis(), 100,
-                boundedInputsOnly ? MAX_BOUNDED_INPUT_DURATION_MILLIS
+                boundedInputsOnly || tunnelOnly ? MAX_BOUNDED_INPUT_DURATION_MILLIS
                         : longRunningOnly ? MAX_KILL_ZONE_DURATION_MILLIS
                         : MAX_ACTION_DURATION_MILLIS,
                 "budget.max_duration_ms");
         requireRange(budget.maxTicks(), 2,
-                boundedInputsOnly ? MAX_BOUNDED_INPUT_TICKS
+                boundedInputsOnly || tunnelOnly ? MAX_BOUNDED_INPUT_TICKS
                         : longRunningOnly ? MAX_KILL_ZONE_TICKS : MAX_ACTION_TICKS,
                 "budget.max_ticks");
         requireFiniteRange(
-                budget.maxDistanceBlocks(), 0, NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
+                budget.maxDistanceBlocks(), 0, tunnelOnly ? ActionDslCompiler.MAX_TUNNEL_COST.distanceBlocks()
+                        : NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
                 "budget.max_distance_blocks");
         requireFiniteRange(
-                budget.maxCameraDegrees(), 0, MAX_ACTION_CAMERA_DEGREES,
+                budget.maxCameraDegrees(), 0, tunnelOnly ? ActionDslCompiler.MAX_TUNNEL_COST.cameraDegrees()
+                        : MAX_ACTION_CAMERA_DEGREES,
                 "budget.max_camera_degrees");
         requireRange(budget.maxInteractions(), 0,
                 killZoneOnly ? MAX_KILL_ZONE_ATTACKS : MAX_INTERACTIONS,
                 "budget.max_interactions");
         requireRange(budget.maxBlocksBroken(), 0,
-                cobblestoneGeneratorOnly
+                tunnelOnly ? ActionDslCompiler.MAX_TUNNEL_COST.blocksBroken() : cobblestoneGeneratorOnly
                         ? MAX_COBBLESTONE_GENERATOR_BREAKS : MAX_BLOCKS_BROKEN,
                 "budget.max_blocks_broken");
         requireRange(budget.maxBlocksPlaced(), 0, MAX_BLOCKS_PLACED,
@@ -371,6 +380,24 @@ public final class ActionDslValidator {
                     path + ".minimum_inventory_count");
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
+            return 1;
+        }
+        if (node instanceof ActionDsl.ExcavateTunnel operation) {
+            validatePosition(operation.target(), path + ".target");
+            validateBlockState(operation.expectedState(), path + ".expected_state");
+            if (!SafeMiningBlocks.allowsState(operation.expectedState().block(), operation.expectedState().properties())
+                    || !SafeMiningBlocks.allowsTool(operation.toolItem())) {
+                throw invalid(path + " block state or tool is outside the closed tunnel allowlist");
+            }
+            try {
+                TunnelGeometry.plan(operation.target(), operation.face(), operation.lengthBlocks(),
+                        operation.pattern() == ActionDsl.MiningPattern.BRANCHES,
+                        operation.branchLengthBlocks(), operation.branchSpacingBlocks());
+            } catch (IllegalArgumentException | ArithmeticException invalidGeometry) {
+                throw invalid(path + " tunnel geometry is outside the bounded horizontal footprint");
+            }
+            walk.requiredCapabilities.addAll(Set.of(ActionDsl.Capability.MOVEMENT,
+                    ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_BREAK));
             return 1;
         }
         if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
@@ -955,6 +982,7 @@ public final class ActionDslValidator {
             if (node instanceof ActionDsl.BreakKnownFace
                     || node instanceof ActionDsl.BreakKnownBlock
                     || node instanceof ActionDsl.OperateKnownCobblestoneGenerator
+                    || node instanceof ActionDsl.ExcavateTunnel
                     || node instanceof ActionDsl.HoldBoundedInputs hold
                             && (hold.inputs().contains(ActionDsl.BoundedInput.ATTACK)
                                     || hold.inputs().contains(ActionDsl.BoundedInput.USE))

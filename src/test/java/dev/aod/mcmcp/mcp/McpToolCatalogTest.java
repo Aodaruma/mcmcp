@@ -915,7 +915,8 @@ class McpToolCatalogTest {
                 .contains("witness disappearance, movement, or merge alone never succeeds")
                 .contains("Any failure stops the unstarted suffix");
         assertThat(description)
-                .contains("when a mutation creates new drops or newly exposed surfaces, finish, reobserve")
+                .contains("when an ordinary mutation creates new drops or newly exposed surfaces, finish, reobserve")
+                .contains("standalone excavate_tunnel exception")
                 .contains("Put wait_until immediately after its plant node");
     }
 

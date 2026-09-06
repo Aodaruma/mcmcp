@@ -128,6 +128,7 @@ public final class ActionDslParser {
             case "break_known_block" -> breakKnownBlock(object, path);
             case "operate_known_cobblestone_generator" ->
                     operateKnownCobblestoneGenerator(object, path);
+            case "excavate_tunnel" -> excavateTunnel(object, path);
             case "hold_bounded_inputs" -> holdBoundedInputs(object, path);
             case "till_known_block" -> tillKnownBlock(object, path);
             case "till_known_batch" -> tillKnownBatch(object, path);
@@ -267,6 +268,36 @@ public final class ActionDslParser {
                         path + ".regeneration_wait_ticks"),
                 longInteger(source.get("max_operation_duration_ticks"),
                         path + ".max_operation_duration_ticks"));
+    }
+
+    private static ActionDsl.ExcavateTunnel excavateTunnel(JsonObject source, String path) {
+        exactKeys(source, path,
+                Set.of("id", "op", "target", "face", "expected_state", "tool_item", "length_blocks",
+                        "pattern", "branch_length_blocks", "branch_spacing_blocks"),
+                Set.of("id", "op", "target", "face", "expected_state", "tool_item", "length_blocks"));
+        var pattern = source.has("pattern")
+                ? switch (string(source.get("pattern"), path + ".pattern")) {
+                    case "straight" -> ActionDsl.MiningPattern.STRAIGHT;
+                    case "branches" -> ActionDsl.MiningPattern.BRANCHES;
+                    default -> throw invalid(path + ".pattern must be straight or branches");
+                } : ActionDsl.MiningPattern.STRAIGHT;
+        if (pattern == ActionDsl.MiningPattern.STRAIGHT
+                && (source.has("branch_length_blocks") || source.has("branch_spacing_blocks"))) {
+            throw invalid(path + " straight pattern forbids branch parameters");
+        }
+        return new ActionDsl.ExcavateTunnel(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                blockFace(string(source.get("face"), path + ".face"), path + ".face"),
+                blockStateSpec(source.get("expected_state"), path + ".expected_state"),
+                string(source.get("tool_item"), path + ".tool_item"),
+                integer(source.get("length_blocks"), path + ".length_blocks"), pattern,
+                pattern == ActionDsl.MiningPattern.STRAIGHT ? 0
+                        : source.has("branch_length_blocks")
+                                ? integer(source.get("branch_length_blocks"), path + ".branch_length_blocks") : 6,
+                pattern == ActionDsl.MiningPattern.STRAIGHT ? 0
+                        : source.has("branch_spacing_blocks")
+                                ? integer(source.get("branch_spacing_blocks"), path + ".branch_spacing_blocks") : 3);
     }
 
     private static ActionDsl.HoldBoundedInputs holdBoundedInputs(
