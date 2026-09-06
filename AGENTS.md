@@ -55,6 +55,7 @@
 - production prompt、T0、deadline、合格条件、artifact形式は[`docs/experiments/MCMCP_fresh_MCP-only_評価protocol.md`](docs/experiments/MCMCP_fresh_MCP-only_評価protocol.md)を正本とする。個別結果と改善履歴は[`docs/experiments/`](docs/experiments/)へ置き、AGENTS.mdへ転記しない。
 - production goalの達成と、fixtureの再植付け・原状復旧を含む強いcompletion gateは別々に判定する。1回の機能PASSだけで安定完了とせず、同一prompt・非干渉条件での再現性と十分なdeadline余裕を確認する。
 - MCMCPがeffective configへ未登録のrunに限りdirect MCP bridgeをfallbackとして許可する。rate limitを守り、固定診断だけをartifactへ残す。反復するschema推測失敗はpromptへ答えを足さず、Tool description、catalog、診断を改善する。
+- 接続診断と未登録環境のfallbackは`tools/mcp/`の固定実装を使い、評価runnerとHTTP・JSON-RPC・Tool結果検証を共有する。入力と成功結果をcatalogで検証し、Action開始成功時のIDだけを待機に使う。HTTP/JSON-RPC/Toolエラー・ID欠落からpollを開始せず、単独get/cancelも要求IDと結果IDを照合する。通信失敗によるmutationの自動再送・引数推測補完を行わない。通常のMCP登録が利用できる場合はそれを優先する。
 
 ## Development workflow
 

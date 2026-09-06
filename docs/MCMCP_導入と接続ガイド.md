@@ -82,6 +82,9 @@ $env:MCMCP_BEARER_TOKEN = (Get-Content -LiteralPath $mcmcpTokenPath -Raw).Trim()
 
 ## 5. Codexへ接続する
 
+**推奨は第3節のゲーム内自動設定です。** 設定後にCodexを再起動し、`codex mcp list` またはMCP一覧で `mcmcp` の登録を確認します。ゲームと同じPC・同じユーザー環境の設定を確認してください。以下の手動登録は、自動設定を利用できない場合だけ必要です。<br>
+**Prefer the in-game setup in section 3.** Restart Codex and check `codex mcp list` or its MCP server list. Use the same computer and user environment as Minecraft. Manual registration below is a fallback.
+
 Codex CLIで一度だけ次を実行する。
 
 ```powershell
@@ -103,6 +106,9 @@ tool_timeout_sec = 900
 Codexアプリ、Codex CLI、IDE拡張は同じCodexホスト上のMCP設定を共有する。設定後はCodexを再起動し、`/mcp`またはMCP server一覧で`mcmcp`を確認する。詳しい形式は[Codex公式MCPガイド](https://developers.openai.com/codex/mcp/)を参照する。
 
 ## 6. Claude Codeへ接続する
+
+**推奨は第3節の「Claude Codeを自動設定」です。** 再起動後に `claude mcp list` とClaude Code内の `/mcp` で接続を確認します。自動設定では `headersHelper` がtokenを読み、tokenを設定へ貼り付ける必要はありません。<br>
+**Prefer “Claude Codeを自動設定” in section 3.** Restart Claude Code, then check `claude mcp list` and `/mcp`. The generated `headersHelper` reads the token without copying it into the configuration.
 
 tokenをコマンド履歴や設定ファイルへ直接書かないため、環境変数展開を使う。任意の作業フォルダーに次の`.mcp.json`を作成するか、同等の内容をユーザー設定へ登録する。
 
@@ -170,3 +176,14 @@ MCMCPで現在の状態だけを確認してください。まだ行動は開始
 - ツールが見えない: Minecraftを先に起動してからCodex/Claude Codeを再起動し、`/mcp`を確認する。
 
 tokenそのものをトラブル報告へ添付してはいけない。
+
+### 接続とActionの失敗を分けて確認する / Separate connection and Action failures
+
+接続を詳しく確認する場合は、repoに含まれる[接続診断ツール](../tools/mcp/README.md)を `-Check` で実行します。接続と固定5 Toolの登録だけを検査し、Minecraft内の操作は開始しません。通常のMCP Toolが使える場合はそちらを優先してください。<br>
+Use the repository's [connection diagnostic](../tools/mcp/README.md) with `-Check` to test connectivity and the five tools without starting gameplay. Prefer normal MCP tools whenever available.
+
+接続拒否・HTTP 401・protocol不一致と、Toolの `isError:true` は別の失敗です。後者はMCPまで到達したうえで、操作許可や観測などの条件によって拒否されています。開始が成功して有効な `action_id` を受け取った場合だけ、そのIDで待機します。IDがない失敗応答を空文字や仮のIDで繰り返し照会しないでください。<br>
+Connection/HTTP/protocol failures differ from a Tool's `isError:true`: the latter reached MCP but was rejected by its operation checks. Only poll a valid ID returned by a successful start. Never substitute an empty or guessed ID.
+
+通常のMCP登録がない環境で使うfallbackは上記の固定ツールを利用します。protocol情報・UTF-8・timeout・結果検証は評価runnerと共通です。送信済み操作の応答を受け取れなかった場合、成功とも失敗とも断定せず、移動・移送などを自動再送しません。<br>
+When normal MCP registration is unavailable, use the fixed fallback. It shares protocol, UTF-8, timeout, and result validation with the evaluator. A lost response leaves the mutation outcome uncertain; do not automatically resend it.
