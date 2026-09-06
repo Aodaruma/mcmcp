@@ -33,6 +33,7 @@ $oracle.kind = 'oracle'; $oracle.baselineMatches = $false; $oracle.outsideChange
 $oracle.completedCells = 4; $oracle.prefixCells = 4; $oracle.partialCells = 0
 $oracle.invalidInsideStates = 0; $oracle.poseMatch = $true; $oracle.hazardPrefix = $true
 $oracle.player = @(260.45,200.03,256.5); $oracle.health = 20.0; $oracle.pass = $true
+$oracle.resourcesActive = $true; $oracle.forcedChunks = 22; $oracle.raysPerTick = 512
 $oracle.scope = 'world-only; join with public Action and evaluation lease terminal receipts'
 $gate = [ordered]@{
     schema_version = 1; gate = 'tunnel'; fixture_mode = 'hazard'; fixture_setup_id = $setupId
@@ -67,6 +68,36 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not (Get-Content $paths.report -Raw | ConvertFrom-Json).passed) {
         throw 'valid hazard acceptance was rejected'
     }
+    $invalidCoverage = @(
+        @{ field = 'resourcesActive'; remove = $true },
+        @{ field = 'forcedChunks'; remove = $true },
+        @{ field = 'raysPerTick'; remove = $true },
+        @{ field = 'resourcesActive'; value = $false },
+        @{ field = 'resourcesActive'; value = 'true' },
+        @{ field = 'resourcesActive'; value = @($true) },
+        @{ field = 'forcedChunks'; value = 21 },
+        @{ field = 'forcedChunks'; value = '22' },
+        @{ field = 'forcedChunks'; value = @(22) },
+        @{ field = 'raysPerTick'; value = 256 },
+        @{ field = 'raysPerTick'; value = '512' },
+        @{ field = 'raysPerTick'; value = @(512) }
+    )
+    foreach ($invalid in $invalidCoverage) {
+        $original = $oracle[$invalid.field]
+        if ($invalid.ContainsKey('remove')) { $oracle.Remove($invalid.field) }
+        else { $oracle[$invalid.field] = $invalid.value }
+        [IO.File]::WriteAllText($paths.oracle, (ConvertTo-Json $oracle -Depth 30), [Text.UTF8Encoding]::new($false))
+        & (Get-Process -Id $PID).Path -NoProfile -File $checker `
+            -GateResultPath $paths.gate -FixtureStatusPath $paths.status `
+            -FixtureOraclePath $paths.oracle -OutputPath $paths.report
+        $coverageReport = Get-Content -LiteralPath $paths.report -Raw | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 1 -or $coverageReport.passed -or
+            $coverageReport.violations -cnotcontains 'fixture post-run oracle did not preserve resource coverage') {
+            throw "invalid post-run oracle coverage was accepted: $($invalid.field)"
+        }
+        $oracle[$invalid.field] = $original
+    }
+    [IO.File]::WriteAllText($paths.oracle, (ConvertTo-Json $oracle -Depth 30), [Text.UTF8Encoding]::new($false))
     $status.forcedChunks = 21
     [IO.File]::WriteAllText($paths.status, (ConvertTo-Json $status -Depth 30), [Text.UTF8Encoding]::new($false))
     $gate.fixture_status_sha256 = (Get-FileHash -LiteralPath $paths.status -Algorithm SHA256).Hash.ToLowerInvariant()

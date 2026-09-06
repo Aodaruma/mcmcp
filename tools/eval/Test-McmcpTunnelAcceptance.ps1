@@ -163,6 +163,16 @@ if ($null -ne $case) {
         $forcedChunks.Value -eq 22 -and
         (Get-Value $status 'fixtureTickMutation') -ceq 'none') `
         'fixture T0 status was not ready and immutable'
+    $oracleResources = $oracle.PSObject.Properties['resourcesActive']
+    $oracleChunks = $oracle.PSObject.Properties['forcedChunks']
+    $oracleRays = $oracle.PSObject.Properties['raysPerTick']
+    Require ($null -ne $oracleResources -and $oracleResources.Value -is [bool] -and
+        $oracleResources.Value -and
+        $null -ne $oracleChunks -and $oracleChunks.Value -is [long] -and
+        $oracleChunks.Value -eq 22 -and
+        $null -ne $oracleRays -and $oracleRays.Value -is [long] -and
+        $oracleRays.Value -eq 512) `
+        'fixture post-run oracle did not preserve resource coverage'
 
     $result = Get-Value $gate 'result'
     $expectedActionState = if ($mode -ceq 'hazard') { 'failed' } else { 'succeeded' }

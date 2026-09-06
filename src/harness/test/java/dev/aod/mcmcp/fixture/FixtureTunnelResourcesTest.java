@@ -104,6 +104,65 @@ class FixtureTunnelResourcesTest {
     }
 
     @Test
+    void statusReadDetectsOneUnforcedChunkWithoutChangingTheSavedRestorationLedger() {
+        var chunks = new FakeChunks();
+        var preexisting = FixtureTunnelResources.chunks().getFirst();
+        chunks.values.put(preexisting, true);
+        // This extra forced flag must never compensate for a missing flag inside the fixed 22.
+        chunks.values.put(new FixtureTunnelResources.Chunk(90, 90), true);
+        var original = Map.copyOf(chunks.values);
+        var resources = resources(new AtomicReference<>(128));
+        resources.begin(new Object(), new Object(), chunks);
+        assertThat(resources.actualForcedChunks()).isEqualTo(22);
+
+        chunks.values.put(preexisting, false); // External unforce after the first ready/status read.
+        assertThat(resources.actualForcedChunks()).isEqualTo(21);
+        assertThat(resources.actualForcedChunks()).isEqualTo(21); // No cached 22 on a later status read.
+        assertThat(resources.pendingChunks()).isEqualTo(22);
+        assertThat(chunks.forced(preexisting)).isFalse(); // Observation itself does not repair the drift.
+
+        resources.restore();
+        assertThat(chunks.values).isEqualTo(original); // Preserve the original true, rather than the drifted false.
+        assertThat(resources.actualForcedChunks()).isZero();
+    }
+
+    @Test
+    void unreadableCurrentFlagsCannotFallBackToTheRecordedTwentyTwo() {
+        var chunks = new FakeChunks();
+        var resources = resources(new AtomicReference<>(128));
+        resources.begin(new Object(), new Object(), chunks);
+        chunks.failRead = true;
+        assertThatIllegalStateException().isThrownBy(resources::actualForcedChunks);
+        assertThat(resources.pendingChunks()).isEqualTo(22);
+        chunks.failRead = false;
+        resources.restore();
+        assertThat(resources.active()).isFalse();
+    }
+
+    @Test
+    void sharedHealthRejectsExternalRayDriftAndRestorationRecoversTheSavedRate() {
+        var override = new AtomicReference<>(128);
+        var resources = resources(override);
+        var chunks = new FakeChunks();
+        resources.begin(new Object(), new Object(), chunks);
+        var ready = resources.health(override.get(), false);
+        assertThat(ready.intact()).isTrue();
+        assertThat(resources.health(override.get(), true).intact()).isFalse();
+
+        override.set(64); // Same external setting change inspected by status, oracle and pre-tick.
+        var drifted = resources.health(override.get(), false);
+        assertThat(drifted.forcedChunks()).isEqualTo(22);
+        assertThat(drifted.raysPerTick()).isEqualTo(64);
+        assertThat(drifted.intact()).isFalse();
+        assertThat(ready.raysPerTick()).isEqualTo(512); // Prior snapshots are immutable evidence.
+
+        resources.restore();
+        assertThat(override).hasValue(128);
+        assertThat(chunks.values.values()).allMatch(value -> !value);
+        assertThat(resources.health(512, false).intact()).isFalse(); // Inactive cannot become ready from a rate alone.
+    }
+
+    @Test
     void failedChunkRestorationKeepsOnlyItsLedgerAndStillRestoresRaysForLifecycleRetry() {
         var chunks = new FakeChunks();
         var override = new AtomicReference<>(64);
@@ -163,10 +222,14 @@ class FixtureTunnelResourcesTest {
         final Map<FixtureTunnelResources.Chunk, Boolean> values = new HashMap<>();
         boolean failAfterForce;
         boolean failRestore;
+        boolean failRead;
         int writes;
 
         FakeChunks() { FixtureTunnelResources.chunks().forEach(chunk -> values.put(chunk, false)); }
-        @Override public boolean forced(FixtureTunnelResources.Chunk chunk) { return values.getOrDefault(chunk, false); }
+        @Override public boolean forced(FixtureTunnelResources.Chunk chunk) {
+            if (failRead) throw new IllegalStateException("current chunk flags unavailable");
+            return values.getOrDefault(chunk, false);
+        }
         @Override public void setForced(FixtureTunnelResources.Chunk chunk, boolean forced) {
             writes++;
             if (!forced && failRestore && chunk.equals(FixtureTunnelResources.chunks().getFirst()))

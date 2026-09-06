@@ -78,6 +78,22 @@ final class FixtureTunnelResources {
     synchronized int pendingChunks() { return pendingRestore.size(); }
     synchronized Integer originalRaysPerTick() { return rays.originalEffectiveRays(); }
 
+    /** Current world flags, never the restoration-ledger size. Read failures remain failures. */
+    synchronized int actualForcedChunks() {
+        if (!active()) return 0;
+        int count = 0;
+        for (Chunk chunk : chunks()) if (access.forced(chunk)) count++;
+        return count;
+    }
+
+    synchronized Health health(int currentRaysPerTick, boolean restorePending) {
+        return new Health(active(), restorePending, actualForcedChunks(), currentRaysPerTick);
+    }
+
+    record Health(boolean active, boolean restorePending, int forcedChunks, int raysPerTick) {
+        boolean intact() { return active && !restorePending && forcedChunks == 22 && raysPerTick == 512; }
+    }
+
     static List<Chunk> chunks() {
         var result = new ArrayList<Chunk>();
         for (int x = FixtureTunnelPlan.MIN.x() >> 4; x <= (FixtureTunnelPlan.MAX.x() >> 4); x++)

@@ -103,8 +103,17 @@ final class FixtureTunnelScenario {
     static synchronized void onServerPreTick(ServerTickEvent.Pre event) {
         if (!RESOURCES.active() || event.getServer() != RESOURCES.server()) return;
         if (restorePending || prepared == null || !FixtureSecurity.reauthorize(prepared.context).allowed()
-                || !currentSessionMatches())
+                || !currentSessionMatches() || !resourcesIntact())
             restoreAtLifecycle();
+    }
+
+    private static boolean resourcesIntact() {
+        try { return resourceHealth().intact(); }
+        catch (RuntimeException | LinkageError unavailable) { return false; }
+    }
+
+    private static FixtureTunnelResources.Health resourceHealth() {
+        return RESOURCES.health(McmcpClientConfig.raysPerTick(), restorePending);
     }
 
     private static boolean currentSessionMatches() {
@@ -159,21 +168,27 @@ final class FixtureTunnelScenario {
         result.put("inventoryMatches", inventory);
         result.put("startPoseMatches", pose);
         result.put("playerBaselineMatches", body);
-        result.put("resourcesActive", RESOURCES.active() && !restorePending);
-        result.put("raysPerTick", McmcpClientConfig.raysPerTick());
+        var resources = resourceHealth();
+        result.put("resourcesActive", resources.active() && !resources.restorePending());
+        result.put("raysPerTick", resources.raysPerTick());
         result.put("originalRaysPerTick", RESOURCES.originalRaysPerTick());
-        result.put("forcedChunks", RESOURCES.pendingChunks());
+        result.put("forcedChunks", resources.forcedChunks());
         result.put("ready", baseline && entities == 0 && inventory && pose && body
-                && RESOURCES.active() && !restorePending && RESOURCES.pendingChunks() == 22
-                && McmcpClientConfig.raysPerTick() == 512);
+                && resources.intact());
         result.put("fixtureTickMutation", "none");
         output.accept(Component.literal(JSON.toJson(result)));
     }
 
     static synchronized void sendOracle(FixtureSecurity.Context context, Consumer<Component> output) {
         Prepared value = requirePrepared(context);
+        var resources = resourceHealth();
+        if (!resources.intact())
+            throw new IllegalStateException("tunnel oracle requires the active unchanged fixture resources");
         var audit = audit(value);
         var result = base(value, "oracle");
+        result.put("resourcesActive", true);
+        result.put("forcedChunks", resources.forcedChunks());
+        result.put("raysPerTick", resources.raysPerTick());
         result.put("baselineMatches", audit.baselineMatches());
         result.put("outsideChanged", audit.outsideChanged());
         result.put("completedCells", audit.completedCells());
