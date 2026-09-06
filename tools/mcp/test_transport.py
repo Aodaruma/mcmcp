@@ -309,7 +309,8 @@ $ErrorActionPreference = 'Stop'
 $Endpoint = $args[0]
 $script:Bearer = [IO.File]::ReadAllText($args[1])
 $script:McpRequestId = 0L
-$script:EvaluationLeaseAcquired = $false
+$script:EvaluationLeaseAcquired = $true
+$script:EvaluationLeaseId = 'fixture-evaluation-lease'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(
     (Join-Path (Get-Location) 'tools/eval/Invoke-McmcpFreshEval.ps1'), [ref]$tokens, [ref]$errors)
@@ -329,6 +330,8 @@ try {
         self.assertEqual(process.stdout, b'request_timeout', process.stderr)
         self.assertEqual(process.stderr, b'')
         self.assertEqual(len(self.requests), 1)
+        headers = {k.lower(): v for k, v in self.requests[0][1].items()}
+        self.assertEqual(headers['mcmcp-evaluation-lease'], 'fixture-evaluation-lease')
 
 
 if __name__ == '__main__':

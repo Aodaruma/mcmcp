@@ -24,6 +24,8 @@ main `f9f4d32` のcatalog自体は変更せず、既存runnerとtrace auditorに
 
 Javaの `test harnessTest adminBridgeTest verifyHarnessIsolation build` は1,236 tests、failure/error 0で成功した。Java runtime・catalog・配布用画像/PDFは変更していない。
 
+固定hash同期後の評価trace auditor自己検証は64/64成功。monitorの共有transport参照と、既に追加されていたwarehouse-smelt profileの検証期待値も同期した。評価lease headerが既存runner wrapperから実HTTPへ渡ることをtimeout回帰で確認した。
+
 通常の登録済みMCP Toolから実ゲームの `agent_get_state` 取得にも成功し、操作がREADYであることを確認した。Action開始・ゲーム設定変更は行っていない。別のローカル検証profileのtokenによる `-Check` はHTTP 401・固定診断・exit 1で停止した。その後、既存MCP設定が参照しているprofileを確認し、同じtokenファイルを指定した `-Check` は `connection:reachable / tool_count:5 / exit 0` で成功した。token内容・既存設定・ゲームprofileのファイルは変更していない。
 
 この結果は通信経路の検証であり、Lunaの操作能力や実ワールドのAction成功を示すものではない。観測欠測からの回復と低FPSの実機検証はIssue #4で扱う。
