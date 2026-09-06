@@ -13,6 +13,46 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class DeliveredPolicyEvidenceStoreTest {
     @Test
+    void capturedSurfaceLeaseExpiresEvenWhenTheSameFaceIsRedeliveredDuringRecovery() {
+        var clock = new AtomicLong();
+        var store = new DeliveredPolicyEvidenceStore(clock::get);
+        var chest = surface(1, 64, 1, "minecraft:chest", 10, 3);
+        var page = new ObservationPage("obs-0000000000000001", 10, List.of(chest), null);
+        var receipt = store.prepareDelivery(page);
+        assertThat(store.surfaceLeaseStatus(store.captureSurfaceLease(chest.position(), chest.block())))
+                .isEqualTo(DeliveredPolicyEvidenceStore.SurfaceLeaseStatus.NOT_DELIVERED);
+        store.confirmDelivery(receipt);
+        var lease = store.captureSurfaceLease(chest.position(), chest.block());
+        clock.set(Duration.ofSeconds(59).toNanos());
+        store.confirmDelivery(store.prepareDelivery(page));
+        assertThat(store.surfaceLeaseStatus(lease)).isEqualTo(DeliveredPolicyEvidenceStore.SurfaceLeaseStatus.VALID);
+        clock.set(Duration.ofSeconds(60).toNanos());
+        assertThat(store.surfaceLeaseStatus(lease))
+                .isEqualTo(DeliveredPolicyEvidenceStore.SurfaceLeaseStatus.DELIVERY_EXPIRED);
+        var current = Optional.of(frame("obs-0000000000000002", 20, List.of(chest)));
+        assertThat(store.augment(current).orElseThrow().records()).containsExactly(chest);
+        assertThat(store.restrictToSurfaceLease(current, lease).orElseThrow().records()).isEmpty();
+    }
+
+    @Test
+    void clearedSessionAndNewlyDeliveredFacesCannotEnlargeCapturedLease() {
+        var store = new DeliveredPolicyEvidenceStore(() -> 0L);
+        var chest = surface(1, 64, 1, "minecraft:chest", 10, 3);
+        store.recordDelivered(new ObservationPage("obs-0000000000000001", 10, List.of(chest), null));
+        var lease = store.captureSurfaceLease(chest.position(), chest.block());
+        var newFace = new ObservationRecord.VisibleSurface(chest.position(), ObservationRecord.Face.SOUTH,
+                chest.block(), chest.shapeClass(), null, chest.rayHit(), chest.eyeOrigin(), 20, 65);
+        store.recordDelivered(new ObservationPage("obs-0000000000000002", 20, List.of(newFace), null));
+        var current = Optional.of(frame("obs-0000000000000003", 20, List.of(chest, newFace)));
+        assertThat(store.restrictToSurfaceLease(current, lease).orElseThrow().records()).containsExactly(chest);
+        store.clear();
+        store.recordDelivered(new ObservationPage("obs-0000000000000004", 20, List.of(chest), null));
+        assertThat(store.surfaceLeaseStatus(lease))
+                .isEqualTo(DeliveredPolicyEvidenceStore.SurfaceLeaseStatus.NOT_DELIVERED);
+        assertThat(store.restrictToSurfaceLease(current, lease).orElseThrow().records()).isEmpty();
+    }
+
+    @Test
     void reobservesOnlyDeliveredSurfacesWithoutExtendingDeliveryLifetimeOrDynamicEvidence() {
         var clock = new AtomicLong();
         var store = new DeliveredPolicyEvidenceStore(clock::get);

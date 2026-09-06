@@ -11,6 +11,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -18,6 +19,66 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ClientCommandInboxTest {
+    @Test
+    void deferredPreflightRunsOncePerDrainAndPreservesItsOriginalDeadline() {
+        var now = new AtomicLong(10);
+        var inbox = new ClientCommandInbox(8, new InputReleaseController(), new LocalArmingState(),
+                (reason, session) -> ClientCommandInbox.StopProgress.COMPLETE, now::get);
+        var attempts = new AtomicInteger();
+        var queued = inbox.submitControl("agent_start_action", 1, 12, () -> {
+            attempts.incrementAndGet();
+            throw new ClientCommandInbox.DeferControl();
+        });
+        inbox.drainControls(1, now.get());
+        assertThat(attempts).hasValue(1);
+        assertThat(queued).isNotDone();
+        now.set(11);
+        inbox.drainControls(1, now.get());
+        assertThat(attempts).hasValue(2);
+        now.set(12);
+        inbox.drainControls(1, now.get());
+        assertThatThrownBy(queued::join).hasCauseInstanceOf(ClientCommandInbox.CommandTimeoutException.class);
+        assertThat(attempts).hasValue(2);
+    }
+
+    @Test
+    void deferredPreflightCannotResumeAfterWorldChangeStopOrCallerCancellation() {
+        for (int boundary = 0; boundary < 3; boundary++) {
+            var now = new AtomicLong(10);
+            var inbox = new ClientCommandInbox(8, new InputReleaseController(), new LocalArmingState(),
+                    (reason, session) -> ClientCommandInbox.StopProgress.COMPLETE, now::get);
+            var abandoned = new AtomicBoolean();
+            var attempts = new AtomicInteger();
+            var queued = inbox.submitControl("agent_start_action", 1, 100, () -> {
+                attempts.incrementAndGet();
+                throw new ClientCommandInbox.DeferControl();
+            }, abandoned::get, ignored -> { throw new AssertionError("No reservation was created"); });
+            inbox.drainControls(1, 10);
+            if (boundary == 1) inbox.requestEmergencyStop("operator_stop");
+            if (boundary == 2) abandoned.set(true);
+            inbox.drainControls(boundary == 0 ? 2 : 1, 11);
+            assertThat(queued).isCompletedExceptionally();
+            assertThat(attempts).hasValue(1);
+        }
+    }
+
+    @Test
+    void stopAcceptedInsideDeferredAttemptCannotBeLostWhileTheCommandIsOutsideTheQueue() {
+        var now = new AtomicLong(10);
+        var inbox = new ClientCommandInbox(8, new InputReleaseController(), new LocalArmingState(),
+                (reason, session) -> ClientCommandInbox.StopProgress.COMPLETE, now::get);
+        var attempts = new AtomicInteger();
+        var queued = inbox.submitControl("agent_start_action", 1, 100, () -> {
+            attempts.incrementAndGet();
+            inbox.requestEmergencyStop("operator_stop");
+            throw new ClientCommandInbox.DeferControl();
+        });
+        inbox.drainControls(1, 10);
+        inbox.drainControls(1, 11);
+        assertThat(queued).isCompletedExceptionally();
+        assertThat(attempts).hasValue(1);
+    }
+
     @Test
     void preTickReservationRollsBackWhenItsCallerAbandonsDuringCommit() {
         var inbox = new ClientCommandInbox(4, new InputReleaseController(), new LocalArmingState());

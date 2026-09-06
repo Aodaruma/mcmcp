@@ -33,6 +33,48 @@ class MinecraftPhaseFiveInventoryPortTest {
     private static final int DEFAULT_HASH = 41;
 
     @Test
+    void rendererWaitGatesOnlyUnsentInitialOpenAndNeverAckReadbackOrCleanup() throws Exception {
+        var checks = new java.util.concurrent.atomic.AtomicInteger();
+        var current = new java.util.concurrent.atomic.AtomicReference<>(
+                MinecraftPhaseFiveInventoryPort.InitialOpenWitness.RENDERER_EVIDENCE_MISSING);
+        java.util.function.Supplier<MinecraftPhaseFiveInventoryPort.InitialOpenWitness> witness = () -> {
+            checks.incrementAndGet();
+            return current.get();
+        };
+        for (int tick = 0; tick < 4; tick++) {
+            assertThat(MinecraftPhaseFiveInventoryPort.initialOpenWitness(
+                    MinecraftPhaseFiveInventoryPort.Stage.AIMING_INITIAL, witness))
+                    .isEqualTo(MinecraftPhaseFiveInventoryPort.InitialOpenWitness.RENDERER_EVIDENCE_MISSING);
+        }
+        current.set(MinecraftPhaseFiveInventoryPort.InitialOpenWitness.READY);
+        assertThat(MinecraftPhaseFiveInventoryPort.initialOpenWitness(
+                MinecraftPhaseFiveInventoryPort.Stage.AIMING_INITIAL, witness))
+                .isEqualTo(MinecraftPhaseFiveInventoryPort.InitialOpenWitness.READY);
+        current.set(MinecraftPhaseFiveInventoryPort.InitialOpenWitness.DELIVERY_EXPIRED);
+        for (var stage : MinecraftPhaseFiveInventoryPort.Stage.values()) {
+            if (stage == MinecraftPhaseFiveInventoryPort.Stage.AIMING_INITIAL) continue;
+            assertThat(MinecraftPhaseFiveInventoryPort.initialOpenWitness(stage, witness))
+                    .isEqualTo(MinecraftPhaseFiveInventoryPort.InitialOpenWitness.READY);
+        }
+        assertThat(checks).hasValue(5);
+        assertThat(MinecraftPhaseFiveInventoryPort.initialOpenWitness(
+                MinecraftPhaseFiveInventoryPort.Stage.AIMING_INITIAL, witness))
+                .isEqualTo(MinecraftPhaseFiveInventoryPort.InitialOpenWitness.DELIVERY_EXPIRED);
+
+        var node = classNode();
+        assertThat(invocations(node, "dispatchExpectedOpen")).containsSubsequence(
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#ongoingFailure",
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#initialOpenWitness",
+                "dev/aod/mcmcp/runtime/ScreenOwnershipSignals#beginExpectedOpen",
+                "dev/aod/mcmcp/runtime/ClientPredictionSignals#begin",
+                "net/minecraft/client/multiplayer/MultiPlayerGameMode#useItemOn");
+        assertThat(invocations(node, "maintain")).containsSubsequence(
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#ongoingFailure",
+                "dev/aod/mcmcp/routine/PhaseFiveAttempt#hardDeadlineClientTick",
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#maintainAim");
+    }
+
+    @Test
     void expiredReleaseRetriesOnlyWhenObservableCleanupEvidenceChanges() {
         var waiting = List.of("same-menu", ScreenOwnershipSignals.Phase.FAILED, 42L,
                 ScreenOwnershipSignals.CausalBarrierStatus.WAITING_ACK);
