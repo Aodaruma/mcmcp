@@ -13,7 +13,7 @@ class FixturePhase5AutorunConfigTest {
         assertThat(Arrays.stream(FixturePhase5Mode.values())
                 .map(FixturePhase5Mode::wireName))
                 .containsExactly(
-                        "recipes", "craft", "smelt", "warehouse_smelt", "label_transfer", "brew", "redstone", "transfer", "crop",
+                        "recipes", "craft", "smelt", "warehouse_smelt", "label_transfer", "copper_transfer", "brew", "redstone", "transfer", "crop",
                         "combined_wheat", "tree", "sleep", "survey", "generalization",
                         "bounded_input_hold",
                         "cobblestone_generator",

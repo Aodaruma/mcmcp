@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.agent.observation;
 
+import dev.aod.mcmcp.routine.KnownContainerPolicy;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -28,7 +29,7 @@ public final class ContainerAimOcclusion {
         if (surface.rayHit() == null) return false;
         var point = surface.rayHit();
         var block = surface.position();
-        boolean chest = surface.block().value().equals("minecraft:chest");
+        boolean chest = KnownContainerPolicy.isChest(surface.block().value());
         double[] horizontal = chest ? CHEST_HORIZONTAL_EDGES : CELL_EDGES;
         double[] vertical = chest ? CHEST_VERTICAL_EDGES : CELL_EDGES;
         double clearance = switch (surface.face()) {

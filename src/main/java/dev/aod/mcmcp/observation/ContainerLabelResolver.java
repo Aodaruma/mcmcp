@@ -4,6 +4,7 @@ import dev.aod.mcmcp.agent.observation.ObservationRecord.ContainerLabel;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.Face;
 import dev.aod.mcmcp.agent.observation.ObservationValues.BlockPosition;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
+import dev.aod.mcmcp.routine.KnownContainerPolicy;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -11,7 +12,6 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.ChestType;
@@ -47,18 +47,24 @@ public final class ContainerLabelResolver {
         if (!level.isLoaded(support)) return Optional.empty();
         BlockState state = level.getBlockState(support);
         String block = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-        if (state.is(Blocks.CHEST)) {
-            // A label on one half does not prove a unique policy for the logical double chest.
-            if (state.getValue(ChestBlock.TYPE) != ChestType.SINGLE) return Optional.empty();
-        } else if (!state.is(Blocks.BARREL)) {
-            return Optional.empty();
-        }
+        if (!policyVisibleSingleContainer(state)) return Optional.empty();
         return Optional.of(new ContainerLabel(
                 new ResourceId(itemKey.toString()),
                 new BlockPosition(
                         new ResourceId(dimension), support.getX(), support.getY(), support.getZ()),
                 new ResourceId(block),
                 face(direction)));
+    }
+
+    static boolean policyVisibleSingleContainer(BlockState state) {
+        Objects.requireNonNull(state, "state");
+        String block = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+        if (KnownContainerPolicy.isChest(block)) {
+            // A label on one half does not prove a unique policy for the logical double chest.
+            return state.hasProperty(ChestBlock.TYPE)
+                    && state.getValue(ChestBlock.TYPE) == ChestType.SINGLE;
+        }
+        return KnownContainerPolicy.isBarrel(block);
     }
 
     private static Face face(Direction direction) {

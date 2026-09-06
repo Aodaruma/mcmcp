@@ -301,6 +301,13 @@ class ObservationModelContractTest {
                 new BlockPosition(DIMENSION, 2, 64, 1),
                 new ResourceId("minecraft:barrel"),
                 Face.SOUTH);
+        var copperLabel = new ContainerLabel(
+                new ResourceId("minecraft:wheat"),
+                new BlockPosition(DIMENSION, 3, 64, 1),
+                new ResourceId("minecraft:waxed_copper_chest"),
+                Face.SOUTH);
+        assertThat(copperLabel.containerBlock().value())
+                .isEqualTo("minecraft:waxed_copper_chest");
         var frame = new VisibleEntity(
                 new ResourceId("minecraft:item_frame"),
                 null,

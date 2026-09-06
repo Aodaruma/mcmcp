@@ -74,6 +74,10 @@ Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world
   nether wart, and one blaze powder for a production `brew_known_recipe` smoke test.
 - `/mcmcp_fixture phase5 smelt` — prepares an empty furnace plus one raw iron and one coal for a
   production smelting smoke test.
+- `/mcmcp_fixture phase5 copper_transfer` — prepares two visible, normally reachable single
+  `minecraft:waxed_copper_chest` containers. The source contains 16 raw iron in slot 0; the
+  destination and player inventory are empty. Setup removes fixture item frames and dropped items,
+  so this is the closed inspect/take/store copper-chest gate without label or entity interference.
 - `/mcmcp_fixture phase5 redstone` — prepares supported air cells and supplies one redstone lamp
   and one lever for the bounded identity truth-table smoke test.
 - `/mcmcp_fixture phase5 generalization` — rebuilds one interference-free arena containing a
@@ -145,6 +149,18 @@ For the combined generalization smoke arena, run:
 This passes only the closed `mcmcp.fixture.phase5.mode` value. After server-authoritative setup and
 client slot synchronization, autorun stops in setup-only state. Open any Screen and press the MCMCP
 status button once before the live test; that explicit UI action is the local authorization.
+
+For the dedicated copper-chest transfer gate, run:
+
+```powershell
+.\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=copper_transfer
+```
+
+This prepares the same closed `copper_transfer` state through one-shot autorun: waxed copper source
+and destination chests, 16 raw iron only in the source, an empty player inventory, and no fixture
+item frames or dropped-item entities. Autorun remains setup-only; use the same explicit local UI
+authorization before exercising production `inspect_known_container`,
+`take_known_container_stack`, and `store_known_container_stack`.
 
 The autorun-only `creative_capture` mode keeps the existing gallery layout, changes the owner to
 Creative, and places them more than 32 blocks from the fixed 1,024-cell capture region

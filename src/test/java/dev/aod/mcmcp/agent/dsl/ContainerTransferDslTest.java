@@ -2,6 +2,7 @@ package dev.aod.mcmcp.agent.dsl;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import dev.aod.mcmcp.routine.KnownContainerPolicy;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -11,6 +12,40 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ContainerTransferDslTest {
+    @Test
+    void allCopperChestIdsAreAcceptedForEachContainerOpcodeAndOtherContainersStayClosed() {
+        var base = ActionDslParser.parse(request("take"));
+        var target = new ActionDsl.Position("minecraft:overworld", 1, 64, 2);
+        for (String blockId : KnownContainerPolicy.copperChestBlockIds()) {
+            for (ActionDsl.Node node : List.of(
+                    new ActionDsl.InspectKnownContainer("inspect", target, blockId),
+                    new ActionDsl.TakeKnownContainerStack(
+                            "take", target, blockId, "minecraft:torch",
+                            "default_components_only", 64),
+                    new ActionDsl.StoreKnownContainerStack(
+                            "store", target, blockId, "minecraft:torch",
+                            "default_components_only", 64))) {
+                var program = new ActionDsl.Program(
+                        1, Optional.empty(), base.program().capabilities(), List.of(node));
+                assertThat(ActionDslValidator.validate(
+                        new ActionDsl.Request(1, program, base.budget()))).isNotNull();
+            }
+        }
+
+        for (String blockId : List.of(
+                "minecraft:trapped_chest",
+                "minecraft:ender_chest",
+                "minecraft:white_shulker_box",
+                "example:modded_chest")) {
+            var node = new ActionDsl.InspectKnownContainer("inspect", target, blockId);
+            var program = new ActionDsl.Program(
+                    1, Optional.empty(), base.program().capabilities(), List.of(node));
+            assertThatThrownBy(() -> ActionDslValidator.validate(
+                    new ActionDsl.Request(1, program, base.budget())))
+                    .isInstanceOf(ActionDslException.class);
+        }
+    }
+
     @Test
     void oldRequestsAndConstructorsKeepOneStackWhileExplicitLimitsRoundTrip() {
         for (String op : List.of("take", "store")) {

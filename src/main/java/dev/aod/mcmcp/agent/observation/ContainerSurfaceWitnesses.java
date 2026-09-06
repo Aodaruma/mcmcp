@@ -3,6 +3,7 @@ package dev.aod.mcmcp.agent.observation;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleEntity;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleSurface;
 import dev.aod.mcmcp.agent.observation.ObservationValues.WorldPosition;
+import dev.aod.mcmcp.routine.KnownContainerPolicy;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.List;
@@ -19,8 +20,8 @@ final class ContainerSurfaceWitnesses {
     }
 
     static boolean supports(VisibleSurface surface) {
-        return surface.rayHit() != null && (surface.block().value().equals("minecraft:chest")
-                || surface.block().value().equals("minecraft:barrel"));
+        return surface.rayHit() != null
+                && KnownContainerPolicy.allows(surface.block().value());
     }
 
     void add(VisibleSurface surface) {
@@ -67,7 +68,7 @@ final class ContainerSurfaceWitnesses {
             case UP, DOWN -> hit.z() - block.z();
             case NORTH, SOUTH, EAST, WEST -> hit.y() - block.y();
         };
-        boolean chest = surface.block().value().equals("minecraft:chest");
+        boolean chest = KnownContainerPolicy.isChest(surface.block().value());
         boolean horizontalFace = surface.face() == ObservationRecord.Face.UP
                 || surface.face() == ObservationRecord.Face.DOWN;
         double lowU = chest ? 0.0625D : 0.0D;

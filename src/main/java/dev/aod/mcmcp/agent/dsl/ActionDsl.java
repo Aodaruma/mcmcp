@@ -522,7 +522,7 @@ public final class ActionDsl {
         }
     }
 
-    /** Opens a visible vanilla chest/barrel and records its complete server-synchronized item totals. */
+    /** Opens a visible allowlisted Vanilla chest/barrel and records its server-synchronized item totals. */
     public record InspectKnownContainer(
             String id,
             Position target,
@@ -540,7 +540,7 @@ public final class ActionDsl {
         }
     }
 
-    /** Moves bounded whole matching stacks from a visible vanilla chest/barrel. */
+    /** Moves bounded whole matching stacks from a visible allowlisted Vanilla chest/barrel. */
     public record TakeKnownContainerStack(
             String id,
             Position target,
@@ -597,7 +597,7 @@ public final class ActionDsl {
         }
     }
 
-    /** Moves bounded whole matching stacks into a visible vanilla chest/barrel. */
+    /** Moves bounded whole matching stacks into a visible allowlisted Vanilla chest/barrel. */
     public record StoreKnownContainerStack(
             String id,
             Position target,
