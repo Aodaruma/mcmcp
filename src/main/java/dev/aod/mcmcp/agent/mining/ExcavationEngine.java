@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Objects;
 import java.util.Set;
 
@@ -19,6 +20,7 @@ import static dev.aod.mcmcp.agent.mining.ExcavationPort.*;
  * Break confirmation is deliberately separate from item pickup evidence.
  */
 public final class ExcavationEngine implements AutoCloseable {
+    public static final int MAX_LOCAL_RELEASE_ATTEMPTS = 3;
     private final TunnelGeometry.Plan plan;
     private final ExcavationPort port;
     private final Limits limits;
@@ -33,6 +35,7 @@ public final class ExcavationEngine implements AutoCloseable {
     private int breakDispatches;
     private int confirmedBreaks;
     private int pendingBrokenDelta;
+    private int releaseAttempts;
     private long minObservationTick;
     private long minObservationRevision;
     private long observationWaitStart = -1;
@@ -245,6 +248,7 @@ public final class ExcavationEngine implements AutoCloseable {
     }
 
     private void release() {
+        releaseAttempts = Math.min(MAX_LOCAL_RELEASE_ATTEMPTS, releaseAttempts + 1);
         try {
             boolean released = port.release();
             recordEffects(port.drainEffects());
@@ -270,9 +274,14 @@ public final class ExcavationEngine implements AutoCloseable {
         return result;
     }
 
+    /** The outer owner preserves this intent when escalating a stuck release to its OFF lock. */
+    public Optional<Status> pendingTerminalStatus() { return Optional.ofNullable(terminalIntent); }
+
     private TickResult result() {
         TickResult result = new TickResult(status, reason, phase, drainBrokenDelta(),
-                confirmedBreaks, visited.size(), routeIndex, drainEffects());
+                confirmedBreaks, visited.size(), routeIndex, drainEffects(),
+                status == Status.RUNNING && terminalIntent != null
+                        && releaseAttempts >= MAX_LOCAL_RELEASE_ATTEMPTS);
         return result;
     }
 
@@ -299,7 +308,7 @@ public final class ExcavationEngine implements AutoCloseable {
 
     public record TickResult(Status status, StopReason reason, Phase phase, int brokenDelta,
             int confirmedBreaks, int completedCells, int completedMoves,
-            List<KnownConstructionAttempt.EffectDelta> effects) {
+            List<KnownConstructionAttempt.EffectDelta> effects, boolean releaseEscalationRequired) {
         public TickResult {
             Objects.requireNonNull(status, "status");
             Objects.requireNonNull(reason, "reason");

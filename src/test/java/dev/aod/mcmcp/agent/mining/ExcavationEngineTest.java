@@ -267,6 +267,63 @@ class ExcavationEngineTest {
         assertThat(port.moves).isEmpty();
     }
 
+    @Test void visibleLavaBeyondTheClearedHeadStopsBeforeBreakingTheStillSolidFeet() {
+        var plan = plan(16, false);
+        var port = new FakePort(plan);
+        port.visibleLavaBeyondHead = true;
+        var result = run(engine(plan, port, 100_000, 20), port);
+        assertThat(result.reason()).isEqualTo(StopReason.FLUID);
+        assertThat(result.confirmedBreaks()).isEqualTo(1);
+        assertThat(port.air).contains(plan.route().getFirst().head()).doesNotContain(plan.route().getFirst());
+        assertThat(port.feet).isEqualTo(plan.startFeet()); // Current feet remain dry and unmoved.
+        assertThat(port.breaks).containsExactly(plan.route().getFirst().head());
+        assertThat(port.moves).isEmpty();
+        assertThat(port.released).isTrue();
+    }
+
+    @Test void permanentlyFailedReleaseEscalatesAfterThreeAttemptsWithoutPublishingTerminal() {
+        for (boolean throwsFailure : List.of(false, true)) {
+            var plan = plan(16, false);
+            var port = new FakePort(plan);
+            port.releaseFailures = Integer.MAX_VALUE;
+            port.releaseThrows = throwsFailure;
+            var engine = engine(plan, port, 100_000, 20);
+            step(engine, port);
+            port.unsafe = StopReason.HEALTH_CHANGED;
+            for (int attempt = 1; attempt <= ExcavationEngine.MAX_LOCAL_RELEASE_ATTEMPTS; attempt++) {
+                var result = step(engine, port);
+                assertThat(result.status()).isEqualTo(ExcavationEngine.Status.RUNNING);
+                assertThat(result.phase()).isEqualTo(ExcavationEngine.Phase.RELEASING);
+                assertThat(result.reason()).isEqualTo(StopReason.HEALTH_CHANGED);
+                assertThat(result.releaseEscalationRequired())
+                        .isEqualTo(attempt == ExcavationEngine.MAX_LOCAL_RELEASE_ATTEMPTS);
+                assertThat(engine.pendingTerminalStatus()).contains(ExcavationEngine.Status.FAILED);
+                assertThat(port.activeBreak).isNotNull();
+                assertThat(port.released).isFalse();
+                engine.cancel(); // A later cancellation cannot overwrite the original failure.
+            }
+            assertThat(port.breaks).hasSize(1);
+            assertThat(port.moves).isEmpty();
+        }
+    }
+
+    @Test void successfulWorkWithStuckCleanupPreservesSuccessIntentForTheOuterReleaseFence() {
+        var plan = plan(1, false);
+        var port = new FakePort(plan);
+        port.releaseFailures = Integer.MAX_VALUE;
+        var engine = engine(plan, port, 100_000, 20);
+        ExcavationEngine.TickResult result = step(engine, port);
+        for (int tick = 0; tick < 100 && !result.releaseEscalationRequired(); tick++) {
+            result = step(engine, port);
+        }
+        assertThat(result.releaseEscalationRequired()).isTrue();
+        assertThat(result.status()).isEqualTo(ExcavationEngine.Status.RUNNING);
+        assertThat(result.completedCells()).isEqualTo(1);
+        assertThat(result.confirmedBreaks()).isEqualTo(2);
+        assertThat(engine.pendingTerminalStatus()).contains(ExcavationEngine.Status.SUCCEEDED);
+        assertThat(port.released).isFalse();
+    }
+
     private static TunnelGeometry.Plan plan(int length, boolean branches) {
         return TunnelGeometry.plan(new ActionDsl.Position("minecraft:overworld", 1, 64, 0),
                 ActionDsl.BlockFace.WEST, length, branches, branches ? 2 : 0, branches ? 3 : 0);
@@ -317,6 +374,8 @@ class ExcavationEngineTest {
         boolean confirmedActive;
         boolean confirmDuringRelease;
         boolean staleAtStart;
+        boolean visibleLavaBeyondHead;
+        boolean releaseThrows;
         int releaseFailures;
         StopReason stopAfterFirstBreak = StopReason.NONE;
         StopReason moveStop = StopReason.NONE;
@@ -389,9 +448,13 @@ class ExcavationEngineTest {
             return new OperationResult(OperationStatus.SUCCEEDED, tick, revision, List.of());
         }
 
-        @Override public StopReason safety() { return unsafe; }
+        @Override public StopReason safety() {
+            return visibleLavaBeyondHead && air.contains(plan.route().getFirst().head())
+                    ? StopReason.FLUID : unsafe;
+        }
 
         @Override public boolean release() {
+            if (releaseThrows) throw new IllegalStateException("simulated stuck release");
             if (releaseFailures-- > 0) return false;
             if (activeBreak != null && !confirmedActive) {
                 releaseEffects.add(effect(activeBreak, confirmDuringRelease
