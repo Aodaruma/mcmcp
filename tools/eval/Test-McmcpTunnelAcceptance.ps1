@@ -30,8 +30,32 @@ function Require([bool]$Condition, [string]$Message) {
     if (-not $Condition) { $violations.Add($Message) }
 }
 
+function ConvertTo-Canonical([object]$Value) {
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [Collections.IDictionary]) {
+        $sorted = [ordered]@{}
+        foreach ($key in @($Value.Keys | ForEach-Object { [string]$_ } | Sort-Object)) {
+            $sorted[$key] = ConvertTo-Canonical $Value[$key]
+        }
+        return $sorted
+    }
+    if ($Value -is [pscustomobject]) {
+        $sorted = [ordered]@{}
+        foreach ($property in @($Value.PSObject.Properties | Sort-Object Name)) {
+            $sorted[$property.Name] = ConvertTo-Canonical $property.Value
+        }
+        return $sorted
+    }
+    if ($Value -is [Collections.IEnumerable] -and $Value -isnot [string]) {
+        $items = @($Value | ForEach-Object { ConvertTo-Canonical $_ })
+        Write-Output -NoEnumerate $items
+        return
+    }
+    return $Value
+}
+
 function Compact([object]$Value) {
-    return ConvertTo-Json $Value -Compress -Depth 100
+    return ConvertTo-Json (ConvertTo-Canonical $Value) -Compress -Depth 100
 }
 
 $gate = Read-JsonObject $GateResultPath 'gate result'
@@ -94,8 +118,9 @@ if ($null -ne $case) {
         Require ((Compact (Get-Value $status $field)) -ceq (Compact (Get-Value $oracle $field))) `
             "fixture status/oracle mismatch: $field"
     }
-    Require ((Compact (Get-Value $oracle 'auditBounds')) -ceq
-        (Compact ([ordered]@{ min = @(256,196,248); max = @(418,203,264) }))) `
+    $bounds = Get-Value $oracle 'auditBounds'
+    Require ((Compact (Get-Value $bounds 'min')) -ceq (Compact @(256,196,248)) -and
+        (Compact (Get-Value $bounds 'max')) -ceq (Compact @(418,203,264))) `
         'fixture audit bounds changed'
     $scenario = Get-Value $oracle 'scenario'
     $expectedPattern = if ($mode -ceq 'branches') { 'branches' } else { 'straight' }
@@ -130,11 +155,17 @@ if ($null -ne $case) {
         (Get-Value $expectedResult 'confirmedBreaks') -eq $case.breaks -and
         (Compact (Get-Value $expectedResult 'finalFeet')) -ceq (Compact $case.final_feet)) `
         'fixture expectedResult does not match the selected profile'
-    $expectedPlayer = @(
-        [double]($case.final_feet[0]) + 0.5
-        200.0
-        [double]($case.final_feet[2]) + 0.5
-    )
+    $player = @(Get-Value $oracle 'player')
+    $playerMatches = $player.Count -eq 3 -and
+        $player[0] -is [ValueType] -and $player[1] -is [ValueType] -and
+        $player[2] -is [ValueType] -and
+        [double]::IsFinite([double]$player[0]) -and
+        [double]::IsFinite([double]$player[1]) -and
+        [double]::IsFinite([double]$player[2]) -and
+        [double]::Hypot(
+            [double]$player[0] - ([double]($case.final_feet[0]) + 0.5),
+            [double]$player[2] - ([double]($case.final_feet[2]) + 0.5)) -le 0.25 -and
+        [Math]::Abs([double]$player[1] - 200.0) -le 0.05
     Require ((Get-Value $oracle 'kind') -ceq 'oracle' -and
         (Get-Value $oracle 'baselineMatches') -is [bool] -and
         -not [bool](Get-Value $oracle 'baselineMatches') -and
@@ -146,7 +177,7 @@ if ($null -ne $case) {
         (Get-Value $oracle 'invalidInsideStates') -eq 0 -and
         (Get-Value $oracle 'poseMatch') -is [bool] -and
         [bool](Get-Value $oracle 'poseMatch') -and
-        (Compact (Get-Value $oracle 'player')) -ceq (Compact $expectedPlayer) -and
+        $playerMatches -and
         (Get-Value $oracle 'health') -eq 20) `
         'fixture world oracle did not prove the exact bounded result'
     $expectedHazard = $mode -ceq 'hazard'

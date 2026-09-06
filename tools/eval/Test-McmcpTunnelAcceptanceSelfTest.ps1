@@ -11,7 +11,7 @@ $common = [ordered]@{
     schema = 'mcmcp_fixture_tunnel_v1'; setupId = $setupId; mode = 'tunnel_hazard'
     baselineBlocks = 22168
     measurement = 'completedCells/prefixCells count excavated two-block columns, not visited route cells'
-    auditBounds = [ordered]@{ min = @(256,196,248); max = @(418,203,264) }
+    auditBounds = [ordered]@{ max = @(418,203,264); min = @(256,196,248) }
     scenario = [ordered]@{
         lengthBlocks = 16; pattern = 'straight'; branchLengthBlocks = 0
         branchSpacingBlocks = 0; startFeet = @(257,200,256)
@@ -29,7 +29,7 @@ $oracle = [ordered]@{} + $common
 $oracle.kind = 'oracle'; $oracle.baselineMatches = $false; $oracle.outsideChanged = 0
 $oracle.completedCells = 4; $oracle.prefixCells = 4; $oracle.partialCells = 0
 $oracle.invalidInsideStates = 0; $oracle.poseMatch = $true; $oracle.hazardPrefix = $true
-$oracle.player = @(260.5,200.0,256.5); $oracle.health = 20.0; $oracle.pass = $true
+$oracle.player = @(260.45,200.03,256.5); $oracle.health = 20.0; $oracle.pass = $true
 $oracle.scope = 'world-only; join with public Action and evaluation lease terminal receipts'
 $gate = [ordered]@{
     schema_version = 1; gate = 'tunnel'; fixture_mode = 'hazard'; fixture_setup_id = $setupId
@@ -59,6 +59,15 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not (Get-Content $paths.report -Raw | ConvertFrom-Json).passed) {
         throw 'valid hazard acceptance was rejected'
     }
+    $oracle.player = @(260.8,200.0,256.5)
+    [IO.File]::WriteAllText($paths.oracle, (ConvertTo-Json $oracle -Depth 30), [Text.UTF8Encoding]::new($false))
+    & (Get-Process -Id $PID).Path -NoProfile -File $checker `
+        -GateResultPath $paths.gate -FixtureStatusPath $paths.status `
+        -FixtureOraclePath $paths.oracle -OutputPath $paths.report
+    if ($LASTEXITCODE -ne 1 -or (Get-Content $paths.report -Raw | ConvertFrom-Json).passed) {
+        throw 'out-of-tolerance final pose was accepted'
+    }
+    $oracle.player = @(260.45,200.03,256.5)
     $oracle.outsideChanged = 1
     [IO.File]::WriteAllText($paths.oracle, (ConvertTo-Json $oracle -Depth 30), [Text.UTF8Encoding]::new($false))
     & (Get-Process -Id $PID).Path -NoProfile -File $checker `

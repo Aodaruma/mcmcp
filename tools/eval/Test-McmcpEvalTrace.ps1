@@ -2089,10 +2089,12 @@ function Invoke-TraceAudit {
         $manualReviewRequired.Add('通常FPS1回とmaxFps=10の1〜3回を同一baseline・製品commit・JAR hashで比較すること。not_exercisedは欠測回復PASSに数えない')
     }
     if ($AuditPromptProfile -like 'tunnel-*') {
-        $tunnelRendererRecoveryWitness = Get-McmcpTunnelRecoveryWitness `
-            -Calls @($tunnelCalls) -ExpectedProfile $AuditPromptProfile
-        foreach ($violation in @($tunnelRendererRecoveryWitness.violations)) {
-            $violations.Add([string]$violation)
+        if ($violations.Count -eq 0) {
+            $tunnelRendererRecoveryWitness = Get-McmcpTunnelRecoveryWitness `
+                -Calls @($tunnelCalls) -ExpectedProfile $AuditPromptProfile
+            foreach ($violation in @($tunnelRendererRecoveryWitness.violations)) {
+                $violations.Add([string]$violation)
+            }
         }
     }
     $manualReviewRequired.Add('agent_start_action の target が先行する正規MCP観測に由来すること')
@@ -3505,6 +3507,7 @@ function Invoke-AuditSelfTest {
                 expected_exit = 0
                 expected_success = 1
                 expected_failure = 0
+                expected_tunnel_recovery = 'not_exercised'
                 required = @()
                 required_manual = @('one-shot tunnel fixture', 'input_owner_none',
                     'missing>0かつrevalidated>0')
@@ -3523,6 +3526,7 @@ function Invoke-AuditSelfTest {
                     bridge = $wrongInventoryBridge
                     expected_profile = $tunnelProfileName
                     expected_exit = 1
+                    expected_tunnel_recovery = $null
                     required = @('T0 inventory-empty proof does not match the fixed profile')
                 })
         }
@@ -3932,6 +3936,16 @@ function Invoke-AuditSelfTest {
             if ($case.Contains('expected_recovery') -and
                 $report.recovery_witness.status -cne $case.expected_recovery) {
                 throw "self-test '$($case.name)' recovery witness mismatch"
+            }
+            if ($case.Contains('expected_tunnel_recovery')) {
+                if ($null -eq $case.expected_tunnel_recovery) {
+                    if ($null -ne $report.tunnel_renderer_recovery_witness) {
+                        throw "self-test '$($case.name)' retained a witness on an invalid audit"
+                    }
+                } elseif ($report.tunnel_renderer_recovery_witness.status -cne
+                    $case.expected_tunnel_recovery) {
+                    throw "self-test '$($case.name)' tunnel recovery witness mismatch"
+                }
             }
             foreach ($needle in $case.required) {
                 if (@($report.violations | Where-Object { [string]$_ -like "*$needle*" }).Count -eq 0) {
