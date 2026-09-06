@@ -706,7 +706,17 @@ class McpToolCatalogTest {
         var schema = new McpToolCatalog().inputSchema("agent_start_action");
         var definitions = schema.getAsJsonObject("$defs");
         assertThat(definitions.getAsJsonObject("inspectContainerNode")
-                .get("description").getAsString()).contains("30000 ms", "600 ticks", "360 camera");
+                .get("description").getAsString())
+                .contains(
+                        "agent_get_action with include_container_results=true",
+                        "container_results.results[].items",
+                        "missing result is not an empty container",
+                        "items=[]",
+                        "truncated=false",
+                        "truncated=true",
+                        "returned_item_types less than total_item_types",
+                        "30000 ms", "600 ticks", "360 camera")
+                .doesNotContain("return up to 54 server-synchronized item counts in NODE_EVIDENCE");
         assertThat(definitions.getAsJsonObject("takeContainerStackNode")
                 .get("description").getAsString()).contains(
                         "600+60*(max_stacks-1) ticks", "50 times that in ms", "360 camera",
