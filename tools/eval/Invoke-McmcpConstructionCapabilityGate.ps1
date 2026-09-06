@@ -215,8 +215,17 @@ function Invoke-LiveMcpRequest {
     if ($null -ne $error) {
         throw "$Method returned JSON-RPC error code=$(Get-ObjectProperty $error 'code')"
     }
-    $result = Get-ObjectProperty $response 'result'
-    if ($null -eq $result) { throw "$Method returned no result" }
+    $resultProperty = if ($response -is [Collections.IDictionary]) {
+        if ($response.Contains('result')) { [pscustomobject]@{ Value = $response['result'] } } else { $null }
+    } elseif ($response -is [pscustomobject]) {
+        $response.PSObject.Properties['result']
+    } else { $null }
+    if ($null -eq $resultProperty -or $resultProperty.Value -is [array] -or
+        ($resultProperty.Value -isnot [pscustomobject] -and
+            $resultProperty.Value -isnot [Collections.IDictionary])) {
+        throw "$Method returned no object result"
+    }
+    $result = $resultProperty.Value
     return $result
 }
 
@@ -316,9 +325,19 @@ function Invoke-GateTool {
             }
             throw "$Tool returned a domain error: $diagnostic"
         }
-        $structured = Get-ObjectProperty $result 'structuredContent'
+        $structuredProperty = if ($result -is [Collections.IDictionary]) {
+            if ($result.Contains('structuredContent')) {
+                [pscustomobject]@{ Value = $result['structuredContent'] }
+            } else { $null }
+        } elseif ($result -is [pscustomobject]) {
+            $result.PSObject.Properties['structuredContent']
+        } else { $null }
+        $structured = if ($null -eq $structuredProperty) { $null } else { $structuredProperty.Value }
     }
-    if ($null -eq $structured) { throw "$Tool returned no structured content" }
+    if ($null -eq $structured -or $structured -is [array] -or
+        ($structured -isnot [pscustomobject] -and $structured -isnot [Collections.IDictionary])) {
+        throw "$Tool returned no object structured content"
+    }
     Add-GateEvent -Event 'tool_call_completed' -Detail ([ordered]@{ tool = $Tool })
     return $structured
 }

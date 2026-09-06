@@ -27,6 +27,8 @@ $LibraryOnly = $tunnelLibraryOnly
 $script:TunnelFixtureMode = $FixtureMode
 $script:TunnelFixtureBinding = $null
 $script:TunnelTerminalWorldSessionId = $null
+$script:TunnelAcceptedActionId = $null
+$script:TunnelTerminalActionState = $null
 $script:TunnelEntrance = [ordered]@{
     dimension = 'minecraft:overworld'; x = 258; y = 200; z = 256
 }
@@ -59,6 +61,69 @@ $script:TunnelCases = [ordered]@{
     }
 }
 
+function Get-TunnelField([object]$Object, [string]$Name,
+    [ValidateSet('string', 'long', 'bool', 'object', 'array', 'number')][string]$Kind,
+    [switch]$Nullable) {
+    if ($Object -isnot [pscustomobject]) { throw 'tunnel evidence must contain a JSON object' }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { throw 'tunnel evidence omitted a required field' }
+    $value = $property.Value
+    if ($Nullable -and $null -eq $value) { return $null }
+    $valid = switch ($Kind) {
+        string { $value -is [string] }
+        long { $value -is [long] }
+        bool { $value -is [bool] }
+        object { $value -isnot [array] -and $value -is [pscustomobject] }
+        array { $value -is [object[]] }
+        number { ($value -is [long] -or $value -is [double]) -and [double]::IsFinite($value) }
+    }
+    if (-not $valid) { throw 'tunnel evidence has an invalid field type' }
+    # Keep JSON arrays as one value; ordinary function output would unwrap a one-item array.
+    return ,($value)
+}
+
+function Assert-TunnelJsonKeys([System.Text.Json.JsonElement]$Element) {
+    if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
+        $keys = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($property in $Element.EnumerateObject()) {
+            if (-not $keys.Add($property.Name)) { throw 'tunnel JSON contains duplicate object keys' }
+            Assert-TunnelJsonKeys $property.Value
+        }
+    } elseif ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array) {
+        foreach ($item in $Element.EnumerateArray()) { Assert-TunnelJsonKeys $item }
+    }
+}
+
+function Assert-TunnelUuid([object]$Value) {
+    if ($Value -isnot [string] -or
+        $Value -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+        throw 'tunnel evidence has an invalid UUID'
+    }
+}
+
+function Assert-TunnelActionIdentity([object]$Action, [string]$ActionId) {
+    Assert-TunnelUuid $ActionId
+    $id = Get-TunnelField $Action 'action_id' string
+    Assert-TunnelUuid $id
+    $state = Get-TunnelField $Action 'state' string
+    if ((Get-TunnelField $Action 'schema_version' long) -ne 1 -or $id -cne $ActionId -or
+        $state -cnotin @('queued', 'running', 'succeeded', 'failed', 'cancelled')) {
+        throw 'tunnel Action identity or state changed'
+    }
+}
+
+function Assert-TunnelStateAction([object]$State, [string]$ActionId, [string]$ActionState) {
+    Assert-TunnelUuid $ActionId
+    if ($ActionState -cnotin $script:TerminalStates) { throw 'tunnel cleanup requires a terminal Action' }
+    $action = Get-TunnelField $State 'action' object
+    $id = Get-TunnelField $action 'action_id' string
+    Assert-TunnelUuid $id
+    if ($id -cne $ActionId -or (Get-TunnelField $action 'state' string) -cne $ActionState) {
+        throw 'tunnel public state belongs to another Action'
+    }
+    return $action
+}
+
 function Assert-TunnelFixedFive {
     $proof = @($script:GateEvents | Where-Object {
             (Get-ObjectProperty $_ 'event') -ceq 'fixed_five_surface_verified'
@@ -77,10 +142,18 @@ function Read-TunnelPreRunStatus {
     if ($bytes.Length -eq 0 -or $bytes.Length -gt 65536) {
         throw 'tunnel pre-run status artifact has an invalid size'
     }
+    $document = $null
     try {
-        $status = [Text.UTF8Encoding]::new($false, $true).GetString($bytes) |
-            ConvertFrom-Json -Depth 40 -NoEnumerate
+        $json = [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
+        $document = [System.Text.Json.JsonDocument]::Parse($json)
     } catch { throw 'tunnel pre-run status artifact is not valid UTF-8 JSON' }
+    try {
+        if ($document.RootElement.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
+            throw 'tunnel pre-run status artifact must contain one JSON object'
+        }
+        Assert-TunnelJsonKeys $document.RootElement
+        $status = ConvertFrom-Json -InputObject $json -Depth 64 -NoEnumerate
+    } finally { $document.Dispose() }
     if ($status -isnot [System.Management.Automation.PSCustomObject]) {
         throw 'tunnel pre-run status artifact must contain one JSON object'
     }
@@ -141,10 +214,29 @@ function Get-TunnelSessionState {
             query = [ordered]@{ kind = 'result_item'; item = 'minecraft:stick' }
             max_results = 1
         })
-    Assert-ReadyState -State $state -Phase 'tunnel world-session boundary'
-    $basis = Get-ObjectProperty (Get-ObjectProperty $state 'recipe_query') 'basis'
-    $sessionId = Get-ObjectProperty $basis 'world_session_id'
-    if ($null -eq $script:TunnelFixtureBinding -or $sessionId -isnot [string] -or
+    $control = Get-TunnelField $state 'control' object
+    $world = Get-TunnelField $state 'world' object
+    $observation = Get-TunnelField $state 'observation' object
+    $action = Get-TunnelField $state 'action' object -Nullable
+    if ((Get-TunnelField $state 'schema_version' long) -ne 1 -or
+        (Get-TunnelField $control 'mode' string) -cne 'ready' -or
+        (Get-TunnelField $control 'game_paused' bool) -or
+        (Get-TunnelField $world 'dimension' string) -cne 'minecraft:overworld' -or
+        (Get-TunnelField $world 'client_tick' long) -lt 0 -or
+        (Get-TunnelField $world 'world_revision' long) -lt 0 -or
+        (Get-TunnelField $observation 'latest_frame_id' string) -cnotmatch '^obs-[0-9a-f]{16}$') {
+        throw 'tunnel requires a ready unpaused public world state'
+    }
+    if ($null -ne $action) {
+        Assert-TunnelUuid (Get-TunnelField $action 'action_id' string)
+        if ((Get-TunnelField $action 'state' string) -cnotin $script:TerminalStates) {
+            throw 'tunnel found a non-terminal public Action'
+        }
+    }
+    $basis = Get-TunnelField (Get-TunnelField $state 'recipe_query' object) 'basis' object
+    $sessionId = Get-TunnelField $basis 'world_session_id' string
+    Assert-TunnelUuid $sessionId
+    if ($null -eq $script:TunnelFixtureBinding -or
         $sessionId -cne $script:TunnelFixtureBinding.world_session_id) {
         throw 'tunnel public world session does not match the pre-run fixture status'
     }
@@ -152,23 +244,22 @@ function Get-TunnelSessionState {
 }
 
 function Assert-TunnelInitialState([object]$State) {
-    Assert-ReadyState -State $State -Phase 'tunnel initial state'
-    $inventory = @(Get-ObjectProperty $State 'inventory')
+    $inventory = Get-TunnelField $State 'inventory' array
     if ($inventory.Count -ne 1 -or
-        (Get-ObjectProperty $inventory[0] 'item') -cne 'minecraft:netherite_pickaxe' -or
-        (Get-ObjectProperty $inventory[0] 'count') -ne 1) {
+        (Get-TunnelField $inventory[0] 'item' string) -cne 'minecraft:netherite_pickaxe' -or
+        (Get-TunnelField $inventory[0] 'count' long) -ne 1) {
         throw 'tunnel fixture requires only one netherite pickaxe in public inventory'
     }
-    $world = Get-ObjectProperty $State 'world'
-    $position = Get-ObjectProperty $world 'position'
+    $world = Get-TunnelField $State 'world' object
+    $position = Get-TunnelField $world 'position' object
     foreach ($axis in @('x', 'y', 'z')) {
-        if ([Math]::Abs([double](Get-ObjectProperty $position $axis) -
+        if ([Math]::Abs((Get-TunnelField $position $axis number) -
                 [double]$script:TunnelExpectedStart[$axis]) -gt 0.0001) {
             throw "tunnel fixture start position mismatch: $axis"
         }
     }
-    if ([double](Get-ObjectProperty $world 'health') -ne 20.0 -or
-        [int](Get-ObjectProperty $world 'hunger') -ne 20) {
+    if ((Get-TunnelField $world 'health' number) -ne 20.0 -or
+        (Get-TunnelField $world 'hunger' long) -ne 20) {
         throw 'tunnel fixture requires full health and hunger'
     }
 }
@@ -218,10 +309,8 @@ function Wait-TunnelActionTerminal([string]$ActionId, [int]$WallTimeoutSeconds) 
         $snapshot = Invoke-GateTool -Tool 'agent_get_action' -Arguments ([ordered]@{
                 action_id = $ActionId; wait_timeout_ms = 25000
             })
-        if ((Get-ObjectProperty $snapshot 'action_id') -cne $ActionId) {
-            throw 'tunnel Action id changed while polling'
-        }
-        if ((Get-ObjectProperty $snapshot 'state') -cin $script:TerminalStates) {
+        Assert-TunnelActionIdentity $snapshot $ActionId
+        if ((Get-TunnelField $snapshot 'state' string) -cin $script:TerminalStates) {
             return $snapshot
         }
     } while ($watch.Elapsed.TotalSeconds -lt $WallTimeoutSeconds)
@@ -231,33 +320,86 @@ function Wait-TunnelActionTerminal([string]$ActionId, [int]$WallTimeoutSeconds) 
 function Invoke-TunnelAction([Collections.IDictionary]$Request) {
     [void](Get-TunnelSessionState)
     $receipt = Invoke-GateTool -Tool 'agent_start_action' -Arguments $Request
-    $actionId = [string](Get-ObjectProperty $receipt 'action_id')
-    if ($actionId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' -or
-        (Get-ObjectProperty $receipt 'state') -cne 'queued') {
+    $actionId = Get-TunnelField $receipt 'action_id' string
+    Assert-TunnelUuid $actionId
+    $acceptedAt = Get-TunnelField $receipt 'accepted_at' string
+    $parsedAcceptedAt = [DateTimeOffset]::MinValue
+    if ((Get-TunnelField $receipt 'schema_version' long) -ne 1 -or
+        (Get-TunnelField $receipt 'state' string) -cne 'queued' -or
+        $acceptedAt -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$' -or
+        -not [DateTimeOffset]::TryParse($acceptedAt, [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind, [ref]$parsedAcceptedAt)) {
         throw 'tunnel Action start receipt is invalid'
     }
+    # Only a fully valid successful receipt authorizes subsequent get/cancel requests.
     $script:ActiveActionId = $actionId
+    $script:TunnelAcceptedActionId = $actionId
     Add-GateEvent -Event 'action_accepted' -Detail ([ordered]@{
-            action_id = $actionId; fixture_mode = $script:TunnelFixtureMode
+            action_id = $actionId; accepted_at = $acceptedAt; fixture_mode = $script:TunnelFixtureMode
             request = $Request
         })
     $terminal = Wait-TunnelActionTerminal -ActionId $actionId `
         -WallTimeoutSeconds $script:TunnelCases[$script:TunnelFixtureMode].wall_timeout
+    $script:TunnelTerminalActionState = Get-TunnelField $terminal 'state' string
     $terminalState = Get-TunnelSessionState
-    $terminalAction = Get-ObjectProperty $terminalState 'action'
-    if ((Get-ObjectProperty $terminalAction 'action_id') -cne $actionId -or
-        (Get-ObjectProperty $terminalAction 'state') -cne (Get-ObjectProperty $terminal 'state')) {
-        throw 'tunnel terminal does not belong to the current public world session'
-    }
+    [void](Assert-TunnelStateAction $terminalState $actionId $script:TunnelTerminalActionState)
     $script:TunnelTerminalWorldSessionId = $script:TunnelFixtureBinding.world_session_id
     $script:ActiveActionId = $null
     Add-ActionTerminalEvent -ActionId $actionId -Terminal $terminal
     return $terminal
 }
 
-function Assert-TunnelTerminal([object]$Terminal) {
+function Assert-TunnelTerminal([object]$Terminal, [Parameter(Mandatory)][string]$ActionId) {
+    Assert-TunnelActionIdentity $Terminal $ActionId
+    Assert-TunnelUuid $script:TunnelTerminalWorldSessionId
+    $progress = Get-TunnelField $Terminal 'progress' object
+    [void](Get-TunnelField $progress 'phase' string)
+    [void](Get-TunnelField $progress 'current_node_id' string -Nullable)
+    foreach ($field in @('executed_nodes', 'total_node_upper_bound', 'interactions',
+            'blocks_broken', 'blocks_placed', 'ticks')) {
+        if ((Get-TunnelField $progress $field long) -lt 0) { throw 'tunnel progress has a negative counter' }
+    }
+    [void](Get-TunnelField $progress 'distance_travelled' number)
+    [void](Get-TunnelField $progress 'camera_degrees' number)
+    $failure = Get-TunnelField $Terminal 'failure' object -Nullable
+    if ($null -ne $failure) {
+        [void](Get-TunnelField $failure 'code' string)
+        [void](Get-TunnelField $failure 'message' string)
+        [void](Get-TunnelField $failure 'recoverable' bool)
+        foreach ($entry in (Get-TunnelField $failure 'evidence' array)) {
+            if ($entry -isnot [string]) { throw 'tunnel failure evidence must contain strings' }
+        }
+    }
+    $aggregate = Get-TunnelField $Terminal 'effect_aggregate' object
+    foreach ($field in @('total_effects', 'retained_effects', 'confirmed_effects', 'qualified_effects',
+            'unknown_effects', 'dispatched_attacks', 'confirmed_attacks', 'unknown_attacks')) {
+        if ((Get-TunnelField $aggregate $field long) -lt 0) { throw 'tunnel effect aggregate is negative' }
+    }
+    foreach ($effect in (Get-TunnelField $Terminal 'effects' array)) {
+        foreach ($field in @('seq', 'client_tick', 'world_revision')) {
+            if ((Get-TunnelField $effect $field long) -lt 0) { throw 'tunnel effect counter is negative' }
+        }
+        foreach ($field in @('node_id', 'kind', 'subject', 'verification')) {
+            [void](Get-TunnelField $effect $field string)
+        }
+        foreach ($field in @('observed_before', 'observed_after')) {
+            $observed = Get-TunnelField $effect $field object
+            [void](Get-TunnelField $observed 'block' string)
+            [void](Get-TunnelField $observed 'affected_blocks' long)
+        }
+    }
+    $partial = Get-TunnelField $Terminal 'partial' object
+    [void](Get-TunnelField $partial 'has_confirmed_effects' bool)
+    [void](Get-TunnelField $partial 'interrupted_node_id' string -Nullable)
+    [void](Get-TunnelField $partial 'remaining_node_upper_bound' long)
+    [void](Get-TunnelField $partial 'resume_requires_reobservation' bool)
+    foreach ($entry in (Get-TunnelField $Terminal 'trace' array)) {
+        if ((Get-TunnelField $entry 'tick' long) -lt 0) { throw 'tunnel trace tick is negative' }
+        [void](Get-TunnelField $entry 'event' string)
+        [void](Get-TunnelField $entry 'detail' string)
+    }
     $case = $script:TunnelCases[$script:TunnelFixtureMode]
-    $state = [string](Get-ObjectProperty $Terminal 'state')
+    $state = Get-TunnelField $Terminal 'state' string
     if ($state -cne $case.terminal) { throw "unexpected tunnel terminal: $state" }
     $progress = Get-ObjectProperty $Terminal 'progress'
     $expectedBreaks = if ($script:TunnelFixtureMode -ceq 'hazard') {
@@ -346,17 +488,61 @@ function Assert-TunnelTerminal([object]$Terminal) {
         })
     if ($evidence.Count -ne 1) { throw 'tunnel terminal omitted its exact bounded summary' }
     return [ordered]@{
-        action_id = Get-ObjectProperty $Terminal 'action_id'; state = $state
+        action_id = Get-TunnelField $Terminal 'action_id' string; state = $state
         world_session_id = $script:TunnelTerminalWorldSessionId
         confirmed_breaks = $expectedBreaks; completed_cells = $case.cells
         completed_moves = $case.moves; bounded_summary = $true
     }
 }
 
+function Invoke-TunnelCleanup {
+    $cancelRequested = $false
+    if ($null -ne $script:ActiveActionId) {
+        $actionId = $script:ActiveActionId
+        $snapshot = Invoke-GateTool -Tool 'agent_get_action' -Arguments ([ordered]@{
+                action_id = $actionId; wait_timeout_ms = 0
+            })
+        Assert-TunnelActionIdentity $snapshot $actionId
+        if ((Get-TunnelField $snapshot 'state' string) -cnotin $script:TerminalStates) {
+            $cancel = Invoke-GateTool -Tool 'agent_cancel_action' -Arguments ([ordered]@{ action_id = $actionId })
+            $cancelId = Get-TunnelField $cancel 'action_id' string
+            Assert-TunnelUuid $cancelId
+            $cancelRequested = Get-TunnelField $cancel 'cancel_requested' bool
+            if ((Get-TunnelField $cancel 'schema_version' long) -ne 1 -or $cancelId -cne $actionId -or
+                (Get-TunnelField $cancel 'state_at_request' string) -cnotin
+                    @('queued', 'running', 'succeeded', 'failed', 'cancelled')) {
+                throw 'tunnel cancellation receipt does not match its Action'
+            }
+            Add-GateEvent -Event 'cleanup_cancel_requested' -Detail ([ordered]@{
+                    action_id = $actionId; cancel_requested = $cancelRequested
+                })
+            $snapshot = Wait-TunnelActionTerminal -ActionId $actionId -WallTimeoutSeconds 60
+        }
+        $script:TunnelTerminalActionState = Get-TunnelField $snapshot 'state' string
+        Add-ActionTerminalEvent -ActionId $actionId -Terminal $snapshot -Source 'cleanup_recovery'
+        $script:ActiveActionId = $null
+    }
+    $release = Invoke-GateCleanup
+    $release.cancel_requested = $cancelRequested
+    if ($null -ne $script:TunnelFixtureBinding) {
+        $state = Get-TunnelSessionState
+        $basis = Get-TunnelField (Get-TunnelField $state 'recipe_query' object) 'basis' object
+        $release.world_session_id = Get-TunnelField $basis 'world_session_id' string
+        if ($null -ne $script:TunnelAcceptedActionId) {
+            $action = Assert-TunnelStateAction $state $script:TunnelAcceptedActionId $script:TunnelTerminalActionState
+            $release.action_id = Get-TunnelField $action 'action_id' string
+            $release.action_state = Get-TunnelField $action 'state' string
+        }
+    }
+    return $release
+}
+
 function Invoke-McmcpTunnelCapabilityGate {
     $script:ActiveActionId = $null
     $script:TunnelFixtureBinding = $null
     $script:TunnelTerminalWorldSessionId = $null
+    $script:TunnelAcceptedActionId = $null
+    $script:TunnelTerminalActionState = $null
     $primaryFailure = $null
     $cleanupFailure = $null
     $result = $null
@@ -369,14 +555,10 @@ function Invoke-McmcpTunnelCapabilityGate {
         Add-GateEvent -Event 'fixture_status_bound' -Detail $script:TunnelFixtureBinding
         $surface = Get-TunnelEntranceSurface $initial
         $terminal = Invoke-TunnelAction (New-TunnelActionRequest $surface)
-        $result = Assert-TunnelTerminal $terminal
+        $result = Assert-TunnelTerminal $terminal -ActionId $script:TunnelAcceptedActionId
     } catch { $primaryFailure = $_ } finally {
         try {
-            $release = Invoke-GateCleanup
-            if ($null -ne $script:TunnelFixtureBinding) {
-                [void](Get-TunnelSessionState)
-                $release.world_session_id = $script:TunnelFixtureBinding.world_session_id
-            }
+            $release = Invoke-TunnelCleanup
         } catch { $cleanupFailure = $_ }
     }
     $failure = if ($null -ne $primaryFailure) { $primaryFailure } else { $cleanupFailure }

@@ -5,11 +5,22 @@ param(
     [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$FixtureOraclePath,
     [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$OutputPath
 )
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $Utf8NoBom = [Text.UTF8Encoding]::new($false)
 $violations = [Collections.Generic.List[string]]::new()
+
+function Assert-UniqueJsonKeys([Text.Json.JsonElement]$Element) {
+    if ($Element.ValueKind -eq [Text.Json.JsonValueKind]::Object) {
+        $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($property in $Element.EnumerateObject()) {
+            if (-not $names.Add($property.Name)) { throw 'duplicate JSON property' }
+            Assert-UniqueJsonKeys $property.Value
+        }
+    } elseif ($Element.ValueKind -eq [Text.Json.JsonValueKind]::Array) {
+        foreach ($item in $Element.EnumerateArray()) { Assert-UniqueJsonKeys $item }
+    }
+}
 
 function Read-JsonObject([string]$Path, [string]$Label, $Sha256 = $null) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or
@@ -18,9 +29,20 @@ function Read-JsonObject([string]$Path, [string]$Label, $Sha256 = $null) {
     }
     $bytes = [IO.File]::ReadAllBytes([IO.Path]::GetFullPath($Path))
     if ($bytes.Length -eq 0 -or $bytes.Length -gt 65536) { throw "$Label has an invalid size" }
-    try { $value = [Text.UTF8Encoding]::new($false, $true).GetString($bytes) | ConvertFrom-Json -Depth 100 -NoEnumerate }
-    catch { throw "$Label is not valid UTF-8 JSON" }
-    if ($value -isnot [System.Management.Automation.PSCustomObject]) { throw "$Label must be one JSON object" }
+    $document = $null
+    try {
+        $json = [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
+        $options = [Text.Json.JsonDocumentOptions]::new()
+        $options.MaxDepth = 100
+        $document = [Text.Json.JsonDocument]::Parse([ReadOnlyMemory[byte]]::new($bytes), $options)
+        if ($document.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Object) {
+            throw 'JSON root must be an object'
+        }
+        Assert-UniqueJsonKeys $document.RootElement
+        $value = ConvertFrom-Json -InputObject $json -Depth 100 -NoEnumerate
+        if ($value -isnot [System.Management.Automation.PSCustomObject]) { throw 'invalid object' }
+    } catch { throw "$Label must be unique-key UTF-8 JSON with one object root" }
+    finally { if ($null -ne $document) { $document.Dispose() } }
     if ($null -ne $Sha256) {
         $Sha256.Value = [Convert]::ToHexString(
             [Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
@@ -28,229 +50,185 @@ function Read-JsonObject([string]$Path, [string]$Label, $Sha256 = $null) {
     return $value
 }
 
-function Get-Value([object]$Object, [string]$Name) {
-    if ($null -eq $Object) { return $null }
-    $property = $Object.PSObject.Properties[$Name]
-    if ($null -eq $property) { return $null }
-    return $property.Value
-}
-
 function Require([bool]$Condition, [string]$Message) {
     if (-not $Condition) { $violations.Add($Message) }
 }
-
-function ConvertTo-Canonical([object]$Value) {
-    if ($null -eq $Value) { return $null }
-    if ($Value -is [Collections.IDictionary]) {
-        $sorted = [ordered]@{}
-        foreach ($key in @($Value.Keys | ForEach-Object { [string]$_ } | Sort-Object)) {
-            $sorted[$key] = ConvertTo-Canonical $Value[$key]
-        }
-        return $sorted
-    }
-    if ($Value -is [pscustomobject]) {
-        $sorted = [ordered]@{}
-        foreach ($property in @($Value.PSObject.Properties | Sort-Object Name)) {
-            $sorted[$property.Name] = ConvertTo-Canonical $property.Value
-        }
-        return $sorted
-    }
-    if ($Value -is [Collections.IEnumerable] -and $Value -isnot [string]) {
-        $items = @($Value | ForEach-Object { ConvertTo-Canonical $_ })
-        Write-Output -NoEnumerate $items
-        return
-    }
-    return $Value
+function Test-FiniteNumber([AllowNull()][object]$Value) {
+    return ($Value -is [long] -or $Value -is [double]) -and [double]::IsFinite([double]$Value)
 }
 
-function Compact([object]$Value) {
-    return ConvertTo-Json (ConvertTo-Canonical $Value) -Compress -Depth 100
+# Validate the original PSProperty.Value before returning it; preserve arrays as single values.
+function Get-Field([AllowNull()][object]$Object, [string]$Name,
+        [ValidateSet('string', 'long', 'bool', 'object', 'array', 'number', 'null')][string]$Type,
+        [string]$Label) {
+    $property = $null
+    if ($Object -is [System.Management.Automation.PSCustomObject]) {
+        $matching = @($Object.PSObject.Properties | Where-Object { $_.Name -ceq $Name })
+        if ($matching.Count -eq 1) { $property = $matching[0] }
+    }
+    $valid = $null -ne $property
+    if ($valid) {
+        $valid = switch ($Type) {
+            'string' { $property.Value -is [string] }
+            'long' { $property.Value -is [long] }
+            'bool' { $property.Value -is [bool] }
+            'object' { $property.Value -isnot [array] -and
+                    $property.Value -is [System.Management.Automation.PSCustomObject] }
+            'array' { $property.Value -is [array] }
+            'number' { Test-FiniteNumber $property.Value }
+            'null' { $null -eq $property.Value }
+        }
+    }
+    if (-not $valid) {
+        Require $false "$Label.$Name must be a present $Type value"
+        return $null
+    }
+    if ($Type -ceq 'array') { Write-Output -NoEnumerate $property.Value }
+    else { return $property.Value }
+}
+
+function Assert-IntVector([AllowNull()][object]$Object, [string]$Name,
+        [long[]]$Expected, [string]$Label) {
+    $vector = Get-Field $Object $Name 'array' $Label
+    $shape = $null -ne $vector -and $vector.Count -eq $Expected.Count
+    Require $shape "$Label.$Name has an invalid vector shape"
+    if (-not $shape) { return }
+    for ($index = 0; $index -lt $Expected.Count; $index++) {
+        Require ($vector[$index] -is [long] -and $vector[$index] -eq $Expected[$index]) `
+            "$Label.$Name differs from the fixed integer vector"
+    }
 }
 
 $gate = Read-JsonObject $GateResultPath 'gate result'
 $statusHash = $null
 $status = Read-JsonObject $FixtureStatusPath 'fixture status' ([ref]$statusHash)
 $oracle = Read-JsonObject $FixtureOraclePath 'fixture oracle'
-$mode = [string](Get-Value $gate 'fixture_mode')
+$mode = Get-Field $gate 'fixture_mode' 'string' 'gate'
+$setupId = Get-Field $gate 'fixture_setup_id' 'string' 'gate'
+$sessionId = Get-Field $gate 'world_session_id' 'string' 'gate'
+$boundHash = Get-Field $gate 'fixture_status_sha256' 'string' 'gate'
+$uuid = '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 $cases = [ordered]@{
-    straight16 = [ordered]@{
-        wire = 'tunnel_straight16'; action_cells = 16; excavated_cells = 16
-        moves = 16; breaks = 32; final_feet = @(273, 200, 256)
-    }
-    straight160 = [ordered]@{
-        wire = 'tunnel_straight160'; action_cells = 160; excavated_cells = 160
-        moves = 160; breaks = 320; final_feet = @(417, 200, 256)
-    }
-    branches = [ordered]@{
-        wire = 'tunnel_branches'; action_cells = 40; excavated_cells = 40
-        moves = 64; breaks = 80; final_feet = @(273, 200, 256)
-    }
-    hazard = [ordered]@{
-        wire = 'tunnel_hazard'; action_cells = 3; excavated_cells = 4
-        moves = 3; breaks = 8; final_feet = @(260, 200, 256)
-    }
+    straight16 = @{ wire = 'tunnel_straight16'; action_cells = 16; excavated_cells = 16; moves = 16; breaks = 32; final_feet = @(273,200,256) }
+    straight160 = @{ wire = 'tunnel_straight160'; action_cells = 160; excavated_cells = 160; moves = 160; breaks = 320; final_feet = @(417,200,256) }
+    branches = @{ wire = 'tunnel_branches'; action_cells = 40; excavated_cells = 40; moves = 64; breaks = 80; final_feet = @(273,200,256) }
+    hazard = @{ wire = 'tunnel_hazard'; action_cells = 3; excavated_cells = 4; moves = 3; breaks = 8; final_feet = @(260,200,256) }
 }
-$case = $cases[$mode]
+$case = if ($null -ne $mode -and $mode -cin @($cases.Keys)) { $cases[$mode] } else { $null }
 Require ($null -ne $case) 'gate fixture_mode is unsupported'
+Require ($setupId -cmatch $uuid) 'gate fixture_setup_id is invalid'
+Require ($sessionId -cmatch $uuid) 'gate public world session is invalid'
+Require ($boundHash -cmatch '^[0-9a-f]{64}$' -and $boundHash -ceq $statusHash) `
+    'fixture status bytes differ from the artifact read before the Action'
+Require ((Get-Field $gate 'schema_version' 'long' 'gate') -ceq 1 -and
+    (Get-Field $gate 'gate' 'string' 'gate') -ceq 'tunnel' -and
+    (Get-Field $gate 'status' 'string' 'gate') -ceq 'passed' -and
+    (Get-Field $gate 'normal_player_actions_only' 'bool' 'gate') -ceq $true -and
+    (Get-Field $gate 'fixture_oracle_required' 'bool' 'gate') -ceq $true) `
+    'gate did not finish with the fixed tunnel acceptance contract'
+[void](Get-Field $gate 'failure' 'null' 'gate')
+$result = Get-Field $gate 'result' 'object' 'gate'
+$release = Get-Field $gate 'public_input_release' 'object' 'gate'
 
 if ($null -ne $case) {
-    $setupId = [string](Get-Value $gate 'fixture_setup_id')
-    $sessionId = Get-Value $gate 'world_session_id'
-    Require ($sessionId -is [string] -and
-        $sessionId -cmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') `
-        'gate public world session is invalid'
-    Require ((Get-Value $gate 'fixture_status_sha256') -ceq $statusHash) `
-        'fixture status bytes differ from the artifact read before the Action'
-    Require ($setupId -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$') `
-        'gate fixture_setup_id is invalid'
-    Require ((Get-Value $gate 'schema_version') -eq 1 -and
-        (Get-Value $gate 'gate') -ceq 'tunnel' -and
-        (Get-Value $gate 'status') -ceq 'passed' -and
-        (Get-Value $gate 'normal_player_actions_only') -is [bool] -and
-        [bool](Get-Value $gate 'normal_player_actions_only') -and
-        (Get-Value $gate 'fixture_oracle_required') -is [bool] -and
-        [bool](Get-Value $gate 'fixture_oracle_required')) `
-        'gate did not finish with the fixed tunnel acceptance contract'
-    $release = Get-Value $gate 'public_input_release'
-    Require ((Get-Value $release 'control_ready') -is [bool] -and
-        [bool](Get-Value $release 'control_ready') -and
-        (Get-Value $release 'all_actions_terminal') -is [bool] -and
-        [bool](Get-Value $release 'all_actions_terminal') -and
-        (Get-Value $release 'world_session_id') -ceq $sessionId -and
-        (Get-Value $release 'input_owner_directly_exposed') -is [bool] -and
-        -not [bool](Get-Value $release 'input_owner_directly_exposed')) `
-        'gate did not prove terminal public input release'
-
-    foreach ($fixture in @($status, $oracle)) {
-        $fixtureSchema = $fixture.PSObject.Properties['schema']
-        $fixtureSetup = $fixture.PSObject.Properties['setupId']
-        $fixtureSession = $fixture.PSObject.Properties['worldSessionId']
-        $fixtureMode = $fixture.PSObject.Properties['mode']
-        $fixtureBaselineBlocks = $fixture.PSObject.Properties['baselineBlocks']
-        Require ($null -ne $fixtureSchema -and $fixtureSchema.Value -is [string] -and
-            $fixtureSchema.Value -ceq 'mcmcp_fixture_tunnel_v1') `
-            'fixture schema changed'
-        Require ($null -ne $fixtureSetup -and $fixtureSetup.Value -is [string] -and
-            $fixtureSetup.Value -ceq $setupId) `
-            'fixture setupId does not match the gate run'
-        Require ($null -ne $fixtureSession -and $fixtureSession.Value -is [string] -and
-            $fixtureSession.Value -ceq $sessionId) `
-            'fixture world session does not match the public Action run'
-        Require ($null -ne $fixtureMode -and $fixtureMode.Value -is [string] -and
-            $fixtureMode.Value -ceq $case.wire) `
-            'fixture mode does not match the gate run'
-        Require ($null -ne $fixtureBaselineBlocks -and $fixtureBaselineBlocks.Value -is [long] -and
-            $fixtureBaselineBlocks.Value -eq 22168) `
-            'fixture bounded volume changed'
-    }
-    foreach ($field in @('auditBounds', 'scenario', 'expectedResult', 'measurement')) {
-        Require ((Compact (Get-Value $status $field)) -ceq (Compact (Get-Value $oracle $field))) `
-            "fixture status/oracle mismatch: $field"
-    }
-    $bounds = Get-Value $oracle 'auditBounds'
-    Require ((Compact (Get-Value $bounds 'min')) -ceq (Compact @(256,196,248)) -and
-        (Compact (Get-Value $bounds 'max')) -ceq (Compact @(418,203,264))) `
-        'fixture audit bounds changed'
-    $scenario = Get-Value $oracle 'scenario'
-    $expectedPattern = if ($mode -ceq 'branches') { 'branches' } else { 'straight' }
-    $expectedLength = if ($mode -ceq 'straight160') { 160 } else { 16 }
-    Require ((Get-Value $scenario 'lengthBlocks') -eq $expectedLength -and
-        (Get-Value $scenario 'pattern') -ceq $expectedPattern -and
-        (Get-Value $scenario 'branchLengthBlocks') -eq $(if ($mode -ceq 'branches') { 3 } else { 0 }) -and
-        (Get-Value $scenario 'branchSpacingBlocks') -eq $(if ($mode -ceq 'branches') { 4 } else { 0 }) -and
-        (Get-Value $scenario 'excavationCells') -eq $(if ($mode -ceq 'straight160') { 160 } elseif ($mode -ceq 'branches') { 40 } else { 16 }) -and
-        (Get-Value $scenario 'routeMoves') -eq $(if ($mode -ceq 'branches') { 64 } else { $expectedLength })) `
-        'fixture scenario does not match the selected profile'
-    $statusKind = $status.PSObject.Properties['kind']
-    $statusEntities = $status.PSObject.Properties['entities']
-    $statusRays = $status.PSObject.Properties['raysPerTick']
-    $statusChunks = $status.PSObject.Properties['forcedChunks']
-    $statusTickMutation = $status.PSObject.Properties['fixtureTickMutation']
-    $statusReady = $null -ne $statusKind -and $statusKind.Value -is [string] -and
-        $statusKind.Value -ceq 'status' -and
-        $null -ne $statusEntities -and $statusEntities.Value -is [long] -and
-        $statusEntities.Value -eq 0 -and
-        $null -ne $statusRays -and $statusRays.Value -is [long] -and
-        $statusRays.Value -eq 512 -and
-        $null -ne $statusChunks -and $statusChunks.Value -is [long] -and
-        $statusChunks.Value -eq 22 -and
-        $null -ne $statusTickMutation -and $statusTickMutation.Value -is [string] -and
-        $statusTickMutation.Value -ceq 'none'
-    foreach ($flag in @('ready', 'baselineMatches', 'inventoryMatches',
-            'startPoseMatches', 'playerBaselineMatches', 'resourcesActive')) {
-        $property = $status.PSObject.Properties[$flag]
-        $statusReady = $statusReady -and $null -ne $property -and
-            $property.Value -is [bool] -and $property.Value
-    }
-    Require $statusReady `
-        'fixture T0 status was not ready and immutable'
-    $oracleResources = $oracle.PSObject.Properties['resourcesActive']
-    $oracleChunks = $oracle.PSObject.Properties['forcedChunks']
-    $oracleRays = $oracle.PSObject.Properties['raysPerTick']
-    Require ($null -ne $oracleResources -and $oracleResources.Value -is [bool] -and
-        $oracleResources.Value -and
-        $null -ne $oracleChunks -and $oracleChunks.Value -is [long] -and
-        $oracleChunks.Value -eq 22 -and
-        $null -ne $oracleRays -and $oracleRays.Value -is [long] -and
-        $oracleRays.Value -eq 512) `
-        'fixture post-run oracle did not preserve resource coverage'
-
-    $result = Get-Value $gate 'result'
     $expectedActionState = if ($mode -ceq 'hazard') { 'failed' } else { 'succeeded' }
-    Require ((Get-Value $result 'state') -ceq $expectedActionState -and
-        (Get-Value $result 'world_session_id') -ceq $sessionId -and
-        (Get-Value $result 'confirmed_breaks') -eq $case.breaks -and
-        (Get-Value $result 'completed_cells') -eq $case.action_cells -and
-        (Get-Value $result 'completed_moves') -eq $case.moves -and
-        (Get-Value $result 'bounded_summary') -is [bool] -and
-        [bool](Get-Value $result 'bounded_summary')) `
+    $actionId = Get-Field $result 'action_id' 'string' 'gate.result'
+    Require ($actionId -cmatch $uuid) 'public Action id is invalid'
+    Require ((Get-Field $result 'state' 'string' 'gate.result') -ceq $expectedActionState -and
+        (Get-Field $result 'world_session_id' 'string' 'gate.result') -ceq $sessionId -and
+        (Get-Field $result 'confirmed_breaks' 'long' 'gate.result') -ceq $case.breaks -and
+        (Get-Field $result 'completed_cells' 'long' 'gate.result') -ceq $case.action_cells -and
+        (Get-Field $result 'completed_moves' 'long' 'gate.result') -ceq $case.moves -and
+        (Get-Field $result 'bounded_summary' 'bool' 'gate.result') -ceq $true) `
         'public Action result does not match the fixed plan'
+    $releaseId = Get-Field $release 'action_id' 'string' 'gate.public_input_release'
+    Require ($releaseId -cmatch $uuid -and $releaseId -ceq $actionId -and
+        (Get-Field $release 'action_state' 'string' 'gate.public_input_release') -ceq $expectedActionState -and
+        (Get-Field $release 'world_session_id' 'string' 'gate.public_input_release') -ceq $sessionId -and
+        (Get-Field $release 'control_ready' 'bool' 'gate.public_input_release') -ceq $true -and
+        (Get-Field $release 'all_actions_terminal' 'bool' 'gate.public_input_release') -ceq $true -and
+        (Get-Field $release 'cancel_requested' 'bool' 'gate.public_input_release') -ceq $false -and
+        (Get-Field $release 'input_owner_directly_exposed' 'bool' 'gate.public_input_release') -ceq $false) `
+        'gate did not prove input release for the same terminal Action'
 
-    $expectedResult = Get-Value $oracle 'expectedResult'
-    Require ((Get-Value $expectedResult 'excavatedCells') -eq $case.excavated_cells -and
-        (Get-Value $expectedResult 'completedMoves') -eq $case.moves -and
-        (Get-Value $expectedResult 'confirmedBreaks') -eq $case.breaks -and
-        (Compact (Get-Value $expectedResult 'finalFeet')) -ceq (Compact $case.final_feet)) `
-        'fixture expectedResult does not match the selected profile'
-    $player = @(Get-Value $oracle 'player')
-    $playerMatches = $player.Count -eq 3 -and
-        $player[0] -is [ValueType] -and $player[1] -is [ValueType] -and
-        $player[2] -is [ValueType] -and
-        [double]::IsFinite([double]$player[0]) -and
-        [double]::IsFinite([double]$player[1]) -and
-        [double]::IsFinite([double]$player[2]) -and
-        [double]::Hypot(
-            [double]$player[0] - ([double]($case.final_feet[0]) + 0.5),
-            [double]$player[2] - ([double]($case.final_feet[2]) + 0.5)) -le 0.25 -and
-        [Math]::Abs([double]$player[1] - 200.0) -le 0.05
-    Require ((Get-Value $oracle 'kind') -ceq 'oracle' -and
-        (Get-Value $oracle 'baselineMatches') -is [bool] -and
-        -not [bool](Get-Value $oracle 'baselineMatches') -and
-        (Get-Value $oracle 'pass') -is [bool] -and [bool](Get-Value $oracle 'pass') -and
-        (Get-Value $oracle 'outsideChanged') -eq 0 -and
-        (Get-Value $oracle 'completedCells') -eq $case.excavated_cells -and
-        (Get-Value $oracle 'prefixCells') -eq $case.excavated_cells -and
-        (Get-Value $oracle 'partialCells') -eq 0 -and
-        (Get-Value $oracle 'invalidInsideStates') -eq 0 -and
-        (Get-Value $oracle 'poseMatch') -is [bool] -and
-        [bool](Get-Value $oracle 'poseMatch') -and
-        $playerMatches -and
-        (Get-Value $oracle 'health') -eq 20) `
+    $length = if ($mode -ceq 'straight160') { 160 } else { 16 }
+    $branches = $mode -ceq 'branches'
+    $pattern = if ($branches) { 'branches' } else { 'straight' }
+    $measurement = 'completedCells/prefixCells count excavated two-block columns, not visited route cells'
+    foreach ($entry in @(@{ value = $status; label = 'status' }, @{ value = $oracle; label = 'oracle' })) {
+        $fixture = $entry.value
+        $label = $entry.label
+        Require ((Get-Field $fixture 'schema' 'string' $label) -ceq 'mcmcp_fixture_tunnel_v1' -and
+            (Get-Field $fixture 'kind' 'string' $label) -ceq $label -and
+            (Get-Field $fixture 'setupId' 'string' $label) -ceq $setupId -and
+            (Get-Field $fixture 'worldSessionId' 'string' $label) -ceq $sessionId -and
+            (Get-Field $fixture 'mode' 'string' $label) -ceq $case.wire -and
+            (Get-Field $fixture 'baselineBlocks' 'long' $label) -ceq 22168 -and
+            (Get-Field $fixture 'measurement' 'string' $label) -ceq $measurement) `
+            "$label does not match the fixed fixture identity and measurement"
+        $bounds = Get-Field $fixture 'auditBounds' 'object' $label
+        Assert-IntVector $bounds 'min' @(256,196,248) "$label.auditBounds"
+        Assert-IntVector $bounds 'max' @(418,203,264) "$label.auditBounds"
+        $scenario = Get-Field $fixture 'scenario' 'object' $label
+        Require ((Get-Field $scenario 'lengthBlocks' 'long' "$label.scenario") -ceq $length -and
+            (Get-Field $scenario 'pattern' 'string' "$label.scenario") -ceq $pattern -and
+            (Get-Field $scenario 'branchLengthBlocks' 'long' "$label.scenario") -ceq $(if ($branches) { 3 } else { 0 }) -and
+            (Get-Field $scenario 'branchSpacingBlocks' 'long' "$label.scenario") -ceq $(if ($branches) { 4 } else { 0 }) -and
+            (Get-Field $scenario 'face' 'string' "$label.scenario") -ceq 'west' -and
+            (Get-Field $scenario 'excavationCells' 'long' "$label.scenario") -ceq $(if ($branches) { 40 } else { $length }) -and
+            (Get-Field $scenario 'routeMoves' 'long' "$label.scenario") -ceq $(if ($branches) { 64 } else { $length })) `
+            "$label scenario does not match the selected profile"
+        Assert-IntVector $scenario 'startFeet' @(257,200,256) "$label.scenario"
+        Assert-IntVector $scenario 'entrance' @(258,200,256) "$label.scenario"
+        $expected = Get-Field $fixture 'expectedResult' 'object' $label
+        Require ((Get-Field $expected 'excavatedCells' 'long' "$label.expectedResult") -ceq $case.excavated_cells -and
+            (Get-Field $expected 'completedMoves' 'long' "$label.expectedResult") -ceq $case.moves -and
+            (Get-Field $expected 'confirmedBreaks' 'long' "$label.expectedResult") -ceq $case.breaks) `
+            "$label expectedResult does not match the selected profile"
+        Assert-IntVector $expected 'finalFeet' $case.final_feet "$label.expectedResult"
+        Require ((Get-Field $fixture 'resourcesActive' 'bool' $label) -ceq $true -and
+            (Get-Field $fixture 'forcedChunks' 'long' $label) -ceq 22 -and
+            (Get-Field $fixture 'raysPerTick' 'long' $label) -ceq 512) `
+            "fixture $label did not preserve resource coverage"
+    }
+    foreach ($flag in @('ready', 'baselineMatches', 'inventoryMatches', 'startPoseMatches', 'playerBaselineMatches')) {
+        Require ((Get-Field $status $flag 'bool' 'status') -ceq $true) 'fixture T0 status was not ready and immutable'
+    }
+    Require ((Get-Field $status 'entities' 'long' 'status') -ceq 0 -and
+        (Get-Field $status 'fixtureTickMutation' 'string' 'status') -ceq 'none') `
+        'fixture T0 status was not ready and immutable'
+
+    $player = Get-Field $oracle 'player' 'array' 'oracle'
+    $playerMatches = $null -ne $player -and $player.Count -eq 3
+    if ($playerMatches) {
+        $playerMatches = (Test-FiniteNumber $player[0]) -and (Test-FiniteNumber $player[1]) -and
+            (Test-FiniteNumber $player[2])
+        if ($playerMatches) {
+            $playerMatches = [double]::Hypot([double]$player[0] - ($case.final_feet[0] + 0.5),
+                [double]$player[2] - ($case.final_feet[2] + 0.5)) -le 0.25 -and
+                [Math]::Abs([double]$player[1] - 200.0) -le 0.05
+        }
+    }
+    Require $playerMatches 'fixture final player position is not a finite in-tolerance vector'
+    Require ((Get-Field $oracle 'baselineMatches' 'bool' 'oracle') -ceq $false -and
+        (Get-Field $oracle 'pass' 'bool' 'oracle') -ceq $true -and
+        (Get-Field $oracle 'outsideChanged' 'long' 'oracle') -ceq 0 -and
+        (Get-Field $oracle 'completedCells' 'long' 'oracle') -ceq $case.excavated_cells -and
+        (Get-Field $oracle 'prefixCells' 'long' 'oracle') -ceq $case.excavated_cells -and
+        (Get-Field $oracle 'partialCells' 'long' 'oracle') -ceq 0 -and
+        (Get-Field $oracle 'invalidInsideStates' 'long' 'oracle') -ceq 0 -and
+        (Get-Field $oracle 'poseMatch' 'bool' 'oracle') -ceq $true -and
+        (Get-Field $oracle 'health' 'number' 'oracle') -ceq 20 -and
+        (Get-Field $oracle 'hazardPrefix' 'bool' 'oracle') -ceq ($mode -ceq 'hazard') -and
+        (Get-Field $oracle 'scope' 'string' 'oracle') -ceq
+            'world-only; join with public Action and evaluation lease terminal receipts') `
         'fixture world oracle did not prove the exact bounded result'
-    $expectedHazard = $mode -ceq 'hazard'
-    Require ((Get-Value $oracle 'hazardPrefix') -is [bool] -and
-        [bool](Get-Value $oracle 'hazardPrefix') -eq $expectedHazard) `
-        'fixture hazard prefix proof does not match the selected profile'
 }
 
 $report = [ordered]@{
-    schema_version = 1
-    passed = $violations.Count -eq 0
-    fixture_mode = $mode
-    fixture_setup_id = Get-Value $gate 'fixture_setup_id'
-    world_session_id = Get-Value $gate 'world_session_id'
-    fixture_status_sha256 = $statusHash
-    violations = @($violations)
+    schema_version = 1; passed = $violations.Count -eq 0; fixture_mode = $mode
+    fixture_setup_id = $setupId; world_session_id = $sessionId
+    fixture_status_sha256 = $statusHash; violations = @($violations)
 }
 [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($OutputPath)))
 [IO.File]::WriteAllText([IO.Path]::GetFullPath($OutputPath),
