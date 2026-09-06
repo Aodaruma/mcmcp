@@ -493,7 +493,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         finalizationRetries.clear();
         goalContinuation.clear();
         voiceRoutineId = null;
-        ClientPredictionSignals.global().closeLevel(minecraft.level);
+        ClientPredictionSignals.global().resetAttemptsForPlayerClone(minecraft.level);
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
                 semanticActionPort::clearSession,
@@ -1072,6 +1072,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 applyBlockPlanPort::clearSession,
                 pillarUpPort::clearSession);
         clearPhaseFivePortSessions();
+        ClientPredictionSignals.global().closeLevel(minecraft.level);
         reconciliationSignals.closeLevel(minecraft.level);
         screenOwnership.clearLevel(minecraft.level);
         recipeCatalog.detachSession();

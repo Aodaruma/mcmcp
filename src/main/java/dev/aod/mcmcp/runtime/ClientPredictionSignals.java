@@ -32,6 +32,8 @@ public final class ClientPredictionSignals {
 
     private final Object gate = new Object();
     private final Map<ClientLevel, LevelChannel> channels = new WeakHashMap<>();
+    private final Set<ClientLevel> lifecycleClosedLevels =
+            Collections.newSetFromMap(new WeakHashMap<>());
 
     public static ClientPredictionSignals global() {
         return GLOBAL;
@@ -41,6 +43,7 @@ public final class ClientPredictionSignals {
     public void onBridgeReady(ClientLevel level, String minecraftVersion) {
         Objects.requireNonNull(level, "level");
         synchronized (gate) {
+            lifecycleClosedLevels.remove(level);
             var old = channels.put(level, new LevelChannel(
                     SUPPORTED_MINECRAFT_VERSION.equals(minecraftVersion), minecraftVersion));
             if (old != null) {
@@ -114,7 +117,8 @@ public final class ClientPredictionSignals {
         synchronized (gate) {
             var channel = requireCompatibleChannel(level);
             if (channel.attempts.size() >= MAX_ACTIVE_ATTEMPTS_PER_LEVEL) {
-                throw new PredictionBridgeException("too many active prediction attempts");
+                throw new PredictionBridgeException(
+                        FailureKind.ATTEMPT_LIMIT, "too many active prediction attempts");
             }
             // Reading through the accessor here proves that the required Mixin is actually live
             // before a routine transitions into its mutating phase.
@@ -132,7 +136,25 @@ public final class ClientPredictionSignals {
             return;
         }
         synchronized (gate) {
+            lifecycleClosedLevels.add(level);
             var channel = channels.remove(level);
+            if (channel != null) {
+                channel.closeAll();
+            }
+        }
+    }
+
+    /**
+     * Clears attempts owned by an old LocalPlayer without unbinding the still-current level.
+     * Player clone/respawn may replace the player inside the same ClientLevel, whose constructor
+     * mixin therefore cannot run again to restore a removed bridge.
+     */
+    public void resetAttemptsForPlayerClone(ClientLevel level) {
+        if (level == null) {
+            return;
+        }
+        synchronized (gate) {
+            var channel = channels.get(level);
             if (channel != null) {
                 channel.closeAll();
             }
@@ -142,8 +164,12 @@ public final class ClientPredictionSignals {
     private int currentSequence(ClientLevel level, LevelChannel expectedChannel) {
         assertCurrentClientLevel(level);
         synchronized (gate) {
-            if (channels.get(level) != expectedChannel || !expectedChannel.compatible) {
-                throw new PredictionBridgeException("prediction bridge is no longer active for this level");
+            if (channels.get(level) != expectedChannel) {
+                throw unavailable(level, "prediction bridge is no longer active for this level");
+            }
+            if (!expectedChannel.compatible) {
+                throw new PredictionBridgeException(
+                        FailureKind.DISABLED, "prediction bridge is disabled for this level");
             }
             try {
                 if (!(level instanceof ClientLevelPredictionAccessor accessor)) {
@@ -152,7 +178,8 @@ public final class ClientPredictionSignals {
                 return accessor.mcmcp$getBlockStatePredictionHandler().currentSequence();
             } catch (RuntimeException | LinkageError failure) {
                 expectedChannel.disable();
-                throw new PredictionBridgeException("prediction bridge is incompatible", failure);
+                throw new PredictionBridgeException(
+                        FailureKind.DISABLED, "prediction bridge is incompatible", failure);
             }
         }
     }
@@ -217,15 +244,23 @@ public final class ClientPredictionSignals {
     private LevelChannel requireCompatibleChannel(ClientLevel level) {
         var channel = channels.get(level);
         if (channel == null) {
-            throw new PredictionBridgeException(
+            throw unavailable(level,
                     "prediction bridge is unavailable; the required client mixin did not bind this level");
         }
         if (!channel.compatible) {
             throw new PredictionBridgeException(
+                    FailureKind.DISABLED,
                     "prediction bridge only supports Minecraft " + SUPPORTED_MINECRAFT_VERSION
                             + " (detected " + sanitizeVersion(channel.detectedVersion) + ")");
         }
         return channel;
+    }
+
+    private PredictionBridgeException unavailable(ClientLevel level, String message) {
+        return new PredictionBridgeException(
+                lifecycleClosedLevels.contains(level)
+                        ? FailureKind.LIFECYCLE_CLOSED : FailureKind.UNREGISTERED,
+                message);
     }
 
     private static String sanitizeVersion(String version) {
@@ -264,6 +299,25 @@ public final class ClientPredictionSignals {
         IDENTITY_RELEASED,
         INCOMPATIBLE,
         CLOSED
+    }
+
+    /** Stable, non-reflective diagnostic categories for prediction admission failures. */
+    public enum FailureKind {
+        UNREGISTERED("unregistered"),
+        DISABLED("disabled"),
+        LIFECYCLE_CLOSED("lifecycle_closed"),
+        ATTEMPT_LIMIT("attempt_limit"),
+        OTHER("other");
+
+        private final String diagnostic;
+
+        FailureKind(String diagnostic) {
+            this.diagnostic = diagnostic;
+        }
+
+        public String diagnostic() {
+            return diagnostic;
+        }
     }
 
     public record PredictionAcknowledgement(
@@ -647,12 +701,28 @@ public final class ClientPredictionSignals {
     }
 
     public static final class PredictionBridgeException extends IllegalStateException {
+        private final FailureKind kind;
+
         public PredictionBridgeException(String message) {
-            super(message);
+            this(FailureKind.OTHER, message);
         }
 
         public PredictionBridgeException(String message, Throwable cause) {
+            this(FailureKind.OTHER, message, cause);
+        }
+
+        public PredictionBridgeException(FailureKind kind, String message) {
+            super(message);
+            this.kind = Objects.requireNonNull(kind, "kind");
+        }
+
+        public PredictionBridgeException(FailureKind kind, String message, Throwable cause) {
             super(message, cause);
+            this.kind = Objects.requireNonNull(kind, "kind");
+        }
+
+        public FailureKind kind() {
+            return kind;
         }
     }
 }

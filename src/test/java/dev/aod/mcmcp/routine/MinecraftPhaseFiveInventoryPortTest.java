@@ -9,15 +9,21 @@ import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponentMap;
-import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.CraftingTableBlock;
+import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.phys.Vec3;
@@ -191,7 +197,7 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
-    void fourteenStackTakeWithOneEmptyHotbarKeepsAStableHandForTheNextContainer() {
+    void fourteenStackTakeKeepsAVanillaBlockStackSafeInMainHandWithoutAnotherInteraction() {
         var hotbar = new ArrayList<ItemStack>();
         for (int slot = 0; slot < 8; slot++) {
             hotbar.add(testItemStack(Blocks.COBBLESTONE.asItem(), 64));
@@ -199,35 +205,56 @@ class MinecraftPhaseFiveInventoryPortTest {
         hotbar.add(ItemStack.EMPTY);
 
         var opening = MinecraftPhaseFiveInventoryPort.chooseOpenHand(
-                hotbar, ItemStack.EMPTY, 3).orElseThrow();
-        assertThat(opening.hand()).isEqualTo(InteractionHand.OFF_HAND);
-        assertThat(opening.selectedSlot()).isEqualTo(3);
+                hotbar, 3).orElseThrow();
+        assertThat(opening.selectedSlot()).isZero();
+        assertThat(MinecraftPhaseFiveInventoryPort.safeKnownMenuOpenStack(hotbar.getFirst()))
+                .isTrue();
+        assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(hotbar.getFirst())).isFalse();
 
-        var menuSlots = emptySlots(28);
-        for (int slot = 0; slot < 14; slot++) {
-            menuSlots.set(slot, stack("minecraft:cobblestone", 64, DEFAULT_HASH));
-        }
-        var batch = new MinecraftPhaseFiveInventoryPort.TransferBatch(
-                menuSlots,
-                java.util.stream.IntStream.range(0, 14).boxed().toList(),
-                java.util.stream.IntStream.range(14, 28).boxed().toList(),
-                "minecraft:cobblestone", DEFAULT_HASH, true, 14, 896, 896);
-        long revision = 1L;
-        for (int slot = 0; slot < 14; slot++) {
-            assertThat(batch.beginClick(transferSnapshot(menuSlots, revision), 1L + slot * 2L))
-                    .isTrue();
-            menuSlots.set(slot, StackFingerprint.EMPTY);
-            menuSlots.set(14 + slot, stack("minecraft:cobblestone", 64, DEFAULT_HASH));
-            assertThat(batch.confirm(transferSnapshot(menuSlots, ++revision))).isTrue();
-        }
-        assertThat(batch.exhausted()).isTrue();
-
-        // Vanilla may fill the only empty hotbar slot during the maximum inbound batch.
+        // All fourteen transfer clicks remain available: no parking or hand-swap click is needed.
         hotbar.set(8, testItemStack(Blocks.COBBLESTONE.asItem(), 64));
         var nextContainer = MinecraftPhaseFiveInventoryPort.chooseOpenHand(
-                hotbar, ItemStack.EMPTY, 3).orElseThrow();
-        assertThat(nextContainer.hand()).isEqualTo(InteractionHand.OFF_HAND);
-        assertThat(nextContainer.selectedSlot()).isEqualTo(3);
+                hotbar, 3).orElseThrow();
+        assertThat(nextContainer.selectedSlot()).isZero();
+    }
+
+    @Test
+    void customNeoForgeOpenHooksAreNeverTreatedAsSafeContainerOpeningHands() {
+        assertThat(MinecraftPhaseFiveInventoryPort.usesDefaultNeoForgeOpenHooks(
+                CustomFirstUseItem.class)).isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.usesDefaultNeoForgeOpenHooks(
+                CustomSneakBypassItem.class)).isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.usesDefaultNeoForgeOpenHooks(
+                InheritedSneakBypassItem.class)).isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.usesDefaultNeoForgeOpenHooks(
+                Blocks.COBBLESTONE.asItem().getClass())).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.safeKnownMenuOpenStack(ItemStack.EMPTY))
+                .isTrue();
+    }
+
+    @Test
+    void unsafeInboundItemCannotFillAnEmptyMainHandBeforeTransferPlanning()
+            throws Exception {
+        assertThat(MinecraftPhaseFiveInventoryPort.inboundTransferKeepsOpenHandSafe(
+                false, true, CustomFirstUseItem.class)).isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.inboundTransferKeepsOpenHandSafe(
+                false, true, CustomSneakBypassItem.class)).isFalse();
+        assertThat(MinecraftPhaseFiveInventoryPort.inboundTransferKeepsOpenHandSafe(
+                false, true, Blocks.COBBLESTONE.asItem().getClass())).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.inboundTransferKeepsOpenHandSafe(
+                true, true, CustomFirstUseItem.class)).isTrue();
+        assertThat(MinecraftPhaseFiveInventoryPort.inboundTransferKeepsOpenHandSafe(
+                false, false, CustomFirstUseItem.class)).isTrue();
+
+        var node = classNode();
+        assertThat(invocations(node, "acceptTransferSnapshot")).containsSubsequence(
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        + "#inboundTransferKeepsOpenHandSafe",
+                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$AttemptState"
+                        + "#beginTransferBatch");
+        assertThat(invocations(node, "dispatchTransferClick"))
+                .contains("dev/aod/mcmcp/routine/KnownMenuTransfers"
+                        + "#dispatchServerConfirmedQuickMove");
     }
 
     @Test
@@ -377,15 +404,15 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
-    void refilledTorchHandDoesNotRejectOwnedReadbackButStillRejectsTheNextBlockUse()
+    void refilledVanillaBlockHandRemainsSafeForTheNextExactKnownMenuUse()
             throws Exception {
         // An empty opening hand may be filled by normal full-content sync or an auto-refill mod.
         // The isolated NeoForge JUnit loader does not bind Vanilla item defaults.
         var holder = Items.TORCH.builtInRegistryHolder();
         if (!holder.areComponentsBound()) holder.bindComponents(DataComponentMap.EMPTY);
-        boolean safeRefilledHand = MinecraftKnownBrewingPort.safeNormalUseStack(
+        boolean safeRefilledHand = MinecraftPhaseFiveInventoryPort.safeKnownMenuOpenStack(
                 new ItemStack(Items.TORCH, 64));
-        assertThat(safeRefilledHand).isFalse();
+        assertThat(safeRefilledHand).isTrue();
         for (var stage : List.of(MinecraftPhaseFiveInventoryPort.Stage.OPENING_INITIAL,
                 MinecraftPhaseFiveInventoryPort.Stage.OPENING_READBACK)) {
             assertThat(MinecraftPhaseFiveInventoryPort.safeOpenHandFailure(stage, () -> {
@@ -395,8 +422,8 @@ class MinecraftPhaseFiveInventoryPortTest {
         }
         for (var stage : List.of(MinecraftPhaseFiveInventoryPort.Stage.AIMING_INITIAL,
                 MinecraftPhaseFiveInventoryPort.Stage.AIMING_READBACK)) {
-            assertThat(MinecraftPhaseFiveInventoryPort.safeOpenHandFailure(stage, () -> safeRefilledHand)
-                    .code()).isEqualTo("INVENTORY_SAFE_OPEN_HAND_CHANGED");
+            assertThat(MinecraftPhaseFiveInventoryPort.safeOpenHandFailure(
+                    stage, () -> safeRefilledHand)).isNull();
             assertThat(MinecraftPhaseFiveInventoryPort.safeOpenHandFailure(stage, () -> true)).isNull();
         }
 
@@ -732,8 +759,7 @@ class MinecraftPhaseFiveInventoryPortTest {
                                 + "#ongoingFailure",
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$OpenHandPlan"
                                 + "#ready",
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$OpenHandPlan"
-                                + "#hand",
+                        "dev/aod/mcmcp/runtime/ScreenOwnershipSignals#beginExpectedOpen",
                         "dev/aod/mcmcp/runtime/ClientPredictionSignals#begin",
                         "dev/aod/mcmcp/runtime/ClientPredictionSignals$PredictionAttempt"
                                 + "#sequenceBeforePrediction",
@@ -742,6 +768,9 @@ class MinecraftPhaseFiveInventoryPortTest {
                                 + "#captureIssuedPredictions",
                         "dev/aod/mcmcp/runtime/ScreenOwnershipSignals"
                                 + "#cancelRoutineAfterPredictedUse");
+        assertThat(invocations(node, "dispatchExpectedOpen"))
+                .doesNotContain("net/minecraft/client/player/LocalPlayer#getOffhandItem");
+        assertThat(interactionHands(node, "dispatchExpectedOpen")).containsExactly("MAIN_HAND");
         assertThat(invocations(node, "cancelScreenAuthority"))
                 .contains("dev/aod/mcmcp/runtime/ScreenOwnershipSignals"
                         + "#cancelRoutineAfterPredictedUse");
@@ -751,6 +780,46 @@ class MinecraftPhaseFiveInventoryPortTest {
                                 + "#cancelScreenAuthority",
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#closeOpenPrediction");
+    }
+
+    @Test
+    void vanillaKnownMenuOpenOrderConsumesBeforeAnyHeldItemUse() throws Exception {
+        var client = classNode("/net/minecraft/client/multiplayer/MultiPlayerGameMode.class");
+        assertThat(invocations(client, "performUseItemOn")).containsSubsequence(
+                "net/minecraft/world/item/ItemStack#onItemUseFirst",
+                "net/minecraft/world/item/ItemStack#doesSneakBypassUse",
+                "net/minecraft/world/level/block/state/BlockState#useItemOn",
+                "net/minecraft/world/level/block/state/BlockState#useWithoutItem",
+                "net/minecraft/world/item/ItemStack#useOn");
+
+        var server = classNode("/net/minecraft/server/level/ServerPlayerGameMode.class");
+        assertThat(invocations(server, "useItemOn")).containsSubsequence(
+                "net/minecraft/world/item/ItemStack#onItemUseFirst",
+                "net/minecraft/world/level/block/state/BlockState#useItemOn",
+                "net/minecraft/world/level/block/state/BlockState#useWithoutItem",
+                "net/minecraft/world/item/ItemStack#useOn");
+
+        var block = classNode("/net/minecraft/world/level/block/state/BlockBehaviour.class");
+        assertThat(fieldReads(block, "useItemOn", "net/minecraft/world/InteractionResult"))
+                .contains("TRY_WITH_EMPTY_HAND");
+
+        for (String resource : List.of(
+                "/net/minecraft/world/level/block/CraftingTableBlock.class",
+                "/net/minecraft/world/level/block/ChestBlock.class",
+                "/net/minecraft/world/level/block/BarrelBlock.class")) {
+            var menuBlock = classNode(resource);
+            assertThat(menuBlock.methods.stream().map(method -> method.name).toList())
+                    .doesNotContain("useItemOn");
+            assertThat(invocations(menuBlock, "useWithoutItem"))
+                    .contains("net/minecraft/world/entity/player/Player#openMenu");
+        }
+
+        assertThat(CraftingTableBlock.class.getDeclaredMethods())
+                .extracting(java.lang.reflect.Method::getName).doesNotContain("useItemOn");
+        assertThat(ChestBlock.class.getDeclaredMethods())
+                .extracting(java.lang.reflect.Method::getName).doesNotContain("useItemOn");
+        assertThat(BarrelBlock.class.getDeclaredMethods())
+                .extracting(java.lang.reflect.Method::getName).doesNotContain("useItemOn");
     }
 
     @Test
@@ -782,7 +851,7 @@ class MinecraftPhaseFiveInventoryPortTest {
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#visibleThreatClear");
         assertThat(invocations(node, "chooseOpenHand"))
-                .contains("net/minecraft/client/player/LocalPlayer#getOffhandItem");
+                .doesNotContain("net/minecraft/client/player/LocalPlayer#getOffhandItem");
         var brewing = classNode("/dev/aod/mcmcp/routine/MinecraftKnownBrewingPort.class");
         assertThat(invocations(brewing, "chooseOpenHand"))
                 .doesNotContain("net/minecraft/client/player/LocalPlayer#getOffhandItem");
@@ -831,13 +900,47 @@ class MinecraftPhaseFiveInventoryPortTest {
         return inputs;
     }
 
+    private static List<String> interactionHands(ClassNode node, String methodName) {
+        var hands = new ArrayList<String>();
+        node.methods.stream()
+                .filter(method -> method.name.equals(methodName))
+                .findFirst().orElseThrow()
+                .instructions.forEach(instruction -> {
+                    if (instruction instanceof FieldInsnNode field
+                            && field.owner.equals("net/minecraft/world/InteractionHand")) {
+                        hands.add(field.name);
+                    }
+                });
+        return hands;
+    }
+
+    private static List<String> fieldReads(ClassNode node, String methodName, String owner) {
+        var fields = new ArrayList<String>();
+        node.methods.stream()
+                .filter(method -> method.name.equals(methodName))
+                .findFirst().orElseThrow()
+                .instructions.forEach(instruction -> {
+                    if (instruction instanceof FieldInsnNode field && field.owner.equals(owner)) {
+                        fields.add(field.name);
+                    }
+                });
+        return fields;
+    }
+
     private ClassNode classNode() throws Exception {
         return classNode("/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort.class");
     }
 
     private ClassNode classNode(String resource) throws Exception {
         var node = new ClassNode();
-        try (var stream = getClass().getResourceAsStream(resource)) {
+        var local = getClass().getResourceAsStream(resource);
+        if (local == null && resource.startsWith("/net/minecraft/")) {
+            String binaryName = resource.substring(1, resource.length() - ".class".length())
+                    .replace('/', '.');
+            Class<?> targetClass = Class.forName(binaryName);
+            local = targetClass.getModule().getResourceAsStream(resource.substring(1));
+        }
+        try (var stream = local) {
             assertThat(stream).isNotNull();
             new ClassReader(stream).accept(node, 0);
         }
@@ -863,6 +966,35 @@ class MinecraftPhaseFiveInventoryPortTest {
 
     private static ItemStack testItemStack(Item item, int count) {
         return new ItemStack(Holder.direct(item, DataComponentMap.EMPTY), count);
+    }
+
+    private static final class CustomFirstUseItem extends Item {
+        private CustomFirstUseItem() {
+            super(new Item.Properties());
+        }
+
+        @Override
+        public InteractionResult onItemUseFirst(ItemStack stack, UseOnContext context) {
+            return InteractionResult.SUCCESS;
+        }
+    }
+
+    private static class CustomSneakBypassItem extends Item {
+        private CustomSneakBypassItem() {
+            super(new Item.Properties());
+        }
+
+        @Override
+        public boolean doesSneakBypassUse(
+                ItemStack stack, LevelReader level, BlockPos pos, Player player) {
+            return true;
+        }
+    }
+
+    private static final class InheritedSneakBypassItem extends CustomSneakBypassItem {
+        private InheritedSneakBypassItem() {
+            super();
+        }
     }
 
     private static ContainerSnapshot transferSnapshot(List<StackFingerprint> slots, long revision) {

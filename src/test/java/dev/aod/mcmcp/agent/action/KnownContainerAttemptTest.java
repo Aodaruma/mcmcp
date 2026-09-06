@@ -40,13 +40,41 @@ class KnownContainerAttemptTest {
                 assertThat(result.status()).isEqualTo(KnownContainerAttempt.Status.FAILED);
                 assertThat(result.evidence()).isEqualTo(code.toLowerCase(java.util.Locale.ROOT));
                 assertThat(result.diagnostics()).containsExactly(
-                        "safe_open_hand=no_side_effect_free_hotbar_or_offhand_item",
-                        "remedy=prepare_empty_or_safe_offhand_or_plain_material_or_safe_mining_tool");
+                        "safe_open_hand=no_side_effect_free_main_hand",
+                        "remedy=prepare_empty_hotbar_or_plain_material_or_safe_mining_tool");
                 assertThat(result.interactionDelta()).isZero();
                 assertThat(result.items()).isEmpty();
                 assertThat(result.effects()).isEmpty();
                 operation.close();
             }
+        }
+    }
+
+    @Test
+    void predictionAdmissionReportsOnlyWhitelistedBridgeKinds() {
+        for (String kind : List.of(
+                "unregistered", "disabled", "lifecycle_closed", "attempt_limit")) {
+            var port = new FakePort();
+            var operation = new KnownContainerAttempt(port, request(), 1, 101);
+            port.tick = 1;
+            port.observationFailure = failure(
+                    "CONTAINER_OPEN_PREDICTION_UNAVAILABLE",
+                    Map.of("prediction_bridge", kind, "detail", "private"));
+
+            var result = operation.tick(1);
+            assertThat(result.diagnostics()).containsExactly("prediction_bridge=" + kind);
+            operation.close();
+        }
+
+        for (String privateKind : List.of("other", "private_detail")) {
+            var port = new FakePort();
+            var operation = new KnownContainerAttempt(port, request(), 1, 101);
+            port.tick = 1;
+            port.observationFailure = failure(
+                    "CONTAINER_OPEN_PREDICTION_UNAVAILABLE",
+                    Map.of("prediction_bridge", privateKind));
+            assertThat(operation.tick(1).diagnostics()).isEmpty();
+            operation.close();
         }
     }
 
