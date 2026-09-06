@@ -17,6 +17,20 @@ The reported Claude run is unavailable. This work addresses the architectural ro
 - 通常nodeの32マス/8break等の受付上限を維持し、坑道専用の大きいcounterをwire schemaと同期する。
 - break ACKとpickupの証拠を分離し、ledgerの省略があってもaggregateと実測counterを保持する。
 
+## ローカル検証結果 / Local validation
+
+- 対象コード / Product commit: `7f1320d781bad3d4ae24005fe8192fa461194bb5`（最新base `28ffcc1`の受入記録も統合）。
+- `gradlew test harnessTest adminBridgeTest verifyHarnessIsolation build --console=plain`: **PASS**。unit 1,282、harness 13、admin 21、計1,316件でfailure/error 0。
+- `Test-McmcpEvalTrace.ps1 -SelfTest`: **66/66 PASS**。公開catalogとTool surfaceの固定hashをrunner/監査双方で同期。
+- `python -m unittest discover -s tools/mcp -p 'test_*.py' -q`: **14 PASS**。認証不要のmock HTTP試験で、ゲームへは接続していません。
+- JAR: `build/libs/mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar`。
+- JAR SHA-256: `0F72465683555D828813C48F37AB07AAEB0D2C50C7E64590469040F51AC6B2FF`。
+- 実機での16/160マス完走・枝坑道・性能改善は**未確認**です。新opcodeは回収完了を断定せず、`drop_collection=not_asserted`を記録します。
+
+レビューで採掘後の予測airとACK待機の分離、ACK確認後に中断した場合のcounter保存、可視液体・落下中blockの停止、入力解放が3回未確認の場合の既存deferred cleanup/OFF lockへの移行を補強しました。最初の終了意図と所有権を保持し、解放未確認のterminalを公開しません。
+
+The automated checks above passed. They do not establish live-game completion or measured token savings. The validation JAR contains the new operation, while live acceptance remains pending with maintenance.
+
 ## 実機受入 / Game acceptance
 
 窓口は保守担当に一本化します。改善担当から通常プロフィールを操作しません。`MCMCP-Validation`または削除可能なcloneで、場所・変更範囲・baseline・復旧手順・対象JAR hashをT0前に記録し、T0後は公開MCPのみで実行します。
