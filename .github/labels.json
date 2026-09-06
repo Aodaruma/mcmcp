@@ -1,0 +1,77 @@
+[
+  {
+    "name": "area:connection",
+    "color": "1D76DB",
+    "description": "MCP接続・認証・bridge / Connection, auth and transport"
+  },
+  {
+    "name": "area:observation",
+    "color": "0E8A16",
+    "description": "観測・鮮度・ページング / Observation and freshness"
+  },
+  {
+    "name": "area:inventory",
+    "color": "BFD4F2",
+    "description": "コンテナ・手持ち・転送 / Containers and inventory"
+  },
+  {
+    "name": "area:docs",
+    "color": "0075CA",
+    "description": "文書・導入ガイド / Documentation and guides"
+  },
+  {
+    "name": "area:ci",
+    "color": "5319E7",
+    "description": "CI・配布・開発運用 / CI, releases and contribution workflow"
+  },
+  {
+    "name": "area:safety",
+    "color": "D93F0B",
+    "description": "操作認可・停止・所有権 / Admission, stops and ownership"
+  },
+  {
+    "name": "priority:p0",
+    "color": "B60205",
+    "description": "最優先・配布を止める回帰 / Urgent release-blocking regression"
+  },
+  {
+    "name": "priority:p1",
+    "color": "D93F0B",
+    "description": "次に取り組む不具合・改善 / Next fixes and improvements"
+  },
+  {
+    "name": "priority:p2",
+    "color": "FBCA04",
+    "description": "計画的な改善 / Planned improvements"
+  },
+  {
+    "name": "status:triage",
+    "color": "EDEDED",
+    "description": "受け付け・切り分け待ち / Needs triage"
+  },
+  {
+    "name": "status:ready",
+    "color": "C2E0C6",
+    "description": "範囲と完了条件が明確・着手可 / Ready to pick up"
+  },
+  {
+    "name": "status:in-progress",
+    "color": "0052CC",
+    "description": "担当者が作業中 / Work in progress"
+  },
+  {
+    "name": "status:review",
+    "color": "5319E7",
+    "description": "PRの確認待ち / Awaiting PR review"
+  },
+  {
+    "name": "status:blocked",
+    "color": "B60205",
+    "description": "依存・権限・実機確認待ち / Blocked; see the latest note"
+  },
+  {
+    "name": "release:verification-needed",
+    "color": "FEF2C0",
+    "description": "公開前に実機確認が必要 / In-game verification needed before release"
+  }
+]

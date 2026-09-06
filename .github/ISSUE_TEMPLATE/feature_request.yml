@@ -1,0 +1,29 @@
+name: 機能提案 / Feature request
+description: 欲しい機能や使いやすさの改善を提案する / Suggest a feature or improvement.
+labels: ["enhancement", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        日本語・英語のどちらでも大丈夫です。実装方法がわからなくても歓迎です。
+        Japanese or English is welcome. You do not need an implementation plan.
+        [参加ガイド / Contributing](https://github.com/Aodaruma/mcmcp/blob/main/CONTRIBUTING.md)
+  - type: textarea
+    id: need
+    attributes:
+      label: やりたいこと・困っていること / Goal or problem
+      description: どんな場面で役立ちますか？ / When would this help you?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案する動作 / Proposed behavior
+      description: 利用者から見てどう動くとよいか教えてください。 / Describe how it should work for the user.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 代替案・補足（任意） / Alternatives or context (optional)
+      description: 今の対処方法や参考例があれば教えてください。秘密や個人情報は含めないでください。 / Share any workaround or example. Do not include secrets or personal information.

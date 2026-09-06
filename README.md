@@ -54,6 +54,10 @@ For setup problems, see the guide’s [troubleshooting section (Japanese)](docs/
 
 ## 開発者向け / For developers
 
+修正への参加は[CONTRIBUTING.md](CONTRIBUTING.md)からどうぞ。Issueで担当と範囲を決め、fork / cloneした環境からPRを送れます。Codex・Claude Code共通の作業ルールは[AGENTS.md](AGENTS.md)、保守・マージ方針は[MAINTENANCE.md](docs/MAINTENANCE.md)にあります。<br>Start with [CONTRIBUTING.md](CONTRIBUTING.md): coordinate on an issue, work in your own fork / clone, and submit a PR. [AGENTS.md](AGENTS.md) applies to Codex and Claude Code; see [MAINTENANCE.md](docs/MAINTENANCE.md) for triage and merge rules.
+
+**[着手できるIssue / Ready issues](https://github.com/Aodaruma/mcmcp/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready)** · **[初めての修正 / Good first issues](https://github.com/Aodaruma/mcmcp/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)**
+
 <details>
 <summary>ビルド・技術文書・配布手順 / Build, technical docs, and release instructions</summary>
 
@@ -63,7 +67,7 @@ Java 25を`JAVA_HOME`へ設定して実行します。<br>Set `JAVA_HOME` to Jav
 .\gradlew.bat test harnessTest adminBridgeTest verifyHarnessIsolation build
 ```
 
-Linux/macOSでは`./gradlew`を使います。検証用MODは本体JARから分離しています。<br>On Linux/macOS, use `./gradlew`. Test-only mods are kept separate from the production JAR.
+Linux/macOSでは`bash gradlew`を使います。検証用MODは本体JARから分離しています。<br>On Linux/macOS, use `bash gradlew`. Test-only mods are kept separate from the production JAR.
 
 - [接続設定の詳細 / Connection details](docs/MCMCP_導入と接続ガイド.md)
 - [Action DSLガイド / Action DSL guide](docs/MCMCP_Action_DSL_クイックガイド.md) · [実行例 / Examples](docs/action-templates/)

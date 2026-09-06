@@ -1,0 +1,63 @@
+name: 不具合報告 / Bug report
+description: 動かない・期待と違う動作を報告する / Report unexpected behavior.
+labels: ["bug", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        日本語・英語のどちらでも大丈夫です。わからない項目は「不明 / Unknown」と書いてください。
+        Japanese or English is welcome. Write "Unknown" where needed.
+        [参加ガイド / Contributing](https://github.com/Aodaruma/mcmcp/blob/main/CONTRIBUTING.md)
+  - type: textarea
+    id: symptoms
+    attributes:
+      label: 症状 / What happened?
+      description: 何をしていて、どうなったかを教えてください。 / Describe what you were doing and what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 再現手順 / Steps to reproduce
+      description: わかる範囲で手順や発生頻度を教えてください。 / Share known steps and how often it happens.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する動作 / Expected behavior
+      description: 本来どうなると思いましたか？ / What did you expect to happen?
+    validations:
+      required: true
+  - type: input
+    id: mod_version
+    attributes:
+      label: MCMCPのバージョン / MCMCP version
+      description: バージョン名かJARのファイル名。 / Version or JAR filename.
+      placeholder: mcmcp-neoforge-26.2-0.1.0-rc.2.jar
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 利用環境（任意） / Environment (optional)
+      description: わかる項目だけで構いません。サーバーのアドレスは不要です。 / Fill in what you know; no server address is needed.
+      value: |
+        Minecraft:
+        NeoForge:
+        OS:
+        ランチャー / Launcher:
+        MCPクライアント・バージョン / MCP client and version:
+        AIモデル・推論設定 / AI model and reasoning setting:
+        シングル・マルチ / Singleplayer or multiplayer:
+        関連する他のMOD / Relevant other mods:
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ・画像（任意） / Logs or screenshots (optional)
+      description: |
+        関連部分だけで構いません。添付前にトークン・APIキー・認証情報・サーバーアドレス・個人情報（ユーザー名を含むパス等）を削除してください。
+        Relevant excerpts are enough. Remove tokens, API keys, credentials, server addresses, and personal information (including usernames in paths) before attaching.

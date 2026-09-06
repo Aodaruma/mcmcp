@@ -25,3 +25,11 @@ JAR: `mcmcp-neoforge-26.2-0.1.0-rc.3-SNAPSHOT.jar`
 SHA-256: `7548ddd2009bf3a1772adf91910dd2dbc0dad58a20ffcea976eac9cb10369648`
 
 自動試験は実ワールドのE06-C05-L02からE05-C05-L01への残作業完了を意味しない。JAR差し替え・Minecraft再起動後に、同じ場所で実際のtake→storeを再確認する。
+
+## 実機確認の追記: 不合格・公開保留
+
+2026-09-06、保守担当から差し替え後の実機不合格が報告された。`inspect_known_container`単体と、896個取得後のstore前段inspectで`SERVER_DENIED_OR_DESYNC` / `container_open_prediction_unavailable`となり、開封前に停止した。`interactions=0`、`effects=[]`で、この失敗時のアイテム移動は報告されていない。`ba327f8`と上記SHAのJARをReleaseへ昇格させない。
+
+追加のコードレビューでは、当該エラーは`useItemOn`より前のprediction begin/sequence取得失敗であり、これだけでVanillaのoffhand拒否とは断定できない。一方で別の問題として、Vanilla 26.2のclient/serverは通常blockの`useWithoutItem`をMAIN_HANDの場合だけ呼び、ChestBlockの開封はそこにある。NeoForge 26.2.0.59のpatchもこの分岐を変更していない。空offhandの選択テストが通ることは、通常チェストの開封成功を保証しない。
+
+次の修正ではprediction bridgeの登録・無効化・lifecycleを固定診断で切り分け、MAIN_HANDを維持する方針と通常開封経路の回帰を検証する。直接openMenuを呼ぶ代替、未解決prediction ledgerの破棄、UNKNOWNの再送で回避しない。今回の追記は保守報告とソースレビューの記録であり、新たな実機操作は行っていない。

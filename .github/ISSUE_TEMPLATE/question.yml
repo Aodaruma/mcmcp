@@ -1,0 +1,24 @@
+name: 質問 / Question
+description: 導入方法や使い方を質問する / Ask about setup or usage.
+labels: ["question", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        日本語・英語のどちらでも大丈夫です。
+        Japanese or English is welcome.
+        [参加ガイド / Contributing](https://github.com/Aodaruma/mcmcp/blob/main/CONTRIBUTING.md)
+  - type: textarea
+    id: question
+    attributes:
+      label: 質問 / Your question
+      description: やりたいことと、わからない点を教えてください。 / Tell us your goal and what is unclear.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 試したこと・利用環境（任意） / What you tried and environment (optional)
+      description: |
+        関係する場合はMCMCP版、MCPクライアント、AIモデルなどを添えてください。秘密や個人情報は含めないでください。
+        If relevant, include your MCMCP version, MCP client, and AI model. Do not include secrets or personal information.
