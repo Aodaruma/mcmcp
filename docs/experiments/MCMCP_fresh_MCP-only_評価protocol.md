@@ -2,7 +2,7 @@
 
 ## 目的
 
-選択したprompt profileのproduction prompt **だけ**を新規のephemeral Codex threadへ渡し、MCMCPの公開5 toolsだけで遂行できるかを比較する。runnerは任意文字列を受け取らず、次の4つの能力評価profileと、別枠の機能回帰 `container-inspect-recovery` だけを許可する。後者の固定prompt・証跡・合否は[回復試験ガイド](../../tools/eval/RECOVERY.md)に定め、モデル能力の比較結果とは分ける。 / The fifth profile is a separate functional regression; see the recovery guide for its fixed prompt and acceptance evidence.
+選択したprompt profileのproduction prompt **だけ**を新規のephemeral Codex threadへ渡し、MCMCPの公開5 toolsだけで遂行できるかを比較する。runnerは任意文字列を受け取らず、畑・倉庫・建築の4能力profile、坑道の4能力profile、別枠の機能回帰`container-inspect-recovery`だけを許可する。後者の固定prompt・証跡・合否は[回復試験ガイド](../../tools/eval/RECOVERY.md)に定め、モデル能力の比較結果とは分ける。 / The runner accepts four farm/storage/building profiles, four tunnel profiles, and one separate recovery regression. Each profile has a fixed prompt and deadline.
 
 `full-cycle`は製品受入の主profileである。
 
@@ -20,13 +20,33 @@
 
 > チェストの材料を自由に加工して、近くにある屋根付きの木造建築を見本に、羊毛の上へ同じ建築をコピーしてください。
 
+坑道profileは1つの有限Actionで進む設計を検証する。直進が既定であり、枝道はユーザーが明示したprofileだけで使う。 / Tunnel profiles verify one finite Action. Straight excavation is the default; branches are selected only by an explicit request.
+
+`tunnel-straight16`（30分）:
+
+> 正面にある石壁の下段を入口として、幅1・高さ2の直線坑道を16マス掘ってください。坑道掘削Actionを1回だけ開始し、完了まで確認してください。
+
+`tunnel-straight160`（120分）:
+
+> 正面にある石壁の下段を入口として、幅1・高さ2の直線坑道を160マス掘ってください。坑道掘削Actionを1回だけ開始し、完了まで確認してください。
+
+`tunnel-branches`（40分）:
+
+> 正面にある石壁の下段を入口として、主坑道16マス、枝の長さ3マス、枝の間隔4マスの枝坑道を掘ってください。坑道掘削Actionを1回だけ開始し、完了まで確認してください。
+
+`tunnel-hazard`（30分）:
+
+> 正面にある石壁の下段を入口として、幅1・高さ2の直線坑道を16マス掘ってください。危険を検出した場合はそのActionを再送せず、確認済みの地点で停止してください。
+
+坑道profileのT0 inventoryはネザライトのツルハシ1個だけとし、他profileは空のままにする。公開inventoryで証明できないホットバー位置、新品耐久、componentsはdev fixtureの起動前statusで固定する。 / Tunnel readiness requires exactly one netherite pickaxe and no other public inventory item. The fixture status separately proves properties absent from the public aggregate inventory.
+
 `full-cycle`のproduction goalは、T0前にユーザーまたは評価計画が指定した畑区画について、耕作可能な全土blockの耕耘、全区画への播種、成熟後の全区画収穫、収穫区画への再播種を反復し、player inventoryの小麦絶対個数が64以上になることである。64個へ到達した最後の収穫cycleでも、対象区画の再播種を終えてからproduction goalを完了とする。固定arenaや無関係な座標へのteleport/buildはこの意味を置き換えない。`short-regression`の成功だけを、この明示的completionの代替合格にしてはならない。
 
 `hard-building-copy`のproduction goalは、見本建築を変更せず、羊毛で指定された領域に、airによる開口部を含む同一の完全BlockState配置を再現することである。合格にはsource/destinationの完全state差分、craft/smeltした材料の証拠、inventory収支、全Action terminalを一致させる。
 
 `warehouse-smelt`のproduction goalは、材料chestのraw iron 1個とcoal 1個を通常GUIで取り出し、空のcold furnaceでiron ingot 1個へ精錬し、default componentsの完成品だけを空のoutput barrelへ通常GUIで格納することである。run terminal後にworldをSave and Quitし、source / furnace / playerが空、outputがiron ingot 1個だけ、fixture workspaceのblockが不変であることをoffline oracleで確定する。
 
-deadlineはprofileに固定し、`short-regression` / `full-cycle` / `warehouse-smelt`は30分、`hard-building-copy`は90分、機能回帰の `container-inspect-recovery` は5分とする。callerによる上書きや延長は認めない。 / Deadlines are fixed per profile; recovery regression uses five minutes.
+deadlineはprofileに固定し、`short-regression` / `full-cycle` / `warehouse-smelt` / `tunnel-straight16` / `tunnel-hazard`は30分、`tunnel-branches`は40分、`hard-building-copy`は90分、`tunnel-straight160`は120分、機能回帰の`container-inspect-recovery`は5分とする。callerによる上書きや延長は認めない。 / Deadlines are fixed at 5, 30, 40, 90, or 120 minutes by profile and cannot be overridden.
 
 対象は `gpt-5.6-sol/high` を先行し、必要に応じて同じ golden baseline を復元して `gpt-5.6-luna/xhigh`、`gpt-5.6-luna/high` を別runで評価する。session、観測、action historyをモデル間で共有しない。
 
@@ -67,9 +87,9 @@ runnerはclean cwdからfilesystem rootまでの全祖先とisolated `CODEX_HOME
 
 `agent_start_action`や`agent_cancel_action`はpreflightで呼ばない。各HTTP requestはliteral `127.0.0.1`だけへ`-NoProxy -MaximumRedirection 0`で送り、UTF-8 JSON Content-Type、JSON-RPC 2.0、request/response IDの型と値、result/errorの排他的存在を検査する。`server/discover`は`resultType=complete`、`supportedVersions=[2026-07-28]`、`capabilities.tools.listChanged=false`、`ttlMs=0`、`cacheScope=private`、serverInfo=`mcmcp/0.1.0`とsemantic exactで一致させる。`tools/list`は`docs/MCMCP_MCP_Tool_Catalog.json`のraw SHA-256とsemantic tool surface SHA-256を、[runner](../../tools/eval/Invoke-McmcpFreshEval.ps1)と[auditor](../../tools/eval/Test-McmcpEvalTrace.ps1)の`$ExpectedCatalogFileSha256` / `$ExpectedToolSurfaceSha256`へ同じ値でpinする。protocol本文へ値を複製せず、full resultと固定5件の名前、description、inputSchemaをexact比較してからdynamicToolsへ変換する。
 
-`agent_get_state`は`isError`の存在とBoolean型、`resultType=complete`、serverInfo、TextContent/structuredContent型を検証する。さらに`control.mode=ready`、unpaused、world/observationあり、inventory空、`omnidirectional_rays_per_tick=512`、`observation.record_counts.visible_entity=0`、actionがnullまたはterminalでなければT0へ進まない。各baselineはvisible entity 0を開始条件とし、1件でもあれば作業領域の落下item等による開始条件汚染として扱う。state body、座標、fixture知識はartifactへ保存せず、各判定のBooleanだけを残す。thread作成成功後にも同じreadinessを再取得し、8判定が全てtrueであることを記録する。
+`agent_get_state`は`isError`の存在とBoolean型、`resultType=complete`、serverInfo、TextContent/structuredContent型を検証する。さらに`control.mode=ready`、unpaused、world/observationあり、profile固定のinventory（坑道はネザライトのツルハシ1個だけ、他は空）、`omnidirectional_rays_per_tick=512`、`observation.record_counts.visible_entity=0`、actionがnullまたはterminalでなければT0へ進まない。各baselineはvisible entity 0を開始条件とし、1件でもあれば作業領域の落下item等による開始条件汚染として扱う。state body、座標、fixture知識はartifactへ保存せず、各判定のBooleanだけを残す。thread作成成功後にも同じreadinessを再取得し、固定判定が全てtrueであることを記録する。
 
-preflightとapp-server thread作成後、runnerはpreliminary readinessを確認してevaluation-turn leaseを獲得する。その後、active lease header付き`agent_get_state`でauthoritative T0 readinessを再確認してからT0を記録し、exact promptを含む`turn/start`をstdin JSONLへ1回だけ送る。これによりpreliminary checkからlease取得までのfocus・物理入力変化をT0へ持ち越さない。T0後はモデルのdynamic tool requestに対する機械的な1対1 forward以外、operator/runnerからMinecraftやMCPを操作しない。唯一の例外として、残時間が安全なHTTP完了とturn終端に足りないrequestはMCPへ送信せず、後述の固定deadline拒否をapp-serverへ返す。この拒否はMinecraftを操作せず、引数も変更しない。拒否後もモデル自身が発行した厳密な`agent_cancel_action` 1件だけは、残時間を満たす場合にcleanupとしてforwardできるが、runnerが自動cancelを生成することはない。TurnDeadlineは選択profileの固定値（30分または90分）から決定して延長せず、15秒のterminalization reserveをその内側に確保する。期限までにturnが完了しなければrunを終了し、一般的なapp-server応答障害ではなく`evaluation deadline expired before turn/completed`として分類する。
+preflightとapp-server thread作成後、runnerはpreliminary readinessを確認してevaluation-turn leaseを獲得する。その後、active lease header付き`agent_get_state`でauthoritative T0 readinessを再確認してからT0を記録し、exact promptを含む`turn/start`をstdin JSONLへ1回だけ送る。これによりpreliminary checkからlease取得までのfocus・物理入力変化をT0へ持ち越さない。T0後はモデルのdynamic tool requestに対する機械的な1対1 forward以外、operator/runnerからMinecraftやMCPを操作しない。唯一の例外として、残時間が安全なHTTP完了とturn終端に足りないrequestはMCPへ送信せず、後述の固定deadline拒否をapp-serverへ返す。この拒否はMinecraftを操作せず、引数も変更しない。拒否後もモデル自身が発行した厳密な`agent_cancel_action` 1件だけは、残時間を満たす場合にcleanupとしてforwardできるが、runnerが自動cancelを生成することはない。TurnDeadlineは選択profileの固定値から決定して延長せず、15秒のterminalization reserveをその内側に確保する。期限までにturnが完了しなければrunを終了し、一般的なapp-server応答障害ではなく`evaluation deadline expired before turn/completed`として分類する。
 
 ## evaluation-turn lease と読み取り専用monitor
 
@@ -186,6 +206,30 @@ warehouse E2Eはdev-only fixtureの`mcmcp.fixture.phase5.mode=warehouse_smelt`�
 
 額縁ラベル経路だけを短く検証する場合は、dev-only fixtureの`label_transfer`を準備し、`Invoke-McmcpWarehouseLabelCapabilityGate.ps1`を使う。これはsource single chestのraw iron 16個をlabel付きtakeし、freshに再取得した別barrelのlabelで全量storeする2 Actionの固定gateである。double chestやカテゴリ分類は扱わない。詳細とremote手順は[`04_workstations/2026-09-05_warehouse-label-transfer-gate.md`](04_workstations/2026-09-05_warehouse-label-transfer-gate.md)を参照する。
 
+坑道profileは対応するdev-only one-shot fixtureを新しいクライアントで起動する。`tunnel_status`のJSONをT0前に保存し、その`setupId`を専用gateへ渡す。通常のモデル評価では同名の`-PromptProfile tunnel-*`を使う。直進160は静的予約時間が約93分25秒のため、120分のprofile期限と121分のevaluation-turn上限を使う。
+
+```powershell
+.\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=tunnel_straight16
+# ゲーム内: /mcmcp_fixture phase5 tunnel_status
+
+pwsh -NoProfile -File .\tools\eval\Invoke-McmcpTunnelCapabilityGate.ps1 `
+  -FixtureMode straight16 `
+  -FixtureSetupId '<statusのsetupId>' `
+  -ArtifactDirectory '<repo外の空directory>\tunnel-gate' `
+  -TokenPath '<MCMCP tokenの絶対path>'
+
+# Action終了後、ゲーム内: /mcmcp_fixture phase5 tunnel_oracle
+pwsh -NoProfile -File .\tools\eval\Test-McmcpTunnelAcceptance.ps1 `
+  -GateResultPath '<tunnel-gate>\gate-result.json' `
+  -FixtureStatusPath '<status JSON file>' `
+  -FixtureOraclePath '<oracle JSON file>' `
+  -OutputPath '<tunnel-gate>\tunnel-acceptance.json'
+```
+
+`FixtureMode`は`straight16`、`straight160`、`branches`、`hazard`のいずれかで、対応する起動modeは`mcmcpFixturePhase5Mode=tunnel_straight16`、`tunnel_straight160`、`tunnel_branches`、`tunnel_hazard`である。危険停止はActionの「安全に通過した3セル」とworld oracleの「掘削済み4列」を区別し、8破壊確認、3移動、床穴手前の最終位置、範囲外変更0を同時に要求する。
+
+renderer欠測回復はAction終端の固定`NODE_EVIDENCE`に`missing>0`と同一block probeの`revalidated>0`があり、Actionも成功した場合だけ`witnessed`とする。欠測が起きなければ`not_exercised`であり、低FPSや成功だけを回復PASSに数えない。
+
 ```powershell
 pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
   -Model gpt-5.6-sol -ReasoningEffort high `
@@ -243,6 +287,7 @@ pwsh -NoProfile -File .\tools\eval\Invoke-McmcpFreshEval.ps1 `
 - `audit-stderr.log`: audit process stderr
 - `manifest.json`: model/effort/baseline、prompt hash、T0、profile固定の`evaluator_timeout_seconds`、Codex version、git状態、runner / launcher / monitor script hash、isolation/secret状態、lease ID hash、acquire / terminal時刻、固定terminal reason、inputs released / input owner none / all Action terminalのBoolean proof
 - `offline-warehouse-smelt-oracle.json` (`warehouse-smelt`のみ): world closeとevaluation terminalを先に検証し、source / furnace / player / output、完成品component、workspace全cellを照合した結果
+- `gate-result.json`と`tunnel-acceptance.json`（坑道専用gateのみ）: 公開Action終端・入力解放と、同じ`setupId`の起動前status・終了後world oracleを結合した結果
 - `live-monitor.log`: visible monitorを使ったrunだけに生成し、Terminalへ表示した安全な公開行をprefixなしで同じ順序・同じ本文のまま保存
 
 monitor境界は、raw / summary deltaがopt-outされartifactにも存在しないこと、completed summaryとpublic commentaryだけを採用すること、runner / module / self-test / launcher / hostの固定hash、monitor prefix / event allowlist / 制御文字guard、Terminal表示と`live-monitor.log`の完全一致self-testで証明する。opt-out対象のprivate reasoning notificationが到達した場合はraw writerより前にrunをfail closedさせ、Bearer、access token、account ID、evaluation lease IDの完全一致もraw / bridge / final message / stderr / preflight / manifest / live monitorの各書込み前に拒否する。
@@ -257,7 +302,7 @@ monitor境界は、raw / summary deltaがopt-outされartifactにも存在しな
 - raw reasoning text deltaとreasoning summary deltaがinitializeでopt-outされ、traceに存在しない。monitor候補のreasoningはcompleted itemのsummaryだけ、agent messageは`phase=commentary`のpublic commentary / preambleだけである。self-testは公開本文が座標、ID、path / URL、JSONを含んでも保持されること、raw Tool引数・結果がevent選択されないこと、private reasoning notificationと実credential完全一致がartifact writer前に拒否されること、Terminal制御文字が表示前に遮断されることを検証する。
 - 各dynamic requestは、通常forwardの`start=1/completion=1/response=1/reject=0`、またはdeadline拒否の`start=0/completion=0/reject=1/response=1`のどちらか一方だけに対応する。request ID、call ID、tool、route、argument hash、output hash、success、event順を双方向照合する。通常forwardでは`success=true/status=completed`とexact domain `tool_error`の`success=false/status=failed`をproofまで検証する。deadline拒否では固定error、`success=false/status=failed`、T0/event UTC由来の残時間とheadroom計算を検証し、MCP成功/domain error件数とは分離する。最初の拒否後のforwardは原則禁止し、拒否response後に始まる1件の`agent_cancel_action`だけを、exact引数、5秒timeout、20秒headroom、cleanup mode、UTC proofがすべて一致する場合に許可する。
 - evaluation-turn acquireはpreliminary readiness後・authoritative T0 readiness前に1件、terminalはturn terminal後かつrunner終了前に1件とする。runnerは認証済みHTTP receiptとcontrol streamを照合し、acquire / terminal UTC、lease ID hash、runner process束縛、固定terminal reasonをmanifestへ残す。authoritative T0 readiness以後の通常forwardはactive lease header付きであり、生のlease IDをartifact secret scan対象に含める。
-- `turn/completed`は`status="completed"`かつ`error=null`で、完了agent messageがある。その後のlease release receiptが`inputs_released=true`、`input_owner_none=true`、`all_actions_terminal=true`を証明するまで成功terminalにしない。
+- `turn/completed`は`status="completed"`かつ`error=null`で、完了agent messageがある。その後のlease release receiptが`inputs_released=true`、`input_owner_none=true`、`all_actions_terminal=true`、`process_identity_bound=true`をBoolean型で証明するまで成功terminalにしない。
 - runner、monitor host、visible childのprocess lifecycleはevent-drivenで、周期poll eventがなく、runner終了後のbounded wait内にvisible childが終了し同じexit codeを伝播する。
 - 禁止tool/item/request/notification、未知event/client_send、壊れたJSONL、orphan、重複、turn terminal後のresponse/server request/notificationを含む全messageをfail closedにする。
 
@@ -272,7 +317,10 @@ $files = @(
   '.\tools\eval\Invoke-McmcpFreshEvalMonitorHost.ps1',
   '.\tools\eval\McmcpLiveMonitor.psm1',
   '.\tools\eval\Test-McmcpLiveMonitor.ps1',
-  '.\tools\eval\Test-McmcpEvalTrace.ps1'
+  '.\tools\eval\Test-McmcpEvalTrace.ps1',
+  '.\tools\eval\Invoke-McmcpTunnelCapabilityGate.ps1',
+  '.\tools\eval\McmcpTunnelRecoveryWitness.psm1',
+  '.\tools\eval\Test-McmcpTunnelAcceptance.ps1'
 )
 foreach ($file in $files) {
   $tokens = $null
@@ -286,10 +334,14 @@ pwsh -NoProfile -File .\tools\eval\Test-McmcpEvalTrace.ps1 -SelfTest
 if ($LASTEXITCODE -ne 0) { throw 'audit self-test failed' }
 pwsh -NoProfile -File .\tools\eval\Test-McmcpLiveMonitor.ps1
 if ($LASTEXITCODE -ne 0) { throw 'monitor self-test failed' }
+pwsh -NoProfile -File .\tools\eval\Test-McmcpTunnelCapabilityGate.ps1
+if ($LASTEXITCODE -ne 0) { throw 'tunnel capability gate self-test failed' }
+pwsh -NoProfile -File .\tools\eval\Test-McmcpTunnelAcceptanceSelfTest.ps1
+if ($LASTEXITCODE -ne 0) { throw 'tunnel acceptance self-test failed' }
 ```
 
 trace self-testはrequest ID `0`を含むsuccess、回復可能domain error、dynamic call 0件、JSON-RPC/protocol failure、route/namespace違反、必須property欠落、禁止item、malformed JSONLに加え、未知client_send、setup順序、terminal後response、domain member欠落/重複/proof不一致、追加instruction/context、無効model/effort、item route/timestamp、notification `emittedAtMs`の欠落・非整数・範囲外・順序違反、readiness proofの欠落・raw混入、failure diagnostic違反、property大小文字違反、正常deadline拒否、`agent_get_action(25000)`のheadroom境界と不正型、latch後の連続拒否、正常cleanup cancel、cleanupのtimeout/headroom/引数/order/回数違反、T0/reject UTC欠落・改変・早すぎる拒否、response欠落、重複拒否、reject/forward混在、hash/success/headroom/reason/identity不一致を検証する。monitor / runner self-testはevaluation-turnのacquire / terminal順、active header付与、release proof、raw / summary delta opt-out、公開本文の無加工転送、実credential / Terminal制御文字guard、Terminal表示と`live-monitor.log`の行単位完全一致、周期polling不在、visible childの終了連動を固定する。endpoint認証、lease状態遷移、Esc / UI / lifecycle / deadline時のAction停止と入力解放はJava契約テストで検証する。Codex CLIを更新する場合はversion pinを先に緩めず、generated experimental schema、external auth、dynamic lifecycle、hardening key、synthetic auditを再確認する。
 
-profile回帰は30分（1800秒）と90分（5400秒）の正常deadline計算、`hard-building-copy`への1800秒混入の拒否、audit/manifestのprofile固定timeout、launcherのprofile allowlistを検証する。
+profile回帰は5・30・40・90・120分の固定deadline計算、誤ったprofile期限やinventory proofの拒否、audit/manifestのprofile固定timeout、launcherのprofile allowlistを検証する。120分profileはevaluation-turn acquireへ120分45秒を要求し、HTTPは121分ちょうどまで受理して1ms超過を拒否する。
 
 参考: [Codex app server](https://developers.openai.com/codex/app-server/)、[Codex MCP](https://developers.openai.com/codex/mcp/)

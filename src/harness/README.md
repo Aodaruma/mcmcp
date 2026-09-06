@@ -159,6 +159,30 @@ This passes only the closed `mcmcp.fixture.phase5.mode` value. After server-auth
 client slot synchronization, autorun stops in setup-only state. Open any Screen and press the MCMCP
 status button once before the live test; that explicit UI action is the local authorization.
 
+Tunnel acceptance uses four independent one-shot baselines. Start a fresh disposable client for
+each mode:
+
+```powershell
+.\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=tunnel_straight16
+.\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=tunnel_straight160
+.\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=tunnel_branches
+.\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=tunnel_hazard
+```
+
+The modes prepare a private fixed volume at `256,196,248` through `418,203,264`, place one new
+netherite pickaxe in hotbar slot 0, clear every other inventory slot, restore full health and hunger,
+and emit a setup-only status. They retain the bounded chunks but do not mutate the fixture on a tick.
+Use `/mcmcp_fixture phase5 tunnel_status` before T0 and
+`/mcmcp_fixture phase5 tunnel_oracle` after the Action. Both commands are read-only and emit
+`mcmcp_fixture_tunnel_v1` JSON with the same random `setupId`. The oracle measures excavated
+two-block columns independently from the Action's visited-route counter. In `tunnel_hazard`, the
+fourth column is excavated but the floor gap prevents move four, so the fixed result is four
+excavated columns, three moves, eight confirmed breaks, and final feet block `260,200,256`.
+
+Run `Invoke-McmcpTunnelCapabilityGate.ps1` with the status `setupId`, then join the gate, status and
+oracle artifacts using `Test-McmcpTunnelAcceptance.ps1`. Fixture commands do not grant permission
+to mutate the world and are not available in production source sets.
+
 The container partial-contract modes are independent one-shot baselines. Use a fresh client restart
 for each mode:
 

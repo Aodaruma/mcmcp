@@ -21,7 +21,8 @@ param(
     [string]$TokenPath,
 
     [Parameter(Mandatory)]
-    [ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy', 'container-inspect-recovery')]
+    [ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy', 'container-inspect-recovery',
+        'tunnel-straight16', 'tunnel-straight160', 'tunnel-branches', 'tunnel-hazard')]
     [string]$PromptProfile,
 
     # Required only for the recovery regression; paths never enter model input/artifacts.
@@ -54,29 +55,55 @@ $script:LiveMonitorState = New-McmcpLiveMonitorState -Enabled:$LiveMonitor
 Write-McmcpLiveMonitorFixed -State $script:LiveMonitorState -Event 'runner_started'
 
 $EvaluationProfiles = [ordered]@{
+    'tunnel-straight16' = [ordered]@{
+        prompt = '正面にある石壁の下段を入口として、幅1・高さ2の直線坑道を16マス掘ってください。坑道掘削Actionを1回だけ開始し、完了まで確認してください。'
+        timeout_minutes = 30
+        inventory_profile = 'single_netherite_pickaxe'
+    }
+    'tunnel-straight160' = [ordered]@{
+        prompt = '正面にある石壁の下段を入口として、幅1・高さ2の直線坑道を160マス掘ってください。坑道掘削Actionを1回だけ開始し、完了まで確認してください。'
+        timeout_minutes = 120
+        inventory_profile = 'single_netherite_pickaxe'
+    }
+    'tunnel-branches' = [ordered]@{
+        prompt = '正面にある石壁の下段を入口として、主坑道16マス、枝の長さ3マス、枝の間隔4マスの枝坑道を掘ってください。坑道掘削Actionを1回だけ開始し、完了まで確認してください。'
+        timeout_minutes = 40
+        inventory_profile = 'single_netherite_pickaxe'
+    }
+    'tunnel-hazard' = [ordered]@{
+        prompt = '正面にある石壁の下段を入口として、幅1・高さ2の直線坑道を16マス掘ってください。危険を検出した場合はそのActionを再送せず、確認済みの地点で停止してください。'
+        timeout_minutes = 30
+        inventory_profile = 'single_netherite_pickaxe'
+    }
     'container-inspect-recovery' = [ordered]@{
         prompt = '近くにあるチェスト1つの中身を一度だけ確認し、結果を教えてください。アイテムの出し入れはしないでください。'
         timeout_minutes = 5
+        inventory_profile = 'empty'
     }
     'short-regression' = [ordered]@{
         prompt = 'チェストに小麦の種と鍬が入っています。これを取り出して、畑から小麦を1スタック作ってもらえませんか'
         timeout_minutes = 30
+        inventory_profile = 'empty'
     }
     'full-cycle' = [ordered]@{
         prompt = 'チェストに小麦の種と鍬が入っています。これを取り出し、この畑の区画にある耕作可能な土をすべて耕して、すべてに小麦の種を植えてください。成熟後はすべて収穫して植え直す工程を、小麦を1スタック（64個）以上所持するまで繰り返してください。'
         timeout_minutes = 30
+        inventory_profile = 'empty'
     }
     'warehouse-smelt' = [ordered]@{
         prompt = '近くの材料チェストから生の鉄1個と石炭1個を取り出し、かまどで鉄インゴット1個に精錬し、完成品用の空の樽へ収納してください。終了時はプレイヤーのインベントリ、材料チェスト、かまどを空にしてください。'
         timeout_minutes = 30
+        inventory_profile = 'empty'
     }
     'hard-building-copy' = [ordered]@{
         prompt = 'チェストの材料を自由に加工して、近くにある屋根付きの木造建築を見本に、羊毛の上へ同じ建築をコピーしてください。'
         timeout_minutes = 90
+        inventory_profile = 'empty'
     }
 }
 $EvaluationProfile = $EvaluationProfiles[$PromptProfile]
 $ProductionPrompt = [string]$EvaluationProfile['prompt']
+$ExpectedInventoryProfile = [string]$EvaluationProfile['inventory_profile']
 $RequiredCodexVersion = 'codex-cli 0.146.1'
 $ModernProtocolVersion = '2026-07-28'
 $EvaluatorTimeout = [TimeSpan]::FromMinutes([int]$EvaluationProfile['timeout_minutes'])
@@ -699,9 +726,19 @@ function Invoke-McmcpReadinessCheck {
     $worldPresent = $null -ne (Get-PropertyValue $snapshot 'world')
     $observationPresent = $null -ne (Get-PropertyValue $snapshot 'observation')
     $inventoryProperty = Get-Property $snapshot 'inventory'
-    $inventoryEmpty = $null -ne $inventoryProperty -and
+    $inventoryShapeValid = $null -ne $inventoryProperty -and
         $inventoryProperty.Value -is [Collections.IEnumerable] -and
-        $inventoryProperty.Value -isnot [string] -and @($inventoryProperty.Value).Count -eq 0
+        $inventoryProperty.Value -isnot [string]
+    $inventoryEntries = if ($inventoryShapeValid) { @($inventoryProperty.Value) } else { @() }
+    $inventoryEmpty = $inventoryShapeValid -and $inventoryEntries.Count -eq 0
+    $singleNetheritePickaxe = $inventoryShapeValid -and $inventoryEntries.Count -eq 1 -and
+        (Get-PropertyValue $inventoryEntries[0] 'item') -ceq 'minecraft:netherite_pickaxe' -and
+        (Get-PropertyValue $inventoryEntries[0] 'count') -eq 1
+    $inventoryProfileMatches = switch ($ExpectedInventoryProfile) {
+        'empty' { $inventoryEmpty }
+        'single_netherite_pickaxe' { $singleNetheritePickaxe }
+        default { throw 'unsupported evaluation inventory profile' }
+    }
     $raysPerTick = Get-NestedValue $snapshot 'policy.omnidirectional_rays_per_tick'
     $raysPerTick512 = $raysPerTick -is [long] -and $raysPerTick -eq 512
     $visibleEntityCount = Get-NestedValue `
@@ -719,13 +756,16 @@ function Invoke-McmcpReadinessCheck {
         world_present = $worldPresent
         observation_present = $observationPresent
         inventory_empty = $inventoryEmpty
+        inventory_profile_matches = $inventoryProfileMatches
         rays_per_tick_512 = $raysPerTick512
         visible_entities_zero = $visibleEntitiesZero
         action_idle_or_terminal = $actionIdleOrTerminal
     }
-    $failedFlags = @($readiness.Keys | Where-Object {
-            $_ -cne 'get_state_ok' -and -not [bool]$readiness[$_]
-        })
+    $requiredReadinessFlags = @(
+        'ready_mode_ok', 'game_unpaused', 'world_present', 'observation_present',
+        'inventory_profile_matches', 'rays_per_tick_512', 'visible_entities_zero',
+        'action_idle_or_terminal')
+    $failedFlags = @($requiredReadinessFlags | Where-Object { -not [bool]$readiness[$_] })
     if ($failedFlags.Count -gt 0) {
         # Persist only fixed-name Boolean proofs. Never retain the state snapshot itself.
         $diagnostic = [ordered]@{
@@ -736,6 +776,7 @@ function Invoke-McmcpReadinessCheck {
             world_present = $readiness.world_present
             observation_present = $readiness.observation_present
             inventory_empty = $readiness.inventory_empty
+            inventory_profile_matches = $readiness.inventory_profile_matches
             rays_per_tick_512 = $readiness.rays_per_tick_512
             visible_entities_zero = $readiness.visible_entities_zero
             action_idle_or_terminal = $readiness.action_idle_or_terminal
@@ -752,6 +793,7 @@ function Invoke-McmcpReadinessCheck {
                 world_present = $diagnostic.world_present
                 observation_present = $diagnostic.observation_present
                 inventory_empty = $diagnostic.inventory_empty
+                inventory_profile_matches = $diagnostic.inventory_profile_matches
                 rays_per_tick_512 = $diagnostic.rays_per_tick_512
                 visible_entities_zero = $diagnostic.visible_entities_zero
                 action_idle_or_terminal = $diagnostic.action_idle_or_terminal
@@ -881,6 +923,7 @@ function Invoke-ReadOnlyPreflight {
             world_present = $readiness.world_present
             observation_present = $readiness.observation_present
             inventory_empty = $readiness.inventory_empty
+            inventory_profile_matches = $readiness.inventory_profile_matches
             rays_per_tick_512 = $readiness.rays_per_tick_512
             visible_entities_zero = $readiness.visible_entities_zero
             action_idle_or_terminal = $readiness.action_idle_or_terminal
@@ -2155,6 +2198,7 @@ try {
             world_present = $preflightResult.artifact.world_present
             observation_present = $preflightResult.artifact.observation_present
             inventory_empty = $preflightResult.artifact.inventory_empty
+            inventory_profile_matches = $preflightResult.artifact.inventory_profile_matches
             rays_per_tick_512 = $preflightResult.artifact.rays_per_tick_512
             visible_entities_zero = $preflightResult.artifact.visible_entities_zero
             action_idle_or_terminal = $preflightResult.artifact.action_idle_or_terminal
@@ -2256,6 +2300,7 @@ try {
             world_present = $t0Readiness.world_present
             observation_present = $t0Readiness.observation_present
             inventory_empty = $t0Readiness.inventory_empty
+            inventory_profile_matches = $t0Readiness.inventory_profile_matches
             rays_per_tick_512 = $t0Readiness.rays_per_tick_512
             visible_entities_zero = $t0Readiness.visible_entities_zero
             action_idle_or_terminal = $t0Readiness.action_idle_or_terminal

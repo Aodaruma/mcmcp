@@ -21,7 +21,8 @@ param(
     [string]$TokenPath,
 
     [Parameter(Mandatory)]
-    [ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy', 'container-inspect-recovery')]
+    [ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy', 'container-inspect-recovery',
+        'tunnel-straight16', 'tunnel-straight160', 'tunnel-branches', 'tunnel-hazard')]
     [string]$PromptProfile,
 
     [string]$ProductCommit,

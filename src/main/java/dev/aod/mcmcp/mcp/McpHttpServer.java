@@ -64,7 +64,7 @@ public final class McpHttpServer implements AutoCloseable {
     private static final int MAX_HEADER_CHARS = 16_384;
     private static final int MAX_EVALUATION_CONTROL_BODY_BYTES = 512;
     private static final long MIN_EVALUATION_DURATION_MILLIS = 1_000L;
-    private static final long MAX_EVALUATION_DURATION_MILLIS = 91L * 60L * 1_000L;
+    private static final long MAX_EVALUATION_DURATION_MILLIS = 121L * 60L * 1_000L;
     private static final long EVALUATION_STREAM_HEARTBEAT_SECONDS = 2L;
     private static final Set<String> REQUEST_KEYS = Set.of("jsonrpc", "id", "method", "params");
 
