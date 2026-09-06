@@ -44,4 +44,33 @@ Java 25で `gradlew.bat test harnessTest adminBridgeTest verifyHarnessIsolation 
 
 低FPSの実機試験・GUI操作・Minecraft再起動は行っていない。`release:verification-needed` を維持し、実機PASS前に公開tagを付けない。
 
-実機確認時は対象SHA、session/control状態、各段のtick、current fog有無、元lease期限と固定reason、dispatch回数を秘密を除いて記録する。欠測→復帰の成功だけでなく、待機中の遮蔽・対象変更・期限到達・Escで新規操作が発生しないことも対照とする。
+## 実機受入用の有界な要約
+
+PR #14 のmerge後、base `681bc52` に追従して計測を追加した。既存の5 Tool・DSL・catalog/schemaは変更しない。`agent_get_action` の既存 `trace` に、欠測が発生したActionだけ次の固定eventを最大1件合成する。
+
+```json
+{"event":"RENDERER_RECOVERY","detail":"missing=capture,initial_open;revalidated=capture,initial_open"}
+```
+
+`missing` と `revalidated` は、それぞれ固定の `capture,commit,dispatch,jit,initial_open` からなる順序付き集合で、空集合は `none` とする。`missing` はその段階で現tickのrenderer欠測を少なくとも一度検出した履歴、`revalidated` はその欠測後に同じ段階の現在証拠と安全検査をすべて通過した履歴である。単にfog sampleが戻っただけでは `revalidated` に追加しない。座標・対象名・任意文字列は記録しない。
+
+**どちらもAction内の累積値であり、現在のREADY状態ではない。** 同じ段階で欠測→再検証→再欠測となっても `revalidated` は残る。要約だけでは現在の可視性、操作送信、server ACK、container解放、Action成功を証明できない。特に `initial_open` は初回open前の再検証通過を示すだけで、その後の `useItemOn` の実行や成功を記録しない。要約の `tick` もsnapshot時点のAction進捗であり、各欠測・復帰の発生時刻ではない。
+
+capture/commitの欠測履歴は同じ回復状態に保持し、Action予約後に引き継ぐ。予約前に失敗してAction IDが発行されない場合は従来の固定診断だけになる。対象外または無欠測のActionには要約を追加せず、`none/none` も出さない。計測のない旧JARでは、要約がないことから欠測の有無を判定できない。
+
+各pollでは最新の要約1件を既存256件のtrace枠内へ合成し、tickごとのeventは蓄積しない。通常traceが満杯でも要約は残る。保持は既存Action storeの最新Actionと直前terminal Actionまでで、さらに次へ進むと古い結果は失効する。必要なterminal結果は次の試行前にartifactへ保存する。
+
+### 受入手順と判定の限界
+
+1. `MCMCP-Validation` で対象SHA/JAR hash・同一baselineをT0前に確認する。通常FPSと、T0前に低いFPS上限（例10）を設定した条件を分け、同じ公開MCPの観測→単独inspectを1〜数回の有限試行で比較する。
+2. T0以後はterminalまでGUI・fixture・operator操作を差し込まず、公開Tool応答を保存する。terminalの `trace`、`state`、`progress.interactions`、完全な `container_results`、評価leaseと入力解放の既存記録を採取する。
+3. `RENDERER_RECOVERY` の `missing` と `revalidated` に同じ段階が含まれ、Actionが `succeeded`、inspectの確認済み `container_results` がcleanup後に公開された場合、その段階の欠測後に完全再検証を通って処理を完了した肯定証拠とする。既存 `progress.interactions` は操作実行の補助証拠であり、初回open専用の送信回数ではない。
+4. 成功しても要約がない場合は「欠測経路は未確認」と記録する。低FPSだけでは欠測の発生を保証できず、この方法だけで全5段階を実機で通したとは言わない。
+
+遮蔽や実fogの短距離制約・配送期限切れ・stopで新規操作へ進まない対照は下記の構成試験で確認する。T0前に設定した遮蔽の通常拒否は実機でも確認できるが、「欠測待機中に遮蔽が変わった」ことの証明にはならない。待機中の期限到達・Escを確実に発生させる専用runner/fixture割込は今回追加せず、実機未確認として残す。原状復旧はterminal記録後に行う。
+
+### 計測の回帰検証
+
+`SurfacePreflightRecoveryTest` はcapture/commit/dispatchの各missing/revalidated組合せ、遮蔽・実fog・対象変更時に再検証を記録しないこと、別段階による誤記録とfog復帰だけの誤記録を防ぐこと、同段階の再欠測で履歴が累積することを確認する。`AgentActionStoreTest` は300回更新してもtrace1件・全体256件以内、immutable snapshot・terminal保持と失効、未知bit拒否、effects/interactions/ticksが増えないことを確認する。本番配線の構成試験は各段階の安全検査後にだけ再検証を記録し、初回open前gateが操作送信を記録しないことを確認する。
+
+Java 25の `gradlew.bat test harnessTest adminBridgeTest verifyHarnessIsolation build` で unit 1,222件、harness 13件、admin bridge 21件が失敗・errorとも0。元のTTL・HTTP締切・総予算、fog認可、revision、ACK、cleanup、再送禁止は変更していない。実機受入は未実施で、Issue #4 と `release:verification-needed` は維持する。

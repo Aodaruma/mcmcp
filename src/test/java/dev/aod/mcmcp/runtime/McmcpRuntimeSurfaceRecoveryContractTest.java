@@ -13,6 +13,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** Wiring guard: fixture recovery must remain on capture, reservation and actual dispatch paths. */
 class McmcpRuntimeSurfaceRecoveryContractTest {
     @Test
+    void recoverySummaryIsRecordedAfterCompleteChecksRatherThanOnFogAvailabilityAlone() throws Exception {
+        assertThat(calls("surfaceRecoveryFailure")).containsSubsequence(
+                "ClientFogDistanceSignals#current", "SurfacePreflightRecovery#evaluate",
+                "SurfacePreflightRecovery#noteMissing", "McmcpRuntime#publishRendererRecovery")
+                .doesNotContain("SurfacePreflightRecovery#noteRevalidated");
+        assertThat(calls("prepareAgentAction")).containsSubsequence(
+                "SurfacePreflightRecovery#noteRevalidated", "McmcpRuntime$PreparedAgentAction#<init>");
+        assertThat(calls("admissionFenceFailure")).containsSubsequence(
+                "McmcpRuntime#breakProgramPreconditionsCurrent", "McmcpRuntime#rendererRecoveryRevalidated");
+        assertThat(calls("bindAgentPrimitive")).containsSubsequence(
+                "McmcpRuntime#fitsRemainingBudget", "McmcpRuntime#rendererRecoveryRevalidated");
+        assertThat(calls("initialContainerOpenWitness")).containsSubsequence(
+                "AgentPrimitivePlanner#requireKnownSurface", "McmcpRuntime#rendererRecoveryRevalidated")
+                .doesNotContain("MultiPlayerGameMode#useItemOn");
+        assertThat(calls("commitAgentAction")).containsSubsequence(
+                "AgentActionStore#reserve", "McmcpRuntime#publishRendererRecovery");
+        assertThat(calls("publishRendererRecovery")).containsSubsequence(
+                "SurfacePreflightRecovery#summary", "AgentActionStore$RendererRecoverySummary#missingStages",
+                "AgentActionStore#recordRendererRecovery");
+    }
+
+    @Test
     void captureAndCommitKeepRecoveryAheadOfReservation() throws Exception {
         assertThat(calls("captureAgentAdmission")).containsSubsequence(
                 "SurfacePreflightRecovery#capture", "McmcpRuntime#requireSurfaceRecoveryReady",

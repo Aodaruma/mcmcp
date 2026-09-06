@@ -16,6 +16,49 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AgentActionStoreTest {
     @Test
+    void rendererSummaryIsOneFixedTraceEntryAndSurvivesOrdinaryTraceEvictionAndTerminalRetention() {
+        var store = new AgentActionStore();
+        var action = store.start(program(), source(), Instant.EPOCH);
+        assertThat(store.get(action.actionId()).trace()).noneMatch(entry -> entry.event().equals("RENDERER_RECOVERY"));
+        store.recordRendererRecovery(action.actionId(), new AgentActionStore.RendererRecoverySummary(1, 0));
+        var before = store.get(action.actionId());
+        store.markRunning(action.actionId());
+        for (int tick = 0; tick < 300; tick++) {
+            store.setPhase(action.actionId(), AgentActionStore.Phase.EXECUTING, "bounded_test");
+            store.recordRendererRecovery(action.actionId(), new AgentActionStore.RendererRecoverySummary(31, 31));
+        }
+        store.succeed(action.actionId());
+        var terminal = store.get(action.actionId());
+        assertThat(terminal.trace()).hasSize(256);
+        assertThat(terminal.trace().stream().filter(entry -> entry.event().equals("RENDERER_RECOVERY")))
+                .singleElement().satisfies(entry -> assertThat(entry.detail()).isEqualTo(
+                        "missing=capture,commit,dispatch,jit,initial_open;revalidated=capture,commit,dispatch,jit,initial_open"));
+        assertThat(before.trace().getLast().detail()).isEqualTo("missing=capture;revalidated=none");
+        assertThat(terminal.effects()).isEmpty();
+        assertThat(terminal.progress().interactions()).isZero();
+        assertThat(terminal.progress().ticks()).isZero();
+        assertThatThrownBy(() -> store.recordRendererRecovery(action.actionId(),
+                new AgentActionStore.RendererRecoverySummary(1, 1))).isInstanceOf(IllegalStateException.class);
+        var next = store.start(program(), source(), Instant.EPOCH.plusSeconds(1));
+        assertThat(store.get(action.actionId()).trace()).isEqualTo(terminal.trace());
+        assertThat(store.get(next.actionId()).trace()).noneMatch(entry -> entry.event().equals("RENDERER_RECOVERY"));
+        store.markRunning(next.actionId());
+        store.succeed(next.actionId());
+        store.start(program(), source(), Instant.EPOCH.plusSeconds(2));
+        assertThatThrownBy(() -> store.get(action.actionId())).isInstanceOf(AgentActionStore.NotFoundException.class);
+    }
+
+    @Test
+    void rendererSummaryRejectsUnknownBitsAndRecoveryWithoutAMissingWitness() {
+        assertThatThrownBy(() -> new AgentActionStore.RendererRecoverySummary(32, 0))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new AgentActionStore.RendererRecoverySummary(1, 2))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new AgentActionStore.RendererRecoverySummary(0, -1))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void chargesAdmissionWaitAgainstTheSameActionBudgetBeforeStartingTheFirstNode() {
         var store = new AgentActionStore();
         var action = store.start(program(), source(), Instant.EPOCH);

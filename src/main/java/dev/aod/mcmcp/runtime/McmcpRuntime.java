@@ -5,6 +5,7 @@ import dev.aod.mcmcp.agent.action.ContainerInspection;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import dev.aod.mcmcp.agent.action.AgentActionStore;
+import dev.aod.mcmcp.agent.action.AgentActionStore.RendererRecoveryStage;
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.action.ActionProgramCursor;
 import dev.aod.mcmcp.agent.action.CollectBatchEvidence;
@@ -2183,6 +2184,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             throw planningFailure(failure);
         }
+        surfaceRecovery.noteRevalidated(RendererRecoveryStage.CAPTURE);
         return new PreparedAgentAction(
                 snapshot, program, source, analysis, initialPrimitive, frameItemAim, surfaceRecovery);
     }
@@ -2435,7 +2437,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 session,
                 prepared,
                 LocalArmingState.Mode.READY,
-                captured.control().controlEpoch());
+                captured.control().controlEpoch(), RendererRecoveryStage.COMMIT);
         if (admissionFailure.isPresent()) {
             if (admissionFailure.orElseThrow() == AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING) {
                 throw new ClientCommandInbox.DeferControl();
@@ -2552,6 +2554,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             pendingAgentAdmission = new PendingAgentAdmission(
                     accepted.actionId(), prepared, killZoneAdmission,
                     transportApproval);
+            publishRendererRecovery(prepared.surfaceRecovery());
             requireLiveCall(context, "agent_start_action");
         } catch (RuntimeException | LinkageError failure) {
             if (accepted == null) {
@@ -2968,10 +2971,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private Optional<AdmissionFenceFailure> surfaceRecoveryFailure(
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
-            SurfacePreflightRecovery surfaceRecovery) {
+            SurfacePreflightRecovery surfaceRecovery, RendererRecoveryStage stage) {
         var decision = surfaceRecovery.evaluate(deliveredAgentEvidence, session.clientTick(), System.nanoTime(),
                 minecraft.level != null && minecraft.player != null && ClientFogDistanceSignals.current(
                         minecraft.level, minecraft.player, minecraft.player.tickCount).isPresent());
+        if (decision == SurfacePreflightRecovery.Decision.RENDERER_EVIDENCE_MISSING
+                && surfaceRecovery.noteMissing(stage)) publishRendererRecovery(surfaceRecovery);
         return switch (decision) {
             case READY -> Optional.empty();
             case RENDERER_EVIDENCE_MISSING -> Optional.of(AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING);
@@ -2983,7 +2988,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private void requireSurfaceRecoveryReady(Minecraft minecraft, WorldSessionTracker.Snapshot session,
             SurfacePreflightRecovery surfaceRecovery) {
-        surfaceRecoveryFailure(minecraft, session, surfaceRecovery).ifPresent(reason -> {
+        surfaceRecoveryFailure(minecraft, session, surfaceRecovery, RendererRecoveryStage.CAPTURE).ifPresent(reason -> {
             if (reason == AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING) {
                 throw new ClientCommandInbox.DeferControl();
             }
@@ -2991,12 +2996,27 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         });
     }
 
+    private void rendererRecoveryRevalidated(SurfacePreflightRecovery recovery, RendererRecoveryStage stage) {
+        if (recovery.noteRevalidated(stage)) publishRendererRecovery(recovery);
+    }
+
+    private void publishRendererRecovery(SurfacePreflightRecovery recovery) {
+        if (recovery.lease() == null) return;
+        var summary = recovery.summary();
+        if (summary.missingStages() == 0) return;
+        if (agentExecution != null && agentExecution.surfaceRecovery == recovery) {
+            agentActions.recordRendererRecovery(agentExecution.actionId, summary);
+        } else if (pendingAgentAdmission != null && pendingAgentAdmission.prepared().surfaceRecovery() == recovery) {
+            agentActions.recordRendererRecovery(pendingAgentAdmission.actionId(), summary);
+        }
+    }
+
     private Optional<AdmissionFenceFailure> admissionFenceFailure(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             PreparedAgentAction prepared,
             LocalArmingState.Mode expectedMode,
-            long expectedControlEpoch) {
+            long expectedControlEpoch, RendererRecoveryStage stage) {
         var captured = prepared.snapshot();
         var player = minecraft.player;
         var lock = arming.snapshot(session.worldSessionId());
@@ -3071,7 +3091,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (!routeDependenciesCurrent(currentMap, prepared.analysis().routeDependencies())) {
             return Optional.of(AdmissionFenceFailure.ROUTE_CHANGED);
         }
-        var rendererFailure = surfaceRecoveryFailure(minecraft, session, prepared.surfaceRecovery());
+        var rendererFailure = surfaceRecoveryFailure(minecraft, session, prepared.surfaceRecovery(), stage);
         if (rendererFailure.isPresent()) return rendererFailure;
         Optional<ObservationFrame> currentPlanningFrame = agentPlanningFrame(
                 prepared.initialPrimitive().orElse(null), prepared.surfaceRecovery().lease());
@@ -3151,6 +3171,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 minecraft, prepared.program(), prepared.initialPrimitive())) {
             return Optional.of(AdmissionFenceFailure.BREAK_PRECONDITION_CHANGED);
         }
+        rendererRecoveryRevalidated(prepared.surfaceRecovery(), stage);
         return Optional.empty();
     }
 
@@ -4577,7 +4598,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         session,
                         pending.prepared(),
                         LocalArmingState.Mode.AGENT,
-                        pending.prepared().snapshot().control().controlEpoch() + 1L);
+                        pending.prepared().snapshot().control().controlEpoch() + 1L, RendererRecoveryStage.DISPATCH);
                 if (admissionFailure.isPresent()) {
                     if (admissionFailure.orElseThrow() == AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING) {
                         // Receipt acknowledgement authorizes no input. Retain the original
@@ -5798,7 +5819,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         try {
             var surfaceRecovery = agentExecution.surfaceRecovery;
             if (surfaceRecovery != null && surfaceRecovery.applies(agentExecution.primitive)) {
-                var rendererFailure = surfaceRecoveryFailure(minecraft, session, surfaceRecovery);
+                var rendererFailure = surfaceRecoveryFailure(minecraft, session, surfaceRecovery, RendererRecoveryStage.JIT);
                 if (rendererFailure.isPresent()) {
                     var reason = rendererFailure.orElseThrow();
                     if (reason != AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING) {
@@ -5891,6 +5912,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 agentActions.setPhase(
                         action.actionId(), AgentActionStore.Phase.EXECUTING, "jit_primitive_bound");
                 agentExecution.primitivePlanning = false;
+            }
+            if (surfaceRecovery != null && surfaceRecovery.applies(agentExecution.primitive)) {
+                rendererRecoveryRevalidated(surfaceRecovery, RendererRecoveryStage.JIT);
             }
             return true;
         } catch (AgentPrimitivePlanner.PlanningException unavailable) {
@@ -7557,7 +7581,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             var map = requireAgentMap(session);
             var reconciliation = reconciliationSignals.bindAndSnapshot(minecraft.level, session.worldSessionId());
             visualBarrierWorldRevision(map, reconciliation);
-            var decision = surfaceRecoveryFailure(minecraft, session, execution.surfaceRecovery);
+            var decision = surfaceRecoveryFailure(minecraft, session, execution.surfaceRecovery, RendererRecoveryStage.INITIAL_OPEN);
             if (decision.isPresent()) {
                 return MinecraftPhaseFiveInventoryPort.InitialOpenWitness.valueOf(decision.orElseThrow().name());
             }
@@ -7567,6 +7591,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     target.position(), target.block(),
                     primitiveSurfaceRevisionBarrier(execution.primitive, map, reconciliation)
                             .applyAsLong(target.position()));
+            rendererRecoveryRevalidated(execution.surfaceRecovery, RendererRecoveryStage.INITIAL_OPEN);
             return ready;
         } catch (AgentPrimitivePlanner.PlanningException mismatch) {
             return MinecraftPhaseFiveInventoryPort.InitialOpenWitness.SURFACE_REOBSERVATION_MISMATCH;
