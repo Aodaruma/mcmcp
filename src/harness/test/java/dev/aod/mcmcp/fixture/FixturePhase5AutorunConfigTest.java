@@ -21,7 +21,8 @@ class FixturePhase5AutorunConfigTest {
                         "cobblestone_generator",
                         "fishing",
                         "kill_zone",
-                        "iron_farm", "reset");
+                        "iron_farm", "tunnel_straight16", "tunnel_straight160",
+                        "tunnel_branches", "tunnel_hazard", "reset");
 
         for (FixturePhase5Mode mode : FixturePhase5Mode.values()) {
             assertThat(FixturePhase5AutorunConfig.parse(

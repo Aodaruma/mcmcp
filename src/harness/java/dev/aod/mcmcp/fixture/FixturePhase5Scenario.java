@@ -196,6 +196,9 @@ final class FixturePhase5Scenario {
             FixtureSecurity.Context context,
             FixturePhase5Mode mode,
             Consumer<Component> output) {
+        if (mode.tunnel()) {
+            throw new IllegalStateException("tunnel setup is autorun-only; restart with the matching launch mode");
+        }
         // Fishing owns a larger water volume than the other arena fixtures. Retire it before
         // any successor writes its smaller T0 layout, otherwise the remaining source-water ring
         // can flow back into the successor workspace on later Vanilla fluid ticks.
@@ -980,7 +983,7 @@ final class FixturePhase5Scenario {
                     throw new IllegalArgumentException("fishing has separate inventory setup");
             case KILL_ZONE ->
                     throw new IllegalArgumentException("kill_zone has separate inventory setup");
-            case IRON_FARM, RESET ->
+            case IRON_FARM, RESET, TUNNEL_STRAIGHT16, TUNNEL_STRAIGHT160, TUNNEL_BRANCHES, TUNNEL_HAZARD ->
                     throw new IllegalArgumentException(mode.wireName() + " has separate inventory setup");
         }
         player.getInventory().setSelectedSlot(mode.selectedSlot());
@@ -1039,7 +1042,7 @@ final class FixturePhase5Scenario {
                     throw new IllegalArgumentException("fishing has a separate pose");
             case KILL_ZONE ->
                     throw new IllegalArgumentException("kill_zone has a separate pose");
-            case IRON_FARM, RESET ->
+            case IRON_FARM, RESET, TUNNEL_STRAIGHT16, TUNNEL_STRAIGHT160, TUNNEL_BRANCHES, TUNNEL_HAZARD ->
                     throw new IllegalArgumentException(mode.wireName() + " has a separate pose");
         };
     }

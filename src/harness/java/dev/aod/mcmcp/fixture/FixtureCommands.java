@@ -161,6 +161,14 @@ final class FixtureCommands {
                                 .executes(context -> execute(context.getSource(),
                                         FixtureKillZoneScenario::sendOracle)))
                         .then(phase5("iron_farm", FixturePhase5Mode.IRON_FARM))
+                        .then(phase5("tunnel_straight16", FixturePhase5Mode.TUNNEL_STRAIGHT16))
+                        .then(phase5("tunnel_straight160", FixturePhase5Mode.TUNNEL_STRAIGHT160))
+                        .then(phase5("tunnel_branches", FixturePhase5Mode.TUNNEL_BRANCHES))
+                        .then(phase5("tunnel_hazard", FixturePhase5Mode.TUNNEL_HAZARD))
+                        .then(Commands.literal("tunnel_status")
+                                .executes(context -> execute(context.getSource(), FixtureTunnelScenario::sendStatus)))
+                        .then(Commands.literal("tunnel_oracle")
+                                .executes(context -> execute(context.getSource(), FixtureTunnelScenario::sendOracle)))
                         .then(Commands.literal("verify_tree")
                                 .executes(context -> execute(
                                         context.getSource(), FixturePhase5Scenario::verifyTreeGate)))

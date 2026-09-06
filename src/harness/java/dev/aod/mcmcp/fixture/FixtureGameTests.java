@@ -70,6 +70,7 @@ final class FixtureGameTests {
             id("kill_zone_geometry_fixture");
     private static final Identifier PLAYER_SAFETY_BASELINE_TEST_ID =
             id("player_safety_baseline_fixture");
+    private static final Identifier TUNNEL_TEST_ID = id("tunnel_fixture");
     private static final Identifier ENVIRONMENT_ID = id("fixture_environment");
     private static final Identifier PLAYER_BASELINE_ENVIRONMENT_ID =
             id("player_baseline_environment");
@@ -118,6 +119,8 @@ final class FixtureGameTests {
             TEST_FUNCTIONS.register(
                     "player_safety_baseline_fixture",
                     () -> FixtureGameTests::runPlayerSafetyBaselineFixture);
+    private static final DeferredHolder<Consumer<GameTestHelper>, Consumer<GameTestHelper>> TUNNEL_FIXTURE =
+            TEST_FUNCTIONS.register("tunnel_fixture", () -> FixtureGameTests::runTunnelFixture);
 
     private FixtureGameTests() {
     }
@@ -160,6 +163,7 @@ final class FixtureGameTests {
                 new FunctionGameTestInstance(KILL_ZONE_ARMOR_STAND_FIXTURE.getKey(), data));
         event.registerTest(KILL_ZONE_GEOMETRY_TEST_ID,
                 new FunctionGameTestInstance(KILL_ZONE_GEOMETRY_FIXTURE.getKey(), data));
+        event.registerTest(TUNNEL_TEST_ID, new FunctionGameTestInstance(TUNNEL_FIXTURE.getKey(), data));
         TestData<Holder<TestEnvironmentDefinition<?>>> playerBaselineData = new TestData<>(
                 playerBaselineEnvironment,
                 Identifier.withDefaultNamespace("empty"),
@@ -168,6 +172,71 @@ final class FixtureGameTests {
                 true);
         event.registerTest(PLAYER_SAFETY_BASELINE_TEST_ID,
                 new FunctionGameTestInstance(PLAYER_SAFETY_BASELINE_FIXTURE.getKey(), playerBaselineData));
+    }
+
+    private static void runTunnelFixture(GameTestHelper helper) {
+        try {
+            FixtureTunnelScenario.setBounded(helper.getLevel(), FixtureTunnelPlan.MIN.offset(-1, 0, 0),
+                    Blocks.AIR.defaultBlockState());
+            helper.fail(Component.literal("Tunnel setter accepted a write outside its dedicated volume"));
+            return;
+        } catch (IllegalArgumentException expected) {
+            // Rejected before touching the world; generic FixtureArena bounds remain unchanged.
+        }
+        // Audit all large plans as data; only a 5 x 6 x 3 representative section touches the test world.
+        for (var mode : FixturePhase5Mode.values()) {
+            if (!mode.tunnel()) continue;
+            var plan = FixtureTunnelPlan.forMode(mode);
+            if (plan.baseline().size() != FixtureTunnelPlan.VOLUME_SIZE
+                    || !plan.excavation().stream().allMatch(cell -> FixtureTunnelPlan.contains(cell)
+                            && plan.baseline().get(cell) == FixtureTunnelPlan.Material.STONE)) {
+                helper.fail(Component.literal("Tunnel plan escaped its closed baseline"));
+                return;
+            }
+        }
+        var plan = FixtureTunnelPlan.forMode(FixturePhase5Mode.TUNNEL_HAZARD);
+        for (int x = 0; x <= 4; x++) {
+            for (int y = 0; y <= 5; y++) {
+                for (int z = 0; z <= 2; z++) {
+                    var cell = new FixtureTunnelPlan.Cell(257 + x, 196 + y, 255 + z);
+                    helper.setBlock(new BlockPos(x, y, z), FixtureTunnelScenario.state(plan.baseline().get(cell)));
+                }
+            }
+        }
+        helper.runAfterDelay(2L, () -> {
+            for (int x = 0; x <= 4; x++) {
+                for (int y = 0; y <= 5; y++) {
+                    for (int z = 0; z <= 2; z++) {
+                        var cell = new FixtureTunnelPlan.Cell(257 + x, 196 + y, 255 + z);
+                        if (!helper.getBlockState(new BlockPos(x, y, z))
+                                .equals(FixtureTunnelScenario.state(plan.baseline().get(cell)))) {
+                            helper.fail(Component.literal("Tunnel sample baseline changed after normal world ticks"));
+                            return;
+                        }
+                    }
+                }
+            }
+            ServerPlayer player = helper.makeMockServerPlayerInLevel();
+            dirtyPlayerSafetyBaseline(player);
+            FixtureTunnelScenario.configurePlayer(player);
+            if (player.gameMode.getGameModeForPlayer() != GameType.SURVIVAL
+                    || player.getHealth() != 20.0F || player.getAbsorptionAmount() != 0.0F
+                    || player.getFoodData().getFoodLevel() != 20 || player.getFoodData().getSaturationLevel() != 20.0F
+                    || player.getRemainingFireTicks() > 0 || !player.getActiveEffects().isEmpty()
+                    || !player.getInventory().getItem(0).is(Items.NETHERITE_PICKAXE)
+                    || player.getInventory().getItem(0).getCount() != 1
+                    || player.getInventory().getItem(0).getDamageValue() != 0) {
+                helper.fail(Component.literal("Tunnel player baseline did not match its pristine tool and safety state"));
+                return;
+            }
+            for (int slot = 1; slot < player.getInventory().getContainerSize(); slot++) {
+                if (!player.getInventory().getItem(slot).isEmpty()) {
+                    helper.fail(Component.literal("Tunnel player baseline retained an unexpected inventory item"));
+                    return;
+                }
+            }
+            helper.succeed();
+        });
     }
 
     private static void runPlayerSafetyBaselineFixture(GameTestHelper helper) {
