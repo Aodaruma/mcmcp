@@ -14,20 +14,22 @@ The reported Claude run is unavailable. This work addresses the architectural ro
 - 直線16/160と枝坑道の座標・順序・枝からの戻り・最終位置を固定する。
 - 露出した液体、床欠損、落下物、敵、道具/容量不足で停止し、suffixを送信しない。
 - renderer欠測待ち、ACK不明、cancel、入力解放、元の総期限を検証する。
+- dev fixtureが一時的に所有する22チャンクと512 rays/tickを、終了・失敗・置換・shutdown時に元の値へ戻す。
+- 実行前statusのraw hash・`setupId`・mode・実`worldSessionId`をAction終端・cleanup・oracleまで束縛する。
 - 通常nodeの32マス/8break等の受付上限を維持し、坑道専用の大きいcounterをwire schemaと同期する。
 - break ACKとpickupの証拠を分離し、ledgerの省略があってもaggregateと実測counterを保持する。
 
 ## ローカル検証結果 / Local validation
 
-- 対象コード / Validated code commit: `764f51925204e6f02163f85e8a83d97bb8b22f99`（latest main `805cd5321f907932bf9f53a172c8975dd7014698`を統合）。
-- `gradlew test harnessTest adminBridgeTest verifyHarnessIsolation build --console=plain`: **PASS**。unit 1,300、harness 17、admin 21、計1,338件でfailure/error 0。
+- 対象コード / Validated code commit: `d5bab0a814d5ecf98e2e741cac13959e0ce8dac3`（latest main `805cd5321f907932bf9f53a172c8975dd7014698`を統合）。
+- `gradlew test harnessTest adminBridgeTest verifyHarnessIsolation build --console=plain`: **PASS**。unit 1,303、harness 24、admin 21、計1,348件でfailure/error 0。
 - `gradlew runGameTestServer --console=plain`: **15/15 PASS**。固定坑道fixtureの代表90ブロック配置も専用source set内で検証。
 - `Test-McmcpEvalTrace.ps1 -SelfTest`: **71/71 PASS**、`Test-McmcpLiveMonitor.ps1`: **81/81 PASS**。
-- 坑道専用mock: capability gate **PASS**、bounded acceptanceの正常/範囲外変更拒否 **PASS**、renderer witness **13/13 PASS**。
+- 坑道専用mock: capability gate **PASS**、bounded acceptanceの正常/範囲外変更・別run・status差し替え拒否 **PASS**、renderer witness **13/13 PASS**。
 - `python -m unittest discover -s tools/mcp -p 'test_*.py' -q`: **14 PASS**。認証不要のmock HTTP試験で、ゲームへは接続していません。
 - catalog raw SHA-256: `0c36ccfe6c923b61a385c402d2343178a11f3b942ee9d1eba3a4993a748c7544`、semantic Tool surface SHA-256: `a452d7812915c0e3d0d2e51fa9a2ee32e97667469ccde04ebfd7e388fb0cbe67`。
 - JAR: `build/libs/mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar`。
-- JAR SHA-256: `FD9E801BD73F3CE88DA37880F091F4AD84518159B42B48B54BCB1AD6EB1CC189`。
+- JAR SHA-256: `A8A1168B284D576F63DB4182D2C216C11E0B04EB49C87922431187A87CB8F37D`。
 - 実機での16/160マス完走・枝坑道・性能改善は**未確認**です。新opcodeは回収完了を断定せず、`drop_collection=not_asserted`を記録します。
 
 レビューで採掘後の予測airとACK待機の分離、ACK確認後に中断した場合のcounter保存、可視液体・落下中blockの停止、入力解放が3回未確認の場合の既存deferred cleanup/OFF lockへの移行を補強しました。最初の終了意図と所有権を保持し、解放未確認のterminalを公開しません。
