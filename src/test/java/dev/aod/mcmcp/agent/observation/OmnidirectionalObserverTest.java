@@ -39,6 +39,40 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OmnidirectionalObserverTest {
     @Test
+    void exposedTunnelFluidStopsEvenWhenItIsBeyondTheEmptyHeadCell() {
+        var sample = sample(20, 100, UnknownBoundaryReason.RADIUS_LIMIT);
+        var lava = new VisibleSurface(new BlockPosition(DIMENSION, 2, 65, 0), Face.WEST,
+                new ResourceId("minecraft:lava"), ShapeClass.FLUID, null,
+                new WorldPosition(DIMENSION, 2, 65.5, 0.5), sample.eyeOrigin(), 20, 100);
+        var exposed = new OmnidirectionalObserver.RayTrace(OmnidirectionalObserver.RayOutcome.MISS,
+                List.of(lava), boundary(sample, UnknownBoundaryReason.RADIUS_LIMIT, 3, 65.5, 0.5));
+        assertThat(OmnidirectionalObserver.tunnelTraceContainsFluid(exposed)).isTrue();
+        // The ray stopped on a stone wall; a lava block hidden behind it is not an observation.
+        var sealed = new OmnidirectionalObserver.RayTrace(OmnidirectionalObserver.RayOutcome.HIT,
+                List.of(chestSurface(sample, "minecraft:stone")),
+                boundary(sample, UnknownBoundaryReason.OPAQUE_OCCLUSION, 1, 64.5, 0.5));
+        assertThat(OmnidirectionalObserver.tunnelTraceContainsFluid(sealed)).isFalse();
+    }
+
+    @Test
+    void tunnelAirRequiresAnUnobstructedRayEndingInsideTheAdmittedCell() {
+        var sample = sample(20, 100, UnknownBoundaryReason.RADIUS_LIMIT);
+        var target = new BlockPosition(DIMENSION, 1, 64, 0);
+        var clear = new OmnidirectionalObserver.RayTrace(OmnidirectionalObserver.RayOutcome.MISS,
+                List.of(), boundary(sample, UnknownBoundaryReason.RADIUS_LIMIT, 1.5, 64.5, 0.5));
+        assertThat(OmnidirectionalObserver.tunnelRayReachesEmptyCell(clear, target)).isTrue();
+        assertThat(OmnidirectionalObserver.tunnelRayReachesEmptyCell(clear,
+                new BlockPosition(DIMENSION, 2, 64, 0))).isFalse();
+        var occluded = new OmnidirectionalObserver.RayTrace(OmnidirectionalObserver.RayOutcome.HIT,
+                List.of(chestSurface(sample, "minecraft:stone")),
+                boundary(sample, UnknownBoundaryReason.OPAQUE_OCCLUSION, 1, 64.5, 0.5));
+        assertThat(OmnidirectionalObserver.tunnelRayReachesEmptyCell(occluded, target)).isFalse();
+        var unknown = new OmnidirectionalObserver.RayTrace(OmnidirectionalObserver.RayOutcome.UNKNOWN,
+                List.of(), boundary(sample, UnknownBoundaryReason.UNLOADED, 1.5, 64.5, 0.5));
+        assertThat(OmnidirectionalObserver.tunnelRayReachesEmptyCell(unknown, target)).isFalse();
+    }
+
+    @Test
     void entityCrossingTheFogBoundaryCannotUseItsHiddenSamplePointsForLineOfSight() {
         var fog = new OmnidirectionalObserver.TickSample(DIMENSION,
                 new WorldPosition(DIMENSION, 0, 64, 0), 20, 100, 100,

@@ -585,6 +585,12 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         }
     }
 
+    /** Stop this child's attack input while preserving its original prediction and ACK wait. */
+    public void suspendActionInput(ApplyBlockPlanActionAttempt attempt) {
+        assertClientThread();
+        stopAttack(requireAction(attempt));
+    }
+
     @Override
     public ApplyBlockPlanActionEvidence actionEvidence(ApplyBlockPlanActionAttempt attempt) {
         var minecraft = assertClientThread();
@@ -1816,7 +1822,9 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         Objects.requireNonNull(liveState, "liveState");
         Objects.requireNonNull(expectedBefore, "expectedBefore");
         Objects.requireNonNull(breakSafety, "breakSafety");
-        boolean safe = breakSafety == ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK
+        boolean safe = breakSafety == ApplyBlockPlanRequest.BreakSafety.SAFE_TUNNEL_BLOCK
+                ? tunnelBlockAllowed(liveState, liveBlockEntityPresent)
+                : breakSafety == ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK
                 ? SafeConstructionBlockPolicy.allowsLiveState(
                         liveState, liveBlockEntityPresent)
                 : SafeBreakSourcePolicy.allowsLiveState(
@@ -1840,11 +1848,24 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             ApplyBlockPlanRequest.BreakSafety breakSafety,
             BlockState liveState,
             boolean liveBlockEntityPresent) {
-        if (breakSafety == ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK) {
+        if (breakSafety == ApplyBlockPlanRequest.BreakSafety.SAFE_TUNNEL_BLOCK) {
+            if (!tunnelBlockAllowed(liveState, liveBlockEntityPresent)) {
+                throw new IllegalArgumentException("unsupported tunnel source");
+            }
+        } else if (breakSafety == ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK) {
             SafeConstructionBlockPolicy.requireLiveState(liveState, liveBlockEntityPresent);
         } else {
             SafeBreakSourcePolicy.requireLiveState(liveState, liveBlockEntityPresent);
         }
+    }
+
+    static boolean tunnelBlockAllowed(BlockState state, boolean blockEntityPresent) {
+        var exact = fingerprint(state);
+        return !blockEntityPresent && state.getFluidState().isEmpty()
+                && dev.aod.mcmcp.agent.mining.SafeMiningBlocks.allowsState(
+                        exact.blockId(), exact.properties())
+                && net.minecraft.world.level.block.Block.isShapeFullBlock(state.getCollisionShape(
+                        net.minecraft.world.level.EmptyBlockGetter.INSTANCE, BlockPos.ZERO));
     }
 
     private static boolean withinWorldBorder(ClientLevel level, BlockPos position) {

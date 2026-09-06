@@ -257,6 +257,115 @@ public final class OmnidirectionalObserver {
                         && current.shapeClass() == known.shapeClass()).findFirst();
     }
 
+    /**
+     * Internal tunnel frontier inspection. The immutable admitted footprint is checked before
+     * tracing; this never inserts a delivered surface or modifies a public observation frame.
+     * A missing renderer sample must be rejected by the caller before invoking this method.
+     */
+    public Optional<ScopedTunnelCell> observeTunnelCell(
+            ClientLevel level, LocalPlayer player,
+            dev.aod.mcmcp.agent.mining.TunnelGeometry.Plan scope,
+            dev.aod.mcmcp.agent.mining.TunnelGeometry.Cell cell,
+            long clientTick, long worldRevision, double fogDistanceBlocks) {
+        if (!scope.containsBlock(cell) || player.level() != level
+                || !cell.dimension().equals(level.dimension().identifier().toString())
+                || !Double.isFinite(fogDistanceBlocks) && fogDistanceBlocks != Double.POSITIVE_INFINITY
+                || fogDistanceBlocks <= 0.0D) return Optional.empty();
+        var dimension = new ResourceId(cell.dimension());
+        Vec3 eye = player.getEyePosition();
+        Vec3 end = new Vec3(cell.x() + 0.5D, cell.y() + 0.5D, cell.z() + 0.5D);
+        Vec3 delta = end.subtract(eye);
+        double distance = delta.length();
+        double radius = Math.min(configuredRadiusBlocks, fogDistanceBlocks);
+        if (distance <= 1.0E-6D || distance > radius) return Optional.empty();
+        var sample = new TickSample(dimension, worldPosition(dimension, eye), clientTick,
+                worldRevision, worldRevision, distance, UnknownBoundaryReason.RADIUS_LIMIT);
+        var direction = new DirectionVector(delta.x / distance, delta.y / distance, delta.z / distance);
+        var trace = traceMinecraftRay(level, player, direction, sample, distance);
+        var position = new BlockPosition(dimension, cell.x(), cell.y(), cell.z());
+        Optional<VisibleSurface> surface = trace.surfaces().stream()
+                .filter(value -> value.position().equals(position)).findFirst();
+        if (surface.isPresent()) return Optional.of(new ScopedTunnelCell(
+                surface.orElseThrow(), false, clientTick, worldRevision));
+        // Only after an unobstructed policy ray entered this cell may its visible empty state
+        // be read. No wall-occluded state or neighbouring fluid is queried here.
+        if (tunnelRayReachesEmptyCell(trace, position)
+                && level.getBlockState(new BlockPos(cell.x(), cell.y(), cell.z())).isAir()) {
+            return Optional.of(new ScopedTunnelCell(null, true, clientTick, worldRevision));
+        }
+        return Optional.empty();
+    }
+
+    static boolean tunnelRayReachesEmptyCell(RayTrace trace, BlockPosition position) {
+        var end = trace.boundary().position();
+        return trace.outcome() == RayOutcome.MISS && trace.surfaces().isEmpty()
+                && end.dimension().equals(position.dimension())
+                && Math.floor(end.x()) == position.x() && Math.floor(end.y()) == position.y()
+                && Math.floor(end.z()) == position.z();
+    }
+
+    public record ScopedTunnelCell(VisibleSurface surface, boolean clear, long tick, long revision) {
+        public ScopedTunnelCell {
+            if (clear == (surface != null) || tick < 0 || revision < 0)
+                throw new IllegalArgumentException("invalid scoped tunnel observation");
+        }
+    }
+
+    /** Fresh, finite visual rays around the current frontier; no sealed-neighbour state reads. */
+    public boolean hasVisibleTunnelFluid(ClientLevel level, LocalPlayer player,
+            dev.aod.mcmcp.agent.mining.TunnelGeometry.Plan scope,
+            dev.aod.mcmcp.agent.mining.TunnelGeometry.Cell frontier,
+            long clientTick, long worldRevision, double fogDistanceBlocks) {
+        if (!scope.containsBlock(frontier) || player.level() != level
+                || !frontier.dimension().equals(level.dimension().identifier().toString())
+                || fogDistanceBlocks <= 0 || Double.isNaN(fogDistanceBlocks)) return false;
+        var dimension = new ResourceId(frontier.dimension());
+        Vec3 eye = player.getEyePosition();
+        double radius = Math.min(6.0D, Math.min(configuredRadiusBlocks, fogDistanceBlocks));
+        var sample = new TickSample(dimension, worldPosition(dimension, eye), clientTick,
+                worldRevision, worldRevision, radius, UnknownBoundaryReason.RADIUS_LIMIT);
+        // Centre, immediate neighbours and corners expose fluid through the newly opened head
+        // cell, including above/side pockets, before the next lower-block attack is admitted.
+        int[][] offsets = {{0,0,0}, {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1},
+                {1,1,1}, {1,1,-1}, {-1,1,1}, {-1,1,-1},
+                {1,-1,1}, {1,-1,-1}, {-1,-1,1}, {-1,-1,-1}};
+        for (int[] offset : offsets) {
+            Vec3 delta = new Vec3(frontier.x() + 0.5D + offset[0],
+                    frontier.y() + 0.5D + offset[1], frontier.z() + 0.5D + offset[2]).subtract(eye);
+            double distance = delta.length();
+            if (distance <= 1.0E-6D) continue;
+            var direction = new DirectionVector(delta.x / distance, delta.y / distance, delta.z / distance);
+            if (tunnelTraceContainsFluid(traceMinecraftRay(level, player, direction, sample, radius))) return true;
+        }
+        return false;
+    }
+
+    static boolean tunnelTraceContainsFluid(RayTrace trace) {
+        return trace.surfaces().stream().anyMatch(surface -> surface.shapeClass() == ShapeClass.FLUID);
+    }
+
+    /** Same entity fog/LOS boundary as ordinary observation; bounded independently of drops. */
+    public Optional<Boolean> visibleTunnelFallingBlock(ClientLevel level, LocalPlayer player,
+            long clientTick, long worldRevision, double fogDistanceBlocks) {
+        if (player.level() != level || fogDistanceBlocks <= 0 || Double.isNaN(fogDistanceBlocks))
+            return Optional.empty();
+        double radius = Math.min(6.0D, Math.min(configuredRadiusBlocks, fogDistanceBlocks));
+        var dimension = new ResourceId(level.dimension().identifier().toString());
+        Vec3 eye = player.getEyePosition();
+        var sample = new TickSample(dimension, worldPosition(dimension, eye), clientTick,
+                worldRevision, worldRevision, radius, UnknownBoundaryReason.RADIUS_LIMIT);
+        var candidates = new ArrayList<net.minecraft.world.entity.item.FallingBlockEntity>();
+        level.getEntities(EntityTypeTest.forClass(net.minecraft.world.entity.item.FallingBlockEntity.class),
+                player.getBoundingBox().inflate(radius), entity -> !entity.isRemoved()
+                        && entity.getBoundingBox().distanceToSqr(eye) <= radius * radius,
+                candidates, 17);
+        for (var entity : candidates.subList(0, Math.min(16, candidates.size()))) {
+            if (!entity.isInvisibleTo(player) && hasLineOfSight(level, player, entity.getBoundingBox(), sample))
+                return Optional.of(true);
+        }
+        return candidates.size() > 16 ? Optional.empty() : Optional.of(false);
+    }
+
     /** Discards a partial temporal frame, for example after disconnecting from a world. */
     public void reset() {
         clearAccumulation();
