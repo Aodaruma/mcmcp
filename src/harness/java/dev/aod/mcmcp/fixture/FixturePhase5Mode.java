@@ -9,6 +9,7 @@ enum FixturePhase5Mode {
     SMELT("smelt", 0),
     WAREHOUSE_SMELT("warehouse_smelt", 0),
     LABEL_TRANSFER("label_transfer", 0),
+    COPPER_TRANSFER("copper_transfer", 0),
     BREW("brew", 0),
     REDSTONE("redstone", 0),
     TRANSFER("transfer", 0),
@@ -41,6 +42,7 @@ enum FixturePhase5Mode {
             case "smelt" -> SMELT;
             case "warehouse_smelt" -> WAREHOUSE_SMELT;
             case "label_transfer" -> LABEL_TRANSFER;
+            case "copper_transfer" -> COPPER_TRANSFER;
             case "brew" -> BREW;
             case "redstone" -> REDSTONE;
             case "transfer" -> TRANSFER;

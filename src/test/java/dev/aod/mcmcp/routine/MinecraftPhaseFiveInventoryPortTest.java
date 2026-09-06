@@ -616,6 +616,53 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
+    void transferSupportsEveryCopperChestSizeAndFailsClosedOnIdentityChanges() {
+        var copperChests = Blocks.COPPER_CHEST.asList();
+        assertThat(copperChests).hasSize(8);
+        for (int index = 0; index < copperChests.size(); index++) {
+            var single = copperChests.get(index).defaultBlockState()
+                    .setValue(ChestBlock.FACING, Direction.SOUTH)
+                    .setValue(ChestBlock.TYPE, ChestType.SINGLE)
+                    .setValue(ChestBlock.WATERLOGGED, false);
+            var expectedSingle = MinecraftPhaseFiveInventoryPort.fingerprintLiveState(single);
+            assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
+                    expectedSingle, single)).isTrue();
+            assertThat(MinecraftPhaseFiveInventoryPort.transferMenuType(expectedSingle))
+                    .isEqualTo(MinecraftPhaseFiveInventoryPort.SINGLE_CONTAINER_MENU);
+
+            var doubleChest = single.setValue(ChestBlock.TYPE, ChestType.LEFT);
+            var expectedDouble = MinecraftPhaseFiveInventoryPort.fingerprintLiveState(doubleChest);
+            assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
+                    expectedDouble, doubleChest)).isTrue();
+            assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
+                    expectedDouble,
+                    doubleChest.setValue(ChestBlock.TYPE, ChestType.RIGHT))).isFalse();
+            assertThat(MinecraftPhaseFiveInventoryPort.transferMenuType(expectedDouble))
+                    .isEqualTo(MinecraftPhaseFiveInventoryPort.DOUBLE_CONTAINER_MENU);
+
+            var changedVariant = copperChests.get((index + 1) % copperChests.size())
+                    .withPropertiesOf(single);
+            assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
+                    expectedSingle, changedVariant)).isFalse();
+        }
+
+        for (var rejected : List.of(
+                Blocks.TRAPPED_CHEST.defaultBlockState(),
+                Blocks.ENDER_CHEST.defaultBlockState(),
+                Blocks.SHULKER_BOX.defaultBlockState())) {
+            var fingerprint = MinecraftPhaseFiveInventoryPort.fingerprintLiveState(rejected);
+            assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
+                    fingerprint, rejected)).isFalse();
+            assertThatThrownBy(() -> MinecraftPhaseFiveInventoryPort.transferMenuType(fingerprint))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(() -> MinecraftPhaseFiveInventoryPort.transferMenuType(
+                new BlockStateFingerprint(
+                        "minecraft:waxed_copper_chest", Map.of("type", "unknown"))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void craftingAloneRetainsTheStationHeadingAndUsesTheRuntimeCameraLimit() throws Exception {
         var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
         var parameters = new MinecraftPhaseFiveInventoryPort.CraftParameters(

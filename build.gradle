@@ -120,7 +120,7 @@ neoForge {
                 }
                 def requestedMode = phase5Mode.get()
                 def supportedModes = [
-                        'recipes', 'craft', 'smelt', 'warehouse_smelt', 'brew', 'redstone', 'transfer', 'crop',
+                        'recipes', 'craft', 'smelt', 'warehouse_smelt', 'copper_transfer', 'brew', 'redstone', 'transfer', 'crop',
                         'combined_wheat', 'tree', 'sleep', 'survey', 'generalization',
                         'cobblestone_generator',
                         'fishing',

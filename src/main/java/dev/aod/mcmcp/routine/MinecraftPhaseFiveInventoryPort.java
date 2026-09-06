@@ -1574,10 +1574,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     }
 
     private static boolean vanillaStorageContainer(BlockState state) {
-        if (state.is(Blocks.BARREL)) {
-            return true;
-        }
-        return state.is(Blocks.CHEST);
+        return KnownContainerPolicy.allows(
+                BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
     }
 
     private boolean basicPlayerSafety(Minecraft minecraft, PlayerBaseline baseline) {
@@ -1757,7 +1755,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             BlockStateFingerprint expected, BlockState live) {
         if (!vanillaStorageContainer(live)) return false;
         BlockStateFingerprint actual = fingerprint(live);
-        if (live.is(Blocks.CHEST)) return expected.equals(actual);
+        if (KnownContainerPolicy.isChest(actual.blockId())) return expected.equals(actual);
         if (!expected.blockId().equals(actual.blockId())) return false;
         var expectedProperties = new LinkedHashMap<>(expected.properties());
         var actualProperties = new LinkedHashMap<>(actual.properties());
@@ -2239,14 +2237,19 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     }
 
     static String transferMenuType(BlockStateFingerprint expectedState) {
-        if ("minecraft:barrel".equals(expectedState.blockId())) {
+        if (KnownContainerPolicy.isBarrel(expectedState.blockId())) {
             return SINGLE_CONTAINER_MENU;
         }
-        if ("minecraft:chest".equals(expectedState.blockId())) {
-            return ChestType.SINGLE.getSerializedName().equals(
-                    expectedState.properties().get("type"))
-                    ? SINGLE_CONTAINER_MENU
-                    : DOUBLE_CONTAINER_MENU;
+        if (KnownContainerPolicy.isChest(expectedState.blockId())) {
+            String type = expectedState.properties().get("type");
+            if (ChestType.SINGLE.getSerializedName().equals(type)) {
+                return SINGLE_CONTAINER_MENU;
+            }
+            if (ChestType.LEFT.getSerializedName().equals(type)
+                    || ChestType.RIGHT.getSerializedName().equals(type)) {
+                return DOUBLE_CONTAINER_MENU;
+            }
+            throw new IllegalArgumentException("unsupported chest type");
         }
         throw new IllegalArgumentException("unsupported vanilla storage container");
     }

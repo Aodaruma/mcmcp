@@ -70,6 +70,17 @@ class ContainerSurfaceWitnessesTest {
     }
 
     @Test
+    void copperChestUsesTheSameRetainedRayAndOutlinePolicyAsWoodenChest() {
+        var copperCenter = surface(0.5, 1, "minecraft:waxed_copper_chest");
+        var copperInset = surface(0.09, 2, "minecraft:waxed_copper_chest");
+        var witnesses = new ContainerSurfaceWitnesses(copperCenter);
+        witnesses.add(copperInset);
+
+        assertThat(ContainerSurfaceWitnesses.supports(copperCenter)).isTrue();
+        assertThat(witnesses.choose(List.of(frame(2)))).isSameAs(copperInset);
+    }
+
+    @Test
     void unsafeOnlyOutlineSampleRemainsVisualEvidenceWithoutSynthesizingAnInset() {
         var outlineEdge = surface(0.0625, 1);
         var witnesses = new ContainerSurfaceWitnesses(outlineEdge);
@@ -78,8 +89,12 @@ class ContainerSurfaceWitnessesTest {
     }
 
     private static VisibleSurface surface(double edge, long tick) {
+        return surface(edge, tick, "minecraft:chest");
+    }
+
+    private static VisibleSurface surface(double edge, long tick, String blockId) {
         return new VisibleSurface(new BlockPosition(DIMENSION, 0, 64, 0), Face.NORTH,
-                new ResourceId("minecraft:chest"), ShapeClass.PARTIAL, null,
+                new ResourceId(blockId), ShapeClass.PARTIAL, null,
                 new WorldPosition(DIMENSION, edge, 64 + edge, 0.0625), EYE, tick, 0);
     }
 
