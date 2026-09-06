@@ -921,6 +921,23 @@ final class FixtureGameTests {
                     "Phase 5 label-transfer fixture must use two direct exact-item labels"));
         }
 
+        var copperTransfer = FixturePhase5Scenario.copperTransferLayout();
+        copperTransfer.keySet().forEach(position -> assertInsideArena(helper, position));
+        assertLayoutState(helper, copperTransfer, FixturePhase5Scenario.COPPER_SOURCE_CHEST,
+                FixturePhase5Scenario.waxedCopperChestState());
+        assertLayoutState(helper, copperTransfer,
+                FixturePhase5Scenario.COPPER_DESTINATION_CHEST,
+                FixturePhase5Scenario.waxedCopperChestState());
+        if (FixturePhase5Scenario.COPPER_SOURCE_CHEST.equals(
+                    FixturePhase5Scenario.COPPER_DESTINATION_CHEST)
+                || !copperTransfer.get(FixturePhase5Scenario.COPPER_SOURCE_CHEST)
+                        .getValue(ChestBlock.TYPE).equals(ChestType.SINGLE)
+                || FixturePhase5Scenario.COPPER_TRANSFER_ITEM != Items.RAW_IRON
+                || FixturePhase5Scenario.COPPER_TRANSFER_ITEM_COUNT != 16) {
+            helper.fail(Component.literal(
+                    "Phase 5 copper-transfer fixture must use two single waxed copper chests"));
+        }
+
         var combined = FixturePhase5Scenario.combinedWheatLayout();
         combined.keySet().forEach(position -> assertInsideArena(helper, position));
         assertLayoutState(helper, combined, FixturePhase5Scenario.COMBINED_SUPPLY_CHEST,
@@ -1147,6 +1164,41 @@ final class FixtureGameTests {
                 || doubleChest.getItem(53).getCount() != 64) {
             helper.fail(Component.literal(
                     "Container batch partial fixture must expose logical slots 0=47 and 53=64"));
+        }
+
+        if (Blocks.COPPER_CHEST.asList().size() != 8) {
+            helper.fail(Component.literal(
+                    "Minecraft 26.2 must expose exactly eight copper chest variants"));
+        }
+        for (Block copperChestBlock : Blocks.COPPER_CHEST.asList()) {
+            ChestBlock copperChest = (ChestBlock) copperChestBlock;
+            BlockState copperRight = copperChest.defaultBlockState()
+                    .setValue(ChestBlock.FACING, Direction.SOUTH)
+                    .setValue(ChestBlock.TYPE, ChestType.RIGHT)
+                    .setValue(ChestBlock.WATERLOGGED, false);
+            BlockState copperLeft = copperRight.setValue(ChestBlock.TYPE, ChestType.LEFT);
+            helper.getLevel().setBlock(helper.absolutePos(chestWest), copperRight, pairFlags);
+            helper.getLevel().setBlock(helper.absolutePos(chestEast), copperLeft, pairFlags);
+            Container copperDouble = ChestBlock.getContainer(
+                    copperChest, copperRight, helper.getLevel(),
+                    helper.absolutePos(chestWest), false);
+            if (copperDouble == null || copperDouble.getContainerSize() != 54) {
+                helper.fail(Component.literal(
+                        "Copper chest pair must expose one vanilla generic_9x6 container"));
+            }
+
+            BlockState copperSingle = copperRight.setValue(ChestBlock.TYPE, ChestType.SINGLE);
+            helper.getLevel().setBlock(
+                    helper.absolutePos(chestEast), Blocks.AIR.defaultBlockState(), pairFlags);
+            helper.getLevel().setBlock(helper.absolutePos(chestWest), copperSingle, pairFlags);
+            Container copperSingleContainer = ChestBlock.getContainer(
+                    copperChest, copperSingle, helper.getLevel(),
+                    helper.absolutePos(chestWest), false);
+            if (copperSingleContainer == null
+                    || copperSingleContainer.getContainerSize() != 27) {
+                helper.fail(Component.literal(
+                        "Copper single chest must expose one vanilla generic_9x3 container"));
+            }
         }
 
         BlockPos scaffoldingBase = new BlockPos(4, 1, 4);

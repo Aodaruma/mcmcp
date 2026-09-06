@@ -56,6 +56,10 @@ final class FixturePhase5Scenario {
             LABEL_DESTINATION_BARREL.relative(LABEL_ATTACHMENT_FACE);
     static final Item LABEL_ITEM = Items.RAW_IRON;
     static final int LABEL_ITEM_COUNT = 16;
+    static final BlockPos COPPER_SOURCE_CHEST = CRAFTING_TABLE;
+    static final BlockPos COPPER_DESTINATION_CHEST = BREWING_STAND;
+    static final Item COPPER_TRANSFER_ITEM = Items.RAW_IRON;
+    static final int COPPER_TRANSFER_ITEM_COUNT = 16;
     static final BlockPos REDSTONE_LAMP_TARGET = new BlockPos(201, 200, 194);
     static final BlockPos REDSTONE_LEVER_TARGET = new BlockPos(202, 200, 194);
     static final BlockPos TRANSFER_BARREL = new BlockPos(199, 200, 194);
@@ -248,6 +252,8 @@ final class FixturePhase5Scenario {
             resetWarehouseSmeltWorkspace(context.level());
         } else if (mode == FixturePhase5Mode.LABEL_TRANSFER) {
             resetLabelTransferWorkspace(context.level());
+        } else if (mode == FixturePhase5Mode.COPPER_TRANSFER) {
+            resetCopperTransferWorkspace(context.level());
         } else {
             resetStatefulWorkstations(context.level());
             applyLayout(context.level());
@@ -339,6 +345,17 @@ final class FixturePhase5Scenario {
                     + " source_count=" + LABEL_ITEM_COUNT
                     + " player_inventory=empty destination_inventory=empty selected_slot="
                     + mode.selectedSlot()));
+            return;
+        }
+        if (mode == FixturePhase5Mode.COPPER_TRANSFER) {
+            output.accept(Component.literal("phase5.mode=copper_transfer"
+                    + " source=" + position(COPPER_SOURCE_CHEST)
+                    + " destination=" + position(COPPER_DESTINATION_CHEST)
+                    + " container=minecraft:waxed_copper_chest"
+                    + " item=minecraft:raw_iron"
+                    + " source_count=" + COPPER_TRANSFER_ITEM_COUNT
+                    + " player_inventory=empty destination_inventory=empty"
+                    + " visible_entities=0 selected_slot=" + mode.selectedSlot()));
             return;
         }
         if (mode == FixturePhase5Mode.BOUNDED_INPUT_HOLD) {
@@ -484,6 +501,13 @@ final class FixturePhase5Scenario {
         return Map.copyOf(result);
     }
 
+    static Map<BlockPos, BlockState> copperTransferLayout() {
+        var result = emptyWorkspace();
+        result.put(COPPER_SOURCE_CHEST, waxedCopperChestState());
+        result.put(COPPER_DESTINATION_CHEST, waxedCopperChestState());
+        return Map.copyOf(result);
+    }
+
     static BlockState generalizationLadderState() {
         return Blocks.LADDER.defaultBlockState()
                 .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.EAST)
@@ -506,6 +530,13 @@ final class FixturePhase5Scenario {
 
     static BlockState combinedSupplyChestState() {
         return Blocks.CHEST.defaultBlockState()
+                .setValue(ChestBlock.FACING, Direction.SOUTH)
+                .setValue(ChestBlock.TYPE, ChestType.SINGLE)
+                .setValue(ChestBlock.WATERLOGGED, false);
+    }
+
+    static BlockState waxedCopperChestState() {
+        return Blocks.COPPER_CHEST.waxed().unaffected().defaultBlockState()
                 .setValue(ChestBlock.FACING, Direction.SOUTH)
                 .setValue(ChestBlock.TYPE, ChestType.SINGLE)
                 .setValue(ChestBlock.WATERLOGGED, false);
@@ -651,6 +682,17 @@ final class FixturePhase5Scenario {
                 List.of(), "label destination barrel");
         spawnLabelFrame(level, LABEL_SOURCE_FRAME, LABEL_ITEM);
         spawnLabelFrame(level, LABEL_DESTINATION_FRAME, LABEL_ITEM);
+    }
+
+    private static void resetCopperTransferWorkspace(ServerLevel level) {
+        copperTransferLayout().forEach((position, state) ->
+                FixtureArena.setBlock(level, position, state));
+        configureContainer(level, COPPER_SOURCE_CHEST,
+                List.of(new ContainerEntry(
+                        0, COPPER_TRANSFER_ITEM, COPPER_TRANSFER_ITEM_COUNT)),
+                "copper source chest");
+        configureContainer(level, COPPER_DESTINATION_CHEST,
+                List.of(), "copper destination chest");
     }
 
     private static void spawnLabelFrame(ServerLevel level, BlockPos position, Item item) {
@@ -884,6 +926,9 @@ final class FixturePhase5Scenario {
             case LABEL_TRANSFER -> {
                 // The labeled source is the only initial item holder.
             }
+            case COPPER_TRANSFER -> {
+                // The waxed copper source is the only initial item holder.
+            }
             case BREW -> {
                 var water = BuiltInRegistries.POTION.get(
                                 Identifier.fromNamespaceAndPath("minecraft", "water"))
@@ -973,7 +1018,7 @@ final class FixturePhase5Scenario {
     private static Pose pose(FixturePhase5Mode mode) {
         return switch (mode) {
             case RECIPES, CRAFT -> new Pose(195.5D, 200.0D, 196.5D, 180.0F, 25.0F);
-            case SMELT, WAREHOUSE_SMELT, LABEL_TRANSFER ->
+            case SMELT, WAREHOUSE_SMELT, LABEL_TRANSFER, COPPER_TRANSFER ->
                     new Pose(196.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case BREW -> new Pose(197.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case REDSTONE -> new Pose(201.5D, 200.0D, 193.5D, 0.0F, 25.0F);

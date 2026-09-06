@@ -8,6 +8,7 @@ import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.agent.dsl.ActionDslOperationManifest;
 import dev.aod.mcmcp.brewing.StandardPotionPolicy;
+import dev.aod.mcmcp.routine.KnownContainerPolicy;
 import dev.aod.mcmcp.runtime.McmcpRuntimeContractTestAccess;
 import org.junit.jupiter.api.Test;
 
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -29,6 +31,70 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class McpToolCatalogTest {
+    @Test
+    void copperContainerAllowlistIsSharedByEveryPublishedActionAndRoutingLabelSchema() {
+        var catalog = new McpToolCatalog();
+        var schema = catalog.inputSchema("agent_start_action");
+        var definitions = schema.getAsJsonObject("$defs");
+        Set<String> published = Set.copyOf(definitions
+                .getAsJsonObject("knownContainerBlock")
+                .getAsJsonArray("enum").asList().stream()
+                .map(JsonElement::getAsString)
+                .toList());
+        assertThat(published).containsExactlyInAnyOrderElementsOf(
+                KnownContainerPolicy.blockIds());
+
+        for (String definition : List.of(
+                "inspectContainerNode", "takeContainerStackNode", "storeContainerStackNode")) {
+            assertThat(definitions.getAsJsonObject(definition)
+                    .getAsJsonObject("properties")
+                    .getAsJsonObject("expected_block")
+                    .get("$ref").getAsString())
+                    .isEqualTo("#/$defs/knownContainerBlock");
+        }
+
+        var examples = schema.getAsJsonArray("examples").asList().stream()
+                .map(JsonElement::getAsJsonObject)
+                .filter(example -> {
+                    String op = example.getAsJsonObject("program")
+                            .getAsJsonArray("body").get(0).getAsJsonObject()
+                            .get("op").getAsString();
+                    return op.equals("inspect_known_container")
+                            || op.equals("take_known_container_stack")
+                            || op.equals("store_known_container_stack");
+                })
+                .toList();
+        assertThat(examples).hasSize(3);
+        for (var example : examples) {
+            for (String blockId : KnownContainerPolicy.copperChestBlockIds()) {
+                var candidate = example.deepCopy();
+                candidate.getAsJsonObject("program").getAsJsonArray("body")
+                        .get(0).getAsJsonObject().addProperty("expected_block", blockId);
+                assertThat(CatalogSchemaValidator.matches(schema, candidate))
+                        .as("%s", blockId).isTrue();
+            }
+            for (String blockId : List.of(
+                    "minecraft:trapped_chest", "minecraft:ender_chest",
+                    "minecraft:white_shulker_box", "example:modded_chest")) {
+                var candidate = example.deepCopy();
+                candidate.getAsJsonObject("program").getAsJsonArray("body")
+                        .get(0).getAsJsonObject().addProperty("expected_block", blockId);
+                assertThat(CatalogSchemaValidator.matches(schema, candidate))
+                        .as("%s", blockId).isFalse();
+            }
+        }
+
+        var labelEnum = catalog.outputSchema("agent_get_observation")
+                .getAsJsonObject("$defs").getAsJsonObject("visibleEntity")
+                .getAsJsonObject("properties").getAsJsonObject("container_label")
+                .getAsJsonObject("properties").getAsJsonObject("container_block")
+                .getAsJsonArray("enum").asList().stream()
+                .map(JsonElement::getAsString)
+                .toList();
+        assertThat(labelEnum).containsExactlyInAnyOrderElementsOf(
+                KnownContainerPolicy.blockIds());
+    }
+
     @Test
     void validConstructionExamplePassesAggregateSchemaAndReachesDispatch() throws Exception {
         var schema = new McpToolCatalog().inputSchema("agent_start_action");
