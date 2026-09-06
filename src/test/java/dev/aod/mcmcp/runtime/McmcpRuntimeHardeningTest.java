@@ -293,16 +293,16 @@ class McmcpRuntimeHardeningTest {
                 0.0D,
                 0,
                 0,
-                1,
+                0,
                 3,
                 false);
         var effect = new AgentActionStore.Effect(
                 1,
-                "place",
-                "block_place",
-                "block:minecraft:overworld:1,64,2",
-                Map.of("block", "minecraft:air"),
-                Map.of("block", "minecraft:stone"),
+                "take",
+                "container_take",
+                "container:minecraft:overworld:1,64,2/minecraft:dripstone_block",
+                Map.of("source_count", 111, "destination_count", 0),
+                Map.of("source_count", 64, "destination_count", 47, "transferred", 47),
                 AgentActionStore.Verification.CONFIRMED,
                 3L,
                 9L);
@@ -313,24 +313,38 @@ class McmcpRuntimeHardeningTest {
                 new AgentActionStore.Failure(
                         AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
                         true,
-                        List.of("suffix_stopped")),
+                        List.of("transfer_batch_goal_not_reached")),
                 List.of(),
                 actionSource(),
                 List.of(effect),
-                new AgentActionStore.Partial(true, "place", 1, true)));
+                new AgentActionStore.Partial(true, "take", 1, true)));
 
+        assertThat(payload.get("state")).isEqualTo("failed");
+        var failure = (Map<?, ?>) payload.get("failure");
+        assertThat(failure.get("code")).isEqualTo("SERVER_DENIED_OR_DESYNC");
+        assertThat(failure.get("recoverable")).isEqualTo(true);
+        assertThat(failure.get("evidence"))
+                .isEqualTo(List.of("transfer_batch_goal_not_reached"));
         assertThat((List<?>) payload.get("effects")).singleElement().satisfies(raw -> {
             var mapped = (Map<?, ?>) raw;
+            assertThat(mapped.get("kind")).isEqualTo("container_take");
             assertThat(mapped.get("verification")).isEqualTo("confirmed");
             assertThat(mapped.get("world_revision")).isEqualTo(9L);
+            assertThat(((Map<?, ?>) mapped.get("observed_after")).get("transferred"))
+                    .isEqualTo(47);
             assertThat(mapped.containsKey("slot")).isFalse();
             assertThat(mapped.containsKey("raw_payload")).isFalse();
             assertThat(mapped.containsKey("secret")).isFalse();
         });
-        assertThat(((Map<?, ?>) payload.get("partial")).get(
-                "resume_requires_reobservation")).isEqualTo(true);
-        assertThat(((Map<?, ?>) payload.get("effect_aggregate")).get("confirmed_effects"))
-                .isEqualTo(1L);
+        var partial = (Map<?, ?>) payload.get("partial");
+        assertThat(partial.get("has_confirmed_effects")).isEqualTo(true);
+        assertThat(partial.get("resume_requires_reobservation")).isEqualTo(true);
+        var aggregate = (Map<?, ?>) payload.get("effect_aggregate");
+        assertThat(aggregate.get("total_effects")).isEqualTo(1L);
+        assertThat(aggregate.get("retained_effects")).isEqualTo(1);
+        assertThat(aggregate.get("confirmed_effects")).isEqualTo(1L);
+        assertThat(aggregate.get("qualified_effects")).isEqualTo(0L);
+        assertThat(aggregate.get("unknown_effects")).isEqualTo(0L);
     }
 
     @Test

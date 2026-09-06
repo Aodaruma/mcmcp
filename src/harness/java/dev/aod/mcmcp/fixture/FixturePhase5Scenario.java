@@ -74,6 +74,8 @@ final class FixturePhase5Scenario {
     static final BlockPos GENERALIZATION_CHEST_WEST = new BlockPos(194, 200, 203);
     static final BlockPos GENERALIZATION_CHEST_EAST =
             GENERALIZATION_CHEST_WEST.relative(Direction.EAST);
+    static final BlockPos CONTAINER_BATCH_CHEST_WEST = GENERALIZATION_CHEST_WEST;
+    static final BlockPos CONTAINER_BATCH_CHEST_EAST = GENERALIZATION_CHEST_EAST;
     static final BlockPos GENERALIZATION_LADDER_BASE = new BlockPos(204, 200, 200);
     static final List<BlockPos> GENERALIZATION_LADDER_RUNGS = List.of(
             GENERALIZATION_LADDER_BASE,
@@ -178,6 +180,14 @@ final class FixturePhase5Scenario {
             new ContainerEntry(0, Items.COBBLESTONE, 12));
     private static final List<ContainerEntry> GENERALIZATION_CHEST_EAST_CONTENTS = List.of(
             new ContainerEntry(26, Items.OAK_LOG, 4));
+    private static final List<ContainerEntry> CONTAINER_BATCH_SUCCESS_WEST_CONTENTS = List.of(
+            new ContainerEntry(0, Items.DRIPSTONE_BLOCK, 47));
+    private static final List<ContainerEntry> CONTAINER_BATCH_SUCCESS_EAST_CONTENTS = List.of(
+            new ContainerEntry(26, Items.DRIPSTONE_BLOCK, 27));
+    private static final List<ContainerEntry> CONTAINER_BATCH_PARTIAL_WEST_CONTENTS = List.of(
+            new ContainerEntry(0, Items.DRIPSTONE_BLOCK, 47));
+    private static final List<ContainerEntry> CONTAINER_BATCH_PARTIAL_EAST_CONTENTS = List.of(
+            new ContainerEntry(26, Items.DRIPSTONE_BLOCK, 64));
 
     private FixturePhase5Scenario() {
     }
@@ -235,6 +245,9 @@ final class FixturePhase5Scenario {
         } else if (mode == FixturePhase5Mode.GENERALIZATION) {
             applyGeneralizationLayout(context.level());
             configureGeneralizationChest(context.level());
+        } else if (isContainerBatchMode(mode)) {
+            applyContainerBatchLayout(context.level());
+            configureContainerBatchChest(context.level(), mode);
         } else if (mode == FixturePhase5Mode.WAREHOUSE_SMELT) {
             resetWarehouseSmeltWorkspace(context.level());
         } else if (mode == FixturePhase5Mode.LABEL_TRANSFER) {
@@ -273,6 +286,16 @@ final class FixturePhase5Scenario {
             prepareSafeNight(context.level());
         }
         teleport(context, pose(mode));
+
+        if (isContainerBatchMode(mode)) {
+            AABB workspace = AABB.encapsulatingFullBlocks(WORKSPACE_MIN, WORKSPACE_MAX);
+            discardNonPlayerEntities(context.level(), context.player(), workspace);
+            if (!context.level().getEntities(
+                    context.player(), workspace, Entity::isAlive).isEmpty()) {
+                throw new IllegalStateException(
+                        "Phase 5 container batch workspace still has a live non-player entity");
+            }
+        }
 
         if (mode == FixturePhase5Mode.COMBINED_WHEAT) {
             FixtureCombinedWheatScenario.arm(context, output);
@@ -341,6 +364,21 @@ final class FixturePhase5Scenario {
                     + " target_state=minecraft:obsidian"
                     + " selected_item=minecraft:wooden_pickaxe"
                     + " safe_hold_ticks=60 selected_slot=" + mode.selectedSlot()));
+            return;
+        }
+        if (isContainerBatchMode(mode)) {
+            String stacks = mode == FixturePhase5Mode.CONTAINER_BATCH_SUCCESS
+                    ? "47;27" : "47;64";
+            String terminal = mode == FixturePhase5Mode.CONTAINER_BATCH_SUCCESS
+                    ? "succeeded" : "failed_after_confirmed_47";
+            output.accept(Component.literal("phase5.mode=" + mode.wireName()
+                    + " chest=" + position(CONTAINER_BATCH_CHEST_WEST)
+                    + ";" + position(CONTAINER_BATCH_CHEST_EAST)
+                    + " item=minecraft:dripstone_block source_stacks=" + stacks
+                    + " minimum_inventory_count=74 max_transfer_count=74 max_stacks=8"
+                    + " expected_terminal=" + terminal
+                    + " player_inventory=empty workspace_entities=0 selected_slot="
+                    + mode.selectedSlot()));
             return;
         }
 
@@ -438,6 +476,13 @@ final class FixturePhase5Scenario {
         }
         result.put(GENERALIZATION_WIRE_OBSERVATION_PEDESTAL,
                 Blocks.SMOOTH_STONE.defaultBlockState());
+        return Map.copyOf(result);
+    }
+
+    static Map<BlockPos, BlockState> containerBatchLayout() {
+        var result = emptyWorkspace();
+        result.put(CONTAINER_BATCH_CHEST_WEST, generalizationChestState(ChestType.RIGHT));
+        result.put(CONTAINER_BATCH_CHEST_EAST, generalizationChestState(ChestType.LEFT));
         return Map.copyOf(result);
     }
 
@@ -559,6 +604,24 @@ final class FixturePhase5Scenario {
         return GENERALIZATION_CHEST_EAST_CONTENTS;
     }
 
+    static List<ContainerEntry> containerBatchWestContents(FixturePhase5Mode mode) {
+        return switch (mode) {
+            case CONTAINER_BATCH_SUCCESS -> CONTAINER_BATCH_SUCCESS_WEST_CONTENTS;
+            case CONTAINER_BATCH_PARTIAL -> CONTAINER_BATCH_PARTIAL_WEST_CONTENTS;
+            default -> throw new IllegalArgumentException(
+                    "not a container batch fixture mode: " + mode.wireName());
+        };
+    }
+
+    static List<ContainerEntry> containerBatchEastContents(FixturePhase5Mode mode) {
+        return switch (mode) {
+            case CONTAINER_BATCH_SUCCESS -> CONTAINER_BATCH_SUCCESS_EAST_CONTENTS;
+            case CONTAINER_BATCH_PARTIAL -> CONTAINER_BATCH_PARTIAL_EAST_CONTENTS;
+            default -> throw new IllegalArgumentException(
+                    "not a container batch fixture mode: " + mode.wireName());
+        };
+    }
+
     static ItemStack combinedSupplyHoe() {
         ItemStack hoe = new ItemStack(Items.IRON_HOE);
         hoe.setDamageValue(COMBINED_HOE_DAMAGE);
@@ -579,6 +642,13 @@ final class FixturePhase5Scenario {
         var frames = level.getEntitiesOfClass(ItemFrame.class, bounds, Entity::isAlive);
         frames.forEach(Entity::discard);
         return frames.size();
+    }
+
+    static int discardNonPlayerEntities(
+            ServerLevel level, ServerPlayer player, AABB bounds) {
+        var entities = level.getEntities(player, bounds, Entity::isAlive);
+        entities.forEach(Entity::discard);
+        return entities.size();
     }
 
     static int resetCombinedWheatWorkspace(ServerLevel level) {
@@ -697,6 +767,21 @@ final class FixturePhase5Scenario {
                 generalizationChestState(ChestType.LEFT));
     }
 
+    private static void applyContainerBatchLayout(ServerLevel level) {
+        containerBatchLayout().forEach((position, state) -> {
+            if (!position.equals(CONTAINER_BATCH_CHEST_WEST)
+                    && !position.equals(CONTAINER_BATCH_CHEST_EAST)) {
+                FixtureArena.setBlock(level, position, state);
+            }
+        });
+        FixtureArena.setPairedBlocks(
+                level,
+                CONTAINER_BATCH_CHEST_WEST,
+                generalizationChestState(ChestType.RIGHT),
+                CONTAINER_BATCH_CHEST_EAST,
+                generalizationChestState(ChestType.LEFT));
+    }
+
     private static List<BlockPos> treeEnclosure() {
         var result = new LinkedHashSet<BlockPos>();
         for (int x = TREE_ENCLOSURE_MIN.getX(); x <= TREE_ENCLOSURE_MAX.getX(); x++) {
@@ -794,6 +879,20 @@ final class FixturePhase5Scenario {
                 "east double chest");
     }
 
+    private static void configureContainerBatchChest(
+            ServerLevel level, FixturePhase5Mode mode) {
+        configureContainer(
+                level,
+                CONTAINER_BATCH_CHEST_WEST,
+                containerBatchWestContents(mode),
+                mode.wireName() + " west double chest");
+        configureContainer(
+                level,
+                CONTAINER_BATCH_CHEST_EAST,
+                containerBatchEastContents(mode),
+                mode.wireName() + " east double chest");
+    }
+
     private static void configureContainer(
             ServerLevel level,
             BlockPos position,
@@ -847,6 +946,9 @@ final class FixturePhase5Scenario {
             }
             case TRANSFER -> {
                 // Empty inventory is the deterministic destination for container-to-player tests.
+            }
+            case CONTAINER_BATCH_SUCCESS, CONTAINER_BATCH_PARTIAL -> {
+                // Empty inventory makes the confirmed prefix and exact goal deterministic.
             }
             case CROP -> {
                 player.getInventory().setItem(0, new ItemStack(Items.IRON_HOE));
@@ -921,6 +1023,8 @@ final class FixturePhase5Scenario {
             case BREW -> new Pose(197.5D, 200.0D, 196.5D, 180.0F, 25.0F);
             case REDSTONE -> new Pose(201.5D, 200.0D, 193.5D, 0.0F, 25.0F);
             case TRANSFER -> new Pose(199.5D, 200.0D, 196.5D, 180.0F, 25.0F);
+            case CONTAINER_BATCH_SUCCESS, CONTAINER_BATCH_PARTIAL ->
+                    new Pose(194.5D, 200.0D, 205.5D, 180.0F, 25.0F);
             case CROP -> new Pose(194.5D, 200.0D, 201.5D, 180.0F, 28.0F);
             case COMBINED_WHEAT -> new Pose(199.5D, 200.0D, 197.0D, 180.0F, 18.0F);
             case TREE -> new Pose(201.5D, 200.0D, 198.5D, -90.0F, 8.0F);
@@ -943,6 +1047,11 @@ final class FixturePhase5Scenario {
     private static ResourceKey<Recipe<?>> recipeKey(String path) {
         return ResourceKey.create(Registries.RECIPE,
                 Identifier.fromNamespaceAndPath("minecraft", path));
+    }
+
+    private static boolean isContainerBatchMode(FixturePhase5Mode mode) {
+        return mode == FixturePhase5Mode.CONTAINER_BATCH_SUCCESS
+                || mode == FixturePhase5Mode.CONTAINER_BATCH_PARTIAL;
     }
 
     private static String positions(List<BlockPos> positions) {
