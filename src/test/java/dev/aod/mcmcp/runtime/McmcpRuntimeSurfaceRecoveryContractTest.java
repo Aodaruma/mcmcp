@@ -59,7 +59,9 @@ class McmcpRuntimeSurfaceRecoveryContractTest {
         assertThat(calls("bindAgentPrimitive")).containsSubsequence(
                 "McmcpRuntime#surfaceRecoveryFailure", "McmcpRuntime#requireAgentMap",
                 "ClientReconciliationSignals#bindAndSnapshot", "McmcpRuntime#agentPlanningFrame",
-                "McmcpRuntime#analyzePrimitive", "McmcpRuntime#fitsRemainingBudget");
+                "McmcpRuntime#analyzePrimitive",
+                "McmcpRuntime#firstRecoveredSurfacePrimitiveRemainingCost",
+                "McmcpRuntime#fitsRemainingBudget");
         assertThat(calls("initialContainerOpenWitness")).containsSubsequence(
                 "McmcpRuntime#sameAdmissionSession", "LocalArmingState$Snapshot#controlEpoch",
                 "McmcpRuntime#multiplayerPolicyAllows", "McmcpRuntime#requireAgentMap",

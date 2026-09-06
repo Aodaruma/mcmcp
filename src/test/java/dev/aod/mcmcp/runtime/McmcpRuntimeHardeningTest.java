@@ -654,6 +654,116 @@ class McmcpRuntimeHardeningTest {
     }
 
     @Test
+    void recoveredFirstContainerPrimitiveConsumesOnlyItsDeclaredHeadroom() {
+        var inspect = new ActionDsl.InspectKnownContainer(
+                "inspect",
+                new ActionDsl.Position("minecraft:overworld", 1, 64, 2),
+                "minecraft:chest",
+                java.util.Optional.empty());
+        var planned = new ActionDslCompiler.Cost(30_000, 600, 0, 38, 1, 0, 0);
+        var afterFourRecoveryTicks = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING,
+                "inspect", 0, 1, 0, 0, 0, 0, 0, 4, false);
+        var afterLeadingControlNodes = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING,
+                "inspect", 2, 3, 0, 0, 0, 0, 0, 4, false);
+
+        var remaining = McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+                afterFourRecoveryTicks, true, inspect, planned,
+                Duration.ofMillis(200).toNanos());
+
+        assertThat(remaining).isEqualTo(
+                new ActionDslCompiler.Cost(29_800, 596, 0, 38, 1, 0, 0));
+        assertThat(McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+                afterLeadingControlNodes, true, inspect, planned,
+                Duration.ofMillis(200).toNanos())).isEqualTo(remaining);
+        assertThat(McmcpRuntime.fitsRemainingBudget(
+                afterFourRecoveryTicks,
+                new ActionDsl.Budget(30_000, 600, 0, 360, 1, 0, 0),
+                remaining,
+                Duration.ofMillis(200).toNanos())).isTrue();
+    }
+
+    @Test
+    void recoveredContainerHeadroomStopsBeforeTheBoundedMenuAttemptWouldBeShortened() {
+        var inspect = new ActionDsl.InspectKnownContainer(
+                "inspect",
+                new ActionDsl.Position("minecraft:overworld", 1, 64, 2),
+                "minecraft:chest",
+                java.util.Optional.empty());
+        var planned = new ActionDslCompiler.Cost(30_000, 600, 0, 38, 1, 0, 0);
+        var budget = new ActionDsl.Budget(30_000, 600, 0, 360, 1, 0, 0);
+        var atBoundary = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING,
+                "inspect", 0, 1, 0, 0, 0, 0, 0, 200, false);
+        var beyondBoundary = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING,
+                "inspect", 0, 1, 0, 0, 0, 0, 0, 201, false);
+        var wallOnlyBeyondBoundary = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING,
+                "inspect", 0, 1, 0, 0, 0, 0, 0, 0, false);
+
+        var boundaryRemaining = McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+                atBoundary, true, inspect, planned, Duration.ofSeconds(10).toNanos());
+        var exhaustedRemaining = McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+                beyondBoundary, true, inspect, planned,
+                Duration.ofSeconds(10).toNanos());
+        var wallOnlyExhaustedRemaining =
+                McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+                        wallOnlyBeyondBoundary, true, inspect, planned,
+                        Duration.ofSeconds(10).toNanos() + 1);
+
+        assertThat(boundaryRemaining.durationMillis()).isEqualTo(20_000L);
+        assertThat(boundaryRemaining.ticks()).isEqualTo(400L);
+        assertThat(McmcpRuntime.fitsRemainingBudget(
+                atBoundary, budget, boundaryRemaining,
+                Duration.ofSeconds(10).toNanos())).isTrue();
+        assertThat(McmcpRuntime.fitsRemainingBudget(
+                beyondBoundary, budget, exhaustedRemaining,
+                Duration.ofSeconds(10).toNanos())).isFalse();
+        assertThat(McmcpRuntime.fitsRemainingBudget(
+                wallOnlyBeyondBoundary, budget, wallOnlyExhaustedRemaining,
+                Duration.ofSeconds(10).toNanos() + 1)).isFalse();
+    }
+
+    @Test
+    void recoveredTransferReserveScalesWithStacksButDoesNotDiscountOtherPrimitivesOrLaterNodes() {
+        var target = new ActionDsl.Position("minecraft:overworld", 1, 64, 2);
+        var take = new ActionDsl.TakeKnownContainerStack(
+                "take", target, "minecraft:chest", "minecraft:stone",
+                "default_components_only", 64, java.util.Optional.empty(), 14, 896);
+        var store = new ActionDsl.StoreKnownContainerStack(
+                "store", target, "minecraft:chest", "minecraft:stone",
+                "default_components_only", 64, java.util.Optional.empty(), 1, 64);
+        long reservedTicks = ActionDslCompiler.knownContainerTransferTicks(14);
+        var planned = new ActionDslCompiler.Cost(
+                reservedTicks * 50L, reservedTicks, 0, 38,
+                ActionDslCompiler.knownContainerTransferInteractions(14), 0, 0);
+        var first = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING,
+                "take", 0, 1, 0, 0, 0, 0, 0, 4, false);
+        var later = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING,
+                "take", 1, 2, 0, 0, 0, 0, 0, 4, false);
+        var approach = new ActionDsl.ApproachKnownSurface(
+                "approach", target, "minecraft:chest");
+
+        assertThat(McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+                first, true, take, planned, Duration.ofMillis(200).toNanos()).ticks())
+                .isEqualTo(reservedTicks - 4L);
+        var singleStackPlanned = new ActionDslCompiler.Cost(30_000, 600, 0, 38, 3, 0, 0);
+        assertThat(McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+                first, true, store, singleStackPlanned,
+                Duration.ofMillis(200).toNanos()).ticks()).isEqualTo(596L);
+        assertThat(McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+                later, false, take, planned, Duration.ofMillis(200).toNanos()))
+                .isEqualTo(planned);
+        assertThat(McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+                first, true, approach, planned, Duration.ofMillis(200).toNanos()))
+                .isEqualTo(planned);
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void craftRequestCarriesTheDeclaredStationStateWithoutReadingLiveWorldState() {
         var target = new ActionDsl.Position("minecraft:the_nether", 4, 70, -3);

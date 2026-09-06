@@ -75,9 +75,9 @@ The runner records `recovery_preflight` in the T0 bridge record and manifest. It
 
 The auditor correlates the start receipt with get_action and requires a successful terminal response, null failure, positive interactions, a bounded trace and the complete post-cleanup inspect result. It never borrows recovery flags from another action or an earlier snapshot. Missing full container-result retrieval also fails. Existing lease release, input-owner and all-actions-terminal evidence remains mandatory.
 
-正式比較は**通常FPSで1回＋同一baselineを復元したmaxFps=10で1〜3回**に限定します。製品commit、build/設置hash、baseline ID、prompt、model/effortが一致するrunを並べ、少なくとも低FPSの1回が `witnessed` であることを確認します。3回とも `not_exercised` なら「未通過」で止め、成功するまで無制限に繰り返しません。対象stageだけの肯定証拠であり、全stageやモデル能力の証明にはしません。terminal後にFPSと環境を復旧し、保守・検証担当が比較結果をIssue #4へ記録します。
+正式比較は**通常FPSで1回＋同一baselineを復元したmaxFps=10で1〜3回**に限定します。製品commit、build/設置hash、baseline ID、prompt、model/effortが一致するrunを並べ、少なくとも低FPSの1回が `witnessed` であることを確認します。T0へ到達した低FPS runは `witnessed` / `not_exercised` / `invalid` の結果にかかわらず試行数へ数え、T0前のsetup/preflight失敗だけを数えません。3回で肯定証拠が得られなければ止め、成功するまで無制限に繰り返しません。対象stageだけの肯定証拠であり、全stageやモデル能力の証明にはしません。terminal後にFPSと環境を復旧し、保守・検証担当が比較結果をIssue #4へ記録します。
 
-Run exactly one normal condition and one to three independently restored low-FPS attempts. Match product commit, both JAR hashes, baseline, prompt and model/effort; require at least one low-FPS `witnessed` result. If all three runs are `not_exercised`, stop and record the unexercised path. This proves only the observed stage, not every stage or general model capability. Restore settings after terminal and record acceptance in #4.
+Run exactly one normal condition and one to three independently restored low-FPS attempts. Match product commit, both JAR hashes, baseline, prompt and model/effort; require at least one low-FPS `witnessed` result. Count every run that reaches T0, including `invalid` results; only setup or preflight failures before T0 do not consume an attempt. Stop after three attempts without affirmative evidence. This proves only the observed stage, not every stage or general model capability. Restore settings after terminal and record acceptance in #4.
 
 ## 自動回帰 / Automated regression
 

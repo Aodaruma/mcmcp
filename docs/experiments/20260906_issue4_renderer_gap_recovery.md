@@ -74,3 +74,18 @@ capture/commitの欠測履歴は同じ回復状態に保持し、Action予約後
 `SurfacePreflightRecoveryTest` はcapture/commit/dispatchの各missing/revalidated組合せ、遮蔽・実fog・対象変更時に再検証を記録しないこと、別段階による誤記録とfog復帰だけの誤記録を防ぐこと、同段階の再欠測で履歴が累積することを確認する。`AgentActionStoreTest` は300回更新してもtrace1件・全体256件以内、immutable snapshot・terminal保持と失効、未知bit拒否、effects/interactions/ticksが増えないことを確認する。本番配線の構成試験は各段階の安全検査後にだけ再検証を記録し、初回open前gateが操作送信を記録しないことを確認する。
 
 Java 25の `gradlew.bat test harnessTest adminBridgeTest verifyHarnessIsolation build` で unit 1,222件、harness 13件、admin bridge 21件が失敗・errorとも0。元のTTL・HTTP締切・総予算、fog認可、revision、ACK、cleanup、再送禁止は変更していない。実機受入は未実施で、Issue #4 と `release:verification-needed` は維持する。
+
+## 正式受入campaign 1の不合格と予算修正
+
+製品commit `34c7a05e9cd3bcd91c17d1d389a5c04d61feab72`、JAR SHA-256 `8EC6E0AB7DD93208FA243139E00ECAE9EBEDC7D850BED9BB455AEB70B508FD68`、baseline `container-inspect-recovery-warehouse-20260906-8ec6e0ab`、`gpt-5.6-sol / high` を固定し、`MCMCP-Validation` で正式比較を実施した。
+
+- `recovery-normal-run02`: maxFps=120。最小予算30,000 ms / 600 ticks / 1 interactionの単独inspectが成功し、audit PASS、回復経路は `not_exercised`。
+- `recovery-low-run01`、`recovery-low-attempt02`、`recovery-low-attempt03`: maxFps=10。各runの最初の単独inspectは2 ticks、0 interactions、0 completed nodesで `BUDGET_EXCEEDED / jit_primitive_budget`。後続の増額Actionは成功したが、別Actionの証拠を借用しないため全runを `invalid` / audit FAILとした。
+
+T0へ到達した低FPS試行を3回すべて消費したため、同じbuildで4回目は行わない。Minecraft本体を停止し、maxFps=120、`warehouse_smelt` fixtureへ復元し、検証用の一時認証ファイルを削除した。campaign 1は正式受入FAILであり、公開tag、Release、JAR配布へ進めない。
+
+根因はrunnerや監査ではなくJITの残予算計算だった。renderer欠測待機を `recordAdmissionTicks` でAction進捗へ計上した後、最初のcontainer primitiveが予約上限600 ticks / 30,000 msを再び全量要求し、最小予算では `used + planned` が必ず上限を超えていた。実container attemptは400 ticks / 20,000 msで、差分200 ticks / 10,000 msは既にdispatch・JIT・release余白として公開契約に含まれる。
+
+修正では最初のprimitive occurrenceに限り、inspectは400 ticks、take/storeは `400+60*(max_stacks-1)` ticksを下限として、欠測待機のtickとwall timeを600系予約から差し引く。camera、interaction、移動、破壊、設置予算は差し引かない。最小予約では200 ticks / 10,000 msまでが既存headroomに収まり、それを超える場合は操作前にfail closedする。後続node、同じtargetの再出現、`approach_known_surface`、他primitiveには割引を適用しない。compiler予約、container deadline、監査条件、promptは変更しない。
+
+算術境界と本番JIT配線の回帰試験後に新commit/JARを作り、別campaignとして通常1回と低FPS最大3回を最初から実施する。Issue #4 と `release:verification-needed` は新campaignの実機PASSまで維持する。

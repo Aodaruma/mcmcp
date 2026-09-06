@@ -1,8 +1,10 @@
 package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
+import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.action.AgentActionStore.RendererRecoveryStage;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
+import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilityMap;
 import dev.aod.mcmcp.agent.observation.*;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleSurface;
@@ -70,6 +72,32 @@ class SurfacePreflightRecoveryTest {
         assertThat(fixture.store.augment(Optional.of(RAW)).orElseThrow().records()).containsExactly(CHEST);
         assertThat(fixture.recovery.summary().missingStages()).isEqualTo(1 | 2 | 4);
         assertThat(fixture.recovery.summary().revalidatedStages()).isEqualTo(1 | 2 | 4);
+    }
+
+    @Test
+    void chargedRendererWaitStillFitsTheExactContainerReservation() {
+        var fixture = new Fixture();
+        var capture = fixture.submit(RendererRecoveryStage.CAPTURE, false);
+        fixture.drain(10, false);
+        fixture.drain(11, true);
+        assertThat(capture.join()).isEqualTo("ready");
+        long consumedTicks = fixture.recovery.consumedTicks(11);
+        long now = 11L * 50_000_000L;
+        long elapsedNanos = now - fixture.recovery.executionStartNanos(now);
+        var used = new AgentActionStore.Progress(
+                AgentActionStore.Phase.EXECUTING,
+                "inspect", 0, 1, 0, 0, 0, 0, 0,
+                Math.toIntExact(consumedTicks), false);
+        var planned = new ActionDslCompiler.Cost(30_000, 600, 0, 38, 1, 0, 0);
+        var remaining = McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+                used, true, NODE, planned, elapsedNanos);
+
+        assertThat(consumedTicks).isOne();
+        assertThat(McmcpRuntime.fitsRemainingBudget(
+                used,
+                new ActionDsl.Budget(30_000, 600, 0, 360, 1, 0, 0),
+                remaining,
+                elapsedNanos)).isTrue();
     }
 
     @Test
