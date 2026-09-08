@@ -1,5 +1,7 @@
 # Repository guardrails
 
+コードの入口・責務・対応テストは[コード案内](docs/CODE_MAP.md)を参照する。以下の安全契約と規範文書が優先する。
+
 ## Product and public contract
 
 - 文書、UI、実験記録、ユーザーへの報告は日本語を基本とする。対象はMinecraft 26.2、NeoForge 26.2.0.59、Java 25とし、互換性を確認せず更新しない。Fabric等へ置き換えない。

@@ -2,6 +2,8 @@
 
 ここはproduction MODへ同梱しない、Stage 3/4のlocal development toolです。PowerShell 7.4以上を使います。
 
+ソース修正後は `pwsh -File tools/check-source.ps1` でJava・MCP transport・capability gate mockを検証できます。`-SkipJava` はtoolsだけの修正向け、`-PythonExecutable` はPythonの実行パス指定です。[コード案内](../docs/CODE_MAP.md)も参照してください。
+
 ## MCP接続診断 / MCP connection diagnostics
 
 通常のCodex・Claude Code接続を優先し、接続確認には[固定MCPクライアント](mcp/README.md)の `-Check` を使います。Toolが登録されていない環境向けのfallbackも同じ実装です。HTTP・JSON-RPC・Toolエラーを区別し、開始IDのないActionを待機しません。<br>
@@ -15,6 +17,10 @@ capability gateの公開入口は `eval/Invoke-Mcmcp*CapabilityGate.ps1` です�
 
 観測欠測の単独チェスト確認試験は [回復試験ガイド](eval/RECOVERY.md) を参照してください。製品JAR・baseline・FPS条件を記録し、欠測未発生と回復成功を分けて判定します。<br>
 See the [recovery regression guide](eval/RECOVERY.md) for standalone chest inspection, JAR/baseline/FPS evidence and the distinction between an unexercised gap and witnessed recovery.
+
+### 旧routine向けの履歴ツール
+
+`run-build-gate.ps1` と以下のcreative capture手順は旧routine/creative surface向けです。現在の固定5 Tool endpointでは実行できません。新しい評価は `eval/Invoke-Mcmcp*CapabilityGate.ps1` と公開Action DSLを使ってください。旧artifactの検証・SVG変換は引き続き利用できます。
 
 ```powershell
 # worldへ接続せずclosed manifestだけを検査

@@ -250,7 +250,7 @@ NeoForge ClientTick
 - workerへ渡すのはsession、control epoch、pose、policy、observation frame、Known Traversability Map等のimmutable valueだけ
 - workerの結果はclient threadでworld/session、control、pose、policy、観測依存edge、安全条件を再照合してから採用する
 
-command queueはJDKのArrayBlockingQueueで固定長32件、公開snapshotはAtomicReferenceで保持する。満杯ならSERVER_BUSYを返し、無制限にメモリを消費しない。
+command queueはJDKのArrayBlockingQueueを使う。ClientCommandInboxの既定容量は通常要求64件・control要求32件で、緊急停止は専用laneに置く。公開session snapshotはvolatileなimmutable参照で保持する。満杯ならSERVER_BUSYを返し、無制限にメモリを消費しない。
 
 HttpServerはlisten backlog 16、daemon worker 2 threadの固定executorで動かす。virtual threadや無制限executorは使わない。製品endpointのI/O timeoutは30秒とする。`agent_get_action.wait_timeout_ms`による待機は最大25秒で、Minecraft非依存のAction state monitor上でHTTP workerを1本だけ待たせ、もう1本を状態取得・取消に残す。Minecraft client threadは待機させない。
 
@@ -1578,7 +1578,7 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - path expansion数をtickごとに制限
 - MCP statusを毎秒10回、60秒呼んでもgame threadがHTTPを待たない
 - memory内trace: Taskあたり最大256 event
-- command queue: 32件
+- command queue: 通常64件・control32件（ClientCommandInboxの既定値）
 
 性能値は対象Prismプロファイル上で測定し、全周visualの半径・ray/tick、path expansion上限をhard range内で調整可能にする。Local Observation Volumeは安全契約を一定にするため半径6 block、最大128 transition、毎tick最大512仮想評価へ固定する。構成上の合法な最大record数がframe上限16,384以下であることをcontract testで固定する。
 

@@ -71,7 +71,6 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
     private static final int CRAFTING_GRID_LAST_SLOT = 9;
     private static final float MIN_SAFE_HEALTH = 10.0F;
     private static final double THREAT_RADIUS = 8.0D;
-    private static final double MAX_POSITION_DRIFT_SQUARED = 0.01D * 0.01D;
     private static final double MAX_HORIZONTAL_VELOCITY_SQUARED = 0.01D;
     private static final float LEGACY_MAX_TURN_PER_TICK = 8.0F;
     private static final float AIM_EPSILON = 0.75F;
@@ -2286,34 +2285,6 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         boolean readyAtSlot(LocalPlayer player) {
             return safeKnownMenuOpenContext(
                     player.getInventory().getItem(selectedSlot), player.getOffhandItem());
-        }
-    }
-
-    private record PlayerBaseline(
-            UUID worldSessionId,
-            String dimension,
-            double x,
-            double y,
-            double z,
-            float health) {
-        static PlayerBaseline capture(
-                LocalPlayer player, WorldSessionTracker.Snapshot session) {
-            return new PlayerBaseline(
-                    session.worldSessionId(), session.dimension(),
-                    player.getX(), player.getY(), player.getZ(), player.getHealth());
-        }
-
-        boolean sameSession(WorldSessionTracker.Snapshot session) {
-            return worldSessionId.equals(session.worldSessionId())
-                    && dimension.equals(session.dimension());
-        }
-
-        boolean matches(LocalPlayer player) {
-            double dx = player.getX() - x;
-            double dy = player.getY() - y;
-            double dz = player.getZ() - z;
-            return Double.isFinite(dx) && Double.isFinite(dy) && Double.isFinite(dz)
-                    && dx * dx + dy * dy + dz * dz <= MAX_POSITION_DRIFT_SQUARED;
         }
     }
 
