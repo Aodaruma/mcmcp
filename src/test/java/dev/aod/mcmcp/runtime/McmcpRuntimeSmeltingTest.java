@@ -23,7 +23,7 @@ class McmcpRuntimeSmeltingTest {
 
         var aim = new dev.aod.mcmcp.agent.action.AgentPrimitivePlanner.MutationAim(
                 smelt.target(), ActionDsl.BlockFace.UP, new Vec3(2.5D, 65.0D, 3.5D));
-        var request = McmcpRuntime.smeltRequest(smelt, aim);
+        var request = InventoryRequests.smeltRequest(smelt, aim);
         var station = (Map<String, Object>) request.parameters().get("station");
         var fuel = (Map<String, Object>) request.parameters().get("fuel");
         var aimPoint = (Map<String, Object>) request.parameters().get("aim_point");
@@ -40,7 +40,7 @@ class McmcpRuntimeSmeltingTest {
                 .containsEntry("x", 2.5D)
                 .containsEntry("y", 65.0D)
                 .containsEntry("z", 3.5D);
-        assertThat(McmcpRuntime.structuralPrimitiveCost(smelt).orElseThrow())
+        assertThat(ActionPlanning.structuralPrimitiveCost(smelt).orElseThrow())
                 .isEqualTo(new dev.aod.mcmcp.agent.dsl.ActionDslCompiler.Cost(
                         750_000, 15_000, 0, 0, 7, 0, 0));
     }
@@ -55,9 +55,9 @@ class McmcpRuntimeSmeltingTest {
                         "minecraft:furnace", Map.of("facing", "north", "lit", "false")),
                 "minecraft:coal", "default_components_only", 1);
 
-        assertThatThrownBy(() -> McmcpRuntime.smeltRequest(smelt, null))
+        assertThatThrownBy(() -> InventoryRequests.smeltRequest(smelt, null))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> McmcpRuntime.smeltRequest(
+        assertThatThrownBy(() -> InventoryRequests.smeltRequest(
                 smelt,
                 new dev.aod.mcmcp.agent.action.AgentPrimitivePlanner.MutationAim(
                         new ActionDsl.Position("minecraft:overworld", 3, 64, 3),

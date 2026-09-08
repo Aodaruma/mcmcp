@@ -127,7 +127,7 @@ class MerchantOfferViewTest {
         var open = new ContainerSyncSignals.OpenScreenEvidence(
                 snapshot.worldSessionId(), 9, "minecraft:merchant", 40, 2);
 
-        var payload = McmcpRuntime.merchantOfferPayload(
+        var payload = ActionWireMapper.merchantOfferPayload(
                 snapshot.worldSessionId(), 9, open, snapshot);
 
         assertThat(payload).containsOnlyKeys(
@@ -138,16 +138,16 @@ class MerchantOfferViewTest {
                 .containsEntry("stored_enchantments", List.of(Map.of(
                         "enchantment", "minecraft:mending", "level", 1)))
                 .doesNotContainKeys("raw_nbt", "components", "lore", "text", "raw_slot");
-        assertThat(McmcpRuntime.merchantOfferPayload(
+        assertThat(ActionWireMapper.merchantOfferPayload(
                 UUID.randomUUID(), 9, open, snapshot)).isNull();
-        assertThat(McmcpRuntime.merchantOfferPayload(
+        assertThat(ActionWireMapper.merchantOfferPayload(
                 snapshot.worldSessionId(), 10, open, snapshot)).isNull();
-        assertThat(McmcpRuntime.merchantOfferPayload(
+        assertThat(ActionWireMapper.merchantOfferPayload(
                 snapshot.worldSessionId(), 9,
                 new ContainerSyncSignals.OpenScreenEvidence(
                         snapshot.worldSessionId(), 9, "minecraft:merchant", 40, 3),
                 snapshot)).isNull();
-        assertThat(McmcpRuntime.merchantOfferPayload(
+        assertThat(ActionWireMapper.merchantOfferPayload(
                 snapshot.worldSessionId(), 9,
                 new ContainerSyncSignals.OpenScreenEvidence(
                         snapshot.worldSessionId(), 9, "example:merchant", 40, 2),

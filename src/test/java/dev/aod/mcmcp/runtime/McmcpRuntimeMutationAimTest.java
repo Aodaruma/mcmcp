@@ -18,27 +18,27 @@ class McmcpRuntimeMutationAimTest {
         var aim = new AgentPrimitivePlanner.MutationAim(
                 target, ActionDsl.BlockFace.UP, point);
 
-        assertThat(McmcpRuntime.inventoryAimPoint(target, aim)).containsExactlyInAnyOrderEntriesOf(
+        assertThat(InventoryRequests.inventoryAimPoint(target, aim)).containsExactlyInAnyOrderEntriesOf(
                 java.util.Map.of(
                         "dimension", target.dimension(),
                         "x", point.x,
                         "y", point.y,
                         "z", point.z));
-        assertThatThrownBy(() -> McmcpRuntime.inventoryAimPoint(
+        assertThatThrownBy(() -> InventoryRequests.inventoryAimPoint(
                 target,
                 new AgentPrimitivePlanner.MutationAim(
                         new ActionDsl.Position("minecraft:overworld", -11, 56, 4),
                         ActionDsl.BlockFace.UP,
                         new net.minecraft.world.phys.Vec3(-10.5D, 57.0D, 4.5D))))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> McmcpRuntime.inventoryAimPoint(
+        assertThatThrownBy(() -> InventoryRequests.inventoryAimPoint(
                 target,
                 new AgentPrimitivePlanner.MutationAim(
                         target,
                         ActionDsl.BlockFace.UP,
                         new net.minecraft.world.phys.Vec3(-9.5D, 57.0D, 3.5D))))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> McmcpRuntime.inventoryAimPoint(
+        assertThatThrownBy(() -> InventoryRequests.inventoryAimPoint(
                 target,
                 new AgentPrimitivePlanner.MutationAim(
                         target,
@@ -57,7 +57,7 @@ class McmcpRuntimeMutationAimTest {
         var node = new ActionDsl.PlantKnownWheat(
                 "plant", target, support, "minecraft:wheat_seeds");
 
-        var request = (PlaceBlockRequest) McmcpRuntime.blockMutationRequest(
+        var request = (PlaceBlockRequest) ConstructionRequests.blockMutationRequest(
                 node,
                 new AgentPrimitivePlanner.MutationAim(
                         support, ActionDsl.BlockFace.UP, point));
@@ -75,7 +75,7 @@ class McmcpRuntimeMutationAimTest {
         var point = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
                 target, ActionDsl.BlockFace.SOUTH);
 
-        var request = (InteractBlockRequest) McmcpRuntime.blockMutationRequest(
+        var request = (InteractBlockRequest) ConstructionRequests.blockMutationRequest(
                 new ActionDsl.OpenKnownFenceGate("open_gate", target),
                 new AgentPrimitivePlanner.MutationAim(
                         target, ActionDsl.BlockFace.SOUTH, point));
@@ -100,7 +100,7 @@ class McmcpRuntimeMutationAimTest {
         var point = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(
                 target, ActionDsl.BlockFace.WEST);
 
-        var request = (InteractBlockRequest) McmcpRuntime.blockMutationRequest(
+        var request = (InteractBlockRequest) ConstructionRequests.blockMutationRequest(
                 new ActionDsl.OpenKnownPassage("open_door", target, "minecraft:oak_door"),
                 new AgentPrimitivePlanner.MutationAim(
                         target, ActionDsl.BlockFace.WEST, point));

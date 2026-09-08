@@ -312,6 +312,14 @@ class BlockItemPlacementInvokerContractTest {
     void phaseThreePlacementGatesAdmissionObservationAndNormalUseDispatch() throws Exception {
         assertThat(invocations(
                 "/dev/aod/mcmcp/runtime/McmcpRuntime.class",
+                "executeOnClientThread"))
+                .contains("dev/aod/mcmcp/runtime/RoutineAdmission#startRoutine");
+        assertThat(invocations(
+                "/dev/aod/mcmcp/runtime/RoutineAdmission.class",
+                "startRoutine"))
+                .contains("dev/aod/mcmcp/runtime/RoutineAdmission#startSemanticAction");
+        assertThat(invocations(
+                "/dev/aod/mcmcp/runtime/RoutineAdmission.class",
                 "startSemanticAction"))
                 .contains("dev/aod/mcmcp/routine/MinecraftSemanticActionPort#"
                         + "requireSafePlacementSupportForAdmission");

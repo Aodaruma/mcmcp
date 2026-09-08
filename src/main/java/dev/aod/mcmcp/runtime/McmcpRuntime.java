@@ -1,242 +1,140 @@
 package dev.aod.mcmcp.runtime;
 
-import dev.aod.mcmcp.agent.action.ContainerInspection;
-
+import dev.aod.mcmcp.runtime.AgentObservations.PreparedObservationPage;
+import dev.aod.mcmcp.runtime.ActionAdmission.AgentAdmissionSnapshot;
+import dev.aod.mcmcp.runtime.ActionAdmission.PreparedAgentAction;
+import dev.aod.mcmcp.runtime.ActionAdmission.AdmissionFenceFailure;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import dev.aod.mcmcp.agent.action.AgentActionStore;
-import dev.aod.mcmcp.agent.action.AgentActionStore.RendererRecoveryStage;
-import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
+import dev.aod.mcmcp.McmcpMod;
 import dev.aod.mcmcp.agent.action.ActionProgramCursor;
+import dev.aod.mcmcp.agent.action.AgentActionStore.RendererRecoveryStage;
+import dev.aod.mcmcp.agent.action.AgentActionStore;
+import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.action.CollectBatchEvidence;
+import dev.aod.mcmcp.agent.action.ContainerInspection;
 import dev.aod.mcmcp.agent.action.FrameItemAttempt;
 import dev.aod.mcmcp.agent.action.KnownBlockBreakAttempt;
 import dev.aod.mcmcp.agent.action.KnownBlockMutationAttempt;
-import dev.aod.mcmcp.agent.action.KnownBrewingAttempt;
-import dev.aod.mcmcp.agent.action.KnownContainerAttempt;
-import dev.aod.mcmcp.agent.action.KnownConstructionAttempt;
-import dev.aod.mcmcp.agent.action.KnownPillarUpAttempt;
-import dev.aod.mcmcp.agent.action.KnownRedstoneIdentityAttempt;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.agent.dsl.ActionDslException;
-import dev.aod.mcmcp.agent.dsl.ActionDslOperationManifest;
 import dev.aod.mcmcp.agent.dsl.ActionDslParser;
 import dev.aod.mcmcp.agent.dsl.ActionDslSource;
 import dev.aod.mcmcp.agent.dsl.ActionDslValidator;
-import dev.aod.mcmcp.agent.dsl.PolicySnapshot;
-import dev.aod.mcmcp.agent.dsl.PredicateEvaluator;
 import dev.aod.mcmcp.agent.navigation.DeterministicAStar;
-import dev.aod.mcmcp.agent.navigation.KnownTraversabilityMap;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.LocalObservationProjector;
 import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.agent.navigation.RoutePlan;
-import dev.aod.mcmcp.agent.observation.DeliveredPolicyEvidenceStore;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
-import dev.aod.mcmcp.agent.observation.ClientFogDistanceSignals;
-import dev.aod.mcmcp.agent.observation.ObservationFrameStore;
-import dev.aod.mcmcp.agent.observation.ObservationFilter;
-import dev.aod.mcmcp.agent.observation.ObservationKind;
-import dev.aod.mcmcp.agent.observation.ObservationPage;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
-import dev.aod.mcmcp.agent.observation.OmnidirectionalObserver;
-import dev.aod.mcmcp.agent.observation.ObservationStoreException;
 import dev.aod.mcmcp.agent.observation.ObservationWireMapper;
-import dev.aod.mcmcp.agent.observation.PlacementStateResolver;
-import dev.aod.mcmcp.agent.observation.SoundClueStore;
-import dev.aod.mcmcp.agent.observation.SoundPlaybackQueue;
-import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
 import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
-import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.agent.safety.MinecraftRecoveryGovernor;
-import dev.aod.mcmcp.McmcpMod;
+import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.client.AutomationIndicatorController;
 import dev.aod.mcmcp.client.McmcpClientConfig;
 import dev.aod.mcmcp.client.MultiplayerAllowlist;
-import dev.aod.mcmcp.construction.SafeConstructionBlocks;
 import dev.aod.mcmcp.mcp.EvaluationTurnControl;
+import dev.aod.mcmcp.mcp.McpRuntimePort.RuntimeReply;
 import dev.aod.mcmcp.mcp.McpRuntimePort;
-import dev.aod.mcmcp.mcp.McpToolSchemas;
 import dev.aod.mcmcp.mcp.RuntimeCallContext;
 import dev.aod.mcmcp.observation.BlockPlanComparator;
-import dev.aod.mcmcp.observation.BlockPlan;
-import dev.aod.mcmcp.observation.BlockPlanStateTransformer;
-import dev.aod.mcmcp.observation.BlockPlanValidationException;
-import dev.aod.mcmcp.observation.BlockStateView;
-import dev.aod.mcmcp.observation.BlockPosition;
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.observation.WorldMemory;
-import dev.aod.mcmcp.routine.FrameItemPort;
-import dev.aod.mcmcp.routine.MinecraftFrameItemPort;
-import dev.aod.mcmcp.safety.EvaluationTurnGuard;
-import dev.aod.mcmcp.safety.InputReleaseController;
-import dev.aod.mcmcp.safety.LocalArmingState;
-import dev.aod.mcmcp.safety.ScopedEntityAttackConsentStore;
-import dev.aod.mcmcp.safety.ScopedEntityAttackConsentTransportBridge;
-import dev.aod.mcmcp.safety.ScopedEntityAttackConsentUiBridge;
-import dev.aod.mcmcp.routine.ActionBounds;
-import dev.aod.mcmcp.routine.ApplyBlockPlanOperation;
-import dev.aod.mcmcp.routine.ApplyBlockPlanRequest;
-import dev.aod.mcmcp.routine.ApplyBlockPlanStep;
-import dev.aod.mcmcp.routine.BlockTarget;
-import dev.aod.mcmcp.routine.BlockAimWitness;
 import dev.aod.mcmcp.routine.BlockStateFingerprint;
+import dev.aod.mcmcp.routine.BlockTarget;
 import dev.aod.mcmcp.routine.BoundedInputLease;
-import dev.aod.mcmcp.routine.BreakBlockRequest;
-import dev.aod.mcmcp.routine.FinitePlanRequest;
-import dev.aod.mcmcp.routine.InteractBlockRequest;
-import dev.aod.mcmcp.routine.InteractEntityRequest;
-import dev.aod.mcmcp.routine.KnownBrewingRequest;
-import dev.aod.mcmcp.routine.KnownConstructionRequest;
-import dev.aod.mcmcp.routine.KnownPillarUpRequest;
+import dev.aod.mcmcp.routine.FrameItemPort;
 import dev.aod.mcmcp.routine.MinecraftApplyBlockPlanPort;
-import dev.aod.mcmcp.routine.MinecraftPillarUpPort;
+import dev.aod.mcmcp.routine.MinecraftFrameItemPort;
 import dev.aod.mcmcp.routine.MinecraftKnownBrewingPort;
 import dev.aod.mcmcp.routine.MinecraftKnownFurnacePort;
 import dev.aod.mcmcp.routine.MinecraftKnownMenuPort;
 import dev.aod.mcmcp.routine.MinecraftPhaseFiveInventoryPort;
 import dev.aod.mcmcp.routine.MinecraftPhaseFiveWorldPort;
+import dev.aod.mcmcp.routine.MinecraftPillarUpPort;
 import dev.aod.mcmcp.routine.MinecraftSemanticActionPort;
 import dev.aod.mcmcp.routine.MinecraftStationaryBreakPort;
-import dev.aod.mcmcp.routine.NavigateToRequest;
-import dev.aod.mcmcp.routine.PlaceBlockRequest;
-import dev.aod.mcmcp.routine.PhaseFiveBounds;
-import dev.aod.mcmcp.routine.PhaseFivePort;
 import dev.aod.mcmcp.routine.PhaseFivePortRouter;
-import dev.aod.mcmcp.routine.PhaseFiveRequest;
-import dev.aod.mcmcp.routine.PlacementSupportWitness;
-import dev.aod.mcmcp.routine.RoutineManager;
-import dev.aod.mcmcp.routine.SafeBreakSourcePolicy;
-import dev.aod.mcmcp.routine.SafePlacementSupportPolicy;
 import dev.aod.mcmcp.routine.RoutineFailure;
+import dev.aod.mcmcp.routine.RoutineManager;
 import dev.aod.mcmcp.routine.RoutineSnapshot;
 import dev.aod.mcmcp.routine.RoutineState;
+import dev.aod.mcmcp.routine.SafeBreakSourcePolicy;
 import dev.aod.mcmcp.routine.SemanticActionRequest;
 import dev.aod.mcmcp.routine.StationaryBreakGoal;
 import dev.aod.mcmcp.routine.StationaryBreakOperation;
 import dev.aod.mcmcp.routine.StationaryBreakRequest;
-import dev.aod.mcmcp.routine.UseItemOnBlockRequest;
-import dev.aod.mcmcp.redstone.RedstoneIdentityRequest;
-import dev.aod.mcmcp.redstone.RedstoneSpec;
+import dev.aod.mcmcp.runtime.ActionBudgets.BatchTargetDisposition;
+import dev.aod.mcmcp.runtime.ActionEvidence.CropWaitAuthorization;
+import dev.aod.mcmcp.runtime.ActionEvidence.CropWaitLiveState;
+import dev.aod.mcmcp.runtime.ActionEvidence.CropWaitVisibilityState;
+import dev.aod.mcmcp.runtime.ActionPredicates.PredicateRequirements;
+import dev.aod.mcmcp.runtime.KillZoneSafety.AttackProfile;
+import dev.aod.mcmcp.runtime.KillZoneSafety.KillZoneAdmission;
+import dev.aod.mcmcp.runtime.RecoveryPlanning.RecoveryDescentTracker;
+import dev.aod.mcmcp.runtime.RecoveryPlanning.RecoveryHazards;
+import dev.aod.mcmcp.runtime.RuntimeFailures.RuntimeInvocationException;
+import dev.aod.mcmcp.safety.InputReleaseController;
+import dev.aod.mcmcp.safety.LocalArmingState;
+import dev.aod.mcmcp.safety.ScopedEntityAttackConsentStore;
+import dev.aod.mcmcp.safety.ScopedEntityAttackConsentTransportBridge;
+import dev.aod.mcmcp.safety.ScopedEntityAttackConsentUiBridge;
 import dev.aod.mcmcp.voice.SimpleVoiceChat2622Adapter;
-import dev.aod.mcmcp.voice.VoiceChatAdapter;
 import dev.aod.mcmcp.voice.VoiceChatEventBridge;
 import dev.aod.mcmcp.voice.VoiceChatSafetyController;
 import dev.aod.mcmcp.voice.VoiceTransmissionGuard;
-import net.minecraft.SharedConstants;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.screens.inventory.MerchantScreen;
-import net.minecraft.core.BlockPos;
-import net.minecraft.core.component.DataComponents;
-import net.minecraft.core.Direction;
-import net.minecraft.core.Holder;
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.tags.DamageTypeTags;
-import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
-import net.minecraft.sounds.SoundSource;
-import net.minecraft.util.Mth;
-import net.minecraft.world.effect.MobEffects;
-import net.minecraft.world.entity.Mob;
-import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.monster.Enemy;
-import net.minecraft.world.entity.decoration.ArmorStand;
-import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.entity.projectile.Projectile;
-import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.item.BlockItem;
-import net.minecraft.world.item.BedItem;
-import net.minecraft.world.item.DoubleHighBlockItem;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.InteractionResult;
-import net.minecraft.world.entity.projectile.FishingHook;
-import net.minecraft.world.item.SolidBucketItem;
-import net.minecraft.world.level.ClipContext;
-import net.minecraft.world.level.GameType;
-import net.minecraft.world.level.block.BedBlock;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.DoorBlock;
-import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.BlockStateProperties;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.EntityHitResult;
-import net.minecraft.world.phys.AABB;
-import net.minecraft.world.phys.HitResult;
-import net.minecraft.world.phys.Vec3;
-
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.OptionalDouble;
-import java.util.OptionalInt;
 import java.util.Set;
 import java.util.UUID;
-import java.util.EnumSet;
-import java.util.EnumMap;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
-import java.util.function.ToLongFunction;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.inventory.MerchantScreen;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.tags.DamageTypeTags;
+import net.minecraft.util.Mth;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.entity.projectile.FishingHook;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 
 /** Client runtime and the sole implementation of the MCP-to-Minecraft boundary. */
 public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl {
-    static final int MAX_MUTATION_AIM_FAILURES = 3;
     static final int MAX_ACTION_INPUT_RELEASE_ATTEMPTS = 3;
-    static final String REPLANNED_ROUTE_SHAPE_EVIDENCE =
-            "replanned_route_shape_exceeds_occurrence";
-    static final String REPLANNED_ROUTE_GLOBAL_EVIDENCE =
-            "replanned_route_global_budget";
-    static final String REPLANNED_ROUTE_REMAINING_EVIDENCE =
-            "replanned_route_remaining_occurrence";
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private static final String MCP_PROTOCOL_VERSION = "2026-07-28";
-    private static final Duration FINALIZATION_RESERVE = Duration.ofSeconds(5);
-    private static final Duration EVALUATION_CONTROL_DISPATCH_TIMEOUT = Duration.ofSeconds(1);
     private static final long ACTION_DELIVERY_CONFIRM_NANOS = Duration.ofSeconds(5).toNanos();
-    private static final double MAX_SAFE_STAY_HORIZONTAL_SPEED_SQUARED = 0.01;
-    static final double CROP_WAIT_OBSERVER_EPSILON_BLOCKS =
-            AgentPrimitivePlanner.WAIT_WITNESS_EYE_EPSILON_BLOCKS;
-    private static final float MIN_SAFE_STAY_HEALTH = 6.0F;
-    /** Expanded only when a phase has passed its gate. */
-    private static final Set<String> AVAILABLE_CAPABILITIES =
-            Set.of("movement", "camera", "block_break", "block_interact", "block_place",
-                    "inventory_transfer", "item_use", "entity_attack");
 
     private final String modVersion;
     private final String neoForgeVersion;
     private final WorldSessionTracker sessions = new WorldSessionTracker();
-    private final ObservationFrameStore agentObservationFrames = new ObservationFrameStore();
-    private final DeliveredPolicyEvidenceStore deliveredAgentEvidence =
-            new DeliveredPolicyEvidenceStore();
-    private final SoundClueStore soundClues = new SoundClueStore();
-    private final SoundPlaybackQueue soundPlaybacks = new SoundPlaybackQueue();
-    private final KnownTraversabilityMap knownTraversability = new KnownTraversabilityMap();
     private final DeterministicAStar agentPathfinder = new DeterministicAStar();
     private final AgentActionStore agentActions = new AgentActionStore();
     private final WorldMemory memory = new WorldMemory();
@@ -250,12 +148,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             new ScopedEntityAttackConsentStore();
     private final LocalArmingState arming = new LocalArmingState();
     private final InputReleaseController inputRelease = new InputReleaseController();
-    private final EvaluationTurnGuard evaluationTurns = new EvaluationTurnGuard();
-    private final Object evaluationTerminalGate = new Object();
-    /** Guarded by {@link #evaluationTerminalGate}; never reused during this runtime lifetime. */
-    private long evaluationFenceRevision;
+    private final EvaluationLeaseController evaluationControl;
     private final MinecraftStationaryBreakPort stationaryBreakPort;
     private final ClientReconciliationSignals reconciliationSignals;
+    private final AgentObservations agentObservations;
+    private final ActionAdmission actionAdmission;
     private final MinecraftSemanticActionPort semanticActionPort;
     private final MinecraftFrameItemPort frameItemPort;
     private final MinecraftApplyBlockPlanPort applyBlockPlanPort;
@@ -268,11 +165,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final PhaseFivePortRouter phaseFivePort;
     private final MinecraftFinitePlanPort finitePlanPort;
     private final RoutineManager routines;
+    private final RoutineLifecycle routineLifecycle;
+    private final RoutineAdmission routineAdmission;
     private final VoiceChatSafetyController voiceChat;
     private final ClientCommandInbox inbox;
-    private final FinalizationRetryQueue finalizationRetries = new FinalizationRetryQueue();
-    private final GoalContinuationSession goalContinuation = new GoalContinuationSession();
-    private RoutineWallClockDeadline activeRoutineDeadline;
     private AgentExecution agentExecution;
     private boolean pendingAgentInputRelease;
     private boolean agentInputReleaseFaultLogged;
@@ -282,21 +178,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private long lastStatefulAgentCleanupOwnershipEpoch = Long.MIN_VALUE;
     private AgentCleanupProgress lastStatefulAgentCleanup =
             new AgentCleanupProgress(true, true);
-    private PendingEvaluationTerminal pendingEvaluationTerminal;
     private PendingAgentTerminal pendingAgentTerminal;
     private PendingAgentAdmission pendingAgentAdmission;
-    private OmnidirectionalObserver agentObserver;
-    private LocalObservationVolume.Snapshot latestLocalObservation;
     private MinecraftRecoveryGovernor recoveryGovernor;
     private final RecoveryDescentTracker recoveryDescent = new RecoveryDescentTracker();
-    private LocalObservationProjector.CurrentSafety localSafety =
-            LocalObservationProjector.CurrentSafety.REPLAN;
-    private long knownTraversabilityRevision;
-    private boolean soundPlaybackTruncated;
     private long pauseStartedAtNanos;
     private AutomationIndicatorController entityAttackConsentUi;
-
-    private UUID voiceRoutineId;
 
     private volatile WorldSessionTracker.Snapshot publishedSession = sessions.snapshot();
     private volatile boolean paused;
@@ -316,6 +203,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 observations,
                 ClientPredictionSignals.global());
         reconciliationSignals = ClientReconciliationSignals.global();
+        agentObservations = new AgentObservations(memory, sessions, observations, reconciliationSignals);
         semanticActionPort = new MinecraftSemanticActionPort(
                 Minecraft::getInstance,
                 sessions::snapshot,
@@ -383,6 +271,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         routines = new RoutineManager(
                 stationaryBreakPort, semanticActionPort, applyBlockPlanPort,
                 phaseFivePort, finitePlanPort);
+        actionAdmission = new ActionAdmission(arming, agentObservations, reconciliationSignals,
+                recipeCatalog, agentPathfinder,
+                () -> pendingAgentInputRelease || agentExecution != null
+                        || agentActions.active().isPresent() || routines.activeRoutineId().isPresent(),
+                this::multiplayerPolicyAllows, this::publishRendererRecovery);
         voiceChat = new VoiceChatSafetyController(
                 SimpleVoiceChat2622Adapter.forNeoForge(() -> {
                     var minecraft = Minecraft.getInstance();
@@ -392,11 +285,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 VoiceChatEventBridge.GLOBAL,
                 true,
                 this::requestSafetyStop);
+        routineLifecycle = new RoutineLifecycle(routines, sessions, arming, inputRelease,
+                voiceChat, observations, screenOwnership, this::returnControlReady,
+                context -> requireLiveCall(context, "start_routine"));
+        routineAdmission = new RoutineAdmission(routines, routineLifecycle, arming,
+                stationaryBreakPort, semanticActionPort, finitePlanPort);
         inbox = new ClientCommandInbox(
                 ClientCommandInbox.DEFAULT_CAPACITY,
                 inputRelease,
                 arming,
                 this::stopActiveRoutineForEmergency);
+        evaluationControl = new EvaluationLeaseController(sessions, () -> publishedSession,
+                arming, inputRelease, inbox, () -> shutdown,
+                () -> !paused && !Minecraft.getInstance().isPaused()
+                        && endpointFaultCode == null,
+                this::automationActivityPending, this::evaluationActionsTerminal);
     }
 
     public void onResourcesReady() {
@@ -407,14 +310,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     public void onLoggingIn(Minecraft minecraft) {
         assertClientThread(minecraft);
         transientMultiplayerConsentAddress = null;
-        terminateActiveEvaluationOnClient(
+        evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
         stopForLifecycle(minecraft, "world_join");
         routines.clearSession("world_join");
-        finalizationRetries.clear();
-        goalContinuation.clear();
-        voiceRoutineId = null;
+        routineLifecycle.clearSession();
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
                 semanticActionPort::clearSession,
@@ -432,14 +333,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     public void onLevelUnload(Minecraft minecraft) {
         assertClientThread(minecraft);
         transientMultiplayerConsentAddress = null;
-        terminateActiveEvaluationOnClient(
+        evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
         stopForLifecycle(minecraft, "level_or_dimension_change");
         routines.clearSession("level_or_dimension_change");
-        finalizationRetries.clear();
-        goalContinuation.clear();
-        voiceRoutineId = null;
+        routineLifecycle.clearSession();
         ClientPredictionSignals.global().closeLevel(minecraft.level);
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
@@ -459,14 +358,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     public void onLoggingOut(Minecraft minecraft) {
         assertClientThread(minecraft);
         transientMultiplayerConsentAddress = null;
-        terminateActiveEvaluationOnClient(
+        evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
         stopForLifecycle(minecraft, "disconnect");
         routines.clearSession("disconnect");
-        finalizationRetries.clear();
-        goalContinuation.clear();
-        voiceRoutineId = null;
+        routineLifecycle.clearSession();
         ClientPredictionSignals.global().closeLevel(minecraft.level);
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
@@ -486,14 +383,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     public void onPlayerClone(Minecraft minecraft) {
         assertClientThread(minecraft);
         transientMultiplayerConsentAddress = null;
-        terminateActiveEvaluationOnClient(
+        evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
         stopForLifecycle(minecraft, "player_respawn");
         routines.clearSession("player_respawn");
-        finalizationRetries.clear();
-        goalContinuation.clear();
-        voiceRoutineId = null;
+        routineLifecycle.clearSession();
         ClientPredictionSignals.global().resetAttemptsForPlayerClone(minecraft.level);
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
@@ -517,16 +412,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return;
         }
         long nowNanos = System.nanoTime();
+        routineLifecycle.onPauseChanged(paused, nowNanos);
         if (paused) {
             pauseStartedAtNanos = nowNanos;
             releaseAgentInputsForHold(minecraft, "pause_input_release_failed");
         } else {
-            long pausedNanos = nonNegativeNanoElapsed(pauseStartedAtNanos, nowNanos);
-            if (activeRoutineDeadline != null) {
-                activeRoutineDeadline = activeRoutineDeadline.shiftStart(pausedNanos);
-            }
+            long pausedNanos = ActionBudgets.nonNegativeNanoElapsed(pauseStartedAtNanos, nowNanos);
             if (agentExecution != null) {
-                agentExecution.pausedNanos = saturatingNonNegativeAdd(
+                agentExecution.pausedNanos = ActionBudgets.saturatingNonNegativeAdd(
                         agentExecution.pausedNanos, pausedNanos);
             }
             pauseStartedAtNanos = 0L;
@@ -541,7 +434,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             double x,
             double y,
             double z) {
-        soundPlaybacks.capturePositionSound(soundEvent, source, x, y, z);
+        agentObservations.soundPlaybacks().capturePositionSound(soundEvent, source, x, y, z);
     }
 
     public void onPreTick(Minecraft minecraft) {
@@ -565,13 +458,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             publishSession();
             return;
         }
-        finishPendingEvaluationTerminalOnClient(minecraft);
-        terminateInvalidEvaluationLeaseOnClient(minecraft);
+        evaluationControl.finishPendingEvaluationTerminalOnClient(minecraft);
+        evaluationControl.terminateInvalidEvaluationLeaseOnClient(minecraft);
         var evaluationSession = sessions.snapshot();
-        if (evaluationTurns.snapshot(evaluationSession.worldSessionId()).active()
+        if (evaluationControl.snapshot(evaluationSession.worldSessionId()).active()
                 && evaluationSession.worldReady()
                 && !localControlAvailable(minecraft, evaluationSession)) {
-            terminateActiveEvaluationOnClient(
+            evaluationControl.terminateActiveEvaluationOnClient(
                     minecraft, EvaluationTurnControl.ReleaseReason.PLAYER_UNAVAILABLE);
         }
         boolean pendingReleaseCompleted = retryPendingAgentInputRelease(minecraft);
@@ -596,8 +489,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (!pendingReleaseClockAdvanced) {
                 sessions.tick();
             }
-            synchronizeKnownTraversability(minecraft);
-            collectAgentObservation(minecraft);
+            agentObservations.synchronizeKnownTraversability(minecraft);
+            agentObservations.collectAgentObservation(minecraft);
         } catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error(
                     "MCMCP pre-tick observation failed; stopping automation before input reuse",
@@ -616,7 +509,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         inbox.drainEmergencyStopPreTick(minecraft, publishedSession);
         inbox.drainControlsPreTick(sessions.snapshot());
-        retryPendingFinalizations(minecraft);
+        routineLifecycle.retryPendingFinalizations(minecraft);
         tickActiveRoutine(minecraft);
         tickAgentAction(minecraft);
         publishSession();
@@ -662,14 +555,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         assertClientThread(minecraft);
         entityAttackConsent.clear();
         if (anyActive()) {
-            terminateActiveEvaluationOnClient(
+            evaluationControl.terminateActiveEvaluationOnClient(
                     minecraft, EvaluationTurnControl.ReleaseReason.LOCAL_ESCAPE);
         } else {
             runPriorityStop(
                     inbox::requestLocalEmergencyStop,
                     () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
         }
-        goalContinuation.clear();
+        routineLifecycle.clearContinuation();
         overlay(minecraft, "MCMCP: 現在の操作を緊急停止（MCP操作はON）");
     }
 
@@ -683,7 +576,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return AutomationUiSnapshot.resolve(
                 localControlAvailable(Minecraft.getInstance(), session),
                 lock,
-                evaluationTurns.snapshot(session.worldSessionId()).active(),
+                evaluationControl.snapshot(session.worldSessionId()).active(),
                 localConsentPending,
                 !localConsentPending
                         ? null
@@ -831,11 +724,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     /** May be called by the endpoint lifecycle worker; client-thread cleanup uses the priority lane. */
     public void reportEndpointFault(String code) {
-        endpointFaultCode = sanitizeLocalCode(code);
+        endpointFaultCode = RuntimeFailures.sanitizeLocalCode(code);
         entityAttackConsent.clear();
         inbox.requestEmergencyStop("endpoint_fault");
-        evaluationTurns.snapshot(publishedSession.worldSessionId()).activeLease()
-                .ifPresent(lease -> requestEvaluationReleaseFromAnyThread(
+        evaluationControl.snapshot(publishedSession.worldSessionId()).activeLease()
+                .ifPresent(lease -> evaluationControl.requestEvaluationReleaseFromAnyThread(
                         lease.leaseId(), EvaluationTurnControl.ReleaseReason.ENDPOINT_FAULT));
     }
 
@@ -849,7 +742,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         transientMultiplayerConsentAddress = null;
         entityAttackConsent.clear();
         if (anyActive()) {
-            terminateActiveEvaluationOnClient(
+            evaluationControl.terminateActiveEvaluationOnClient(
                     minecraft, EvaluationTurnControl.ReleaseReason.LOCAL_UI_DISABLED);
         } else {
             runPriorityStop(
@@ -857,7 +750,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
         }
         arming.lock("local_ui_disabled");
-        goalContinuation.clear();
+        routineLifecycle.clearContinuation();
         overlay(minecraft, "MCMCP: MCP自動操作を無効にしました");
     }
 
@@ -881,7 +774,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             overlay(minecraft, "MCMCP: 停止処理の完了後に再許可してください");
             return false;
         }
-        goalContinuation.reset(session.worldSessionId());
+        routineLifecycle.resetContinuation(session.worldSessionId());
         arming.arm(session.worldSessionId(), availableCapabilities(minecraft));
         overlay(minecraft, "MCMCP: このワールドでMCP自動操作を再許可しました");
         return true;
@@ -909,20 +802,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return false;
     }
 
-    private static String sanitizeLocalCode(String code) {
-        if (code == null || code.isBlank()) {
-            return "internal_error";
-        }
-        String normalized = code.toLowerCase(java.util.Locale.ROOT)
-                .replaceAll("[^a-z0-9_]+", "_")
-                .replaceAll("^_+|_+$", "");
-        if (normalized.isEmpty()) {
-            return "internal_error";
-        }
-        return normalized.substring(0, Math.min(64, normalized.length()));
-    }
-
-    private static boolean localControlAvailable(
+    static boolean localControlAvailable(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session) {
         return session.worldReady()
@@ -942,8 +822,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || pendingAgentAdmission != null
                 || inbox.hasPendingCommand("start_routine")
                 || inbox.hasPendingCommand("agent_start_action")
-                || finalizationRetries.hasPending()
-                || voiceRoutineId != null;
+                || routineLifecycle.hasPendingFinalizations()
+                || routineLifecycle.hasVoiceOwner();
     }
 
     /** Local controls are already on the client thread and must finish the priority stop inline. */
@@ -1001,16 +881,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         FrameDisplaySyncSignals.global().clear();
         entityAttackConsent.clear();
         recoveryDescent.reset();
-        agentObservationFrames.clear();
-        deliveredAgentEvidence.clear();
-        soundClues.clear();
-        soundPlaybacks.clear();
-        soundPlaybackTruncated = false;
+        agentObservations.clearSession();
         fishingSessionRefs.clear();
-        latestLocalObservation = null;
-        knownTraversability.clearWorld();
-        knownTraversabilityRevision = 0L;
-        localSafety = LocalObservationProjector.CurrentSafety.REPLAN;
         var activeAction = agentActions.active();
         PendingAgentTerminal worldBoundaryTerminal = activeAction
                 .map(action -> PendingAgentTerminal.failure(
@@ -1033,9 +905,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 rememberPendingAgentTerminal(worldBoundaryTerminal);
             }
         }
-        if (agentObserver != null) {
-            agentObserver.reset();
-        }
+        agentObservations.resetObserver();
     }
 
     /** Returns whether an active/pending start was stopped before the caller can continue. */
@@ -1055,7 +925,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (shutdown) {
             return;
         }
-        terminateActiveEvaluationOnClient(
+        evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.CLIENT_SHUTDOWN);
         shutdown = true;
         entityAttackConsent.clear();
@@ -1063,9 +933,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         sessions.stopping();
         inbox.shutdown(minecraft, sessions.snapshot());
         routines.clearSession("client_shutdown");
-        finalizationRetries.clear();
-        goalContinuation.clear();
-        voiceRoutineId = null;
+        routineLifecycle.clearSession();
         voiceChat.close();
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
@@ -1085,324 +953,29 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     @Override
     public CompletionStage<EvaluationTurnControl.LeaseReceipt> acquire(
             EvaluationTurnControl.AcquireRequest request) {
-        Objects.requireNonNull(request, "request");
-        if (shutdown) {
-            return CompletableFuture.failedFuture(
-                    new IllegalStateException("runtime is stopping"));
-        }
-        var runner = ProcessHandle.of(request.runnerProcessId())
-                .filter(ProcessHandle::isAlive)
-                .orElse(null);
-        if (runner == null) {
-            return CompletableFuture.failedFuture(
-                    new IllegalArgumentException("evaluation runner is not alive"));
-        }
-        var started = runner.info().startInstant();
-        if (started.isEmpty()) {
-            return CompletableFuture.failedFuture(
-                    new IllegalArgumentException("evaluation runner start identity is unavailable"));
-        }
-        var identity = new EvaluationTurnGuard.RunnerIdentity(
-                runner.pid(), started);
-        var fence = publishedSession;
-        long deadline = RuntimeCallContext.deadlineAfter(
-                System.nanoTime(), EVALUATION_CONTROL_DISPATCH_TIMEOUT.toNanos());
-        var delivered = new CompletableFuture<EvaluationTurnControl.LeaseReceipt>();
-        java.util.function.Consumer<EvaluationTurnControl.LeaseReceipt> releaseAbandoned =
-                receipt -> {
-                    if (receipt != null
-                            && receipt.state() == EvaluationTurnControl.LeaseState.ACTIVE) {
-                        requestEvaluationReleaseFromAnyThread(
-                                receipt.leaseId(),
-                                EvaluationTurnControl.ReleaseReason.ACQUIRE_ABANDONED);
-                    }
-                };
-        var submitted = inbox.submitControl(
-                "evaluation_turn_acquire",
-                fence.generation(),
-                deadline,
-                () -> acquireEvaluationTurnOnClient(request, runner, identity),
-                delivered::isDone,
-                releaseAbandoned);
-        submitted.whenComplete((receipt, failure) -> {
-            if (failure != null) {
-                delivered.completeExceptionally(failure);
-                return;
-            }
-            if (!delivered.complete(receipt)) {
-                releaseAbandoned.accept(receipt);
-            }
-        });
-        return delivered;
-    }
-
-    private EvaluationTurnControl.LeaseReceipt acquireEvaluationTurnOnClient(
-            EvaluationTurnControl.AcquireRequest request,
-            ProcessHandle runner,
-            EvaluationTurnGuard.RunnerIdentity identity) {
-        var minecraft = Minecraft.getInstance();
-        assertClientThread(minecraft);
-        return withEvaluationTurnGate(
-                evaluationTerminalGate,
-                () -> acquireEvaluationTurnWithGateHeld(
-                        minecraft, request, runner, identity));
-    }
-
-    private EvaluationTurnControl.LeaseReceipt acquireEvaluationTurnWithGateHeld(
-            Minecraft minecraft,
-            EvaluationTurnControl.AcquireRequest request,
-            ProcessHandle runner,
-            EvaluationTurnGuard.RunnerIdentity identity) {
-        // This entire admission is serialized with ABSENT/ACTIVE call commits and terminal
-        // claims. Recheck every mutable condition after waiting for that gate.
-        var session = sessions.snapshot();
-        var control = arming.snapshot(session.worldSessionId());
-        if (shutdown
-                || !runner.isAlive()
-                || !identity.matches(runner)
-                || !localControlAvailable(minecraft, session)
-                || paused
-                || minecraft.isPaused()
-                || endpointFaultCode != null
-                || control.mode() != LocalArmingState.Mode.READY
-                || automationActivityPending()
-                || evaluationTurns.snapshot(session.worldSessionId()).active()) {
-            throw new IllegalStateException("evaluation turn admission is not ready");
-        }
-        if (!boundedActionInputRelease(() -> releaseAllAndConfirmNoInputOwner(minecraft))) {
-            arming.lock("input_release_failed");
-            throw new IllegalStateException("evaluation input preflight release failed");
-        }
-        var lease = evaluationTurns.tryAcquire(
-                        Objects.requireNonNull(session.worldSessionId(), "worldSessionId"),
-                        request.leaseId(),
-                        identity,
-                        request.maximumDuration())
-                .orElseThrow(() -> new IllegalStateException("evaluation lease is already active"));
-        evaluationFenceRevision = Math.incrementExact(evaluationFenceRevision);
-        try {
-            runner.onExit().thenRun(() -> requestEvaluationReleaseFromAnyThread(
-                    lease.leaseId(), EvaluationTurnControl.ReleaseReason.RUNNER_PROCESS_EXITED));
-        } catch (RuntimeException | LinkageError failure) {
-            terminateActiveEvaluationOnClient(
-                    minecraft, EvaluationTurnControl.ReleaseReason.RUNNER_PROCESS_EXITED);
-            throw new IllegalStateException("evaluation runner cannot be monitored", failure);
-        }
-        if (!runner.isAlive() || !identity.matches(runner)) {
-            terminateActiveEvaluationOnClient(
-                    minecraft, EvaluationTurnControl.ReleaseReason.RUNNER_PROCESS_EXITED);
-            throw new IllegalStateException("evaluation runner exited during admission");
-        }
-        return new EvaluationTurnControl.LeaseReceipt(
-                lease.leaseId(),
-                EvaluationTurnControl.LeaseState.ACTIVE,
-                null,
-                false,
-                true,
-                true,
-                true);
+        return evaluationControl.acquire(request);
     }
 
     @Override
     public CompletionStage<EvaluationTurnControl.LeaseReceipt> await(UUID leaseId) {
-        Objects.requireNonNull(leaseId, "leaseId");
-        var snapshot = evaluationTurns.snapshot(publishedSession.worldSessionId());
-        if (snapshot.activeLease().filter(lease -> lease.leaseId().equals(leaseId)).isPresent()) {
-            return evaluationTurns.awaitTerminal(snapshot.activeLease().orElseThrow())
-                    .thenApply(McmcpRuntime::evaluationReceipt);
-        }
-        if (snapshot.previousTerminal()
-                .filter(terminal -> terminal.lease().leaseId().equals(leaseId)).isPresent()) {
-            return CompletableFuture.completedFuture(evaluationReceipt(
-                    snapshot.previousTerminal().orElseThrow()));
-        }
-        return CompletableFuture.failedFuture(
-                new IllegalArgumentException("unknown evaluation lease"));
+        return evaluationControl.await(leaseId);
     }
 
     @Override
     public CompletionStage<EvaluationTurnControl.LeaseReceipt> release(
-            UUID leaseId,
-            EvaluationTurnControl.ReleaseReason reason) {
-        Objects.requireNonNull(leaseId, "leaseId");
-        Objects.requireNonNull(reason, "reason");
-        final EvaluationTerminalClaim claim;
-        try {
-            claim = claimEvaluationTerminal(leaseId, reason);
-        } catch (RuntimeException failure) {
-            return CompletableFuture.failedFuture(failure);
-        }
-        if (claim.completedReceipt() != null) {
-            return CompletableFuture.completedFuture(claim.completedReceipt());
-        }
-        if (!claim.owner()) {
-            return claim.pending().completion.copy();
-        }
-
-        var fence = publishedSession;
-        long deadline = RuntimeCallContext.deadlineAfter(
-                System.nanoTime(), EVALUATION_CONTROL_DISPATCH_TIMEOUT.toNanos());
-        var submitted = inbox.submitControl(
-                "evaluation_turn_release",
-                fence.generation(),
-                deadline,
-                () -> terminateEvaluationLeaseOnClient(
-                        Minecraft.getInstance(), claim.pending()));
-        submitted.whenComplete((receipt, failure) -> {
-            if (failure != null) {
-                // Claiming the terminal intent is the ownership hand-off. Queue invalidation
-                // cannot publish failure or discard that intent; pre-tick/lifecycle cleanup
-                // keeps retrying while the guard remains physically isolating input.
-                return;
-            } else if (receipt != null) {
-                completePendingEvaluationTerminal(claim.pending(), receipt);
-            }
-        });
-        return claim.pending().completion.copy();
+            UUID leaseId, EvaluationTurnControl.ReleaseReason reason) {
+        return evaluationControl.release(leaseId, reason);
     }
 
     @Override
-    public boolean active(UUID leaseId) {
-        return leaseId != null && fenceSnapshot().accepts(leaseId);
-    }
+    public boolean active(UUID leaseId) { return evaluationControl.active(leaseId); }
 
     @Override
-    public boolean anyActive() {
-        return fenceSnapshot().isolationActive();
-    }
+    public boolean anyActive() { return evaluationControl.anyActive(); }
 
     @Override
     public EvaluationTurnControl.FenceSnapshot fenceSnapshot() {
-        synchronized (evaluationTerminalGate) {
-            var activeLease = evaluationTurns.snapshot(publishedSession.worldSessionId())
-                    .activeLease()
-                    .orElse(null);
-            UUID acceptedLeaseId = activeLease != null && pendingEvaluationTerminal == null
-                    ? activeLease.leaseId() : null;
-            return new EvaluationTurnControl.FenceSnapshot(
-                    evaluationFenceRevision,
-                    activeLease != null,
-                    acceptedLeaseId);
-        }
-    }
-
-    private EvaluationTerminalClaim claimEvaluationTerminal(
-            UUID leaseId,
-            EvaluationTurnControl.ReleaseReason reason) {
-        synchronized (evaluationTerminalGate) {
-            var snapshot = evaluationTurns.snapshot(publishedSession.worldSessionId());
-            var activeLease = snapshot.activeLease().orElse(null);
-            if (activeLease == null) {
-                var terminal = snapshot.previousTerminal()
-                        .filter(value -> value.lease().leaseId().equals(leaseId))
-                        .orElseThrow(() -> new IllegalArgumentException(
-                                "unknown evaluation lease"));
-                return new EvaluationTerminalClaim(
-                        null, false, evaluationReceipt(terminal));
-            }
-            if (!activeLease.leaseId().equals(leaseId)) {
-                throw new IllegalArgumentException("unknown evaluation lease");
-            }
-            if (pendingEvaluationTerminal != null) {
-                if (!pendingEvaluationTerminal.lease.equals(activeLease)) {
-                    throw new IllegalStateException(
-                            "evaluation terminal intent belongs to another lease");
-                }
-                return new EvaluationTerminalClaim(
-                        pendingEvaluationTerminal, false, null);
-            }
-            var pending = new PendingEvaluationTerminal(activeLease, reason);
-            pendingEvaluationTerminal = pending;
-            evaluationFenceRevision = Math.incrementExact(evaluationFenceRevision);
-            return new EvaluationTerminalClaim(pending, true, null);
-        }
-    }
-
-    private void requestEvaluationReleaseFromAnyThread(
-            UUID leaseId,
-            EvaluationTurnControl.ReleaseReason reason) {
-        release(leaseId, reason).whenComplete((ignored, failure) -> {
-            if (failure != null && active(leaseId)) {
-                McmcpMod.LOGGER.warn(
-                        "MCMCP evaluation lease release could not reach the client lane: {}",
-                        reason.wireName());
-            }
-        });
-    }
-
-    private EvaluationTurnControl.LeaseReceipt terminateEvaluationLeaseOnClient(
-            Minecraft minecraft,
-            PendingEvaluationTerminal pending) {
-        assertClientThread(minecraft);
-        if (pending.completion.isDone()) {
-            return pending.completedReceipt();
-        }
-        CompletableFuture<ClientCommandInbox.StopReceipt> stop = pending.stopCompletion();
-        if (stop == null) {
-            stop = switch (pending.reason) {
-                case LOCAL_ESCAPE -> inbox.requestLocalEmergencyStop();
-                case LOCAL_UI_DISABLED -> inbox.requestLocalDisable();
-                default -> inbox.requestEmergencyStop(
-                        "evaluation_" + pending.reason.wireName());
-            };
-            pending.retainStopCompletion(stop);
-        }
-        inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
-        PendingEvaluationStopOutcome stopOutcome = pending.stopOutcome();
-        if (stopOutcome == null) {
-            return null;
-        }
-        ClientCommandInbox.StopReceipt stopReceipt = stopOutcome.failure() == null
-                ? stopOutcome.receipt() : null;
-        if (stopReceipt == null) {
-            pending.retryStopAfter(stop);
-            arming.lock(EvaluationTurnControl.ReleaseReason.INPUT_RELEASE_FAILED.wireName());
-            return null;
-        }
-        boolean inputsReleased = stopReceipt.inputsReleased();
-        boolean inputOwnerNone = stopReceipt.inputOwnerNone();
-        boolean allActionsTerminal = inputsReleased
-                && inputOwnerNone
-                && evaluationActionsTerminal();
-        var releasableReason = evaluationTerminalReasonIfSafe(
-                pending.reason, inputsReleased, inputOwnerNone, allActionsTerminal);
-        if (releasableReason.isEmpty()) {
-            arming.lock(EvaluationTurnControl.ReleaseReason.INPUT_RELEASE_FAILED.wireName());
-            if (!inputsReleased || !inputOwnerNone) {
-                // A terminally unsafe receipt does not prove that later idempotent release
-                // attempts will fail. Retain the lease/fence and retry through the same lane.
-                pending.retryStopAfter(stop);
-            }
-            return null;
-        }
-        var terminalReason = releasableReason.orElseThrow();
-        if (locksLocalArming(terminalReason)) {
-            arming.lock(terminalReason.wireName());
-        }
-        boolean terminalized = terminalReason == EvaluationTurnControl.ReleaseReason.TURN_COMPLETED
-                ? evaluationTurns.release(pending.lease, terminalReason.wireName())
-                : evaluationTurns.revoke(pending.lease, terminalReason.wireName());
-        EvaluationTurnControl.LeaseReceipt receipt;
-        if (terminalized) {
-            receipt = new EvaluationTurnControl.LeaseReceipt(
-                    pending.lease.leaseId(),
-                    EvaluationTurnControl.LeaseState.RELEASED,
-                    terminalReason.wireName(),
-                    true,
-                    true,
-                    true,
-                    true);
-        } else {
-            receipt = evaluationTurns.snapshot(publishedSession.worldSessionId())
-                    .previousTerminal()
-                    .filter(terminal -> terminal.lease().leaseId()
-                            .equals(pending.lease.leaseId()))
-                    .map(McmcpRuntime::evaluationReceipt)
-                    .orElseThrow(() -> new IllegalStateException(
-                            "evaluation terminal state was not retained"));
-        }
-        completePendingEvaluationTerminal(pending, receipt);
-        return receipt;
+        return evaluationControl.fenceSnapshot();
     }
 
     private boolean evaluationActionsTerminal() {
@@ -1412,192 +985,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && !pendingAgentInputRelease
                 && agentExecution == null
                 && pendingAgentAdmission == null
-                && !finalizationRetries.hasPending()
-                && voiceRoutineId == null
+                && !routineLifecycle.hasPendingFinalizations()
+                && !routineLifecycle.hasVoiceOwner()
                 && !inbox.hasPendingCommand("start_routine")
                 && !inbox.hasPendingCommand("agent_start_action");
-    }
-
-    static Optional<EvaluationTurnControl.ReleaseReason> evaluationTerminalReasonIfSafe(
-            EvaluationTurnControl.ReleaseReason firstIntent,
-            boolean inputsReleased,
-            boolean inputOwnerNone,
-            boolean allActionsTerminal) {
-        Objects.requireNonNull(firstIntent, "firstIntent");
-        return inputsReleased && inputOwnerNone && allActionsTerminal
-                ? Optional.of(firstIntent)
-                : Optional.empty();
-    }
-
-    private void terminateActiveEvaluationOnClient(
-            Minecraft minecraft,
-            EvaluationTurnControl.ReleaseReason reason) {
-        var activeLease = evaluationTurns.snapshot(sessions.snapshot().worldSessionId())
-                .activeLease().orElse(null);
-        if (activeLease == null) {
-            return;
-        }
-        var claim = claimEvaluationTerminal(activeLease.leaseId(), reason);
-        if (claim.completedReceipt() == null) {
-            terminateEvaluationLeaseOnClient(minecraft, claim.pending());
-        }
-    }
-
-    private void terminateInvalidEvaluationLeaseOnClient(Minecraft minecraft) {
-        var session = sessions.snapshot();
-        if (!evaluationTurns.snapshot(session.worldSessionId()).active()) {
-            return;
-        }
-        var control = arming.snapshot(session.worldSessionId());
-        if (control.locked()) {
-            var reason = control.lastLockReason() != null
-                    && control.lastLockReason().contains("input_release_failed")
-                    ? EvaluationTurnControl.ReleaseReason.INPUT_RELEASE_FAILED
-                    : EvaluationTurnControl.ReleaseReason.RUNNER_FAILURE;
-            terminateActiveEvaluationOnClient(minecraft, reason);
-            return;
-        }
-        var invalidation = evaluationTurns
-                .leaseNeedingRevocation(session.worldSessionId())
-                .orElse(null);
-        if (invalidation == null) {
-            return;
-        }
-        var reason = switch (invalidation.reason()) {
-            case LEASE_EXPIRED -> EvaluationTurnControl.ReleaseReason.LEASE_EXPIRED;
-            case WORLD_SESSION_CHANGED -> EvaluationTurnControl.ReleaseReason.WORLD_CHANGED;
-        };
-        terminateActiveEvaluationOnClient(minecraft, reason);
-    }
-
-    private void finishPendingEvaluationTerminalOnClient(Minecraft minecraft) {
-        PendingEvaluationTerminal pending;
-        synchronized (evaluationTerminalGate) {
-            pending = pendingEvaluationTerminal;
-        }
-        if (pending != null && !pending.completion.isDone()) {
-            terminateEvaluationLeaseOnClient(minecraft, pending);
-        }
-    }
-
-    private void completePendingEvaluationTerminal(
-            PendingEvaluationTerminal pending,
-            EvaluationTurnControl.LeaseReceipt receipt) {
-        synchronized (evaluationTerminalGate) {
-            if (pendingEvaluationTerminal == pending) {
-                pendingEvaluationTerminal = null;
-            }
-        }
-        pending.rememberCompletedReceipt(receipt);
-        pending.completion.complete(receipt);
-    }
-
-    private static boolean locksLocalArming(
-            EvaluationTurnControl.ReleaseReason reason) {
-        return switch (reason) {
-            case LOCAL_UI_DISABLED, WORLD_CHANGED, PLAYER_UNAVAILABLE, ENDPOINT_FAULT,
-                    CLIENT_SHUTDOWN, INPUT_RELEASE_FAILED -> true;
-            case TURN_COMPLETED, RUNNER_FAILURE, EVALUATION_DEADLINE,
-                    LAUNCHER_TEARDOWN, RUNNER_CONNECTION_CLOSED,
-                    RUNNER_PROCESS_EXITED, LOCAL_ESCAPE, LEASE_EXPIRED,
-                    ACQUIRE_ABANDONED -> false;
-        };
-    }
-
-    private static EvaluationTurnControl.LeaseReceipt evaluationReceipt(
-            EvaluationTurnGuard.Terminal terminal) {
-        return new EvaluationTurnControl.LeaseReceipt(
-                terminal.lease().leaseId(),
-                EvaluationTurnControl.LeaseState.RELEASED,
-                terminal.reason(),
-                true,
-                true,
-                true,
-                true);
-    }
-
-    private static final class PendingEvaluationTerminal {
-        private final EvaluationTurnGuard.Lease lease;
-        private final EvaluationTurnControl.ReleaseReason reason;
-        private final CompletableFuture<EvaluationTurnControl.LeaseReceipt> completion =
-                new CompletableFuture<>();
-        private CompletableFuture<ClientCommandInbox.StopReceipt> stopCompletion;
-        private ClientCommandInbox.StopReceipt stopReceipt;
-        private Throwable stopFailure;
-        private boolean stopSettled;
-        private EvaluationTurnControl.LeaseReceipt completedReceipt;
-
-        private PendingEvaluationTerminal(
-                EvaluationTurnGuard.Lease lease,
-                EvaluationTurnControl.ReleaseReason reason) {
-            this.lease = Objects.requireNonNull(lease, "lease");
-            this.reason = Objects.requireNonNull(reason, "reason");
-        }
-
-        private synchronized CompletableFuture<ClientCommandInbox.StopReceipt> stopCompletion() {
-            return stopCompletion;
-        }
-
-        private synchronized void retainStopCompletion(
-                CompletableFuture<ClientCommandInbox.StopReceipt> stop) {
-            Objects.requireNonNull(stop, "stop");
-            if (stopCompletion != null) {
-                return;
-            }
-            stopCompletion = stop;
-            stop.whenComplete((receipt, failure) -> {
-                synchronized (this) {
-                    if (stopCompletion == stop) {
-                        stopReceipt = receipt;
-                        stopFailure = failure;
-                        stopSettled = true;
-                    }
-                }
-            });
-        }
-
-        private synchronized PendingEvaluationStopOutcome stopOutcome() {
-            return stopSettled
-                    ? new PendingEvaluationStopOutcome(stopReceipt, stopFailure)
-                    : null;
-        }
-
-        private synchronized void retryStopAfter(
-                CompletableFuture<ClientCommandInbox.StopReceipt> completedStop) {
-            if (stopCompletion != completedStop || !stopSettled) {
-                return;
-            }
-            stopCompletion = null;
-            stopReceipt = null;
-            stopFailure = null;
-            stopSettled = false;
-        }
-
-        private synchronized void rememberCompletedReceipt(
-                EvaluationTurnControl.LeaseReceipt receipt) {
-            completedReceipt = Objects.requireNonNull(receipt, "receipt");
-        }
-
-        private synchronized EvaluationTurnControl.LeaseReceipt completedReceipt() {
-            return completedReceipt;
-        }
-    }
-
-    private record PendingEvaluationStopOutcome(
-            ClientCommandInbox.StopReceipt receipt,
-            Throwable failure) {
-    }
-
-    private record EvaluationTerminalClaim(
-            PendingEvaluationTerminal pending,
-            boolean owner,
-            EvaluationTurnControl.LeaseReceipt completedReceipt) {
-        private EvaluationTerminalClaim {
-            if ((pending == null) == (completedReceipt == null)) {
-                throw new IllegalArgumentException(
-                        "claim must contain either pending or completed terminal state");
-            }
-        }
     }
 
     @Override
@@ -1619,14 +1010,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                         "released_inputs", receipt.inputsReleased(),
                                         "discarded_pending_starts",
                                         receipt.discardedPendingStarts()))
-                                : mapFailure(failure));
+                                : RuntimeFailures.mapFailure(failure));
                     });
             return inbox.submitControlMapped(
                     command.toolName(),
                     fence.generation(),
                     context.deadlineNanos(),
                     emergency,
-                    failure -> CompletableFuture.completedFuture(mapFailure(failure)))
+                    failure -> CompletableFuture.completedFuture(RuntimeFailures.mapFailure(failure)))
                     .thenCompose(stage -> stage);
         }
         if (!context.canBeginWork()) {
@@ -1647,8 +1038,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 var minecraft = Minecraft.getInstance();
                 assertClientThread(minecraft);
                 var session = sessions.snapshot();
-                requireReady(session);
-                PreparedObservationPage prepared = getAgentObservation(observation.arguments());
+                RuntimeFailures.requireReady(session);
+                PreparedObservationPage prepared = agentObservations.getAgentObservation(observation.arguments());
                 return RuntimeReply.success(
                         prepared.wirePage(),
                         new McpRuntimePort.ObservationDeliveryReceipt(prepared.receiptId()));
@@ -1663,11 +1054,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || command instanceof AbandonObservationDelivery
                 ? inbox.submitControlMapped(
                         command.toolName(), fence.generation(), context.deadlineNanos(),
-                        work, McmcpRuntime::mapFailure)
+                        work, RuntimeFailures::mapFailure)
                 : inbox.submitMapped(
                         command.toolName(), fence.generation(), context.deadlineNanos(),
-                        work, McmcpRuntime::mapFailure, () -> false,
-                        this::abandonUnconfirmedDelivery);
+                        work, RuntimeFailures::mapFailure, () -> false,
+                        agentObservations::abandonUnconfirmedDelivery);
         return submitted;
     }
 
@@ -1679,7 +1070,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private CompletionStage<RuntimeReply> submitAgentGetAction(
             GetAction command, RuntimeCallContext context) {
         try {
-            UUID requestedId = actionId(command.arguments());
+            UUID requestedId = RuntimeArguments.actionId(command.arguments());
             int requestedWaitMillis = agentActionWaitTimeoutMillis(command.arguments());
             var containerQuery = ContainerInspection.Query.parse(command.arguments());
             if (requestedWaitMillis > 0 && Thread.currentThread() == clientThread) {
@@ -1697,7 +1088,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             RuntimeReply reply = withEvaluationLeaseFence(
                     context,
                     command.toolName(),
-                    () -> RuntimeReply.success(actionPayload(snapshot, containerQuery)));
+                    () -> RuntimeReply.success(ActionWireMapper.actionPayload(snapshot, containerQuery)));
             return CompletableFuture.completedFuture(reply);
         } catch (InterruptedException failure) {
             Thread.currentThread().interrupt();
@@ -1705,7 +1096,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return CompletableFuture.completedFuture(RuntimeReply.failure(
                     "server_busy", "The action terminal wait was interrupted", true));
         } catch (RuntimeException | LinkageError failure) {
-            return CompletableFuture.completedFuture(mapFailure(failure));
+            return CompletableFuture.completedFuture(RuntimeFailures.mapFailure(failure));
         }
     }
 
@@ -1724,10 +1115,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             request = ActionDslParser.parse(sourceObject);
             ActionDslValidator.validate(request);
             source = ActionDslSource.capture(sourceObject);
-            predicateRequirements = predicateRequirements(request.program());
-            localSafetyRequired = actionAdmissionRequiresLocalSafety(request.program());
+            predicateRequirements = ActionPredicates.predicateRequirements(request.program());
+            localSafetyRequired = ActionPlanning.actionAdmissionRequiresLocalSafety(request.program());
         } catch (RuntimeException | LinkageError failure) {
-            return CompletableFuture.completedFuture(mapFailure(failure));
+            return CompletableFuture.completedFuture(RuntimeFailures.mapFailure(failure));
         }
         var fence = publishedSession;
         var surfaceRecovery = new SurfacePreflightRecovery(request.budget());
@@ -1740,12 +1131,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 () -> withEvaluationLeaseFence(
                         context,
                         command.toolName(),
-                        () -> captureAgentAdmission(
+                        () -> actionAdmission.captureAgentAdmission(
                                 Minecraft.getInstance(),
                                 sessions.snapshot(),
                                 predicateRequirements,
                                 localSafetyRequired,
-                                containsRecipeReference(request.program()),
+                                ActionPlanning.containsRecipeReference(request.program()),
                                 request.program(), surfaceRecovery)),
                 context::isCancelled, ignored -> { });
         final AgentAdmissionSnapshot snapshot;
@@ -1761,21 +1152,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             capture.cancel(true);
             context.cancel();
             if (surfaceRecovery.hasWaited()) {
-                return CompletableFuture.completedFuture(mapAdmissionFailure(failure, surfaceRecovery));
+                return CompletableFuture.completedFuture(ActionAdmission.mapAdmissionFailure(failure, surfaceRecovery));
             }
             return CompletableFuture.completedFuture(RuntimeReply.failure(
                     "server_busy", "Agent preflight capture timed out", true));
         } catch (ExecutionException | RuntimeException failure) {
-            return CompletableFuture.completedFuture(mapAdmissionFailure(failure, surfaceRecovery));
+            return CompletableFuture.completedFuture(ActionAdmission.mapAdmissionFailure(failure, surfaceRecovery));
         }
 
         final PreparedAgentAction prepared;
         try {
             requireLiveCall(context, command.toolName());
-            prepared = prepareAgentAction(request, source, snapshot, context, surfaceRecovery);
+            prepared = actionAdmission.prepareAgentAction(request, source, snapshot, context, surfaceRecovery);
             requireLiveCall(context, command.toolName());
         } catch (RuntimeException | LinkageError failure) {
-            return CompletableFuture.completedFuture(mapFailure(failure));
+            return CompletableFuture.completedFuture(RuntimeFailures.mapFailure(failure));
         }
 
         java.util.concurrent.Callable<RuntimeReply> commit = () ->
@@ -1790,7 +1181,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 snapshot.session().generation(),
                 context.deadlineNanos(),
                 commit,
-                failure -> mapAdmissionFailure(failure, surfaceRecovery),
+                failure -> ActionAdmission.mapAdmissionFailure(failure, surfaceRecovery),
                 context::isCancelled,
                 reply -> {
                     if (reply.successful()) {
@@ -1818,28 +1209,28 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             case ConfirmActionDelivery delivery -> confirmAgentActionDelivery(delivery.actionId());
             case AbandonActionDelivery delivery -> abandonAgentActionDelivery(delivery.actionId());
             case ConfirmObservationDelivery delivery -> Map.of(
-                    "confirmed", deliveredAgentEvidence.confirmDelivery(delivery.receiptId()));
+                    "confirmed", agentObservations.deliveredEvidence().confirmDelivery(delivery.receiptId()));
             case AbandonObservationDelivery delivery -> Map.of(
-                    "abandoned", deliveredAgentEvidence.abandonDelivery(delivery.receiptId()));
+                    "abandoned", agentObservations.deliveredEvidence().abandonDelivery(delivery.receiptId()));
             case GetSnapshot snapshot -> {
-                requireReady(session);
+                RuntimeFailures.requireReady(session);
                 yield observations.getSnapshot(minecraft, session.clientTick(), snapshot.arguments());
             }
             case CompareBlockPlan compare -> {
-                requireReady(session);
+                RuntimeFailures.requireReady(session);
                 yield blockPlans.compare(minecraft, session.clientTick(), compare.arguments());
             }
             case GetRecipes getRecipes -> {
-                requireReady(session);
+                RuntimeFailures.requireReady(session);
                 yield getRecipes(minecraft, session, getRecipes.arguments());
             }
-            case ListRoutines list -> listRoutines(list.arguments());
-            case GetRoutine get -> getRoutine(get.arguments());
+            case ListRoutines list -> routineAdmission.listRoutines(list.arguments());
+            case GetRoutine get -> routineAdmission.getRoutine(get.arguments());
             case StartRoutine start -> {
-                requireReady(session);
-                yield startRoutine(minecraft, session, start.arguments(), context);
+                RuntimeFailures.requireReady(session);
+                yield routineAdmission.startRoutine(minecraft, session, start.arguments(), context);
             }
-            case CancelRoutine cancel -> cancelRoutine(minecraft, cancel.arguments());
+            case CancelRoutine cancel -> routineAdmission.cancelRoutine(minecraft, cancel.arguments());
             case EmergencyStop ignored -> throw new AssertionError("emergency stop bypasses the normal queue");
         };
     }
@@ -1848,255 +1239,31 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             Map<String, Object> arguments) {
-        requireExactKeys(arguments, "get_recipes", Set.of("query", "max_results"));
-        int maxResults = intArgument(arguments, "max_results");
+        RuntimeArguments.requireExactKeys(arguments, "get_recipes", Set.of("query", "max_results"));
+        int maxResults = RuntimeArguments.intArgument(arguments, "max_results");
         if (maxResults < 1 || maxResults > 64) {
             throw new IllegalArgumentException("max_results must be in 1..64");
         }
-        Map<String, Object> queryInput = objectArgument(arguments, "query");
-        String kind = stringArgument(queryInput, "kind");
+        Map<String, Object> queryInput = RuntimeArguments.objectArgument(arguments, "query");
+        String kind = RuntimeArguments.stringArgument(queryInput, "kind");
         ClientRecipeCatalog.Query query = switch (kind) {
             case "result_item" -> {
-                requireExactKeys(queryInput, "get_recipes query", Set.of("kind", "item"));
+                RuntimeArguments.requireExactKeys(queryInput, "get_recipes query", Set.of("kind", "item"));
                 yield new ClientRecipeCatalog.Query(
                         ClientRecipeCatalog.QueryKind.RESULT_ITEM,
-                        stringArgument(queryInput, "item"));
+                        RuntimeArguments.stringArgument(queryInput, "item"));
             }
             case "result_tag" -> {
-                requireExactKeys(queryInput, "get_recipes query", Set.of("kind", "tag"));
+                RuntimeArguments.requireExactKeys(queryInput, "get_recipes query", Set.of("kind", "tag"));
                 yield new ClientRecipeCatalog.Query(
                         ClientRecipeCatalog.QueryKind.RESULT_TAG,
-                        stringArgument(queryInput, "tag"));
+                        RuntimeArguments.stringArgument(queryInput, "tag"));
             }
             default -> throw new IllegalArgumentException("get_recipes query kind is unsupported");
         };
         recipeCatalog.refreshFromClient(
                 minecraft, Objects.requireNonNull(session.worldSessionId(), "worldSessionId"), session.clientTick());
         return recipeCatalog.query(session.worldSessionId(), query, maxResults).toMap();
-    }
-
-    private PreparedObservationPage getAgentObservation(Map<String, Object> arguments) {
-        Set<String> required = Set.of("schema_version", "frame_id", "kinds", "cursor", "limit");
-        requireAllowedKeys(arguments, "agent_get_observation",
-                Set.of("schema_version", "frame_id", "kinds", "filter", "cursor", "limit"));
-        if (!arguments.keySet().containsAll(required)
-                || arguments.size() < required.size()
-                || arguments.size() > required.size() + 1) {
-            throw new IllegalArgumentException(
-                    "agent_get_observation must contain schema_version, frame_id, kinds, cursor, "
-                            + "and limit; filter is optional");
-        }
-        if (intArgument(arguments, "schema_version") != 1) {
-            throw new IllegalArgumentException("schema_version must be 1");
-        }
-        Object rawKinds = arguments.get("kinds");
-        if (!(rawKinds instanceof List<?> values)) {
-            throw new IllegalArgumentException("kinds must be an array");
-        }
-        var kinds = EnumSet.noneOf(ObservationKind.class);
-        for (Object value : values) {
-            if (!(value instanceof String wireName) || !kinds.add(ObservationKind.fromWireName(wireName))) {
-                throw new IllegalArgumentException("kinds must contain unique observation kinds");
-            }
-        }
-        Object rawCursor = arguments.get("cursor");
-        String cursor = rawCursor == null ? null : (String) rawCursor;
-        ObservationFilter filter = observationFilterArgument(arguments);
-        try {
-            ObservationPage page = agentObservationFrames.page(
-                    stringArgument(arguments, "frame_id"),
-                    kinds,
-                    filter,
-                    cursor,
-                    intArgument(arguments, "limit"));
-            UUID receiptId = deliveredAgentEvidence.prepareDelivery(page);
-            Map<String, Object> wirePage = ObservationWireMapper.page(page, surface ->
-                    deliveredAgentEvidence.preparedPlacementStateRef(receiptId, surface)
-                            .orElse(null));
-            return new PreparedObservationPage(wirePage, receiptId);
-        } catch (ObservationStoreException failure) {
-            throw new RuntimeInvocationException(
-                    failure.code().name().toLowerCase(Locale.ROOT),
-                    failure.getMessage(),
-                    failure.code() != ObservationStoreException.Code.INVALID_CURSOR,
-                    Map.of());
-        }
-    }
-
-    private static ObservationFilter observationFilterArgument(Map<String, Object> arguments) {
-        return ObservationFilterArguments.parse(arguments);
-    }
-
-    private void abandonUnconfirmedDelivery(RuntimeReply reply) {
-        if (reply != null
-                && reply.deliveryReceipt()
-                        instanceof McpRuntimePort.ObservationDeliveryReceipt observation) {
-            deliveredAgentEvidence.abandonDelivery(observation.receiptId());
-        }
-    }
-
-    private record PreparedObservationPage(Map<String, Object> wirePage, UUID receiptId) {
-        private PreparedObservationPage {
-            wirePage = java.util.Collections.unmodifiableMap(
-                    new java.util.LinkedHashMap<>(
-                            Objects.requireNonNull(wirePage, "wirePage")));
-            Objects.requireNonNull(receiptId, "receiptId");
-        }
-    }
-
-    /**
-     * Planner view containing the current frame plus only static surfaces that were actually
-     * returned to the MCP client. Every consumer still applies its ordinary revision, pose,
-     * reach, age, commit, and JIT fences. Actual target-frame rays may refresh its internal
-     * record, but neither its original delivery lease nor the public frame is extended.
-     */
-    private Optional<ObservationFrame> agentPlanningFrame() {
-        return agentPlanningFrame(null);
-    }
-
-    private Optional<ObservationFrame> agentPlanningFrame(ActionDsl.Node primitive) {
-        return agentPlanningFrame(primitive, null);
-    }
-
-    private Optional<ObservationFrame> agentPlanningFrame(ActionDsl.Node primitive,
-            DeliveredPolicyEvidenceStore.SurfaceLease surfaceLease) {
-        var minecraft = Minecraft.getInstance();
-        assertClientThread(minecraft);
-        var session = sessions.snapshot();
-        if (!session.worldReady() || minecraft.level == null || minecraft.player == null
-                || agentObserver == null) return Optional.empty();
-        var reconciliation = reconciliationSignals.bindAndSnapshot(
-                minecraft.level, session.worldSessionId());
-        var fogDistance = ClientFogDistanceSignals.current(
-                minecraft.level, minecraft.player, minecraft.player.tickCount);
-        if (fogDistance.isEmpty()) {
-            // Retain the original evidence timestamps/revisions; missing render data cannot
-            // authorize a new ray or refresh a previously delivered surface.
-            return deliveredAgentEvidence.augment(agentObservationFrames.latestFrame());
-        }
-        String frameRef = frameItemTargetRef(primitive);
-        var planning = deliveredAgentEvidence.reobserveForPlanning(agentObservationFrames.latestFrame(), surface -> {
-            var position = surface.position();
-            long barrier = reconciliation.surfaceBarrierWorldRevision(
-                    position.x(), position.y(), position.z());
-            if (surface.worldRevision() >= barrier
-                    && (surfaceLease == null || !surfaceLease.targets(surface))) return Optional.of(surface);
-            return agentObserver.reobserveSurface(minecraft.level, minecraft.player, surface,
-                    session.clientTick(), reconciliation.worldRevision(), fogDistance.getAsDouble());
-        }, session.clientTick(), known -> {
-            if (frameRef == null || !frameRef.equals(known.entityRef())
-                    || known.worldRevision() >= reconciliation.visualBarrierWorldRevision()) {
-                return Optional.empty();
-            }
-            return observations.resolveLoadedEntityRefIdentity(minecraft, session.clientTick(),
-                            session.worldSessionId(), session.dimension(), frameRef,
-                            McmcpClientConfig.visualRadiusBlocks())
-                    .filter(net.minecraft.world.entity.decoration.ItemFrame.class::isInstance)
-                    .map(net.minecraft.world.entity.decoration.ItemFrame.class::cast)
-                    .flatMap(frame -> OmnidirectionalObserver.reobserveFrameEntity(
-                            minecraft.level, minecraft.player, frame, known, session.clientTick(),
-                            reconciliation.worldRevision(), McmcpClientConfig.visualRadiusBlocks()));
-        }, surface -> surfaceLease != null && surfaceLease.targets(surface));
-        return surfaceLease == null ? planning
-                : deliveredAgentEvidence.restrictToSurfaceLease(planning, surfaceLease);
-    }
-
-    static String frameItemTargetRef(ActionDsl.Node primitive) {
-        if (primitive instanceof ActionDsl.RemoveVisibleFrameItem remove) return remove.entityRef();
-        if (primitive instanceof ActionDsl.InsertVisibleFrameItem insert) return insert.entityRef();
-        return null;
-    }
-
-    private AgentAdmissionSnapshot captureAgentAdmission(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            PredicateRequirements predicateRequirements,
-            boolean localSafetyRequired,
-            boolean recipeReferenceRequired,
-            ActionDsl.Program program,
-            SurfacePreflightRecovery surfaceRecovery) {
-        assertClientThread(minecraft);
-        requireReady(session);
-        if (pendingAgentInputRelease || agentExecution != null
-                || agentActions.active().isPresent() || routines.activeRoutineId().isPresent()) {
-            throw new RuntimeInvocationException(
-                    "task_busy", "Another action is already queued or running.", true, Map.of());
-        }
-        if (minecraft.isMultiplayerServer() && !multiplayerPolicyAllows(minecraft)) {
-            throw new RuntimeInvocationException(
-                    "multiplayer_not_allowed",
-                    "This local policy does not allow multiplayer automation.",
-                    false,
-                    Map.of());
-        }
-        var lock = arming.snapshot(session.worldSessionId());
-        if (lock.mode() != LocalArmingState.Mode.READY) {
-            throw new RuntimeInvocationException(
-                    "mcp_operation_disabled",
-                    "Enable MCP operation from the in-game Screen before starting an action.",
-                    true,
-                    Map.of());
-        }
-        if (localSafetyRequired
-                && localSafety != LocalObservationProjector.CurrentSafety.CONTINUE) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state",
-                    "The Local Observation Volume does not permit action admission.",
-                    true,
-                    Map.of());
-        }
-        if (recipeReferenceRequired) {
-            recipeCatalog.refreshFromClient(
-                    minecraft,
-                    Objects.requireNonNull(session.worldSessionId(), "worldSessionId"),
-                    session.clientTick());
-        }
-        var map = requireAgentMap(session);
-        var reconciliation = reconciliationSignals.bindAndSnapshot(
-                minecraft.level, session.worldSessionId());
-        final long visualBarrierWorldRevision;
-        try {
-            visualBarrierWorldRevision = visualBarrierWorldRevision(map, reconciliation);
-        } catch (AgentPrimitivePlanner.PlanningException mismatch) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state",
-                    "The visual evidence boundary does not match the traversability map.",
-                    true,
-                    Map.of());
-        }
-        var player = Objects.requireNonNull(minecraft.player, "player");
-        var predicateSnapshot = AdmissionPolicySnapshot.capture(
-                policySnapshot(minecraft), predicateRequirements);
-        var singlePrimitive = firstPrimitive(program, predicateSnapshot).orElse(null);
-        surfaceRecovery.capture(singlePrimitive, deliveredAgentEvidence);
-        if (surfaceRecovery.lease() != null && !surfaceRecovery.applies(singlePrimitive)) {
-            throw admissionPreflightFailure(AdmissionFenceFailure.POLICY_BRANCH_CHANGED);
-        }
-        requireSurfaceRecoveryReady(minecraft, session, surfaceRecovery);
-        String frameRef = frameItemTargetRef(singlePrimitive);
-        if (frameRef != null) {
-            deliveredAgentEvidence.frameDisplayRejection(
-                    frameRef, agentObservationFrames.latestFrame(), session.clientTick()).ifPresent(reason -> {
-                        throw new RuntimeInvocationException("target_unknown",
-                                "Frame witness rejected: " + reason.name().toLowerCase(Locale.ROOT), true, Map.of());
-                    });
-        }
-        return new AgentAdmissionSnapshot(
-                session,
-                lock,
-                map,
-                playerPose(player, session.dimension()),
-                agentPlanningFrame(singlePrimitive, surfaceRecovery.lease()),
-                localSafety,
-                localSafetyRequired,
-                predicateRequirements,
-                predicateSnapshot,
-                McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
-                minecraft.isMultiplayerServer(),
-                multiplayerPolicyAllows(minecraft),
-                reconciliation,
-                visualBarrierWorldRevision,
-                reconciliation.positionCorrectionRevision());
     }
 
     private boolean multiplayerPolicyAllows(Minecraft minecraft) {
@@ -2111,316 +1278,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 server.ip));
     }
 
-    private PreparedAgentAction prepareAgentAction(
-            ActionDsl.Request request,
-            ActionDslSource source,
-            AgentAdmissionSnapshot snapshot,
-            RuntimeCallContext context,
-            SurfacePreflightRecovery surfaceRecovery) {
-        validatePredicateAvailability(request.program(), snapshot.predicateSnapshot());
-        var allowed = EnumSet.noneOf(ActionDsl.Capability.class);
-        if (snapshot.control().capabilities().contains("movement")) {
-            allowed.add(ActionDsl.Capability.MOVEMENT);
-        }
-        if (snapshot.control().capabilities().contains("camera")) {
-            allowed.add(ActionDsl.Capability.CAMERA);
-        }
-        if (snapshot.control().capabilities().contains("block_break")) {
-            allowed.add(ActionDsl.Capability.BLOCK_BREAK);
-        }
-        if (snapshot.control().capabilities().contains("block_interact")) {
-            allowed.add(ActionDsl.Capability.BLOCK_INTERACT);
-        }
-        if (snapshot.control().capabilities().contains("block_place")) {
-            allowed.add(ActionDsl.Capability.BLOCK_PLACE);
-        }
-        if (snapshot.control().capabilities().contains("inventory_transfer")) {
-            allowed.add(ActionDsl.Capability.INVENTORY_TRANSFER);
-        }
-        if (snapshot.control().capabilities().contains("item_use")) {
-            allowed.add(ActionDsl.Capability.ITEM_USE);
-        }
-        if (snapshot.control().capabilities().contains("entity_attack")) {
-            allowed.add(ActionDsl.Capability.ENTITY_ATTACK);
-        }
-        ActionDslCompiler.CompiledProgram program = ActionDslCompiler.compile(
-                request, this::admissionPrimitiveCost, allowed);
-        surfaceRecovery.effectiveBudget(program.effectiveBudget());
-        Optional<ActionDsl.Node> initialPrimitive = firstPrimitive(
-                request.program(), snapshot.predicateSnapshot());
-        final AgentPrimitivePlanner.Analysis analysis;
-        final Optional<AgentPrimitivePlanner.FrameItemAim> frameItemAim;
-        try {
-            analysis = initialPrimitive
-                    .filter(McmcpRuntime::requiresWorldPlanning)
-                    .map(primitive -> analyzePrimitive(
-                            request.program(),
-                            primitive,
-                            snapshot.map(),
-                            snapshot.pose(),
-                            snapshot.frame(),
-                            snapshot.cameraDegreesPerTick(),
-                            snapshot.visualBarrierWorldRevision(),
-                            primitiveSurfaceRevisionBarrier(
-                                    primitive,
-                                    snapshot.map(),
-                                    snapshot.reconciliation()),
-                            context::canBeginWork))
-                    .orElseGet(McmcpRuntime::emptyPrimitiveAnalysis);
-            initialPrimitive.flatMap(analysis::worstCase).ifPresent(cost ->
-                    ActionDslCompiler.requireWithinBudget(cost, program.effectiveBudget()));
-            frameItemAim = initialPrimitive.filter(McmcpRuntime::isFrameItemPrimitive)
-                    .map(primitive -> AgentPrimitivePlanner.requireFrameItemAim(
-                            snapshot.map(), snapshot.pose(), snapshot.frame(), primitive,
-                            snapshot.visualBarrierWorldRevision()));
-            if (frameItemAim.isPresent()
-                    && !frameItemEvidenceFresh(frameItemAim.orElseThrow(), snapshot.session().clientTick())) {
-                throw new RuntimeInvocationException("target_unknown",
-                        "Frame display evidence expired.", true, Map.of());
-            }
-        } catch (AgentPrimitivePlanner.PlanningException failure) {
-            if (surfaceRecovery.lease() != null
-                    && failure.code() == AgentPrimitivePlanner.Code.TARGET_UNKNOWN) {
-                throw admissionPreflightFailure(AdmissionFenceFailure.SURFACE_REOBSERVATION_MISMATCH);
-            }
-            throw planningFailure(failure);
-        }
-        surfaceRecovery.noteRevalidated(RendererRecoveryStage.CAPTURE);
-        return new PreparedAgentAction(
-                snapshot, program, source, analysis, initialPrimitive, frameItemAim, surfaceRecovery);
-    }
-
-    private AgentPrimitivePlanner.Analysis analyzePrimitive(
-            ActionDsl.Program program,
-            ActionDsl.Node primitive,
-            KnownTraversabilitySnapshot map,
-            AgentPrimitivePlanner.Pose pose,
-            Optional<ObservationFrame> frame,
-            float cameraDegreesPerTick,
-            long visualBarrierWorldRevision,
-            ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier,
-            java.util.function.BooleanSupplier canContinue) {
-        var oneNode = new ActionDsl.Program(
-                program.dslVersion(), Optional.empty(), program.capabilities(), List.of(primitive));
-        return AgentPrimitivePlanner.analyze(
-                oneNode,
-                map,
-                agentPathfinder,
-                pose,
-                frame,
-                cameraDegreesPerTick,
-                visualBarrierWorldRevision,
-                surfaceRevisionBarrier,
-                canContinue,
-                deliveredAgentEvidence::resolvePlacementState);
-    }
-
-    private static AgentPrimitivePlanner.Analysis emptyPrimitiveAnalysis() {
-        return new AgentPrimitivePlanner.Analysis(
-                Map.of(), Map.of(), Set.of(), Set.of(), Set.of(), Map.of(), Map.of());
-    }
-
-    private static Optional<ActionDsl.Node> firstPrimitive(
-            ActionDsl.Program program, PolicySnapshot snapshot) {
-        return Optional.ofNullable(new ActionProgramCursor(program).next(snapshot).primitive());
-    }
-
-    private static boolean containsRecipeReference(ActionDsl.Program program) {
-        return program.body().stream().anyMatch(McmcpRuntime::containsRecipeReference);
-    }
-
-    private static boolean containsRecipeReference(ActionDsl.Node node) {
-        if (node instanceof ActionDsl.CraftKnownRecipe
-                || node instanceof ActionDsl.SmeltKnownRecipe) {
-            return true;
-        }
-        if (node instanceof ActionDsl.If conditional) {
-            return conditional.thenBranch().stream().anyMatch(McmcpRuntime::containsRecipeReference)
-                    || conditional.elseBranch().stream()
-                            .anyMatch(McmcpRuntime::containsRecipeReference);
-        }
-        return node instanceof ActionDsl.Repeat repeat
-                && repeat.body().stream().anyMatch(McmcpRuntime::containsRecipeReference);
-    }
-
-    private static boolean requiresWorldPlanning(ActionDsl.Node node) {
-        return !(node instanceof ActionDsl.WaitTicks
-                || node instanceof ActionDsl.OperateKnownMenu
-                || node instanceof ActionDsl.ReelKnownFishingSession
-                || node instanceof ActionDsl.OperateKillZone
-                || node instanceof ActionDsl.HoldBoundedInputs
-                || node instanceof ActionDsl.WaitUntil wait
-                        && wait.condition() instanceof ActionDsl.SoundClueCondition);
-    }
-
-    static AgentPrimitivePlanner.ApproachPlan requireRuntimeApproachPlan(
-            KnownTraversabilitySnapshot map,
-            DeterministicAStar pathfinder,
-            AgentPrimitivePlanner.Pose startPose,
-            ActionDsl.ApproachKnownSurface approach,
-            Optional<ObservationFrame> planningFrame,
-            long surfaceBarrierWorldRevision) {
-        AgentPrimitivePlanner.requireKnownSurface(
-                map,
-                planningFrame,
-                approach.target(),
-                approach.expectedBlock(),
-                surfaceBarrierWorldRevision);
-        return AgentPrimitivePlanner.requireApproachPlan(
-                map,
-                pathfinder,
-                startPose,
-                approach.target(),
-                approach.expectedBlock(),
-                planningFrame,
-                surfaceBarrierWorldRevision);
-    }
-
-    static AgentPrimitivePlanner.ApproachPlan requireRuntimeKnownPlacementApproachPlan(
-            KnownTraversabilitySnapshot map,
-            DeterministicAStar pathfinder,
-            AgentPrimitivePlanner.Pose startPose,
-            ActionDsl.ApproachKnownPlacement approach,
-            Optional<ObservationFrame> planningFrame,
-            ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier,
-            PlacementStateResolver placementStates) {
-        return AgentPrimitivePlanner.requireKnownPlacementApproachPlan(
-                map,
-                pathfinder,
-                startPose,
-                approach,
-                planningFrame,
-                surfaceRevisionBarrier,
-                placementStates);
-    }
-
-    static boolean actionAdmissionRequiresLocalSafety(ActionDsl.Program program) {
-        Objects.requireNonNull(program, "program");
-        return program.body().size() != 1
-                || !(program.body().getFirst() instanceof ActionDsl.OperateKnownMenu);
-    }
-
-    static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
-        if (isFrameItemPrimitive(node)) {
-            return Optional.of(new ActionDslCompiler.Cost(
-                    ActionDslCompiler.FRAME_ITEM_DURATION_MILLIS,
-                    ActionDslCompiler.FRAME_ITEM_TICKS, 0.0D, 360.0D, 1L, 0L, 0L));
-        }
-        if (node instanceof ActionDsl.HoldBoundedInputs hold) {
-            return Optional.of(ActionDslCompiler.intrinsicBoundedInputCost(hold));
-        }
-        long durationMillis = node instanceof ActionDsl.CraftKnownRecipe
-                ? ActionDslCompiler.KNOWN_CRAFTING_DURATION_MILLIS
-                : node instanceof ActionDsl.TakeKnownContainerStack take
-                        ? ActionDslCompiler.knownContainerTransferTicks(take.maxStacks()) * 50L
-                : node instanceof ActionDsl.StoreKnownContainerStack store
-                        ? ActionDslCompiler.knownContainerTransferTicks(store.maxStacks()) * 50L
-                : node instanceof ActionDsl.SmeltKnownRecipe smelt
-                        ? ActionDslCompiler.knownSmeltingDurationMillis(smelt.maxSmelts())
-                : node instanceof ActionDsl.OperateKnownMenu
-                        ? ActionDslCompiler.KNOWN_MENU_OPERATION_DURATION_MILLIS
-                : node instanceof ActionDsl.BrewKnownPotionBatch
-                        ? ActionDslCompiler.KNOWN_BREWING_DURATION_MILLIS
-                : node instanceof ActionDsl.CastKnownFishingRod
-                        ? ActionDslCompiler.KNOWN_FISHING_DURATION_MILLIS : 0L;
-        long ticks = node instanceof ActionDsl.CraftKnownRecipe
-                ? ActionDslCompiler.KNOWN_CRAFTING_TICKS
-                : node instanceof ActionDsl.TakeKnownContainerStack take
-                        ? ActionDslCompiler.knownContainerTransferTicks(take.maxStacks())
-                : node instanceof ActionDsl.StoreKnownContainerStack store
-                        ? ActionDslCompiler.knownContainerTransferTicks(store.maxStacks())
-                : node instanceof ActionDsl.SmeltKnownRecipe smelt
-                        ? ActionDslCompiler.knownSmeltingTicks(smelt.maxSmelts())
-                : node instanceof ActionDsl.OperateKnownMenu
-                        ? ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS
-                : node instanceof ActionDsl.BrewKnownPotionBatch
-                        ? ActionDslCompiler.KNOWN_BREWING_TICKS
-                : node instanceof ActionDsl.CastKnownFishingRod
-                        ? ActionDslCompiler.KNOWN_FISHING_TICKS : 0L;
-        long interactions = node instanceof ActionDsl.TillKnownBlock
-                        || node instanceof ActionDsl.OpenKnownFenceGate
-                        || node instanceof ActionDsl.OpenKnownPassage
-                        || node instanceof ActionDsl.InspectKnownContainer
-                ? 1L
-                : node instanceof ActionDsl.TillKnownBatch batch
-                        ? batch.targets().size()
-                : node instanceof ActionDsl.TakeKnownContainerStack take
-                        ? ActionDslCompiler.knownContainerTransferInteractions(take.maxStacks())
-                : node instanceof ActionDsl.StoreKnownContainerStack store
-                        ? ActionDslCompiler.knownContainerTransferInteractions(store.maxStacks())
-                : node instanceof ActionDsl.CraftKnownRecipe craft
-                        ? ActionDslCompiler.knownCraftInteractions(craft.maxCrafts())
-                : node instanceof ActionDsl.SmeltKnownRecipe
-                        ? ActionDslCompiler.KNOWN_SMELTING_INTERACTIONS
-                : node instanceof ActionDsl.OperateKnownMenu
-                        ? ActionDslCompiler.KNOWN_MENU_OPERATION_INTERACTIONS
-                : node instanceof ActionDsl.BrewKnownPotionBatch
-                        ? ActionDslCompiler.KNOWN_BREWING_INTERACTIONS
-                : node instanceof ActionDsl.CastKnownFishingRod ? 2L : 0L;
-        if (node instanceof ActionDsl.OperateKillZone operation) {
-            return Optional.of(ActionDslCompiler.intrinsicKillZoneCost(operation));
-        }
-        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
-            return Optional.of(ActionDslCompiler.intrinsicCobblestoneGeneratorCost(operation));
-        }
-        long breaks = node instanceof ActionDsl.BreakKnownFace
-                        || node instanceof ActionDsl.BreakKnownBlock
-                        || node instanceof ActionDsl.HarvestKnownWheat
-                ? 1L : 0L;
-        if (node instanceof ActionDsl.HarvestKnownWheatBatch batch) {
-            breaks = batch.targets().size();
-        }
-        long placements = node instanceof ActionDsl.PlantKnownWheat ? 1L : 0L;
-        if (node instanceof ActionDsl.PlantKnownWheatBatch batch) {
-            placements = batch.targets().size();
-        }
-        return Optional.of(new ActionDslCompiler.Cost(
-                durationMillis, ticks, 0.0D, 0.0D, interactions, breaks, placements));
-    }
-
-    private Optional<ActionDslCompiler.Cost> admissionPrimitiveCost(ActionDsl.Node node) {
-        if (node instanceof ActionDsl.PillarUpKnown pillar) {
-            return Optional.of(pillarAdmissionCost(
-                    pillar, deliveredAgentEvidence::resolvePlacementState));
-        }
-        if (node instanceof ActionDsl.ApplyKnownBlockPlan plan) {
-            long placements = plan.entries().stream()
-                    .mapToLong(this::rememberedPlacementCells)
-                    .sum();
-            return Optional.of(ActionDslCompiler.intrinsicKnownBlockPlanCost(
-                    plan.entries().size(), placements));
-        }
-        return structuralPrimitiveCost(node);
-    }
-
-    static ActionDslCompiler.Cost pillarAdmissionCost(
-            ActionDsl.PillarUpKnown pillar,
-            PlacementStateResolver placementStates) {
-        Optional<PillarSource> source = resolvePillarSource(pillar, placementStates);
-        source.ifPresent(value -> KnownPillarUpRequest.requireSourceStateAndItem(
-                new BlockStateFingerprint(
-                        value.state().block(), value.state().properties()),
-                value.item()));
-        // The footprint is fixed at one. Unknown/evicted refs need no identity guess for cost;
-        // the admission planner resolves them separately and reports TARGET_UNKNOWN.
-        return ActionDslCompiler.intrinsicPillarUpCost();
-    }
-
-    private long rememberedPlacementCells(ActionDsl.BlockPlanEntry entry) {
-        Optional<ActionDsl.BlockStateSpec> state = entry.sourceState();
-        if (state.isEmpty()) {
-            state = entry.placementStateRef()
-                    .flatMap(deliveredAgentEvidence::resolvePlacementState)
-                    .map(remembered -> new ActionDsl.BlockStateSpec(
-                            remembered.state().block().value(),
-                            remembered.state().properties()));
-        }
-        // Unknown/evicted references remain fail-closed here and are rejected by planning.
-        return state.map(value -> (long) SafeConstructionBlocks
-                        .placementCellCount(value.block()))
-                .orElse(2L);
-    }
-
     private Map<String, Object> commitAgentAction(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
@@ -2433,7 +1290,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
         }
-        var admissionFailure = admissionFenceFailure(
+        var admissionFailure = actionAdmission.admissionFenceFailure(
                 minecraft,
                 session,
                 prepared,
@@ -2443,10 +1300,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (admissionFailure.orElseThrow() == AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING) {
                 throw new ClientCommandInbox.DeferControl();
             }
-            throw admissionPreflightFailure(admissionFailure.orElseThrow());
+            throw ActionAdmission.admissionPreflightFailure(admissionFailure.orElseThrow());
         }
         requireLiveCall(context, "agent_start_action");
-        ActionDsl.OperateKillZone killZone = soleKillZone(prepared.program().request().program());
+        ActionDsl.OperateKillZone killZone = KillZoneSafety.soleKillZone(prepared.program().request().program());
         KillZoneAdmission killZoneAdmission = null;
         ScopedEntityAttackConsentTransportBridge.ResponseCapability transportApproval = null;
         if (killZone != null) {
@@ -2574,12 +1431,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 "accepted_at", accepted.acceptedAt().toString());
     }
 
-    private static ActionDsl.OperateKillZone soleKillZone(ActionDsl.Program program) {
-        return program.body().size() == 1
-                        && program.body().getFirst() instanceof ActionDsl.OperateKillZone operation
-                ? operation : null;
-    }
-
     static KillZoneElicitationDecision killZoneElicitationDecision(
             RuntimeCallContext.ElicitationInput elicitation) {
         Objects.requireNonNull(elicitation, "elicitation");
@@ -2657,7 +1508,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     "target_changed", "The declared main-hand item is not currently held.",
                     true, Map.of());
         }
-        AttackProfile profile = requireKnownAttackProfile(player.getMainHandItem());
+        AttackProfile profile = KillZoneSafety.requireKnownAttackProfile(player.getMainHandItem());
         if (player.getMainHandItem().isDamageableItem()
                 && player.getMainHandItem().getMaxDamage()
                         - player.getMainHandItem().getDamageValue() < operation.maxAttacks()) {
@@ -2674,9 +1525,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var zone = new ScopedEntityAttackConsentStore.Bounds(
                 raw.min().x(), raw.min().y(), raw.min().z(),
                 raw.max().x(), raw.max().y(), raw.max().z());
-        requireKillZoneBarrier(
+        KillZoneSafety.requireKillZoneBarrier(
                 level, player, station, zone, operation.entityTypeAllowlist());
-        String structure = killZoneStructureFingerprint(level, station, zone);
+        String structure = KillZoneSafety.killZoneStructureFingerprint(level, station, zone);
         var scope = new ScopedEntityAttackConsentStore.Scope(
                 session.dimension(),
                 station,
@@ -2690,315 +1541,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 operation.minimumIntervalTicks(),
                 operation.maxOperationDurationTicks());
         var binding = new StringBuilder(source.consentBindingSha256());
-        appendIdentity(binding, scope.toString());
-        return new KillZoneAdmission(sha256Identity(binding), scope);
-    }
-
-    private static AttackProfile requireKnownAttackProfile(ItemStack stack) {
-        if (stack == null || stack.isEmpty()) {
-            throw new RuntimeInvocationException(
-                    "unsupported_attack_profile", "The main hand has no supported attack item.",
-                    false, Map.of());
-        }
-        String item = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-        boolean sword = item.matches("minecraft:(wooden|stone|copper|iron|golden|diamond|netherite)_sword");
-        boolean axe = item.matches("minecraft:(wooden|stone|copper|iron|golden|diamond|netherite)_axe");
-        if (!sword && !axe) {
-            throw new RuntimeInvocationException(
-                    "unsupported_attack_profile",
-                    "Only audited Vanilla swords and axes are supported; MOD profiles need an adapter.",
-                    false, Map.of());
-        }
-        var canonical = new StringBuilder(item);
-        for (var entry : stack.getComponentsPatch().entrySet()) {
-            if (entry.getKey() != DataComponents.DAMAGE
-                    && entry.getKey() != DataComponents.ENCHANTMENTS) {
-                throw new RuntimeInvocationException(
-                        "unsupported_attack_profile",
-                        "The held stack has an unaudited attack-relevant component patch.",
-                        false, Map.of());
-            }
-        }
-        if (!stack.getEnchantments().isEmpty()) {
-            throw new RuntimeInvocationException(
-                    "unsupported_attack_profile",
-                    "The initial production slice accepts only unenchanted Vanilla swords and axes.",
-                    false, Map.of());
-        }
-        return new AttackProfile(
-                sha256Identity(canonical),
-                sword
-                        ? ScopedEntityAttackConsentStore.AttackSideEffectProfile.VANILLA_SWEEP
-                        : ScopedEntityAttackConsentStore.AttackSideEffectProfile.VANILLA_SINGLE_TARGET);
-    }
-
-    private static String killZoneStructureFingerprint(
-            net.minecraft.client.multiplayer.ClientLevel level,
-            ScopedEntityAttackConsentStore.Bounds station,
-            ScopedEntityAttackConsentStore.Bounds zone) {
-        int minX = Mth.floor(Math.min(station.minX(), zone.minX())) - 1;
-        int minY = Mth.floor(Math.min(station.minY(), zone.minY())) - 1;
-        int minZ = Mth.floor(Math.min(station.minZ(), zone.minZ())) - 1;
-        int maxX = Mth.ceil(Math.max(station.maxX(), zone.maxX())) + 1;
-        int maxY = Mth.ceil(Math.max(station.maxY(), zone.maxY())) + 1;
-        int maxZ = Mth.ceil(Math.max(station.maxZ(), zone.maxZ())) + 1;
-        long cells = Math.multiplyExact(
-                Math.multiplyExact((long) maxX - minX + 1L, (long) maxY - minY + 1L),
-                (long) maxZ - minZ + 1L);
-        if (cells > 8_192L) {
-            throw new RuntimeInvocationException(
-                    "unsupported_kill_zone", "The structure witness exceeds 8192 loaded cells.",
-                    false, Map.of());
-        }
-        var canonical = new StringBuilder();
-        for (int y = minY; y <= maxY; y++) {
-            for (int z = minZ; z <= maxZ; z++) {
-                for (int x = minX; x <= maxX; x++) {
-                    var pos = new BlockPos(x, y, z);
-                    if (!level.isLoaded(pos)) {
-                        throw new RuntimeInvocationException(
-                                "target_unknown", "Every structure witness cell must be loaded.",
-                                true, Map.of());
-                    }
-                    BlockState state = level.getBlockState(pos);
-                    appendIdentity(canonical, x + "," + y + "," + z);
-                    appendIdentity(canonical,
-                            BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
-                    state.getValues()
-                            .map(value -> value.property().getName() + "=" + value.valueName())
-                            .sorted()
-                            .forEach(value -> appendIdentity(canonical, value));
-                    state.getCollisionShape(level, pos).toAabbs().stream()
-                            .map(box -> box.minX + "," + box.minY + "," + box.minZ + ","
-                                    + box.maxX + "," + box.maxY + "," + box.maxZ)
-                            .sorted()
-                            .forEach(value -> appendIdentity(canonical, value));
-                    var fluid = state.getFluidState();
-                    appendIdentity(canonical, fluid.isEmpty() ? "empty"
-                            : BuiltInRegistries.FLUID.getKey(fluid.getType()).toString()
-                                    + ":" + fluid.getAmount() + ":" + fluid.isSource());
-                }
-            }
-        }
-        return sha256Identity(canonical);
-    }
-
-    private static void requireKillZoneBarrier(
-            net.minecraft.client.multiplayer.ClientLevel level,
-            Player player,
-            ScopedEntityAttackConsentStore.Bounds station,
-            ScopedEntityAttackConsentStore.Bounds zone,
-            List<String> allowedTypes) {
-        Set<String> auditedTypes = Set.of(
-                "minecraft:armor_stand",
-                "minecraft:zombie",
-                "minecraft:skeleton");
-        if (!auditedTypes.containsAll(allowedTypes)) {
-            throw unsafeKillZone(
-                    "The initial fixture accepts only audited armor-stand and basic zombie/skeleton types.");
-        }
-        AABB playerBox = player.getBoundingBox();
-        AABB safetyVolume = playerBox.inflate(8.0D);
-        if (zone.minX() < safetyVolume.minX || zone.minY() < safetyVolume.minY
-                || zone.minZ() < safetyVolume.minZ || zone.maxX() > safetyVolume.maxX
-                || zone.maxY() > safetyVolume.maxY || zone.maxZ() > safetyVolume.maxZ) {
-            throw unsafeKillZone(
-                    "The complete kill zone must remain inside the eight-block hazard volume.");
-        }
-        int cellX = Mth.floor((playerBox.minX + playerBox.maxX) * 0.5D);
-        int cellY = Mth.floor(playerBox.minY + 1.0e-5D);
-        int cellZ = Mth.floor((playerBox.minZ + playerBox.maxZ) * 0.5D);
-        if (Mth.floor(playerBox.minX) != Mth.floor(playerBox.maxX - 1.0e-5D)
-                || Mth.floor(playerBox.minZ) != Mth.floor(playerBox.maxZ - 1.0e-5D)) {
-            throw unsafeKillZone("The player must stand wholly inside one safety-cell column.");
-        }
-
-        double dx = (zone.minX() + zone.maxX()) * 0.5D - player.getX();
-        double dz = (zone.minZ() + zone.maxZ()) * 0.5D - player.getZ();
-        int frontX = cellX;
-        int frontZ = cellZ;
-        if (Math.abs(dx) >= Math.abs(dz) && dx > 0.0D && zone.minX() >= cellX + 2.0D) {
-            frontX++;
-        } else if (Math.abs(dx) >= Math.abs(dz) && dx < 0.0D
-                && zone.maxX() <= cellX - 1.0D) {
-            frontX--;
-        } else if (Math.abs(dz) > Math.abs(dx) && dz > 0.0D
-                && zone.minZ() >= cellZ + 2.0D) {
-            frontZ++;
-        } else if (Math.abs(dz) > Math.abs(dx) && dz < 0.0D
-                && zone.maxZ() <= cellZ - 1.0D) {
-            frontZ--;
-        } else {
-            throw unsafeKillZone(
-                    "The kill zone must lie wholly beyond one cardinal face of the safety cell.");
-        }
-
-        BlockPos front = new BlockPos(frontX, cellY, frontZ);
-        if (!exactFullCollisionCube(level, front)) {
-            throw unsafeKillZone(
-                    "The attack face lower block must be a full collision cube.");
-        }
-        int[][] sides = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-        for (int[] side : sides) {
-            BlockPos low = new BlockPos(cellX + side[0], cellY, cellZ + side[1]);
-            if (!low.equals(front) && !exactFullCollisionCube(level, low)) {
-                throw unsafeKillZone("The other three lower safety-cell walls must be full cubes.");
-            }
-            if (low.equals(front)) {
-                if (!exactCollisionBox(
-                        level, low.above(), new AABB(0, 0.5D, 0, 1, 1, 1))) {
-                    throw unsafeKillZone(
-                            "The attack face requires an exact upper top slab over its half-block slit.");
-                }
-            } else if (!exactFullCollisionCube(level, low.above())) {
-                throw unsafeKillZone("Every upper safety-cell wall must be a full cube.");
-            }
-        }
-        if (!exactFullCollisionCube(level, new BlockPos(cellX, cellY - 1, cellZ))
-                || !exactFullCollisionCube(level, new BlockPos(cellX, cellY + 2, cellZ))) {
-            throw unsafeKillZone("The safety cell requires a full-cube support and roof.");
-        }
-        for (String allowedType : allowedTypes) {
-            Identifier id = Identifier.tryParse(allowedType);
-            var type = id == null ? null
-                    : BuiltInRegistries.ENTITY_TYPE.get(id).map(Holder::value).orElse(null);
-            if (type == null || type.getDimensions().height() <= 1.0F) {
-                throw unsafeKillZone(
-                        "Every allowed entity type must be taller than the fixed one-block opening.");
-            }
-        }
-    }
-
-    private static RuntimeInvocationException unsafeKillZone(String message) {
-        return new RuntimeInvocationException(
-                "unsafe_kill_zone", message, false, Map.of());
-    }
-
-    private static boolean exactFullCollisionCube(
-            net.minecraft.client.multiplayer.ClientLevel level, BlockPos pos) {
-        return exactCollisionBox(level, pos, new AABB(0, 0, 0, 1, 1, 1));
-    }
-
-    private static boolean exactCollisionBox(
-            net.minecraft.client.multiplayer.ClientLevel level,
-            BlockPos pos,
-            AABB expected) {
-        if (!level.isLoaded(pos)) return false;
-        List<AABB> boxes = level.getBlockState(pos).getCollisionShape(level, pos).toAabbs();
-        return boxes.size() == 1 && boxes.getFirst().equals(expected);
-    }
-
-    private record AttackProfile(
-            String fingerprint,
-            ScopedEntityAttackConsentStore.AttackSideEffectProfile sideEffects) {
-        private AttackProfile {
-            Objects.requireNonNull(fingerprint, "fingerprint");
-            Objects.requireNonNull(sideEffects, "sideEffects");
-        }
-    }
-
-    private record KillZoneAdmission(
-            String policyBindingHash,
-            ScopedEntityAttackConsentStore.Scope scope) {
-        private KillZoneAdmission {
-            Objects.requireNonNull(policyBindingHash, "policyBindingHash");
-            Objects.requireNonNull(scope, "scope");
-        }
-    }
-
-    private static boolean sameAdmissionSession(
-            WorldSessionTracker.Snapshot captured,
-            WorldSessionTracker.Snapshot current) {
-        return current.worldReady()
-                && captured.generation() == current.generation()
-                && Objects.equals(captured.worldSessionId(), current.worldSessionId())
-                && Objects.equals(captured.dimension(), current.dimension());
-    }
-
-    enum AdmissionFenceFailure {
-        WORLD_SESSION_CHANGED,
-        PLAYER_UNAVAILABLE,
-        CONTROL_MODE_CHANGED,
-        CONTROL_EPOCH_CHANGED,
-        CAPABILITIES_CHANGED,
-        POSE_CHANGED,
-        LOCAL_SAFETY_CHANGED,
-        CAMERA_POLICY_CHANGED,
-        MULTIPLAYER_CONTEXT_CHANGED,
-        MULTIPLAYER_POLICY_CHANGED,
-        OBSERVATION_UNAVAILABLE,
-        POSITION_CORRECTION_CHANGED,
-        POLICY_UNAVAILABLE,
-        POLICY_BRANCH_CHANGED,
-        ROUTE_CHANGED,
-        KNOWN_TARGET_CHANGED,
-        FACING_SURFACE_CHANGED,
-        KNOWN_SURFACE_CHANGED,
-        RENDERER_EVIDENCE_MISSING,
-        RENDERER_EVIDENCE_TIMEOUT,
-        DELIVERY_EXPIRED,
-        TARGET_NOT_DELIVERED,
-        SURFACE_REOBSERVATION_MISMATCH,
-        VISIBLE_ITEM_CHANGED,
-        VISIBLE_BATCH_ITEM_CHANGED,
-        FRAME_ITEM_CHANGED,
-        BREAK_PRECONDITION_CHANGED;
-
-        String code() {
-            return name().toLowerCase(Locale.ROOT);
-        }
-
-        String executionEvidence() {
-            return "admission_" + code() + "_before_execution";
-        }
-    }
-
-    static RuntimeException admissionPreflightFailure(AdmissionFenceFailure reason) {
-        return new RuntimeInvocationException(
-                "unsafe_state",
-                "The world, local control, pose, observation, or policy changed during preflight. "
-                        + "Reason: " + Objects.requireNonNull(reason, "reason").code() + ".",
-                true,
-                Map.of("admission_reason", reason.code()));
-    }
-
-    static RuntimeReply mapAdmissionFailure(Throwable failure, SurfacePreflightRecovery recovery) {
-        var cause = unwrap(failure);
-        return recovery.hasWaited()
-                && (cause instanceof TimeoutException || cause instanceof ClientCommandInbox.CommandTimeoutException)
-                ? mapFailure(admissionPreflightFailure(AdmissionFenceFailure.RENDERER_EVIDENCE_TIMEOUT))
-                : mapFailure(failure);
-    }
-
-    private Optional<AdmissionFenceFailure> surfaceRecoveryFailure(
-            Minecraft minecraft, WorldSessionTracker.Snapshot session,
-            SurfacePreflightRecovery surfaceRecovery, RendererRecoveryStage stage) {
-        var decision = surfaceRecovery.evaluate(deliveredAgentEvidence, session.clientTick(), System.nanoTime(),
-                minecraft.level != null && minecraft.player != null && ClientFogDistanceSignals.current(
-                        minecraft.level, minecraft.player, minecraft.player.tickCount).isPresent());
-        if (decision == SurfacePreflightRecovery.Decision.RENDERER_EVIDENCE_MISSING
-                && surfaceRecovery.noteMissing(stage)) publishRendererRecovery(surfaceRecovery);
-        return switch (decision) {
-            case READY -> Optional.empty();
-            case RENDERER_EVIDENCE_MISSING -> Optional.of(AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING);
-            case RENDERER_EVIDENCE_TIMEOUT -> Optional.of(AdmissionFenceFailure.RENDERER_EVIDENCE_TIMEOUT);
-            case DELIVERY_EXPIRED -> Optional.of(AdmissionFenceFailure.DELIVERY_EXPIRED);
-            case TARGET_NOT_DELIVERED -> Optional.of(AdmissionFenceFailure.TARGET_NOT_DELIVERED);
-        };
-    }
-
-    private void requireSurfaceRecoveryReady(Minecraft minecraft, WorldSessionTracker.Snapshot session,
-            SurfacePreflightRecovery surfaceRecovery) {
-        surfaceRecoveryFailure(minecraft, session, surfaceRecovery, RendererRecoveryStage.CAPTURE).ifPresent(reason -> {
-            if (reason == AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING) {
-                throw new ClientCommandInbox.DeferControl();
-            }
-            throw admissionPreflightFailure(reason);
-        });
-    }
-
-    private void rendererRecoveryRevalidated(SurfacePreflightRecovery recovery, RendererRecoveryStage stage) {
-        if (recovery.noteRevalidated(stage)) publishRendererRecovery(recovery);
+        RoutineIdentity.appendIdentity(binding, scope.toString());
+        return new KillZoneAdmission(RoutineIdentity.sha256Identity(binding), scope);
     }
 
     private void publishRendererRecovery(SurfacePreflightRecovery recovery) {
@@ -3010,194 +1554,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         } else if (pendingAgentAdmission != null && pendingAgentAdmission.prepared().surfaceRecovery() == recovery) {
             agentActions.recordRendererRecovery(pendingAgentAdmission.actionId(), summary);
         }
-    }
-
-    private Optional<AdmissionFenceFailure> admissionFenceFailure(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            PreparedAgentAction prepared,
-            LocalArmingState.Mode expectedMode,
-            long expectedControlEpoch, RendererRecoveryStage stage) {
-        var captured = prepared.snapshot();
-        var player = minecraft.player;
-        var lock = arming.snapshot(session.worldSessionId());
-        if (!sameAdmissionSession(captured.session(), session)) {
-            return Optional.of(AdmissionFenceFailure.WORLD_SESSION_CHANGED);
-        }
-        if (player == null) {
-            return Optional.of(AdmissionFenceFailure.PLAYER_UNAVAILABLE);
-        }
-        if (lock.mode() != expectedMode) {
-            return Optional.of(AdmissionFenceFailure.CONTROL_MODE_CHANGED);
-        }
-        if (lock.controlEpoch() != expectedControlEpoch) {
-            return Optional.of(AdmissionFenceFailure.CONTROL_EPOCH_CHANGED);
-        }
-        if (!lock.capabilities().equals(captured.control().capabilities())) {
-            return Optional.of(AdmissionFenceFailure.CAPABILITIES_CHANGED);
-        }
-        if (!playerPose(player, session.dimension()).equals(captured.pose())) {
-            return Optional.of(AdmissionFenceFailure.POSE_CHANGED);
-        }
-        if (captured.localSafetyRequired()
-                && (captured.localSafety() != LocalObservationProjector.CurrentSafety.CONTINUE
-                        || localSafety != LocalObservationProjector.CurrentSafety.CONTINUE)) {
-            return Optional.of(AdmissionFenceFailure.LOCAL_SAFETY_CHANGED);
-        }
-        if (McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F
-                != captured.cameraDegreesPerTick()) {
-            return Optional.of(AdmissionFenceFailure.CAMERA_POLICY_CHANGED);
-        }
-        if (minecraft.isMultiplayerServer() != captured.multiplayerServer()) {
-            return Optional.of(AdmissionFenceFailure.MULTIPLAYER_CONTEXT_CHANGED);
-        }
-        if (multiplayerPolicyAllows(minecraft) != captured.multiplayerAllowed()) {
-            return Optional.of(AdmissionFenceFailure.MULTIPLAYER_POLICY_CHANGED);
-        }
-        final KnownTraversabilitySnapshot currentMap;
-        final AdmissionPolicySnapshot currentPredicates;
-        final ClientReconciliationSignals.Snapshot currentReconciliation;
-        final long currentVisualBarrierWorldRevision;
-        final ToLongFunction<ActionDsl.Position> currentSurfaceRevisionBarrier;
-        try {
-            currentMap = requireAgentMap(session);
-            currentReconciliation = reconciliationSignals.bindAndSnapshot(
-                    Objects.requireNonNull(minecraft.level, "level"), session.worldSessionId());
-            currentVisualBarrierWorldRevision = visualBarrierWorldRevision(
-                    currentMap, currentReconciliation);
-            currentSurfaceRevisionBarrier = prepared.initialPrimitive()
-                    .map(primitive -> primitiveSurfaceRevisionBarrier(
-                            primitive, currentMap, currentReconciliation))
-                    .orElseGet(() -> surfaceRevisionBarrier(
-                            currentMap, currentReconciliation));
-            if (currentReconciliation.positionCorrectionRevision()
-                    != captured.positionCorrectionRevision()) {
-                return Optional.of(AdmissionFenceFailure.POSITION_CORRECTION_CHANGED);
-            }
-        } catch (RuntimeException | LinkageError changed) {
-            return Optional.of(AdmissionFenceFailure.OBSERVATION_UNAVAILABLE);
-        }
-        try {
-            currentPredicates = AdmissionPolicySnapshot.capture(
-                    policySnapshot(minecraft), captured.predicateRequirements());
-            validatePredicateAvailability(
-                    prepared.program().request().program(), currentPredicates);
-        } catch (RuntimeException | LinkageError changed) {
-            return Optional.of(AdmissionFenceFailure.POLICY_UNAVAILABLE);
-        }
-        if (!firstPrimitive(prepared.program().request().program(), currentPredicates)
-                .equals(prepared.initialPrimitive())) {
-            return Optional.of(AdmissionFenceFailure.POLICY_BRANCH_CHANGED);
-        }
-        if (!routeDependenciesCurrent(currentMap, prepared.analysis().routeDependencies())) {
-            return Optional.of(AdmissionFenceFailure.ROUTE_CHANGED);
-        }
-        var rendererFailure = surfaceRecoveryFailure(minecraft, session, prepared.surfaceRecovery(), stage);
-        if (rendererFailure.isPresent()) return rendererFailure;
-        Optional<ObservationFrame> currentPlanningFrame = agentPlanningFrame(
-                prepared.initialPrimitive().orElse(null), prepared.surfaceRecovery().lease());
-        if (prepared.frameItemAim().isPresent()) {
-            try {
-                var currentAim = AgentPrimitivePlanner.requireFrameItemAim(
-                        currentMap, playerPose(player, session.dimension()), currentPlanningFrame,
-                        prepared.initialPrimitive().orElseThrow(), currentVisualBarrierWorldRevision);
-                if (!frameItemEvidenceFresh(currentAim, session.clientTick())
-                        || !sameFrameItemAuthorization(prepared.frameItemAim().orElseThrow(), currentAim)) {
-                    return Optional.of(AdmissionFenceFailure.FRAME_ITEM_CHANGED);
-                }
-            } catch (RuntimeException unavailable) {
-                return Optional.of(AdmissionFenceFailure.FRAME_ITEM_CHANGED);
-            }
-        }
-        if (!prepared.analysis().knownTargets().stream().allMatch(target ->
-                        prepared.initialPrimitive()
-                                        .filter(ActionDsl.FaceKnownPosition.class::isInstance)
-                                        .isPresent()
-                                ? AgentPrimitivePlanner.knownFacingTarget(
-                                        currentMap, currentPlanningFrame, target)
-                                : AgentPrimitivePlanner.knownTarget(
-                                        currentMap,
-                                        currentPlanningFrame,
-                                        target,
-                                        currentSurfaceRevisionBarrier.applyAsLong(target)))) {
-            return Optional.of(prepared.surfaceRecovery().lease() == null
-                    ? AdmissionFenceFailure.KNOWN_TARGET_CHANGED
-                    : AdmissionFenceFailure.SURFACE_REOBSERVATION_MISMATCH);
-        }
-        if (!prepared.analysis().knownFacingSurfaces().stream().allMatch(surface ->
-                        AgentPrimitivePlanner.knownFacingSurface(
-                                currentMap, currentPlanningFrame, surface))) {
-            return Optional.of(AdmissionFenceFailure.FACING_SURFACE_CHANGED);
-        }
-        if (!prepared.analysis().knownSurfaces().stream().allMatch(surface ->
-                        AgentPrimitivePlanner.knownSurface(
-                                currentMap,
-                                currentPlanningFrame,
-                                surface,
-                                currentSurfaceRevisionBarrier.applyAsLong(surface.position())))) {
-            return Optional.of(prepared.surfaceRecovery().lease() == null
-                    ? AdmissionFenceFailure.KNOWN_SURFACE_CHANGED
-                    : AdmissionFenceFailure.SURFACE_REOBSERVATION_MISMATCH);
-        }
-        if (!prepared.initialPrimitive()
-                        .filter(ActionDsl.CollectVisibleItem.class::isInstance)
-                        .map(ActionDsl.CollectVisibleItem.class::cast)
-                        .map(target -> AgentPrimitivePlanner.visibleItemCurrent(
-                                currentMap,
-                                currentPlanningFrame,
-                                target,
-                                currentVisualBarrierWorldRevision,
-                                session.clientTick(),
-                                visibleItemEvidenceMaxAgeTicks(
-                                        McmcpClientConfig.raysPerTick())))
-                        .orElse(true)) {
-            return Optional.of(AdmissionFenceFailure.VISIBLE_ITEM_CHANGED);
-        }
-        if (!prepared.initialPrimitive()
-                        .filter(ActionDsl.CollectVisibleItemBatch.class::isInstance)
-                        .map(ActionDsl.CollectVisibleItemBatch.class::cast)
-                        .map(batch -> AgentPrimitivePlanner.visibleBatchItemAabbs(
-                                        currentMap,
-                                        currentPlanningFrame,
-                                        batch,
-                                        currentVisualBarrierWorldRevision,
-                                        session.clientTick(),
-                                        visibleItemEvidenceMaxAgeTicks(
-                                                McmcpClientConfig.raysPerTick()))
-                                .stream().allMatch(Optional::isPresent))
-                        .orElse(true)) {
-            return Optional.of(AdmissionFenceFailure.VISIBLE_BATCH_ITEM_CHANGED);
-        }
-        if (!breakProgramPreconditionsCurrent(
-                minecraft, prepared.program(), prepared.initialPrimitive())) {
-            return Optional.of(AdmissionFenceFailure.BREAK_PRECONDITION_CHANGED);
-        }
-        rendererRecoveryRevalidated(prepared.surfaceRecovery(), stage);
-        return Optional.empty();
-    }
-
-    static boolean routeDependenciesCurrent(
-            KnownTraversabilitySnapshot current,
-            Map<dev.aod.mcmcp.agent.navigation.TraversabilityEdge.Key,
-                    dev.aod.mcmcp.agent.navigation.TraversabilityEdge> required) {
-        for (var dependency : required.entrySet()) {
-            var currentEdge = current.edge(dependency.getKey()).orElse(null);
-            if (currentEdge == null || !sameOrSaferEdge(dependency.getValue(), currentEdge)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean sameOrSaferEdge(
-            dev.aod.mcmcp.agent.navigation.TraversabilityEdge captured,
-            dev.aod.mcmcp.agent.navigation.TraversabilityEdge current) {
-        return captured.worldSessionId().equals(current.worldSessionId())
-                && (captured.status() == current.status()
-                        || captured.status()
-                                == dev.aod.mcmcp.agent.navigation.TraversabilityEdge.Status.PROBE_ALLOWED
-                        && current.status()
-                                == dev.aod.mcmcp.agent.navigation.TraversabilityEdge.Status.CONFIRMED);
     }
 
     private void rollbackAbandonedAgentAction(
@@ -3264,18 +1620,18 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private Map<String, Object> getAgentAction(Map<String, Object> arguments) {
         agentActionWaitTimeoutMillis(arguments);
-        return actionPayload(agentActions.get(actionId(arguments)), ContainerInspection.Query.parse(arguments));
+        return ActionWireMapper.actionPayload(agentActions.get(RuntimeArguments.actionId(arguments)), ContainerInspection.Query.parse(arguments));
     }
 
     static int agentActionWaitTimeoutMillis(Map<String, Object> arguments) {
-        requireAllowedKeys(
+        RuntimeArguments.requireAllowedKeys(
                 arguments, "agent_get_action", Set.of("action_id", "wait_timeout_ms",
                         "include_container_results", "container_results_cursor", "container_results_limit"));
         if (!arguments.containsKey("action_id")) {
             throw new IllegalArgumentException("agent_get_action must contain action_id");
         }
         int timeoutMillis = arguments.containsKey("wait_timeout_ms")
-                ? intArgument(arguments, "wait_timeout_ms")
+                ? RuntimeArguments.intArgument(arguments, "wait_timeout_ms")
                 : 0;
         if (timeoutMillis < 0
                 || timeoutMillis > AgentActionStore.MAX_TERMINAL_WAIT_MILLIS) {
@@ -3287,8 +1643,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private Map<String, Object> cancelAgentAction(
             Minecraft minecraft, Map<String, Object> arguments) {
-        requireExactKeys(arguments, "agent_cancel_action", Set.of("action_id"));
-        UUID requestedId = actionId(arguments);
+        RuntimeArguments.requireExactKeys(arguments, "agent_cancel_action", Set.of("action_id"));
+        UUID requestedId = RuntimeArguments.actionId(arguments);
         AgentActionStore.State stateAtRequest = agentActions.get(requestedId).state();
         boolean activeBeforeRequest = !stateAtRequest.terminal();
         var terminal = PendingAgentTerminal.cancel(requestedId);
@@ -3322,99 +1678,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 "state_at_request", cancelled.stateAtRequest().wireName());
     }
 
-    private static UUID actionId(Map<String, Object> arguments) {
-        try {
-            return UUID.fromString(stringArgument(arguments, "action_id"));
-        } catch (IllegalArgumentException failure) {
-            throw new IllegalArgumentException("action_id must be a UUID", failure);
-        }
-    }
-
-    static Map<String, Object> actionPayload(AgentActionStore.Snapshot snapshot) {
-        var progress = snapshot.progress();
-        var progressPayload = new LinkedHashMap<String, Object>();
-        progressPayload.put("phase", progress.phase().wireName());
-        progressPayload.put("current_node_id", progress.currentNodeId());
-        progressPayload.put("executed_nodes", progress.executedNodes());
-        progressPayload.put("total_node_upper_bound", progress.totalNodeUpperBound());
-        progressPayload.put("distance_travelled", progress.distanceTravelled());
-        progressPayload.put("camera_degrees", progress.cameraDegrees());
-        progressPayload.put("interactions", progress.interactions());
-        progressPayload.put("blocks_broken", progress.blocksBroken());
-        progressPayload.put("blocks_placed", progress.blocksPlaced());
-        progressPayload.put("ticks", progress.ticks());
-
-        Map<String, Object> failurePayload = null;
-        if (snapshot.failure() != null) {
-            failurePayload = Map.of(
-                    "code", snapshot.failure().code().wireName(),
-                    "recoverable", snapshot.failure().recoverable(),
-                    "evidence", snapshot.failure().evidence());
-        }
-        var result = new LinkedHashMap<String, Object>();
-        result.put("schema_version", 1);
-        result.put("action_id", snapshot.actionId().toString());
-        result.put("state", snapshot.state().wireName());
-        result.put("progress", progressPayload);
-        result.put("failure", failurePayload);
-        result.put("trace", snapshot.trace().stream().map(entry -> Map.<String, Object>of(
-                "tick", entry.tick(),
-                "event", entry.event(),
-                "detail", entry.detail())).toList());
-        result.put("effects", snapshot.effects().stream().map(effect -> {
-            var payload = new LinkedHashMap<String, Object>();
-            payload.put("seq", effect.seq());
-            payload.put("node_id", effect.nodeId());
-            payload.put("kind", effect.kind());
-            payload.put("subject", effect.subject());
-            payload.put("observed_before", effect.observedBefore());
-            payload.put("observed_after", effect.observedAfter());
-            payload.put("verification", effect.verification().wireName());
-            payload.put("client_tick", effect.clientTick());
-            payload.put("world_revision", effect.worldRevision());
-            return Map.copyOf(payload);
-        }).toList());
-        var aggregate = snapshot.effectAggregate();
-        result.put("effect_aggregate", Map.of(
-                "total_effects", aggregate.totalEffects(),
-                "retained_effects", aggregate.retainedEffects(),
-                "confirmed_effects", aggregate.confirmedEffects(),
-                "qualified_effects", aggregate.qualifiedEffects(),
-                "unknown_effects", aggregate.unknownEffects(),
-                "dispatched_attacks", aggregate.dispatchedAttacks(),
-                "confirmed_attacks", aggregate.confirmedAttacks(),
-                "unknown_attacks", aggregate.unknownAttacks()));
-        Map<String, Object> partialPayload = null;
-        if (snapshot.partial() != null) {
-            var partial = snapshot.partial();
-            var payload = new LinkedHashMap<String, Object>();
-            payload.put("has_confirmed_effects", partial.hasConfirmedEffects());
-            payload.put("interrupted_node_id", partial.interruptedNodeId());
-            payload.put("remaining_node_upper_bound", partial.remainingNodeUpperBound());
-            payload.put(
-                    "resume_requires_reobservation",
-                    partial.resumeRequiresReobservation());
-            partialPayload = payload;
-        }
-        result.put("partial", partialPayload);
-        result.put("source", snapshot.source().sourcePayload());
-        result.put("template", snapshot.source().templatePayload());
-        result.put(
-                "reference_requirements",
-                snapshot.source().referenceRequirementPayload());
-        return result;
-    }
-
-    static Map<String, Object> actionPayload(
-            AgentActionStore.Snapshot snapshot, ContainerInspection.Query query) {
-        var result = actionPayload(snapshot);
-        if (query.include()) result.put("container_results", ContainerInspection.page(snapshot, query));
-        return result;
-    }
-
     private static Set<String> availableCapabilities(Minecraft minecraft) {
         Objects.requireNonNull(minecraft, "minecraft");
-        return AVAILABLE_CAPABILITIES;
+        return ActionWireMapper.AVAILABLE_CAPABILITIES;
     }
 
     private Map<String, Object> status(
@@ -3479,11 +1745,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 var open = ContainerSyncSignals.global().snapshot(minecraft.level)
                         .map(ContainerSyncSignals.Snapshot::lastOpenScreen)
                         .orElse(null);
-                merchantOffers = merchantOfferPayload(
+                merchantOffers = ActionWireMapper.merchantOfferPayload(
                         session.worldSessionId(), screen.getMenu().containerId, open, snapshot);
             }
             if (lock.mode() == LocalArmingState.Mode.READY) {
-                knownMenu = knownMenuPayload(
+                knownMenu = ActionWireMapper.knownMenuPayload(
                         minecraft, session, ContainerSyncSignals.global(), knownMenuOperationRefs);
             }
         }
@@ -3502,7 +1768,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         "count", entry.getValue()))
                 .toList();
         var result = new LinkedHashMap<>(
-                statePayload(
+                ActionWireMapper.statePayload(
                         lock,
                         paused,
                         world,
@@ -3513,9 +1779,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         McmcpClientConfig.raysPerTick()));
         result.put(
                 "entity_attack_consent",
-                entityAttackConsentPayload(entityAttackConsentSnapshot(session, lock)));
+                ActionWireMapper.entityAttackConsentPayload(entityAttackConsentSnapshot(session, lock)));
         if (!arguments.isEmpty()) {
-            requireReady(session);
+            RuntimeFailures.requireReady(session);
             result.put("recipe_query", getRecipes(minecraft, session, arguments));
         }
         if (merchantOffers != null) {
@@ -3524,7 +1790,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (knownMenu != null) {
             result.put("known_menu", knownMenu);
         }
-        result.put("observation", agentObservationFrames.announceLatestSummary()
+        result.put("observation", agentObservations.frames().announceLatestSummary()
                 .map(ObservationWireMapper::summary)
                 .orElse(null));
         result.put("action", agentActions.latestSummary()
@@ -3537,247 +1803,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 })
                 .orElse(null));
         return result;
-    }
-
-    static Map<String, Object> merchantOfferPayload(
-            UUID worldSessionId,
-            int containerId,
-            ContainerSyncSignals.OpenScreenEvidence open,
-            MerchantOfferSignals.Snapshot snapshot) {
-        if (open == null
-                || snapshot == null
-                || !worldSessionId.equals(open.worldSessionId())
-                || !worldSessionId.equals(snapshot.worldSessionId())
-                || containerId != open.containerId()
-                || containerId != snapshot.containerId()
-                || !"minecraft:merchant".equals(open.menuTypeId())
-                || snapshot.openPacketRevision() != open.packetLedgerRevision()
-                || snapshot.receivedTick() < open.receivedTick()) {
-            return null;
-        }
-        return Map.of(
-                "world_session_id", worldSessionId.toString(),
-                "container_id", containerId,
-                "signal_revision", snapshot.revision(),
-                "open_packet_revision", snapshot.openPacketRevision(),
-                "received_tick", snapshot.receivedTick(),
-                "offers", MerchantOfferView.from(snapshot).stream()
-                        .map(MerchantOfferView::toMap)
-                        .toList());
-    }
-
-    static Map<String, Object> knownMenuPayload(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            ContainerSyncSignals signals,
-            KnownMenuOperationRefs references) {
-        KnownMenuProfileSupport.Context context = KnownMenuProfileSupport.current(
-                minecraft, session.worldSessionId(), signals).orElse(null);
-        if (context == null) return null;
-
-        var operations = new ArrayList<Map<String, Object>>();
-        boolean truncated = false;
-        long deadline = session.clientTick() > Long.MAX_VALUE - 1_200L
-                ? Long.MAX_VALUE : session.clientTick() + 1_200L;
-        for (int sourceSlot : context.transferableStorageSlots()) {
-            ItemStack source = context.menu().slots.get(sourceSlot).getItem();
-            if (!context.canTransferEntireStack(sourceSlot)) {
-                continue;
-            }
-            if (operations.size() == KnownMenuOperationRefs.MAX_LEASES) {
-                truncated = true;
-                continue;
-            }
-            int baseline = exactPlayerCount(context, source);
-            int expected = Math.addExact(baseline, source.getCount());
-            String operationReference = references.issue(
-                    context.referenceContext(session.worldSessionId(), session.clientTick()),
-                    sourceSlot,
-                    context.snapshot().slots().get(sourceSlot),
-                    source,
-                    context.snapshot().slots(),
-                    baseline,
-                    expected,
-                    KnownMenuOperationRefs.TRANSFER_TO_PLAYER,
-                    deadline);
-            operations.add(Map.of(
-                    "operation_ref", operationReference,
-                    "kind", KnownMenuOperationRefs.TRANSFER_TO_PLAYER,
-                    "stack", Map.of(
-                            "item", context.snapshot().slots().get(sourceSlot).itemId(),
-                            "count", source.getCount(),
-                            "damage", source.getDamageValue(),
-                            "max_damage", source.getMaxDamage()),
-                    "expected_inventory_count", expected,
-                    "valid_through_client_tick", deadline));
-        }
-        var payload = new LinkedHashMap<String, Object>();
-        payload.put("profile_id", context.profile().profileId());
-        payload.put("profile_hash", context.profile().profileHash());
-        payload.put("menu_type", context.profile().menuType());
-        payload.put("operations_truncated", truncated);
-        payload.put("operations", List.copyOf(operations));
-        return Map.copyOf(payload);
-    }
-
-    private static int exactPlayerCount(
-            KnownMenuProfileSupport.Context context, ItemStack expected) {
-        int count = 0;
-        for (int slot : context.playerSlots()) {
-            ItemStack actual = context.menu().slots.get(slot).getItem();
-            if (ItemStack.isSameItemSameComponents(actual, expected)) {
-                count = Math.addExact(count, actual.getCount());
-            }
-        }
-        return count;
-    }
-
-    static Map<String, Object> statePayload(
-            LocalArmingState.Snapshot lock,
-            boolean paused,
-            Map<String, Object> world,
-            List<Map<String, Object>> inventory) {
-        return statePayload(
-                lock, paused, world, inventory, List.of(),
-                false,
-                McmcpClientConfig.DEFAULT_VISUAL_RADIUS_BLOCKS,
-                McmcpClientConfig.DEFAULT_RAYS_PER_TICK);
-    }
-
-    static Map<String, Object> statePayload(
-            LocalArmingState.Snapshot lock,
-            boolean paused,
-            Map<String, Object> world,
-            List<Map<String, Object>> inventory,
-            boolean multiplayerEnabled,
-            int visualRadiusBlocks,
-            int raysPerTick) {
-        return statePayload(
-                lock, paused, world, inventory, List.of(), multiplayerEnabled,
-                visualRadiusBlocks, raysPerTick);
-    }
-
-    static Map<String, Object> statePayload(
-            LocalArmingState.Snapshot lock,
-            boolean paused,
-            Map<String, Object> world,
-            List<Map<String, Object>> inventory,
-            List<Map<String, Object>> standardPotions,
-            boolean multiplayerEnabled,
-            int visualRadiusBlocks,
-            int raysPerTick) {
-        Objects.requireNonNull(lock, "lock");
-        Objects.requireNonNull(inventory, "inventory");
-        Objects.requireNonNull(standardPotions, "standardPotions");
-
-        var control = new LinkedHashMap<String, Object>();
-        control.put("mode", lock.mode().name().toLowerCase(Locale.ROOT));
-        // Kept nullable for MCP clients written against schema version 1; READY no longer expires.
-        control.put("ready_expires_at", null);
-        control.put("game_paused", paused);
-        control.put("granted_capabilities", lock.capabilities().stream().sorted().toList());
-
-        var actionDsl = new LinkedHashMap<String, Object>();
-        actionDsl.put("version", 1);
-        actionDsl.put("max_ast_depth", 4);
-        actionDsl.put("max_source_nodes", 64);
-        actionDsl.put("max_executed_nodes", 256);
-        actionDsl.put("max_repeat_count", 16);
-        actionDsl.put(
-                "allowed_capabilities", AVAILABLE_CAPABILITIES.stream().sorted().toList());
-        actionDsl.put(
-                "available_operations",
-                ActionDslOperationManifest.operationPayload(lock.capabilities()));
-        actionDsl.put(
-                "reference_descriptors",
-                ActionDslOperationManifest.referenceDescriptorPayload());
-        actionDsl.put(
-                "missing_capability_guidance",
-                ActionDslOperationManifest.missingCapabilityGuidance());
-        var policy = Map.<String, Object>ofEntries(
-                Map.entry("profile", "survival_omnidirectional"),
-                Map.entry("multiplayer_enabled", multiplayerEnabled),
-                Map.entry("max_duration_ms", Math.toIntExact(
-                        ActionDslValidator.MAX_ACTION_DURATION_MILLIS)),
-                Map.entry("max_ticks", ActionDslValidator.MAX_ACTION_TICKS),
-                Map.entry("max_distance_blocks", 32),
-                Map.entry("max_camera_degrees", ActionDslValidator.MAX_ACTION_CAMERA_DEGREES),
-                Map.entry("max_blocks_broken", 8),
-                Map.entry("max_interactions", ActionDslValidator.MAX_INTERACTIONS),
-                Map.entry("max_blocks_placed", 8),
-                Map.entry("omnidirectional_visual_radius_blocks", visualRadiusBlocks),
-                Map.entry(
-                        "local_observation_radius_blocks",
-                        (int) LocalObservationVolume.RADIUS_BLOCKS),
-                Map.entry("omnidirectional_direction_count", 2_048),
-                Map.entry("omnidirectional_rays_per_tick", raysPerTick),
-                Map.entry("max_recent_sound_clues", 32),
-                Map.entry("sound_clue_ttl_ticks", 600),
-                Map.entry("action_dsl", actionDsl));
-
-        var result = new LinkedHashMap<String, Object>();
-        result.put("schema_version", 1);
-        result.put("control", control);
-        result.put("world", world);
-        result.put("inventory", List.copyOf(inventory));
-        result.put("standard_potions", List.copyOf(standardPotions));
-        result.put(
-                "entity_attack_consent",
-                entityAttackConsentPayload(ScopedEntityAttackConsentStore.Snapshot.none()));
-        result.put("recipe_query", null);
-        result.put("policy", policy);
-        result.put("observation", null);
-        result.put("action", null);
-        return result;
-    }
-
-    static Map<String, Object> entityAttackConsentPayload(
-            ScopedEntityAttackConsentStore.Snapshot snapshot) {
-        Objects.requireNonNull(snapshot, "snapshot");
-        var result = new LinkedHashMap<String, Object>();
-        result.put("state", snapshot.state().name().toLowerCase(Locale.ROOT));
-        result.put("policy_binding_hash", snapshot.policyBindingHash());
-        if (snapshot.scope() == null) {
-            result.put("scope", null);
-        } else {
-            var scope = snapshot.scope();
-            result.put("scope", Map.ofEntries(
-                    Map.entry("dimension", scope.dimension()),
-                    Map.entry(
-                            "player_station_bounds",
-                            entityAttackConsentBoundsPayload(scope.playerStationBounds())),
-                    Map.entry(
-                            "target_kill_zone_bounds",
-                            entityAttackConsentBoundsPayload(scope.targetKillZoneBounds())),
-                    Map.entry("entity_type_allowlist", scope.entityTypeAllowlist()),
-                    Map.entry("main_hand", Map.of(
-                            "item", scope.mainHandItem(),
-                            "attack_effects_bound", true)),
-                    Map.entry(
-                            "side_effect_profile",
-                            scope.attackSideEffectProfile().name().toLowerCase(Locale.ROOT)),
-                    Map.entry("structure_bound", true),
-                    Map.entry("max_attacks", scope.maxAttacks()),
-                    Map.entry("minimum_interval_ticks", scope.minimumIntervalTicks()),
-                    Map.entry(
-                            "max_operation_duration_ticks",
-                            scope.maxOperationDurationTicks())));
-        }
-        boolean granted = snapshot.state() == ScopedEntityAttackConsentStore.State.GRANTED;
-        result.put("consent_ref", granted ? snapshot.consentRef() : null);
-        result.put("valid_before_tick", granted ? snapshot.validBeforeClientTick() : null);
-        return result;
-    }
-
-    private static Map<String, Double> entityAttackConsentBoundsPayload(
-            ScopedEntityAttackConsentStore.Bounds bounds) {
-        return Map.of(
-                "min_x", bounds.minX(),
-                "min_y", bounds.minY(),
-                "min_z", bounds.minZ(),
-                "max_x", bounds.maxX(),
-                "max_y", bounds.maxY(),
-                "max_z", bounds.maxZ());
     }
 
     private ScopedEntityAttackConsentStore.Snapshot entityAttackConsentSnapshot(
@@ -3805,763 +1830,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             int itemOrder = item.compareTo(other.item);
             return itemOrder != 0 ? itemOrder : potion.compareTo(other.potion);
         }
-    }
-
-    private Map<String, Object> listRoutines(Map<String, Object> arguments) {
-        Object kind = arguments.get("kind");
-        return kind == null
-                ? routineCatalog()
-                : routineCatalog(stringArgument(arguments, "kind"));
-    }
-
-    static Map<String, Object> routineCatalog() {
-        var summaries = detailedRoutineCatalog().stream()
-                .map(McmcpRuntime::routineCatalogSummary)
-                .toList();
-        return Map.of(
-                "catalog_version", "phase-6-compact-v2",
-                "routines", summaries);
-    }
-
-    static Map<String, Object> routineCatalog(String kind) {
-        Objects.requireNonNull(kind, "kind");
-        var entry = detailedRoutineCatalog().stream()
-                .filter(candidate -> kind.equals(candidate.get("kind")))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("kind is not an available routine"));
-        var detailed = new LinkedHashMap<>(entry);
-        detailed.put("capabilities", routineCapabilities(kind));
-        return Map.of(
-                "catalog_version", "phase-6-compact-v2",
-                "routines", List.of(Map.copyOf(detailed)));
-    }
-
-    private static List<Map<String, Object>> detailedRoutineCatalog() {
-        return List.of(
-                        routineCatalogEntry(
-                                "stationary_break",
-                                2,
-                                McpToolSchemas.stationaryBreakStartInput(),
-                                List.of(
-                                        "each counted break has a covering vanilla prediction ACK",
-                                        "each counted break has a server-verified target state transition",
-                                        "the synchronized inventory reaches the requested minimum item count",
-                                        "all routine-owned attack input is released before terminal state")),
-                        routineCatalogEntry(
-                                NavigateToRequest.KIND,
-                                3,
-                                McpToolSchemas.navigateToStartInput(),
-                                List.of(
-                                        "the destination is reached within the requested horizontal tolerance",
-                                        "the settled position is server-reconciled without a position correction",
-                                        "all routine-owned movement input is released before verification")),
-                        routineCatalogEntry(
-                                BreakBlockRequest.KIND,
-                                3,
-                                McpToolSchemas.breakBlockStartInput(),
-                                List.of(
-                                        "the requested block transition has a covering vanilla prediction ACK",
-                                        "the server-verified target state matches the Phase 3 minecraft:air expected_after",
-                                        "all routine-owned attack input is released before verification")),
-                        routineCatalogEntry(
-                                PlaceBlockRequest.KIND,
-                                3,
-                                McpToolSchemas.placeBlockStartInput(),
-                                List.of(
-                                        "the exact item is selected from hotbar or staged once from player inventory before dispatch",
-                                        "wheat, carrot, potato, and beetroot items may initially plant an exact age-0 crop above farmland",
-                                        "exactly one bounded main-hand placement is dispatched",
-                                        "the placement has a covering vanilla prediction ACK",
-                                        "the server-verified target state matches expected_after")),
-                        routineCatalogEntry(
-                                InteractBlockRequest.KIND,
-                                3,
-                                McpToolSchemas.interactBlockStartInput(),
-                                List.of(
-                                        "exactly one allowlisted block interaction is dispatched",
-                                        "expected_after is the exact full same-block toggle state",
-                                        "the interaction has a covering vanilla prediction ACK",
-                                        "the server-verified target state matches expected_after")),
-                        routineCatalogEntry(
-                                InteractEntityRequest.KIND,
-                                3,
-                                McpToolSchemas.interactEntityStartInput(),
-                                List.of(
-                                        "the opaque entity reference is re-resolved as a visible, reachable, targeted adult cow",
-                                        "exactly one main-hand interaction is dispatched with minecraft:bucket and without automatic retry",
-                                        "a fresh inbound inventory sync reaches the absolute minecraft:milk_bucket count goal")),
-                        routineCatalogEntry(
-                                UseItemOnBlockRequest.KIND,
-                                3,
-                                McpToolSchemas.useItemOnBlockStartInput(),
-                                List.of(
-                                        "the exact item is selected from hotbar or staged once from player inventory before dispatch",
-                                        "the closed transition tills dirt, grass block, or dirt path to moisture-0 farmland with a vanilla hoe",
-                                        "exactly one allowlisted normal-use item action is dispatched",
-                                        "the action has a covering vanilla prediction ACK",
-                                        "the server-verified target state matches expected_after")),
-                        routineCatalogEntry(
-                                ApplyBlockPlanRequest.KIND,
-                                4,
-                                McpToolSchemas.applyBlockPlanStartInput(),
-                                List.of(
-                                        "already-satisfied cells are skipped only after a current exact full-state observation",
-                                        "all mutations have a covering vanilla prediction ACK and exact server state",
-                                        "all required cells match current exact full states with unknown equal to zero",
-                                        "the current client inventory is accepted as the eligible-hotbar baseline; every placement requires a fresh inbound selected-slot inventory sync")),
-                        routineCatalogEntry(
-                                "craft_items",
-                                5,
-                                McpToolSchemas.craftItemsStartInput(),
-                                List.of(
-                                        "the opaque client-known recipe reference and fingerprint are revalidated before dispatch",
-                                        "ambiguous container clicks are never retried blindly",
-                                        "success requires a fresh full-content readback with the absolute inventory goal and an empty cursor")),
-                        routineCatalogEntry(
-                                "transfer_items",
-                                5,
-                                McpToolSchemas.transferItemsStartInput(),
-                                List.of(
-                                        "only an automation-opened canonical vanilla chest or barrel is used",
-                                        "minimum_destination_count zero performs a no-mutation bounded content readback",
-                                        "default-only or exact item-ID whole stacks, including damaged tools, can be transferred",
-                                        "a missing requested item reports a bounded list of observed source item IDs for replanning",
-                                        "one bounded quick-move segment is never retried blindly",
-                                        "success requires a fresh reopened full-content snapshot for both endpoints and an empty cursor")),
-                        routineCatalogEntry(
-                                "tend_crop_area",
-                                5,
-                                McpToolSchemas.tendCropAreaStartInput(),
-                                List.of(
-                                        "only existing declared crop blocks are harvested or replanted; air cells require place_block",
-                                        "only declared current-visible cells using the closed vanilla crop adapters are mutated",
-                                        "every harvest and replant transition has server-positive block evidence",
-                                        "drop collection uncertainty remains explicit")),
-                        routineCatalogEntry(
-                                "harvest_tree_area",
-                                5,
-                                McpToolSchemas.harvestTreeAreaStartInput(),
-                                List.of(
-                                        "only declared current-visible vanilla log cells are claimed and mutated",
-                                        "hidden logs and complete natural-tree coverage are never inferred",
-                                        "drop collection uncertainty remains explicit")),
-                        routineCatalogEntry(
-                                "sleep_at_bed",
-                                5,
-                                McpToolSchemas.sleepAtBedStartInput(),
-                                List.of(
-                                        "both exact bed halves and the dimension sleep rule are revalidated before normal use",
-                                        "sleep and wake require server-synchronized player state",
-                                        "respawn change is confirmed only by the action-scoped vanilla semantic signal")),
-                        routineCatalogEntry(
-                                "survey_area",
-                                5,
-                                McpToolSchemas.surveyAreaStartInput(),
-                                List.of(
-                                        "only declared waypoints and samples are inspected through normal movement and view control",
-                                        "current, last-known, and unknown coverage remain distinct",
-                                        "spawn-surface assessment is explicitly predicted rather than server-confirmed")),
-                        routineCatalogEntry(
-                                "execute_plan",
-                                6,
-                                McpToolSchemas.executePlanStartInput(),
-                                List.of(
-                                        "every child action remains private to one parent routine",
-                                        "all loops, waits, total ticks, nesting, and expanded executions are bounded",
-                                        "conditions authorize progress only from positive current evidence",
-                                        "the active child action is released before any terminal parent state")));
-    }
-
-    private static Map<String, Object> routineCatalogSummary(Map<String, Object> entry) {
-        String kind = (String) entry.get("kind");
-        return Map.of(
-                "kind", kind,
-                "phase", entry.get("phase"),
-                "experimental", entry.get("experimental"),
-                "capabilities", routineCapabilities(kind));
-    }
-
-    private static List<String> routineCapabilities(String kind) {
-        return switch (kind) {
-            case "stationary_break" -> List.of("break one regenerating target", "collect to inventory goal");
-            case NavigateToRequest.KIND -> List.of("bounded ground navigation");
-            case BreakBlockRequest.KIND -> List.of("break one exact block to air");
-            case PlaceBlockRequest.KIND -> List.of(
-                    "place one exact block or initially plant one crop",
-                    "auto-stage the exact item from player inventory");
-            case InteractBlockRequest.KIND -> List.of("toggle one allowlisted block");
-            case InteractEntityRequest.KIND -> List.of("interact with one visible referenced entity");
-            case UseItemOnBlockRequest.KIND -> List.of(
-                    "till one exact dirt, grass, or path block with a vanilla hoe",
-                    "auto-stage the exact item from player inventory");
-            case ApplyBlockPlanRequest.KIND -> List.of("verify, break, place, or replace up to 64 declared cells");
-            case "craft_items" -> List.of("craft a client-known recipe to an inventory goal");
-            case "transfer_items" -> List.of(
-                    "open, transfer one item type to or from one container, verify, and close",
-                    "inspect bounded source item choices without mutation by setting the destination goal to zero",
-                    "report bounded source item choices when the requested item is absent");
-            case "tend_crop_area" -> List.of(
-                    "harvest and replant existing declared crop plots",
-                    "use place_block for initial planting into air");
-            case "harvest_tree_area" -> List.of("harvest and replant declared visible tree cells");
-            case "sleep_at_bed" -> List.of("sleep at one declared bed and return");
-            case "survey_area" -> List.of("visit declared waypoints and observe declared samples");
-            case "execute_plan" -> List.of(
-                    "execute a bounded typed sequence with finite loops and checks",
-                    "compose transfer_items, use_item_on_block, and place_block for farming");
-            default -> throw new IllegalArgumentException("kind is not an available routine");
-        };
-    }
-
-    private static Map<String, Object> routineCatalogEntry(
-            String kind,
-            int phase,
-            Map<String, Object> inputSchema,
-            List<String> postconditions) {
-        var entry = new LinkedHashMap<String, Object>();
-        entry.put("kind", kind);
-        entry.put("phase", phase);
-        entry.put("experimental", false);
-        entry.put("input_schema", inputSchema);
-        entry.put("postconditions", postconditions);
-        return Map.copyOf(entry);
-    }
-
-    private Map<String, Object> getRoutine(Map<String, Object> arguments) {
-        var routineId = uuidArgument(arguments, "routine_id");
-        long afterEventSeq = optionalLong(arguments, "after_event_seq", 0);
-        int maxEvents = Math.toIntExact(optionalLong(arguments, "max_events", 32));
-        return RoutineWireMapper.toMap(routines.getRoutine(routineId, afterEventSeq, maxEvents));
-    }
-
-    private Map<String, Object> startRoutine(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            Map<String, Object> arguments,
-            RuntimeCallContext context) {
-        requireStartRoutineKeys(arguments);
-        String kind = stringArgument(arguments, "kind");
-        if (!AVAILABLE_CAPABILITIES.contains(kind)) {
-            throw new IllegalArgumentException("kind is not an available routine");
-        }
-        String completionIntent = completionIntentArgument(arguments);
-        return switch (kind) {
-            case "stationary_break" -> startStationaryBreak(
-                    minecraft, session, arguments, completionIntent, context);
-            case NavigateToRequest.KIND,
-                    BreakBlockRequest.KIND,
-                    PlaceBlockRequest.KIND,
-                    InteractBlockRequest.KIND,
-                    InteractEntityRequest.KIND,
-                    UseItemOnBlockRequest.KIND -> startSemanticAction(
-                            minecraft, session, arguments, completionIntent, context);
-            case ApplyBlockPlanRequest.KIND -> startApplyBlockPlan(
-                    minecraft, session, arguments, completionIntent, context);
-            case "craft_items", "transfer_items", "tend_crop_area",
-                    "harvest_tree_area", "sleep_at_bed", "survey_area" -> startPhaseFive(
-                            minecraft, session, arguments, completionIntent, context);
-            case "execute_plan" -> startFinitePlan(
-                    session, arguments, completionIntent, context);
-            default -> throw new IllegalArgumentException("kind is not an available routine");
-        };
-    }
-
-    private Map<String, Object> startStationaryBreak(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            Map<String, Object> arguments,
-            String completionIntent,
-            RuntimeCallContext context) {
-        var parameters = objectArgument(arguments, "parameters");
-        requireExactKeys(parameters, "stationary_break parameters", Set.of(
-                "target", "allowed_blocks", "goal", "regeneration_timeout_seconds"));
-        var target = dimensionBlockTargetArgument(parameters, "target");
-        var bounds = actionBoundsArgument(arguments, session);
-        if (!bounds.contains(target)
-                || bounds.maxTravelBlocks() != 0
-                || !bounds.allowBreak()
-                || bounds.maxDurationSeconds() > 60) {
-            throw new IllegalArgumentException("stationary_break target/bounds are inconsistent");
-        }
-
-        Set<String> allowedBlocks = stringSetArgument(parameters, "allowed_blocks");
-        validateStationaryBreakAllowedBlocks(allowedBlocks);
-        var goalMap = objectArgument(parameters, "goal");
-        requireExactKeys(goalMap, "goal", Set.of("item", "minimum_inventory_count"));
-        var goal = new StationaryBreakGoal(
-                stringArgument(goalMap, "item"),
-                intArgument(goalMap, "minimum_inventory_count"));
-        int maxDurationSeconds = bounds.maxDurationSeconds();
-        int regenerationSeconds = intArgument(parameters, "regeneration_timeout_seconds");
-        if (regenerationSeconds < 1 || regenerationSeconds > 10) {
-            throw new IllegalArgumentException("regeneration_timeout_seconds must be in 1..10");
-        }
-        String idempotencyKey = stringArgument(arguments, "idempotency_key");
-        String requestIdentity = stationaryBreakIdentity(
-                target,
-                allowedBlocks,
-                goal,
-                bounds.minimum(),
-                bounds.maximum(),
-                maxDurationSeconds,
-                regenerationSeconds,
-                completionIntent);
-        var replay = replayStationaryBreakAfterFinalizationGate(
-                finalizationRetries,
-                routines,
-                idempotencyKey,
-                requestIdentity,
-                session.clientTick());
-        if (replay.isPresent()) {
-            return startReceiptPayload(replay.orElseThrow());
-        }
-
-        requireLiveCall(context, "start_routine");
-
-        if (!arming.allows(session.worldSessionId(), "stationary_break")) {
-            throw new RuntimeInvocationException(
-                    "locked",
-                    "stationary_break is not armed for this world session",
-                    false,
-                    Map.of());
-        }
-        validateLiveBounds(minecraft, bounds, target);
-
-        final BlockStateFingerprint expectedSource;
-        try {
-            expectedSource = stationaryBreakPort.captureExpectedSource(target, allowedBlocks);
-        }
-        catch (IllegalArgumentException | IllegalStateException failure) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state", publicMessage(failure), true, Map.of("target", "not_ready"));
-        }
-        long hardDeadlineTick = saturatingAdd(
-                session.clientTick(), Math.multiplyExact(maxDurationSeconds, 20L));
-        int regenerationTicks = Math.multiplyExact(regenerationSeconds, 20);
-        var request = new StationaryBreakRequest(
-                target,
-                expectedSource,
-                goal,
-                hardDeadlineTick,
-                StationaryBreakRequest.MAX_ATTACK_LEASE_TICKS,
-                regenerationTicks);
-
-        var receipt = admitWithVoiceSafety(
-                context, session.worldSessionId(), completionIntent, maxDurationSeconds,
-                () -> routines.startStationaryBreak(
-                idempotencyKey, requestIdentity, request, session.clientTick()));
-        return startReceiptPayload(receipt);
-    }
-
-    private Map<String, Object> startSemanticAction(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            Map<String, Object> arguments,
-            String completionIntent,
-            RuntimeCallContext context) {
-        var request = semanticActionArgument(arguments, session);
-        var idempotencyKey = stringArgument(arguments, "idempotency_key");
-        var requestIdentity = semanticActionIdentity(request, completionIntent);
-        var replay = replaySemanticActionAfterFinalizationGate(
-                finalizationRetries,
-                routines,
-                idempotencyKey,
-                requestIdentity,
-                request,
-                session.clientTick());
-        if (replay.isPresent()) {
-            return startReceiptPayload(replay.orElseThrow());
-        }
-
-        requireLiveCall(context, "start_routine");
-        if (!arming.allows(session.worldSessionId(), request.kind())) {
-            throw new RuntimeInvocationException(
-                    "locked",
-                    request.kind() + " is not armed for this world session",
-                    false,
-                    Map.of());
-        }
-        validateLiveBounds(minecraft, request.bounds(), semanticTarget(request).orElse(null));
-        if (request instanceof PlaceBlockRequest place) {
-            try {
-                semanticActionPort.requireSafePlacementSupportForAdmission(place);
-            } catch (SafePlacementSupportPolicy.UnsafePlacementSupportException rejected) {
-                throw new RuntimeInvocationException(
-                        "unsafe_state", SafePlacementSupportPolicy.REJECTION_MESSAGE, true,
-                        Map.of("placement_support", "not_safe"));
-            }
-        }
-
-        var receipt = admitWithVoiceSafety(
-                context, session.worldSessionId(), completionIntent,
-                request.bounds().maxDurationSeconds(), () -> routines.startSemanticAction(
-                idempotencyKey, requestIdentity, request, session.clientTick()));
-        return startReceiptPayload(receipt);
-    }
-
-    private Map<String, Object> startApplyBlockPlan(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            Map<String, Object> arguments,
-            String completionIntent,
-            RuntimeCallContext context) {
-        var parsed = applyBlockPlanArgument(arguments, session.dimension());
-        var request = parsed.request();
-        var idempotencyKey = stringArgument(arguments, "idempotency_key");
-        var replay = replayApplyBlockPlanAfterFinalizationGate(
-                finalizationRetries,
-                routines,
-                idempotencyKey,
-                parsed.requestIdentity(),
-                session.clientTick());
-        if (replay.isPresent()) {
-            return startReceiptPayload(replay.orElseThrow(), parsed.resourceEstimate());
-        }
-
-        requireLiveCall(context, "start_routine");
-        if (!arming.allows(session.worldSessionId(), request.kind())) {
-            throw new RuntimeInvocationException(
-                    "locked",
-                    request.kind() + " is not armed for this world session",
-                    false,
-                    Map.of());
-        }
-        for (var step : request.steps()) {
-            validateLiveBounds(minecraft, request.bounds(), step.target());
-        }
-        validateApplyBlockPlanItems(request);
-
-        var receipt = admitWithVoiceSafety(
-                context, session.worldSessionId(), completionIntent,
-                request.bounds().maxDurationSeconds(), () -> routines.startApplyBlockPlan(
-                idempotencyKey,
-                parsed.requestIdentity(),
-                request,
-                session.clientTick()));
-        return startReceiptPayload(receipt, parsed.resourceEstimate());
-    }
-
-    private Map<String, Object> startPhaseFive(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            Map<String, Object> arguments,
-            String completionIntent,
-            RuntimeCallContext context) {
-        var parsed = phaseFiveRequestArgument(arguments, session.dimension());
-        var request = parsed.request();
-        String idempotencyKey = stringArgument(arguments, "idempotency_key");
-        var replay = replayPhaseFiveAfterFinalizationGate(
-                finalizationRetries,
-                routines,
-                idempotencyKey,
-                parsed.requestIdentity(),
-                request,
-                session.clientTick());
-        if (replay.isPresent()) {
-            return startReceiptPayload(replay.orElseThrow());
-        }
-
-        requireLiveCall(context, "start_routine");
-        if (!arming.allows(session.worldSessionId(), request.kind())) {
-            throw new RuntimeInvocationException(
-                    "locked",
-                    request.kind() + " is not armed for this world session",
-                    false,
-                    Map.of());
-        }
-        validateLiveBounds(minecraft, request.bounds(), parsed.targets());
-
-        var receipt = admitWithVoiceSafety(
-                context, session.worldSessionId(), completionIntent,
-                request.bounds().maxDurationSeconds(), () -> routines.startPhaseFive(
-                idempotencyKey,
-                parsed.requestIdentity(),
-                request,
-                session.clientTick()));
-        return startReceiptPayload(receipt);
-    }
-
-    private Map<String, Object> startFinitePlan(
-            WorldSessionTracker.Snapshot session,
-            Map<String, Object> arguments,
-            String completionIntent,
-            RuntimeCallContext context) {
-        var parsed = finitePlanRequestArgument(arguments);
-        var request = parsed.request();
-        String idempotencyKey = stringArgument(arguments, "idempotency_key");
-        var replay = replayFinitePlanAfterFinalizationGate(
-                finalizationRetries,
-                routines,
-                idempotencyKey,
-                parsed.requestIdentity(),
-                session.clientTick());
-        if (replay.isPresent()) {
-            return startReceiptPayload(replay.orElseThrow());
-        }
-
-        requireLiveCall(context, "start_routine");
-        if (!arming.allows(session.worldSessionId(), "execute_plan")) {
-            throw new RuntimeInvocationException(
-                    "locked",
-                    "execute_plan is not armed for this world session",
-                    false,
-                    Map.of());
-        }
-        finitePlanPort.validate(request);
-        int maxDurationSeconds = (request.maxTicks() + 19) / 20;
-        var receipt = admitWithVoiceSafety(
-                context,
-                session.worldSessionId(),
-                completionIntent,
-                maxDurationSeconds,
-                () -> routines.startFinitePlan(
-                        idempotencyKey,
-                        parsed.requestIdentity(),
-                        request,
-                        session.clientTick()));
-        return startReceiptPayload(receipt);
-    }
-
-    private RoutineManager.StartReceipt admitWithVoiceSafety(
-            RuntimeCallContext context,
-            UUID worldSessionId,
-            String completionIntent,
-            int maxDurationSeconds,
-            Supplier<RoutineManager.StartReceipt> admission) {
-        if (!goalContinuation.canAdmit(worldSessionId, completionIntent)) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state",
-                    "The local continuation routine limit is exhausted",
-                    false,
-                    Map.of("reason", "continuation_limit"));
-        }
-        final VoiceChatSafetyController.BeginResult voiceBegin;
-        try {
-            requireLiveCall(context, "start_routine");
-            voiceBegin = voiceChat.beginAutomation();
-        }
-        catch (ClientCommandInbox.CommandTimeoutException timeout) {
-            // The deadline check happens before Voice Chat is touched, so no rollback is needed.
-            throw timeout;
-        }
-        catch (RuntimeException | LinkageError failure) {
-            McmcpMod.LOGGER.error("MCMCP Voice Chat begin safety gate threw", failure);
-            var voiceEnd = cleanUpRejectedVoiceBegin();
-            var details = new LinkedHashMap<String, Object>();
-            details.put("voice.stage", "begin");
-            details.put("voice.failure", "voicechat_begin_exception");
-            appendVoiceEndDetails(details, voiceEnd);
-            throw new RuntimeInvocationException(
-                    "unsafe_state", "Voice Chat safety gate failed", true, details);
-        }
-        if (!voiceBegin.permitted()) {
-            var code = voiceBegin.failureCode() != null
-                            && (voiceBegin.failureCode().contains("version")
-                            || voiceBegin.failureCode().contains("adapter"))
-                    ? "incompatible"
-                    : "unsafe_state";
-            var voiceEnd = cleanUpRejectedVoiceBegin();
-            var details = new LinkedHashMap<>(voiceBeginFailureDetails(voiceBegin));
-            appendVoiceEndDetails(details, voiceEnd);
-            throw new RuntimeInvocationException(
-                    code,
-                    "Voice Chat safety gate rejected routine start",
-                    true,
-                    details);
-        }
-
-        final RoutineManager.StartReceipt receipt;
-        if (!arming.beginAction(worldSessionId)) {
-            var voiceEnd = endVoiceSessionFor(null);
-            var details = new LinkedHashMap<String, Object>();
-            details.put("reason", "ready_lease_unavailable");
-            appendVoiceEndDetails(details, voiceEnd);
-            throw new RuntimeInvocationException(
-                    "locked",
-                    "The READY authorization is no longer available",
-                    true,
-                    details);
-        }
-        try {
-            requireLiveCall(context, "start_routine");
-            receipt = admission.get();
-        }
-        catch (RuntimeException | LinkageError failure) {
-            returnControlReady();
-            var voiceEnd = endVoiceSessionFor(null);
-            throw withVoiceEndFailureDiagnostics(failure, voiceEnd);
-        }
-        if (!receipt.reused()) {
-            long startedAtNanos = System.nanoTime();
-            activeRoutineDeadline = RoutineWallClockDeadline.start(
-                    receipt.routineId(), maxDurationSeconds, startedAtNanos);
-            if (paused) {
-                pauseStartedAtNanos = startedAtNanos;
-            }
-        }
-        voiceRoutineId = receipt.routineId();
-        goalContinuation.remember(
-                worldSessionId, receipt.routineId(), receipt.reused(), completionIntent);
-        return receipt;
-    }
-
-    private Map<String, Object> startReceiptPayload(RoutineManager.StartReceipt receipt) {
-        return startReceiptPayload(receipt, null);
-    }
-
-    private Map<String, Object> startReceiptPayload(
-            RoutineManager.StartReceipt receipt,
-            Map<String, Object> resourceEstimate) {
-        var snapshot = routines.getRoutine(receipt.routineId(), Long.MAX_VALUE, 1);
-        var result = new LinkedHashMap<String, Object>();
-        result.put("routine_id", receipt.routineId().toString());
-        result.put("kind", snapshot.kind());
-        result.put("state", snapshot.state().name());
-        result.put("idempotent_replay", receipt.reused());
-        result.put("resource_estimate", resourceEstimate);
-        return result;
-    }
-
-    private static String stationaryBreakIdentity(
-            BlockTarget target,
-            Set<String> allowedBlocks,
-            StationaryBreakGoal goal,
-            BlockTarget minimum,
-            BlockTarget maximum,
-            int maxDurationSeconds,
-            int regenerationSeconds,
-            String completionIntent) {
-        var sortedBlocks = allowedBlocks.stream().sorted().toList();
-        return String.join("\u001f",
-                target.dimension(),
-                Integer.toString(target.x()),
-                Integer.toString(target.y()),
-                Integer.toString(target.z()),
-                String.join(",", sortedBlocks),
-                goal.itemId(),
-                Integer.toString(goal.minimumInventoryCount()),
-                Integer.toString(minimum.x()),
-                Integer.toString(minimum.y()),
-                Integer.toString(minimum.z()),
-                Integer.toString(maximum.x()),
-                Integer.toString(maximum.y()),
-                Integer.toString(maximum.z()),
-                Integer.toString(maxDurationSeconds),
-                Integer.toString(regenerationSeconds),
-                completionIntent);
-    }
-
-    static String semanticActionIdentity(SemanticActionRequest request) {
-        return semanticActionIdentity(request, GoalContinuationSession.FINISH_GOAL);
-    }
-
-    static String semanticActionIdentity(SemanticActionRequest request, String completionIntent) {
-        Objects.requireNonNull(request, "request");
-        GoalContinuationSession.requireIntent(completionIntent);
-        var canonical = new StringBuilder();
-        appendIdentity(canonical, request.kind());
-        switch (request) {
-            case NavigateToRequest navigation -> {
-                appendTargetIdentity(canonical, navigation.target());
-                appendIdentity(canonical, Double.toHexString(
-                        navigation.horizontalToleranceBlocks()));
-            }
-            case BreakBlockRequest block -> {
-                appendTargetIdentity(canonical, block.target());
-                appendBlockStateIdentity(canonical, block.expectedBefore());
-                appendBlockStateIdentity(canonical, block.expectedAfter());
-            }
-            case PlaceBlockRequest place -> {
-                appendTargetIdentity(canonical, place.target());
-                appendBlockStateIdentity(canonical, place.expectedBefore());
-                appendIdentity(canonical, place.item());
-                appendBlockStateIdentity(canonical, place.expectedAfter());
-            }
-            case UseItemOnBlockRequest use -> {
-                appendTargetIdentity(canonical, use.target());
-                appendBlockStateIdentity(canonical, use.expectedBefore());
-                appendIdentity(canonical, use.item());
-                appendBlockStateIdentity(canonical, use.expectedAfter());
-            }
-            case InteractBlockRequest block -> {
-                appendTargetIdentity(canonical, block.target());
-                appendBlockStateIdentity(canonical, block.expectedBefore());
-                appendBlockStateIdentity(canonical, block.expectedAfter());
-            }
-            case InteractEntityRequest entity -> {
-                appendIdentity(canonical, entity.entityRef());
-                appendIdentity(canonical, entity.expectedType());
-                appendIdentity(canonical, entity.hand());
-                appendIdentity(canonical, entity.heldItem());
-                appendIdentity(canonical, entity.goal().itemId());
-                appendIdentity(canonical, Integer.toString(
-                        entity.goal().minimumInventoryCount()));
-            }
-        }
-        appendBoundsIdentity(canonical, request.bounds());
-        appendIdentity(canonical, completionIntent);
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(
-                    canonical.toString().getBytes(StandardCharsets.UTF_8));
-            return "sha256:" + java.util.HexFormat.of().formatHex(digest);
-        }
-        catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException("SHA-256 is unavailable", impossible);
-        }
-    }
-
-    private static void appendBoundsIdentity(StringBuilder output, ActionBounds bounds) {
-        appendIdentity(output, bounds.dimension());
-        appendTargetIdentity(output, bounds.minimum());
-        appendTargetIdentity(output, bounds.maximum());
-        appendIdentity(output, Integer.toString(bounds.maxTravelBlocks()));
-        appendIdentity(output, Integer.toString(bounds.maxDurationSeconds()));
-        appendIdentity(output, Boolean.toString(bounds.allowBreak()));
-    }
-
-    private static void appendTargetIdentity(StringBuilder output, BlockTarget target) {
-        appendIdentity(output, target.dimension());
-        appendIdentity(output, Integer.toString(target.x()));
-        appendIdentity(output, Integer.toString(target.y()));
-        appendIdentity(output, Integer.toString(target.z()));
-    }
-
-    private static void appendBlockStateIdentity(
-            StringBuilder output,
-            BlockStateFingerprint state) {
-        appendIdentity(output, state.blockId());
-        state.properties().entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> {
-                    appendIdentity(output, entry.getKey());
-                    appendIdentity(output, entry.getValue());
-                });
-        appendIdentity(output, Integer.toString(state.properties().size()));
-    }
-
-    private static void appendIdentity(StringBuilder output, String value) {
-        output.append(value.length()).append(':').append(value).append(';');
-    }
-
-    private Map<String, Object> cancelRoutine(Minecraft minecraft, Map<String, Object> arguments) {
-        var routineId = uuidArgument(arguments, "routine_id");
-        var before = routines.getRoutine(routineId, Long.MAX_VALUE, 1);
-        boolean alreadyTerminal = before.state().terminal();
-        if (alreadyTerminal) {
-            return Map.of(
-                    "routine_id", routineId.toString(),
-                    "state", before.state().name(),
-                    "released_inputs", finalizationReleasedInputs(before),
-                    "already_terminal", true);
-        }
-        var cancelled = routines.cancelRoutine(
-                routineId, stringArgument(arguments, "reason"), Long.MAX_VALUE, 1);
-        var cleanup = finalizeTerminalRoutine(minecraft, cancelled);
-        return Map.of(
-                "routine_id", routineId.toString(),
-                "state", cleanup.snapshot().state().name(),
-                "released_inputs", cleanup.inputsReleased(),
-                "already_terminal", alreadyTerminal);
     }
 
     private void tickAgentAction(Minecraft minecraft) {
@@ -4594,7 +1862,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             "admission_missing_before_execution");
                     return;
                 }
-                var admissionFailure = admissionFenceFailure(
+                var admissionFailure = actionAdmission.admissionFenceFailure(
                         minecraft,
                         session,
                         pending.prepared(),
@@ -4616,7 +1884,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 KillZoneAdmission currentKillAuthorization = null;
                 if (killAuthorization != null) {
                     ActionDsl.OperateKillZone operation = Objects.requireNonNull(
-                            soleKillZone(action.program().request().program()),
+                            KillZoneSafety.soleKillZone(action.program().request().program()),
                             "kill-zone operation");
                     currentKillAuthorization = requireKillZoneAdmission(
                             minecraft, session, pending.prepared().source(), operation);
@@ -4634,7 +1902,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         pending.prepared().analysis().mutationAims(),
                         reconciliationSignals.bindAndSnapshot(
                                         minecraft.level, session.worldSessionId())
-                                .positionCorrectionRevision());
+                                .positionCorrectionRevision(),
+                        new MenuPrimitiveExecution(action.actionId(), agentActions, knownFurnacePort,
+                                knownMenuPort, phaseFiveInventoryPort, knownBrewingPort, applyBlockPlanPort,
+                                pillarUpPort, semanticActionPort, observations, agentObservations.deliveredEvidence()),
+                        new FishingPrimitiveExecution(action.actionId(), agentActions, fishingSessionRefs, arming));
                 boolean transportApprovalConsumed = false;
                 if (killAuthorization != null
                         && pending.transportApproval() != null) {
@@ -4666,7 +1938,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     boolean consumed = currentKillAuthorization.equals(killAuthorization)
                             && (transportApprovalConsumed
                                     || entityAttackConsent.consumeExactForActionStart(
-                                            Objects.requireNonNull(soleKillZone(
+                                            Objects.requireNonNull(KillZoneSafety.soleKillZone(
                                                             action.program().request().program()))
                                                     .consentRef().orElseThrow(),
                                             session.worldSessionId(),
@@ -4682,11 +1954,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     }
                     agentExecution.killZone = new KillZoneExecution(
                             Objects.requireNonNull(
-                                    soleKillZone(action.program().request().program())),
+                                    KillZoneSafety.soleKillZone(action.program().request().program())),
                             killAuthorization.scope(),
                             session.clientTick(),
                             minecraft.player.getHealth(),
-                            minecraft.player.getAbsorptionAmount());
+                            minecraft.player.getAbsorptionAmount(), agentExecution.actionId, agentActions, agentObservations.frames(),
+                            observations, reconciliationSignals);
                     if (!advanceAgentProgram(
                             minecraft, agentActions.get(action.actionId()).progress())) {
                         return;
@@ -4701,7 +1974,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             if (agentExecution.killZone != null
                     && minecraft.player != null
-                    && killZoneHealthDecreased(agentExecution.killZone, minecraft.player)) {
+                    && agentExecution.killZone.healthDecreased(minecraft.player)) {
                 safetyInterruptKillZone(
                         minecraft, session, action, agentExecution.killZone, "health_decreased");
                 return;
@@ -4709,11 +1982,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (paused) {
                 releaseAgentInputsForHold(minecraft, "pause_input_release_failed");
                 if (agentExecution.primitive instanceof ActionDsl.HoldBoundedInputs
-                        || isFrameItemPrimitive(agentExecution.primitive)) {
+                        || ActionEvidence.isFrameItemPrimitive(agentExecution.primitive)) {
                     failAgentAction(
                             AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
                             true,
-                            isFrameItemPrimitive(agentExecution.primitive)
+                            ActionEvidence.isFrameItemPrimitive(agentExecution.primitive)
                                     ? "frame_item_screen_open" : "bounded_input_screen_open");
                 }
                 return;
@@ -4740,7 +2013,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 agentExecution.lastPosition = minecraft.player.position();
                 agentExecution.lastYaw = minecraft.player.getYRot();
                 agentExecution.lastPitch = minecraft.player.getXRot();
-                boolean repeated = repeatedPositionCorrection(
+                boolean repeated = ActionBudgets.repeatedPositionCorrection(
                         previousCorrectionRevision,
                         correctionRevision,
                         agentExecution.positionCorrections);
@@ -4887,9 +2160,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem collect
                     && agentExecution.pickupInventoryBefore >= 0
-                    && pickupInventoryIncreased(
+                    && PlayerInventoryEvidence.pickupInventoryIncreased(
                             agentExecution.pickupInventoryBefore,
-                            inventoryItemCount(player, collect.displayedItem()))) {
+                            PlayerInventoryEvidence.inventoryItemCount(player, collect.displayedItem()))) {
                 completeAgentPrimitive(minecraft, action);
                 return;
             }
@@ -4928,7 +2201,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (agentExecution.primitive
                     instanceof ActionDsl.OperateKnownCobblestoneGenerator
                     && (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
-                            || localSafety == LocalObservationProjector.CurrentSafety.REPLAN)) {
+                            || agentObservations.localSafety() == LocalObservationProjector.CurrentSafety.REPLAN)) {
                 failAgentAction(
                         AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
                         true,
@@ -4938,8 +2211,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (!(agentExecution.primitive instanceof ActionDsl.OperateKnownMenu)
                     && !(agentExecution.primitive instanceof ActionDsl.PillarUpKnown)
                     && (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
-                            || localSafety == LocalObservationProjector.CurrentSafety.REPLAN)) {
-                if (isAgentWait(agentExecution.primitive)) {
+                            || agentObservations.localSafety() == LocalObservationProjector.CurrentSafety.REPLAN)) {
+                if (ActionEvidence.isAgentWait(agentExecution.primitive)) {
                     failAgentAction(
                             AgentActionStore.FailureCode.PATH_BLOCKED,
                             true,
@@ -4959,7 +2232,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 tickAgentCobblestoneGenerator(minecraft, session, action, operation);
                 return;
             }
-            if (isAgentWait(agentExecution.primitive)) {
+            if (ActionEvidence.isAgentWait(agentExecution.primitive)) {
                 if (occurrenceBudgetExceeded(
                         agentActions.get(action.actionId()).progress(),
                         agentExecution)) {
@@ -5032,7 +2305,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 return;
             }
             if (agentExecution.replanning
-                    && replanDeadlineReached(actionTick, agentExecution.replanDeadlineTick)) {
+                    && ActionBudgets.replanDeadlineReached(actionTick, agentExecution.replanDeadlineTick)) {
                 failAgentAction(
                         AgentActionStore.FailureCode.PATH_BLOCKED,
                         true,
@@ -5061,20 +2334,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     return;
                 }
                 if (agentExecution.pickupCell != null) {
-                    var pickupMap = requireAgentMap(session);
-                    long visualBarrierWorldRevision = visualBarrierWorldRevision(
+                    var pickupMap = agentObservations.requireAgentMap(session);
+                    long visualBarrierWorldRevision = ActionEvidence.visualBarrierWorldRevision(
                             pickupMap,
                             reconciliationSignals.bindAndSnapshot(
                                     Objects.requireNonNull(minecraft.level, "level"),
                                     session.worldSessionId()));
                     if (!AgentPrimitivePlanner.visibleItemPickupCellCurrent(
                             pickupMap,
-                            agentPlanningFrame(),
+                            agentObservations.agentPlanningFrame(),
                             activeCollect,
                             agentExecution.pickupCell,
                             visualBarrierWorldRevision,
                             session.clientTick(),
-                            visibleItemEvidenceMaxAgeTicks(
+                            ActionBudgets.visibleItemEvidenceMaxAgeTicks(
                                     McmcpClientConfig.raysPerTick()))) {
                         requestAgentReplan(actionTick, "pickup_witness_changed");
                         return;
@@ -5094,7 +2367,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 return;
             }
 
-            if (isFrameItemPrimitive(agentExecution.primitive)) {
+            if (ActionEvidence.isFrameItemPrimitive(agentExecution.primitive)) {
                 tickAgentFrameItem(minecraft, session, action);
                 return;
             }
@@ -5105,55 +2378,65 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     || agentExecution.primitive instanceof ActionDsl.CraftKnownRecipe
                     || agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe
                     || agentExecution.primitive instanceof ActionDsl.OperateKnownMenu) {
-                tickAgentContainer(minecraft, session, action);
+                applyMenuPrimitiveOutcome(minecraft, action,
+                        agentExecution.menuPrimitives.tickAgentContainer(minecraft, session,
+                                agentExecution.primitive, agentExecution.mutationAims,
+                                agentExecution.latestWorldRevision));
                 return;
             }
 
             if (agentExecution.primitive instanceof ActionDsl.BrewKnownPotionBatch) {
-                tickAgentBrewing(minecraft, session, action);
+                applyMenuPrimitiveOutcome(minecraft, action,
+                        agentExecution.menuPrimitives.tickAgentBrewing(session, agentExecution.primitive,
+                                agentExecution.mutationAims, agentExecution.maxCameraDegreesPerTick));
                 return;
             }
 
             if (agentExecution.primitive instanceof ActionDsl.ApplyKnownBlockPlan
                     || agentExecution.primitive instanceof ActionDsl.ClearKnownBlockPlan) {
-                tickAgentConstruction(minecraft, session, action);
+                applyMenuPrimitiveOutcome(minecraft, action,
+                        agentExecution.menuPrimitives.tickAgentConstruction(session, agentExecution.primitive,
+                                agentExecution.latestWorldRevision));
                 return;
             }
 
             if (agentExecution.primitive instanceof ActionDsl.PillarUpKnown) {
-                tickAgentPillarUp(minecraft, session, action);
+                applyMenuPrimitiveOutcome(minecraft, action,
+                        agentExecution.menuPrimitives.tickAgentPillarUp(session, agentExecution.primitive));
                 return;
             }
 
             if (agentExecution.primitive instanceof ActionDsl.ApplyKnownRedstoneSpec) {
-                tickAgentRedstone(minecraft, session, action);
+                applyMenuPrimitiveOutcome(minecraft, action,
+                        agentExecution.menuPrimitives.tickAgentRedstone(minecraft, session,
+                                agentExecution.primitive, agentExecution.mutationAims));
                 return;
             }
 
-            KnownTraversabilitySnapshot map = requireAgentMap(session);
+            KnownTraversabilitySnapshot map = agentObservations.requireAgentMap(session);
             if (agentExecution.primitiveExecutor.active()
                     && (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition
                             || agentExecution.primitive instanceof ActionDsl.FaceKnownBlockFace
-                            || isKnownBreak(agentExecution.primitive)
+                            || KnownBreakSafety.isKnownBreak(agentExecution.primitive)
                             || agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod)) {
                 var faceReconciliation = reconciliationSignals.bindAndSnapshot(
                         Objects.requireNonNull(minecraft.level, "level"),
                         session.worldSessionId());
-                var faceSurfaceBarrier = surfaceRevisionBarrier(map, faceReconciliation);
+                var faceSurfaceBarrier = ActionEvidence.surfaceRevisionBarrier(map, faceReconciliation);
                 boolean faceEvidenceCurrent;
                 if (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition face) {
                     faceEvidenceCurrent = AgentPrimitivePlanner.knownFacingTarget(
-                            map, agentPlanningFrame(), face.target());
+                            map, agentObservations.agentPlanningFrame(), face.target());
                 } else if (agentExecution.primitive instanceof ActionDsl.FaceKnownBlockFace face) {
                     faceEvidenceCurrent = AgentPrimitivePlanner.knownFacingSurface(
                             map,
-                            agentPlanningFrame(),
+                            agentObservations.agentPlanningFrame(),
                             new AgentPrimitivePlanner.KnownSurface(
                                     face.target(), face.face(), face.expectedBlock()));
                 } else if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod cast) {
                     faceEvidenceCurrent = AgentPrimitivePlanner.knownExactSurface(
                             map,
-                            agentPlanningFrame(),
+                            agentObservations.agentPlanningFrame(),
                             cast.target(),
                             cast.face(),
                             cast.expectedState(),
@@ -5162,14 +2445,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     var block = agentExecution.primitive;
                     faceEvidenceCurrent = AgentPrimitivePlanner.knownSurface(
                             map,
-                            agentPlanningFrame(),
+                            agentObservations.agentPlanningFrame(),
                             new AgentPrimitivePlanner.KnownSurface(
-                                    breakTarget(block), breakFace(block), breakBlockId(block)),
-                            faceSurfaceBarrier.applyAsLong(breakTarget(block)));
+                                    KnownBreakSafety.breakTarget(block), KnownBreakSafety.breakFace(block), KnownBreakSafety.breakBlockId(block)),
+                            faceSurfaceBarrier.applyAsLong(KnownBreakSafety.breakTarget(block)));
                     if (faceEvidenceCurrent && block instanceof ActionDsl.BreakKnownBlock exact) {
                         try {
                             AgentPrimitivePlanner.requireKnownBreakSurface(
-                                    map, agentPlanningFrame(), exact,
+                                    map, agentObservations.agentPlanningFrame(), exact,
                                     faceSurfaceBarrier.applyAsLong(exact.target()));
                         } catch (AgentPrimitivePlanner.PlanningException unavailable) {
                             faceEvidenceCurrent = false;
@@ -5181,7 +2464,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     return;
                 }
             }
-            if (isKnownBreak(agentExecution.primitive)
+            if (KnownBreakSafety.isKnownBreak(agentExecution.primitive)
                     && agentExecution.breakAimComplete) {
                 tickAgentBreak(
                         minecraft, session, action, map, agentExecution.primitive, actionTick);
@@ -5223,7 +2506,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 return;
             }
             var usedAfterTick = agentActions.get(action.actionId()).progress();
-            if (motionBudgetExceededAfterPrimitive(
+            if (ActionBudgets.motionBudgetExceededAfterPrimitive(
                     usedAfterTick,
                     action.program().effectiveBudget(),
                     agentExecution.primitive,
@@ -5244,7 +2527,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             switch (result.status()) {
                 case RUNNING -> {
-                    if (shouldVerifyReplanHeartbeat(agentExecution.replanning, result)) {
+                    if (ActionBudgets.shouldVerifyReplanHeartbeat(agentExecution.replanning, result)) {
                         agentExecution.replanHeartbeatPending = true;
                     }
                 }
@@ -5256,7 +2539,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         agentExecution.replanDeadlineTick = 0L;
                         return;
                     }
-                    if (isKnownBreak(agentExecution.primitive)) {
+                    if (KnownBreakSafety.isKnownBreak(agentExecution.primitive)) {
                         agentExecution.breakAimComplete = true;
                         agentExecution.replanning = false;
                         agentExecution.replanNotBeforeTick = 0L;
@@ -5265,19 +2548,19 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     }
                     ActionDsl.CollectVisibleItem completedCollect = activeCollectTarget();
                     if (completedCollect != null) {
-                        long visualBarrierWorldRevision = visualBarrierWorldRevision(
+                        long visualBarrierWorldRevision = ActionEvidence.visualBarrierWorldRevision(
                                 map,
                                 reconciliationSignals.bindAndSnapshot(
                                         Objects.requireNonNull(minecraft.level, "level"),
                                         session.worldSessionId()));
                         var itemBounds = AgentPrimitivePlanner.visibleItemAabb(
                                 map,
-                                agentPlanningFrame(),
+                                agentObservations.agentPlanningFrame(),
                                 completedCollect,
                                 visualBarrierWorldRevision,
                                 session.clientTick(),
-                                visibleItemEvidenceMaxAgeTicks(McmcpClientConfig.raysPerTick()));
-                        if (itemBounds.isEmpty() || !playerPickupAreaIntersects(
+                                ActionBudgets.visibleItemEvidenceMaxAgeTicks(McmcpClientConfig.raysPerTick()));
+                        if (itemBounds.isEmpty() || !PlayerInventoryEvidence.playerPickupAreaIntersects(
                                 Objects.requireNonNull(minecraft.player, "player").getBoundingBox(),
                                 itemBounds.orElseThrow())) {
                             requestAgentReplan(actionTick, "pickup_area_unreached");
@@ -5328,408 +2611,38 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
-    /** Returns false when the action became terminal while advancing control nodes. */
-    private void tickKillZone(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action,
-            boolean actionHardDeadlineReached,
+    private void tickKillZone(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action, boolean actionHardDeadlineReached,
             boolean newDispatchBudgetReached) {
-        KillZoneExecution operation = Objects.requireNonNull(agentExecution.killZone, "killZone");
-        var player = Objects.requireNonNull(minecraft.player, "player");
-        var level = Objects.requireNonNull(minecraft.level, "level");
-        long tick = session.clientTick();
-
-        String hazard = killZoneHardHazard(minecraft, player, operation);
-        if (hazard != null) {
-            safetyInterruptKillZone(minecraft, session, action, operation, hazard);
-            return;
-        }
-
-        AttackProfile currentProfile;
-        try {
-            currentProfile = requireKnownAttackProfile(player.getMainHandItem());
-        } catch (RuntimeInvocationException changed) {
-            safetyInterruptKillZone(
-                    minecraft, session, action, operation, "attack_profile_changed");
-            return;
-        }
-        if (!operation.scope.mainHandItem().equals(
-                        BuiltInRegistries.ITEM.getKey(player.getMainHandItem().getItem()).toString())
-                || !operation.scope.attackProfileFingerprint().equals(currentProfile.fingerprint())
-                || operation.scope.attackSideEffectProfile() != currentProfile.sideEffects()) {
-            safetyInterruptKillZone(minecraft, session, action, operation, "attack_profile_changed");
-            return;
-        }
-
-        if (operation.pending != null) {
-            KillZoneAttackAttempt attempt = operation.pending;
-            LivingEntity target = attempt.target;
-            boolean armorStandHit = armorStandHitConfirmed(attempt);
-            boolean confirmed = armorStandHit || target.getHealth() < attempt.healthBefore
-                    || (!target.isAlive() && target.getHealth() <= 0.0F);
-            if (confirmed) {
-                operation.confirmedAttacks++;
-                recordKillZoneAttackEffect(
-                        session, action, attempt, AgentActionStore.Verification.CONFIRMED,
-                        target.getHealth(), armorStandHit ? "armor_stand_hit_event"
-                                : target.isAlive() ? "health_decreased" : "dead");
-                operation.pending = null;
-            } else if (target.isRemoved() || killZonePendingMustClose(
-                    tick, attempt.effectDeadlineTick, actionHardDeadlineReached)) {
-                operation.unknownAttacks++;
-                operation.noRetryEntityIds.add(target.getUUID());
-                recordKillZoneAttackEffect(
-                        session, action, attempt, AgentActionStore.Verification.UNKNOWN,
-                        target.getHealth(), target.isRemoved()
-                                ? "despawned_or_unloaded"
-                                : actionHardDeadlineReached
-                                        ? "action_budget_deadline" : "effect_timeout");
-                operation.pending = null;
-            } else {
-                return;
-            }
-        }
-
-        boolean durationComplete = actionHardDeadlineReached || newDispatchBudgetReached
-                || tick - operation.startedAtClientTick
-                >= operation.scope.maxOperationDurationTicks();
-        boolean countComplete = operation.dispatchedAttacks >= operation.scope.maxAttacks();
-        if (durationComplete || countComplete) {
-            finishKillZone(minecraft, session, action, operation,
-                    actionHardDeadlineReached ? "action_budget_reached"
-                            : countComplete ? "attack_limit_reached"
-                            : newDispatchBudgetReached ? "dispatch_budget_reached"
-                            : "duration_reached");
-            return;
-        }
-        if (operation.lastDispatchTick != Long.MIN_VALUE
-                && tick - operation.lastDispatchTick < operation.scope.minimumIntervalTicks()) {
-            return;
-        }
-        if (player.getAttackStrengthScale(0.0F) < 0.99F) {
-            return;
-        }
-
-        KillZoneTarget target = currentKillZoneTarget(minecraft, session, operation);
-        if (target == null) return;
-        if (!killZoneStructureFingerprint(
-                        level,
-                        operation.scope.playerStationBounds(),
-                        operation.scope.targetKillZoneBounds())
-                .equals(operation.scope.structureFingerprint())) {
-            safetyInterruptKillZone(minecraft, session, action, operation, "structure_changed");
-            return;
-        }
-        if (!killZoneCollateralSafe(level, player, target.entity(), operation.scope)) {
-            safetyInterruptKillZone(minecraft, session, action, operation, "collateral_not_proved");
-            return;
-        }
-
-        // Reserve before semantic dispatch. Unknown outcomes and exceptions never return this slot.
-        operation.dispatchedAttacks++;
-        operation.lastDispatchTick = tick;
-        float healthBefore = target.entity().getHealth();
-        long armorStandLastHitBefore = armorStandLastHit(target.entity());
-        try {
-            minecraft.gameMode.attack(player, target.entity());
-            player.swing(InteractionHand.MAIN_HAND);
-            agentActions.recordInteraction(action.actionId());
-        } catch (RuntimeException | LinkageError dispatchFailure) {
-            operation.unknownAttacks++;
-            operation.noRetryEntityIds.add(target.entity().getUUID());
-            var synthetic = new KillZoneAttackAttempt(
-                    target.entity(), target.entityRef(), healthBefore,
-                    armorStandLastHitBefore, tick);
-            recordKillZoneAttackEffect(
-                    session, action, synthetic, AgentActionStore.Verification.UNKNOWN,
-                    target.entity().getHealth(), "dispatch_exception");
-            throw dispatchFailure;
-        }
-        operation.pending = new KillZoneAttackAttempt(
-                target.entity(), target.entityRef(), healthBefore,
-                armorStandLastHitBefore, tick);
+        var operation = Objects.requireNonNull(agentExecution.killZone, "killZone");
+        var outcome = operation.tickKillZone(minecraft, session,
+                agentExecution.latestWorldRevision, actionHardDeadlineReached, newDispatchBudgetReached);
+        applyKillZoneOutcome(minecraft, action, outcome);
     }
 
-    private String killZoneHardHazard(
-            Minecraft minecraft, Player player, KillZoneExecution operation) {
-        float health = player.getHealth();
-        float effectiveHealth = effectiveHealth(player);
-        if (!player.isAlive() || player.isCreative() || player.isSpectator()) return "player_mode_or_life";
-        if (effectiveHealth < operation.lastEffectiveHealth) return "health_decreased";
-        if (health < MIN_SAFE_STAY_HEALTH) return "health_floor";
-        if (player.hurtTime > 0) return "active_damage";
-        if (player.isOnFire()) return "on_fire";
-        if (player.fallDistance > 0.0F || !player.onGround()) return "fall_or_support";
-        if (player.getAirSupply() < player.getMaxAirSupply()) return "air_loss";
-        if (player.isPassenger() || player.isInWater() || player.isInLava()
-                || player.isFallFlying() || player.getAbilities().flying) return "unsupported_locomotion";
-        if (!AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())) return "screen_open";
-        AABB box = player.getBoundingBox();
-        if (!operation.scope.playerStationBounds().contains(
-                box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)) return "station_departed";
-        if (!minecraft.level.noCollision(player, box.deflate(1.0e-5D))) return "player_collision";
-        if (player.getDeltaMovement().lengthSqr() > 0.01D) return "unexpected_motion";
-        AABB safety = box.inflate(8.0D);
-        if (!minecraft.level.getEntities(player, safety,
-                entity -> entity instanceof Projectile && entity.isAlive()).isEmpty()) {
-            return "projectile_present";
+    private void safetyInterruptKillZone(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action, KillZoneExecution operation, String reason) {
+        var outcome = operation.safetyInterruptKillZone(minecraft, session,
+                agentExecution.latestWorldRevision, operation, reason);
+        applyKillZoneOutcome(minecraft, action, outcome);
+    }
+
+    private void applyKillZoneOutcome(Minecraft minecraft, AgentActionStore.Active action,
+            PrimitiveOutcome outcome) {
+        if (outcome.failure() != null) {
+            failAgentAction(outcome.failure().code(), outcome.failure().recoverable(),
+                    outcome.failure().evidence().getFirst());
+        } else if (outcome.complete()) {
+            agentActions.completeNode(action.actionId());
+            agentExecution.primitive = null;
+            advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
         }
-        if (!minecraft.level.getEntities(player, box.inflate(0.125D),
-                entity -> entity instanceof LivingEntity && entity.isAlive()).isEmpty()) {
-            return "living_contact";
-        }
-        for (Entity entity : minecraft.level.getEntities(player, safety,
-                entity -> entity.isAlive() && (entity instanceof Enemy
-                        || entity instanceof Mob mob && mob.getTarget() == player))) {
-            if (!(entity instanceof LivingEntity living)
-                    || !operation.scope.entityTypeAllowlist().contains(entityType(entity))
-                    || !wholeBoxInside(operation.scope.targetKillZoneBounds(), living.getBoundingBox())) {
-                return "hostile_outside_policy";
-            }
-            if (living.hasLineOfSight(player)) return "hostile_has_player_los";
-        }
-        return null;
     }
 
-    private KillZoneTarget currentKillZoneTarget(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            KillZoneExecution operation) {
-        if (!(minecraft.hitResult instanceof EntityHitResult hit)
-                || !(hit.getEntity() instanceof LivingEntity target)
-                || target instanceof Player
-                || !target.isAlive()
-                || operation.noRetryEntityIds.contains(target.getUUID())
-                || !operation.scope.entityTypeAllowlist().contains(entityType(target))
-                || !wholeBoxInside(operation.scope.targetKillZoneBounds(), target.getBoundingBox())
-                || target.getBoundingBox().getYsize() <= 1.0D
-                || !clearKillZoneCrosshairRay(minecraft, hit)
-                || target instanceof Mob mob
-                        && (mob instanceof Enemy || mob.getTarget() == minecraft.player)
-                        && target.hasLineOfSight(minecraft.player)
-                || !minecraft.player.isWithinEntityInteractionRange(target, 0.0D)) {
-            return null;
-        }
-        Optional<ObservationFrame> frame = agentObservationFrames.latestFrame();
-        if (frame.isEmpty() || frame.orElseThrow().visibleEntitiesTruncated()
-                || !session.dimension().equals(frame.orElseThrow().dimension().value())
-                || session.clientTick() < frame.orElseThrow().frameCompletedTick()
-                || session.clientTick() - frame.orElseThrow().frameCompletedTick() > 2L) {
-            return null;
-        }
-        for (ObservationRecord record : frame.orElseThrow().records()) {
-            if (!(record instanceof ObservationRecord.VisibleEntity visible)
-                    || visible.entityRef() == null
-                    || visible.observedTick() + 2L < session.clientTick()
-                    || !visible.entityType().value().equals(entityType(target))) continue;
-            Optional<Entity> resolved = observations.resolveLoadedEntityRefIdentity(
-                    minecraft, session.clientTick(), session.worldSessionId(), session.dimension(),
-                    visible.entityRef(), minecraft.player.entityInteractionRange() + 1.0D);
-            if (resolved.orElse(null) == target) {
-                return new KillZoneTarget(target, visible.entityRef());
-            }
-        }
-        return null;
-    }
-
-    private static boolean clearKillZoneCrosshairRay(
-            Minecraft minecraft, EntityHitResult hit) {
-        Vec3 eye = minecraft.player.getEyePosition();
-        Vec3 hitLocation = hit.getLocation();
-        if (!hit.getEntity().getBoundingBox().inflate(1.0e-5D).contains(hitLocation)
-                || eye.distanceToSqr(hitLocation) < 1.0e-8D) {
-            return false;
-        }
-        HitResult obstruction = minecraft.level.clip(new ClipContext(
-                eye,
-                hitLocation,
-                ClipContext.Block.COLLIDER,
-                ClipContext.Fluid.NONE,
-                minecraft.player));
-        return obstruction.getType() == HitResult.Type.MISS;
-    }
-
-    private static boolean killZoneCollateralSafe(
-            net.minecraft.client.multiplayer.ClientLevel level,
-            Player player,
-            LivingEntity target,
-            ScopedEntityAttackConsentStore.Scope scope) {
-        if (scope.attackSideEffectProfile()
-                == ScopedEntityAttackConsentStore.AttackSideEffectProfile.VANILLA_SINGLE_TARGET) {
-            return true;
-        }
-        if (scope.attackSideEffectProfile()
-                != ScopedEntityAttackConsentStore.AttackSideEffectProfile.VANILLA_SWEEP) {
-            return false;
-        }
-        AABB effects = target.getBoundingBox().inflate(1.0D, 0.25D, 1.0D);
-        for (LivingEntity candidate : level.getEntitiesOfClass(
-                LivingEntity.class, effects, Entity::isAlive)) {
-            if (candidate == player
-                    || candidate instanceof Player
-                    || !scope.entityTypeAllowlist().contains(entityType(candidate))
-                    || !wholeBoxInside(scope.targetKillZoneBounds(), candidate.getBoundingBox())) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private void recordKillZoneAttackEffect(
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action,
-            KillZoneAttackAttempt attempt,
-            AgentActionStore.Verification verification,
-            float healthAfter,
-            String outcome) {
-        long revision = reconciliationSignals.bindAndSnapshot(
-                Objects.requireNonNull(Minecraft.getInstance().level, "level"),
-                session.worldSessionId()).worldRevision();
-        agentActions.recordEffect(
-                action.actionId(),
-                "entity_attack",
-                "refhash:" + sha256Identity(new StringBuilder(attempt.entityRef))
-                        .substring("sha256:".length()),
-                Map.of("entity_type", entityType(attempt.target), "health", attempt.healthBefore),
-                Map.of("health", healthAfter, "outcome", outcome),
-                verification,
-                session.clientTick(),
-                revision);
-    }
-
-    private void finishKillZone(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action,
-            KillZoneExecution operation,
-            String reason) {
-        if (operation.confirmedAttacks < 1) {
-            failAgentAction(
-                    AgentActionStore.FailureCode.CONDITION_TIMEOUT,
-                    true,
-                    "kill_zone_no_confirmed_attack");
-            return;
-        }
-        long revision = reconciliationSignals.bindAndSnapshot(
-                Objects.requireNonNull(minecraft.level, "level"),
-                session.worldSessionId()).worldRevision();
-        agentActions.recordEffect(
-                action.actionId(), "kill_zone_summary", "operation",
-                Map.of("max_attacks", operation.scope.maxAttacks()),
-                Map.of(
-                        "dispatched_attacks", operation.dispatchedAttacks,
-                        "confirmed_attacks", operation.confirmedAttacks,
-                        "unknown_attacks", operation.unknownAttacks,
-                        "completion_reason", reason),
-                AgentActionStore.Verification.CONFIRMED,
-                session.clientTick(), revision);
-        agentActions.completeNode(action.actionId());
-        agentExecution.primitive = null;
-        advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
-    }
-
-    private void safetyInterruptKillZone(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action,
-            KillZoneExecution operation,
-            String reason) {
-        AgentInputState.global().releaseAttack();
-        closePendingKillZoneEffectForTerminal(reason);
-        float current = minecraft.player == null ? 0.0F : minecraft.player.getHealth();
-        float currentAbsorption = minecraft.player == null
-                ? 0.0F : minecraft.player.getAbsorptionAmount();
-        float currentEffective = current + currentAbsorption;
-        long revision = minecraft.level == null ? 0L : reconciliationSignals.bindAndSnapshot(
-                minecraft.level, session.worldSessionId()).worldRevision();
-        agentActions.recordEffect(
-                action.actionId(), "safety_interrupted", "player",
-                Map.of(
-                        "health_before", operation.lastHealth,
-                        "absorption_before", operation.lastAbsorption,
-                        "effective_health_before", operation.lastEffectiveHealth,
-                        "effective_health_previous", operation.lastEffectiveHealth),
-                Map.of(
-                        "health_current", current,
-                        "absorption_current", currentAbsorption,
-                        "effective_health_current", currentEffective,
-                        "health_delta", currentEffective - operation.lastEffectiveHealth,
-                        "dispatched_attacks", operation.dispatchedAttacks,
-                        "confirmed_attacks", operation.confirmedAttacks,
-                        "unknown_attacks", operation.unknownAttacks,
-                        "reason", reason),
-                AgentActionStore.Verification.CONFIRMED,
-                session.clientTick(), revision);
-        failAgentAction(
-                AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
-                false,
-                reason);
-    }
-
-    private static boolean wholeBoxInside(
-            ScopedEntityAttackConsentStore.Bounds bounds, AABB box) {
-        return bounds.contains(
-                box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
-    }
-
-    private static String entityType(Entity entity) {
-        return BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString();
-    }
-
-    private static float effectiveHealth(Player player) {
-        return player.getHealth() + player.getAbsorptionAmount();
-    }
-
-    private static long armorStandLastHit(LivingEntity target) {
-        return target instanceof ArmorStand stand ? stand.lastHit : Long.MIN_VALUE;
-    }
-
-    static boolean armorStandHitEventAdvanced(long before, long after) {
-        return before != Long.MIN_VALUE && after > before;
-    }
-
-    static boolean killZonePendingMustClose(
-            long currentTick, long effectDeadlineTick, boolean actionHardDeadlineReached) {
-        return actionHardDeadlineReached || currentTick >= effectDeadlineTick;
-    }
-
-    private static boolean armorStandHitConfirmed(KillZoneAttackAttempt attempt) {
-        return armorStandHitEventAdvanced(
-                attempt.armorStandLastHitBefore, armorStandLastHit(attempt.target));
-    }
-
-    static boolean healthDecreased(
-            float previousHealth,
-            float previousAbsorption,
-            float currentHealth,
-            float currentAbsorption) {
-        return currentHealth < previousHealth
-                || currentAbsorption < previousAbsorption
-                || currentHealth + currentAbsorption
-                        < previousHealth + previousAbsorption;
-    }
-
-    private static boolean killZoneHealthDecreased(
-            KillZoneExecution operation, Player player) {
-        float currentHealth = player.getHealth();
-        float currentAbsorption = player.getAbsorptionAmount();
-        if (healthDecreased(
-                operation.lastHealth,
-                operation.lastAbsorption,
-                currentHealth,
-                currentAbsorption)) {
-            return true;
-        }
-        operation.lastHealth = currentHealth;
-        operation.lastAbsorption = currentAbsorption;
-        operation.lastEffectiveHealth = currentHealth + currentAbsorption;
-        return false;
-    }
-
+    /** 制御nodeの進行中にActionが終了した場合はfalseを返す。 */
     private boolean advanceAgentProgram(
             Minecraft minecraft, AgentActionStore.Progress occurrenceBaseline) {
-        ActionProgramCursor.Advance advance = agentExecution.cursor.next(policySnapshot(minecraft));
+        ActionProgramCursor.Advance advance = agentExecution.cursor.next(ActionPredicates.policySnapshot(minecraft));
         for (String controlNode : advance.completedControlNodeIds()) {
             agentActions.beginNode(agentExecution.actionId, controlNode);
             agentActions.completeNode(agentExecution.actionId);
@@ -5764,15 +2677,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         agentExecution.collectBatchEvidence = null;
         agentExecution.cropWaitAuthorization = null;
         agentExecution.fishingAimComplete = false;
-        agentExecution.fishingAttempt = null;
         agentExecution.primitivePlanDeadlineTick = Math.addExact(
-                occurrenceBaseline.ticks(), primitiveReobservationTicks(advance.primitive()));
+                occurrenceBaseline.ticks(), ActionEvidence.primitiveReobservationTicks(advance.primitive()));
         agentExecution.mutationAims.clear();
         agentExecution.pickupInventoryBefore = advance.primitive()
                 instanceof ActionDsl.CollectVisibleItem collect
-                ? pickupOccurrenceBaseline(
+                ? ActionBudgets.pickupOccurrenceBaseline(
                         -1,
-                        inventoryItemCount(
+                        PlayerInventoryEvidence.inventoryItemCount(
                                 Objects.requireNonNull(minecraft.player, "player"),
                                 collect.displayedItem()))
                 : -1;
@@ -5781,7 +2693,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (advance.primitive() instanceof ActionDsl.CollectVisibleItemBatch batch) {
             agentExecution.collectBatchEvidence = new CollectBatchEvidence(
                     batch.targets(),
-                    collectBatchInventoryCounts(
+                    PlayerInventoryEvidence.collectBatchInventoryCounts(
                             Objects.requireNonNull(minecraft.player, "player"), batch));
         }
         agentActions.beginNode(agentExecution.actionId, advance.primitive().id());
@@ -5797,7 +2709,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             throw new IllegalStateException("Compiled wait cost bound is unavailable");
         }
         if (agentExecution.occurrenceLimit != null
-                && !fitsRemainingBudget(
+                && !ActionBudgets.fitsRemainingBudget(
                         occurrenceBaseline,
                         agentExecution.program.effectiveBudget(),
                         agentExecution.occurrenceLimit,
@@ -5820,7 +2732,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         try {
             var surfaceRecovery = agentExecution.surfaceRecovery;
             if (surfaceRecovery != null && surfaceRecovery.applies(agentExecution.primitive)) {
-                var rendererFailure = surfaceRecoveryFailure(minecraft, session, surfaceRecovery, RendererRecoveryStage.JIT);
+                var rendererFailure = actionAdmission.surfaceRecoveryFailure(minecraft, session, surfaceRecovery, RendererRecoveryStage.JIT);
                 if (rendererFailure.isPresent()) {
                     var reason = rendererFailure.orElseThrow();
                     if (reason != AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING) {
@@ -5832,28 +2744,28 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 }
             }
             var player = Objects.requireNonNull(minecraft.player, "player");
-            var map = requireAgentMap(session);
+            var map = agentObservations.requireAgentMap(session);
             var reconciliation = reconciliationSignals.bindAndSnapshot(
                     Objects.requireNonNull(minecraft.level, "level"),
                     session.worldSessionId());
-            long visualBarrierWorldRevision = visualBarrierWorldRevision(map, reconciliation);
-            boolean worldPlanning = requiresWorldPlanning(agentExecution.primitive);
-            var planningFrame = worldPlanning ? agentPlanningFrame(agentExecution.primitive,
+            long visualBarrierWorldRevision = ActionEvidence.visualBarrierWorldRevision(map, reconciliation);
+            boolean worldPlanning = ActionPlanning.requiresWorldPlanning(agentExecution.primitive);
+            var planningFrame = worldPlanning ? agentObservations.agentPlanningFrame(agentExecution.primitive,
                     surfaceRecovery != null && surfaceRecovery.applies(agentExecution.primitive)
                             ? surfaceRecovery.lease() : null) : Optional.<ObservationFrame>empty();
             var analysis = worldPlanning
-                    ? analyzePrimitive(
+                    ? actionAdmission.analyzePrimitive(
                             action.program().request().program(),
                             agentExecution.primitive,
                             map,
-                            playerPose(player, session.dimension()),
+                            ActionPlanning.playerPose(player, session.dimension()),
                             planningFrame,
                             McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
                             visualBarrierWorldRevision,
-                            primitiveSurfaceRevisionBarrier(
+                            ActionEvidence.primitiveSurfaceRevisionBarrier(
                                     agentExecution.primitive, map, reconciliation),
                             () -> true)
-                    : emptyPrimitiveAnalysis();
+                    : ActionPlanning.emptyPrimitiveAnalysis();
             ActionDslCompiler.Cost cost = (worldPlanning
                             ? analysis.worstCase(agentExecution.primitive)
                             : Optional.ofNullable(action.program().primitiveCostBounds()
@@ -5864,14 +2776,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     agentExecution, System.nanoTime());
             ActionDslCompiler.Cost remainingCost = surfaceRecovery != null
                     && surfaceRecovery.applies(agentExecution.primitive)
-                    ? firstRecoveredSurfacePrimitiveRemainingCost(
+                    ? ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
                             progress,
                             agentExecution.occurrenceBaseline.executedNodes() == 0,
                             agentExecution.primitive,
                             cost,
                             activeElapsedNanos)
-                    : firstPrimitiveRemainingCost(progress, cost, activeElapsedNanos);
-            if (!fitsRemainingBudget(
+                    : ActionBudgets.firstPrimitiveRemainingCost(progress, cost, activeElapsedNanos);
+            if (!ActionBudgets.fitsRemainingBudget(
                     progress,
                     action.program().effectiveBudget(),
                     remainingCost,
@@ -5885,7 +2797,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             CropWaitAuthorization cropWaitAuthorization =
                     agentExecution.primitive instanceof ActionDsl.WaitUntil wait
                             && wait.condition() instanceof ActionDsl.CropMatureCondition
-                            ? requireCropWaitAuthorization(
+                            ? ActionEvidence.requireCropWaitAuthorization(
                                     session,
                                     wait,
                                     analysis,
@@ -5894,7 +2806,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                     player.getEyePosition())
                             : null;
             if (agentExecution.retainOccurrenceBaseline) {
-                agentExecution.occurrenceLimit = occurrenceCostIncludingConsumed(
+                agentExecution.occurrenceLimit = ActionBudgets.occurrenceCostIncludingConsumed(
                         progress, agentExecution.occurrenceBaseline, cost);
                 agentExecution.retainOccurrenceBaseline = false;
             } else {
@@ -5902,12 +2814,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 agentExecution.occurrenceLimit = cost;
             }
             agentExecution.mutationAims.putAll(analysis.mutationAims());
-            if (isFrameItemPrimitive(agentExecution.primitive)) {
+            if (ActionEvidence.isFrameItemPrimitive(agentExecution.primitive)) {
                 var currentAim = AgentPrimitivePlanner.requireFrameItemAim(
-                        map, playerPose(player, session.dimension()), planningFrame,
+                        map, ActionPlanning.playerPose(player, session.dimension()), planningFrame,
                         agentExecution.primitive, visualBarrierWorldRevision);
-                if (!frameItemEvidenceFresh(currentAim, session.clientTick())
-                        || !sameFrameItemAuthorization(agentExecution.frameItemAim, currentAim)) {
+                if (!ActionEvidence.frameItemEvidenceFresh(currentAim, session.clientTick())
+                        || !ActionEvidence.sameFrameItemAuthorization(agentExecution.frameItemAim, currentAim)) {
                     failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED,
                             false, "frame_item_authorization_changed");
                     return false;
@@ -5924,7 +2836,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 agentExecution.primitivePlanning = false;
             }
             if (surfaceRecovery != null && surfaceRecovery.applies(agentExecution.primitive)) {
-                rendererRecoveryRevalidated(surfaceRecovery, RendererRecoveryStage.JIT);
+                actionAdmission.rendererRecoveryRevalidated(surfaceRecovery, RendererRecoveryStage.JIT);
             }
             return true;
         } catch (AgentPrimitivePlanner.PlanningException unavailable) {
@@ -5935,7 +2847,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         AdmissionFenceFailure.SURFACE_REOBSERVATION_MISMATCH.code());
                 return false;
             }
-            if (isFrameItemPrimitive(agentExecution.primitive)) {
+            if (ActionEvidence.isFrameItemPrimitive(agentExecution.primitive)) {
                 failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED,
                         false, "frame_item_authorization_unavailable");
                 return false;
@@ -5943,7 +2855,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (!releaseAgentInputsForHold(minecraft, "jit_replan_input_release_failed")) {
                 return false;
             }
-            if (replanDeadlineReached(actionTick, agentExecution.primitivePlanDeadlineTick)) {
+            if (ActionBudgets.replanDeadlineReached(actionTick, agentExecution.primitivePlanDeadlineTick)) {
                 failAgentAction(
                         AgentActionStore.FailureCode.PATH_BLOCKED,
                         true,
@@ -5961,45 +2873,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
-    static long primitiveReobservationTicks(ActionDsl.Node primitive) {
-        return requiresWorldPlanning(primitive)
-                ? AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS : 0L;
-    }
-
-    static CropWaitAuthorization requireCropWaitAuthorization(
-            WorldSessionTracker.Snapshot session,
-            ActionDsl.WaitUntil wait,
-            AgentPrimitivePlanner.Analysis analysis,
-            long visualBarrierWorldRevision,
-            Vec3 playerPosition,
-            Vec3 observerEye) {
-        Objects.requireNonNull(session, "session");
-        Objects.requireNonNull(wait, "wait");
-        Objects.requireNonNull(analysis, "analysis");
-        Objects.requireNonNull(playerPosition, "playerPosition");
-        Objects.requireNonNull(observerEye, "observerEye");
-        ActionDsl.Position target = ((ActionDsl.CropMatureCondition) wait.condition()).target();
-        AgentPrimitivePlanner.KnownSurface visibleWheat = analysis.knownSurfaces().stream()
-                .filter(surface -> surface.position().equals(target)
-                        && surface.block().equals("minecraft:wheat")
-                        && surface.eyeOrigin() != null)
-                .findFirst()
-                .orElse(null);
-        double epsilonSquared = CROP_WAIT_OBSERVER_EPSILON_BLOCKS
-                * CROP_WAIT_OBSERVER_EPSILON_BLOCKS;
-        if (!session.worldReady()
-                || !Objects.equals(session.dimension(), target.dimension())
-                || visibleWheat == null
-                || observerEye.distanceToSqr(visibleWheat.eyeOrigin())
-                        > epsilonSquared) {
-            throw new IllegalStateException(
-                    "crop wait authorization requires current-origin visible wheat evidence");
-        }
-        return new CropWaitAuthorization(
-                session.worldSessionId(), session.dimension(), target,
-                visualBarrierWorldRevision, playerPosition, visibleWheat.eyeOrigin());
-    }
-
     private CropWaitLiveState authorizedCropWaitLiveState(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
@@ -6012,7 +2885,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         var reconciliation = reconciliationSignals.bindAndSnapshot(
                 level, session.worldSessionId());
-        CropWaitVisibilityState visibility = cropWaitVisibilityState(
+        CropWaitVisibilityState visibility = ActionEvidence.cropWaitVisibilityState(
                 authorization,
                 session,
                 ((ActionDsl.CropMatureCondition) wait.condition()).target(),
@@ -6031,53 +2904,19 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return CropWaitLiveState.UNLOADED;
         }
         // The authorization is coordinate-exact; do not inspect any neighboring or hidden state.
-        return cropWaitLiveState(true, level.getBlockState(position));
-    }
-
-    static CropWaitVisibilityState cropWaitVisibilityState(
-            CropWaitAuthorization authorization,
-            WorldSessionTracker.Snapshot session,
-            ActionDsl.Position requestedTarget,
-            long currentVisualBarrierWorldRevision,
-            Vec3 currentPlayerPosition,
-            Vec3 currentObserverEye) {
-        Objects.requireNonNull(session, "session");
-        Objects.requireNonNull(requestedTarget, "requestedTarget");
-        Objects.requireNonNull(currentPlayerPosition, "currentPlayerPosition");
-        Objects.requireNonNull(currentObserverEye, "currentObserverEye");
-        if (authorization == null || !authorization.matches(session, requestedTarget)) {
-            return CropWaitVisibilityState.WORLD_CHANGED;
-        }
-        double epsilonSquared = CROP_WAIT_OBSERVER_EPSILON_BLOCKS
-                * CROP_WAIT_OBSERVER_EPSILON_BLOCKS;
-        if (currentVisualBarrierWorldRevision != authorization.visualBarrierWorldRevision()
-                || currentPlayerPosition.distanceToSqr(authorization.playerPosition())
-                        > epsilonSquared
-                || currentObserverEye.distanceToSqr(authorization.observerEye())
-                        > epsilonSquared) {
-            return CropWaitVisibilityState.VISIBILITY_INVALIDATED;
-        }
-        return CropWaitVisibilityState.CURRENT;
-    }
-
-    static CropWaitLiveState cropWaitLiveState(boolean loaded, BlockState state) {
-        if (!loaded) return CropWaitLiveState.UNLOADED;
-        Objects.requireNonNull(state, "state");
-        if (!state.is(Blocks.WHEAT)) return CropWaitLiveState.TARGET_CHANGED;
-        return state.getValue(BlockStateProperties.AGE_7) == 7
-                ? CropWaitLiveState.MATURE : CropWaitLiveState.PENDING;
+        return ActionEvidence.cropWaitLiveState(true, level.getBlockState(position));
     }
 
     private boolean soundClueMatched(
             Minecraft minecraft, ActionDsl.SoundClueCondition condition, long currentTick) {
         var player = minecraft.player;
         FishingHook hook = player == null ? null : player.fishing;
-        if (player == null || !ownedFishingHook(player, hook, null)
-                || !pointInside(condition.bounds(), sessions.snapshot().dimension(),
+        if (player == null || !PlayerInventoryEvidence.ownedFishingHook(player, hook, null)
+                || !ActionEvidence.pointInside(condition.bounds(), sessions.snapshot().dimension(),
                         hook.getX(), hook.getY(), hook.getZ())) {
             return false;
         }
-        List<ObservationRecord.SoundClue> nearby = soundClues.snapshot(currentTick).clues()
+        List<ObservationRecord.SoundClue> nearby = agentObservations.soundClues().snapshot(currentTick).clues()
                 .stream()
                 .filter(clue -> {
                     double dx = clue.position().x() - hook.getX();
@@ -6086,58 +2925,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     return dx * dx + dy * dy + dz * dz <= 4.0;
                 })
                 .toList();
-        return soundClueMatches(condition, currentTick, nearby);
-    }
-
-    static boolean soundClueMatches(
-            ActionDsl.SoundClueCondition condition,
-            long currentTick,
-            List<ObservationRecord.SoundClue> clues) {
-        if (condition.sinceTick() > currentTick) return false;
-        return clues.stream().anyMatch(clue ->
-                clue.soundEvent().value().equals(condition.soundEvent())
-                        && clue.lastObservedTick() >= condition.sinceTick()
-                        && currentTick >= clue.lastObservedTick()
-                        && currentTick - clue.lastObservedTick() <= SoundClueStore.TTL_TICKS
-                        && pointInside(condition.bounds(), clue.position().dimension().value(),
-                                clue.position().x(), clue.position().y(), clue.position().z()));
-    }
-
-    static boolean pointInside(
-            ActionDsl.WorldBounds bounds, String dimension, double x, double y, double z) {
-        Objects.requireNonNull(bounds, "bounds");
-        return bounds.dimension().equals(dimension)
-                && x >= bounds.min().x() && x <= bounds.max().x()
-                && y >= bounds.min().y() && y <= bounds.max().y()
-                && z >= bounds.min().z() && z <= bounds.max().z();
-    }
-
-    private static boolean isAgentWait(ActionDsl.Node primitive) {
-        return primitive instanceof ActionDsl.WaitTicks || primitive instanceof ActionDsl.WaitUntil;
-    }
-
-    static boolean isFrameItemPrimitive(ActionDsl.Node primitive) {
-        return primitive instanceof ActionDsl.RemoveVisibleFrameItem
-                || primitive instanceof ActionDsl.InsertVisibleFrameItem;
-    }
-
-    static boolean frameItemEvidenceFresh(AgentPrimitivePlanner.FrameItemAim aim, long currentTick) {
-        return aim != null && aim.observedTick() <= currentTick && currentTick - aim.observedTick() <= 100;
-    }
-
-    /** Fresh delivery can advance its clocks but cannot replace the admitted frame or aim. */
-    static boolean sameFrameItemAuthorization(
-            AgentPrimitivePlanner.FrameItemAim expected,
-            AgentPrimitivePlanner.FrameItemAim current) {
-        return expected != null && current != null
-                && expected.entityRef().equals(current.entityRef())
-                && expected.entityType().equals(current.entityType())
-                && expected.expectedItem().equals(current.expectedItem())
-                && expected.insertedItem().equals(current.insertedItem())
-                && expected.rotation() == current.rotation()
-                && expected.aimPoint().equals(current.aimPoint())
-                && current.observedTick() >= expected.observedTick()
-                && current.worldRevision() >= expected.worldRevision();
+        return ActionEvidence.soundClueMatches(condition, currentTick, nearby);
     }
 
     private boolean beginAgentPrimitive(
@@ -6152,20 +2940,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             var reconciliation = reconciliationSignals.bindAndSnapshot(
                     Objects.requireNonNull(minecraft.level, "level"),
                     map.worldSessionId());
-            long visualBarrierWorldRevision = visualBarrierWorldRevision(map, reconciliation);
-            var surfaceRevisionBarrier = surfaceRevisionBarrier(map, reconciliation);
+            long visualBarrierWorldRevision = ActionEvidence.visualBarrierWorldRevision(map, reconciliation);
+            var surfaceRevisionBarrier = ActionEvidence.surfaceRevisionBarrier(map, reconciliation);
             if (agentExecution.primitive instanceof ActionDsl.NavigateToKnown navigate) {
                 RoutePlan route = AgentPrimitivePlanner.requireRoute(
                         map,
                         agentPathfinder,
-                        playerCell(player, map.dimension()),
+                        ActionPlanning.playerCell(player, map.dimension()),
                         navigate.target());
-                var pose = playerPose(player, map.dimension());
+                var pose = ActionPlanning.playerPose(player, map.dimension());
                 cost = agentExecution.replanning
                         ? AgentPrimitivePlanner.navigationReplanCost(route, pose)
                         : AgentPrimitivePlanner.navigationCost(route, pose);
                 if (agentExecution.replanning) {
-                    String evidence = replannedRouteBudgetFailure(
+                    String evidence = ActionBudgets.replannedRouteBudgetFailure(
                             progressBeforeTick,
                             agentExecution.occurrenceBaseline,
                             agentExecution.occurrenceLimit,
@@ -6179,7 +2967,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 evidence);
                         return false;
                     }
-                } else if (!fitsRemainingBudget(
+                } else if (!ActionBudgets.fitsRemainingBudget(
                                 progressBeforeTick,
                                 action.program().effectiveBudget(),
                                 cost,
@@ -6199,12 +2987,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 }
                 agentExecution.primitiveExecutor.beginNavigate(route, navigate.tolerance());
             } else if (agentExecution.primitive instanceof ActionDsl.ApproachKnownSurface approach) {
-                Optional<ObservationFrame> approachFrame = agentPlanningFrame();
+                Optional<ObservationFrame> approachFrame = agentObservations.agentPlanningFrame();
                 long approachSurfaceBarrier =
                         surfaceRevisionBarrier.applyAsLong(approach.target());
-                var pose = playerPose(player, map.dimension());
+                var pose = ActionPlanning.playerPose(player, map.dimension());
                 AgentPrimitivePlanner.ApproachPlan plan =
-                        requireRuntimeApproachPlan(
+                        ActionPlanning.requireRuntimeApproachPlan(
                                 map,
                                 agentPathfinder,
                                 pose,
@@ -6215,7 +3003,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         ? AgentPrimitivePlanner.navigationReplanCost(plan.route(), pose)
                         : AgentPrimitivePlanner.navigationCost(plan.route(), pose);
                 if (agentExecution.replanning) {
-                    String evidence = replannedRouteBudgetFailure(
+                    String evidence = ActionBudgets.replannedRouteBudgetFailure(
                             progressBeforeTick,
                             agentExecution.occurrenceBaseline,
                             agentExecution.occurrenceLimit,
@@ -6229,7 +3017,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 evidence);
                         return false;
                     }
-                } else if (!fitsRemainingBudget(
+                } else if (!ActionBudgets.fitsRemainingBudget(
                                 progressBeforeTick,
                                 action.program().effectiveBudget(),
                                 cost,
@@ -6245,21 +3033,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 agentExecution.primitiveExecutor.beginNavigate(plan.route(), 0.25D);
             } else if (agentExecution.primitive
                     instanceof ActionDsl.ApproachKnownPlacement approach) {
-                var pose = playerPose(player, map.dimension());
+                var pose = ActionPlanning.playerPose(player, map.dimension());
                 AgentPrimitivePlanner.ApproachPlan plan =
-                        requireRuntimeKnownPlacementApproachPlan(
+                        ActionPlanning.requireRuntimeKnownPlacementApproachPlan(
                                 map,
                                 agentPathfinder,
                                 pose,
                                 approach,
-                                agentPlanningFrame(),
+                                agentObservations.agentPlanningFrame(),
                                 surfaceRevisionBarrier,
-                                deliveredAgentEvidence::resolvePlacementState);
+                                agentObservations.deliveredEvidence()::resolvePlacementState);
                 cost = agentExecution.replanning
                         ? AgentPrimitivePlanner.navigationReplanCost(plan.route(), pose)
                         : AgentPrimitivePlanner.navigationCost(plan.route(), pose);
                 if (agentExecution.replanning) {
-                    String evidence = replannedRouteBudgetFailure(
+                    String evidence = ActionBudgets.replannedRouteBudgetFailure(
                             progressBeforeTick,
                             agentExecution.occurrenceBaseline,
                             agentExecution.occurrenceLimit,
@@ -6273,7 +3061,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 evidence);
                         return false;
                     }
-                } else if (!fitsRemainingBudget(
+                } else if (!ActionBudgets.fitsRemainingBudget(
                                 progressBeforeTick,
                                 action.program().effectiveBudget(),
                                 cost,
@@ -6290,13 +3078,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             } else if (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition face) {
                 var target = AgentPrimitivePlanner.requireKnownFaceTarget(
                         map,
-                        agentPlanningFrame(),
+                        agentObservations.agentPlanningFrame(),
                         face.target());
                 cost = AgentPrimitivePlanner.faceCost(
-                        playerPose(player, map.dimension()),
+                        ActionPlanning.playerPose(player, map.dimension()),
                         face.target(),
                         McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
-                if (!fitsRemainingBudget(
+                if (!ActionBudgets.fitsRemainingBudget(
                         progressBeforeTick,
                         action.program().effectiveBudget(),
                         cost,
@@ -6317,13 +3105,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             } else if (agentExecution.primitive instanceof ActionDsl.FaceKnownBlockFace face) {
                 var target = AgentPrimitivePlanner.requireKnownBlockFaceTarget(
                         map,
-                        agentPlanningFrame(),
+                        agentObservations.agentPlanningFrame(),
                         face);
                 cost = AgentPrimitivePlanner.faceCost(
-                        playerPose(player, map.dimension()),
+                        ActionPlanning.playerPose(player, map.dimension()),
                         face,
                         McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
-                if (!fitsRemainingBudget(
+                if (!ActionBudgets.fitsRemainingBudget(
                         progressBeforeTick,
                         action.program().effectiveBudget(),
                         cost,
@@ -6347,17 +3135,17 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 AgentPrimitivePlanner.MutationAim breakAim =
                         AgentPrimitivePlanner.requireKnownBreakAim(
                         map,
-                        agentPlanningFrame(),
+                        agentObservations.agentPlanningFrame(),
                         block,
                         surfaceRevisionBarrier.applyAsLong(block.target()));
                 cost = AgentPrimitivePlanner.breakCost(
-                        playerPose(player, map.dimension()),
+                        ActionPlanning.playerPose(player, map.dimension()),
                         block,
                         breakAim.point(),
                         McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
-                long aimTicks = breakAimTicks(cost);
-                cost = breakExecutionCost(cost, agentExecution.replanning);
-                if (!fitsRemainingBudget(
+                long aimTicks = ActionBudgets.breakAimTicks(cost);
+                cost = ActionBudgets.breakExecutionCost(cost, agentExecution.replanning);
+                if (!ActionBudgets.fitsRemainingBudget(
                         progressBeforeTick,
                         action.program().effectiveBudget(),
                         cost,
@@ -6374,9 +3162,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         1L,
                         action.program().worstCaseCost().blocksBroken()
                                 - progressBeforeTick.blocksBroken()));
-                int toolSlot = findDurableHotbarTool(
+                int toolSlot = KnownBreakSafety.findDurableHotbarTool(
                         player, block.toolItem(), remainingBreaks);
-                if (toolSlot < 0 || !inventoryCanReceiveKnownBreakDrops(
+                if (toolSlot < 0 || !KnownBreakSafety.inventoryCanReceiveKnownBreakDrops(
                         player, action.program())) {
                     failAgentAction(
                             AgentActionStore.FailureCode.WORLD_CHANGED,
@@ -6396,17 +3184,17 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 AgentPrimitivePlanner.MutationAim breakAim =
                         AgentPrimitivePlanner.requireKnownBreakAim(
                                 map,
-                                agentPlanningFrame(),
+                                agentObservations.agentPlanningFrame(),
                                 block,
                                 surfaceRevisionBarrier.applyAsLong(block.target()));
                 cost = AgentPrimitivePlanner.breakCost(
-                        playerPose(player, map.dimension()),
+                        ActionPlanning.playerPose(player, map.dimension()),
                         block,
                         breakAim.point(),
                         McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
-                long aimTicks = breakAimTicks(cost);
-                cost = breakExecutionCost(cost, agentExecution.replanning);
-                if (!fitsRemainingBudget(
+                long aimTicks = ActionBudgets.breakAimTicks(cost);
+                cost = ActionBudgets.breakExecutionCost(cost, agentExecution.replanning);
+                if (!ActionBudgets.fitsRemainingBudget(
                         progressBeforeTick,
                         action.program().effectiveBudget(),
                         cost,
@@ -6423,9 +3211,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         1L,
                         action.program().worstCaseCost().blocksBroken()
                                 - progressBeforeTick.blocksBroken()));
-                int toolSlot = findDurableHotbarTool(
+                int toolSlot = KnownBreakSafety.findDurableHotbarTool(
                         player, block.toolItem(), remainingBreaks);
-                if (toolSlot < 0 || !inventoryCanReceiveKnownBreakDrops(
+                if (toolSlot < 0 || !KnownBreakSafety.inventoryCanReceiveKnownBreakDrops(
                         player, action.program())) {
                     failAgentAction(
                             AgentActionStore.FailureCode.WORLD_CHANGED,
@@ -6442,7 +3230,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 breakAim.point().y, breakAim.point().z, true),
                         aimTicks);
             } else if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod cast) {
-                if (!exactFishingRodHeld(player, cast.hand(), cast.rodItem())
+                if (!PlayerInventoryEvidence.exactFishingRodHeld(player, cast.hand(), cast.rodItem())
                         || player.fishing != null) {
                     failAgentAction(
                             AgentActionStore.FailureCode.WORLD_CHANGED,
@@ -6467,18 +3255,18 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 AgentPrimitivePlanner.PickupPlan pickup = AgentPrimitivePlanner.requirePickupPlan(
                         map,
                         agentPathfinder,
-                        playerCell(player, map.dimension()),
-                        agentPlanningFrame(),
+                        ActionPlanning.playerCell(player, map.dimension()),
+                        agentObservations.agentPlanningFrame(),
                         collect,
                         visualBarrierWorldRevision,
                         currentTick,
-                        visibleItemEvidenceMaxAgeTicks(McmcpClientConfig.raysPerTick()));
-                var pose = playerPose(player, map.dimension());
+                        ActionBudgets.visibleItemEvidenceMaxAgeTicks(McmcpClientConfig.raysPerTick()));
+                var pose = ActionPlanning.playerPose(player, map.dimension());
                 cost = agentExecution.replanning
                         ? AgentPrimitivePlanner.pickupReplanCost(pickup.route(), pose)
                         : AgentPrimitivePlanner.pickupCost(pickup.route(), pose);
                 if (agentExecution.replanning) {
-                    String evidence = replannedRouteBudgetFailure(
+                    String evidence = ActionBudgets.replannedRouteBudgetFailure(
                             progressBeforeTick,
                             agentExecution.occurrenceBaseline,
                             agentExecution.occurrenceLimit,
@@ -6492,7 +3280,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 evidence);
                         return false;
                     }
-                } else if (!fitsRemainingBudget(
+                } else if (!ActionBudgets.fitsRemainingBudget(
                                 progressBeforeTick,
                                 action.program().effectiveBudget(),
                                 cost,
@@ -6523,7 +3311,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 requestAgentReplan(actionTick, unavailable.code().name().toLowerCase(Locale.ROOT));
                 return false;
             }
-            if (!replanDeadlineReached(actionTick, agentExecution.replanDeadlineTick)) {
+            if (!ActionBudgets.replanDeadlineReached(actionTick, agentExecution.replanDeadlineTick)) {
                 return false;
             }
             throw unavailable;
@@ -6539,9 +3327,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             ActionDsl.CollectVisibleItem collect) {
         var player = Objects.requireNonNull(minecraft.player, "player");
         if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem
-                && pickupInventoryIncreased(
+                && PlayerInventoryEvidence.pickupInventoryIncreased(
                 agentExecution.pickupInventoryBefore,
-                inventoryItemCount(player, collect.displayedItem()))) {
+                PlayerInventoryEvidence.inventoryItemCount(player, collect.displayedItem()))) {
             completeAgentPrimitive(minecraft, action);
             return;
         }
@@ -6558,7 +3346,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             Minecraft minecraft, AgentActionStore.Active action) {
         closeAgentPrimitiveExecutor();
         var collect = (ActionDsl.CollectVisibleItem) agentExecution.primitive;
-        int inventoryAfter = inventoryItemCount(
+        int inventoryAfter = PlayerInventoryEvidence.inventoryItemCount(
                 Objects.requireNonNull(minecraft.player, "player"), collect.displayedItem());
         agentActions.recordNodeEvidence(
                 action.actionId(),
@@ -6613,8 +3401,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return false;
         }
         var player = Objects.requireNonNull(minecraft.player, "player");
-        KnownTraversabilitySnapshot map = requireAgentMap(session);
-        long visualBarrierWorldRevision = visualBarrierWorldRevision(
+        KnownTraversabilitySnapshot map = agentObservations.requireAgentMap(session);
+        long visualBarrierWorldRevision = ActionEvidence.visualBarrierWorldRevision(
                 map,
                 reconciliationSignals.bindAndSnapshot(
                         Objects.requireNonNull(minecraft.level, "level"),
@@ -6622,16 +3410,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         List<Optional<dev.aod.mcmcp.agent.observation.ObservationValues.Aabb>> bounds =
                 AgentPrimitivePlanner.visibleBatchItemAabbs(
                         map,
-                        agentPlanningFrame(),
+                        agentObservations.agentPlanningFrame(),
                         batch,
                         visualBarrierWorldRevision,
                         session.clientTick(),
-                        visibleItemEvidenceMaxAgeTicks(McmcpClientConfig.raysPerTick()));
+                        ActionBudgets.visibleItemEvidenceMaxAgeTicks(McmcpClientConfig.raysPerTick()));
         boolean currentTargetContact = false;
         for (int index = agentExecution.collectBatchIndex;
                 index < batch.targets().size(); index++) {
             if (!evidence.credited(index)
-                    && bounds.get(index).filter(aabb -> playerPickupAreaIntersects(
+                    && bounds.get(index).filter(aabb -> PlayerInventoryEvidence.playerPickupAreaIntersects(
                             player.getBoundingBox(), aabb)).isPresent()) {
                 evidence.recordContact(index, session.clientTick());
                 currentTargetContact |= index == agentExecution.collectBatchIndex;
@@ -6647,7 +3435,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         final List<CollectBatchEvidence.Credit> credits;
         try {
             credits = evidence.reconcile(
-                    collectBatchInventoryCounts(player, batch),
+                    PlayerInventoryEvidence.collectBatchInventoryCounts(player, batch),
                     session.clientTick(),
                     AgentPrimitivePlanner.PICKUP_CONFIRM_TICKS,
                     agentExecution.collectBatchIndex);
@@ -6694,208 +3482,25 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
     }
 
-    private static int inventoryItemCount(
-            net.minecraft.client.player.LocalPlayer player, String item) {
-        int count = 0;
-        var inventory = player.getInventory();
-        for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
-            var stack = inventory.getItem(slot);
-            if (!stack.isEmpty()
-                    && item.equals(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString())) {
-                count = Math.addExact(count, stack.getCount());
-            }
-        }
-        return count;
-    }
-
-    private static Map<String, Integer> collectBatchInventoryCounts(
-            net.minecraft.client.player.LocalPlayer player,
-            ActionDsl.CollectVisibleItemBatch batch) {
-        Objects.requireNonNull(player, "player");
-        Objects.requireNonNull(batch, "batch");
-        var counts = new LinkedHashMap<String, Integer>();
-        for (ActionDsl.CollectTarget target : batch.targets()) {
-            counts.computeIfAbsent(
-                    target.displayedItem(), item -> inventoryItemCount(player, item));
-        }
-        return counts;
-    }
-
-    static boolean pickupInventoryIncreased(int before, int current) {
-        if (before < 0 || current < 0) {
-            throw new IllegalArgumentException("pickup inventory counts must be non-negative");
-        }
-        return current > before;
-    }
-
-    private void tickAgentFishing(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
+    private void tickAgentFishing(Minecraft minecraft, WorldSessionTracker.Snapshot session,
             AgentActionStore.Active action) {
-        var player = Objects.requireNonNull(minecraft.player, "player");
-        var gameMode = Objects.requireNonNull(minecraft.gameMode, "gameMode");
-        if (agentExecution.fishingAttempt == null) {
-            if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod cast) {
-                if (!exactFishingRodHeld(player, cast.hand(), cast.rodItem())
-                        || player.fishing != null) {
-                    failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true,
-                            "fishing_cast_precondition_changed");
-                    return;
-                }
-                gameMode.useItem(player, fishingHand(cast.hand()));
-                agentActions.recordInteraction(action.actionId());
-                agentExecution.fishingAttempt = FishingAttempt.cast(
-                        cast.hand(), cast.rodItem(), session.clientTick());
-                return;
-            }
-            var reel = (ActionDsl.ReelKnownFishingSession) agentExecution.primitive;
-            FishingSessionRefs.Session granted = fishingSessionRefs.consume(
-                            reel.fishingSessionRef(), session.worldSessionId(),
-                            session.dimension(), session.clientTick())
-                    .orElse(null);
-            FishingHook hook = player.fishing;
-            if (granted == null
-                    || !granted.hand().equals(reel.hand())
-                    || !granted.rodItem().equals(reel.rodItem())
-                    || !exactFishingRodHeld(player, reel.hand(), reel.rodItem())
-                    || !ownedFishingHook(player, hook, granted.bobberId())) {
-                failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true,
-                        "fishing_session_unavailable");
-                return;
-            }
-            ItemStack rod = player.getItemInHand(fishingHand(reel.hand()));
-            gameMode.useItem(player, fishingHand(reel.hand()));
-            agentActions.recordInteraction(action.actionId());
-            agentExecution.fishingAttempt = FishingAttempt.reel(
-                    reel.hand(), reel.rodItem(), granted.bobberId(),
-                    rod.getDamageValue(), inventoryCounts(player), session.clientTick());
-            return;
-        }
-
-        FishingAttempt attempt = agentExecution.fishingAttempt;
-        if (attempt.mode == FishingMode.CAST) {
-            FishingHook hook = player.fishing;
-            if (ownedFishingHook(player, hook, null)) {
-                String reference = fishingSessionRefs.issue(
-                        session.worldSessionId(), session.dimension(), hook.getUUID(),
-                        attempt.hand, attempt.rodItem, session.clientTick());
-                agentActions.recordEffect(
-                        action.actionId(), "fishing_cast", "minecraft:fishing_bobber",
-                        Map.of("hand", attempt.hand, "rod_item", attempt.rodItem,
-                                "bobber_present", false),
-                        Map.of("hand", attempt.hand, "rod_item", attempt.rodItem,
-                                "bobber_present", true, "fishing_session_ref", reference),
-                        AgentActionStore.Verification.CONFIRMED,
-                        session.clientTick(), agentExecution.latestWorldRevision);
-                finishFishingPrimitive(minecraft, action);
-                return;
-            }
-        } else {
-            FishingHook hook = player.fishing;
-            if (hook == null || hook.isRemoved()) {
-                int damageAfter = fishingRodDamage(player, attempt.hand, attempt.rodItem);
-                Map<String, Integer> inventoryAfter = inventoryCounts(player);
-                agentActions.recordEffect(
-                        action.actionId(), "fishing_reel", "minecraft:fishing_bobber",
-                        Map.of("hand", attempt.hand, "rod_damage", attempt.rodDamageBefore,
-                                "inventory_count", totalInventoryCount(attempt.inventoryBefore),
-                                "bobber_present", true),
-                        Map.of("hand", attempt.hand, "rod_damage", damageAfter,
-                                "inventory_count", totalInventoryCount(inventoryAfter),
-                                "bobber_present", false),
-                        AgentActionStore.Verification.CONFIRMED,
-                        session.clientTick(), agentExecution.latestWorldRevision);
-                attempt.effectRecorded = true;
-                finishFishingPrimitive(minecraft, action);
-                return;
-            } else if (!ownedFishingHook(player, hook, attempt.bobberId)) {
-                failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true,
-                        "owned_bobber_changed");
-                return;
-            }
-        }
-        if (session.clientTick() >= attempt.deadlineTick) {
-            failAgentAction(AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC, true,
-                    "fishing_ack_timeout");
+        var outcome = agentExecution.fishing.tickAgentFishing(minecraft, session,
+                agentExecution.primitive, agentExecution.latestWorldRevision);
+        if (outcome.failure() != null) {
+            failAgentAction(outcome.failure().code(), outcome.failure().recoverable(),
+                    outcome.failure().evidence().getFirst());
+        } else if (outcome.complete()) {
+            finishFishingPrimitive(minecraft, action);
         }
     }
 
     private void finishFishingPrimitive(
             Minecraft minecraft, AgentActionStore.Active action) {
-        agentExecution.fishingAttempt = null;
         agentExecution.fishingAimComplete = false;
         closeAgentPrimitiveExecutor();
         agentActions.completeNode(action.actionId());
         agentExecution.primitive = null;
         advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
-    }
-
-    private static InteractionHand fishingHand(String hand) {
-        return "main_hand".equals(hand) ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
-    }
-
-    private static boolean exactFishingRodHeld(
-            net.minecraft.client.player.LocalPlayer player, String hand, String rodItem) {
-        ItemStack stack = player.getItemInHand(fishingHand(hand));
-        return !stack.isEmpty()
-                && rodItem.equals(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString());
-    }
-
-    private static int fishingRodDamage(
-            net.minecraft.client.player.LocalPlayer player, String hand, String rodItem) {
-        ItemStack stack = player.getItemInHand(fishingHand(hand));
-        return !stack.isEmpty()
-                && rodItem.equals(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString())
-                ? stack.getDamageValue() : -1;
-    }
-
-    private static boolean ownedFishingHook(
-            net.minecraft.client.player.LocalPlayer player, FishingHook hook, UUID expectedId) {
-        return hook != null && !hook.isRemoved() && hook.getOwner() == player
-                && (expectedId == null || expectedId.equals(hook.getUUID()));
-    }
-
-    private static Map<String, Integer> inventoryCounts(
-            net.minecraft.client.player.LocalPlayer player) {
-        var counts = new LinkedHashMap<String, Integer>();
-        var inventory = player.getInventory();
-        for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
-            ItemStack stack = inventory.getItem(slot);
-            if (!stack.isEmpty()) {
-                counts.merge(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(),
-                        stack.getCount(), Integer::sum);
-            }
-        }
-        return Map.copyOf(counts);
-    }
-
-    private static int totalInventoryCount(Map<String, Integer> counts) {
-        return counts.values().stream().mapToInt(Integer::intValue).sum();
-    }
-
-    static int pickupOccurrenceBaseline(int existing, int current) {
-        if (existing < -1 || current < 0) {
-            throw new IllegalArgumentException("pickup inventory counts are invalid");
-        }
-        return existing < 0 ? current : existing;
-    }
-
-    static int visibleItemEvidenceMaxAgeTicks(int raysPerTick) {
-        if (raysPerTick < OmnidirectionalObserver.MIN_RAYS_PER_TICK
-                || raysPerTick > OmnidirectionalObserver.MAX_RAYS_PER_TICK) {
-            throw new IllegalArgumentException("raysPerTick is outside the observer policy");
-        }
-        return Math.ceilDiv(OmnidirectionalObserver.DIRECTION_COUNT, raysPerTick);
-    }
-
-    static boolean playerPickupAreaIntersects(
-            AABB playerBounds, dev.aod.mcmcp.agent.observation.ObservationValues.Aabb itemBounds) {
-        Objects.requireNonNull(playerBounds, "playerBounds");
-        Objects.requireNonNull(itemBounds, "itemBounds");
-        AABB pickupArea = playerBounds.inflate(1.0D, 0.5D, 1.0D);
-        return pickupArea.intersects(new AABB(
-                itemBounds.minX(), itemBounds.minY(), itemBounds.minZ(),
-                itemBounds.maxX(), itemBounds.maxY(), itemBounds.maxZ()));
     }
 
     private void tickAgentBreak(
@@ -6910,9 +3515,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             var reconciliation = reconciliationSignals.bindAndSnapshot(
                     Objects.requireNonNull(minecraft.level, "level"),
                     session.worldSessionId());
-            long surfaceBarrierWorldRevision = surfaceRevisionBarrier(map, reconciliation)
-                    .applyAsLong(breakTarget(block));
-            if (!breakTargetStateMatches(minecraft, block)) {
+            long surfaceBarrierWorldRevision = ActionEvidence.surfaceRevisionBarrier(map, reconciliation)
+                    .applyAsLong(KnownBreakSafety.breakTarget(block));
+            if (!KnownBreakSafety.breakTargetStateMatches(minecraft, block)) {
                 failAgentAction(
                         AgentActionStore.FailureCode.WORLD_CHANGED,
                         true,
@@ -6921,22 +3526,22 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             if (!AgentPrimitivePlanner.knownSurface(
                             map,
-                            agentPlanningFrame(),
+                            agentObservations.agentPlanningFrame(),
                             new AgentPrimitivePlanner.KnownSurface(
-                                    breakTarget(block), breakFace(block), breakBlockId(block)),
+                                    KnownBreakSafety.breakTarget(block), KnownBreakSafety.breakFace(block), KnownBreakSafety.breakBlockId(block)),
                             surfaceBarrierWorldRevision)
-                    || !breakSourceControlled(minecraft, block)) {
+                    || !KnownBreakSafety.breakSourceControlled(minecraft, block)) {
                 requestAgentReplan(actionTick, "break_target_reobservation");
                 return;
             }
             try {
                 var target = new BlockTarget(
-                        breakTarget(block).dimension(),
-                        breakTarget(block).x(),
-                        breakTarget(block).y(),
-                        breakTarget(block).z());
+                        KnownBreakSafety.breakTarget(block).dimension(),
+                        KnownBreakSafety.breakTarget(block).x(),
+                        KnownBreakSafety.breakTarget(block).y(),
+                        KnownBreakSafety.breakTarget(block).z());
                 var expected = stationaryBreakPort.captureExpectedSource(
-                        target, Set.of(breakBlockId(block)));
+                        target, Set.of(KnownBreakSafety.breakBlockId(block)));
                 if (block instanceof ActionDsl.BreakKnownBlock exact) {
                     var declared = new BlockStateFingerprint(
                             exact.expectedState().block(), exact.expectedState().properties());
@@ -6952,12 +3557,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 int minimumInventoryCount = block instanceof ActionDsl.BreakKnownBlock exact
                         ? exact.minimumInventoryCount()
                         : Math.min(2_304, Math.addExact(
-                                inventoryItemCount(player, breakExpectedDrop(block)), 1));
+                                PlayerInventoryEvidence.inventoryItemCount(player, KnownBreakSafety.breakExpectedDrop(block)), 1));
                 var request = new StationaryBreakRequest(
                         target,
                         expected,
                         new StationaryBreakGoal(
-                                breakExpectedDrop(block), minimumInventoryCount),
+                                KnownBreakSafety.breakExpectedDrop(block), minimumInventoryCount),
                         Math.addExact(
                                 session.clientTick(),
                                 AgentPrimitivePlanner.BREAK_TICK_UPPER_BOUND),
@@ -6983,9 +3588,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         final KnownBlockBreakAttempt.TickResult result;
         try {
             result = agentExecution.blockBreakAttempt.tick(
-                    session.clientTick(), breakSourceControlled(minecraft, block));
+                    session.clientTick(), KnownBreakSafety.breakSourceControlled(minecraft, block));
             recordBreakEffects(
-                    action.actionId(), breakTarget(block),
+                    action.actionId(), KnownBreakSafety.breakTarget(block),
                     agentExecution.blockBreakAttempt.drainEffectDeltas());
         } catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error("MCMCP known-face break confirmation failed", failure);
@@ -7138,7 +3743,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (screenOwnership.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE) {
             return "screen_owner_active";
         }
-        if (localSafety != LocalObservationProjector.CurrentSafety.CONTINUE) {
+        if (agentObservations.localSafety() != LocalObservationProjector.CurrentSafety.CONTINUE) {
             return "local_safety_changed";
         }
         BlockPos feet = BlockPos.containing(player.position());
@@ -7213,9 +3818,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             AgentActionStore.Active action,
             ActionDsl.OperateKnownCobblestoneGenerator operation) {
         var player = Objects.requireNonNull(minecraft.player, "player");
-        ActionDsl.BreakKnownBlock block = cobblestoneGeneratorBreak(operation);
+        ActionDsl.BreakKnownBlock block = KnownBreakSafety.cobblestoneGeneratorBreak(operation);
         if (agentExecution.cobblestoneGeneratorAttempt == null) {
-            int currentCount = inventoryItemCount(player, operation.expectedDrop());
+            int currentCount = PlayerInventoryEvidence.inventoryItemCount(player, operation.expectedDrop());
             if (currentCount < operation.minimumInventoryCount()
                     && operation.minimumInventoryCount() - currentCount > operation.maxBreaks()) {
                 failAgentAction(
@@ -7224,9 +3829,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         "cobblestone_goal_exceeds_max_breaks");
                 return;
             }
-            int toolSlot = findDurableHotbarTool(
+            int toolSlot = KnownBreakSafety.findDurableHotbarTool(
                     player, operation.toolItem(), operation.maxBreaks());
-            if (toolSlot < 0 || !inventoryCanReceiveKnownBreakDrops(player, action.program())) {
+            if (toolSlot < 0 || !KnownBreakSafety.inventoryCanReceiveKnownBreakDrops(player, action.program())) {
                 failAgentAction(
                         AgentActionStore.FailureCode.WORLD_CHANGED,
                         true,
@@ -7235,8 +3840,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 : "inventory_full");
                 return;
             }
-            if (!breakTargetStateMatches(minecraft, block)
-                    || !breakSourceControlled(minecraft, block)) {
+            if (!KnownBreakSafety.breakTargetStateMatches(minecraft, block)
+                    || !KnownBreakSafety.breakSourceControlled(minecraft, block)) {
                 failAgentAction(
                         AgentActionStore.FailureCode.WORLD_CHANGED,
                         true,
@@ -7289,7 +3894,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         // The hit face may legitimately flip at the same coordinate as the block regenerates.
         var generatorSnapshot = agentExecution.cobblestoneGeneratorAttempt.snapshot();
         if ("execute".equals(generatorSnapshot.phase())
-                && !breakSourceControlled(minecraft, block, false)) {
+                && !KnownBreakSafety.breakSourceControlled(minecraft, block, false)) {
             failAgentAction(
                     AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
                     true,
@@ -7416,16 +4021,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             AgentActionStore.Active action,
             long actionTick) {
         ActionDsl.Node mutation = agentExecution.primitive;
-        if (isMutationBatch(mutation)) {
+        if (ActionBudgets.isMutationBatch(mutation)) {
             if (!bindMutationBatchTarget(minecraft, session, action, actionTick)) {
                 return;
             }
             mutation = agentExecution.mutationBatchTarget;
         }
         if (agentExecution.blockMutationAttempt == null) {
-            SemanticActionRequest request = blockMutationRequest(
+            SemanticActionRequest request = ConstructionRequests.blockMutationRequest(
                     mutation,
-                    isMutationBatch(agentExecution.primitive)
+                    ActionBudgets.isMutationBatch(agentExecution.primitive)
                             ? agentExecution.mutationBatchTargetAim
                             : agentExecution.mutationAims.get(agentExecution.primitive.id()));
             long deadline = Math.addExact(
@@ -7441,15 +4046,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         switch (result.status()) {
             case RUNNING -> { }
             case FAILED -> {
-                if (isMutationBatch(agentExecution.primitive)
-                        && mutationBatchDisposition(
+                if (ActionBudgets.isMutationBatch(agentExecution.primitive)
+                        && ActionBudgets.mutationBatchDisposition(
                                 agentExecution.mutationBatchIndex,
                                 agentExecution.mutationBatchPlan.steps().size(),
                                 false) != BatchTargetDisposition.STOP) {
                     throw new IllegalStateException("Failed batch target must stop dispatch");
                 }
-                if (retryableMutationAimFailure(result.evidence())) {
-                    if (!mutationAimRetriesAllowed(agentExecution.primitive)) {
+                if (ActionBudgets.retryableMutationAimFailure(result.evidence())) {
+                    if (!ActionBudgets.mutationAimRetriesAllowed(agentExecution.primitive)) {
                         failAgentAction(
                                 AgentActionStore.FailureCode.PATH_BLOCKED,
                                 true,
@@ -7477,10 +4082,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         agentActions.recordBlockBreak(action.actionId());
                     }
                 }
-                if (isMutationBatch(agentExecution.primitive)) {
+                if (ActionBudgets.isMutationBatch(agentExecution.primitive)) {
                     agentActions.recordNodeEvidence(
-                            action.actionId(), batchTargetTrace(mutation));
-                    BatchTargetDisposition disposition = mutationBatchDisposition(
+                            action.actionId(), ActionBudgets.batchTargetTrace(mutation));
+                    BatchTargetDisposition disposition = ActionBudgets.mutationBatchDisposition(
                             agentExecution.mutationBatchIndex,
                             agentExecution.mutationBatchPlan.steps().size(),
                             true);
@@ -7578,30 +4183,30 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var session = sessions.snapshot();
         var captured = execution.surfaceAdmission;
         var lock = arming.snapshot(session.worldSessionId());
-        if (captured == null || !sameAdmissionSession(captured.session(), session)
+        if (captured == null || !ActionAdmission.sameAdmissionSession(captured.session(), session)
                 || minecraft.player != execution.playerIdentity
                 || lock.mode() != LocalArmingState.Mode.AGENT
                 || lock.controlEpoch() != captured.control().controlEpoch() + 1L
                 || !lock.capabilities().equals(captured.control().capabilities())
-                || localSafety != LocalObservationProjector.CurrentSafety.CONTINUE
+                || agentObservations.localSafety() != LocalObservationProjector.CurrentSafety.CONTINUE
                 || McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F != captured.cameraDegreesPerTick()
                 || minecraft.isMultiplayerServer() != captured.multiplayerServer()
                 || multiplayerPolicyAllows(minecraft) != captured.multiplayerAllowed()) return unsafe;
         try {
-            var map = requireAgentMap(session);
+            var map = agentObservations.requireAgentMap(session);
             var reconciliation = reconciliationSignals.bindAndSnapshot(minecraft.level, session.worldSessionId());
-            visualBarrierWorldRevision(map, reconciliation);
-            var decision = surfaceRecoveryFailure(minecraft, session, execution.surfaceRecovery, RendererRecoveryStage.INITIAL_OPEN);
+            ActionEvidence.visualBarrierWorldRevision(map, reconciliation);
+            var decision = actionAdmission.surfaceRecoveryFailure(minecraft, session, execution.surfaceRecovery, RendererRecoveryStage.INITIAL_OPEN);
             if (decision.isPresent()) {
                 return MinecraftPhaseFiveInventoryPort.InitialOpenWitness.valueOf(decision.orElseThrow().name());
             }
             var target = SurfacePreflightRecovery.target(execution.primitive);
             AgentPrimitivePlanner.requireKnownSurface(map,
-                    agentPlanningFrame(execution.primitive, execution.surfaceRecovery.lease()),
+                    agentObservations.agentPlanningFrame(execution.primitive, execution.surfaceRecovery.lease()),
                     target.position(), target.block(),
-                    primitiveSurfaceRevisionBarrier(execution.primitive, map, reconciliation)
+                    ActionEvidence.primitiveSurfaceRevisionBarrier(execution.primitive, map, reconciliation)
                             .applyAsLong(target.position()));
-            rendererRecoveryRevalidated(execution.surfaceRecovery, RendererRecoveryStage.INITIAL_OPEN);
+            actionAdmission.rendererRecoveryRevalidated(execution.surfaceRecovery, RendererRecoveryStage.INITIAL_OPEN);
             return ready;
         } catch (AgentPrimitivePlanner.PlanningException mismatch) {
             return MinecraftPhaseFiveInventoryPort.InitialOpenWitness.SURFACE_REOBSERVATION_MISMATCH;
@@ -7610,467 +4215,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
-    private void tickAgentContainer(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action) {
-        if (agentExecution.containerAttempt == null) {
-            PhaseFiveRequest request = containerRequest(
-                    minecraft,
-                    session,
-                    agentExecution.primitive,
-                    agentExecution.mutationAims.get(agentExecution.primitive.id()));
-            boolean smelting = agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe;
-            boolean knownMenu = agentExecution.primitive instanceof ActionDsl.OperateKnownMenu;
-            long deadline = Math.addExact(
-                    session.clientTick(),
-                    smelting
-                            ? ActionDslCompiler.knownSmeltingTicks(
-                                    ((ActionDsl.SmeltKnownRecipe) agentExecution.primitive)
-                                            .maxSmelts())
-                            : knownMenu
-                                    ? ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS
-                            : agentExecution.primitive instanceof ActionDsl.TakeKnownContainerStack take
-                                    ? ActionDslCompiler.knownContainerTransferOperationTicks(take.maxStacks())
-                            : agentExecution.primitive instanceof ActionDsl.StoreKnownContainerStack store
-                                    ? ActionDslCompiler.knownContainerTransferOperationTicks(store.maxStacks())
-                            : AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND);
-            PhaseFivePort port = smelting ? knownFurnacePort
-                    : knownMenu ? knownMenuPort : phaseFiveInventoryPort;
-            agentExecution.containerAttempt = new KnownContainerAttempt(
-                    port, request, session.clientTick(), deadline);
-        }
-        KnownContainerAttempt.TickResult result =
-                agentExecution.containerAttempt.tick(session.clientTick());
-        recordContainerEffects(
-                action.actionId(), agentExecution.primitive, result.effects());
-        for (int count = 0; count < result.interactionDelta(); count++) {
-            agentActions.recordInteraction(action.actionId());
-        }
-        switch (result.status()) {
-            case RUNNING -> { }
-            case FAILED -> failAgentAction(
-                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                    true,
-                    result.evidence(), result.diagnostics().toArray(String[]::new));
-            case SUCCEEDED -> {
-                KnownContainerAttempt completedContainer = agentExecution.containerAttempt;
-                agentExecution.containerAttempt = null;
-                if (agentExecution.primitive instanceof ActionDsl.InspectKnownContainer inspect) {
-                    agentActions.recordContainerInspection(action.actionId(), inspect.target(),
-                            completedContainer.inspectionContents());
-                    agentActions.recordNodeEvidence(
-                            action.actionId(), containerItemsTrace(result.items()));
-                } else if (agentExecution.primitive instanceof ActionDsl.TakeKnownContainerStack) {
-                    var take = (ActionDsl.TakeKnownContainerStack) agentExecution.primitive;
-                    agentActions.recordNodeEvidence(
-                            action.actionId(), "container_transfer=" + take.item());
-                } else if (agentExecution.primitive instanceof ActionDsl.StoreKnownContainerStack) {
-                    var store = (ActionDsl.StoreKnownContainerStack) agentExecution.primitive;
-                    agentActions.recordNodeEvidence(
-                            action.actionId(), "container_store=" + store.item());
-                } else if (agentExecution.primitive instanceof ActionDsl.CraftKnownRecipe craft) {
-                    agentActions.recordNodeEvidence(
-                            action.actionId(), "craft_complete=" + craft.goalItem());
-                } else if (agentExecution.primitive instanceof ActionDsl.OperateKnownMenu) {
-                    agentActions.recordNodeEvidence(
-                            action.actionId(), "menu_transfer_complete");
-                } else {
-                    var smelt = (ActionDsl.SmeltKnownRecipe) agentExecution.primitive;
-                    agentActions.recordNodeEvidence(
-                            action.actionId(), "smelt_complete=" + smelt.goalItem());
-                }
-                agentActions.completeNode(action.actionId());
-                agentExecution.primitive = null;
-                agentExecution.replanning = false;
-                agentExecution.replanNotBeforeTick = 0L;
-                agentExecution.replanDeadlineTick = 0L;
-                advanceAgentProgram(
-                        minecraft, agentActions.get(action.actionId()).progress());
-            }
-        }
-    }
-
-    private void tickAgentBrewing(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action) {
-        if (agentExecution.brewingAttempt == null) {
-            final KnownBrewingRequest request;
-            try {
-                request = brewingRequest(
-                        (ActionDsl.BrewKnownPotionBatch) agentExecution.primitive,
-                        agentExecution.mutationAims.get(agentExecution.primitive.id()),
-                        agentExecution.maxCameraDegreesPerTick);
-            } catch (RuntimeException rejected) {
-                failAgentAction(
-                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                        false,
-                        "brewing_request_rejected");
-                return;
-            }
-            long deadline = Math.addExact(
-                    session.clientTick(), KnownBrewingRequest.MAX_TICKS);
-            agentExecution.brewingAttempt = new KnownBrewingAttempt(
-                    knownBrewingPort, request, session.clientTick(), deadline);
-        }
-        KnownBrewingAttempt.TickResult result =
-                agentExecution.brewingAttempt.tick(session.clientTick());
-        for (int count = 0; count < result.interactionDelta(); count++) {
-            agentActions.recordInteraction(action.actionId());
-        }
-        switch (result.status()) {
-            case RUNNING -> { }
-            case FAILED -> failAgentAction(
-                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                    true,
-                    result.evidence());
-            case SUCCEEDED -> {
-                agentExecution.brewingAttempt = null;
-                agentActions.recordNodeEvidence(
-                        action.actionId(),
-                        "brewing_complete=" + result.verifiedPotions());
-                agentActions.completeNode(action.actionId());
-                agentExecution.primitive = null;
-                agentExecution.replanning = false;
-                agentExecution.replanNotBeforeTick = 0L;
-                agentExecution.replanDeadlineTick = 0L;
-                advanceAgentProgram(
-                        minecraft, agentActions.get(action.actionId()).progress());
-            }
-        }
-    }
-
-    private void tickAgentConstruction(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action) {
-        if (agentExecution.constructionAttempt == null) {
-            final KnownConstructionRequest request;
-            try {
-                request = agentExecution.primitive instanceof ActionDsl.ApplyKnownBlockPlan plan
-                        ? constructionRequest(
-                                plan, deliveredAgentEvidence::resolvePlacementState)
-                        : constructionRequest(
-                                (ActionDsl.ClearKnownBlockPlan) agentExecution.primitive);
-            } catch (RuntimeException rejected) {
-                // Registry/state diagnostics may contain submitted property names or values.
-                // Keep the public trace fixed and non-reflective.
-                failAgentAction(
-                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                        false,
-                        "construction_request_rejected");
-                return;
-            }
-            long ticks = Math.multiplyExact(
-                    request.entries().size(), (long) KnownConstructionAttempt.TICKS_PER_ENTRY);
-            long deadline = Math.addExact(session.clientTick(), ticks);
-            agentExecution.constructionAttempt = new KnownConstructionAttempt(
-                    applyBlockPlanPort, request, session.clientTick(), deadline,
-                    (call, stepIndex, failure) -> McmcpMod.LOGGER.error(
-                            "MCMCP known-construction adapter failed: call={}, step_index={}",
-                            call, stepIndex, failure));
-        }
-        KnownConstructionAttempt.TickResult result =
-                agentExecution.constructionAttempt.tick(session.clientTick());
-        recordConstructionEffects(action.actionId(), result.effects());
-        for (int count = 0; count < result.placedDelta(); count++) {
-            agentActions.recordBlockPlace(action.actionId());
-        }
-        for (int count = 0; count < result.brokenDelta(); count++) {
-            agentActions.recordBlockBreak(action.actionId());
-        }
-        switch (result.status()) {
-            case RUNNING -> { }
-            case FAILED -> failAgentAction(
-                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                    true,
-                    result.evidence());
-            case SUCCEEDED -> {
-                agentExecution.constructionAttempt = null;
-                agentActions.recordNodeEvidence(
-                        action.actionId(),
-                        "construction_complete=" + result.completedEntries()
-                                + ",server_confirmed=" + result.confirmedEntries());
-                agentActions.completeNode(action.actionId());
-                agentExecution.primitive = null;
-                agentExecution.replanning = false;
-                agentExecution.replanNotBeforeTick = 0L;
-                agentExecution.replanDeadlineTick = 0L;
-                advanceAgentProgram(
-                        minecraft, agentActions.get(action.actionId()).progress());
-            }
-        }
-    }
-
-    private void recordConstructionEffects(
-            UUID actionId, List<KnownConstructionAttempt.EffectDelta> effects) {
-        for (var effect : effects) {
-            agentActions.recordEffect(
-                    actionId,
-                    effect.kind(),
-                    effect.subject(),
-                    effect.observedBefore(),
-                    effect.observedAfter(),
-                    effect.verification(),
-                    effect.clientTick(),
-                    agentExecution.latestWorldRevision);
-        }
-    }
-
-    private void recordContainerEffects(
-            UUID actionId,
-            ActionDsl.Node primitive,
-            List<KnownContainerAttempt.EffectDelta> effects) {
-        if (effects.isEmpty()) return;
-        final String kind;
-        final ActionDsl.Position target;
-        final String item;
-        if (primitive instanceof ActionDsl.TakeKnownContainerStack take) {
-            kind = "container_take";
-            target = take.target();
-            item = take.item();
-        } else if (primitive instanceof ActionDsl.StoreKnownContainerStack store) {
-            kind = "container_store";
-            target = store.target();
-            item = store.item();
-        } else {
-            throw new IllegalStateException(
-                    "container transfer effect has no transfer primitive");
-        }
-        String subject = "container:" + target.dimension() + ":"
-                + target.x() + "," + target.y() + "," + target.z() + "/" + item;
-        for (var effect : effects) {
-            agentActions.recordEffect(
-                    actionId,
-                    kind,
-                    subject,
-                    effect.observedBefore(),
-                    effect.observedAfter(),
-                    effect.verification(),
-                    effect.clientTick(),
-                    agentExecution.latestWorldRevision);
-        }
-    }
-
-    private void tickAgentPillarUp(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action) {
-        if (agentExecution.pillarUpAttempt == null) {
-            final KnownPillarUpRequest request;
-            try {
-                request = pillarUpRequest(
-                        (ActionDsl.PillarUpKnown) agentExecution.primitive,
-                        deliveredAgentEvidence::resolvePlacementState);
-            } catch (RuntimeException rejected) {
-                failAgentAction(
-                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                        false,
-                        "pillar_request_rejected");
-                return;
-            }
-            long deadline = Math.addExact(
-                    session.clientTick(), KnownPillarUpAttempt.MAX_TICKS);
-            agentExecution.pillarUpAttempt = new KnownPillarUpAttempt(
-                    pillarUpPort, request, session.clientTick(), deadline);
-        }
-        KnownPillarUpAttempt.TickResult result =
-                agentExecution.pillarUpAttempt.tick(session.clientTick());
-        for (int count = 0; count < result.placedDelta(); count++) {
-            agentActions.recordBlockPlace(action.actionId());
-        }
-        switch (result.status()) {
-            case RUNNING -> { }
-            case FAILED -> failAgentAction(
-                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                    true,
-                    result.evidence());
-            case SUCCEEDED -> {
-                agentExecution.pillarUpAttempt = null;
-                agentActions.recordNodeEvidence(action.actionId(), "pillar_up_complete=1");
-                agentActions.completeNode(action.actionId());
-                agentExecution.primitive = null;
-                agentExecution.replanning = false;
-                agentExecution.replanNotBeforeTick = 0L;
-                agentExecution.replanDeadlineTick = 0L;
-                advanceAgentProgram(
-                        minecraft, agentActions.get(action.actionId()).progress());
-            }
-        }
-    }
-
-    static KnownPillarUpRequest pillarUpRequest(ActionDsl.PillarUpKnown pillar) {
-        return pillarUpRequest(pillar, PlacementStateResolver.none());
-    }
-
-    static KnownPillarUpRequest pillarUpRequest(
-            ActionDsl.PillarUpKnown pillar,
-            PlacementStateResolver placementStates) {
-        Objects.requireNonNull(pillar, "pillar");
-        Objects.requireNonNull(placementStates, "placementStates");
-        PillarSource source = resolvePillarSource(pillar, placementStates)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "pillar placement_state_ref is unknown"));
-        return new KnownPillarUpRequest(
-                new BlockTarget(
-                        pillar.support().dimension(),
-                        pillar.support().x(),
-                        pillar.support().y(),
-                        pillar.support().z()),
-                new BlockStateFingerprint(
-                        pillar.expectedSupport().block(),
-                        pillar.expectedSupport().properties()),
-                new BlockStateFingerprint(
-                        source.state().block(),
-                        source.state().properties()),
-                source.item());
-    }
-
-    private static Optional<PillarSource> resolvePillarSource(
-            ActionDsl.PillarUpKnown pillar,
-            PlacementStateResolver placementStates) {
-        if (pillar.placementStateRef().isPresent()) {
-            return placementStates.resolve(pillar.placementStateRef().orElseThrow())
-                    .map(remembered -> new PillarSource(
-                            new ActionDsl.BlockStateSpec(
-                                    remembered.state().block().value(),
-                                    remembered.state().properties()),
-                            remembered.placementItem().value()));
-        }
-        return Optional.of(new PillarSource(
-                pillar.sourceState().orElseThrow(), pillar.item().orElseThrow()));
-    }
-
-    private record PillarSource(ActionDsl.BlockStateSpec state, String item) {
-        private PillarSource {
-            Objects.requireNonNull(state, "state");
-            Objects.requireNonNull(item, "item");
-        }
-    }
-
-    private void tickAgentRedstone(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action) {
-        if (agentExecution.redstoneAttempt == null) {
-            var player = Objects.requireNonNull(minecraft.player, "player");
-            var redstone = (ActionDsl.ApplyKnownRedstoneSpec) agentExecution.primitive;
-            int outputCount = (int) redstone.components().stream()
-                    .filter(component -> component.role() == RedstoneSpec.Role.OUTPUT)
-                    .count();
-            int wireCount = (int) redstone.components().stream()
-                    .filter(component -> component.role() == RedstoneSpec.Role.WIRE)
-                    .count();
-            if (inventoryItemCount(player, "minecraft:redstone_lamp") < outputCount
-                    || inventoryItemCount(player, "minecraft:lever") < 1
-                    || inventoryItemCount(player, "minecraft:redstone") < wireCount) {
-                failAgentAction(
-                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                        true,
-                        "redstone_items_unavailable");
-                return;
-            }
-            final RedstoneIdentityRequest request;
-            try {
-                var lampAims = new ArrayList<AgentPrimitivePlanner.MutationAim>();
-                lampAims.add(Objects.requireNonNull(
-                        agentExecution.mutationAims.get(redstone.id() + "/lamp"),
-                        "lamp aim"));
-                if (outputCount == 2) {
-                    lampAims.add(Objects.requireNonNull(
-                            agentExecution.mutationAims.get(redstone.id() + "/lamp_2"),
-                            "second lamp aim"));
-                }
-                request = redstoneIdentityRequest(
-                        redstone,
-                        session.worldSessionId(),
-                        lampAims,
-                        Objects.requireNonNull(
-                                agentExecution.mutationAims.get(redstone.id() + "/lever"),
-                                "lever aim"),
-                        wireCount == 1
-                                ? Optional.of(Objects.requireNonNull(
-                                        agentExecution.mutationAims.get(redstone.id() + "/wire"),
-                                        "wire aim"))
-                                : Optional.empty());
-            } catch (RuntimeException rejected) {
-                failAgentAction(
-                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                        false,
-                        "redstone_request_rejected");
-                return;
-            }
-            long deadline = Math.addExact(
-                    session.clientTick(),
-                    ActionDslCompiler.intrinsicKnownRedstoneCost(
-                            redstone.timing().settleTicks(), outputCount, wireCount).ticks());
-            List<BlockPosition> lamps = request.lampTargets().stream()
-                    .map(target -> new BlockPosition(
-                            target.dimension(), target.x(), target.y(), target.z()))
-                    .toList();
-            BlockTarget lever = request.leverTarget();
-            Optional<BlockPosition> wire = request.wireTarget().map(target -> new BlockPosition(
-                    target.dimension(), target.x(), target.y(), target.z()));
-            List<BlockPosition> halo = request.safetyEnvelope().keySet().stream()
-                    .map(target -> new BlockPosition(
-                            target.dimension(), target.x(), target.y(), target.z()))
-                    .toList();
-            agentExecution.redstoneAttempt = new KnownRedstoneIdentityAttempt(
-                    semanticActionPort,
-                    request,
-                    tick -> observations.observeBlocks(
-                            minecraft,
-                            tick,
-                            lamps,
-                            MinecraftObservationService.BlockSource.LIVE),
-                    tick -> observations.observeBlock(
-                            minecraft,
-                            tick,
-                            new BlockPosition(
-                                    lever.dimension(), lever.x(), lever.y(), lever.z()),
-                            MinecraftObservationService.BlockSource.LIVE),
-                    tick -> wire.map(position -> observations.observeBlock(
-                                    minecraft,
-                                    tick,
-                                    position,
-                                    MinecraftObservationService.BlockSource.LIVE))
-                            .orElse(null),
-                    tick -> observations.observeBlocks(
-                            minecraft,
-                            tick,
-                            halo,
-                            MinecraftObservationService.BlockSource.LIVE),
-                    session.clientTick(),
-                    deadline);
-        }
-        KnownRedstoneIdentityAttempt.TickResult result =
-                agentExecution.redstoneAttempt.tick(session.clientTick());
-        for (int count = 0; count < result.placedDelta(); count++) {
-            agentActions.recordBlockPlace(action.actionId());
-        }
-        for (int count = 0; count < result.interactionDelta(); count++) {
-            agentActions.recordInteraction(action.actionId());
-        }
-        switch (result.status()) {
-            case RUNNING -> { }
-            case FAILED -> failAgentAction(
-                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                    true,
-                    result.evidence());
-            case SUCCEEDED -> {
-                agentExecution.redstoneAttempt = null;
-                agentActions.recordNodeEvidence(
-                        action.actionId(),
-                        "redstone_identity_observations=" + result.outputObservations());
-                agentActions.completeNode(action.actionId());
-                agentExecution.primitive = null;
-                agentExecution.replanning = false;
-                agentExecution.replanNotBeforeTick = 0L;
-                agentExecution.replanDeadlineTick = 0L;
-                advanceAgentProgram(
-                        minecraft, agentActions.get(action.actionId()).progress());
-            }
+    private void applyMenuPrimitiveOutcome(
+            Minecraft minecraft, AgentActionStore.Active action, PrimitiveOutcome outcome) {
+        if (outcome.failure() != null) {
+            failAgentAction(outcome.failure().code(), outcome.failure().recoverable(),
+                    outcome.failure().evidence().getFirst(),
+                    outcome.failure().evidence().subList(1, outcome.failure().evidence().size())
+                            .toArray(String[]::new));
+        } else if (outcome.complete()) {
+            agentActions.completeNode(action.actionId());
+            agentExecution.primitive = null;
+            agentExecution.replanning = false;
+            agentExecution.replanNotBeforeTick = 0L;
+            agentExecution.replanDeadlineTick = 0L;
+            advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
         }
     }
 
@@ -8092,19 +4250,19 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 plan.steps().get(agentExecution.mutationBatchIndex);
         try {
             var player = Objects.requireNonNull(minecraft.player, "player");
-            var map = requireAgentMap(session);
+            var map = agentObservations.requireAgentMap(session);
             var reconciliation = reconciliationSignals.bindAndSnapshot(
                     Objects.requireNonNull(minecraft.level, "level"), session.worldSessionId());
-            AgentPrimitivePlanner.Pose currentPose = playerPose(player, session.dimension());
-            var analysis = analyzePrimitive(
+            AgentPrimitivePlanner.Pose currentPose = ActionPlanning.playerPose(player, session.dimension());
+            var analysis = actionAdmission.analyzePrimitive(
                     action.program().request().program(),
                     step.primitive(),
                     map,
                     currentPose,
-                    agentPlanningFrame(),
+                    agentObservations.agentPlanningFrame(),
                     McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
-                    visualBarrierWorldRevision(map, reconciliation),
-                    surfaceRevisionBarrier(map, reconciliation),
+                    ActionEvidence.visualBarrierWorldRevision(map, reconciliation),
+                    ActionEvidence.surfaceRevisionBarrier(map, reconciliation),
                     () -> true);
             ActionDslCompiler.Cost cost = analysis.worstCase(step.primitive()).orElseThrow();
             AgentPrimitivePlanner.MutationAim freshAim = analysis.mutationAims()
@@ -8112,7 +4270,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             if (freshAim == null) {
                 throw new IllegalStateException("Fresh batch target aim is unavailable");
             }
-            ActionDslCompiler.Cost requiredRemainder = mutationBatchRequiredRemainder(
+            ActionDslCompiler.Cost requiredRemainder = ActionBudgets.mutationBatchRequiredRemainder(
                     plan,
                     agentExecution.mutationBatchIndex,
                     currentPose,
@@ -8120,7 +4278,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     cost,
                     McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
             AgentActionStore.Progress progress = agentActions.get(action.actionId()).progress();
-            if (!fitsMutationBatchRemainder(
+            if (!ActionBudgets.fitsMutationBatchRemainder(
                     progress,
                     agentExecution.occurrenceBaseline,
                     agentExecution.occurrenceLimit,
@@ -8153,7 +4311,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         action.actionId(), AgentActionStore.Phase.REPLANNING,
                         "batch_" + unavailable.code().name().toLowerCase(Locale.ROOT));
             }
-            if (replanDeadlineReached(
+            if (ActionBudgets.replanDeadlineReached(
                     actionTick, agentExecution.mutationBatchTargetDeadlineTick)) {
                 failAgentAction(
                         AgentActionStore.FailureCode.PATH_BLOCKED,
@@ -8168,7 +4326,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         agentExecution.tillSettlingAllowance = 0.0D;
         agentExecution.tillSettlingTarget = null;
         agentExecution.tillSettlingDeadlineTick = 0L;
-        if (!isMutationBatch(agentExecution.primitive)
+        if (!ActionBudgets.isMutationBatch(agentExecution.primitive)
                 || !(mutation instanceof ActionDsl.TillKnownBlock till)
                 || minecraft.player == null) {
             return;
@@ -8184,604 +4342,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
-    private static boolean isMutationBatch(ActionDsl.Node node) {
-        return node instanceof ActionDsl.TillKnownBatch
-                || node instanceof ActionDsl.PlantKnownWheatBatch
-                || node instanceof ActionDsl.HarvestKnownWheatBatch;
-    }
-
-    static boolean mutationAimRetriesAllowed(ActionDsl.Node node) {
-        return !isMutationBatch(Objects.requireNonNull(node, "node"));
-    }
-
-    static BatchTargetDisposition mutationBatchDisposition(
-            int completedBeforeTarget, int targetCount, boolean serverConfirmed) {
-        if (targetCount < 1
-                || targetCount > ActionDslValidator.MAX_MUTATION_BATCH_TARGETS
-                || completedBeforeTarget < 0
-                || completedBeforeTarget >= targetCount) {
-            throw new IllegalArgumentException("invalid mutation batch progress");
-        }
-        if (!serverConfirmed) return BatchTargetDisposition.STOP;
-        return completedBeforeTarget + 1 == targetCount
-                ? BatchTargetDisposition.COMPLETE
-                : BatchTargetDisposition.CONTINUE;
-    }
-
-    enum BatchTargetDisposition { STOP, CONTINUE, COMPLETE }
-
-    static ActionDslCompiler.Cost mutationBatchRequiredRemainder(
-            AgentPrimitivePlanner.MutationBatchPlan plan,
-            int currentIndex,
-            AgentPrimitivePlanner.Pose currentPose,
-            AgentPrimitivePlanner.MutationAim freshCurrentAim,
-            ActionDslCompiler.Cost freshCurrent,
-            float cameraLimit) {
-        return AgentPrimitivePlanner.recostMutationBatchRemainder(
-                plan,
-                currentIndex,
-                currentPose,
-                freshCurrentAim,
-                freshCurrent,
-                cameraLimit);
-    }
-
-    private static String batchTargetTrace(ActionDsl.Node mutation) {
-        ActionDsl.Position target = switch (mutation) {
-            case ActionDsl.TillKnownBlock till -> till.target();
-            case ActionDsl.PlantKnownWheat plant -> plant.target();
-            case ActionDsl.HarvestKnownWheat harvest -> harvest.target();
-            default -> throw new IllegalArgumentException("node is not a batch target");
-        };
-        return "batch_target=" + target.x() + "," + target.y() + "," + target.z();
-    }
-
-    static KnownConstructionRequest constructionRequest(
-            ActionDsl.ApplyKnownBlockPlan plan) {
-        return constructionRequest(plan, PlacementStateResolver.none());
-    }
-
-    static KnownConstructionRequest constructionRequest(
-            ActionDsl.ApplyKnownBlockPlan plan,
-            PlacementStateResolver placementStates) {
-        Objects.requireNonNull(plan, "plan");
-        Objects.requireNonNull(placementStates, "placementStates");
-        var transform = new BlockPlan.Transform(
-                plan.transform().rotation().degrees(),
-                plan.transform().mirror().wireName());
-        var entries = new ArrayList<ApplyBlockPlanStep>(plan.entries().size());
-        var prior = new LinkedHashMap<String, ApplyBlockPlanStep>();
-        BlockTarget minimum = null;
-        BlockTarget maximum = null;
-        for (ActionDsl.BlockPlanEntry entry : plan.entries()) {
-            ActionDsl.BlockStateSpec sourceState;
-            String item;
-            if (entry.placementStateRef().isPresent()) {
-                PlacementStateResolver.PlacementState remembered = placementStates
-                        .resolve(entry.placementStateRef().orElseThrow())
-                        .orElseThrow(() -> new IllegalArgumentException(
-                                "construction placement_state_ref is unknown"));
-                sourceState = new ActionDsl.BlockStateSpec(
-                        remembered.state().block().value(), remembered.state().properties());
-                item = remembered.placementItem().value();
-            } else {
-                sourceState = entry.sourceState().orElseThrow();
-                item = entry.item().orElseThrow();
-            }
-            ActionDsl.Offset offset = plan.transform().apply(entry.offset());
-            var target = new BlockTarget(
-                    plan.anchor().dimension(),
-                    Math.addExact(plan.anchor().x(), offset.x()),
-                    Math.addExact(plan.anchor().y(), offset.y()),
-                    Math.addExact(plan.anchor().z(), offset.z()));
-            BlockStateView transformed = BlockPlanStateTransformer.transformFull(
-                    new BlockStateView(
-                            sourceState.block(), sourceState.properties()),
-                    transform,
-                    "construction.entry.source_state");
-            var expectedAfter = new BlockStateFingerprint(
-                    transformed.block(), transformed.properties());
-            ActionDsl.PlacementSupport support = entry.support();
-            var supportTarget = new BlockTarget(
-                    support.position().dimension(),
-                    support.position().x(),
-                    support.position().y(),
-                    support.position().z());
-            String face = support.face().name().toLowerCase(Locale.ROOT);
-            PlacementSupportWitness witness;
-            if (support.expectedState().isPresent()) {
-                ActionDsl.BlockStateSpec state = support.expectedState().orElseThrow();
-                witness = PlacementSupportWitness.visible(
-                        supportTarget,
-                        face,
-                        new BlockStateFingerprint(state.block(), state.properties()));
-            } else {
-                String dependencyId = support.dependencyEntryId().orElseThrow();
-                ApplyBlockPlanStep dependency = prior.get(dependencyId);
-                if (dependency == null) {
-                    throw new IllegalArgumentException(
-                            "construction dependency is not an earlier entry");
-                }
-                witness = PlacementSupportWitness.confirmedDependency(
-                        supportTarget,
-                        face,
-                        dependency.expectedAfter(),
-                        dependencyId);
-            }
-            var step = new ApplyBlockPlanStep(
-                    entry.id(),
-                    ApplyBlockPlanOperation.PLACE,
-                    target,
-                    new BlockStateFingerprint("minecraft:air", Map.of()),
-                    expectedAfter,
-                    Optional.of(item),
-                    Optional.of(witness));
-            entries.add(step);
-            prior.put(entry.id(), step);
-            minimum = minimum == null ? target : new BlockTarget(
-                    target.dimension(),
-                    Math.min(minimum.x(), target.x()),
-                    Math.min(minimum.y(), target.y()),
-                    Math.min(minimum.z(), target.z()));
-            maximum = maximum == null ? target : new BlockTarget(
-                    target.dimension(),
-                    Math.max(maximum.x(), target.x()),
-                    Math.max(maximum.y(), target.y()),
-                    Math.max(maximum.z(), target.z()));
-            if (MinecraftApplyBlockPlanPort.supportedDoorPlacement(expectedAfter)) {
-                maximum = new BlockTarget(
-                        target.dimension(), maximum.x(),
-                        Math.max(maximum.y(), Math.addExact(target.y(), 1)), maximum.z());
-            }
-        }
-        if (entries.isEmpty()) {
-            throw new IllegalArgumentException("construction plan is empty");
-        }
-        int maxDurationSeconds = Math.multiplyExact(entries.size(), 15);
-        return new KnownConstructionRequest(
-                "construction",
-                entries,
-                new ActionBounds(
-                        plan.anchor().dimension(),
-                        Objects.requireNonNull(minimum, "minimum"),
-                        Objects.requireNonNull(maximum, "maximum"),
-                        0,
-                        maxDurationSeconds,
-                        false));
-    }
-
-    static KnownConstructionRequest constructionRequest(
-            ActionDsl.ClearKnownBlockPlan plan) {
-        Objects.requireNonNull(plan, "plan");
-        var transform = new BlockPlan.Transform(
-                plan.transform().rotation().degrees(),
-                plan.transform().mirror().wireName());
-        var entries = new ArrayList<ApplyBlockPlanStep>(plan.entries().size());
-        BlockTarget minimum = null;
-        BlockTarget maximum = null;
-        for (ActionDsl.ClearBlockPlanEntry entry : plan.entries()) {
-            ActionDsl.Offset offset = plan.transform().apply(entry.offset());
-            var target = new BlockTarget(
-                    plan.anchor().dimension(),
-                    Math.addExact(plan.anchor().x(), offset.x()),
-                    Math.addExact(plan.anchor().y(), offset.y()),
-                    Math.addExact(plan.anchor().z(), offset.z()));
-            BlockStateView transformed = BlockPlanStateTransformer.transformFull(
-                    new BlockStateView(
-                            entry.expectedBefore().block(),
-                            entry.expectedBefore().properties()),
-                    transform,
-                    "construction.clear.expected_before");
-            entries.add(new ApplyBlockPlanStep(
-                    entry.id(),
-                    ApplyBlockPlanOperation.BREAK_TO_AIR,
-                    target,
-                    new BlockStateFingerprint(
-                            transformed.block(), transformed.properties()),
-                    new BlockStateFingerprint("minecraft:air", Map.of()),
-                    Optional.empty(),
-                    Optional.empty()));
-            minimum = minimum == null ? target : new BlockTarget(
-                    target.dimension(),
-                    Math.min(minimum.x(), target.x()),
-                    Math.min(minimum.y(), target.y()),
-                    Math.min(minimum.z(), target.z()));
-            maximum = maximum == null ? target : new BlockTarget(
-                    target.dimension(),
-                    Math.max(maximum.x(), target.x()),
-                    Math.max(maximum.y(), target.y()),
-                    Math.max(maximum.z(), target.z()));
-        }
-        if (entries.isEmpty()) {
-            throw new IllegalArgumentException("construction clear plan is empty");
-        }
-        return new KnownConstructionRequest(new ApplyBlockPlanRequest(
-                "construction-clear",
-                1,
-                1,
-                entries,
-                new ActionBounds(
-                        plan.anchor().dimension(),
-                        Objects.requireNonNull(minimum, "minimum"),
-                        Objects.requireNonNull(maximum, "maximum"),
-                        0,
-                        Math.multiplyExact(entries.size(), 15),
-                        true),
-                ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK));
-    }
-
-    static RedstoneIdentityRequest redstoneIdentityRequest(
-            ActionDsl.ApplyKnownRedstoneSpec redstone,
-            UUID worldSessionId,
-            AgentPrimitivePlanner.MutationAim lampAim,
-            AgentPrimitivePlanner.MutationAim leverAim) {
-        return redstoneIdentityRequest(
-                redstone, worldSessionId, List.of(lampAim), leverAim, Optional.empty());
-    }
-
-    static RedstoneIdentityRequest redstoneIdentityRequest(
-            ActionDsl.ApplyKnownRedstoneSpec redstone,
-            UUID worldSessionId,
-            List<AgentPrimitivePlanner.MutationAim> lampAims,
-            AgentPrimitivePlanner.MutationAim leverAim) {
-        return redstoneIdentityRequest(
-                redstone, worldSessionId, lampAims, leverAim, Optional.empty());
-    }
-
-    static RedstoneIdentityRequest redstoneIdentityRequest(
-            ActionDsl.ApplyKnownRedstoneSpec redstone,
-            UUID worldSessionId,
-            List<AgentPrimitivePlanner.MutationAim> lampAims,
-            AgentPrimitivePlanner.MutationAim leverAim,
-            Optional<AgentPrimitivePlanner.MutationAim> wireAim) {
-        Objects.requireNonNull(redstone, "redstone");
-        Objects.requireNonNull(worldSessionId, "worldSessionId");
-        lampAims = List.copyOf(Objects.requireNonNull(lampAims, "lampAims"));
-        Objects.requireNonNull(leverAim, "leverAim");
-        Objects.requireNonNull(wireAim, "wireAim");
-        var spec = new RedstoneSpec(
-                redstone.components(),
-                redstone.truthTable(),
-                redstone.footprint(),
-                redstone.rotation(),
-                new RedstoneSpec.ExecutionBounds(
-                        true, redstone.timing().settleTicks()));
-        ActionDsl.Position anchor = redstone.anchor();
-        var firstLampTarget = new BlockTarget(
-                anchor.dimension(), anchor.x(), anchor.y(), anchor.z());
-        int x = switch (redstone.rotation()) {
-            case 0 -> 1;
-            case 180 -> -1;
-            case 90, 270 -> 0;
-            default -> throw new IllegalArgumentException("unsupported redstone rotation");
-        };
-        int z = switch (redstone.rotation()) {
-            case 90 -> 1;
-            case 270 -> -1;
-            case 0, 180 -> 0;
-            default -> throw new IllegalArgumentException("unsupported redstone rotation");
-        };
-        var leverTarget = new BlockTarget(
-                anchor.dimension(), anchor.x() + (1 + spec.wireCount()) * x, anchor.y(),
-                anchor.z() + (1 + spec.wireCount()) * z);
-        var lampTargets = new ArrayList<BlockTarget>();
-        lampTargets.add(firstLampTarget);
-        if (spec.outputCount() == 2) {
-            lampTargets.add(new BlockTarget(
-                    anchor.dimension(), anchor.x() + 2 * x, anchor.y(), anchor.z() + 2 * z));
-        }
-        Optional<BlockTarget> wireTarget = spec.wireCount() == 1
-                ? Optional.of(new BlockTarget(
-                        anchor.dimension(), anchor.x() + x, anchor.y(), anchor.z() + z))
-                : Optional.empty();
-        if (wireAim.isPresent() != wireTarget.isPresent()) {
-            throw new IllegalArgumentException("redstone wire aim does not match the specification");
-        }
-        if (lampAims.size() != lampTargets.size()) {
-            throw new IllegalArgumentException("redstone lamp aims do not match the specification");
-        }
-        var targets = new ArrayList<>(lampTargets);
-        targets.add(leverTarget);
-        wireTarget.ifPresent(targets::add);
-        var minimum = new BlockTarget(
-                anchor.dimension(),
-                targets.stream().mapToInt(BlockTarget::x).min().orElseThrow(),
-                anchor.y() - 1,
-                targets.stream().mapToInt(BlockTarget::z).min().orElseThrow());
-        var maximum = new BlockTarget(
-                anchor.dimension(),
-                targets.stream().mapToInt(BlockTarget::x).max().orElseThrow(),
-                anchor.y(),
-                targets.stream().mapToInt(BlockTarget::z).max().orElseThrow());
-        var bounds = new ActionBounds(
-                anchor.dimension(), minimum, maximum, 0, 30, false);
-        return new RedstoneIdentityRequest(
-                spec,
-                worldSessionId,
-                lampTargets,
-                leverTarget,
-                lampAims.stream().map(McmcpRuntime::blockAimWitness).toList(),
-                blockAimWitness(leverAim),
-                wireAim.map(McmcpRuntime::blockAimWitness),
-                bounds);
-    }
-
-    static KnownBrewingRequest brewingRequest(
-            ActionDsl.BrewKnownPotionBatch brew,
-            AgentPrimitivePlanner.MutationAim brewingAim,
-            float maxCameraDegreesPerTick) {
-        Objects.requireNonNull(brew, "brew");
-        if (!StandardPotionPolicy.BREWING_STAND.equals(brew.expectedBlock())) {
-            throw new IllegalArgumentException("brewing target must be a brewing stand");
-        }
-        var target = new BlockTarget(
-                brew.target().dimension(),
-                brew.target().x(),
-                brew.target().y(),
-                brew.target().z());
-        KnownBrewingRequest base = new KnownBrewingRequest(
-                target,
-                brew.input(),
-                brew.ingredientItem(),
-                brew.fuelItem(),
-                brew.expectedOutput(),
-                maxCameraDegreesPerTick);
-        PhaseFiveRequest operation = withInventoryAim(
-                base.operation(), brew.target(), brewingAim);
-        return new KnownBrewingRequest(
-                base.target(), base.input(), base.ingredientItem(), base.fuelItem(),
-                base.expectedOutput(), base.maxCameraDegreesPerTick(), operation);
-    }
-
-    private static PhaseFiveRequest containerRequest(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            ActionDsl.Node primitive,
-            AgentPrimitivePlanner.MutationAim inventoryAim) {
-        if (primitive instanceof ActionDsl.OperateKnownMenu operation) {
-            var player = Objects.requireNonNull(minecraft.player, "player");
-            return knownMenuRequest(operation, new BlockTarget(
-                    session.dimension(),
-                    Mth.floor(player.getX()),
-                    Mth.floor(player.getY()),
-                    Mth.floor(player.getZ())));
-        }
-        if (primitive instanceof ActionDsl.CraftKnownRecipe craft) {
-            return withInventoryAim(craftRequest(craft), craft.target(), inventoryAim);
-        }
-        if (primitive instanceof ActionDsl.SmeltKnownRecipe smelt) {
-            return smeltRequest(smelt, inventoryAim);
-        }
-        ActionDsl.Position position;
-        String expectedBlock;
-        String item;
-        String stackPolicy;
-        int minimumDestinationCount;
-        int maxStacks = 1;
-        int maxTransferCount = 64;
-        if (primitive instanceof ActionDsl.InspectKnownContainer inspect) {
-            position = inspect.target();
-            expectedBlock = inspect.expectedBlock();
-            item = "minecraft:air";
-            stackPolicy = "item_id_any_components";
-            minimumDestinationCount = 0;
-        } else if (primitive instanceof ActionDsl.TakeKnownContainerStack take) {
-            position = take.target();
-            expectedBlock = take.expectedBlock();
-            item = take.item();
-            stackPolicy = take.stackPolicy();
-            minimumDestinationCount = take.minimumInventoryCount();
-            maxStacks = take.maxStacks();
-            maxTransferCount = take.maxTransferCount();
-        } else if (primitive instanceof ActionDsl.StoreKnownContainerStack store) {
-            position = store.target();
-            expectedBlock = store.expectedBlock();
-            item = store.item();
-            stackPolicy = store.stackPolicy();
-            minimumDestinationCount = store.minimumContainerCount();
-            maxStacks = store.maxStacks();
-            maxTransferCount = store.maxTransferCount();
-        } else {
-            throw new IllegalArgumentException("node is not a known container operation");
-        }
-        if (!position.dimension().equals(session.dimension())) {
-            throw new IllegalArgumentException("container target dimension changed");
-        }
-        BlockPos blockPos = new BlockPos(position.x(), position.y(), position.z());
-        var level = Objects.requireNonNull(minecraft.level, "level");
-        BlockStateFingerprint state = MinecraftPhaseFiveInventoryPort.fingerprintLiveState(
-                level.getBlockState(blockPos));
-        if (!expectedBlock.equals(state.blockId())) {
-            throw new IllegalArgumentException("container target block changed");
-        }
-        var target = new BlockTarget(
-                position.dimension(), position.x(), position.y(), position.z());
-        var targetMap = Map.<String, Object>of(
-                "dimension", target.dimension(),
-                "x", target.x(),
-                "y", target.y(),
-                "z", target.z());
-        var stateMap = Map.<String, Object>of(
-                "block", state.blockId(),
-                "properties", state.properties());
-        var parameters = new LinkedHashMap<String, Object>();
-        parameters.put("container", Map.of("target", targetMap, "expected_state", stateMap));
-        parameters.put("direction", knownContainerTransferDirection(primitive));
-        parameters.put("stack", Map.of("item", item, "stack_policy", stackPolicy));
-        parameters.put("goal", Map.of(
-                "minimum_destination_count", minimumDestinationCount));
-        parameters.put("max_transfer_count", maxTransferCount);
-        parameters.put("max_stack_moves", maxStacks);
-        parameters.put("retain_view_on_release", true);
-        parameters.put("max_camera_degrees_per_tick",
-                McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0D);
-        parameters.put("aim_point", inventoryAimPoint(position, inventoryAim));
-        knownContainerRoutingLabel(primitive).ifPresent(label -> parameters.put(
-                "routing_label", Map.of(
-                        "entity_ref", label.entityRef(),
-                        "item", label.item())));
-        var bounds = new PhaseFiveBounds(
-                target.dimension(), target, target, 0, 20, false);
-        return new PhaseFiveRequest(
-                "transfer_items", parameters, bounds, minimumDestinationCount, "items");
-    }
-
-    static String knownContainerTransferDirection(ActionDsl.Node primitive) {
-        Objects.requireNonNull(primitive, "primitive");
-        if (primitive instanceof ActionDsl.StoreKnownContainerStack) {
-            return "player_to_container";
-        }
-        if (primitive instanceof ActionDsl.InspectKnownContainer
-                || primitive instanceof ActionDsl.TakeKnownContainerStack) {
-            return "container_to_player";
-        }
-        throw new IllegalArgumentException("node is not a known container operation");
-    }
-
-    private static Optional<ActionDsl.RoutingLabel> knownContainerRoutingLabel(
-            ActionDsl.Node primitive) {
-        if (primitive instanceof ActionDsl.InspectKnownContainer inspect) {
-            return inspect.routingLabel();
-        }
-        if (primitive instanceof ActionDsl.TakeKnownContainerStack take) {
-            return take.routingLabel();
-        }
-        if (primitive instanceof ActionDsl.StoreKnownContainerStack store) {
-            return store.routingLabel();
-        }
-        return Optional.empty();
-    }
-
-    private static PhaseFiveRequest withInventoryAim(
-            PhaseFiveRequest request,
-            ActionDsl.Position target,
-            AgentPrimitivePlanner.MutationAim aim) {
-        var parameters = new LinkedHashMap<String, Object>(request.parameters());
-        parameters.put("aim_point", inventoryAimPoint(target, aim));
-        return new PhaseFiveRequest(
-                request.kind(), parameters, request.bounds(),
-                request.expectedUnits(), request.progressUnit());
-    }
-
-    static Map<String, Object> inventoryAimPoint(
-            ActionDsl.Position target,
-            AgentPrimitivePlanner.MutationAim aim) {
-        if (aim == null || !target.equals(aim.block())) {
-            throw new IllegalArgumentException("menu aim witness is unavailable");
-        }
-        Vec3 point = aim.point();
-        if (!Double.isFinite(point.x) || !Double.isFinite(point.y) || !Double.isFinite(point.z)
-                || point.x < target.x() || point.x > target.x() + 1.0D
-                || point.y < target.y() || point.y > target.y() + 1.0D
-                || point.z < target.z() || point.z > target.z() + 1.0D) {
-            throw new IllegalArgumentException("menu aim witness is outside its target");
-        }
-        return Map.of(
-                "dimension", target.dimension(),
-                "x", point.x,
-                "y", point.y,
-                "z", point.z);
-    }
-
-    static PhaseFiveRequest knownMenuRequest(
-            ActionDsl.OperateKnownMenu operation, BlockTarget position) {
-        Objects.requireNonNull(operation, "operation");
-        Objects.requireNonNull(position, "position");
-        return new PhaseFiveRequest(
-                MinecraftKnownMenuPort.KIND,
-                Map.of("operation_ref", operation.operationRef()),
-                new PhaseFiveBounds(
-                        position.dimension(), position, position, 0, 30, false),
-                1,
-                "items");
-    }
-
-    static PhaseFiveRequest craftRequest(ActionDsl.CraftKnownRecipe craft) {
-        ActionDsl.Position position = craft.target();
-        var expected = new BlockStateFingerprint(
-                craft.expectedState().block(), craft.expectedState().properties());
-        var target = new BlockTarget(
-                position.dimension(), position.x(), position.y(), position.z());
-        var targetMap = Map.<String, Object>of(
-                "dimension", target.dimension(),
-                "x", target.x(),
-                "y", target.y(),
-                "z", target.z());
-        var stateMap = Map.<String, Object>of(
-                "block", expected.blockId(),
-                "properties", expected.properties());
-        var parameters = new LinkedHashMap<String, Object>();
-        parameters.put("recipe_ref", craft.recipeRef());
-        parameters.put("recipe_fingerprint", craft.recipeFingerprint());
-        parameters.put("goal", Map.of(
-                "item", craft.goalItem(),
-                "stack_policy", craft.stackPolicy(),
-                "minimum_inventory_count", craft.minimumInventoryCount()));
-        parameters.put("station", Map.of(
-                "kind", craft.stationKind(),
-                "target", targetMap,
-                "expected_state", stateMap));
-        parameters.put("max_crafts", craft.maxCrafts());
-        var bounds = new PhaseFiveBounds(
-                target.dimension(), target, target, 0, 20, false);
-        return new PhaseFiveRequest(
-                "craft_items", parameters, bounds, craft.minimumInventoryCount(), "items");
-    }
-
-    static PhaseFiveRequest smeltRequest(
-            ActionDsl.SmeltKnownRecipe smelt,
-            AgentPrimitivePlanner.MutationAim smeltingAim) {
-        ActionDsl.Position position = smelt.target();
-        var target = new BlockTarget(
-                position.dimension(), position.x(), position.y(), position.z());
-        var parameters = new LinkedHashMap<String, Object>();
-        parameters.put("recipe_ref", smelt.recipeRef());
-        parameters.put("recipe_fingerprint", smelt.recipeFingerprint());
-        parameters.put("goal", Map.of(
-                "item", smelt.goalItem(),
-                "stack_policy", smelt.stackPolicy(),
-                "minimum_inventory_count", smelt.minimumInventoryCount()));
-        parameters.put("station", Map.of(
-                "kind", smelt.stationKind(),
-                "target", Map.of(
-                        "dimension", target.dimension(),
-                        "x", target.x(), "y", target.y(), "z", target.z()),
-                "expected_state", Map.of(
-                        "block", smelt.expectedState().block(),
-                        "properties", smelt.expectedState().properties())));
-        parameters.put("fuel", Map.of(
-                "item", smelt.fuelItem(),
-                "stack_policy", smelt.fuelStackPolicy()));
-        parameters.put("max_smelts", smelt.maxSmelts());
-        long ticks = ActionDslCompiler.knownSmeltingTicks(smelt.maxSmelts());
-        var bounds = new PhaseFiveBounds(
-                target.dimension(), target, target, 0,
-                Math.toIntExact((ticks + 19L) / 20L), false);
-        PhaseFiveRequest request = new PhaseFiveRequest(
-                "smelt_items", parameters, bounds, smelt.maxSmelts(), "smelts");
-        return withInventoryAim(request, position, smeltingAim);
-    }
-
-    private static String containerItemsTrace(List<KnownContainerAttempt.ItemCount> items) {
-        var output = new StringBuilder("container_items=");
-        for (var item : items) {
-            String entry = (output.length() == "container_items=".length() ? "" : ",")
-                    + item.item() + ":" + item.count();
-            if (output.length() + entry.length() > 252) {
-                output.append(",...");
-                break;
-            }
-            output.append(entry);
-        }
-        return output.toString();
-    }
-
     private void retryAgentMutationAim(
             Minecraft minecraft, AgentActionStore.Active action, String evidence) {
         agentExecution.blockMutationAttempt.close();
         agentExecution.blockMutationAttempt = null;
         agentExecution.mutationAimFailures++;
-        if (!mutationAimRetryAllowed(agentExecution.mutationAimFailures)) {
+        if (!ActionBudgets.mutationAimRetryAllowed(agentExecution.mutationAimFailures)) {
             failAgentAction(
                     AgentActionStore.FailureCode.PATH_BLOCKED,
                     true,
@@ -8804,85 +4370,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         agentActions.setPhase(action.actionId(), AgentActionStore.Phase.REPLANNING, evidence);
     }
 
-    static boolean retryableMutationAimFailure(String evidence) {
-        return "aim_raycast_unavailable".equals(evidence);
-    }
-
-    static boolean mutationAimRetryAllowed(int failureCount) {
-        if (failureCount < 1) {
-            throw new IllegalArgumentException("failureCount must be positive");
-        }
-        return failureCount < MAX_MUTATION_AIM_FAILURES;
-    }
-
-    static SemanticActionRequest blockMutationRequest(
-            ActionDsl.Node node, AgentPrimitivePlanner.MutationAim plannedAim) {
-        Objects.requireNonNull(plannedAim, "plannedAim");
-        ActionDsl.Position position = switch (node) {
-            case ActionDsl.TillKnownBlock value -> value.target();
-            case ActionDsl.PlantKnownWheat value -> value.target();
-            case ActionDsl.HarvestKnownWheat value -> value.target();
-            case ActionDsl.OpenKnownFenceGate value -> value.target();
-            case ActionDsl.OpenKnownPassage value -> value.target();
-            default -> throw new IllegalArgumentException("node is not a known block mutation");
-        };
-        var target = new BlockTarget(
-                position.dimension(), position.x(), position.y(), position.z());
-        boolean breaking = node instanceof ActionDsl.HarvestKnownWheat;
-        var bounds = new ActionBounds(
-                position.dimension(), target, target, 0, 5, breaking);
-        var aim = Optional.of(blockAimWitness(plannedAim));
-        return switch (node) {
-            case ActionDsl.TillKnownBlock till -> new UseItemOnBlockRequest(
-                    target,
-                    new BlockStateFingerprint(till.expectedBlock(), Map.of()),
-                    till.hoeItem(),
-                    new BlockStateFingerprint("minecraft:farmland", Map.of("moisture", "0")),
-                    bounds,
-                    aim);
-            case ActionDsl.PlantKnownWheat plant -> new PlaceBlockRequest(
-                    target,
-                    new BlockStateFingerprint("minecraft:air", Map.of()),
-                    plant.seedItem(),
-                    new BlockStateFingerprint("minecraft:wheat", Map.of("age", "0")),
-                    bounds,
-                    aim);
-            case ActionDsl.HarvestKnownWheat ignored -> new BreakBlockRequest(
-                    target,
-                    new BlockStateFingerprint("minecraft:wheat", Map.of("age", "7")),
-                    new BlockStateFingerprint("minecraft:air", Map.of()),
-                    bounds,
-                    aim);
-            case ActionDsl.OpenKnownFenceGate ignored -> new InteractBlockRequest(
-                    target,
-                    new BlockStateFingerprint(
-                            "minecraft:oak_fence_gate", Map.of("open", "false")),
-                    new BlockStateFingerprint(
-                            "minecraft:oak_fence_gate", Map.of("open", "true")),
-                    bounds,
-                    aim);
-            case ActionDsl.OpenKnownPassage passage -> new InteractBlockRequest(
-                    target,
-                    new BlockStateFingerprint(passage.expectedBlock(), Map.of("open", "false")),
-                    new BlockStateFingerprint(passage.expectedBlock(), Map.of("open", "true")),
-                    bounds,
-                    aim);
-            default -> throw new IllegalArgumentException("node is not a known block mutation");
-        };
-    }
-
-    private static BlockAimWitness blockAimWitness(AgentPrimitivePlanner.MutationAim aim) {
-        var block = aim.block();
-        return new BlockAimWitness(
-                new BlockTarget(block.dimension(), block.x(), block.y(), block.z()),
-                BlockAimWitness.Face.valueOf(aim.face().name()),
-                aim.point().x,
-                aim.point().y,
-                aim.point().z);
-    }
-
     private void requestAgentReplan(long actionTick, String reason) {
-        if (isFrameItemPrimitive(agentExecution.primitive)) {
+        if (ActionEvidence.isFrameItemPrimitive(agentExecution.primitive)) {
             failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED,
                     false, "frame_item_replan_required");
             return;
@@ -8905,42 +4394,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         agentActions.setPhase(
                 agentExecution.actionId, AgentActionStore.Phase.REPLANNING, reason);
         agentExecution.replanning = true;
-        agentExecution.replanDeadlineTick = agentReplanDeadlineTick(
+        agentExecution.replanDeadlineTick = RecoveryPlanning.agentReplanDeadlineTick(
                 agentExecution.primitive,
                 actionTick,
                 agentExecution.occurrenceBaseline.ticks(),
                 agentExecution.occurrenceLimit.ticks());
-    }
-
-    static long agentReplanWindowTicks(ActionDsl.Node primitive) {
-        return isKnownBreak(primitive)
-                ? AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS
-                : 20L;
-    }
-
-    static long agentReplanDeadlineTick(
-            ActionDsl.Node primitive,
-            long actionTick,
-            long occurrenceStartTick,
-            long occurrenceTickLimit) {
-        long observationDeadline = Math.addExact(actionTick, agentReplanWindowTicks(primitive));
-        if (!(primitive instanceof ActionDsl.NavigateToKnown)
-                && !(primitive instanceof ActionDsl.ApproachKnownSurface)
-                && !(primitive instanceof ActionDsl.ApproachKnownPlacement)
-                && !(primitive instanceof ActionDsl.CollectVisibleItem)) {
-            return observationDeadline;
-        }
-        long admittedNavigationDeadline = Math.addExact(
-                occurrenceStartTick, Math.addExact(occurrenceTickLimit, 1L));
-        return Math.max(observationDeadline, admittedNavigationDeadline);
-    }
-
-    static long recoveryEvidenceClientTick(WorldSessionTracker.Snapshot session) {
-        Objects.requireNonNull(session, "session");
-        if (!session.worldReady() || session.clientTick() < 0L) {
-            throw new IllegalStateException("recovery evidence requires a ready world clock");
-        }
-        return session.clientTick();
     }
 
     private MinecraftRecoveryGovernor.TickResult tickAgentRecovery(
@@ -8948,20 +4406,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             WorldSessionTracker.Snapshot session,
             long nowNanos) {
         var player = Objects.requireNonNull(minecraft.player, "player");
-        var map = requireAgentMap(session);
+        var map = agentObservations.requireAgentMap(session);
         var local = Objects.requireNonNull(
-                latestLocalObservation, "local safety observation");
+                agentObservations.localObservation(), "local safety observation");
         if (local.worldRevision() != map.worldRevision()) {
             throw new IllegalStateException("local safety observation crossed a world revision");
         }
         if (recoveryGovernor == null) {
             recoveryGovernor = new MinecraftRecoveryGovernor(minecraft);
         }
-        long clientTick = recoveryEvidenceClientTick(session);
+        long clientTick = RecoveryPlanning.recoveryEvidenceClientTick(session);
         var evidence = recoveryEvidence(player, session, map, local, clientTick);
         return recoveryGovernor.tick(
                 evidence,
-                recoveryCandidates(
+                RecoveryPlanning.recoveryCandidates(
                         minecraft, player, map, evidence, recoveryGovernor.recovering()),
                 MinecraftRecoveryGovernor.StopSignal.NONE,
                 () -> preemptAgentGoalForRecovery(session),
@@ -9016,7 +4474,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 };
         double descentSinceGround = recoveryDescent.current(
                 player, player.level(), session.worldSessionId());
-        RecoveryHazards hazards = recoveryHazards(
+        RecoveryHazards hazards = RecoveryPlanning.recoveryHazards(
                 current.fluid(),
                 current.hazard(),
                 player.isInLava(),
@@ -9034,10 +4492,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 player.getAbsorptionAmount(),
                 player.getAirSupply(),
                 player.isUnderWater(),
-                effectDuration(player, MobEffects.WATER_BREATHING),
+                RecoveryPlanning.effectDuration(player, MobEffects.WATER_BREATHING),
                 player.isOnFire(),
                 Math.max(0, player.getRemainingFireTicks()),
-                effectDuration(player, MobEffects.FIRE_RESISTANCE),
+                RecoveryPlanning.effectDuration(player, MobEffects.FIRE_RESISTANCE),
                 hazards.inLava(),
                 current.suffocation(),
                 hazards.onGround(),
@@ -9057,32 +4515,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.FREEZING);
     }
 
-    static RecoveryHazards recoveryHazards(
-            dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid fluid,
-            dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard hazard,
-            boolean playerInLava,
-            boolean onGround,
-            double verticalVelocity,
-            double descentSinceGround) {
-        boolean observedDangerousFall = hazard
-                == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.FALL;
-        return new RecoveryHazards(
-                playerInLava
-                        || fluid == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.LAVA,
-                onGround && !observedDangerousFall,
-                observedDangerousFall ? Math.min(-0.081D, verticalVelocity) : verticalVelocity,
-                observedDangerousFall
-                        ? Math.max(Math.nextUp(3.0D), descentSinceGround)
-                        : Math.max(0.0D, descentSinceGround));
-    }
-
-    record RecoveryHazards(
-            boolean inLava,
-            boolean onGround,
-            double verticalVelocity,
-            double descentSinceGround) {
-    }
-
     private void trackRecoveryDescent(Minecraft minecraft) {
         var session = sessions.snapshot();
         if (!session.worldReady() || minecraft.player == null || minecraft.level == null) {
@@ -9099,195 +4531,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 minecraft.player.onGround(),
                 minecraft.player.isInWater() && !minecraft.player.isInLava(),
                 correctionRevision);
-    }
-
-    static final class RecoveryDescentTracker {
-        private Object playerIdentity;
-        private Object levelIdentity;
-        private UUID worldSessionId;
-        private double lastY;
-        private double descent;
-        private long correctionRevision;
-
-        double update(
-                Object player,
-                Object level,
-                UUID sessionId,
-                double y,
-                boolean onGround,
-                boolean safeWater,
-                long currentCorrectionRevision) {
-            Objects.requireNonNull(player, "player");
-            Objects.requireNonNull(level, "level");
-            Objects.requireNonNull(sessionId, "sessionId");
-            if (!Double.isFinite(y) || currentCorrectionRevision < 0L) {
-                throw new IllegalArgumentException("descent evidence must be finite");
-            }
-            if (playerIdentity != player
-                    || levelIdentity != level
-                    || !sessionId.equals(worldSessionId)) {
-                playerIdentity = player;
-                levelIdentity = level;
-                worldSessionId = sessionId;
-                lastY = y;
-                descent = 0.0D;
-                correctionRevision = currentCorrectionRevision;
-            } else {
-                if (currentCorrectionRevision == correctionRevision) {
-                    descent += Math.max(0.0D, lastY - y);
-                }
-                lastY = y;
-                correctionRevision = currentCorrectionRevision;
-            }
-            if (onGround || safeWater) {
-                descent = 0.0D;
-            }
-            return descent;
-        }
-
-        double current(Object player, Object level, UUID sessionId) {
-            return playerIdentity == player
-                            && levelIdentity == level
-                            && Objects.equals(worldSessionId, sessionId)
-                    ? descent : 0.0D;
-        }
-
-        void reset() {
-            playerIdentity = null;
-            levelIdentity = null;
-            worldSessionId = null;
-            lastY = 0.0D;
-            descent = 0.0D;
-            correctionRevision = 0L;
-        }
-    }
-
-    record PredicateRequirements(
-            Set<ActionDsl.NumericField> numericFields,
-            Set<ActionDsl.BooleanField> booleanFields,
-            Set<String> inventoryItems,
-            Set<String> statusEffects) {
-        PredicateRequirements {
-            numericFields = Set.copyOf(Objects.requireNonNull(numericFields, "numericFields"));
-            booleanFields = Set.copyOf(Objects.requireNonNull(booleanFields, "booleanFields"));
-            inventoryItems = Set.copyOf(Objects.requireNonNull(inventoryItems, "inventoryItems"));
-            statusEffects = Set.copyOf(Objects.requireNonNull(statusEffects, "statusEffects"));
-        }
-    }
-
-    private record AdmissionPolicySnapshot(
-            Map<ActionDsl.NumericField, Double> numericValues,
-            Map<ActionDsl.BooleanField, Boolean> booleanValues,
-            Map<String, Integer> inventoryCounts,
-            Map<String, Boolean> statusEffectValues) implements PolicySnapshot {
-        private AdmissionPolicySnapshot {
-            numericValues = Map.copyOf(Objects.requireNonNull(numericValues, "numericValues"));
-            booleanValues = Map.copyOf(Objects.requireNonNull(booleanValues, "booleanValues"));
-            inventoryCounts = Map.copyOf(
-                    Objects.requireNonNull(inventoryCounts, "inventoryCounts"));
-            statusEffectValues = Map.copyOf(
-                    Objects.requireNonNull(statusEffectValues, "statusEffectValues"));
-        }
-
-        static AdmissionPolicySnapshot capture(
-                PolicySnapshot source, PredicateRequirements requirements) {
-            var numeric = new EnumMap<ActionDsl.NumericField, Double>(ActionDsl.NumericField.class);
-            for (var field : requirements.numericFields()) {
-                var value = source.numeric(field);
-                if (value.isPresent()) numeric.put(field, value.getAsDouble());
-            }
-            var bools = new EnumMap<ActionDsl.BooleanField, Boolean>(ActionDsl.BooleanField.class);
-            for (var field : requirements.booleanFields()) {
-                source.bool(field).ifPresent(value -> bools.put(field, value));
-            }
-            var items = new LinkedHashMap<String, Integer>();
-            for (var item : requirements.inventoryItems()) {
-                var value = source.inventoryCount(item);
-                if (value.isPresent()) items.put(item, value.getAsInt());
-            }
-            var effects = new LinkedHashMap<String, Boolean>();
-            for (var effect : requirements.statusEffects()) {
-                source.hasStatusEffect(effect).ifPresent(value -> effects.put(effect, value));
-            }
-            return new AdmissionPolicySnapshot(numeric, bools, items, effects);
-        }
-
-        @Override
-        public OptionalDouble numeric(ActionDsl.NumericField field) {
-            Double value = numericValues.get(field);
-            return value == null ? OptionalDouble.empty() : OptionalDouble.of(value);
-        }
-
-        @Override
-        public Optional<Boolean> bool(ActionDsl.BooleanField field) {
-            return Optional.ofNullable(booleanValues.get(field));
-        }
-
-        @Override
-        public OptionalInt inventoryCount(String item) {
-            Integer value = inventoryCounts.get(item);
-            return value == null ? OptionalInt.empty() : OptionalInt.of(value);
-        }
-
-        @Override
-        public Optional<Boolean> hasStatusEffect(String effect) {
-            return Optional.ofNullable(statusEffectValues.get(effect));
-        }
-    }
-
-    private record AgentAdmissionSnapshot(
-            WorldSessionTracker.Snapshot session,
-            LocalArmingState.Snapshot control,
-            KnownTraversabilitySnapshot map,
-            AgentPrimitivePlanner.Pose pose,
-            Optional<ObservationFrame> frame,
-            LocalObservationProjector.CurrentSafety localSafety,
-            boolean localSafetyRequired,
-            PredicateRequirements predicateRequirements,
-            AdmissionPolicySnapshot predicateSnapshot,
-            float cameraDegreesPerTick,
-            boolean multiplayerServer,
-            boolean multiplayerAllowed,
-            ClientReconciliationSignals.Snapshot reconciliation,
-            long visualBarrierWorldRevision,
-            long positionCorrectionRevision) {
-        private AgentAdmissionSnapshot {
-            Objects.requireNonNull(session, "session");
-            Objects.requireNonNull(control, "control");
-            Objects.requireNonNull(map, "map");
-            Objects.requireNonNull(pose, "pose");
-            frame = Objects.requireNonNull(frame, "frame");
-            Objects.requireNonNull(localSafety, "localSafety");
-            Objects.requireNonNull(predicateRequirements, "predicateRequirements");
-            Objects.requireNonNull(predicateSnapshot, "predicateSnapshot");
-            Objects.requireNonNull(reconciliation, "reconciliation");
-            if (McmcpRuntime.visualBarrierWorldRevision(map, reconciliation)
-                    != visualBarrierWorldRevision) {
-                throw new IllegalArgumentException("visual barrier snapshot mismatch");
-            }
-            if (positionCorrectionRevision < 0L) {
-                throw new IllegalArgumentException(
-                        "positionCorrectionRevision must be non-negative");
-            }
-        }
-    }
-
-    private record PreparedAgentAction(
-            AgentAdmissionSnapshot snapshot,
-            ActionDslCompiler.CompiledProgram program,
-            ActionDslSource source,
-            AgentPrimitivePlanner.Analysis analysis,
-            Optional<ActionDsl.Node> initialPrimitive,
-            Optional<AgentPrimitivePlanner.FrameItemAim> frameItemAim,
-            SurfacePreflightRecovery surfaceRecovery) {
-        private PreparedAgentAction {
-            Objects.requireNonNull(snapshot, "snapshot");
-            Objects.requireNonNull(program, "program");
-            Objects.requireNonNull(source, "source");
-            Objects.requireNonNull(analysis, "analysis");
-            Objects.requireNonNull(initialPrimitive, "initialPrimitive");
-            Objects.requireNonNull(frameItemAim, "frameItemAim");
-        }
     }
 
     private record PendingAgentAdmission(
@@ -9336,900 +4579,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
-    private static int effectDuration(
-            net.minecraft.client.player.LocalPlayer player,
-            Holder<net.minecraft.world.effect.MobEffect> effect) {
-        var instance = player.getEffect(effect);
-        return instance == null ? 0
-                : instance.isInfiniteDuration()
-                ? Integer.MAX_VALUE
-                : Math.max(0, instance.getDuration());
-    }
-
-    private static List<MinecraftRecoveryGovernor.Candidate> recoveryCandidates(
-            Minecraft minecraft,
-            net.minecraft.client.player.LocalPlayer player,
-            KnownTraversabilitySnapshot map,
-            MinecraftRecoveryGovernor.Evidence evidence,
-            boolean continuingRecovery) {
-        var candidates = new ArrayList<MinecraftRecoveryGovernor.Candidate>();
-        var threat = recoveryThreat(player);
-        var currentHazard = LocalObservationVolume.global().latestFor(player)
-                .map(snapshot -> snapshot.current().hazard())
-                .orElse(dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.UNKNOWN);
-        var currentCenter = player.getBoundingBox().getCenter();
-        boolean lavaRecovery = evidence.inLava()
-                || continuingRecovery
-                        && !evidence.onGround()
-                        && evidence.landing() == MinecraftRecoveryGovernor.Landing.KNOWN_LAVA;
-        boolean continuingLavaEscape = lavaRecovery && !evidence.inLava();
-        for (var option : LocalObservationVolume.global()
-                .recoveryOptions(player, map.worldRevision())) {
-            var endpoint = option.endpoint();
-            var target = new net.minecraft.world.phys.Vec3(
-                    option.target().x(), option.target().y(), option.target().z());
-            var movement = EnumSet.noneOf(dev.aod.mcmcp.routine.MovementInputLease.MovementKey.class);
-            movement.addAll(MinecraftActionPrimitiveExecutor.steering(
-                    player.getX(),
-                    player.getZ(),
-                    player.getYRot(),
-                    target.x,
-                    target.z,
-                    0.05D));
-            if (requiresRecoveryJump(currentCenter.y, target)) {
-                movement.add(dev.aod.mcmcp.routine.MovementInputLease.MovementKey.JUMP);
-            }
-            if (movement.isEmpty()) continue;
-            boolean dryStable = recoveryDryStable(endpoint);
-            boolean waterStable = endpoint.loaded()
-                    == dev.aod.mcmcp.agent.safety.ObservationRecord.LoadedState.LOADED
-                    && endpoint.clearance()
-                    == dev.aod.mcmcp.agent.safety.ObservationRecord.Clearance.CLEAR
-                    && endpoint.fluid()
-                    == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.WATER
-                    && !endpoint.suffocation()
-                    && endpoint.hazard()
-                    == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.NONE;
-            boolean avoidsNewDamage = LocalObservationVolume.avoidsNewDamageHazard(
-                    currentHazard, option.path().hazard(), endpoint.hazard());
-            if (evidence.suffocating() && (dryStable || waterStable)) {
-                addRecoveryCandidate(
-                        candidates,
-                        player,
-                        map,
-                        recoveryCandidateId("free", target),
-                        MinecraftRecoveryGovernor.CandidateKind.BACK_TO_FREE_AABB,
-                        AgentInputState.RecoveryMode.ESCAPE_SUFFOCATION,
-                        target,
-                        null,
-                        movement,
-                        true,
-                        true);
-            }
-            if ((currentHazard
-                            == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.FIRE_DAMAGE
-                    || currentHazard
-                            == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.CONTACT_DAMAGE
-                    || currentHazard
-                            == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.FREEZING)
-                    && dryStable) {
-                addRecoveryCandidate(
-                        candidates,
-                        player,
-                        map,
-                        recoveryCandidateId("surface-exit", target),
-                        MinecraftRecoveryGovernor.CandidateKind.RETREAT_TO_KNOWN_SAFE,
-                        AgentInputState.RecoveryMode.EXIT_DAMAGE_SURFACE,
-                        target,
-                        null,
-                        movement,
-                        true,
-                        true);
-            }
-            if (lavaRecovery && avoidsNewDamage && (dryStable || waterStable)
-                    && endpoint.fluid()
-                    != dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.LAVA) {
-                addRecoveryCandidate(
-                        candidates,
-                        player,
-                        map,
-                        recoveryCandidateId("lava-exit", target),
-                        MinecraftRecoveryGovernor.CandidateKind.EXIT_HAZARDOUS_FLUID,
-                        continuingLavaEscape
-                                ? AgentInputState.RecoveryMode.CONTINUE_LAVA_ESCAPE
-                                : AgentInputState.RecoveryMode.EXIT_LAVA,
-                        target,
-                        null,
-                        movement,
-                        true,
-                        true);
-            }
-            if (lavaRecovery
-                    && !continuingLavaEscape
-                    && target.y > currentCenter.y
-                    && endpoint.loaded()
-                    == dev.aod.mcmcp.agent.safety.ObservationRecord.LoadedState.LOADED
-                    && endpoint.clearance()
-                    == dev.aod.mcmcp.agent.safety.ObservationRecord.Clearance.CLEAR
-                    && endpoint.fluid()
-                    == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.LAVA
-                    && !endpoint.suffocation()) {
-                addRecoveryCandidate(
-                        candidates,
-                        player,
-                        map,
-                        recoveryCandidateId("lava-progress", target),
-                        MinecraftRecoveryGovernor.CandidateKind.EXIT_HAZARDOUS_FLUID,
-                        AgentInputState.RecoveryMode.EXIT_LAVA,
-                        target,
-                        null,
-                        movement,
-                        false,
-                        false);
-            }
-            if (evidence.underwater()
-                    && endpoint.loaded()
-                    == dev.aod.mcmcp.agent.safety.ObservationRecord.LoadedState.LOADED
-                    && endpoint.fluid()
-                    != dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.LAVA
-                    && endpoint.fluid()
-                    != dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.UNKNOWN
-                    && !endpoint.suffocation()
-                    && endpoint.hazard()
-                    == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.NONE) {
-                boolean reachesAir = endpoint.fluid()
-                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.NONE;
-                if (reachesAir || target.y > currentCenter.y) {
-                    addRecoveryCandidate(
-                            candidates,
-                            player,
-                            map,
-                            recoveryCandidateId("air", target),
-                            MinecraftRecoveryGovernor.CandidateKind.REACH_BREATHING_SPACE,
-                            AgentInputState.RecoveryMode.REACH_BREATHING_SPACE,
-                            target,
-                            null,
-                            movement,
-                            reachesAir,
-                            reachesAir);
-                }
-            }
-            if (evidence.onFire() && waterStable && avoidsNewDamage) {
-                addRecoveryCandidate(
-                        candidates,
-                        player,
-                        map,
-                        recoveryCandidateId("water", target),
-                        MinecraftRecoveryGovernor.CandidateKind.EXIT_HAZARDOUS_FLUID,
-                        AgentInputState.RecoveryMode.ENTER_WATER,
-                        target,
-                        null,
-                        movement,
-                        true,
-                        true);
-            }
-            if (!evidence.onGround()
-                    && evidence.verticalVelocity() < -0.08D
-                    && option.landing()
-                    && dryStable) {
-                addRecoveryCandidate(
-                        candidates,
-                        player,
-                        map,
-                        recoveryCandidateId("landing", target),
-                        MinecraftRecoveryGovernor.CandidateKind.STEER_TO_KNOWN_LANDING,
-                        AgentInputState.RecoveryMode.STEER_TO_LANDING,
-                        target,
-                        null,
-                        movement,
-                        true,
-                        true);
-            }
-            if (threat != null && dryStable
-                    && fartherFromThreat(player.position(), target, threat)) {
-                addRecoveryCandidate(
-                        candidates,
-                        player,
-                        map,
-                        recoveryCandidateId("retreat", target),
-                        MinecraftRecoveryGovernor.CandidateKind.RETREAT_FROM_THREAT,
-                        AgentInputState.RecoveryMode.RETREAT_FROM_THREAT,
-                        target,
-                        threat,
-                        movement,
-                        false,
-                        true);
-            }
-        }
-        return List.copyOf(candidates);
-    }
-
-    private static void addRecoveryCandidate(
-            List<MinecraftRecoveryGovernor.Candidate> candidates,
-            net.minecraft.client.player.LocalPlayer player,
-            KnownTraversabilitySnapshot map,
-            String id,
-            MinecraftRecoveryGovernor.CandidateKind kind,
-            AgentInputState.RecoveryMode mode,
-            net.minecraft.world.phys.Vec3 target,
-            net.minecraft.world.phys.Vec3 threat,
-            Set<dev.aod.mcmcp.routine.MovementInputLease.MovementKey> movement,
-            boolean preventsFatalHarm,
-            boolean reachesStableState) {
-        var currentCenter = player.getBoundingBox().getCenter();
-        double distance = recoveryDistance(currentCenter, target);
-        if (distance <= 0.0D || movement.isEmpty()) return;
-        candidates.add(new MinecraftRecoveryGovernor.Candidate(
-                id,
-                map.worldSessionId(),
-                map.dimension(),
-                map.worldRevision(),
-                kind,
-                movement,
-                new AgentInputState.RecoveryIntent(mode, target, threat),
-                true,
-                true,
-                preventsFatalHarm,
-                true,
-                reachesStableState,
-                Math.max(1, (int) Math.ceil(distance * RoutePlan.TICKS_PER_TRANSITION)),
-                distance,
-                distance));
-    }
-
-    static boolean requiresRecoveryJump(double currentCenterY, net.minecraft.world.phys.Vec3 target) {
-        return target.y > currentCenterY + 0.1D;
-    }
-
-    static double recoveryDistance(
-            net.minecraft.world.phys.Vec3 currentCenter,
-            net.minecraft.world.phys.Vec3 target) {
-        return Math.hypot(target.x - currentCenter.x, target.z - currentCenter.z)
-                + Math.max(0.0D, target.y - currentCenter.y);
-    }
-
-    static String recoveryCandidateId(String prefix, net.minecraft.world.phys.Vec3 target) {
-        return prefix + "-"
-                + recoveryTargetCoordinate(target.x) + "_"
-                + recoveryTargetCoordinate(target.y) + "_"
-                + recoveryTargetCoordinate(target.z);
-    }
-
-    private static long recoveryTargetCoordinate(double coordinate) {
-        return (long) Math.floor(coordinate * 4.0D);
-    }
-
-    private static boolean recoveryDryStable(LocalObservationVolume.EndpointSafety endpoint) {
-        return endpoint.loaded()
-                        == dev.aod.mcmcp.agent.safety.ObservationRecord.LoadedState.LOADED
-                && endpoint.clearance()
-                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Clearance.CLEAR
-                && endpoint.support()
-                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Support.PRESENT
-                && endpoint.fluid()
-                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.NONE
-                && !endpoint.suffocation()
-                && endpoint.hazard()
-                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.NONE;
-    }
-
-    private static net.minecraft.world.phys.Vec3 recoveryThreat(
-            net.minecraft.client.player.LocalPlayer player) {
-        var source = player.getLastDamageSource();
-        if (source == null) return null;
-        var raw = source.sourcePositionRaw();
-        if (raw != null) return raw;
-        var causing = source.getEntity();
-        if (causing != null && !causing.isRemoved()) return causing.position();
-        var direct = source.getDirectEntity();
-        return direct == null || direct.isRemoved()
-                || direct.position().distanceToSqr(player.position()) <= 1.0E-6D
-                ? null : direct.position();
-    }
-
-    static boolean fartherFromThreat(
-            net.minecraft.world.phys.Vec3 current,
-            net.minecraft.world.phys.Vec3 target,
-            net.minecraft.world.phys.Vec3 threat) {
-        double currentDistance = Math.hypot(current.x - threat.x, current.z - threat.z);
-        double targetDistance = Math.hypot(target.x - threat.x, target.z - threat.z);
-        return targetDistance > currentDistance + 1.0E-7D;
-    }
-
-    static PredicateRequirements predicateRequirements(ActionDsl.Program program) {
-        Objects.requireNonNull(program, "program");
-        var numeric = EnumSet.noneOf(ActionDsl.NumericField.class);
-        var bools = EnumSet.noneOf(ActionDsl.BooleanField.class);
-        var items = new LinkedHashSet<String>();
-        var effects = new LinkedHashSet<String>();
-        collectPredicateRequirements(program.body(), numeric, bools, items, effects);
-        return new PredicateRequirements(numeric, bools, items, effects);
-    }
-
-    private static void collectPredicateRequirements(
-            List<ActionDsl.Node> nodes,
-            Set<ActionDsl.NumericField> numeric,
-            Set<ActionDsl.BooleanField> bools,
-            Set<String> items,
-            Set<String> effects) {
-        for (var node : nodes) {
-            if (node instanceof ActionDsl.If conditional) {
-                for (var atomic : predicateOperands(conditional.condition())) {
-                    switch (atomic) {
-                        case ActionDsl.NumericPredicate value -> numeric.add(value.field());
-                        case ActionDsl.BooleanPredicate value -> bools.add(value.field());
-                        case ActionDsl.InventoryPredicate value -> items.add(value.item());
-                        case ActionDsl.StatusPredicate value -> effects.add(value.effect());
-                    }
-                }
-                collectPredicateRequirements(
-                        conditional.thenBranch(), numeric, bools, items, effects);
-                collectPredicateRequirements(
-                        conditional.elseBranch(), numeric, bools, items, effects);
-            } else if (node instanceof ActionDsl.Repeat repeat) {
-                collectPredicateRequirements(repeat.body(), numeric, bools, items, effects);
-            }
-        }
-    }
-
-    private static List<ActionDsl.AtomicPredicate> predicateOperands(
-            ActionDsl.Predicate predicate) {
-        return predicate instanceof ActionDsl.AtomicPredicate atomic
-                ? List.of(atomic)
-                : ((ActionDsl.LogicalPredicate) predicate).operands();
-    }
-
-    private static boolean breakProgramPreconditionsCurrent(
-            Minecraft minecraft,
-            ActionDslCompiler.CompiledProgram program,
-            Optional<ActionDsl.Node> initialPrimitive) {
-        if (initialPrimitive.filter(McmcpRuntime::isKnownBreak).isEmpty()) {
-            return true;
-        }
-        var player = minecraft.player;
-        if (player == null) return false;
-        var breaks = new ArrayList<ActionDsl.Node>();
-        collectBreakNodes(program.request().program().body(), breaks);
-        if (breaks.isEmpty()) return true;
-        if (!player.isAlive() || player.isDeadOrDying() || player.isUsingItem()
-                || !player.onGround() || player.isPassenger()
-                || player.isInWater() || player.isInLava()
-                || player.isFallFlying() || player.getAbilities().flying
-                || minecraft.gameMode == null
-                || minecraft.gameMode.getPlayerMode() != GameType.SURVIVAL) {
-            return false;
-        }
-        int requiredDurability = Math.toIntExact(program.worstCaseCost().blocksBroken());
-        // ponytail: mixed-tool branches use one conservative worst-path allowance per tool.
-        for (var block : breaks) {
-            if (findDurableHotbarTool(player, breakToolItem(block), requiredDurability) < 0) {
-                return false;
-            }
-        }
-        return inventoryCanReceiveKnownBreakDrops(player, program);
-    }
-
-    private static boolean isKnownBreak(ActionDsl.Node node) {
-        return node instanceof ActionDsl.BreakKnownFace
-                || node instanceof ActionDsl.BreakKnownBlock
-                || node instanceof ActionDsl.OperateKnownCobblestoneGenerator;
-    }
-
-    private static ActionDsl.Position breakTarget(ActionDsl.Node node) {
-        if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.target();
-        if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.target();
-        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
-            return operation.target();
-        }
-        throw new IllegalArgumentException("node is not a known break");
-    }
-
-    private static ActionDsl.BlockFace breakFace(ActionDsl.Node node) {
-        if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.face();
-        if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.face();
-        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
-            return operation.face();
-        }
-        throw new IllegalArgumentException("node is not a known break");
-    }
-
-    private static String breakBlockId(ActionDsl.Node node) {
-        if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.expectedBlock();
-        if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.expectedState().block();
-        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
-            return operation.expectedState().block();
-        }
-        throw new IllegalArgumentException("node is not a known break");
-    }
-
-    private static String breakToolItem(ActionDsl.Node node) {
-        if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.toolItem();
-        if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.toolItem();
-        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
-            return operation.toolItem();
-        }
-        throw new IllegalArgumentException("node is not a known break");
-    }
-
-    private static String breakExpectedDrop(ActionDsl.Node node) {
-        if (node instanceof ActionDsl.BreakKnownFace legacy) return legacy.expectedBlock();
-        if (node instanceof ActionDsl.BreakKnownBlock exact) return exact.expectedDrop();
-        if (node instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
-            return operation.expectedDrop();
-        }
-        throw new IllegalArgumentException("node is not a known break");
-    }
-
-    private static void collectBreakNodes(
-            List<ActionDsl.Node> nodes, List<ActionDsl.Node> output) {
-        for (var node : nodes) {
-            if (isKnownBreak(node)) {
-                output.add(node);
-            } else if (node instanceof ActionDsl.If conditional) {
-                collectBreakNodes(conditional.thenBranch(), output);
-                collectBreakNodes(conditional.elseBranch(), output);
-            } else if (node instanceof ActionDsl.Repeat repeat) {
-                collectBreakNodes(repeat.body(), output);
-            }
-        }
-    }
-
-    private static ActionDsl.BreakKnownBlock cobblestoneGeneratorBreak(
-            ActionDsl.OperateKnownCobblestoneGenerator operation) {
-        return new ActionDsl.BreakKnownBlock(
-                operation.id(), operation.target(), operation.face(),
-                operation.expectedState(), operation.toolItem(), operation.expectedDrop(),
-                operation.minimumInventoryCount());
-    }
-
-    private static int findDurableHotbarTool(
-            net.minecraft.client.player.LocalPlayer player,
-            String itemId,
-            int requiredDurability) {
-        if (requiredDurability < 1) return -1;
-        var inventory = player.getInventory();
-        for (int slot = 0; slot < Inventory.getSelectionSize(); slot++) {
-            var stack = inventory.getItem(slot);
-            if (!stack.isEmpty()
-                    && itemId.equals(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString())
-                    && stack.isDamageableItem()
-                    && stack.getMaxDamage() - stack.getDamageValue() >= requiredDurability) {
-                return slot;
-            }
-        }
-        return -1;
-    }
-
-    private static boolean inventoryCanReceiveKnownBreakDrops(
-            net.minecraft.client.player.LocalPlayer player,
-            ActionDslCompiler.CompiledProgram program) {
-        var breaks = new ArrayList<ActionDsl.Node>();
-        collectBreakNodes(program.request().program().body(), breaks);
-        var dropItems = new LinkedHashSet<String>();
-        breaks.forEach(block -> dropItems.add(breakExpectedDrop(block)));
-        if (dropItems.isEmpty()) return true;
-        int requiredPerType = Math.toIntExact(program.worstCaseCost().blocksBroken());
-        var inventory = player.getInventory();
-        int emptySlots = 0;
-        for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
-            if (inventory.getItem(slot).isEmpty()) emptySlots++;
-        }
-        int newStacksNeeded = 0;
-        for (String itemId : dropItems) {
-            int existingCapacity = 0;
-            for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
-                var stack = inventory.getItem(slot);
-                if (!stack.isEmpty()
-                        && itemId.equals(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString())) {
-                    existingCapacity = Math.addExact(
-                            existingCapacity,
-                            Math.max(0, stack.getMaxStackSize() - stack.getCount()));
-                }
-            }
-            if (existingCapacity < requiredPerType) newStacksNeeded++;
-        }
-        return emptySlots >= newStacksNeeded;
-    }
-
-    private static boolean breakSourceControlled(
-            Minecraft minecraft, ActionDsl.Node block) {
-        return breakSourceControlled(minecraft, block, true);
-    }
-
-    private static boolean breakSourceControlled(
-            Minecraft minecraft, ActionDsl.Node block, boolean requireDeclaredFace) {
-        var player = minecraft.player;
-        var level = minecraft.level;
-        var gameMode = minecraft.gameMode;
-        if (player == null || level == null || gameMode == null
-                || minecraft.getConnection() == null
-                || !player.isAlive() || player.isDeadOrDying() || player.isUsingItem()
-                || !player.onGround() || player.isPassenger()
-                || player.isInWater() || player.isInLava()
-                || player.isFallFlying() || player.getAbilities().flying
-                || gameMode.getPlayerMode() != GameType.SURVIVAL
-                || !breakTarget(block).dimension().equals(
-                        level.dimension().identifier().toString())) {
-            return false;
-        }
-        var position = new BlockPos(
-                breakTarget(block).x(), breakTarget(block).y(), breakTarget(block).z());
-        if (!level.isLoaded(position)
-                || !(minecraft.hitResult instanceof BlockHitResult hit)
-                || hit.getType() != HitResult.Type.BLOCK
-                || !hit.getBlockPos().equals(position)
-                || requireDeclaredFace
-                        && hit.getDirection() != Direction.valueOf(breakFace(block).name())
-                || !player.isWithinBlockInteractionRange(position, 0.0D)
-                || !level.getWorldBorder().isWithinBounds(position)
-                || player.blockActionRestricted(level, position, gameMode.getPlayerMode())) {
-            return false;
-        }
-        var state = level.getBlockState(position);
-        var blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-        float destroyProgress = state.getDestroyProgress(player, level, position);
-        if (!breakBlockId(block).equals(blockId)
-                || !SafeBreakSourcePolicy.allowsLiveState(
-                        state, level.getBlockEntity(position) != null)
-                || destroyProgress <= 0.0F
-                || destroyProgress * StationaryBreakRequest.MAX_ATTACK_LEASE_TICKS < 1.0F) {
-            return false;
-        }
-        if (block instanceof ActionDsl.BreakKnownBlock exact) {
-            var live = MinecraftStationaryBreakPort.fingerprintForPolicy(state);
-            if (!new BlockStateFingerprint(
-                            exact.expectedState().block(), exact.expectedState().properties())
-                    .equals(live)
-                    || !SafeBreakSourcePolicy.allowsKnownBlockCombination(
-                            exact.expectedState().block(), exact.toolItem(), exact.expectedDrop())) {
-                return false;
-            }
-        }
-        int selected = player.getInventory().getSelectedSlot();
-        if (selected < 0 || selected >= Inventory.getSelectionSize()) return false;
-        var tool = player.getInventory().getItem(selected);
-        return !tool.isEmpty()
-                && breakToolItem(block).equals(
-                        BuiltInRegistries.ITEM.getKey(tool.getItem()).toString())
-                && tool.isDamageableItem()
-                && tool.getMaxDamage() - tool.getDamageValue() >= 1;
-    }
-
-    private static boolean breakTargetStateMatches(
-            Minecraft minecraft, ActionDsl.Node block) {
-        var level = minecraft.level;
-        if (level == null || !breakTarget(block).dimension().equals(
-                level.dimension().identifier().toString())) {
-            return false;
-        }
-        var position = new BlockPos(
-                breakTarget(block).x(), breakTarget(block).y(), breakTarget(block).z());
-        if (!level.isLoaded(position)) return false;
-        var state = level.getBlockState(position);
-        if (!breakBlockId(block).equals(
-                BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString())) return false;
-        return !(block instanceof ActionDsl.BreakKnownBlock exact)
-                || new BlockStateFingerprint(
-                        exact.expectedState().block(), exact.expectedState().properties())
-                        .equals(MinecraftStationaryBreakPort.fingerprintForPolicy(state));
-    }
-
-    static void validatePredicateAvailability(
-            ActionDsl.Program program, PolicySnapshot snapshot) {
-        for (var node : program.body()) {
-            validatePredicateAvailability(node, snapshot);
-        }
-    }
-
-    private static void validatePredicateAvailability(
-            ActionDsl.Node node, PolicySnapshot snapshot) {
-        if (node instanceof ActionDsl.If conditional) {
-            PredicateEvaluator.evaluate(conditional.condition(), snapshot);
-            conditional.thenBranch().forEach(child ->
-                    validatePredicateAvailability(child, snapshot));
-            conditional.elseBranch().forEach(child ->
-                    validatePredicateAvailability(child, snapshot));
-        } else if (node instanceof ActionDsl.Repeat repeat) {
-            repeat.body().forEach(child -> validatePredicateAvailability(child, snapshot));
-        }
-    }
-
-    private static PolicySnapshot policySnapshot(Minecraft minecraft) {
-        var player = Objects.requireNonNull(minecraft.player, "player");
-        return new PolicySnapshot() {
-            @Override
-            public OptionalDouble numeric(ActionDsl.NumericField field) {
-                return OptionalDouble.of(switch (field) {
-                    case HEALTH -> player.getHealth();
-                    case HUNGER -> player.getFoodData().getFoodLevel();
-                    case AIR -> player.getAirSupply();
-                });
-            }
-
-            @Override
-            public Optional<Boolean> bool(ActionDsl.BooleanField field) {
-                return Optional.of(switch (field) {
-                    case ON_FIRE -> player.isOnFire();
-                    case SUBMERGED -> player.isUnderWater();
-                });
-            }
-
-            @Override
-            public OptionalInt inventoryCount(String item) {
-                int count = 0;
-                var inventory = player.getInventory();
-                for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
-                    var stack = inventory.getItem(slot);
-                    if (!stack.isEmpty()
-                            && BuiltInRegistries.ITEM.getKey(stack.getItem()).toString().equals(item)) {
-                        count = Math.addExact(count, stack.getCount());
-                    }
-                }
-                return OptionalInt.of(count);
-            }
-
-            @Override
-            public Optional<Boolean> hasStatusEffect(String effect) {
-                return Optional.of(player.getActiveEffects().stream()
-                        .anyMatch(instance -> instance.getEffect().getRegisteredName().equals(effect)));
-            }
-        };
-    }
-
-    private KnownTraversabilitySnapshot requireAgentMap(
-            WorldSessionTracker.Snapshot session) {
-        var map = knownTraversability.snapshot().orElseThrow(() ->
-                new RuntimeInvocationException(
-                        "unsafe_state", "No current traversability map is available.", true, Map.of()));
-        if (!session.worldReady()
-                || !session.worldSessionId().equals(map.worldSessionId())
-                || !session.dimension().equals(map.dimension())
-                || map.worldRevision() != knownTraversabilityRevision) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state",
-                    "The traversability map crossed a world boundary.",
-                    true,
-                    Map.of());
-        }
-        return map;
-    }
-
-    static long visualBarrierWorldRevision(
-            KnownTraversabilitySnapshot map,
-            ClientReconciliationSignals.Snapshot reconciliation) {
-        Objects.requireNonNull(map, "map");
-        Objects.requireNonNull(reconciliation, "reconciliation");
-        return AgentPrimitivePlanner.requireVisualBarrierWorldRevision(
-                map,
-                reconciliation.worldSessionId(),
-                reconciliation.worldRevision(),
-                reconciliation.visualBarrierWorldRevision());
-    }
-
-    static ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier(
-            KnownTraversabilitySnapshot map,
-            ClientReconciliationSignals.Snapshot reconciliation) {
-        visualBarrierWorldRevision(map, reconciliation);
-        return position -> AgentPrimitivePlanner.requireSurfaceBarrierWorldRevision(
-                map,
-                reconciliation.surfaceBarrierWorldRevision(
-                        position.x(), position.y(), position.z()));
-    }
-
-    static ToLongFunction<ActionDsl.Position> waitTargetSurfaceRevisionBarrier(
-            KnownTraversabilitySnapshot map,
-            ClientReconciliationSignals.Snapshot reconciliation) {
-        visualBarrierWorldRevision(map, reconciliation);
-        return position -> AgentPrimitivePlanner.requireSurfaceBarrierWorldRevision(
-                map,
-                reconciliation.waitTargetSurfaceBarrierWorldRevision(
-                        position.x(), position.y(), position.z()));
-    }
-
-    static ToLongFunction<ActionDsl.Position> primitiveSurfaceRevisionBarrier(
-            ActionDsl.Node primitive,
-            KnownTraversabilitySnapshot map,
-            ClientReconciliationSignals.Snapshot reconciliation) {
-        Objects.requireNonNull(primitive, "primitive");
-        return primitive instanceof ActionDsl.WaitUntil
-                && ((ActionDsl.WaitUntil) primitive).condition()
-                        instanceof ActionDsl.CropMatureCondition
-                ? waitTargetSurfaceRevisionBarrier(map, reconciliation)
-                : surfaceRevisionBarrier(map, reconciliation);
-    }
-
-    private static AgentPrimitivePlanner.Pose playerPose(
-            net.minecraft.client.player.LocalPlayer player, String dimension) {
-        Objects.requireNonNull(player, "player");
-        return new AgentPrimitivePlanner.Pose(
-                playerCell(player, dimension),
-                player.getX(),
-                player.getY(),
-                player.getZ(),
-                player.getEyeY() - player.getY(),
-                player.getYRot(),
-                player.getXRot());
-    }
-
-    private static NavCell playerCell(
-            net.minecraft.client.player.LocalPlayer player, String dimension) {
-        return new NavCell(
-                dimension,
-                Mth.floor(player.getX()),
-                Mth.floor(player.getY()),
-                Mth.floor(player.getZ()));
-    }
-
-    private static RuntimeInvocationException planningFailure(
-            AgentPrimitivePlanner.PlanningException failure) {
-        String code = switch (failure.code()) {
-            case TIMEOUT -> "timeout";
-            case PROGRAM_BUDGET_UNPROVABLE -> "program_budget_unprovable";
-            case TARGET_UNKNOWN, NO_KNOWN_PATH ->
-                    failure.code().name().toLowerCase(Locale.ROOT);
-        };
-        return new RuntimeInvocationException(
-                code,
-                failure.getMessage(),
-                true,
-                Map.of());
-    }
-
-    static boolean fitsRemainingBudget(
-            AgentActionStore.Progress used,
-            ActionDsl.Budget budget,
-            ActionDslCompiler.Cost next,
-            long activeElapsedNanos) {
-        Objects.requireNonNull(used, "used");
-        Objects.requireNonNull(budget, "budget");
-        Objects.requireNonNull(next, "next");
-        if (activeElapsedNanos < 0L || used.motionOverflowed()) return false;
-        return fits(
-                        activeElapsedNanos,
-                        Duration.ofMillis(next.durationMillis()).toNanos(),
-                        Duration.ofMillis(budget.maxDurationMillis()).toNanos())
-                && fits(used.ticks(), next.ticks(), budget.maxTicks())
-                && fits(used.distanceTravelled(), next.distanceBlocks(), budget.maxDistanceBlocks())
-                && fits(used.cameraDegrees(), next.cameraDegrees(), budget.maxCameraDegrees())
-                && fits(used.interactions(), next.interactions(), budget.maxInteractions())
-                && fits(used.blocksBroken(), next.blocksBroken(), budget.maxBlocksBroken())
-                && fits(used.blocksPlaced(), next.blocksPlaced(), budget.maxBlocksPlaced());
-    }
-
-    /**
-     * Returns a fixed, non-reflective diagnostic when a freshly planned movement route cannot
-     * use the reserve admitted for its original logical occurrence.
-     */
-    static String replannedRouteBudgetFailure(
-            AgentActionStore.Progress used,
-            AgentActionStore.Progress occurrenceBaseline,
-            ActionDslCompiler.Cost occurrenceLimit,
-            ActionDsl.Budget globalBudget,
-            ActionDslCompiler.Cost retry,
-            long activeElapsedNanos) {
-        Objects.requireNonNull(used, "used");
-        Objects.requireNonNull(occurrenceBaseline, "occurrenceBaseline");
-        Objects.requireNonNull(occurrenceLimit, "occurrenceLimit");
-        Objects.requireNonNull(globalBudget, "globalBudget");
-        Objects.requireNonNull(retry, "retry");
-        if (!costFitsLimit(retry, occurrenceLimit)) {
-            return REPLANNED_ROUTE_SHAPE_EVIDENCE;
-        }
-        if (!fitsRemainingBudget(used, globalBudget, retry, activeElapsedNanos)) {
-            return REPLANNED_ROUTE_GLOBAL_EVIDENCE;
-        }
-        if (!fitsOccurrenceBudget(used, occurrenceBaseline, occurrenceLimit, retry)) {
-            return REPLANNED_ROUTE_REMAINING_EVIDENCE;
-        }
-        return null;
-    }
-
-    private static boolean costFitsLimit(
-            ActionDslCompiler.Cost cost, ActionDslCompiler.Cost limit) {
-        Objects.requireNonNull(cost, "cost");
-        Objects.requireNonNull(limit, "limit");
-        return fits(0L, cost.durationMillis(), limit.durationMillis())
-                && fits(0L, cost.ticks(), limit.ticks())
-                && fits(0.0D, cost.distanceBlocks(), limit.distanceBlocks())
-                && fits(0.0D, cost.cameraDegrees(), limit.cameraDegrees())
-                && fits(0L, cost.interactions(), limit.interactions())
-                && fits(0L, cost.blocksBroken(), limit.blocksBroken())
-                && fits(0L, cost.blocksPlaced(), limit.blocksPlaced());
-    }
-
-    static ActionDslCompiler.Cost firstPrimitiveRemainingCost(
-            AgentActionStore.Progress used,
-            ActionDslCompiler.Cost planned,
-            long activeElapsedNanos) {
-        Objects.requireNonNull(used, "used");
-        Objects.requireNonNull(planned, "planned");
-        if (used.ticks() != 0L || activeElapsedNanos <= 0L) return planned;
-        long elapsedMillis = Math.ceilDiv(activeElapsedNanos, 1_000_000L);
-        return new ActionDslCompiler.Cost(
-                Math.max(0L, planned.durationMillis() - elapsedMillis),
-                planned.ticks(),
-                planned.distanceBlocks(),
-                planned.cameraDegrees(),
-                planned.interactions(),
-                planned.blocksBroken(),
-                planned.blocksPlaced());
-    }
-
-    /**
-     * Charges renderer waiting against the explicit container headroom without pretending that
-     * the bounded menu attempt itself became shorter. Other recovered surface primitives retain
-     * their complete JIT cost because they do not declare this separate operation reserve.
-     */
-    static ActionDslCompiler.Cost firstRecoveredSurfacePrimitiveRemainingCost(
-            AgentActionStore.Progress used,
-            boolean firstPrimitiveOccurrence,
-            ActionDsl.Node primitive,
-            ActionDslCompiler.Cost planned,
-            long activeElapsedNanos) {
-        Objects.requireNonNull(used, "used");
-        Objects.requireNonNull(primitive, "primitive");
-        Objects.requireNonNull(planned, "planned");
-        if (!firstPrimitiveOccurrence) {
-            return planned;
-        }
-        long operationTicks = switch (primitive) {
-            case ActionDsl.InspectKnownContainer ignored ->
-                    AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND;
-            case ActionDsl.TakeKnownContainerStack take ->
-                    ActionDslCompiler.knownContainerTransferOperationTicks(take.maxStacks());
-            case ActionDsl.StoreKnownContainerStack store ->
-                    ActionDslCompiler.knownContainerTransferOperationTicks(store.maxStacks());
-            default -> -1L;
-        };
-        if (operationTicks < 0L) {
-            return firstPrimitiveRemainingCost(used, planned, activeElapsedNanos);
-        }
-        if (activeElapsedNanos < 0L) return planned;
-        long elapsedMillis = Math.ceilDiv(activeElapsedNanos, 1_000_000L);
-        long operationDurationMillis = Math.multiplyExact(operationTicks, 50L);
-        return new ActionDslCompiler.Cost(
-                Math.max(operationDurationMillis,
-                        Math.max(0L, planned.durationMillis() - elapsedMillis)),
-                Math.max(operationTicks, Math.max(0L, planned.ticks() - used.ticks())),
-                planned.distanceBlocks(),
-                planned.cameraDegrees(),
-                planned.interactions(),
-                planned.blocksBroken(),
-                planned.blocksPlaced());
-    }
-
-    static boolean motionBudgetExhausted(
-            AgentActionStore.Progress used,
-            ActionDsl.Budget budget,
-            ActionDsl.Node primitive) {
-        Objects.requireNonNull(used, "used");
-        Objects.requireNonNull(budget, "budget");
-        return used.motionOverflowed()
-                || primitive instanceof ActionDsl.NavigateToKnown
-                        && used.distanceTravelled() >= budget.maxDistanceBlocks()
-                || primitive instanceof ActionDsl.ApproachKnownSurface
-                        && used.distanceTravelled() >= budget.maxDistanceBlocks()
-                || primitive instanceof ActionDsl.ApproachKnownPlacement
-                        && used.distanceTravelled() >= budget.maxDistanceBlocks()
-                || primitive instanceof ActionDsl.CollectVisibleItem
-                        && used.distanceTravelled() >= budget.maxDistanceBlocks()
-                || primitive instanceof ActionDsl.CollectVisibleItemBatch
-                        && used.distanceTravelled() >= budget.maxDistanceBlocks()
-                || primitive instanceof ActionDsl.FaceKnownPosition
-                        && used.cameraDegrees() >= budget.maxCameraDegrees()
-                || primitive instanceof ActionDsl.FaceKnownBlockFace
-                        && used.cameraDegrees() >= budget.maxCameraDegrees()
-                || isKnownBreak(primitive)
-                        && used.cameraDegrees() >= budget.maxCameraDegrees();
-    }
-
     private static double remainingDistance(
             AgentActionStore.Progress used,
             ActionDsl.Budget budget,
             AgentExecution execution) {
         double global = budget.maxDistanceBlocks() - used.distanceTravelled();
         double occurrence = execution.occurrenceLimit.distanceBlocks()
-                - consumedDistance(used, execution.occurrenceBaseline);
+                - ActionBudgets.consumedDistance(used, execution.occurrenceBaseline);
         return Math.max(0.0D, Math.min(global, occurrence));
     }
 
@@ -10239,7 +4595,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             AgentExecution execution) {
         double global = budget.maxCameraDegrees() - used.cameraDegrees();
         double occurrence = execution.occurrenceLimit.cameraDegrees()
-                - consumedCamera(used, execution.occurrenceBaseline);
+                - ActionBudgets.consumedCamera(used, execution.occurrenceBaseline);
         return Math.max(0.0D, Math.min(global, occurrence));
     }
 
@@ -10249,73 +4605,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             ActionDslCompiler.Cost next) {
         var baseline = Objects.requireNonNull(execution.occurrenceBaseline, "occurrenceBaseline");
         var limit = Objects.requireNonNull(execution.occurrenceLimit, "occurrenceLimit");
-        return fitsOccurrenceBudget(used, baseline, limit, next);
-    }
-
-    private static boolean fitsOccurrenceBudget(
-            AgentActionStore.Progress used,
-            AgentActionStore.Progress baseline,
-            ActionDslCompiler.Cost limit,
-            ActionDslCompiler.Cost next) {
-        Objects.requireNonNull(used, "used");
-        Objects.requireNonNull(baseline, "baseline");
-        Objects.requireNonNull(limit, "limit");
-        Objects.requireNonNull(next, "next");
-        return !used.motionOverflowed()
-                && fits(consumedDurationMillis(used, baseline), next.durationMillis(),
-                        limit.durationMillis())
-                && fits(consumedTicks(used, baseline), next.ticks(), limit.ticks())
-                && fits(consumedDistance(used, baseline), next.distanceBlocks(),
-                        limit.distanceBlocks())
-                && fits(consumedCamera(used, baseline), next.cameraDegrees(),
-                        limit.cameraDegrees())
-                && fits(consumedInteractions(used, baseline), next.interactions(),
-                        limit.interactions())
-                && fits(consumedBreaks(used, baseline), next.blocksBroken(),
-                        limit.blocksBroken())
-                && fits(consumedPlacements(used, baseline), next.blocksPlaced(),
-                        limit.blocksPlaced());
-    }
-
-    static boolean fitsMutationBatchRemainder(
-            AgentActionStore.Progress used,
-            AgentActionStore.Progress occurrenceBaseline,
-            ActionDslCompiler.Cost occurrenceLimit,
-            ActionDsl.Budget globalBudget,
-            ActionDslCompiler.Cost requiredRemainder,
-            long activeElapsedNanos) {
-        return fitsRemainingBudget(
-                        used, globalBudget, requiredRemainder, activeElapsedNanos)
-                && fitsOccurrenceBudget(
-                        used, occurrenceBaseline, occurrenceLimit, requiredRemainder);
-    }
-
-    static ActionDslCompiler.Cost breakExecutionCost(
-            ActionDslCompiler.Cost planned, boolean reobservationComplete) {
-        Objects.requireNonNull(planned, "planned");
-        if (!reobservationComplete) return planned;
-        long ticks = Math.subtractExact(
-                planned.ticks(), AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
-        long duration = Math.subtractExact(
-                planned.durationMillis(),
-                Math.multiplyExact(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS, 50L));
-        return new ActionDslCompiler.Cost(
-                duration,
-                ticks,
-                planned.distanceBlocks(),
-                planned.cameraDegrees(),
-                planned.interactions(),
-                planned.blocksBroken(),
-                planned.blocksPlaced());
-    }
-
-    static long breakAimTicks(ActionDslCompiler.Cost planned) {
-        Objects.requireNonNull(planned, "planned");
-        return Math.max(
-                1L,
-                planned.ticks()
-                        - AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS
-                        - AgentPrimitivePlanner.BREAK_TICK_UPPER_BOUND);
+        return ActionBudgets.fitsOccurrenceBudget(used, baseline, limit, next);
     }
 
     private static boolean occurrenceBudgetExceeded(
@@ -10323,13 +4613,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var baseline = Objects.requireNonNull(execution.occurrenceBaseline, "occurrenceBaseline");
         var limit = Objects.requireNonNull(execution.occurrenceLimit, "occurrenceLimit");
         return used.motionOverflowed()
-                || consumedDurationMillis(used, baseline) > limit.durationMillis()
-                || consumedTicks(used, baseline) > limit.ticks()
-                || consumedDistance(used, baseline) > limit.distanceBlocks() + 1.0e-9D
-                || consumedCamera(used, baseline) > limit.cameraDegrees() + 1.0e-9D
-                || consumedInteractions(used, baseline) > limit.interactions()
-                || consumedBreaks(used, baseline) > limit.blocksBroken()
-                || consumedPlacements(used, baseline) > limit.blocksPlaced();
+                || ActionBudgets.consumedDurationMillis(used, baseline) > limit.durationMillis()
+                || ActionBudgets.consumedTicks(used, baseline) > limit.ticks()
+                || ActionBudgets.consumedDistance(used, baseline) > limit.distanceBlocks() + 1.0e-9D
+                || ActionBudgets.consumedCamera(used, baseline) > limit.cameraDegrees() + 1.0e-9D
+                || ActionBudgets.consumedInteractions(used, baseline) > limit.interactions()
+                || ActionBudgets.consumedBreaks(used, baseline) > limit.blocksBroken()
+                || ActionBudgets.consumedPlacements(used, baseline) > limit.blocksPlaced();
     }
 
     private static boolean occurrenceBudgetExceededAfterPrimitive(
@@ -10340,103 +4630,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return occurrenceBudgetExceeded(used, execution);
     }
 
-    static ActionDslCompiler.Cost occurrenceCostIncludingConsumed(
-            AgentActionStore.Progress used,
-            AgentActionStore.Progress baseline,
-            ActionDslCompiler.Cost next) {
-        return new ActionDslCompiler.Cost(
-                Math.addExact(consumedDurationMillis(used, baseline), next.durationMillis()),
-                Math.addExact(consumedTicks(used, baseline), next.ticks()),
-                consumedDistance(used, baseline) + next.distanceBlocks(),
-                consumedCamera(used, baseline) + next.cameraDegrees(),
-                Math.addExact(consumedInteractions(used, baseline), next.interactions()),
-                Math.addExact(consumedBreaks(used, baseline), next.blocksBroken()),
-                Math.addExact(consumedPlacements(used, baseline), next.blocksPlaced()));
-    }
-
-    private static long consumedDurationMillis(
-            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
-        return Math.multiplyExact(consumedTicks(used, baseline), 50L);
-    }
-
-    private static long consumedTicks(
-            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
-        return nonNegativeDifference(used.ticks(), baseline.ticks());
-    }
-
-    private static double consumedDistance(
-            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
-        return nonNegativeDifference(used.distanceTravelled(), baseline.distanceTravelled());
-    }
-
-    private static double consumedCamera(
-            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
-        return nonNegativeDifference(used.cameraDegrees(), baseline.cameraDegrees());
-    }
-
-    private static long consumedInteractions(
-            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
-        return nonNegativeDifference(used.interactions(), baseline.interactions());
-    }
-
-    private static long consumedBreaks(
-            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
-        return nonNegativeDifference(used.blocksBroken(), baseline.blocksBroken());
-    }
-
-    private static long consumedPlacements(
-            AgentActionStore.Progress used, AgentActionStore.Progress baseline) {
-        return nonNegativeDifference(used.blocksPlaced(), baseline.blocksPlaced());
-    }
-
-    private static long nonNegativeDifference(long current, long baseline) {
-        if (current < baseline) throw new IllegalStateException("Action progress moved backwards");
-        return current - baseline;
-    }
-
-    private static double nonNegativeDifference(double current, double baseline) {
-        double difference = current - baseline;
-        if (!Double.isFinite(difference) || difference < -1.0e-9D) {
-            throw new IllegalStateException("Action progress moved backwards");
-        }
-        return Math.max(0.0D, difference);
-    }
-
-    static boolean motionBudgetExceededAfterPrimitive(
-            AgentActionStore.Progress used,
-            ActionDsl.Budget budget,
-            ActionDsl.Node primitive,
-            MinecraftActionPrimitiveExecutor.Status status) {
-        Objects.requireNonNull(status, "status");
-        if (used.motionOverflowed()
-                || used.distanceTravelled() > budget.maxDistanceBlocks()
-                || used.cameraDegrees() > budget.maxCameraDegrees()) {
-            return true;
-        }
-        return status == MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED
-                && motionBudgetExhausted(used, budget, primitive);
-    }
-
-    static boolean replanDeadlineReached(long actionTick, long deadlineTick) {
-        return deadlineTick > 0L && actionTick >= deadlineTick;
-    }
-
-    static boolean shouldVerifyReplanHeartbeat(
-            boolean replanning, MinecraftActionPrimitiveExecutor.TickResult result) {
-        Objects.requireNonNull(result, "result");
-        return replanning && result.status() == MinecraftActionPrimitiveExecutor.Status.RUNNING;
-    }
-
-    static boolean repeatedPositionCorrection(
-            long previousRevision, long currentRevision, int previousCorrections) {
-        return currentRevision - previousRevision > 1L || previousCorrections > 0;
-    }
-
     private void recordAgentMotion(
             UUID actionId, net.minecraft.client.player.LocalPlayer player) {
         var position = player.position();
         double distance = position.distanceTo(agentExecution.lastPosition);
-        double camera = cameraDelta(
+        double camera = ActionBudgets.cameraDelta(
                 player.getYRot(), player.getXRot(),
                 agentExecution.lastYaw, agentExecution.lastPitch);
         var settlingTarget = agentExecution.tillSettlingTarget;
@@ -10462,7 +4660,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && !movement.left()
                 && !movement.right()
                 && !movement.jump();
-        double settlingCredit = batchTillSettlingCredit(
+        double settlingCredit = ActionBudgets.batchTillSettlingCredit(
                 agentExecution.lastPosition,
                 position,
                 agentExecution.tillSettlingAllowance,
@@ -10482,33 +4680,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         agentExecution.lastPosition = position;
         agentExecution.lastYaw = player.getYRot();
         agentExecution.lastPitch = player.getXRot();
-    }
-
-    static double batchTillSettlingCredit(
-            net.minecraft.world.phys.Vec3 previous,
-            net.minecraft.world.phys.Vec3 current,
-            double allowance,
-            boolean qualifiedWindow,
-            boolean inputNeutral) {
-        Objects.requireNonNull(previous, "previous");
-        Objects.requireNonNull(current, "current");
-        if (!qualifiedWindow || !inputNeutral
-                || !Double.isFinite(allowance) || allowance <= 0.0D) return 0.0D;
-        double dx = current.x - previous.x;
-        double dz = current.z - previous.z;
-        double descent = previous.y - current.y;
-        if (Math.hypot(dx, dz) > 1.0e-6D
-                || descent <= 0.0D
-                || descent > allowance + 1.0e-6D) {
-            return 0.0D;
-        }
-        return Math.min(descent, allowance);
-    }
-
-    static double cameraDelta(
-            float yaw, float pitch, float previousYaw, float previousPitch) {
-        return Math.abs(Mth.wrapDegrees((double) yaw - previousYaw))
-                + Math.abs((double) pitch - previousPitch);
     }
 
     private void recordPendingAgentMotion(Minecraft minecraft) {
@@ -10544,16 +4715,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && Objects.equals(session.dimension(), currentDimension);
     }
 
-    private static boolean fits(long used, long next, long maximum) {
-        return used >= 0L && next >= 0L && used <= maximum && next <= maximum - used;
-    }
-
-    private static boolean fits(double used, double next, double maximum) {
-        return Double.isFinite(used) && Double.isFinite(next) && Double.isFinite(maximum)
-                && used >= 0.0D && next >= 0.0D && used <= maximum
-                && next <= maximum - used + 1.0e-9D;
-    }
-
     private static long activeElapsedNanos(AgentExecution execution, long nowNanos) {
         return activeElapsedNanos(
                 execution.startedAtNanos, execution.pausedNanos, nowNanos);
@@ -10570,13 +4731,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (pausedNanos < 0L) {
             throw new IllegalArgumentException("pausedNanos must be non-negative");
         }
-        long elapsed = nonNegativeNanoElapsed(startedAtNanos, nowNanos);
+        long elapsed = ActionBudgets.nonNegativeNanoElapsed(startedAtNanos, nowNanos);
         return pausedNanos >= elapsed ? 0L : elapsed - pausedNanos;
-    }
-
-    private static long nonNegativeNanoElapsed(long startedAtNanos, long nowNanos) {
-        long elapsed = nowNanos - startedAtNanos;
-        return elapsed < 0L ? 0L : elapsed;
     }
 
     private boolean closeAgentPrimitiveExecutor() {
@@ -10599,10 +4755,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 McmcpMod.LOGGER.error("MCMCP known-face break release failed", failure);
             } finally {
                 try {
-                    if (isKnownBreak(agentExecution.primitive)) {
+                    if (KnownBreakSafety.isKnownBreak(agentExecution.primitive)) {
                         recordBreakEffects(
                                 agentExecution.actionId,
-                                breakTarget(agentExecution.primitive),
+                                KnownBreakSafety.breakTarget(agentExecution.primitive),
                                 breaking.drainEffectDeltas());
                     }
                 } catch (RuntimeException | LinkageError failure) {
@@ -10658,181 +4814,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 }
             }
         }
-        if (agentExecution.containerAttempt != null) {
-            KnownContainerAttempt container = agentExecution.containerAttempt;
-            try {
-                container.close();
-                agentExecution.containerAttempt = null;
-            } catch (RuntimeException | LinkageError failure) {
-                closed = false;
-                if (container.releaseStatus()
-                        != KnownContainerAttempt.ReleaseStatus.PROGRESSING
-                        && !agentExecution.containerReleaseFaultLogged) {
-                    agentExecution.containerReleaseFaultLogged = true;
-                    McmcpMod.LOGGER.error("MCMCP known-container release failed", failure);
-                }
-            } finally {
-                try {
-                    int releasedInteractions = container.drainReleaseInteractionDelta();
-                    for (int count = 0; count < releasedInteractions; count++) {
-                        agentActions.recordInteraction(agentExecution.actionId);
-                    }
-                    recordContainerEffects(
-                            agentExecution.actionId,
-                            agentExecution.primitive,
-                            container.drainEffectDeltas());
-                } catch (RuntimeException | LinkageError failure) {
-                    closed = false;
-                    McmcpMod.LOGGER.error(
-                            "MCMCP known-container release usage capture failed", failure);
-                }
-            }
-        }
-        if (agentExecution.brewingAttempt != null) {
-            KnownBrewingAttempt brewing = agentExecution.brewingAttempt;
-            try {
-                brewing.close();
-                agentExecution.brewingAttempt = null;
-            } catch (RuntimeException | LinkageError failure) {
-                closed = false;
-                if (brewing.releaseStatus() != KnownBrewingAttempt.ReleaseStatus.PROGRESSING) {
-                    McmcpMod.LOGGER.error("MCMCP known-brewing release failed", failure);
-                }
-            } finally {
-                try {
-                    int releasedInteractions = brewing.drainReleaseInteractionDelta();
-                    for (int count = 0; count < releasedInteractions; count++) {
-                        agentActions.recordInteraction(agentExecution.actionId);
-                    }
-                } catch (RuntimeException | LinkageError failure) {
-                    closed = false;
-                    McmcpMod.LOGGER.error(
-                            "MCMCP known-brewing release usage capture failed", failure);
-                }
-            }
-        }
-        if (agentExecution.constructionAttempt != null) {
-            KnownConstructionAttempt construction = agentExecution.constructionAttempt;
-            try {
-                construction.close();
-                agentExecution.constructionAttempt = null;
-            } catch (RuntimeException | LinkageError failure) {
-                closed = false;
-                McmcpMod.LOGGER.error("MCMCP known-construction release failed", failure);
-            } finally {
-                try {
-                    recordConstructionEffects(
-                            agentExecution.actionId,
-                            construction.drainEffectDeltas());
-                } catch (RuntimeException | LinkageError failure) {
-                    closed = false;
-                    McmcpMod.LOGGER.error(
-                            "MCMCP known-construction effect capture failed", failure);
-                }
-            }
-        }
-        if (agentExecution.pillarUpAttempt != null) {
-            try {
-                agentExecution.pillarUpAttempt.close();
-                agentExecution.pillarUpAttempt = null;
-            } catch (RuntimeException | LinkageError failure) {
-                closed = false;
-                McmcpMod.LOGGER.error("MCMCP known-pillar release failed", failure);
-            }
-        }
-        if (agentExecution.redstoneAttempt != null) {
-            try {
-                agentExecution.redstoneAttempt.close();
-                agentExecution.redstoneAttempt = null;
-            } catch (RuntimeException | LinkageError failure) {
-                closed = false;
-                McmcpMod.LOGGER.error("MCMCP known-redstone release failed", failure);
-            }
-        }
-        if (agentExecution.fishingAttempt != null) {
-            try {
-                if (releaseFishingAttempt(Minecraft.getInstance(), agentExecution.fishingAttempt)) {
-                    agentExecution.fishingAttempt = null;
-                } else {
-                    closed = false;
-                }
-            } catch (RuntimeException | LinkageError failure) {
-                closed = false;
-                McmcpMod.LOGGER.error("MCMCP known-fishing release failed", failure);
-            }
-        }
+        if (!agentExecution.menuPrimitives.close(
+                agentExecution.primitive, agentExecution.latestWorldRevision)) closed = false;
+        if (!agentExecution.fishing.close(Minecraft.getInstance(),
+                sessions.snapshot().clientTick(), agentExecution.latestWorldRevision)) closed = false;
         agentExecution.breakAimComplete = false;
         agentExecution.fishingAimComplete = false;
         return closed;
-    }
-
-    private boolean releaseFishingAttempt(Minecraft minecraft, FishingAttempt attempt) {
-        var player = minecraft.player;
-        if (player == null) return true;
-        long tick = sessions.snapshot().clientTick();
-        FishingHook hook = player.fishing;
-        if (hook == null || hook.isRemoved()) {
-            if (attempt.mode == FishingMode.CAST && tick < attempt.deadlineTick) return false;
-            recordUnknownFishingEffect(player, attempt, false, tick);
-            return true;
-        }
-        long cleanupDeadline = attempt.cleanupDispatched
-                ? attempt.cleanupDeadlineTick : attempt.deadlineTick;
-        if (tick > cleanupDeadline) {
-            recordUnknownFishingEffect(player, attempt,
-                    ownedFishingHook(player, hook, attempt.bobberId), tick);
-            fishingSessionRefs.clear();
-            arming.lock("fishing_cleanup_unconfirmed");
-            return true;
-        }
-        if (attempt.mode == FishingMode.REEL && !ownedFishingHook(player, hook, attempt.bobberId)) {
-            return false;
-        }
-        if (!attempt.cleanupDispatched) {
-            if (!exactFishingRodHeld(player, attempt.hand, attempt.rodItem)
-                    || minecraft.gameMode == null) {
-                return false;
-            }
-            minecraft.gameMode.useItem(player, fishingHand(attempt.hand));
-            agentActions.recordInteraction(agentExecution.actionId);
-            attempt.cleanupDispatched = true;
-            attempt.cleanupDeadlineTick = Math.addExact(tick, 20L);
-            return false;
-        }
-        // Returning false keeps terminal publication behind the bounded stateful cleanup fence.
-        return false;
-    }
-
-    private void recordUnknownFishingEffect(
-            net.minecraft.client.player.LocalPlayer player,
-            FishingAttempt attempt,
-            boolean bobberPresent,
-            long clientTick) {
-        if (attempt.effectRecorded || agentExecution == null) return;
-        Map<String, Object> before;
-        Map<String, Object> after;
-        String kind;
-        if (attempt.mode == FishingMode.CAST) {
-            kind = "fishing_cast";
-            before = Map.of("hand", attempt.hand, "rod_item", attempt.rodItem,
-                    "bobber_present", false);
-            after = Map.of("hand", attempt.hand, "rod_item", attempt.rodItem,
-                    "bobber_present", bobberPresent);
-        } else {
-            kind = "fishing_reel";
-            before = Map.of("hand", attempt.hand, "rod_damage", attempt.rodDamageBefore,
-                    "inventory_count", totalInventoryCount(attempt.inventoryBefore),
-                    "bobber_present", true);
-            after = Map.of("hand", attempt.hand,
-                    "rod_damage", fishingRodDamage(player, attempt.hand, attempt.rodItem),
-                    "inventory_count", totalInventoryCount(inventoryCounts(player)),
-                    "bobber_present", bobberPresent);
-        }
-        agentActions.recordEffect(
-                agentExecution.actionId, kind, "minecraft:fishing_bobber",
-                before, after, AgentActionStore.Verification.UNKNOWN,
-                clientTick, agentExecution.latestWorldRevision);
-        attempt.effectRecorded = true;
     }
 
     private boolean closeRecoveryGovernor() {
@@ -10876,34 +4864,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void closePendingKillZoneEffectForTerminal(String reason) {
-        if (agentExecution == null || agentExecution.killZone == null
-                || agentExecution.killZone.pending == null) return;
-        KillZoneExecution operation = agentExecution.killZone;
-        KillZoneAttackAttempt attempt = operation.pending;
-        operation.pending = null;
-        boolean armorStandHit = armorStandHitConfirmed(attempt);
-        boolean confirmed = armorStandHit || attempt.target.getHealth() < attempt.healthBefore
-                || (!attempt.target.isAlive() && attempt.target.getHealth() <= 0.0F);
-        if (confirmed) operation.confirmedAttacks++;
-        else {
-            operation.unknownAttacks++;
-            operation.noRetryEntityIds.add(attempt.target.getUUID());
-        }
-        var session = sessions.snapshot();
-        agentActions.recordEffect(
-                agentExecution.actionId,
-                "entity_attack",
-                "refhash:" + sha256Identity(new StringBuilder(attempt.entityRef))
-                        .substring("sha256:".length()),
-                Map.of("entity_type", entityType(attempt.target), "health", attempt.healthBefore),
-                Map.of(
-                        "health", attempt.target.getHealth(),
-                        "outcome", armorStandHit ? "armor_stand_hit_event"
-                                : confirmed ? "terminal_confirmed" : "terminal_unknown"),
-                confirmed ? AgentActionStore.Verification.CONFIRMED
-                        : AgentActionStore.Verification.UNKNOWN,
-                Math.max(0L, session.clientTick()),
-                Math.max(0L, agentExecution.latestWorldRevision));
+        if (agentExecution == null || agentExecution.killZone == null) return;
+        agentExecution.killZone.closePendingEffect(sessions.snapshot(), agentExecution.latestWorldRevision);
     }
 
     private void finishAgentControlReady(Minecraft minecraft) {
@@ -10999,13 +4961,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 agentExecution.frameItemAttempt != null
                         && agentExecution.frameItemAttempt.releaseStatus()
                                 == FrameItemAttempt.ReleaseStatus.PROGRESSING
-                || agentExecution.containerAttempt != null
-                        && agentExecution.containerAttempt.releaseStatus()
-                                == KnownContainerAttempt.ReleaseStatus.PROGRESSING
-                || agentExecution.brewingAttempt != null
-                        && agentExecution.brewingAttempt.releaseStatus()
-                                == KnownBrewingAttempt.ReleaseStatus.PROGRESSING
-                || agentExecution.fishingAttempt != null);
+                || agentExecution.menuPrimitives.releaseProgressing()
+                || agentExecution.fishing.active());
     }
 
     private boolean advancePendingAgentReleaseClock() {
@@ -11189,8 +5146,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         var session = sessions.snapshot();
         var routineId = before.orElseThrow();
-        if (activeRoutineDeadline == null
-                || !activeRoutineDeadline.allows(routineId, System.nanoTime())) {
+        if (!routineLifecycle.withinDeadline(routineId, System.nanoTime())) {
             runPriorityStop(
                     () -> inbox.requestEmergencyStop("routine_wall_clock_deadline"),
                     () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
@@ -11212,15 +5168,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
             return;
         }
-        if (finalizationRetries.contains(routineId)) {
+        if (routineLifecycle.finalizationRetries().contains(routineId)) {
             return;
         }
         var current = routines.getRoutine(routineId, Long.MAX_VALUE, 1);
         if (current.state() == RoutineState.FINALIZING) {
-            finalizeRoutineBoundary(minecraft, current);
+            routineLifecycle.finalizeRoutineBoundary(minecraft, current);
         }
         else if (current.state().terminal()) {
-            finishTerminalRoutine(minecraft, routineId);
+            routineLifecycle.finishTerminalRoutine(minecraft, routineId);
         }
     }
 
@@ -11240,54 +5196,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return false;
     }
 
-    private void retryPendingFinalizations(Minecraft minecraft) {
-        long clientTick = sessions.snapshot().clientTick();
-        for (var routineId : finalizationRetries.pendingRoutineIds(clientTick)) {
-            final RoutineSnapshot snapshot;
-            try {
-                snapshot = routines.getRoutine(routineId, Long.MAX_VALUE, 1);
-            }
-            catch (RoutineManager.RoutineNotFoundException missing) {
-                finalizationRetries.forget(routineId);
-                continue;
-            }
-            catch (RuntimeException | LinkageError failure) {
-                McmcpMod.LOGGER.error(
-                        "MCMCP could not inspect pending routine finalization {}",
-                        routineId,
-                        failure);
-                continue;
-            }
-
-            if (snapshot.finalizationCompleted()) {
-                finalizationRetries.forget(routineId);
-                applyCompletionIntentAfterTerminal(snapshot);
-            }
-            else if (snapshot.state() == RoutineState.FINALIZING || snapshot.state().terminal()) {
-                finalizeRoutineBoundary(minecraft, snapshot);
-            }
-            else {
-                McmcpMod.LOGGER.error(
-                        "MCMCP retained finalization retry {} in non-terminal state {}",
-                        routineId,
-                        snapshot.state());
-                returnControlReady();
-            }
-        }
-    }
-
-    private void finishTerminalRoutine(Minecraft minecraft, UUID routineId) {
-        var before = routines.getRoutine(routineId, Long.MAX_VALUE, 1);
-        var terminal = finalizeTerminalRoutine(minecraft, before).snapshot();
-        if (terminal.finalizationFailure() != null) {
-            returnControlReady();
-        }
-    }
-
     private ClientCommandInbox.StopProgress stopActiveRoutineForEmergency(
             String reason,
             WorldSessionTracker.Snapshot session) {
-        goalContinuation.clear();
+        routineLifecycle.clearContinuation();
         AgentActionStore.FailureCode actionCode = "local_ui_disabled".equals(reason)
                 ? AgentActionStore.FailureCode.USER_DISABLED
                 : AgentActionStore.FailureCode.EMERGENCY_STOP;
@@ -11296,7 +5208,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 .map(action -> PendingAgentTerminal.failure(
                         action.actionId(),
                         new AgentActionStore.Failure(
-                                actionCode, true, List.of(sanitizeLocalCode(reason)))))
+                                actionCode, true, List.of(RuntimeFailures.sanitizeLocalCode(reason)))))
                 .orElse(null);
         ClientCommandInbox.StopProgress actionProgress = ClientCommandInbox.StopProgress.COMPLETE;
         try {
@@ -11320,12 +5232,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         var active = routines.activeRoutineId();
         if (active.isEmpty()) {
-            boolean voiceEnded = endVoiceFor(voiceRoutineId);
+            boolean voiceEnded = routineLifecycle.endOwnedVoice();
             return voiceEnded ? actionProgress : ClientCommandInbox.StopProgress.FAILED;
         }
         try {
             var cancelled = routines.cancelRoutine(active.orElseThrow(), reason, Long.MAX_VALUE, 1);
-            var cleanup = finalizeTerminalRoutine(Minecraft.getInstance(), cancelled);
+            var cleanup = routineLifecycle.finalizeTerminalRoutine(Minecraft.getInstance(), cancelled);
             if (!cleanup.inputsReleased() || !cleanup.voice().success()) {
                 return ClientCommandInbox.StopProgress.FAILED;
             }
@@ -11333,450 +5245,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error("MCMCP routine cancellation failed during emergency stop", failure);
-            endVoiceFor(active.orElseThrow());
+            routineLifecycle.endVoiceFor(active.orElseThrow());
             return ClientCommandInbox.StopProgress.FAILED;
         }
-    }
-
-    private TerminalCleanup finalizeTerminalRoutine(
-            Minecraft minecraft,
-            RoutineSnapshot terminalSnapshot) {
-        return finalizeRoutineBoundary(minecraft, terminalSnapshot);
-    }
-
-    private TerminalCleanup finalizeRoutineBoundary(
-            Minecraft minecraft,
-            RoutineSnapshot snapshot) {
-        var attempt = finalizationRetries.attempt(
-                snapshot.routineId(),
-                sessions.snapshot().clientTick(),
-                priorIncident -> {
-                    boolean retryCleanup = shouldRetryFinalizationCleanup(priorIncident);
-                    var cleanup = retryCleanup
-                            ? releaseOwnedResources(
-                                    minecraft,
-                                    snapshot.routineId(),
-                                    priorIncident == null || !priorIncident.inputsReleased(),
-                                    priorIncident == null || !priorIncident.voiceRestored())
-                            : retainedCleanupOutcome(priorIncident);
-                    if (retryCleanup) {
-                        finalizationRetries.rememberCleanupOutcome(
-                                snapshot.routineId(),
-                                cleanup.inputsReleased(),
-                                cleanup.voice().success(),
-                                cleanup.voice().failureCode());
-                    }
-                    String boundaryFailureCode = priorIncident == null
-                            ? completionBoundaryFailure(minecraft, snapshot)
-                            : priorIncident.boundaryFailureCode();
-                    var failure = finalizationFailure(
-                            snapshot,
-                            cleanup.inputsReleased(),
-                            cleanup.voice().success(),
-                            cleanup.voice().failureCode(),
-                            boundaryFailureCode,
-                            priorIncident != null && priorIncident.previousInputReleaseFailure(),
-                            priorIncident == null ? null : priorIncident.previousVoiceFailureCode());
-                    var finalized = snapshot.state() == RoutineState.FINALIZING
-                            ? routines.completeFinalization(
-                                    snapshot.routineId(), failure, Long.MAX_VALUE, 1)
-                            : routines.recordTerminalFinalization(
-                                    snapshot.routineId(), failure, Long.MAX_VALUE, 1);
-                    if (finalized.finalizationFailure() != null) {
-                        returnControlReady();
-                    }
-                    return new TerminalCleanup(
-                            finalized, cleanup.inputsReleased(), cleanup.voice());
-                },
-                () -> releaseOwnedResources(minecraft, snapshot.routineId()));
-        if (attempt.success()) {
-            var cleanup = attempt.value();
-            clearRoutineWallClockDeadline(cleanup.snapshot().routineId());
-            applyCompletionIntentAfterTerminal(cleanup.snapshot());
-            return cleanup;
-        }
-
-        if (attempt.incident().failedAttempts()
-                >= FinalizationRetryQueue.MAX_AUTOMATIC_ATTEMPTS) {
-            McmcpMod.LOGGER.error(
-                    "MCMCP routine finalization exhausted cleanup retries; "
-                            + "continuing record-only probes for {}",
-                    snapshot.routineId(),
-                    attempt.failure());
-        }
-        else {
-            McmcpMod.LOGGER.error(
-                    "MCMCP routine finalization boundary failed; a bounded retry was retained for {}",
-                    snapshot.routineId(),
-                    attempt.failure());
-        }
-        goalContinuation.clear();
-        returnControlReady();
-        var emergencyRelease = attempt.emergencyRelease();
-        if (!attempt.emergencyReleaseAttempted()) {
-            var incident = attempt.incident();
-            return new TerminalCleanup(
-                    snapshot,
-                    incident.inputsReleased(),
-                    new VoiceEndOutcome(
-                            incident.voiceRestored(),
-                            incident.voiceRestored()
-                                    ? null
-                                    : incident.previousVoiceFailureCode(),
-                            false,
-                            false,
-                            incident.voiceRestored()));
-        }
-        if (emergencyRelease == null) {
-            finalizationRetries.rememberCleanupOutcome(
-                    snapshot.routineId(),
-                    false,
-                    false,
-                    "finalization_emergency_release_exception");
-            return new TerminalCleanup(
-                    snapshot,
-                    false,
-                    new VoiceEndOutcome(
-                            false,
-                            "finalization_emergency_release_exception",
-                            true,
-                            false,
-                            false));
-        }
-        finalizationRetries.rememberCleanupOutcome(
-                snapshot.routineId(),
-                emergencyRelease.inputsReleased(),
-                emergencyRelease.voice().success(),
-                emergencyRelease.voice().failureCode());
-        return new TerminalCleanup(
-                snapshot,
-                emergencyRelease.inputsReleased(),
-                emergencyRelease.voice());
-    }
-
-    private String completionBoundaryFailure(Minecraft minecraft, RoutineSnapshot snapshot) {
-        if (snapshot.state() != RoutineState.FINALIZING || !snapshot.goalVerified()) {
-            return null;
-        }
-        var player = minecraft.player;
-        var level = minecraft.level;
-        if (player == null || level == null) {
-            return safeStayFailure(
-                    false, false, false, false, 0.0F, 0.0D,
-                    false, false, false, false);
-        }
-        var velocity = player.getDeltaMovement();
-        boolean visibleThreatClear = level.getEntities(
-                        player,
-                        player.getBoundingBox().inflate(16.0D),
-                        entity -> entity.isAlive() && (entity instanceof Enemy
-                                || entity instanceof Mob mob && mob.getTarget() == player))
-                .stream()
-                .noneMatch(entity -> observations.isEntityCurrentlyVisible(
-                        minecraft, entity, 16.0D));
-        return safeStayFailure(
-                true,
-                player.isAlive(),
-                player.onGround(),
-                player.isPassenger(),
-                player.getHealth(),
-                velocity.x * velocity.x + velocity.z * velocity.z,
-                player.isUsingItem(),
-                AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen()),
-                screenOwnership.snapshot().phase() == ScreenOwnershipSignals.Phase.IDLE,
-                visibleThreatClear);
-    }
-
-    static String safeStayFailure(
-            boolean worldReady,
-            boolean alive,
-            boolean onGround,
-            boolean passenger,
-            float health,
-            double horizontalVelocitySquared,
-            boolean usingItem,
-            boolean screenClear,
-            boolean screenOwnershipIdle,
-            boolean visibleThreatClear) {
-        if (!worldReady) {
-            return "safe_stay_world_unavailable";
-        }
-        if (!alive) {
-            return "safe_stay_player_not_alive";
-        }
-        if (!onGround) {
-            return "safe_stay_not_on_ground";
-        }
-        if (passenger) {
-            return "safe_stay_passenger";
-        }
-        if (!Float.isFinite(health) || health < MIN_SAFE_STAY_HEALTH) {
-            return "safe_stay_low_health";
-        }
-        if (!Double.isFinite(horizontalVelocitySquared)
-                || horizontalVelocitySquared > MAX_SAFE_STAY_HORIZONTAL_SPEED_SQUARED) {
-            return "safe_stay_player_moving";
-        }
-        if (usingItem) {
-            return "safe_stay_item_use_active";
-        }
-        if (!screenClear) {
-            return "safe_stay_screen_open";
-        }
-        if (!screenOwnershipIdle) {
-            return "safe_stay_screen_ownership_active";
-        }
-        if (!visibleThreatClear) {
-            return "safe_stay_visible_hostile";
-        }
-        return null;
-    }
-
-    private void applyCompletionIntentAfterTerminal(RoutineSnapshot terminal) {
-        goalContinuation.consumeIntent(terminal.routineId());
-        goalContinuation.clear();
-        returnControlReady();
-    }
-
-    static boolean recoverableContinuationFailure(
-            String completionIntent,
-            RoutineFailure failure,
-            RoutineFailure finalizationFailure) {
-        return GoalContinuationSession.CONTINUE_GOAL.equals(completionIntent)
-                && failure != null
-                && finalizationFailure == null
-                && !failure.requiresUser()
-                && failure.category() != RoutineFailure.Category.SAFETY
-                && failure.recovery() == RoutineFailure.Recovery.REPLAN;
-    }
-
-    static boolean shouldRetryFinalizationCleanup(FinalizationRetryQueue.Incident incident) {
-        return incident == null
-                || incident.failedAttempts() < FinalizationRetryQueue.MAX_AUTOMATIC_ATTEMPTS;
-    }
-
-    private static CleanupOutcome retainedCleanupOutcome(FinalizationRetryQueue.Incident incident) {
-        Objects.requireNonNull(incident, "incident");
-        return new CleanupOutcome(
-                incident.inputsReleased(),
-                new VoiceEndOutcome(
-                        incident.voiceRestored(),
-                        incident.voiceRestored()
-                                ? null
-                                : incident.previousVoiceFailureCode(),
-                        false,
-                        false,
-                        incident.voiceRestored()));
-    }
-
-    private CleanupOutcome releaseOwnedResources(Minecraft minecraft, UUID routineId) {
-        return releaseOwnedResources(minecraft, routineId, true, true);
-    }
-
-    private CleanupOutcome releaseOwnedResources(
-            Minecraft minecraft,
-            UUID routineId,
-            boolean releaseInputs,
-            boolean restoreVoice) {
-        boolean inputsReleased;
-        if (!releaseInputs) {
-            inputsReleased = true;
-        }
-        else {
-            try {
-                inputsReleased = releaseAllAndConfirmNoInputOwner(minecraft);
-            }
-            catch (RuntimeException | LinkageError failure) {
-                McmcpMod.LOGGER.error("MCMCP input release failed during finalization", failure);
-                inputsReleased = false;
-            }
-        }
-        var voice = restoreVoice
-                ? endVoiceSessionFor(routineId)
-                : new VoiceEndOutcome(true, null, false, false, false);
-        if (!voice.success()) {
-            McmcpMod.LOGGER.warn(
-                    "MCMCP Voice Chat restore did not complete: {}", voice.failureCode());
-        }
-        return new CleanupOutcome(inputsReleased, voice);
-    }
-
-    static RoutineFailure finalizationFailure(
-            RoutineSnapshot snapshot,
-            boolean inputsReleased,
-            boolean voiceRestored,
-            String voiceFailureCode) {
-        return finalizationFailure(
-                snapshot, inputsReleased, voiceRestored, voiceFailureCode, null);
-    }
-
-    static RoutineFailure finalizationFailure(
-            RoutineSnapshot snapshot,
-            boolean inputsReleased,
-            boolean voiceRestored,
-            String voiceFailureCode,
-            String boundaryFailureCode) {
-        return finalizationFailure(
-                snapshot,
-                inputsReleased,
-                voiceRestored,
-                voiceFailureCode,
-                boundaryFailureCode,
-                false,
-                null);
-    }
-
-    static RoutineFailure finalizationFailure(
-            RoutineSnapshot snapshot,
-            boolean inputsReleased,
-            boolean voiceRestored,
-            String voiceFailureCode,
-            String boundaryFailureCode,
-            boolean previousInputReleaseFailure,
-            String previousVoiceFailureCode) {
-        if (inputsReleased && voiceRestored && boundaryFailureCode == null) {
-            return null;
-        }
-        String code = !inputsReleased
-                ? "INPUT_RELEASE_FAILED"
-                : !voiceRestored
-                        ? "VOICECHAT_RESTORE_FAILED"
-                        : "FINALIZATION_BOUNDARY_FAILED";
-        var observed = new LinkedHashMap<String, Object>();
-        observed.put("inputs_released", inputsReleased);
-        observed.put("voicechat_restored", voiceRestored);
-        if (voiceFailureCode != null) {
-            observed.put("voicechat_failure", voiceFailureCode);
-        }
-        if (boundaryFailureCode != null) {
-            observed.put("boundary_failure", boundaryFailureCode);
-        }
-        if (previousInputReleaseFailure) {
-            observed.put("previous_input_release_failure", true);
-        }
-        if (previousVoiceFailureCode != null) {
-            observed.put("previous_voicechat_failure", previousVoiceFailureCode);
-        }
-        return new RoutineFailure(
-                RoutineFailure.Category.EXTERNAL,
-                code,
-                false,
-                RoutineFailure.Recovery.USER,
-                RoutineFailure.Scope.FINALIZATION,
-                intValue(snapshot.verification().get("attempts")),
-                Map.of("inputs_released", true, "voicechat_restored", true),
-                observed,
-                Map.of(
-                        "goal_verified", snapshot.goalVerified(),
-                        "terminal_state", snapshot.state().name(),
-                        "finalization_retry", boundaryFailureCode != null),
-                List.of("player"),
-                true);
-    }
-
-    static boolean finalizationReleasedInputs(RoutineSnapshot snapshot) {
-        Objects.requireNonNull(snapshot, "snapshot");
-        if (!snapshot.finalizationCompleted()) {
-            return false;
-        }
-        var failure = snapshot.finalizationFailure();
-        if (failure == null) {
-            return true;
-        }
-        return Boolean.TRUE.equals(failure.observed().get("inputs_released"));
-    }
-
-    private boolean endVoiceFor(UUID routineId) {
-        var outcome = endVoiceSessionFor(routineId);
-        if (!outcome.success()) {
-            McmcpMod.LOGGER.warn(
-                    "MCMCP Voice Chat restore did not complete: {}", outcome.failureCode());
-        }
-        return outcome.success();
-    }
-
-    private VoiceEndOutcome endVoiceSessionFor(UUID routineId) {
-        if (routineId != null && !routineId.equals(voiceRoutineId)) {
-            return new VoiceEndOutcome(true, null, false, false, false);
-        }
-        if (routineId == null && voiceRoutineId != null) {
-            return new VoiceEndOutcome(true, null, false, false, false);
-        }
-        try {
-            var ended = voiceChat.endAutomation();
-            var outcome = new VoiceEndOutcome(
-                    ended.failureCode() == null,
-                    ended.failureCode(),
-                    ended.sessionExisted(),
-                    ended.restoreAttempted(),
-                    ended.restored());
-            voiceRoutineId = voiceRoutineAfterEnd(voiceRoutineId, routineId, outcome);
-            return outcome;
-        }
-        catch (RuntimeException | LinkageError failure) {
-            return new VoiceEndOutcome(
-                    false, "voicechat_end_exception", true, false, false);
-        }
-    }
-
-    private VoiceEndOutcome cleanUpRejectedVoiceBegin() {
-        if (routines.activeRoutineId().isEmpty() && voiceRoutineId != null) {
-            return endVoiceSessionFor(voiceRoutineId);
-        }
-        return endVoiceSessionFor(null);
-    }
-
-    static UUID voiceRoutineAfterEnd(
-            UUID currentRoutineId,
-            UUID requestedRoutineId,
-            VoiceEndOutcome outcome) {
-        Objects.requireNonNull(outcome, "outcome");
-        boolean ownsRequestedSession = requestedRoutineId == null
-                || requestedRoutineId.equals(currentRoutineId);
-        return outcome.success() && ownsRequestedSession ? null : currentRoutineId;
-    }
-
-    static Map<String, Object> voiceBeginFailureDetails(
-            VoiceChatSafetyController.BeginResult begin) {
-        Objects.requireNonNull(begin, "begin");
-        var details = new LinkedHashMap<String, Object>();
-        details.put("reason", begin.failureCode() == null
-                ? "voicechat_not_ready"
-                : begin.failureCode());
-        details.put("voice.stage", "begin");
-        details.put("voice.present", begin.voiceChatPresent());
-        details.put("voice.owns_mute", begin.ownsMute());
-        details.put("voice.rollback_attempted", begin.rollbackAttempted());
-        details.put("voice.rollback_restored", begin.rollbackRestored());
-        if (begin.rollbackFailureCode() != null) {
-            details.put("voice.rollback_failure", begin.rollbackFailureCode());
-        }
-        return Map.copyOf(details);
-    }
-
-    private static void appendVoiceEndDetails(
-            Map<String, Object> details,
-            VoiceEndOutcome voiceEnd) {
-        details.put("voice.end_succeeded", voiceEnd.success());
-        details.put("voice.end_session_existed", voiceEnd.sessionExisted());
-        details.put("voice.end_restore_attempted", voiceEnd.restoreAttempted());
-        details.put("voice.end_restored", voiceEnd.restored());
-        if (voiceEnd.failureCode() != null) {
-            details.put("voice.end_failure", voiceEnd.failureCode());
-        }
-    }
-
-    static RuntimeException withVoiceEndFailureDiagnostics(
-            Throwable failure,
-            VoiceEndOutcome voiceEnd) {
-        Objects.requireNonNull(failure, "failure");
-        Objects.requireNonNull(voiceEnd, "voiceEnd");
-        if (voiceEnd.success() && failure instanceof RuntimeException runtimeFailure) {
-            return runtimeFailure;
-        }
-        var details = new LinkedHashMap<String, Object>();
-        appendVoiceEndDetails(details, voiceEnd);
-        return new FailureWithDetailsException(failure, details);
     }
 
     private void requestSafetyStop(String reason) {
@@ -11809,148 +5280,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             String command,
             Supplier<T> work) {
         Objects.requireNonNull(work, "work");
-        return withEvaluationTurnGate(evaluationTerminalGate, () -> {
+        return evaluationControl.withFence(() -> {
             requireLiveCall(context, command);
             return work.get();
         });
     }
 
-    static <T> T withEvaluationTurnGate(Object gate, Supplier<T> work) {
-        Objects.requireNonNull(gate, "gate");
-        Objects.requireNonNull(work, "work");
-        synchronized (gate) {
-            return work.get();
-        }
-    }
-
-    static void requireNoPendingFinalizations(FinalizationRetryQueue retries) {
-        Objects.requireNonNull(retries, "retries");
-        if (retries.hasPending()) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state",
-                    "A previous routine finalization is still pending",
-                    true,
-                    Map.of(
-                            "reason", "finalization_pending",
-                            "pending_finalizations", retries.pendingCount()));
-        }
-    }
-
-    static Optional<RoutineManager.StartReceipt> replayStationaryBreakAfterFinalizationGate(
-            FinalizationRetryQueue retries,
-            RoutineManager routines,
-            String idempotencyKey,
-            String requestIdentity,
-            long clientTick) {
-        requireNoPendingFinalizations(retries);
-        return routines.replayStationaryBreak(idempotencyKey, requestIdentity, clientTick);
-    }
-
-    static Optional<RoutineManager.StartReceipt> replaySemanticActionAfterFinalizationGate(
-            FinalizationRetryQueue retries,
-            RoutineManager routines,
-            String idempotencyKey,
-            String requestIdentity,
-            SemanticActionRequest request,
-            long clientTick) {
-        requireNoPendingFinalizations(retries);
-        return routines.replaySemanticAction(
-                idempotencyKey, requestIdentity, request, clientTick);
-    }
-
-    static Optional<RoutineManager.StartReceipt> replayApplyBlockPlanAfterFinalizationGate(
-            FinalizationRetryQueue retries,
-            RoutineManager routines,
-            String idempotencyKey,
-            String requestIdentity,
-            long clientTick) {
-        requireNoPendingFinalizations(retries);
-        return routines.replayApplyBlockPlan(
-                idempotencyKey, requestIdentity, clientTick);
-    }
-
-    static Optional<RoutineManager.StartReceipt> replayPhaseFiveAfterFinalizationGate(
-            FinalizationRetryQueue retries,
-            RoutineManager routines,
-            String idempotencyKey,
-            String requestIdentity,
-            PhaseFiveRequest request,
-            long clientTick) {
-        requireNoPendingFinalizations(retries);
-        return routines.replayPhaseFive(
-                idempotencyKey, requestIdentity, request, clientTick);
-    }
-
-    static Optional<RoutineManager.StartReceipt> replayFinitePlanAfterFinalizationGate(
-            FinalizationRetryQueue retries,
-            RoutineManager routines,
-            String idempotencyKey,
-            String requestIdentity,
-            long clientTick) {
-        requireNoPendingFinalizations(retries);
-        return routines.replayFinitePlan(idempotencyKey, requestIdentity, clientTick);
-    }
-
-    private static int intValue(Object value) {
-        return value instanceof Number number ? Math.max(0, number.intValue()) : 0;
-    }
-
-    record VoiceEndOutcome(
-            boolean success,
-            String failureCode,
-            boolean sessionExisted,
-            boolean restoreAttempted,
-            boolean restored) {
-    }
-
-    private record CleanupOutcome(boolean inputsReleased, VoiceEndOutcome voice) {
-    }
-
     private record AgentCleanupProgress(boolean primitiveClosed, boolean recoveryClosed) {
-    }
-
-    record ParsedApplyBlockPlan(
-            ApplyBlockPlanRequest request,
-            String requestIdentity,
-            Map<String, Object> resourceEstimate) {
-        ParsedApplyBlockPlan {
-            Objects.requireNonNull(request, "request");
-            Objects.requireNonNull(requestIdentity, "requestIdentity");
-            Objects.requireNonNull(resourceEstimate, "resourceEstimate");
-        }
-    }
-
-    record ParsedPhaseFive(
-            PhaseFiveRequest request,
-            String requestIdentity,
-            List<BlockTarget> targets) {
-        ParsedPhaseFive {
-            Objects.requireNonNull(request, "request");
-            Objects.requireNonNull(requestIdentity, "requestIdentity");
-            targets = List.copyOf(Objects.requireNonNull(targets, "targets"));
-        }
-    }
-
-    record ParsedFinitePlan(FinitePlanRequest request, String requestIdentity) {
-        ParsedFinitePlan {
-            Objects.requireNonNull(request, "request");
-            Objects.requireNonNull(requestIdentity, "requestIdentity");
-        }
-    }
-
-    private record FullStatePair(
-            BlockStateFingerprint source,
-            BlockStateFingerprint transformed) {
-        private FullStatePair {
-            Objects.requireNonNull(source, "source");
-            Objects.requireNonNull(transformed, "transformed");
-        }
-    }
-
-    private record TerminalCleanup(
-            RoutineSnapshot snapshot,
-            boolean inputsReleased,
-            VoiceEndOutcome voice) {
     }
 
     private void stopForLifecycle(Minecraft minecraft, String reason) {
@@ -11958,1207 +5294,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             inbox.requestEmergencyStop(reason);
             inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
         } finally {
-            activeRoutineDeadline = null;
+            routineLifecycle.clearDeadline();
         }
-    }
-
-    private void clearRoutineWallClockDeadline(UUID routineId) {
-        if (activeRoutineDeadline != null
-                && activeRoutineDeadline.routineId().equals(routineId)) {
-            activeRoutineDeadline = null;
-        }
-    }
-
-    record RoutineWallClockDeadline(
-            UUID routineId, long startedAtNanos, long durationNanos, long pausedNanos) {
-        RoutineWallClockDeadline(UUID routineId, long startedAtNanos, long durationNanos) {
-            this(routineId, startedAtNanos, durationNanos, 0L);
-        }
-
-        RoutineWallClockDeadline {
-            Objects.requireNonNull(routineId, "routineId");
-            if (durationNanos <= 0 || pausedNanos < 0L) {
-                throw new IllegalArgumentException("durationNanos must be positive and pause non-negative");
-            }
-        }
-
-        static RoutineWallClockDeadline start(UUID routineId, int maxDurationSeconds, long nowNanos) {
-            if (maxDurationSeconds <= 0) {
-                throw new IllegalArgumentException("max_duration_seconds must be positive");
-            }
-            return new RoutineWallClockDeadline(
-                    routineId,
-                    nowNanos,
-                    Math.addExact(
-                            Duration.ofSeconds(maxDurationSeconds).toNanos(),
-                            FINALIZATION_RESERVE.toNanos()));
-        }
-
-        boolean allows(UUID activeRoutineId, long nowNanos) {
-            long elapsedNanos = activeElapsedNanos(startedAtNanos, pausedNanos, nowNanos);
-            return routineId.equals(activeRoutineId)
-                    && elapsedNanos < durationNanos;
-        }
-
-        RoutineWallClockDeadline shiftStart(long pausedNanos) {
-            if (pausedNanos <= 0L) {
-                return this;
-            }
-            return new RoutineWallClockDeadline(
-                    routineId,
-                    startedAtNanos,
-                    durationNanos,
-                    saturatingNonNegativeAdd(this.pausedNanos, pausedNanos));
-        }
-    }
-
-    static SemanticActionRequest semanticActionArgument(
-            Map<String, Object> arguments,
-            WorldSessionTracker.Snapshot session) {
-        Objects.requireNonNull(session, "session");
-        return semanticActionArgument(arguments, session.dimension());
-    }
-
-    static SemanticActionRequest semanticActionArgument(
-            Map<String, Object> arguments,
-            String currentDimension) {
-        Objects.requireNonNull(arguments, "arguments");
-        requireStartRoutineKeys(arguments);
-        completionIntentArgument(arguments);
-        var kind = stringArgument(arguments, "kind");
-        var parameters = objectArgument(arguments, "parameters");
-        var bounds = actionBoundsArgument(arguments, currentDimension);
-        return switch (kind) {
-            case NavigateToRequest.KIND -> {
-                requireExactKeys(parameters, "navigate_to parameters", Set.of(
-                        "target", "horizontal_tolerance_blocks"));
-                yield new NavigateToRequest(
-                        dimensionBlockTargetArgument(parameters, "target"),
-                        doubleArgument(parameters, "horizontal_tolerance_blocks"),
-                        bounds);
-            }
-            case BreakBlockRequest.KIND -> {
-                requireExactKeys(parameters, "break_block parameters", Set.of(
-                        "target", "expected_before", "expected_after"));
-                var expectedBefore = blockStateArgument(parameters, "expected_before");
-                SafeBreakSourcePolicy.requireRegisteredBlockId(expectedBefore.blockId());
-                yield new BreakBlockRequest(
-                        dimensionBlockTargetArgument(parameters, "target"),
-                        expectedBefore,
-                        blockStateArgument(parameters, "expected_after"),
-                        bounds);
-            }
-            case PlaceBlockRequest.KIND -> {
-                requireExactKeys(parameters, "place_block parameters", Set.of(
-                        "target", "expected_before", "item", "expected_after"));
-                yield new PlaceBlockRequest(
-                        dimensionBlockTargetArgument(parameters, "target"),
-                        blockStateArgument(parameters, "expected_before"),
-                        stringArgument(parameters, "item"),
-                        blockStateArgument(parameters, "expected_after"),
-                        bounds);
-            }
-            case UseItemOnBlockRequest.KIND -> {
-                requireExactKeys(parameters, "use_item_on_block parameters", Set.of(
-                        "target", "expected_before", "item", "expected_after"));
-                yield new UseItemOnBlockRequest(
-                        dimensionBlockTargetArgument(parameters, "target"),
-                        blockStateArgument(parameters, "expected_before"),
-                        stringArgument(parameters, "item"),
-                        blockStateArgument(parameters, "expected_after"),
-                        bounds);
-            }
-            case InteractBlockRequest.KIND -> {
-                requireExactKeys(parameters, "interact_block parameters", Set.of(
-                        "target", "expected_before", "expected_after"));
-                yield new InteractBlockRequest(
-                        dimensionBlockTargetArgument(parameters, "target"),
-                        blockStateArgument(parameters, "expected_before"),
-                        blockStateArgument(parameters, "expected_after"),
-                        bounds);
-            }
-            case InteractEntityRequest.KIND -> {
-                requireExactKeys(parameters, "interact_entity parameters", Set.of(
-                        "entity_ref", "expected_type", "hand", "held_item", "goal"));
-                var goal = objectArgument(parameters, "goal");
-                requireExactKeys(goal, "goal", Set.of("item", "minimum_inventory_count"));
-                yield new InteractEntityRequest(
-                        stringArgument(parameters, "entity_ref"),
-                        stringArgument(parameters, "expected_type"),
-                        stringArgument(parameters, "hand"),
-                        stringArgument(parameters, "held_item"),
-                        new StationaryBreakGoal(
-                                stringArgument(goal, "item"),
-                                intArgument(goal, "minimum_inventory_count")),
-                        bounds);
-            }
-            default -> throw new IllegalArgumentException("kind is not a Phase 3 semantic action");
-        };
-    }
-
-    static ParsedFinitePlan finitePlanRequestArgument(Map<String, Object> arguments) {
-        Objects.requireNonNull(arguments, "arguments");
-        requireStartRoutineKeys(arguments);
-        if (!"execute_plan".equals(stringArgument(arguments, "kind"))) {
-            throw new IllegalArgumentException("kind must be execute_plan");
-        }
-        String completionIntent = completionIntentArgument(arguments);
-        var outerBounds = objectArgument(arguments, "bounds");
-        requireExactKeys(outerBounds, "execute_plan bounds", Set.of());
-        var parameters = objectArgument(arguments, "parameters");
-        var request = FinitePlanRequest.parse(parameters);
-        var canonical = new StringBuilder();
-        appendIdentity(canonical, "finite-plan/v1");
-        appendCanonicalValue(canonical, parameters);
-        appendCanonicalValue(canonical, completionIntent);
-        return new ParsedFinitePlan(request, sha256Identity(canonical));
-    }
-
-    static ParsedApplyBlockPlan applyBlockPlanArgument(
-            Map<String, Object> arguments,
-            String currentDimension) {
-        Objects.requireNonNull(arguments, "arguments");
-        requireStartRoutineKeys(arguments);
-        if (!ApplyBlockPlanRequest.KIND.equals(stringArgument(arguments, "kind"))) {
-            throw new IllegalArgumentException("kind must be apply_block_plan");
-        }
-        String completionIntent = completionIntentArgument(arguments);
-
-        var parameters = objectArgument(arguments, "parameters");
-        requireExactKeys(parameters, "apply_block_plan parameters", Set.of(
-                "anchor", "transform", "phase", "entries"));
-        var bounds = actionBoundsArgument(arguments, currentDimension);
-        var anchor = dimensionBlockTargetArgument(parameters, "anchor");
-        if (!anchor.dimension().equals(bounds.dimension())) {
-            throw new IllegalArgumentException("anchor dimension must equal bounds.dimension");
-        }
-
-        var transformInput = objectArgument(parameters, "transform");
-        requireExactKeys(transformInput, "transform", Set.of("rotation", "mirror"));
-        int rotation = intArgument(transformInput, "rotation");
-        var transform = new BlockPlan.Transform(rotation, stringArgument(transformInput, "mirror"));
-
-        var phase = objectArgument(parameters, "phase");
-        requireExactKeys(phase, "phase", Set.of("id", "index", "total"));
-        String phaseId = stringArgument(phase, "id");
-        int phaseIndex = intArgument(phase, "index");
-        int phaseTotal = intArgument(phase, "total");
-
-        Object rawEntries = parameters.get("entries");
-        if (!(rawEntries instanceof List<?> entries)
-                || entries.isEmpty()
-                || entries.size() > ApplyBlockPlanRequest.MAX_STEPS) {
-            throw new IllegalArgumentException("entries must contain 1..64 items");
-        }
-
-        var canonical = new StringBuilder();
-        appendIdentity(canonical, "apply_block_plan/v1");
-        appendIdentity(canonical, ApplyBlockPlanRequest.KIND);
-        appendTargetIdentity(canonical, anchor);
-        appendIdentity(canonical, Integer.toString(transform.rotation()));
-        appendIdentity(canonical, transform.mirror());
-        appendIdentity(canonical, phaseId);
-        appendIdentity(canonical, Integer.toString(phaseIndex));
-        appendIdentity(canonical, Integer.toString(phaseTotal));
-        appendIdentity(canonical, Integer.toString(entries.size()));
-
-        var steps = new ArrayList<ApplyBlockPlanStep>(entries.size());
-        for (int index = 0; index < entries.size(); index++) {
-            String path = "entries[" + index + "]";
-            if (!(entries.get(index) instanceof Map<?, ?> rawEntry)) {
-                throw new IllegalArgumentException(path + " must be an object");
-            }
-            @SuppressWarnings("unchecked")
-            var entry = (Map<String, Object>) rawEntry;
-            String operationName = stringArgument(entry, "operation");
-            ApplyBlockPlanOperation operation = switch (operationName) {
-                case "verify_only" -> ApplyBlockPlanOperation.VERIFY_ONLY;
-                case "break_to_air" -> ApplyBlockPlanOperation.BREAK_TO_AIR;
-                case "place" -> ApplyBlockPlanOperation.PLACE;
-                case "replace" -> ApplyBlockPlanOperation.REPLACE;
-                default -> throw new IllegalArgumentException(path + ".operation is unsupported");
-            };
-            boolean itemRequired = operation == ApplyBlockPlanOperation.PLACE
-                    || operation == ApplyBlockPlanOperation.REPLACE;
-            var exactKeys = itemRequired
-                    ? Set.of("id", "offset", "operation", "expected_before", "expected_after", "item")
-                    : Set.of("id", "offset", "operation", "expected_before", "expected_after");
-            requireExactKeys(entry, path, exactKeys);
-
-            String id = stringArgument(entry, "id");
-            var offset = objectArgument(entry, "offset");
-            requireExactKeys(offset, path + ".offset", Set.of("x", "y", "z"));
-            int rawX = relativeCoordinate(offset, "x", path);
-            int rawY = relativeCoordinate(offset, "y", path);
-            int rawZ = relativeCoordinate(offset, "z", path);
-            var transformedOffset = transform.apply(new BlockPlan.Offset(rawX, rawY, rawZ));
-            final BlockTarget target;
-            try {
-                target = checkedBlockTarget(
-                        anchor.dimension(),
-                        Math.addExact(anchor.x(), transformedOffset.x()),
-                        Math.addExact(anchor.y(), transformedOffset.y()),
-                        Math.addExact(anchor.z(), transformedOffset.z()));
-            }
-            catch (ArithmeticException overflow) {
-                throw new IllegalArgumentException(path + ".offset transforms outside supported bounds", overflow);
-            }
-
-            var before = fullBlockStateArgument(entry, "expected_before", transform, path);
-            var after = fullBlockStateArgument(entry, "expected_after", transform, path);
-            Optional<String> item = itemRequired
-                    ? Optional.of(stringArgument(entry, "item"))
-                    : Optional.empty();
-            if (operation == ApplyBlockPlanOperation.REPLACE
-                    && before.transformed().equals(after.transformed())) {
-                throw new IllegalArgumentException(
-                        path + " replace requires different exact before and after states");
-            }
-            steps.add(new ApplyBlockPlanStep(
-                    id, operation, target, before.transformed(), after.transformed(), item));
-
-            appendIdentity(canonical, id);
-            appendIdentity(canonical, Integer.toString(rawX));
-            appendIdentity(canonical, Integer.toString(rawY));
-            appendIdentity(canonical, Integer.toString(rawZ));
-            appendIdentity(canonical, operation.wireName());
-            appendBlockStateIdentity(canonical, before.source());
-            appendBlockStateIdentity(canonical, after.source());
-            appendIdentity(canonical, item.orElse(""));
-        }
-
-        var request = new ApplyBlockPlanRequest(
-                phaseId, phaseIndex, phaseTotal, steps, bounds);
-        request.requiredResources().entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> {
-                    appendIdentity(canonical, entry.getKey());
-                    appendIdentity(canonical, Integer.toString(entry.getValue()));
-                });
-        appendIdentity(canonical, Integer.toString(request.requiredResources().size()));
-        appendBoundsIdentity(canonical, bounds);
-        appendIdentity(canonical, completionIntent);
-        return new ParsedApplyBlockPlan(
-                request,
-                sha256Identity(canonical),
-                resourceEstimate(request));
-    }
-
-    static ParsedPhaseFive phaseFiveRequestArgument(
-            Map<String, Object> arguments,
-            String currentDimension) {
-        Objects.requireNonNull(arguments, "arguments");
-        requireStartRoutineKeys(arguments);
-        String completionIntent = completionIntentArgument(arguments);
-        String kind = stringArgument(arguments, "kind");
-        if (!PhaseFiveRequest.KINDS.contains(kind)) {
-            throw new IllegalArgumentException("kind is not a Phase 5 routine");
-        }
-        var parameters = objectArgument(arguments, "parameters");
-        var bounds = phaseFiveBoundsArgument(arguments, currentDimension);
-        var targets = new ArrayList<BlockTarget>();
-        int expectedUnits;
-        String progressUnit;
-
-        switch (kind) {
-            case "craft_items" -> {
-                requireExactKeys(parameters, "craft_items parameters", Set.of(
-                        "recipe_ref", "recipe_fingerprint", "goal", "station", "max_crafts"));
-                requireOpaqueReference(parameters, "recipe_ref");
-                requireSha256Fingerprint(parameters, "recipe_fingerprint");
-                var goal = objectArgument(parameters, "goal");
-                requireExactKeys(goal, "craft_items goal", Set.of(
-                        "item", "stack_policy", "minimum_inventory_count"));
-                requireRegisteredItemId(stringArgument(goal, "item"));
-                requireLiteral(goal, "stack_policy", "default_components_only");
-                expectedUnits = requireRange(
-                        intArgument(goal, "minimum_inventory_count"), 1, 2_304,
-                        "minimum_inventory_count");
-                requireRange(intArgument(parameters, "max_crafts"), 1, 64, "max_crafts");
-
-                var station = objectArgument(parameters, "station");
-                requireExactKeys(station, "craft_items station", Set.of(
-                        "kind", "target", "expected_state"));
-                requireLiteral(station, "kind", "crafting_table");
-                var target = boundedDimensionTarget(station, "target", bounds);
-                targets.add(target);
-                var expected = exactFullState(station, "expected_state", "station");
-                if (!"minecraft:crafting_table".equals(expected.blockId())) {
-                    throw new IllegalArgumentException(
-                            "craft_items station must be minecraft:crafting_table");
-                }
-                progressUnit = "items";
-            }
-            case "transfer_items" -> {
-                requireExactKeys(parameters, "transfer_items parameters", Set.of(
-                        "container", "direction", "stack", "goal", "max_transfer_count"));
-                String direction = stringArgument(parameters, "direction");
-                if (!direction.equals("player_to_container")
-                        && !direction.equals("container_to_player")) {
-                    throw new IllegalArgumentException("transfer direction is unsupported");
-                }
-                var container = objectArgument(parameters, "container");
-                requireExactKeys(container, "transfer_items container", Set.of(
-                        "target", "expected_state"));
-                targets.add(boundedDimensionTarget(container, "target", bounds));
-                var expected = exactFullState(container, "expected_state", "container");
-                if (!expected.blockId().equals("minecraft:barrel")
-                        && !expected.blockId().equals("minecraft:chest")) {
-                    throw new IllegalArgumentException(
-                            "transfer container must be a canonical chest or barrel");
-                }
-                if (expected.blockId().equals("minecraft:chest")
-                        && !"single".equals(expected.properties().get("type"))) {
-                    throw new IllegalArgumentException("transfer chest must be single");
-                }
-                var stack = objectArgument(parameters, "stack");
-                requireExactKeys(stack, "transfer_items stack", Set.of("item", "stack_policy"));
-                requireRegisteredItemId(stringArgument(stack, "item"));
-                String stackPolicy = stringArgument(stack, "stack_policy");
-                if (!Set.of("default_components_only", "item_id_any_components")
-                        .contains(stackPolicy)) {
-                    throw new IllegalArgumentException("transfer stack policy is unsupported");
-                }
-                var goal = objectArgument(parameters, "goal");
-                requireExactKeys(goal, "transfer_items goal", Set.of("minimum_destination_count"));
-                expectedUnits = requireRange(
-                        intArgument(goal, "minimum_destination_count"), 0,
-                        direction.equals("player_to_container") ? 3_456 : 2_304,
-                        "minimum_destination_count");
-                requireRange(intArgument(parameters, "max_transfer_count"), 1, 2_304,
-                        "max_transfer_count");
-                progressUnit = "items";
-            }
-            case "tend_crop_area" -> {
-                requireExactKeys(parameters, "tend_crop_area parameters", Set.of(
-                        "crop_adapter", "plots", "goal", "wait_policy"));
-                String adapter = stringArgument(parameters, "crop_adapter");
-                if (!Set.of("wheat", "carrots", "potatoes", "beetroots").contains(adapter)) {
-                    throw new IllegalArgumentException("crop_adapter is unsupported");
-                }
-                var plots = objectListArgument(parameters, "plots", 1, 64);
-                var ids = new java.util.HashSet<String>();
-                var cropTargets = new java.util.HashSet<BlockTarget>();
-                for (int index = 0; index < plots.size(); index++) {
-                    var plot = plots.get(index);
-                    String path = "plots[" + index + "]";
-                    requireExactKeys(plot, path, Set.of(
-                            "id", "crop_position", "support_position", "expected_support_state"));
-                    requireUniqueLocalId(ids, stringArgument(plot, "id"), path + ".id");
-                    var crop = boundedDimensionTarget(plot, "crop_position", bounds);
-                    if (!cropTargets.add(crop)) {
-                        throw new IllegalArgumentException("crop positions must be unique");
-                    }
-                    targets.add(crop);
-                    targets.add(boundedDimensionTarget(plot, "support_position", bounds));
-                    var support = exactFullState(plot, "expected_support_state", path);
-                    if (!"minecraft:farmland".equals(support.blockId())) {
-                        throw new IllegalArgumentException("crop support must be minecraft:farmland");
-                    }
-                }
-                var goal = objectArgument(parameters, "goal");
-                requireExactKeys(goal, "tend_crop_area goal", Set.of(
-                        "minimum_harvested_plots", "replant", "collect_drops"));
-                expectedUnits = requireRange(
-                        intArgument(goal, "minimum_harvested_plots"), 0, plots.size(),
-                        "minimum_harvested_plots");
-                requireTrue(goal, "replant");
-                requireTrue(goal, "collect_drops");
-                String waitPolicy = stringArgument(parameters, "wait_policy");
-                if (!waitPolicy.equals("no_wait") && !waitPolicy.equals("until_minimum")) {
-                    throw new IllegalArgumentException("wait_policy is unsupported");
-                }
-                progressUnit = "cells";
-            }
-            case "harvest_tree_area" -> {
-                requireExactKeys(parameters, "harvest_tree_area parameters", Set.of(
-                        "trees", "collect_drops"));
-                requireTrue(parameters, "collect_drops");
-                var trees = objectListArgument(parameters, "trees", 1, 8);
-                var ids = new java.util.HashSet<String>();
-                var logTargets = new java.util.HashSet<BlockTarget>();
-                int totalLogs = 0;
-                for (int treeIndex = 0; treeIndex < trees.size(); treeIndex++) {
-                    var tree = trees.get(treeIndex);
-                    String path = "trees[" + treeIndex + "]";
-                    requireExactKeys(tree, path, Set.of(
-                            "id", "logs", "support", "sapling", "growth_clearance"));
-                    requireUniqueLocalId(ids, stringArgument(tree, "id"), path + ".id");
-                    var logs = objectListArgument(tree, "logs", 1, 64);
-                    totalLogs = Math.addExact(totalLogs, logs.size());
-                    if (totalLogs > 64) {
-                        throw new IllegalArgumentException("all tree logs together must not exceed 64");
-                    }
-                    for (int logIndex = 0; logIndex < logs.size(); logIndex++) {
-                        var log = logs.get(logIndex);
-                        String logPath = path + ".logs[" + logIndex + "]";
-                        validateExpectedCell(log, logPath, bounds, targets, logTargets);
-                    }
-                    validateExpectedCell(
-                            objectArgument(tree, "support"), path + ".support",
-                            bounds, targets, null);
-                    var sapling = objectArgument(tree, "sapling");
-                    requireExactKeys(sapling, path + ".sapling", Set.of(
-                            "item", "expected_after_state"));
-                    requireRegisteredItemId(stringArgument(sapling, "item"));
-                    exactFullState(sapling, "expected_after_state", path + ".sapling");
-                    var clearance = objectListArgument(tree, "growth_clearance", 1, 64);
-                    for (int clearanceIndex = 0; clearanceIndex < clearance.size(); clearanceIndex++) {
-                        validateExpectedCell(
-                                clearance.get(clearanceIndex),
-                                path + ".growth_clearance[" + clearanceIndex + "]",
-                                bounds, targets, null);
-                    }
-                }
-                expectedUnits = totalLogs;
-                progressUnit = "blocks";
-            }
-            case "sleep_at_bed" -> {
-                requireExactKeys(parameters, "sleep_at_bed parameters", Set.of(
-                        "bed", "return_policy"));
-                requireLiteral(parameters, "return_policy", "start_checkpoint");
-                var bed = objectArgument(parameters, "bed");
-                requireExactKeys(bed, "sleep_at_bed bed", Set.of(
-                        "foot_position", "expected_foot_state",
-                        "head_position", "expected_head_state"));
-                var foot = boundedDimensionTarget(bed, "foot_position", bounds);
-                var head = boundedDimensionTarget(bed, "head_position", bounds);
-                if (foot.equals(head)) {
-                    throw new IllegalArgumentException("bed halves must use distinct positions");
-                }
-                targets.add(foot);
-                targets.add(head);
-                var footState = exactFullState(bed, "expected_foot_state", "bed");
-                var headState = exactFullState(bed, "expected_head_state", "bed");
-                if (!footState.blockId().equals(headState.blockId())
-                        || !footState.blockId().endsWith("_bed")) {
-                    throw new IllegalArgumentException("bed halves must use the same bed block");
-                }
-                expectedUnits = 1;
-                progressUnit = "interactions";
-            }
-            case "survey_area" -> {
-                requireExactKeys(parameters, "survey_area parameters", Set.of(
-                        "waypoints", "samples", "goal", "assessment"));
-                var waypoints = objectListArgument(parameters, "waypoints", 1, 32);
-                var waypointIds = new java.util.HashSet<String>();
-                for (int index = 0; index < waypoints.size(); index++) {
-                    var waypoint = waypoints.get(index);
-                    String path = "waypoints[" + index + "]";
-                    requireExactKeys(waypoint, path, Set.of("id", "target", "look_at"));
-                    requireUniqueLocalId(
-                            waypointIds, stringArgument(waypoint, "id"), path + ".id");
-                    targets.add(boundedDimensionTarget(waypoint, "target", bounds));
-                    targets.add(boundedDimensionTarget(waypoint, "look_at", bounds));
-                }
-                var samples = objectListArgument(parameters, "samples", 1, 256);
-                var sampleIds = new java.util.HashSet<String>();
-                for (int index = 0; index < samples.size(); index++) {
-                    var sample = samples.get(index);
-                    String path = "samples[" + index + "]";
-                    requireExactKeys(sample, path, Set.of("id", "position"));
-                    requireUniqueLocalId(sampleIds, stringArgument(sample, "id"), path + ".id");
-                    targets.add(boundedDimensionTarget(sample, "position", bounds));
-                }
-                var goal = objectArgument(parameters, "goal");
-                requireExactKeys(goal, "survey_area goal", Set.of("minimum_observed_samples"));
-                expectedUnits = requireRange(
-                        intArgument(goal, "minimum_observed_samples"), 1, samples.size(),
-                        "minimum_observed_samples");
-                String assessment = stringArgument(parameters, "assessment");
-                if (!assessment.equals("coverage_only")
-                        && !assessment.equals("spawn_surface_prediction")) {
-                    throw new IllegalArgumentException("survey assessment is unsupported");
-                }
-                progressUnit = "cells";
-            }
-            default -> throw new AssertionError("unreachable Phase 5 kind");
-        }
-
-        var request = new PhaseFiveRequest(
-                kind, parameters, bounds, expectedUnits, progressUnit);
-        var canonical = new StringBuilder();
-        appendIdentity(canonical, "phase-five/v1");
-        appendCanonicalValue(canonical, kind);
-        appendCanonicalValue(canonical, parameters);
-        appendCanonicalValue(canonical, Map.of(
-                "dimension", bounds.dimension(),
-                "minimum", Map.of(
-                        "x", bounds.minimum().x(), "y", bounds.minimum().y(), "z", bounds.minimum().z()),
-                "maximum", Map.of(
-                        "x", bounds.maximum().x(), "y", bounds.maximum().y(), "z", bounds.maximum().z()),
-                "max_travel_blocks", bounds.maxTravelBlocks(),
-                "max_duration_seconds", bounds.maxDurationSeconds(),
-                "allow_break", bounds.allowBreak()));
-        appendCanonicalValue(canonical, completionIntent);
-        return new ParsedPhaseFive(
-                request, sha256Identity(canonical), targets.stream().distinct().toList());
-    }
-
-    private static PhaseFiveBounds phaseFiveBoundsArgument(
-            Map<String, Object> arguments,
-            String currentDimension) {
-        var bounds = objectArgument(arguments, "bounds");
-        requireExactKeys(bounds, "bounds", Set.of(
-                "dimension", "region", "max_travel_blocks",
-                "max_duration_seconds", "allow_break"));
-        String dimension = stringArgument(bounds, "dimension");
-        if (!dimension.equals(Objects.requireNonNull(currentDimension, "currentDimension"))) {
-            throw new IllegalArgumentException("bounds.dimension must equal the current dimension");
-        }
-        var region = objectArgument(bounds, "region");
-        requireExactKeys(region, "bounds.region", Set.of("min", "max"));
-        return new PhaseFiveBounds(
-                dimension,
-                positionTargetArgument(region, "min", dimension),
-                positionTargetArgument(region, "max", dimension),
-                intArgument(bounds, "max_travel_blocks"),
-                intArgument(bounds, "max_duration_seconds"),
-                booleanArgument(bounds, "allow_break"));
-    }
-
-    private static BlockTarget boundedDimensionTarget(
-            Map<String, Object> source,
-            String name,
-            PhaseFiveBounds bounds) {
-        var target = dimensionBlockTargetArgument(source, name);
-        if (!bounds.contains(target)) {
-            throw new IllegalArgumentException(name + " must be inside bounds.region");
-        }
-        return target;
-    }
-
-    private static BlockStateFingerprint exactFullState(
-            Map<String, Object> source,
-            String name,
-            String path) {
-        return fullBlockStateArgument(
-                source, name, new BlockPlan.Transform(0, "none"), path).transformed();
-    }
-
-    private static void validateExpectedCell(
-            Map<String, Object> cell,
-            String path,
-            PhaseFiveBounds bounds,
-            List<BlockTarget> targets,
-            Set<BlockTarget> uniqueTargets) {
-        requireExactKeys(cell, path, Set.of("position", "expected_state"));
-        var target = boundedDimensionTarget(cell, "position", bounds);
-        if (uniqueTargets != null && !uniqueTargets.add(target)) {
-            throw new IllegalArgumentException("declared log positions must be unique");
-        }
-        targets.add(target);
-        exactFullState(cell, "expected_state", path);
-    }
-
-    private static List<Map<String, Object>> objectListArgument(
-            Map<String, Object> source,
-            String name,
-            int minimum,
-            int maximum) {
-        Object raw = source.get(name);
-        if (!(raw instanceof List<?> values)
-                || values.size() < minimum
-                || values.size() > maximum) {
-            throw new IllegalArgumentException(
-                    name + " must contain " + minimum + ".." + maximum + " objects");
-        }
-        var result = new ArrayList<Map<String, Object>>(values.size());
-        for (Object value : values) {
-            if (!(value instanceof Map<?, ?> map)) {
-                throw new IllegalArgumentException(name + " must contain only objects");
-            }
-            @SuppressWarnings("unchecked")
-            var typed = (Map<String, Object>) map;
-            result.add(typed);
-        }
-        return List.copyOf(result);
-    }
-
-    private static void requireUniqueLocalId(Set<String> ids, String id, String path) {
-        if (!id.matches("[a-z][a-z0-9_.-]{0,63}") || !ids.add(id)) {
-            throw new IllegalArgumentException(path + " must be a unique local identifier");
-        }
-    }
-
-    private static void requireRegisteredItemId(String itemId) {
-        Identifier identifier = Identifier.tryParse(itemId);
-        var registered = identifier == null
-                ? Optional.<Holder.Reference<net.minecraft.world.item.Item>>empty()
-                : BuiltInRegistries.ITEM.get(identifier);
-        if (registered.isEmpty()
-                || registered.orElseThrow().value() == net.minecraft.world.item.Items.AIR) {
-            throw new IllegalArgumentException("item must be a registered item ID");
-        }
-    }
-
-    private static void requireOpaqueReference(Map<String, Object> source, String name) {
-        if (!stringArgument(source, name).matches("[A-Za-z0-9_-]{24}")) {
-            throw new IllegalArgumentException(name + " must be a 24-character opaque reference");
-        }
-    }
-
-    private static void requireSha256Fingerprint(Map<String, Object> source, String name) {
-        if (!stringArgument(source, name).matches("sha256:[0-9a-f]{64}")) {
-            throw new IllegalArgumentException(name + " must be a SHA-256 fingerprint");
-        }
-    }
-
-    private static void requireLiteral(
-            Map<String, Object> source, String name, String expected) {
-        if (!expected.equals(stringArgument(source, name))) {
-            throw new IllegalArgumentException(name + " must be " + expected);
-        }
-    }
-
-    private static void requireTrue(Map<String, Object> source, String name) {
-        if (!booleanArgument(source, name)) {
-            throw new IllegalArgumentException(name + " must be true");
-        }
-    }
-
-    private static int requireRange(int value, int minimum, int maximum, String name) {
-        if (value < minimum || value > maximum) {
-            throw new IllegalArgumentException(
-                    name + " must be in " + minimum + ".." + maximum);
-        }
-        return value;
-    }
-
-    private static void appendCanonicalValue(StringBuilder output, Object value) {
-        if (value instanceof Map<?, ?> map) {
-            appendIdentity(output, "map");
-            map.entrySet().stream()
-                    .sorted(java.util.Comparator.comparing(entry -> String.valueOf(entry.getKey())))
-                    .forEach(entry -> {
-                        if (!(entry.getKey() instanceof String key)) {
-                            throw new IllegalArgumentException("canonical map keys must be strings");
-                        }
-                        appendIdentity(output, key);
-                        appendCanonicalValue(output, entry.getValue());
-                    });
-            appendIdentity(output, Integer.toString(map.size()));
-        }
-        else if (value instanceof List<?> list) {
-            appendIdentity(output, "list");
-            for (Object element : list) {
-                appendCanonicalValue(output, element);
-            }
-            appendIdentity(output, Integer.toString(list.size()));
-        }
-        else if (value instanceof String text) {
-            appendIdentity(output, "string");
-            appendIdentity(output, text);
-        }
-        else if (value instanceof Boolean flag) {
-            appendIdentity(output, "boolean");
-            appendIdentity(output, flag.toString());
-        }
-        else if (value instanceof Number number) {
-            try {
-                long integral = exactLong(number);
-                appendIdentity(output, "integer");
-                appendIdentity(output, Long.toString(integral));
-            }
-            catch (ArithmeticException nonInteger) {
-                double finite = number.doubleValue();
-                if (!Double.isFinite(finite)) {
-                    throw new IllegalArgumentException("canonical numbers must be finite");
-                }
-                appendIdentity(output, "number");
-                appendIdentity(output, new BigDecimal(number.toString())
-                        .stripTrailingZeros().toPlainString());
-            }
-        }
-        else {
-            throw new IllegalArgumentException("unsupported value in Phase 5 identity");
-        }
-    }
-
-    private static int relativeCoordinate(
-            Map<String, Object> offset,
-            String coordinate,
-            String entryPath) {
-        int value = intArgument(offset, coordinate);
-        if (value < -4_096 || value > 4_096) {
-            throw new IllegalArgumentException(
-                    entryPath + ".offset." + coordinate + " must be in -4096..4096");
-        }
-        return value;
-    }
-
-    private static FullStatePair fullBlockStateArgument(
-            Map<String, Object> source,
-            String name,
-            BlockPlan.Transform transform,
-            String entryPath) {
-        var state = objectArgument(source, name);
-        requireExactKeys(state, entryPath + "." + name, Set.of("block", "properties"));
-        var fingerprint = blockStateArgument(source, name);
-        var sourceView = new BlockStateView(fingerprint.blockId(), fingerprint.properties());
-        var transformed = BlockPlanStateTransformer.transformFull(
-                sourceView, transform, entryPath + "." + name);
-        return new FullStatePair(
-                fingerprint,
-                new BlockStateFingerprint(transformed.block(), transformed.properties()));
-    }
-
-    private static String sha256Identity(StringBuilder canonical) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(
-                    canonical.toString().getBytes(StandardCharsets.UTF_8));
-            return "sha256:" + java.util.HexFormat.of().formatHex(digest);
-        }
-        catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException("SHA-256 is unavailable", impossible);
-        }
-    }
-
-    private static Map<String, Object> resourceEstimate(ApplyBlockPlanRequest request) {
-        var items = request.requiredResources().entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(entry -> Map.<String, Object>of(
-                        "item", entry.getKey(),
-                        "maximum_required_count", entry.getValue()))
-                .toList();
-        int breaks = 0;
-        int placements = 0;
-        for (var step : request.steps()) {
-            if (step.operation() == ApplyBlockPlanOperation.BREAK_TO_AIR
-                    || step.operation() == ApplyBlockPlanOperation.REPLACE) {
-                breaks++;
-            }
-            if (step.operation() == ApplyBlockPlanOperation.PLACE
-                    || step.operation() == ApplyBlockPlanOperation.REPLACE) {
-                placements++;
-            }
-        }
-        return Map.of(
-                "items", items,
-                "break_operations", breaks,
-                "place_operations", placements);
-    }
-
-    private static ActionBounds actionBoundsArgument(
-            Map<String, Object> arguments,
-            WorldSessionTracker.Snapshot session) {
-        Objects.requireNonNull(session, "session");
-        return actionBoundsArgument(arguments, session.dimension());
-    }
-
-    private static ActionBounds actionBoundsArgument(
-            Map<String, Object> arguments,
-            String currentDimension) {
-        var bounds = objectArgument(arguments, "bounds");
-        requireExactKeys(bounds, "bounds", Set.of(
-                "dimension", "region", "max_travel_blocks",
-                "max_duration_seconds", "allow_break"));
-        var dimension = stringArgument(bounds, "dimension");
-        if (!dimension.equals(Objects.requireNonNull(currentDimension, "currentDimension"))) {
-            throw new IllegalArgumentException("bounds.dimension must equal the current dimension");
-        }
-        var region = objectArgument(bounds, "region");
-        requireExactKeys(region, "bounds.region", Set.of("min", "max"));
-        var minimum = positionTargetArgument(region, "min", dimension);
-        var maximum = positionTargetArgument(region, "max", dimension);
-        return new ActionBounds(
-                dimension,
-                minimum,
-                maximum,
-                intArgument(bounds, "max_travel_blocks"),
-                intArgument(bounds, "max_duration_seconds"),
-                booleanArgument(bounds, "allow_break"));
-    }
-
-    private static BlockTarget dimensionBlockTargetArgument(
-            Map<String, Object> source,
-            String name) {
-        var target = objectArgument(source, name);
-        requireExactKeys(target, name, Set.of("dimension", "x", "y", "z"));
-        return checkedBlockTarget(
-                stringArgument(target, "dimension"),
-                intArgument(target, "x"),
-                intArgument(target, "y"),
-                intArgument(target, "z"));
-    }
-
-    private static BlockTarget positionTargetArgument(
-            Map<String, Object> source,
-            String name,
-            String dimension) {
-        var target = objectArgument(source, name);
-        requireExactKeys(target, name, Set.of("x", "y", "z"));
-        return checkedBlockTarget(
-                dimension,
-                intArgument(target, "x"),
-                intArgument(target, "y"),
-                intArgument(target, "z"));
-    }
-
-    private static BlockTarget checkedBlockTarget(
-            String dimension,
-            int x,
-            int y,
-            int z) {
-        if (x < -30_000_000 || x > 29_999_999
-                || z < -30_000_000 || z > 29_999_999
-                || y < -2_048 || y > 2_047) {
-            throw new IllegalArgumentException("block position is outside supported bounds");
-        }
-        return new BlockTarget(dimension, x, y, z);
-    }
-
-    private static BlockStateFingerprint blockStateArgument(
-            Map<String, Object> source,
-            String name) {
-        var state = objectArgument(source, name);
-        requireAllowedKeys(state, name, Set.of("block", "properties"));
-        var block = stringArgument(state, "block");
-        var properties = new LinkedHashMap<String, String>();
-        if (state.containsKey("properties")) {
-            var rawProperties = state.get("properties");
-            if (!(rawProperties instanceof Map<?, ?> values)) {
-                throw new IllegalArgumentException(name + ".properties must be an object");
-            }
-            if (values.size() > 128) {
-                throw new IllegalArgumentException(name + ".properties must contain at most 128 entries");
-            }
-            for (var entry : values.entrySet()) {
-                if (!(entry.getKey() instanceof String key)
-                        || !key.matches("[a-z0-9_]+")) {
-                    throw new IllegalArgumentException(name + ".properties has an invalid key");
-                }
-                if (!(entry.getValue() instanceof String value)
-                        || value.isBlank()
-                        || value.length() > 64) {
-                    throw new IllegalArgumentException(name + ".properties has an invalid value");
-                }
-                properties.put(key, value);
-            }
-        }
-        return new BlockStateFingerprint(block, properties);
-    }
-
-    private static Optional<BlockTarget> semanticTarget(SemanticActionRequest request) {
-        return switch (request) {
-            case NavigateToRequest navigation -> Optional.of(navigation.target());
-            case BreakBlockRequest block -> Optional.of(block.target());
-            case PlaceBlockRequest place -> Optional.of(place.target());
-            case UseItemOnBlockRequest use -> Optional.of(use.target());
-            case InteractBlockRequest block -> Optional.of(block.target());
-            case InteractEntityRequest ignored -> Optional.empty();
-        };
-    }
-
-    static void validateLiveBounds(
-            Minecraft minecraft,
-            ActionBounds bounds,
-            BlockTarget target) {
-        var level = minecraft.level;
-        if (level == null) {
-            throw new MinecraftObservationService.ObservationUnavailableException(
-                    "no_world", "No client world is ready");
-        }
-        if (!level.isInsideBuildHeight(bounds.minimum().y())
-                || !level.isInsideBuildHeight(bounds.maximum().y())) {
-            throw new IllegalArgumentException("bounds.region is outside the current build height");
-        }
-        if (target != null
-                && !level.getWorldBorder().isWithinBounds(
-                        new net.minecraft.core.BlockPos(target.x(), target.y(), target.z()))) {
-            throw new IllegalArgumentException("target is outside the current world border");
-        }
-    }
-
-    static void validateLiveBounds(
-            Minecraft minecraft,
-            PhaseFiveBounds bounds,
-            List<BlockTarget> targets) {
-        var level = minecraft.level;
-        if (level == null) {
-            throw new MinecraftObservationService.ObservationUnavailableException(
-                    "no_world", "No client world is ready");
-        }
-        if (!level.isInsideBuildHeight(bounds.minimum().y())
-                || !level.isInsideBuildHeight(bounds.maximum().y())) {
-            throw new IllegalArgumentException("bounds.region is outside the current build height");
-        }
-        for (var target : targets) {
-            if (!bounds.contains(target)) {
-                throw new IllegalArgumentException("Phase 5 target is outside bounds.region");
-            }
-            if (!level.getWorldBorder().isWithinBounds(
-                    new net.minecraft.core.BlockPos(target.x(), target.y(), target.z()))) {
-                throw new IllegalArgumentException("Phase 5 target is outside the current world border");
-            }
-        }
-    }
-
-    static void validateApplyBlockPlanItems(ApplyBlockPlanRequest request) {
-        for (var step : request.steps()) {
-            boolean supportedDoorPlace = step.operation() == ApplyBlockPlanOperation.PLACE
-                    && "minecraft:air".equals(step.expectedBefore().blockId())
-                    && step.expectedBefore().properties().isEmpty()
-                    && step.requiredItemId().filter("minecraft:oak_door"::equals).isPresent()
-                    && MinecraftApplyBlockPlanPort.supportedDoorPlacement(step.expectedAfter())
-                    && request.bounds().contains(new BlockTarget(
-                            step.target().dimension(), step.target().x(),
-                            Math.addExact(step.target().y(), 1), step.target().z()));
-            if (step.operation().mutating()
-                    && !supportedDoorPlace
-                    && (unsupportedMultiCellBlock(step.expectedBefore().blockId())
-                            || unsupportedMultiCellBlock(step.expectedAfter().blockId()))) {
-                throw new IllegalArgumentException(
-                        "multi-cell mutation is not supported; verify each cell with verify_only");
-            }
-            if ((step.operation() == ApplyBlockPlanOperation.BREAK_TO_AIR
-                    || step.operation() == ApplyBlockPlanOperation.REPLACE)
-                    && !SafeBreakSourcePolicy.allowsRegisteredBlockId(
-                            step.expectedBefore().blockId())) {
-                throw new IllegalArgumentException(SafeBreakSourcePolicy.REJECTION_MESSAGE);
-            }
-            if (step.requiredItemId().isEmpty()) {
-                continue;
-            }
-            String itemId = step.requiredItemId().orElseThrow();
-            Identifier identifier = Identifier.tryParse(itemId);
-            var registered = identifier == null
-                    ? Optional.<Holder.Reference<net.minecraft.world.item.Item>>empty()
-                    : BuiltInRegistries.ITEM.get(identifier);
-            if (registered.isEmpty()
-                    || !(registered.orElseThrow().value() instanceof BlockItem blockItem)) {
-                throw new IllegalArgumentException("plan item must be a registered BlockItem");
-            }
-            if (blockItem instanceof SolidBucketItem) {
-                throw new IllegalArgumentException(
-                        "plan item must not replace itself with a different container item");
-            }
-            if (!MinecraftApplyBlockPlanPort.supportsPlacementItem(blockItem)) {
-                throw new IllegalArgumentException(
-                        "plan item uses an unsupported placement implementation");
-            }
-            var placedBlock = blockItem.getBlock();
-            String placedBlockId = BuiltInRegistries.BLOCK.getKey(placedBlock).toString();
-            if (!placedBlockId.equals(step.expectedAfter().blockId())) {
-                throw new IllegalArgumentException("plan item must place the expected_after block");
-            }
-            if (blockItem instanceof BedItem
-                    || blockItem instanceof DoubleHighBlockItem && !supportedDoorPlace
-                    || placedBlock instanceof DoorBlock && !supportedDoorPlace
-                    || placedBlock instanceof BedBlock
-                    || placedBlock.defaultBlockState().hasProperty(
-                            BlockStateProperties.DOUBLE_BLOCK_HALF) && !supportedDoorPlace
-                    || placedBlock.defaultBlockState().hasProperty(
-                            BlockStateProperties.BED_PART)) {
-                throw new IllegalArgumentException(
-                        "multi-cell mutation is not supported; verify each cell with verify_only");
-            }
-        }
-    }
-
-    static void validateStationaryBreakAllowedBlocks(Set<String> allowedBlocks) {
-        Objects.requireNonNull(allowedBlocks, "allowedBlocks");
-        allowedBlocks.forEach(SafeBreakSourcePolicy::requireRegisteredBlockId);
-    }
-
-    private static boolean unsupportedMultiCellBlock(String blockId) {
-        Identifier identifier = Identifier.tryParse(blockId);
-        var registered = identifier == null
-                ? Optional.<Holder.Reference<net.minecraft.world.level.block.Block>>empty()
-                : BuiltInRegistries.BLOCK.get(identifier);
-        if (registered.isEmpty()) {
-            return false;
-        }
-        var block = registered.orElseThrow().value();
-        var state = block.defaultBlockState();
-        return block instanceof DoorBlock
-                || block instanceof BedBlock
-                || state.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)
-                || state.hasProperty(BlockStateProperties.BED_PART);
-    }
-
-    private static void requireStartRoutineKeys(Map<String, Object> arguments) {
-        Set<String> allowed = Set.of(
-                "kind", "parameters", "bounds", "completion_intent", "idempotency_key");
-        requireAllowedKeys(arguments, "start_routine", allowed);
-        Set<String> required = Set.of("kind", "parameters", "bounds", "idempotency_key");
-        if (!arguments.keySet().containsAll(required)
-                || arguments.size() < required.size()
-                || arguments.size() > allowed.size()) {
-            throw new IllegalArgumentException(
-                    "start_routine must contain kind, parameters, bounds, and idempotency_key; "
-                            + "completion_intent is optional");
-        }
-    }
-
-    static String completionIntentArgument(Map<String, Object> arguments) {
-        Objects.requireNonNull(arguments, "arguments");
-        String intent = arguments.containsKey("completion_intent")
-                ? stringArgument(arguments, "completion_intent")
-                : GoalContinuationSession.FINISH_GOAL;
-        GoalContinuationSession.requireIntent(intent);
-        return intent;
-    }
-
-    private static void requireExactKeys(
-            Map<String, Object> source,
-            String name,
-            Set<String> expected) {
-        requireAllowedKeys(source, name, expected);
-        if (source.size() != expected.size() || !source.keySet().containsAll(expected)) {
-            throw new IllegalArgumentException(name + " must contain exactly "
-                    + expected.stream().sorted().toList());
-        }
-    }
-
-    private static void requireAllowedKeys(
-            Map<String, Object> source,
-            String name,
-            Set<String> allowed) {
-        Objects.requireNonNull(source, "source");
-        for (var key : source.keySet()) {
-            if (key == null || !allowed.contains(key)) {
-                throw new IllegalArgumentException(name + " contains an unknown property");
-            }
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> objectArgument(Map<String, Object> source, String name) {
-        var value = source.get(name);
-        if (!(value instanceof Map<?, ?> map)) {
-            throw new IllegalArgumentException(name + " must be an object");
-        }
-        return (Map<String, Object>) map;
-    }
-
-    private static String stringArgument(Map<String, Object> source, String name) {
-        var value = source.get(name);
-        if (!(value instanceof String text) || text.isBlank()) {
-            throw new IllegalArgumentException(name + " must be a non-empty string");
-        }
-        return text;
-    }
-
-    private static int intArgument(Map<String, Object> source, String name) {
-        var value = source.get(name);
-        if (!(value instanceof Number number)) {
-            throw new IllegalArgumentException(name + " must be an integer");
-        }
-        try {
-            return Math.toIntExact(exactLong(number));
-        }
-        catch (ArithmeticException invalid) {
-            throw new IllegalArgumentException(name + " must be an integer", invalid);
-        }
-    }
-
-    private static double doubleArgument(Map<String, Object> source, String name) {
-        var value = source.get(name);
-        if (!(value instanceof Number number)) {
-            throw new IllegalArgumentException(name + " must be a finite number");
-        }
-        double result = number.doubleValue();
-        if (!Double.isFinite(result)) {
-            throw new IllegalArgumentException(name + " must be a finite number");
-        }
-        return result;
-    }
-
-    private static boolean booleanArgument(Map<String, Object> source, String name) {
-        var value = source.get(name);
-        if (!(value instanceof Boolean flag)) {
-            throw new IllegalArgumentException(name + " must be a boolean");
-        }
-        return flag;
-    }
-
-    private static long optionalLong(Map<String, Object> source, String name, long fallback) {
-        var value = source.get(name);
-        if (value == null) {
-            return fallback;
-        }
-        if (!(value instanceof Number number)) {
-            throw new IllegalArgumentException(name + " must be an integer");
-        }
-        try {
-            return exactLong(number);
-        }
-        catch (ArithmeticException invalid) {
-            throw new IllegalArgumentException(name + " must be an integer", invalid);
-        }
-    }
-
-    private static long exactLong(Number number) {
-        return switch (number) {
-            case Byte value -> value.longValue();
-            case Short value -> value.longValue();
-            case Integer value -> value.longValue();
-            case Long value -> value;
-            case BigInteger value -> value.longValueExact();
-            case BigDecimal value -> value.longValueExact();
-            case Float value -> exactFloatingLong(value.doubleValue());
-            case Double value -> exactFloatingLong(value);
-            default -> new BigDecimal(number.toString()).longValueExact();
-        };
-    }
-
-    private static long exactFloatingLong(double value) {
-        if (!Double.isFinite(value)
-                || value != Math.rint(value)
-                || value < Long.MIN_VALUE
-                || value >= 0x1.0p63) {
-            throw new ArithmeticException("not an exact long");
-        }
-        return (long) value;
-    }
-
-    private static UUID uuidArgument(Map<String, Object> source, String name) {
-        try {
-            return UUID.fromString(stringArgument(source, name));
-        }
-        catch (IllegalArgumentException invalid) {
-            throw new IllegalArgumentException(name + " must be a UUID", invalid);
-        }
-    }
-
-    private static Set<String> stringSetArgument(Map<String, Object> source, String name) {
-        var value = source.get(name);
-        if (!(value instanceof List<?> list)) {
-            throw new IllegalArgumentException(name + " must be an array");
-        }
-        if (list.isEmpty() || list.size() > 16) {
-            throw new IllegalArgumentException(name + " must contain 1..16 registry IDs");
-        }
-        var result = new java.util.LinkedHashSet<String>();
-        for (var element : list) {
-            if (!(element instanceof String text)
-                    || !text.matches("[a-z0-9_.-]+:[a-z0-9_./-]+")) {
-                throw new IllegalArgumentException(name + " must contain registry IDs");
-            }
-            result.add(text);
-        }
-        if (result.size() != list.size()) {
-            throw new IllegalArgumentException(name + " must contain unique registry IDs");
-        }
-        return Set.copyOf(result);
-    }
-
-    private static long saturatingAdd(long left, long right) {
-        if (left < 0L || right < 0L) {
-            throw new IllegalArgumentException("saturating tick add requires non-negative operands");
-        }
-        return saturatingNonNegativeAdd(left, right);
-    }
-
-    private static long saturatingNonNegativeAdd(long left, long right) {
-        if (left < 0L || right < 0L) {
-            throw new IllegalArgumentException("saturating add requires non-negative operands");
-        }
-        if (left > Long.MAX_VALUE - right) {
-            return Long.MAX_VALUE;
-        }
-        return left + right;
     }
 
     private void synchronizeWorld(Minecraft minecraft) {
@@ -13172,13 +5309,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var after = sessions.snapshot();
         if (changed) {
             if (before.dimension() != null && !before.dimension().equals(dimension)) {
-                terminateActiveEvaluationOnClient(
+                evaluationControl.terminateActiveEvaluationOnClient(
                         minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
                 clearAgentSessionState();
                 routines.clearSession("dimension_changed");
-                finalizationRetries.clear();
-                goalContinuation.clear();
-                voiceRoutineId = null;
+                routineLifecycle.clearSession();
                 clearAutomationPortSessions(
                         stationaryBreakPort::clearSession,
                         semanticActionPort::clearSession,
@@ -13192,249 +5327,18 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             memory.startSession(after.worldSessionId(), dimension);
             var reconciliation = reconciliationSignals.bindAndSnapshot(
                     minecraft.level, after.worldSessionId());
-            knownTraversability.startSession(
+            agentObservations.startSession(
                     after.worldSessionId(), dimension, reconciliation.worldRevision());
-            knownTraversabilityRevision = reconciliation.worldRevision();
             screenOwnership.bindWorldSession(minecraft.level, after.worldSessionId());
             MerchantOfferSignals.global().bindSession(minecraft.level, after.worldSessionId());
         }
-    }
-
-    private void synchronizeKnownTraversability(Minecraft minecraft) {
-        var session = sessions.snapshot();
-        if (!session.worldReady() || minecraft.level == null) {
-            return;
-        }
-        var reconciliation = reconciliationSignals.bindAndSnapshot(
-                minecraft.level, session.worldSessionId());
-        if (reconciliation.worldRevision() <= knownTraversabilityRevision) {
-            return;
-        }
-        var mutations = reconciliation.worldMutations().stream()
-                .filter(mutation -> mutation.revision() > knownTraversabilityRevision)
-                .toList();
-        boolean ledgerGap = mutations.isEmpty()
-                || mutations.getFirst().revision() != knownTraversabilityRevision + 1L;
-        if (ledgerGap || mutations.stream().anyMatch(mutation ->
-                mutation.kind() == ClientReconciliationSignals.WorldMutation.Kind.ALL)) {
-            knownTraversability.startSession(
-                    session.worldSessionId(), session.dimension(), reconciliation.worldRevision());
-            knownTraversabilityRevision = reconciliation.worldRevision();
-            return;
-        }
-
-        var affected = new LinkedHashSet<NavCell>();
-        var map = knownTraversability.snapshot().orElseThrow();
-        for (var key : map.edges().keySet()) {
-            for (var mutation : mutations) {
-                if (mutationAffects(mutation, key.from()) || mutationAffects(mutation, key.to())) {
-                    affected.add(key.from());
-                    affected.add(key.to());
-                    break;
-                }
-            }
-        }
-        knownTraversability.advanceWorldRevision(
-                reconciliation.worldRevision(), affected, List.of());
-        knownTraversabilityRevision = reconciliation.worldRevision();
-    }
-
-    static boolean mutationAffects(
-            ClientReconciliationSignals.WorldMutation mutation, NavCell cell) {
-        if (mutation.navigationImpact() == ClientReconciliationSignals.NavigationImpact.NONE) {
-            return false;
-        }
-        return switch (mutation.kind()) {
-            case ENTITY_DISPLAY -> false;
-            case ALL -> true;
-            case CHUNK -> (cell.x() >> 4) == mutation.x() && (cell.z() >> 4) == mutation.z();
-            case BLOCK -> Math.abs((long) cell.x() - mutation.x()) <= 1L
-                    && Math.abs((long) cell.z() - mutation.z()) <= 1L
-                    && cell.y() >= mutation.y() - 2
-                    && cell.y() <= mutation.y() + 3;
-        };
-    }
-
-    private void collectAgentObservation(Minecraft minecraft) {
-        var session = sessions.snapshot();
-        if (!session.worldReady() || minecraft.level == null || minecraft.player == null) {
-            return;
-        }
-        int radius = McmcpClientConfig.visualRadiusBlocks();
-        int rays = McmcpClientConfig.raysPerTick();
-        if (agentObserver == null
-                || agentObserver.configuredRadiusBlocks() != radius
-                || agentObserver.raysPerTick() != rays) {
-            agentObserver = new OmnidirectionalObserver(radius, rays);
-        }
-        var reconciliation = reconciliationSignals.bindAndSnapshot(
-                minecraft.level, session.worldSessionId());
-        long worldRevision = reconciliation.worldRevision();
-        var dimension = new ResourceId(session.dimension());
-        latestLocalObservation = LocalObservationVolume.global().observe(
-                minecraft.player, session.clientTick(), worldRevision);
-        var local = LocalObservationProjector.project(
-                latestLocalObservation,
-                session.worldSessionId(),
-                session.dimension(),
-                worldRevision,
-                minecraft.player.getY());
-        localSafety = local.currentSafety();
-        local.edges().forEach(knownTraversability::observe);
-        soundPlaybackTruncated = soundPlaybacks.drainInto(
-                soundClues,
-                dimension,
-                session.clientTick(),
-                worldRevision,
-                candidate -> {
-                    Identifier identifier = Identifier.tryParse(candidate);
-                    return identifier != null && BuiltInRegistries.ENTITY_TYPE.get(identifier).isPresent();
-                }).recentSoundCluesTruncated();
-        var fogDistance = ClientFogDistanceSignals.current(
-                minecraft.level,
-                minecraft.player,
-                minecraft.player.tickCount);
-        // Several client ticks may run between renders (for example at background FPS).
-        // Local safety and sound still update above; do not turn absent renderer data into
-        // a fabricated one-block fog frame or redate the previous visual evidence.
-        if (fogDistance.isEmpty()) return;
-        agentObserver.tick(
-                        minecraft.level,
-                        minecraft.player,
-                        session.clientTick(),
-                        worldRevision,
-                        reconciliation.visualRevision(),
-                        fogDistance.getAsDouble(),
-                        entity -> {
-                            var position = entity.position();
-                            var velocity = entity.getDeltaMovement();
-                            String entityType = BuiltInRegistries.ENTITY_TYPE
-                                    .getKey(entity.getType()).toString();
-                            return memory.rememberVisibleEntityReference(
-                                    session.worldSessionId(),
-                                    session.dimension(),
-                                    entity.getUUID(),
-                                    entityType,
-                                    position.x,
-                                    position.y,
-                                    position.z,
-                                    velocity.x,
-                                    velocity.y,
-                                    velocity.z,
-                                    entity.isVehicle(),
-                                    entity.isPassenger(),
-                                    session.clientTick());
-                        })
-                .ifPresent(visual -> {
-                    var sounds = soundClues.snapshot(visual.frameCompletedTick());
-                    var records = new ArrayList<>(visual.records());
-                    records.addAll(local.records());
-                    records.addAll(sounds.clues());
-                    agentObservationFrames.publish(new ObservationFrame(
-                            visual.frameId(),
-                            visual.dimension(),
-                            visual.frameCompletedTick(),
-                            visual.configuredVisualRadiusBlocks(),
-                            visual.visibleEntitiesTruncated(),
-                            sounds.recentSoundCluesTruncated() || soundPlaybackTruncated,
-                            records));
-                });
-    }
-
-    private static void requireReady(WorldSessionTracker.Snapshot session) {
-        if (!session.worldReady()) {
-            throw new MinecraftObservationService.ObservationUnavailableException(
-                    "no_world", "No client world is ready");
-        }
-    }
-
-    static RuntimeReply mapFailure(Throwable failure) {
-        var cause = unwrap(failure);
-        if (cause instanceof FailureWithDetailsException detailed) {
-            var mapped = mapFailure(detailed.getCause());
-            var original = mapped.failure();
-            var details = new LinkedHashMap<String, Object>(original.details());
-            details.putAll(detailed.details());
-            return RuntimeReply.failure(
-                    original.code(), original.message(), original.retryable(), details);
-        }
-        if (cause instanceof ClientCommandInbox.CommandTimeoutException) {
-            return RuntimeReply.failure("server_busy", "The client-thread deadline expired", true);
-        }
-        if (cause instanceof ClientCommandInbox.CommandInvalidatedException) {
-            return RuntimeReply.failure("unsafe_state", "The world or safety epoch changed before execution", true);
-        }
-        if (cause instanceof RejectedExecutionException) {
-            return RuntimeReply.failure("server_busy", "The bounded client command inbox is full", true);
-        }
-        if (cause instanceof MinecraftObservationService.ObservationUnavailableException unavailable) {
-            return RuntimeReply.failure(unavailable.code(), unavailable.getMessage(), true);
-        }
-        if (cause instanceof ActionDslException invalidDsl) {
-            return RuntimeReply.failure(
-                    invalidDsl.code().name().toLowerCase(Locale.ROOT),
-                    publicMessage(invalidDsl),
-                    invalidDsl.code() != ActionDslException.Code.INVALID_ARGUMENT);
-        }
-        if (cause instanceof AgentActionStore.BusyException) {
-            return RuntimeReply.failure("task_busy", "Another action is active", true);
-        }
-        if (cause instanceof AgentActionStore.NotFoundException) {
-            return RuntimeReply.failure("action_not_found", "The action is not retained", false);
-        }
-        if (cause instanceof RuntimeInvocationException invocation) {
-            return RuntimeReply.failure(
-                    invocation.code(), publicMessage(invocation), invocation.retryable(), invocation.details());
-        }
-        if (cause instanceof RoutineManager.RoutineBusyException busy) {
-            var details = busy.activeRoutineId() == null
-                    ? Map.<String, Object>of()
-                    : Map.<String, Object>of("active_routine_id", busy.activeRoutineId().toString());
-            return RuntimeReply.failure("task_busy", "Another routine is active", true, details);
-        }
-        if (cause instanceof RoutineManager.IdempotencyConflictException) {
-            return RuntimeReply.failure(
-                    "idempotency_conflict", "The idempotency key has different arguments", false);
-        }
-        if (cause instanceof RoutineManager.RoutineNotFoundException) {
-            return RuntimeReply.failure("routine_not_found", "The routine is not retained", false);
-        }
-        if (cause instanceof BlockPlanValidationException invalidPlan) {
-            var details = new LinkedHashMap<String, Object>(invalidPlan.details());
-            details.put("plan_validation_code", invalidPlan.code());
-            details.put("path", invalidPlan.path());
-            return RuntimeReply.failure(
-                    "invalid_argument", publicMessage(invalidPlan), false, details);
-        }
-        if (cause instanceof IllegalArgumentException) {
-            return RuntimeReply.failure("invalid_argument", publicMessage(cause), false);
-        }
-        return RuntimeReply.failure("internal_error", "The request failed; consult the local audit log", false);
-    }
-
-    private static Throwable unwrap(Throwable failure) {
-        var result = failure;
-        while ((result instanceof CompletionException || result instanceof java.util.concurrent.ExecutionException)
-                && result.getCause() != null) {
-            result = result.getCause();
-        }
-        return result;
-    }
-
-    private static String publicMessage(Throwable failure) {
-        var message = failure.getMessage();
-        if (message == null || message.isBlank()) {
-            return "The request arguments are invalid";
-        }
-        var normalized = message.replaceAll("[\\p{Cntrl}]", " ").strip();
-        return normalized.substring(0, Math.min(512, normalized.length()));
     }
 
     private void publishSession() {
         publishedSession = sessions.snapshot();
     }
 
-    private static void assertClientThread(Minecraft minecraft) {
+    static void assertClientThread(Minecraft minecraft) {
         if (!minecraft.isSameThread()) {
             throw new IllegalStateException("Minecraft state accessed outside the client thread");
         }
@@ -13452,61 +5356,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     public WorldMemory memory() {
         return memory;
-    }
-
-    enum CropWaitLiveState {
-        PENDING,
-        MATURE,
-        TARGET_CHANGED,
-        UNLOADED,
-        VISIBILITY_INVALIDATED,
-        WORLD_CHANGED
-    }
-
-    enum CropWaitVisibilityState {
-        CURRENT,
-        VISIBILITY_INVALIDATED,
-        WORLD_CHANGED
-    }
-
-    record CropWaitAuthorization(
-            UUID worldSessionId,
-            String dimension,
-            ActionDsl.Position target,
-            long visualBarrierWorldRevision,
-            Vec3 playerPosition,
-            Vec3 observerEye) {
-        CropWaitAuthorization {
-            Objects.requireNonNull(worldSessionId, "worldSessionId");
-            Objects.requireNonNull(dimension, "dimension");
-            Objects.requireNonNull(target, "target");
-            Objects.requireNonNull(playerPosition, "playerPosition");
-            Objects.requireNonNull(observerEye, "observerEye");
-            if (!dimension.equals(target.dimension())) {
-                throw new IllegalArgumentException(
-                        "crop wait authorization must stay in one dimension");
-            }
-            if (visualBarrierWorldRevision < 0L
-                    || !finite(playerPosition) || !finite(observerEye)) {
-                throw new IllegalArgumentException(
-                        "crop wait authorization fence must be finite and non-negative");
-            }
-        }
-
-        private static boolean finite(Vec3 value) {
-            return Double.isFinite(value.x)
-                    && Double.isFinite(value.y)
-                    && Double.isFinite(value.z);
-        }
-
-        boolean matches(
-                WorldSessionTracker.Snapshot session,
-                ActionDsl.Position requestedTarget) {
-            return session.worldReady()
-                    && worldSessionId.equals(session.worldSessionId())
-                    && dimension.equals(session.dimension())
-                    && target.equals(requestedTarget);
-        }
     }
 
     private static final class BoundedInputExecution {
@@ -13538,6 +5387,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private static final class AgentExecution {
+        private final MenuPrimitiveExecution menuPrimitives;
         private SurfacePreflightRecovery surfaceRecovery;
         private AgentAdmissionSnapshot surfaceAdmission;
         private final UUID actionId;
@@ -13572,7 +5422,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private int agentSelectedSlot = -1;
         private boolean breakAimComplete;
         private boolean fishingAimComplete;
-        private FishingAttempt fishingAttempt;
+        private final FishingPrimitiveExecution fishing;
         private int mutationAimFailures;
         private KnownBlockBreakAttempt blockBreakAttempt;
         private StationaryBreakOperation cobblestoneGeneratorAttempt;
@@ -13594,12 +5444,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private double tillSettlingAllowance;
         private ActionDsl.Position tillSettlingTarget;
         private long tillSettlingDeadlineTick;
-        private KnownContainerAttempt containerAttempt;
-        private boolean containerReleaseFaultLogged;
-        private KnownBrewingAttempt brewingAttempt;
-        private KnownConstructionAttempt constructionAttempt;
-        private KnownPillarUpAttempt pillarUpAttempt;
-        private KnownRedstoneIdentityAttempt redstoneAttempt;
         private KillZoneExecution killZone;
         private int pickupInventoryBefore = -1;
         private long pickupArrivalTick = -1L;
@@ -13615,7 +5459,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 net.minecraft.client.player.LocalPlayer player,
                 float maxCameraDegreesPerTick,
                 Map<String, AgentPrimitivePlanner.MutationAim> mutationAims,
-                long positionCorrectionRevision) {
+                long positionCorrectionRevision, MenuPrimitiveExecution menuPrimitives,
+                FishingPrimitiveExecution fishing) {
+            this.menuPrimitives = menuPrimitives;
+            this.fishing = fishing;
             actionId = action.actionId();
             this.worldSessionId = Objects.requireNonNull(worldSessionId, "worldSessionId");
             program = action.program();
@@ -13638,168 +5485,4 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
-    /** Runtime-only authority copied from the consumed consent; never serialized as a bearer. */
-    private static final class KillZoneExecution {
-        private static final long EFFECT_DEADLINE_TICKS = 10L;
-
-        private final ActionDsl.OperateKillZone operation;
-        private final ScopedEntityAttackConsentStore.Scope scope;
-        private final long startedAtClientTick;
-        private final float healthBaseline;
-        private final float absorptionBaseline;
-        private final float effectiveHealthBaseline;
-        private float lastHealth;
-        private float lastAbsorption;
-        private float lastEffectiveHealth;
-        private final Set<UUID> noRetryEntityIds = new LinkedHashSet<>();
-        private long lastDispatchTick = Long.MIN_VALUE;
-        private int dispatchedAttacks;
-        private int confirmedAttacks;
-        private int unknownAttacks;
-        private KillZoneAttackAttempt pending;
-
-        private KillZoneExecution(
-                ActionDsl.OperateKillZone operation,
-                ScopedEntityAttackConsentStore.Scope scope,
-                long startedAtClientTick,
-                float healthBaseline,
-                float absorptionBaseline) {
-            this.operation = Objects.requireNonNull(operation, "operation");
-            this.scope = Objects.requireNonNull(scope, "scope");
-            if (startedAtClientTick < 0L || !Float.isFinite(healthBaseline)
-                    || !Float.isFinite(absorptionBaseline)) {
-                throw new IllegalArgumentException("Invalid kill-zone execution baseline");
-            }
-            this.startedAtClientTick = startedAtClientTick;
-            this.healthBaseline = healthBaseline;
-            this.absorptionBaseline = absorptionBaseline;
-            effectiveHealthBaseline = healthBaseline + absorptionBaseline;
-            lastHealth = healthBaseline;
-            lastAbsorption = absorptionBaseline;
-            lastEffectiveHealth = effectiveHealthBaseline;
-        }
-    }
-
-    private static final class KillZoneAttackAttempt {
-        private final LivingEntity target;
-        private final String entityRef;
-        private final float healthBefore;
-        private final long armorStandLastHitBefore;
-        private final long effectDeadlineTick;
-
-        private KillZoneAttackAttempt(
-                LivingEntity target,
-                String entityRef,
-                float healthBefore,
-                long armorStandLastHitBefore,
-                long dispatchTick) {
-            this.target = Objects.requireNonNull(target, "target");
-            this.entityRef = Objects.requireNonNull(entityRef, "entityRef");
-            this.healthBefore = healthBefore;
-            this.armorStandLastHitBefore = armorStandLastHitBefore;
-            effectDeadlineTick = Math.addExact(
-                    dispatchTick, KillZoneExecution.EFFECT_DEADLINE_TICKS);
-        }
-    }
-
-    private record KillZoneTarget(LivingEntity entity, String entityRef) {
-        private KillZoneTarget {
-            Objects.requireNonNull(entity, "entity");
-            Objects.requireNonNull(entityRef, "entityRef");
-        }
-    }
-
-    private enum FishingMode { CAST, REEL }
-
-    private static final class FishingAttempt {
-        private final FishingMode mode;
-        private final String hand;
-        private final String rodItem;
-        private final UUID bobberId;
-        private final int rodDamageBefore;
-        private final Map<String, Integer> inventoryBefore;
-        private final long deadlineTick;
-        private final long startTick;
-        private boolean effectRecorded;
-        private boolean cleanupDispatched;
-        private long cleanupDeadlineTick;
-
-        private FishingAttempt(
-                FishingMode mode,
-                String hand,
-                String rodItem,
-                UUID bobberId,
-                int rodDamageBefore,
-                Map<String, Integer> inventoryBefore,
-                long startTick) {
-            this.mode = Objects.requireNonNull(mode, "mode");
-            this.hand = Objects.requireNonNull(hand, "hand");
-            this.rodItem = Objects.requireNonNull(rodItem, "rodItem");
-            this.bobberId = bobberId;
-            this.rodDamageBefore = rodDamageBefore;
-            this.inventoryBefore = Map.copyOf(inventoryBefore);
-            this.startTick = startTick;
-            deadlineTick = Math.addExact(startTick, ActionDslCompiler.KNOWN_FISHING_TICKS);
-        }
-
-        private static FishingAttempt cast(String hand, String rodItem, long startTick) {
-            return new FishingAttempt(
-                    FishingMode.CAST, hand, rodItem, null, -1, Map.of(), startTick);
-        }
-
-        private static FishingAttempt reel(
-                String hand,
-                String rodItem,
-                UUID bobberId,
-                int rodDamageBefore,
-                Map<String, Integer> inventoryBefore,
-                long startTick) {
-            return new FishingAttempt(
-                    FishingMode.REEL, hand, rodItem,
-                    Objects.requireNonNull(bobberId, "bobberId"),
-                    rodDamageBefore, inventoryBefore, startTick);
-        }
-    }
-
-    private static final class RuntimeInvocationException extends RuntimeException {
-        private final String code;
-        private final boolean retryable;
-        private final Map<String, Object> details;
-
-        private RuntimeInvocationException(
-                String code,
-                String message,
-                boolean retryable,
-                Map<String, Object> details) {
-            super(message);
-            this.code = Objects.requireNonNull(code, "code");
-            this.retryable = retryable;
-            this.details = Map.copyOf(details);
-        }
-
-        private String code() {
-            return code;
-        }
-
-        private boolean retryable() {
-            return retryable;
-        }
-
-        private Map<String, Object> details() {
-            return details;
-        }
-    }
-
-    private static final class FailureWithDetailsException extends RuntimeException {
-        private final Map<String, Object> details;
-
-        private FailureWithDetailsException(Throwable cause, Map<String, Object> details) {
-            super(Objects.requireNonNull(cause, "cause"));
-            this.details = Map.copyOf(details);
-        }
-
-        private Map<String, Object> details() {
-            return details;
-        }
-    }
 }

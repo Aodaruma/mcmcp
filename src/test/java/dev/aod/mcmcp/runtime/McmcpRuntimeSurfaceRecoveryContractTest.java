@@ -14,18 +14,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 class McmcpRuntimeSurfaceRecoveryContractTest {
     @Test
     void recoverySummaryIsRecordedAfterCompleteChecksRatherThanOnFogAvailabilityAlone() throws Exception {
-        assertThat(calls("surfaceRecoveryFailure")).containsSubsequence(
+        assertThat(calls(ActionAdmission.class, "surfaceRecoveryFailure")).containsSubsequence(
                 "ClientFogDistanceSignals#current", "SurfacePreflightRecovery#evaluate",
-                "SurfacePreflightRecovery#noteMissing", "McmcpRuntime#publishRendererRecovery")
+                "SurfacePreflightRecovery#noteMissing", "Consumer#accept")
                 .doesNotContain("SurfacePreflightRecovery#noteRevalidated");
-        assertThat(calls("prepareAgentAction")).containsSubsequence(
-                "SurfacePreflightRecovery#noteRevalidated", "McmcpRuntime$PreparedAgentAction#<init>");
-        assertThat(calls("admissionFenceFailure")).containsSubsequence(
-                "McmcpRuntime#breakProgramPreconditionsCurrent", "McmcpRuntime#rendererRecoveryRevalidated");
+        assertThat(calls(ActionAdmission.class, "prepareAgentAction")).containsSubsequence(
+                "SurfacePreflightRecovery#noteRevalidated", "ActionAdmission$PreparedAgentAction#<init>");
+        assertThat(calls(ActionAdmission.class, "admissionFenceFailure")).containsSubsequence(
+                "KnownBreakSafety#breakProgramPreconditionsCurrent", "ActionAdmission#rendererRecoveryRevalidated");
         assertThat(calls("bindAgentPrimitive")).containsSubsequence(
-                "McmcpRuntime#fitsRemainingBudget", "McmcpRuntime#rendererRecoveryRevalidated");
+                "ActionBudgets#fitsRemainingBudget", "ActionAdmission#rendererRecoveryRevalidated");
         assertThat(calls("initialContainerOpenWitness")).containsSubsequence(
-                "AgentPrimitivePlanner#requireKnownSurface", "McmcpRuntime#rendererRecoveryRevalidated")
+                "AgentPrimitivePlanner#requireKnownSurface", "ActionAdmission#rendererRecoveryRevalidated")
                 .doesNotContain("MultiPlayerGameMode#useItemOn");
         assertThat(calls("commitAgentAction")).containsSubsequence(
                 "AgentActionStore#reserve", "McmcpRuntime#publishRendererRecovery");
@@ -36,43 +36,72 @@ class McmcpRuntimeSurfaceRecoveryContractTest {
 
     @Test
     void captureAndCommitKeepRecoveryAheadOfReservation() throws Exception {
-        assertThat(calls("captureAgentAdmission")).containsSubsequence(
-                "SurfacePreflightRecovery#capture", "McmcpRuntime#requireSurfaceRecoveryReady",
-                "McmcpRuntime#agentPlanningFrame");
+        assertThat(calls(ActionAdmission.class, "captureAgentAdmission")).containsSubsequence(
+                "SurfacePreflightRecovery#capture", "ActionAdmission#requireSurfaceRecoveryReady",
+                "AgentObservations#agentPlanningFrame");
         assertThat(calls("commitAgentAction")).containsSubsequence(
-                "McmcpRuntime#admissionFenceFailure", "ClientCommandInbox$DeferControl#<init>",
+                "ActionAdmission#admissionFenceFailure", "ClientCommandInbox$DeferControl#<init>",
                 "McmcpRuntime#requireLiveCall", "LocalArmingState#beginAction", "AgentActionStore#reserve");
     }
 
     @Test
     void dispatchRepeatsTheFullFenceAndChargesWaitingBeforeTheFirstJit() throws Exception {
         assertThat(calls("tickAgentAction")).containsSubsequence(
-                "McmcpRuntime#admissionFenceFailure", "SurfacePreflightRecovery#executionStartNanos",
+                "ActionAdmission#admissionFenceFailure", "SurfacePreflightRecovery#executionStartNanos",
                 "AgentActionStore#markRunning", "AgentActionStore#recordAdmissionTicks",
                 "McmcpRuntime#bindAgentPrimitive");
-        assertThat(calls("admissionFenceFailure")).containsSubsequence(
-                "McmcpRuntime#sameAdmissionSession", "McmcpRuntime#playerPose",
-                "McmcpRuntime#multiplayerPolicyAllows", "McmcpRuntime#requireAgentMap",
-                "ClientReconciliationSignals#bindAndSnapshot", "McmcpRuntime#policySnapshot",
-                "McmcpRuntime#firstPrimitive", "McmcpRuntime#routeDependenciesCurrent",
-                "McmcpRuntime#surfaceRecoveryFailure", "McmcpRuntime#agentPlanningFrame");
+        assertThat(calls(ActionAdmission.class, "admissionFenceFailure")).containsSubsequence(
+                "ActionAdmission#sameAdmissionSession", "ActionPlanning#playerPose",
+                "Predicate#test", "AgentObservations#requireAgentMap",
+                "ClientReconciliationSignals#bindAndSnapshot", "ActionPredicates#policySnapshot",
+                "ActionPlanning#firstPrimitive", "ActionEvidence#routeDependenciesCurrent",
+                "ActionAdmission#surfaceRecoveryFailure", "AgentObservations#agentPlanningFrame");
         assertThat(calls("bindAgentPrimitive")).containsSubsequence(
-                "McmcpRuntime#surfaceRecoveryFailure", "McmcpRuntime#requireAgentMap",
-                "ClientReconciliationSignals#bindAndSnapshot", "McmcpRuntime#agentPlanningFrame",
-                "McmcpRuntime#analyzePrimitive",
-                "McmcpRuntime#firstRecoveredSurfacePrimitiveRemainingCost",
-                "McmcpRuntime#fitsRemainingBudget");
+                "ActionAdmission#surfaceRecoveryFailure", "AgentObservations#requireAgentMap",
+                "ClientReconciliationSignals#bindAndSnapshot", "AgentObservations#agentPlanningFrame",
+                "ActionAdmission#analyzePrimitive",
+                "ActionBudgets#firstRecoveredSurfacePrimitiveRemainingCost",
+                "ActionBudgets#fitsRemainingBudget");
         assertThat(calls("initialContainerOpenWitness")).containsSubsequence(
-                "McmcpRuntime#sameAdmissionSession", "LocalArmingState$Snapshot#controlEpoch",
-                "McmcpRuntime#multiplayerPolicyAllows", "McmcpRuntime#requireAgentMap",
-                "ClientReconciliationSignals#bindAndSnapshot", "McmcpRuntime#visualBarrierWorldRevision",
-                "McmcpRuntime#surfaceRecoveryFailure", "McmcpRuntime#agentPlanningFrame",
+                "ActionAdmission#sameAdmissionSession", "LocalArmingState$Snapshot#controlEpoch",
+                "McmcpRuntime#multiplayerPolicyAllows", "AgentObservations#requireAgentMap",
+                "ClientReconciliationSignals#bindAndSnapshot", "ActionEvidence#visualBarrierWorldRevision",
+                "ActionAdmission#surfaceRecoveryFailure", "AgentObservations#agentPlanningFrame",
                 "AgentPrimitivePlanner#requireKnownSurface");
     }
 
-    private static List<String> calls(String name) throws Exception {
+    @Test
+    void admissionCallbacksBindToRuntimePolicyAndRecoveryLedger() throws Exception {
         var type = new ClassNode();
-        try (var input = McmcpRuntime.class.getResourceAsStream("/dev/aod/mcmcp/runtime/McmcpRuntime.class")) {
+        try (var input = McmcpRuntime.class.getResourceAsStream("McmcpRuntime.class")) {
+            assertThat(input).isNotNull();
+            new ClassReader(input).accept(type, 0);
+        }
+        var constructor = type.methods.stream().filter(method -> method.name.equals("<init>"))
+                .findFirst().orElseThrow();
+        var targets = new ArrayList<String>();
+        for (var instruction : constructor.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.InvokeDynamicInsnNode dynamic) {
+                for (Object argument : dynamic.bsmArgs) {
+                    if (argument instanceof org.objectweb.asm.Handle handle) {
+                        targets.add(handle.getOwner() + "#" + handle.getName());
+                    }
+                }
+            }
+        }
+        assertThat(targets).contains(
+                "dev/aod/mcmcp/runtime/McmcpRuntime#multiplayerPolicyAllows",
+                "dev/aod/mcmcp/runtime/McmcpRuntime#publishRendererRecovery");
+    }
+
+    private static List<String> calls(String name) throws Exception {
+        return calls(McmcpRuntime.class, name);
+    }
+
+    private static List<String> calls(Class<?> owner, String name) throws Exception {
+        var type = new ClassNode();
+        try (var input = owner.getResourceAsStream(owner.getSimpleName() + ".class")) {
+            assertThat(input).isNotNull();
             new ClassReader(input).accept(type, 0);
         }
         var method = type.methods.stream().filter(value -> value.name.equals(name)).findFirst().orElseThrow();

@@ -52,7 +52,25 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 | AgentMutationPlanner / AgentConstructionPlanner | menu・mutation batch、建築・撤去・柱・redstone |
 | AgentPlannerGeometry / AgentPlannerCosts | 視線・到達距離・角度、保守的なコストの計算・集約 |
 
-対応する57件のテストは `AgentPrimitivePlannerTest` です。たとえば `./gradlew test --tests '*AgentPrimitivePlannerTest'` で対象を絞れます。public APIの委譲で引数順・姿勢・証拠の保持を変えないことが境界です。
+対応するテストは `AgentPrimitivePlannerTest` です。たとえば `./gradlew test --tests '*AgentPrimitivePlannerTest'` で対象を絞れます。public APIの委譲で引数順・姿勢・証拠の保持を変えないことが境界です。
+
+## 状態と実行処理の所有
+
+[`runtime/`](../src/main/java/dev/aod/mcmcp/runtime/) では、寿命と安全境界が同じ状態を次の単位で扱います。
+
+| クラス | 所有するもの・境界 |
+| --- | --- |
+| McmcpRuntime | client lifecycle、Actionのcommit・DSL進行・入力解放・terminal公開の調整 |
+| ActionAdmission | clientからのsnapshot取得、workerのplanning、配送leaseの再検証。予約済みActionのcommitはruntimeに戻す |
+| EvaluationLeaseController | 評価lease、同期fence、最初のterminal要求、control laneの非同期停止待機 |
+| AgentObservations | 観測frame、配送証拠、音、局所地図とrevision。world境界でclearする |
+| RoutineAdmission / RoutineLifecycle | 内部routineの受付、実行期限、音声owner、終了retryとcontinuation |
+| MenuPrimitiveExecution | 1 Actionのcontainer・brewing・construction・pillar・redstone attempt。cleanupで未回収effectと使用量を回収 |
+| FishingPrimitiveExecution | 1 Actionの釣りdispatch・bobber ACK・cleanup。未確認操作を再送しない |
+| KillZoneExecution | 消費済み同意scope、攻撃ACK待機、再送禁止entity集合 |
+| PrimitiveOutcome | 小さな進行結果。実行クラスは結果を返し、runtimeが次nodeまたは終了へ遷移させる |
+
+`RuntimePrimitiveOwnershipContractTest` はcleanup順序とeffectの保存を、`McmcpRuntimeEvaluationTurnContractTest` はfenceと入力解放後のlease終了を検査します。新しい状態のownerを増やす場合も、この接続と終了順序を明示してください。
 
 ## 実行基盤の計算・変換モジュール
 

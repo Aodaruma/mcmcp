@@ -241,7 +241,7 @@ class InputIsolationContractTest {
                 .containsSubsequence(
                         "dev/aod/mcmcp/runtime/McmcpRuntime#activeElapsedNanos",
                         "dev/aod/mcmcp/agent/dsl/ActionDsl$Budget#maxTicks",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#pickupInventoryIncreased",
+                        "dev/aod/mcmcp/runtime/PlayerInventoryEvidence#pickupInventoryIncreased",
                         "dev/aod/mcmcp/agent/action/AgentActionStore#recordTick",
                         "dev/aod/mcmcp/agent/action/AgentPrimitivePlanner#visibleItemPickupCellCurrent");
     }
@@ -256,7 +256,7 @@ class InputIsolationContractTest {
                 "dev/aod/mcmcp/agent/action/AgentPrimitivePlanner#visibleItemPickupCellCurrent",
                 replan,
                 "dev/aod/mcmcp/agent/action/AgentPrimitivePlanner#visibleItemAabb",
-                "dev/aod/mcmcp/runtime/McmcpRuntime#playerPickupAreaIntersects",
+                "dev/aod/mcmcp/runtime/PlayerInventoryEvidence#playerPickupAreaIntersects",
                 replan);
 
         var request = method(runtime, "requestAgentReplan");
@@ -265,7 +265,7 @@ class InputIsolationContractTest {
                 "dev/aod/mcmcp/runtime/McmcpRuntime#releaseAgentInputsForHold",
                 "dev/aod/mcmcp/runtime/McmcpRuntime#isCollectPrimitive",
                 "dev/aod/mcmcp/agent/action/AgentActionStore#setPhase",
-                "dev/aod/mcmcp/runtime/McmcpRuntime#agentReplanDeadlineTick");
+                "dev/aod/mcmcp/runtime/RecoveryPlanning#agentReplanDeadlineTick");
         assertThat(fieldWrites(request)).containsSubsequence(
                 "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#pickupArrivalTick",
                 "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#pickupCell",
@@ -279,10 +279,10 @@ class InputIsolationContractTest {
                 "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#replanDeadlineTick");
         assertThat(invocations(request).stream()
                 .filter(call -> call.equals(
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#agentReplanDeadlineTick")))
+                        "dev/aod/mcmcp/runtime/RecoveryPlanning#agentReplanDeadlineTick")))
                 .hasSize(1);
         assertThat(tickCalls).containsSubsequence(
-                "dev/aod/mcmcp/runtime/McmcpRuntime#replanDeadlineReached",
+                "dev/aod/mcmcp/runtime/ActionBudgets#replanDeadlineReached",
                 "dev/aod/mcmcp/runtime/McmcpRuntime#failAgentAction");
     }
 
