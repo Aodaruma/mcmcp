@@ -19,17 +19,7 @@ $ErrorActionPreference = 'Stop'
 
 # Reuse only the fixed-five MCP transport, lifecycle, observation, and cleanup primitives.
 # The station gate has its own admission, oracle, artifacts, and executable entry point.
-$smeltArtifactDirectory = $ArtifactDirectory
-$smeltTokenPath = $TokenPath
-$smeltEndpoint = $Endpoint
-$smeltLibraryOnly = [bool]$LibraryOnly
-$commonRunner = Join-Path $PSScriptRoot 'Invoke-McmcpConstructionCapabilityGate.ps1'
-. $commonRunner -Gate navigation -ArtifactDirectory $smeltArtifactDirectory `
-    -TokenPath $smeltTokenPath -Endpoint $smeltEndpoint -LibraryOnly
-$ArtifactDirectory = $smeltArtifactDirectory
-$TokenPath = $smeltTokenPath
-$Endpoint = $smeltEndpoint
-$LibraryOnly = $smeltLibraryOnly
+. (Join-Path $PSScriptRoot 'McmcpCapabilityGateSupport.ps1')
 
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null

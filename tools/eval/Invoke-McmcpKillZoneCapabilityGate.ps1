@@ -11,21 +11,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$killZoneArtifactDirectory = $ArtifactDirectory
-$killZoneTokenPath = $TokenPath
-$killZoneEndpoint = $Endpoint
-$killZoneConsentWaitSeconds = $ConsentWaitSeconds
-$killZoneApprovalMode = $ApprovalMode
-$killZoneLibraryOnly = [bool]$LibraryOnly
-$commonRunner = Join-Path $PSScriptRoot 'Invoke-McmcpConstructionCapabilityGate.ps1'
-. $commonRunner -Gate navigation -ArtifactDirectory $killZoneArtifactDirectory `
-    -TokenPath $killZoneTokenPath -Endpoint $killZoneEndpoint -LibraryOnly
-$ArtifactDirectory = $killZoneArtifactDirectory
-$TokenPath = $killZoneTokenPath
-$Endpoint = $killZoneEndpoint
-$ConsentWaitSeconds = $killZoneConsentWaitSeconds
-$ApprovalMode = $killZoneApprovalMode
-$LibraryOnly = $killZoneLibraryOnly
+. (Join-Path $PSScriptRoot 'McmcpCapabilityGateSupport.ps1')
 
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null

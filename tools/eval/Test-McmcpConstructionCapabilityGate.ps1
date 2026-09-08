@@ -16,29 +16,43 @@ function Assert-True {
 # Parse the production runner, not a copied fixture, so Gate C cannot silently
 # disappear from the public selector/dispatcher or grow a command/fixture escape
 # hatch.  Runtime transport still enforces the fixed-five allowlist separately.
-$runnerTokens = $null
-$runnerParseErrors = $null
-$runnerAst = [Management.Automation.Language.Parser]::ParseFile(
-    (Resolve-Path -LiteralPath $runner), [ref]$runnerTokens, [ref]$runnerParseErrors)
-Assert-True (@($runnerParseErrors).Count -eq 0) 'production runner did not parse'
-$gateCFunctions = @($runnerAst.FindAll({
+$runnerFiles = @((Get-Item -LiteralPath $runner)) + @(Get-ChildItem -LiteralPath $PSScriptRoot -File |
+    Where-Object { $_.Name -like 'McmcpConstruction*.ps1' -or
+        $_.Name -like 'McmcpCapabilityGate*.ps1' })
+$runnerAsts = @($runnerFiles | ForEach-Object {
+    $runnerParseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        $_.FullName, [ref]$null, [ref]$runnerParseErrors)
+    Assert-True (@($runnerParseErrors).Count -eq 0) "production file did not parse: $($_.Name)"
+    # 分割先を検査対象に加えるだけでなく、LibraryOnlyから実際に読み込まれることも確認する。
+    foreach ($definition in $ast.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst]
+        }, $true)) {
+        $loaded = Get-Command -Name $definition.Name -CommandType Function -ErrorAction Stop
+        Assert-True ($loaded.ScriptBlock.File -eq $_.FullName) `
+            "production function was not loaded from its definition: $($definition.Name)"
+    }
+    $ast
+})
+$gateCFunctions = @($runnerAsts | ForEach-Object { $_.FindAll({
             param($node)
             $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
             $node.Name -cin @('New-GateCExternalOracleManifest',
                 'Invoke-BuildingGateC')
-        }, $true))
+        }, $true) })
 Assert-True ($gateCFunctions.Count -eq 2) `
     'Gate C production functions are missing or duplicated'
-$runnerSource = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $runner))
+$runnerSource = ($runnerFiles | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
 Assert-True ($runnerSource -match
         "ValidateSet\('navigation', 'faces-place', 'state-ref-ttl', 'wall-3x3', 'wall-5x5', 'gate-c'\)" -and
     $runnerSource -match "'gate-c' \{ Invoke-BuildingGateC \}" -and
     $runnerSource -notmatch '(?i)brew') `
     'Gate C selector/dispatch changed or construction runner crossed into brew scope'
-$runnerCommands = @($runnerAst.FindAll({
+$runnerCommands = @($runnerAsts | ForEach-Object { $_.FindAll({
             param($node)
             $node -is [Management.Automation.Language.CommandAst]
-        }, $true) | ForEach-Object { $_.GetCommandName() } | Where-Object {
+        }, $true) } | ForEach-Object { $_.GetCommandName() } | Where-Object {
             -not [string]::IsNullOrWhiteSpace($_)
         })
 Assert-True (@($runnerCommands | Where-Object {

@@ -10,19 +10,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$holdArtifactDirectory = $ArtifactDirectory
-$holdTokenPath = $TokenPath
-$holdEndpoint = $Endpoint
-$requestedHoldInput = $HoldInput
-$holdLibraryOnly = [bool]$LibraryOnly
-$commonRunner = Join-Path $PSScriptRoot 'Invoke-McmcpConstructionCapabilityGate.ps1'
-. $commonRunner -Gate navigation -ArtifactDirectory $holdArtifactDirectory `
-    -TokenPath $holdTokenPath -Endpoint $holdEndpoint -LibraryOnly
-$ArtifactDirectory = $holdArtifactDirectory
-$TokenPath = $holdTokenPath
-$Endpoint = $holdEndpoint
-$HoldInput = $requestedHoldInput
-$LibraryOnly = $holdLibraryOnly
+. (Join-Path $PSScriptRoot 'McmcpCapabilityGateSupport.ps1')
 
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null

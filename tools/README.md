@@ -9,6 +9,10 @@ Prefer native MCP registration in Codex or Claude Code. The [fixed client](mcp/R
 
 ## Build gate runner
 
+capability gateの公開入口は `eval/Invoke-Mcmcp*CapabilityGate.ps1` です。共通入口 `McmcpCapabilityGateSupport.ps1` は Transport（既存通信・固定5 Tool）、Observation（観測・revision）、Action（予算・terminal・cleanup）を同じscopeへdot-sourceします。読込だけでは通信・認証読取・artifact作成を行わず、他gateは建築シナリオを読み込みません。通信契約に差がある `mcp/McmcpTransport.ps1` への統合はこの分割に含めていません。
+
+建築の引数・`-LibraryOnly` は維持しています。`McmcpConstruction*.ps1` の内訳は Navigation（移動）、Placement（配置・state-ref TTL）、WallPlans（壁面選択・行Action・oracle）、ScaffoldBuild / ScaffoldNavigation / ScaffoldRecovery（仮設足場の構築・移動・撤去回収）、WallScenarios（wall-3x3 / wall-5x5 / gate-cの実行順序）です。ゲームに接続しない検証は `eval/Test-Mcmcp*CapabilityGate.ps1` と `eval/Test-McmcpCapabilityGateLoading.ps1` です。
+
 観測欠測の単独チェスト確認試験は [回復試験ガイド](eval/RECOVERY.md) を参照してください。製品JAR・baseline・FPS条件を記録し、欠測未発生と回復成功を分けて判定します。<br>
 See the [recovery regression guide](eval/RECOVERY.md) for standalone chest inspection, JAR/baseline/FPS evidence and the distinction between an unexercised gap and witnessed recovery.
 
