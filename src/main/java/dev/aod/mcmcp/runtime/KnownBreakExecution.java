@@ -56,7 +56,6 @@ final class KnownBreakExecution {
                 try {
                     if (KnownBreakSafety.isKnownBreak(block)) {
                         recordBreakEffects(
-                                actionId,
                                 KnownBreakSafety.breakTarget(block),
                                 breaking.drainEffectDeltas());
                     }
@@ -153,7 +152,7 @@ final class KnownBreakExecution {
             result = blockBreakAttempt.tick(
                     session.clientTick(), KnownBreakSafety.breakSourceControlled(minecraft, block));
             recordBreakEffects(
-                    action.actionId(), KnownBreakSafety.breakTarget(block),
+                    KnownBreakSafety.breakTarget(block),
                     blockBreakAttempt.drainEffectDeltas());
         } catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error("MCMCP known-face break confirmation failed", failure);
@@ -178,7 +177,6 @@ final class KnownBreakExecution {
     }
 
     private void recordBreakEffects(
-            UUID actionId,
             ActionDsl.Position target,
             List<KnownBlockBreakAttempt.EffectDelta> effects) {
         String subject = "block:" + target.dimension() + ":"

@@ -122,7 +122,7 @@ KnownBreakExecution、CobblestoneExecution、BlockMutationExecution、FrameItemE
 | MinecraftPhaseFiveInventoryPort | 2,635行 | 1,864行 |
 | MinecraftPhaseFiveInventoryPortTest | 1,238行 | 876行 |
 | 本体Javaファイル数 | 286 | 297 |
-| 本体Java総行数 | 87,498行 | 88,089行 |
+| 本体Java総行数 | 87,498行 | 88,086行 |
 | 上位10ファイルの合計 | 23,996行（27.4%） | 21,929行（24.9%） |
 
 ファイルは空行・コメントを含む。tick入口は宣言から閉じ括弧までで集計する。クラス間の依存・結果の受渡しを明示したため総行数は約0.7%増えた。行数だけでなく、1操作を理解するときに読む責務の範囲が小さくなったことを成果とする。
@@ -131,6 +131,9 @@ KnownBreakExecution、CobblestoneExecution、BlockMutationExecution、FrameItemE
 - Inventoryの関連74件と移動メンバー70件の一致を確認。既存assertionを保ち、ASMは移動先とruntimeからの接続・実行順を検査するよう更新した。
 - 独立Codex CLIの対象SHA・結論、最終CI結果はIssue #32に対応するPRへ記録する。
 - CLI sandbox内ではJDKアクセスが拒否されたため、Java検証は統合担当の環境で実行した。権限・ACL・認証設定は変更していない。
+- Python transport14件、capability mock10本、読込/scope試験も成功。
+
+独立CLIの全体レビュー（対象`6a404c75e238f0bc5e450744799c6090ed639579`）では修正必須の回帰はなく、今回の区切りも妥当との評価を得た。参考提案に従い、破壊・丸石生成の記録helperへ所有済みAction IDを再渡しする引数を除いた。統合側では、batch計画を元コードと同じ無条件の代入に戻し、値がない場合も旧計画を残さない形へ簡素化した。この追加差分のレビュー対象SHAとCIはPRへ記録する。
 
 実機Minecraft、実server ACK、fog、入力解放の実機確認は未実施。Releaseタグは公開しない。
 

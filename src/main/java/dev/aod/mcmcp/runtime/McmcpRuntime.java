@@ -2800,8 +2800,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     return false;
                 }
             }
-            Optional.ofNullable(analysis.mutationBatchPlans().get(agentExecution.primitive.id()))
-                    .ifPresent(agentExecution.mutation::bindPlan);
+            agentExecution.mutation.bindPlan(
+                    analysis.mutationBatchPlans().get(agentExecution.primitive.id()));
             agentExecution.waiting.authorize(cropWaitAuthorization);
             agentExecution.primitivePlanDeadlineTick = 0L;
             if (agentExecution.primitivePlanning) {

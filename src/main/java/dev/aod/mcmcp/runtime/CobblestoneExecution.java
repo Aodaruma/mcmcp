@@ -46,7 +46,7 @@ final class CobblestoneExecution {
                     RoutineSnapshot snapshot =
                             cobblestoneGeneratorAttempt.snapshot();
                     recordCobblestoneGeneratorCheckpoints(
-                            actionId, operation, snapshot);
+                            operation, snapshot);
                     recordUnconfirmedCobblestoneGeneratorDispatch(operation, snapshot);
                 }
                 cobblestoneGeneratorAttempt.close();
@@ -150,7 +150,7 @@ final class CobblestoneExecution {
         try {
             result = cobblestoneGeneratorAttempt.tick();
             recordCobblestoneGeneratorCheckpoints(
-                    action.actionId(), operation, result.snapshot());
+                    operation, result.snapshot());
         } catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error(
                     "MCMCP cobblestone-generator confirmation failed", failure);
@@ -204,7 +204,6 @@ final class CobblestoneExecution {
     }
 
     private void recordCobblestoneGeneratorCheckpoints(
-            UUID actionId,
             ActionDsl.OperateKnownCobblestoneGenerator operation,
             RoutineSnapshot snapshot) {
         long checkpoint = snapshot.checkpoint().seq();
