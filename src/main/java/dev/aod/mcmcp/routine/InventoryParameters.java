@@ -21,7 +21,7 @@ final class InventoryParameters {
 
     static final String DOUBLE_CONTAINER_MENU = "minecraft:generic_9x6";
 
-    static final float LEGACY_MAX_TURN_PER_TICK = 8.0F;
+    private static final float LEGACY_MAX_TURN_PER_TICK = 8.0F;
 
     static ParsedParameters parse(PhaseFiveRequest request) {
         return switch (request.kind()) {

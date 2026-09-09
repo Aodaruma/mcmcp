@@ -138,7 +138,7 @@ final class BlockMutationExecution {
                 occurrenceLimit,
                 action.program().effectiveBudget(),
                 requiredRemainder,
-                McmcpRuntime.activeElapsedNanos(startedAtNanos, pausedNanos, System.nanoTime()))) {
+                ActionBudgets.activeElapsedNanos(startedAtNanos, pausedNanos, System.nanoTime()))) {
             return PrimitiveOutcome.failed(
                     AgentActionStore.FailureCode.BUDGET_EXCEEDED,
                     false,

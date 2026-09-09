@@ -3531,7 +3531,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private static long activeElapsedNanos(AgentExecution execution, long nowNanos) {
-        return activeElapsedNanos(
+        return ActionBudgets.activeElapsedNanos(
                 execution.startedAtNanos, execution.pausedNanos, nowNanos);
     }
 
@@ -3540,14 +3540,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         long remaining = Math.max(
                 0L, durationLimitNanos - activeElapsedNanos(execution, nowNanos));
         return AgentInputState.global().watchdogTime(nowNanos) + remaining;
-    }
-
-    static long activeElapsedNanos(long startedAtNanos, long pausedNanos, long nowNanos) {
-        if (pausedNanos < 0L) {
-            throw new IllegalArgumentException("pausedNanos must be non-negative");
-        }
-        long elapsed = ActionBudgets.nonNegativeNanoElapsed(startedAtNanos, nowNanos);
-        return pausedNanos >= elapsed ? 0L : elapsed - pausedNanos;
     }
 
     private boolean closeAgentPrimitiveExecutor() {

@@ -60,7 +60,7 @@ final class BoundedInputExecution {
         if ((recordTick
                         ? progress.ticks() >= action.program().effectiveBudget().maxTicks()
                         : progress.ticks() > action.program().effectiveBudget().maxTicks())
-                || McmcpRuntime.activeElapsedNanos(startedAtNanos, pausedNanos, System.nanoTime()) >= durationLimit) {
+                || ActionBudgets.activeElapsedNanos(startedAtNanos, pausedNanos, System.nanoTime()) >= durationLimit) {
             return PrimitiveOutcome.failed(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false,
                     "bounded_input_duration_budget");
         }

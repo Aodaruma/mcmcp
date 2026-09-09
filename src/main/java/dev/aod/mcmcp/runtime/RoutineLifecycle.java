@@ -636,7 +636,7 @@ final class RoutineLifecycle {
         }
 
         boolean allows(UUID activeRoutineId, long nowNanos) {
-            long elapsedNanos = McmcpRuntime.activeElapsedNanos(startedAtNanos, pausedNanos, nowNanos);
+            long elapsedNanos = ActionBudgets.activeElapsedNanos(startedAtNanos, pausedNanos, nowNanos);
             return routineId.equals(activeRoutineId)
                     && elapsedNanos < durationNanos;
         }

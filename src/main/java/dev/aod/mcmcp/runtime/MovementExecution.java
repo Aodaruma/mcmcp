@@ -51,7 +51,7 @@ final class MovementExecution {
     record BudgetEvidence(AgentActionStore.Progress baseline, ActionDslCompiler.Cost limit,
             long startedAtNanos, long pausedNanos) {
         long elapsedNanos() {
-            return McmcpRuntime.activeElapsedNanos(startedAtNanos, pausedNanos, System.nanoTime());
+            return ActionBudgets.activeElapsedNanos(startedAtNanos, pausedNanos, System.nanoTime());
         }
         boolean fits(AgentActionStore.Progress progress, ActionDslCompiler.Cost cost) {
             return ActionBudgets.fitsOccurrenceBudget(progress,
