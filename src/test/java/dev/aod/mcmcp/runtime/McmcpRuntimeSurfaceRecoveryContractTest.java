@@ -47,9 +47,13 @@ class McmcpRuntimeSurfaceRecoveryContractTest {
     @Test
     void dispatchRepeatsTheFullFenceAndChargesWaitingBeforeTheFirstJit() throws Exception {
         assertThat(calls("tickAgentAction")).containsSubsequence(
+                "McmcpRuntime#startAgentExecution", "McmcpRuntime#agentControlCurrent",
+                "McmcpRuntime#tickAgentProgram");
+        assertThat(calls("startAgentExecution")).containsSubsequence(
                 "ActionAdmission#admissionFenceFailure", "SurfacePreflightRecovery#executionStartNanos",
-                "AgentActionStore#markRunning", "AgentActionStore#recordAdmissionTicks",
-                "McmcpRuntime#bindAgentPrimitive");
+                "AgentActionStore#markRunning", "AgentActionStore#recordAdmissionTicks");
+        assertThat(calls("tickAgentProgram")).containsSubsequence(
+                "AgentActionStore#recordTick", "McmcpRuntime#bindAgentPrimitive");
         assertThat(calls(ActionAdmission.class, "admissionFenceFailure")).containsSubsequence(
                 "ActionAdmission#sameAdmissionSession", "ActionPlanning#playerPose",
                 "Predicate#test", "AgentObservations#requireAgentMap",

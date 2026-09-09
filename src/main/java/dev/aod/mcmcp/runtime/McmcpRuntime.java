@@ -13,9 +13,6 @@ import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.action.CollectBatchEvidence;
 import dev.aod.mcmcp.agent.action.ContainerInspection;
-import dev.aod.mcmcp.agent.action.FrameItemAttempt;
-import dev.aod.mcmcp.agent.action.KnownBlockBreakAttempt;
-import dev.aod.mcmcp.agent.action.KnownBlockMutationAttempt;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
@@ -27,7 +24,6 @@ import dev.aod.mcmcp.agent.navigation.DeterministicAStar;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.LocalObservationProjector;
 import dev.aod.mcmcp.agent.navigation.NavCell;
-import dev.aod.mcmcp.agent.navigation.RoutePlan;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.observation.ObservationWireMapper;
@@ -47,10 +43,6 @@ import dev.aod.mcmcp.observation.BlockPlanComparator;
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.observation.WorldMemory;
-import dev.aod.mcmcp.routine.BlockStateFingerprint;
-import dev.aod.mcmcp.routine.BlockTarget;
-import dev.aod.mcmcp.routine.BoundedInputLease;
-import dev.aod.mcmcp.routine.FrameItemPort;
 import dev.aod.mcmcp.routine.MinecraftApplyBlockPlanPort;
 import dev.aod.mcmcp.routine.MinecraftFrameItemPort;
 import dev.aod.mcmcp.routine.MinecraftKnownBrewingPort;
@@ -62,19 +54,9 @@ import dev.aod.mcmcp.routine.MinecraftPillarUpPort;
 import dev.aod.mcmcp.routine.MinecraftSemanticActionPort;
 import dev.aod.mcmcp.routine.MinecraftStationaryBreakPort;
 import dev.aod.mcmcp.routine.PhaseFivePortRouter;
-import dev.aod.mcmcp.routine.RoutineFailure;
 import dev.aod.mcmcp.routine.RoutineManager;
-import dev.aod.mcmcp.routine.RoutineSnapshot;
 import dev.aod.mcmcp.routine.RoutineState;
-import dev.aod.mcmcp.routine.SafeBreakSourcePolicy;
-import dev.aod.mcmcp.routine.SemanticActionRequest;
-import dev.aod.mcmcp.routine.StationaryBreakGoal;
-import dev.aod.mcmcp.routine.StationaryBreakOperation;
-import dev.aod.mcmcp.routine.StationaryBreakRequest;
-import dev.aod.mcmcp.runtime.ActionBudgets.BatchTargetDisposition;
 import dev.aod.mcmcp.runtime.ActionEvidence.CropWaitAuthorization;
-import dev.aod.mcmcp.runtime.ActionEvidence.CropWaitLiveState;
-import dev.aod.mcmcp.runtime.ActionEvidence.CropWaitVisibilityState;
 import dev.aod.mcmcp.runtime.ActionPredicates.PredicateRequirements;
 import dev.aod.mcmcp.runtime.KillZoneSafety.AttackProfile;
 import dev.aod.mcmcp.runtime.KillZoneSafety.KillZoneAdmission;
@@ -111,18 +93,13 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.MerchantScreen;
-import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.effect.MobEffects;
-import net.minecraft.world.entity.projectile.FishingHook;
 import net.minecraft.world.phys.AABB;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 /** Client runtime and the sole implementation of the MCP-to-Minecraft boundary. */
@@ -1848,192 +1825,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         var session = sessions.snapshot();
         try {
-            if (agentExecution == null || !agentExecution.actionId.equals(action.actionId())) {
-                if (minecraft.player == null || !session.worldReady()) {
-                    failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true, "world_unavailable");
-                    return;
-                }
-                var pending = pendingAgentAdmission;
-                if (pending == null
-                        || !pending.actionId().equals(action.actionId())) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.WORLD_CHANGED,
-                            true,
-                            "admission_missing_before_execution");
-                    return;
-                }
-                var admissionFailure = actionAdmission.admissionFenceFailure(
-                        minecraft,
-                        session,
-                        pending.prepared(),
-                        LocalArmingState.Mode.AGENT,
-                        pending.prepared().snapshot().control().controlEpoch() + 1L, RendererRecoveryStage.DISPATCH);
-                if (admissionFailure.isPresent()) {
-                    if (admissionFailure.orElseThrow() == AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING) {
-                        // Receipt acknowledgement authorizes no input. Retain the original
-                        // admission, delivery lease and elapsed budget until a fresh render.
-                        return;
-                    }
-                    failAgentAction(
-                            AgentActionStore.FailureCode.WORLD_CHANGED,
-                            true,
-                            admissionFailure.orElseThrow().executionEvidence());
-                    return;
-                }
-                KillZoneAdmission killAuthorization = pending.killZoneAdmission();
-                KillZoneAdmission currentKillAuthorization = null;
-                if (killAuthorization != null) {
-                    ActionDsl.OperateKillZone operation = Objects.requireNonNull(
-                            KillZoneSafety.soleKillZone(action.program().request().program()),
-                            "kill-zone operation");
-                    currentKillAuthorization = requireKillZoneAdmission(
-                            minecraft, session, pending.prepared().source(), operation);
-                }
-                long startedAtNanos = pending.prepared().surfaceRecovery().executionStartNanos(System.nanoTime());
-                var nextExecution = new AgentExecution(
-                        action,
-                        session.worldSessionId(),
-                        startedAtNanos,
-                        minecraft.player.position(),
-                        minecraft.player.getYRot(),
-                        minecraft.player.getXRot(),
-                        minecraft.player,
-                        McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
-                        pending.prepared().analysis().mutationAims(),
-                        reconciliationSignals.bindAndSnapshot(
-                                        minecraft.level, session.worldSessionId())
-                                .positionCorrectionRevision(),
-                        new MenuPrimitiveExecution(action.actionId(), agentActions, knownFurnacePort,
-                                knownMenuPort, phaseFiveInventoryPort, knownBrewingPort, applyBlockPlanPort,
-                                pillarUpPort, semanticActionPort, observations, agentObservations.deliveredEvidence()),
-                        new FishingPrimitiveExecution(action.actionId(), agentActions, fishingSessionRefs, arming));
-                boolean transportApprovalConsumed = false;
-                if (killAuthorization != null
-                        && pending.transportApproval() != null) {
-                    transportApprovalConsumed = currentKillAuthorization.equals(killAuthorization)
-                            && ScopedEntityAttackConsentTransportBridge.consumeApprovedPending(
-                                    entityAttackConsent,
-                                    pending.transportApproval(),
-                                    session.worldSessionId(),
-                                    currentKillAuthorization.policyBindingHash(),
-                                    currentKillAuthorization.scope(),
-                                    session.clientTick());
-                    if (!transportApprovalConsumed) {
-                        failAgentAction(
-                                AgentActionStore.FailureCode.CAPABILITY_DENIED,
-                                true,
-                                "kill_zone_transport_approval_not_consumed");
-                        return;
-                    }
-                }
-                agentActions.markRunning(action.actionId());
-                agentActions.recordAdmissionTicks(action.actionId(),
-                        pending.prepared().surfaceRecovery().consumedTicks(session.clientTick()));
-                agentExecution = nextExecution;
-                agentExecution.surfaceRecovery = pending.prepared().surfaceRecovery();
-                agentExecution.surfaceAdmission = pending.prepared().snapshot();
-                agentInputReleaseFaultLogged = false;
-                agentExecution.frameItemAim = pending.prepared().frameItemAim().orElse(null);
-                if (killAuthorization != null) {
-                    boolean consumed = currentKillAuthorization.equals(killAuthorization)
-                            && (transportApprovalConsumed
-                                    || entityAttackConsent.consumeExactForActionStart(
-                                            Objects.requireNonNull(KillZoneSafety.soleKillZone(
-                                                            action.program().request().program()))
-                                                    .consentRef().orElseThrow(),
-                                            session.worldSessionId(),
-                                            currentKillAuthorization.policyBindingHash(),
-                                            currentKillAuthorization.scope(),
-                                            session.clientTick()));
-                    if (!consumed) {
-                        failAgentAction(
-                                AgentActionStore.FailureCode.CAPABILITY_DENIED,
-                                true,
-                                "kill_zone_consent_not_consumed");
-                        return;
-                    }
-                    agentExecution.killZone = new KillZoneExecution(
-                            Objects.requireNonNull(
-                                    KillZoneSafety.soleKillZone(action.program().request().program())),
-                            killAuthorization.scope(),
-                            session.clientTick(),
-                            minecraft.player.getHealth(),
-                            minecraft.player.getAbsorptionAmount(), agentExecution.actionId, agentActions, agentObservations.frames(),
-                            observations, reconciliationSignals);
-                    if (!advanceAgentProgram(
-                            minecraft, agentActions.get(action.actionId()).progress())) {
-                        return;
-                    }
-                }
-                agentControlOwnershipEpoch = Math.incrementExact(agentControlOwnershipEpoch);
-                pendingAgentAdmission = null;
-                if (paused) {
-                    // A pause cannot refund renderer waiting charged before execution began.
-                    pauseStartedAtNanos = System.nanoTime();
-                }
-            }
-            if (agentExecution.killZone != null
-                    && minecraft.player != null
-                    && agentExecution.killZone.healthDecreased(minecraft.player)) {
-                safetyInterruptKillZone(
-                        minecraft, session, action, agentExecution.killZone, "health_decreased");
-                return;
-            }
-            if (paused) {
-                releaseAgentInputsForHold(minecraft, "pause_input_release_failed");
-                if (agentExecution.primitive instanceof ActionDsl.HoldBoundedInputs
-                        || ActionEvidence.isFrameItemPrimitive(agentExecution.primitive)) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
-                            true,
-                            ActionEvidence.isFrameItemPrimitive(agentExecution.primitive)
-                                    ? "frame_item_screen_open" : "bounded_input_screen_open");
-                }
-                return;
-            }
-            if (!session.worldReady()
-                    || !Objects.equals(agentExecution.worldSessionId, session.worldSessionId())) {
-                failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true, "world_session_changed");
-                return;
-            }
-            var control = arming.snapshot(session.worldSessionId());
-            if (control.mode() != LocalArmingState.Mode.AGENT
-                    && control.mode() != LocalArmingState.Mode.RECOVERING) {
-                failAgentAction(AgentActionStore.FailureCode.USER_DISABLED, true, "local_control_locked");
-                return;
-            }
-
-            var currentReconciliation = reconciliationSignals.bindAndSnapshot(
-                    minecraft.level, session.worldSessionId());
-            agentExecution.latestWorldRevision = currentReconciliation.worldRevision();
-            long correctionRevision = currentReconciliation.positionCorrectionRevision();
-            if (correctionRevision > agentExecution.positionCorrectionRevision) {
-                long previousCorrectionRevision = agentExecution.positionCorrectionRevision;
-                agentExecution.positionCorrectionRevision = correctionRevision;
-                agentExecution.lastPosition = minecraft.player.position();
-                agentExecution.lastYaw = minecraft.player.getYRot();
-                agentExecution.lastPitch = minecraft.player.getXRot();
-                boolean repeated = ActionBudgets.repeatedPositionCorrection(
-                        previousCorrectionRevision,
-                        correctionRevision,
-                        agentExecution.positionCorrections);
-                agentExecution.positionCorrections++;
-                if (repeated) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                            true,
-                            "repeated_position_correction");
-                    return;
-                }
-                var correctionProgress = agentActions.get(action.actionId()).progress();
-                agentActions.recordTick(action.actionId());
-                if (agentExecution.primitive != null && agentExecution.occurrenceLimit != null) {
-                    requestAgentReplan(
-                            correctionProgress.ticks() + 1L, "server_position_correction");
-                }
-                return;
-            }
-
+            if (!startAgentExecution(minecraft, session, action)) return;
+            if (!agentControlCurrent(minecraft, session, action)) return;
             long now = System.nanoTime();
             var player = minecraft.player;
             recordAgentMotion(action.actionId(), player);
@@ -2049,551 +1842,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 return;
             }
             var recovery = tickAgentRecovery(minecraft, session, now);
-            if (agentExecution.killZone != null
-                    && recovery.state() != MinecraftRecoveryGovernor.State.IDLE
-                    && recovery.state() != MinecraftRecoveryGovernor.State.REPLAN_REQUIRED) {
-                safetyInterruptKillZone(
-                        minecraft,
-                        session,
-                        action,
-                        agentExecution.killZone,
-                        recovery.reason().name().toLowerCase(Locale.ROOT));
-                return;
-            }
-            switch (recovery.state()) {
-                case RECOVERING, PAUSED -> {
-                    agentActions.recordTick(action.actionId());
-                    return;
-                }
-                case RECOVERED -> {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.SAFETY_RECOVERED,
-                            true,
-                            recovery.reason().name().toLowerCase(Locale.ROOT));
-                    return;
-                }
-                case EXHAUSTED -> {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.RECOVERY_EXHAUSTED,
-                            false,
-                            recovery.reason().name().toLowerCase(Locale.ROOT));
-                    return;
-                }
-                case STOPPED -> {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.EMERGENCY_STOP,
-                            true,
-                            recovery.reason().name().toLowerCase(Locale.ROOT));
-                    return;
-                }
-                case IDLE, REPLAN_REQUIRED -> { }
-            }
+            if (!recoveryAllowsAgentTick(minecraft, session, action, recovery)) return;
 
             // The ordinary recovery governor remains authoritative for every hard hazard. Only
             // the later generic local visible-hostile REPLAN is replaced by zone-scoped proofs.
             if (agentExecution.killZone != null) {
-                var killBudget = action.program().effectiveBudget();
-                var killUsed = agentActions.get(action.actionId()).progress();
-                long durationLimit = Duration.ofMillis(killBudget.maxDurationMillis()).toNanos();
-                if (killUsed.distanceTravelled() > 0.0D
-                        || killUsed.cameraDegrees() > 0.0D
-                        || killUsed.blocksBroken() > 0
-                        || killUsed.blocksPlaced() > 0
-                        || killUsed.motionOverflowed()) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                            false,
-                            "kill_zone_stationary_contract");
-                    return;
-                }
-                long elapsedNanos = activeElapsedNanos(agentExecution, now);
-                boolean hardDeadlineReached = elapsedNanos >= durationLimit
-                        || killUsed.ticks() >= killBudget.maxTicks();
-                long effectReserveNanos = Duration.ofMillis(
-                        ActionDslCompiler.KILL_ZONE_EFFECT_RESERVE_TICKS * 50L).toNanos();
-                boolean newDispatchBudgetReached = elapsedNanos
-                                >= Math.max(0L, durationLimit - effectReserveNanos)
-                        || killUsed.ticks() >= killBudget.maxTicks()
-                                - ActionDslCompiler.KILL_ZONE_EFFECT_RESERVE_TICKS
-                        || killUsed.interactions() >= killBudget.maxInteractions();
-                if (hardDeadlineReached) {
-                    tickKillZone(minecraft, session, action, true, true);
-                    return;
-                }
-                var used = agentActions.get(action.actionId()).progress();
-                if (agentExecution.primitive == null
-                        && !advanceAgentProgram(minecraft, used)) {
-                    return;
-                }
-                agentActions.recordTick(action.actionId());
-                tickKillZone(
-                        minecraft, session, action, false, newDispatchBudgetReached);
+                tickKillZoneBudget(minecraft, session, action, now);
                 return;
             }
 
-            var usedBeforeTick = agentActions.get(action.actionId()).progress();
-            boolean movementRejected = AgentInputState.global().consumeGoalMovementRejection();
-            long durationLimit = Duration.ofMillis(
-                    action.program().effectiveBudget().maxDurationMillis()).toNanos();
-            if (usedBeforeTick.motionOverflowed()
-                    || usedBeforeTick.distanceTravelled()
-                            > action.program().effectiveBudget().maxDistanceBlocks()
-                    || usedBeforeTick.cameraDegrees()
-                            > action.program().effectiveBudget().maxCameraDegrees()) {
-                failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "motion");
-                return;
-            }
-            if (activeElapsedNanos(agentExecution, now) >= durationLimit) {
-                failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "duration");
-                return;
-            }
-            if (usedBeforeTick.ticks() >= action.program().effectiveBudget().maxTicks()) {
-                failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "ticks");
-                return;
-            }
-            // Vanilla can collect the witnessed item while the navigator is still reporting
-            // RUNNING. Honor that server-confirmed inventory delta only after the hard action
-            // gates, and before a vanished witness can be mistaken for a path failure.
-            if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItemBatch
-                    && !reconcileCollectBatchEvidence(minecraft, session, action)) {
-                return;
-            }
-            if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem collect
-                    && agentExecution.pickupInventoryBefore >= 0
-                    && PlayerInventoryEvidence.pickupInventoryIncreased(
-                            agentExecution.pickupInventoryBefore,
-                            PlayerInventoryEvidence.inventoryItemCount(player, collect.displayedItem()))) {
-                completeAgentPrimitive(minecraft, action);
-                return;
-            }
-            agentActions.recordTick(action.actionId());
-            long actionTick = usedBeforeTick.ticks() + 1L;
-            if (agentExecution.replanning
-                    && agentExecution.replanHeartbeatPending
-                    && !movementRejected) {
-                agentActions.setPhase(
-                        action.actionId(), AgentActionStore.Phase.EXECUTING,
-                        "replan_heartbeat_verified");
-                agentExecution.replanning = false;
-                agentExecution.replanHeartbeatPending = false;
-                agentExecution.replanDeadlineTick = 0L;
-            }
-            if (movementRejected) {
-                if (agentExecution.primitive != null && agentExecution.occurrenceLimit != null) {
-                    requestAgentReplan(actionTick, "unverified_actual_movement");
-                }
-                return;
-            }
-
-            if (agentExecution.primitive == null
-                    && !advanceAgentProgram(minecraft, usedBeforeTick)) {
-                return;
-            }
-            if (agentExecution.occurrenceLimit == null
-                    && !bindAgentPrimitive(
-                            minecraft,
-                            session,
-                            action,
-                            usedBeforeTick,
-                            actionTick)) {
-                return;
-            }
-            if (agentExecution.primitive
-                    instanceof ActionDsl.OperateKnownCobblestoneGenerator
-                    && (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
-                            || agentObservations.localSafety() == LocalObservationProjector.CurrentSafety.REPLAN)) {
-                failAgentAction(
-                        AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
-                        true,
-                        "cobblestone_generator_safety_changed");
-                return;
-            }
-            if (!(agentExecution.primitive instanceof ActionDsl.OperateKnownMenu)
-                    && !(agentExecution.primitive instanceof ActionDsl.PillarUpKnown)
-                    && (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
-                            || agentObservations.localSafety() == LocalObservationProjector.CurrentSafety.REPLAN)) {
-                if (ActionEvidence.isAgentWait(agentExecution.primitive)) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.PATH_BLOCKED,
-                            true,
-                            "local_safety_changed_during_wait");
-                } else {
-                    requestAgentReplan(actionTick, "local_safety_changed");
-                }
-                return;
-            }
-            if (agentExecution.primitive
-                    instanceof ActionDsl.HoldBoundedInputs hold) {
-                tickAgentBoundedInputHold(minecraft, session, action, hold, false);
-                return;
-            }
-            if (agentExecution.primitive
-                    instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
-                tickAgentCobblestoneGenerator(minecraft, session, action, operation);
-                return;
-            }
-            if (ActionEvidence.isAgentWait(agentExecution.primitive)) {
-                if (occurrenceBudgetExceeded(
-                        agentActions.get(action.actionId()).progress(),
-                        agentExecution)) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                            false,
-                            "primitive_budget");
-                    return;
-                }
-                boolean complete = false;
-                if (agentExecution.primitive instanceof ActionDsl.WaitUntil wait
-                        && wait.condition() instanceof ActionDsl.CropMatureCondition) {
-                    CropWaitLiveState live = authorizedCropWaitLiveState(
-                            minecraft,
-                            session,
-                            wait,
-                            agentExecution.cropWaitAuthorization);
-                    if (live == CropWaitLiveState.WORLD_CHANGED) {
-                        failAgentAction(
-                                AgentActionStore.FailureCode.WORLD_CHANGED,
-                                true,
-                                "crop_wait_world_changed");
-                        return;
-                    }
-                    if (live == CropWaitLiveState.VISIBILITY_INVALIDATED) {
-                        failAgentAction(
-                                AgentActionStore.FailureCode.PATH_BLOCKED,
-                                true,
-                                "crop_wait_visibility_invalidated");
-                        return;
-                    }
-                    if (live == CropWaitLiveState.UNLOADED) {
-                        failAgentAction(
-                                AgentActionStore.FailureCode.PATH_BLOCKED,
-                                true,
-                                "crop_wait_target_unloaded");
-                        return;
-                    }
-                    if (live == CropWaitLiveState.TARGET_CHANGED) {
-                        failAgentAction(
-                                AgentActionStore.FailureCode.PATH_BLOCKED,
-                                true,
-                                "crop_wait_target_changed");
-                        return;
-                    }
-                    complete = live == CropWaitLiveState.MATURE;
-                } else if (agentExecution.primitive instanceof ActionDsl.WaitUntil wait
-                        && wait.condition() instanceof ActionDsl.SoundClueCondition sound) {
-                    complete = soundClueMatched(minecraft, sound, session.clientTick());
-                }
-                if (complete || agentExecution.primitive instanceof ActionDsl.WaitTicks
-                        && --agentExecution.waitTicksRemaining == 0) {
-                    agentActions.completeNode(action.actionId());
-                    agentExecution.primitive = null;
-                    advanceAgentProgram(
-                            minecraft, agentActions.get(action.actionId()).progress());
-                } else if (agentExecution.primitive instanceof ActionDsl.WaitUntil
-                        && --agentExecution.waitTicksRemaining == 0) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.CONDITION_TIMEOUT,
-                            true,
-                            "wait_condition_timeout");
-                }
-                return;
-            }
-            if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod
-                    && agentExecution.fishingAimComplete
-                    || agentExecution.primitive instanceof ActionDsl.ReelKnownFishingSession) {
-                tickAgentFishing(minecraft, session, action);
-                return;
-            }
-            if (agentExecution.replanning
-                    && ActionBudgets.replanDeadlineReached(actionTick, agentExecution.replanDeadlineTick)) {
-                failAgentAction(
-                        AgentActionStore.FailureCode.PATH_BLOCKED,
-                        true,
-                        "replan_deadline_exhausted");
-                return;
-            }
-            if (agentExecution.replanNotBeforeTick > actionTick) {
-                return;
-            }
-            if (occurrenceBudgetExceeded(
-                    agentActions.get(action.actionId()).progress(),
-                    agentExecution)) {
-                failAgentAction(
-                        AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                        false,
-                        "primitive_budget");
-                return;
-            }
-
-            ActionDsl.CollectVisibleItem activeCollect = activeCollectTarget();
-            if (activeCollect != null
-                    && (agentExecution.pickupInventoryBefore >= 0
-                            || agentExecution.collectBatchEvidence != null)) {
-                if (agentExecution.pickupArrivalTick >= 0L) {
-                    tickAgentPickupConfirmation(minecraft, session, action, activeCollect);
-                    return;
-                }
-                if (agentExecution.pickupCell != null) {
-                    var pickupMap = agentObservations.requireAgentMap(session);
-                    long visualBarrierWorldRevision = ActionEvidence.visualBarrierWorldRevision(
-                            pickupMap,
-                            reconciliationSignals.bindAndSnapshot(
-                                    Objects.requireNonNull(minecraft.level, "level"),
-                                    session.worldSessionId()));
-                    if (!AgentPrimitivePlanner.visibleItemPickupCellCurrent(
-                            pickupMap,
-                            agentObservations.agentPlanningFrame(),
-                            activeCollect,
-                            agentExecution.pickupCell,
-                            visualBarrierWorldRevision,
-                            session.clientTick(),
-                            ActionBudgets.visibleItemEvidenceMaxAgeTicks(
-                                    McmcpClientConfig.raysPerTick()))) {
-                        requestAgentReplan(actionTick, "pickup_witness_changed");
-                        return;
-                    }
-                }
-            }
-
-            if (agentExecution.primitive instanceof ActionDsl.TillKnownBlock
-                    || agentExecution.primitive instanceof ActionDsl.TillKnownBatch
-                    || agentExecution.primitive instanceof ActionDsl.PlantKnownWheat
-                    || agentExecution.primitive instanceof ActionDsl.PlantKnownWheatBatch
-                    || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheat
-                    || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheatBatch
-                    || agentExecution.primitive instanceof ActionDsl.OpenKnownFenceGate
-                    || agentExecution.primitive instanceof ActionDsl.OpenKnownPassage) {
-                tickAgentBlockMutation(minecraft, session, action, actionTick);
-                return;
-            }
-
-            if (ActionEvidence.isFrameItemPrimitive(agentExecution.primitive)) {
-                tickAgentFrameItem(minecraft, session, action);
-                return;
-            }
-
-            if (agentExecution.primitive instanceof ActionDsl.InspectKnownContainer
-                    || agentExecution.primitive instanceof ActionDsl.TakeKnownContainerStack
-                    || agentExecution.primitive instanceof ActionDsl.StoreKnownContainerStack
-                    || agentExecution.primitive instanceof ActionDsl.CraftKnownRecipe
-                    || agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe
-                    || agentExecution.primitive instanceof ActionDsl.OperateKnownMenu) {
-                applyMenuPrimitiveOutcome(minecraft, action,
-                        agentExecution.menuPrimitives.tickAgentContainer(minecraft, session,
-                                agentExecution.primitive, agentExecution.mutationAims,
-                                agentExecution.latestWorldRevision));
-                return;
-            }
-
-            if (agentExecution.primitive instanceof ActionDsl.BrewKnownPotionBatch) {
-                applyMenuPrimitiveOutcome(minecraft, action,
-                        agentExecution.menuPrimitives.tickAgentBrewing(session, agentExecution.primitive,
-                                agentExecution.mutationAims, agentExecution.maxCameraDegreesPerTick));
-                return;
-            }
-
-            if (agentExecution.primitive instanceof ActionDsl.ApplyKnownBlockPlan
-                    || agentExecution.primitive instanceof ActionDsl.ClearKnownBlockPlan) {
-                applyMenuPrimitiveOutcome(minecraft, action,
-                        agentExecution.menuPrimitives.tickAgentConstruction(session, agentExecution.primitive,
-                                agentExecution.latestWorldRevision));
-                return;
-            }
-
-            if (agentExecution.primitive instanceof ActionDsl.PillarUpKnown) {
-                applyMenuPrimitiveOutcome(minecraft, action,
-                        agentExecution.menuPrimitives.tickAgentPillarUp(session, agentExecution.primitive));
-                return;
-            }
-
-            if (agentExecution.primitive instanceof ActionDsl.ApplyKnownRedstoneSpec) {
-                applyMenuPrimitiveOutcome(minecraft, action,
-                        agentExecution.menuPrimitives.tickAgentRedstone(minecraft, session,
-                                agentExecution.primitive, agentExecution.mutationAims));
-                return;
-            }
-
-            KnownTraversabilitySnapshot map = agentObservations.requireAgentMap(session);
-            if (agentExecution.primitiveExecutor.active()
-                    && (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition
-                            || agentExecution.primitive instanceof ActionDsl.FaceKnownBlockFace
-                            || KnownBreakSafety.isKnownBreak(agentExecution.primitive)
-                            || agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod)) {
-                var faceReconciliation = reconciliationSignals.bindAndSnapshot(
-                        Objects.requireNonNull(minecraft.level, "level"),
-                        session.worldSessionId());
-                var faceSurfaceBarrier = ActionEvidence.surfaceRevisionBarrier(map, faceReconciliation);
-                boolean faceEvidenceCurrent;
-                if (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition face) {
-                    faceEvidenceCurrent = AgentPrimitivePlanner.knownFacingTarget(
-                            map, agentObservations.agentPlanningFrame(), face.target());
-                } else if (agentExecution.primitive instanceof ActionDsl.FaceKnownBlockFace face) {
-                    faceEvidenceCurrent = AgentPrimitivePlanner.knownFacingSurface(
-                            map,
-                            agentObservations.agentPlanningFrame(),
-                            new AgentPrimitivePlanner.KnownSurface(
-                                    face.target(), face.face(), face.expectedBlock()));
-                } else if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod cast) {
-                    faceEvidenceCurrent = AgentPrimitivePlanner.knownExactSurface(
-                            map,
-                            agentObservations.agentPlanningFrame(),
-                            cast.target(),
-                            cast.face(),
-                            cast.expectedState(),
-                            faceSurfaceBarrier.applyAsLong(cast.target()));
-                } else {
-                    var block = agentExecution.primitive;
-                    faceEvidenceCurrent = AgentPrimitivePlanner.knownSurface(
-                            map,
-                            agentObservations.agentPlanningFrame(),
-                            new AgentPrimitivePlanner.KnownSurface(
-                                    KnownBreakSafety.breakTarget(block), KnownBreakSafety.breakFace(block), KnownBreakSafety.breakBlockId(block)),
-                            faceSurfaceBarrier.applyAsLong(KnownBreakSafety.breakTarget(block)));
-                    if (faceEvidenceCurrent && block instanceof ActionDsl.BreakKnownBlock exact) {
-                        try {
-                            AgentPrimitivePlanner.requireKnownBreakSurface(
-                                    map, agentObservations.agentPlanningFrame(), exact,
-                                    faceSurfaceBarrier.applyAsLong(exact.target()));
-                        } catch (AgentPrimitivePlanner.PlanningException unavailable) {
-                            faceEvidenceCurrent = false;
-                        }
-                    }
-                }
-                if (!faceEvidenceCurrent) {
-                    requestAgentReplan(actionTick, "face_target_reobservation");
-                    return;
-                }
-            }
-            if (KnownBreakSafety.isKnownBreak(agentExecution.primitive)
-                    && agentExecution.breakAimComplete) {
-                tickAgentBreak(
-                        minecraft, session, action, map, agentExecution.primitive, actionTick);
-                return;
-            }
-            if (!agentExecution.primitiveExecutor.active()
-                    && !beginAgentPrimitive(
-                            minecraft, action, map, usedBeforeTick, session.clientTick())) {
-                return;
-            }
-            if (activeElapsedNanos(agentExecution, System.nanoTime()) >= durationLimit) {
-                failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "duration");
-                return;
-            }
-            final MinecraftActionPrimitiveExecutor.TickResult result;
-            try {
-                result = agentExecution.primitiveExecutor.tick(
-                        minecraft,
-                        map,
-                        LocalObservationVolume.global(),
-                        remainingDistance(
-                                usedBeforeTick,
-                                action.program().effectiveBudget(),
-                                agentExecution),
-                        remainingCameraDegrees(
-                                usedBeforeTick,
-                                action.program().effectiveBudget(),
-                                agentExecution),
-                        actionTick,
-                        () -> activeElapsedNanos(agentExecution, System.nanoTime())
-                                < durationLimit);
-            } finally {
-                recordAgentMotion(action.actionId(), player);
-            }
-            AgentInputState.global().capMovementValidity(actionMovementDeadline(
-                    agentExecution, durationLimit, System.nanoTime()));
-            if (activeElapsedNanos(agentExecution, System.nanoTime()) >= durationLimit) {
-                failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "duration");
-                return;
-            }
-            var usedAfterTick = agentActions.get(action.actionId()).progress();
-            if (ActionBudgets.motionBudgetExceededAfterPrimitive(
-                    usedAfterTick,
-                    action.program().effectiveBudget(),
-                    agentExecution.primitive,
-                    result.status())
-                    || occurrenceBudgetExceededAfterPrimitive(
-                            usedAfterTick,
-                            agentExecution,
-                            result.status())) {
-                failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "motion");
-                return;
-            }
-            // The movement tick itself can enter the pickup area and let vanilla collect the
-            // witnessed item before the next observation frame. Bind contact against the still
-            // fresh policy-visible AABB and reconcile the post-move absolute inventory now.
-            if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItemBatch
-                    && !reconcileCollectBatchEvidence(minecraft, session, action)) {
-                return;
-            }
-            switch (result.status()) {
-                case RUNNING -> {
-                    if (ActionBudgets.shouldVerifyReplanHeartbeat(agentExecution.replanning, result)) {
-                        agentExecution.replanHeartbeatPending = true;
-                    }
-                }
-                case SUCCEEDED -> {
-                    if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod) {
-                        agentExecution.fishingAimComplete = true;
-                        agentExecution.replanning = false;
-                        agentExecution.replanNotBeforeTick = 0L;
-                        agentExecution.replanDeadlineTick = 0L;
-                        return;
-                    }
-                    if (KnownBreakSafety.isKnownBreak(agentExecution.primitive)) {
-                        agentExecution.breakAimComplete = true;
-                        agentExecution.replanning = false;
-                        agentExecution.replanNotBeforeTick = 0L;
-                        agentExecution.replanDeadlineTick = 0L;
-                        return;
-                    }
-                    ActionDsl.CollectVisibleItem completedCollect = activeCollectTarget();
-                    if (completedCollect != null) {
-                        long visualBarrierWorldRevision = ActionEvidence.visualBarrierWorldRevision(
-                                map,
-                                reconciliationSignals.bindAndSnapshot(
-                                        Objects.requireNonNull(minecraft.level, "level"),
-                                        session.worldSessionId()));
-                        var itemBounds = AgentPrimitivePlanner.visibleItemAabb(
-                                map,
-                                agentObservations.agentPlanningFrame(),
-                                completedCollect,
-                                visualBarrierWorldRevision,
-                                session.clientTick(),
-                                ActionBudgets.visibleItemEvidenceMaxAgeTicks(McmcpClientConfig.raysPerTick()));
-                        if (itemBounds.isEmpty() || !PlayerInventoryEvidence.playerPickupAreaIntersects(
-                                Objects.requireNonNull(minecraft.player, "player").getBoundingBox(),
-                                itemBounds.orElseThrow())) {
-                            requestAgentReplan(actionTick, "pickup_area_unreached");
-                            return;
-                        }
-                        if (agentExecution.primitive
-                                instanceof ActionDsl.CollectVisibleItemBatch) {
-                            agentExecution.collectBatchEvidence.recordContact(
-                                    agentExecution.collectBatchIndex, session.clientTick());
-                        }
-                        closeAgentPrimitiveExecutor();
-                        agentExecution.pickupArrivalTick = session.clientTick();
-                        return;
-                    }
-                    closeAgentPrimitiveExecutor();
-                    agentActions.completeNode(action.actionId());
-                    agentExecution.primitive = null;
-                    agentExecution.replanning = false;
-                    agentExecution.replanNotBeforeTick = 0L;
-                    agentExecution.replanDeadlineTick = 0L;
-                    advanceAgentProgram(minecraft, usedAfterTick);
-                }
-                case REPLAN_REQUIRED -> requestAgentReplan(
-                        actionTick, result.reason().name().toLowerCase(Locale.ROOT));
-                case FAILED -> failAgentAction(
-                        result.reason() == MinecraftActionPrimitiveExecutor.Reason.WORLD_UNAVAILABLE
-                                        || result.reason()
-                                        == MinecraftActionPrimitiveExecutor.Reason.WORLD_BOUNDARY_CHANGED
-                                ? AgentActionStore.FailureCode.WORLD_CHANGED
-                                : AgentActionStore.FailureCode.INTERNAL_ERROR,
-                        false,
-                        result.reason().name().toLowerCase(Locale.ROOT));
-            }
+            tickAgentProgram(minecraft, session, action, now, recovery);
         } catch (AgentPrimitivePlanner.PlanningException failure) {
             failAgentAction(
                     AgentActionStore.FailureCode.PATH_BLOCKED,
@@ -2608,6 +1866,733 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         } catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error("MCMCP Action DSL execution failed", failure);
             failAgentAction(AgentActionStore.FailureCode.INTERNAL_ERROR, false, "runtime_exception");
+        }
+    }
+
+    /** 配送確認後にも元のadmission fenceを通して実行ownerを確定する。 */
+    private boolean startAgentExecution(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action) {
+        if (agentExecution == null || !agentExecution.actionId.equals(action.actionId())) {
+            if (minecraft.player == null || !session.worldReady()) {
+                failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true, "world_unavailable");
+                return false;
+            }
+            var pending = pendingAgentAdmission;
+            if (pending == null
+                    || !pending.actionId().equals(action.actionId())) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.WORLD_CHANGED,
+                        true,
+                        "admission_missing_before_execution");
+                return false;
+            }
+            var admissionFailure = actionAdmission.admissionFenceFailure(
+                    minecraft,
+                    session,
+                    pending.prepared(),
+                    LocalArmingState.Mode.AGENT,
+                    pending.prepared().snapshot().control().controlEpoch() + 1L, RendererRecoveryStage.DISPATCH);
+            if (admissionFailure.isPresent()) {
+                if (admissionFailure.orElseThrow() == AdmissionFenceFailure.RENDERER_EVIDENCE_MISSING) {
+                    // Receipt acknowledgement authorizes no input. Retain the original
+                    // admission, delivery lease and elapsed budget until a fresh render.
+                    return false;
+                }
+                failAgentAction(
+                        AgentActionStore.FailureCode.WORLD_CHANGED,
+                        true,
+                        admissionFailure.orElseThrow().executionEvidence());
+                return false;
+            }
+            KillZoneAdmission killAuthorization = pending.killZoneAdmission();
+            KillZoneAdmission currentKillAuthorization = null;
+            if (killAuthorization != null) {
+                ActionDsl.OperateKillZone operation = Objects.requireNonNull(
+                        KillZoneSafety.soleKillZone(action.program().request().program()),
+                        "kill-zone operation");
+                currentKillAuthorization = requireKillZoneAdmission(
+                        minecraft, session, pending.prepared().source(), operation);
+            }
+            long startedAtNanos = pending.prepared().surfaceRecovery().executionStartNanos(System.nanoTime());
+            var nextExecution = new AgentExecution(
+                    action,
+                    session.worldSessionId(),
+                    startedAtNanos,
+                    minecraft.player.position(),
+                    minecraft.player.getYRot(),
+                    minecraft.player.getXRot(),
+                    minecraft.player,
+                    McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
+                    pending.prepared().analysis().mutationAims(),
+                    reconciliationSignals.bindAndSnapshot(
+                                    minecraft.level, session.worldSessionId())
+                            .positionCorrectionRevision(),
+                    new MenuPrimitiveExecution(action.actionId(), agentActions, knownFurnacePort,
+                            knownMenuPort, phaseFiveInventoryPort, knownBrewingPort, applyBlockPlanPort,
+                            pillarUpPort, semanticActionPort, observations, agentObservations.deliveredEvidence()),
+                    new FishingPrimitiveExecution(action.actionId(), agentActions, fishingSessionRefs, arming),
+                    new MovementExecution(McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
+                            agentPathfinder, agentObservations, reconciliationSignals),
+                    new WaitExecution(agentObservations, reconciliationSignals),
+                    new BlockMutationExecution(action.actionId(), agentActions,
+                            semanticActionPort, agentObservations, actionAdmission, reconciliationSignals),
+                    new CobblestoneExecution(action.actionId(), agentActions,
+                            stationaryBreakPort),
+                    new KnownBreakExecution(action.actionId(), agentActions,
+                            stationaryBreakPort, reconciliationSignals, agentObservations),
+                    new BoundedInputExecution(minecraft.player,
+                            session.worldSessionId(), screenOwnership, agentActions),
+                    new FrameItemExecution(action.actionId(), agentActions, frameItemPort,
+                            McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F, pending.prepared().frameItemAim().orElse(null)));
+            boolean transportApprovalConsumed = false;
+            if (killAuthorization != null
+                    && pending.transportApproval() != null) {
+                transportApprovalConsumed = currentKillAuthorization.equals(killAuthorization)
+                        && ScopedEntityAttackConsentTransportBridge.consumeApprovedPending(
+                                entityAttackConsent,
+                                pending.transportApproval(),
+                                session.worldSessionId(),
+                                currentKillAuthorization.policyBindingHash(),
+                                currentKillAuthorization.scope(),
+                                session.clientTick());
+                if (!transportApprovalConsumed) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.CAPABILITY_DENIED,
+                            true,
+                            "kill_zone_transport_approval_not_consumed");
+                    return false;
+                }
+            }
+            agentActions.markRunning(action.actionId());
+            agentActions.recordAdmissionTicks(action.actionId(),
+                    pending.prepared().surfaceRecovery().consumedTicks(session.clientTick()));
+            agentExecution = nextExecution;
+            agentExecution.surfaceRecovery = pending.prepared().surfaceRecovery();
+            agentExecution.surfaceAdmission = pending.prepared().snapshot();
+            agentInputReleaseFaultLogged = false;
+            if (killAuthorization != null) {
+                boolean consumed = currentKillAuthorization.equals(killAuthorization)
+                        && (transportApprovalConsumed
+                                || entityAttackConsent.consumeExactForActionStart(
+                                        Objects.requireNonNull(KillZoneSafety.soleKillZone(
+                                                        action.program().request().program()))
+                                                .consentRef().orElseThrow(),
+                                        session.worldSessionId(),
+                                        currentKillAuthorization.policyBindingHash(),
+                                        currentKillAuthorization.scope(),
+                                        session.clientTick()));
+                if (!consumed) {
+                    failAgentAction(
+                            AgentActionStore.FailureCode.CAPABILITY_DENIED,
+                            true,
+                            "kill_zone_consent_not_consumed");
+                    return false;
+                }
+                agentExecution.killZone = new KillZoneExecution(
+                        Objects.requireNonNull(
+                                KillZoneSafety.soleKillZone(action.program().request().program())),
+                        killAuthorization.scope(),
+                        session.clientTick(),
+                        minecraft.player.getHealth(),
+                        minecraft.player.getAbsorptionAmount(), agentExecution.actionId, agentActions, agentObservations.frames(),
+                        observations, reconciliationSignals);
+                if (!advanceAgentProgram(
+                        minecraft, agentActions.get(action.actionId()).progress())) {
+                    return false;
+                }
+            }
+            agentControlOwnershipEpoch = Math.incrementExact(agentControlOwnershipEpoch);
+            pendingAgentAdmission = null;
+            if (paused) {
+                // A pause cannot refund renderer waiting charged before execution began.
+                pauseStartedAtNanos = System.nanoTime();
+            }
+        }
+        return true;
+    }
+
+    /** pause・world・lease・server位置補正を、通常tick加算より先に処理する。 */
+    private boolean agentControlCurrent(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action) {
+        if (agentExecution.killZone != null
+                && minecraft.player != null
+                && agentExecution.killZone.healthDecreased(minecraft.player)) {
+            safetyInterruptKillZone(
+                    minecraft, session, action, agentExecution.killZone, "health_decreased");
+            return false;
+        }
+        if (paused) {
+            releaseAgentInputsForHold(minecraft, "pause_input_release_failed");
+            if (agentExecution.primitive instanceof ActionDsl.HoldBoundedInputs
+                    || ActionEvidence.isFrameItemPrimitive(agentExecution.primitive)) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
+                        true,
+                        ActionEvidence.isFrameItemPrimitive(agentExecution.primitive)
+                                ? "frame_item_screen_open" : "bounded_input_screen_open");
+            }
+            return false;
+        }
+        if (!session.worldReady()
+                || !Objects.equals(agentExecution.worldSessionId, session.worldSessionId())) {
+            failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED, true, "world_session_changed");
+            return false;
+        }
+        var control = arming.snapshot(session.worldSessionId());
+        if (control.mode() != LocalArmingState.Mode.AGENT
+                && control.mode() != LocalArmingState.Mode.RECOVERING) {
+            failAgentAction(AgentActionStore.FailureCode.USER_DISABLED, true, "local_control_locked");
+            return false;
+        }
+
+        var currentReconciliation = reconciliationSignals.bindAndSnapshot(
+                minecraft.level, session.worldSessionId());
+        agentExecution.latestWorldRevision = currentReconciliation.worldRevision();
+        long correctionRevision = currentReconciliation.positionCorrectionRevision();
+        if (correctionRevision > agentExecution.positionCorrectionRevision) {
+            long previousCorrectionRevision = agentExecution.positionCorrectionRevision;
+            agentExecution.positionCorrectionRevision = correctionRevision;
+            agentExecution.lastPosition = minecraft.player.position();
+            agentExecution.lastYaw = minecraft.player.getYRot();
+            agentExecution.lastPitch = minecraft.player.getXRot();
+            boolean repeated = ActionBudgets.repeatedPositionCorrection(
+                    previousCorrectionRevision,
+                    correctionRevision,
+                    agentExecution.positionCorrections);
+            agentExecution.positionCorrections++;
+            if (repeated) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                        true,
+                        "repeated_position_correction");
+                return false;
+            }
+            var correctionProgress = agentActions.get(action.actionId()).progress();
+            agentActions.recordTick(action.actionId());
+            if (agentExecution.primitive != null && agentExecution.occurrenceLimit != null) {
+                requestAgentReplan(
+                        correctionProgress.ticks() + 1L, "server_position_correction");
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    private boolean recoveryAllowsAgentTick(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action, MinecraftRecoveryGovernor.TickResult recovery) {
+        if (agentExecution.killZone != null
+                && recovery.state() != MinecraftRecoveryGovernor.State.IDLE
+                && recovery.state() != MinecraftRecoveryGovernor.State.REPLAN_REQUIRED) {
+            safetyInterruptKillZone(
+                    minecraft,
+                    session,
+                    action,
+                    agentExecution.killZone,
+                    recovery.reason().name().toLowerCase(Locale.ROOT));
+            return false;
+        }
+        switch (recovery.state()) {
+            case RECOVERING, PAUSED -> {
+                agentActions.recordTick(action.actionId());
+                return false;
+            }
+            case RECOVERED -> {
+                failAgentAction(
+                        AgentActionStore.FailureCode.SAFETY_RECOVERED,
+                        true,
+                        recovery.reason().name().toLowerCase(Locale.ROOT));
+                return false;
+            }
+            case EXHAUSTED -> {
+                failAgentAction(
+                        AgentActionStore.FailureCode.RECOVERY_EXHAUSTED,
+                        false,
+                        recovery.reason().name().toLowerCase(Locale.ROOT));
+                return false;
+            }
+            case STOPPED -> {
+                failAgentAction(
+                        AgentActionStore.FailureCode.EMERGENCY_STOP,
+                        true,
+                        recovery.reason().name().toLowerCase(Locale.ROOT));
+                return false;
+            }
+            case IDLE, REPLAN_REQUIRED -> { }
+        }
+
+        return true;
+    }
+
+    private void tickKillZoneBudget(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action, long now) {
+        var killBudget = action.program().effectiveBudget();
+        var killUsed = agentActions.get(action.actionId()).progress();
+        long durationLimit = Duration.ofMillis(killBudget.maxDurationMillis()).toNanos();
+        if (killUsed.distanceTravelled() > 0.0D
+                || killUsed.cameraDegrees() > 0.0D
+                || killUsed.blocksBroken() > 0
+                || killUsed.blocksPlaced() > 0
+                || killUsed.motionOverflowed()) {
+            failAgentAction(
+                    AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                    false,
+                    "kill_zone_stationary_contract");
+            return;
+        }
+        long elapsedNanos = activeElapsedNanos(agentExecution, now);
+        boolean hardDeadlineReached = elapsedNanos >= durationLimit
+                || killUsed.ticks() >= killBudget.maxTicks();
+        long effectReserveNanos = Duration.ofMillis(
+                ActionDslCompiler.KILL_ZONE_EFFECT_RESERVE_TICKS * 50L).toNanos();
+        boolean newDispatchBudgetReached = elapsedNanos
+                        >= Math.max(0L, durationLimit - effectReserveNanos)
+                || killUsed.ticks() >= killBudget.maxTicks()
+                        - ActionDslCompiler.KILL_ZONE_EFFECT_RESERVE_TICKS
+                || killUsed.interactions() >= killBudget.maxInteractions();
+        if (hardDeadlineReached) {
+            tickKillZone(minecraft, session, action, true, true);
+            return;
+        }
+        var used = agentActions.get(action.actionId()).progress();
+        if (agentExecution.primitive == null
+                && !advanceAgentProgram(minecraft, used)) {
+            return;
+        }
+        agentActions.recordTick(action.actionId());
+        tickKillZone(
+                minecraft, session, action, false, newDispatchBudgetReached);
+        return;
+    }
+
+    /** dispatch後のACK待機も同じownerへ返す。認識しないnodeだけ移動段階へ進む。 */
+    private boolean dispatchSemanticPrimitive(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action, long actionTick) {
+        if (agentExecution.primitive instanceof ActionDsl.TillKnownBlock
+                || agentExecution.primitive instanceof ActionDsl.TillKnownBatch
+                || agentExecution.primitive instanceof ActionDsl.PlantKnownWheat
+                || agentExecution.primitive instanceof ActionDsl.PlantKnownWheatBatch
+                || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheat
+                || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheatBatch
+                || agentExecution.primitive instanceof ActionDsl.OpenKnownFenceGate
+                || agentExecution.primitive instanceof ActionDsl.OpenKnownPassage) {
+            tickAgentBlockMutation(minecraft, session, action, actionTick);
+            return true;
+        }
+
+        if (ActionEvidence.isFrameItemPrimitive(agentExecution.primitive)) {
+            tickAgentFrameItem(minecraft, session, action);
+            return true;
+        }
+
+        if (agentExecution.primitive instanceof ActionDsl.InspectKnownContainer
+                || agentExecution.primitive instanceof ActionDsl.TakeKnownContainerStack
+                || agentExecution.primitive instanceof ActionDsl.StoreKnownContainerStack
+                || agentExecution.primitive instanceof ActionDsl.CraftKnownRecipe
+                || agentExecution.primitive instanceof ActionDsl.SmeltKnownRecipe
+                || agentExecution.primitive instanceof ActionDsl.OperateKnownMenu) {
+            applyPrimitiveOutcome(minecraft, action,
+                    agentExecution.menuPrimitives.tickAgentContainer(minecraft, session,
+                            agentExecution.primitive, agentExecution.mutationAims,
+                            agentExecution.latestWorldRevision));
+            return true;
+        }
+
+        if (agentExecution.primitive instanceof ActionDsl.BrewKnownPotionBatch) {
+            applyPrimitiveOutcome(minecraft, action,
+                    agentExecution.menuPrimitives.tickAgentBrewing(session, agentExecution.primitive,
+                            agentExecution.mutationAims, agentExecution.maxCameraDegreesPerTick));
+            return true;
+        }
+
+        if (agentExecution.primitive instanceof ActionDsl.ApplyKnownBlockPlan
+                || agentExecution.primitive instanceof ActionDsl.ClearKnownBlockPlan) {
+            applyPrimitiveOutcome(minecraft, action,
+                    agentExecution.menuPrimitives.tickAgentConstruction(session, agentExecution.primitive,
+                            agentExecution.latestWorldRevision));
+            return true;
+        }
+
+        if (agentExecution.primitive instanceof ActionDsl.PillarUpKnown) {
+            applyPrimitiveOutcome(minecraft, action,
+                    agentExecution.menuPrimitives.tickAgentPillarUp(session, agentExecution.primitive));
+            return true;
+        }
+
+        if (agentExecution.primitive instanceof ActionDsl.ApplyKnownRedstoneSpec) {
+            applyPrimitiveOutcome(minecraft, action,
+                    agentExecution.menuPrimitives.tickAgentRedstone(minecraft, session,
+                            agentExecution.primitive, agentExecution.mutationAims));
+            return true;
+        }
+
+        return false;
+    }
+
+    /** 通常Actionの予算・一tick加算・JIT・node順序を所有する。 */
+    private void tickAgentProgram(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action, long now, MinecraftRecoveryGovernor.TickResult recovery) {
+        var player = minecraft.player;
+        var usedBeforeTick = agentActions.get(action.actionId()).progress();
+        boolean movementRejected = AgentInputState.global().consumeGoalMovementRejection();
+        long durationLimit = Duration.ofMillis(
+                action.program().effectiveBudget().maxDurationMillis()).toNanos();
+        if (usedBeforeTick.motionOverflowed()
+                || usedBeforeTick.distanceTravelled()
+                        > action.program().effectiveBudget().maxDistanceBlocks()
+                || usedBeforeTick.cameraDegrees()
+                        > action.program().effectiveBudget().maxCameraDegrees()) {
+            failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "motion");
+            return;
+        }
+        if (activeElapsedNanos(agentExecution, now) >= durationLimit) {
+            failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "duration");
+            return;
+        }
+        if (usedBeforeTick.ticks() >= action.program().effectiveBudget().maxTicks()) {
+            failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "ticks");
+            return;
+        }
+        // Vanilla can collect the witnessed item while the navigator is still reporting
+        // RUNNING. Honor that server-confirmed inventory delta only after the hard action
+        // gates, and before a vanished witness can be mistaken for a path failure.
+        if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItemBatch
+                && !reconcileCollectBatchEvidence(minecraft, session, action)) {
+            return;
+        }
+        if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem collect
+                && agentExecution.pickupInventoryBefore >= 0
+                && PlayerInventoryEvidence.pickupInventoryIncreased(
+                        agentExecution.pickupInventoryBefore,
+                        PlayerInventoryEvidence.inventoryItemCount(player, collect.displayedItem()))) {
+            completeAgentPrimitive(minecraft, action);
+            return;
+        }
+        agentActions.recordTick(action.actionId());
+        long actionTick = usedBeforeTick.ticks() + 1L;
+        if (agentExecution.replanning
+                && agentExecution.replanHeartbeatPending
+                && !movementRejected) {
+            agentActions.setPhase(
+                    action.actionId(), AgentActionStore.Phase.EXECUTING,
+                    "replan_heartbeat_verified");
+            agentExecution.replanning = false;
+            agentExecution.replanHeartbeatPending = false;
+            agentExecution.replanDeadlineTick = 0L;
+        }
+        if (movementRejected) {
+            if (agentExecution.primitive != null && agentExecution.occurrenceLimit != null) {
+                requestAgentReplan(actionTick, "unverified_actual_movement");
+            }
+            return;
+        }
+
+        if (agentExecution.primitive == null
+                && !advanceAgentProgram(minecraft, usedBeforeTick)) {
+            return;
+        }
+        if (agentExecution.occurrenceLimit == null
+                && !bindAgentPrimitive(
+                        minecraft,
+                        session,
+                        action,
+                        usedBeforeTick,
+                        actionTick)) {
+            return;
+        }
+        if (agentExecution.primitive
+                instanceof ActionDsl.OperateKnownCobblestoneGenerator
+                && (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
+                        || agentObservations.localSafety() == LocalObservationProjector.CurrentSafety.REPLAN)) {
+            failAgentAction(
+                    AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
+                    true,
+                    "cobblestone_generator_safety_changed");
+            return;
+        }
+        if (!(agentExecution.primitive instanceof ActionDsl.OperateKnownMenu)
+                && !(agentExecution.primitive instanceof ActionDsl.PillarUpKnown)
+                && (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
+                        || agentObservations.localSafety() == LocalObservationProjector.CurrentSafety.REPLAN)) {
+            if (ActionEvidence.isAgentWait(agentExecution.primitive)) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.PATH_BLOCKED,
+                        true,
+                        "local_safety_changed_during_wait");
+            } else {
+                requestAgentReplan(actionTick, "local_safety_changed");
+            }
+            return;
+        }
+        if (agentExecution.primitive
+                instanceof ActionDsl.HoldBoundedInputs hold) {
+            tickAgentBoundedInputHold(minecraft, session, action, hold, false);
+            return;
+        }
+        if (agentExecution.primitive
+                instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
+            tickAgentCobblestoneGenerator(minecraft, session, action, operation);
+            return;
+        }
+        if (ActionEvidence.isAgentWait(agentExecution.primitive)) {
+            if (occurrenceBudgetExceeded(
+                    agentActions.get(action.actionId()).progress(),
+                    agentExecution)) {
+                failAgentAction(
+                        AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                        false,
+                        "primitive_budget");
+                return;
+            }
+            applyPrimitiveOutcome(minecraft, action,
+                    agentExecution.waiting.tick(minecraft, session, agentExecution.primitive), false);
+            return;
+        }
+        if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod
+                && agentExecution.fishingAimComplete
+                || agentExecution.primitive instanceof ActionDsl.ReelKnownFishingSession) {
+            tickAgentFishing(minecraft, session, action);
+            return;
+        }
+        if (agentExecution.replanning
+                && ActionBudgets.replanDeadlineReached(actionTick, agentExecution.replanDeadlineTick)) {
+            failAgentAction(
+                    AgentActionStore.FailureCode.PATH_BLOCKED,
+                    true,
+                    "replan_deadline_exhausted");
+            return;
+        }
+        if (agentExecution.replanNotBeforeTick > actionTick) {
+            return;
+        }
+        if (occurrenceBudgetExceeded(
+                agentActions.get(action.actionId()).progress(),
+                agentExecution)) {
+            failAgentAction(
+                    AgentActionStore.FailureCode.BUDGET_EXCEEDED,
+                    false,
+                    "primitive_budget");
+            return;
+        }
+
+        ActionDsl.CollectVisibleItem activeCollect = activeCollectTarget();
+        if (activeCollect != null
+                && (agentExecution.pickupInventoryBefore >= 0
+                        || agentExecution.collectBatchEvidence != null)) {
+            if (agentExecution.pickupArrivalTick >= 0L) {
+                tickAgentPickupConfirmation(minecraft, session, action, activeCollect);
+                return;
+            }
+            if (agentExecution.pickupCell != null) {
+                var pickupMap = agentObservations.requireAgentMap(session);
+                long visualBarrierWorldRevision = ActionEvidence.visualBarrierWorldRevision(
+                        pickupMap,
+                        reconciliationSignals.bindAndSnapshot(
+                                Objects.requireNonNull(minecraft.level, "level"),
+                                session.worldSessionId()));
+                if (!AgentPrimitivePlanner.visibleItemPickupCellCurrent(
+                        pickupMap,
+                        agentObservations.agentPlanningFrame(),
+                        activeCollect,
+                        agentExecution.pickupCell,
+                        visualBarrierWorldRevision,
+                        session.clientTick(),
+                        ActionBudgets.visibleItemEvidenceMaxAgeTicks(
+                                McmcpClientConfig.raysPerTick()))) {
+                    requestAgentReplan(actionTick, "pickup_witness_changed");
+                    return;
+                }
+            }
+        }
+
+        if (dispatchSemanticPrimitive(minecraft, session, action, actionTick)) return;
+        tickAgentMovement(minecraft, session, action, usedBeforeTick, actionTick, durationLimit);
+    }
+
+    private void tickAgentMovement(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action, AgentActionStore.Progress usedBeforeTick,
+            long actionTick, long durationLimit) {
+        var player = minecraft.player;
+        KnownTraversabilitySnapshot map = agentObservations.requireAgentMap(session);
+        if (agentExecution.movement.active()
+                && (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition
+                        || agentExecution.primitive instanceof ActionDsl.FaceKnownBlockFace
+                        || KnownBreakSafety.isKnownBreak(agentExecution.primitive)
+                        || agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod)) {
+            var faceReconciliation = reconciliationSignals.bindAndSnapshot(
+                    Objects.requireNonNull(minecraft.level, "level"),
+                    session.worldSessionId());
+            var faceSurfaceBarrier = ActionEvidence.surfaceRevisionBarrier(map, faceReconciliation);
+            boolean faceEvidenceCurrent;
+            if (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition face) {
+                faceEvidenceCurrent = AgentPrimitivePlanner.knownFacingTarget(
+                        map, agentObservations.agentPlanningFrame(), face.target());
+            } else if (agentExecution.primitive instanceof ActionDsl.FaceKnownBlockFace face) {
+                faceEvidenceCurrent = AgentPrimitivePlanner.knownFacingSurface(
+                        map,
+                        agentObservations.agentPlanningFrame(),
+                        new AgentPrimitivePlanner.KnownSurface(
+                                face.target(), face.face(), face.expectedBlock()));
+            } else if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod cast) {
+                faceEvidenceCurrent = AgentPrimitivePlanner.knownExactSurface(
+                        map,
+                        agentObservations.agentPlanningFrame(),
+                        cast.target(),
+                        cast.face(),
+                        cast.expectedState(),
+                        faceSurfaceBarrier.applyAsLong(cast.target()));
+            } else {
+                var block = agentExecution.primitive;
+                faceEvidenceCurrent = AgentPrimitivePlanner.knownSurface(
+                        map,
+                        agentObservations.agentPlanningFrame(),
+                        new AgentPrimitivePlanner.KnownSurface(
+                                KnownBreakSafety.breakTarget(block), KnownBreakSafety.breakFace(block), KnownBreakSafety.breakBlockId(block)),
+                        faceSurfaceBarrier.applyAsLong(KnownBreakSafety.breakTarget(block)));
+                if (faceEvidenceCurrent && block instanceof ActionDsl.BreakKnownBlock exact) {
+                    try {
+                        AgentPrimitivePlanner.requireKnownBreakSurface(
+                                map, agentObservations.agentPlanningFrame(), exact,
+                                faceSurfaceBarrier.applyAsLong(exact.target()));
+                    } catch (AgentPrimitivePlanner.PlanningException unavailable) {
+                        faceEvidenceCurrent = false;
+                    }
+                }
+            }
+            if (!faceEvidenceCurrent) {
+                requestAgentReplan(actionTick, "face_target_reobservation");
+                return;
+            }
+        }
+        if (KnownBreakSafety.isKnownBreak(agentExecution.primitive)
+                && agentExecution.breaking.aimComplete()) {
+            tickAgentBreak(
+                    minecraft, session, action, map, agentExecution.primitive);
+            return;
+        }
+        if (!agentExecution.movement.active()
+                && !beginAgentPrimitive(
+                        minecraft, action, map, usedBeforeTick, session.clientTick())) {
+            return;
+        }
+        if (activeElapsedNanos(agentExecution, System.nanoTime()) >= durationLimit) {
+            failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "duration");
+            return;
+        }
+        final MinecraftActionPrimitiveExecutor.TickResult result;
+        try {
+            result = agentExecution.movement.tick(
+                    minecraft,
+                    map,
+                    LocalObservationVolume.global(),
+                    remainingDistance(
+                            usedBeforeTick,
+                            action.program().effectiveBudget(),
+                            agentExecution),
+                    remainingCameraDegrees(
+                            usedBeforeTick,
+                            action.program().effectiveBudget(),
+                            agentExecution),
+                    actionTick,
+                    () -> activeElapsedNanos(agentExecution, System.nanoTime())
+                            < durationLimit);
+        } finally {
+            recordAgentMotion(action.actionId(), player);
+        }
+        AgentInputState.global().capMovementValidity(actionMovementDeadline(
+                agentExecution, durationLimit, System.nanoTime()));
+        if (activeElapsedNanos(agentExecution, System.nanoTime()) >= durationLimit) {
+            failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "duration");
+            return;
+        }
+        var usedAfterTick = agentActions.get(action.actionId()).progress();
+        if (ActionBudgets.motionBudgetExceededAfterPrimitive(
+                usedAfterTick,
+                action.program().effectiveBudget(),
+                agentExecution.primitive,
+                result.status())
+                || occurrenceBudgetExceededAfterPrimitive(
+                        usedAfterTick,
+                        agentExecution,
+                        result.status())) {
+            failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "motion");
+            return;
+        }
+        // The movement tick itself can enter the pickup area and let vanilla collect the
+        // witnessed item before the next observation frame. Bind contact against the still
+        // fresh policy-visible AABB and reconcile the post-move absolute inventory now.
+        if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItemBatch
+                && !reconcileCollectBatchEvidence(minecraft, session, action)) {
+            return;
+        }
+        switch (result.status()) {
+            case RUNNING -> {
+                if (ActionBudgets.shouldVerifyReplanHeartbeat(agentExecution.replanning, result)) {
+                    agentExecution.replanHeartbeatPending = true;
+                }
+            }
+            case SUCCEEDED -> {
+                if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod) {
+                    agentExecution.fishingAimComplete = true;
+                    agentExecution.replanning = false;
+                    agentExecution.replanNotBeforeTick = 0L;
+                    agentExecution.replanDeadlineTick = 0L;
+                    return;
+                }
+                if (KnownBreakSafety.isKnownBreak(agentExecution.primitive)) {
+                    agentExecution.breaking.aimed();
+                    agentExecution.replanning = false;
+                    agentExecution.replanNotBeforeTick = 0L;
+                    agentExecution.replanDeadlineTick = 0L;
+                    return;
+                }
+                ActionDsl.CollectVisibleItem completedCollect = activeCollectTarget();
+                if (completedCollect != null) {
+                    long visualBarrierWorldRevision = ActionEvidence.visualBarrierWorldRevision(
+                            map,
+                            reconciliationSignals.bindAndSnapshot(
+                                    Objects.requireNonNull(minecraft.level, "level"),
+                                    session.worldSessionId()));
+                    var itemBounds = AgentPrimitivePlanner.visibleItemAabb(
+                            map,
+                            agentObservations.agentPlanningFrame(),
+                            completedCollect,
+                            visualBarrierWorldRevision,
+                            session.clientTick(),
+                            ActionBudgets.visibleItemEvidenceMaxAgeTicks(McmcpClientConfig.raysPerTick()));
+                    if (itemBounds.isEmpty() || !PlayerInventoryEvidence.playerPickupAreaIntersects(
+                            Objects.requireNonNull(minecraft.player, "player").getBoundingBox(),
+                            itemBounds.orElseThrow())) {
+                        requestAgentReplan(actionTick, "pickup_area_unreached");
+                        return;
+                    }
+                    if (agentExecution.primitive
+                            instanceof ActionDsl.CollectVisibleItemBatch) {
+                        agentExecution.collectBatchEvidence.recordContact(
+                                agentExecution.collectBatchIndex, session.clientTick());
+                    }
+                    closeAgentPrimitiveExecutor();
+                    agentExecution.pickupArrivalTick = session.clientTick();
+                    return;
+                }
+                closeAgentPrimitiveExecutor();
+                agentActions.completeNode(action.actionId());
+                agentExecution.primitive = null;
+                agentExecution.replanning = false;
+                agentExecution.replanNotBeforeTick = 0L;
+                agentExecution.replanDeadlineTick = 0L;
+                advanceAgentProgram(minecraft, usedAfterTick);
+            }
+            case REPLAN_REQUIRED -> requestAgentReplan(
+                    actionTick, result.reason().name().toLowerCase(Locale.ROOT));
+            case FAILED -> failAgentAction(
+                    result.reason() == MinecraftActionPrimitiveExecutor.Reason.WORLD_UNAVAILABLE
+                                    || result.reason()
+                                    == MinecraftActionPrimitiveExecutor.Reason.WORLD_BOUNDARY_CHANGED
+                            ? AgentActionStore.FailureCode.WORLD_CHANGED
+                            : AgentActionStore.FailureCode.INTERNAL_ERROR,
+                    false,
+                    result.reason().name().toLowerCase(Locale.ROOT));
         }
     }
 
@@ -2666,16 +2651,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         agentExecution.occurrenceLimit = null;
         agentExecution.retainOccurrenceBaseline = false;
         agentExecution.primitivePlanning = false;
-        agentExecution.mutationAimFailures = 0;
-        agentExecution.mutationBatchPlan = null;
-        agentExecution.mutationBatchIndex = 0;
-        agentExecution.mutationBatchTarget = null;
-        agentExecution.mutationBatchTargetAim = null;
-        agentExecution.mutationBatchTargetBound = false;
-        agentExecution.mutationBatchTargetDeadlineTick = 0L;
+        agentExecution.mutation.resetOccurrence();
         agentExecution.collectBatchIndex = 0;
         agentExecution.collectBatchEvidence = null;
-        agentExecution.cropWaitAuthorization = null;
+        agentExecution.waiting.begin(advance.primitive());
         agentExecution.fishingAimComplete = false;
         agentExecution.primitivePlanDeadlineTick = Math.addExact(
                 occurrenceBaseline.ticks(), ActionEvidence.primitiveReobservationTicks(advance.primitive()));
@@ -2698,11 +2677,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         agentActions.beginNode(agentExecution.actionId, advance.primitive().id());
         if (advance.primitive() instanceof ActionDsl.WaitTicks wait) {
-            agentExecution.waitTicksRemaining = wait.ticks();
             agentExecution.occurrenceLimit = agentExecution.program.primitiveCostBounds()
                     .get(advance.primitive().id());
-        } else if (advance.primitive() instanceof ActionDsl.WaitUntil wait) {
-            agentExecution.waitTicksRemaining = wait.maxTicks();
         }
         if (advance.primitive() instanceof ActionDsl.WaitTicks
                 && agentExecution.occurrenceLimit == null) {
@@ -2818,17 +2794,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 var currentAim = AgentPrimitivePlanner.requireFrameItemAim(
                         map, ActionPlanning.playerPose(player, session.dimension()), planningFrame,
                         agentExecution.primitive, visualBarrierWorldRevision);
-                if (!ActionEvidence.frameItemEvidenceFresh(currentAim, session.clientTick())
-                        || !ActionEvidence.sameFrameItemAuthorization(agentExecution.frameItemAim, currentAim)) {
+                if (!agentExecution.frameItem.reauthorize(currentAim, session.clientTick())) {
                     failAgentAction(AgentActionStore.FailureCode.WORLD_CHANGED,
                             false, "frame_item_authorization_changed");
                     return false;
                 }
-                agentExecution.frameItemAim = currentAim;
             }
             Optional.ofNullable(analysis.mutationBatchPlans().get(agentExecution.primitive.id()))
-                    .ifPresent(plan -> agentExecution.mutationBatchPlan = plan);
-            agentExecution.cropWaitAuthorization = cropWaitAuthorization;
+                    .ifPresent(agentExecution.mutation::bindPlan);
+            agentExecution.waiting.authorize(cropWaitAuthorization);
             agentExecution.primitivePlanDeadlineTick = 0L;
             if (agentExecution.primitivePlanning) {
                 agentActions.setPhase(
@@ -2873,436 +2847,28 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
-    private CropWaitLiveState authorizedCropWaitLiveState(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            ActionDsl.WaitUntil wait,
-            CropWaitAuthorization authorization) {
-        var level = minecraft.level;
-        var player = minecraft.player;
-        if (level == null || player == null) {
-            return CropWaitLiveState.WORLD_CHANGED;
-        }
-        var reconciliation = reconciliationSignals.bindAndSnapshot(
-                level, session.worldSessionId());
-        CropWaitVisibilityState visibility = ActionEvidence.cropWaitVisibilityState(
-                authorization,
-                session,
-                ((ActionDsl.CropMatureCondition) wait.condition()).target(),
-                reconciliation.visualBarrierWorldRevision(),
-                player.position(),
-                player.getEyePosition());
-        if (visibility == CropWaitVisibilityState.WORLD_CHANGED) {
-            return CropWaitLiveState.WORLD_CHANGED;
-        }
-        if (visibility == CropWaitVisibilityState.VISIBILITY_INVALIDATED) {
-            return CropWaitLiveState.VISIBILITY_INVALIDATED;
-        }
-        ActionDsl.Position target = authorization.target();
-        var position = new BlockPos(target.x(), target.y(), target.z());
-        if (!level.isLoaded(position) || !level.getWorldBorder().isWithinBounds(position)) {
-            return CropWaitLiveState.UNLOADED;
-        }
-        // The authorization is coordinate-exact; do not inspect any neighboring or hidden state.
-        return ActionEvidence.cropWaitLiveState(true, level.getBlockState(position));
-    }
-
-    private boolean soundClueMatched(
-            Minecraft minecraft, ActionDsl.SoundClueCondition condition, long currentTick) {
-        var player = minecraft.player;
-        FishingHook hook = player == null ? null : player.fishing;
-        if (player == null || !PlayerInventoryEvidence.ownedFishingHook(player, hook, null)
-                || !ActionEvidence.pointInside(condition.bounds(), sessions.snapshot().dimension(),
-                        hook.getX(), hook.getY(), hook.getZ())) {
-            return false;
-        }
-        List<ObservationRecord.SoundClue> nearby = agentObservations.soundClues().snapshot(currentTick).clues()
-                .stream()
-                .filter(clue -> {
-                    double dx = clue.position().x() - hook.getX();
-                    double dy = clue.position().y() - hook.getY();
-                    double dz = clue.position().z() - hook.getZ();
-                    return dx * dx + dy * dy + dz * dz <= 4.0;
-                })
-                .toList();
-        return ActionEvidence.soundClueMatches(condition, currentTick, nearby);
-    }
-
-    private boolean beginAgentPrimitive(
-            Minecraft minecraft,
-            AgentActionStore.Active action,
-            KnownTraversabilitySnapshot map,
-            AgentActionStore.Progress progressBeforeTick,
-            long currentTick) {
-        var player = Objects.requireNonNull(minecraft.player, "player");
-        ActionDslCompiler.Cost cost;
+    private boolean beginAgentPrimitive(Minecraft minecraft, AgentActionStore.Active action,
+            KnownTraversabilitySnapshot map, AgentActionStore.Progress progressBeforeTick, long currentTick) {
         try {
-            var reconciliation = reconciliationSignals.bindAndSnapshot(
-                    Objects.requireNonNull(minecraft.level, "level"),
-                    map.worldSessionId());
-            long visualBarrierWorldRevision = ActionEvidence.visualBarrierWorldRevision(map, reconciliation);
-            var surfaceRevisionBarrier = ActionEvidence.surfaceRevisionBarrier(map, reconciliation);
-            if (agentExecution.primitive instanceof ActionDsl.NavigateToKnown navigate) {
-                RoutePlan route = AgentPrimitivePlanner.requireRoute(
-                        map,
-                        agentPathfinder,
-                        ActionPlanning.playerCell(player, map.dimension()),
-                        navigate.target());
-                var pose = ActionPlanning.playerPose(player, map.dimension());
-                cost = agentExecution.replanning
-                        ? AgentPrimitivePlanner.navigationReplanCost(route, pose)
-                        : AgentPrimitivePlanner.navigationCost(route, pose);
-                if (agentExecution.replanning) {
-                    String evidence = ActionBudgets.replannedRouteBudgetFailure(
-                            progressBeforeTick,
-                            agentExecution.occurrenceBaseline,
-                            agentExecution.occurrenceLimit,
-                            action.program().effectiveBudget(),
-                            cost,
-                            activeElapsedNanos(agentExecution, System.nanoTime()));
-                    if (evidence != null) {
-                        failAgentAction(
-                                AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                                false,
-                                evidence);
-                        return false;
-                    }
-                } else if (!ActionBudgets.fitsRemainingBudget(
-                                progressBeforeTick,
-                                action.program().effectiveBudget(),
-                                cost,
-                                activeElapsedNanos(agentExecution, System.nanoTime()))) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                            false,
-                            "navigate_to_known");
-                    return false;
-                } else if (!fitsOccurrenceRemaining(
-                        progressBeforeTick, agentExecution, cost)) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                            false,
-                            "primitive_navigate_to_known");
-                    return false;
+            PrimitiveOutcome outcome;
+            try {
+                outcome = agentExecution.movement.begin(minecraft, action, map, progressBeforeTick, currentTick,
+                        agentExecution.primitive, new MovementExecution.BudgetEvidence(
+                                agentExecution.occurrenceBaseline, agentExecution.occurrenceLimit,
+                                agentExecution.startedAtNanos, agentExecution.pausedNanos),
+                        agentExecution.replanning, agentExecution.mutationAims,
+                        activeCollectTarget(), agentExecution.pickupInventoryBefore);
+            } finally {
+                if (agentExecution.movement.selectedSlot() >= 0) {
+                    agentExecution.agentSelectedSlot = agentExecution.movement.selectedSlot();
                 }
-                agentExecution.primitiveExecutor.beginNavigate(route, navigate.tolerance());
-            } else if (agentExecution.primitive instanceof ActionDsl.ApproachKnownSurface approach) {
-                Optional<ObservationFrame> approachFrame = agentObservations.agentPlanningFrame();
-                long approachSurfaceBarrier =
-                        surfaceRevisionBarrier.applyAsLong(approach.target());
-                var pose = ActionPlanning.playerPose(player, map.dimension());
-                AgentPrimitivePlanner.ApproachPlan plan =
-                        ActionPlanning.requireRuntimeApproachPlan(
-                                map,
-                                agentPathfinder,
-                                pose,
-                                approach,
-                                approachFrame,
-                                approachSurfaceBarrier);
-                cost = agentExecution.replanning
-                        ? AgentPrimitivePlanner.navigationReplanCost(plan.route(), pose)
-                        : AgentPrimitivePlanner.navigationCost(plan.route(), pose);
-                if (agentExecution.replanning) {
-                    String evidence = ActionBudgets.replannedRouteBudgetFailure(
-                            progressBeforeTick,
-                            agentExecution.occurrenceBaseline,
-                            agentExecution.occurrenceLimit,
-                            action.program().effectiveBudget(),
-                            cost,
-                            activeElapsedNanos(agentExecution, System.nanoTime()));
-                    if (evidence != null) {
-                        failAgentAction(
-                                AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                                false,
-                                evidence);
-                        return false;
-                    }
-                } else if (!ActionBudgets.fitsRemainingBudget(
-                                progressBeforeTick,
-                                action.program().effectiveBudget(),
-                                cost,
-                                activeElapsedNanos(agentExecution, System.nanoTime()))
-                        || !fitsOccurrenceRemaining(
-                                progressBeforeTick, agentExecution, cost)) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                            false,
-                            "approach_known_surface");
-                    return false;
+                if (isCollectPrimitive(agentExecution.primitive)
+                        && agentExecution.movement.pickupCell() != null) {
+                    agentExecution.pickupCell = agentExecution.movement.pickupCell();
                 }
-                agentExecution.primitiveExecutor.beginNavigate(plan.route(), 0.25D);
-            } else if (agentExecution.primitive
-                    instanceof ActionDsl.ApproachKnownPlacement approach) {
-                var pose = ActionPlanning.playerPose(player, map.dimension());
-                AgentPrimitivePlanner.ApproachPlan plan =
-                        ActionPlanning.requireRuntimeKnownPlacementApproachPlan(
-                                map,
-                                agentPathfinder,
-                                pose,
-                                approach,
-                                agentObservations.agentPlanningFrame(),
-                                surfaceRevisionBarrier,
-                                agentObservations.deliveredEvidence()::resolvePlacementState);
-                cost = agentExecution.replanning
-                        ? AgentPrimitivePlanner.navigationReplanCost(plan.route(), pose)
-                        : AgentPrimitivePlanner.navigationCost(plan.route(), pose);
-                if (agentExecution.replanning) {
-                    String evidence = ActionBudgets.replannedRouteBudgetFailure(
-                            progressBeforeTick,
-                            agentExecution.occurrenceBaseline,
-                            agentExecution.occurrenceLimit,
-                            action.program().effectiveBudget(),
-                            cost,
-                            activeElapsedNanos(agentExecution, System.nanoTime()));
-                    if (evidence != null) {
-                        failAgentAction(
-                                AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                                false,
-                                evidence);
-                        return false;
-                    }
-                } else if (!ActionBudgets.fitsRemainingBudget(
-                                progressBeforeTick,
-                                action.program().effectiveBudget(),
-                                cost,
-                                activeElapsedNanos(agentExecution, System.nanoTime()))
-                        || !fitsOccurrenceRemaining(
-                                progressBeforeTick, agentExecution, cost)) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                            false,
-                            "approach_known_placement");
-                    return false;
-                }
-                agentExecution.primitiveExecutor.beginNavigate(plan.route(), 0.25D);
-            } else if (agentExecution.primitive instanceof ActionDsl.FaceKnownPosition face) {
-                var target = AgentPrimitivePlanner.requireKnownFaceTarget(
-                        map,
-                        agentObservations.agentPlanningFrame(),
-                        face.target());
-                cost = AgentPrimitivePlanner.faceCost(
-                        ActionPlanning.playerPose(player, map.dimension()),
-                        face.target(),
-                        McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
-                if (!ActionBudgets.fitsRemainingBudget(
-                        progressBeforeTick,
-                        action.program().effectiveBudget(),
-                        cost,
-                        activeElapsedNanos(agentExecution, System.nanoTime()))) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED, false, "face_target");
-                    return false;
-                }
-                if (!fitsOccurrenceRemaining(
-                        progressBeforeTick, agentExecution, cost)) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                            false,
-                            "primitive_face_target");
-                    return false;
-                }
-                agentExecution.primitiveExecutor.beginFace(target, cost.ticks());
-            } else if (agentExecution.primitive instanceof ActionDsl.FaceKnownBlockFace face) {
-                var target = AgentPrimitivePlanner.requireKnownBlockFaceTarget(
-                        map,
-                        agentObservations.agentPlanningFrame(),
-                        face);
-                cost = AgentPrimitivePlanner.faceCost(
-                        ActionPlanning.playerPose(player, map.dimension()),
-                        face,
-                        McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
-                if (!ActionBudgets.fitsRemainingBudget(
-                        progressBeforeTick,
-                        action.program().effectiveBudget(),
-                        cost,
-                        activeElapsedNanos(agentExecution, System.nanoTime()))) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                            false,
-                            "face_block_target");
-                    return false;
-                }
-                if (!fitsOccurrenceRemaining(
-                        progressBeforeTick, agentExecution, cost)) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                            false,
-                            "primitive_face_block_target");
-                    return false;
-                }
-                agentExecution.primitiveExecutor.beginFace(target, cost.ticks());
-            } else if (agentExecution.primitive instanceof ActionDsl.BreakKnownFace block) {
-                AgentPrimitivePlanner.MutationAim breakAim =
-                        AgentPrimitivePlanner.requireKnownBreakAim(
-                        map,
-                        agentObservations.agentPlanningFrame(),
-                        block,
-                        surfaceRevisionBarrier.applyAsLong(block.target()));
-                cost = AgentPrimitivePlanner.breakCost(
-                        ActionPlanning.playerPose(player, map.dimension()),
-                        block,
-                        breakAim.point(),
-                        McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
-                long aimTicks = ActionBudgets.breakAimTicks(cost);
-                cost = ActionBudgets.breakExecutionCost(cost, agentExecution.replanning);
-                if (!ActionBudgets.fitsRemainingBudget(
-                        progressBeforeTick,
-                        action.program().effectiveBudget(),
-                        cost,
-                        activeElapsedNanos(agentExecution, System.nanoTime()))
-                        || !fitsOccurrenceRemaining(
-                                progressBeforeTick, agentExecution, cost)) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                            false,
-                            "break_known_face");
-                    return false;
-                }
-                int remainingBreaks = Math.toIntExact(Math.max(
-                        1L,
-                        action.program().worstCaseCost().blocksBroken()
-                                - progressBeforeTick.blocksBroken()));
-                int toolSlot = KnownBreakSafety.findDurableHotbarTool(
-                        player, block.toolItem(), remainingBreaks);
-                if (toolSlot < 0 || !KnownBreakSafety.inventoryCanReceiveKnownBreakDrops(
-                        player, action.program())) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.WORLD_CHANGED,
-                            true,
-                            toolSlot < 0 ? "required_axe_unavailable" : "inventory_full");
-                    return false;
-                }
-                player.getInventory().setSelectedSlot(toolSlot);
-                agentExecution.agentSelectedSlot = toolSlot;
-                agentExecution.primitiveExecutor.beginFace(
-                        new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
-                                map.worldSessionId(), map.worldRevision(),
-                                block.target(), breakAim.point().x,
-                                breakAim.point().y, breakAim.point().z, true),
-                        aimTicks);
-            } else if (agentExecution.primitive instanceof ActionDsl.BreakKnownBlock block) {
-                AgentPrimitivePlanner.MutationAim breakAim =
-                        AgentPrimitivePlanner.requireKnownBreakAim(
-                                map,
-                                agentObservations.agentPlanningFrame(),
-                                block,
-                                surfaceRevisionBarrier.applyAsLong(block.target()));
-                cost = AgentPrimitivePlanner.breakCost(
-                        ActionPlanning.playerPose(player, map.dimension()),
-                        block,
-                        breakAim.point(),
-                        McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
-                long aimTicks = ActionBudgets.breakAimTicks(cost);
-                cost = ActionBudgets.breakExecutionCost(cost, agentExecution.replanning);
-                if (!ActionBudgets.fitsRemainingBudget(
-                        progressBeforeTick,
-                        action.program().effectiveBudget(),
-                        cost,
-                        activeElapsedNanos(agentExecution, System.nanoTime()))
-                        || !fitsOccurrenceRemaining(
-                                progressBeforeTick, agentExecution, cost)) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                            false,
-                            "break_known_block");
-                    return false;
-                }
-                int remainingBreaks = Math.toIntExact(Math.max(
-                        1L,
-                        action.program().worstCaseCost().blocksBroken()
-                                - progressBeforeTick.blocksBroken()));
-                int toolSlot = KnownBreakSafety.findDurableHotbarTool(
-                        player, block.toolItem(), remainingBreaks);
-                if (toolSlot < 0 || !KnownBreakSafety.inventoryCanReceiveKnownBreakDrops(
-                        player, action.program())) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.WORLD_CHANGED,
-                            true,
-                            toolSlot < 0 ? "required_tool_unavailable" : "inventory_full");
-                    return false;
-                }
-                player.getInventory().setSelectedSlot(toolSlot);
-                agentExecution.agentSelectedSlot = toolSlot;
-                agentExecution.primitiveExecutor.beginFace(
-                        new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
-                                map.worldSessionId(), map.worldRevision(),
-                                block.target(), breakAim.point().x,
-                                breakAim.point().y, breakAim.point().z, true),
-                        aimTicks);
-            } else if (agentExecution.primitive instanceof ActionDsl.CastKnownFishingRod cast) {
-                if (!PlayerInventoryEvidence.exactFishingRodHeld(player, cast.hand(), cast.rodItem())
-                        || player.fishing != null) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.WORLD_CHANGED,
-                            true,
-                            player.fishing == null
-                                    ? "required_fishing_rod_unavailable"
-                                    : "owned_bobber_already_present");
-                    return false;
-                }
-                AgentPrimitivePlanner.MutationAim aim = Objects.requireNonNull(
-                        agentExecution.mutationAims.get(cast.id()), "fishing cast aim");
-                cost = Objects.requireNonNull(
-                        agentExecution.occurrenceLimit, "fishing cast cost");
-                agentExecution.primitiveExecutor.beginFace(
-                        new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
-                                map.worldSessionId(), map.worldRevision(), cast.target(),
-                                aim.point().x, aim.point().y, aim.point().z, true),
-                        Math.max(1L, Math.min(600L, cost.ticks())));
-            } else if (isCollectPrimitive(agentExecution.primitive)) {
-                ActionDsl.CollectVisibleItem collect = Objects.requireNonNull(
-                        activeCollectTarget(), "active collect target");
-                AgentPrimitivePlanner.PickupPlan pickup = AgentPrimitivePlanner.requirePickupPlan(
-                        map,
-                        agentPathfinder,
-                        ActionPlanning.playerCell(player, map.dimension()),
-                        agentObservations.agentPlanningFrame(),
-                        collect,
-                        visualBarrierWorldRevision,
-                        currentTick,
-                        ActionBudgets.visibleItemEvidenceMaxAgeTicks(McmcpClientConfig.raysPerTick()));
-                var pose = ActionPlanning.playerPose(player, map.dimension());
-                cost = agentExecution.replanning
-                        ? AgentPrimitivePlanner.pickupReplanCost(pickup.route(), pose)
-                        : AgentPrimitivePlanner.pickupCost(pickup.route(), pose);
-                if (agentExecution.replanning) {
-                    String evidence = ActionBudgets.replannedRouteBudgetFailure(
-                            progressBeforeTick,
-                            agentExecution.occurrenceBaseline,
-                            agentExecution.occurrenceLimit,
-                            action.program().effectiveBudget(),
-                            cost,
-                            activeElapsedNanos(agentExecution, System.nanoTime()));
-                    if (evidence != null) {
-                        failAgentAction(
-                                AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                                false,
-                                evidence);
-                        return false;
-                    }
-                } else if (!ActionBudgets.fitsRemainingBudget(
-                                progressBeforeTick,
-                                action.program().effectiveBudget(),
-                                cost,
-                                activeElapsedNanos(agentExecution, System.nanoTime()))
-                        || !fitsOccurrenceRemaining(
-                                progressBeforeTick, agentExecution, cost)) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                            false,
-                            "collect_visible_item");
-                    return false;
-                }
-                if (agentExecution.primitive instanceof ActionDsl.CollectVisibleItem
-                        && agentExecution.pickupInventoryBefore < 0) {
-                    throw new IllegalStateException(
-                            "collect occurrence inventory baseline was not captured");
-                }
-                agentExecution.pickupCell = pickup.pickupCell();
-                agentExecution.primitiveExecutor.beginNavigate(pickup.route(), 0.25D);
-            } else {
-                failAgentAction(
-                        AgentActionStore.FailureCode.INTERNAL_ERROR, false, "primitive_unavailable");
+            }
+            if (outcome.failure() != null) {
+                applyPrimitiveOutcome(minecraft, action, outcome);
                 return false;
             }
         } catch (AgentPrimitivePlanner.PlanningException unavailable) {
@@ -3503,673 +3069,68 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
     }
 
-    private void tickAgentBreak(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action,
-            KnownTraversabilitySnapshot map,
-            ActionDsl.Node block,
-            long actionTick) {
-        var player = Objects.requireNonNull(minecraft.player, "player");
-        if (agentExecution.blockBreakAttempt == null) {
-            var reconciliation = reconciliationSignals.bindAndSnapshot(
-                    Objects.requireNonNull(minecraft.level, "level"),
-                    session.worldSessionId());
-            long surfaceBarrierWorldRevision = ActionEvidence.surfaceRevisionBarrier(map, reconciliation)
-                    .applyAsLong(KnownBreakSafety.breakTarget(block));
-            if (!KnownBreakSafety.breakTargetStateMatches(minecraft, block)) {
-                failAgentAction(
-                        AgentActionStore.FailureCode.WORLD_CHANGED,
-                        true,
-                        "break_target_changed");
-                return;
-            }
-            if (!AgentPrimitivePlanner.knownSurface(
-                            map,
-                            agentObservations.agentPlanningFrame(),
-                            new AgentPrimitivePlanner.KnownSurface(
-                                    KnownBreakSafety.breakTarget(block), KnownBreakSafety.breakFace(block), KnownBreakSafety.breakBlockId(block)),
-                            surfaceBarrierWorldRevision)
-                    || !KnownBreakSafety.breakSourceControlled(minecraft, block)) {
-                requestAgentReplan(actionTick, "break_target_reobservation");
-                return;
-            }
-            try {
-                var target = new BlockTarget(
-                        KnownBreakSafety.breakTarget(block).dimension(),
-                        KnownBreakSafety.breakTarget(block).x(),
-                        KnownBreakSafety.breakTarget(block).y(),
-                        KnownBreakSafety.breakTarget(block).z());
-                var expected = stationaryBreakPort.captureExpectedSource(
-                        target, Set.of(KnownBreakSafety.breakBlockId(block)));
-                if (block instanceof ActionDsl.BreakKnownBlock exact) {
-                    var declared = new BlockStateFingerprint(
-                            exact.expectedState().block(), exact.expectedState().properties());
-                    if (!expected.equals(declared)) {
-                        requestAgentReplan(actionTick, "break_precondition_changed");
-                        return;
-                    }
-                    SafeBreakSourcePolicy.requireKnownBlockCombination(
-                            exact.expectedState().block(),
-                            exact.toolItem(),
-                            exact.expectedDrop());
-                }
-                int minimumInventoryCount = block instanceof ActionDsl.BreakKnownBlock exact
-                        ? exact.minimumInventoryCount()
-                        : Math.min(2_304, Math.addExact(
-                                PlayerInventoryEvidence.inventoryItemCount(player, KnownBreakSafety.breakExpectedDrop(block)), 1));
-                var request = new StationaryBreakRequest(
-                        target,
-                        expected,
-                        new StationaryBreakGoal(
-                                KnownBreakSafety.breakExpectedDrop(block), minimumInventoryCount),
-                        Math.addExact(
-                                session.clientTick(),
-                                AgentPrimitivePlanner.BREAK_TICK_UPPER_BOUND),
-                        StationaryBreakRequest.MAX_ATTACK_LEASE_TICKS,
-                        1);
-                agentExecution.blockBreakAttempt = new KnownBlockBreakAttempt(
-                        stationaryBreakPort, request, session.clientTick());
-                return;
-            } catch (SafeBreakSourcePolicy.UnsafeBreakSourceException
-                    | IllegalArgumentException changed) {
-                requestAgentReplan(actionTick, "break_precondition_changed");
-                return;
-            } catch (RuntimeException | LinkageError failure) {
-                McmcpMod.LOGGER.error("MCMCP known-face break could not start", failure);
-                failAgentAction(
-                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                        true,
-                        "break_start_failed");
-                return;
-            }
-        }
+    private void tickAgentBreak(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action, KnownTraversabilitySnapshot map, ActionDsl.Node block) {
+        applyPrimitiveOutcome(minecraft, action,
+                agentExecution.breaking.tick(minecraft, session, action, map, block));
+    }
 
-        final KnownBlockBreakAttempt.TickResult result;
+    private void tickAgentBoundedInputHold(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action, ActionDsl.HoldBoundedInputs hold, boolean recordTick) {
+        applyPrimitiveOutcome(minecraft, action,
+                agentExecution.boundedInput.tick(minecraft, session, action, hold, recordTick,
+                        agentExecution.startedAtNanos, agentExecution.pausedNanos,
+                        agentExecution.latestWorldRevision, agentObservations.localSafety()), false);
+    }
+
+    private void tickAgentCobblestoneGenerator(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action, ActionDsl.OperateKnownCobblestoneGenerator operation) {
+        PrimitiveOutcome outcome;
         try {
-            result = agentExecution.blockBreakAttempt.tick(
-                    session.clientTick(), KnownBreakSafety.breakSourceControlled(minecraft, block));
-            recordBreakEffects(
-                    action.actionId(), KnownBreakSafety.breakTarget(block),
-                    agentExecution.blockBreakAttempt.drainEffectDeltas());
-        } catch (RuntimeException | LinkageError failure) {
-            McmcpMod.LOGGER.error("MCMCP known-face break confirmation failed", failure);
-            failAgentAction(
-                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                    true,
-                    "break_confirmation_failed");
-            return;
-        }
-        switch (result) {
-            case RUNNING -> { }
-            case SERVER_DENIED_OR_DESYNC -> failAgentAction(
-                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                    true,
-                    "break_not_server_confirmed");
-            case SUCCEEDED -> {
-                agentExecution.blockBreakAttempt = null;
-                agentActions.recordBlockBreak(action.actionId());
-                agentActions.completeNode(action.actionId());
-                agentExecution.primitive = null;
-                agentExecution.breakAimComplete = false;
-                agentExecution.replanning = false;
-                agentExecution.replanNotBeforeTick = 0L;
-                agentExecution.replanDeadlineTick = 0L;
-                advanceAgentProgram(
-                        minecraft, agentActions.get(action.actionId()).progress());
-            }
-        }
-    }
-
-    private void recordBreakEffects(
-            UUID actionId,
-            ActionDsl.Position target,
-            List<KnownBlockBreakAttempt.EffectDelta> effects) {
-        String subject = "block:" + target.dimension() + ":"
-                + target.x() + "," + target.y() + "," + target.z();
-        for (var effect : effects) {
-            agentActions.recordEffect(
-                    actionId,
-                    "block_break",
-                    subject,
-                    effect.observedBefore(),
-                    effect.observedAfter(),
-                    effect.verification(),
-                    effect.clientTick(),
-                    effect.worldRevision());
-        }
-    }
-
-    private void tickAgentBoundedInputHold(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action,
-            ActionDsl.HoldBoundedInputs hold,
-            boolean recordTick) {
-        var player = Objects.requireNonNull(minecraft.player, "player");
-        var level = Objects.requireNonNull(minecraft.level, "level");
-        var progress = agentActions.get(action.actionId()).progress();
-        if (agentExecution.boundedInputHold != null
-                && agentExecution.boundedInputHold.activeTicks >= hold.durationTicks()) {
-            if (!closeBoundedInputHold()) {
-                failAgentAction(AgentActionStore.FailureCode.INTERNAL_ERROR, false,
-                        "bounded_input_release_failed");
-                return;
-            }
-            agentActions.completeNode(action.actionId());
-            agentExecution.primitive = null;
-            advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
-            return;
-        }
-        long durationLimit = Duration.ofMillis(
-                action.program().effectiveBudget().maxDurationMillis()).toNanos();
-        if ((recordTick
-                        ? progress.ticks() >= action.program().effectiveBudget().maxTicks()
-                        : progress.ticks() > action.program().effectiveBudget().maxTicks())
-                || activeElapsedNanos(agentExecution, System.nanoTime()) >= durationLimit) {
-            failAgentAction(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false,
-                    "bounded_input_duration_budget");
-            return;
-        }
-        String unsafe = boundedInputUnsafeReason(minecraft, session, action, hold);
-        if (unsafe != null) {
-            failAgentAction(AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
-                    "bounded_input_" + unsafe);
-            return;
-        }
-        try {
-            boolean acquired = false;
-            if (agentExecution.boundedInputHold == null) {
-                Set<BoundedInputLease.Input> inputs = hold.inputs().stream()
-                        .map(McmcpRuntime::boundedLeaseInput)
-                        .collect(java.util.stream.Collectors.toUnmodifiableSet());
-                var lease = BoundedInputLease.acquire(
-                        AgentInputState.global(), inputs, System.nanoTime(), Duration.ofSeconds(1));
-                agentExecution.boundedInputHold = new BoundedInputExecution(
-                        lease, player.position(), player.getHealth() + player.getAbsorptionAmount());
-                acquired = true;
-            }
-            var execution = agentExecution.boundedInputHold;
-            if (!acquired && !execution.lease.heartbeat(
-                    System.nanoTime(), Duration.ofSeconds(1))) {
-                failAgentAction(AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
-                        "bounded_input_lease_expired");
-                return;
-            }
-            if (boundedInputMoves(hold)) {
-                double remaining = Math.max(0.0D,
-                        action.program().effectiveBudget().maxDistanceBlocks()
-                                - progress.distanceTravelled());
-                AgentInputState.global().requireGoalMovementSafety(
-                        player, level, agentExecution.latestWorldRevision, remaining);
-            }
-            execution.observeMovement(player.position(), boundedInputMovesHorizontally(hold));
-            execution.activeTicks++;
-            if (recordTick) agentActions.recordTick(action.actionId());
-        } catch (RuntimeException | LinkageError failure) {
-            McmcpMod.LOGGER.error("MCMCP bounded input hold failed", failure);
-            failAgentAction(AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
-                    "bounded_input_runtime_failure");
-        }
-    }
-
-    private String boundedInputUnsafeReason(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action,
-            ActionDsl.HoldBoundedInputs hold) {
-        var player = minecraft.player;
-        var level = minecraft.level;
-        if (player == null || level == null || minecraft.gameMode == null
-                || minecraft.getConnection() == null) return "world_unavailable";
-        if (player != agentExecution.playerIdentity || !session.worldReady()
-                || !Objects.equals(session.worldSessionId(), agentExecution.worldSessionId)) {
-            return "world_session_changed";
-        }
-        if (!player.isAlive() || player.isDeadOrDying()) return "player_dead";
-        if (agentExecution.boundedInputHold != null
-                && player.getHealth() + player.getAbsorptionAmount()
-                        < agentExecution.boundedInputHold.effectiveHealthBaseline) {
-            return "health_decreased";
-        }
-        if (player.isOnFire()) return "on_fire";
-        if (player.isInLava()) return "in_lava";
-        if (player.isInWater()) return "in_water";
-        if (player.isPassenger() || player.isFallFlying() || player.fallDistance > 0.0F) {
-            return "unstable_pose";
-        }
-        if (!AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())) return "screen_open";
-        if (minecraft.gui.overlay() != null) return "overlay_open";
-        if (screenOwnership.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE) {
-            return "screen_owner_active";
-        }
-        if (agentObservations.localSafety() != LocalObservationProjector.CurrentSafety.CONTINUE) {
-            return "local_safety_changed";
-        }
-        BlockPos feet = BlockPos.containing(player.position());
-        if (!level.isLoaded(feet) || !level.isLoaded(feet.below())
-                || !level.getWorldBorder().isWithinBounds(feet)) return "unknown_or_unloaded";
-        if (agentExecution.boundedInputHold != null
-                && agentExecution.boundedInputHold.stalledTicks >= 10) return "movement_blocked";
-        if (action.program().effectiveBudget().maxDistanceBlocks()
-                - agentActions.get(action.actionId()).progress().distanceTravelled() <= 0.0D
-                && boundedInputMoves(hold)) return "distance_limit";
-        if (hold.targetGuard().isEmpty()) return null;
-        var guard = hold.targetGuard().orElseThrow();
-        if (!guard.target().dimension().equals(level.dimension().identifier().toString())) {
-            return "target_dimension_changed";
-        }
-        var target = new BlockPos(guard.target().x(), guard.target().y(), guard.target().z());
-        if (!level.isLoaded(target) || !level.getWorldBorder().isWithinBounds(target)
-                || !player.isWithinBlockInteractionRange(target, 0.0D)
-                || !(minecraft.hitResult instanceof BlockHitResult hit)
-                || hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(target)
-                || hit.getDirection() != Direction.valueOf(guard.face().name())) {
-            return "target_face_or_reach_changed";
-        }
-        var expected = new BlockStateFingerprint(
-                guard.expectedState().block(), guard.expectedState().properties());
-        if (!expected.equals(MinecraftStationaryBreakPort.fingerprintForPolicy(
-                level.getBlockState(target)))) return "target_state_changed";
-        var selected = player.getMainHandItem();
-        if (selected.isEmpty() || !hold.selectedItem().orElseThrow().equals(
-                BuiltInRegistries.ITEM.getKey(selected.getItem()).toString())) {
-            return "selected_item_changed";
-        }
-        if (agentExecution.boundedInputHold != null
-                && player.position().distanceToSqr(agentExecution.boundedInputHold.startPosition)
-                        > 1.0D / (1024.0D * 1024.0D)) return "station_changed";
-        return null;
-    }
-
-    private boolean closeBoundedInputHold() {
-        if (agentExecution == null || agentExecution.boundedInputHold == null) return true;
-        try {
-            agentExecution.boundedInputHold.lease.close();
-            agentExecution.boundedInputHold = null;
-            return true;
-        } catch (RuntimeException | LinkageError failure) {
-            McmcpMod.LOGGER.error("MCMCP bounded input release failed", failure);
-            return false;
-        }
-    }
-
-    private static boolean boundedInputMoves(ActionDsl.HoldBoundedInputs hold) {
-        return hold.inputs().stream().anyMatch(input -> switch (input) {
-            case FORWARD, BACK, LEFT, RIGHT, JUMP, SNEAK -> true;
-            case ATTACK, USE -> false;
-        });
-    }
-
-    private static boolean boundedInputMovesHorizontally(ActionDsl.HoldBoundedInputs hold) {
-        return hold.inputs().stream().anyMatch(input -> switch (input) {
-            case FORWARD, BACK, LEFT, RIGHT -> true;
-            case JUMP, SNEAK, ATTACK, USE -> false;
-        });
-    }
-
-    private static BoundedInputLease.Input boundedLeaseInput(ActionDsl.BoundedInput input) {
-        return BoundedInputLease.Input.valueOf(input.name());
-    }
-
-    private void tickAgentCobblestoneGenerator(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action,
-            ActionDsl.OperateKnownCobblestoneGenerator operation) {
-        var player = Objects.requireNonNull(minecraft.player, "player");
-        ActionDsl.BreakKnownBlock block = KnownBreakSafety.cobblestoneGeneratorBreak(operation);
-        if (agentExecution.cobblestoneGeneratorAttempt == null) {
-            int currentCount = PlayerInventoryEvidence.inventoryItemCount(player, operation.expectedDrop());
-            if (currentCount < operation.minimumInventoryCount()
-                    && operation.minimumInventoryCount() - currentCount > operation.maxBreaks()) {
-                failAgentAction(
-                        AgentActionStore.FailureCode.WORLD_CHANGED,
-                        true,
-                        "cobblestone_goal_exceeds_max_breaks");
-                return;
-            }
-            int toolSlot = KnownBreakSafety.findDurableHotbarTool(
-                    player, operation.toolItem(), operation.maxBreaks());
-            if (toolSlot < 0 || !KnownBreakSafety.inventoryCanReceiveKnownBreakDrops(player, action.program())) {
-                failAgentAction(
-                        AgentActionStore.FailureCode.WORLD_CHANGED,
-                        true,
-                        toolSlot < 0
-                                ? "required_iron_pickaxe_unavailable"
-                                : "inventory_full");
-                return;
-            }
-            if (!KnownBreakSafety.breakTargetStateMatches(minecraft, block)
-                    || !KnownBreakSafety.breakSourceControlled(minecraft, block)) {
-                failAgentAction(
-                        AgentActionStore.FailureCode.WORLD_CHANGED,
-                        true,
-                        "cobblestone_generator_target_or_face_changed");
-                return;
-            }
-            try {
-                player.getInventory().setSelectedSlot(toolSlot);
-                agentExecution.agentSelectedSlot = toolSlot;
-                var target = new BlockTarget(
-                        operation.target().dimension(), operation.target().x(),
-                        operation.target().y(), operation.target().z());
-                BlockStateFingerprint observed = stationaryBreakPort.captureExpectedSource(
-                        target, Set.of("minecraft:cobblestone"));
-                var expected = new BlockStateFingerprint(
-                        operation.expectedState().block(),
-                        operation.expectedState().properties());
-                if (!expected.equals(observed)) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.WORLD_CHANGED,
-                            true,
-                            "cobblestone_generator_state_changed");
-                    return;
-                }
-                var request = new StationaryBreakRequest(
-                        target,
-                        expected,
-                        new StationaryBreakGoal(
-                                operation.expectedDrop(), operation.minimumInventoryCount()),
-                        Math.addExact(
-                                session.clientTick(), operation.maxOperationDurationTicks()),
-                        StationaryBreakRequest.MAX_ATTACK_LEASE_TICKS,
-                        operation.regenerationWaitTicks());
-                agentExecution.cobblestoneGeneratorAttempt = new StationaryBreakOperation(
-                        stationaryBreakPort, request, operation.maxBreaks(), session.clientTick());
-                agentExecution.cobblestoneGeneratorCheckpoint = 0L;
-            } catch (RuntimeException | LinkageError failure) {
-                McmcpMod.LOGGER.error(
-                        "MCMCP cobblestone-generator operation could not start", failure);
-                failAgentAction(
-                        AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                        true,
-                        "cobblestone_generator_start_failed");
-                return;
-            }
-        }
-
-        // Air is the expected neutral regeneration wait. Once cobblestone is present again,
-        // exact target, state, reach, tool, and the operation's unchanged view are rechecked.
-        // The hit face may legitimately flip at the same coordinate as the block regenerates.
-        var generatorSnapshot = agentExecution.cobblestoneGeneratorAttempt.snapshot();
-        if ("execute".equals(generatorSnapshot.phase())
-                && !KnownBreakSafety.breakSourceControlled(minecraft, block, false)) {
-            failAgentAction(
-                    AgentActionStore.FailureCode.SAFETY_INTERRUPTED,
-                    true,
-                    "cobblestone_generator_stationary_face_changed");
-            return;
-        }
-
-        final StationaryBreakOperation.TickResult result;
-        try {
-            result = agentExecution.cobblestoneGeneratorAttempt.tick();
-            recordCobblestoneGeneratorCheckpoints(
-                    action.actionId(), operation, result.snapshot());
-        } catch (RuntimeException | LinkageError failure) {
-            McmcpMod.LOGGER.error(
-                    "MCMCP cobblestone-generator confirmation failed", failure);
-            failAgentAction(
-                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                    true,
-                    "cobblestone_generator_confirmation_failed");
-            return;
-        }
-        switch (result.status()) {
-            case RUNNING -> { }
-            case SUCCEEDED -> {
-                try {
-                    agentExecution.cobblestoneGeneratorAttempt.close();
-                    agentExecution.cobblestoneGeneratorAttempt = null;
-                } catch (RuntimeException | LinkageError releaseFailure) {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.INTERNAL_ERROR,
-                            true,
-                            "cobblestone_generator_release_failed");
-                    return;
-                }
-                agentActions.completeNode(action.actionId());
-                agentExecution.primitive = null;
-                advanceAgentProgram(
-                        minecraft, agentActions.get(action.actionId()).progress());
-            }
-            case MAX_BREAKS_REACHED -> failAgentAction(
-                    AgentActionStore.FailureCode.CONDITION_TIMEOUT,
-                    true,
-                    "cobblestone_generator_max_breaks_reached");
-            case FAILED -> {
-                RoutineFailure failure = result.snapshot().failure();
-                AgentActionStore.FailureCode code = failure != null
-                                && failure.category() == RoutineFailure.Category.SAFETY
-                        ? AgentActionStore.FailureCode.SAFETY_INTERRUPTED
-                        : failure != null && "HARD_DEADLINE_EXPIRED".equals(failure.code())
-                                ? AgentActionStore.FailureCode.CONDITION_TIMEOUT
-                                : failure != null
-                                        && (failure.category()
-                                                        == RoutineFailure.Category.PRECONDITION
-                                                || failure.category()
-                                                        == RoutineFailure.Category.DIVERGENCE)
-                                                ? AgentActionStore.FailureCode.WORLD_CHANGED
-                                                : AgentActionStore.FailureCode
-                                                        .SERVER_DENIED_OR_DESYNC;
-                failAgentAction(
-                        code,
-                        failure == null || failure.retryable(),
-                        "cobblestone_generator_"
-                                + (failure == null ? "failed"
-                                        : failure.code().toLowerCase(Locale.ROOT)));
-            }
-        }
-    }
-
-    private void recordCobblestoneGeneratorCheckpoints(
-            UUID actionId,
-            ActionDsl.OperateKnownCobblestoneGenerator operation,
-            RoutineSnapshot snapshot) {
-        long checkpoint = snapshot.checkpoint().seq();
-        while (agentExecution.cobblestoneGeneratorCheckpoint < checkpoint) {
-            agentExecution.cobblestoneGeneratorCheckpoint++;
-            agentActions.recordBlockBreak(actionId);
-            agentActions.recordEffect(
-                    actionId,
-                    "block_break",
-                    "block:" + operation.target().dimension() + ":"
-                            + operation.target().x() + "," + operation.target().y() + ","
-                            + operation.target().z(),
-                    Map.of(
-                            "block", operation.expectedState().block(),
-                            "properties", operation.expectedState().properties(),
-                            "cycle", agentExecution.cobblestoneGeneratorCheckpoint),
-                    Map.of(
-                            "block", "minecraft:air",
-                            "properties", Map.of(),
-                            "inventory_count", snapshot.progress().completed()),
-                    AgentActionStore.Verification.CONFIRMED,
-                    snapshot.lastClientTick(),
-                    snapshot.checkpoint().observationRevision());
-        }
-    }
-
-    private void recordUnconfirmedCobblestoneGeneratorDispatch(
-            ActionDsl.OperateKnownCobblestoneGenerator operation,
-            RoutineSnapshot snapshot) {
-        if (agentExecution.cobblestoneGeneratorUnknownRecorded) return;
-        Object rawAttempts = snapshot.diagnostics().get("attempts");
-        long attempts = rawAttempts instanceof Number number ? number.longValue() : 0L;
-        if (attempts <= snapshot.checkpoint().seq()) return;
-        agentActions.recordEffect(
-                agentExecution.actionId,
-                "block_break",
-                "block:" + operation.target().dimension() + ":"
-                        + operation.target().x() + "," + operation.target().y() + ","
-                        + operation.target().z(),
-                Map.of(
-                        "block", operation.expectedState().block(),
-                        "properties", operation.expectedState().properties(),
-                        "cycle", attempts),
-                Map.of(),
-                AgentActionStore.Verification.UNKNOWN,
-                snapshot.lastClientTick(),
-                snapshot.checkpoint().observationRevision());
-        agentExecution.cobblestoneGeneratorUnknownRecorded = true;
-    }
-
-    private void tickAgentBlockMutation(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action,
-            long actionTick) {
-        ActionDsl.Node mutation = agentExecution.primitive;
-        if (ActionBudgets.isMutationBatch(mutation)) {
-            if (!bindMutationBatchTarget(minecraft, session, action, actionTick)) {
-                return;
-            }
-            mutation = agentExecution.mutationBatchTarget;
-        }
-        if (agentExecution.blockMutationAttempt == null) {
-            SemanticActionRequest request = ConstructionRequests.blockMutationRequest(
-                    mutation,
-                    ActionBudgets.isMutationBatch(agentExecution.primitive)
-                            ? agentExecution.mutationBatchTargetAim
-                            : agentExecution.mutationAims.get(agentExecution.primitive.id()));
-            long deadline = Math.addExact(
-                    session.clientTick(), AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND);
-            agentExecution.blockMutationAttempt = new KnownBlockMutationAttempt(
-                    semanticActionPort, request, session.clientTick(), deadline);
-        }
-        KnownBlockMutationAttempt.TickResult result =
-                agentExecution.blockMutationAttempt.tick(session.clientTick());
-        if (result.dispatchedThisTick()) {
-            armBatchTillSettlingAllowance(minecraft, mutation);
-        }
-        switch (result.status()) {
-            case RUNNING -> { }
-            case FAILED -> {
-                if (ActionBudgets.isMutationBatch(agentExecution.primitive)
-                        && ActionBudgets.mutationBatchDisposition(
-                                agentExecution.mutationBatchIndex,
-                                agentExecution.mutationBatchPlan.steps().size(),
-                                false) != BatchTargetDisposition.STOP) {
-                    throw new IllegalStateException("Failed batch target must stop dispatch");
-                }
-                if (ActionBudgets.retryableMutationAimFailure(result.evidence())) {
-                    if (!ActionBudgets.mutationAimRetriesAllowed(agentExecution.primitive)) {
-                        failAgentAction(
-                                AgentActionStore.FailureCode.PATH_BLOCKED,
-                                true,
-                                "batch_aim_raycast_unavailable");
-                    } else {
-                        retryAgentMutationAim(minecraft, action, result.evidence());
-                    }
-                } else {
-                    failAgentAction(
-                            AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                            true,
-                            result.evidence());
-                }
-            }
-            case SUCCEEDED -> {
-                agentExecution.blockMutationAttempt = null;
-                if (result.performed()) {
-                    if (mutation instanceof ActionDsl.TillKnownBlock
-                            || mutation instanceof ActionDsl.OpenKnownFenceGate
-                            || mutation instanceof ActionDsl.OpenKnownPassage) {
-                        agentActions.recordInteraction(action.actionId());
-                    } else if (mutation instanceof ActionDsl.PlantKnownWheat) {
-                        agentActions.recordBlockPlace(action.actionId());
-                    } else {
-                        agentActions.recordBlockBreak(action.actionId());
-                    }
-                }
-                if (ActionBudgets.isMutationBatch(agentExecution.primitive)) {
-                    agentActions.recordNodeEvidence(
-                            action.actionId(), ActionBudgets.batchTargetTrace(mutation));
-                    BatchTargetDisposition disposition = ActionBudgets.mutationBatchDisposition(
-                            agentExecution.mutationBatchIndex,
-                            agentExecution.mutationBatchPlan.steps().size(),
-                            true);
-                    agentExecution.mutationBatchIndex++;
-                    agentExecution.mutationBatchTarget = null;
-                    agentExecution.mutationBatchTargetAim = null;
-                    agentExecution.mutationBatchTargetBound = false;
-                    agentExecution.mutationBatchTargetDeadlineTick = 0L;
-                    agentExecution.mutationAimFailures = 0;
-                    if (disposition == BatchTargetDisposition.COMPLETE) {
-                        agentActions.completeNode(action.actionId());
-                        agentExecution.primitive = null;
-                        agentExecution.replanning = false;
-                        agentExecution.replanNotBeforeTick = 0L;
-                        agentExecution.replanDeadlineTick = 0L;
-                        advanceAgentProgram(
-                                minecraft, agentActions.get(action.actionId()).progress());
-                    }
-                } else {
-                    agentActions.completeNode(action.actionId());
-                    agentExecution.primitive = null;
-                    agentExecution.replanning = false;
-                    agentExecution.replanNotBeforeTick = 0L;
-                    agentExecution.replanDeadlineTick = 0L;
-                    advanceAgentProgram(
-                            minecraft, agentActions.get(action.actionId()).progress());
-                }
-            }
-        }
-    }
-
-    private void tickAgentFrameItem(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action) {
-        if (agentExecution.frameItemAttempt == null) {
-            var aim = Objects.requireNonNull(agentExecution.frameItemAim, "admitted frame item aim");
-            boolean remove = agentExecution.primitive instanceof ActionDsl.RemoveVisibleFrameItem;
-            var request = new FrameItemPort.Request(
-                    remove ? FrameItemPort.Mode.REMOVE : FrameItemPort.Mode.INSERT,
-                    aim.entityRef(),
-                    (remove ? aim.expectedItem() : aim.insertedItem()).orElseThrow(),
-                    aim.rotation(), session.worldSessionId(), session.dimension(),
-                    new FrameItemPort.AimPoint(aim.aimPoint().x, aim.aimPoint().y, aim.aimPoint().z),
-                    agentExecution.maxCameraDegreesPerTick);
-            agentExecution.frameItemAttempt = new FrameItemAttempt(
-                    frameItemPort, request, session.clientTick(),
-                    Math.addExact(session.clientTick(), ActionDslCompiler.FRAME_ITEM_TICKS));
-        }
-        FrameItemAttempt attempt = agentExecution.frameItemAttempt;
-        FrameItemAttempt.TickResult result;
-        try {
-            result = attempt.tick(session.clientTick());
+            outcome = agentExecution.cobblestone.tick(minecraft, session, action, operation);
         } finally {
-            recordFrameItemUsage(action.actionId(), attempt);
-        }
-        switch (result.status()) {
-            case RUNNING -> { }
-            case FAILED -> failAgentAction(
-                    AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                    false, result.evidence());
-            case SUCCEEDED -> {
-                agentExecution.frameItemAttempt = null;
-                agentActions.recordNodeEvidence(action.actionId(), "frame_display_server_confirmed");
-                agentActions.completeNode(action.actionId());
-                agentExecution.primitive = null;
-                advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
+            if (agentExecution.cobblestone.selectedSlot() >= 0) {
+                agentExecution.agentSelectedSlot = agentExecution.cobblestone.selectedSlot();
             }
+        }
+        applyPrimitiveOutcome(minecraft, action, outcome, false);
+    }
+
+    private void tickAgentBlockMutation(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action, long actionTick) {
+        if (ActionBudgets.isMutationBatch(agentExecution.primitive)
+                && !agentExecution.mutation.targetBound()) {
+            PrimitiveOutcome binding;
+            try {
+                binding = agentExecution.mutation.bindTarget(minecraft, session, action,
+                        agentExecution.occurrenceBaseline, agentExecution.occurrenceLimit,
+                        agentExecution.startedAtNanos, agentExecution.pausedNanos);
+            } catch (AgentPrimitivePlanner.PlanningException unavailable) {
+                if (!releaseAgentInputsForHold(minecraft, "batch_reproof_input_release_failed")) return;
+                applyPrimitiveOutcome(minecraft, action,
+                        agentExecution.mutation.waitForReproof(actionTick, unavailable));
+                return;
+            }
+            if (!binding.complete()) {
+                applyPrimitiveOutcome(minecraft, action, binding);
+                return;
+            }
+            agentExecution.replanning = false;
+            agentActions.setPhase(action.actionId(), AgentActionStore.Phase.EXECUTING, "batch_target_reproved");
+        }
+        var outcome = agentExecution.mutation.tick(minecraft, session, action,
+                agentExecution.primitive, agentExecution.mutationAims);
+        if (outcome.replanEvidence() != null) {
+            retryAgentMutationAim(minecraft, action, outcome.replanEvidence());
+        } else {
+            applyPrimitiveOutcome(minecraft, action, outcome);
         }
     }
 
-    private void recordFrameItemUsage(UUID actionId, FrameItemAttempt attempt) {
-        int interactions = attempt.drainInteractionDelta();
-        for (int count = 0; count < interactions; count++) {
-            agentActions.recordInteraction(actionId);
-        }
-        var aim = Objects.requireNonNull(agentExecution.frameItemAim, "admitted frame item aim");
-        String kind = agentExecution.primitive instanceof ActionDsl.RemoveVisibleFrameItem
-                ? "frame_item_remove" : "frame_item_insert";
-        for (var effect : attempt.drainEffectDeltas()) {
-            agentActions.recordEffect(actionId, kind, aim.entityType(),
-                    effect.observedBefore(), effect.observedAfter(), effect.verification(),
-                    effect.clientTick(), effect.worldRevision());
-        }
+    private void tickAgentFrameItem(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            AgentActionStore.Active action) {
+        applyPrimitiveOutcome(minecraft, action,
+                agentExecution.frameItem.tick(minecraft, session, agentExecution.primitive), false);
     }
 
     private MinecraftPhaseFiveInventoryPort.InitialOpenWitness initialContainerOpenWitness() {
@@ -4215,8 +3176,17 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
-    private void applyMenuPrimitiveOutcome(
-            Minecraft minecraft, AgentActionStore.Active action, PrimitiveOutcome outcome) {
+    private void applyPrimitiveOutcome(Minecraft minecraft, AgentActionStore.Active action,
+            PrimitiveOutcome outcome) {
+        applyPrimitiveOutcome(minecraft, action, outcome, true);
+    }
+
+    private void applyPrimitiveOutcome(
+            Minecraft minecraft, AgentActionStore.Active action, PrimitiveOutcome outcome, boolean resetReplan) {
+        if (outcome.replanEvidence() != null) {
+            requestAgentReplan(agentActions.get(action.actionId()).progress().ticks(), outcome.replanEvidence());
+            return;
+        }
         if (outcome.failure() != null) {
             failAgentAction(outcome.failure().code(), outcome.failure().recoverable(),
                     outcome.failure().evidence().getFirst(),
@@ -4225,129 +3195,18 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         } else if (outcome.complete()) {
             agentActions.completeNode(action.actionId());
             agentExecution.primitive = null;
-            agentExecution.replanning = false;
-            agentExecution.replanNotBeforeTick = 0L;
-            agentExecution.replanDeadlineTick = 0L;
+            if (resetReplan) {
+                agentExecution.replanning = false;
+                agentExecution.replanNotBeforeTick = 0L;
+                agentExecution.replanDeadlineTick = 0L;
+            }
             advanceAgentProgram(minecraft, agentActions.get(action.actionId()).progress());
-        }
-    }
-
-    private boolean bindMutationBatchTarget(
-            Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            AgentActionStore.Active action,
-            long actionTick) {
-        if (agentExecution.mutationBatchTargetBound) {
-            return true;
-        }
-        AgentPrimitivePlanner.MutationBatchPlan plan = agentExecution.mutationBatchPlan;
-        if (plan == null || agentExecution.mutationBatchIndex >= plan.steps().size()) {
-            failAgentAction(
-                    AgentActionStore.FailureCode.INTERNAL_ERROR, false, "mutation_batch_plan_missing");
-            return false;
-        }
-        AgentPrimitivePlanner.MutationBatchStep step =
-                plan.steps().get(agentExecution.mutationBatchIndex);
-        try {
-            var player = Objects.requireNonNull(minecraft.player, "player");
-            var map = agentObservations.requireAgentMap(session);
-            var reconciliation = reconciliationSignals.bindAndSnapshot(
-                    Objects.requireNonNull(minecraft.level, "level"), session.worldSessionId());
-            AgentPrimitivePlanner.Pose currentPose = ActionPlanning.playerPose(player, session.dimension());
-            var analysis = actionAdmission.analyzePrimitive(
-                    action.program().request().program(),
-                    step.primitive(),
-                    map,
-                    currentPose,
-                    agentObservations.agentPlanningFrame(),
-                    McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F,
-                    ActionEvidence.visualBarrierWorldRevision(map, reconciliation),
-                    ActionEvidence.surfaceRevisionBarrier(map, reconciliation),
-                    () -> true);
-            ActionDslCompiler.Cost cost = analysis.worstCase(step.primitive()).orElseThrow();
-            AgentPrimitivePlanner.MutationAim freshAim = analysis.mutationAims()
-                    .get(step.primitive().id());
-            if (freshAim == null) {
-                throw new IllegalStateException("Fresh batch target aim is unavailable");
-            }
-            ActionDslCompiler.Cost requiredRemainder = ActionBudgets.mutationBatchRequiredRemainder(
-                    plan,
-                    agentExecution.mutationBatchIndex,
-                    currentPose,
-                    freshAim,
-                    cost,
-                    McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
-            AgentActionStore.Progress progress = agentActions.get(action.actionId()).progress();
-            if (!ActionBudgets.fitsMutationBatchRemainder(
-                    progress,
-                    agentExecution.occurrenceBaseline,
-                    agentExecution.occurrenceLimit,
-                    action.program().effectiveBudget(),
-                    requiredRemainder,
-                    activeElapsedNanos(agentExecution, System.nanoTime()))) {
-                failAgentAction(
-                        AgentActionStore.FailureCode.BUDGET_EXCEEDED,
-                        false,
-                        "batch_target_budget");
-                return false;
-            }
-            agentExecution.mutationBatchTarget = step.primitive();
-            agentExecution.mutationBatchTargetAim = freshAim;
-            agentExecution.mutationBatchTargetBound = true;
-            agentExecution.mutationBatchTargetDeadlineTick = 0L;
-            agentExecution.replanning = false;
-            agentActions.setPhase(
-                    action.actionId(), AgentActionStore.Phase.EXECUTING,
-                    "batch_target_reproved");
-            return true;
-        } catch (AgentPrimitivePlanner.PlanningException unavailable) {
-            if (!releaseAgentInputsForHold(minecraft, "batch_reproof_input_release_failed")) {
-                return false;
-            }
-            if (agentExecution.mutationBatchTargetDeadlineTick == 0L) {
-                agentExecution.mutationBatchTargetDeadlineTick = Math.addExact(
-                        actionTick, AgentPrimitivePlanner.MUTATION_BATCH_REPROOF_TICKS);
-                agentActions.setPhase(
-                        action.actionId(), AgentActionStore.Phase.REPLANNING,
-                        "batch_" + unavailable.code().name().toLowerCase(Locale.ROOT));
-            }
-            if (ActionBudgets.replanDeadlineReached(
-                    actionTick, agentExecution.mutationBatchTargetDeadlineTick)) {
-                failAgentAction(
-                        AgentActionStore.FailureCode.PATH_BLOCKED,
-                        true,
-                        "batch_" + unavailable.code().name().toLowerCase(Locale.ROOT));
-            }
-            return false;
-        }
-    }
-
-    private void armBatchTillSettlingAllowance(Minecraft minecraft, ActionDsl.Node mutation) {
-        agentExecution.tillSettlingAllowance = 0.0D;
-        agentExecution.tillSettlingTarget = null;
-        agentExecution.tillSettlingDeadlineTick = 0L;
-        if (!ActionBudgets.isMutationBatch(agentExecution.primitive)
-                || !(mutation instanceof ActionDsl.TillKnownBlock till)
-                || minecraft.player == null) {
-            return;
-        }
-        var player = minecraft.player;
-        if (Mth.floor(player.getY()) == till.target().y() + 1
-                && Mth.floor(player.getX()) == till.target().x()
-                && Mth.floor(player.getZ()) == till.target().z()) {
-            agentExecution.tillSettlingAllowance = 1.0D / 16.0D;
-            agentExecution.tillSettlingTarget = till.target();
-            agentExecution.tillSettlingDeadlineTick = Math.addExact(
-                    agentActions.get(agentExecution.actionId).progress().ticks(), 2L);
         }
     }
 
     private void retryAgentMutationAim(
             Minecraft minecraft, AgentActionStore.Active action, String evidence) {
-        agentExecution.blockMutationAttempt.close();
-        agentExecution.blockMutationAttempt = null;
-        agentExecution.mutationAimFailures++;
-        if (!ActionBudgets.mutationAimRetryAllowed(agentExecution.mutationAimFailures)) {
+        if (!agentExecution.mutation.retryAimAllowed()) {
             failAgentAction(
                     AgentActionStore.FailureCode.PATH_BLOCKED,
                     true,
@@ -4381,7 +3240,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 Minecraft.getInstance(), "replan_input_release_failed")) {
             return;
         }
-        agentExecution.breakAimComplete = false;
         agentExecution.replanHeartbeatPending = false;
         agentExecution.replanNotBeforeTick = actionTick + 1L;
         if (isCollectPrimitive(agentExecution.primitive)) {
@@ -4599,15 +3457,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return Math.max(0.0D, Math.min(global, occurrence));
     }
 
-    private static boolean fitsOccurrenceRemaining(
-            AgentActionStore.Progress used,
-            AgentExecution execution,
-            ActionDslCompiler.Cost next) {
-        var baseline = Objects.requireNonNull(execution.occurrenceBaseline, "occurrenceBaseline");
-        var limit = Objects.requireNonNull(execution.occurrenceLimit, "occurrenceLimit");
-        return ActionBudgets.fitsOccurrenceBudget(used, baseline, limit, next);
-    }
-
     private static boolean occurrenceBudgetExceeded(
             AgentActionStore.Progress used, AgentExecution execution) {
         var baseline = Objects.requireNonNull(execution.occurrenceBaseline, "occurrenceBaseline");
@@ -4637,42 +3486,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         double camera = ActionBudgets.cameraDelta(
                 player.getYRot(), player.getXRot(),
                 agentExecution.lastYaw, agentExecution.lastPitch);
-        var settlingTarget = agentExecution.tillSettlingTarget;
-        long currentTick = agentActions.get(actionId).progress().ticks();
-        var level = Minecraft.getInstance().level;
-        boolean settlingWindow = settlingTarget != null
-                && currentTick <= agentExecution.tillSettlingDeadlineTick
-                && !agentExecution.primitiveExecutor.active()
-                && level != null
-                && "minecraft:farmland".equals(BuiltInRegistries.BLOCK.getKey(
-                                level.getBlockState(new BlockPos(
-                                        settlingTarget.x(),
-                                        settlingTarget.y(),
-                                        settlingTarget.z())).getBlock())
-                        .toString())
-                && Mth.floor(agentExecution.lastPosition.x) == settlingTarget.x()
-                && Mth.floor(agentExecution.lastPosition.z) == settlingTarget.z()
-                && Mth.floor(position.x) == settlingTarget.x()
-                && Mth.floor(position.z) == settlingTarget.z();
-        var movement = AgentInputState.global().movementSnapshot();
-        boolean inputNeutral = !movement.forward()
-                && !movement.backward()
-                && !movement.left()
-                && !movement.right()
-                && !movement.jump();
-        double settlingCredit = ActionBudgets.batchTillSettlingCredit(
-                agentExecution.lastPosition,
-                position,
-                agentExecution.tillSettlingAllowance,
-                settlingWindow,
-                inputNeutral);
-        if (settlingCredit > 0.0D
-                || distance > 1.0e-9D
-                || currentTick > agentExecution.tillSettlingDeadlineTick) {
-            agentExecution.tillSettlingAllowance = 0.0D;
-            agentExecution.tillSettlingTarget = null;
-            agentExecution.tillSettlingDeadlineTick = 0L;
-        }
+        double settlingCredit = agentExecution.mutation.consumeSettlingCredit(
+                agentExecution.lastPosition, position, agentExecution.movement.active());
         agentActions.recordMotion(actionId, Math.max(0.0D, distance - settlingCredit), camera);
         if (settlingCredit > 0.0D) {
             agentActions.recordPassiveMotion(actionId, settlingCredit, "farmland_settling");
@@ -4738,87 +3553,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private boolean closeAgentPrimitiveExecutor() {
         if (agentExecution == null) return true;
         boolean closed = true;
-        if (!closeBoundedInputHold()) closed = false;
+        if (!agentExecution.boundedInput.close()) closed = false;
         try {
-            agentExecution.primitiveExecutor.close();
+            agentExecution.movement.close();
         } catch (RuntimeException | LinkageError failure) {
             closed = false;
             McmcpMod.LOGGER.error("MCMCP Action DSL input release failed", failure);
         }
-        if (agentExecution.blockBreakAttempt != null) {
-            KnownBlockBreakAttempt breaking = agentExecution.blockBreakAttempt;
-            try {
-                breaking.close();
-                agentExecution.blockBreakAttempt = null;
-            } catch (RuntimeException | LinkageError failure) {
-                closed = false;
-                McmcpMod.LOGGER.error("MCMCP known-face break release failed", failure);
-            } finally {
-                try {
-                    if (KnownBreakSafety.isKnownBreak(agentExecution.primitive)) {
-                        recordBreakEffects(
-                                agentExecution.actionId,
-                                KnownBreakSafety.breakTarget(agentExecution.primitive),
-                                breaking.drainEffectDeltas());
-                    }
-                } catch (RuntimeException | LinkageError failure) {
-                    closed = false;
-                    McmcpMod.LOGGER.error(
-                            "MCMCP known-block break effect capture failed", failure);
-                }
-            }
-        }
-        if (agentExecution.cobblestoneGeneratorAttempt != null) {
-            try {
-                if (agentExecution.primitive
-                        instanceof ActionDsl.OperateKnownCobblestoneGenerator operation) {
-                    RoutineSnapshot snapshot =
-                            agentExecution.cobblestoneGeneratorAttempt.snapshot();
-                    recordCobblestoneGeneratorCheckpoints(
-                            agentExecution.actionId, operation, snapshot);
-                    recordUnconfirmedCobblestoneGeneratorDispatch(operation, snapshot);
-                }
-                agentExecution.cobblestoneGeneratorAttempt.close();
-                agentExecution.cobblestoneGeneratorAttempt = null;
-            } catch (RuntimeException | LinkageError failure) {
-                closed = false;
-                McmcpMod.LOGGER.error(
-                        "MCMCP cobblestone-generator release failed", failure);
-            }
-        }
-        if (agentExecution.blockMutationAttempt != null) {
-            try {
-                agentExecution.blockMutationAttempt.close();
-                agentExecution.blockMutationAttempt = null;
-            } catch (RuntimeException | LinkageError failure) {
-                closed = false;
-                McmcpMod.LOGGER.error("MCMCP known-block mutation release failed", failure);
-            }
-        }
-        if (agentExecution.frameItemAttempt != null) {
-            FrameItemAttempt frameItem = agentExecution.frameItemAttempt;
-            try {
-                frameItem.close();
-                agentExecution.frameItemAttempt = null;
-            } catch (RuntimeException | LinkageError failure) {
-                closed = false;
-                if (frameItem.releaseStatus() != FrameItemAttempt.ReleaseStatus.PROGRESSING) {
-                    McmcpMod.LOGGER.error("MCMCP frame-item release failed", failure);
-                }
-            } finally {
-                try {
-                    recordFrameItemUsage(agentExecution.actionId, frameItem);
-                } catch (RuntimeException | LinkageError failure) {
-                    closed = false;
-                    McmcpMod.LOGGER.error("MCMCP frame-item effect capture failed", failure);
-                }
-            }
-        }
+        if (!agentExecution.breaking.close()) closed = false;
+        if (!agentExecution.cobblestone.close()) closed = false;
+        if (!agentExecution.mutation.close()) closed = false;
+        if (!agentExecution.frameItem.close()) closed = false;
         if (!agentExecution.menuPrimitives.close(
                 agentExecution.primitive, agentExecution.latestWorldRevision)) closed = false;
         if (!agentExecution.fishing.close(Minecraft.getInstance(),
                 sessions.snapshot().clientTick(), agentExecution.latestWorldRevision)) closed = false;
-        agentExecution.breakAimComplete = false;
         agentExecution.fishingAimComplete = false;
         return closed;
     }
@@ -4958,9 +3707,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private boolean statefulMenuReleaseProgressing() {
         return agentExecution != null && (
-                agentExecution.frameItemAttempt != null
-                        && agentExecution.frameItemAttempt.releaseStatus()
-                                == FrameItemAttempt.ReleaseStatus.PROGRESSING
+                agentExecution.frameItem.releaseProgressing()
                 || agentExecution.menuPrimitives.releaseProgressing()
                 || agentExecution.fishing.active());
     }
@@ -5358,34 +4105,6 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return memory;
     }
 
-    private static final class BoundedInputExecution {
-        private final BoundedInputLease lease;
-        private final Vec3 startPosition;
-        private final float effectiveHealthBaseline;
-        private Vec3 lastPosition;
-        private long activeTicks;
-        private int stalledTicks;
-
-        private BoundedInputExecution(
-                BoundedInputLease lease, Vec3 startPosition, float effectiveHealthBaseline) {
-            this.lease = Objects.requireNonNull(lease, "lease");
-            this.startPosition = Objects.requireNonNull(startPosition, "startPosition");
-            this.lastPosition = startPosition;
-            if (!Float.isFinite(effectiveHealthBaseline) || effectiveHealthBaseline <= 0.0F) {
-                throw new IllegalArgumentException("bounded input health baseline must be positive");
-            }
-            this.effectiveHealthBaseline = effectiveHealthBaseline;
-        }
-
-        private void observeMovement(Vec3 current, boolean expectsHorizontalMovement) {
-            Objects.requireNonNull(current, "current");
-            double horizontal = Math.hypot(current.x - lastPosition.x, current.z - lastPosition.z);
-            stalledTicks = expectsHorizontalMovement && horizontal < 1.0E-4D
-                    ? Math.min(10, stalledTicks + 1) : 0;
-            lastPosition = current;
-        }
-    }
-
     private static final class AgentExecution {
         private final MenuPrimitiveExecution menuPrimitives;
         private SurfacePreflightRecovery surfaceRecovery;
@@ -5394,7 +4113,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private final UUID worldSessionId;
         private final ActionDslCompiler.CompiledProgram program;
         private final ActionProgramCursor cursor;
-        private final MinecraftActionPrimitiveExecutor primitiveExecutor;
+        private final MovementExecution movement;
         private final Map<String, AgentPrimitivePlanner.MutationAim> mutationAims;
         private final long startedAtNanos;
         private long pausedNanos;
@@ -5402,7 +4121,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private float lastYaw;
         private float lastPitch;
         private ActionDsl.Node primitive;
-        private int waitTicksRemaining;
+        private final WaitExecution waiting;
         private long replanNotBeforeTick;
         private long replanDeadlineTick;
         private long primitivePlanDeadlineTick;
@@ -5420,30 +4139,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         private final int originalSelectedSlot;
         private final float maxCameraDegreesPerTick;
         private int agentSelectedSlot = -1;
-        private boolean breakAimComplete;
         private boolean fishingAimComplete;
         private final FishingPrimitiveExecution fishing;
-        private int mutationAimFailures;
-        private KnownBlockBreakAttempt blockBreakAttempt;
-        private StationaryBreakOperation cobblestoneGeneratorAttempt;
-        private BoundedInputExecution boundedInputHold;
-        private long cobblestoneGeneratorCheckpoint;
-        private boolean cobblestoneGeneratorUnknownRecorded;
-        private KnownBlockMutationAttempt blockMutationAttempt;
-        private FrameItemAttempt frameItemAttempt;
-        private AgentPrimitivePlanner.FrameItemAim frameItemAim;
-        private AgentPrimitivePlanner.MutationBatchPlan mutationBatchPlan;
-        private int mutationBatchIndex;
-        private ActionDsl.Node mutationBatchTarget;
-        private AgentPrimitivePlanner.MutationAim mutationBatchTargetAim;
-        private boolean mutationBatchTargetBound;
-        private long mutationBatchTargetDeadlineTick;
+        private final KnownBreakExecution breaking;
+        private final CobblestoneExecution cobblestone;
+        private final BoundedInputExecution boundedInput;
+        private final FrameItemExecution frameItem;
+        private final BlockMutationExecution mutation;
         private int collectBatchIndex;
         private CollectBatchEvidence collectBatchEvidence;
-        private CropWaitAuthorization cropWaitAuthorization;
-        private double tillSettlingAllowance;
-        private ActionDsl.Position tillSettlingTarget;
-        private long tillSettlingDeadlineTick;
         private KillZoneExecution killZone;
         private int pickupInventoryBefore = -1;
         private long pickupArrivalTick = -1L;
@@ -5460,14 +4164,22 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 float maxCameraDegreesPerTick,
                 Map<String, AgentPrimitivePlanner.MutationAim> mutationAims,
                 long positionCorrectionRevision, MenuPrimitiveExecution menuPrimitives,
-                FishingPrimitiveExecution fishing) {
+                FishingPrimitiveExecution fishing, MovementExecution movement, WaitExecution waiting,
+                BlockMutationExecution mutation, CobblestoneExecution cobblestone,
+                KnownBreakExecution breaking, BoundedInputExecution boundedInput, FrameItemExecution frameItem) {
             this.menuPrimitives = menuPrimitives;
             this.fishing = fishing;
             actionId = action.actionId();
             this.worldSessionId = Objects.requireNonNull(worldSessionId, "worldSessionId");
             program = action.program();
             cursor = new ActionProgramCursor(action.program().request().program());
-            primitiveExecutor = new MinecraftActionPrimitiveExecutor(maxCameraDegreesPerTick);
+            this.movement = movement;
+            this.waiting = waiting;
+            this.mutation = mutation;
+            this.cobblestone = cobblestone;
+            this.breaking = breaking;
+            this.boundedInput = boundedInput;
+            this.frameItem = frameItem;
             this.maxCameraDegreesPerTick = maxCameraDegreesPerTick;
             this.mutationAims = new LinkedHashMap<>(
                     Objects.requireNonNull(mutationAims, "mutationAims"));
