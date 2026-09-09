@@ -439,4 +439,3 @@ function Get-CurrentTemporaryDropPickupTraversabilityRecords {
         })
     return @($records)
 }
-

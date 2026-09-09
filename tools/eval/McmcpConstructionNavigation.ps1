@@ -260,4 +260,3 @@ function Invoke-ApproachSurface {
         -Distance (Get-PolicyDistanceBudget $State)
     [void](Invoke-ActionRequest -Request $request -WallTimeoutSeconds 90)
 }
-

@@ -351,4 +351,3 @@ function Select-TemporaryPillarDescentRecord {
     }
     return $selected[0].record
 }
-

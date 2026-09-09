@@ -286,4 +286,3 @@ function Wait-ForCurrentVisibleSurfaceRecords {
     }
     throw "$Block surfaces did not reach the current world revision after $MaximumPolls polls"
 }
-

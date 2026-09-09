@@ -2623,7 +2623,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private void safetyInterruptKillZone(Minecraft minecraft, WorldSessionTracker.Snapshot session,
             AgentActionStore.Active action, KillZoneExecution operation, String reason) {
         var outcome = operation.safetyInterruptKillZone(minecraft, session,
-                agentExecution.latestWorldRevision, operation, reason);
+                agentExecution.latestWorldRevision, reason);
         applyKillZoneOutcome(minecraft, action, outcome);
     }
 

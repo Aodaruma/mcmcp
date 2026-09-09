@@ -165,4 +165,3 @@ function New-PrimitiveRequest {
             max_blocks_placed = $Placements
         })
 }
-

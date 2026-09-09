@@ -52,7 +52,7 @@
 | McpToolSchemas | 1,681 | 592 |
 | Construction capability gate入口 | 4,108 | 151 |
 | 本体Javaファイル数 | 252 | 286 |
-| 本体Java総行数 | 86,859 | 87,504 |
+| 本体Java総行数 | 86,859 | 87,498 |
 | 本体Java上位10ファイルの合計行数 | 35,231（40.6%） | 23,996（27.4%） |
 | 1,000行を超える本体Javaファイル数 | 19 | 17 |
 
@@ -67,12 +67,21 @@ Java25で `gradlew.bat test harnessTest adminBridgeTest verifyHarnessIsolation b
 - verifyHarnessIsolationとproduction JARのbuild: 成功。
 - PythonのMCP transport: **14件成功**。
 - capability gate mock: **10スクリプト成功**。読込・scope・引数保持の追加試験も成功。
-- 親側でも建築/共有支援92関数の完全一致を検証。新しい案内の相対リンクと `git diff --check` を確認。
+- 親側でも建築/共有支援92関数の完全一致を検証。新しい案内の相対リンクと、基点からの全差分に対する `git diff --check 805cd5321f907932bf9f53a172c8975dd7014698 HEAD` を確認。
 - 初回のJava試験で検出した旧owner参照は、移動先を検査するよう修正した。入力解放、再計画期限、session tick、placement admissionのassertionは維持し、委譲先への接続も追加確認した。
 - 公開Tool Catalog、McpRuntimePort、EvaluationTurnControlには差分なし。
 - CLI sandbox内ではJDKファイルのアクセス拒否があったため、コンパイル・JUnitの合否は親環境の実行結果で確認した。ACL・認証設定は変更していない。
 
-実機のMinecraft、実server ACK、fog・入力解放の実機評価は未実施。配布用タグは公開しない。独立Codex CLIのponytailレビューとPR上のCI結果はレビュー記録へ追記する。
+実機のMinecraft、実server ACK、fog・入力解放の実機評価は未実施。配布用タグは公開しない。
+
+## 独立レビュー
+
+Codex CLI（read-only、reasoning high）でponytail-reviewと安全性レビューを実施。対象 `7000c383e90be284a49b314a0c2615816cde1b58` では修正必須の回帰・安全条件の変更なし。参考指摘の2点を反映した。
+
+- KillZoneExecutionの `operation = this` と自己引数を除去。所有者自身のfieldを直接参照する。
+- 抽出したPowerShell 10ファイルの末尾空行を除去。working treeだけでなく基点からの全差分を検査する。
+
+変更後の差分レビュー、対象HEAD、GitHub必須CIの結果は [PR #31](https://github.com/Aodaruma/mcmcp/pull/31) へ記録する。CLIの記録はGitHubの自己approvalとは区別する。
 
 ## 残る分割候補と順序
 

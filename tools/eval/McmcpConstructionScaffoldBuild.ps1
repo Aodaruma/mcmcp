@@ -483,4 +483,3 @@ function Get-CurrentTemporaryScaffoldSite {
         }
     }
 }
-

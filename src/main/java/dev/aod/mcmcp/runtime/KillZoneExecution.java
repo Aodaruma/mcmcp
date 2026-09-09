@@ -89,14 +89,13 @@ final class KillZoneExecution {
             long latestWorldRevision,
             boolean actionHardDeadlineReached,
             boolean newDispatchBudgetReached) {
-        KillZoneExecution operation = this;
         var player = Objects.requireNonNull(minecraft.player, "player");
         var level = Objects.requireNonNull(minecraft.level, "level");
         long tick = session.clientTick();
 
-        String hazard = killZoneHardHazard(minecraft, player, operation);
+        String hazard = killZoneHardHazard(minecraft, player);
         if (hazard != null) {
-            return safetyInterruptKillZone(minecraft, session, latestWorldRevision, operation, hazard);
+            return safetyInterruptKillZone(minecraft, session, latestWorldRevision, hazard);
         }
 
         AttackProfile currentProfile;
@@ -104,79 +103,79 @@ final class KillZoneExecution {
             currentProfile = KillZoneSafety.requireKnownAttackProfile(player.getMainHandItem());
         } catch (RuntimeInvocationException changed) {
             return safetyInterruptKillZone(
-                    minecraft, session, latestWorldRevision, operation, "attack_profile_changed");
+                    minecraft, session, latestWorldRevision, "attack_profile_changed");
         }
-        if (!operation.scope.mainHandItem().equals(
+        if (!this.scope.mainHandItem().equals(
                         BuiltInRegistries.ITEM.getKey(player.getMainHandItem().getItem()).toString())
-                || !operation.scope.attackProfileFingerprint().equals(currentProfile.fingerprint())
-                || operation.scope.attackSideEffectProfile() != currentProfile.sideEffects()) {
-            return safetyInterruptKillZone(minecraft, session, latestWorldRevision, operation, "attack_profile_changed");
+                || !this.scope.attackProfileFingerprint().equals(currentProfile.fingerprint())
+                || this.scope.attackSideEffectProfile() != currentProfile.sideEffects()) {
+            return safetyInterruptKillZone(minecraft, session, latestWorldRevision, "attack_profile_changed");
         }
 
-        if (operation.pending != null) {
-            KillZoneAttackAttempt attempt = operation.pending;
+        if (this.pending != null) {
+            KillZoneAttackAttempt attempt = this.pending;
             LivingEntity target = attempt.target;
             boolean armorStandHit = armorStandHitConfirmed(attempt);
             boolean confirmed = armorStandHit || target.getHealth() < attempt.healthBefore
                     || (!target.isAlive() && target.getHealth() <= 0.0F);
             if (confirmed) {
-                operation.confirmedAttacks++;
+                this.confirmedAttacks++;
                 recordKillZoneAttackEffect(
                         session, attempt, AgentActionStore.Verification.CONFIRMED,
                         target.getHealth(), armorStandHit ? "armor_stand_hit_event"
                                 : target.isAlive() ? "health_decreased" : "dead");
-                operation.pending = null;
+                this.pending = null;
             } else if (target.isRemoved() || KillZoneSafety.killZonePendingMustClose(
                     tick, attempt.effectDeadlineTick, actionHardDeadlineReached)) {
-                operation.unknownAttacks++;
-                operation.noRetryEntityIds.add(target.getUUID());
+                this.unknownAttacks++;
+                this.noRetryEntityIds.add(target.getUUID());
                 recordKillZoneAttackEffect(
                         session, attempt, AgentActionStore.Verification.UNKNOWN,
                         target.getHealth(), target.isRemoved()
                                 ? "despawned_or_unloaded"
                                 : actionHardDeadlineReached
                                         ? "action_budget_deadline" : "effect_timeout");
-                operation.pending = null;
+                this.pending = null;
             } else {
                 return PrimitiveOutcome.running();
             }
         }
 
         boolean durationComplete = actionHardDeadlineReached || newDispatchBudgetReached
-                || tick - operation.startedAtClientTick
-                >= operation.scope.maxOperationDurationTicks();
-        boolean countComplete = operation.dispatchedAttacks >= operation.scope.maxAttacks();
+                || tick - this.startedAtClientTick
+                >= this.scope.maxOperationDurationTicks();
+        boolean countComplete = this.dispatchedAttacks >= this.scope.maxAttacks();
         if (durationComplete || countComplete) {
-            return finishKillZone(minecraft, session, latestWorldRevision, operation,
+            return finishKillZone(minecraft, session, latestWorldRevision,
                     actionHardDeadlineReached ? "action_budget_reached"
                             : countComplete ? "attack_limit_reached"
                             : newDispatchBudgetReached ? "dispatch_budget_reached"
                             : "duration_reached");
         }
-        if (operation.lastDispatchTick != Long.MIN_VALUE
-                && tick - operation.lastDispatchTick < operation.scope.minimumIntervalTicks()) {
+        if (this.lastDispatchTick != Long.MIN_VALUE
+                && tick - this.lastDispatchTick < this.scope.minimumIntervalTicks()) {
             return PrimitiveOutcome.running();
         }
         if (player.getAttackStrengthScale(0.0F) < 0.99F) {
             return PrimitiveOutcome.running();
         }
 
-        KillZoneTarget target = currentKillZoneTarget(minecraft, session, operation);
+        KillZoneTarget target = currentKillZoneTarget(minecraft, session);
         if (target == null) return PrimitiveOutcome.running();
         if (!KillZoneSafety.killZoneStructureFingerprint(
                         level,
-                        operation.scope.playerStationBounds(),
-                        operation.scope.targetKillZoneBounds())
-                .equals(operation.scope.structureFingerprint())) {
-            return safetyInterruptKillZone(minecraft, session, latestWorldRevision, operation, "structure_changed");
+                        this.scope.playerStationBounds(),
+                        this.scope.targetKillZoneBounds())
+                .equals(this.scope.structureFingerprint())) {
+            return safetyInterruptKillZone(minecraft, session, latestWorldRevision, "structure_changed");
         }
-        if (!KillZoneSafety.killZoneCollateralSafe(level, player, target.entity(), operation.scope)) {
-            return safetyInterruptKillZone(minecraft, session, latestWorldRevision, operation, "collateral_not_proved");
+        if (!KillZoneSafety.killZoneCollateralSafe(level, player, target.entity(), this.scope)) {
+            return safetyInterruptKillZone(minecraft, session, latestWorldRevision, "collateral_not_proved");
         }
 
         // Reserve before semantic dispatch. Unknown outcomes and exceptions never return this slot.
-        operation.dispatchedAttacks++;
-        operation.lastDispatchTick = tick;
+        this.dispatchedAttacks++;
+        this.lastDispatchTick = tick;
         float healthBefore = target.entity().getHealth();
         long armorStandLastHitBefore = KillZoneSafety.armorStandLastHit(target.entity());
         try {
@@ -184,8 +183,8 @@ final class KillZoneExecution {
             player.swing(InteractionHand.MAIN_HAND);
             agentActions.recordInteraction(actionId);
         } catch (RuntimeException | LinkageError dispatchFailure) {
-            operation.unknownAttacks++;
-            operation.noRetryEntityIds.add(target.entity().getUUID());
+            this.unknownAttacks++;
+            this.noRetryEntityIds.add(target.entity().getUUID());
             var synthetic = new KillZoneAttackAttempt(
                     target.entity(), target.entityRef(), healthBefore,
                     armorStandLastHitBefore, tick);
@@ -194,18 +193,18 @@ final class KillZoneExecution {
                     target.entity().getHealth(), "dispatch_exception");
             throw dispatchFailure;
         }
-        operation.pending = new KillZoneAttackAttempt(
+        this.pending = new KillZoneAttackAttempt(
                 target.entity(), target.entityRef(), healthBefore,
                 armorStandLastHitBefore, tick);
         return PrimitiveOutcome.running();
     }
 
     private String killZoneHardHazard(
-            Minecraft minecraft, Player player, KillZoneExecution operation) {
+            Minecraft minecraft, Player player) {
         float health = player.getHealth();
         float effectiveHealth = KillZoneSafety.effectiveHealth(player);
         if (!player.isAlive() || player.isCreative() || player.isSpectator()) return "player_mode_or_life";
-        if (effectiveHealth < operation.lastEffectiveHealth) return "health_decreased";
+        if (effectiveHealth < this.lastEffectiveHealth) return "health_decreased";
         if (health < MIN_SAFE_STAY_HEALTH) return "health_floor";
         if (player.hurtTime > 0) return "active_damage";
         if (player.isOnFire()) return "on_fire";
@@ -215,7 +214,7 @@ final class KillZoneExecution {
                 || player.isFallFlying() || player.getAbilities().flying) return "unsupported_locomotion";
         if (!AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())) return "screen_open";
         AABB box = player.getBoundingBox();
-        if (!operation.scope.playerStationBounds().contains(
+        if (!this.scope.playerStationBounds().contains(
                 box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ)) return "station_departed";
         if (!minecraft.level.noCollision(player, box.deflate(1.0e-5D))) return "player_collision";
         if (player.getDeltaMovement().lengthSqr() > 0.01D) return "unexpected_motion";
@@ -232,8 +231,8 @@ final class KillZoneExecution {
                 entity -> entity.isAlive() && (entity instanceof Enemy
                         || entity instanceof Mob mob && mob.getTarget() == player))) {
             if (!(entity instanceof LivingEntity living)
-                    || !operation.scope.entityTypeAllowlist().contains(KillZoneSafety.entityType(entity))
-                    || !KillZoneSafety.wholeBoxInside(operation.scope.targetKillZoneBounds(), living.getBoundingBox())) {
+                    || !this.scope.entityTypeAllowlist().contains(KillZoneSafety.entityType(entity))
+                    || !KillZoneSafety.wholeBoxInside(this.scope.targetKillZoneBounds(), living.getBoundingBox())) {
                 return "hostile_outside_policy";
             }
             if (living.hasLineOfSight(player)) return "hostile_has_player_los";
@@ -243,15 +242,14 @@ final class KillZoneExecution {
 
     private KillZoneTarget currentKillZoneTarget(
             Minecraft minecraft,
-            WorldSessionTracker.Snapshot session,
-            KillZoneExecution operation) {
+            WorldSessionTracker.Snapshot session) {
         if (!(minecraft.hitResult instanceof EntityHitResult hit)
                 || !(hit.getEntity() instanceof LivingEntity target)
                 || target instanceof Player
                 || !target.isAlive()
-                || operation.noRetryEntityIds.contains(target.getUUID())
-                || !operation.scope.entityTypeAllowlist().contains(KillZoneSafety.entityType(target))
-                || !KillZoneSafety.wholeBoxInside(operation.scope.targetKillZoneBounds(), target.getBoundingBox())
+                || this.noRetryEntityIds.contains(target.getUUID())
+                || !this.scope.entityTypeAllowlist().contains(KillZoneSafety.entityType(target))
+                || !KillZoneSafety.wholeBoxInside(this.scope.targetKillZoneBounds(), target.getBoundingBox())
                 || target.getBoundingBox().getYsize() <= 1.0D
                 || !KillZoneSafety.clearKillZoneCrosshairRay(minecraft, hit)
                 || target instanceof Mob mob
@@ -307,9 +305,8 @@ final class KillZoneExecution {
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             long latestWorldRevision,
-            KillZoneExecution operation,
             String reason) {
-        if (operation.confirmedAttacks < 1) {
+        if (this.confirmedAttacks < 1) {
             return PrimitiveOutcome.failed(
                     AgentActionStore.FailureCode.CONDITION_TIMEOUT,
                     true,
@@ -320,11 +317,11 @@ final class KillZoneExecution {
                 session.worldSessionId()).worldRevision();
         agentActions.recordEffect(
                 actionId, "kill_zone_summary", "operation",
-                Map.of("max_attacks", operation.scope.maxAttacks()),
+                Map.of("max_attacks", this.scope.maxAttacks()),
                 Map.of(
-                        "dispatched_attacks", operation.dispatchedAttacks,
-                        "confirmed_attacks", operation.confirmedAttacks,
-                        "unknown_attacks", operation.unknownAttacks,
+                        "dispatched_attacks", this.dispatchedAttacks,
+                        "confirmed_attacks", this.confirmedAttacks,
+                        "unknown_attacks", this.unknownAttacks,
                         "completion_reason", reason),
                 AgentActionStore.Verification.CONFIRMED,
                 session.clientTick(), revision);
@@ -335,7 +332,6 @@ final class KillZoneExecution {
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             long latestWorldRevision,
-            KillZoneExecution operation,
             String reason) {
         AgentInputState.global().releaseAttack();
         closePendingEffect(session, latestWorldRevision);
@@ -348,18 +344,18 @@ final class KillZoneExecution {
         agentActions.recordEffect(
                 actionId, "safety_interrupted", "player",
                 Map.of(
-                        "health_before", operation.lastHealth,
-                        "absorption_before", operation.lastAbsorption,
-                        "effective_health_before", operation.lastEffectiveHealth,
-                        "effective_health_previous", operation.lastEffectiveHealth),
+                        "health_before", this.lastHealth,
+                        "absorption_before", this.lastAbsorption,
+                        "effective_health_before", this.lastEffectiveHealth,
+                        "effective_health_previous", this.lastEffectiveHealth),
                 Map.of(
                         "health_current", current,
                         "absorption_current", currentAbsorption,
                         "effective_health_current", currentEffective,
-                        "health_delta", currentEffective - operation.lastEffectiveHealth,
-                        "dispatched_attacks", operation.dispatchedAttacks,
-                        "confirmed_attacks", operation.confirmedAttacks,
-                        "unknown_attacks", operation.unknownAttacks,
+                        "health_delta", currentEffective - this.lastEffectiveHealth,
+                        "dispatched_attacks", this.dispatchedAttacks,
+                        "confirmed_attacks", this.confirmedAttacks,
+                        "unknown_attacks", this.unknownAttacks,
                         "reason", reason),
                 AgentActionStore.Verification.CONFIRMED,
                 session.clientTick(), revision);
@@ -375,34 +371,32 @@ final class KillZoneExecution {
     }
 
     boolean healthDecreased(Player player) {
-        KillZoneExecution operation = this;
         float currentHealth = player.getHealth();
         float currentAbsorption = player.getAbsorptionAmount();
         if (KillZoneSafety.healthDecreased(
-                operation.lastHealth,
-                operation.lastAbsorption,
+                this.lastHealth,
+                this.lastAbsorption,
                 currentHealth,
                 currentAbsorption)) {
             return true;
         }
-        operation.lastHealth = currentHealth;
-        operation.lastAbsorption = currentAbsorption;
-        operation.lastEffectiveHealth = currentHealth + currentAbsorption;
+        this.lastHealth = currentHealth;
+        this.lastAbsorption = currentAbsorption;
+        this.lastEffectiveHealth = currentHealth + currentAbsorption;
         return false;
     }
 
     void closePendingEffect(WorldSessionTracker.Snapshot session, long latestWorldRevision) {
         if (pending == null) return;
-        KillZoneExecution operation = this;
-        KillZoneAttackAttempt attempt = operation.pending;
-        operation.pending = null;
+        KillZoneAttackAttempt attempt = this.pending;
+        this.pending = null;
         boolean armorStandHit = armorStandHitConfirmed(attempt);
         boolean confirmed = armorStandHit || attempt.target.getHealth() < attempt.healthBefore
                 || (!attempt.target.isAlive() && attempt.target.getHealth() <= 0.0F);
-        if (confirmed) operation.confirmedAttacks++;
+        if (confirmed) this.confirmedAttacks++;
         else {
-            operation.unknownAttacks++;
-            operation.noRetryEntityIds.add(attempt.target.getUUID());
+            this.unknownAttacks++;
+            this.noRetryEntityIds.add(attempt.target.getUUID());
         }
         agentActions.recordEffect(
                 actionId,

@@ -220,4 +220,3 @@ function Invoke-GateTool {
     Add-GateEvent -Event 'tool_call_completed' -Detail ([ordered]@{ tool = $Tool })
     return $structured
 }
-

@@ -975,4 +975,3 @@ function Invoke-Wall5x5Gate {
 function Invoke-BuildingGateC {
     Invoke-WallGate -Width 5 -Height 5 -ScaffoldLevels 3 -MovementCapabilityOnly
 }
-

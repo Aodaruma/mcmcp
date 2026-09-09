@@ -529,4 +529,3 @@ function New-GateCExternalOracleManifest {
         expected_inventory_delta = 0
     }
 }
-
