@@ -66,7 +66,7 @@ class MinecraftKnownMenuPortTest {
         assertThat(invocations(classNode(MinecraftPhaseFiveInventoryPort.class), "dispatchTransferClick"))
                 .containsSubsequence(
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#prepareOwnedDispatch",
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$TransferBatch#beginClick",
+                        "dev/aod/mcmcp/routine/InventoryTransferBatch#beginClick",
                         "dev/aod/mcmcp/routine/KnownMenuTransfers#dispatchServerConfirmedQuickMove");
     }
 

@@ -4,12 +4,18 @@ import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
 import dev.aod.mcmcp.observation.ContainerLabelResolver;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
+import dev.aod.mcmcp.routine.InventoryOpenHandPolicy.OpenHandPlan;
+import dev.aod.mcmcp.routine.InventoryParameters.CraftParameters;
+import dev.aod.mcmcp.routine.InventoryParameters.ParsedParameters;
+import dev.aod.mcmcp.routine.InventoryParameters.RoutingLabelParameters;
+import dev.aod.mcmcp.routine.InventoryParameters.TransferParameters;
 import dev.aod.mcmcp.runtime.ClientPredictionSignals;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals;
 import dev.aod.mcmcp.runtime.ExpectedOpenToken;
 import dev.aod.mcmcp.runtime.KnownMenuProfileSupport;
 import dev.aod.mcmcp.runtime.ScreenOwnershipSignals;
 import dev.aod.mcmcp.runtime.WorldSessionTracker;
+
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -21,27 +27,18 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.Enemy;
-import net.minecraft.world.entity.player.Inventory;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.GameType;
-import net.minecraft.world.level.LevelReader;
-import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.neoforge.common.extensions.IItemExtension;
 
-import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -49,9 +46,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.function.DoubleSupplier;
 import java.util.function.BooleanSupplier;
+import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
+
+import static dev.aod.mcmcp.routine.InventoryParameters.CRAFTING_MENU;
+import static dev.aod.mcmcp.routine.InventoryParameters.CRAFT_ITEMS;
+import static dev.aod.mcmcp.routine.InventoryParameters.DOUBLE_CONTAINER_MENU;
+import static dev.aod.mcmcp.routine.InventoryParameters.TRANSFER_ITEMS;
 
 /**
  * Minecraft 26.2 adapter for the two Phase 5 inventory routines.
@@ -61,18 +63,11 @@ import java.util.function.Supplier;
  * reopening the same exact block, and receiving a fresh full-content packet.</p>
  */
 public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
-    static final String CRAFT_ITEMS = "craft_items";
-    static final String TRANSFER_ITEMS = "transfer_items";
-    static final String CRAFTING_MENU = "minecraft:crafting";
-    static final String SINGLE_CONTAINER_MENU = "minecraft:generic_9x3";
-    static final String DOUBLE_CONTAINER_MENU = "minecraft:generic_9x6";
     private static final int OPEN_TIMEOUT_TICKS = 40;
     private static final int RELEASE_TIMEOUT_TICKS = 40;
-    private static final int CRAFTING_GRID_LAST_SLOT = 9;
     private static final float MIN_SAFE_HEALTH = 10.0F;
     private static final double THREAT_RADIUS = 8.0D;
     private static final double MAX_HORIZONTAL_VELOCITY_SQUARED = 0.01D;
-    private static final float LEGACY_MAX_TURN_PER_TICK = 8.0F;
     private static final float AIM_EPSILON = 0.75F;
     private static final float ROTATION_EPSILON = 0.1F;
 
@@ -239,7 +234,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 routineId, request.kind(), tick, packetRevision(), hardDeadlineClientTick,
                 Map.of("verification", "close_reopen_full_content",
                         "container_click_retry", "none"));
-        var state = new AttemptState(request, parse(request));
+        var state = new AttemptState(request, InventoryParameters.parse(request));
         attempts.put(attempt, state);
 
         RoutineFailure preflight;
@@ -455,7 +450,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     Map.of("menu_type", snapshot.menuTypeId()));
             return;
         }
-        if (!craftingGridAndResultEmpty(snapshot.slots())) {
+        if (!InventorySlotPlanning.craftingGridAndResultEmpty(snapshot.slots())) {
             if (state.stage == Stage.OPENING_READBACK) {
                 state.inconclusive = new InconclusiveState(
                         PhaseFiveEvidence.Certainty.AMBIGUOUS,
@@ -469,11 +464,11 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             }
             return;
         }
-        int current = countPlayerItem(
+        int current = InventorySlotPlanning.countPlayerItem(
                 snapshot.slots(), menu, player.getInventory(), craft.goalItem(),
                 defaultStackHash(craft.goalItem()));
         if (state.stage == Stage.OPENING_READBACK) {
-            var readback = verifyCraftReadback(
+            var readback = InventorySlotPlanning.verifyCraftReadback(
                     state.beforeDestinationCount,
                     current,
                     state.expectedCraftOutputCount,
@@ -543,15 +538,15 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         }
         var expected = state.recipe.view().result().alternatives().getFirst();
         var resultStack = snapshot.slots().get(CraftingMenu.RESULT_SLOT);
-        if (!matchesDefaultStack(resultStack, expected.item(), defaultStackHash(expected.item()))
+        if (!InventorySlotPlanning.matchesDefaultStack(resultStack, expected.item(), defaultStackHash(expected.item()))
                 || resultStack.count() != expected.count()
                 || !snapshot.carried().empty()
-                || !exactlyOneCraftPrepared(
+                || !InventorySlotPlanning.exactlyOneCraftPrepared(
                         snapshot.slots(), state.recipe.view().ingredients())) {
             return;
         }
-        var destination = chooseCraftDestinationSlot(
-                snapshot.slots(), layout(menu, minecraft.player.getInventory()).playerSlots(),
+        var destination = InventorySlotPlanning.chooseCraftDestinationSlot(
+                snapshot.slots(), InventorySlotPlanning.layout(menu, minecraft.player.getInventory()).playerSlots(),
                 expected.item(), defaultStackHash(expected.item()), expected.count(),
                 defaultStackMaxCount(expected.item()));
         if (destination.isEmpty()) {
@@ -585,11 +580,11 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return;
         }
         int hash = transfer.defaultComponentsOnly() ? defaultStackHash(transfer.item()) : 0;
-        var layout = layout(menu, player.getInventory());
-        int playerCount = countTransfer(
+        var layout = InventorySlotPlanning.layout(menu, player.getInventory());
+        int playerCount = InventorySlotPlanning.countTransfer(
                 snapshot.slots(), layout.playerSlots(), transfer.item(), hash,
                 transfer.defaultComponentsOnly());
-        int containerCount = countTransfer(
+        int containerCount = InventorySlotPlanning.countTransfer(
                 snapshot.slots(), layout.containerSlots(), transfer.item(), hash,
                 transfer.defaultComponentsOnly());
         List<Integer> sourceSlots = transfer.playerToContainer()
@@ -601,10 +596,10 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
         if (state.stage == Stage.OPENING_READBACK) {
             state.recordTransferReadback(source, destination);
-            TransferBatch batch = state.transferBatch;
+            InventoryTransferBatch batch = state.transferBatch;
             boolean exactSlots = batch != null && batch.reconcileReadback(snapshot);
             state.updateTransferPrefix();
-            var readback = verifyTransferReadback(
+            var readback = InventorySlotPlanning.verifyTransferReadback(
                     state.beforeSourceCount,
                     state.beforeDestinationCount,
                     source,
@@ -612,7 +607,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     state.completedUnits,
                     transfer.minimumDestinationCount());
             if (!exactSlots || !readback.exactMove()
-                    || !liveMenuMatchesSnapshot(menu, snapshot)) {
+                    || !InventorySlotPlanning.liveMenuMatchesSnapshot(menu, snapshot)) {
                 state.inconclusive = new InconclusiveState(
                         PhaseFiveEvidence.Certainty.AMBIGUOUS,
                         "transfer_readback_did_not_confirm_exact_full_stack_move");
@@ -645,7 +640,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             evidence.put("full_readback", true);
             boolean inspection = "minecraft:air".equals(transfer.item())
                     && !transfer.playerToContainer() && transfer.minimumDestinationCount() == 0;
-            evidence.putAll(availableItemEvidence(snapshot.slots(), sourceSlots, inspection ? 54 : 27));
+            evidence.putAll(InventorySlotPlanning.availableItemEvidence(snapshot.slots(), sourceSlots, inspection ? 54 : 27));
             if (inspection) {
                 evidence.put("complete_container_inspection", true);
                 evidence.put("contents_world_session_id", snapshot.worldSessionId().toString());
@@ -657,7 +652,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         }
 
         if (state.transferBatch == null) {
-            if (!inboundTransferKeepsOpenHandSafe(transfer.playerToContainer(),
+            if (!InventoryOpenHandPolicy.inboundTransferKeepsOpenHandSafe(transfer.playerToContainer(),
                     player.getMainHandItem().isEmpty(), defaultStack(transfer.item()).getItem().getClass())) {
                 fail(state, "INVENTORY_SAFE_OPEN_HAND_UNAVAILABLE",
                         RoutineFailure.Category.SAFETY, RoutineFailure.Recovery.REPLAN,
@@ -674,40 +669,40 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                         Map.of("maximum_destination_count", maximumDestination));
                 return;
             }
-            state.beginTransferBatch(new TransferBatch(snapshot.slots(), sourceSlots, destinationSlots,
+            state.beginTransferBatch(new InventoryTransferBatch(snapshot.slots(), sourceSlots, destinationSlots,
                     transfer.item(), hash, transfer.defaultComponentsOnly(), transfer.maxStackMoves(),
                     transfer.maxTransferCount(), transfer.minimumDestinationCount() - destination),
                     source, destination);
         }
-        TransferBatch batch = state.transferBatch;
+        InventoryTransferBatch batch = state.transferBatch;
         if (batch.exhausted()) {
-            if (batch.confirmedMoves > 0) {
+            if (batch.confirmedMoves() > 0) {
                 closeForReadback(attempt, state);
                 return;
             }
             var observed = new LinkedHashMap<String, Object>();
             observed.put("source_count", source);
-            observed.putAll(availableItemEvidence(snapshot.slots(), sourceSlots, 27));
+            observed.putAll(InventorySlotPlanning.availableItemEvidence(snapshot.slots(), sourceSlots, 27));
             fail(state, "TRANSFER_FULL_STACK_UNAVAILABLE", RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
                     Map.of("item", transfer.item(), "maximum_remaining", transfer.maxTransferCount()),
                     observed);
             return;
         }
-        if (!batch.confirmedSlots.equals(snapshot.slots())) {
+        if (!batch.confirmedSlots().equals(snapshot.slots())) {
             // No click is repeated or newly planned after refills or unrelated slot changes.
-            if (batch.confirmedMoves > 0) closeForReadback(attempt, state);
+            if (batch.confirmedMoves() > 0) closeForReadback(attempt, state);
             else fail(state, "TRANSFER_INITIAL_SLOTS_CHANGED", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.REPLAN, Map.of(), Map.of());
             return;
         }
         int slot = batch.next().slot();
         ItemStack sourceStack = menu.slots.get(slot).getItem();
-        if (!liveMenuMatchesSnapshot(menu, snapshot)
+        if (!InventorySlotPlanning.liveMenuMatchesSnapshot(menu, snapshot)
                 || !KnownMenuProfileSupport.hasFullDestinationCapacity(
                         sourceStack,
                         destinationSlots.stream().map(menu.slots::get).toList())) {
-            if (batch.confirmedMoves > 0) {
+            if (batch.confirmedMoves() > 0) {
                 closeForReadback(attempt, state);
                 return;
             }
@@ -812,7 +807,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             var snapshot = proof.orElseThrow();
             Minecraft minecraft = requireMinecraft();
             if (minecraft.player != null
-                    && liveMenuMatchesSnapshot(minecraft.player.containerMenu, snapshot)
+                    && InventorySlotPlanning.liveMenuMatchesSnapshot(minecraft.player.containerMenu, snapshot)
                     && state.transferBatch.confirm(snapshot)) {
                 state.updateTransferPrefix();
                 if (state.transferBatch.exhausted()
@@ -997,7 +992,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
     private static boolean selectOpenHand(
             Minecraft minecraft, AttemptState state, long clientTick) {
-        Optional<OpenHandPlan> openHand = chooseOpenHand(
+        Optional<OpenHandPlan> openHand = InventoryOpenHandPolicy.chooseOpenHand(
                 Objects.requireNonNull(minecraft.player));
         if (openHand.isEmpty()) {
             fail(state, "INVENTORY_SAFE_OPEN_HAND_UNAVAILABLE", RoutineFailure.Category.SAFETY,
@@ -1021,7 +1016,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     Map.of("kind", "craft_items|transfer_items"),
                     Map.of("kind", request.kind()));
         }
-        var parameters = parse(request);
+        var parameters = InventoryParameters.parse(request);
         var player = minecraft.player;
         var level = minecraft.level;
         if (session == null || !session.worldReady() || level == null || player == null
@@ -1047,7 +1042,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     RoutineFailure.Recovery.USER,
                     Map.of("screen", "clear", "ownership", "idle"), Map.of());
         }
-        if (chooseOpenHand(player).isEmpty()) {
+        if (InventoryOpenHandPolicy.chooseOpenHand(player).isEmpty()) {
             return failure("INVENTORY_SAFE_OPEN_HAND_REQUIRED",
                     RoutineFailure.Category.PRECONDITION,
                     RoutineFailure.Recovery.REPLAN,
@@ -1401,170 +1396,6 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         return Math.max(0L, screens.snapshot().packetLedgerRevision());
     }
 
-    private static ParsedParameters parse(PhaseFiveRequest request) {
-        return switch (request.kind()) {
-            case CRAFT_ITEMS -> parseCraft(request.parameters());
-            case TRANSFER_ITEMS -> parseTransfer(request.parameters());
-            default -> throw new IllegalArgumentException("unsupported inventory routine kind");
-        };
-    }
-
-    private static CraftParameters parseCraft(Map<String, Object> parameters) {
-        var station = map(parameters.get("station"), "station");
-        String stationKind = string(station.get("kind"), "station.kind");
-        if ("inventory_2x2".equals(stationKind)) {
-            throw new IllegalArgumentException(
-                    "inventory_2x2 is not supported because strict close/reopen readback is unavailable");
-        }
-        if (!"crafting_table".equals(stationKind)) {
-            throw new IllegalArgumentException("unsupported crafting station");
-        }
-        var goal = map(parameters.get("goal"), "goal");
-        requireDefaultComponents(goal, "goal");
-        var target = target(map(station.get("target"), "station.target"));
-        return new CraftParameters(
-                string(parameters.get("recipe_ref"), "recipe_ref"),
-                string(parameters.get("recipe_fingerprint"), "recipe_fingerprint"),
-                string(goal.get("item"), "goal.item"),
-                integer(goal.get("minimum_inventory_count"), "goal.minimum_inventory_count"),
-                integer(parameters.get("max_crafts"), "max_crafts"),
-                target,
-                state(map(station.get("expected_state"), "station.expected_state")));
-    }
-
-    private static TransferParameters parseTransfer(Map<String, Object> parameters) {
-        var container = map(parameters.get("container"), "container");
-        var stack = map(parameters.get("stack"), "stack");
-        var goal = map(parameters.get("goal"), "goal");
-        String stackPolicy = string(stack.get("stack_policy"), "stack.stack_policy");
-        if (!"default_components_only".equals(stackPolicy)
-                && !"item_id_any_components".equals(stackPolicy)) {
-            throw new IllegalArgumentException("unsupported transfer stack policy");
-        }
-        String direction = string(parameters.get("direction"), "direction");
-        if (!"player_to_container".equals(direction)
-                && !"container_to_player".equals(direction)) {
-            throw new IllegalArgumentException("unsupported transfer direction");
-        }
-        return new TransferParameters(
-                "player_to_container".equals(direction),
-                string(stack.get("item"), "stack.item"),
-                stackPolicy,
-                integer(goal.get("minimum_destination_count"),
-                        "goal.minimum_destination_count"),
-                integer(parameters.get("max_transfer_count"), "max_transfer_count"),
-                parameters.containsKey("max_stack_moves")
-                        ? integer(parameters.get("max_stack_moves"), "max_stack_moves")
-                        : 1,
-                Boolean.TRUE.equals(parameters.get("retain_view_on_release")),
-                parameters.containsKey("max_camera_degrees_per_tick")
-                        ? finiteNumber(parameters.get("max_camera_degrees_per_tick"),
-                                "max_camera_degrees_per_tick")
-                        : LEGACY_MAX_TURN_PER_TICK,
-                target(map(container.get("target"), "container.target")),
-                state(map(container.get("expected_state"), "container.expected_state")),
-                routingLabel(parameters));
-    }
-
-    private static Optional<RoutingLabelParameters> routingLabel(
-            Map<String, Object> parameters) {
-        if (!parameters.containsKey("routing_label")) return Optional.empty();
-        Map<String, Object> label = map(parameters.get("routing_label"), "routing_label");
-        if (!label.keySet().equals(java.util.Set.of("entity_ref", "item"))) {
-            throw new IllegalArgumentException("routing_label has an invalid shape");
-        }
-        return Optional.of(new RoutingLabelParameters(
-                string(label.get("entity_ref"), "routing_label.entity_ref"),
-                string(label.get("item"), "routing_label.item")));
-    }
-
-    private static void requireDefaultComponents(Map<String, Object> source, String name) {
-        if (!"default_components_only".equals(
-                string(source.get("stack_policy"), name + ".stack_policy"))) {
-            throw new IllegalArgumentException(name + " requires default_components_only");
-        }
-    }
-
-    private static BlockTarget target(Map<String, Object> value) {
-        return new BlockTarget(
-                string(value.get("dimension"), "dimension"),
-                integer(value.get("x"), "x"),
-                integer(value.get("y"), "y"),
-                integer(value.get("z"), "z"));
-    }
-
-    private static BlockStateFingerprint state(Map<String, Object> value) {
-        var properties = new LinkedHashMap<String, String>();
-        for (var entry : map(value.get("properties"), "properties").entrySet()) {
-            properties.put(entry.getKey(), string(entry.getValue(), "property value"));
-        }
-        return new BlockStateFingerprint(
-                string(value.get("block"), "block"), properties);
-    }
-
-    private static Map<String, Object> map(Object value, String name) {
-        if (!(value instanceof Map<?, ?> raw)) {
-            throw new IllegalArgumentException(name + " must be an object");
-        }
-        var result = new LinkedHashMap<String, Object>();
-        for (var entry : raw.entrySet()) {
-            if (!(entry.getKey() instanceof String key)) {
-                throw new IllegalArgumentException(name + " has a non-string key");
-            }
-            result.put(key, entry.getValue());
-        }
-        return result;
-    }
-
-    private static String string(Object value, String name) {
-        if (!(value instanceof String text) || text.isBlank()) {
-            throw new IllegalArgumentException(name + " must be a non-blank string");
-        }
-        return text;
-    }
-
-    private static int integer(Object value, String name) {
-        if (!(value instanceof Number number)) {
-            throw new IllegalArgumentException(name + " must be an integer");
-        }
-        long longValue = number.longValue();
-        if (number.doubleValue() != longValue
-                || longValue < Integer.MIN_VALUE || longValue > Integer.MAX_VALUE) {
-            throw new IllegalArgumentException(name + " must be an integer");
-        }
-        return (int) longValue;
-    }
-
-    private static double finiteNumber(Object value, String name) {
-        if (!(value instanceof Number number) || !Double.isFinite(number.doubleValue())) {
-            throw new IllegalArgumentException(name + " must be a finite number");
-        }
-        return number.doubleValue();
-    }
-
-    static Vec3 inventoryAimPoint(PhaseFiveRequest request, BlockTarget target) {
-        Object raw = request.parameters().get("aim_point");
-        if (raw == null) {
-            return new Vec3(target.x() + 0.5D, target.y() + 0.5D, target.z() + 0.5D);
-        }
-        Map<String, Object> point = map(raw, "aim_point");
-        if (!point.keySet().equals(java.util.Set.of("dimension", "x", "y", "z"))) {
-            throw new IllegalArgumentException("aim_point fields are invalid");
-        }
-        if (!target.dimension().equals(string(point.get("dimension"), "aim_point.dimension"))) {
-            throw new IllegalArgumentException("aim_point dimension does not match target");
-        }
-        double x = finiteNumber(point.get("x"), "aim_point.x");
-        double y = finiteNumber(point.get("y"), "aim_point.y");
-        double z = finiteNumber(point.get("z"), "aim_point.z");
-        if (x < target.x() || x > target.x() + 1.0D
-                || y < target.y() || y > target.y() + 1.0D
-                || z < target.z() || z > target.z() + 1.0D) {
-            throw new IllegalArgumentException("aim_point is outside its target block");
-        }
-        return new Vec3(x, y, z);
-    }
-
     private static BlockHitResult exactHit(Minecraft minecraft, BlockTarget target) {
         if (!ContainerAimGate.exactTarget(minecraft.hitResult, blockPos(target))) {
             throw new IllegalArgumentException("current crosshair does not identify the exact target");
@@ -1648,108 +1479,6 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 && ScreenOwnershipSignals.menuTypeId(screen.getMenu().getType()).equals(menuTypeId);
     }
 
-    private static Optional<OpenHandPlan> chooseOpenHand(LocalPlayer player) {
-        Objects.requireNonNull(player, "player");
-        var hotbar = new ArrayList<ItemStack>(9);
-        for (int slot = 0; slot < 9; slot++) {
-            hotbar.add(player.getInventory().getItem(slot));
-        }
-        return chooseOpenHand(
-                hotbar, player.getOffhandItem(), player.getInventory().getSelectedSlot());
-    }
-
-    static Optional<OpenHandPlan> chooseOpenHand(
-            List<ItemStack> hotbar, ItemStack offhand, int selectedSlot) {
-        Objects.requireNonNull(offhand, "offhand");
-        return chooseOpenHand(hotbar, safeEmptyMainHandOffhand(offhand), selectedSlot);
-    }
-
-    static Optional<OpenHandPlan> chooseOpenHand(
-            List<ItemStack> hotbar, boolean emptyMainHandAllowed, int selectedSlot) {
-        Objects.requireNonNull(hotbar, "hotbar");
-        if (hotbar.size() != 9 || selectedSlot < 0 || selectedSlot > 8) {
-            throw new IllegalArgumentException("invalid hotbar selection context");
-        }
-        // NeoForge checks sneak-use bypass and invokes onItemUseFirst before the block. A nonempty
-        // MAIN_HAND with default hooks short-circuits the offhand bypass hook. Empty MAIN_HAND
-        // reports bypass=true, so its offhand bypass hook must also be proven default.
-        for (int slot = 0; slot < 9; slot++) {
-            if (!hotbar.get(slot).isEmpty() && safeKnownMenuOpenStack(hotbar.get(slot))) {
-                return Optional.of(new OpenHandPlan(slot));
-            }
-        }
-        if (emptyMainHandAllowed) {
-            for (int slot = 0; slot < 9; slot++) {
-                if (hotbar.get(slot).isEmpty()) {
-                    return Optional.of(new OpenHandPlan(slot));
-                }
-            }
-        }
-        return Optional.empty();
-    }
-
-    /**
-     * Safety proof for an exact known crafting table, chest or barrel interaction. NeoForge calls
-     * sneak-use bypass and {@code onItemUseFirst} before the block. Empty MAIN_HAND also evaluates
-     * the offhand sneak-use bypass hook, so that hook must remain default too. The supported
-     * Vanilla block then consumes {@code useWithoutItem} before {@code ItemStack.useOn}.
-     */
-    static boolean safeKnownMenuOpenStack(ItemStack stack) {
-        Objects.requireNonNull(stack, "stack");
-        return !stack.isEmpty() && usesDefaultNeoForgeOpenHooks(stack.getItem().getClass());
-    }
-
-    static boolean safeKnownMenuOpenContext(ItemStack mainHand, ItemStack offhand) {
-        Objects.requireNonNull(mainHand, "mainHand");
-        Objects.requireNonNull(offhand, "offhand");
-        return mainHand.isEmpty()
-                ? safeEmptyMainHandOffhand(offhand) : safeKnownMenuOpenStack(mainHand);
-    }
-
-    static boolean safeEmptyMainHandOffhand(ItemStack offhand) {
-        Objects.requireNonNull(offhand, "offhand");
-        return safeEmptyMainHandOffhand(
-                offhand.isEmpty(), offhand.getItem().getClass());
-    }
-
-    static boolean safeEmptyMainHandOffhand(boolean empty, Class<?> itemType) {
-        Objects.requireNonNull(itemType, "itemType");
-        return empty || usesDefaultNeoForgeSneakBypass(itemType);
-    }
-
-    static boolean inboundTransferKeepsOpenHandSafe(
-            boolean playerToContainer, boolean mainHandEmpty, Class<?> transferredItemType) {
-        Objects.requireNonNull(transferredItemType, "transferredItemType");
-        return playerToContainer || !mainHandEmpty || usesDefaultNeoForgeOpenHooks(transferredItemType);
-    }
-
-    static boolean usesDefaultNeoForgeOpenHooks(Class<?> itemType) {
-        return usesDefaultNeoForgeFirstUse(itemType) && usesDefaultNeoForgeSneakBypass(itemType);
-    }
-
-    static boolean usesDefaultNeoForgeFirstUse(Class<?> itemType) {
-        Objects.requireNonNull(itemType, "itemType");
-        try {
-            return itemType
-                    .getMethod("onItemUseFirst", ItemStack.class, UseOnContext.class)
-                    .getDeclaringClass() == IItemExtension.class;
-        } catch (ReflectiveOperationException | SecurityException | LinkageError failure) {
-            return false;
-        }
-    }
-
-    static boolean usesDefaultNeoForgeSneakBypass(Class<?> itemType) {
-        Objects.requireNonNull(itemType, "itemType");
-        try {
-            return itemType
-                    .getMethod("doesSneakBypassUse", ItemStack.class, LevelReader.class,
-                            BlockPos.class, Player.class)
-                    .getDeclaringClass() == IItemExtension.class;
-        } catch (ReflectiveOperationException | SecurityException | LinkageError failure) {
-            return false;
-        }
-    }
-
     static boolean sameTransferContainerIdentity(
             BlockStateFingerprint expected, BlockState live) {
         if (!vanillaStorageContainer(live)) return false;
@@ -1810,248 +1539,6 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         return defaultStack(itemId).getMaxStackSize();
     }
 
-    private static MenuLayout layout(AbstractContainerMenu menu, Inventory inventory) {
-        var playerSlots = new ArrayList<Integer>();
-        var containerSlots = new ArrayList<Integer>();
-        for (int index = 0; index < menu.slots.size(); index++) {
-            if (menu.slots.get(index).container == inventory) {
-                playerSlots.add(index);
-            } else {
-                containerSlots.add(index);
-            }
-        }
-        return new MenuLayout(playerSlots, containerSlots);
-    }
-
-    private static boolean liveMenuMatchesSnapshot(
-            AbstractContainerMenu menu,
-            ContainerSyncSignals.ContainerSnapshot snapshot) {
-        if (menu.slots.size() != snapshot.slots().size()) return false;
-        for (int index = 0; index < menu.slots.size(); index++) {
-            if (!ContainerSyncSignals.StackFingerprint.fromServerPacket(
-                    menu.slots.get(index).getItem()).equals(snapshot.slots().get(index))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static int countPlayerItem(
-            List<ContainerSyncSignals.StackFingerprint> stacks,
-            AbstractContainerMenu menu,
-            Inventory inventory,
-            String item,
-            int defaultHash) {
-        return countExact(stacks, layout(menu, inventory).playerSlots(), item, defaultHash);
-    }
-
-    static boolean craftingGridAndResultEmpty(
-            List<ContainerSyncSignals.StackFingerprint> stacks) {
-        if (stacks.size() <= CRAFTING_GRID_LAST_SLOT) {
-            return false;
-        }
-        for (int slot = CraftingMenu.RESULT_SLOT; slot <= CRAFTING_GRID_LAST_SLOT; slot++) {
-            if (!stacks.get(slot).empty()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    static boolean exactlyOneCraftPrepared(
-            List<ContainerSyncSignals.StackFingerprint> stacks,
-            List<ClientRecipeCatalog.IngredientView> ingredients) {
-        if (stacks.size() <= CRAFTING_GRID_LAST_SLOT || ingredients.isEmpty()) {
-            return false;
-        }
-        long expectedUnits = ingredients.stream()
-                .mapToLong(ClientRecipeCatalog.IngredientView::countPerCraft)
-                .sum();
-        long gridUnits = 0L;
-        for (int slot = 1; slot <= CRAFTING_GRID_LAST_SLOT; slot++) {
-            gridUnits += stacks.get(slot).count();
-        }
-        return gridUnits == expectedUnits;
-    }
-
-    static Optional<Integer> chooseCraftDestinationSlot(
-            List<ContainerSyncSignals.StackFingerprint> stacks,
-            List<Integer> playerSlots,
-            String item,
-            int defaultHash,
-            int outputCount,
-            int maximumStackCount) {
-        if (outputCount < 1 || outputCount > maximumStackCount) {
-            return Optional.empty();
-        }
-        Integer empty = null;
-        for (int slot : playerSlots) {
-            if (slot < 0 || slot >= stacks.size()) {
-                throw new IllegalArgumentException("slot is outside the full snapshot");
-            }
-            var stack = stacks.get(slot);
-            if (matchesDefaultStack(stack, item, defaultHash)
-                    && stack.count() <= maximumStackCount - outputCount) {
-                return Optional.of(slot);
-            }
-            if (stack.empty() && empty == null) {
-                empty = slot;
-            }
-        }
-        return Optional.ofNullable(empty);
-    }
-
-    static int countExact(
-            List<ContainerSyncSignals.StackFingerprint> stacks,
-            List<Integer> slots,
-            String item,
-            int defaultHash) {
-        Objects.requireNonNull(stacks, "stacks");
-        Objects.requireNonNull(slots, "slots");
-        int count = 0;
-        for (int slot : slots) {
-            if (slot < 0 || slot >= stacks.size()) {
-                throw new IllegalArgumentException("slot is outside the full snapshot");
-            }
-            var stack = stacks.get(slot);
-            if (matchesDefaultStack(stack, item, defaultHash)) {
-                count = Math.addExact(count, stack.count());
-            }
-        }
-        return count;
-    }
-
-    static Optional<Integer> chooseFullStackSlot(
-            List<ContainerSyncSignals.StackFingerprint> stacks,
-            List<Integer> sourceSlots,
-            String item,
-            int defaultHash,
-            int maximumCount) {
-        if (maximumCount < 1) {
-            return Optional.empty();
-        }
-        for (int slot : sourceSlots) {
-            if (slot < 0 || slot >= stacks.size()) {
-                throw new IllegalArgumentException("slot is outside the full snapshot");
-            }
-            var stack = stacks.get(slot);
-            if (matchesDefaultStack(stack, item, defaultHash)
-                    && stack.count() > 0 && stack.count() <= maximumCount) {
-                return Optional.of(slot);
-            }
-        }
-        return Optional.empty();
-    }
-
-    static int countTransfer(
-            List<ContainerSyncSignals.StackFingerprint> stacks,
-            List<Integer> slots,
-            String item,
-            int defaultHash,
-            boolean defaultComponentsOnly) {
-        if (defaultComponentsOnly) {
-            return countExact(stacks, slots, item, defaultHash);
-        }
-        int count = 0;
-        for (int slot : slots) {
-            if (slot < 0 || slot >= stacks.size()) {
-                throw new IllegalArgumentException("slot is outside the full snapshot");
-            }
-            var stack = stacks.get(slot);
-            if (!stack.empty() && item.equals(stack.itemId())) {
-                count = Math.addExact(count, stack.count());
-            }
-        }
-        return count;
-    }
-
-    static Optional<Integer> chooseTransferSlot(
-            List<ContainerSyncSignals.StackFingerprint> stacks,
-            List<Integer> sourceSlots,
-            String item,
-            int defaultHash,
-            int maximumCount,
-            boolean defaultComponentsOnly) {
-        if (defaultComponentsOnly) {
-            return chooseFullStackSlot(stacks, sourceSlots, item, defaultHash, maximumCount);
-        }
-        if (maximumCount < 1) {
-            return Optional.empty();
-        }
-        for (int slot : sourceSlots) {
-            if (slot < 0 || slot >= stacks.size()) {
-                throw new IllegalArgumentException("slot is outside the full snapshot");
-            }
-            var stack = stacks.get(slot);
-            if (!stack.empty() && item.equals(stack.itemId())
-                    && stack.count() > 0 && stack.count() <= maximumCount) {
-                return Optional.of(slot);
-            }
-        }
-        return Optional.empty();
-    }
-
-    static Map<String, Object> availableItemEvidence(
-            List<ContainerSyncSignals.StackFingerprint> stacks,
-            List<Integer> sourceSlots,
-            int maximumItems) {
-        Objects.requireNonNull(stacks, "stacks");
-        Objects.requireNonNull(sourceSlots, "sourceSlots");
-        if (maximumItems < 1) {
-            throw new IllegalArgumentException("maximumItems must be positive");
-        }
-        var counts = new java.util.TreeMap<String, Integer>();
-        for (int slot : sourceSlots) {
-            if (slot < 0 || slot >= stacks.size()) {
-                throw new IllegalArgumentException("slot is outside the full snapshot");
-            }
-            var stack = stacks.get(slot);
-            if (!stack.empty() && stack.count() > 0) {
-                counts.merge(stack.itemId(), stack.count(), Math::addExact);
-            }
-        }
-        var items = counts.entrySet().stream()
-                .limit(maximumItems)
-                .map(entry -> Map.<String, Object>of(
-                        "item", entry.getKey(), "count", entry.getValue()))
-                .toList();
-        return Map.of(
-                "available_source_items", items,
-                "available_source_items_truncated", counts.size() > maximumItems);
-    }
-
-    private static boolean matchesDefaultStack(
-            ContainerSyncSignals.StackFingerprint stack,
-            String item,
-            int defaultHash) {
-        return !stack.empty()
-                && item.equals(stack.itemId())
-                && stack.itemAndComponentsHash() == defaultHash;
-    }
-
-    static TransferReadback verifyTransferReadback(
-            int sourceBefore,
-            int destinationBefore,
-            int sourceAfter,
-            int destinationAfter,
-            int dispatchedFullStackCount,
-            int minimumDestinationCount) {
-        boolean exact = dispatchedFullStackCount > 0
-                && sourceBefore - sourceAfter == dispatchedFullStackCount
-                && destinationAfter - destinationBefore == dispatchedFullStackCount;
-        return new TransferReadback(exact, exact && destinationAfter >= minimumDestinationCount);
-    }
-
-    static CraftReadback verifyCraftReadback(
-            int inventoryBefore,
-            int inventoryAfter,
-            int expectedOutputCount,
-            int minimumInventoryCount) {
-        boolean exact = expectedOutputCount > 0
-                && inventoryAfter - inventoryBefore == expectedOutputCount;
-        return new CraftReadback(exact, exact && inventoryAfter >= minimumInventoryCount);
-    }
-
     private static void succeed(
             AttemptState state, int verifiedUnits, Map<String, Object> basis) {
         state.result = new PhaseFiveResult(verifiedUnits, true, basis, List.of());
@@ -2104,267 +1591,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         TERMINAL
     }
 
-    sealed interface ParsedParameters permits CraftParameters, TransferParameters {
-        BlockTarget target();
-
-        BlockStateFingerprint expectedState();
-
-        String menuTypeId();
-
-        default boolean restoreViewOnRelease() {
-            return true;
-        }
-
-        default float maxCameraDegreesPerTick() {
-            return LEGACY_MAX_TURN_PER_TICK;
-        }
-
-        default Optional<RoutingLabelParameters> routingLabel() {
-            return Optional.empty();
-        }
-    }
-
-    record CraftParameters(
-            String recipeRef,
-            String recipeFingerprint,
-            String goalItem,
-            int minimumInventoryCount,
-            int maxCrafts,
-            BlockTarget target,
-            BlockStateFingerprint expectedState) implements ParsedParameters {
-        CraftParameters {
-            Objects.requireNonNull(recipeRef, "recipeRef");
-            Objects.requireNonNull(recipeFingerprint, "recipeFingerprint");
-            Objects.requireNonNull(goalItem, "goalItem");
-            Objects.requireNonNull(target, "target");
-            Objects.requireNonNull(expectedState, "expectedState");
-            if (minimumInventoryCount < 1 || minimumInventoryCount > 2_304
-                    || maxCrafts < 1 || maxCrafts > 64) {
-                throw new IllegalArgumentException("craft limits are outside the v1 contract");
-            }
-        }
-
-        @Override
-        public String menuTypeId() {
-            return CRAFTING_MENU;
-        }
-
-        @Override
-        public boolean restoreViewOnRelease() {
-            return false;
-        }
-    }
-
-    record TransferParameters(
-            boolean playerToContainer,
-            String item,
-            String stackPolicy,
-            int minimumDestinationCount,
-            int maxTransferCount,
-            int maxStackMoves,
-            boolean retainViewOnRelease,
-            double cameraDegreesPerTick,
-            BlockTarget target,
-            BlockStateFingerprint expectedState,
-            Optional<RoutingLabelParameters> routingLabel) implements ParsedParameters {
-        TransferParameters {
-            Objects.requireNonNull(item, "item");
-            Objects.requireNonNull(stackPolicy, "stackPolicy");
-            Objects.requireNonNull(target, "target");
-            Objects.requireNonNull(expectedState, "expectedState");
-            Objects.requireNonNull(routingLabel, "routingLabel");
-            if (!"default_components_only".equals(stackPolicy)
-                    && !"item_id_any_components".equals(stackPolicy)) {
-                throw new IllegalArgumentException("unsupported transfer stack policy");
-            }
-            if (minimumDestinationCount < 0
-                    || minimumDestinationCount > (playerToContainer ? 3_456 : 2_304)
-                    || maxTransferCount < 1 || maxTransferCount > 896
-                    || maxStackMoves < 1 || maxStackMoves > 14
-                    || !Double.isFinite(cameraDegreesPerTick)
-                    || cameraDegreesPerTick < 0.1D || cameraDegreesPerTick > 18.0D) {
-                throw new IllegalArgumentException("transfer limits are outside the v1 contract");
-            }
-        }
-
-        TransferParameters(
-                boolean playerToContainer,
-                String item,
-                String stackPolicy,
-                int minimumDestinationCount,
-                int maxTransferCount,
-                int maxStackMoves,
-                boolean retainViewOnRelease,
-                double cameraDegreesPerTick,
-                BlockTarget target,
-                BlockStateFingerprint expectedState) {
-            this(playerToContainer, item, stackPolicy, minimumDestinationCount,
-                    maxTransferCount, maxStackMoves, retainViewOnRelease,
-                    cameraDegreesPerTick, target, expectedState, Optional.empty());
-        }
-
-        @Override
-        public String menuTypeId() {
-            return transferMenuType(expectedState);
-        }
-
-        boolean defaultComponentsOnly() {
-            return "default_components_only".equals(stackPolicy);
-        }
-
-        @Override
-        public boolean restoreViewOnRelease() {
-            return !retainViewOnRelease;
-        }
-
-        @Override
-        public float maxCameraDegreesPerTick() {
-            return (float) cameraDegreesPerTick;
-        }
-    }
-
-    record RoutingLabelParameters(String entityRef, String item) {
-        RoutingLabelParameters {
-            Objects.requireNonNull(entityRef, "entityRef");
-            Objects.requireNonNull(item, "item");
-            if (!entityRef.matches("[A-Za-z0-9_-]{24}")
-                    || !item.matches("[a-z0-9_.-]+:[a-z0-9_./-]+")
-                    || item.length() > 128) {
-                throw new IllegalArgumentException("invalid routing label");
-            }
-        }
-    }
-
-    static String transferMenuType(BlockStateFingerprint expectedState) {
-        if (KnownContainerPolicy.isBarrel(expectedState.blockId())) {
-            return SINGLE_CONTAINER_MENU;
-        }
-        if (KnownContainerPolicy.isChest(expectedState.blockId())) {
-            String type = expectedState.properties().get("type");
-            if (ChestType.SINGLE.getSerializedName().equals(type)) {
-                return SINGLE_CONTAINER_MENU;
-            }
-            if (ChestType.LEFT.getSerializedName().equals(type)
-                    || ChestType.RIGHT.getSerializedName().equals(type)) {
-                return DOUBLE_CONTAINER_MENU;
-            }
-            throw new IllegalArgumentException("unsupported chest type");
-        }
-        throw new IllegalArgumentException("unsupported vanilla storage container");
-    }
-
-    record MenuLayout(List<Integer> playerSlots, List<Integer> containerSlots) {
-        MenuLayout {
-            playerSlots = List.copyOf(playerSlots);
-            containerSlots = List.copyOf(containerSlots);
-        }
-    }
-
-    record TransferReadback(boolean exactMove, boolean goalVerified) {
-    }
-
-    record CraftReadback(boolean exactlyOneCraft, boolean goalVerified) {
-    }
-
     private record InconclusiveState(
             PhaseFiveEvidence.Certainty certainty, String reason) {
     }
-
-    record OpenHandPlan(int selectedSlot) {
-        OpenHandPlan {
-            if (selectedSlot < 0 || selectedSlot > 8) {
-                throw new IllegalArgumentException("open-hand slot is outside the hotbar");
-            }
-        }
-
-        boolean ready(LocalPlayer player) {
-            if (player.getInventory().getSelectedSlot() != selectedSlot) return false;
-            return safeKnownMenuOpenContext(player.getMainHandItem(), player.getOffhandItem());
-        }
-
-        boolean readyAtSlot(LocalPlayer player) {
-            return safeKnownMenuOpenContext(
-                    player.getInventory().getItem(selectedSlot), player.getOffhandItem());
-        }
-    }
-
-    /** Fixed initial sources and per-click server baselines, bounded by the caller's stack/count caps. */
-    static final class TransferBatch {
-        private final List<PlannedTransferStack> plan;
-        private final List<Integer> destinationSlots;
-        private List<ContainerSyncSignals.StackFingerprint> confirmedSlots;
-        private List<ContainerSyncSignals.StackFingerprint> clickBaseline;
-        private long clickRevision;
-        private long confirmedRevision = -1L;
-        private long lastDispatchTick = -1L;
-        private int confirmedMoves;
-        private int confirmedCount;
-
-        TransferBatch(
-                List<ContainerSyncSignals.StackFingerprint> initial,
-                List<Integer> sourceSlots, List<Integer> destinationSlots,
-                String item, int defaultHash, boolean defaultComponentsOnly,
-                int maximumStacks, int maximumCount, int neededCount) {
-            if (maximumStacks < 1 || maximumStacks > 14 || maximumCount < 1 || maximumCount > 896) {
-                throw new IllegalArgumentException("transfer batch limits are outside the contract");
-            }
-            this.confirmedSlots = List.copyOf(initial);
-            this.destinationSlots = List.copyOf(destinationSlots);
-            var selected = new ArrayList<PlannedTransferStack>();
-            int plannedCount = 0;
-            for (int slot : sourceSlots) {
-                if (selected.size() >= maximumStacks || plannedCount >= neededCount) break;
-                var stack = initial.get(slot);
-                if (stack.empty() || !item.equals(stack.itemId())
-                        || (defaultComponentsOnly && stack.itemAndComponentsHash() != defaultHash)
-                        || stack.count() > maximumCount - plannedCount) continue;
-                selected.add(new PlannedTransferStack(slot, stack));
-                plannedCount = Math.addExact(plannedCount, stack.count());
-            }
-            this.plan = List.copyOf(selected);
-        }
-
-        PlannedTransferStack next() { return plan.get(confirmedMoves); }
-        boolean exhausted() { return confirmedMoves >= plan.size(); }
-        boolean inFlight() { return clickBaseline != null; }
-
-        boolean beginClick(ContainerSyncSignals.ContainerSnapshot snapshot, long tick) {
-            if (inFlight() || exhausted() || tick <= lastDispatchTick
-                    || !snapshot.carried().empty()
-                    || snapshot.packetLedgerRevision() < confirmedRevision
-                    || !confirmedSlots.equals(snapshot.slots())
-                    || !next().stack().equals(snapshot.slots().get(next().slot()))) return false;
-            clickBaseline = List.copyOf(snapshot.slots());
-            clickRevision = snapshot.packetLedgerRevision();
-            lastDispatchTick = tick;
-            return true;
-        }
-
-        boolean confirm(ContainerSyncSignals.ContainerSnapshot snapshot) {
-            if (!inFlight() || snapshot.packetLedgerRevision() <= clickRevision
-                    || !snapshot.carried().empty()
-                    || !KnownMenuTransfers.exactWholeStackMove(
-                            clickBaseline, snapshot.slots(), next().slot(), destinationSlots)) return false;
-            confirmedCount = Math.addExact(confirmedCount, next().stack().count());
-            confirmedMoves++;
-            confirmedSlots = List.copyOf(snapshot.slots());
-            confirmedRevision = snapshot.packetLedgerRevision();
-            clickBaseline = null;
-            return true;
-        }
-
-        boolean ackTimedOut(long tick) {
-            return inFlight() && tick - lastDispatchTick >= KnownMenuTransfers.UPDATE_TIMEOUT_TICKS;
-        }
-
-        boolean reconcileReadback(ContainerSyncSignals.ContainerSnapshot snapshot) {
-            if (inFlight()) confirm(snapshot);
-            return !inFlight() && confirmedMoves > 0 && snapshot.carried().empty()
-                    && confirmedSlots.equals(snapshot.slots());
-        }
-    }
-
-    record PlannedTransferStack(int slot, ContainerSyncSignals.StackFingerprint stack) { }
 
     static final class AttemptState {
         private final PhaseFiveRequest request;
@@ -2387,7 +1616,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private int beforeDestinationCount;
         private int afterDestinationCount;
         private int dispatchedStackCount;
-        private TransferBatch transferBatch;
+        private InventoryTransferBatch transferBatch;
         private int expectedCraftOutputCount;
         private long lastPacketRevision;
         private long closeDeadlineClientTick;
@@ -2409,7 +1638,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         AttemptState(PhaseFiveRequest request, ParsedParameters parameters) {
             this.request = Objects.requireNonNull(request, "request");
             this.parameters = Objects.requireNonNull(parameters, "parameters");
-            this.aimPoint = inventoryAimPoint(request, parameters.target());
+            this.aimPoint = InventoryParameters.inventoryAimPoint(request, parameters.target());
         }
 
         void prepareTransfer(int source, int destination, int stackCount) {
@@ -2419,7 +1648,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             transferReadbackObserved = false;
         }
 
-        void beginTransferBatch(TransferBatch batch, int source, int destination) {
+        void beginTransferBatch(InventoryTransferBatch batch, int source, int destination) {
             transferBatch = Objects.requireNonNull(batch, "batch");
             prepareTransfer(source, destination, 0);
         }
@@ -2432,8 +1661,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
 
         void updateTransferPrefix() {
             if (transferBatch == null) return;
-            completedUnits = transferBatch.confirmedCount;
-            completedActions = transferBatch.confirmedMoves;
+            completedUnits = transferBatch.confirmedCount();
+            completedActions = transferBatch.confirmedMoves();
         }
 
         private boolean terminal() {

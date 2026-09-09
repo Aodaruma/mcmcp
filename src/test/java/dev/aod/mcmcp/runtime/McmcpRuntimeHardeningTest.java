@@ -1659,7 +1659,7 @@ class McmcpRuntimeHardeningTest {
         assertThat(shiftedClock.allows(
                 routineId, negativeStart + Duration.ofSeconds(42).toNanos())).isFalse();
         assertThat(negativeClock.allows(UUID.randomUUID(), negativeStart)).isFalse();
-        assertThat(McmcpRuntime.activeElapsedNanos(-100L, 20L, -50L)).isEqualTo(30L);
+        assertThat(ActionBudgets.activeElapsedNanos(-100L, 20L, -50L)).isEqualTo(30L);
     }
 
     @Test

@@ -68,9 +68,19 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 | MenuPrimitiveExecution | 1 Actionのcontainer・brewing・construction・pillar・redstone attempt。cleanupで未回収effectと使用量を回収 |
 | FishingPrimitiveExecution | 1 Actionの釣りdispatch・bobber ACK・cleanup。未確認操作を再送しない |
 | KillZoneExecution | 消費済み同意scope、攻撃ACK待機、再送禁止entity集合 |
+| KnownBreakExecution / CobblestoneExecution | 通常破壊のattempt・effectと、丸石生成のcheckpoint・未確認dispatchを別々に所有 |
+| BlockMutationExecution | batch対象の再証明期限・再照準回数・attempt・耕作後の下降補正 |
+| FrameItemExecution | 額縁の認可aim・ACK待機・使用量とeffectの回収 |
+| BoundedInputExecution | 有限入力leaseと、その間の姿勢・health・停滞証拠 |
+| MovementExecution | 移動・照準の準備、入力executor。準備ごとの選択slot・pickup結果を返す |
+| WaitExecution | 有限待機tick、作物・音の認可済み証拠 |
 | PrimitiveOutcome | 小さな進行結果。実行クラスは結果を返し、runtimeが次nodeまたは終了へ遷移させる |
 
 `RuntimePrimitiveOwnershipContractTest` はcleanup順序とeffectの保存を、`McmcpRuntimeEvaluationTurnContractTest` はfenceと入力解放後のlease終了を検査します。新しい状態のownerを増やす場合も、この接続と終了順序を明示してください。
+
+`tickAgentAction`は開始・制御境界の確認、移動量記録、bounded input、回復、kill-zone、通常programの順に処理します。通常programの予算・pickup確認は`tickAgentProgram`、移動とその結果は`tickAgentMovement`を読むと、関係する段階を絞れます。各ownerは進行結果を返し、DSLの次nodeへの遷移とterminal公開はruntimeが決めます。
+
+準備時のslot選択・pickup結果は、その呼出しで新しく確定した証拠です。前のprimitiveの結果を再利用してrootの所有記録を上書きしないでください。`ExecutionSelectionEvidenceTest`は準備失敗時の古い証拠の混入を、`WaitExecutionTest`は待機tick数と次occurrenceのresetを確認します。
 
 ## 実行基盤の計算・変換モジュール
 
@@ -91,6 +101,21 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 | RoutineArguments / RoutineIdentity / RoutineCatalog | 既存の内部routine互換経路の要求・同一性・一覧 |
 
 `routine/` はすべて旧機能という意味ではありません。現在のActionもそこにあるMinecraft操作portや小さなoperationを利用します。削除時は実際の呼出元を確認してください。`McpToolSchemas` は内部routine入力schemaだけを保持し、固定5 Toolの正本はcatalog側にあります。
+
+## 在庫操作の分割
+
+[`MinecraftPhaseFiveInventoryPort`](../src/main/java/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort.java)は、client thread上の受付・開封・通常click・server同期・readback・画面解放を調整します。要求の解釈や計画を変える際は、次の同packageの実装から読み始めてください。
+
+| クラス | 責務・関連テスト |
+| --- | --- |
+| InventoryParameters | 要求解析、immutableなcraft/transfer条件、aim点の検証、menu種別。公開APIからの要求組立てはruntime/InventoryRequestsも確認する |
+| InventorySlotPlanning | server snapshotからのslot選択・個数集計・craft/transfer readback判定。InventorySlotPlanningTest |
+| InventoryOpenHandPolicy | 既知Vanilla containerをMAIN_HANDで開くhotbar選択、NeoForgeの先行hook検証。MinecraftPhaseFiveInventoryPortTestの開封・手持ち安全契約 |
+| InventoryTransferBatch | 最初のsource集合、1 clickのserver baseline、確認済みprefix。InventoryTransferBatchTest |
+
+Batchは確認済み状態だけを更新し、click自体はportが発行します。ACK前に次のsourceを選び直したり、未知結果のclickを再送したりしません。公開結果へのeffect回収、readback後の成功判定、cleanup完了までの画面所有はportの責務です。policyクラスへMinecraft操作やattempt状態を追加しないでください。
+
+`MinecraftPhaseFiveInventoryPortTest`はportと各方針の接続・順序を検査し、独立したslot/batch試験は対応する小さなテストファイルで実行します。`./gradlew test --tests '*Inventory*Test'`でまとめて確認できます。照準の共通解析を変える場合は、呼出元のBrewing/Furnaceの契約試験も実行してください。
 
 ## 評価スクリプト
 

@@ -19,6 +19,14 @@ import net.minecraft.world.phys.Vec3;
 final class ActionBudgets {
     private ActionBudgets() {}
 
+    static long activeElapsedNanos(long startedAtNanos, long pausedNanos, long nowNanos) {
+        if (pausedNanos < 0L) {
+            throw new IllegalArgumentException("pausedNanos must be non-negative");
+        }
+        long elapsed = nonNegativeNanoElapsed(startedAtNanos, nowNanos);
+        return pausedNanos >= elapsed ? 0L : elapsed - pausedNanos;
+    }
+
     static final int MAX_MUTATION_AIM_FAILURES = 3;
     static final String REPLANNED_ROUTE_SHAPE_EVIDENCE =
             "replanned_route_shape_exceeds_occurrence";

@@ -1564,7 +1564,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                 family,
                 target,
                 expected,
-                MinecraftPhaseFiveInventoryPort.inventoryAimPoint(request, target),
+                InventoryParameters.inventoryAimPoint(request, target),
                 string(fuel.get("item"), "fuel.item"),
                 integer(request.parameters().get("max_smelts"), "max_smelts"),
                 request);

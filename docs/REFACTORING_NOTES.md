@@ -1,4 +1,6 @@
-# Issue #30: 責務分割の作業記録
+# 責務分割の作業記録
+
+第1段階（Issue #30 / PR #31）の記録を保持し、末尾に第2段階（Issue #32）の結果を追記した。各段階の規模と未確認条件は、その時点のもの。
 
 ## 目的と契約
 
@@ -28,7 +30,7 @@
 - baselineの前回監査では本体1245件、harness13件、通信14件成功。adminBridge21件はUP-TO-DATEだった。今回の改修後に改めて検証する。
 - 実機検証・Release公開は未実施。完了と混同しない。
 
-## 現在の状態
+## 第1段階完了時の状態
 
 2026-09-09:
 
@@ -83,10 +85,60 @@ Codex CLI（read-only、reasoning high）でponytail-reviewと安全性レビュ
 
 変更後の差分レビュー、対象HEAD、GitHub必須CIの結果は [PR #31](https://github.com/Aodaruma/mcmcp/pull/31) へ記録する。CLIの記録はGitHubの自己approvalとは区別する。
 
-## 残る分割候補と順序
+## 第1段階終了時の分割候補と順序
 
 1. **McmcpRuntimeのAction進行部分**: 約5,500行と、まだ最大のファイル。`tickAgentAction`、`beginAgentPrimitive`、破壊・mutation・bounded inputの実行が残る。次は1 Action内の進行状態と予算・再計画の関係を明示し、入力解放の順序を保って1種類ずつ分離する。全runtime参照を受け取る巨大controllerへ移すだけにはしない。
 2. **Minecraft操作port**: Inventory 2,635行、Brewing 2,453行、ApplyBlockPlan 2,416行、Furnace 2,252行。候補選択・slot計画・readback/ACK・cleanupを個別に扱う。今回共有したPlayerBaseline以上に安全gateをまとめると、操作固有の差を消す可能性があるため、意味の一致を確認してから抽出する。
 3. **局所観測と評価runner**: LocalObservationVolume 2,307行、EvalTrace/Fresh runnerの大きさも残る。観測時刻・revision・fixture境界のテストを基点に次の単位を選ぶ。建築WallScenariosも1関数が長く、引数のscopeを保った次段階の整理が候補。
 
 今後の機能追加は[コード案内](CODE_MAP.md)から該当モジュールを選ぶ。分割先へ処理を追加し、runtimeには必要な進行・終了の接続を残す。
+
+## 第2段階（Issue #32）
+
+基点: `eec1f46c2390dd3a0cff76b7b893aa4dc51ccccc`。ユーザーからの継続依頼に対し、残るAction tick・primitive状態とInventory portの方針の混在を対象にする。subagentは使用せず、Runtimeの実装と独立レビューをCodex CLIで行う。
+
+### Inventoryの境界
+
+- InventoryParameters: 要求解析、immutableな条件、menu種別・aim検証。Brewing/Furnaceの同じaim検証の呼出先も更新した。
+- InventorySlotPlanning: server snapshotからのslot選択・個数・readback計算。
+- InventoryOpenHandPolicy: MAIN_HANDの選択と、既知containerに先行するNeoForge hookの安全証明。
+- InventoryTransferBatch: 初期source集合・click baseline・確認済みprefixの所有。mutable fieldをprivateに保ち、portへは確認済み個数・immutableなslot snapshotを返す。
+- portはclient thread上の開封・click・同期・readback・cleanupを保持する。public APIと診断、上限、clickの順序を変えない。
+
+既存テスト16件をslot計画とbatch契約の小さなファイルへ移動した。port試験には各方針への接続、入力・画面所有と処理順の検査を残す。移動した70メンバーを旧commitと照合し、可視性・indent・constructorの所有クラス以外に本体差分がないことを確認した。
+
+### Runtimeの境界
+
+KnownBreakExecution、CobblestoneExecution、BlockMutationExecution、FrameItemExecution、BoundedInputExecution、MovementExecution、WaitExecutionへ分割した。抽出先は123〜543行で、各操作の状態とtick・cleanupを同じownerが扱う。RuntimeはAction開始・DSL進行・入力解放・terminalの調整を保持する。時間予算の純粋計算はActionBudgetsへ移し、各実行クラスからRuntime本体への逆参照を除いた。
+
+長いtickは開始確認、制御境界、回復、予算・pickup確認、semantic dispatch、移動結果に分けた。tick加算位置、早期return、元の配送期限、ACK、effect回収、入力解放後のterminal公開を維持する。準備出力の古いslot・pickupが後続操作へ残らないよう初期化し、失敗時にも前の操作の証拠を返さない回帰試験を加えた。
+
+### 規模と検証
+
+| 対象 | 第1段階終了時 | 第2段階終了時 |
+| --- | ---: | ---: |
+| McmcpRuntime | 5,488行 | 4,192行 |
+| tickAgentActionの入口 | 778行 | 59行 |
+| MinecraftPhaseFiveInventoryPort | 2,635行 | 1,864行 |
+| MinecraftPhaseFiveInventoryPortTest | 1,238行 | 876行 |
+| 本体Javaファイル数 | 286 | 297 |
+| 本体Java総行数 | 87,498行 | 88,086行 |
+| 上位10ファイルの合計 | 23,996行（27.4%） | 21,929行（24.9%） |
+
+ファイルは空行・コメントを含む。tick入口は宣言から閉じ括弧までで集計する。クラス間の依存・結果の受渡しを明示したため総行数は約0.7%増えた。行数だけでなく、1操作を理解するときに読む責務の範囲が小さくなったことを成果とする。
+
+- Java25の本体テスト1,256件、harness13件、admin bridge21件が成功。失敗・skipなし。buildとverifyHarnessIsolationも成功。
+- Inventoryの関連74件と移動メンバー70件の一致を確認。既存assertionを保ち、ASMは移動先とruntimeからの接続・実行順を検査するよう更新した。
+- 独立Codex CLIの対象SHA・結論、最終CI結果はIssue #32に対応するPRへ記録する。
+- CLI sandbox内ではJDKアクセスが拒否されたため、Java検証は統合担当の環境で実行した。権限・ACL・認証設定は変更していない。
+- Python transport14件、capability mock10本、読込/scope試験も成功。
+
+独立CLIの全体レビュー（対象`6a404c75e238f0bc5e450744799c6090ed639579`）では修正必須の回帰はなく、今回の区切りも妥当との評価を得た。参考提案に従い、破壊・丸石生成の記録helperへ所有済みAction IDを再渡しする引数を除いた。統合側では、batch計画をnullの場合も旧計画を消去する無条件代入へ変更した。この追加差分のレビュー対象SHAとCIはPRへ記録する。
+
+実機Minecraft、実server ACK、fog、入力解放の実機確認は未実施。Releaseタグは公開しない。
+
+### 今回の区切りと次の候補
+
+Runtimeはまだ約4,200行あるが、操作固有の実装と主要な判断段階には入口ができた。残るAction進行と停止の調整を一括で別controllerへ移すと、入力解放・最初のterminal intent・評価leaseの順序を複数のowner間で管理することになる。今回はこの調整を1か所に保持して区切る。
+
+今後は、機能変更に合わせてpickupの接触・在庫確認状態、recovery調整、Brewing/Furnace等の個別portを1つずつ扱う。既に短く責務が明確なmoduleのさらなる細分化は優先しない。次の大きな状態分割や配布の前には実機評価も挟み、ソース試験だけで安全性やLLMの修正成功率が証明されたとは扱わない。
