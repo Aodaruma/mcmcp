@@ -99,11 +99,16 @@ class LocalObservationMixinContractTest {
                 .noneMatch(call -> call.contains("LocalObservationVolume#onPlayerTick"));
         assertThat(invocations(begin))
                 .contains("dev/aod/mcmcp/client/AgentInputState#beginPlayerMovementTick");
-        var collect = method(
-                classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class"),
+        var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
+        assertThat(invocations(method(runtime, "onPreTick")))
+                .contains("dev/aod/mcmcp/runtime/AgentObservations#collectAgentObservation");
+        var collect = method(classNode("/dev/aod/mcmcp/runtime/AgentObservations.class"),
                 "collectAgentObservation");
         assertThat(invocations(collect))
-                .contains("dev/aod/mcmcp/agent/safety/LocalObservationVolume#observe");
+                .containsSubsequence(
+                        "dev/aod/mcmcp/runtime/WorldSessionTracker#snapshot",
+                        "dev/aod/mcmcp/runtime/WorldSessionTracker$Snapshot#clientTick",
+                        "dev/aod/mcmcp/agent/safety/LocalObservationVolume#observe");
     }
 
     @Test

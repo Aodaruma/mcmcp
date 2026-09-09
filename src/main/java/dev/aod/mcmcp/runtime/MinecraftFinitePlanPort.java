@@ -71,10 +71,10 @@ final class MinecraftFinitePlanPort implements FinitePlanPort {
         visitActions(request.steps(), action -> {
             var compiled = compile(action, dimension);
             if (compiled.semantic != null) {
-                McmcpRuntime.validateLiveBounds(
+                RoutineArguments.validateLiveBounds(
                         minecraft, compiled.semantic.bounds(), semanticTarget(compiled.semantic));
             } else {
-                McmcpRuntime.validateLiveBounds(
+                RoutineArguments.validateLiveBounds(
                         minecraft, compiled.phaseFive.bounds(), compiled.targets);
             }
         });
@@ -346,14 +346,14 @@ final class MinecraftFinitePlanPort implements FinitePlanPort {
         full.put("completion_intent", CHILD_COMPLETION_INTENT);
         full.put("idempotency_key", CHILD_IDEMPOTENCY_KEY);
         if (PhaseFiveRequest.KINDS.contains(action.kind().wireName())) {
-            var parsed = McmcpRuntime.phaseFiveRequestArgument(full, dimension);
+            var parsed = RoutineArguments.phaseFiveRequestArgument(full, dimension);
             return new CompiledAction(
                     null,
                     parsed.request(),
                     parsed.targets());
         }
         return new CompiledAction(
-                McmcpRuntime.semanticActionArgument(full, dimension), null, List.of());
+                RoutineArguments.semanticActionArgument(full, dimension), null, List.of());
     }
 
     private static BlockTarget semanticTarget(SemanticActionRequest request) {

@@ -89,11 +89,11 @@ class SurfacePreflightRecoveryTest {
                 "inspect", 0, 1, 0, 0, 0, 0, 0,
                 Math.toIntExact(consumedTicks), false);
         var planned = new ActionDslCompiler.Cost(30_000, 600, 0, 38, 1, 0, 0);
-        var remaining = McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+        var remaining = ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
                 used, true, NODE, planned, elapsedNanos);
 
         assertThat(consumedTicks).isOne();
-        assertThat(McmcpRuntime.fitsRemainingBudget(
+        assertThat(ActionBudgets.fitsRemainingBudget(
                 used,
                 new ActionDsl.Budget(30_000, 600, 0, 360, 1, 0, 0),
                 remaining,

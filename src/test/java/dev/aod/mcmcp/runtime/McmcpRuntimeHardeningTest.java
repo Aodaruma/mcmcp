@@ -123,9 +123,9 @@ class McmcpRuntimeHardeningTest {
 
     @Test
     void armorStandServerHitEventConfirmsWithoutHealthLoss() {
-        assertThat(McmcpRuntime.armorStandHitEventAdvanced(0L, 42L)).isTrue();
-        assertThat(McmcpRuntime.armorStandHitEventAdvanced(42L, 42L)).isFalse();
-        assertThat(McmcpRuntime.armorStandHitEventAdvanced(Long.MIN_VALUE, 42L)).isFalse();
+        assertThat(KillZoneSafety.armorStandHitEventAdvanced(0L, 42L)).isTrue();
+        assertThat(KillZoneSafety.armorStandHitEventAdvanced(42L, 42L)).isFalse();
+        assertThat(KillZoneSafety.armorStandHitEventAdvanced(Long.MIN_VALUE, 42L)).isFalse();
     }
 
     @Test
@@ -134,19 +134,19 @@ class McmcpRuntimeHardeningTest {
         long effectDeadline = dispatchTick
                 + ActionDslCompiler.KILL_ZONE_EFFECT_RESERVE_TICKS;
         // Reaching max_interactions=1 stops another dispatch, but is not a hard deadline.
-        assertThat(McmcpRuntime.killZonePendingMustClose(
+        assertThat(KillZoneSafety.killZonePendingMustClose(
                 dispatchTick + 1L, effectDeadline, false)).isFalse();
-        assertThat(McmcpRuntime.killZonePendingMustClose(
+        assertThat(KillZoneSafety.killZonePendingMustClose(
                 effectDeadline, effectDeadline, false)).isTrue();
-        assertThat(McmcpRuntime.killZonePendingMustClose(
+        assertThat(KillZoneSafety.killZonePendingMustClose(
                 dispatchTick + 1L, effectDeadline, true)).isTrue();
     }
 
     @Test
     void killZoneHealthFenceDetectsDamageAfterRecovery() {
-        assertThat(McmcpRuntime.healthDecreased(16.0F, 0.0F, 20.0F, 0.0F)).isFalse();
-        assertThat(McmcpRuntime.healthDecreased(20.0F, 0.0F, 18.0F, 0.0F)).isTrue();
-        assertThat(McmcpRuntime.healthDecreased(20.0F, 4.0F, 20.0F, 2.0F)).isTrue();
+        assertThat(KillZoneSafety.healthDecreased(16.0F, 0.0F, 20.0F, 0.0F)).isFalse();
+        assertThat(KillZoneSafety.healthDecreased(20.0F, 0.0F, 18.0F, 0.0F)).isTrue();
+        assertThat(KillZoneSafety.healthDecreased(20.0F, 4.0F, 20.0F, 2.0F)).isTrue();
     }
 
     @Test
@@ -249,7 +249,7 @@ class McmcpRuntimeHardeningTest {
                 0,
                 0,
                 false);
-        var payload = McmcpRuntime.actionPayload(new AgentActionStore.Snapshot(
+        var payload = ActionWireMapper.actionPayload(new AgentActionStore.Snapshot(
                 UUID.randomUUID(),
                 AgentActionStore.State.QUEUED,
                 progress,
@@ -273,7 +273,7 @@ class McmcpRuntimeHardeningTest {
         assertThat(payload).doesNotContainKey("container_results");
         var snapshot = new AgentActionStore.Snapshot(UUID.randomUUID(), AgentActionStore.State.QUEUED,
                 progress, null, List.of(), source);
-        var withContents = McmcpRuntime.actionPayload(snapshot,
+        var withContents = ActionWireMapper.actionPayload(snapshot,
                 dev.aod.mcmcp.agent.action.ContainerInspection.Query.parse(
                         Map.of("include_container_results", true)));
         assertThat(((Map<?, ?>) withContents.get("container_results")).containsKey("results")).isTrue();
@@ -306,7 +306,7 @@ class McmcpRuntimeHardeningTest {
                 AgentActionStore.Verification.CONFIRMED,
                 3L,
                 9L);
-        var payload = McmcpRuntime.actionPayload(new AgentActionStore.Snapshot(
+        var payload = ActionWireMapper.actionPayload(new AgentActionStore.Snapshot(
                 actionId,
                 AgentActionStore.State.FAILED,
                 progress,
@@ -359,15 +359,15 @@ class McmcpRuntimeHardeningTest {
         var map = new KnownTraversabilityMap();
         map.startSession(session, "minecraft:overworld", 1L);
 
-        assertThat(McmcpRuntime.visualBarrierWorldRevision(
+        assertThat(ActionEvidence.visualBarrierWorldRevision(
                 map.snapshot().orElseThrow(), signals.snapshot())).isZero();
-        var neutralSurfaceBarriers = McmcpRuntime.surfaceRevisionBarrier(
+        var neutralSurfaceBarriers = ActionEvidence.surfaceRevisionBarrier(
                 map.snapshot().orElseThrow(), signals.snapshot());
         assertThat(neutralSurfaceBarriers.applyAsLong(
                 new ActionDsl.Position("minecraft:overworld", 1, 65, 1))).isEqualTo(1L);
         assertThat(neutralSurfaceBarriers.applyAsLong(
                 new ActionDsl.Position("minecraft:overworld", 9, 65, 9))).isZero();
-        var waitSurfaceBarriers = McmcpRuntime.waitTargetSurfaceRevisionBarrier(
+        var waitSurfaceBarriers = ActionEvidence.waitTargetSurfaceRevisionBarrier(
                 map.snapshot().orElseThrow(), signals.snapshot());
         assertThat(waitSurfaceBarriers.applyAsLong(
                 new ActionDsl.Position("minecraft:overworld", 1, 65, 1))).isEqualTo(1L);
@@ -379,32 +379,32 @@ class McmcpRuntimeHardeningTest {
                 2, 64, 1,
                 ClientReconciliationSignals.NavigationImpact.LOCAL);
         map.advanceWorldRevision(2L, List.of(), List.of());
-        assertThat(McmcpRuntime.visualBarrierWorldRevision(
+        assertThat(ActionEvidence.visualBarrierWorldRevision(
                 map.snapshot().orElseThrow(), signals.snapshot())).isEqualTo(2L);
-        assertThat(McmcpRuntime.surfaceRevisionBarrier(
+        assertThat(ActionEvidence.surfaceRevisionBarrier(
                 map.snapshot().orElseThrow(), signals.snapshot()).applyAsLong(
                         new ActionDsl.Position("minecraft:overworld", 9, 65, 9)))
                 .isEqualTo(2L);
-        assertThat(McmcpRuntime.waitTargetSurfaceRevisionBarrier(
+        assertThat(ActionEvidence.waitTargetSurfaceRevisionBarrier(
                 map.snapshot().orElseThrow(), signals.snapshot()).applyAsLong(
                         new ActionDsl.Position("minecraft:overworld", 1, 65, 1)))
                 .isEqualTo(2L);
 
         var staleMap = new KnownTraversabilityMap();
         staleMap.startSession(session, "minecraft:overworld", 1L);
-        assertThatThrownBy(() -> McmcpRuntime.visualBarrierWorldRevision(
+        assertThatThrownBy(() -> ActionEvidence.visualBarrierWorldRevision(
                 staleMap.snapshot().orElseThrow(), signals.snapshot()))
                 .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
-        assertThatThrownBy(() -> McmcpRuntime.waitTargetSurfaceRevisionBarrier(
+        assertThatThrownBy(() -> ActionEvidence.waitTargetSurfaceRevisionBarrier(
                 staleMap.snapshot().orElseThrow(), signals.snapshot()))
                 .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
 
         var otherSessionMap = new KnownTraversabilityMap();
         otherSessionMap.startSession(UUID.randomUUID(), "minecraft:overworld", 2L);
-        assertThatThrownBy(() -> McmcpRuntime.visualBarrierWorldRevision(
+        assertThatThrownBy(() -> ActionEvidence.visualBarrierWorldRevision(
                 otherSessionMap.snapshot().orElseThrow(), signals.snapshot()))
                 .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
-        assertThatThrownBy(() -> McmcpRuntime.waitTargetSurfaceRevisionBarrier(
+        assertThatThrownBy(() -> ActionEvidence.waitTargetSurfaceRevisionBarrier(
                 otherSessionMap.snapshot().orElseThrow(), signals.snapshot()))
                 .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
     }
@@ -445,7 +445,7 @@ class McmcpRuntimeHardeningTest {
         var pose = new AgentPrimitivePlanner.Pose(
                 start, 0.5D, 64.0D, 4.5D, 1.27D, 0.0F, 0.0F);
 
-        var plan = McmcpRuntime.requireRuntimeApproachPlan(
+        var plan = ActionPlanning.requireRuntimeApproachPlan(
                 map.snapshot().orElseThrow(),
                 new DeterministicAStar(),
                 pose,
@@ -455,7 +455,7 @@ class McmcpRuntimeHardeningTest {
 
         assertThat(plan.anchor()).isEqualTo(aabbOnly);
         assertThat(plan.route().cells()).containsExactly(start, aabbOnly);
-        assertThatThrownBy(() -> McmcpRuntime.requireRuntimeApproachPlan(
+        assertThatThrownBy(() -> ActionPlanning.requireRuntimeApproachPlan(
                         map.snapshot().orElseThrow(),
                         new DeterministicAStar(),
                         pose,
@@ -468,29 +468,29 @@ class McmcpRuntimeHardeningTest {
 
     @Test
     void visibleItemPickupRequiresAnAbsoluteInventoryIncrease() {
-        assertThat(McmcpRuntime.pickupInventoryIncreased(10, 11)).isTrue();
-        assertThat(McmcpRuntime.pickupInventoryIncreased(10, 10)).isFalse();
-        assertThat(McmcpRuntime.pickupInventoryIncreased(10, 9)).isFalse();
-        assertThatThrownBy(() -> McmcpRuntime.pickupInventoryIncreased(-1, 0))
+        assertThat(PlayerInventoryEvidence.pickupInventoryIncreased(10, 11)).isTrue();
+        assertThat(PlayerInventoryEvidence.pickupInventoryIncreased(10, 10)).isFalse();
+        assertThat(PlayerInventoryEvidence.pickupInventoryIncreased(10, 9)).isFalse();
+        assertThatThrownBy(() -> PlayerInventoryEvidence.pickupInventoryIncreased(-1, 0))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        assertThat(McmcpRuntime.pickupOccurrenceBaseline(-1, 10)).isEqualTo(10);
-        assertThat(McmcpRuntime.pickupOccurrenceBaseline(10, 11)).isEqualTo(10);
-        assertThatThrownBy(() -> McmcpRuntime.pickupOccurrenceBaseline(-2, 10))
+        assertThat(ActionBudgets.pickupOccurrenceBaseline(-1, 10)).isEqualTo(10);
+        assertThat(ActionBudgets.pickupOccurrenceBaseline(10, 11)).isEqualTo(10);
+        assertThatThrownBy(() -> ActionBudgets.pickupOccurrenceBaseline(-2, 10))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        assertThat(McmcpRuntime.visibleItemEvidenceMaxAgeTicks(512)).isEqualTo(4);
-        assertThat(McmcpRuntime.visibleItemEvidenceMaxAgeTicks(64)).isEqualTo(32);
-        assertThatThrownBy(() -> McmcpRuntime.visibleItemEvidenceMaxAgeTicks(63))
+        assertThat(ActionBudgets.visibleItemEvidenceMaxAgeTicks(512)).isEqualTo(4);
+        assertThat(ActionBudgets.visibleItemEvidenceMaxAgeTicks(64)).isEqualTo(32);
+        assertThatThrownBy(() -> ActionBudgets.visibleItemEvidenceMaxAgeTicks(63))
                 .isInstanceOf(IllegalArgumentException.class);
 
         var player = new AABB(0.2D, 64.0D, 0.2D, 0.8D, 65.8D, 0.8D);
-        assertThat(McmcpRuntime.playerPickupAreaIntersects(
+        assertThat(PlayerInventoryEvidence.playerPickupAreaIntersects(
                 player,
                 new dev.aod.mcmcp.agent.observation.ObservationValues.Aabb(
                         1.7D, 64.0D, 0.4D, 1.9D, 64.25D, 0.6D)))
                 .isTrue();
-        assertThat(McmcpRuntime.playerPickupAreaIntersects(
+        assertThat(PlayerInventoryEvidence.playerPickupAreaIntersects(
                 player,
                 new dev.aod.mcmcp.agent.observation.ObservationValues.Aabb(
                         0.4D, 66.4D, 0.4D, 0.6D, 66.65D, 0.6D)))
@@ -523,65 +523,65 @@ class McmcpRuntimeHardeningTest {
 
         var compiled = ActionDslCompiler.compile(
                 request,
-                McmcpRuntime::structuralPrimitiveCost,
+                ActionPlanning::structuralPrimitiveCost,
                 request.program().capabilities());
 
         assertThat(compiled.worstCaseCost()).isEqualTo(
                 new ActionDslCompiler.Cost(500, 10, 0, 0, 1, 1, 1));
         assertThat(compiled.primitiveCostBounds().get("plant").ticks()).isZero();
-        assertThat(McmcpRuntime.primitiveReobservationTicks(request.program().body().get(1)))
+        assertThat(ActionEvidence.primitiveReobservationTicks(request.program().body().get(1)))
                 .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
-        assertThat(McmcpRuntime.primitiveReobservationTicks(
+        assertThat(ActionEvidence.primitiveReobservationTicks(
                 new ActionDsl.NavigateToKnown("move", support, 0.75)))
                 .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
-        assertThat(McmcpRuntime.primitiveReobservationTicks(
+        assertThat(ActionEvidence.primitiveReobservationTicks(
                 new ActionDsl.FaceKnownPosition("face", support)))
                 .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
-        assertThat(McmcpRuntime.primitiveReobservationTicks(
+        assertThat(ActionEvidence.primitiveReobservationTicks(
                 new ActionDsl.FaceKnownBlockFace(
                         "face_surface", support, ActionDsl.BlockFace.UP,
                         "minecraft:stone")))
                 .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
-        assertThat(McmcpRuntime.structuralPrimitiveCost(
+        assertThat(ActionPlanning.structuralPrimitiveCost(
                 new ActionDsl.OpenKnownFenceGate("open_gate", support))).contains(
                         new ActionDslCompiler.Cost(0, 0, 0, 0, 1, 0, 0));
-        assertThat(McmcpRuntime.structuralPrimitiveCost(
+        assertThat(ActionPlanning.structuralPrimitiveCost(
                 new ActionDsl.InspectKnownContainer(
                         "inspect", support, "minecraft:chest"))).contains(
                         new ActionDslCompiler.Cost(0, 0, 0, 0, 1, 0, 0));
-        assertThat(McmcpRuntime.structuralPrimitiveCost(
+        assertThat(ActionPlanning.structuralPrimitiveCost(
                 new ActionDsl.TakeKnownContainerStack(
                         "take", support, "minecraft:chest", "minecraft:wheat_seeds",
                         "default_components_only", 64))).contains(
                         new ActionDslCompiler.Cost(30_000, 600, 0, 0, 3, 0, 0));
-        assertThat(McmcpRuntime.structuralPrimitiveCost(
+        assertThat(ActionPlanning.structuralPrimitiveCost(
                 new ActionDsl.StoreKnownContainerStack(
                         "store", support, "minecraft:barrel", "minecraft:wheat",
                         "default_components_only", 64))).contains(
                         new ActionDslCompiler.Cost(30_000, 600, 0, 0, 3, 0, 0));
-        assertThat(McmcpRuntime.structuralPrimitiveCost(
+        assertThat(ActionPlanning.structuralPrimitiveCost(
                 new ActionDsl.StoreKnownContainerStack(
                         "batch", support, "minecraft:chest", "minecraft:wheat",
                         "default_components_only", 3_456, Optional.empty(), 14, 896))).contains(
                         new ActionDslCompiler.Cost(69_000, 1_380, 0, 0, 16, 0, 0));
-        assertThat(McmcpRuntime.knownContainerTransferDirection(
+        assertThat(InventoryRequests.knownContainerTransferDirection(
                 new ActionDsl.StoreKnownContainerStack(
                         "store", support, "minecraft:barrel", "minecraft:wheat",
                         "default_components_only", 64)))
                 .isEqualTo("player_to_container");
-        assertThat(McmcpRuntime.knownContainerTransferDirection(
+        assertThat(InventoryRequests.knownContainerTransferDirection(
                 new ActionDsl.TakeKnownContainerStack(
                         "take", support, "minecraft:chest", "minecraft:wheat_seeds",
                         "default_components_only", 64)))
                 .isEqualTo("container_to_player");
-        assertThat(McmcpRuntime.structuralPrimitiveCost(
+        assertThat(ActionPlanning.structuralPrimitiveCost(
                 new ActionDsl.CraftKnownRecipe(
                         "craft", "abcdefghijklmnopqrstuvwx", "sha256:" + "a".repeat(64),
                         "minecraft:oak_planks", "default_components_only", 64,
                         "crafting_table", support,
                         new ActionDsl.BlockStateSpec("minecraft:crafting_table", Map.of()), 3)))
                 .contains(new ActionDslCompiler.Cost(30_000, 600, 0, 0, 13, 0, 0));
-        assertThat(McmcpRuntime.structuralPrimitiveCost(
+        assertThat(ActionPlanning.structuralPrimitiveCost(
                 new ActionDsl.BrewKnownPotionBatch(
                         "brew", support, "minecraft:brewing_stand",
                         new StandardPotionStackSpec("minecraft:potion", "minecraft:water", 3),
@@ -589,17 +589,17 @@ class McmcpRuntimeHardeningTest {
                         new StandardPotionStackSpec(
                                 "minecraft:potion", "minecraft:awkward", 3))))
                 .contains(new ActionDslCompiler.Cost(70_000, 1_400, 0, 0, 16, 0, 0));
-        assertThat(McmcpRuntime.structuralPrimitiveCost(
+        assertThat(ActionPlanning.structuralPrimitiveCost(
                 new ActionDsl.CastKnownFishingRod(
                         "cast", "main_hand", "minecraft:fishing_rod", support,
                         ActionDsl.BlockFace.UP,
                         new ActionDsl.BlockStateSpec(
                                 "minecraft:water", Map.of("level", "0")))))
                 .contains(new ActionDslCompiler.Cost(4_000, 80, 0, 0, 2, 0, 0));
-        assertThat(McmcpRuntime.primitiveReobservationTicks(
+        assertThat(ActionEvidence.primitiveReobservationTicks(
                 new ActionDsl.OpenKnownFenceGate("open_gate", support)))
                 .isEqualTo(AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS);
-        assertThat(McmcpRuntime.primitiveReobservationTicks(new ActionDsl.WaitTicks("hold", 1)))
+        assertThat(ActionEvidence.primitiveReobservationTicks(new ActionDsl.WaitTicks("hold", 1)))
                 .isZero();
     }
 
@@ -620,12 +620,12 @@ class McmcpRuntimeHardeningTest {
         var budget = new ActionDsl.Budget(2_000, 30, 0, 0, 0, 0, 0);
         var waitCost = new ActionDslCompiler.Cost(1_000, 20, 0, 0, 0, 0, 0);
 
-        assertThat(McmcpRuntime.fitsRemainingBudget(
+        assertThat(ActionBudgets.fitsRemainingBudget(
                 usedAtBoundary,
                 budget,
                 waitCost,
                 Duration.ofMillis(1_000).toNanos())).isTrue();
-        assertThat(McmcpRuntime.fitsRemainingBudget(
+        assertThat(ActionBudgets.fitsRemainingBudget(
                 new AgentActionStore.Progress(
                         AgentActionStore.Phase.EXECUTING,
                         "grow",
@@ -641,7 +641,7 @@ class McmcpRuntimeHardeningTest {
                 budget,
                 waitCost,
                 Duration.ofMillis(1_000).toNanos())).isFalse();
-        assertThat(McmcpRuntime.fitsRemainingBudget(
+        assertThat(ActionBudgets.fitsRemainingBudget(
                 usedAtBoundary,
                 budget,
                 waitCost,
@@ -656,11 +656,11 @@ class McmcpRuntimeHardeningTest {
         var planned = new ActionDslCompiler.Cost(30_000, 600, 0, 0, 5, 0, 0);
         long elapsedNanos = 1_500_001L;
 
-        var remaining = McmcpRuntime.firstPrimitiveRemainingCost(
+        var remaining = ActionBudgets.firstPrimitiveRemainingCost(
                 unused, planned, elapsedNanos);
 
         assertThat(remaining.durationMillis()).isEqualTo(29_998L);
-        assertThat(McmcpRuntime.fitsRemainingBudget(
+        assertThat(ActionBudgets.fitsRemainingBudget(
                 unused,
                 new ActionDsl.Budget(30_000, 600, 0, 0, 5, 0, 0),
                 remaining,
@@ -682,16 +682,16 @@ class McmcpRuntimeHardeningTest {
                 AgentActionStore.Phase.EXECUTING,
                 "inspect", 2, 3, 0, 0, 0, 0, 0, 4, false);
 
-        var remaining = McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+        var remaining = ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
                 afterFourRecoveryTicks, true, inspect, planned,
                 Duration.ofMillis(200).toNanos());
 
         assertThat(remaining).isEqualTo(
                 new ActionDslCompiler.Cost(29_800, 596, 0, 38, 1, 0, 0));
-        assertThat(McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+        assertThat(ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
                 afterLeadingControlNodes, true, inspect, planned,
                 Duration.ofMillis(200).toNanos())).isEqualTo(remaining);
-        assertThat(McmcpRuntime.fitsRemainingBudget(
+        assertThat(ActionBudgets.fitsRemainingBudget(
                 afterFourRecoveryTicks,
                 new ActionDsl.Budget(30_000, 600, 0, 360, 1, 0, 0),
                 remaining,
@@ -717,25 +717,25 @@ class McmcpRuntimeHardeningTest {
                 AgentActionStore.Phase.EXECUTING,
                 "inspect", 0, 1, 0, 0, 0, 0, 0, 0, false);
 
-        var boundaryRemaining = McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+        var boundaryRemaining = ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
                 atBoundary, true, inspect, planned, Duration.ofSeconds(10).toNanos());
-        var exhaustedRemaining = McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+        var exhaustedRemaining = ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
                 beyondBoundary, true, inspect, planned,
                 Duration.ofSeconds(10).toNanos());
         var wallOnlyExhaustedRemaining =
-                McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+                ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
                         wallOnlyBeyondBoundary, true, inspect, planned,
                         Duration.ofSeconds(10).toNanos() + 1);
 
         assertThat(boundaryRemaining.durationMillis()).isEqualTo(20_000L);
         assertThat(boundaryRemaining.ticks()).isEqualTo(400L);
-        assertThat(McmcpRuntime.fitsRemainingBudget(
+        assertThat(ActionBudgets.fitsRemainingBudget(
                 atBoundary, budget, boundaryRemaining,
                 Duration.ofSeconds(10).toNanos())).isTrue();
-        assertThat(McmcpRuntime.fitsRemainingBudget(
+        assertThat(ActionBudgets.fitsRemainingBudget(
                 beyondBoundary, budget, exhaustedRemaining,
                 Duration.ofSeconds(10).toNanos())).isFalse();
-        assertThat(McmcpRuntime.fitsRemainingBudget(
+        assertThat(ActionBudgets.fitsRemainingBudget(
                 wallOnlyBeyondBoundary, budget, wallOnlyExhaustedRemaining,
                 Duration.ofSeconds(10).toNanos() + 1)).isFalse();
     }
@@ -762,17 +762,17 @@ class McmcpRuntimeHardeningTest {
         var approach = new ActionDsl.ApproachKnownSurface(
                 "approach", target, "minecraft:chest");
 
-        assertThat(McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+        assertThat(ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
                 first, true, take, planned, Duration.ofMillis(200).toNanos()).ticks())
                 .isEqualTo(reservedTicks - 4L);
         var singleStackPlanned = new ActionDslCompiler.Cost(30_000, 600, 0, 38, 3, 0, 0);
-        assertThat(McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+        assertThat(ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
                 first, true, store, singleStackPlanned,
                 Duration.ofMillis(200).toNanos()).ticks()).isEqualTo(596L);
-        assertThat(McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+        assertThat(ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
                 later, false, take, planned, Duration.ofMillis(200).toNanos()))
                 .isEqualTo(planned);
-        assertThat(McmcpRuntime.firstRecoveredSurfacePrimitiveRemainingCost(
+        assertThat(ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
                 first, true, approach, planned, Duration.ofMillis(200).toNanos()))
                 .isEqualTo(planned);
     }
@@ -788,7 +788,7 @@ class McmcpRuntimeHardeningTest {
                 "minecraft:oak_planks", "default_components_only", 8,
                 "crafting_table", target, expected, 2);
 
-        var request = McmcpRuntime.craftRequest(craft);
+        var request = InventoryRequests.craftRequest(craft);
         var station = (Map<String, Object>) request.parameters().get("station");
         var actualState = (Map<String, Object>) station.get("expected_state");
 
@@ -800,10 +800,10 @@ class McmcpRuntimeHardeningTest {
 
     @Test
     void onlyAimRaycastFailureRebindsWithoutErasingConsumedOccurrenceBudget() {
-        assertThat(McmcpRuntime.retryableMutationAimFailure("aim_raycast_unavailable")).isTrue();
-        assertThat(McmcpRuntime.retryableMutationAimFailure("mutation_precondition_changed"))
+        assertThat(ActionBudgets.retryableMutationAimFailure("aim_raycast_unavailable")).isTrue();
+        assertThat(ActionBudgets.retryableMutationAimFailure("mutation_precondition_changed"))
                 .isFalse();
-        assertThat(McmcpRuntime.retryableMutationAimFailure("AIM_RAYCAST_UNAVAILABLE")).isFalse();
+        assertThat(ActionBudgets.retryableMutationAimFailure("AIM_RAYCAST_UNAVAILABLE")).isFalse();
 
         var baseline = new AgentActionStore.Progress(
                 AgentActionStore.Phase.EXECUTING,
@@ -831,13 +831,13 @@ class McmcpRuntimeHardeningTest {
                 false);
         var rebound = new ActionDslCompiler.Cost(5_050, 101, 0, 5, 0, 0, 1);
 
-        assertThat(McmcpRuntime.occurrenceCostIncludingConsumed(used, baseline, rebound))
+        assertThat(ActionBudgets.occurrenceCostIncludingConsumed(used, baseline, rebound))
                 .isEqualTo(new ActionDslCompiler.Cost(5_300, 106, 0, 20, 0, 0, 1));
 
-        assertThat(McmcpRuntime.mutationAimRetryAllowed(1)).isTrue();
-        assertThat(McmcpRuntime.mutationAimRetryAllowed(2)).isTrue();
-        assertThat(McmcpRuntime.mutationAimRetryAllowed(3)).isFalse();
-        assertThatThrownBy(() -> McmcpRuntime.mutationAimRetryAllowed(0))
+        assertThat(ActionBudgets.mutationAimRetryAllowed(1)).isTrue();
+        assertThat(ActionBudgets.mutationAimRetryAllowed(2)).isTrue();
+        assertThat(ActionBudgets.mutationAimRetryAllowed(3)).isFalse();
+        assertThatThrownBy(() -> ActionBudgets.mutationAimRetryAllowed(0))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -852,7 +852,7 @@ class McmcpRuntimeHardeningTest {
         var playerPosition = new Vec3(1.5D, 64.0D, 1.5D);
         var observerEye = new Vec3(1.5D, 65.62D, 1.5D);
         var witnessEye = observerEye.add(
-                McmcpRuntime.CROP_WAIT_OBSERVER_EPSILON_BLOCKS / 2.0D, 0.0D, 0.0D);
+                ActionEvidence.CROP_WAIT_OBSERVER_EPSILON_BLOCKS / 2.0D, 0.0D, 0.0D);
         var analysis = new AgentPrimitivePlanner.Analysis(
                 Map.of("wait", ActionDslCompiler.intrinsicWaitCost(20)),
                 Map.of(),
@@ -862,7 +862,7 @@ class McmcpRuntimeHardeningTest {
                         target, ActionDsl.BlockFace.UP, "minecraft:wheat", null, witnessEye)),
                 Map.of(),
                 Map.of());
-        var authorization = McmcpRuntime.requireCropWaitAuthorization(
+        var authorization = ActionEvidence.requireCropWaitAuthorization(
                 sessions.snapshot(), wait, analysis,
                 4L, playerPosition, observerEye);
 
@@ -879,68 +879,68 @@ class McmcpRuntimeHardeningTest {
                         observerEye.add(1.0D, 0.0D, 0.0D))),
                 Map.of(),
                 Map.of());
-        assertThatThrownBy(() -> McmcpRuntime.requireCropWaitAuthorization(
+        assertThatThrownBy(() -> ActionEvidence.requireCropWaitAuthorization(
                 sessions.snapshot(), wait, staleOriginAnalysis,
                 4L, playerPosition, observerEye))
                 .isInstanceOf(IllegalStateException.class);
 
         assertThat(authorization.target()).isEqualTo(target);
         assertThat(authorization.observerEye()).isEqualTo(witnessEye);
-        assertThat(McmcpRuntime.cropWaitVisibilityState(
+        assertThat(ActionEvidence.cropWaitVisibilityState(
                 authorization,
                 sessions.snapshot(),
                 target,
                 4L,
                 playerPosition,
-                observerEye)).isEqualTo(McmcpRuntime.CropWaitVisibilityState.CURRENT);
-        assertThat(McmcpRuntime.cropWaitLiveState(
+                observerEye)).isEqualTo(ActionEvidence.CropWaitVisibilityState.CURRENT);
+        assertThat(ActionEvidence.cropWaitLiveState(
                 true, Blocks.WHEAT.defaultBlockState())).isEqualTo(
-                        McmcpRuntime.CropWaitLiveState.PENDING);
-        assertThat(McmcpRuntime.cropWaitLiveState(
+                        ActionEvidence.CropWaitLiveState.PENDING);
+        assertThat(ActionEvidence.cropWaitLiveState(
                 true,
                 Blocks.WHEAT.defaultBlockState().setValue(BlockStateProperties.AGE_7, 7)))
-                .isEqualTo(McmcpRuntime.CropWaitLiveState.MATURE);
-        assertThat(McmcpRuntime.cropWaitLiveState(
+                .isEqualTo(ActionEvidence.CropWaitLiveState.MATURE);
+        assertThat(ActionEvidence.cropWaitLiveState(
                 true, Blocks.STONE.defaultBlockState())).isEqualTo(
-                        McmcpRuntime.CropWaitLiveState.TARGET_CHANGED);
-        assertThat(McmcpRuntime.cropWaitLiveState(false, null)).isEqualTo(
-                McmcpRuntime.CropWaitLiveState.UNLOADED);
+                        ActionEvidence.CropWaitLiveState.TARGET_CHANGED);
+        assertThat(ActionEvidence.cropWaitLiveState(false, null)).isEqualTo(
+                ActionEvidence.CropWaitLiveState.UNLOADED);
 
         // A navigation-neutral exact-target wheat AGE update leaves the visual
         // barrier unchanged, so both pending and mature live reads remain authorized.
-        assertThat(McmcpRuntime.cropWaitVisibilityState(
+        assertThat(ActionEvidence.cropWaitVisibilityState(
                 authorization,
                 sessions.snapshot(),
                 target,
                 4L,
                 playerPosition,
-                observerEye)).isEqualTo(McmcpRuntime.CropWaitVisibilityState.CURRENT);
-        assertThat(McmcpRuntime.cropWaitVisibilityState(
+                observerEye)).isEqualTo(ActionEvidence.CropWaitVisibilityState.CURRENT);
+        assertThat(ActionEvidence.cropWaitVisibilityState(
                 authorization,
                 sessions.snapshot(),
                 target,
                 5L,
                 playerPosition,
                 observerEye)).isEqualTo(
-                        McmcpRuntime.CropWaitVisibilityState.VISIBILITY_INVALIDATED);
-        assertThat(McmcpRuntime.cropWaitVisibilityState(
+                        ActionEvidence.CropWaitVisibilityState.VISIBILITY_INVALIDATED);
+        assertThat(ActionEvidence.cropWaitVisibilityState(
                 authorization,
                 sessions.snapshot(),
                 target,
                 4L,
                 playerPosition.add(
-                        McmcpRuntime.CROP_WAIT_OBSERVER_EPSILON_BLOCKS * 2.0D, 0.0D, 0.0D),
+                        ActionEvidence.CROP_WAIT_OBSERVER_EPSILON_BLOCKS * 2.0D, 0.0D, 0.0D),
                 observerEye)).isEqualTo(
-                        McmcpRuntime.CropWaitVisibilityState.VISIBILITY_INVALIDATED);
-        assertThat(McmcpRuntime.cropWaitVisibilityState(
+                        ActionEvidence.CropWaitVisibilityState.VISIBILITY_INVALIDATED);
+        assertThat(ActionEvidence.cropWaitVisibilityState(
                 authorization,
                 sessions.snapshot(),
                 target,
                 4L,
                 playerPosition,
                 observerEye.add(
-                        0.0D, McmcpRuntime.CROP_WAIT_OBSERVER_EPSILON_BLOCKS * 2.0D, 0.0D)))
-                .isEqualTo(McmcpRuntime.CropWaitVisibilityState.VISIBILITY_INVALIDATED);
+                        0.0D, ActionEvidence.CROP_WAIT_OBSERVER_EPSILON_BLOCKS * 2.0D, 0.0D)))
+                .isEqualTo(ActionEvidence.CropWaitVisibilityState.VISIBILITY_INVALIDATED);
 
         var differentSession = new WorldSessionTracker();
         differentSession.latchReady(target.dimension());
@@ -948,13 +948,13 @@ class McmcpRuntimeHardeningTest {
         assertThat(authorization.matches(
                 sessions.snapshot(),
                 new ActionDsl.Position(target.dimension(), 3, 65, 3))).isFalse();
-        assertThat(McmcpRuntime.cropWaitVisibilityState(
+        assertThat(ActionEvidence.cropWaitVisibilityState(
                 authorization,
                 differentSession.snapshot(),
                 target,
                 4L,
                 playerPosition,
-                observerEye)).isEqualTo(McmcpRuntime.CropWaitVisibilityState.WORLD_CHANGED);
+                observerEye)).isEqualTo(ActionEvidence.CropWaitVisibilityState.WORLD_CHANGED);
         assertThat(AgentActionStore.FailureCode.CONDITION_TIMEOUT.wireName())
                 .isEqualTo("CONDITION_TIMEOUT");
     }
@@ -966,9 +966,9 @@ class McmcpRuntimeHardeningTest {
         long unchangedActionProgressTick = 3L;
 
         sessions.tick();
-        long pickupA = McmcpRuntime.recoveryEvidenceClientTick(sessions.snapshot());
+        long pickupA = RecoveryPlanning.recoveryEvidenceClientTick(sessions.snapshot());
         sessions.tick();
-        long pickupB = McmcpRuntime.recoveryEvidenceClientTick(sessions.snapshot());
+        long pickupB = RecoveryPlanning.recoveryEvidenceClientTick(sessions.snapshot());
 
         assertThat(unchangedActionProgressTick).isEqualTo(3L);
         assertThat(pickupB).isEqualTo(pickupA + 1L);
@@ -978,9 +978,9 @@ class McmcpRuntimeHardeningTest {
     void completedBreakReobservationDoesNotReserveTheSameWaitTwice() {
         var planned = new ActionDslCompiler.Cost(5_500, 110, 0, 15, 0, 1, 0);
 
-        assertThat(McmcpRuntime.breakExecutionCost(planned, false)).isEqualTo(planned);
-        assertThat(McmcpRuntime.breakAimTicks(planned)).isEqualTo(10);
-        assertThat(McmcpRuntime.breakExecutionCost(planned, true)).isEqualTo(
+        assertThat(ActionBudgets.breakExecutionCost(planned, false)).isEqualTo(planned);
+        assertThat(ActionBudgets.breakAimTicks(planned)).isEqualTo(10);
+        assertThat(ActionBudgets.breakExecutionCost(planned, true)).isEqualTo(
                 new ActionDslCompiler.Cost(
                         3_500,
                         110 - AgentPrimitivePlanner.BREAK_REOBSERVATION_TICKS,
@@ -989,7 +989,7 @@ class McmcpRuntimeHardeningTest {
                         0,
                         1,
                         0));
-        assertThat(McmcpRuntime.agentReplanWindowTicks(new ActionDsl.BreakKnownFace(
+        assertThat(RecoveryPlanning.agentReplanWindowTicks(new ActionDsl.BreakKnownFace(
                 "chop",
                 new ActionDsl.Position("minecraft:overworld", 1, 64, 1),
                 ActionDsl.BlockFace.WEST,
@@ -1004,13 +1004,13 @@ class McmcpRuntimeHardeningTest {
         var horizontal = new Vec3(1.5D, 64.9D, 0.5D);
         var upward = new Vec3(1.5D, 65.2D, 0.5D);
 
-        assertThat(McmcpRuntime.requiresRecoveryJump(center.y, horizontal)).isFalse();
-        assertThat(McmcpRuntime.recoveryDistance(center, horizontal)).isEqualTo(1.0D);
-        assertThat(McmcpRuntime.requiresRecoveryJump(center.y, upward)).isTrue();
-        assertThat(McmcpRuntime.recoveryDistance(center, upward)).isCloseTo(
+        assertThat(RecoveryPlanning.requiresRecoveryJump(center.y, horizontal)).isFalse();
+        assertThat(RecoveryPlanning.recoveryDistance(center, horizontal)).isEqualTo(1.0D);
+        assertThat(RecoveryPlanning.requiresRecoveryJump(center.y, upward)).isTrue();
+        assertThat(RecoveryPlanning.recoveryDistance(center, upward)).isCloseTo(
                 1.3D, org.assertj.core.data.Offset.offset(1.0E-9D));
-        assertThat(McmcpRuntime.recoveryCandidateId("exit", horizontal))
-                .isNotEqualTo(McmcpRuntime.recoveryCandidateId("exit", upward));
+        assertThat(RecoveryPlanning.recoveryCandidateId("exit", horizontal))
+                .isNotEqualTo(RecoveryPlanning.recoveryCandidateId("exit", upward));
     }
 
     @Test
@@ -1031,13 +1031,13 @@ class McmcpRuntimeHardeningTest {
         var fits = new ActionDslCompiler.Cost(2_000, 40, 5, 80, 0, 0, 0);
         var tooFar = new ActionDslCompiler.Cost(2_000, 40, 5.01D, 80, 0, 0, 0);
 
-        assertThat(McmcpRuntime.fitsRemainingBudget(
+        assertThat(ActionBudgets.fitsRemainingBudget(
                 used, budget, fits, Duration.ofMillis(8_000).toNanos())).isTrue();
-        assertThat(McmcpRuntime.fitsRemainingBudget(
+        assertThat(ActionBudgets.fitsRemainingBudget(
                 used, budget, tooFar, Duration.ofMillis(8_000).toNanos())).isFalse();
-        assertThat(McmcpRuntime.fitsRemainingBudget(
+        assertThat(ActionBudgets.fitsRemainingBudget(
                 used, budget, fits, Duration.ofMillis(8_001).toNanos())).isFalse();
-        assertThat(McmcpRuntime.fitsRemainingBudget(
+        assertThat(ActionBudgets.fitsRemainingBudget(
                 new AgentActionStore.Progress(
                         AgentActionStore.Phase.EXECUTING, "move", 0, 0,
                         0, 0, 0, 0, 0, 0, false),
@@ -1054,7 +1054,7 @@ class McmcpRuntimeHardeningTest {
         var retry = new ActionDslCompiler.Cost(2_800, 56, 1.5D, 0, 0, 0, 0);
         var global = new ActionDsl.Budget(30_000, 600, 32, 0, 0, 0, 0);
 
-        assertThat(McmcpRuntime.replannedRouteBudgetFailure(
+        assertThat(ActionBudgets.replannedRouteBudgetFailure(
                 afterSixTicks,
                 baseline,
                 occurrence,
@@ -1063,14 +1063,14 @@ class McmcpRuntimeHardeningTest {
                 Duration.ofMillis(300).toNanos())).isNull();
 
         var afterReserveWasConsumed = progress(0.832D, 17);
-        assertThat(McmcpRuntime.replannedRouteBudgetFailure(
+        assertThat(ActionBudgets.replannedRouteBudgetFailure(
                 afterReserveWasConsumed,
                 baseline,
                 occurrence,
                 global,
                 retry,
                 Duration.ofMillis(850).toNanos()))
-                .isEqualTo(McmcpRuntime.REPLANNED_ROUTE_REMAINING_EVIDENCE);
+                .isEqualTo(ActionBudgets.REPLANNED_ROUTE_REMAINING_EVIDENCE);
     }
 
     @Test
@@ -1079,32 +1079,32 @@ class McmcpRuntimeHardeningTest {
         var global = new ActionDsl.Budget(30_000, 600, 32, 0, 0, 0, 0);
         var occurrence = new ActionDslCompiler.Cost(3_600, 72, 3.0D, 0, 0, 0, 0);
 
-        assertThat(McmcpRuntime.replannedRouteBudgetFailure(
+        assertThat(ActionBudgets.replannedRouteBudgetFailure(
                 progress(0.0D, 1),
                 baseline,
                 occurrence,
                 global,
                 new ActionDslCompiler.Cost(3_650, 73, 1.0D, 0, 0, 0, 0),
                 Duration.ofMillis(50).toNanos()))
-                .isEqualTo(McmcpRuntime.REPLANNED_ROUTE_SHAPE_EVIDENCE);
+                .isEqualTo(ActionBudgets.REPLANNED_ROUTE_SHAPE_EVIDENCE);
 
-        assertThat(McmcpRuntime.replannedRouteBudgetFailure(
+        assertThat(ActionBudgets.replannedRouteBudgetFailure(
                 progress(31.0D, 6),
                 baseline,
                 new ActionDslCompiler.Cost(5_000, 100, 32.0D, 0, 0, 0, 0),
                 global,
                 new ActionDslCompiler.Cost(500, 10, 1.5D, 0, 0, 0, 0),
                 Duration.ofMillis(300).toNanos()))
-                .isEqualTo(McmcpRuntime.REPLANNED_ROUTE_GLOBAL_EVIDENCE);
+                .isEqualTo(ActionBudgets.REPLANNED_ROUTE_GLOBAL_EVIDENCE);
 
-        assertThat(McmcpRuntime.replannedRouteBudgetFailure(
+        assertThat(ActionBudgets.replannedRouteBudgetFailure(
                 progress(0.832D, 6),
                 baseline,
                 occurrence,
                 global,
                 new ActionDslCompiler.Cost(2_000, 40, 2.2D, 0, 0, 0, 0),
                 Duration.ofMillis(300).toNanos()))
-                .isEqualTo(McmcpRuntime.REPLANNED_ROUTE_REMAINING_EVIDENCE);
+                .isEqualTo(ActionBudgets.REPLANNED_ROUTE_REMAINING_EVIDENCE);
     }
 
     @Test
@@ -1124,39 +1124,39 @@ class McmcpRuntimeHardeningTest {
         var budget = new ActionDsl.Budget(10_000, 100, 8, 90, 0, 0, 0);
         var target = new ActionDsl.Position("minecraft:overworld", 1, 64, 1);
 
-        assertThat(McmcpRuntime.motionBudgetExhausted(
+        assertThat(ActionBudgets.motionBudgetExhausted(
                 used, budget, new ActionDsl.NavigateToKnown("move", target, 0.75D))).isTrue();
-        assertThat(McmcpRuntime.motionBudgetExhausted(
+        assertThat(ActionBudgets.motionBudgetExhausted(
                 used,
                 budget,
                 new ActionDsl.ApproachKnownSurface(
                         "approach_surface", target, "minecraft:stone"))).isTrue();
-        assertThat(McmcpRuntime.motionBudgetExhausted(
+        assertThat(ActionBudgets.motionBudgetExhausted(
                 used, budget, placementApproach(target))).isTrue();
-        assertThat(McmcpRuntime.motionBudgetExhausted(
+        assertThat(ActionBudgets.motionBudgetExhausted(
                 used, budget, new ActionDsl.FaceKnownPosition("face", target))).isTrue();
-        assertThat(McmcpRuntime.motionBudgetExhausted(
+        assertThat(ActionBudgets.motionBudgetExhausted(
                 used,
                 budget,
                 new ActionDsl.FaceKnownBlockFace(
                         "face_surface", target, ActionDsl.BlockFace.UP,
                         "minecraft:stone"))).isTrue();
-        assertThat(McmcpRuntime.motionBudgetExhausted(
+        assertThat(ActionBudgets.motionBudgetExhausted(
                 used, budget, new ActionDsl.WaitTicks("hold", 1))).isFalse();
         var move = new ActionDsl.NavigateToKnown("move", target, 0.75D);
-        assertThat(McmcpRuntime.motionBudgetExceededAfterPrimitive(
+        assertThat(ActionBudgets.motionBudgetExceededAfterPrimitive(
                 used,
                 budget,
                 move,
                 dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor.Status.SUCCEEDED))
                 .isFalse();
-        assertThat(McmcpRuntime.motionBudgetExceededAfterPrimitive(
+        assertThat(ActionBudgets.motionBudgetExceededAfterPrimitive(
                 used,
                 budget,
                 move,
                 dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor.Status.RUNNING))
                 .isFalse();
-        assertThat(McmcpRuntime.motionBudgetExceededAfterPrimitive(
+        assertThat(ActionBudgets.motionBudgetExceededAfterPrimitive(
                 used,
                 budget,
                 move,
@@ -1166,9 +1166,9 @@ class McmcpRuntimeHardeningTest {
 
     @Test
     void replanGraceEndsAtTheFixedDeadlineRatherThanSlidingForever() {
-        assertThat(McmcpRuntime.replanDeadlineReached(119, 120)).isFalse();
-        assertThat(McmcpRuntime.replanDeadlineReached(120, 120)).isTrue();
-        assertThat(McmcpRuntime.replanDeadlineReached(121, 120)).isTrue();
+        assertThat(ActionBudgets.replanDeadlineReached(119, 120)).isFalse();
+        assertThat(ActionBudgets.replanDeadlineReached(120, 120)).isTrue();
+        assertThat(ActionBudgets.replanDeadlineReached(121, 120)).isTrue();
     }
 
     @Test
@@ -1183,10 +1183,10 @@ class McmcpRuntimeHardeningTest {
                 MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED,
                 MinecraftActionPrimitiveExecutor.Reason.ROUTE_EDGE_CHANGED);
 
-        assertThat(McmcpRuntime.shouldVerifyReplanHeartbeat(true, probe)).isTrue();
-        assertThat(McmcpRuntime.shouldVerifyReplanHeartbeat(true, ordinary)).isTrue();
-        assertThat(McmcpRuntime.shouldVerifyReplanHeartbeat(false, probe)).isFalse();
-        assertThat(McmcpRuntime.shouldVerifyReplanHeartbeat(true, terminal)).isFalse();
+        assertThat(ActionBudgets.shouldVerifyReplanHeartbeat(true, probe)).isTrue();
+        assertThat(ActionBudgets.shouldVerifyReplanHeartbeat(true, ordinary)).isTrue();
+        assertThat(ActionBudgets.shouldVerifyReplanHeartbeat(false, probe)).isFalse();
+        assertThat(ActionBudgets.shouldVerifyReplanHeartbeat(true, terminal)).isFalse();
     }
 
     @Test
@@ -1214,27 +1214,27 @@ class McmcpRuntimeHardeningTest {
                                 new ActionDsl.WorldPosition(
                                         "minecraft:overworld", 2.5D, 64.1D, 1.5D))));
 
-        assertThat(McmcpRuntime.agentReplanDeadlineTick(navigate, 2, 0, 38))
+        assertThat(RecoveryPlanning.agentReplanDeadlineTick(navigate, 2, 0, 38))
                 .isEqualTo(39);
-        assertThat(McmcpRuntime.agentReplanDeadlineTick(approachSurface, 2, 0, 38))
+        assertThat(RecoveryPlanning.agentReplanDeadlineTick(approachSurface, 2, 0, 38))
                 .isEqualTo(39);
-        assertThat(McmcpRuntime.agentReplanDeadlineTick(approachPlacement, 2, 0, 38))
+        assertThat(RecoveryPlanning.agentReplanDeadlineTick(approachPlacement, 2, 0, 38))
                 .isEqualTo(39);
-        assertThat(McmcpRuntime.agentReplanDeadlineTick(collect, 2, 0, 38))
+        assertThat(RecoveryPlanning.agentReplanDeadlineTick(collect, 2, 0, 38))
                 .isEqualTo(39);
-        assertThat(McmcpRuntime.replanDeadlineReached(38, 39)).isFalse();
-        assertThat(McmcpRuntime.replanDeadlineReached(39, 39)).isTrue();
-        assertThat(McmcpRuntime.agentReplanDeadlineTick(face, 2, 0, 38))
+        assertThat(ActionBudgets.replanDeadlineReached(38, 39)).isFalse();
+        assertThat(ActionBudgets.replanDeadlineReached(39, 39)).isTrue();
+        assertThat(RecoveryPlanning.agentReplanDeadlineTick(face, 2, 0, 38))
                 .isEqualTo(22);
-        assertThat(McmcpRuntime.agentReplanDeadlineTick(collectBatch, 2, 0, 38))
+        assertThat(RecoveryPlanning.agentReplanDeadlineTick(collectBatch, 2, 0, 38))
                 .isEqualTo(22);
     }
 
     @Test
     void onlyOneSingleRevisionPositionCorrectionGetsAReplanChance() {
-        assertThat(McmcpRuntime.repeatedPositionCorrection(7, 8, 0)).isFalse();
-        assertThat(McmcpRuntime.repeatedPositionCorrection(7, 9, 0)).isTrue();
-        assertThat(McmcpRuntime.repeatedPositionCorrection(8, 9, 1)).isTrue();
+        assertThat(ActionBudgets.repeatedPositionCorrection(7, 8, 0)).isFalse();
+        assertThat(ActionBudgets.repeatedPositionCorrection(7, 9, 0)).isTrue();
+        assertThat(ActionBudgets.repeatedPositionCorrection(8, 9, 1)).isTrue();
     }
 
     private static ActionDsl.ApproachKnownPlacement placementApproach(
@@ -1263,7 +1263,7 @@ class McmcpRuntimeHardeningTest {
 
     @Test
     void localVolumeLavaAndDangerousDropFeedTheRecoveryGovernorBeforeVanillaFlagsCatchUp() {
-        var hazards = McmcpRuntime.recoveryHazards(
+        var hazards = RecoveryPlanning.recoveryHazards(
                 ObservationRecord.Fluid.LAVA,
                 ObservationRecord.Hazard.FALL,
                 false,
@@ -1279,7 +1279,7 @@ class McmcpRuntimeHardeningTest {
 
     @Test
     void recoveryDescentAccumulatesOnlyRealDropsAndRetainsTheWorstEvidence() {
-        var tracker = new McmcpRuntime.RecoveryDescentTracker();
+        var tracker = new RecoveryPlanning.RecoveryDescentTracker();
         var player = new Object();
         var level = new Object();
         var session = UUID.randomUUID();
@@ -1318,7 +1318,7 @@ class McmcpRuntimeHardeningTest {
         float previousYaw = 1.5507406F;
         float previousPitch = -40.073437F;
 
-        assertThat(McmcpRuntime.cameraDelta(yaw, pitch, previousYaw, previousPitch))
+        assertThat(ActionBudgets.cameraDelta(yaw, pitch, previousYaw, previousPitch))
                 .isEqualTo(
                         Math.abs((double) yaw - previousYaw)
                                 + Math.abs((double) pitch - previousPitch));
@@ -1329,41 +1329,41 @@ class McmcpRuntimeHardeningTest {
         var previous = new Vec3(0.5D, 65.0D, 0.5D);
         var oneSixteenthDown = new Vec3(0.5D, 64.9375D, 0.5D);
 
-        assertThat(McmcpRuntime.batchTillSettlingCredit(
+        assertThat(ActionBudgets.batchTillSettlingCredit(
                 previous, oneSixteenthDown, 1.0D / 16.0D, true, true))
                 .isEqualTo(1.0D / 16.0D);
-        assertThat(McmcpRuntime.batchTillSettlingCredit(
+        assertThat(ActionBudgets.batchTillSettlingCredit(
                 previous, new Vec3(0.50001D, 64.9375D, 0.5D),
                 1.0D / 16.0D, true, true)).isZero();
-        assertThat(McmcpRuntime.batchTillSettlingCredit(
+        assertThat(ActionBudgets.batchTillSettlingCredit(
                 previous, new Vec3(0.5D, 64.9374D, 0.5D),
                 1.0D / 16.0D, true, true)).isZero();
-        assertThat(McmcpRuntime.batchTillSettlingCredit(
+        assertThat(ActionBudgets.batchTillSettlingCredit(
                 previous, new Vec3(0.5D, 65.0625D, 0.5D),
                 1.0D / 16.0D, true, true)).isZero();
-        assertThat(McmcpRuntime.batchTillSettlingCredit(
+        assertThat(ActionBudgets.batchTillSettlingCredit(
                 previous, oneSixteenthDown, 1.0D / 16.0D, false, true)).isZero();
-        assertThat(McmcpRuntime.batchTillSettlingCredit(
+        assertThat(ActionBudgets.batchTillSettlingCredit(
                 previous, oneSixteenthDown, Double.NaN, true, true)).isZero();
-        assertThat(McmcpRuntime.batchTillSettlingCredit(
+        assertThat(ActionBudgets.batchTillSettlingCredit(
                 previous, oneSixteenthDown, 1.0D / 16.0D, true, false)).isZero();
     }
 
     @Test
     void mutationBatchStopsAfterAnUnconfirmedTargetAndNeverDispatchesTheRemainder() {
-        assertThat(McmcpRuntime.mutationBatchDisposition(0, 3, false))
-                .isEqualTo(McmcpRuntime.BatchTargetDisposition.STOP);
-        assertThat(McmcpRuntime.mutationBatchDisposition(0, 3, true))
-                .isEqualTo(McmcpRuntime.BatchTargetDisposition.CONTINUE);
-        assertThat(McmcpRuntime.mutationBatchDisposition(2, 3, true))
-                .isEqualTo(McmcpRuntime.BatchTargetDisposition.COMPLETE);
+        assertThat(ActionBudgets.mutationBatchDisposition(0, 3, false))
+                .isEqualTo(ActionBudgets.BatchTargetDisposition.STOP);
+        assertThat(ActionBudgets.mutationBatchDisposition(0, 3, true))
+                .isEqualTo(ActionBudgets.BatchTargetDisposition.CONTINUE);
+        assertThat(ActionBudgets.mutationBatchDisposition(2, 3, true))
+                .isEqualTo(ActionBudgets.BatchTargetDisposition.COMPLETE);
         assertThat(AgentPrimitivePlanner.MUTATION_BATCH_REPROOF_TICKS).isEqualTo(40L);
         var position = new ActionDsl.Position("minecraft:overworld", 0, 64, 0);
-        assertThat(McmcpRuntime.mutationAimRetriesAllowed(
+        assertThat(ActionBudgets.mutationAimRetriesAllowed(
                 new ActionDsl.TillKnownBatch(
                         "batch", List.of(position),
                         "minecraft:dirt", "minecraft:iron_hoe"))).isFalse();
-        assertThat(McmcpRuntime.mutationAimRetriesAllowed(
+        assertThat(ActionBudgets.mutationAimRetriesAllowed(
                 new ActionDsl.TillKnownBlock(
                         "single", position,
                         "minecraft:dirt", "minecraft:iron_hoe"))).isTrue();
@@ -1414,7 +1414,7 @@ class McmcpRuntimeHardeningTest {
         var freshAim = new AgentPrimitivePlanner.MutationAim(
                 position, ActionDsl.BlockFace.UP, new Vec3(-3.5D, 65.0D, 0.5D));
         var oldPoseRequired = plan.requiredRemainder(0, freshCurrent);
-        var required = McmcpRuntime.mutationBatchRequiredRemainder(
+        var required = ActionBudgets.mutationBatchRequiredRemainder(
                 plan, 0, currentPose, freshAim, freshCurrent, 4.5F);
         assertThat(required.interactions()).isEqualTo(3);
         assertThat(required.ticks()).isGreaterThanOrEqualTo(
@@ -1442,7 +1442,7 @@ class McmcpRuntimeHardeningTest {
                 occurrenceLimit.cameraDegrees(),
                 3, 0, 0);
 
-        assertThat(McmcpRuntime.fitsMutationBatchRemainder(
+        assertThat(ActionBudgets.fitsMutationBatchRemainder(
                 used, baseline, occurrenceLimit, global, required,
                 Duration.ofMillis(1_000).toNanos())).isTrue();
         var oneTickTooLarge = new ActionDslCompiler.Cost(
@@ -1451,7 +1451,7 @@ class McmcpRuntimeHardeningTest {
                 0,
                 required.cameraDegrees(),
                 3, 0, 0);
-        assertThat(McmcpRuntime.fitsMutationBatchRemainder(
+        assertThat(ActionBudgets.fitsMutationBatchRemainder(
                 used, baseline, occurrenceLimit, global, oneTickTooLarge,
                 Duration.ofMillis(1_000).toNanos())).isFalse();
     }
@@ -1465,7 +1465,7 @@ class McmcpRuntimeHardeningTest {
                 null,
                 1L);
 
-        var state = McmcpRuntime.statePayload(
+        var state = ActionWireMapper.statePayload(
                 lock, false, null, List.of());
 
         assertThat(state.keySet()).containsExactly(
@@ -1527,7 +1527,7 @@ class McmcpRuntimeHardeningTest {
         assertThat(ScopedEntityAttackConsentUiBridge
                 .grantFromPhysicalPromptClick(store, session, 11)).isTrue();
 
-        var payload = McmcpRuntime.entityAttackConsentPayload(store.snapshot(session, 11));
+        var payload = ActionWireMapper.entityAttackConsentPayload(store.snapshot(session, 11));
 
         assertThat(payload.get("state")).isEqualTo("granted");
         assertThat(payload.get("policy_binding_hash")).isEqualTo(hash);
@@ -1638,10 +1638,10 @@ class McmcpRuntimeHardeningTest {
     void routineWallClockDeadlineIsIndependentFromTheUnlimitedLocalArm() {
         var routineId = UUID.randomUUID();
         long negativeStart = -Duration.ofSeconds(100).toNanos();
-        var negativeClock = McmcpRuntime.RoutineWallClockDeadline.start(
+        var negativeClock = RoutineLifecycle.RoutineWallClockDeadline.start(
                 routineId, 30, negativeStart);
         long nearWrap = Long.MAX_VALUE - Duration.ofSeconds(1).toNanos();
-        var wrappedClock = McmcpRuntime.RoutineWallClockDeadline.start(
+        var wrappedClock = RoutineLifecycle.RoutineWallClockDeadline.start(
                 routineId, 1, nearWrap);
 
         assertThat(negativeClock.durationNanos()).isEqualTo(Duration.ofSeconds(35).toNanos());
@@ -1665,14 +1665,14 @@ class McmcpRuntimeHardeningTest {
     @Test
     void retainsVoiceOwnershipAfterAFailedEndSoFinalizationCanRetryRecovery() {
         var routineId = UUID.randomUUID();
-        var failed = new McmcpRuntime.VoiceEndOutcome(
+        var failed = new RoutineLifecycle.VoiceEndOutcome(
                 false, "restore_readback_mismatch", true, true, false);
-        var restored = new McmcpRuntime.VoiceEndOutcome(
+        var restored = new RoutineLifecycle.VoiceEndOutcome(
                 true, null, true, true, true);
 
-        assertThat(McmcpRuntime.voiceRoutineAfterEnd(routineId, routineId, failed))
+        assertThat(RoutineLifecycle.voiceRoutineAfterEnd(routineId, routineId, failed))
                 .isEqualTo(routineId);
-        assertThat(McmcpRuntime.voiceRoutineAfterEnd(routineId, routineId, restored))
+        assertThat(RoutineLifecycle.voiceRoutineAfterEnd(routineId, routineId, restored))
                 .isNull();
     }
 
@@ -1688,12 +1688,12 @@ class McmcpRuntimeHardeningTest {
                 false,
                 "restore_readback_mismatch");
         var details = new java.util.LinkedHashMap<>(
-                McmcpRuntime.voiceBeginFailureDetails(begin));
-        var end = new McmcpRuntime.VoiceEndOutcome(
+                RoutineLifecycle.voiceBeginFailureDetails(begin));
+        var end = new RoutineLifecycle.VoiceEndOutcome(
                 false, "voicechat_disconnected", true, true, false);
 
-        var mapped = McmcpRuntime.mapFailure(
-                McmcpRuntime.withVoiceEndFailureDiagnostics(
+        var mapped = RuntimeFailures.mapFailure(
+                RoutineLifecycle.withVoiceEndFailureDiagnostics(
                         new ClientCommandInbox.CommandTimeoutException("start_routine"),
                         end));
 
@@ -1718,7 +1718,7 @@ class McmcpRuntimeHardeningTest {
 
     @Test
     void turnsARetriedRecordExceptionIntoAVisibleFinalizationFailure() {
-        var failure = McmcpRuntime.finalizationFailure(
+        var failure = RoutineLifecycle.finalizationFailure(
                 terminalSnapshot(),
                 true,
                 true,
@@ -1752,8 +1752,8 @@ class McmcpRuntimeHardeningTest {
                 () -> "unused");
         assertThat(first.success()).isFalse();
 
-        var mapped = McmcpRuntime.mapFailure(
-                catchThrowable(() -> McmcpRuntime.requireNoPendingFinalizations(retries)));
+        var mapped = RuntimeFailures.mapFailure(
+                catchThrowable(() -> RoutineAdmission.requireNoPendingFinalizations(retries)));
 
         assertThat(mapped.failure().code()).isEqualTo("unsafe_state");
         assertThat(mapped.failure().retryable()).isTrue();
@@ -1767,7 +1767,7 @@ class McmcpRuntimeHardeningTest {
                 ignored -> "recorded",
                 () -> "unused");
         assertThat(recovered.success()).isTrue();
-        assertThatCode(() -> McmcpRuntime.requireNoPendingFinalizations(retries))
+        assertThatCode(() -> RoutineAdmission.requireNoPendingFinalizations(retries))
                 .doesNotThrowAnyException();
     }
 
@@ -1795,14 +1795,14 @@ class McmcpRuntimeHardeningTest {
                 Object::new);
 
         var blocked = catchThrowable(() ->
-                McmcpRuntime.replayStationaryBreakAfterFinalizationGate(
+                RoutineAdmission.replayStationaryBreakAfterFinalizationGate(
                         retries,
                         routines,
                         key,
                         "same-request",
                         10 + RoutineManager.DEFAULT_TERMINAL_TTL_TICKS));
 
-        assertThat(McmcpRuntime.mapFailure(blocked).failure().code())
+        assertThat(RuntimeFailures.mapFailure(blocked).failure().code())
                 .isEqualTo("unsafe_state");
         assertThat(routines.getRoutine(receipt.routineId(), 0, 1).state())
                 .isEqualTo(RoutineState.CANCELLED);
@@ -1829,7 +1829,7 @@ class McmcpRuntimeHardeningTest {
                 Object::new);
 
         var semanticBlocked = catchThrowable(() ->
-                McmcpRuntime.replaySemanticActionAfterFinalizationGate(
+                RoutineAdmission.replaySemanticActionAfterFinalizationGate(
                         semanticRetries,
                         semanticRoutines,
                         semanticKey,
@@ -1837,7 +1837,7 @@ class McmcpRuntimeHardeningTest {
                         semanticRequest,
                         10 + RoutineManager.DEFAULT_TERMINAL_TTL_TICKS));
 
-        assertThat(McmcpRuntime.mapFailure(semanticBlocked).failure().code())
+        assertThat(RuntimeFailures.mapFailure(semanticBlocked).failure().code())
                 .isEqualTo("unsafe_state");
         assertThat(semanticRoutines.getRoutine(semanticReceipt.routineId(), 0, 1).state())
                 .isEqualTo(RoutineState.CANCELLED);
@@ -1845,7 +1845,7 @@ class McmcpRuntimeHardeningTest {
 
     @Test
     void advertisesCompactRoutineSummariesAndOneOnDemandSchema() throws Exception {
-        var catalog = McmcpRuntime.routineCatalog();
+        var catalog = RoutineCatalog.routineCatalog();
 
         assertThat(catalog).containsEntry("catalog_version", "phase-6-compact-v2");
         @SuppressWarnings("unchecked")
@@ -1876,7 +1876,7 @@ class McmcpRuntimeHardeningTest {
                 .getBytes(StandardCharsets.UTF_8).length).isLessThan(8_000);
 
         @SuppressWarnings("unchecked")
-        var detailed = (List<Map<String, Object>>) McmcpRuntime
+        var detailed = (List<Map<String, Object>>) RoutineCatalog
                 .routineCatalog("tend_crop_area")
                 .get("routines");
         assertThat(detailed).singleElement().satisfies(entry -> {
@@ -1884,7 +1884,7 @@ class McmcpRuntimeHardeningTest {
             assertThat(entry.get("input_schema")).isInstanceOf(Map.class);
             assertThat(entry.get("postconditions")).isInstanceOf(List.class);
         });
-        assertThat(new Gson().toJson(McmcpRuntime.routineCatalog("tend_crop_area"))
+        assertThat(new Gson().toJson(RoutineCatalog.routineCatalog("tend_crop_area"))
                 .getBytes(StandardCharsets.UTF_8).length).isLessThan(15_000);
     }
 
@@ -1898,7 +1898,7 @@ class McmcpRuntimeHardeningTest {
         parameters.put("goal", Map.of("minimum_observed_samples", 1));
         parameters.put("assessment", "coverage_only");
 
-        var parsed = McmcpRuntime.phaseFiveRequestArgument(
+        var parsed = RoutineArguments.phaseFiveRequestArgument(
                 startArguments("survey_area", parameters, 128, 600, false),
                 "minecraft:overworld");
         var reordered = new LinkedHashMap<String, Object>();
@@ -1906,7 +1906,7 @@ class McmcpRuntimeHardeningTest {
         reordered.put("goal", Map.of("minimum_observed_samples", 1));
         reordered.put("samples", parameters.get("samples"));
         reordered.put("waypoints", parameters.get("waypoints"));
-        var same = McmcpRuntime.phaseFiveRequestArgument(
+        var same = RoutineArguments.phaseFiveRequestArgument(
                 startArguments("survey_area", reordered, 128, 600, false),
                 "minecraft:overworld");
 
@@ -1920,7 +1920,7 @@ class McmcpRuntimeHardeningTest {
 
         var impossibleGoal = new LinkedHashMap<>(parameters);
         impossibleGoal.put("goal", Map.of("minimum_observed_samples", 2));
-        assertThatThrownBy(() -> McmcpRuntime.phaseFiveRequestArgument(
+        assertThatThrownBy(() -> RoutineArguments.phaseFiveRequestArgument(
                 startArguments("survey_area", impossibleGoal, 128, 600, false),
                 "minecraft:overworld"))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -1929,20 +1929,20 @@ class McmcpRuntimeHardeningTest {
 
     @Test
     void strictlyParsesAllSixClosedSemanticActionBranches() {
-        assertThat(McmcpRuntime.semanticActionArgument(
+        assertThat(RoutineArguments.semanticActionArgument(
                 startArguments("navigate_to", Map.of(
                         "target", targetMap(),
                         "horizontal_tolerance_blocks", 0.5D), 1, 120, false),
                 "minecraft:overworld"))
                 .isInstanceOf(NavigateToRequest.class);
-        assertThat(McmcpRuntime.semanticActionArgument(
+        assertThat(RoutineArguments.semanticActionArgument(
                 startArguments("break_block", Map.of(
                         "target", targetMap(),
                         "expected_before", blockState("minecraft:stone"),
                         "expected_after", blockState("minecraft:air")), 0, 30, true),
                 "minecraft:overworld"))
                 .isInstanceOf(BreakBlockRequest.class);
-        assertThat(McmcpRuntime.semanticActionArgument(
+        assertThat(RoutineArguments.semanticActionArgument(
                 startArguments("place_block", Map.of(
                         "target", targetMap(),
                         "expected_before", blockState("minecraft:air"),
@@ -1950,7 +1950,7 @@ class McmcpRuntimeHardeningTest {
                         "expected_after", blockState("minecraft:stone")), 0, 30, false),
                 "minecraft:overworld"))
                 .isInstanceOf(PlaceBlockRequest.class);
-        assertThat(McmcpRuntime.semanticActionArgument(
+        assertThat(RoutineArguments.semanticActionArgument(
                 startArguments("use_item_on_block", Map.of(
                         "target", targetMap(),
                         "expected_before", blockState("minecraft:dirt"),
@@ -1958,7 +1958,7 @@ class McmcpRuntimeHardeningTest {
                         "expected_after", blockState("minecraft:farmland")), 0, 30, false),
                 "minecraft:overworld"))
                 .isInstanceOf(UseItemOnBlockRequest.class);
-        assertThat(McmcpRuntime.semanticActionArgument(
+        assertThat(RoutineArguments.semanticActionArgument(
                 startArguments("interact_block", Map.of(
                         "target", targetMap(),
                         "expected_before", Map.of(
@@ -1969,7 +1969,7 @@ class McmcpRuntimeHardeningTest {
                                 "properties", Map.of("powered", "true"))), 0, 30, false),
                 "minecraft:overworld"))
                 .isInstanceOf(InteractBlockRequest.class);
-        assertThat(McmcpRuntime.semanticActionArgument(
+        assertThat(RoutineArguments.semanticActionArgument(
                 startArguments("interact_entity", Map.of(
                         "entity_ref", "abcdefghijklmnopqrstuvwx",
                         "expected_type", "minecraft:cow",
@@ -2003,7 +2003,7 @@ class McmcpRuntimeHardeningTest {
         arguments.put("bounds", Map.of());
         arguments.put("idempotency_key", "7f7809c5-eae4-48a6-9fea-d50b600d5641");
 
-        var parsed = McmcpRuntime.finitePlanRequestArgument(arguments);
+        var parsed = RoutineArguments.finitePlanRequestArgument(arguments);
 
         assertThat(parsed.request().maxTicks()).isEqualTo(72_000);
         assertThat(((FinitePlanRequest.Action) parsed.request().steps().getFirst()).kind())
@@ -2017,7 +2017,7 @@ class McmcpRuntimeHardeningTest {
                 "op", "action",
                 "kind", "navigate_to",
                 "arguments", invalidArguments)));
-        assertThatThrownBy(() -> McmcpRuntime.finitePlanRequestArgument(arguments))
+        assertThatThrownBy(() -> RoutineArguments.finitePlanRequestArgument(arguments))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("action arguments must contain exactly");
     }
@@ -2031,20 +2031,20 @@ class McmcpRuntimeHardeningTest {
         var fractionalBounds = boundsMap(1, 120, false);
         fractionalBounds.put("max_duration_seconds", 1.5D);
 
-        assertThat(McmcpRuntime.mapFailure(catchThrowable(() ->
-                McmcpRuntime.semanticActionArgument(
+        assertThat(RuntimeFailures.mapFailure(catchThrowable(() ->
+                RoutineArguments.semanticActionArgument(
                         startArguments("navigate_to", hybrid, 1, 120, false),
                         "minecraft:overworld"))).failure().code())
                 .isEqualTo("invalid_argument");
-        assertThat(McmcpRuntime.mapFailure(catchThrowable(() ->
-                McmcpRuntime.semanticActionArgument(
+        assertThat(RuntimeFailures.mapFailure(catchThrowable(() ->
+                RoutineArguments.semanticActionArgument(
                         rawStartArguments("navigate_to", Map.of(
                                 "target", targetMap(),
                                 "horizontal_tolerance_blocks", 0.5D), fractionalBounds),
                         "minecraft:overworld"))).failure().code())
                 .isEqualTo("invalid_argument");
-        assertThat(McmcpRuntime.mapFailure(catchThrowable(() ->
-                McmcpRuntime.semanticActionArgument(
+        assertThat(RuntimeFailures.mapFailure(catchThrowable(() ->
+                RoutineArguments.semanticActionArgument(
                         startArguments("unknown_action", Map.of(), 0, 30, false),
                         "minecraft:overworld"))).failure().code())
                 .isEqualTo("invalid_argument");
@@ -2061,8 +2061,8 @@ class McmcpRuntimeHardeningTest {
                         "item", "minecraft:milk_bucket",
                         "minimum_inventory_count", 1)), 0, 30, false);
 
-        var mapped = McmcpRuntime.mapFailure(catchThrowable(() ->
-                McmcpRuntime.semanticActionArgument(unsupported, "minecraft:overworld")));
+        var mapped = RuntimeFailures.mapFailure(catchThrowable(() ->
+                RoutineArguments.semanticActionArgument(unsupported, "minecraft:overworld")));
 
         assertThat(mapped.failure().code()).isEqualTo("invalid_argument");
         assertThat(mapped.failure().message()).contains("only supports adult cow milking");
@@ -2075,8 +2075,8 @@ class McmcpRuntimeHardeningTest {
                 "expected_before", blockState("minecraft:stone"),
                 "expected_after", blockState("minecraft:cobblestone")), 0, 30, true);
 
-        var mapped = McmcpRuntime.mapFailure(catchThrowable(() ->
-                McmcpRuntime.semanticActionArgument(unsupported, "minecraft:overworld")));
+        var mapped = RuntimeFailures.mapFailure(catchThrowable(() ->
+                RoutineArguments.semanticActionArgument(unsupported, "minecraft:overworld")));
 
         assertThat(mapped.failure().code()).isEqualTo("invalid_argument");
         assertThat(mapped.failure().message()).contains("only supports minecraft:air");
@@ -2090,7 +2090,7 @@ class McmcpRuntimeHardeningTest {
                 "minecraft:chest",
                 "minecraft:ice",
                 "example:stone")) {
-            assertThatThrownBy(() -> McmcpRuntime.validateStationaryBreakAllowedBlocks(
+            assertThatThrownBy(() -> RoutineArguments.validateStationaryBreakAllowedBlocks(
                     Set.of("minecraft:cobblestone", unsafe)))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("closed safe allowlist");
@@ -2099,14 +2099,14 @@ class McmcpRuntimeHardeningTest {
                     "target", targetMap(),
                     "expected_before", blockState(unsafe),
                     "expected_after", blockState("minecraft:air")), 0, 30, true);
-            var mapped = McmcpRuntime.mapFailure(catchThrowable(() ->
-                    McmcpRuntime.semanticActionArgument(
+            var mapped = RuntimeFailures.mapFailure(catchThrowable(() ->
+                    RoutineArguments.semanticActionArgument(
                             request, "minecraft:overworld")));
             assertThat(mapped.failure().code()).isEqualTo("invalid_argument");
             assertThat(mapped.failure().message()).contains("closed safe allowlist");
         }
 
-        assertThatCode(() -> McmcpRuntime.validateStationaryBreakAllowedBlocks(
+        assertThatCode(() -> RoutineArguments.validateStationaryBreakAllowedBlocks(
                 Set.of("minecraft:cobblestone", "minecraft:stone")))
                 .doesNotThrowAnyException();
     }
@@ -2127,8 +2127,8 @@ class McmcpRuntimeHardeningTest {
                         "properties", Map.of("open", "true"))), 0, 30, false);
 
         for (var invalid : List.of(noPropertyTransition, differentBlock)) {
-            var mapped = McmcpRuntime.mapFailure(catchThrowable(() ->
-                    McmcpRuntime.semanticActionArgument(invalid, "minecraft:overworld")));
+            var mapped = RuntimeFailures.mapFailure(catchThrowable(() ->
+                    RoutineArguments.semanticActionArgument(invalid, "minecraft:overworld")));
             assertThat(mapped.failure().code()).isEqualTo("invalid_argument");
         }
     }
@@ -2161,13 +2161,13 @@ class McmcpRuntimeHardeningTest {
                 second.expectedAfter(),
                 new ActionBounds(target.dimension(), target, target, 0, 29, false));
 
-        assertThat(McmcpRuntime.semanticActionIdentity(first))
+        assertThat(RoutineIdentity.semanticActionIdentity(first))
                 .matches("sha256:[0-9a-f]{64}")
-                .isEqualTo(McmcpRuntime.semanticActionIdentity(second))
-                .isNotEqualTo(McmcpRuntime.semanticActionIdentity(changedDuration))
-                .isEqualTo(McmcpRuntime.semanticActionIdentity(
+                .isEqualTo(RoutineIdentity.semanticActionIdentity(second))
+                .isNotEqualTo(RoutineIdentity.semanticActionIdentity(changedDuration))
+                .isEqualTo(RoutineIdentity.semanticActionIdentity(
                         first, GoalContinuationSession.FINISH_GOAL))
-                .isNotEqualTo(McmcpRuntime.semanticActionIdentity(
+                .isNotEqualTo(RoutineIdentity.semanticActionIdentity(
                         first, GoalContinuationSession.CONTINUE_GOAL));
     }
 
@@ -2177,11 +2177,11 @@ class McmcpRuntimeHardeningTest {
         var explicitContinue = Map.<String, Object>of(
                 "completion_intent", GoalContinuationSession.CONTINUE_GOAL);
 
-        assertThat(McmcpRuntime.completionIntentArgument(omitted))
+        assertThat(RuntimeArguments.completionIntentArgument(omitted))
                 .isEqualTo(GoalContinuationSession.FINISH_GOAL);
-        assertThat(McmcpRuntime.completionIntentArgument(explicitContinue))
+        assertThat(RuntimeArguments.completionIntentArgument(explicitContinue))
                 .isEqualTo(GoalContinuationSession.CONTINUE_GOAL);
-        assertThatThrownBy(() -> McmcpRuntime.completionIntentArgument(
+        assertThatThrownBy(() -> RuntimeArguments.completionIntentArgument(
                 Map.of("completion_intent", "continue_forever")))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -2207,15 +2207,15 @@ class McmcpRuntimeHardeningTest {
 
     @Test
     void safeStayRequiresAStableHealthyScreenFreeCheckpoint() {
-        assertThat(McmcpRuntime.safeStayFailure(
+        assertThat(RoutineLifecycle.safeStayFailure(
                 true, true, true, false, 20.0F, 0.0D,
                 false, true, true, true))
                 .isNull();
-        assertThat(McmcpRuntime.safeStayFailure(
+        assertThat(RoutineLifecycle.safeStayFailure(
                 true, true, true, false, 20.0F, 0.0D,
                 false, true, true, false))
                 .isEqualTo("safe_stay_visible_hostile");
-        assertThat(McmcpRuntime.safeStayFailure(
+        assertThat(RoutineLifecycle.safeStayFailure(
                 true, true, true, false, 5.0F, 0.0D,
                 false, true, true, true))
                 .isEqualTo("safe_stay_low_health");
@@ -2223,19 +2223,19 @@ class McmcpRuntimeHardeningTest {
 
     @Test
     void strictlyParsesAllFourClosedApplyBlockPlanOperations() {
-        var verify = McmcpRuntime.applyBlockPlanArgument(
+        var verify = RoutineArguments.applyBlockPlanArgument(
                 applyPlanArguments("verify_only", fullState("minecraft:air", Map.of()),
                         fullState("minecraft:air", Map.of()), null, false),
                 "minecraft:overworld");
-        var breakToAir = McmcpRuntime.applyBlockPlanArgument(
+        var breakToAir = RoutineArguments.applyBlockPlanArgument(
                 applyPlanArguments("break_to_air", fullState("minecraft:stone", Map.of()),
                         fullState("minecraft:air", Map.of()), null, true),
                 "minecraft:overworld");
-        var place = McmcpRuntime.applyBlockPlanArgument(
+        var place = RoutineArguments.applyBlockPlanArgument(
                 applyPlanArguments("place", fullState("minecraft:air", Map.of()),
                         fullState("minecraft:stone", Map.of()), "minecraft:stone", false),
                 "minecraft:overworld");
-        var replace = McmcpRuntime.applyBlockPlanArgument(
+        var replace = RoutineArguments.applyBlockPlanArgument(
                 applyPlanArguments("replace", fullState("minecraft:dirt", Map.of()),
                         fullState("minecraft:stone", Map.of()), "minecraft:stone", true),
                 "minecraft:overworld");
@@ -2264,8 +2264,8 @@ class McmcpRuntimeHardeningTest {
                 "minecraft:oak_stairs",
                 false);
 
-        var mapped = McmcpRuntime.mapFailure(catchThrowable(() ->
-                McmcpRuntime.applyBlockPlanArgument(arguments, "minecraft:overworld")));
+        var mapped = RuntimeFailures.mapFailure(catchThrowable(() ->
+                RoutineArguments.applyBlockPlanArgument(arguments, "minecraft:overworld")));
 
         assertThat(mapped.failure().code()).isEqualTo("invalid_argument");
         assertThat(mapped.failure().message()).contains("complete runtime BlockState");
@@ -2288,10 +2288,10 @@ class McmcpRuntimeHardeningTest {
         var bounds = (Map<String, Object>) changedDuration.get("bounds");
         bounds.put("max_duration_seconds", 29);
 
-        var parsed = McmcpRuntime.applyBlockPlanArgument(first, "minecraft:overworld");
-        var transformed = McmcpRuntime.applyBlockPlanArgument(
+        var parsed = RoutineArguments.applyBlockPlanArgument(first, "minecraft:overworld");
+        var transformed = RoutineArguments.applyBlockPlanArgument(
                 changedTransform, "minecraft:overworld");
-        var shorter = McmcpRuntime.applyBlockPlanArgument(
+        var shorter = RoutineArguments.applyBlockPlanArgument(
                 changedDuration, "minecraft:overworld");
 
         assertThat(parsed.requestIdentity()).matches("sha256:[0-9a-f]{64}")
@@ -2328,11 +2328,11 @@ class McmcpRuntimeHardeningTest {
         var rotatedParameters = (Map<String, Object>) rotated.get("parameters");
         rotatedParameters.put("transform", Map.of("rotation", 90, "mirror", "none"));
 
-        var firstParsed = McmcpRuntime.applyBlockPlanArgument(
+        var firstParsed = RoutineArguments.applyBlockPlanArgument(
                 first, "minecraft:overworld");
-        var secondParsed = McmcpRuntime.applyBlockPlanArgument(
+        var secondParsed = RoutineArguments.applyBlockPlanArgument(
                 second, "minecraft:overworld");
-        var rotatedParsed = McmcpRuntime.applyBlockPlanArgument(
+        var rotatedParsed = RoutineArguments.applyBlockPlanArgument(
                 rotated, "minecraft:overworld");
 
         assertThat(firstParsed.requestIdentity()).isEqualTo(secondParsed.requestIdentity());
@@ -2363,7 +2363,7 @@ class McmcpRuntimeHardeningTest {
                             Optional.of(itemAndBlock.getKey()))),
                     executionBounds);
 
-            assertThatThrownBy(() -> McmcpRuntime.validateApplyBlockPlanItems(request))
+            assertThatThrownBy(() -> RoutineArguments.validateApplyBlockPlanItems(request))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("multi-cell mutation");
         }
@@ -2378,7 +2378,7 @@ class McmcpRuntimeHardeningTest {
                         new BlockStateFingerprint("minecraft:stone", Map.of()),
                         Optional.of("minecraft:stone"))),
                 executionBounds);
-        assertThatCode(() -> McmcpRuntime.validateApplyBlockPlanItems(stone))
+        assertThatCode(() -> RoutineArguments.validateApplyBlockPlanItems(stone))
                 .doesNotThrowAnyException();
 
         var lowerOakDoor = new ApplyBlockPlanRequest(
@@ -2396,7 +2396,7 @@ class McmcpRuntimeHardeningTest {
                         target.dimension(), target,
                         new BlockTarget(target.dimension(), target.x(), target.y() + 1, target.z()),
                         0, 30, false));
-        assertThatCode(() -> McmcpRuntime.validateApplyBlockPlanItems(lowerOakDoor))
+        assertThatCode(() -> RoutineArguments.validateApplyBlockPlanItems(lowerOakDoor))
                 .doesNotThrowAnyException();
 
         var breakDoor = new ApplyBlockPlanRequest(
@@ -2409,7 +2409,7 @@ class McmcpRuntimeHardeningTest {
                         new BlockStateFingerprint("minecraft:air", Map.of()),
                         Optional.empty())),
                 new ActionBounds(target.dimension(), target, target, 0, 30, true));
-        assertThatThrownBy(() -> McmcpRuntime.validateApplyBlockPlanItems(breakDoor))
+        assertThatThrownBy(() -> RoutineArguments.validateApplyBlockPlanItems(breakDoor))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("multi-cell mutation");
 
@@ -2429,7 +2429,7 @@ class McmcpRuntimeHardeningTest {
                         Optional.of("minecraft:powder_snow_bucket"))),
                 new ActionBounds(target.dimension(), target, target, 0, 30, false));
 
-        assertThatThrownBy(() -> McmcpRuntime.validateApplyBlockPlanItems(request))
+        assertThatThrownBy(() -> RoutineArguments.validateApplyBlockPlanItems(request))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("different container item");
     }
@@ -2461,7 +2461,7 @@ class McmcpRuntimeHardeningTest {
                                         : Optional.empty())),
                         new ActionBounds(target.dimension(), target, target, 0, 30, true));
 
-                assertThatThrownBy(() -> McmcpRuntime.validateApplyBlockPlanItems(request))
+                assertThatThrownBy(() -> RoutineArguments.validateApplyBlockPlanItems(request))
                         .isInstanceOf(IllegalArgumentException.class)
                         .hasMessageContaining("closed safe allowlist");
             }
@@ -2479,7 +2479,7 @@ class McmcpRuntimeHardeningTest {
                                 Map.of("enabled", "true", "facing", "down")),
                         Optional.of("minecraft:hopper"))),
                 new ActionBounds(target.dimension(), target, target, 0, 30, false));
-        assertThatCode(() -> McmcpRuntime.validateApplyBlockPlanItems(placeEmptyHopper))
+        assertThatCode(() -> RoutineArguments.validateApplyBlockPlanItems(placeEmptyHopper))
                 .doesNotThrowAnyException();
     }
 
@@ -2497,7 +2497,7 @@ class McmcpRuntimeHardeningTest {
                     routineId,
                     attemptTick,
                     incident -> {
-                        if (McmcpRuntime.shouldRetryFinalizationCleanup(incident)) {
+                        if (RoutineLifecycle.shouldRetryFinalizationCleanup(incident)) {
                             cleanupAttempts.incrementAndGet();
                         }
                         throw new IllegalStateException("record failed");
@@ -2507,13 +2507,13 @@ class McmcpRuntimeHardeningTest {
         }
 
         assertThat(attempt).isNotNull();
-        assertThat(McmcpRuntime.shouldRetryFinalizationCleanup(attempt.incident())).isFalse();
+        assertThat(RoutineLifecycle.shouldRetryFinalizationCleanup(attempt.incident())).isFalse();
 
         retries.attempt(
                 routineId,
                 clientTick,
                 incident -> {
-                    if (McmcpRuntime.shouldRetryFinalizationCleanup(incident)) {
+                    if (RoutineLifecycle.shouldRetryFinalizationCleanup(incident)) {
                         cleanupAttempts.incrementAndGet();
                     }
                     return "recorded";
@@ -2551,13 +2551,13 @@ class McmcpRuntimeHardeningTest {
                 List.of("player"),
                 false);
 
-        assertThat(McmcpRuntime.recoverableContinuationFailure(
+        assertThat(RoutineLifecycle.recoverableContinuationFailure(
                 GoalContinuationSession.CONTINUE_GOAL, replan, null)).isTrue();
-        assertThat(McmcpRuntime.recoverableContinuationFailure(
+        assertThat(RoutineLifecycle.recoverableContinuationFailure(
                 GoalContinuationSession.FINISH_GOAL, replan, null)).isFalse();
-        assertThat(McmcpRuntime.recoverableContinuationFailure(
+        assertThat(RoutineLifecycle.recoverableContinuationFailure(
                 GoalContinuationSession.CONTINUE_GOAL, safety, null)).isFalse();
-        assertThat(McmcpRuntime.recoverableContinuationFailure(
+        assertThat(RoutineLifecycle.recoverableContinuationFailure(
                 GoalContinuationSession.CONTINUE_GOAL, replan, replan)).isFalse();
     }
 

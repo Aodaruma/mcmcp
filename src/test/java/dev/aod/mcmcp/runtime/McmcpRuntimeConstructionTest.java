@@ -48,7 +48,7 @@ class McmcpRuntimeConstructionTest {
                                         Optional.empty(),
                                         Optional.of("base")))));
 
-        var request = McmcpRuntime.constructionRequest(plan);
+        var request = ConstructionRequests.constructionRequest(plan);
 
         assertThat(request.entries()).hasSize(2);
         assertThat(request.entries())
@@ -84,7 +84,7 @@ class McmcpRuntimeConstructionTest {
                                         "minecraft:stone", Map.of())),
                                 Optional.empty()))));
 
-        assertThatThrownBy(() -> McmcpRuntime.constructionRequest(plan))
+        assertThatThrownBy(() -> ConstructionRequests.constructionRequest(plan))
                 .isInstanceOf(BlockPlanValidationException.class)
                 .extracting(failure -> ((BlockPlanValidationException) failure).code())
                 .isEqualTo("incomplete_block_state");
@@ -113,7 +113,7 @@ class McmcpRuntimeConstructionTest {
                                         "minecraft:stone", Map.of())),
                                 Optional.empty()))));
 
-        var request = McmcpRuntime.constructionRequest(plan);
+        var request = ConstructionRequests.constructionRequest(plan);
 
         assertThat(request.bounds().maximum().y()).isEqualTo(66);
         assertThat(request.placementCellCount(0)).isEqualTo(2);
@@ -149,7 +149,7 @@ class McmcpRuntimeConstructionTest {
                         Map.of("axis", "x")),
                 new ObservationValues.ResourceId("minecraft:oak_log"));
 
-        var request = McmcpRuntime.constructionRequest(
+        var request = ConstructionRequests.constructionRequest(
                 plan, candidate -> candidate.equals(ref)
                         ? Optional.of(remembered) : Optional.empty());
 
@@ -158,7 +158,7 @@ class McmcpRuntimeConstructionTest {
             assertThat(step.expectedAfter().properties()).containsEntry("axis", "z");
             assertThat(step.requiredItemId()).contains("minecraft:oak_log");
         });
-        assertThatThrownBy(() -> McmcpRuntime.constructionRequest(
+        assertThatThrownBy(() -> ConstructionRequests.constructionRequest(
                 plan, PlacementStateResolver.none()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("placement_state_ref is unknown");
@@ -168,7 +168,7 @@ class McmcpRuntimeConstructionTest {
                         new ObservationValues.ResourceId("minecraft:tnt"),
                         Map.of("unstable", "false")),
                 new ObservationValues.ResourceId("minecraft:tnt"));
-        assertThatThrownBy(() -> McmcpRuntime.constructionRequest(
+        assertThatThrownBy(() -> ConstructionRequests.constructionRequest(
                 plan, ignored -> Optional.of(unsafe)))
                 .isInstanceOf(SafeConstructionBlockPolicy.UnsafeConstructionBlockException.class);
     }
@@ -188,7 +188,7 @@ class McmcpRuntimeConstructionTest {
                         new ObservationValues.ResourceId("minecraft:oak_planks"), Map.of()),
                 new ObservationValues.ResourceId("minecraft:oak_planks"));
 
-        var request = McmcpRuntime.pillarUpRequest(
+        var request = ConstructionRequests.pillarUpRequest(
                 pillar, candidate -> candidate.equals(ref)
                         ? Optional.of(planks) : Optional.empty());
 
@@ -196,7 +196,7 @@ class McmcpRuntimeConstructionTest {
                 .isEqualTo(new dev.aod.mcmcp.routine.BlockStateFingerprint(
                         "minecraft:oak_planks", Map.of()));
         assertThat(request.item()).isEqualTo("minecraft:oak_planks");
-        assertThatThrownBy(() -> McmcpRuntime.pillarUpRequest(
+        assertThatThrownBy(() -> ConstructionRequests.pillarUpRequest(
                 pillar, PlacementStateResolver.none()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("placement_state_ref is unknown");
@@ -208,7 +208,7 @@ class McmcpRuntimeConstructionTest {
                                 "facing", "east", "half", "lower", "hinge", "right",
                                 "open", "false", "powered", "false")),
                 new ObservationValues.ResourceId("minecraft:oak_door"));
-        assertThatThrownBy(() -> McmcpRuntime.pillarUpRequest(
+        assertThatThrownBy(() -> ConstructionRequests.pillarUpRequest(
                 pillar, ignored -> Optional.of(door)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("one ordinary full block");
@@ -224,7 +224,7 @@ class McmcpRuntimeConstructionTest {
                 Optional.empty(),
                 Optional.of("psr_0123456789abcdef0123456789abcdef"));
 
-        assertThat(McmcpRuntime.pillarAdmissionCost(
+        assertThat(ActionPlanning.pillarAdmissionCost(
                 pillar, PlacementStateResolver.none()))
                 .isEqualTo(ActionDslCompiler.intrinsicPillarUpCost());
     }
@@ -243,7 +243,7 @@ class McmcpRuntimeConstructionTest {
                         new ActionDsl.BlockStateSpec(
                                 "minecraft:oak_log", Map.of("axis", "x")))));
 
-        var request = McmcpRuntime.constructionRequest(plan);
+        var request = ConstructionRequests.constructionRequest(plan);
 
         assertThat(request.breakOnly()).isTrue();
         assertThat(request.plan().breakSafety())

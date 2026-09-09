@@ -20,7 +20,7 @@ class McmcpRuntimeKnownMenuTest {
     void opaqueMenuOperationUsesOneStationaryBoundedAdapterRequest() {
         var operation = new ActionDsl.OperateKnownMenu(
                 "transfer", "abcdefghijklmnopqrstuvwx");
-        var request = McmcpRuntime.knownMenuRequest(
+        var request = InventoryRequests.knownMenuRequest(
                 operation, new BlockTarget("minecraft:overworld", 1, 64, 2));
 
         assertThat(request.kind()).isEqualTo("operate_known_menu");
@@ -30,7 +30,7 @@ class McmcpRuntimeKnownMenuTest {
         assertThat(request.bounds().maxTravelBlocks()).isZero();
         assertThat(request.bounds().maxDurationSeconds()).isEqualTo(30);
         assertThat(request.expectedUnits()).isEqualTo(1);
-        assertThat(McmcpRuntime.structuralPrimitiveCost(operation).orElseThrow())
+        assertThat(ActionPlanning.structuralPrimitiveCost(operation).orElseThrow())
                 .isEqualTo(new ActionDslCompiler.Cost(
                         ActionDslCompiler.KNOWN_MENU_OPERATION_DURATION_MILLIS,
                         ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS,
@@ -54,8 +54,8 @@ class McmcpRuntimeKnownMenuTest {
                 Set.of(ActionDsl.Capability.INVENTORY_TRANSFER),
                 List.of(new ActionDsl.WaitTicks("wait", 1), operation));
 
-        assertThat(McmcpRuntime.actionAdmissionRequiresLocalSafety(menuOnly)).isFalse();
-        assertThat(McmcpRuntime.actionAdmissionRequiresLocalSafety(delayed)).isTrue();
+        assertThat(ActionPlanning.actionAdmissionRequiresLocalSafety(menuOnly)).isFalse();
+        assertThat(ActionPlanning.actionAdmissionRequiresLocalSafety(delayed)).isTrue();
     }
 
     @Test

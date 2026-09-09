@@ -288,6 +288,21 @@ class AgentPrimitivePlannerTest {
         assertThat(accepted.worstCase(plan)).contains(
                 ActionDslCompiler.intrinsicKnownBlockPlanCost(1));
 
+        // 建築の委譲後も、後続cameraは元の姿勢から計算し、支持面の証拠を保持する。
+        var faceAfterConstruction = new ActionDsl.FaceKnownPosition("after_copy", support);
+        var withFollowingFace = AgentPrimitivePlanner.analyze(
+                new ActionDsl.Program(1, Optional.empty(), program.capabilities(),
+                        List.of(plan, faceAfterConstruction)),
+                map.snapshot().orElseThrow(), new DeterministicAStar(), pose,
+                Optional.of(frame(List.of(surfaceWithState(
+                        support, ObservationRecord.Face.UP,
+                        "minecraft:oak_log", Map.of("axis", "x"), 0L)))),
+                4.5F);
+        assertThat(withFollowingFace.worstCase(plan)).isEqualTo(accepted.worstCase(plan));
+        assertThat(withFollowingFace.worstCase(faceAfterConstruction))
+                .contains(AgentPrimitivePlanner.faceCost(pose, support, 4.5F));
+        assertThat(withFollowingFace.knownSurfaces()).isEqualTo(accepted.knownSurfaces());
+
         var dimension = new ObservationValues.ResourceId(DIMENSION);
         var edgeHit = new ObservationRecord.VisibleSurface(
                 new ObservationValues.BlockPosition(
