@@ -133,7 +133,7 @@ KnownBreakExecution、CobblestoneExecution、BlockMutationExecution、FrameItemE
 - CLI sandbox内ではJDKアクセスが拒否されたため、Java検証は統合担当の環境で実行した。権限・ACL・認証設定は変更していない。
 - Python transport14件、capability mock10本、読込/scope試験も成功。
 
-独立CLIの全体レビュー（対象`6a404c75e238f0bc5e450744799c6090ed639579`）では修正必須の回帰はなく、今回の区切りも妥当との評価を得た。参考提案に従い、破壊・丸石生成の記録helperへ所有済みAction IDを再渡しする引数を除いた。統合側では、batch計画を元コードと同じ無条件の代入に戻し、値がない場合も旧計画を残さない形へ簡素化した。この追加差分のレビュー対象SHAとCIはPRへ記録する。
+独立CLIの全体レビュー（対象`6a404c75e238f0bc5e450744799c6090ed639579`）では修正必須の回帰はなく、今回の区切りも妥当との評価を得た。参考提案に従い、破壊・丸石生成の記録helperへ所有済みAction IDを再渡しする引数を除いた。統合側では、batch計画をnullの場合も旧計画を消去する無条件代入へ変更した。この追加差分のレビュー対象SHAとCIはPRへ記録する。
 
 実機Minecraft、実server ACK、fog、入力解放の実機確認は未実施。Releaseタグは公開しない。
 
