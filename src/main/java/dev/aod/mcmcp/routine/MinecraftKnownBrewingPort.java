@@ -1811,7 +1811,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
     }
 
     private static Vec3 aimPoint(KnownBrewingRequest brewing) {
-        return MinecraftPhaseFiveInventoryPort.inventoryAimPoint(
+        return InventoryParameters.inventoryAimPoint(
                 brewing.operation(), brewing.target());
     }
 

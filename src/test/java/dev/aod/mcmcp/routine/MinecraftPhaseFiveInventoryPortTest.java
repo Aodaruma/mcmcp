@@ -2,7 +2,6 @@ package dev.aod.mcmcp.routine;
 
 import dev.aod.mcmcp.observation.ClientRecipeCatalog;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
-import dev.aod.mcmcp.runtime.ContainerSyncSignals.ContainerSnapshot;
 import dev.aod.mcmcp.runtime.ScreenOwnershipSignals;
 import org.junit.jupiter.api.Test;
 import org.objectweb.asm.ClassReader;
@@ -116,129 +115,6 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
-    void fullStackSelectionIgnoresCustomComponentsAndRespectsRemainingCap() {
-        var stacks = List.of(
-                stack("minecraft:stone", 32, 99),
-                stack("minecraft:stone", 16, DEFAULT_HASH),
-                stack("minecraft:stone", 8, DEFAULT_HASH));
-
-        assertThat(MinecraftPhaseFiveInventoryPort.chooseFullStackSlot(
-                stacks, List.of(0, 1, 2), "minecraft:stone", DEFAULT_HASH, 12))
-                .contains(2);
-        assertThat(MinecraftPhaseFiveInventoryPort.chooseFullStackSlot(
-                stacks, List.of(0, 1), "minecraft:stone", DEFAULT_HASH, 12))
-                .isEmpty();
-    }
-
-    @Test
-    void packetSnapshotCountIncludesOnlyExactDefaultComponentStacks() {
-        var stacks = List.of(
-                stack("minecraft:stone", 12, DEFAULT_HASH),
-                stack("minecraft:stone", 4, 99),
-                stack("minecraft:dirt", 7, DEFAULT_HASH),
-                StackFingerprint.EMPTY);
-
-        assertThat(MinecraftPhaseFiveInventoryPort.countExact(
-                stacks, List.of(0, 1, 2, 3), "minecraft:stone", DEFAULT_HASH))
-                .isEqualTo(12);
-    }
-
-    @Test
-    void unavailableTransferReportsBoundedSourceItemChoices() {
-        var stacks = List.of(
-                stack("minecraft:wheat_seeds", 32, DEFAULT_HASH),
-                stack("minecraft:diamond_hoe", 1, 99),
-                stack("minecraft:wheat_seeds", 16, DEFAULT_HASH),
-                StackFingerprint.EMPTY);
-
-        assertThat(MinecraftPhaseFiveInventoryPort.availableItemEvidence(
-                stacks, List.of(0, 1, 2, 3), 16))
-                .containsEntry("available_source_items_truncated", false)
-                .containsEntry("available_source_items", List.of(
-                        java.util.Map.of("item", "minecraft:diamond_hoe", "count", 1),
-                        java.util.Map.of("item", "minecraft:wheat_seeds", "count", 48)));
-        assertThat(MinecraftPhaseFiveInventoryPort.availableItemEvidence(
-                stacks, List.of(0, 1, 2, 3), 1))
-                .containsEntry("available_source_items_truncated", true);
-    }
-
-    @Test
-    void completeInspectionAggregatesAll54SlotsWithoutPlayerInventoryOrComponentDetails() {
-        var stacks = new java.util.ArrayList<StackFingerprint>();
-        for (int index = 0; index < 54; index++) {
-            stacks.add(stack("minecraft:item_%02d".formatted(index), 64, index));
-        }
-        stacks.add(stack("minecraft:diamond", 64, 999)); // Player slot must not leak into contents.
-        var sourceSlots = java.util.stream.IntStream.range(0, 54).boxed().toList();
-        var evidence = MinecraftPhaseFiveInventoryPort.availableItemEvidence(stacks, sourceSlots, 54);
-        assertThat(evidence).containsEntry("available_source_items_truncated", false);
-        assertThat((List<?>) evidence.get("available_source_items")).hasSize(54)
-                .allSatisfy(item -> assertThat(item).isNotEqualTo(
-                        java.util.Map.of("item", "minecraft:diamond", "count", 64)));
-        var sameId = java.util.stream.IntStream.range(0, 54)
-                .mapToObj(index -> stack("minecraft:stone", 64, index)).toList();
-        assertThat(MinecraftPhaseFiveInventoryPort.availableItemEvidence(sameId, sourceSlots, 54))
-                .containsEntry("available_source_items", List.of(
-                        java.util.Map.of("item", "minecraft:stone", "count", 3456)));
-    }
-
-    @Test
-    void transferReadbackRequiresEqualFullStackDecreaseAndIncrease() {
-        var confirmed = MinecraftPhaseFiveInventoryPort.verifyTransferReadback(
-                40, 3, 24, 19, 16, 18);
-        assertThat(confirmed.exactMove()).isTrue();
-        assertThat(confirmed.goalVerified()).isTrue();
-
-        assertThat(MinecraftPhaseFiveInventoryPort.verifyTransferReadback(
-                40, 3, 24, 18, 16, 18).exactMove()).isFalse();
-        assertThat(MinecraftPhaseFiveInventoryPort.verifyTransferReadback(
-                40, 3, 25, 19, 16, 18).exactMove()).isFalse();
-    }
-
-    @Test
-    void batchMovesAtMostFourteenInitialWholeStacksAfterFreshCompleteServerDeltas() {
-        var slots = emptySlots(32);
-        for (int i = 0; i < 16; i++) slots.set(i, stack("minecraft:stone", 64, DEFAULT_HASH));
-        var sources = java.util.stream.IntStream.range(0, 16).boxed().toList();
-        var destinations = java.util.stream.IntStream.range(16, 32).boxed().toList();
-        var batch = new MinecraftPhaseFiveInventoryPort.TransferBatch(slots, sources, destinations,
-                "minecraft:stone", DEFAULT_HASH, true, 14, 896, 1_024);
-        var state = transferState(false, 1_024, 896, 14);
-        state.beginTransferBatch(batch, 1_024, 0);
-        long revision = 1;
-        for (int i = 0; i < 14; i++) {
-            long tick = i * 2L + 1;
-            assertThat(batch.next().slot()).isEqualTo(i);
-            assertThat(batch.beginClick(transferSnapshot(slots, revision), tick)).isTrue();
-            assertThat(batch.beginClick(transferSnapshot(slots, revision), tick + 1)).isFalse();
-            var partial = new ArrayList<>(slots);
-            partial.set(i, StackFingerprint.EMPTY);
-            assertThat(batch.confirm(transferSnapshot(partial, ++revision))).isFalse();
-            slots.set(i, StackFingerprint.EMPTY);
-            slots.set(16 + i, stack("minecraft:stone", 64, DEFAULT_HASH));
-            // Matching slots without a newer server revision are not an acknowledgement.
-            assertThat(batch.confirm(transferSnapshot(slots, revision - 1))).isFalse();
-            assertThat(batch.confirm(transferSnapshot(slots, ++revision))).isTrue();
-            assertThat(batch.beginClick(transferSnapshot(slots, revision), tick)).isFalse();
-            state.updateTransferPrefix();
-        }
-        assertThat(batch.exhausted()).isTrue();
-        assertThat(batch.beginClick(transferSnapshot(slots, revision), 99)).isFalse();
-        assertThat(batch.reconcileReadback(transferSnapshot(slots, ++revision))).isTrue();
-        assertThat(slots.get(14).count()).isEqualTo(64);
-        assertThat(slots.get(15).count()).isEqualTo(64);
-        assertThat(state.basis()).containsEntry("source_before", 1_024)
-                .containsEntry("destination_before", 0)
-                .containsEntry("confirmed_transfer_count", 896)
-                .containsEntry("confirmed_stack_moves", 14)
-                .containsEntry("confirmed_source_count", 128)
-                .containsEntry("confirmed_destination_count", 896)
-                .containsEntry("transfer_in_flight", false)
-                .containsEntry("transfer_readback_observed", false)
-                .doesNotContainKeys("source_after", "destination_after", "pending_stack_count");
-    }
-
-    @Test
     void fourteenStackTakeKeepsAVanillaBlockStackSafeInMainHandWithoutAnotherInteraction() {
         var hotbar = new ArrayList<ItemStack>();
         for (int slot = 0; slot < 8; slot++) {
@@ -246,16 +122,16 @@ class MinecraftPhaseFiveInventoryPortTest {
         }
         hotbar.add(ItemStack.EMPTY);
 
-        var opening = MinecraftPhaseFiveInventoryPort.chooseOpenHand(
+        var opening = InventoryOpenHandPolicy.chooseOpenHand(
                 hotbar, false, 3).orElseThrow();
         assertThat(opening.selectedSlot()).isZero();
-        assertThat(MinecraftPhaseFiveInventoryPort.safeKnownMenuOpenStack(hotbar.getFirst()))
+        assertThat(InventoryOpenHandPolicy.safeKnownMenuOpenStack(hotbar.getFirst()))
                 .isTrue();
         assertThat(MinecraftKnownBrewingPort.safeNormalUseStack(hotbar.getFirst())).isFalse();
 
         // All fourteen transfer clicks remain available: no parking or hand-swap click is needed.
         hotbar.set(8, testItemStack(Blocks.COBBLESTONE.asItem(), 64));
-        var nextContainer = MinecraftPhaseFiveInventoryPort.chooseOpenHand(
+        var nextContainer = InventoryOpenHandPolicy.chooseOpenHand(
                 hotbar, false, 3).orElseThrow();
         assertThat(nextContainer.selectedSlot()).isZero();
     }
@@ -267,215 +143,57 @@ class MinecraftPhaseFiveInventoryPortTest {
         var plainOffhand = testItemStack(Blocks.COBBLESTONE.asItem(), 1);
 
         assertThat(ItemStack.EMPTY.doesSneakBypassUse(null, null, null)).isTrue();
-        assertThat(MinecraftPhaseFiveInventoryPort.chooseOpenHand(
+        assertThat(InventoryOpenHandPolicy.chooseOpenHand(
                 emptyHotbar, ItemStack.EMPTY, 3))
-                .contains(new MinecraftPhaseFiveInventoryPort.OpenHandPlan(0));
-        assertThat(MinecraftPhaseFiveInventoryPort.chooseOpenHand(
+                .contains(new InventoryOpenHandPolicy.OpenHandPlan(0));
+        assertThat(InventoryOpenHandPolicy.chooseOpenHand(
                 emptyHotbar, plainOffhand, 3))
-                .contains(new MinecraftPhaseFiveInventoryPort.OpenHandPlan(0));
-        assertThat(MinecraftPhaseFiveInventoryPort.chooseOpenHand(
+                .contains(new InventoryOpenHandPolicy.OpenHandPlan(0));
+        assertThat(InventoryOpenHandPolicy.chooseOpenHand(
                 emptyHotbar, false, 3)).isEmpty();
-        assertThat(MinecraftPhaseFiveInventoryPort.safeEmptyMainHandOffhand(
+        assertThat(InventoryOpenHandPolicy.safeEmptyMainHandOffhand(
                 false, CustomFirstUseItem.class)).isTrue();
-        assertThat(MinecraftPhaseFiveInventoryPort.safeEmptyMainHandOffhand(
+        assertThat(InventoryOpenHandPolicy.safeEmptyMainHandOffhand(
                 false, CustomSneakBypassItem.class)).isFalse();
     }
 
     @Test
     void customNeoForgeOpenHooksAreNeverTreatedAsSafeContainerOpeningHands() {
-        assertThat(MinecraftPhaseFiveInventoryPort.usesDefaultNeoForgeOpenHooks(
+        assertThat(InventoryOpenHandPolicy.usesDefaultNeoForgeOpenHooks(
                 CustomFirstUseItem.class)).isFalse();
-        assertThat(MinecraftPhaseFiveInventoryPort.usesDefaultNeoForgeOpenHooks(
+        assertThat(InventoryOpenHandPolicy.usesDefaultNeoForgeOpenHooks(
                 CustomSneakBypassItem.class)).isFalse();
-        assertThat(MinecraftPhaseFiveInventoryPort.usesDefaultNeoForgeOpenHooks(
+        assertThat(InventoryOpenHandPolicy.usesDefaultNeoForgeOpenHooks(
                 InheritedSneakBypassItem.class)).isFalse();
-        assertThat(MinecraftPhaseFiveInventoryPort.usesDefaultNeoForgeOpenHooks(
+        assertThat(InventoryOpenHandPolicy.usesDefaultNeoForgeOpenHooks(
                 Blocks.COBBLESTONE.asItem().getClass())).isTrue();
-        assertThat(MinecraftPhaseFiveInventoryPort.safeKnownMenuOpenStack(ItemStack.EMPTY))
+        assertThat(InventoryOpenHandPolicy.safeKnownMenuOpenStack(ItemStack.EMPTY))
                 .isFalse();
     }
 
     @Test
     void unsafeInboundItemCannotFillAnEmptyMainHandBeforeTransferPlanning()
             throws Exception {
-        assertThat(MinecraftPhaseFiveInventoryPort.inboundTransferKeepsOpenHandSafe(
+        assertThat(InventoryOpenHandPolicy.inboundTransferKeepsOpenHandSafe(
                 false, true, CustomFirstUseItem.class)).isFalse();
-        assertThat(MinecraftPhaseFiveInventoryPort.inboundTransferKeepsOpenHandSafe(
+        assertThat(InventoryOpenHandPolicy.inboundTransferKeepsOpenHandSafe(
                 false, true, CustomSneakBypassItem.class)).isFalse();
-        assertThat(MinecraftPhaseFiveInventoryPort.inboundTransferKeepsOpenHandSafe(
+        assertThat(InventoryOpenHandPolicy.inboundTransferKeepsOpenHandSafe(
                 false, true, Blocks.COBBLESTONE.asItem().getClass())).isTrue();
-        assertThat(MinecraftPhaseFiveInventoryPort.inboundTransferKeepsOpenHandSafe(
+        assertThat(InventoryOpenHandPolicy.inboundTransferKeepsOpenHandSafe(
                 true, true, CustomFirstUseItem.class)).isTrue();
-        assertThat(MinecraftPhaseFiveInventoryPort.inboundTransferKeepsOpenHandSafe(
+        assertThat(InventoryOpenHandPolicy.inboundTransferKeepsOpenHandSafe(
                 false, false, CustomFirstUseItem.class)).isTrue();
 
         var node = classNode();
         assertThat(invocations(node, "acceptTransferSnapshot")).containsSubsequence(
-                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                "dev/aod/mcmcp/routine/InventoryOpenHandPolicy"
                         + "#inboundTransferKeepsOpenHandSafe",
                 "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$AttemptState"
                         + "#beginTransferBatch");
         assertThat(invocations(node, "dispatchTransferClick"))
                 .contains("dev/aod/mcmcp/routine/KnownMenuTransfers"
                         + "#dispatchServerConfirmedQuickMove");
-    }
-
-    @Test
-    void batchPlanRespectsCountPolicyAndAbsoluteGoalWithoutAddingNewSources() {
-        var slots = new ArrayList<>(List.of(
-                stack("minecraft:stone", 64, DEFAULT_HASH),
-                stack("minecraft:stone", 32, DEFAULT_HASH),
-                stack("minecraft:stone", 16, DEFAULT_HASH),
-                stack("minecraft:stone", 16, 99), StackFingerprint.EMPTY,
-                StackFingerprint.EMPTY, StackFingerprint.EMPTY));
-        var batch = new MinecraftPhaseFiveInventoryPort.TransferBatch(slots,
-                List.of(0, 1, 2, 3, 4), List.of(5, 6),
-                "minecraft:stone", DEFAULT_HASH, true, 3, 80, 100);
-        assertThat(batch.beginClick(transferSnapshot(slots, 1), 1)).isTrue();
-        slots.set(0, StackFingerprint.EMPTY);
-        slots.set(5, stack("minecraft:stone", 64, DEFAULT_HASH));
-        assertThat(batch.confirm(transferSnapshot(slots, 2))).isTrue();
-        assertThat(batch.next().slot()).isEqualTo(2); // 32 does not fit the remaining whole-stack cap.
-        var replenished = new ArrayList<>(slots);
-        replenished.set(0, stack("minecraft:stone", 16, DEFAULT_HASH));
-        assertThat(batch.beginClick(transferSnapshot(replenished, 3), 2)).isFalse();
-        assertThat(batch.beginClick(transferSnapshot(slots, 4), 2)).isTrue();
-        slots.set(2, StackFingerprint.EMPTY);
-        slots.set(6, stack("minecraft:stone", 16, DEFAULT_HASH));
-        assertThat(batch.confirm(transferSnapshot(slots, 5))).isTrue();
-        assertThat(batch.exhausted()).isTrue();
-
-        var goalOne = new MinecraftPhaseFiveInventoryPort.TransferBatch(
-                List.of(stack("minecraft:stone", 64, 99), stack("minecraft:stone", 16, DEFAULT_HASH),
-                        StackFingerprint.EMPTY), List.of(0, 1), List.of(2),
-                "minecraft:stone", DEFAULT_HASH, false, 14, 896, 1);
-        var initial = List.of(stack("minecraft:stone", 64, 99),
-                stack("minecraft:stone", 16, DEFAULT_HASH), StackFingerprint.EMPTY);
-        assertThat(goalOne.beginClick(transferSnapshot(initial, 1), 1)).isTrue();
-        assertThat(goalOne.confirm(transferSnapshot(List.of(StackFingerprint.EMPTY,
-                initial.get(1), initial.get(0)), 2))).isTrue();
-        assertThat(goalOne.exhausted()).isTrue(); // minimum is an absolute goal, not a batch size.
-    }
-
-    @Test
-    void doubleChestPlanUsesMatchingWholeStacksAcrossAllFiftyFourSourceSlots() {
-        var slots = emptySlots(90);
-        slots.set(0, stack("minecraft:dripstone_block", 47, DEFAULT_HASH));
-        slots.set(53, stack("minecraft:dripstone_block", 27, DEFAULT_HASH));
-        var sourceSlots = java.util.stream.IntStream.range(0, 54).boxed().toList();
-        var destinationSlots = java.util.stream.IntStream.range(54, 90).boxed().toList();
-        var batch = new MinecraftPhaseFiveInventoryPort.TransferBatch(
-                slots, sourceSlots, destinationSlots,
-                "minecraft:dripstone_block", DEFAULT_HASH, true, 8, 74, 74);
-        var state = transferState(false, 74, 74, 8);
-        state.beginTransferBatch(batch, 74, 0);
-
-        assertThat(batch.next().slot()).isZero();
-        assertThat(batch.beginClick(transferSnapshot(slots, 1), 1)).isTrue();
-        slots.set(0, StackFingerprint.EMPTY);
-        slots.set(54, stack("minecraft:dripstone_block", 47, DEFAULT_HASH));
-        assertThat(batch.confirm(transferSnapshot(slots, 2))).isTrue();
-        state.updateTransferPrefix();
-
-        assertThat(batch.next().slot()).isEqualTo(53);
-        assertThat(batch.beginClick(transferSnapshot(slots, 2), 2)).isTrue();
-        slots.set(53, StackFingerprint.EMPTY);
-        slots.set(54, stack("minecraft:dripstone_block", 64, DEFAULT_HASH));
-        slots.set(55, stack("minecraft:dripstone_block", 10, DEFAULT_HASH));
-        assertThat(batch.confirm(transferSnapshot(slots, 3))).isTrue();
-        state.updateTransferPrefix();
-
-        assertThat(batch.exhausted()).isTrue();
-        assertThat(batch.reconcileReadback(transferSnapshot(slots, 4))).isTrue();
-        state.recordTransferReadback(0, 74);
-        assertThat(state.basis()).containsEntry("source_before", 74)
-                .containsEntry("destination_before", 0)
-                .containsEntry("confirmed_transfer_count", 74)
-                .containsEntry("confirmed_stack_moves", 2)
-                .containsEntry("confirmed_source_count", 0)
-                .containsEntry("confirmed_destination_count", 74)
-                .containsEntry("transfer_in_flight", false);
-    }
-
-    @Test
-    void wholeStackCeilingCanLeaveAConfirmedPrefixShortOfTheAbsoluteGoal() {
-        var slots = emptySlots(90);
-        slots.set(0, stack("minecraft:dripstone_block", 47, DEFAULT_HASH));
-        slots.set(53, stack("minecraft:dripstone_block", 64, DEFAULT_HASH));
-        var batch = new MinecraftPhaseFiveInventoryPort.TransferBatch(
-                slots,
-                java.util.stream.IntStream.range(0, 54).boxed().toList(),
-                java.util.stream.IntStream.range(54, 90).boxed().toList(),
-                "minecraft:dripstone_block", DEFAULT_HASH, true, 8, 74, 74);
-        var state = transferState(false, 74, 74, 8);
-        state.beginTransferBatch(batch, 111, 0);
-
-        assertThat(batch.next().slot()).isZero();
-        assertThat(batch.beginClick(transferSnapshot(slots, 1), 1)).isTrue();
-        slots.set(0, StackFingerprint.EMPTY);
-        slots.set(54, stack("minecraft:dripstone_block", 47, DEFAULT_HASH));
-        assertThat(batch.confirm(transferSnapshot(slots, 2))).isTrue();
-        state.updateTransferPrefix();
-
-        assertThat(batch.exhausted()).isTrue();
-        assertThat(batch.reconcileReadback(transferSnapshot(slots, 3))).isTrue();
-        state.recordTransferReadback(64, 47);
-        assertThat(state.basis()).containsEntry("confirmed_transfer_count", 47)
-                .containsEntry("confirmed_stack_moves", 1)
-                .containsEntry("confirmed_source_count", 64)
-                .containsEntry("confirmed_destination_count", 47)
-                .containsEntry("transfer_in_flight", false);
-    }
-
-    @Test
-    void prefixAndTheOneUnconfirmedClickRemainSeparateWithoutBlindRetry() {
-        var slots = new ArrayList<>(List.of(stack("minecraft:stone", 64, DEFAULT_HASH),
-                stack("minecraft:stone", 64, DEFAULT_HASH), StackFingerprint.EMPTY,
-                StackFingerprint.EMPTY));
-        var batch = new MinecraftPhaseFiveInventoryPort.TransferBatch(slots,
-                List.of(0, 1), List.of(2, 3), "minecraft:stone", DEFAULT_HASH, true, 2, 128, 128);
-        var state = transferState(false, 128, 128, 2);
-        state.beginTransferBatch(batch, 128, 0);
-        assertThat(batch.beginClick(transferSnapshot(slots, 1), 1)).isTrue();
-        slots.set(0, StackFingerprint.EMPTY);
-        slots.set(2, stack("minecraft:stone", 64, DEFAULT_HASH));
-        assertThat(batch.confirm(transferSnapshot(slots, 2))).isTrue();
-        state.updateTransferPrefix();
-        assertThat(batch.beginClick(transferSnapshot(slots, 2), 3)).isTrue();
-        assertThat(batch.ackTimedOut(62)).isFalse();
-        assertThat(batch.ackTimedOut(63)).isTrue();
-        assertThat(batch.beginClick(transferSnapshot(slots, 3), 64)).isFalse();
-        assertThat(batch.reconcileReadback(transferSnapshot(slots, 4))).isFalse();
-        state.recordTransferReadback(64, 64);
-        assertThat(state.basis()).containsEntry("source_before", 128)
-                .containsEntry("destination_before", 0)
-                .containsEntry("confirmed_transfer_count", 64)
-                .containsEntry("confirmed_stack_moves", 1)
-                .containsEntry("confirmed_source_count", 64)
-                .containsEntry("confirmed_destination_count", 64)
-                .containsEntry("transfer_in_flight", true)
-                .containsEntry("pending_source_before", 64)
-                .containsEntry("pending_destination_before", 64)
-                .containsEntry("pending_stack_count", 64)
-                .containsEntry("transfer_readback_observed", true)
-                .containsEntry("source_after", 64).containsEntry("destination_after", 64);
-    }
-
-    @Test
-    void finalFullReadbackCanResolveOneUnacknowledgedClickButRefillIsNeverSuccess() {
-        var initial = List.of(stack("minecraft:torch", 64, DEFAULT_HASH), StackFingerprint.EMPTY);
-        var batch = new MinecraftPhaseFiveInventoryPort.TransferBatch(initial,
-                List.of(0), List.of(1), "minecraft:torch", DEFAULT_HASH, true, 1, 64, 1);
-        assertThat(batch.beginClick(transferSnapshot(initial, 1), 1)).isTrue();
-        var refilled = List.of(initial.get(0), initial.get(0));
-        assertThat(batch.reconcileReadback(transferSnapshot(refilled, 2))).isFalse();
-        assertThat(batch.inFlight()).isTrue();
-        var exact = List.of(StackFingerprint.EMPTY, initial.get(0));
-        assertThat(batch.reconcileReadback(transferSnapshot(exact, 3))).isTrue();
-        assertThat(batch.inFlight()).isFalse();
-        assertThat(batch.exhausted()).isTrue();
-        // A later inventory change must still invalidate final batch completion.
-        assertThat(batch.reconcileReadback(transferSnapshot(refilled, 4))).isFalse();
     }
 
     @Test
@@ -493,21 +211,9 @@ class MinecraftPhaseFiveInventoryPortTest {
     }
 
     @Test
-    void replenishedSourceIsNotAConfirmedTransferEvenWhenDestinationGainedTheWholeStack() {
-        var replenished = MinecraftPhaseFiveInventoryPort.verifyTransferReadback(
-                64, 0, 64, 64, 64, 1);
-        assertThat(replenished.exactMove()).isFalse();
-        assertThat(replenished.goalVerified()).isFalse();
-        var conserved = MinecraftPhaseFiveInventoryPort.verifyTransferReadback(
-                64, 0, 0, 64, 64, 1);
-        assertThat(conserved.exactMove()).isTrue();
-        assertThat(conserved.goalVerified()).isTrue();
-    }
-
-    @Test
     void transferEvidenceDistinguishesUnreadZeroFromObservedZeroAndResetsBetweenClicks() {
         var target = new BlockTarget("minecraft:overworld", 147, 66, -300);
-        var parameters = new MinecraftPhaseFiveInventoryPort.TransferParameters(
+        var parameters = new InventoryParameters.TransferParameters(
                 true, "minecraft:torch", "default_components_only", 1, 128, 2,
                 true, 8.0D, target, new BlockStateFingerprint("minecraft:barrel", Map.of()));
         var state = new MinecraftPhaseFiveInventoryPort.AttemptState(
@@ -543,7 +249,7 @@ class MinecraftPhaseFiveInventoryPortTest {
         // The isolated NeoForge JUnit loader does not bind Vanilla item defaults.
         var holder = Items.TORCH.builtInRegistryHolder();
         if (!holder.areComponentsBound()) holder.bindComponents(DataComponentMap.EMPTY);
-        boolean safeRefilledHand = MinecraftPhaseFiveInventoryPort.safeKnownMenuOpenStack(
+        boolean safeRefilledHand = InventoryOpenHandPolicy.safeKnownMenuOpenStack(
                 new ItemStack(Items.TORCH, 64));
         assertThat(safeRefilledHand).isTrue();
         for (var stage : List.of(MinecraftPhaseFiveInventoryPort.Stage.OPENING_INITIAL,
@@ -566,45 +272,16 @@ class MinecraftPhaseFiveInventoryPortTest {
                 "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#screenContextMatches",
                 "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#safeOpenHandFailure");
         assertThat(invocations(node, "dispatchExpectedOpen")).containsSubsequence(
-                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$OpenHandPlan#ready",
+                "dev/aod/mcmcp/routine/InventoryOpenHandPolicy$OpenHandPlan#ready",
                 "net/minecraft/client/multiplayer/MultiPlayerGameMode#useItemOn");
         assertThat(invocations(node, "acceptTransferSnapshot")).containsSubsequence(
                 "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$AttemptState#recordTransferReadback",
-                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#verifyTransferReadback");
+                "dev/aod/mcmcp/routine/InventorySlotPlanning#verifyTransferReadback");
         assertThat(invocations(node, "dispatchTransferClick")).containsSubsequence(
                 "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#prepareOwnedDispatch",
                 "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#freshEmptyServerCursorProof",
-                "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$TransferBatch#beginClick",
+                "dev/aod/mcmcp/routine/InventoryTransferBatch#beginClick",
                 "dev/aod/mcmcp/routine/KnownMenuTransfers#dispatchServerConfirmedQuickMove");
-    }
-
-    @Test
-    void itemIdTransferCanBindAndMoveADamagedToolStack() {
-        var stacks = List.of(
-                stack("minecraft:diamond_hoe", 1, 99),
-                stack("minecraft:diamond_hoe", 1, DEFAULT_HASH),
-                stack("minecraft:wheat_seeds", 16, DEFAULT_HASH));
-
-        assertThat(MinecraftPhaseFiveInventoryPort.countTransfer(
-                stacks, List.of(0, 1, 2), "minecraft:diamond_hoe", 0, false))
-                .isEqualTo(2);
-        assertThat(MinecraftPhaseFiveInventoryPort.chooseTransferSlot(
-                stacks, List.of(0, 1, 2), "minecraft:diamond_hoe", 0, 1, false))
-                .contains(0);
-        assertThat(MinecraftPhaseFiveInventoryPort.chooseTransferSlot(
-                stacks, List.of(0, 1, 2), "minecraft:diamond_hoe", DEFAULT_HASH, 1, true))
-                .contains(1);
-    }
-
-    @Test
-    void craftReadbackRejectsNoOpAndMultipleCraftDelta() {
-        assertThat(MinecraftPhaseFiveInventoryPort.verifyCraftReadback(
-                2, 6, 4, 6))
-                .isEqualTo(new MinecraftPhaseFiveInventoryPort.CraftReadback(true, true));
-        assertThat(MinecraftPhaseFiveInventoryPort.verifyCraftReadback(
-                2, 2, 4, 6).exactlyOneCraft()).isFalse();
-        assertThat(MinecraftPhaseFiveInventoryPort.verifyCraftReadback(
-                2, 10, 4, 6).exactlyOneCraft()).isFalse();
     }
 
     @Test
@@ -617,37 +294,6 @@ class MinecraftPhaseFiveInventoryPortTest {
                 recipe("unsupported", true))).isFalse();
         assertThat(MinecraftPhaseFiveInventoryPort.craftingTableRecipeSupported(
                 recipe("crafting_table", false))).isFalse();
-    }
-
-    @Test
-    void craftPreparationAndReadbackRequireConservedEmptyGridAndOneIngredientSet() {
-        var slots = emptySlots(46);
-        assertThat(MinecraftPhaseFiveInventoryPort.craftingGridAndResultEmpty(slots)).isTrue();
-
-        slots.set(0, stack("minecraft:stick", 4, DEFAULT_HASH));
-        slots.set(1, stack("minecraft:oak_planks", 1, DEFAULT_HASH));
-        slots.set(2, stack("minecraft:oak_planks", 1, DEFAULT_HASH));
-        assertThat(MinecraftPhaseFiveInventoryPort.exactlyOneCraftPrepared(
-                slots, recipe("crafting_table", true).ingredients())).isTrue();
-
-        slots.set(1, stack("minecraft:oak_planks", 2, DEFAULT_HASH));
-        assertThat(MinecraftPhaseFiveInventoryPort.exactlyOneCraftPrepared(
-                slots, recipe("crafting_table", true).ingredients())).isFalse();
-        assertThat(MinecraftPhaseFiveInventoryPort.craftingGridAndResultEmpty(slots)).isFalse();
-    }
-
-    @Test
-    void craftOutputUsesOnlyCompatibleCapacityOrAnEmptyPlayerSlot() {
-        var slots = emptySlots(46);
-        slots.set(10, stack("minecraft:stick", 60, DEFAULT_HASH));
-
-        assertThat(MinecraftPhaseFiveInventoryPort.chooseCraftDestinationSlot(
-                slots, List.of(10, 11), "minecraft:stick", DEFAULT_HASH, 4, 64))
-                .contains(10);
-        assertThat(MinecraftPhaseFiveInventoryPort.chooseCraftDestinationSlot(
-                slots, List.of(10, 11), "minecraft:stick", DEFAULT_HASH, 5, 64))
-                .contains(11);
-
     }
 
     @Test
@@ -679,10 +325,10 @@ class MinecraftPhaseFiveInventoryPortTest {
                 expectedDouble, doubleChest)).isTrue();
         assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
                 expectedDouble, doubleChest.setValue(ChestBlock.TYPE, ChestType.RIGHT))).isFalse();
-        assertThat(MinecraftPhaseFiveInventoryPort.transferMenuType(expectedChest))
-                .isEqualTo(MinecraftPhaseFiveInventoryPort.SINGLE_CONTAINER_MENU);
-        assertThat(MinecraftPhaseFiveInventoryPort.transferMenuType(expectedDouble))
-                .isEqualTo(MinecraftPhaseFiveInventoryPort.DOUBLE_CONTAINER_MENU);
+        assertThat(InventoryParameters.transferMenuType(expectedChest))
+                .isEqualTo(InventoryParameters.SINGLE_CONTAINER_MENU);
+        assertThat(InventoryParameters.transferMenuType(expectedDouble))
+                .isEqualTo(InventoryParameters.DOUBLE_CONTAINER_MENU);
     }
 
     @Test
@@ -697,8 +343,8 @@ class MinecraftPhaseFiveInventoryPortTest {
             var expectedSingle = MinecraftPhaseFiveInventoryPort.fingerprintLiveState(single);
             assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
                     expectedSingle, single)).isTrue();
-            assertThat(MinecraftPhaseFiveInventoryPort.transferMenuType(expectedSingle))
-                    .isEqualTo(MinecraftPhaseFiveInventoryPort.SINGLE_CONTAINER_MENU);
+            assertThat(InventoryParameters.transferMenuType(expectedSingle))
+                    .isEqualTo(InventoryParameters.SINGLE_CONTAINER_MENU);
 
             var doubleChest = single.setValue(ChestBlock.TYPE, ChestType.LEFT);
             var expectedDouble = MinecraftPhaseFiveInventoryPort.fingerprintLiveState(doubleChest);
@@ -707,8 +353,8 @@ class MinecraftPhaseFiveInventoryPortTest {
             assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
                     expectedDouble,
                     doubleChest.setValue(ChestBlock.TYPE, ChestType.RIGHT))).isFalse();
-            assertThat(MinecraftPhaseFiveInventoryPort.transferMenuType(expectedDouble))
-                    .isEqualTo(MinecraftPhaseFiveInventoryPort.DOUBLE_CONTAINER_MENU);
+            assertThat(InventoryParameters.transferMenuType(expectedDouble))
+                    .isEqualTo(InventoryParameters.DOUBLE_CONTAINER_MENU);
 
             var changedVariant = copperChests.get((index + 1) % copperChests.size())
                     .withPropertiesOf(single);
@@ -723,10 +369,10 @@ class MinecraftPhaseFiveInventoryPortTest {
             var fingerprint = MinecraftPhaseFiveInventoryPort.fingerprintLiveState(rejected);
             assertThat(MinecraftPhaseFiveInventoryPort.sameTransferContainerIdentity(
                     fingerprint, rejected)).isFalse();
-            assertThatThrownBy(() -> MinecraftPhaseFiveInventoryPort.transferMenuType(fingerprint))
+            assertThatThrownBy(() -> InventoryParameters.transferMenuType(fingerprint))
                     .isInstanceOf(IllegalArgumentException.class);
         }
-        assertThatThrownBy(() -> MinecraftPhaseFiveInventoryPort.transferMenuType(
+        assertThatThrownBy(() -> InventoryParameters.transferMenuType(
                 new BlockStateFingerprint(
                         "minecraft:waxed_copper_chest", Map.of("type", "unknown"))))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -735,11 +381,11 @@ class MinecraftPhaseFiveInventoryPortTest {
     @Test
     void craftingAloneRetainsTheStationHeadingAndUsesTheRuntimeCameraLimit() throws Exception {
         var target = new BlockTarget("minecraft:overworld", 1, 64, 2);
-        var parameters = new MinecraftPhaseFiveInventoryPort.CraftParameters(
+        var parameters = new InventoryParameters.CraftParameters(
                 "recipe-ref", "fingerprint", "minecraft:stick", 1, 1, target,
                 new BlockStateFingerprint("minecraft:crafting_table", Map.of()));
         assertThat(parameters.restoreViewOnRelease()).isFalse();
-        var transfer = new MinecraftPhaseFiveInventoryPort.TransferParameters(
+        var transfer = new InventoryParameters.TransferParameters(
                 false, "minecraft:stone", "default_components_only", 0, 1, 1,
                 false, 8.0D, target,
                 new BlockStateFingerprint("minecraft:barrel", Map.of()));
@@ -779,24 +425,24 @@ class MinecraftPhaseFiveInventoryPortTest {
                 "y", 57.0D,
                 "z", 3.5D);
 
-        assertThat(MinecraftPhaseFiveInventoryPort.inventoryAimPoint(
+        assertThat(InventoryParameters.inventoryAimPoint(
                 inventoryRequest(target, visibleUpHit), target))
                 .isEqualTo(new Vec3(-10.5D, 57.0D, 3.5D));
-        assertThat(MinecraftPhaseFiveInventoryPort.inventoryAimPoint(
+        assertThat(InventoryParameters.inventoryAimPoint(
                 inventoryRequest(target, null), target))
                 .isEqualTo(new Vec3(-10.5D, 56.5D, 3.5D));
 
-        assertThatThrownBy(() -> MinecraftPhaseFiveInventoryPort.inventoryAimPoint(
+        assertThatThrownBy(() -> InventoryParameters.inventoryAimPoint(
                 inventoryRequest(target, Map.of(
                         "dimension", "minecraft:the_nether",
                         "x", -10.5D, "y", 57.0D, "z", 3.5D)), target))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> MinecraftPhaseFiveInventoryPort.inventoryAimPoint(
+        assertThatThrownBy(() -> InventoryParameters.inventoryAimPoint(
                 inventoryRequest(target, Map.of(
                         "dimension", target.dimension(),
                         "x", -9.5D, "y", 57.0D, "z", 3.5D)), target))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> MinecraftPhaseFiveInventoryPort.inventoryAimPoint(
+        assertThatThrownBy(() -> InventoryParameters.inventoryAimPoint(
                 inventoryRequest(target, Map.of(
                         "dimension", target.dimension(),
                         "x", Double.NaN, "y", 57.0D, "z", 3.5D)), target))
@@ -862,11 +508,11 @@ class MinecraftPhaseFiveInventoryPortTest {
                                 + "#freshServerCursorSnapshot",
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#closeForReadback")
-                .doesNotContain("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                .doesNotContain("dev/aod/mcmcp/routine/InventorySlotPlanning"
                         + "#countTransfer");
         assertThat(invocations(node, "acceptCraftSnapshot"))
                 .contains(
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        "dev/aod/mcmcp/routine/InventorySlotPlanning"
                                 + "#craftingGridAndResultEmpty",
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#dispatchRecipePlacement");
@@ -875,7 +521,7 @@ class MinecraftPhaseFiveInventoryPortTest {
                         + "#freshServerCursorSnapshot");
         assertThat(invocations(node, "acceptTransferSnapshot"))
                 .containsSubsequence(
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        "dev/aod/mcmcp/routine/InventorySlotPlanning"
                                 + "#liveMenuMatchesSnapshot",
                         "dev/aod/mcmcp/runtime/KnownMenuProfileSupport"
                                 + "#hasFullDestinationCapacity",
@@ -937,7 +583,7 @@ class MinecraftPhaseFiveInventoryPortTest {
                 .contains(
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#ongoingFailure",
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$OpenHandPlan"
+                        "dev/aod/mcmcp/routine/InventoryOpenHandPolicy$OpenHandPlan"
                                 + "#ready",
                         "dev/aod/mcmcp/runtime/ScreenOwnershipSignals#beginExpectedOpen",
                         "dev/aod/mcmcp/runtime/ClientPredictionSignals#begin",
@@ -1015,7 +661,7 @@ class MinecraftPhaseFiveInventoryPortTest {
                 .contains(
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#basicPlayerSafety",
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        "dev/aod/mcmcp/routine/InventoryOpenHandPolicy"
                                 + "#chooseOpenHand");
         assertThat(invocations(node, "ongoingFailure"))
                 .contains(
@@ -1030,20 +676,21 @@ class MinecraftPhaseFiveInventoryPortTest {
                         "net/minecraft/client/Minecraft#isPaused",
                         "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
                                 + "#visibleThreatClear");
-        assertThat(invocations(node, "chooseOpenHand"))
+        assertThat(invocations(classNode("/dev/aod/mcmcp/routine/InventoryOpenHandPolicy.class"),
+                "chooseOpenHand"))
                 .contains("net/minecraft/client/player/LocalPlayer#getOffhandItem");
         var openHand = classNode(
-                "/dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort$OpenHandPlan.class");
+                "/dev/aod/mcmcp/routine/InventoryOpenHandPolicy$OpenHandPlan.class");
         assertThat(invocations(openHand, "ready"))
                 .containsSubsequence(
                         "net/minecraft/client/player/LocalPlayer#getMainHandItem",
                         "net/minecraft/client/player/LocalPlayer#getOffhandItem",
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        "dev/aod/mcmcp/routine/InventoryOpenHandPolicy"
                                 + "#safeKnownMenuOpenContext");
         assertThat(invocations(openHand, "readyAtSlot"))
                 .contains(
                         "net/minecraft/client/player/LocalPlayer#getOffhandItem",
-                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                        "dev/aod/mcmcp/routine/InventoryOpenHandPolicy"
                                 + "#safeKnownMenuOpenContext");
         var brewing = classNode("/dev/aod/mcmcp/routine/MinecraftKnownBrewingPort.class");
         assertThat(invocations(brewing, "chooseOpenHand"))
@@ -1190,23 +837,14 @@ class MinecraftPhaseFiveInventoryPortTest {
         }
     }
 
-    private static ContainerSnapshot transferSnapshot(List<StackFingerprint> slots, long revision) {
-        return new ContainerSnapshot(new java.util.UUID(0, 1), 1, "minecraft:generic_9x3", 0,
-                slots, StackFingerprint.EMPTY, revision, revision);
-    }
-
     private static MinecraftPhaseFiveInventoryPort.AttemptState transferState(
             boolean store, int minimum, int maximumCount, int maximumStacks) {
         var target = new BlockTarget("minecraft:overworld", 0, 64, 0);
         return new MinecraftPhaseFiveInventoryPort.AttemptState(inventoryRequest(target, null),
-                new MinecraftPhaseFiveInventoryPort.TransferParameters(
+                new InventoryParameters.TransferParameters(
                         store, "minecraft:stone", "default_components_only", minimum,
                         maximumCount, maximumStacks, true, 8.0D, target,
                         new BlockStateFingerprint("minecraft:chest", Map.of("type", "left"))));
-    }
-
-    private static ArrayList<StackFingerprint> emptySlots(int size) {
-        return new ArrayList<>(java.util.Collections.nCopies(size, StackFingerprint.EMPTY));
     }
 
     private static PhaseFiveRequest inventoryRequest(
