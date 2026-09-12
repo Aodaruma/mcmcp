@@ -210,11 +210,21 @@ public final class ActionDsl {
     public record ExactBlockTargetGuard(
             Position target,
             BlockFace face,
+            String expectedBlock,
             BlockStateSpec expectedState) {
         public ExactBlockTargetGuard {
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(face, "face");
-            Objects.requireNonNull(expectedState, "expectedState");
+            Objects.requireNonNull(expectedBlock, "expectedBlock");
+        }
+
+        public ExactBlockTargetGuard(Position target, BlockFace face, BlockStateSpec expectedState) {
+            this(target, face, expectedState.block(), expectedState);
+        }
+
+        public boolean matches(String block, Map<String, String> properties) {
+            return expectedBlock.equals(block) && (expectedState == null
+                    || expectedState.properties().equals(properties));
         }
     }
 

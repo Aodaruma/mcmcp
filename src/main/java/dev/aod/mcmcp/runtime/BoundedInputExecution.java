@@ -6,7 +6,6 @@ import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.navigation.LocalObservationProjector;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.client.AgentScreenPolicy;
-import dev.aod.mcmcp.routine.BlockStateFingerprint;
 import dev.aod.mcmcp.routine.BoundedInputLease;
 import dev.aod.mcmcp.routine.MinecraftStationaryBreakPort;
 import java.time.Duration;
@@ -47,6 +46,10 @@ final class BoundedInputExecution {
         var player = Objects.requireNonNull(minecraft.player, "player");
         var level = Objects.requireNonNull(minecraft.level, "level");
         var progress = agentActions.get(action.actionId()).progress();
+        if (boundedInputHold != null && AgentInputState.global().boundedDispatchRejected()) {
+            return PrimitiveOutcome.failed(AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
+                    "bounded_input_dispatch_guard_changed");
+        }
         if (boundedInputHold != null
                 && boundedInputHold.activeTicks >= hold.durationTicks()) {
             if (!close()) {
@@ -79,6 +82,10 @@ final class BoundedInputExecution {
                         AgentInputState.global(), inputs, System.nanoTime(), Duration.ofSeconds(1));
                 boundedInputHold = new Hold(
                         lease, player.position(), player.getHealth() + player.getAbsorptionAmount());
+                if (hold.targetGuard().isPresent()) {
+                    AgentInputState.global().setBoundedDispatchGuard(() ->
+                            boundedInputUnsafeReason(minecraft, session, action, hold, localSafety) == null);
+                }
                 acquired = true;
             }
             var execution = boundedInputHold;
@@ -159,10 +166,8 @@ final class BoundedInputExecution {
                 || hit.getDirection() != Direction.valueOf(guard.face().name())) {
             return "target_face_or_reach_changed";
         }
-        var expected = new BlockStateFingerprint(
-                guard.expectedState().block(), guard.expectedState().properties());
-        if (!expected.equals(MinecraftStationaryBreakPort.fingerprintForPolicy(
-                level.getBlockState(target)))) return "target_state_changed";
+        var actual = MinecraftStationaryBreakPort.fingerprintForPolicy(level.getBlockState(target));
+        if (!guard.matches(actual.blockId(), actual.properties())) return "target_state_changed";
         var selected = player.getMainHandItem();
         if (selected.isEmpty() || !hold.selectedItem().orElseThrow().equals(
                 BuiltInRegistries.ITEM.getKey(selected.getItem()).toString())) {
@@ -178,6 +183,7 @@ final class BoundedInputExecution {
         if (boundedInputHold == null) return true;
         try {
             boundedInputHold.lease.close();
+            AgentInputState.global().clearBoundedDispatchGuard();
             boundedInputHold = null;
             return true;
         } catch (RuntimeException | LinkageError failure) {

@@ -301,12 +301,18 @@ public final class ActionDslParser {
     private static ActionDsl.ExactBlockTargetGuard exactBlockTargetGuard(
             JsonElement value, String path) {
         JsonObject guard = rawObject(value, path);
-        Set<String> fields = Set.of("target", "face", "expected_state");
-        exactKeys(guard, path, fields, fields);
+        Set<String> fields = Set.of("target", "face", "expected_state", "expected_block");
+        exactKeys(guard, path, fields, Set.of("target", "face", "expected_state"));
+        var state = guard.get("expected_state").isJsonNull() ? null
+                : blockStateSpec(guard.get("expected_state"), path + ".expected_state");
+        String block = guard.has("expected_block")
+                ? string(guard.get("expected_block"), path + ".expected_block")
+                : state == null ? null : state.block();
+        if (block == null) throw invalid(path + ".expected_block is required for null state");
         return new ActionDsl.ExactBlockTargetGuard(
                 position(guard.get("target"), path + ".target"),
                 blockFace(string(guard.get("face"), path + ".face"), path + ".face"),
-                blockStateSpec(guard.get("expected_state"), path + ".expected_state"));
+                block, state);
     }
 
     private static ActionDsl.TillKnownBlock tillKnownBlock(JsonObject source, String path) {

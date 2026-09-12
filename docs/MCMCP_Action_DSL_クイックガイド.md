@@ -229,3 +229,22 @@ budgetは成功予想ではなく、worst-caseを収める停止上限です。�
 schema違反はcatalog順に最大4件、budget不足は不足component名をまとめて返します。提出値や未知property名は診断へ反射されません。mutationやdrop生成後の`TARGET_UNKNOWN`をfield推測で直すのではなく、Actionを区切って新しいframeを観測してください。
 
 具体的な最小JSONは`docs/action-templates/`にあります。template内の座標は例であり、実行時には必ず同じworld/sessionの最新policy-visible recordから置き換えます。
+
+
+## 状態非公開の対象への有限長押し
+
+`hold_bounded_inputs` は現在の照準を維持したまま有限時間だけ入力を保持する。
+`target_guard` は観測済みの `target` と `face` を必須とし、`expected_state` は省略せず指定する。
+完全な `state` があれば従来通りその値をコピーする。`state: null` の場合は
+`expected_state: null` と、観測の `block` をコピーした `expected_block` を指定する。
+完全な状態と `expected_block` を両方指定する場合、block IDは一致しなければならない。
+
+実行時はMinecraftの現在のフォーカスレイ（crosshairのBlockHitResult）で
+座標・面・通常reach・ブロック種を毎tick確認する。完全な状態がある場合は全propertyの一致も必要。
+nullはブロック種の照合を省略する指示ではなく、非公開propertyを推測して送る必要をなくす形式である。
+選択アイテム・姿勢・health・Screen・停止/入力解放の既存検証は維持する。
+対象消失・別ブロック・entityへの照準変更では停止する。再生成を待つ自動再開機能ではない。
+この変更のみで雪製造機の継続採掘・耐久保護・回収量保証が実装されるわけではない。
+
+pre-tickの検証に加え、post-tickの採掘・使用入力直前にも現在の照準を再照合する。
+不一致は停止まで保持し、一瞬対象が戻っても同じActionの入力を再開しない。

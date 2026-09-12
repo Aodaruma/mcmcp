@@ -44,6 +44,8 @@
 - 多区画作業は公開DSLでbatch化できるようにし、植付け、代表成熟待機、batch収穫、drop回収、再植付けの順を基本とする。container、pickup、camera等の具体的な期限・予算はcatalog、runtime、testで一元管理する。
 - 既存の安全境界、入力検証、fail-closedなエラー処理、fixture isolationを簡略化しない。
 
+- 有限長押しのtarget_guardは観測済み座標・面・ブロック種と現在のフォーカスレイを照合する。expected_state:nullは明示expected_blockを必須とし、完全state指定時は従来通り全property一致を要求する。nullを無対象入力やhidden propertyの推測に使わない。対象消失・別block・entity照準では停止し、自動再開しない。
+
 ## Fixture and environments
 
 - admin command/fixture機能はMCMCP本体から分離したdev-only MODに置き、release JARへ含めない。singleplayer、integrated server、loopback認証、固定test profileだけで有効にし、MCMCPを自動armしない。

@@ -5,12 +5,46 @@ import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
+import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class HoldBoundedInputsDslTest {
+    @Test
+    void nullStateRequiresExplicitBlockAndStillRejectsOtherBlocks() {
+        var request = parse(guarded("[\"use\"]", 20).replace(
+                "\"expected_state\":{\"block\":\"minecraft:water\",\"properties\":{\"level\":\"0\"}}",
+                "\"expected_state\":null,\"expected_block\":\"minecraft:snow\""));
+        ActionDslValidator.validate(request);
+        var guard = ((ActionDsl.HoldBoundedInputs) request.program().body().getFirst())
+                .targetGuard().orElseThrow();
+        assertThat(guard.expectedState()).isNull();
+        assertThat(guard.matches("minecraft:snow", Map.of("layers", "1"))).isTrue();
+        assertThat(guard.matches("minecraft:stone", Map.of())).isFalse();
+        assertThat(guard.matches("minecraft:air", Map.of())).isFalse();
+    }
+
+    @Test
+    void completeStateStillChecksEveryProperty() {
+        var hold = (ActionDsl.HoldBoundedInputs) parse(guarded("[\"use\"]", 20))
+                .program().body().getFirst();
+        var guard = hold.targetGuard().orElseThrow();
+        assertThat(guard.matches("minecraft:water", Map.of("level", "0"))).isTrue();
+        assertThat(guard.matches("minecraft:water", Map.of("level", "1"))).isFalse();
+        assertThat(guard.matches("minecraft:water", Map.of())).isFalse();
+    }
+
+    @Test
+    void rejectsMissingIdentityAirAndConflictingState() {
+        String original = guarded("[\"use\"]", 20);
+        String state = "\"expected_state\":{\"block\":\"minecraft:water\",\"properties\":{\"level\":\"0\"}}";
+        assertInvalid(original.replace(state, "\"expected_state\":null"));
+        assertInvalid(original.replace(state, "\"expected_state\":null,\"expected_block\":\"minecraft:air\""));
+        assertInvalid(original.replace(state, state + ",\"expected_block\":\"minecraft:snow\""));
+    }
+
     @Test
     void parsesAndCompilesGuardedUseForAtMostTwentyFourHours() {
         ActionDsl.Request request = parse(guarded("[\"use\"]", 1_728_000));

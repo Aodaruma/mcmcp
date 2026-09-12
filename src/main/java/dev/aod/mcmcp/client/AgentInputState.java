@@ -367,6 +367,37 @@ public final class AgentInputState {
         attackValidUntilNanos = 0L;
     }
 
+    private java.util.function.BooleanSupplier boundedDispatchGuard;
+    private boolean boundedDispatchRejected;
+
+    public synchronized void setBoundedDispatchGuard(java.util.function.BooleanSupplier guard) {
+        boundedDispatchGuard = java.util.Objects.requireNonNull(guard, "guard");
+        boundedDispatchRejected = false;
+    }
+
+    /** Recheck at the actual attack/use dispatch, not only at pre-tick publication. */
+    public synchronized boolean allowsBoundedDispatch() {
+        if (boundedDispatchRejected) return false;
+        if (boundedDispatchGuard == null) return true;
+        try {
+            if (boundedDispatchGuard.getAsBoolean()) return true;
+        } catch (RuntimeException | LinkageError failure) {
+            // A broken proof never permits an input dispatch.
+        }
+        boundedDispatchRejected = true;
+        suppressAll();
+        return false;
+    }
+
+    public synchronized boolean boundedDispatchRejected() {
+        return boundedDispatchRejected;
+    }
+
+    public synchronized void clearBoundedDispatchGuard() {
+        boundedDispatchGuard = null;
+        boundedDispatchRejected = false;
+    }
+
     public synchronized void publishAttack(long validUntilNanos) {
         attackOwned = true;
         attackSuppressed = false;

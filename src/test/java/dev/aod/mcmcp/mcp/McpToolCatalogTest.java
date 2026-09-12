@@ -410,6 +410,24 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void boundedInputNullStateRequiresObservedBlockIdentityInSchema() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var example = schema.getAsJsonArray("examples").asList().stream()
+                .map(com.google.gson.JsonElement::getAsJsonObject)
+                .filter(value -> value.getAsJsonObject("program").getAsJsonArray("body")
+                        .get(0).getAsJsonObject().get("op").getAsString().equals("hold_bounded_inputs"))
+                .findFirst().orElseThrow().deepCopy();
+        var guard = example.getAsJsonObject("program").getAsJsonArray("body")
+                .get(0).getAsJsonObject().getAsJsonObject("target_guard");
+        guard.add("expected_state", com.google.gson.JsonNull.INSTANCE);
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isFalse();
+        guard.addProperty("expected_block", "minecraft:snow");
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
+        guard.remove("expected_state");
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isFalse();
+    }
+
+    @Test
     void catalogAdmitsOnlyTheClosedKnownBlockFaceCameraNodeShape() {
         var schema = new McpToolCatalog().inputSchema("agent_start_action");
         var request = JsonParser.parseString("""

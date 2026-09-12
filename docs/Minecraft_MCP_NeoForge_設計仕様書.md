@@ -2030,3 +2030,24 @@ repository作成直前に、選択したowner配下で`mcmcp`が作成可能か�
 ### チャットから期待したコンテナへの画面遷移
 
 NeoForge 26.2の画面切替は新画面のOpeningの後に旧画面のClosingを通知する。通常操作を許可する非pause ChatScreenから、正確なOpenScreen packetに対応したmenuへ切り替わる場合だけ、EXPECTING_FULL_CONTENTへ進んだ同じclient tick内の旧chatのClosingを1回許可する。所有権は同じsession・container ID・menu typeのfull-content packet確認後に限る。期待前・別tick・重複のchat閉鎖、所有済みコンテナの予期しない閉鎖、別menuのopenは引き続き停止する。
+
+
+## 状態非公開の対象への有限長押し
+
+`hold_bounded_inputs` は現在の照準を維持したまま有限時間だけ入力を保持する。
+`target_guard` は観測済みの `target` と `face` を必須とし、`expected_state` は省略せず指定する。
+完全な `state` があれば従来通りその値をコピーする。`state: null` の場合は
+`expected_state: null` と、観測の `block` をコピーした `expected_block` を指定する。
+完全な状態と `expected_block` を両方指定する場合、block IDは一致しなければならない。
+
+実行時はMinecraftの現在のフォーカスレイ（crosshairのBlockHitResult）で
+座標・面・通常reach・ブロック種を毎tick確認する。完全な状態がある場合は全propertyの一致も必要。
+nullはブロック種の照合を省略する指示ではなく、非公開propertyを推測して送る必要をなくす形式である。
+選択アイテム・姿勢・health・Screen・停止/入力解放の既存検証は維持する。
+対象消失・別ブロック・entityへの照準変更では停止する。再生成を待つ自動再開機能ではない。
+この変更のみで雪製造機の継続採掘・耐久保護・回収量保証が実装されるわけではない。
+
+pre-tickと実dispatchの間の照準変化も、post-tickの採掘・使用channelで再検証する。
+bounded hold専用のdispatch guardが拒否または例外となった場合は入力を抑止し、拒否をラッチする。
+次tickはSAFETY_INTERRUPTEDで終了し、leaseの入力解放成功後にguardを破棄する。
+再publishや同tick後の対象復帰は拒否ラッチを解除しない。

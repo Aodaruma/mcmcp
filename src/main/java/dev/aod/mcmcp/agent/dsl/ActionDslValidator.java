@@ -440,7 +440,17 @@ public final class ActionDslValidator {
             if (needsGuard) {
                 ActionDsl.ExactBlockTargetGuard guard = hold.targetGuard().orElseThrow();
                 validatePosition(guard.target(), path + ".target_guard.target");
-                validateBlockState(guard.expectedState(), path + ".target_guard.expected_state");
+                requireResourceLocation(guard.expectedBlock(), path + ".target_guard.expected_block");
+                if (Set.of("minecraft:air", "minecraft:cave_air", "minecraft:void_air")
+                        .contains(guard.expectedBlock())) {
+                    throw invalid(path + ".target_guard cannot target air");
+                }
+                if (guard.expectedState() != null) {
+                    validateBlockState(guard.expectedState(), path + ".target_guard.expected_state");
+                    if (!guard.expectedBlock().equals(guard.expectedState().block())) {
+                        throw invalid(path + ".target_guard block and state must agree");
+                    }
+                }
                 requireResourceLocation(hold.selectedItem().orElseThrow(),
                         path + ".selected_item");
             }

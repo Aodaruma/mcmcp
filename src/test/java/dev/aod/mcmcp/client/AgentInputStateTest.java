@@ -7,6 +7,36 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AgentInputStateTest {
     @Test
+    void changedFocusBetweenPublicationAndDispatchLatchesUntilCleanup() {
+        var state = new AgentInputState();
+        var matches = new java.util.concurrent.atomic.AtomicBoolean(true);
+        state.setBoundedDispatchGuard(matches::get);
+        state.publishAttack();
+        assertThat(state.allowsBoundedDispatch()).isTrue();
+        matches.set(false);
+        assertThat(state.allowsBoundedDispatch()).isFalse();
+        assertThat(state.attackActive()).isFalse();
+        matches.set(true);
+        state.publishAttack();
+        assertThat(state.allowsBoundedDispatch()).isFalse();
+        assertThat(state.boundedDispatchRejected()).isTrue();
+        state.releaseAttack();
+        state.clearBoundedDispatchGuard();
+        assertThat(state.boundedDispatchRejected()).isFalse();
+        assertThat(state.allowsBoundedDispatch()).isTrue();
+    }
+
+    @Test
+    void failedDispatchProofSuppressesUseInsteadOfSendingInput() {
+        var state = new AgentInputState();
+        state.publishUse(Long.MAX_VALUE);
+        state.setBoundedDispatchGuard(() -> { throw new IllegalStateException(); });
+        assertThat(state.allowsBoundedDispatch()).isFalse();
+        assertThat(state.useActive()).isFalse();
+        assertThat(state.boundedDispatchRejected()).isTrue();
+    }
+
+    @Test
     void staleLeaseIsNeutralAtTheActualInputBoundary() {
         var state = new AgentInputState();
         state.publishMovement(true, false, false, false, false, 150L);
