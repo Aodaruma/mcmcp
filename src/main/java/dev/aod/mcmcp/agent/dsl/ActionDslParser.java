@@ -272,7 +272,8 @@ public final class ActionDslParser {
     private static ActionDsl.HoldBoundedInputs holdBoundedInputs(
             JsonObject source, String path) {
         Set<String> fields = Set.of(
-                "id", "op", "inputs", "duration_ticks", "target_guard", "selected_item");
+                "id", "op", "inputs", "duration_ticks", "target_guard", "selected_item",
+                "repeat_target", "max_repetitions");
         exactKeys(source, path, fields, Set.of("id", "op", "inputs", "duration_ticks"));
         JsonArray rawInputs = array(source.get("inputs"), path + ".inputs");
         var inputs = new ArrayList<ActionDsl.BoundedInput>(rawInputs.size());
@@ -290,23 +291,36 @@ public final class ActionDslParser {
         Optional<String> selectedItem = rawItem == null || rawItem.isJsonNull()
                 ? Optional.empty()
                 : Optional.of(string(rawItem, path + ".selected_item"));
+        boolean repeatTarget = source.has("repeat_target")
+                && bool(source.get("repeat_target"), path + ".repeat_target");
+        if (source.has("max_repetitions") != repeatTarget) {
+            throw invalid(path + ".max_repetitions is required only with repeat_target:true");
+        }
         return new ActionDsl.HoldBoundedInputs(
                 string(source.get("id"), path + ".id"),
                 inputs,
                 longInteger(source.get("duration_ticks"), path + ".duration_ticks"),
                 guard,
-                selectedItem);
+                selectedItem,
+                repeatTarget,
+                repeatTarget ? integer(source.get("max_repetitions"), path + ".max_repetitions") : 1);
     }
 
     private static ActionDsl.ExactBlockTargetGuard exactBlockTargetGuard(
             JsonElement value, String path) {
         JsonObject guard = rawObject(value, path);
-        Set<String> fields = Set.of("target", "face", "expected_state");
-        exactKeys(guard, path, fields, fields);
+        Set<String> fields = Set.of("target", "face", "expected_state", "expected_block");
+        exactKeys(guard, path, fields, Set.of("target", "face", "expected_state"));
+        var state = guard.get("expected_state").isJsonNull() ? null
+                : blockStateSpec(guard.get("expected_state"), path + ".expected_state");
+        String block = guard.has("expected_block")
+                ? string(guard.get("expected_block"), path + ".expected_block")
+                : state == null ? null : state.block();
+        if (block == null) throw invalid(path + ".expected_block is required for null state");
         return new ActionDsl.ExactBlockTargetGuard(
                 position(guard.get("target"), path + ".target"),
                 blockFace(string(guard.get("face"), path + ".face"), path + ".face"),
-                blockStateSpec(guard.get("expected_state"), path + ".expected_state"));
+                block, state);
     }
 
     private static ActionDsl.TillKnownBlock tillKnownBlock(JsonObject source, String path) {

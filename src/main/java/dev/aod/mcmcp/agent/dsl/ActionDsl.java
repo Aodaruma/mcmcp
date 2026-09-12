@@ -197,12 +197,19 @@ public final class ActionDsl {
             List<BoundedInput> inputs,
             long durationTicks,
             Optional<ExactBlockTargetGuard> targetGuard,
-            Optional<String> selectedItem) implements Node {
+            Optional<String> selectedItem,
+            boolean repeatTarget,
+            int maxRepetitions) implements Node {
         public HoldBoundedInputs {
             Objects.requireNonNull(id, "id");
             inputs = List.copyOf(Objects.requireNonNull(inputs, "inputs"));
             Objects.requireNonNull(targetGuard, "targetGuard");
             Objects.requireNonNull(selectedItem, "selectedItem");
+        }
+
+        public HoldBoundedInputs(String id, List<BoundedInput> inputs, long durationTicks,
+                Optional<ExactBlockTargetGuard> targetGuard, Optional<String> selectedItem) {
+            this(id, inputs, durationTicks, targetGuard, selectedItem, false, 1);
         }
     }
 
@@ -210,11 +217,21 @@ public final class ActionDsl {
     public record ExactBlockTargetGuard(
             Position target,
             BlockFace face,
+            String expectedBlock,
             BlockStateSpec expectedState) {
         public ExactBlockTargetGuard {
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(face, "face");
-            Objects.requireNonNull(expectedState, "expectedState");
+            Objects.requireNonNull(expectedBlock, "expectedBlock");
+        }
+
+        public ExactBlockTargetGuard(Position target, BlockFace face, BlockStateSpec expectedState) {
+            this(target, face, expectedState.block(), expectedState);
+        }
+
+        public boolean matches(String block, Map<String, String> properties) {
+            return expectedBlock.equals(block) && (expectedState == null
+                    || expectedState.properties().equals(properties));
         }
     }
 

@@ -32,6 +32,44 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McpToolCatalogTest {
     @Test
+    void repeatHoldSchemaRequiresOptInAndFiniteStartBudget() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var request = schema.getAsJsonArray("examples").asList().stream()
+                .map(JsonElement::getAsJsonObject)
+                .filter(example -> example.getAsJsonObject("program").get("name").getAsString()
+                        .equals("repeat_attack_on_observed_snow")).findFirst().orElseThrow().deepCopy();
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+        var node = request.getAsJsonObject("program").getAsJsonArray("body").get(0).getAsJsonObject();
+        // The lightweight validator does not interpret if/then/not; the DSL parser enforces these.
+        var condition = schema.getAsJsonObject("$defs").getAsJsonObject("holdBoundedInputsNode")
+                .getAsJsonArray("allOf").get(1).getAsJsonObject();
+        assertThat(condition.getAsJsonObject("then").getAsJsonArray("required").toString())
+                .isEqualTo("[\"max_repetitions\"]");
+        assertThat(condition.getAsJsonObject("else").getAsJsonObject("not")
+                .getAsJsonArray("required").toString()).isEqualTo("[\"max_repetitions\"]");
+        for (int count : List.of(0, 65)) {
+            node.addProperty("max_repetitions", count);
+            assertThat(CatalogSchemaValidator.matches(schema, request)).isFalse();
+        }
+        node.addProperty("max_repetitions", 8);
+        node.addProperty("repeat_target", false);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                dev.aod.mcmcp.agent.dsl.ActionDslParser.parse(request))
+                .isInstanceOf(dev.aod.mcmcp.agent.dsl.ActionDslException.class);
+        node.remove("repeat_target");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                dev.aod.mcmcp.agent.dsl.ActionDslParser.parse(request))
+                .isInstanceOf(dev.aod.mcmcp.agent.dsl.ActionDslException.class);
+        node.addProperty("repeat_target", true);
+        node.add("inputs", JsonParser.parseString("[\"sneak\"]"));
+        node.remove("target_guard");
+        node.remove("selected_item");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> dev.aod.mcmcp.agent.dsl.ActionDslValidator.validate(
+                dev.aod.mcmcp.agent.dsl.ActionDslParser.parse(request)))
+                .isInstanceOf(dev.aod.mcmcp.agent.dsl.ActionDslException.class);
+    }
+
+    @Test
     void copperContainerAllowlistIsSharedByEveryPublishedActionAndRoutingLabelSchema() {
         var catalog = new McpToolCatalog();
         var schema = catalog.inputSchema("agent_start_action");
@@ -407,6 +445,25 @@ class McpToolCatalogTest {
                 .contains("or item_id_any_components")
                 .contains("craft/smelt goal.stack_policy")
                 .contains("smelt fuel.stack_policy are exactly default_components_only");
+    }
+
+    @Test
+    void boundedInputNullStateRequiresObservedBlockIdentityInSchema() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var example = schema.getAsJsonArray("examples").asList().stream()
+                .map(com.google.gson.JsonElement::getAsJsonObject)
+                .filter(value -> value.getAsJsonObject("program").getAsJsonArray("body")
+                        .get(0).getAsJsonObject().get("op").getAsString().equals("hold_bounded_inputs"))
+                .findFirst().orElseThrow().deepCopy();
+        var guard = example.getAsJsonObject("program").getAsJsonArray("body")
+                .get(0).getAsJsonObject().getAsJsonObject("target_guard");
+        guard.remove("expected_block");
+        guard.add("expected_state", com.google.gson.JsonNull.INSTANCE);
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isFalse();
+        guard.addProperty("expected_block", "minecraft:snow");
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
+        guard.remove("expected_state");
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isFalse();
     }
 
     @Test

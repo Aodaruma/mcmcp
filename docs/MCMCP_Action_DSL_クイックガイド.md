@@ -229,3 +229,32 @@ budgetは成功予想ではなく、worst-caseを収める停止上限です。�
 schema違反はcatalog順に最大4件、budget不足は不足component名をまとめて返します。提出値や未知property名は診断へ反射されません。mutationやdrop生成後の`TARGET_UNKNOWN`をfield推測で直すのではなく、Actionを区切って新しいframeを観測してください。
 
 具体的な最小JSONは`docs/action-templates/`にあります。template内の座標は例であり、実行時には必ず同じworld/sessionの最新policy-visible recordから置き換えます。
+
+
+## 対象の再生成を待つ有限長押し
+
+`hold_bounded_inputs` は有限時間だけ入力を保持します。`target_guard` の座標・面は最新の配送済み観測からコピーし、`expected_state` は省略しません。完全stateがあればそのまま指定し、`state:null` なら `expected_state:null` と観測のblockをコピーした `expected_block` を指定します。両方にblock IDがある場合は一致が必須です。非公開propertyを推測する必要はありません。
+
+既定の `repeat_target:false` は厳密停止です。現在のcrosshairが座標・面・block・指定stateから外れると拒否を保持し、同じAction内では再開しません。
+
+`repeat_target:true` と `max_repetitions:1..64` を明示すると、同じActionの中で対象の再生成を待てます。対象消失、MISS、entity、別の座標・面・block・stateへの照準中は新しい採掘・使用を出さず、同じ対象条件が戻ると再開します。照準を自動で動かしません。開始済みの弓・飲食等の使用は一時的な対象不一致だけでは解除せず、次の使用開始には改めて一致を要求します。
+
+`max_repetitions` は初回を含む新規開始の上限です。通常のVanilla採掘開始または使用開始ごとに1 interactionを消費し、attackは同数の破壊枠も予約します。継続・cooldown・待機tickでは追加消費しません。`budget.max_interactions`、attackではさらに `budget.max_blocks_broken` に上限回数以上を指定します。上限後の新規開始は送信せず `BUDGET_EXCEEDED` で終了します。反復しない場合の `max_repetitions` 指定と、移動だけの反復は拒否します。
+
+例えば、観測済みの雪を現在の照準で最大8回、最大60tickだけ採掘するnodeは次の形です。座標・面・block・手持ちは実観測から置き換え、programの唯一のbody nodeとして `block_break` capabilityで提出します。
+
+```json
+{
+  "id": "hold_attack", "op": "hold_bounded_inputs", "inputs": ["attack"],
+  "duration_ticks": 60, "repeat_target": true, "max_repetitions": 8,
+  "target_guard": {
+    "target": {"dimension": "minecraft:overworld", "x": 204, "y": 200, "z": 194},
+    "face": "south", "expected_state": null, "expected_block": "minecraft:snow"
+  },
+  "selected_item": "minecraft:wooden_shovel"
+}
+```
+
+この例のbudgetは `max_duration_ms:3000`、`max_ticks:60`、`max_interactions:8`、`max_blocks_broken:8`、その他の枠は0です。待機も元の時間・tick予算へ数え、対象復帰で期限を延長しません。実際のsimulation pauseは既存規則通り入力を中立化してactive timeを凍結し、再開時に検証します。
+
+位置・手持ち変更、reach外、health低下、Screen・overlay、安全中断、Esc、OFF、cancel、期限、world/session変更では既存の入力解放経路へ進みます。入力開始直前にも再検証し、例外や安全違反は解除までラッチします。開始回数は保守的な試行数であり、破壊成功数・回収数・server確認済みeffectではありません。道具交換・耐久保護・収集量保証はありません。

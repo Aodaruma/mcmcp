@@ -369,8 +369,8 @@ public final class ActionDslCompiler {
                 ticks,
                 movement ? NavigationDistanceBudget.MAX_DISTANCE_BLOCKS : 0.0D,
                 0.0D,
-                use ? 1L : 0L,
-                attack ? 1L : 0L,
+                hold.repeatTarget() ? hold.maxRepetitions() : use ? 1L : 0L,
+                attack ? hold.maxRepetitions() : 0L,
                 0L);
     }
 
