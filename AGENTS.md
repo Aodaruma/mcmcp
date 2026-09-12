@@ -44,7 +44,7 @@
 - 多区画作業は公開DSLでbatch化できるようにし、植付け、代表成熟待機、batch収穫、drop回収、再植付けの順を基本とする。container、pickup、camera等の具体的な期限・予算はcatalog、runtime、testで一元管理する。
 - 既存の安全境界、入力検証、fail-closedなエラー処理、fixture isolationを簡略化しない。
 
-- 有限長押しのtarget_guardは観測済み座標・面・ブロック種と現在のフォーカスレイを照合する。expected_state:nullは明示expected_blockを必須とし、完全state指定時は従来通り全property一致を要求する。nullを無対象入力やhidden propertyの推測に使わない。対象消失・別block・entity照準では停止し、自動再開しない。
+- 有限長押しのtarget_guardは観測済み座標・面・ブロック種と現在のフォーカスレイを照合する。expected_state:nullは明示expected_blockを必須とし、完全state指定時は従来通り全property一致を要求する。nullを無対象入力やhidden propertyの推測に使わない。既定は対象不一致で厳密停止する。明示した反復モードだけは新規入力を抑止して同一対象の復帰を待つ。開始済みuse、反復上限、予算、解放条件は設計仕様書を正本とする。
 
 ## Fixture and environments
 

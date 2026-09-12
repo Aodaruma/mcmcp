@@ -25,7 +25,8 @@ public final class AgentUseInputChannel {
             return;
         }
         MinecraftUseItemInvoker accessor = (MinecraftUseItemInvoker) minecraft;
-        if (accessor.mcmcp$getRightClickDelay() == 0 && !minecraft.player.isUsingItem()) {
+        if (accessor.mcmcp$getRightClickDelay() == 0 && !minecraft.player.isUsingItem()
+                && inputState.beginBoundedInput()) {
             accessor.mcmcp$startUseItem();
         }
     }

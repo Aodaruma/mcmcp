@@ -2032,22 +2032,30 @@ repository作成直前に、選択したowner配下で`mcmcp`が作成可能か�
 NeoForge 26.2の画面切替は新画面のOpeningの後に旧画面のClosingを通知する。通常操作を許可する非pause ChatScreenから、正確なOpenScreen packetに対応したmenuへ切り替わる場合だけ、EXPECTING_FULL_CONTENTへ進んだ同じclient tick内の旧chatのClosingを1回許可する。所有権は同じsession・container ID・menu typeのfull-content packet確認後に限る。期待前・別tick・重複のchat閉鎖、所有済みコンテナの予期しない閉鎖、別menuのopenは引き続き停止する。
 
 
-## 状態非公開の対象への有限長押し
+## 対象の再生成を待つ有限長押し
 
-`hold_bounded_inputs` は現在の照準を維持したまま有限時間だけ入力を保持する。
-`target_guard` は観測済みの `target` と `face` を必須とし、`expected_state` は省略せず指定する。
-完全な `state` があれば従来通りその値をコピーする。`state: null` の場合は
-`expected_state: null` と、観測の `block` をコピーした `expected_block` を指定する。
-完全な状態と `expected_block` を両方指定する場合、block IDは一致しなければならない。
+`hold_bounded_inputs` は有限時間だけ入力を保持します。`target_guard` の座標・面は最新の配送済み観測からコピーし、`expected_state` は省略しません。完全stateがあればそのまま指定し、`state:null` なら `expected_state:null` と観測のblockをコピーした `expected_block` を指定します。両方にblock IDがある場合は一致が必須です。非公開propertyを推測する必要はありません。
 
-実行時はMinecraftの現在のフォーカスレイ（crosshairのBlockHitResult）で
-座標・面・通常reach・ブロック種を毎tick確認する。完全な状態がある場合は全propertyの一致も必要。
-nullはブロック種の照合を省略する指示ではなく、非公開propertyを推測して送る必要をなくす形式である。
-選択アイテム・姿勢・health・Screen・停止/入力解放の既存検証は維持する。
-対象消失・別ブロック・entityへの照準変更では停止する。再生成を待つ自動再開機能ではない。
-この変更のみで雪製造機の継続採掘・耐久保護・回収量保証が実装されるわけではない。
+既定の `repeat_target:false` は厳密停止です。現在のcrosshairが座標・面・block・指定stateから外れると拒否を保持し、同じAction内では再開しません。
 
-pre-tickと実dispatchの間の照準変化も、post-tickの採掘・使用channelで再検証する。
-bounded hold専用のdispatch guardが拒否または例外となった場合は入力を抑止し、拒否をラッチする。
-次tickはSAFETY_INTERRUPTEDで終了し、leaseの入力解放成功後にguardを破棄する。
-再publishや同tick後の対象復帰は拒否ラッチを解除しない。
+`repeat_target:true` と `max_repetitions:1..64` を明示すると、同じActionの中で対象の再生成を待てます。対象消失、MISS、entity、別の座標・面・block・stateへの照準中は新しい採掘・使用を出さず、同じ対象条件が戻ると再開します。照準を自動で動かしません。開始済みの弓・飲食等の使用は一時的な対象不一致だけでは解除せず、次の使用開始には改めて一致を要求します。
+
+`max_repetitions` は初回を含む新規開始の上限です。通常のVanilla採掘開始または使用開始ごとに1 interactionを消費し、attackは同数の破壊枠も予約します。継続・cooldown・待機tickでは追加消費しません。`budget.max_interactions`、attackではさらに `budget.max_blocks_broken` に上限回数以上を指定します。上限後の新規開始は送信せず `BUDGET_EXCEEDED` で終了します。反復しない場合の `max_repetitions` 指定と、移動だけの反復は拒否します。
+
+例えば、観測済みの雪を現在の照準で最大8回、最大60tickだけ採掘するnodeは次の形です。座標・面・block・手持ちは実観測から置き換え、programの唯一のbody nodeとして `block_break` capabilityで提出します。
+
+```json
+{
+  "id": "hold_attack", "op": "hold_bounded_inputs", "inputs": ["attack"],
+  "duration_ticks": 60, "repeat_target": true, "max_repetitions": 8,
+  "target_guard": {
+    "target": {"dimension": "minecraft:overworld", "x": 204, "y": 200, "z": 194},
+    "face": "south", "expected_state": null, "expected_block": "minecraft:snow"
+  },
+  "selected_item": "minecraft:wooden_shovel"
+}
+```
+
+この例のbudgetは `max_duration_ms:3000`、`max_ticks:60`、`max_interactions:8`、`max_blocks_broken:8`、その他の枠は0です。待機も元の時間・tick予算へ数え、対象復帰で期限を延長しません。実際のsimulation pauseは既存規則通り入力を中立化してactive timeを凍結し、再開時に検証します。
+
+位置・手持ち変更、reach外、health低下、Screen・overlay、安全中断、Esc、OFF、cancel、期限、world/session変更では既存の入力解放経路へ進みます。入力開始直前にも再検証し、例外や安全違反は解除までラッチします。開始回数は保守的な試行数であり、破壊成功数・回収数・server確認済みeffectではありません。道具交換・耐久保護・収集量保証はありません。

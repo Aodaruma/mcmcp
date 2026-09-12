@@ -367,26 +367,79 @@ public final class AgentInputState {
         attackValidUntilNanos = 0L;
     }
 
-    private java.util.function.BooleanSupplier boundedDispatchGuard;
+    private java.util.function.Supplier<BoundedDispatchDecision> boundedDispatchGuard;
+    private java.util.function.BooleanSupplier boundedInputStart;
     private boolean boundedDispatchRejected;
+    private boolean boundedBudgetExhausted;
+    private boolean boundedInputStarted;
+
+    public enum BoundedDispatchDecision { ALLOW, WAIT, STOP }
 
     public synchronized void setBoundedDispatchGuard(java.util.function.BooleanSupplier guard) {
-        boundedDispatchGuard = java.util.Objects.requireNonNull(guard, "guard");
+        Objects.requireNonNull(guard, "guard");
+        boundedDispatchGuard = () -> guard.getAsBoolean()
+                ? BoundedDispatchDecision.ALLOW : BoundedDispatchDecision.STOP;
+        boundedInputStart = null;
         boundedDispatchRejected = false;
+        boundedBudgetExhausted = false;
+        boundedInputStarted = false;
+    }
+
+    public synchronized void setRepeatingBoundedDispatchGuard(
+            java.util.function.Supplier<BoundedDispatchDecision> guard,
+            java.util.function.BooleanSupplier onStart) {
+        boundedDispatchGuard = Objects.requireNonNull(guard, "guard");
+        boundedInputStart = Objects.requireNonNull(onStart, "onStart");
+        boundedDispatchRejected = false;
+        boundedBudgetExhausted = false;
+        boundedInputStarted = false;
     }
 
     /** Recheck at the actual attack/use dispatch, not only at pre-tick publication. */
     public synchronized boolean allowsBoundedDispatch() {
-        if (boundedDispatchRejected) return false;
-        if (boundedDispatchGuard == null) return true;
+        return boundedDispatchDecision() == BoundedDispatchDecision.ALLOW;
+    }
+
+    private BoundedDispatchDecision boundedDispatchDecision() {
+        if (boundedDispatchRejected) return BoundedDispatchDecision.STOP;
+        if (boundedDispatchGuard == null) return BoundedDispatchDecision.ALLOW;
         try {
-            if (boundedDispatchGuard.getAsBoolean()) return true;
+            var decision = Objects.requireNonNull(boundedDispatchGuard.get(), "dispatch decision");
+            if (decision != BoundedDispatchDecision.STOP) return decision;
         } catch (RuntimeException | LinkageError failure) {
             // A broken proof never permits an input dispatch.
         }
         boundedDispatchRejected = true;
         suppressAll();
+        return BoundedDispatchDecision.STOP;
+    }
+
+    /** A target gap must not release an already-started use in repeating mode. */
+    public synchronized boolean maintainsBoundedUse() {
+        return boundedInputStarted && boundedInputStart != null && useActive()
+                && boundedDispatchDecision() != BoundedDispatchDecision.STOP;
+    }
+
+    /** Called only at a new Vanilla destroy/use start, never for continuation/cooldown ticks. */
+    public synchronized boolean beginBoundedInput() {
+        if (!allowsBoundedDispatch()) return false;
+        if (boundedInputStart == null) return true;
+        try {
+            if (boundedInputStart.getAsBoolean()) {
+                boundedInputStarted = true;
+                return true;
+            }
+            boundedBudgetExhausted = true;
+        } catch (RuntimeException | LinkageError failure) {
+            // Failed accounting does not authorize the dispatch.
+        }
+        boundedDispatchRejected = true;
+        suppressAll();
         return false;
+    }
+
+    public synchronized boolean boundedBudgetExhausted() {
+        return boundedBudgetExhausted;
     }
 
     public synchronized boolean boundedDispatchRejected() {
@@ -395,7 +448,10 @@ public final class AgentInputState {
 
     public synchronized void clearBoundedDispatchGuard() {
         boundedDispatchGuard = null;
+        boundedInputStart = null;
         boundedDispatchRejected = false;
+        boundedBudgetExhausted = false;
+        boundedInputStarted = false;
     }
 
     public synchronized void publishAttack(long validUntilNanos) {

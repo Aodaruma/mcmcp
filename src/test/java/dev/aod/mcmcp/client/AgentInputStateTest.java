@@ -7,6 +7,83 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AgentInputStateTest {
     @Test
+    void repeatedTargetGapsDoNotLatchOrChargeContinuationTicks() {
+        var state = new AgentInputState();
+        var target = new java.util.concurrent.atomic.AtomicReference<>(AgentInputState.BoundedDispatchDecision.ALLOW);
+        var starts = new java.util.concurrent.atomic.AtomicInteger();
+        state.setRepeatingBoundedDispatchGuard(target::get, () -> starts.incrementAndGet() <= 3);
+        state.publishUse(Long.MAX_VALUE);
+        assertThat(state.maintainsBoundedUse()).isFalse(); // No Agent-started use yet.
+        for (int repetition = 1; repetition <= 3; repetition++) {
+            assertThat(state.beginBoundedInput()).isTrue();
+            for (int tick = 0; tick < 10; tick++) {
+                assertThat(state.allowsBoundedDispatch()).isTrue();
+                assertThat(state.maintainsBoundedUse()).isTrue();
+            }
+            target.set(AgentInputState.BoundedDispatchDecision.WAIT);
+            assertThat(state.beginBoundedInput()).isFalse();
+            assertThat(state.boundedDispatchRejected()).isFalse();
+            assertThat(state.maintainsBoundedUse()).isTrue();
+            assertThat(starts.get()).isEqualTo(repetition);
+            target.set(AgentInputState.BoundedDispatchDecision.ALLOW);
+        }
+        assertThat(state.beginBoundedInput()).isFalse();
+        assertThat(state.boundedBudgetExhausted()).isTrue();
+        assertThat(state.maintainsBoundedUse()).isFalse();
+        state.publishUse(Long.MAX_VALUE);
+        assertThat(state.beginBoundedInput()).isFalse();
+        assertThat(starts.get()).isEqualTo(4);
+        state.releaseUse();
+        state.clearBoundedDispatchGuard();
+        assertThat(state.maintainsBoundedUse()).isFalse();
+        assertThat(state.boundedBudgetExhausted()).isFalse();
+    }
+
+    @Test
+    void repeatedAttackWaitsButSafetyFailureCannotBeRepublishedAway() {
+        var state = new AgentInputState();
+        var target = new java.util.concurrent.atomic.AtomicReference<>(AgentInputState.BoundedDispatchDecision.WAIT);
+        state.setRepeatingBoundedDispatchGuard(target::get, () -> true);
+        state.publishAttack(Long.MAX_VALUE);
+        assertThat(state.allowsBoundedDispatch()).isFalse();
+        assertThat(state.attackActive()).isTrue();
+        target.set(AgentInputState.BoundedDispatchDecision.ALLOW);
+        assertThat(state.beginBoundedInput()).isTrue();
+        target.set(AgentInputState.BoundedDispatchDecision.STOP);
+        assertThat(state.allowsBoundedDispatch()).isFalse();
+        assertThat(state.attackActive()).isFalse();
+        target.set(AgentInputState.BoundedDispatchDecision.ALLOW);
+        state.publishAttack(Long.MAX_VALUE);
+        assertThat(state.beginBoundedInput()).isFalse();
+        assertThat(state.boundedDispatchRejected()).isTrue();
+    }
+
+    @Test
+    void pauseAndWatchdogDoNotPreserveAnOngoingUse() {
+        var state = new AgentInputState();
+        state.setRepeatingBoundedDispatchGuard(() -> AgentInputState.BoundedDispatchDecision.ALLOW, () -> true);
+        state.publishUse(Long.MAX_VALUE);
+        assertThat(state.beginBoundedInput()).isTrue();
+        state.setPaused(true, 100L);
+        assertThat(state.maintainsBoundedUse()).isFalse();
+        state.setPaused(false, 200L);
+        assertThat(state.maintainsBoundedUse()).isTrue();
+        state.publishUse(1L);
+        assertThat(state.maintainsBoundedUse()).isFalse();
+    }
+
+    @Test
+    void brokenRepetitionAccountingSuppressesInput() {
+        var state = new AgentInputState();
+        state.publishUse(Long.MAX_VALUE);
+        state.setRepeatingBoundedDispatchGuard(() -> AgentInputState.BoundedDispatchDecision.ALLOW,
+                () -> { throw new IllegalStateException(); });
+        assertThat(state.beginBoundedInput()).isFalse();
+        assertThat(state.useActive()).isFalse();
+        assertThat(state.boundedDispatchRejected()).isTrue();
+    }
+
+    @Test
     void changedFocusBetweenPublicationAndDispatchLatchesUntilCleanup() {
         var state = new AgentInputState();
         var matches = new java.util.concurrent.atomic.AtomicBoolean(true);
