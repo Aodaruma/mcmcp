@@ -505,6 +505,33 @@ public final class LocalObservationVolume {
                 1,
                 worldRevision);
         var path = atTick(evaluated.record(), observedTick);
+        if (intent.locomotion() == Locomotion.WATER) {
+            var targetBox = start.move(intent.target().subtract(start.getCenter()));
+            var end = start.move(resolved);
+            boolean bank = stableLanding(player, level, startPoint, targetBox)
+                    && !bouncySupport(level, player, targetBox);
+            boolean bankArc = bank && start.minY >= targetBox.minY - MOVEMENT_EPSILON
+                    && start.minY <= targetBox.minY + ONE_BLOCK_JUMP_APEX;
+            if (!waterAtFeet(level, startPoint, start) && stableLanding(player, level, startPoint, start)
+                    && bank) {
+                return goalIntendedMovementSafe(path)
+                        && waterMovementTowardTarget(startPoint, point(end.getCenter()), intent, 0.20D);
+            }
+            return (waterTransitionSafe(player, level, startPoint, start, targetBox)
+                            || bankArc && waterPathSafe(player, level, startPoint, start, targetBox))
+                    && waterRegionsSafe(player, level, startPoint,
+                            append(sweptRegions(SweptAabbPath.segments(start, intended, resolved)), end))
+                    && waterMovementTowardTarget(startPoint, point(end.getCenter()), intent,
+                            bank ? ONE_BLOCK_JUMP_APEX : 0.20D)
+                    && (waterAtFeet(level, startPoint, end) || stableLanding(player, level, startPoint, end)
+                            || bank && end.minY >= targetBox.minY - MOVEMENT_EPSILON
+                                    && end.minY <= targetBox.minY + ONE_BLOCK_JUMP_APEX
+                            || (waterAtFeet(level, startPoint, targetBox)
+                                    || bank)
+                                    && waterJustBelow(level, startPoint, end)
+                            || resolved.y > MOVEMENT_EPSILON && targetBox.minY > start.minY
+                                    && waterAtFeet(level, startPoint, start));
+        }
         if (intent.locomotion() != Locomotion.GROUND) {
             var endpoint = endpointSafety(player, level, startPoint, evaluated.endBox());
             var targetBox = start.move(intent.target().subtract(start.getCenter()));
@@ -963,6 +990,28 @@ public final class LocalObservationVolume {
             if (node.depth() >= MAX_TRANSITIONS) {
                 continue;
             }
+            {
+                boolean swimming = waterAtFeet(level, origin, node.box()) || waterJustBelow(level, origin, node.box());
+                for (int dy : new int[] {1, -1}) {
+                    for (var direction : List.of(new GridOffset(0, 0),
+                            new GridOffset(1, 0), new GridOffset(-1, 0),
+                            new GridOffset(0, 1), new GridOffset(0, -1))) {
+                        if (!swimming && (dy > 0 || direction.x() == 0 && direction.z() == 0)) continue;
+                        var delta = adjacentWaterDelta(node.box(), direction.x(), dy, direction.z());
+                        var target = node.box().move(delta);
+                        if (!swimming && !waterAtFeet(level, origin, target)) continue;
+                        if (evaluations++ >= MAX_OBSERVATIONS || records.size() >= MAX_OBSERVATIONS) break search;
+                        if (!waterTransitionSafe(player, level, origin, node.box(), target)) continue;
+                        var record = waterRecord(player, level, origin, node.box(), target,
+                                node.depth() + 1, worldRevision);
+                        records.add(record);
+                        var offset = new GridOffset(node.key().offset().x() + direction.x(),
+                                node.key().offset().z() + direction.z());
+                        var key = NodeKey.at(offset, target);
+                        if (reached.add(key)) queue.addLast(new Node(key, target, node.depth() + 1));
+                    }
+                }
+            }
             addClimbableTransitions(
                     player,
                     level,
@@ -1006,6 +1055,19 @@ public final class LocalObservationVolume {
 
                 // Candidate graph only: exact runtime guards keep using the resolved tick path.
                 evaluations++;
+                var waterTarget = node.box().move(intended);
+                if ((waterAtFeet(level, origin, node.box()) || waterJustBelow(level, origin, node.box())
+                        || waterAtFeet(level, origin, waterTarget))
+                        && Math.abs(direction.x()) + Math.abs(direction.z()) == 1) {
+                    if (waterTransitionSafe(player, level, origin, node.box(), waterTarget)) {
+                        records.add(waterRecord(player, level, origin, node.box(), waterTarget,
+                                node.depth() + 1, worldRevision));
+                        var targetKey = NodeKey.at(targetOffset, waterTarget);
+                        if (reached.add(targetKey)) queue.addLast(new Node(
+                                targetKey, waterTarget, node.depth() + 1));
+                    }
+                    continue;
+                }
                 var evaluation = evaluateHypothetical(
                         player,
                         level,
@@ -1038,6 +1100,87 @@ public final class LocalObservationVolume {
             }
         }
         return List.copyOf(records);
+    }
+
+    private static Vec3 adjacentWaterDelta(AABB start, int dx, int dy, int dz) {
+        var center = start.getCenter();
+        return new Vec3(Mth.floor(center.x) + dx + 0.5D - center.x,
+                Mth.floor(start.minY + 1.0E-6D) + dy - start.minY,
+                Mth.floor(center.z) + dz + 0.5D - center.z);
+    }
+
+    /** Only ordinary source water is admitted; flowing water and bubble columns stay unknown. */
+    private static boolean waterAtFeet(ClientLevel level, Point origin, AABB box) {
+        var feet = feetBlock(box);
+        return insideRadius(origin, feet.getX(), feet.getY(), feet.getZ())
+                && level.isLoaded(feet) && level.getBlockState(feet).is(Blocks.WATER)
+                && level.getFluidState(feet).isSource();
+    }
+
+    /** A bounded surface exit may briefly lift the feet above water before reaching the bank. */
+    private static boolean waterJustBelow(ClientLevel level, Point origin, AABB box) {
+        return waterAtFeet(level, origin, box.move(0, -0.5D, 0));
+    }
+
+    private static boolean waterRegionsSafe(LocalPlayer player, ClientLevel level,
+            Point origin, List<AABB> regions) {
+        if (loadedState(level, origin, regions) != LoadedState.LOADED
+                || damageBlockHazard(level, origin, regions) != Hazard.NONE) return false;
+        for (var region : regions) {
+            if (!level.noCollision(player, region)) return false;
+            for (var pos : BlockPos.betweenClosed(Mth.floor(region.minX + 1.0E-6D),
+                    Mth.floor(region.minY + 1.0E-6D), Mth.floor(region.minZ + 1.0E-6D),
+                    Mth.floor(region.maxX - 1.0E-6D), Mth.floor(region.maxY - 1.0E-6D),
+                    Mth.floor(region.maxZ - 1.0E-6D))) {
+                var state = level.getBlockState(pos);
+                if (state.isAir()) continue;
+                if (!state.is(Blocks.WATER) || !state.getFluidState().isSource()) return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean waterTransitionSafe(LocalPlayer player, ClientLevel level,
+            Point origin, AABB start, AABB target) {
+        boolean landing = stableLanding(player, level, origin, target);
+        if (!waterAtFeet(level, origin, start) && !waterAtFeet(level, origin, target)
+                && !(waterJustBelow(level, origin, start) && landing)) return false;
+        if (!waterAtFeet(level, origin, target) && !landing) return false;
+        if (bouncySupport(level, player, target)) return false;
+        return waterPathSafe(player, level, origin, start, target);
+    }
+
+    private static boolean waterPathSafe(LocalPlayer player, ClientLevel level,
+            Point origin, AABB start, AABB target) {
+        Vec3 delta = target.getCenter().subtract(start.getCenter());
+        // Ascend before crossing a bank lip; descend only after clearing the bank.
+        List<AABB> regions = delta.y > 0.0D
+                ? List.of(start.expandTowards(0, delta.y, 0),
+                        start.move(0, delta.y, 0).expandTowards(delta.x, 0, delta.z), target)
+                : List.of(start.expandTowards(delta.x, 0, delta.z),
+                        start.move(delta.x, 0, delta.z).expandTowards(0, delta.y, 0), target);
+        return waterRegionsSafe(player, level, origin, regions);
+    }
+
+    private static ObservationRecord waterRecord(LocalPlayer player, ClientLevel level,
+            Point origin, AABB start, AABB target, int depth, long revision) {
+        var support = support(level, player, origin, target);
+        return new ObservationRecord(player.tickCount, revision, depth, point(start.getCenter()),
+                point(target.getCenter()), point(target.getCenter()), support, Clearance.CLEAR,
+                Transition.PROBE_ALLOWED, waterAtFeet(level, origin, target) ? Fluid.WATER : Fluid.NONE,
+                false, Hazard.NONE, LoadedState.LOADED,
+                support == Support.PRESENT ? Drop.SUPPORTED : Drop.AIRBORNE_OR_SWIMMING,
+                false, Locomotion.WATER);
+    }
+
+    static boolean waterMovementTowardTarget(Point start, Point end,
+            AgentInputState.NavigationIntent intent, double verticalTolerance) {
+        double before = Math.hypot(start.x() - intent.target().x, start.z() - intent.target().z);
+        double after = Math.hypot(end.x() - intent.target().x, end.z() - intent.target().z);
+        double verticalBefore = Math.abs(start.y() - intent.target().y);
+        double verticalAfter = Math.abs(end.y() - intent.target().y);
+        return after <= Math.max(before, intent.horizontalTolerance()) + 0.04D
+                && verticalAfter <= Math.max(verticalBefore, verticalTolerance) + 0.04D;
     }
 
     /**
@@ -1323,7 +1466,7 @@ public final class LocalObservationVolume {
         return switch (locomotion) {
             case LADDER -> safeLadderCell(player, level, origin, box);
             case SCAFFOLDING -> safeScaffoldingCell(player, level, origin, box);
-            case GROUND -> false;
+            case GROUND, WATER -> false;
         };
     }
 
@@ -1382,7 +1525,7 @@ public final class LocalObservationVolume {
         return switch (locomotion) {
             case LADDER -> ladderPathSafe(player, level, origin, from, to);
             case SCAFFOLDING -> scaffoldingPathSafe(player, level, origin, from, to);
-            case GROUND -> false;
+            case GROUND, WATER -> false;
         };
     }
 
@@ -1442,7 +1585,7 @@ public final class LocalObservationVolume {
         return switch (locomotion) {
             case LADDER -> exactLadderAtFeet(level, box);
             case SCAFFOLDING -> exactScaffoldingAtFeet(level, box);
-            case GROUND -> false;
+            case GROUND, WATER -> false;
         };
     }
 
@@ -1800,7 +1943,10 @@ public final class LocalObservationVolume {
         }
         Transition transition = actualTransition(frame, collision);
         Locomotion locomotion;
-        if ((safeLadderCell(player, level, origin, start)
+        if (!collision.horizontallyClipped()
+                && waterTransitionSafe(player, level, origin, start, end)) {
+            locomotion = Locomotion.WATER;
+        } else if ((safeLadderCell(player, level, origin, start)
                         || safeLadderCell(player, level, origin, end))
                 && ladderPathSafe(player, level, origin, start, end)) {
             locomotion = Locomotion.LADDER;
@@ -1892,6 +2038,12 @@ public final class LocalObservationVolume {
             return new DropEvaluation(Drop.AIRBORNE_OR_SWIMMING, Vec3.ZERO);
         }
         if (fluid == Fluid.WATER) {
+            return new DropEvaluation(Drop.AIRBORNE_OR_SWIMMING, Vec3.ZERO);
+        }
+        // Vanilla can retain onGround for the tick that crosses a bank. A verified water
+        // surface immediately below the whole body stops the fall before the pool's floor.
+        if (waterJustBelow(level, origin, box) && waterRegionsSafe(player, level, origin,
+                List.of(box.expandTowards(0.0D, -0.5D, 0.0D)))) {
             return new DropEvaluation(Drop.AIRBORNE_OR_SWIMMING, Vec3.ZERO);
         }
 

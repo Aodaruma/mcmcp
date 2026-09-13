@@ -3289,7 +3289,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         minecraft, player, map, evidence, recoveryGovernor.recovering()),
                 MinecraftRecoveryGovernor.StopSignal.NONE,
                 () -> preemptAgentGoalForRecovery(session),
-                nowNanos);
+                nowNanos, agentExecution.primitive instanceof ActionDsl.NavigateToKnown);
     }
 
     private void preemptAgentGoalForRecovery(WorldSessionTracker.Snapshot session) {

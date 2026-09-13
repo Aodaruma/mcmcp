@@ -183,7 +183,18 @@ final class AgentPlannerCosts {
      * cumulative replan window without enlarging the route executor's own tick bound.
      */
     static ActionDslCompiler.Cost navigationCost(RoutePlan route, Pose pose) {
-        return withNavigationReplanReserve(navigationExecutionCost(route, pose));
+        var cost = navigationExecutionCost(route, pose);
+        if (route.edges().stream().anyMatch(edge -> edge.locomotion()
+                == dev.aod.mcmcp.agent.safety.Locomotion.WATER)) {
+            // Admission may span natural water drift inside this same feet cell. Reserve its
+            // whole envelope once; rebound routes still charge their actual remaining path.
+            var cell = pose.cell();
+            var envelope = new Pose(cell, cell.x() + 0.5D, cell.y() + 0.5D, cell.z() + 0.5D,
+                    pose.eyeHeight(), pose.yaw(), pose.pitch(), Math.sqrt(0.5D), 0.5D, 0.5D, 0.0D);
+            var bounded = navigationExecutionCost(route, envelope);
+            if (bounded.distanceBlocks() > cost.distanceBlocks()) cost = bounded;
+        }
+        return withNavigationReplanReserve(cost);
     }
 
     /** Raw executable cost of a freshly rebound route, including every current probe edge. */

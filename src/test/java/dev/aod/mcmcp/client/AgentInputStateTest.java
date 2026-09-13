@@ -123,6 +123,29 @@ class AgentInputStateTest {
     }
 
     @Test
+    void repeatedWaterAccelerationAndDragDoNotCreateReverseVelocityOnRelease() {
+        var state = new AgentInputState();
+        var player = new Object();
+        var level = new Object();
+        Vec3 physical = new Vec3(0.05D, 0.0D, 0.0D);
+        Vec3 external = physical;
+        for (int tick = 0; tick < 40; tick++) {
+            state.publishMovement(true, false, false, false, false);
+            state.requireGoalMovementSafety(player, level, 1L, 3.0D);
+            state.beginPlayerMovementTick(player, level);
+            Vec3 input = new Vec3(0.02D, 0.04D, 0.0D);
+            state.addAgentMoveContribution(input);
+            physical = physical.add(input).multiply(0.8D, 0.8D, 0.8D).add(0, -0.005D, 0);
+            external = external.multiply(0.8D, 0.8D, 0.8D).add(0, -0.005D, 0);
+            state.scaleAgentVelocity(new Vec3(0.8D, 0.8D, 0.8D));
+            Vec3 released = physical.subtract(state.agentMoveContribution(player, level));
+            assertThat(released.x).isCloseTo(external.x, org.assertj.core.data.Offset.offset(1.0E-12D));
+            assertThat(released.y).isCloseTo(external.y, org.assertj.core.data.Offset.offset(1.0E-12D));
+            state.endPlayerMovementTick(player, level);
+        }
+    }
+
+    @Test
     void attackUsesTheSamePauseAndSafetySuppressionBoundary() {
         var state = new AgentInputState();
         state.publishAttack();

@@ -58,7 +58,8 @@ public record TraversabilityEdge(
             throw new IllegalArgumentException("edge tick and revision must be non-negative");
         }
         validateStatus(status, targetSupport, clearance, transition, fluid, hazard, locomotion);
-        if (locomotion != Locomotion.GROUND && !key.climbableAdjacent()) {
+        if (locomotion != Locomotion.GROUND && locomotion != Locomotion.WATER
+                && !key.climbableAdjacent()) {
             throw new IllegalArgumentException(
                     "climbable edges must be vertical or cardinal horizontal transitions");
         }
@@ -75,7 +76,7 @@ public record TraversabilityEdge(
     /** Ladder rungs remain internal transit nodes unless they also have floor support. */
     public boolean destination() {
         return traversable()
-                && (locomotion == Locomotion.GROUND
+                && (locomotion == Locomotion.GROUND || locomotion == Locomotion.WATER
                         || targetSupport == TargetSupport.CONFIRMED);
     }
 
@@ -99,23 +100,23 @@ public record TraversabilityEdge(
             return;
         }
         if (status == Status.CONFIRMED
-                && ((locomotion == Locomotion.GROUND
+                && (((locomotion == Locomotion.GROUND || locomotion == Locomotion.WATER && fluid == Fluid.NONE)
                                 && support != TargetSupport.CONFIRMED)
                         || support == TargetSupport.UNKNOWN
                 || clearance != Clearance.CONFIRMED
                 || transition != Transition.CONFIRMED
-                || fluid != Fluid.NONE
+                || !safeFluid(fluid, locomotion)
                 || hazard != Hazard.NONE)) {
             throw new IllegalArgumentException(
                     "CONFIRMED requires valid support/clearance and no fluid/hazard");
         }
         if (status == Status.PROBE_ALLOWED
-                && ((locomotion == Locomotion.GROUND
+                && (((locomotion == Locomotion.GROUND || locomotion == Locomotion.WATER && fluid == Fluid.NONE)
                                 && support != TargetSupport.CONFIRMED)
                         || support == TargetSupport.UNKNOWN
                 || clearance != Clearance.CONFIRMED
                 || transition != Transition.PARTIAL
-                || fluid != Fluid.NONE
+                || !safeFluid(fluid, locomotion)
                 || hazard != Hazard.NONE)) {
             throw new IllegalArgumentException(
                     "PROBE_ALLOWED requires valid support/clearance and a partial transition");
@@ -128,6 +129,10 @@ public record TraversabilityEdge(
                 && hazard == Hazard.NONE) {
             throw new IllegalArgumentException("BLOCKED requires concrete blocking evidence");
         }
+    }
+
+    private static boolean safeFluid(Fluid fluid, Locomotion locomotion) {
+        return fluid == Fluid.NONE || locomotion == Locomotion.WATER && fluid == Fluid.WATER;
     }
 
     public record Key(NavCell from, NavCell to) implements Comparable<Key> {

@@ -181,4 +181,45 @@ abstract class LivingEntityAgentMovementMixin {
     private static float modifiedFriction(float base, float modifier) {
         return net.minecraft.util.Mth.clamp(1.0F - (1.0F - base) * modifier, 0.0F, 1.0F);
     }
+
+    @WrapOperation(method = "travelInWater(Lnet/minecraft/world/phys/Vec3;DZD)V",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/phys/Vec3;multiply(DDD)Lnet/minecraft/world/phys/Vec3;"),
+            require = 1, expect = 1)
+    private Vec3 mcmcp$trackAgentWaterDrag(Vec3 movement, double x, double y, double z,
+            Operation<Vec3> original) {
+        Vec3 result = original.call(movement, x, y, z);
+        if ((Object) this instanceof LocalPlayer && AgentInputState.global().goalMovementOutputActive()) {
+            AgentInputState.global().scaleAgentVelocity(new Vec3(x, y, z));
+        }
+        return result;
+    }
+
+    @WrapOperation(method = "travelInWater(Lnet/minecraft/world/phys/Vec3;DZD)V",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;getFluidFallingAdjustedMovement(DZLnet/minecraft/world/phys/Vec3;)Lnet/minecraft/world/phys/Vec3;"),
+            require = 1, expect = 1)
+    private Vec3 mcmcp$trackAgentWaterGravity(LivingEntity instance, double gravity, boolean falling,
+            Vec3 movement, Operation<Vec3> original) {
+        Vec3 full = original.call(instance, gravity, falling, movement);
+        if (instance instanceof LocalPlayer player && AgentInputState.global().goalMovementOutputActive()) {
+            Vec3 contribution = AgentInputState.global().agentMoveContribution(player, player.level());
+            // Vanilla's near-zero gravity snap is nonlinear; apply the same pure calculation
+            // to the external component instead of counting gravity as Agent acceleration.
+            Vec3 external = original.call(instance, gravity, falling, movement.subtract(contribution));
+            AgentInputState.global().replaceAgentMoveContribution(full.subtract(external));
+        }
+        return full;
+    }
+
+    @WrapOperation(method = "jumpOutOfFluid(D)V",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;setDeltaMovement(DDD)V"),
+            require = 1, expect = 1)
+    private void mcmcp$trackAgentWaterBankImpulse(LivingEntity instance, double x, double y, double z,
+            Operation<Void> original) {
+        Vec3 before = instance.getDeltaMovement();
+        original.call(instance, x, y, z);
+        if (instance instanceof LocalPlayer && instance.isInWater()
+                && AgentInputState.global().goalMovementOutputActive()) {
+            AgentInputState.global().addAgentMoveContribution(new Vec3(x, y, z).subtract(before));
+        }
+    }
 }

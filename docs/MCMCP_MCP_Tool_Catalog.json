@@ -1361,7 +1361,7 @@
           },
           "navigateNode": {
             "type": "object",
-            "description": "Copy traversability.navigation_target verbatim into target. Never derive, floor, round, or copy the continuous traversability.from/to coordinates.",
+            "description": "Copy traversability.navigation_target verbatim into target. Never derive, floor, round, or copy the continuous traversability.from/to coordinates. Fresh local traversability can also authorize swimming vertically or horizontally through unobstructed Vanilla source water and entering or leaving a supported bank. Flowing water, bubble columns, water plants and unobserved water paths are not authorized. Swimming uses ordinary movement/jump/crouch inputs without sprint and needs a larger finite tick budget (40 additional ticks per water edge). Critical oxygen recovery takes priority over the requested route; reobserve after interruption.",
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/nodeId"},

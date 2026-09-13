@@ -24,6 +24,29 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class LocalObservationMixinContractTest {
     @Test
+    void waterDragGravityAndSinkHooksMatchThePinnedVanillaCallSites() throws Exception {
+        var living = classNode(net.minecraft.world.entity.LivingEntity.class);
+        var water = method(living, "travelInWater");
+        assertThat(invocations(water)).filteredOn(call -> call.endsWith("#multiply"))
+                .containsExactly("net/minecraft/world/phys/Vec3#multiply");
+        assertThat(invocations(water)).filteredOn(call -> call.endsWith("#getFluidFallingAdjustedMovement"))
+                .containsExactly("net/minecraft/world/entity/LivingEntity#getFluidFallingAdjustedMovement");
+        assertThat(invocations(method(living, "jumpOutOfFluid")))
+                .contains("net/minecraft/world/entity/LivingEntity#setDeltaMovement");
+        assertThat(invocations(method(classNode(net.minecraft.client.player.LocalPlayer.class), "aiStep")))
+                .filteredOn(call -> call.endsWith("#goDownInWater"))
+                .containsExactly("net/minecraft/client/player/LocalPlayer#goDownInWater");
+        var hooks = classNode("/dev/aod/mcmcp/mixin/client/LivingEntityAgentMovementMixin.class");
+        assertThat(invocations(method(hooks, "mcmcp$trackAgentWaterDrag")))
+                .contains("dev/aod/mcmcp/client/AgentInputState#scaleAgentVelocity");
+        assertThat(invocations(method(hooks, "mcmcp$trackAgentWaterGravity")))
+                .contains("dev/aod/mcmcp/client/AgentInputState#replaceAgentMoveContribution");
+        assertThat(invocations(method(classNode("/dev/aod/mcmcp/mixin/client/LocalPlayerMovementTickMixin.class"),
+                "mcmcp$trackAgentWaterSink")))
+                .contains("dev/aod/mcmcp/client/AgentInputState#addAgentMoveContribution");
+    }
+
+    @Test
     void collisionTraceWrapsEntityMoveCollideAndCallsOriginalExactlyOnce() throws Exception {
         var hook = method(
                 classNode("/dev/aod/mcmcp/mixin/client/EntityAgentCollisionMixin.class"),
@@ -352,6 +375,15 @@ class LocalObservationMixinContractTest {
         assertThat(face.indexOf("java/util/function/BooleanSupplier#getAsBoolean"))
                 .isLessThan(face.indexOf(
                         "dev/aod/mcmcp/agent/action/MinecraftActionPrimitiveExecutor#turn"));
+    }
+
+    private static ClassNode classNode(Class<?> type) throws Exception {
+        var node = new ClassNode();
+        try (var stream = type.getResourceAsStream(type.getSimpleName() + ".class")) {
+            assertThat(stream).isNotNull();
+            new ClassReader(stream).accept(node, 0);
+        }
+        return node;
     }
 
     private static ClassNode classNode(String resource) throws Exception {
