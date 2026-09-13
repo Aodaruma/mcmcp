@@ -383,7 +383,9 @@ final class MenuPrimitiveExecution {
                     effect.observedAfter(),
                     effect.verification(),
                     effect.clientTick(),
-                    worldRevision);
+                    // Staging receipts already capture a global reconciliation revision.
+                    // Older block effects carry a local observation revision instead.
+                    effect.kind().equals("inventory_swap") ? effect.worldRevision() : worldRevision);
         }
     }
 
