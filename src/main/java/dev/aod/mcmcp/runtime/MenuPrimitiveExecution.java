@@ -54,6 +54,7 @@ final class MenuPrimitiveExecution {
     private boolean containerReleaseFaultLogged;
     private KnownBrewingAttempt brewingAttempt;
     private KnownConstructionAttempt constructionAttempt;
+    private String lastConstructionEvidence;
     private KnownPillarUpAttempt pillarUpAttempt;
     private MinecraftFloorExtensionAttempt floorExtensionAttempt;
     private KnownRedstoneIdentityAttempt redstoneAttempt;
@@ -342,6 +343,10 @@ final class MenuPrimitiveExecution {
         }
         KnownConstructionAttempt.TickResult result =
                 constructionAttempt.tick(session.clientTick());
+        if (!Objects.equals(lastConstructionEvidence, result.evidence())) {
+            agentActions.recordNodeEvidence(actionId, result.evidence());
+            lastConstructionEvidence = result.evidence();
+        }
         recordConstructionEffects(actionId, result.effects(), worldRevision);
         for (int count = 0; count < result.placedDelta(); count++) {
             agentActions.recordBlockPlace(actionId);
@@ -378,7 +383,9 @@ final class MenuPrimitiveExecution {
                     effect.observedAfter(),
                     effect.verification(),
                     effect.clientTick(),
-                    worldRevision);
+                    // Staging receipts already capture a global reconciliation revision.
+                    // Older block effects carry a local observation revision instead.
+                    effect.kind().equals("inventory_swap") ? effect.worldRevision() : worldRevision);
         }
     }
 

@@ -4,6 +4,7 @@ import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.runtime.ClientReconciliationSignals;
 import dev.aod.mcmcp.runtime.FrameDisplaySyncSignals;
 import dev.aod.mcmcp.runtime.HotbarPayloadSyncSignals;
+import dev.aod.mcmcp.runtime.InventorySwapSignals;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
 import dev.aod.mcmcp.runtime.ScreenOwnershipSignals;
 import net.minecraft.client.Minecraft;
@@ -39,6 +40,7 @@ public abstract class ClientPacketListenerMixin {
         ClientReconciliationSignals.global().closeLevel(Minecraft.getInstance().level);
         FrameDisplaySyncSignals.global().closeLevel(this.level);
         HotbarPayloadSyncSignals.global().closeLevel(this.level);
+        InventorySwapSignals.global().closeLevel(this.level);
     }
 
     @Inject(method = "handleSetEntityData", at = @At("TAIL"), require = 1, expect = 1)
@@ -123,6 +125,8 @@ public abstract class ClientPacketListenerMixin {
         }
         int selected = minecraft.player.getInventory().getSelectedSlot();
         if (this.level == minecraft.level) {
+            InventorySwapSignals.global().onSlot(this.level, packet.slot(),
+                    StackFingerprint.fromServerPacket(packet.contents()));
             HotbarPayloadSyncSignals.global().onSlot(this.level, packet.slot(),
                     StackFingerprint.fromServerPacket(packet.contents()),
                     ScreenOwnershipSignals.global().currentTick());
@@ -146,6 +150,8 @@ public abstract class ClientPacketListenerMixin {
             relevant = slot.container == minecraft.player.getInventory()
                     && slot.getContainerSlot() == minecraft.player.getInventory().getSelectedSlot();
             if (this.level == minecraft.level && slot.container == minecraft.player.getInventory()) {
+                InventorySwapSignals.global().onSlot(this.level, slot.getContainerSlot(),
+                        StackFingerprint.fromServerPacket(packet.getItem()));
                 HotbarPayloadSyncSignals.global().onSlot(this.level, slot.getContainerSlot(),
                         StackFingerprint.fromServerPacket(packet.getItem()),
                         ScreenOwnershipSignals.global().currentTick());
@@ -168,6 +174,8 @@ public abstract class ClientPacketListenerMixin {
             for (int index = 0; index < packet.items().size(); index++) {
                 Slot slot = minecraft.player.inventoryMenu.slots.get(index);
                 if (slot.container == minecraft.player.getInventory()) {
+                    InventorySwapSignals.global().onSlot(this.level, slot.getContainerSlot(),
+                            StackFingerprint.fromServerPacket(packet.items().get(index)));
                     HotbarPayloadSyncSignals.global().onSlot(this.level, slot.getContainerSlot(),
                             StackFingerprint.fromServerPacket(packet.items().get(index)),
                             ScreenOwnershipSignals.global().currentTick());

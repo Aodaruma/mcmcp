@@ -12,6 +12,13 @@ import dev.aod.mcmcp.observation.WorldMemory;
 import dev.aod.mcmcp.runtime.ClientPredictionSignals;
 import dev.aod.mcmcp.runtime.ClientReconciliationSignals;
 import dev.aod.mcmcp.runtime.WorldSessionTracker;
+import dev.aod.mcmcp.runtime.InventorySwapSignals;
+import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import net.minecraft.network.HashedStack;
+import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
+import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
@@ -283,28 +290,22 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 throw new IllegalStateException("required eligible block item is not in inventory");
             }
             boolean staged = sourceSlot >= Inventory.getSelectionSize();
-            long stagingRevision = -1L;
-            int stagingCount = -1;
             if (staged) {
-                var before = reconciliations.bindAndSnapshot(
-                        Objects.requireNonNull(minecraft.level), session.worldSessionId());
-                stagingRevision = before.selectedSlotInventoryRevision();
-                stagingCount = eligibleInventoryCount(
-                        Objects.requireNonNull(minecraft.player), required);
-                if (!stageIntoSelectedHotbar(minecraft,
-                        Objects.requireNonNull(minecraft.player), sourceSlot, required)) {
-                    throw new IllegalStateException("required block item could not be staged");
-                }
+                var player = Objects.requireNonNull(minecraft.player);
+                var inventory = player.getInventory();
+                plan.pendingStaging = new PendingStaging(required, eligibleInventoryCount(player, required),
+                        sourceSlot, inventory.getSelectedSlot(), session.clientTick(),
+                        StackFingerprint.fromServerPacket(inventory.getItem(sourceSlot)),
+                        StackFingerprint.fromServerPacket(inventory.getSelectedItem()));
+            } else {
+                plan.pendingStaging = null;
             }
-            plan.pendingStaging = staged
-                    ? new PendingStaging(required, stagingCount, stagingRevision)
-                    : null;
         }
         var attempt = new ApplyBlockPlanPreparationAttempt(
                 UUID.randomUUID(), child.stepIndex(), session.clientTick(),
                 memory.revision(), leaseExpiresAtClientTick);
         var ownership = ControlOwnership.acquire(
-                minecraft, child.requiredItemId(), attempt.attemptId());
+                minecraft, plan.pendingStaging == null ? child.requiredItemId() : Optional.empty(), attempt.attemptId());
         try {
             ownership.selectOwnedSlot(minecraft);
         } catch (RuntimeException | LinkageError failure) {
@@ -334,6 +335,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 active.failure = safetyFailure();
                 return;
             }
+            active.ownership.requireUndisturbed(requireMinecraft());
             if (!refreshStagingSynchronization(active)) {
                 return;
             }
@@ -419,6 +421,23 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
     }
 
     @Override
+    public Optional<StagingEvidence> stagingEvidence(ApplyBlockPlanPreparationAttempt attempt) {
+        assertClientThread();
+        var pending = requirePreparation(attempt).staging;
+        if (pending == null || pending.ticket == null) return Optional.empty();
+        var before = stagingObservation(pending.sourceBefore, pending.destinationBefore);
+        var after = pending.confirmed ? stagingObservation(pending.destinationBefore, pending.sourceBefore)
+                : Map.<String, Object>of();
+        return Optional.of(new StagingEvidence(before, after, pending.confirmed,
+                pending.evidenceTick, pending.evidenceRevision));
+    }
+
+    static Map<String, Object> stagingObservation(StackFingerprint source, StackFingerprint destination) {
+        return Map.of("source_item", source.itemId(), "source_count", source.count(),
+                "destination_item", destination.itemId(), "destination_count", destination.count());
+    }
+
+    @Override
     public void releasePreparation(ApplyBlockPlanPreparationAttempt attempt) {
         assertClientThread();
         Objects.requireNonNull(attempt, "attempt");
@@ -429,6 +448,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         if (!active.transferred) {
             active.ownership.close(requireMinecraft());
         }
+        releaseStaging(active.plan);
         preparations.remove(attempt);
     }
 
@@ -740,7 +760,8 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 closeActionBestEffort(entry.getValue());
             }
         }
-        plans.remove(request);
+        var plan = plans.remove(request);
+        if (plan != null) releaseStaging(plan);
     }
 
     /** Releases all plan-owned state on disconnect, level replacement, and client shutdown. */
@@ -756,6 +777,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         }
         actions.clear();
         preparations.clear();
+        for (var plan : plans.values()) releaseStaging(plan);
         plans.clear();
         // Prediction channels are shared by every block-action port and are owned by the
         // ClientLevel lifecycle mixin/runtime fence. Closing the level here during world-login
@@ -1177,20 +1199,6 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 });
     }
 
-    private static boolean stageIntoSelectedHotbar(
-            Minecraft minecraft,
-            LocalPlayer player,
-            int sourceInventorySlot,
-            String item) {
-        return MinecraftSemanticActionPort.stageInventorySlotIntoSelectedHotbar(
-                minecraft,
-                player,
-                sourceInventorySlot,
-                stack -> !stack.isEmpty()
-                        && item.equals(registryItemId(stack))
-                        && eligibleBlockStack(stack));
-    }
-
     private static int eligibleInventoryCount(LocalPlayer player, String item) {
         var inventory = player.getInventory();
         int limit = Math.min(Inventory.INVENTORY_SIZE, inventory.getContainerSize());
@@ -1273,27 +1281,80 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         if (pending == null) return true;
         var session = requireSession();
         var minecraft = requireMinecraft();
-        var recon = reconciliations.bindAndSnapshot(
-                Objects.requireNonNull(minecraft.level), session.worldSessionId());
-        if (recon.selectedSlotInventoryRevision() <= pending.revisionBefore()) {
+        var player = Objects.requireNonNull(minecraft.player);
+        active.ownership.requireUndisturbed(minecraft);
+        if (pending.ticket == null) {
+            var inventory = player.getInventory();
+            if (player.containerMenu != player.inventoryMenu || !player.inventoryMenu.getCarried().isEmpty()
+                    || inventory.getSelectedSlot() != pending.destination
+                    || !pending.sourceBefore.equals(StackFingerprint.fromServerPacket(inventory.getItem(pending.source)))
+                    || !pending.destinationBefore.equals(StackFingerprint.fromServerPacket(inventory.getSelectedItem()))) {
+                active.failure = stagingFailure("INVENTORY_STAGING_MISMATCH");
+                return false;
+            }
+            int menuSlot = -1;
+            for (int index = InventoryMenu.INV_SLOT_START; index < player.inventoryMenu.slots.size(); index++) {
+                var slot = player.inventoryMenu.slots.get(index);
+                if (slot.container == inventory && slot.getContainerSlot() == pending.source) menuSlot = index;
+            }
+            if (menuSlot < 0) {
+                active.failure = stagingFailure("INVENTORY_STAGING_MISMATCH");
+                return false;
+            }
+            pending.ticket = InventorySwapSignals.global().begin(minecraft.level, session.worldSessionId(),
+                    pending.source, pending.destination, pending.sourceBefore, pending.destinationBefore);
+            pending.evidenceTick = session.clientTick();
+            pending.evidenceRevision = reconciliations.bindAndSnapshot(
+                    minecraft.level, session.worldSessionId()).worldRevision();
+            // Like known container transfers, leave prediction empty so ordinary slot payloads
+            // confirm the one SWAP. Register before sending; an uncertain send is never repeated.
+            var connection = Objects.requireNonNull(minecraft.getConnection());
+            connection.send(new ServerboundContainerClickPacket(player.inventoryMenu.containerId,
+                    player.inventoryMenu.getStateId(), (short) menuSlot, (byte) pending.destination,
+                    ContainerInput.SWAP, new Int2ObjectOpenHashMap<>(),
+                    HashedStack.create(player.inventoryMenu.getCarried(), connection.decoratedHashOpsGenenerator())));
             return false;
         }
-        var player = Objects.requireNonNull(minecraft.player);
+        var status = pending.ticket.result(session.worldSessionId());
+        if (status == InventorySwapSignals.Result.WAITING) {
+            if (session.clientTick() - pending.startedTick >= KnownMenuTransfers.UPDATE_TIMEOUT_TICKS) {
+                active.failure = stagingFailure("INVENTORY_STAGING_TIMEOUT");
+            }
+            return false;
+        }
         ItemStack selected = player.getInventory().getSelectedItem();
         boolean selectedExact = !selected.isEmpty()
                 && pending.item().equals(registryItemId(selected))
                 && eligibleBlockStack(selected);
         boolean totalUnchanged = eligibleInventoryCount(player, pending.item())
                 == pending.countBefore();
-        if (selectedExact && totalUnchanged) {
+        if (status == InventorySwapSignals.Result.CONFIRMED && selectedExact && totalUnchanged
+                && player.getInventory().getSelectedSlot() == pending.destination) {
+            pending.confirmed = true;
+            pending.evidenceTick = session.clientTick();
+            pending.evidenceRevision = reconciliations.bindAndSnapshot(
+                    minecraft.level, session.worldSessionId()).worldRevision();
+            InventorySwapSignals.global().close(minecraft.level, pending.ticket);
             active.plan.pendingStaging = null;
             return true;
         }
-        active.failure = failure("INVENTORY_STAGING_MISMATCH",
+        active.failure = stagingFailure("INVENTORY_STAGING_MISMATCH");
+        return false;
+    }
+
+    private void releaseStaging(PlanState plan) {
+        var pending = plan.pendingStaging;
+        if (pending != null && pending.ticket != null) {
+            InventorySwapSignals.global().close(requireMinecraft().level, pending.ticket);
+        }
+        plan.pendingStaging = null;
+    }
+
+    private static RoutineFailure stagingFailure(String code) {
+        return failure(code,
                 RoutineFailure.Category.DIVERGENCE, RoutineFailure.Recovery.REPLAN,
                 Map.of("server_inventory_sync", true),
                 Map.of("server_inventory_sync", false));
-        return false;
     }
 
     private void detectReconciliationFailure(
@@ -2176,6 +2237,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
     }
 
     private static final class PreparationState {
+        private final PendingStaging staging;
         private final ApplyBlockPlanRequest request;
         private final ApplyBlockPlanChildAction child;
         private final PlanState plan;
@@ -2194,6 +2256,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             this.request = request;
             this.child = child;
             this.plan = plan;
+            this.staging = plan.pendingStaging;
             this.ownership = ownership;
             this.candidates = candidates;
         }
@@ -2388,13 +2451,22 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
     private record InventoryFacts(Map<String, Integer> counts, Set<String> hotbarItems) {
     }
 
-    private record PendingStaging(String item, int countBefore, long revisionBefore) {
-        private PendingStaging {
-            Objects.requireNonNull(item, "item");
-            if (countBefore < 1 || revisionBefore < 0L) {
-                throw new IllegalArgumentException("invalid staging synchronization baseline");
-            }
+    private static final class PendingStaging {
+        final String item;
+        final int countBefore, source, destination;
+        final long startedTick;
+        final StackFingerprint sourceBefore, destinationBefore;
+        InventorySwapSignals.Ticket ticket;
+        boolean confirmed;
+        long evidenceTick, evidenceRevision;
+        PendingStaging(String item, int countBefore, int source, int destination, long startedTick,
+                StackFingerprint sourceBefore, StackFingerprint destinationBefore) {
+            this.item = item; this.countBefore = countBefore; this.source = source;
+            this.destination = destination; this.startedTick = startedTick;
+            this.sourceBefore = sourceBefore; this.destinationBefore = destinationBefore;
         }
+        String item() { return item; }
+        int countBefore() { return countBefore; }
     }
 
     enum InventoryConsumption { PENDING, CONFIRMED, MISMATCH }
