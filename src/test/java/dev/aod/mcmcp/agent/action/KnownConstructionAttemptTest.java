@@ -32,6 +32,55 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownConstructionAttemptTest {
     @Test
+    void cancellingAfterSwapSendKeepsOneUnknownReceiptAndNeverDispatchesPlacement() {
+        var request = request(1);
+        var port = new FakePort(request);
+        var attempt = new KnownConstructionAttempt(port, request, 1, 301);
+        attempt.tick(1);
+        port.staging = new ApplyBlockPlanPort.StagingEvidence(Map.of("source_count", 16), Map.of(), false, 2, 2);
+        attempt.close();
+        attempt.close();
+        assertThat(attempt.drainEffectDeltas()).singleElement().satisfies(effect -> {
+            assertThat(effect.kind()).isEqualTo("inventory_swap");
+            assertThat(effect.verification()).isEqualTo(AgentActionStore.Verification.UNKNOWN);
+            assertThat(effect.observedBefore()).containsEntry("source_count", 16);
+            assertThat(effect.observedAfter()).isEmpty();
+        });
+        assertThat(attempt.drainEffectDeltas()).isEmpty();
+        assertThat(port.dispatchedEntryIds).isEmpty();
+        assertThat(port.retired).isTrue();
+    }
+
+    @Test
+    void confirmedSwapReceiptIsDistinctFromPlacementAndNotRepeatedOnClose() {
+        var request = request(1);
+        var port = new FakePort(request);
+        var attempt = new KnownConstructionAttempt(port, request, 1, 301);
+        attempt.tick(1);
+        port.staging = new ApplyBlockPlanPort.StagingEvidence(
+                Map.of("source_count", 16), Map.of("destination_count", 16), true, 2, 2);
+        port.tick = 2;
+        assertThat(attempt.tick(2).effects()).singleElement().satisfies(effect -> {
+            assertThat(effect.kind()).isEqualTo("inventory_swap");
+            assertThat(effect.verification()).isEqualTo(AgentActionStore.Verification.CONFIRMED);
+            assertThat(effect.observedAfter()).containsEntry("destination_count", 16);
+        });
+        attempt.close();
+        assertThat(attempt.drainEffectDeltas()).singleElement().satisfies(effect ->
+                assertThat(effect.kind()).isEqualTo("block_place"));
+    }
+
+    @Test
+    void cancellingBeforeSwapSendDoesNotInventAMutation() {
+        var request = request(1);
+        var port = new FakePort(request);
+        var attempt = new KnownConstructionAttempt(port, request, 1, 301);
+        attempt.tick(1);
+        attempt.close();
+        assertThat(attempt.drainEffectDeltas()).isEmpty();
+    }
+
+    @Test
     void preparationDiagnosticsSeparateInventoryObservationStandAndAimWaits() {
         var id = UUID.randomUUID();
         var air = Optional.of(new BlockStateFingerprint("minecraft:air", Map.of()));
@@ -557,6 +606,7 @@ class KnownConstructionAttemptTest {
         private RuntimeException observeFailure;
         private RuntimeException beginPreparationFailure;
         private boolean retired;
+        private ApplyBlockPlanPort.StagingEvidence staging;
         private ApplyBlockPlanChildAction activeChild;
         private ApplyBlockPlanPreparationAttempt preparation;
         private ApplyBlockPlanActionAttempt action;
@@ -609,6 +659,11 @@ class KnownConstructionAttemptTest {
         }
 
         @Override public void maintainPreparation(ApplyBlockPlanPreparationAttempt ignored) { }
+
+        @Override public Optional<ApplyBlockPlanPort.StagingEvidence> stagingEvidence(
+                ApplyBlockPlanPreparationAttempt ignored) {
+            return Optional.ofNullable(staging);
+        }
 
         @Override
         public ApplyBlockPlanPreparationEvidence preparationEvidence(

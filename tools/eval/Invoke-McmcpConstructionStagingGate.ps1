@@ -47,7 +47,7 @@ function Invoke-McmcpConstructionStagingGate {
             $after=Get-InventoryCount -State (Get-FreshState) -Item $p.item
             $surface=Get-MaterialSurface $p.item $p.x 80 $p.z $null
             if($after -ne $before-1 -or $surface.state.block -cne $p.item){throw 'Placement or count mismatch'}
-            $results.Add(@{item=$p.item;target=$target;before=$before;after=$after;action_id=$terminal.action_id})
+            $results.Add(@{item=$p.item;target=$target;before=$before;after=$after;action_id=$terminal.action_id;terminal=$terminal})
         }
     } catch {$failure=$_} finally {
         try {$release=Invoke-GateCleanup} catch {if($null -eq $failure){$failure=$_}}

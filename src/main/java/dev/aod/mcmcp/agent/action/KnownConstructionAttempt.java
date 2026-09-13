@@ -44,6 +44,7 @@ public final class KnownConstructionAttempt implements AutoCloseable {
     private final ArrayList<EffectDelta> pendingEffects = new ArrayList<>(2);
     private boolean currentActionConfirmed;
     private boolean currentUnknownRecorded;
+    private boolean currentStagingRecorded;
 
     public KnownConstructionAttempt(
             ApplyBlockPlanPort port,
@@ -177,6 +178,7 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         }
 
         currentIndex = next;
+        currentStagingRecorded = false;
         child = ApplyBlockPlanChildAction.first(next, request.entries().get(next));
         preparation = Objects.requireNonNull(
                 invokeAdapter(AdapterCall.BEGIN_PREPARATION,
@@ -196,6 +198,7 @@ public final class KnownConstructionAttempt implements AutoCloseable {
                 invokeAdapter(AdapterCall.PREPARATION_EVIDENCE,
                         () -> port.preparationEvidence(preparation)),
                 "adapter returned no construction preparation evidence");
+        recordStagingEffect(false);
         if (!preparation.attemptId().equals(evidence.attemptId())) {
             return fail("construction_adapter_contract");
         }
@@ -409,9 +412,25 @@ public final class KnownConstructionAttempt implements AutoCloseable {
 
     private void releasePreparationStrict() {
         if (preparation == null) return;
+        // A sent SWAP cannot be rolled back on cancel. Preserve an UNKNOWN receipt before
+        // retiring its listener; later slot packets remain normal inventory reconciliation.
+        recordStagingEffect(true);
         invokeAdapter(AdapterCall.RELEASE_PREPARATION,
                 () -> port.releasePreparation(preparation));
         preparation = null;
+    }
+
+    private void recordStagingEffect(boolean closing) {
+        if (preparation == null || currentStagingRecorded) return;
+        var receipt = invokeAdapter(AdapterCall.STAGING_EVIDENCE,
+                () -> port.stagingEvidence(preparation));
+        if (receipt.isEmpty() || (!closing && !receipt.orElseThrow().confirmed())) return;
+        var evidence = receipt.orElseThrow();
+        pendingEffects.add(new EffectDelta("inventory_swap", "inventory:construction_hotbar",
+                evidence.before(), evidence.after(), evidence.confirmed()
+                        ? AgentActionStore.Verification.CONFIRMED : AgentActionStore.Verification.UNKNOWN,
+                evidence.clientTick(), evidence.worldRevision()));
+        currentStagingRecorded = true;
     }
 
     private void releaseActionStrict() {
@@ -462,6 +481,7 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         PREFLIGHT_OBSERVE,
         BEGIN_PREPARATION,
         PREPARATION_EVIDENCE,
+        STAGING_EVIDENCE,
         MAINTAIN_PREPARATION,
         DISPATCH_PREPARED,
         ACTION_EVIDENCE,

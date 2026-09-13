@@ -421,6 +421,24 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
     }
 
     @Override
+    public Optional<StagingEvidence> stagingEvidence(ApplyBlockPlanPreparationAttempt attempt) {
+        assertClientThread();
+        var pending = requirePreparation(attempt).staging;
+        if (pending == null || pending.ticket == null) return Optional.empty();
+        var before = Map.<String, Object>of(
+                "source_slot", pending.source, "destination_slot", pending.destination,
+                "source_item", pending.sourceBefore.itemId(), "source_count", pending.sourceBefore.count(),
+                "destination_item", pending.destinationBefore.itemId(), "destination_count", pending.destinationBefore.count());
+        var after = pending.confirmed ? Map.<String, Object>of(
+                "source_slot", pending.source, "destination_slot", pending.destination,
+                "source_item", pending.destinationBefore.itemId(), "source_count", pending.destinationBefore.count(),
+                "destination_item", pending.sourceBefore.itemId(), "destination_count", pending.sourceBefore.count())
+                : Map.<String, Object>of();
+        return Optional.of(new StagingEvidence(before, after, pending.confirmed,
+                pending.dispatchTick, pending.dispatchRevision));
+    }
+
+    @Override
     public void releasePreparation(ApplyBlockPlanPreparationAttempt attempt) {
         assertClientThread();
         Objects.requireNonNull(attempt, "attempt");
@@ -1286,6 +1304,8 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             }
             pending.ticket = InventorySwapSignals.global().begin(minecraft.level, session.worldSessionId(),
                     pending.source, pending.destination, pending.sourceBefore, pending.destinationBefore);
+            pending.dispatchTick = session.clientTick();
+            pending.dispatchRevision = memory.revision();
             // Like known container transfers, leave prediction empty so ordinary slot payloads
             // confirm the one SWAP. Register before sending; an uncertain send is never repeated.
             var connection = Objects.requireNonNull(minecraft.getConnection());
@@ -1310,6 +1330,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 == pending.countBefore();
         if (status == InventorySwapSignals.Result.CONFIRMED && selectedExact && totalUnchanged
                 && player.getInventory().getSelectedSlot() == pending.destination) {
+            pending.confirmed = true;
             InventorySwapSignals.global().close(minecraft.level, pending.ticket);
             active.plan.pendingStaging = null;
             return true;
@@ -2213,6 +2234,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
     }
 
     private static final class PreparationState {
+        private final PendingStaging staging;
         private final ApplyBlockPlanRequest request;
         private final ApplyBlockPlanChildAction child;
         private final PlanState plan;
@@ -2231,6 +2253,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             this.request = request;
             this.child = child;
             this.plan = plan;
+            this.staging = plan.pendingStaging;
             this.ownership = ownership;
             this.candidates = candidates;
         }
@@ -2431,6 +2454,8 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         final long startedTick;
         final StackFingerprint sourceBefore, destinationBefore;
         InventorySwapSignals.Ticket ticket;
+        boolean confirmed;
+        long dispatchTick, dispatchRevision;
         PendingStaging(String item, int countBefore, int source, int destination, long startedTick,
                 StackFingerprint sourceBefore, StackFingerprint destinationBefore) {
             this.item = item; this.countBefore = countBefore; this.source = source;
