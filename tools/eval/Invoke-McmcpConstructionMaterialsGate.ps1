@@ -10,18 +10,7 @@ param(
 # occur here: all gameplay uses the same five production tools as other capability gates.
 . (Join-Path $PSScriptRoot 'McmcpCapabilityGateSupport.ps1')
 
-function Get-MaterialCellBounds {
-    param([int]$X, [int]$Y, [int]$Z)
-    [ordered]@{ dimension = 'minecraft:overworld'; min_x = $X; max_x = $X
-        min_y = $Y; max_y = $Y; min_z = $Z; max_z = $Z }
-}
-
-function Get-MaterialSurface {
-    param([string]$Block, [int]$X, [int]$Y, [int]$Z, [AllowNull()][string[]]$Faces)
-    $current = Wait-ForCurrentVisibleSurfaceRecords -InitialState (Get-FreshState) `
-        -Block $Block -Bounds (Get-MaterialCellBounds $X $Y $Z) -Faces $Faces
-    return $current.records[0]
-}
+. (Join-Path $PSScriptRoot 'McmcpConstructionMaterialObservation.ps1')
 
 function Invoke-McmcpConstructionMaterialsGate {
     [void][IO.Directory]::CreateDirectory($ArtifactDirectory)

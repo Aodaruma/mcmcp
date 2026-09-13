@@ -42,6 +42,8 @@ public final class ActionDslOperationManifest {
                     caps("block_place", "camera"),
                     ref("/entries/*/placement_state_ref", "placement_state_ref", "one_of_inline_source")),
             fixed(ActionDsl.ClearKnownBlockPlan.class, "clear_known_block_plan", caps("block_break", "camera")),
+            fixed(ActionDsl.ExtendKnownFloor.class, "extend_known_floor", caps("block_place", "camera", "movement"),
+                    ref("/placement_state_ref", "placement_state_ref", "required")),
             fixed(
                     ActionDsl.PillarUpKnown.class,
                     "pillar_up_known",
@@ -178,7 +180,7 @@ public final class ActionDslOperationManifest {
                         "placement_state_ref",
                         "agent_get_observation",
                         "/records/*/placement_state_ref",
-                        List.of("approach_known_placement", "apply_known_block_plan", "pillar_up_known"),
+                        List.of("approach_known_placement", "apply_known_block_plan", "pillar_up_known", "extend_known_floor"),
                         "world_session_bounded_identity_ref_subject_to_512_entry_eviction"),
                 referenceDescriptor(
                         "recipe_ref",

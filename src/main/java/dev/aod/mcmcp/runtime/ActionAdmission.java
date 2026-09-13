@@ -252,6 +252,10 @@ final class ActionAdmission {
     }
 
     private Optional<ActionDslCompiler.Cost> admissionPrimitiveCost(ActionDsl.Node node) {
+        if (node instanceof ActionDsl.ExtendKnownFloor floor) {
+            ActionPlanning.pillarAdmissionCost(floor.sourceWitness(), agentObservations.deliveredEvidence()::resolvePlacementState);
+            return Optional.of(ActionDslCompiler.intrinsicFloorExtensionCost());
+        }
         if (node instanceof ActionDsl.PillarUpKnown pillar) {
             return Optional.of(ActionPlanning.pillarAdmissionCost(
                     pillar, agentObservations.deliveredEvidence()::resolvePlacementState));

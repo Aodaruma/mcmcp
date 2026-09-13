@@ -37,6 +37,7 @@ import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.BedBlock;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.IronBarsBlock;
 import net.minecraft.world.level.block.StairBlock;
@@ -231,7 +232,8 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             };
             boolean stepStandSafe = standSafe
                     && (step.operation() == ApplyBlockPlanOperation.VERIFY_ONLY
-                            || !standCells(player).contains(position));
+                            || !standCells(player).contains(position)
+                            || retainedEdgeStandReady(request, step, player, level));
             cells.put(step.target(), new ApplyBlockPlanCellObservation(
                     step.target(), live, replaceable, stepStandSafe, aimFeasible));
         }
@@ -791,6 +793,10 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             Minecraft minecraft, ApplyBlockPlanActionAttempt attempt, ActionState active) {
         var player = Objects.requireNonNull(minecraft.player);
         var level = Objects.requireNonNull(minecraft.level);
+        if (active.request.standPolicy() == ApplyBlockPlanRequest.StandPolicy.RETAINED_EDGE_SUPPORT
+                && !retainedEdgeStandReady(active.request, active.request.steps().getFirst(), player, level)) {
+            throw new IllegalStateException("retained edge support changed before use");
+        }
         if (!candidateWithinWorldBorder(level, active.candidate)) {
             throw new IllegalStateException("placement target left the current world border");
         }
@@ -1126,6 +1132,31 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             }
         }
         return result;
+    }
+
+    private static boolean retainedEdgeStandReady(ApplyBlockPlanRequest request, ApplyBlockPlanStep step,
+            LocalPlayer player, ClientLevel level) {
+        if (request.standPolicy() != ApplyBlockPlanRequest.StandPolicy.RETAINED_EDGE_SUPPORT
+                || step.operation() != ApplyBlockPlanOperation.PLACE || !player.onGround()
+                || !player.isShiftKeyDown() || step.supportWitness().isEmpty()) return false;
+        var witness = step.supportWitness().orElseThrow();
+        BlockPos support = blockPos(witness.support()), target = blockPos(step.target());
+        if (!level.isLoaded(support) || !level.isLoaded(target)) return false;
+        BlockState live = level.getBlockState(support);
+        AABB body = player.getBoundingBox();
+        double dx = target.getX() - support.getX(), dz = target.getZ() - support.getZ();
+        double offsetX = player.getX() - support.getX() - 0.5;
+        double offsetZ = player.getZ() - support.getZ() - 0.5;
+        return witness.expectedState().equals(fingerprint(live))
+                && allowsSafePlacementSupport(live, level.getBlockEntity(support) != null)
+                && Block.isShapeFullBlock(live.getCollisionShape(level, support))
+                && live.isFaceSturdy(level, support, Direction.UP)
+                && Math.abs(body.minY - (support.getY() + 1)) <= 0.015
+                && MinecraftFloorExtensionAttempt.withinCorridor(offsetX * dx + offsetZ * dz,
+                        offsetX * dz - offsetZ * dx, false)
+                && Math.min(body.maxX, support.getX() + 1) - Math.max(body.minX, support.getX()) >= 0.06999
+                && Math.min(body.maxZ, support.getZ() + 1) - Math.max(body.minZ, support.getZ()) >= 0.06999
+                && !body.intersects(new AABB(target));
     }
 
     private static Set<BlockPos> standCells(LocalPlayer player) {

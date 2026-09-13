@@ -65,7 +65,7 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 | EvaluationLeaseController | 評価lease、同期fence、最初のterminal要求、control laneの非同期停止待機 |
 | AgentObservations | 観測frame、配送証拠、音、局所地図とrevision。world境界でclearする |
 | RoutineAdmission / RoutineLifecycle | 内部routineの受付、実行期限、音声owner、終了retryとcontinuation |
-| MenuPrimitiveExecution | 1 Actionのcontainer・brewing・construction・pillar・redstone attempt。cleanupで未回収effectと使用量を回収 |
+| MenuPrimitiveExecution | 1 Actionのcontainer・brewing・construction・pillar・水平床延長・redstone attempt。cleanupで未回収effectと使用量を回収 |
 | FishingPrimitiveExecution | 1 Actionの釣りdispatch・bobber ACK・cleanup。未確認操作を再送しない |
 | KillZoneExecution | 消費済み同意scope、攻撃ACK待機、再送禁止entity集合 |
 | KnownBreakExecution / CobblestoneExecution | 通常破壊のattempt・effectと、丸石生成のcheckpoint・未確認dispatchを別々に所有 |
@@ -141,3 +141,5 @@ capability gateの入口は `Invoke-Mcmcp*CapabilityGate.ps1` です。共通支
 5. 大きなファイルへ責務を追加したときは、この案内と[分割ノート](REFACTORING_NOTES.md)を更新します。行数は目安にし、状態所有・依存方向・1メソッドの判断の数もレビューします。
 
 実機でのACK・fog・入力解放の確認はソース試験とは別です。配布前には評価protocolに沿った実機合格記録が必要です。
+
+`MinecraftFloorExtensionAttempt` は水平1セルのcrouch移動と、既存`KnownConstructionAttempt`への設置委譲を所有する。stand例外は内部の`ApplyBlockPlanRequest.StandPolicy.RETAINED_EDGE_SUPPORT`だけで、`MinecraftApplyBlockPlanPort`も元支持の保持量をuse直前に検査する。cleanupはMenuPrimitiveExecutionでeffectを回収した後に共通入力解放へ進む。

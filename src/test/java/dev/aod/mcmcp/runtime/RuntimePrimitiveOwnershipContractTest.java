@@ -28,6 +28,9 @@ class RuntimePrimitiveOwnershipContractTest {
                         "KnownConstructionAttempt#close",
                         "KnownConstructionAttempt#drainEffectDeltas",
                         "MenuPrimitiveExecution#recordConstructionEffects",
+                        "MinecraftFloorExtensionAttempt#close",
+                        "MinecraftFloorExtensionAttempt#drainEffects",
+                        "MenuPrimitiveExecution#recordConstructionEffects",
                         "KnownPillarUpAttempt#close",
                         "KnownRedstoneIdentityAttempt#close");
         assertThat(calls(McmcpRuntime.class, "failAgentAction"))

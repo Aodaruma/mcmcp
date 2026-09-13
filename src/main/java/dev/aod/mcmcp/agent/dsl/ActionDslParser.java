@@ -138,6 +138,7 @@ public final class ActionDslParser {
             case "apply_known_block_plan" -> applyKnownBlockPlan(object, path);
             case "clear_known_block_plan" -> clearKnownBlockPlan(object, path);
             case "pillar_up_known" -> pillarUpKnown(object, path);
+            case "extend_known_floor" -> extendKnownFloor(object, path);
             case "apply_known_redstone_spec" -> applyKnownRedstoneSpec(object, path);
             case "open_known_fence_gate" -> openKnownFenceGate(object, path);
             case "open_known_passage" -> openKnownPassage(object, path);
@@ -417,6 +418,16 @@ public final class ActionDslParser {
                 position(source.get("anchor"), path + ".anchor"),
                 blockPlanTransform(source.get("transform"), path + ".transform"),
                 entries);
+    }
+
+    private static ActionDsl.ExtendKnownFloor extendKnownFloor(JsonObject source, String path) {
+        Set<String> fields = Set.of("id", "op", "support", "expected_support", "direction", "placement_state_ref");
+        exactKeys(source, path, fields, fields);
+        return new ActionDsl.ExtendKnownFloor(string(source.get("id"), path + ".id"),
+                position(source.get("support"), path + ".support"),
+                blockStateSpec(source.get("expected_support"), path + ".expected_support"),
+                blockFace(string(source.get("direction"), path + ".direction"), path + ".direction"),
+                string(source.get("placement_state_ref"), path + ".placement_state_ref"));
     }
 
     private static ActionDsl.PillarUpKnown pillarUpKnown(JsonObject source, String path) {

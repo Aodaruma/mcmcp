@@ -512,6 +512,12 @@ final class AgentProgramPlanner {
                     plan, input, map, latestFrame,
                     surfaceRevisionBarrier, costs, knownSurfaces, work);
         }
+        if (node instanceof ActionDsl.ExtendKnownFloor floor) {
+            AgentConstructionPlanner.analyzePillar(floor.sourceWitness(), input, map, latestFrame,
+                    surfaceRevisionBarrier, costs, knownSurfaces, placementStates, work);
+            costs.put(floor.id(), ActionDslCompiler.intrinsicFloorExtensionCost());
+            return input; // Exclusive node: no later primitive may consume this initial pose.
+        }
         if (node instanceof ActionDsl.PillarUpKnown pillar) {
             return AgentConstructionPlanner.analyzePillar(
                     pillar, input, map, latestFrame,
