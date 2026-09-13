@@ -7,6 +7,7 @@ import dev.aod.mcmcp.agent.navigation.LocalObservationProjector;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.routine.BoundedInputLease;
+import dev.aod.mcmcp.routine.BlockStateFingerprint;
 import dev.aod.mcmcp.routine.MinecraftStationaryBreakPort;
 import java.time.Duration;
 import java.util.Objects;
@@ -194,10 +195,9 @@ final class BoundedInputExecution {
             return "target_dimension_changed";
         }
         var target = new BlockPos(guard.target().x(), guard.target().y(), guard.target().z());
-        if (!level.isLoaded(target) || !level.getWorldBorder().isWithinBounds(target)
-                || !player.isWithinBlockInteractionRange(target, 0.0D)) {
-            return "target_face_or_reach_changed";
-        }
+        if (!level.isLoaded(target)) return "target_unloaded";
+        if (!level.getWorldBorder().isWithinBounds(target)) return "target_outside_world_border";
+        if (!player.isWithinBlockInteractionRange(target, 0.0D)) return "target_out_of_reach";
         var selected = player.getMainHandItem();
         if (selected.isEmpty() || !hold.selectedItem().orElseThrow().equals(
                 BuiltInRegistries.ITEM.getKey(selected.getItem()).toString())) {
@@ -213,12 +213,23 @@ final class BoundedInputExecution {
         if (hold.targetGuard().isEmpty()) return null;
         var guard = hold.targetGuard().orElseThrow();
         var target = new BlockPos(guard.target().x(), guard.target().y(), guard.target().z());
-        if (!(minecraft.hitResult instanceof BlockHitResult hit)
-                || hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(target)
-                || hit.getDirection() != Direction.valueOf(guard.face().name())) {
-            return "target_face_or_reach_changed";
+        return boundedTargetMismatch(guard, minecraft.hitResult,
+                () -> MinecraftStationaryBreakPort.fingerprintForPolicy(minecraft.level.getBlockState(target)));
+    }
+
+    /** Shared by initial admission and every dispatch; read state only after the real ray identifies the target. */
+    static String boundedTargetMismatch(ActionDsl.ExactBlockTargetGuard guard, HitResult focus,
+            java.util.function.Supplier<BlockStateFingerprint> currentBlock) {
+        if (!(focus instanceof BlockHitResult hit) || hit.getType() != HitResult.Type.BLOCK) {
+            return "target_not_focused";
         }
-        var actual = MinecraftStationaryBreakPort.fingerprintForPolicy(minecraft.level.getBlockState(target));
+        var target = new BlockPos(guard.target().x(), guard.target().y(), guard.target().z());
+        if (!hit.getBlockPos().equals(target)) return "target_position_changed";
+        if (guard.matchFace() && hit.getDirection() != Direction.valueOf(guard.face().name())) {
+            return "target_face_changed";
+        }
+        var actual = currentBlock.get();
+        if (!guard.expectedBlock().equals(actual.blockId())) return "target_block_changed";
         return guard.matches(actual.blockId(), actual.properties()) ? null : "target_state_changed";
     }
 

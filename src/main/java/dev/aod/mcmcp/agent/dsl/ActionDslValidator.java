@@ -445,6 +445,9 @@ public final class ActionDslValidator {
             }
             if (needsGuard) {
                 ActionDsl.ExactBlockTargetGuard guard = hold.targetGuard().orElseThrow();
+                if (!guard.matchFace() && !attacks) {
+                    throw invalid(path + ".target_guard.match_face=false requires attack; use requires face matching");
+                }
                 validatePosition(guard.target(), path + ".target_guard.target");
                 requireResourceLocation(guard.expectedBlock(), path + ".target_guard.expected_block");
                 if (Set.of("minecraft:air", "minecraft:cave_air", "minecraft:void_air")

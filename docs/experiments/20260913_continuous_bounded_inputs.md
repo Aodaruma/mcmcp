@@ -68,3 +68,16 @@ target guard、開始済みuseの継続、時間・tick期限、simulation pause
 初回独立レビューが指摘した最終tooltip eventによる非表示と長いitem IDへの対応を追加した。標準componentだけでなく最終advanced tooltipと照合し、非表示・置換・取得失敗・数値丸め・player基礎値の合算を公開根拠に使わない。新しい公開情報の実機読取りは導入後に別途確認する。
 
 追加版はJava 1,285件、harness 13件、admin bridge 21件と製品JAR分離/buildが成功。Python transport 14件、capability mock 11組も成功した。最終表示のスロット区分を照合し、同一表示が複数区分にある属性は省略する回帰も追加。独立Codex CLIの再レビューでブロッキング指摘なし。
+
+
+## 採掘の面一致を明示的に省略する追加対応
+
+利用者から、同じ雪の観測代表面upと実crosshairのeast等の違いで長押し開始が拒否され、手動で照準を合わせ直す負担があると報告された。採掘に限る面一致の省略、使用では厳密一致を維持する設計を説明し、2026-09-13に利用者が実装を承認した。
+
+`target_guard.match_face` を追加し、省略時はtrueを維持した。falseを許す入力はattack、またはattackとsneakの組合せだけ。useではschemaとDSL validatorの双方がfalseを拒否する。faceは観測記録として必須のままで、初回と毎回のdispatchが共有する照合処理の面比較だけを省略する。実BLOCK hit、同一dimension/座標/block、非null時の完全state、loaded/world border/reach、手持ち、静止、health等は維持し、実際に当たった面を使うVanilla操作を継続する。
+
+従来のtarget_face_or_reach_changedは、非BLOCK hit、座標違い、面違い、block違い、state違い、unloaded、world border外、reach外の固定診断へ分割した。反復中の対象不一致は引き続き新規開始を抑止して同じ対象を待ち、期限や試行数を延長しない。雪の公開例にはmatch_face:falseを含めた。
+
+Java 1,291件、harness 13件、admin bridge 21件、製品分離/buildが成功。全6面、既定strict、別座標/MISS/entity/非一致blockとstateの拒否、不適合hitでstateを読まないこと、横面での初回開始・対象消失待機・別面での復帰を回帰確認した。独立Codex CLIの静的レビューでブロッキング指摘なし。subagentsは使っていない。
+
+本追加版の実機面照合は未確認。利用者の指示により現行版での採掘は操作元タスクが担当し、実装タスクはゲームやJARを操作せず、導入可能な成果物まで準備する。CI、監査、実プロファイルへの導入状況はPR #35の対象SHA付き記録で追跡する。

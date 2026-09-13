@@ -14,6 +14,55 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class HoldBoundedInputsDslTest {
     @Test
+    void faceMatchingDefaultsToStrictAndOnlyAttackCanOptOut() {
+        for (boolean attack : List.of(false, true)) {
+            var json = repeating(attack, 20);
+            var node = json.getAsJsonObject("program").getAsJsonArray("body").get(0).getAsJsonObject();
+            var guard = node.getAsJsonObject("target_guard");
+            assertThat(((ActionDsl.HoldBoundedInputs) parse(json.toString()).program().body().getFirst())
+                    .targetGuard().orElseThrow().matchFace()).isTrue();
+            guard.addProperty("match_face", true);
+            ActionDslValidator.validate(parse(json.toString()));
+            guard.addProperty("match_face", false);
+            if (!attack) {
+                assertInvalid(json.toString());
+                continue;
+            }
+            var request = parse(json.toString());
+            ActionDslValidator.validate(request);
+            assertThat(((ActionDsl.HoldBoundedInputs) request.program().body().getFirst())
+                    .targetGuard().orElseThrow().matchFace()).isFalse();
+            node.addProperty("repeat_target", false);
+            json.getAsJsonObject("budget").addProperty("max_interactions", 1);
+            json.getAsJsonObject("budget").addProperty("max_blocks_broken", 1);
+            ActionDslValidator.validate(parse(json.toString()));
+            node.add("inputs", JsonParser.parseString("[\"sneak\",\"attack\"]"));
+            json.getAsJsonObject("program").add("capabilities", JsonParser.parseString("[\"block_break\",\"movement\"]"));
+            ActionDslValidator.validate(parse(json.toString()));
+        }
+    }
+
+    @Test
+    void faceOptOutDoesNotAllowNullFlagsMissingEvidenceOrMovementGuards() {
+        var json = repeating(true, 20);
+        var node = json.getAsJsonObject("program").getAsJsonArray("body").get(0).getAsJsonObject();
+        var guard = node.getAsJsonObject("target_guard");
+        for (String invalid : List.of("null", "0", "\"false\"", "{}")) {
+            guard.add("match_face", JsonParser.parseString(invalid));
+            assertInvalid(json.toString());
+        }
+        guard.addProperty("match_face", false);
+        guard.remove("face");
+        assertInvalid(json.toString());
+        guard.addProperty("face", "up");
+        guard.add("expected_state", com.google.gson.JsonNull.INSTANCE);
+        assertInvalid(json.toString());
+        guard.addProperty("expected_block", "minecraft:snow");
+        node.add("inputs", JsonParser.parseString("[\"sneak\"]"));
+        assertInvalid(json.toString());
+    }
+
+    @Test
     void strictDefaultRemainsCompatibleAndRepeatCostsReserveEveryStart() {
         var strict = (ActionDsl.HoldBoundedInputs) parse(guarded("[\"use\"]", 20))
                 .program().body().getFirst();

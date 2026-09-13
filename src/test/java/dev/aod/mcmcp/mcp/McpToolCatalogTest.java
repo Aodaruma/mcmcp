@@ -32,6 +32,42 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McpToolCatalogTest {
     @Test
+    void boundedFaceOptOutSchemaAcceptsOnlyAttackAndKeepsEvidenceRequired() {
+        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var request = schema.getAsJsonArray("examples").asList().stream().map(JsonElement::getAsJsonObject)
+                .filter(example -> example.getAsJsonObject("program").get("name").getAsString()
+                        .equals("repeat_attack_on_observed_snow")).findFirst().orElseThrow().deepCopy();
+        var node = request.getAsJsonObject("program").getAsJsonArray("body").get(0).getAsJsonObject();
+        var guard = node.getAsJsonObject("target_guard");
+        assertThat(guard.get("match_face").getAsBoolean()).isFalse();
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+        for (String inputs : List.of("[\"attack\"]", "[\"attack\",\"sneak\"]", "[\"sneak\",\"attack\"]")) {
+            node.add("inputs", JsonParser.parseString(inputs));
+            assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+        }
+        for (String inputs : List.of("[\"use\"]", "[\"attack\",\"use\"]", "[\"sneak\"]", "[\"attack\",\"forward\"]")) {
+            node.add("inputs", JsonParser.parseString(inputs));
+            assertThat(CatalogSchemaValidator.matches(schema, request)).isFalse();
+        }
+        node.add("inputs", JsonParser.parseString("[\"use\"]"));
+        guard.addProperty("match_face", true);
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+        guard.remove("match_face");
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+        node.add("inputs", JsonParser.parseString("[\"attack\"]"));
+        for (String value : List.of("null", "\"false\"", "0")) {
+            guard.add("match_face", JsonParser.parseString(value));
+            assertThat(CatalogSchemaValidator.matches(schema, request)).isFalse();
+        }
+        guard.addProperty("match_face", false);
+        for (String field : List.of("target", "face", "expected_state", "expected_block")) {
+            var saved = guard.remove(field);
+            assertThat(CatalogSchemaValidator.matches(schema, request)).isFalse();
+            guard.add(field, saved);
+        }
+    }
+
+    @Test
     void heldItemOutputIsNullableClosedAndBounded() {
         var state = new McpToolCatalog().outputSchema("agent_get_state");
         assertThat(state.getAsJsonArray("required").asList())

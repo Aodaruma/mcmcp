@@ -305,7 +305,7 @@ public final class ActionDslParser {
     private static ActionDsl.ExactBlockTargetGuard exactBlockTargetGuard(
             JsonElement value, String path) {
         JsonObject guard = rawObject(value, path);
-        Set<String> fields = Set.of("target", "face", "expected_state", "expected_block");
+        Set<String> fields = Set.of("target", "face", "expected_state", "expected_block", "match_face");
         exactKeys(guard, path, fields, Set.of("target", "face", "expected_state"));
         var state = guard.get("expected_state").isJsonNull() ? null
                 : blockStateSpec(guard.get("expected_state"), path + ".expected_state");
@@ -316,7 +316,7 @@ public final class ActionDslParser {
         return new ActionDsl.ExactBlockTargetGuard(
                 position(guard.get("target"), path + ".target"),
                 blockFace(string(guard.get("face"), path + ".face"), path + ".face"),
-                block, state);
+                block, state, !guard.has("match_face") || bool(guard.get("match_face"), path + ".match_face"));
     }
 
     private static ActionDsl.TillKnownBlock tillKnownBlock(JsonObject source, String path) {

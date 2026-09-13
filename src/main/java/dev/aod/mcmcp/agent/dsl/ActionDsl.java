@@ -212,12 +212,13 @@ public final class ActionDsl {
         }
     }
 
-    /** Exact live crosshair guard required by bounded attack/use input holds. */
+    /** Live block guard; only attack may explicitly opt out of matching the observed face. */
     public record ExactBlockTargetGuard(
             Position target,
             BlockFace face,
             String expectedBlock,
-            BlockStateSpec expectedState) {
+            BlockStateSpec expectedState,
+            boolean matchFace) {
         public ExactBlockTargetGuard {
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(face, "face");
@@ -225,7 +226,12 @@ public final class ActionDsl {
         }
 
         public ExactBlockTargetGuard(Position target, BlockFace face, BlockStateSpec expectedState) {
-            this(target, face, expectedState.block(), expectedState);
+            this(target, face, expectedState.block(), expectedState, true);
+        }
+
+        public ExactBlockTargetGuard(Position target, BlockFace face, String expectedBlock,
+                BlockStateSpec expectedState) {
+            this(target, face, expectedBlock, expectedState, true);
         }
 
         public boolean matches(String block, Map<String, String> properties) {
