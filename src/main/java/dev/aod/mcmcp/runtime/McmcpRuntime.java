@@ -1675,6 +1675,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             var player = minecraft.player;
             world = new LinkedHashMap<>();
             world.put("dimension", session.dimension());
+            world.put("session_id", session.worldSessionId().toString());
             world.put("client_tick", session.clientTick());
             world.put("world_revision", reconciliationSignals
                     .bindAndSnapshot(minecraft.level, session.worldSessionId())
