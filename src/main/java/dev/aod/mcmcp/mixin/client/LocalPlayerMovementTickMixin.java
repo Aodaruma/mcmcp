@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.mixin.client;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import dev.aod.mcmcp.agent.safety.AgentMovementTrace;
 import dev.aod.mcmcp.client.AgentInputState;
 import net.minecraft.client.player.LocalPlayer;
@@ -11,6 +13,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /** Promotes resolved movement to CONTACT only after a complete client-player tick. */
 @Mixin(LocalPlayer.class)
 abstract class LocalPlayerMovementTickMixin {
+    @WrapOperation(method = "aiStep()V",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;goDownInWater()V"),
+            require = 1, expect = 1)
+    private void mcmcp$trackAgentWaterSink(LocalPlayer player, Operation<Void> original) {
+        var before = player.getDeltaMovement();
+        original.call(player);
+        if (AgentInputState.global().goalMovementOutputActive()) {
+            AgentInputState.global().addAgentMoveContribution(player.getDeltaMovement().subtract(before));
+        }
+    }
+
     @Inject(method = "tick()V", at = @At("HEAD"), require = 1, expect = 1)
     private void mcmcp$beginAgentMovementTick(CallbackInfo callback) {
         var player = (LocalPlayer) (Object) this;

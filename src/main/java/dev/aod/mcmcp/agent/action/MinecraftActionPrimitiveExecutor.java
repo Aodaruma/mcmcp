@@ -164,7 +164,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         NavCell finalCell = state.route.cells().getLast();
         boolean waterRoute = state.route.edges().stream().anyMatch(e -> e.locomotion() == Locomotion.WATER)
                 || state.route.edges().isEmpty() && snapshot.edges().values().stream().anyMatch(e ->
-                        e.destination() && e.locomotion() == Locomotion.WATER && e.key().to().equals(finalCell));
+                        e.destination() && e.locomotion() == Locomotion.WATER
+                                && e.fluid() == TraversabilityEdge.Fluid.WATER && e.key().to().equals(finalCell));
         if (player.isInWater() && !waterRoute) {
             return finish(Status.REPLAN_REQUIRED, Reason.UNSUPPORTED_LOCOMOTION);
         }

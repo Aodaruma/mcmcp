@@ -12,7 +12,7 @@ function Invoke-McmcpWaterNavigationGate {
     $failure=$null;$release=$null;$finalWorld=$null
     try {
         Assert-FixedFiveToolSurface
-        foreach($goal in @(@(-2,61,5),@(-3,60,5),@(-4,59,5),@(-3,60,5),@(-2,61,5),@(-1,62,5))) {
+        foreach($goal in @(@(-2,61,5),@(-3,60,5),@(-4,59,5),@(-3,60,5),@(-2,61,5),@(-1,62,5),@(-1,62,5))) {
             $state=Get-FreshState
             $records=@(Get-RecordsFromState -State $state -Kinds @('traversability') -Filter $null)
             $record=@($records | Where-Object {
@@ -28,9 +28,11 @@ function Invoke-McmcpWaterNavigationGate {
                 -Capabilities @('movement') -Node $node -Distance 32 -Camera 0) -WallTimeoutSeconds 60
             $after=Get-FreshState
             $position=$after.world.position
+            Add-GateEvent -Event 'arrival_readback' -Detail @{target=$node.target;world=$after.world}
+            $readbackTolerance=0.25
             if($after.world.health -lt $state.world.health -or
-                [Math]::Abs($position.y-$goal[1]) -gt 0.25 -or
-                [Math]::Sqrt([Math]::Pow($position.x-$goal[0]-0.5,2)+[Math]::Pow($position.z-$goal[2]-0.5,2)) -gt 0.25){
+                [Math]::Abs($position.y-$goal[1]) -gt $readbackTolerance -or
+                [Math]::Sqrt([Math]::Pow($position.x-$goal[0]-0.5,2)+[Math]::Pow($position.z-$goal[2]-0.5,2)) -gt $readbackTolerance){
                 throw 'Water arrival or health mismatch'
             }
             $results.Add(@{target=$node.target;before=$state.world;after=$after.world;terminal=$terminal})
@@ -39,7 +41,7 @@ function Invoke-McmcpWaterNavigationGate {
         try {$release=Invoke-GateCleanup} catch {if($null -eq $failure){$failure=$_}}
         try {$finalWorld=(Get-FreshState).world} catch {if($null -eq $failure){$failure=$_}}
     }
-    $result=@{status=$(if($null -eq $failure -and $results.Count -eq 6){'passed'}else{'failed'})
+    $result=@{status=$(if($null -eq $failure -and $results.Count -eq 7){'passed'}else{'failed'})
         movements=@($results.ToArray());input_release=$release;final_world=$finalWorld
         failure=$(if($null -eq $failure){$null}else{$failure.Exception.Message})}
     [IO.File]::WriteAllLines((Join-Path $ArtifactDirectory 'water-events.jsonl'),

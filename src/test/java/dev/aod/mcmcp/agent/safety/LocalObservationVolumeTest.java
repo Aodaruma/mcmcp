@@ -31,10 +31,14 @@ class LocalObservationVolumeTest {
     void waterMovementAllowsDepthControlButRejectsDivergingDrift() {
         var start = new Point(-1.5, 64.9, -2.5);
         var target = new AgentInputState.NavigationIntent(new Vec3(-0.5, 65.9, -2.5), 1, Locomotion.WATER, 0.2);
-        assertThat(LocalObservationVolume.waterMovementTowardTarget(start, new Point(-1.4, 65, -2.5), target)).isTrue();
-        assertThat(LocalObservationVolume.waterMovementTowardTarget(start, new Point(-1.5, 65, -2.5), target)).isTrue();
-        assertThat(LocalObservationVolume.waterMovementTowardTarget(start, new Point(-1.7, 65, -2.5), target)).isFalse();
-        assertThat(LocalObservationVolume.waterMovementTowardTarget(start, new Point(-1.4, 64.7, -2.5), target)).isFalse();
+        assertThat(LocalObservationVolume.waterMovementTowardTarget(start, new Point(-1.4, 65, -2.5), target, 0.2)).isTrue();
+        assertThat(LocalObservationVolume.waterMovementTowardTarget(start, new Point(-1.5, 65, -2.5), target, 0.2)).isTrue();
+        assertThat(LocalObservationVolume.waterMovementTowardTarget(start, new Point(-1.7, 65, -2.5), target, 0.2)).isFalse();
+        assertThat(LocalObservationVolume.waterMovementTowardTarget(start, new Point(-1.4, 64.7, -2.5), target, 0.2)).isFalse();
+        var nearBank = new Point(-1.5, 65.85, -2.5);
+        assertThat(LocalObservationVolume.waterMovementTowardTarget(nearBank, new Point(-1.4, 66.5, -2.5), target, 0.2)).isFalse();
+        assertThat(LocalObservationVolume.waterMovementTowardTarget(nearBank, new Point(-1.4, 66.5, -2.5), target, 1.25)).isTrue();
+        assertThat(LocalObservationVolume.waterMovementTowardTarget(nearBank, new Point(-1.4, 67.5, -2.5), target, 1.25)).isFalse();
     }
 
     @Test

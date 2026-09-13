@@ -508,18 +508,26 @@ public final class LocalObservationVolume {
         if (intent.locomotion() == Locomotion.WATER) {
             var targetBox = start.move(intent.target().subtract(start.getCenter()));
             var end = start.move(resolved);
+            boolean bank = stableLanding(player, level, startPoint, targetBox)
+                    && !bouncySupport(level, player, targetBox);
+            boolean bankArc = bank && start.minY >= targetBox.minY - MOVEMENT_EPSILON
+                    && start.minY <= targetBox.minY + ONE_BLOCK_JUMP_APEX;
             if (!waterAtFeet(level, startPoint, start) && stableLanding(player, level, startPoint, start)
-                    && stableLanding(player, level, startPoint, targetBox)) {
+                    && bank) {
                 return goalIntendedMovementSafe(path)
-                        && waterMovementTowardTarget(startPoint, point(end.getCenter()), intent);
+                        && waterMovementTowardTarget(startPoint, point(end.getCenter()), intent, 0.20D);
             }
-            return waterTransitionSafe(player, level, startPoint, start, targetBox)
+            return (waterTransitionSafe(player, level, startPoint, start, targetBox)
+                            || bankArc && waterPathSafe(player, level, startPoint, start, targetBox))
                     && waterRegionsSafe(player, level, startPoint,
                             append(sweptRegions(SweptAabbPath.segments(start, intended, resolved)), end))
-                    && waterMovementTowardTarget(startPoint, point(end.getCenter()), intent)
+                    && waterMovementTowardTarget(startPoint, point(end.getCenter()), intent,
+                            bank ? ONE_BLOCK_JUMP_APEX : 0.20D)
                     && (waterAtFeet(level, startPoint, end) || stableLanding(player, level, startPoint, end)
+                            || bank && end.minY >= targetBox.minY - MOVEMENT_EPSILON
+                                    && end.minY <= targetBox.minY + ONE_BLOCK_JUMP_APEX
                             || (waterAtFeet(level, startPoint, targetBox)
-                                    || stableLanding(player, level, startPoint, targetBox))
+                                    || bank)
                                     && waterJustBelow(level, startPoint, end)
                             || resolved.y > MOVEMENT_EPSILON && targetBox.minY > start.minY
                                     && waterAtFeet(level, startPoint, start));
@@ -1139,6 +1147,11 @@ public final class LocalObservationVolume {
                 && !(waterJustBelow(level, origin, start) && landing)) return false;
         if (!waterAtFeet(level, origin, target) && !landing) return false;
         if (bouncySupport(level, player, target)) return false;
+        return waterPathSafe(player, level, origin, start, target);
+    }
+
+    private static boolean waterPathSafe(LocalPlayer player, ClientLevel level,
+            Point origin, AABB start, AABB target) {
         Vec3 delta = target.getCenter().subtract(start.getCenter());
         // Ascend before crossing a bank lip; descend only after clearing the bank.
         List<AABB> regions = delta.y > 0.0D
@@ -1161,13 +1174,13 @@ public final class LocalObservationVolume {
     }
 
     static boolean waterMovementTowardTarget(Point start, Point end,
-            AgentInputState.NavigationIntent intent) {
+            AgentInputState.NavigationIntent intent, double verticalTolerance) {
         double before = Math.hypot(start.x() - intent.target().x, start.z() - intent.target().z);
         double after = Math.hypot(end.x() - intent.target().x, end.z() - intent.target().z);
         double verticalBefore = Math.abs(start.y() - intent.target().y);
         double verticalAfter = Math.abs(end.y() - intent.target().y);
         return after <= Math.max(before, intent.horizontalTolerance()) + 0.04D
-                && verticalAfter <= Math.max(verticalBefore, 0.20D) + 0.04D;
+                && verticalAfter <= Math.max(verticalBefore, verticalTolerance) + 0.04D;
     }
 
     /**
