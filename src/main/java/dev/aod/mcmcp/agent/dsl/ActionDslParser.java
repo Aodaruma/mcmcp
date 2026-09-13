@@ -273,7 +273,7 @@ public final class ActionDslParser {
             JsonObject source, String path) {
         Set<String> fields = Set.of(
                 "id", "op", "inputs", "duration_ticks", "target_guard", "selected_item",
-                "repeat_target", "max_repetitions");
+                "repeat_target");
         exactKeys(source, path, fields, Set.of("id", "op", "inputs", "duration_ticks"));
         JsonArray rawInputs = array(source.get("inputs"), path + ".inputs");
         var inputs = new ArrayList<ActionDsl.BoundedInput>(rawInputs.size());
@@ -293,17 +293,13 @@ public final class ActionDslParser {
                 : Optional.of(string(rawItem, path + ".selected_item"));
         boolean repeatTarget = source.has("repeat_target")
                 && bool(source.get("repeat_target"), path + ".repeat_target");
-        if (source.has("max_repetitions") != repeatTarget) {
-            throw invalid(path + ".max_repetitions is required only with repeat_target:true");
-        }
         return new ActionDsl.HoldBoundedInputs(
                 string(source.get("id"), path + ".id"),
                 inputs,
                 longInteger(source.get("duration_ticks"), path + ".duration_ticks"),
                 guard,
                 selectedItem,
-                repeatTarget,
-                repeatTarget ? integer(source.get("max_repetitions"), path + ".max_repetitions") : 1);
+                repeatTarget);
     }
 
     private static ActionDsl.ExactBlockTargetGuard exactBlockTargetGuard(

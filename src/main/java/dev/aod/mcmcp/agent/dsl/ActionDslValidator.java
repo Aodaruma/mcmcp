@@ -34,7 +34,6 @@ public final class ActionDslValidator {
     public static final int MAX_KILL_ZONE_TICKS = 36_000;
     public static final int MAX_COBBLESTONE_GENERATOR_TICKS = 36_000;
     public static final long MAX_BOUNDED_INPUT_TICKS = 1_728_000L;
-    public static final int MAX_BOUNDED_INPUT_REPETITIONS = 64;
     public static final int MAX_KILL_ZONE_OPERATION_TICKS =
             MAX_KILL_ZONE_TICKS - ActionDslCompiler.KILL_ZONE_EFFECT_RESERVE_TICKS;
     public static final int MAX_FISHING_SOUND_WAIT_TICKS = 900;
@@ -207,10 +206,10 @@ public final class ActionDslValidator {
                 "budget.max_camera_degrees");
         requireRange(budget.maxInteractions(), 0,
                 killZoneOnly ? MAX_KILL_ZONE_ATTACKS
-                        : repeatingInputsOnly ? MAX_BOUNDED_INPUT_REPETITIONS : MAX_INTERACTIONS,
+                        : repeatingInputsOnly ? MAX_BOUNDED_INPUT_TICKS : MAX_INTERACTIONS,
                 "budget.max_interactions");
         requireRange(budget.maxBlocksBroken(), 0,
-                repeatingInputsOnly ? MAX_BOUNDED_INPUT_REPETITIONS : cobblestoneGeneratorOnly
+                repeatingInputsOnly ? MAX_BOUNDED_INPUT_TICKS : cobblestoneGeneratorOnly
                         ? MAX_COBBLESTONE_GENERATOR_BREAKS : MAX_BLOCKS_BROKEN,
                 "budget.max_blocks_broken");
         requireRange(budget.maxBlocksPlaced(), 0, MAX_BLOCKS_PLACED,
@@ -436,9 +435,6 @@ public final class ActionDslValidator {
                         + ".inputs cannot combine attack/use with movement or jump; sneak is allowed");
             }
             boolean needsGuard = attacks || uses;
-            requireRange(hold.maxRepetitions(), 1,
-                    hold.repeatTarget() ? MAX_BOUNDED_INPUT_REPETITIONS : 1,
-                    path + ".max_repetitions");
             if (hold.repeatTarget() && !needsGuard) {
                 throw invalid(path + ".repeat_target requires attack or use");
             }

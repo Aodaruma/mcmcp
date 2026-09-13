@@ -2,6 +2,8 @@
 
 Issue #34 / PR #35の有限長押しに、明示した反復モードを追加した。対象はMinecraft 26.2、NeoForge 26.2.0.59、Java 25。
 
+以下は `5587409` の初版記録。開始回数の制約は末尾の「時間指定への改修」で更新した。
+
 ## 動作と安全境界
 
 - `repeat_target` 省略・falseは従来の厳密停止。trueでは `max_repetitions:1..64` を必須とする。
@@ -43,3 +45,15 @@ Issue #34 / PR #35の有限長押しに、明示した反復モードを追加�
 14:59 JST の起動中 endpoint への接続診断で、`tools/list` の全 5 Tool がローカル catalog と完全一致し、`repeat_target` / `max_repetitions` の公開を確認した。実ログ内の MCMCP 関連エラー行は 0 件。公開 `agent_get_state` では OFF・Action 不在だった。診断でゲーム操作を送信していないため、反復採掘や継続 use の合格判定は引き続き未実施。
 
 再発防止として[導入ツール](../../tools/install/README.md)を追加した。既存の結果ファイルを上書きせず、製品の重複、稼働中 Java、転送された物理パス、相対パス、ハッシュ不一致を拒否する。PowerShell 7 と転送を継承しない Windows PowerShell 5.1 の両方で回帰試験 11 件成功。実際の転送された AppData の検査も拒否された。独立 Codex CLI の再レビューでブロッキング指摘なし。導入成功は前項の実機合格を意味しない。
+
+## 時間指定への改修
+
+利用者の雪半自動装置では、初版の10秒・200tick・64回上限のActionが `succeeded`、`interactions:34` となり、利用者も採掘を目視確認した。移動・視点変化は0、effectsは空のため破壊数・回収量は未確認。依頼元タスクからの報告で、Action IDは `36200134-8c74-4e65-9a14-d28ee446e605`。先行する8回上限の試験では `BUDGET_EXCEEDED` になった。利用者は時間まで継続する仕様を明示依頼した。
+
+`max_repetitions` fieldを廃止し、`repeat_target:true` と `duration_ticks` で継続する。1 client tickに最大1回の新規開始を認可し、compilerは `duration_ticks` 回のinteractionと、attackでは同数の破壊枠を予約する。時間分に満たない要求budgetやlocal hard limitは実行前に拒否する。開始回数64や記録側2,048による時間前の停止をなくし、最大24時間の記録を保持できる。待機・継続・cooldownでは試行数を増やさず、effects・破壊数を捏造しない。通常Action、kill-zone、effect sequenceの既存上限は維持する。
+
+target guard、開始済みuseの継続、時間・tick期限、simulation pause、Esc/OFF/cancel/world変更・入力解放の経路は維持した。独立Codex CLIへ差分と関連実装を渡した静的レビューでブロッキング指摘なし。旧fieldはschema/DSLの双方で拒否し、catalog、利用例、ガイド、固定hashを同期した。
+
+検証は main test 1,275件、harness 13件、admin bridge 21件が成功し、製品JAR分離とbuildも成功。4,096回のruntime開始と同tick内の二重開始拒否、24時間分1,728,000回の会計、完全な時間予算、local hard limitと通常Actionへの上限漏出防止を確認した。Python transport 14件、capability mock 11組も成功。
+
+15:33 JST、Minecraft停止中に指定実プロファイルの製品1本を置換した。物理パスと導入後SHA-256 `54be15f3acbda749d27e487ec540d10b7b5eb2099928244ded316c15a7bbdda5` がビルド成果物と一致。追加バックアップは作成していない。この版の再起動後の読込みと64回を超える実機継続は確認待ちとし、`release:verification-needed`を維持する。

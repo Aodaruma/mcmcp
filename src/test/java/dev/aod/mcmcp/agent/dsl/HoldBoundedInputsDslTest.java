@@ -18,34 +18,32 @@ class HoldBoundedInputsDslTest {
         var strict = (ActionDsl.HoldBoundedInputs) parse(guarded("[\"use\"]", 20))
                 .program().body().getFirst();
         assertThat(strict.repeatTarget()).isFalse();
-        assertThat(strict.maxRepetitions()).isEqualTo(1);
         for (boolean attack : List.of(false, true)) {
-            var json = repeating(attack, 64);
+            var json = repeating(attack, 1_728_000);
             var request = parse(json.toString());
             var capability = attack ? ActionDsl.Capability.BLOCK_BREAK : ActionDsl.Capability.ITEM_USE;
             var cost = ActionDslCompiler.compile(request, ignored -> Optional.empty(), Set.of(capability))
                     .worstCaseCost();
-            assertThat(cost).isEqualTo(new ActionDslCompiler.Cost(1000, 20, 0, 0, 64, attack ? 64 : 0, 0));
+            assertThat(cost).isEqualTo(new ActionDslCompiler.Cost(
+                    86_400_000, 1_728_000, 0, 0, 1_728_000, attack ? 1_728_000 : 0, 0));
         }
     }
 
     @Test
-    void repetitionNeedsExplicitFiniteLimitAndTargetedInputs() {
-        var json = repeating(false, 1);
+    void repetitionNeedsFiniteTimeAndTargetedInputsAndRejectsTheRemovedCountField() {
+        var json = repeating(false, 20);
         var node = json.getAsJsonObject("program").getAsJsonArray("body").get(0).getAsJsonObject();
-        node.remove("max_repetitions");
-        assertInvalid(json.toString());
-        for (int limit : List.of(0, 65)) {
+        for (int limit : List.of(0, 64, 65)) {
             node.addProperty("max_repetitions", limit);
             assertInvalid(json.toString());
         }
-        node.addProperty("max_repetitions", 1);
-        node.addProperty("repeat_target", false);
+        node.remove("max_repetitions");
+        node.remove("duration_ticks");
         assertInvalid(json.toString());
-        node.remove("repeat_target");
+        node.addProperty("duration_ticks", 1_728_001);
         assertInvalid(json.toString());
         assertInvalid(movement("[\"sneak\"]", 20).replace(
-                "\"duration_ticks\":20", "\"duration_ticks\":20,\"repeat_target\":true,\"max_repetitions\":1"));
+                "\"duration_ticks\":20", "\"duration_ticks\":20,\"repeat_target\":true"));
     }
 
     @Test
@@ -62,17 +60,32 @@ class HoldBoundedInputsDslTest {
                 .isInstanceOf(ActionDslException.class);
     }
 
-    private static JsonObject repeating(boolean attack, int count) {
-        var json = JsonParser.parseString(guarded(attack ? "[\"attack\"]" : "[\"use\"]", 20))
+    @Test
+    void expandedCountBudgetsDoNotApplyToOtherActionsOrBypassALocalHardLimit() {
+        var json = repeating(true, 4096);
+        var request = parse(json.toString());
+        var hardLimit = new ActionDsl.Budget(204_800, 4096, 0, 0, 64, 64, 0);
+        assertThatThrownBy(() -> ActionDslCompiler.compile(request, ignored -> Optional.empty(),
+                Set.of(ActionDsl.Capability.BLOCK_BREAK), hardLimit))
+                .isInstanceOf(ActionDslException.class);
+        json.getAsJsonObject("program").getAsJsonArray("body").get(0).getAsJsonObject()
+                .remove("repeat_target");
+        assertInvalid(json.toString());
+        json.getAsJsonObject("program").add("body", JsonParser.parseString(
+                "[{\"id\":\"wait\",\"op\":\"wait_ticks\",\"ticks\":20}]"));
+        assertInvalid(json.toString());
+    }
+
+    private static JsonObject repeating(boolean attack, int ticks) {
+        var json = JsonParser.parseString(guarded(attack ? "[\"attack\"]" : "[\"use\"]", ticks))
                 .getAsJsonObject();
         var program = json.getAsJsonObject("program");
         program.add("capabilities", JsonParser.parseString(attack ? "[\"block_break\"]" : "[\"item_use\"]"));
         var node = program.getAsJsonArray("body").get(0).getAsJsonObject();
         node.addProperty("repeat_target", true);
-        node.addProperty("max_repetitions", count);
         var budget = json.getAsJsonObject("budget");
-        budget.addProperty("max_interactions", count);
-        budget.addProperty("max_blocks_broken", attack ? count : 0);
+        budget.addProperty("max_interactions", ticks);
+        budget.addProperty("max_blocks_broken", attack ? ticks : 0);
         budget.addProperty("max_distance_blocks", 0);
         return json;
     }

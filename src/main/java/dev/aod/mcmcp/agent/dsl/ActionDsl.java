@@ -198,8 +198,7 @@ public final class ActionDsl {
             long durationTicks,
             Optional<ExactBlockTargetGuard> targetGuard,
             Optional<String> selectedItem,
-            boolean repeatTarget,
-            int maxRepetitions) implements Node {
+            boolean repeatTarget) implements Node {
         public HoldBoundedInputs {
             Objects.requireNonNull(id, "id");
             inputs = List.copyOf(Objects.requireNonNull(inputs, "inputs"));
@@ -209,7 +208,7 @@ public final class ActionDsl {
 
         public HoldBoundedInputs(String id, List<BoundedInput> inputs, long durationTicks,
                 Optional<ExactBlockTargetGuard> targetGuard, Optional<String> selectedItem) {
-            this(id, inputs, durationTicks, targetGuard, selectedItem, false, 1);
+            this(id, inputs, durationTicks, targetGuard, selectedItem, false);
         }
     }
 

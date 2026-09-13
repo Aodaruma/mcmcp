@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McpToolCatalogTest {
     @Test
-    void repeatHoldSchemaRequiresOptInAndFiniteStartBudget() {
+    void repeatHoldSchemaUsesFiniteTimeWithoutARepetitionCountField() {
         var schema = new McpToolCatalog().inputSchema("agent_start_action");
         var request = schema.getAsJsonArray("examples").asList().stream()
                 .map(JsonElement::getAsJsonObject)
@@ -43,23 +43,24 @@ class McpToolCatalogTest {
         // The lightweight validator does not interpret if/then/not; the DSL parser enforces these.
         var condition = schema.getAsJsonObject("$defs").getAsJsonObject("holdBoundedInputsNode")
                 .getAsJsonArray("allOf").get(1).getAsJsonObject();
-        assertThat(condition.getAsJsonObject("then").getAsJsonArray("required").toString())
-                .isEqualTo("[\"max_repetitions\"]");
-        assertThat(condition.getAsJsonObject("else").getAsJsonObject("not")
-                .getAsJsonArray("required").toString()).isEqualTo("[\"max_repetitions\"]");
-        for (int count : List.of(0, 65)) {
+        assertThat(condition.getAsJsonObject("then").getAsJsonObject("properties")
+                .getAsJsonObject("inputs").getAsJsonObject("contains")
+                .getAsJsonArray("enum").toString()).isEqualTo("[\"attack\",\"use\"]");
+        assertThat(node.has("max_repetitions")).isFalse();
+        for (int count : List.of(0, 64, 65)) {
             node.addProperty("max_repetitions", count);
             assertThat(CatalogSchemaValidator.matches(schema, request)).isFalse();
         }
-        node.addProperty("max_repetitions", 8);
-        node.addProperty("repeat_target", false);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                dev.aod.mcmcp.agent.dsl.ActionDslParser.parse(request))
-                .isInstanceOf(dev.aod.mcmcp.agent.dsl.ActionDslException.class);
-        node.remove("repeat_target");
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                dev.aod.mcmcp.agent.dsl.ActionDslParser.parse(request))
-                .isInstanceOf(dev.aod.mcmcp.agent.dsl.ActionDslException.class);
+        node.remove("max_repetitions");
+        node.addProperty("duration_ticks", 1_728_000);
+        request.getAsJsonObject("budget").addProperty("max_ticks", 1_728_000);
+        request.getAsJsonObject("budget").addProperty("max_duration_ms", 86_400_000);
+        request.getAsJsonObject("budget").addProperty("max_interactions", 1_728_000);
+        request.getAsJsonObject("budget").addProperty("max_blocks_broken", 1_728_000);
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+        var parsed = dev.aod.mcmcp.agent.dsl.ActionDslParser.parse(request);
+        assertThat(ActionDslCompiler.compile(parsed, ignored -> java.util.Optional.empty(),
+                parsed.program().capabilities()).worstCaseCost().interactions()).isEqualTo(1_728_000);
         node.addProperty("repeat_target", true);
         node.add("inputs", JsonParser.parseString("[\"sneak\"]"));
         node.remove("target_guard");
@@ -973,7 +974,7 @@ class McpToolCatalogTest {
 
         assertThat(schema.getAsJsonObject("properties").getAsJsonObject("budget")
                 .getAsJsonObject("properties").getAsJsonObject("max_interactions")
-                .get("maximum").getAsInt()).isEqualTo(2_048);
+                .get("maximum").getAsInt()).isEqualTo(AgentActionStore.MAX_RECORDED_INTERACTIONS);
         var state = catalog.outputSchema("agent_get_state");
         assertThat(state.getAsJsonObject("properties").getAsJsonObject("policy")
                 .getAsJsonObject("properties").getAsJsonObject("max_interactions")
@@ -1014,7 +1015,7 @@ class McpToolCatalogTest {
         assertThat(catalog.outputSchema("agent_get_action")
                 .getAsJsonObject("properties").getAsJsonObject("progress")
                 .getAsJsonObject("properties").getAsJsonObject("interactions")
-                .get("maximum").getAsInt()).isEqualTo(2_048);
+                .get("maximum").getAsInt()).isEqualTo(AgentActionStore.MAX_RECORDED_INTERACTIONS);
         var actionOutput = catalog.outputSchema("agent_get_action");
         assertThat(actionOutput.getAsJsonObject("properties")
                 .getAsJsonObject("effect_aggregate")

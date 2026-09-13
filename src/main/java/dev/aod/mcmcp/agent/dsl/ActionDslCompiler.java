@@ -24,8 +24,8 @@ public final class ActionDslCompiler {
             ActionDslValidator.MAX_BOUNDED_INPUT_TICKS,
             NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
             ActionDslValidator.MAX_ACTION_CAMERA_DEGREES,
-            ActionDslValidator.MAX_KILL_ZONE_ATTACKS,
-            ActionDslValidator.MAX_COBBLESTONE_GENERATOR_BREAKS,
+            ActionDslValidator.MAX_BOUNDED_INPUT_TICKS,
+            ActionDslValidator.MAX_BOUNDED_INPUT_TICKS,
             ActionDslValidator.MAX_BLOCKS_PLACED);
     private static final long NOMINAL_TICK_MILLIS = 50;
     private static final long BLOCK_PLAN_TICKS_PER_ENTRY = 300;
@@ -369,8 +369,8 @@ public final class ActionDslCompiler {
                 ticks,
                 movement ? NavigationDistanceBudget.MAX_DISTANCE_BLOCKS : 0.0D,
                 0.0D,
-                hold.repeatTarget() ? hold.maxRepetitions() : use ? 1L : 0L,
-                attack ? hold.maxRepetitions() : 0L,
+                hold.repeatTarget() ? ticks : use ? 1L : 0L,
+                attack ? hold.repeatTarget() ? ticks : 1L : 0L,
                 0L);
     }
 

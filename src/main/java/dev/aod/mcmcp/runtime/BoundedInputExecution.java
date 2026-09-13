@@ -27,6 +27,7 @@ final class BoundedInputExecution {
     private final ScreenOwnershipSignals screenOwnership;
     private final AgentActionStore agentActions;
     private Hold boundedInputHold;
+    private long lastInputStartTick = -1L;
 
     BoundedInputExecution(Object playerIdentity, UUID worldSessionId,
             ScreenOwnershipSignals screenOwnership, AgentActionStore agentActions) {
@@ -48,7 +49,7 @@ final class BoundedInputExecution {
         var progress = agentActions.get(action.actionId()).progress();
         if (boundedInputHold != null && AgentInputState.global().boundedBudgetExhausted()) {
             return PrimitiveOutcome.failed(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false,
-                    "bounded_input_repetition_budget");
+                    "bounded_input_start_budget");
         }
         if (boundedInputHold != null && AgentInputState.global().boundedDispatchRejected()) {
             return PrimitiveOutcome.failed(AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
@@ -224,13 +225,16 @@ final class BoundedInputExecution {
     boolean reserveInputStart(AgentActionStore.Active action, ActionDsl.HoldBoundedInputs hold) {
         var budget = action.program().effectiveBudget();
         var progress = agentActions.get(action.actionId()).progress();
-        // The hold is the sole node; its interaction ledger is also its start counter.
-        if (progress.interactions() >= hold.maxRepetitions()
+        // At most one start per client tick proves a duration-derived reservation, even
+        // if another hook unexpectedly invokes the Vanilla start twice in that tick.
+        if (progress.ticks() <= lastInputStartTick
+                || progress.interactions() >= hold.durationTicks()
                 || progress.interactions() >= budget.maxInteractions()
                 || hold.inputs().contains(ActionDsl.BoundedInput.ATTACK)
                         && progress.interactions() >= budget.maxBlocksBroken()) return false;
         // Starts are conservative attempts, not confirmed breaks or inventory effects.
         agentActions.recordInteraction(action.actionId());
+        lastInputStartTick = progress.ticks();
         return true;
     }
 
