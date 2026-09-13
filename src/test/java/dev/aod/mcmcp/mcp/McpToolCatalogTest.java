@@ -32,6 +32,38 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McpToolCatalogTest {
     @Test
+    void heldItemOutputIsNullableClosedAndBounded() {
+        var state = new McpToolCatalog().outputSchema("agent_get_state");
+        assertThat(state.getAsJsonArray("required").asList())
+                .contains(new com.google.gson.JsonPrimitive("held_items"));
+        var schema = state.getAsJsonObject("$defs").getAsJsonObject("held_item");
+        var item = JsonParser.parseString("""
+                {"item":"minecraft:diamond_shovel","count":1,"tooltip_hidden":false,
+                 "display_name":"aod shovel","durability":{"damage":194,"maximum":1561,"remaining":1367},
+                 "unbreakable":null,"enchantments":[{"enchantment":"minecraft:efficiency","level":5}],
+                 "attribute_modifiers":[{"attribute":"minecraft:mining_efficiency","amount":26,"operation":"add_value"}],
+                 "truncated":false}
+                """).getAsJsonObject();
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isTrue();
+        item.addProperty("custom_nbt", "private");
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isFalse();
+        item.remove("custom_nbt");
+        item.addProperty("item", "test:" + "a".repeat(256));
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isFalse();
+        item.add("item", com.google.gson.JsonNull.INSTANCE);
+        item.addProperty("truncated", true);
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isTrue();
+        item.addProperty("display_name", "a".repeat(257));
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isFalse();
+        for (String field : List.of("display_name", "durability", "unbreakable", "enchantments", "attribute_modifiers")) {
+            item.add(field, com.google.gson.JsonNull.INSTANCE);
+        }
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isTrue();
+        item.remove("durability");
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isFalse();
+    }
+
+    @Test
     void repeatHoldSchemaUsesFiniteTimeWithoutARepetitionCountField() {
         var schema = new McpToolCatalog().inputSchema("agent_start_action");
         var request = schema.getAsJsonArray("examples").asList().stream()

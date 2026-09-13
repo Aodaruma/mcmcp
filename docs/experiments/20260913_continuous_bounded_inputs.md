@@ -57,3 +57,14 @@ target guard、開始済みuseの継続、時間・tick期限、simulation pause
 検証は main test 1,275件、harness 13件、admin bridge 21件が成功し、製品JAR分離とbuildも成功。4,096回のruntime開始と同tick内の二重開始拒否、24時間分1,728,000回の会計、完全な時間予算、local hard limitと通常Actionへの上限漏出防止を確認した。Python transport 14件、capability mock 11組も成功。
 
 15:33 JST、Minecraft停止中に指定実プロファイルの製品1本を置換した。物理パスと導入後SHA-256 `54be15f3acbda749d27e487ec540d10b7b5eb2099928244ded316c15a7bbdda5` がビルド成果物と一致。追加バックアップは作成していない。この版の再起動後の読込みと64回を超える実機継続は確認待ちとし、`release:verification-needed`を維持する。
+
+
+## 時間指定版の実機追確認と手持ち情報
+
+15:38 JST、起動中endpointの全5 Toolが時間指定版のcatalogと完全一致し、`max_repetitions` 不在を確認した。操作元タスクから60秒・1,200tickのAction `fad6dd73-c997-4dbf-b295-a97afa31e2ed` が成功し、`interactions:226`、位置・視点変化なしとの報告を受けた。64回を超える入力継続を確認したが、この数は入力開始の試行数であり、破壊数や回収量の証明ではない。
+
+同タスクから利用者の依頼として、手持ちの表示名・残耐久・エンチャント等を公開Toolから取得する追加対応を受けた。`agent_get_state.held_items` を追加し、選択slotと両手の個体を区別する。報告された「aod shovel」、残耐久1,367/1,561、Efficiency V / Unbreaking III / Mending、採掘効率+26を単体fixtureへ使った。これは報告時点の例であり、追加版の実機読取り結果ではない。
+
+初回独立レビューが指摘した最終tooltip eventによる非表示と長いitem IDへの対応を追加した。標準componentだけでなく最終advanced tooltipと照合し、非表示・置換・取得失敗・数値丸め・player基礎値の合算を公開根拠に使わない。新しい公開情報の実機読取りは導入後に別途確認する。
+
+追加版はJava 1,285件、harness 13件、admin bridge 21件と製品JAR分離/buildが成功。Python transport 14件、capability mock 11組も成功した。最終表示のスロット区分を照合し、同一表示が複数区分にある属性は省略する回帰も追加。独立Codex CLIの再レビューでブロッキング指摘なし。

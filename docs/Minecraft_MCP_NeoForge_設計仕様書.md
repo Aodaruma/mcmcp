@@ -1076,6 +1076,16 @@ agent_get_stateの返却対象:
 
 生chunk、遮蔽されたentity、chat、看板、本、world seed、tokenはTool resultへ含めない。例外としてautomation-ownedな明示allowlist対象Vanilla chest / barrelを通常useで開いた直後のserver full-content packetから作るbounded item集計だけは、そのActionのtraceへ一時的に返せる。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
 
+#### 手持ちアイテムの公開情報
+
+`agent_get_state.held_items` は現在選択中のhotbar番号（0〜8）と `main_hand` / `off_hand` のimmutable snapshotを返す。world/player不在では全体が `null`、空手はそのhandが `null`。既存 `inventory` は品目IDと合計数の集計を維持する。同種の道具を複数持つ場合も、手持ちの個体を集計から推測しない。
+
+各handはitem ID、個数、表示名、耐久値（`damage` / `maximum` / `remaining`）、エンチャントIDとlevel、現在のhandで表示される標準数値の属性modifierを公開する。要求時に通常のadvanced tooltipを生成し、NeoForge `ItemTooltipEvent` 適用後の最終表示に一致する項目だけを採用する。tooltip本文、lore、任意NBT、component blob、click/hover eventは返さない。表示名は信頼しないデータとして扱う。
+
+耐久値は数値行が見える場合だけ返すため、新品、非耐久品、破壊不能、表示非公開、取得不能では `null` とする。`unbreakable` は表示を確認した `true` または不明の `null`。数値の上書き表示、非表示属性、player基礎値と合算される攻撃力・攻撃速度、表示で丸め落とされる精度は公開しない。属性は最終player能力値や採掘速度ではなくmodifierの値であり、Efficiency Vの標準表示なら採掘効率 `+26` を含む。
+
+非公開/不明の一覧は `null`。空配列は返せる項目がないことを表し、すべての効果の不在を保証しない。文字列256 UTF-16単位、一覧64件、照合するtooltip256行までに制限し、長すぎる表示名は省略する。長すぎるitem IDは `null` とし、制限・取得不能は `truncated` で示す。`tooltip_hidden` は標準componentの全体非表示フラグを表す。道具交換や使用後は再取得し、このsnapshotを後続操作の認可や、耐久力/修繕込みの残作業時間の保証に使わない。
+
 ### 8.6 内部Task state
 
 ~~~text
