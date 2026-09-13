@@ -96,6 +96,7 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 | RecoveryPlanning | 回復候補、回復期限、下降追跡 |
 | ConstructionRequests / InventoryRequests | 計画済み証拠から実行portの要求を構築 |
 | PlayerInventoryEvidence | inventory・釣り・pickupの局所的な読み取り |
+| HeldItemView | 選択hotbarと両手の表示名・耐久・公開enchantment/attributeのimmutableな投影 |
 | ActionWireMapper | 状態・Action・menuの結果をMCP応答へ変換 |
 | RuntimeArguments / RuntimeFailures | 型・値の検証、固定の公開失敗への変換 |
 | RoutineArguments / RoutineIdentity / RoutineCatalog | 既存の内部routine互換経路の要求・同一性・一覧 |

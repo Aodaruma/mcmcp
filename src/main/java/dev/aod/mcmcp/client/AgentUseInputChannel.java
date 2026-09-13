@@ -18,13 +18,15 @@ public final class AgentUseInputChannel {
         if (!minecraft.isSameThread()) {
             throw new IllegalStateException("agent use input must run on the client thread");
         }
-        if (!inputState.useActive() || minecraft.player == null || minecraft.level == null
+        if (!inputState.useActive() || !inputState.allowsBoundedDispatch()
+                || minecraft.player == null || minecraft.level == null
                 || minecraft.gameMode == null || !AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 || minecraft.gui.overlay() != null) {
             return;
         }
         MinecraftUseItemInvoker accessor = (MinecraftUseItemInvoker) minecraft;
-        if (accessor.mcmcp$getRightClickDelay() == 0 && !minecraft.player.isUsingItem()) {
+        if (accessor.mcmcp$getRightClickDelay() == 0 && !minecraft.player.isUsingItem()
+                && inputState.beginBoundedInput()) {
             accessor.mcmcp$startUseItem();
         }
     }

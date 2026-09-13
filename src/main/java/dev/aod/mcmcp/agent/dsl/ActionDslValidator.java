@@ -128,7 +128,8 @@ public final class ActionDslValidator {
         boolean boundedInputsOnly = program.body().size() == 1
                 && program.body().getFirst() instanceof ActionDsl.HoldBoundedInputs;
         validateRequestBudget(
-                request.budget(), killZoneOnly, cobblestoneGeneratorOnly, boundedInputsOnly);
+                request.budget(), killZoneOnly, cobblestoneGeneratorOnly, boundedInputsOnly,
+                boundedInputsOnly && ((ActionDsl.HoldBoundedInputs) program.body().getFirst()).repeatTarget());
 
         if (program.body().isEmpty() || program.body().size() > MAX_TOP_LEVEL_NODES) {
             throw invalid("program.body must contain 1.." + MAX_TOP_LEVEL_NODES + " nodes");
@@ -177,14 +178,15 @@ public final class ActionDslValidator {
     }
 
     static void validateRequestBudget(ActionDsl.Budget budget) {
-        validateRequestBudget(budget, false, false, false);
+        validateRequestBudget(budget, false, false, false, false);
     }
 
     private static void validateRequestBudget(
             ActionDsl.Budget budget,
             boolean killZoneOnly,
             boolean cobblestoneGeneratorOnly,
-            boolean boundedInputsOnly) {
+            boolean boundedInputsOnly,
+            boolean repeatingInputsOnly) {
         Objects.requireNonNull(budget, "budget");
         boolean longRunningOnly = killZoneOnly || cobblestoneGeneratorOnly;
         requireRange(budget.maxDurationMillis(), 100,
@@ -203,10 +205,11 @@ public final class ActionDslValidator {
                 budget.maxCameraDegrees(), 0, MAX_ACTION_CAMERA_DEGREES,
                 "budget.max_camera_degrees");
         requireRange(budget.maxInteractions(), 0,
-                killZoneOnly ? MAX_KILL_ZONE_ATTACKS : MAX_INTERACTIONS,
+                killZoneOnly ? MAX_KILL_ZONE_ATTACKS
+                        : repeatingInputsOnly ? MAX_BOUNDED_INPUT_TICKS : MAX_INTERACTIONS,
                 "budget.max_interactions");
         requireRange(budget.maxBlocksBroken(), 0,
-                cobblestoneGeneratorOnly
+                repeatingInputsOnly ? MAX_BOUNDED_INPUT_TICKS : cobblestoneGeneratorOnly
                         ? MAX_COBBLESTONE_GENERATOR_BREAKS : MAX_BLOCKS_BROKEN,
                 "budget.max_blocks_broken");
         requireRange(budget.maxBlocksPlaced(), 0, MAX_BLOCKS_PLACED,
@@ -432,6 +435,9 @@ public final class ActionDslValidator {
                         + ".inputs cannot combine attack/use with movement or jump; sneak is allowed");
             }
             boolean needsGuard = attacks || uses;
+            if (hold.repeatTarget() && !needsGuard) {
+                throw invalid(path + ".repeat_target requires attack or use");
+            }
             if (hold.targetGuard().isPresent() != needsGuard
                     || hold.selectedItem().isPresent() != needsGuard) {
                 throw invalid(path
@@ -439,8 +445,21 @@ public final class ActionDslValidator {
             }
             if (needsGuard) {
                 ActionDsl.ExactBlockTargetGuard guard = hold.targetGuard().orElseThrow();
+                if (!guard.matchFace() && !attacks) {
+                    throw invalid(path + ".target_guard.match_face=false requires attack; use requires face matching");
+                }
                 validatePosition(guard.target(), path + ".target_guard.target");
-                validateBlockState(guard.expectedState(), path + ".target_guard.expected_state");
+                requireResourceLocation(guard.expectedBlock(), path + ".target_guard.expected_block");
+                if (Set.of("minecraft:air", "minecraft:cave_air", "minecraft:void_air")
+                        .contains(guard.expectedBlock())) {
+                    throw invalid(path + ".target_guard cannot target air");
+                }
+                if (guard.expectedState() != null) {
+                    validateBlockState(guard.expectedState(), path + ".target_guard.expected_state");
+                    if (!guard.expectedBlock().equals(guard.expectedState().block())) {
+                        throw invalid(path + ".target_guard block and state must agree");
+                    }
+                }
                 requireResourceLocation(hold.selectedItem().orElseThrow(),
                         path + ".selected_item");
             }

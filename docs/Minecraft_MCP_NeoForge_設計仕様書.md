@@ -1076,6 +1076,16 @@ agent_get_stateの返却対象:
 
 生chunk、遮蔽されたentity、chat、看板、本、world seed、tokenはTool resultへ含めない。例外としてautomation-ownedな明示allowlist対象Vanilla chest / barrelを通常useで開いた直後のserver full-content packetから作るbounded item集計だけは、そのActionのtraceへ一時的に返せる。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
 
+#### 手持ちアイテムの公開情報
+
+`agent_get_state.held_items` は現在選択中のhotbar番号（0〜8）と `main_hand` / `off_hand` のimmutable snapshotを返す。world/player不在では全体が `null`、空手はそのhandが `null`。既存 `inventory` は品目IDと合計数の集計を維持する。同種の道具を複数持つ場合も、手持ちの個体を集計から推測しない。
+
+各handはitem ID、個数、表示名、耐久値（`damage` / `maximum` / `remaining`）、エンチャントIDとlevel、現在のhandで表示される標準数値の属性modifierを公開する。要求時に通常のadvanced tooltipを生成し、NeoForge `ItemTooltipEvent` 適用後の最終表示に一致する項目だけを採用する。tooltip本文、lore、任意NBT、component blob、click/hover eventは返さない。表示名は信頼しないデータとして扱う。
+
+耐久値は数値行が見える場合だけ返すため、新品、非耐久品、破壊不能、表示非公開、取得不能では `null` とする。`unbreakable` は表示を確認した `true` または不明の `null`。数値の上書き表示、非表示属性、player基礎値と合算される攻撃力・攻撃速度、表示で丸め落とされる精度は公開しない。属性は最終player能力値や採掘速度ではなくmodifierの値であり、Efficiency Vの標準表示なら採掘効率 `+26` を含む。
+
+非公開/不明の一覧は `null`。空配列は返せる項目がないことを表し、すべての効果の不在を保証しない。文字列256 UTF-16単位、一覧64件、照合するtooltip256行までに制限し、長すぎる表示名は省略する。長すぎるitem IDは `null` とし、制限・取得不能は `truncated` で示す。`tooltip_hidden` は標準componentの全体非表示フラグを表す。道具交換や使用後は再取得し、このsnapshotを後続操作の認可や、耐久力/修繕込みの残作業時間の保証に使わない。
+
 ### 8.6 内部Task state
 
 ~~~text
@@ -2030,3 +2040,34 @@ repository作成直前に、選択したowner配下で`mcmcp`が作成可能か�
 ### チャットから期待したコンテナへの画面遷移
 
 NeoForge 26.2の画面切替は新画面のOpeningの後に旧画面のClosingを通知する。通常操作を許可する非pause ChatScreenから、正確なOpenScreen packetに対応したmenuへ切り替わる場合だけ、EXPECTING_FULL_CONTENTへ進んだ同じclient tick内の旧chatのClosingを1回許可する。所有権は同じsession・container ID・menu typeのfull-content packet確認後に限る。期待前・別tick・重複のchat閉鎖、所有済みコンテナの予期しない閉鎖、別menuのopenは引き続き停止する。
+
+
+## 対象の再生成を待つ有限長押し
+
+`hold_bounded_inputs` は有限時間だけ入力を保持します。`target_guard` の座標・面は最新の配送済み観測からコピーし、`expected_state` は省略しません。完全stateがあればそのまま指定し、`state:null` なら `expected_state:null` と観測のblockをコピーした `expected_block` を指定します。両方にblock IDがある場合は一致が必須です。非公開propertyを推測する必要はありません。
+
+`target_guard.match_face` の既定は `true` で、観測面と実際のcrosshair面も一致させます。雪の採掘などでは `match_face:false` を明示すると、同じ座標・blockへ実際に当たった別の面を許可できます。`face` は観測記録の値として引き続き必須です。許可する入力は `attack` または `attack` と `sneak` の組合せだけで、面により効果が変わる `use` ではfalseを拒否します。通常reach、実BLOCK hit、loaded/world border、手持ち、静止・安全条件、非null時の完全state一致は維持します。実際に当たった面をVanillaへ渡し、照準や面を合成しません。
+
+既定の `repeat_target:false` は厳密停止です。現在のcrosshairが座標・block・指定state（`match_face:true` では面も）から外れると拒否を保持し、同じAction内では再開しません。
+
+`repeat_target:true` と有限の `duration_ticks` を明示すると、同じActionの中で対象の再生成を待てます。対象消失、MISS、entity、別の座標・block・state（`match_face:true` では別の面も）への照準中は新しい採掘・使用を出さず、同じ対象条件が戻ると再開します。照準を自動で動かしません。開始済みの弓・飲食等の使用は一時的な対象不一致だけでは解除せず、次の使用開始には改めて一致を要求します。
+
+回数指定の `max_repetitions` は廃止しました。反復モードでは1 client tickにつき最大1回の新規開始とし、`duration_ticks` から必要な試行枠を算出します。`budget.max_interactions` と、attackでは `budget.max_blocks_broken` に、それぞれ `duration_ticks` 以上を指定してください。時間分に満たない予算は実行前に拒否し、受理したActionを64回・2,048回など時間と独立した回数上限で打ち切りません。最大時間は1,728,000tick・86,400,000ms（24時間）です。通常のVanilla採掘・使用の新規開始ごとに1 interactionを記録し、継続・cooldown・待機tickは追加消費しません。同一tickの重複開始や予算を超える開始は送信前に拒否します。旧 `max_repetitions` fieldと移動だけの反復は拒否します。他のActionの予算上限は変更しません。
+
+例えば、観測済みの雪を現在の照準で最大60tickだけ採掘するnodeは次の形です。座標・面・block・手持ちは実観測から置き換え、programの唯一のbody nodeとして `block_break` capabilityで提出します。
+
+```json
+{
+  "id": "hold_attack", "op": "hold_bounded_inputs", "inputs": ["attack"],
+  "duration_ticks": 60, "repeat_target": true,
+  "target_guard": {
+    "target": {"dimension": "minecraft:overworld", "x": 204, "y": 200, "z": 194},
+    "face": "south", "match_face": false, "expected_state": null, "expected_block": "minecraft:snow"
+  },
+  "selected_item": "minecraft:wooden_shovel"
+}
+```
+
+この例のbudgetは `max_duration_ms:3000`、`max_ticks:60`、`max_interactions:60`、`max_blocks_broken:60`、その他の枠は0です。待機も元の時間・tick予算へ数え、対象復帰で期限を延長しません。実際のsimulation pauseは既存規則通り入力を中立化してactive timeを凍結し、再開時に検証します。
+
+位置・手持ち変更、reach外、health低下、Screen・overlay、安全中断、Esc、OFF、cancel、期限、world/session変更では既存の入力解放経路へ進みます。 対象照合の固定診断は `bounded_input_target_not_focused`、`target_position_changed`、`target_face_changed`、`target_block_changed`、`target_state_changed`、`target_unloaded`、`target_outside_world_border`、`target_out_of_reach`（後続も同じ `bounded_input_` 接頭辞）に分け、面不一致を距離外等と混同しません。入力開始直前にも再検証し、例外や安全違反は解除までラッチします。開始回数は保守的な試行数であり、破壊成功数・回収数・server確認済みeffectではありません。道具交換・耐久保護・収集量保証はありません。

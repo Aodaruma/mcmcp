@@ -279,6 +279,7 @@ final class ActionWireMapper {
         result.put("control", control);
         result.put("world", world);
         result.put("inventory", List.copyOf(inventory));
+        result.put("held_items", null);
         result.put("standard_potions", List.copyOf(standardPotions));
         result.put(
                 "entity_attack_consent",
