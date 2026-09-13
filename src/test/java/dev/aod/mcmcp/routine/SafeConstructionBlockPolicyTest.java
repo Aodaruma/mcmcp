@@ -42,7 +42,7 @@ class SafeConstructionBlockPolicyTest {
                 Blocks.REDSTONE_BLOCK,
                 Blocks.PISTON,
                 Blocks.TNT,
-                Blocks.STONE_SLAB,
+                Blocks.POWDER_SNOW,
                 Blocks.SCAFFOLDING))
                 .allSatisfy(block -> assertThat(
                         SafeConstructionBlockPolicy.allowsLiveState(
@@ -58,6 +58,57 @@ class SafeConstructionBlockPolicyTest {
                 false)).isFalse();
         assertThat(SafeConstructionBlockPolicy.allowsPlacementState(
                 lowerDoor.setValue(BlockStateProperties.OPEN, true), false)).isFalse();
+    }
+
+    @Test
+    void admitsOrdinaryVanillaMaterialsAndEveryQrColourWithoutPerColourExceptions() {
+        var materials = new java.util.ArrayList<String>(List.of(
+                "snow_block", "dirt", "obsidian", "iron_block", "gold_block",
+                "diamond_block", "emerald_block", "coal_ore", "end_stone",
+                "sandstone", "polished_granite", "quartz_pillar", "torch",
+                "stone_slab", "birch_stairs", "iron_bars"));
+        for (String colour : List.of("white", "orange", "magenta", "light_blue", "yellow",
+                "lime", "pink", "gray", "light_gray", "cyan", "purple", "blue", "brown",
+                "green", "red", "black")) {
+            for (String family : List.of("wool", "concrete", "terracotta", "stained_glass",
+                    "stained_glass_pane")) materials.add(colour + "_" + family);
+        }
+        for (String material : materials) {
+            var id = net.minecraft.resources.Identifier.parse("minecraft:" + material);
+            var block = net.minecraft.core.registries.BuiltInRegistries.BLOCK.get(id)
+                    .orElseThrow().value();
+            var state = block.defaultBlockState();
+            assertThat(SafeConstructionBlockPolicy.allowsPlacementState(state, false))
+                    .as(material).isTrue();
+            var properties = new java.util.TreeMap<String, String>();
+            state.getValues().forEach(value ->
+                    properties.put(value.property().getName(), value.valueName()));
+            SafeConstructionBlockPolicy.requireExpectedStateAndItem(
+                    new BlockStateFingerprint(id.toString(), properties), id.toString());
+        }
+    }
+
+    @Test
+    void familyExpansionDoesNotAdmitDynamicHazardousOrCustomBlocks() {
+        for (var block : List.of(Blocks.SAND, Blocks.GRAVEL,
+                net.minecraft.core.registries.BuiltInRegistries.BLOCK.get(
+                        net.minecraft.resources.Identifier.parse("minecraft:red_concrete_powder"))
+                        .orElseThrow().value(),
+                Blocks.TNT, Blocks.REDSTONE_BLOCK, Blocks.PISTON, Blocks.CHEST,
+                Blocks.OAK_LEAVES, Blocks.MAGMA_BLOCK, Blocks.ICE, Blocks.SCAFFOLDING)) {
+            assertThat(SafeConstructionBlockPolicy.allowsPlacementState(
+                    block.defaultBlockState(), false)).as(block.toString()).isFalse();
+        }
+        assertThat(dev.aod.mcmcp.construction.SafeConstructionBlocks.allows("example:stone"))
+                .isFalse();
+        assertThat(dev.aod.mcmcp.construction.SafeConstructionBlocks.allows("minecraft:absent"))
+                .isFalse();
+        assertThat(SafeConstructionBlockPolicy.allowsPlacementState(
+                Blocks.BIRCH_STAIRS.defaultBlockState()
+                        .setValue(BlockStateProperties.WATERLOGGED, true), false)).isFalse();
+        assertThat(SafeConstructionBlockPolicy.allowsPlacementState(
+                Blocks.STONE_SLAB.defaultBlockState()
+                        .setValue(BlockStateProperties.SLAB_TYPE, SlabType.DOUBLE), false)).isFalse();
     }
 
     @Test

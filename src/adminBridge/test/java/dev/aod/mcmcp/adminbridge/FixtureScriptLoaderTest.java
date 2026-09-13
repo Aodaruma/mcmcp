@@ -13,6 +13,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FixtureScriptLoaderTest {
+    @Test
+    void constructionMaterialFixtureIsBoundedAndUsesOnlyDeclaredChestSupplies() throws Exception {
+        var fixture = new FixtureScriptLoader(Path.of("tools/eval/fixtures"))
+                .load("construction-materials");
+        assertThat(fixture.commands()).hasSize(14);
+        assertThat(fixture.manifest().maxChangedBlocks()).isEqualTo(1000);
+        assertThat(fixture.manifest().containers()).hasSize(1);
+    }
+
     @TempDir
     Path temporaryDirectory;
 

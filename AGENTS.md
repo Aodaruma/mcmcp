@@ -42,6 +42,7 @@
 - 物理入力隔離中はVanillaの`KeyMapping`をreleaseし、隔離のfalling edgeでは現在の物理keyboard状態を同一client tick内に1回再同期する。Agent ownerなしだけを物理入力handoff完了の代用にせず、同tick内のlease取得・解除もruntime処理前後の遷移確認で閉じる。
 - block mutationの成功判定は、作物の`age`やfarmlandの`moisture`等の正当な時間発展を許す意味的postconditionにする。破壊・収穫はblock消失だけで成功とせず、安全経路での物理pickupと対象inventoryの絶対個数増加を確認する。
 - 多区画作業は公開DSLでbatch化できるようにし、植付け、代表成熟待機、batch収穫、drop回収、再植付けの順を基本とする。container、pickup、camera等の具体的な期限・予算はcatalog、runtime、testで一元管理する。
+- 建築材料はVanillaの通常建材familyを共通policyで判定し、観測と設置で一致させる。ID namespaceや継承だけで独自挙動を許可せず、完全state、通常の無改変item、支持面、設置予測とserver確認を維持する。床置きtorchとwall_torchを区別し、階段shape・pane接続のplan内閉包と最終照合を材料familyの拡張時にも適用する。
 - 既存の安全境界、入力検証、fail-closedなエラー処理、fixture isolationを簡略化しない。
 
 ## Fixture and environments

@@ -1606,7 +1606,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             return stairShapeDifferenceHasPlannedCause(
                     position, expectedFinal, predictedFingerprint, finalStates, currentState);
         }
-        if (!"minecraft:glass_pane".equals(expectedFinal.blockId())) return false;
+        if (!SafeConstructionBlocks.isPane(expectedFinal.blockId())) return false;
         for (Direction direction : Direction.Plane.HORIZONTAL) {
             String property = direction.getSerializedName();
             boolean expectedConnection = Boolean.parseBoolean(
@@ -1618,7 +1618,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             BlockStateFingerprint planned = finalStates.get(neighbour);
             BlockState live = currentState.apply(neighbour);
             if (!expectedConnection || planned == null || live == null
-                    || !"minecraft:glass_pane".equals(planned.blockId())
+                    || !SafeConstructionBlocks.isPane(planned.blockId())
                     || !"true".equals(planned.properties().get(
                             direction.getOpposite().getSerializedName()))
                     || !hasExactPlannedFinalState(planned)
@@ -1721,8 +1721,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
 
     private static boolean isSupportedStair(BlockStateFingerprint state) {
         return state != null
-                && ("minecraft:oak_stairs".equals(state.blockId())
-                        || "minecraft:cobblestone_stairs".equals(state.blockId()))
+                && SafeConstructionBlocks.isStair(state.blockId())
                 && state.properties().keySet().equals(
                         Set.of("facing", "half", "shape", "waterlogged"))
                 && "false".equals(state.properties().get("waterlogged"));
