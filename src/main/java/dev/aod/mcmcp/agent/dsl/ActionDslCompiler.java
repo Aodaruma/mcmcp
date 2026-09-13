@@ -148,6 +148,11 @@ public final class ActionDslCompiler {
             primitiveCostBounds.put(node.id(), cost);
             return cost;
         }
+        if (node instanceof ActionDsl.ExtendKnownFloor) {
+            Cost cost = intrinsicFloorExtensionCost();
+            primitiveCostBounds.put(node.id(), cost);
+            return cost;
+        }
         if (node instanceof ActionDsl.PillarUpKnown) {
             Cost cost = Objects.requireNonNull(
                     primitiveCosts.worstCase(node), "primitive cost result")
@@ -436,6 +441,10 @@ public final class ActionDslCompiler {
     }
 
     /** Fixed bound for one jump, one placement, and restoring the admitted camera pose. */
+    public static Cost intrinsicFloorExtensionCost() {
+        return new Cost(20000, 400, 2.0D, 720.0D, 0, 0, 1);
+    }
+
     public static Cost intrinsicPillarUpCost() {
         return new Cost(
                 PILLAR_UP_DURATION_MILLIS,

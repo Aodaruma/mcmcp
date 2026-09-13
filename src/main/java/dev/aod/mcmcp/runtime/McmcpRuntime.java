@@ -2213,6 +2213,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             return true;
         }
 
+        if (agentExecution.primitive instanceof ActionDsl.ExtendKnownFloor) {
+            applyPrimitiveOutcome(minecraft, action,
+                    agentExecution.menuPrimitives.tickAgentFloorExtension(minecraft, session,
+                            (ActionDsl.ExtendKnownFloor) agentExecution.primitive, agentExecution.latestWorldRevision));
+            return true;
+        }
         if (agentExecution.primitive instanceof ActionDsl.PillarUpKnown) {
             applyPrimitiveOutcome(minecraft, action,
                     agentExecution.menuPrimitives.tickAgentPillarUp(session, agentExecution.primitive));
@@ -2312,6 +2318,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (!(agentExecution.primitive instanceof ActionDsl.OperateKnownMenu)
                 && !(agentExecution.primitive instanceof ActionDsl.PillarUpKnown)
+                && !(agentExecution.primitive instanceof ActionDsl.ExtendKnownFloor)
                 && (recovery.state() == MinecraftRecoveryGovernor.State.REPLAN_REQUIRED
                         || agentObservations.localSafety() == LocalObservationProjector.CurrentSafety.REPLAN)) {
             if (ActionEvidence.isAgentWait(agentExecution.primitive)) {

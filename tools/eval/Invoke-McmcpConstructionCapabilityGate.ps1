@@ -23,6 +23,7 @@ param(
 
 # 共通支援と建築シナリオを同じscopeへ読み込む。LibraryOnlyでも全建築関数を公開する。
 . (Join-Path $PSScriptRoot 'McmcpCapabilityGateSupport.ps1')
+. (Join-Path $PSScriptRoot 'McmcpConstructionMaterialObservation.ps1')
 
 $script:SourceObservationForbidden = $false
 $script:SourceObservationCount = 0

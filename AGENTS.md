@@ -44,6 +44,7 @@
 - 多区画作業は公開DSLでbatch化できるようにし、植付け、代表成熟待機、batch収穫、drop回収、再植付けの順を基本とする。container、pickup、camera等の具体的な期限・予算はcatalog、runtime、testで一元管理する。
 - 建築材料はVanillaの通常建材familyを共通policyで判定し、観測と設置で一致させる。ID namespaceや継承だけで独自挙動を許可せず、完全state、通常の無改変item、支持面、設置予測とserver確認を維持する。床置きtorchとwall_torchを区別し、階段shape・pane接続のplan内閉包と最終照合を材料familyの拡張時にも適用する。
 - 既存の安全境界、入力検証、fail-closedなエラー処理、fixture isolationを簡略化しない。
+- 水平の端設置は`extend_known_floor`の単独有限Actionへ閉じる。配送済みfull-cube支持と中心姿勢を認可し、crouch中の身体が元の支持と重なる範囲だけ端へ移動する。実可視側面への通常設置とblock・inventoryのserver確認後だけ新床へ進む。支持変更、補正、damage、障害、期限では停止し、取消時もconstruction effectを回収して入力を解放する。通常navigationの未知空間への移動許可へ転用しない。
 
 ## Fixture and environments
 

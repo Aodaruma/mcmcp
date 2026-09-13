@@ -42,7 +42,7 @@ public final class ActionDsl {
             HoldBoundedInputs,
             TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
             HarvestKnownWheat, HarvestKnownWheatBatch, ApplyKnownBlockPlan,
-            ClearKnownBlockPlan, PillarUpKnown,
+            ClearKnownBlockPlan, PillarUpKnown, ExtendKnownFloor,
             ApplyKnownRedstoneSpec,
             OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
@@ -408,6 +408,24 @@ public final class ActionDsl {
                 String item) {
             this(id, support, expectedSupport,
                     Optional.of(sourceState), Optional.of(item), Optional.empty());
+        }
+    }
+
+    /** One cardinal, crouched edge extension, followed by settlement on the confirmed floor. */
+    public record ExtendKnownFloor(String id, Position support, BlockStateSpec expectedSupport,
+            BlockFace direction, String placementStateRef) implements Node {
+        public ExtendKnownFloor {
+            Objects.requireNonNull(id); Objects.requireNonNull(support);
+            Objects.requireNonNull(expectedSupport); Objects.requireNonNull(direction);
+            Objects.requireNonNull(placementStateRef);
+            if (direction == BlockFace.UP || direction == BlockFace.DOWN)
+                throw new IllegalArgumentException("floor direction must be horizontal");
+        }
+
+        /** Reuses the full-block source and centered support admission contract; never dispatched. */
+        public PillarUpKnown sourceWitness() {
+            return new PillarUpKnown(id, support, expectedSupport,
+                    Optional.empty(), Optional.empty(), Optional.of(placementStateRef));
         }
     }
 

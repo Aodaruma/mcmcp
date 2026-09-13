@@ -25,6 +25,7 @@ import dev.aod.mcmcp.routine.MinecraftKnownFurnacePort;
 import dev.aod.mcmcp.routine.MinecraftKnownMenuPort;
 import dev.aod.mcmcp.routine.MinecraftPhaseFiveInventoryPort;
 import dev.aod.mcmcp.routine.MinecraftPillarUpPort;
+import dev.aod.mcmcp.routine.MinecraftFloorExtensionAttempt;
 import dev.aod.mcmcp.routine.MinecraftSemanticActionPort;
 import dev.aod.mcmcp.routine.PhaseFivePort;
 import dev.aod.mcmcp.routine.PhaseFiveRequest;
@@ -54,6 +55,7 @@ final class MenuPrimitiveExecution {
     private KnownBrewingAttempt brewingAttempt;
     private KnownConstructionAttempt constructionAttempt;
     private KnownPillarUpAttempt pillarUpAttempt;
+    private MinecraftFloorExtensionAttempt floorExtensionAttempt;
     private KnownRedstoneIdentityAttempt redstoneAttempt;
 
     MenuPrimitiveExecution(UUID actionId, AgentActionStore agentActions,
@@ -155,6 +157,19 @@ final class MenuPrimitiveExecution {
                     McmcpMod.LOGGER.error(
                             "MCMCP known-construction effect capture failed", failure);
                 }
+            }
+        }
+        if (floorExtensionAttempt != null) {
+            MinecraftFloorExtensionAttempt floor = floorExtensionAttempt;
+            try {
+                floor.close();
+                floorExtensionAttempt = null;
+            } catch (RuntimeException | LinkageError failure) {
+                closed = false;
+                McmcpMod.LOGGER.error("MCMCP floor-extension release failed", failure);
+            } finally {
+                recordConstructionEffects(actionId, floor.drainEffects(), worldRevision);
+                for (int count = floor.drainPlacedDelta(); count > 0; count--) agentActions.recordBlockPlace(actionId);
             }
         }
         if (pillarUpAttempt != null) {
@@ -400,6 +415,34 @@ final class MenuPrimitiveExecution {
                     effect.clientTick(),
                     worldRevision);
         }
+    }
+
+    PrimitiveOutcome tickAgentFloorExtension(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            ActionDsl.ExtendKnownFloor floor, long worldRevision) {
+        if (floorExtensionAttempt == null) {
+            try {
+                floorExtensionAttempt = new MinecraftFloorExtensionAttempt(minecraft, session,
+                        ConstructionRequests.pillarUpRequest(floor.sourceWitness(), deliveredEvidence::resolvePlacementState),
+                        net.minecraft.core.Direction.valueOf(floor.direction().name()), observations,
+                        applyBlockPlanPort, ClientReconciliationSignals.global());
+            } catch (RuntimeException | LinkageError rejected) {
+                return PrimitiveOutcome.failed(AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                        true, "floor_extension_preflight_rejected");
+            }
+        }
+        var result = floorExtensionAttempt.tick(session);
+        recordConstructionEffects(actionId, floorExtensionAttempt.drainEffects(), worldRevision);
+        for (int count = floorExtensionAttempt.drainPlacedDelta(); count > 0; count--) agentActions.recordBlockPlace(actionId);
+        return switch (result.status()) {
+            case RUNNING -> PrimitiveOutcome.running();
+            case FAILED -> PrimitiveOutcome.failed(AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
+                    true, result.evidence());
+            case SUCCEEDED -> {
+                floorExtensionAttempt = null;
+                agentActions.recordNodeEvidence(actionId, "floor_extension_complete=1,server_confirmed=1");
+                yield PrimitiveOutcome.succeeded();
+            }
+        };
     }
 
     PrimitiveOutcome tickAgentPillarUp(

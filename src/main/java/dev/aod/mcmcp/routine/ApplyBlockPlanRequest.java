@@ -13,7 +13,8 @@ public record ApplyBlockPlanRequest(
         int phaseTotal,
         List<ApplyBlockPlanStep> steps,
         ActionBounds bounds,
-        BreakSafety breakSafety) {
+        BreakSafety breakSafety,
+        StandPolicy standPolicy) {
     public static final String KIND = "apply_block_plan";
     public static final int MAX_STEPS = 64;
 
@@ -28,6 +29,7 @@ public record ApplyBlockPlanRequest(
         Objects.requireNonNull(steps, "steps");
         Objects.requireNonNull(bounds, "bounds");
         Objects.requireNonNull(breakSafety, "breakSafety");
+        Objects.requireNonNull(standPolicy, "standPolicy");
         steps = List.copyOf(steps);
         if (steps.isEmpty() || steps.size() > MAX_STEPS) {
             throw new IllegalArgumentException("block plan must contain 1..64 steps");
@@ -56,7 +58,28 @@ public record ApplyBlockPlanRequest(
             throw new IllegalArgumentException(
                     "allowBreak must exactly match whether the plan contains break or replace");
         }
+        if (standPolicy == StandPolicy.RETAINED_EDGE_SUPPORT) {
+            if (steps.size() != 1 || steps.getFirst().operation() != ApplyBlockPlanOperation.PLACE)
+                throw new IllegalArgumentException("edge support permits one placement only");
+            var step = steps.getFirst();
+            var support = step.supportWitness().orElseThrow();
+            if (!"minecraft:air".equals(step.expectedBefore().blockId())
+                    || step.target().y() != support.support().y()
+                    || Math.abs((long) step.target().x() - support.support().x())
+                        + Math.abs((long) step.target().z() - support.support().z()) != 1
+                    || support.confirmedDependencyEntryId().isPresent())
+                throw new IllegalArgumentException("edge support must be the retained adjacent floor");
+            KnownPillarUpRequest.requireSourceStateAndItem(step.expectedAfter(), step.requiredItemId().orElseThrow());
+        }
     }
+
+    public ApplyBlockPlanRequest(String phaseId, int phaseIndex, int phaseTotal,
+            List<ApplyBlockPlanStep> steps, ActionBounds bounds, BreakSafety breakSafety) {
+        this(phaseId, phaseIndex, phaseTotal, steps, bounds, breakSafety, StandPolicy.STATIONARY);
+    }
+
+    /** Internal-only; public plan parsing and ordinary construction always use STATIONARY. */
+    public enum StandPolicy { STATIONARY, RETAINED_EDGE_SUPPORT }
 
     public ApplyBlockPlanRequest(
             String phaseId,
