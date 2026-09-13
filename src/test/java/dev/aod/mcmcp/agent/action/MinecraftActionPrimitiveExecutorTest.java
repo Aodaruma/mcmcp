@@ -32,6 +32,22 @@ class MinecraftActionPrimitiveExecutorTest {
     private static final String DIMENSION = "minecraft:overworld";
 
     @Test
+    void waterSteeringControlsDepthAndArrivalWithoutSprintOrCamera() {
+        var forward = java.util.Set.of(MovementInputLease.MovementKey.FORWARD);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 0, 0.4, 0.6, Locomotion.WATER))
+                .containsExactlyInAnyOrder(MovementInputLease.MovementKey.FORWARD, MovementInputLease.MovementKey.JUMP);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 0, -0.4, 0.6, Locomotion.WATER))
+                .containsExactlyInAnyOrder(MovementInputLease.MovementKey.FORWARD, MovementInputLease.MovementKey.CROUCH);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 1, 0, 0.6, Locomotion.WATER))
+                .containsExactly(MovementInputLease.MovementKey.FORWARD);
+        var target = new NavCell(DIMENSION, -2, 64, -3);
+        assertThat(MinecraftActionPrimitiveExecutor.waterWaypointReached(-1.5, 63.9, -2.5, target, 0.2)).isTrue();
+        assertThat(MinecraftActionPrimitiveExecutor.waterWaypointReached(-1.5, 64.5, -2.5, target, 0.2)).isFalse();
+        assertThat(MinecraftActionPrimitiveExecutor.waterWaypointReached(-0.9, 64, -2.5, target, 0.2)).isFalse();
+        assertThat(MinecraftActionPrimitiveExecutor.requiresNavigationMovementSafety(Locomotion.WATER, 0)).isTrue();
+    }
+
+    @Test
     void closeRetainsTheExactMovementLeaseUntilARetryConfirmsRelease() throws Exception {
         var releases = new java.util.concurrent.atomic.AtomicInteger();
         var failFirstRelease = new java.util.concurrent.atomic.AtomicBoolean(true);

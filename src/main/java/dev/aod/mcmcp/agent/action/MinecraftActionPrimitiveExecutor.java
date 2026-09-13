@@ -156,12 +156,18 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 || !state.route.dimension().equals(snapshot.dimension())) {
             return finish(Status.FAILED, Reason.WORLD_BOUNDARY_CHANGED);
         }
-        if (player.isPassenger() || player.isInWater() || player.isInLava()
+        if (player.isPassenger() || player.isInLava()
                 || player.isFallFlying() || player.getAbilities().flying) {
             return finish(Status.REPLAN_REQUIRED, Reason.UNSUPPORTED_LOCOMOTION);
         }
 
         NavCell finalCell = state.route.cells().getLast();
+        boolean waterRoute = state.route.edges().stream().anyMatch(e -> e.locomotion() == Locomotion.WATER)
+                || state.route.edges().isEmpty() && snapshot.edges().values().stream().anyMatch(e ->
+                        e.destination() && e.locomotion() == Locomotion.WATER && e.key().to().equals(finalCell));
+        if (player.isInWater() && !waterRoute) {
+            return finish(Status.REPLAN_REQUIRED, Reason.UNSUPPORTED_LOCOMOTION);
+        }
         if (state.settling) {
             return tickNavigationSettlement(
                     minecraft, player, snapshot, movementSafety,
@@ -171,6 +177,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
         }
         if (state.route.edges().isEmpty()) {
+            if (waterRoute) return tickWaterDestination(minecraft, player, snapshot, movementSafety,
+                    remainingDistance, clientTick, outputAllowed, finalCell);
             switch (sameCellDecision(
                     player.getX(), player.getY(), player.getZ(), finalCell, state.tolerance)) {
                 case OFF_ROUTE -> {
@@ -212,7 +220,17 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         NavCell waypoint = planned.key().to();
         double waypointTolerance = state.edgeIndex == state.route.edges().size() - 1
                 ? state.tolerance : INTERMEDIATE_WAYPOINT_TOLERANCE;
-        if (atWaypoint(player, waypoint, waypointTolerance)) {
+        if (planned.locomotion() == Locomotion.WATER && planned.fluid() == TraversabilityEdge.Fluid.WATER
+                && state.edgeIndex == state.route.edges().size() - 1) {
+            if (edgeDecision(state.route, state.edgeIndex, snapshot) == EdgeDecision.REPLAN) {
+                return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
+            }
+            return tickWaterDestination(minecraft, player, snapshot, movementSafety,
+                    remainingDistance, clientTick, outputAllowed, waypoint);
+        }
+        if (planned.locomotion() == Locomotion.WATER
+                ? waterWaypointReached(player.getX(), player.getY(), player.getZ(), waypoint, waypointTolerance)
+                : atWaypoint(player, waypoint, waypointTolerance)) {
             state.edgeIndex++;
             state.resetProgress();
             if (state.edgeIndex == state.route.edges().size()) {
@@ -284,7 +302,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 player.maxUpStep(),
                 locomotion);
         Vec3 command = commandDirection(player.getYRot(), desired);
-        if (command.horizontalDistanceSqr() > 0.0D) {
+        if (locomotion != Locomotion.WATER && command.horizontalDistanceSqr() > 0.0D) {
             double previewLength = Math.min(1.0D, horizontalDistance(player, waypoint));
             Vec3 preview = command.scale(previewLength);
             if (!movementSafety.canPreviewGoalMovement(
@@ -336,6 +354,28 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                             waypointTolerance));
         }
         return runningNavigationResult(edge, !desired.isEmpty());
+    }
+
+    private TickResult tickWaterDestination(Minecraft minecraft, LocalPlayer player,
+            KnownTraversabilitySnapshot snapshot, LocalObservationVolume safety, double remaining,
+            long tick, BooleanSupplier allowed, NavCell target) {
+        boolean current = safety.latestFor(player).filter(s -> s.worldRevision() == snapshot.worldRevision()
+                && s.current().loaded() == ObservationRecord.LoadedState.LOADED
+                && s.current().clearance() == ObservationRecord.Clearance.CLEAR
+                && s.current().fluid() == ObservationRecord.Fluid.WATER
+                && s.current().hazard() == ObservationRecord.Hazard.NONE
+                && !s.current().suffocation()).isPresent();
+        navigation.safeTicks = current && waterWaypointReached(player.getX(), player.getY(), player.getZ(),
+                target, navigation.tolerance) ? navigation.safeTicks + 1 : 0;
+        if (navigation.safeTicks >= SETTLE_SAFETY_TICKS) return finish(Status.SUCCEEDED, Reason.NONE);
+        return driveNavigationWaypoint(minecraft, player, snapshot, safety, remaining, tick, allowed,
+                target, navigation.tolerance, Integer.compare(target.y(), Mth.floor(player.getY())),
+                Locomotion.WATER, EdgeDecision.PROBE);
+    }
+
+    static boolean waterWaypointReached(double x, double y, double z, NavCell target, double tolerance) {
+        return Math.hypot(target.x() + 0.5D - x, target.z() + 0.5D - z) <= tolerance
+                && Math.abs(target.y() - y) <= 0.20D;
     }
 
     /**
@@ -829,7 +869,10 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         var result = horizontal.isEmpty()
                 ? EnumSet.noneOf(MovementInputLease.MovementKey.class)
                 : EnumSet.copyOf(horizontal);
-        if (locomotion == Locomotion.SCAFFOLDING && verticalDelta < 0) {
+        if (locomotion == Locomotion.WATER) {
+            if (remainingHeight > 0.03D) result.add(MovementInputLease.MovementKey.JUMP);
+            else if (remainingHeight < -0.12D) result.add(MovementInputLease.MovementKey.CROUCH);
+        } else if (locomotion == Locomotion.SCAFFOLDING && verticalDelta < 0) {
             result.add(MovementInputLease.MovementKey.CROUCH);
         } else if (locomotion != Locomotion.GROUND && verticalDelta > 0) {
             result.add(MovementInputLease.MovementKey.JUMP);

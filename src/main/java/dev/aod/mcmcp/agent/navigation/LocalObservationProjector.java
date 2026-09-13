@@ -164,8 +164,10 @@ public final class LocalObservationProjector {
         boolean safe = supported
                 && source.clearance()
                         == dev.aod.mcmcp.agent.safety.ObservationRecord.Clearance.CLEAR
-                && source.fluid()
+                && (source.fluid()
                         == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.NONE
+                        || source.locomotion() == Locomotion.WATER && source.fluid()
+                        == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.WATER)
                 && source.hazard()
                         == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.NONE;
         if (safe && source.transition()
@@ -246,7 +248,8 @@ public final class LocalObservationProjector {
 
     private static TraversabilityEdge.Hazard edgeHazard(
             dev.aod.mcmcp.agent.safety.ObservationRecord source) {
-        if (source.fluid() == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.WATER) {
+        if (source.fluid() == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.WATER
+                && source.locomotion() != Locomotion.WATER) {
             return TraversabilityEdge.Hazard.CAUTION;
         }
         return switch (source.hazard()) {

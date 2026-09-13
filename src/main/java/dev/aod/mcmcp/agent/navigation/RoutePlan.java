@@ -59,7 +59,7 @@ public record RoutePlan(
         if (Math.abs(actualDistance - distanceBlocks) > 1.0e-9 || actualProbes != probeEdgeCount) {
             throw new IllegalArgumentException("route summary does not match its edges");
         }
-        long expectedTicks = executionTicks(edges.size(), actualProbes);
+        long expectedTicks = executionTicks(edges, actualProbes);
         long expectedDuration = Math.multiplyExact(expectedTicks, MILLIS_PER_ACTIVE_TICK);
         if (tickUpperBound != expectedTicks || durationMillisUpperBound != expectedDuration) {
             throw new IllegalArgumentException("route execution bounds do not match its edges");
@@ -77,7 +77,7 @@ public record RoutePlan(
             distance += edge.key().length();
             if (edge.requiresProbe()) probes++;
         }
-        long ticks = executionTicks(edges.size(), probes);
+        long ticks = executionTicks(edges, probes);
         return new RoutePlan(
                 snapshot.worldSessionId(),
                 snapshot.dimension(),
@@ -90,10 +90,12 @@ public record RoutePlan(
                 Math.multiplyExact(ticks, MILLIS_PER_ACTIVE_TICK));
     }
 
-    private static long executionTicks(int edgeCount, int probes) {
-        long transitions = Math.max(1L, edgeCount);
+    private static long executionTicks(List<TraversabilityEdge> edges, int probes) {
+        long transitions = Math.max(1L, edges.size());
+        long waterTicks = edges.stream().filter(edge -> edge.locomotion()
+                == dev.aod.mcmcp.agent.safety.Locomotion.WATER).count() * 40L;
         return Math.addExact(
-                BASE_SETTLE_TICKS,
+                BASE_SETTLE_TICKS + waterTicks,
                 Math.addExact(
                         Math.multiplyExact(transitions, TICKS_PER_TRANSITION),
                         Math.multiplyExact((long) probes, EXTRA_TICKS_PER_PROBE)));
