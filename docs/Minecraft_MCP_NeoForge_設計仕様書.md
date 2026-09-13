@@ -2034,3 +2034,9 @@ repository作成直前に、選択したowner配下で`mcmcp`が作成可能か�
 ### チャットから期待したコンテナへの画面遷移
 
 NeoForge 26.2の画面切替は新画面のOpeningの後に旧画面のClosingを通知する。通常操作を許可する非pause ChatScreenから、正確なOpenScreen packetに対応したmenuへ切り替わる場合だけ、EXPECTING_FULL_CONTENTへ進んだ同じclient tick内の旧chatのClosingを1回許可する。所有権は同じsession・container ID・menu typeのfull-content packet確認後に限る。期待前・別tick・重複のchat閉鎖、所有済みコンテナの予期しない閉鎖、別menuのopenは引き続き停止する。
+
+## 外部平面施工runnerとworld session
+
+agent_get_state.world.session_id は現在の読込みsessionを識別するopaque UUIDであり、saveの恒久IDではない。物理的に同じワールドの再読込みでも変わり得る。永続クライアントは欠測を許可せず、変更を明示確認なく再開へ使わない。出力schemaでは旧クライアント用fixtureとの互換のため追加fieldとして扱い、現runtimeはworldがあるとき必ず出力する。
+
+tools/building は最大128×128の床と指定した床置きtorchを外部checkpointで管理する。Action開始前のintent、受付後のID、confirmed effectを原子的に保存する。world session内で有効な不変のplacement_state_refと、現在の可視支持・traversabilityを区別する。Unknownの再観測をserverの材料消費ACKと同一視せず、収支不明を完了表示に残す。補充や予算停止を跨ぐ移動は現在の確認済み床から再計画する。詳細は tools/building/README.md を参照する。

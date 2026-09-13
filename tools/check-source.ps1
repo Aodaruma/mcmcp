@@ -22,6 +22,11 @@ try {
     & $PythonExecutable -m unittest discover -s tools/mcp -p 'test_*.py'
     if ($LASTEXITCODE -ne 0) { throw 'MCP transport unit tests failed' }
 
+    foreach($test in Get-ChildItem -LiteralPath tools/building -Filter 'Test-McmcpBuilding*.ps1') {
+        & $shellPath -NoProfile -File $test.FullName
+        if ($LASTEXITCODE -ne 0) { throw 'Building checkpoint tests failed' }
+    }
+
     # 実機評価runnerとは分け、mock capability gateだけを別scope/processで実行する。
     $mockTests = @(Get-ChildItem -LiteralPath tools/eval -Filter 'Test-Mcmcp*CapabilityGate.ps1') +
         @(Get-Item -LiteralPath tools/eval/Test-McmcpCapabilityGateLoading.ps1)
