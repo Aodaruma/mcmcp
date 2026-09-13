@@ -3344,6 +3344,8 @@
               "affected_blocks": {"type": "integer", "minimum": 1, "maximum": 2},
               "source_count": {"type": "integer", "minimum": 0, "maximum": 3456},
               "destination_count": {"type": "integer", "minimum": 0, "maximum": 3456},
+              "source_item": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 192},
+              "destination_item": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 192},
               "transferred": {"type": "integer", "minimum": 1, "maximum": 896},
               "displayed_item": {"type":"string", "pattern":"^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength":128, "description":"Server-observed frame item; minecraft:air means a confirmed empty display. Omitted means unknown."},
               "rotation": {"type":"integer", "minimum":0, "maximum":7},
@@ -3457,7 +3459,7 @@
           },
           "effects": {
             "type": "array",
-            "description": "Bounded latest-effect ring recorded at authoritative observation/ACK points. Sequence numbers remain monotonic when earlier entries are evicted. An unknown entry means a mutation was dispatched but its after-state was not confirmed; it must never be replayed blindly.",
+            "description": "Bounded latest-effect ring recorded at authoritative observation/ACK points. Sequence numbers remain monotonic when earlier entries are evicted. An unknown entry means a mutation was dispatched but its after-state was not confirmed; it must never be replayed blindly. inventory_swap records an internal construction material exchange between main inventory and the selected hotbar: source/destination item and count refer to those two roles, never raw slot indices. Confirmed swaps conserve the items and are distinct from block placement. An interrupted unconfirmed swap has an empty observed_after and may reconcile later; reobserve before planning another action.",
             "maxItems": 64,
             "items": {
               "type": "object",
@@ -3465,7 +3467,7 @@
               "properties": {
                 "seq": {"type": "integer", "minimum": 1, "maximum": 2050},
                 "node_id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"},
-                "kind": {"enum": ["block_place", "block_break", "container_take", "container_store", "frame_item_remove", "frame_item_insert", "fishing_cast", "fishing_reel", "entity_attack", "kill_zone_summary", "safety_interrupted"]},
+                "kind": {"enum": ["block_place", "block_break", "inventory_swap", "container_take", "container_store", "frame_item_remove", "frame_item_insert", "fishing_cast", "fishing_reel", "entity_attack", "kill_zone_summary", "safety_interrupted"]},
                 "subject": {"type": "string", "pattern": "^[a-z0-9_.:/,+-]{1,192}$"},
                 "observed_before": {"$ref": "#/$defs/effectObservation"},
                 "observed_after": {"$ref": "#/$defs/effectObservation"},
