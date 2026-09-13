@@ -144,6 +144,8 @@ capability gateの入口は `Invoke-Mcmcp*CapabilityGate.ps1` です。共通支
 
 `MinecraftFloorExtensionAttempt` は水平1セルのcrouch移動と、既存`KnownConstructionAttempt`への設置委譲を所有する。stand例外は内部の`ApplyBlockPlanRequest.StandPolicy.RETAINED_EDGE_SUPPORT`だけで、`MinecraftApplyBlockPlanPort`も元支持の保持量をuse直前に検査する。cleanupはMenuPrimitiveExecutionでeffectを回収した後に共通入力解放へ進む。
 
+建築準備の持ち替えは`InventorySwapSignals`が同一level内の1回のSWAPを追跡する。`ClientPacketListenerMixin`でplayer inventory indexへ変換した両側の受信payloadを照合し、`MinecraftApplyBlockPlanPort`が所有権・材料総数を再確認する。`ApplyBlockPlanPort.StagingEvidence`から`KnownConstructionAttempt`へ渡すreceiptは、成功と取消・期限切れの両方で一度だけeffectへ回収する。`InventorySwapSignalsTest`、`KnownConstructionAttemptTest`、`ConstructionStagingEffectTest`と`ContainerEffectSchemaTest`を一緒に確認する。
+
 ## 平面施工の保存・再開
 
 外部runnerは tools/building/Invoke-McmcpBuilding.ps1、行列と原子的checkpointは McmcpBuildingLedger.ps1。固定5 Toolと tools/mcp/McmcpClient.ps1 のschema検証を再利用する。対応試験は Test-McmcpBuilding.ps1 と Test-McmcpBuildingRecovery.ps1。ゲーム内の入力・設置・server確認は既存primitiveが所有する。

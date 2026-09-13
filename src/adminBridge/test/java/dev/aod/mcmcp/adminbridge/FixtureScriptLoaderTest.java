@@ -14,6 +14,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FixtureScriptLoaderTest {
     @Test
+    void stagingFixtureFillsNineHotbarStacksBeforeTheTorch() throws Exception {
+        var bootstrap = new FixtureScriptLoader(Path.of("tools/eval/fixtures")).load("construction-staging-bootstrap");
+        assertThat(bootstrap.commands()).hasSize(1);
+        var fixture = new FixtureScriptLoader(Path.of("tools/eval/fixtures")).load("construction-staging");
+        assertThat(fixture.commands()).hasSize(19);
+        assertThat(fixture.commands().stream().mapToLong(RestrictedCommandPolicy.ValidatedCommand::changedBlocks).sum())
+                .isLessThanOrEqualTo(1000);
+        assertThat(fixture.manifest().containers()).hasSize(1);
+    }
+
+    @Test
     void constructionProgressFixtureStartsWithScarceInventoryAndBoundedSupplies() throws Exception {
         var fixture = new FixtureScriptLoader(Path.of("tools/eval/fixtures")).load("construction-progress");
         assertThat(fixture.commands()).hasSize(16);
