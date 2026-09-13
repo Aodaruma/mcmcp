@@ -31,6 +31,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownConstructionAttemptTest {
+    @Test
+    void preparationDiagnosticsSeparateInventoryObservationStandAndAimWaits() {
+        var id = UUID.randomUUID();
+        var air = Optional.of(new BlockStateFingerprint("minecraft:air", Map.of()));
+        assertThat(KnownConstructionAttempt.preparationWaitReason(new ApplyBlockPlanPreparationEvidence(
+                id, 1, 1, air, true, true, true, false, null))).isEqualTo("construction_waiting_hotbar_sync");
+        assertThat(KnownConstructionAttempt.preparationWaitReason(new ApplyBlockPlanPreparationEvidence(
+                id, 1, 1, Optional.empty(), true, true, true, true, null))).isEqualTo("construction_waiting_target_observation");
+        assertThat(KnownConstructionAttempt.preparationWaitReason(new ApplyBlockPlanPreparationEvidence(
+                id, 1, 1, air, true, false, true, true, null))).isEqualTo("construction_waiting_stand");
+        assertThat(KnownConstructionAttempt.preparationWaitReason(new ApplyBlockPlanPreparationEvidence(
+                id, 1, 1, air, true, true, false, true, null))).isEqualTo("construction_waiting_aim");
+    }
+
     private static final String DIMENSION = "minecraft:overworld";
     private static final BlockStateFingerprint AIR =
             new BlockStateFingerprint("minecraft:air", Map.of());

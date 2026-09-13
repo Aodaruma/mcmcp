@@ -205,7 +205,7 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         if (!evidence.prepared()) {
             invokeAdapter(AdapterCall.MAINTAIN_PREPARATION,
                     () -> port.maintainPreparation(preparation));
-            return result(Status.RUNNING, "construction_preparing");
+            return result(Status.RUNNING, preparationWaitReason(evidence));
         }
         if (evidence.liveState().filter(child.expectedBefore()::equals).isEmpty()
                 || (!request.breakOnly() && !evidence.targetReplaceable())) {
@@ -347,6 +347,8 @@ public final class KnownConstructionAttempt implements AutoCloseable {
     }
 
     private static String failureCode(RoutineFailure failure) {
+        if (failure.code().equals("INVENTORY_STAGING_TIMEOUT")) return "construction_inventory_staging_timeout";
+        if (failure.code().equals("INVENTORY_STAGING_MISMATCH")) return "construction_inventory_staging_mismatch";
         return switch (failure.category()) {
             case SAFETY -> "construction_safety_changed";
             case PRECONDITION -> "construction_precondition_changed";
@@ -354,6 +356,14 @@ public final class KnownConstructionAttempt implements AutoCloseable {
             case TRANSIENT -> "construction_transient_failure";
             case EXTERNAL -> "construction_adapter_failed";
         };
+    }
+
+    static String preparationWaitReason(dev.aod.mcmcp.routine.ApplyBlockPlanPreparationEvidence evidence) {
+        if (!evidence.requiredHotbarItemSelected()) return "construction_waiting_hotbar_sync";
+        if (evidence.liveState().isEmpty()) return "construction_waiting_target_observation";
+        if (!evidence.safeStandReady()) return "construction_waiting_stand";
+        if (!evidence.aimAligned()) return "construction_waiting_aim";
+        return "construction_preparing";
     }
 
     @Override
