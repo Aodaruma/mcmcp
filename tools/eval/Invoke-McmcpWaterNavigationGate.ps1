@@ -9,7 +9,7 @@ function Invoke-McmcpWaterNavigationGate {
     $path=Join-Path $ArtifactDirectory 'water-result.json'
     if(Test-Path -LiteralPath $path){throw 'Existing water result'}
     $results=[Collections.Generic.List[object]]::new()
-    $failure=$null;$release=$null
+    $failure=$null;$release=$null;$finalWorld=$null
     try {
         Assert-FixedFiveToolSurface
         foreach($goal in @(@(-2,61,5),@(-3,60,5),@(-4,59,5),@(-3,60,5),@(-2,61,5),@(-1,62,5))) {
@@ -37,9 +37,10 @@ function Invoke-McmcpWaterNavigationGate {
         }
     } catch {$failure=$_} finally {
         try {$release=Invoke-GateCleanup} catch {if($null -eq $failure){$failure=$_}}
+        try {$finalWorld=(Get-FreshState).world} catch {if($null -eq $failure){$failure=$_}}
     }
     $result=@{status=$(if($null -eq $failure -and $results.Count -eq 6){'passed'}else{'failed'})
-        movements=@($results.ToArray());input_release=$release
+        movements=@($results.ToArray());input_release=$release;final_world=$finalWorld
         failure=$(if($null -eq $failure){$null}else{$failure.Exception.Message})}
     [IO.File]::WriteAllLines((Join-Path $ArtifactDirectory 'water-events.jsonl'),
         @($script:GateEvents | ForEach-Object {ConvertTo-CompactJson $_}),$script:Utf8NoBom)

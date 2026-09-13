@@ -34,11 +34,17 @@ class MinecraftActionPrimitiveExecutorTest {
     @Test
     void waterSteeringControlsDepthAndArrivalWithoutSprintOrCamera() {
         var forward = java.util.Set.of(MovementInputLease.MovementKey.FORWARD);
-        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 0, 0.4, 0.6, Locomotion.WATER))
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, -1, -0.2, 0.6, Locomotion.WATER, true, -0.2))
                 .containsExactlyInAnyOrder(MovementInputLease.MovementKey.FORWARD, MovementInputLease.MovementKey.JUMP);
-        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 0, -0.4, 0.6, Locomotion.WATER))
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 1, 0.1, 0.6, Locomotion.WATER, true, 0.12))
                 .containsExactlyInAnyOrder(MovementInputLease.MovementKey.FORWARD, MovementInputLease.MovementKey.CROUCH);
-        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 1, 0, 0.6, Locomotion.WATER))
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, -1, -1.0, 0.6, Locomotion.WATER, false, 0.0D))
+                .containsExactly(MovementInputLease.MovementKey.FORWARD);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 0, 0.4, 0.6, Locomotion.WATER, true, 0.0D))
+                .containsExactlyInAnyOrder(MovementInputLease.MovementKey.FORWARD, MovementInputLease.MovementKey.JUMP);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 0, -0.4, 0.6, Locomotion.WATER, true, 0.0D))
+                .containsExactlyInAnyOrder(MovementInputLease.MovementKey.FORWARD, MovementInputLease.MovementKey.CROUCH);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 1, 0, 0.6, Locomotion.WATER, true, 0.0D))
                 .containsExactly(MovementInputLease.MovementKey.FORWARD);
         var target = new NavCell(DIMENSION, -2, 64, -3);
         assertThat(MinecraftActionPrimitiveExecutor.waterWaypointReached(-1.5, 63.9, -2.5, target, 0.2)).isTrue();
@@ -339,16 +345,16 @@ class MinecraftActionPrimitiveExecutorTest {
     @Test
     void scaffoldingUsesJumpUpAndCrouchDownWhileTrackingVerticalProgress() {
         assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(
-                java.util.Set.of(), 1, 1.0D, 0.6D, Locomotion.SCAFFOLDING))
+                java.util.Set.of(), 1, 1.0D, 0.6D, Locomotion.SCAFFOLDING, false, 0.0D))
                 .containsExactly(MovementInputLease.MovementKey.JUMP);
         assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(
-                java.util.Set.of(), 1, 0.2D, 0.6D, Locomotion.SCAFFOLDING))
+                java.util.Set.of(), 1, 0.2D, 0.6D, Locomotion.SCAFFOLDING, false, 0.0D))
                 .containsExactly(MovementInputLease.MovementKey.JUMP);
         assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(
-                java.util.Set.of(), -1, -1.0D, 0.6D, Locomotion.SCAFFOLDING))
+                java.util.Set.of(), -1, -1.0D, 0.6D, Locomotion.SCAFFOLDING, false, 0.0D))
                 .containsExactly(MovementInputLease.MovementKey.CROUCH);
         assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(
-                java.util.Set.of(), -1, -1.0D, 0.6D, Locomotion.LADDER)).isEmpty();
+                java.util.Set.of(), -1, -1.0D, 0.6D, Locomotion.LADDER, false, 0.0D)).isEmpty();
         var target = cell(0, 65, 0);
         assertThat(MinecraftActionPrimitiveExecutor.navigationDistance(
                 0.5D, 64.0D, 0.5D, target, Locomotion.SCAFFOLDING)).isEqualTo(1.0D);

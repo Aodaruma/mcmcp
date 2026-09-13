@@ -51,6 +51,19 @@ class WaterNavigationTest {
         var route = new DeterministicAStar().findRoute(snapshot, start, end).route().orElseThrow();
         assertThat(route.edges()).hasSize(3);
         assertThat(route.tickUpperBound()).isEqualTo(20 + 3 * (16 + 20 + 40));
+        var pose = new dev.aod.mcmcp.agent.action.AgentPrimitivePlanner.Pose(
+                start, -2.5, 62.5, -3.5, 1.62, 90, 0);
+        var admitted = dev.aod.mcmcp.agent.action.AgentPrimitivePlanner.navigationCost(route, pose);
+        for (double x : new double[] {-2.99, -2.01}) {
+            for (double y : new double[] {62.01, 62.99}) {
+                for (double z : new double[] {-3.99, -3.01}) {
+                    var drift = new dev.aod.mcmcp.agent.action.AgentPrimitivePlanner.Pose(
+                            start, x, y, z, 1.62, 90, 0);
+                    assertThat(dev.aod.mcmcp.agent.action.AgentPrimitivePlanner.navigationReplanCost(route, drift)
+                            .distanceBlocks()).isLessThanOrEqualTo(admitted.distanceBlocks());
+                }
+            }
+        }
         assertThat(new DeterministicAStar().findRoute(snapshot, start,
                 new NavCell("minecraft:overworld", 2, 63, -4)).found()).isFalse();
     }

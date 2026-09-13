@@ -293,14 +293,19 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         }
         // navigate_to_known owns movement only. Relative steering preserves the player's view;
         // a caller that wants camera motion must declare and execute face_known_position.
+        double brakingTicks = locomotion == Locomotion.WATER && player.isInWater() ? 3.0D : 0.0D;
         Set<MovementInputLease.MovementKey> desired = steering(
-                player.getX(), player.getZ(), player.getYRot(), waypoint, waypointTolerance);
+                player.getX() + brakingTicks * player.getDeltaMovement().x,
+                player.getZ() + brakingTicks * player.getDeltaMovement().z,
+                player.getYRot(), waypoint, waypointTolerance);
         desired = withVerticalInput(
                 desired,
                 verticalDelta,
                 waypoint.y() - player.getY(),
                 player.maxUpStep(),
-                locomotion);
+                locomotion,
+                player.isInWater(),
+                player.getDeltaMovement().y);
         Vec3 command = commandDirection(player.getYRot(), desired);
         if (locomotion != Locomotion.WATER && command.horizontalDistanceSqr() > 0.0D) {
             double previewLength = Math.min(1.0D, horizontalDistance(player, waypoint));
@@ -863,15 +868,20 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             int verticalDelta,
             double remainingHeight,
             double maxUpStep,
-            Locomotion locomotion) {
+            Locomotion locomotion,
+            boolean immersed,
+            double verticalVelocity) {
         Objects.requireNonNull(horizontal, "horizontal");
         Objects.requireNonNull(locomotion, "locomotion");
         var result = horizontal.isEmpty()
                 ? EnumSet.noneOf(MovementInputLease.MovementKey.class)
                 : EnumSet.copyOf(horizontal);
         if (locomotion == Locomotion.WATER) {
-            if (remainingHeight > 0.03D) result.add(MovementInputLease.MovementKey.JUMP);
-            else if (remainingHeight < -0.12D) result.add(MovementInputLease.MovementKey.CROUCH);
+            // Brake the current water velocity before crossing the requested depth.
+            double depthError = remainingHeight - (immersed ? 3.0D * verticalVelocity : 0.0D);
+            if (depthError > 0.03D) result.add(MovementInputLease.MovementKey.JUMP);
+            // Crouching on the dry bank would prevent the deliberate, verified entry into water.
+            else if (immersed && depthError < -0.12D) result.add(MovementInputLease.MovementKey.CROUCH);
         } else if (locomotion == Locomotion.SCAFFOLDING && verticalDelta < 0) {
             result.add(MovementInputLease.MovementKey.CROUCH);
         } else if (locomotion != Locomotion.GROUND && verticalDelta > 0) {

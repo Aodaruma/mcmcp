@@ -404,7 +404,15 @@ final class ActionAdmission {
         if (!lock.capabilities().equals(captured.control().capabilities())) {
             return Optional.of(AdmissionFenceFailure.CAPABILITIES_CHANGED);
         }
-        if (!ActionPlanning.playerPose(player, session.dimension()).equals(captured.pose())) {
+        var currentPose = ActionPlanning.playerPose(player, session.dimension());
+        boolean singleWaterNavigation = prepared.program().request().program().body().size() == 1
+                && prepared.program().request().program().body().getFirst() instanceof ActionDsl.NavigateToKnown
+                && prepared.analysis().routeDependencies().values().stream().anyMatch(edge ->
+                        edge.key().from().equals(captured.pose().cell())
+                                && edge.locomotion() == dev.aod.mcmcp.agent.safety.Locomotion.WATER);
+        if (!currentPose.equals(captured.pose()) && !(singleWaterNavigation
+                && boundedWaterPoseDrift(captured.pose(), currentPose, player.isInWater(),
+                        session.clientTick() - captured.session().clientTick()))) {
             return Optional.of(AdmissionFenceFailure.POSE_CHANGED);
         }
         if (captured.localSafetyRequired()
@@ -542,6 +550,17 @@ final class ActionAdmission {
         }
         rendererRecoveryRevalidated(prepared.surfaceRecovery(), stage);
         return Optional.empty();
+    }
+
+    /** The route, safety, control epoch and server-correction fences still run after this check. */
+    static boolean boundedWaterPoseDrift(AgentPrimitivePlanner.Pose captured,
+            AgentPrimitivePlanner.Pose current, boolean immersed, long elapsedTicks) {
+        return immersed && elapsedTicks >= 0 && elapsedTicks <= 5
+                && captured.cell().equals(current.cell())
+                && captured.yaw() == current.yaw() && captured.pitch() == current.pitch()
+                && captured.eyeHeight() == current.eyeHeight()
+                && Math.hypot(Math.hypot(current.x() - captured.x(), current.z() - captured.z()),
+                        current.y() - captured.y()) <= 0.25D;
     }
 
     record AgentAdmissionSnapshot(
