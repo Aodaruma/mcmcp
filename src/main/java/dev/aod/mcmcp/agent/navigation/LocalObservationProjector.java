@@ -159,6 +159,8 @@ public final class LocalObservationProjector {
         boolean supported = source.support()
                         == dev.aod.mcmcp.agent.safety.ObservationRecord.Support.PRESENT
                 || source.locomotion() != Locomotion.GROUND
+                        && (source.locomotion() != Locomotion.WATER || source.fluid()
+                                == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.WATER)
                         && source.support()
                                 == dev.aod.mcmcp.agent.safety.ObservationRecord.Support.ABSENT;
         boolean safe = supported

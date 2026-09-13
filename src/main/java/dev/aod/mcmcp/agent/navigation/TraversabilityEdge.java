@@ -100,7 +100,7 @@ public record TraversabilityEdge(
             return;
         }
         if (status == Status.CONFIRMED
-                && ((locomotion == Locomotion.GROUND
+                && (((locomotion == Locomotion.GROUND || locomotion == Locomotion.WATER && fluid == Fluid.NONE)
                                 && support != TargetSupport.CONFIRMED)
                         || support == TargetSupport.UNKNOWN
                 || clearance != Clearance.CONFIRMED
@@ -111,7 +111,7 @@ public record TraversabilityEdge(
                     "CONFIRMED requires valid support/clearance and no fluid/hazard");
         }
         if (status == Status.PROBE_ALLOWED
-                && ((locomotion == Locomotion.GROUND
+                && (((locomotion == Locomotion.GROUND || locomotion == Locomotion.WATER && fluid == Fluid.NONE)
                                 && support != TargetSupport.CONFIRMED)
                         || support == TargetSupport.UNKNOWN
                 || clearance != Clearance.CONFIRMED

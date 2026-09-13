@@ -11,6 +11,19 @@ import static org.assertj.core.api.Assertions.*;
 
 class WaterNavigationTest {
     @Test
+    void waterModeCannotAuthorizeAnUnsupportedDryDestination() {
+        var origin = new Point(0.5, 64.9, 0.5);
+        var to = new Point(1.5, 64.9, 0.5);
+        var current = new ObservationRecord(10, 3, 0, origin, origin, origin, Support.ABSENT,
+                Clearance.CLEAR, Transition.STATIONARY, Fluid.WATER, false, Hazard.NONE,
+                LoadedState.LOADED, Drop.AIRBORNE_OR_SWIMMING, false);
+        var projected = LocalObservationProjector.project(new LocalObservationVolume.Snapshot(
+                10, 3, origin, current, List.of(record(origin, to, Fluid.NONE, Support.ABSENT, Locomotion.WATER))),
+                UUID.randomUUID(), "minecraft:overworld", 3, 64);
+        assertThat(projected.edges()).allMatch(edge -> !edge.destination());
+    }
+
+    @Test
     void publishesWaterAndBankTargetsAndRoutesInThreeDimensions() {
         var session = UUID.randomUUID();
         var origin = new Point(-2.5, 62.9, -3.5);

@@ -518,6 +518,8 @@ public final class LocalObservationVolume {
                             append(sweptRegions(SweptAabbPath.segments(start, intended, resolved)), end))
                     && waterMovementTowardTarget(startPoint, point(end.getCenter()), intent)
                     && (waterAtFeet(level, end) || stableLanding(player, level, startPoint, end)
+                            || stableLanding(player, level, startPoint, targetBox)
+                                    && waterJustBelow(level, end)
                             || resolved.y > MOVEMENT_EPSILON && targetBox.minY > start.minY
                                     && waterAtFeet(level, start));
         }
@@ -979,14 +981,17 @@ public final class LocalObservationVolume {
             if (node.depth() >= MAX_TRANSITIONS) {
                 continue;
             }
-            if (waterAtFeet(level, node.box())) {
+            {
+                boolean swimming = waterAtFeet(level, node.box()) || waterJustBelow(level, node.box());
                 for (int dy : new int[] {1, -1}) {
                     for (var direction : List.of(new HorizontalDirection(0, 0),
                             new HorizontalDirection(1, 0), new HorizontalDirection(-1, 0),
                             new HorizontalDirection(0, 1), new HorizontalDirection(0, -1))) {
-                        if (evaluations++ >= MAX_OBSERVATIONS || records.size() >= MAX_OBSERVATIONS) break search;
+                        if (!swimming && (dy > 0 || direction.x() == 0 && direction.z() == 0)) continue;
                         var delta = adjacentWaterDelta(node.box(), direction.x(), dy, direction.z());
                         var target = node.box().move(delta);
+                        if (!swimming && !waterAtFeet(level, target)) continue;
+                        if (evaluations++ >= MAX_OBSERVATIONS || records.size() >= MAX_OBSERVATIONS) break search;
                         if (!waterTransitionSafe(player, level, origin, node.box(), target)) continue;
                         var record = waterRecord(player, level, origin, node.box(), target,
                                 node.depth() + 1, worldRevision);
@@ -1040,7 +1045,8 @@ public final class LocalObservationVolume {
                 // Candidate graph only: exact runtime guards keep using the resolved tick path.
                 evaluations++;
                 var waterTarget = node.box().move(intended);
-                if ((waterAtFeet(level, node.box()) || waterAtFeet(level, waterTarget))
+                if ((waterAtFeet(level, node.box()) || waterJustBelow(level, node.box())
+                        || waterAtFeet(level, waterTarget))
                         && Math.abs(direction.x()) + Math.abs(direction.z()) == 1) {
                     if (waterTransitionSafe(player, level, origin, node.box(), waterTarget)) {
                         records.add(waterRecord(player, level, origin, node.box(), waterTarget,
@@ -1099,6 +1105,11 @@ public final class LocalObservationVolume {
                 && level.getFluidState(feet).isSource();
     }
 
+    /** A bounded surface exit may briefly lift the feet above water before reaching the bank. */
+    private static boolean waterJustBelow(ClientLevel level, AABB box) {
+        return waterAtFeet(level, box.move(0, -0.5D, 0));
+    }
+
     private static boolean waterRegionsSafe(LocalPlayer player, ClientLevel level,
             Point origin, List<AABB> regions) {
         if (loadedState(level, origin, regions) != LoadedState.LOADED
@@ -1119,8 +1130,10 @@ public final class LocalObservationVolume {
 
     private static boolean waterTransitionSafe(LocalPlayer player, ClientLevel level,
             Point origin, AABB start, AABB target) {
-        if (!waterAtFeet(level, start) && !waterAtFeet(level, target)) return false;
-        if (!waterAtFeet(level, target) && !stableLanding(player, level, origin, target)) return false;
+        boolean landing = stableLanding(player, level, origin, target);
+        if (!waterAtFeet(level, start) && !waterAtFeet(level, target)
+                && !(waterJustBelow(level, start) && landing)) return false;
+        if (!waterAtFeet(level, target) && !landing) return false;
         if (bouncySupport(level, player, target)) return false;
         Vec3 delta = target.getCenter().subtract(start.getCenter());
         // Ascend before crossing a bank lip; descend only after clearing the bank.
