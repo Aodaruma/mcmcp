@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "construction-materials",
+  "dimension": "minecraft:overworld",
+  "mutation_bounds": {"min": {"x": -11, "y": 54, "z": -1}, "max": {"x": 1, "y": 63, "z": 11}},
+  "player_bounds": {"min": {"x": -10, "y": 55, "z": 0}, "max": {"x": 0, "y": 62, "z": 10}},
+  "max_changed_blocks": 1000,
+  "containers": [{"x": -7, "y": 56, "z": 7}]
+}

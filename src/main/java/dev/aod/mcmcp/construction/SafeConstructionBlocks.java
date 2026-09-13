@@ -2,9 +2,18 @@ package dev.aod.mcmcp.construction;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.DropExperienceBlock;
+import net.minecraft.world.level.block.IronBarsBlock;
+import net.minecraft.world.level.block.RotatedPillarBlock;
+import net.minecraft.world.level.block.SlabBlock;
+import net.minecraft.world.level.block.StainedGlassBlock;
+import net.minecraft.world.level.block.StainedGlassPaneBlock;
+import net.minecraft.world.level.block.StairBlock;
+import net.minecraft.world.level.block.TransparentBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.SlabType;
@@ -13,7 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
 
-/** Canonical registry-id allowlist shared by construction observation and execution. */
+/** Shared Vanilla construction families; custom implementations are never inferred safe. */
 public final class SafeConstructionBlocks {
     /** One-way yaw+pitch displacement; the adapter restores the same admitted pose. */
     public static final double MAX_ONE_WAY_CAMERA_DEGREES = 40.0D;
@@ -31,11 +40,44 @@ public final class SafeConstructionBlocks {
     }
 
     public static boolean allows(String blockId) {
-        return blockId != null && IDS.contains(blockId);
+        if (blockId == null) return false;
+        if (IDS.contains(blockId)) return true;
+        Block block = vanillaBlock(blockId);
+        if (block == null) return false;
+        Class<?> type = block.getClass();
+        return type == Block.class || type == RotatedPillarBlock.class
+                || type == DropExperienceBlock.class || type == TransparentBlock.class
+                || type == StainedGlassBlock.class
+                || isStair(blockId) || isSlab(blockId) || isPane(blockId);
+    }
+
+    private static Block vanillaBlock(String blockId) {
+        if (blockId == null) return null;
+        Identifier id = Identifier.tryParse(blockId);
+        if (id == null || !"minecraft".equals(id.getNamespace())
+                || !blockId.equals(id.toString())) return null;
+        return BuiltInRegistries.BLOCK.get(id).map(holder -> holder.value()).orElse(null);
+    }
+
+    public static boolean isStair(String blockId) {
+        Block block = vanillaBlock(blockId);
+        return block != null && block.getClass() == StairBlock.class;
+    }
+
+    public static boolean isSlab(String blockId) {
+        Block block = vanillaBlock(blockId);
+        return block != null && block.getClass() == SlabBlock.class;
+    }
+
+    public static boolean isPane(String blockId) {
+        Block block = vanillaBlock(blockId);
+        return block != null && (block.getClass() == IronBarsBlock.class
+                || block.getClass() == StainedGlassPaneBlock.class);
     }
 
     public static boolean isSurfaceAttachment(String blockId) {
         return "minecraft:ladder".equals(blockId)
+                || "minecraft:torch".equals(blockId)
                 || "minecraft:wall_torch".equals(blockId);
     }
 
@@ -49,8 +91,8 @@ public final class SafeConstructionBlocks {
      * State-sensitive shape boundary for the construction allowlist.
      *
      * <p>Most admitted blocks must remain full collision cubes. The explicit partial-shape slice
-     * is limited to dry oak/cobblestone stairs, dry non-double oak slabs, dry glass
-     * panes, dry wooden doors, and the two previously audited surface attachments.</p>
+     * is limited to ordinary dry Vanilla stairs, non-double slabs and panes, the audited oak
+     * door, and ladder/torch attachments. Behavioural subclasses stay outside these families.</p>
      */
     public static boolean allowsConstructionState(BlockState state) {
         Objects.requireNonNull(state, "state");
@@ -66,20 +108,12 @@ public final class SafeConstructionBlocks {
                     && !state.getValue(BlockStateProperties.OPEN)
                     && !state.getValue(BlockStateProperties.POWERED);
         }
-        return switch (blockId) {
-            // Stair shape is a bounded, neighbour-derived vanilla property. The construction
-            // port admits it only when the complete horizontal component is inside the plan and
-            // still verifies every final state exactly after all server acknowledgements.
-            case "minecraft:oak_stairs", "minecraft:cobblestone_stairs" ->
-                    state.hasProperty(BlockStateProperties.STAIRS_SHAPE);
-            case "minecraft:oak_slab" ->
-                    state.hasProperty(BlockStateProperties.SLAB_TYPE)
-                            && state.getValue(BlockStateProperties.SLAB_TYPE) != SlabType.DOUBLE;
-            case "minecraft:glass_pane" -> true;
-            default -> Block.isShapeFullBlock(state.getCollisionShape(
-                    EmptyBlockGetter.INSTANCE, BlockPos.ZERO))
-                    || isSurfaceAttachment(blockId);
-        };
+        if (isStair(blockId)) return state.hasProperty(BlockStateProperties.STAIRS_SHAPE);
+        if (isSlab(blockId)) return state.hasProperty(BlockStateProperties.SLAB_TYPE)
+                && state.getValue(BlockStateProperties.SLAB_TYPE) != SlabType.DOUBLE;
+        if (isPane(blockId)) return true;
+        return Block.isShapeFullBlock(state.getCollisionShape(
+                EmptyBlockGetter.INSTANCE, BlockPos.ZERO)) || isSurfaceAttachment(blockId);
     }
 
     /**
@@ -119,6 +153,7 @@ public final class SafeConstructionBlocks {
         ids.addAll(Set.of(
                 "minecraft:bamboo_planks",
                 "minecraft:ladder",
+                "minecraft:torch",
                 "minecraft:wall_torch",
                 "minecraft:crimson_planks",
                 "minecraft:warped_planks",

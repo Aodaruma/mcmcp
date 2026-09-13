@@ -13,6 +13,8 @@ import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.block.state.properties.StairsShape;
 import net.minecraft.world.phys.AABB;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.AnnotationNode;
@@ -587,11 +589,14 @@ class BlockItemPlacementInvokerContractTest {
                         : Blocks.AIR.defaultBlockState())).isFalse();
     }
 
-    @Test
-    void stairShapeDifferenceRequiresTheExactUnfinishedPlanNeighbour() {
+    @ParameterizedTest
+    @ValueSource(strings = {"oak_stairs", "birch_stairs", "stone_brick_stairs"})
+    void stairShapeDifferenceRequiresTheExactUnfinishedPlanNeighbour(String material) {
         BlockPos cornerPosition = new BlockPos(0, 65, 0);
         BlockPos frontPosition = cornerPosition.north();
-        BlockState predictedStraight = Blocks.OAK_STAIRS.defaultBlockState()
+        BlockState predictedStraight = BuiltInRegistries.BLOCK.get(
+                        net.minecraft.resources.Identifier.parse("minecraft:" + material))
+                .orElseThrow().value().defaultBlockState()
                 .setValue(BlockStateProperties.HORIZONTAL_FACING, Direction.NORTH);
         BlockState expectedCorner = predictedStraight
                 .setValue(BlockStateProperties.STAIRS_SHAPE, StairsShape.OUTER_LEFT);
@@ -626,11 +631,14 @@ class BlockItemPlacementInvokerContractTest {
                         ? plannedFront : Blocks.AIR.defaultBlockState())).isFalse();
     }
 
-    @Test
-    void singletonConnectedPaneNeedsTheMatchingUnfinishedPlanNeighbour() {
+    @ParameterizedTest
+    @ValueSource(strings = {"glass_pane", "black_stained_glass_pane", "iron_bars"})
+    void singletonConnectedPaneNeedsTheMatchingUnfinishedPlanNeighbour(String material) {
         BlockPos panePosition = new BlockPos(0, 65, 0);
         BlockPos east = panePosition.east();
-        BlockState predictedUnconnected = Blocks.GLASS_PANE.defaultBlockState();
+        BlockState predictedUnconnected = BuiltInRegistries.BLOCK.get(
+                        net.minecraft.resources.Identifier.parse("minecraft:" + material))
+                .orElseThrow().value().defaultBlockState();
         BlockState expectedConnected = predictedUnconnected
                 .setValue(BlockStateProperties.EAST, true);
         BlockState plannedEast = predictedUnconnected

@@ -655,7 +655,7 @@ public final class OmnidirectionalObserver {
     static ResourceId safeDirectPlacementItem(BlockState state) {
         Objects.requireNonNull(state, "state");
         Block block = state.getBlock();
-        if (block == Blocks.WALL_TORCH
+        if ((block == Blocks.WALL_TORCH || block == Blocks.TORCH)
                 && Items.TORCH instanceof StandingAndWallBlockItem) {
             return new ResourceId("minecraft:torch");
         }
