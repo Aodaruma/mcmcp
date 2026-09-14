@@ -108,7 +108,12 @@ function Start-BuildingAction($Request,[string]$Kind,[int]$Index=-1,$Target=$nul
     $nonce='build_'+[guid]::NewGuid().ToString('N')
     $Request.program.name=$nonce
     $script:Checkpoint.pending=@{kind=$Kind;index=$Index;target=$Target;material=$Material;nonce=$nonce;action_id=$null;terminal=$null}
-    Save-BuildingCheckpoint $CheckpointPath $script:Checkpoint # Intent must survive a lost start response.
+    try {Save-BuildingCheckpoint $CheckpointPath $script:Checkpoint} catch {
+        # HTTP has not begun. Do not let the outer failure save persist an unsent intent.
+        $script:Checkpoint.pending=$null
+        $_.Exception.Data['start_not_sent']=$true
+        throw
+    }
     try {$receipt=Invoke-GateTool 'agent_start_action' $Request} catch {
         # A validated pre-admission rejection is distinct from a lost/invalid response.
         # SERVER_BUSY, INTERNAL_ERROR and transport failures remain uncertain intents.
@@ -306,7 +311,9 @@ function Invoke-BuildingRun {
             }
             if($script:Checkpoint.status -cnotin @('needs_material','unknown')){$script:Checkpoint.status='paused'}
             if($script:Checkpoint.status -cnotin @('needs_material','unknown') -or $null -eq $script:Checkpoint.diagnostic){
-                $script:Checkpoint.diagnostic=$_.Exception.Message
+                $script:Checkpoint.diagnostic=if($_.Exception.Data['start_not_sent'] -eq $true){
+                    'intent_save_failed_before_dispatch'
+                }else{$_.Exception.Message}
             }
             try {Update-BuildingInventory (Get-BuildingState)} catch { }
             Save-BuildingCheckpoint $CheckpointPath $script:Checkpoint
