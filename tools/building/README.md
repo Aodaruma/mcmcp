@@ -4,6 +4,8 @@ PowerShell 7.4以上で使う施工runnerです。最大128×128の床を蛇行�
 
 `example-small-floor.json`はDockerの試験用座標の例です。実際の建築では、利用者が決めた場所・材料・行列へ変更した別ファイルを作ってください。
 
+状態が一意な通常のVanilla full-cube建材は、`agent_get_state.placement_materials`から実所持の設置用参照を取得します。黒羊毛などの見本を先に置く必要はありません。階段・松明等の他の対応stateは従来の可視見本を使います。どちらも同sessionだけで材料identityを保持し、支持面・経路・設置先は再観測します。
+
 ```powershell
 pwsh -File tools/building/Invoke-McmcpBuilding.ps1 `
   -BlueprintPath my-floor.json -CheckpointPath progress/my-floor.json `

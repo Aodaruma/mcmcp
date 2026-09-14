@@ -60,6 +60,14 @@ function Get-BuildingSurface($Position,$Expected,[string[]]$Faces=@()) {
 }
 function Get-BuildingSource($Material) {
     $state=Get-BuildingState
+    foreach($owned in @(Get-ObjectProperty $state 'placement_materials')) {
+        if($null -ne $owned -and $owned.item -ceq $Material.item -and
+            (Test-BuildingStateEqual $owned.state $Material.state) -and $null -ne $owned.placement_state_ref) {
+            $script:Checkpoint.material_refs[(Get-BuildingMaterialKey $Material)]=$owned.placement_state_ref
+            Save-BuildingCheckpoint $CheckpointPath $script:Checkpoint
+            return $owned
+        }
+    }
     $materials=@($script:Plan.blueprint.palette.Values)+@(@{item='minecraft:torch';state=@{block='minecraft:torch';properties=@{}}})
     $records=@(Get-RecordsFromState -State $state -Kinds @('visible_surface') -Filter @{block_ids=@($materials | ForEach-Object {$_.state.block} | Select-Object -Unique)})
     $changed=$false

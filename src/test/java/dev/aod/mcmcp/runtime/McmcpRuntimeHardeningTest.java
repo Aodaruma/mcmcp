@@ -1470,7 +1470,7 @@ class McmcpRuntimeHardeningTest {
 
         assertThat(state.keySet()).containsExactly(
                 "schema_version", "control", "world", "inventory",
-                "standard_potions", "entity_attack_consent", "recipe_query",
+                "standard_potions", "placement_materials", "entity_attack_consent", "recipe_query",
                 "policy", "observation", "action");
         assertThat(state).containsEntry("schema_version", 1)
                 .containsEntry("world", null)

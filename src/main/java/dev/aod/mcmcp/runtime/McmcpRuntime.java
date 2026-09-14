@@ -1011,6 +1011,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var fence = publishedSession;
         java.util.concurrent.Callable<RuntimeReply> work = () ->
                 withEvaluationLeaseFence(context, command.toolName(), () -> {
+            if (command instanceof GetState state) {
+                var minecraft = Minecraft.getInstance();
+                assertClientThread(minecraft);
+                return status(minecraft, sessions.snapshot(), state.arguments());
+            }
             if (command instanceof GetObservation observation) {
                 var minecraft = Minecraft.getInstance();
                 assertClientThread(minecraft);
@@ -1175,7 +1180,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         assertClientThread(minecraft);
         var session = sessions.snapshot();
         return switch (command) {
-            case GetState state -> status(minecraft, session, state.arguments());
+            case GetState ignored ->
+                    throw new AssertionError("agent_get_state must stage placement identity delivery");
             case GetObservation ignored ->
                     throw new AssertionError("agent_get_observation must stage delivery metadata");
             case StartAction action -> {
@@ -1660,13 +1666,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return ActionWireMapper.AVAILABLE_CAPABILITIES;
     }
 
-    private Map<String, Object> status(
+    private RuntimeReply status(
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             Map<String, Object> arguments) {
         var lock = arming.snapshot(session.worldSessionId());
         var inventory = new LinkedHashMap<String, Integer>();
         var standardPotions = new LinkedHashMap<StandardPotionKey, Integer>();
+        var placementStacks = new ArrayList<net.minecraft.world.item.ItemStack>();
         Map<String, Object> merchantOffers = null;
         Map<String, Object> knownMenu = null;
         Map<String, Object> world = null;
@@ -1704,6 +1711,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             for (int slot = 0; slot < playerInventory.getContainerSize(); slot++) {
                 var stack = playerInventory.getItem(slot);
                 if (!stack.isEmpty()) {
+                    placementStacks.add(stack.copy());
                     String item = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
                     inventory.merge(item, stack.getCount(), Integer::sum);
                     StandardPotionPolicy.identify(stack).ifPresent(identity ->
@@ -1780,7 +1788,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     return value;
                 })
                 .orElse(null));
-        return result;
+        return InventoryPlacementMaterials.prepare(result, placementStacks, agentObservations.deliveredEvidence());
     }
 
     private ScopedEntityAttackConsentStore.Snapshot entityAttackConsentSnapshot(
