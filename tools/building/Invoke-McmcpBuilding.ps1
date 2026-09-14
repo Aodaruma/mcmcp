@@ -174,11 +174,16 @@ function Test-BuildingCentered($Position,$Stand) {
     [Math]::Abs($Position.x-$Stand.x-0.5) -le 0.15 -and [Math]::Abs($Position.z-$Stand.z-0.5) -le 0.15 -and
         [Math]::Abs($Position.y-$Stand.y-1) -le 0.02
 }
-function Move-BuildingTo([int]$Index) {
+function Move-BuildingTo {
+    param([int]$Index,[switch]$ForFloorPlacement)
     $goal=Get-BuildingStand $Index
     while($true) {
         $state=Get-BuildingState;$pos=$state.world.position
-        if(Test-BuildingCentered $pos $goal.position){[void](Get-BuildingSurface $goal.position $goal.state @('up'));return}
+        if(Test-BuildingCentered $pos $goal.position){
+            # The floor caller acquires this support immediately before placement.
+            if(-not $ForFloorPlacement){[void](Get-BuildingSurface $goal.position $goal.state @('up'))}
+            return
+        }
         $current=-2
         for($i=-1;$i -lt $script:Checkpoint.next;$i++) {
             $stand=Get-BuildingStand $i
@@ -263,7 +268,7 @@ function Invoke-BuildingRun {
             if($script:Checkpoint.next -lt $script:Plan.cells.Count) {
                 $index=$script:Checkpoint.next;$cell=$script:Plan.cells[$index]
                 Ensure-BuildingMaterial $cell.material ($index-1)
-                Move-BuildingTo ($index-1)
+                Move-BuildingTo ($index-1) -ForFloorPlacement
                 $source=Get-BuildingSource $cell.material
                 $stand=Get-BuildingStand ($index-1)
                 $support=Get-BuildingSurface $stand.position $stand.state @('up')
@@ -273,7 +278,15 @@ function Invoke-BuildingRun {
                     direction=$direction;placement_state_ref=$source.placement_state_ref}
                 $request=New-PrimitiveRequest -Name 'floor' -Capabilities @('movement','camera','block_place') -Node $node -Duration 20000 -Ticks 400 -Distance 2 -Camera 720 -Placements 1
                 Start-BuildingAction $request 'floor' $index $cell.position $cell.material
-                [void](Get-BuildingSurface $cell.position $cell.material.state @('up'))
+                # Complete-BuildingPending requires an exact target/state CONFIRMED effect;
+                # Start-BuildingAction persists it before returning. Next use gets fresh support.
+                $receipt=$script:Checkpoint.receipts["floor:$index"]
+                if($null -ne $script:Checkpoint.pending -or $script:Checkpoint.cells[$index] -cne 'confirmed' -or
+                    $script:Checkpoint.next -ne $index+1 -or $null -eq $script:LastTerminal -or
+                    $script:LastTerminal.state -cne 'succeeded' -or $null -eq $receipt -or
+                    $receipt.verification -cne 'confirmed' -or $receipt.action_id -cne $script:LastTerminal.action_id){
+                    throw 'floor_confirmation_required'
+                }
             } elseif($script:Checkpoint.torch_next -lt $script:Plan.torches.Count) {
                 $index=$script:Checkpoint.torch_next;$floorIndex=$script:Plan.torches[$index]
                 $standIndex=if($floorIndex -gt 0){$floorIndex-1}else{1}
