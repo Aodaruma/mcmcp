@@ -41,6 +41,8 @@ Action開始**前**に一意のnonceを保存し、開始応答を受けたらAc
 
 failed/cancelledのActionでもserver確認済みの設置は一度だけ計上します。その後は停止しており、再開時に位置と支持を再観測します。未知の設置結果は、同じ対象・完全stateを実際に再観測できる場合だけ`observed`として進めます。材料消費のACKが得られたことにはしません。`floor_server_confirmed`/`floor_observed`と松明の対応数は別表示です。
 
+Windowsの保存先に一時的な共有競合がある場合、同じ書込み済みtmpのatomic replaceだけを最大5回試みます。対象はWin32 5/32/33のIO/アクセス例外で、待機の合計は750msです。失敗時は元のcheckpointを保ち、その保存で作成したtmpの削除を試みます。永続的な権限不足を回避する処理ではありません。HTTP呼出前の最初のintent保存が失敗した場合は送信せず、pendingを戻して`intent_save_failed_before_dispatch`と区別します。HTTP開始後の応答不明や受付後の保存失敗は、既存のpendingを保持して照合します。
+
 初期在庫＋確認済み補充−確認済み消費を現在の在庫と照合します。手動出し入れ・拾得などの差は`external_inventory_delta`へ残し、原因や消費ACKを推測しません。未精算があれば、全セルが揃っても`complete`ではなく`built_with_unknown_balance`になります。
 
 `world.session_id`は現在の読込みsessionの識別子で、saveの恒久IDではありません。Minecraft再読込みで変わると自動再開を拒否します。**元のsaveを開いたことを確認した場合だけ**`-AcceptWorldSessionChange`で明示的に結び直せます。この場合は材料refも再取得します。pendingが残る場合のsession付け替えは拒否します。receiptを失い、履歴も失効した操作を勝手に施工し直すことはありません。
@@ -49,6 +51,6 @@ failed/cancelledのActionでもserver確認済みの設置は一度だけ計上�
 
 ## 検証範囲
 
-`Test-McmcpBuilding.ps1`は128×128・4回転の経路、16,505件の確認receiptを含む保存・読込み、二重計上防止、破損、lockを確認します。`Test-McmcpBuildingRecovery.ps1`は開始応答喪失、nonce照合、受付前拒否、world変更、材料収支を検証します。`tools/check-source.ps1`にも含めています。
+`Test-McmcpBuilding.ps1`は128×128・4回転の経路、16,505件の確認receiptを含む保存・読込み、二重計上防止、破損、lockを確認します。`Test-McmcpBuildingRecovery.ps1`は開始応答喪失、nonce照合、受付前拒否、world変更、材料収支を検証します。`Test-McmcpBuildingPersistence.ps1`は実ファイルの共有競合、有限失敗、tmp cleanup、送信前と受付後の保存失敗を検証します。いずれも`tools/check-source.ps1`に含めています。
 
 実機の記録は[進捗保存・再開の試験](../../docs/experiments/20260914_construction_progress.md)を参照してください。128×128全施工やQRの読み取りは、ここでの小平面の合格範囲に含めません。

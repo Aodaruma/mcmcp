@@ -52,9 +52,25 @@ function Save-BuildingCheckpoint([string]$Path,$Checkpoint) {
     $bytes=[Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -InputObject @{sha256=(Get-BuildingHash $data);data=$data}))
     if($bytes.Length -gt 33554432){throw 'checkpoint_too_large'}
     $temporary=$Path+'.'+[guid]::NewGuid().ToString('N')+'.tmp'
-    $stream=[IO.File]::Open($temporary,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-    try {$stream.Write($bytes);$stream.Flush($true)}finally{$stream.Dispose()}
-    [IO.File]::Move($temporary,$Path,$true)
+    $temporaryCreated=$false
+    try {
+        $stream=[IO.File]::Open($temporary,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        $temporaryCreated=$true
+        try {$stream.Write($bytes);$stream.Flush($true)}finally{$stream.Dispose()}
+        for($attempt=0;$attempt -lt 5;$attempt++) {
+            try {[IO.File]::Move($temporary,$Path,$true);return} catch {
+                $cause=$_.Exception.GetBaseException()
+                $code=$cause.HResult -band 0xffff
+                if(-not $IsWindows -or $attempt -eq 4 -or $code -notin @(5,32,33) -or
+                    ($cause -isnot [IO.IOException] -and $cause -isnot [UnauthorizedAccessException])){throw}
+                Start-Sleep -Milliseconds (50 -shl $attempt)
+            }
+        }
+    } finally {
+        if($temporaryCreated -and [IO.File]::Exists($temporary)) {
+            try {[IO.File]::Delete($temporary)} catch {Write-Verbose 'checkpoint_temporary_cleanup_failed'}
+        }
+    }
 }
 function Read-BuildingCheckpoint([string]$Path,$Plan) {
     if(-not (Test-Path -LiteralPath $Path)){return New-BuildingCheckpoint $Plan}
