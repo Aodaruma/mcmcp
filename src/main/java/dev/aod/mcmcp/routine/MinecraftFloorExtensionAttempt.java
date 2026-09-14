@@ -61,6 +61,7 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
     private boolean closed;
     private int placedDelta;
     private long lastMovementHeartbeatTick;
+    private Result leaseExpiryIntent;
 
     public MinecraftFloorExtensionAttempt(Minecraft minecraft, WorldSessionTracker.Snapshot session,
             KnownPillarUpRequest source, Direction direction, MinecraftObservationService observations,
@@ -101,8 +102,10 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
         try {
             // A stalled client tick must stop before camera/placement work. This check does not
             // renew the deadline or republish the previous desired movement.
-            if (movement != null && !movement.validate(owner, tickStartedNanos))
-                return leaseExpired(session.clientTick(), tickPhase, "tick_entry", tickStartedNanos, tickStartedNanos);
+            if (movement != null) {
+                captureLeaseExpiry(session.clientTick(), tickPhase, "tick_entry", tickStartedNanos, tickStartedNanos);
+                if (!movement.validate(owner, tickStartedNanos)) return finishLeaseExpiry();
+            }
             requireSafety(session);
             if (session.clientTick() >= deadline) return failed("floor_extension_deadline");
             if (movement == null) {
@@ -155,11 +158,15 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
                 }
             }
             long outputNanos = System.nanoTime();
+            captureLeaseExpiry(session.clientTick(), tickPhase, "heartbeat", tickStartedNanos, outputNanos);
             if (!movement.heartbeat(owner, outputNanos, Duration.ofMillis(Math.min(40, Math.max(1, deadline - session.clientTick())) * 50)))
-                return leaseExpired(session.clientTick(), tickPhase, "heartbeat", tickStartedNanos, outputNanos);
+                return finishLeaseExpiry();
             lastMovementHeartbeatTick = session.clientTick();
             return new Result(Status.RUNNING, "floor_extension_" + phase.name().toLowerCase(java.util.Locale.ROOT));
         } catch (RuntimeException | LinkageError rejected) {
+            // Preserve the first expiry even if lease or construction cleanup throws. The
+            // runtime retains this attempt and completes input release before publishing it.
+            if (leaseExpiryIntent != null) return leaseExpiryIntent;
             return failed("floor_extension_safety_changed");
         }
     }
@@ -276,16 +283,20 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
         var result = List.copyOf(effects); effects.clear(); return result;
     }
     public int drainPlacedDelta() { int result = placedDelta; placedDelta = 0; return result; }
-    private Result leaseExpired(long clientTick, Phase tickPhase, String checkpoint, long startedNanos, long nowNanos) {
-        long overdueMillis = Math.max(0, AgentInputState.global().watchdogTime(nowNanos) - movement.deadlineNanos()) / 1_000_000;
+    private void captureLeaseExpiry(long clientTick, Phase tickPhase, String checkpoint, long startedNanos, long nowNanos) {
+        long overdueNanos = AgentInputState.global().watchdogTime(nowNanos) - movement.deadlineNanos();
+        if (overdueNanos < 0 || leaseExpiryIntent != null) return;
         var diagnostics = List.of(
                 "floor_extension_phase=" + tickPhase.name().toLowerCase(java.util.Locale.ROOT),
                 "floor_extension_lease_check=" + checkpoint,
-                "floor_extension_lease_overdue_ms=" + overdueMillis,
+                "floor_extension_lease_overdue_ms=" + overdueNanos / 1_000_000,
                 "floor_extension_lease_tick_gap=" + Math.max(0, clientTick - lastMovementHeartbeatTick),
                 "floor_extension_executor_ms=" + Math.max(0, nowNanos - startedNanos) / 1_000_000);
+        leaseExpiryIntent = new Result(Status.FAILED, "floor_extension_input_lease_expired", diagnostics);
+    }
+    private Result finishLeaseExpiry() {
         close();
-        return new Result(Status.FAILED, "floor_extension_input_lease_expired", diagnostics);
+        return Objects.requireNonNull(leaseExpiryIntent);
     }
     private Result failed(String evidence) { close(); return new Result(Status.FAILED, evidence); }
     @Override public void close() {
