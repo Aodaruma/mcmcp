@@ -51,6 +51,92 @@ class SurfacePreflightRecoveryTest {
             "floor", new ActionDsl.Position(DIM.value(), -590, 79, 64),
             new ActionDsl.BlockStateSpec(SNOW_BLOCK.value(), Map.of()), ActionDsl.BlockFace.EAST,
             "psr_00000000000000000000000000000000");
+    private static final ActionDsl.ApplyKnownBlockPlan PLACEMENT = new ActionDsl.ApplyKnownBlockPlan(
+            "light", new ActionDsl.Position(DIM.value(), -590, 80, 64),
+            new ActionDsl.BlockPlanTransform(ActionDsl.BlockPlanRotation.DEGREES_0, ActionDsl.BlockPlanMirror.NONE),
+            List.of(new ActionDsl.BlockPlanEntry("torch", new ActionDsl.Offset(0, 0, 0),
+                    Optional.empty(), Optional.empty(), Optional.of(FLOOR.placementStateRef()),
+                    new ActionDsl.PlacementSupport(FLOOR.support(), ActionDsl.BlockFace.UP,
+                            Optional.of(FLOOR.expectedSupport()), Optional.empty()))));
+
+    @Test
+    void singlePlacementWaitsAtEveryPreDispatchStageUsingOnlyItsOriginalSupport() {
+        var fixture = new Fixture(PLACEMENT, SNOW);
+        int tick = 10;
+        for (var stage : List.of(RendererRecoveryStage.CAPTURE, RendererRecoveryStage.COMMIT,
+                RendererRecoveryStage.DISPATCH, RendererRecoveryStage.JIT)) {
+            var pending = fixture.submit(stage, stage == RendererRecoveryStage.JIT);
+            fixture.drain(tick++, false);
+            assertThat(pending).as("missing fog at %s", stage).isNotDone();
+            assertThat(fixture.interactions).hasValue(0);
+            fixture.drain(tick++, true);
+            assertThat(pending.join()).isEqualTo("ready");
+        }
+        assertThat(fixture.rays).hasValue(4);
+        assertThat(fixture.interactions).hasValue(1);
+        assertThat(fixture.recovery.summary().missingStages()).isEqualTo(1 | 2 | 4 | 8);
+        assertThat(fixture.recovery.summary().revalidatedStages()).isEqualTo(1 | 2 | 4 | 8);
+        assertThat(fixture.store.augment(Optional.of(fixture.raw)).orElseThrow().records()).containsExactly(SNOW);
+        assertThat(fixture.recovery.evaluate(fixture.store, 30, 1_500_000_000L, true))
+                .isEqualTo(RENDERER_EVIDENCE_TIMEOUT);
+    }
+
+    @Test
+    void singlePlacementCannotUseAChangedOccludedOrFogHiddenSupportAfterWaiting() {
+        for (int obstruction = 0; obstruction < 3; obstruction++) {
+            var fixture = new Fixture(PLACEMENT, SNOW);
+            var capture = fixture.submit(RendererRecoveryStage.CAPTURE, false);
+            fixture.drain(10, true);
+            assertThat(capture.join()).isEqualTo("ready");
+            var commit = fixture.submit(RendererRecoveryStage.COMMIT, true);
+            fixture.drain(11, false);
+            assertThat(commit).isNotDone();
+            if (obstruction == 0) fixture.block = new ResourceId("minecraft:stone");
+            if (obstruction == 1) fixture.block = null;
+            if (obstruction == 2) fixture.fogDistance = 1;
+            fixture.drain(12, true);
+            assertThatThrownBy(commit::join).hasCauseInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+            assertThat(fixture.interactions).hasValue(0);
+            assertThat(fixture.recovery.summary().revalidatedStages()).isZero();
+        }
+    }
+
+    @Test
+    void placementRecoveryExcludesMultiEntryAndDependencySupports() {
+        var entry = PLACEMENT.entries().getFirst();
+        var recovery = new Fixture(PLACEMENT, SNOW).recovery;
+        assertThat(recovery.applies(PLACEMENT)).isTrue();
+        assertThat(recovery.applies(new ActionDsl.ApplyKnownBlockPlan("many", PLACEMENT.anchor(),
+                PLACEMENT.transform(), List.of(entry, entry)))).isFalse();
+        var dependency = new ActionDsl.BlockPlanEntry("dependent", entry.offset(), entry.sourceState(),
+                entry.item(), entry.placementStateRef(), new ActionDsl.PlacementSupport(FLOOR.support(),
+                        ActionDsl.BlockFace.UP, Optional.empty(), Optional.of("earlier")));
+        assertThat(SurfacePreflightRecovery.target(new ActionDsl.ApplyKnownBlockPlan("dependent",
+                PLACEMENT.anchor(), PLACEMENT.transform(), List.of(dependency)))).isNull();
+        assertThat(SurfacePreflightRecovery.target(new ActionDsl.ApplyKnownBlockPlan("empty",
+                PLACEMENT.anchor(), PLACEMENT.transform(), List.of()))).isNull();
+    }
+
+    @Test
+    void placementRendererWaitSharesTheOriginalThreeHundredTickEnvelope() {
+        var used = new AgentActionStore.Progress(AgentActionStore.Phase.EXECUTING,
+                "light", 0, 1, 0, 0, 0, 0, 0, 7, false);
+        var planned = ActionDslCompiler.intrinsicKnownBlockPlanCost(1);
+        var remaining = ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
+                used, true, PLACEMENT, planned, 350_000_000L);
+        assertThat(remaining).isEqualTo(new ActionDslCompiler.Cost(14_650, 293, 0, 80, 0, 0, 1));
+        assertThat(ActionBudgets.fitsRemainingBudget(used,
+                new ActionDsl.Budget(15_000, 300, 0, 80, 0, 0, 1), remaining, 350_000_000L)).isTrue();
+        assertThat(ActionBudgets.fitsRemainingBudget(used,
+                new ActionDsl.Budget(15_000, 299, 0, 80, 0, 0, 1), remaining, 350_000_000L)).isFalse();
+        assertThat(ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
+                used, false, PLACEMENT, planned, 350_000_000L)).isEqualTo(planned);
+        var many = new ActionDsl.ApplyKnownBlockPlan("many", PLACEMENT.anchor(), PLACEMENT.transform(),
+                List.of(PLACEMENT.entries().getFirst(), PLACEMENT.entries().getFirst()));
+        var manyCost = ActionDslCompiler.intrinsicKnownBlockPlanCost(2);
+        assertThat(ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
+                used, true, many, manyCost, 350_000_000L)).isEqualTo(manyCost);
+    }
 
     @Test
     void floorSupportWaitsAcrossCaptureCommitDispatchAndJitWithoutRenewingItsWitness() {
@@ -317,9 +403,12 @@ class SurfacePreflightRecoveryTest {
                         tick.get(), entity -> Optional.empty(), known -> lease != null && lease.targets(known))
                         : store.augment(Optional.of(raw));
                 if (lease != null) planning = store.restrictToSurfaceLease(planning, lease);
-                var target = primitive instanceof ActionDsl.ExtendKnownFloor floor
-                        ? new SurfacePreflightRecovery.Target(floor.support(), floor.expectedSupport().block())
-                        : new SurfacePreflightRecovery.Target(NODE.target(), NODE.expectedBlock());
+                var target = primitive instanceof ActionDsl.ApplyKnownBlockPlan plan
+                        ? new SurfacePreflightRecovery.Target(plan.entries().getFirst().support().position(),
+                                plan.entries().getFirst().support().expectedState().orElseThrow().block())
+                        : primitive instanceof ActionDsl.ExtendKnownFloor floor
+                                ? new SurfacePreflightRecovery.Target(floor.support(), floor.expectedSupport().block())
+                                : new SurfacePreflightRecovery.Target(NODE.target(), NODE.expectedBlock());
                 AgentPrimitivePlanner.requireKnownSurface(map.snapshot().orElseThrow(), planning,
                         target.position(), target.block(), 65);
                 recovery.noteRevalidated(stage);
