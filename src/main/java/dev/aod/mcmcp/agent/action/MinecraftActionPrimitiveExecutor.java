@@ -18,6 +18,7 @@ import net.minecraft.world.phys.Vec3;
 
 import java.time.Duration;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -50,6 +51,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
     private FaceState face;
     private MovementInputLease movement;
     private long lastClientTick = -1;
+    private long tickStartedNanos;
+    private long lastMovementHeartbeatTick = -1;
 
     /** @param maxCameraDegreesPerTick configured degrees/second divided by 20 client ticks */
     public MinecraftActionPrimitiveExecutor(float maxCameraDegreesPerTick) {
@@ -109,6 +112,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             throw new IllegalStateException("No Action DSL primitive is active");
         }
         lastClientTick = clientTick;
+        tickStartedNanos = System.nanoTime();
         LocalPlayer player = minecraft.player;
         if (player == null) {
             return finish(Status.FAILED, Reason.WORLD_UNAVAILABLE);
@@ -327,6 +331,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         if (movement == null) {
             movement = MovementInputLease.acquire(
                     minecraft, ownerId, outputNanos, LEASE_HORIZON);
+            lastMovementHeartbeatTick = clientTick;
         }
         if (!outputAllowed.getAsBoolean()) {
             return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
@@ -337,10 +342,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
         }
         outputNanos = System.nanoTime();
-        if (!movement.heartbeat(ownerId, outputNanos, LEASE_HORIZON)) {
-            movement = null;
-            return finish(Status.FAILED, Reason.MOVEMENT_LEASE_EXPIRED);
-        }
+        TickResult leaseFailure = heartbeatMovement(outputNanos, false);
+        if (leaseFailure != null) return leaseFailure;
         if (!requiresNavigationMovementSafety(locomotion, verticalDelta)) {
             AgentInputState.global().requireGoalMovementSafety(
                     player, player.level(), snapshot.worldRevision(), remainingDistance);
@@ -495,6 +498,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         if (movement == null) {
             movement = MovementInputLease.acquire(
                     minecraft, ownerId, outputNanos, LEASE_HORIZON);
+            lastMovementHeartbeatTick = clientTick;
         }
         if (!outputAllowed.getAsBoolean()) {
             return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
@@ -505,10 +509,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
         }
         outputNanos = System.nanoTime();
-        if (!movement.heartbeat(ownerId, outputNanos, LEASE_HORIZON)) {
-            movement = null;
-            return finish(Status.FAILED, Reason.MOVEMENT_LEASE_EXPIRED);
-        }
+        TickResult leaseFailure = heartbeatMovement(outputNanos, true);
+        if (leaseFailure != null) return leaseFailure;
         AgentInputState.global().requireGoalMovementSafety(
                 player, player.level(), snapshot.worldRevision(), remainingDistance);
         return TickResult.running(Reason.NONE);
@@ -633,11 +635,36 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 : TickResult.running(Reason.NONE);
     }
 
+    /** Reports timing only after the original watchdog has closed the expired lease. */
+    private TickResult heartbeatMovement(long outputNanos, boolean settling) {
+        long previousDeadline = movement.deadlineNanos();
+        if (movement.heartbeat(ownerId, outputNanos, LEASE_HORIZON)) {
+            lastMovementHeartbeatTick = lastClientTick;
+            return null;
+        }
+        movement = null;
+        long overdueMillis = elapsedMillis(
+                previousDeadline, AgentInputState.global().watchdogTime(outputNanos));
+        return finish(Status.FAILED, Reason.MOVEMENT_LEASE_EXPIRED, List.of(
+                "movement_lease_phase=" + (settling ? "settling" : "driving"),
+                "movement_lease_overdue_ms=" + overdueMillis,
+                "movement_lease_tick_gap=" + Math.max(0L, lastClientTick - lastMovementHeartbeatTick),
+                "movement_executor_ms=" + elapsedMillis(tickStartedNanos, outputNanos)));
+    }
+
+    private static long elapsedMillis(long startNanos, long endNanos) {
+        return Math.max(0L, endNanos - startNanos) / 1_000_000L;
+    }
+
     private TickResult finish(Status status, Reason reason) {
+        return finish(status, reason, List.of());
+    }
+
+    private TickResult finish(Status status, Reason reason, List<String> diagnostics) {
         releaseMovement();
         navigation = null;
         face = null;
-        return new TickResult(status, reason);
+        return new TickResult(status, reason, diagnostics);
     }
 
     @Override
@@ -1110,10 +1137,20 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         };
     }
 
-    public record TickResult(Status status, Reason reason) {
+    public record TickResult(Status status, Reason reason, List<String> diagnostics) {
+        public TickResult(Status status, Reason reason) {
+            this(status, reason, List.of());
+        }
+
         public TickResult {
             Objects.requireNonNull(status, "status");
             Objects.requireNonNull(reason, "reason");
+            diagnostics = List.copyOf(diagnostics);
+            if (diagnostics.size() > 4 || diagnostics.stream().anyMatch(value -> value.length() > 128)
+                    || !diagnostics.isEmpty()
+                        && (status != Status.FAILED || reason != Reason.MOVEMENT_LEASE_EXPIRED)) {
+                throw new IllegalArgumentException("invalid movement lease diagnostics");
+            }
             if (status == Status.RUNNING && reason != Reason.NONE
                     && reason != Reason.PROBE_MICRO_STEP) {
                 throw new IllegalArgumentException("running result has a terminal reason");

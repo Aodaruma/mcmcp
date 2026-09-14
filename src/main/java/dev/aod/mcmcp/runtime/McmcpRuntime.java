@@ -2608,7 +2608,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             ? AgentActionStore.FailureCode.WORLD_CHANGED
                             : AgentActionStore.FailureCode.INTERNAL_ERROR,
                     false,
-                    result.reason().name().toLowerCase(Locale.ROOT));
+                    result.reason().name().toLowerCase(Locale.ROOT),
+                    result.diagnostics().toArray(String[]::new));
         }
     }
 

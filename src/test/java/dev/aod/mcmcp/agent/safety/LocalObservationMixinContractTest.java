@@ -371,7 +371,10 @@ class LocalObservationMixinContractTest {
                         "dev/aod/mcmcp/routine/MovementInputLease#setDesired"));
         assertThat(navigation.lastIndexOf("java/util/function/BooleanSupplier#getAsBoolean"))
                 .isLessThan(navigation.indexOf(
-                        "dev/aod/mcmcp/routine/MovementInputLease#heartbeat"));
+                        "dev/aod/mcmcp/agent/action/MinecraftActionPrimitiveExecutor#heartbeatMovement"));
+        assertThat(invocations(method(executor, "heartbeatMovement")))
+                .containsSubsequence("dev/aod/mcmcp/routine/MovementInputLease#deadlineNanos",
+                        "dev/aod/mcmcp/routine/MovementInputLease#heartbeat");
         assertThat(face.indexOf("java/util/function/BooleanSupplier#getAsBoolean"))
                 .isLessThan(face.indexOf(
                         "dev/aod/mcmcp/agent/action/MinecraftActionPrimitiveExecutor#turn"));
