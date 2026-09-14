@@ -14,6 +14,38 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** 分割後も効果回収と入力解放がActionのterminal公開より先に行われることを検査する。 */
 class RuntimePrimitiveOwnershipContractTest {
     @Test
+    void floorCleanupExceptionsReturnTheCapturedExpiryBeforeGenericSafetyFailure() throws Exception {
+        var tick = method(dev.aod.mcmcp.routine.MinecraftFloorExtensionAttempt.class, "tick");
+        var handler = tick.tryCatchBlocks.stream().filter(block -> block.type.equals("java/lang/RuntimeException"))
+                .findFirst().orElseThrow().handler;
+        var path = new ArrayList<String>();
+        for (var instruction = handler.getNext(); instruction != null; instruction = instruction.getNext()) {
+            if (instruction instanceof org.objectweb.asm.tree.FieldInsnNode field)
+                path.add("field:" + field.name);
+            if (instruction instanceof MethodInsnNode call) path.add("call:" + call.name);
+            if (instruction.getOpcode() == org.objectweb.asm.Opcodes.ARETURN) { path.add("return"); break; }
+        }
+        assertThat(path).containsSubsequence("field:leaseExpiryIntent", "field:leaseExpiryIntent", "return")
+                .doesNotContain("call:failed", "call:close");
+    }
+
+    @Test
+    void floorLeaseValidationPrecedesPhaseWorkAndFailureRetainsEffectsAndDiagnostics() throws Exception {
+        assertThat(calls(dev.aod.mcmcp.routine.MinecraftFloorExtensionAttempt.class, "tick"))
+                .containsSubsequence("MinecraftFloorExtensionAttempt#captureLeaseExpiry", "MovementInputLease#validate",
+                        "MinecraftFloorExtensionAttempt#finishLeaseExpiry",
+                        "MinecraftFloorExtensionAttempt#requireSafety", "MovementInputLease#acquire",
+                        "MinecraftFloorExtensionAttempt#keys", "MinecraftFloorExtensionAttempt#turn",
+                        "KnownConstructionAttempt#tick", "MinecraftFloorExtensionAttempt#captureLeaseExpiry",
+                        "MovementInputLease#heartbeat", "MinecraftFloorExtensionAttempt#finishLeaseExpiry");
+        assertThat(calls(MenuPrimitiveExecution.class, "tickAgentFloorExtension"))
+                .containsSubsequence("MinecraftFloorExtensionAttempt#tick", "MinecraftFloorExtensionAttempt#drainEffects",
+                        "MenuPrimitiveExecution#recordConstructionEffects", "MinecraftFloorExtensionAttempt#drainPlacedDelta",
+                        "AgentActionStore#recordBlockPlace", "MinecraftFloorExtensionAttempt$Result#diagnostics",
+                        "PrimitiveOutcome#failed");
+    }
+
+    @Test
     void cleanupStillDrainsMenuEffectsBeforeFishingCleanupAndTerminalPublication() throws Exception {
         assertThat(calls(McmcpRuntime.class, "closeAgentPrimitiveExecutor"))
                 .containsSubsequence("MenuPrimitiveExecution#close", "FishingPrimitiveExecution#close");
@@ -145,15 +177,7 @@ class RuntimePrimitiveOwnershipContractTest {
     }
 
     private static List<String> calls(Class<?> owner, String methodName) throws Exception {
-        var type = new ClassNode();
-        try (var input = owner.getResourceAsStream(owner.getSimpleName() + ".class")) {
-            assertThat(input).isNotNull();
-            new ClassReader(input).accept(type, 0);
-        }
-        MethodNode method = type.methods.stream()
-                .filter(candidate -> candidate.name.equals(methodName))
-                .max(java.util.Comparator.comparingInt(candidate ->
-                        org.objectweb.asm.Type.getArgumentTypes(candidate.desc).length)).orElseThrow();
+        MethodNode method = method(owner, methodName);
         var calls = new ArrayList<String>();
         for (var instruction : method.instructions) {
             if (instruction instanceof MethodInsnNode call) {
@@ -161,5 +185,17 @@ class RuntimePrimitiveOwnershipContractTest {
             }
         }
         return List.copyOf(calls);
+    }
+
+    private static MethodNode method(Class<?> owner, String methodName) throws Exception {
+        var type = new ClassNode();
+        try (var input = owner.getResourceAsStream(owner.getSimpleName() + ".class")) {
+            assertThat(input).isNotNull();
+            new ClassReader(input).accept(type, 0);
+        }
+        return type.methods.stream()
+                .filter(candidate -> candidate.name.equals(methodName))
+                .max(java.util.Comparator.comparingInt(candidate ->
+                        org.objectweb.asm.Type.getArgumentTypes(candidate.desc).length)).orElseThrow();
     }
 }
