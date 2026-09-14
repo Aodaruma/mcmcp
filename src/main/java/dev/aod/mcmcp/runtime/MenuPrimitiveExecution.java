@@ -443,7 +443,7 @@ final class MenuPrimitiveExecution {
         return switch (result.status()) {
             case RUNNING -> PrimitiveOutcome.running();
             case FAILED -> PrimitiveOutcome.failed(AgentActionStore.FailureCode.SERVER_DENIED_OR_DESYNC,
-                    true, result.evidence());
+                    true, result.evidence(), result.diagnostics().toArray(String[]::new));
             case SUCCEEDED -> {
                 floorExtensionAttempt = null;
                 agentActions.recordNodeEvidence(actionId, "floor_extension_complete=1,server_confirmed=1");

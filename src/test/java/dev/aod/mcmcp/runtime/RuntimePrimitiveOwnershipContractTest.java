@@ -14,6 +14,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** 分割後も効果回収と入力解放がActionのterminal公開より先に行われることを検査する。 */
 class RuntimePrimitiveOwnershipContractTest {
     @Test
+    void floorLeaseValidationPrecedesPhaseWorkAndFailureRetainsEffectsAndDiagnostics() throws Exception {
+        assertThat(calls(dev.aod.mcmcp.routine.MinecraftFloorExtensionAttempt.class, "tick"))
+                .containsSubsequence("MovementInputLease#validate", "MinecraftFloorExtensionAttempt#leaseExpired",
+                        "MinecraftFloorExtensionAttempt#requireSafety", "MovementInputLease#acquire",
+                        "MinecraftFloorExtensionAttempt#keys", "MinecraftFloorExtensionAttempt#turn",
+                        "KnownConstructionAttempt#tick", "MovementInputLease#heartbeat",
+                        "MinecraftFloorExtensionAttempt#leaseExpired");
+        assertThat(calls(MenuPrimitiveExecution.class, "tickAgentFloorExtension"))
+                .containsSubsequence("MinecraftFloorExtensionAttempt#tick", "MinecraftFloorExtensionAttempt#drainEffects",
+                        "MenuPrimitiveExecution#recordConstructionEffects", "MinecraftFloorExtensionAttempt#drainPlacedDelta",
+                        "AgentActionStore#recordBlockPlace", "MinecraftFloorExtensionAttempt$Result#diagnostics",
+                        "PrimitiveOutcome#failed");
+    }
+
+    @Test
     void cleanupStillDrainsMenuEffectsBeforeFishingCleanupAndTerminalPublication() throws Exception {
         assertThat(calls(McmcpRuntime.class, "closeAgentPrimitiveExecutor"))
                 .containsSubsequence("MenuPrimitiveExecution#close", "FishingPrimitiveExecution#close");

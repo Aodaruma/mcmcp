@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.routine;
 
 import dev.aod.mcmcp.agent.action.KnownConstructionAttempt;
+import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.observation.MinecraftObservationService;
 import dev.aod.mcmcp.runtime.ClientReconciliationSignals;
@@ -59,6 +60,7 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
     private boolean confirmed;
     private boolean closed;
     private int placedDelta;
+    private long lastMovementHeartbeatTick;
 
     public MinecraftFloorExtensionAttempt(Minecraft minecraft, WorldSessionTracker.Snapshot session,
             KnownPillarUpRequest source, Direction direction, MinecraftObservationService observations,
@@ -94,11 +96,19 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
 
     public Result tick(WorldSessionTracker.Snapshot session) {
         if (closed) throw new IllegalStateException("floor extension closed");
+        long tickStartedNanos = System.nanoTime();
+        Phase tickPhase = phase;
         try {
+            // A stalled client tick must stop before camera/placement work. This check does not
+            // renew the deadline or republish the previous desired movement.
+            if (movement != null && !movement.validate(owner, tickStartedNanos))
+                return leaseExpired(session.clientTick(), tickPhase, "tick_entry", tickStartedNanos, tickStartedNanos);
             requireSafety(session);
             if (session.clientTick() >= deadline) return failed("floor_extension_deadline");
-            if (movement == null) movement = MovementInputLease.acquire(minecraft, owner,
-                    System.nanoTime(), Duration.ofSeconds(2));
+            if (movement == null) {
+                movement = MovementInputLease.acquire(minecraft, owner, System.nanoTime(), Duration.ofSeconds(2));
+                lastMovementHeartbeatTick = session.clientTick();
+            }
             keys(false);
             switch (phase) {
                 case ORIENT -> { if (turn(outwardYaw() + 180, 80)) phase = Phase.LEAN; }
@@ -144,8 +154,10 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
                     else if (settled()) { close(); return new Result(Status.SUCCEEDED, "floor_extension_complete"); }
                 }
             }
-            if (!movement.heartbeat(owner, System.nanoTime(), Duration.ofMillis(Math.min(40, Math.max(1, deadline - session.clientTick())) * 50)))
-                return failed("floor_extension_input_lease_expired");
+            long outputNanos = System.nanoTime();
+            if (!movement.heartbeat(owner, outputNanos, Duration.ofMillis(Math.min(40, Math.max(1, deadline - session.clientTick())) * 50)))
+                return leaseExpired(session.clientTick(), tickPhase, "heartbeat", tickStartedNanos, outputNanos);
+            lastMovementHeartbeatTick = session.clientTick();
             return new Result(Status.RUNNING, "floor_extension_" + phase.name().toLowerCase(java.util.Locale.ROOT));
         } catch (RuntimeException | LinkageError rejected) {
             return failed("floor_extension_safety_changed");
@@ -264,6 +276,17 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
         var result = List.copyOf(effects); effects.clear(); return result;
     }
     public int drainPlacedDelta() { int result = placedDelta; placedDelta = 0; return result; }
+    private Result leaseExpired(long clientTick, Phase tickPhase, String checkpoint, long startedNanos, long nowNanos) {
+        long overdueMillis = Math.max(0, AgentInputState.global().watchdogTime(nowNanos) - movement.deadlineNanos()) / 1_000_000;
+        var diagnostics = List.of(
+                "floor_extension_phase=" + tickPhase.name().toLowerCase(java.util.Locale.ROOT),
+                "floor_extension_lease_check=" + checkpoint,
+                "floor_extension_lease_overdue_ms=" + overdueMillis,
+                "floor_extension_lease_tick_gap=" + Math.max(0, clientTick - lastMovementHeartbeatTick),
+                "floor_extension_executor_ms=" + Math.max(0, nowNanos - startedNanos) / 1_000_000);
+        close();
+        return new Result(Status.FAILED, "floor_extension_input_lease_expired", diagnostics);
+    }
     private Result failed(String evidence) { close(); return new Result(Status.FAILED, evidence); }
     @Override public void close() {
         if (closed) return;
@@ -273,5 +296,16 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
     }
     private enum Phase { ORIENT, LEAN, AIM, PLACE, ADVANCE_ORIENT, ADVANCE }
     public enum Status { RUNNING, SUCCEEDED, FAILED }
-    public record Result(Status status, String evidence) { }
+    public record Result(Status status, String evidence, List<String> diagnostics) {
+        public Result(Status status, String evidence) { this(status, evidence, List.of()); }
+        public Result {
+            Objects.requireNonNull(status);
+            Objects.requireNonNull(evidence);
+            diagnostics = List.copyOf(diagnostics);
+            if (diagnostics.size() > 5 || diagnostics.stream().anyMatch(value -> value.length() > 128)
+                    || !diagnostics.isEmpty() && (status != Status.FAILED
+                            || !evidence.equals("floor_extension_input_lease_expired")))
+                throw new IllegalArgumentException("invalid floor lease diagnostics");
+        }
+    }
 }
