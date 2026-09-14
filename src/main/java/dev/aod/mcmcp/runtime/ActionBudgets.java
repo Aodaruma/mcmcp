@@ -210,8 +210,8 @@ final class ActionBudgets {
 
     /**
      * Charges renderer waiting against the explicit container headroom without pretending that
-     * the bounded menu attempt itself became shorter. Other recovered surface primitives retain
-     * their complete JIT cost because they do not declare this separate operation reserve.
+     * the bounded menu attempt itself became shorter. A standalone floor shares its total time
+     * envelope with the wait; other recovered surface primitives retain their complete JIT cost.
      */
     static ActionDslCompiler.Cost firstRecoveredSurfacePrimitiveRemainingCost(
             AgentActionStore.Progress used,
@@ -232,6 +232,9 @@ final class ActionBudgets {
                     ActionDslCompiler.knownContainerTransferOperationTicks(take.maxStacks());
             case ActionDsl.StoreKnownContainerStack store ->
                     ActionDslCompiler.knownContainerTransferOperationTicks(store.maxStacks());
+            // The standalone floor's 400 ticks are one total envelope, including render waits.
+            // Runtime still enforces the original Action deadline before every operation tick.
+            case ActionDsl.ExtendKnownFloor ignored -> 0L;
             default -> -1L;
         };
         if (operationTicks < 0L) {
