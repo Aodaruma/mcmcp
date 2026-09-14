@@ -46,6 +46,7 @@
 - 状態が一意な通常full-cubeの所持建材は、実所持stack・default components・正常個数・既存建築policyを検証した`agent_get_state.placement_materials`から材料identityを配送できる。配送成功前や別sessionのrefを認可せず、所持品からworld座標・方向state・支持証拠を生成しない。
 - 既存の安全境界、入力検証、fail-closedなエラー処理、fixture isolationを簡略化しない。
 - 水平の端設置は`extend_known_floor`の単独有限Actionへ閉じる。配送済みfull-cube支持と中心姿勢を認可し、crouch中の身体が元の支持と重なる範囲だけ端へ移動する。実可視側面への通常設置とblock・inventoryのserver確認後だけ新床へ進む。支持変更、補正、damage、障害、期限では停止し、取消時もconstruction effectを回収して入力を解放する。通常navigationの未知空間への移動許可へ転用しない。
+- 単一entryで既知の完全state支持を指定する`apply_known_block_plan`は、受付・予約・実行開始・未dispatch JITの描画欠測を既存の元支持lease内で有限待機できる。元HTTP締切・配送TTL・総Action予算を共有し、最初の300tick枠へ待機を算入する。復帰時の元支持面・state/item/shape・fog/LOS・姿勢・安全の再検証を省略せず、複数entryやplan内依存支持へ拡張しない。送信済み設置の確認・cleanupへ逆適用しない。
 - 外部施工runnerのcheckpointは進捗と未確認intentの台帳に限定し、公開MCPやActionの上限を増やさない。world sessionの変更を検出し、座標・支持・経路は再観測する。不変なplacement-state identityだけを同じsession内で保持できる。confirmed/observed/unknownと材料収支を区別し、受付前拒否と応答不明を混同しない。未知Actionのblind replay、failed/cancelled後の未検証継続、進捗の二重計上をしない。
 
 ## Fixture and environments
