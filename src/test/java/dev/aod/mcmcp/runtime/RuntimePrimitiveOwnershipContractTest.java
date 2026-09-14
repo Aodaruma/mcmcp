@@ -126,6 +126,8 @@ class RuntimePrimitiveOwnershipContractTest {
                 .containsSubsequence("McmcpRuntime#beginAgentPrimitive", "McmcpRuntime#activeElapsedNanos",
                         "MovementExecution#tick", "McmcpRuntime#recordAgentMotion",
                         "McmcpRuntime#activeElapsedNanos")
+                .containsSubsequence("MinecraftActionPrimitiveExecutor$TickResult#diagnostics",
+                        "McmcpRuntime#failAgentAction")
                 .doesNotContain("AgentActionStore#recordTick");
         assertThat(calls(McmcpRuntime.class, "tickAgentBlockMutation"))
                 .containsSubsequence("BlockMutationExecution#bindTarget", "McmcpRuntime#releaseAgentInputsForHold",
