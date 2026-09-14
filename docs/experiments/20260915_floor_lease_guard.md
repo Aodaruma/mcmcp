@@ -30,6 +30,24 @@ msは小数部切捨て。executor内時間は先行するruntime観測処理、
 
 ## 検証と再開
 
-単体試験は非更新検査、期限ちょうど、pauseを除く時計、nanoTime wrap、owner検査、解放失敗後のcleanupを確認する。床延長の入口順序・末尾heartbeatと、失敗前のeffect回収・診断配送はruntime契約試験で検査する。全source checks、独立レビュー、隔離Dockerの通常床延長・失効停止・復旧結果は完了後に追記する。
+製品ソースは `3abd84dc285eacb95152303b83d85b2cc53280f2`、製品JARのSHA-256は `29731db675414fa356576e81de2cd1e85f1e09fa5af5db0bd1e02b4432d23681`。以後の実験記録追記では製品を再生成していない。
+
+最終ソースでJava 1,304件、harness 13件、admin bridge 25件とisolation/buildが成功した。未変更のPython 14件と外部runner/capability mockは初回の全source checksで成功し、Javaだけのレビュー修正後には再実行していない。単体試験は非更新検査、期限ちょうど、pauseを除く時計、nanoTime wrap、owner検査、解放失敗後のcleanupを確認した。床延長の入口順序・末尾heartbeat、失敗前のeffect回収・診断配送、cleanup例外時の最初の失敗保持はruntime契約試験で検査した。
+
+独立したCodex CLIレビューは初回 `ecb7881a2bad44a5f88188b67d6db5d60e7b97d3` でcleanup例外による失効診断消失を指摘した。修正後の上記製品ソースに対する差分と直接cleanup呼出元の再レビューでは、指摘解消・新規指摘なし。これはGitHubのapprovalや実機検証の代替ではない。
+
+Minecraft 26.2 / NeoForge 26.2.0.59、maxFps 10の隔離Dockerで、固定 `construction-edge` fixtureを使った。通常回帰試験は公開MCPを呼ぶ決定的なcapability gateであり、fresh評価モデルによるMCP-only自律完遂評価とは区別する。
+
+| run | 結果と分類 |
+| --- | --- |
+| 01 | 初回ソースの端設置4回・取消し成功。最終版の合格数へ含めない |
+| 02 / 10 | 最終製品で各4回の端設置と早期取消しが成功。10は故障注入後の再起動を経た再確認。材料収支・支持された終点・全Action terminal・READY復帰を確認 |
+| 03 / 06 / 08 | 材料準備または公開MCPからの要求作成のみ。施工試験へ算入しない |
+| 04 / 05 / 07 | CPU制限0.05または0.1でstate/observation/preflightがタイムアウト。Action未開始のため失効検証へ算入しない。各制限は復旧済み |
+| 09 | Action開始後に検証コンテナを外部から3秒pause/unpauseする、制御された故障注入。入口での失効停止と診断を確認 |
+
+run09の停止は `floor_extension_input_lease_expired`、`orient / tick_entry / overdue=1090ms / tick_gap=1 / executor=0ms`。8tickで失敗し、移動・設置・effectは0、材料は64→64、入力cleanup後にREADYへ戻った。cameraの約56.77度は停止前の累積値である。既存分類 `SERVER_DENIED_OR_DESYNC / recoverable=true` と再観測要求を維持した。このrunは外部停止を含む故障試験であり、通常のMCP-only完遂評価へ算入しない。設置段階、設置確認後、heartbeat末尾における実機失効は未検証であり、元現場の遅延原因も確定していない。
+
+全Action terminalとREADYを確認してからMinecraftを正常終了し、検証コンテナを停止した。開始前のワールド61ファイルを全件hash照合し、MOD・instance設定・optionsも復元した。CPU設定は開始前のmetadataへ完全復元し、実効値 `cpu.max=max 100000` がコンテナ再起動後も維持されることを確認した。元コンテナは停止状態を維持した。fixture-adminは検証専用であり、通常プロファイルの導入対象は上記製品JARだけである。
 
 元現場ではconfirmedの新床と安全な支持・経路、同session/READY/健康状態、台帳のconfirmed/next/pendingを再観測して新規計画する。位置合わせで別途発生した`unverified_actual_movement`→`replanned_route_remaining_occurrence`は、再計画した移動を当初のoccurrence残枠へ収められないための停止である。30秒/600tickを全て消費したことや入力lease失効を意味しない。今回の変更でnavigation予算や移動検証を緩和しない。
