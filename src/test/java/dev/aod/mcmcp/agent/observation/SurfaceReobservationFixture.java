@@ -23,6 +23,8 @@ public final class SurfaceReobservationFixture {
                     (int) Math.floor(hit.x()), (int) Math.floor(hit.y()), (int) Math.floor(hit.z())) : known.position();
             var visible = List.of(new ObservationRecord.VisibleSurface(position, known.face(),
                             currentBlock == null ? new ObservationValues.ResourceId("minecraft:stone") : currentBlock,
+                            known.block().equals(currentBlock) ? known.state() : null,
+                            known.block().equals(currentBlock) ? known.placementItem() : null,
                             known.shapeClass(), null, hit, current.eyeOrigin(),
                             current.observedTick(), current.worldRevision()));
             return new OmnidirectionalObserver.RayTrace(OmnidirectionalObserver.RayOutcome.HIT,

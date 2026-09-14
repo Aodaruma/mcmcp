@@ -232,6 +232,9 @@ final class ActionBudgets {
                     ActionDslCompiler.knownContainerTransferOperationTicks(take.maxStacks());
             case ActionDsl.StoreKnownContainerStack store ->
                     ActionDslCompiler.knownContainerTransferOperationTicks(store.maxStacks());
+            // The standalone floor's 400 ticks are one total envelope, including render waits.
+            // Runtime still enforces the original Action deadline before every operation tick.
+            case ActionDsl.ExtendKnownFloor ignored -> 0L;
             default -> -1L;
         };
         if (operationTicks < 0L) {
