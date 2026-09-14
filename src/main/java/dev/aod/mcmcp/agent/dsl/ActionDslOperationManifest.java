@@ -257,10 +257,18 @@ public final class ActionDslOperationManifest {
         result.put("kind", kind);
         result.put("issued_by", issuedBy);
         result.put("source_path", sourcePath);
+        if ("placement_state_ref".equals(kind)) {
+            result.put("alternative_sources", placementMaterialSources());
+        }
         result.put("consumer_operations", consumerOperations);
         result.put("validity", validity);
         result.put("replay_policy", "always_refresh_before_clone");
         return Map.copyOf(result);
+    }
+
+    static List<Map<String, Object>> placementMaterialSources() {
+        return List.of(Map.of("tool", "agent_get_state",
+                "source_path", "/placement_materials/*/placement_state_ref"));
     }
 
     public record OperationDescriptor(

@@ -350,6 +350,9 @@ public final class ActionDslSource {
             result.put("coupled_paths", coupledPaths);
             result.put("refresh_tool", refreshTool);
             result.put("source_path", sourcePath);
+            if ("placement_state_ref".equals(kind)) {
+                result.put("alternative_sources", ActionDslOperationManifest.placementMaterialSources());
+            }
             result.put("status", "refresh_required");
             return Map.copyOf(result);
         }

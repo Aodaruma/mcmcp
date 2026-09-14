@@ -32,6 +32,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McpToolCatalogTest {
     @Test
+    void ownInventoryPlacementSourcesHaveClosedSchemaAndADiscoverableRefreshPath() {
+        var catalog = new McpToolCatalog();
+        var schema = catalog.outputSchema("agent_get_state").getAsJsonObject("properties")
+                .getAsJsonObject("placement_materials");
+        var value = JsonParser.parseString("""
+                [{"item":"minecraft:black_wool","count":64,
+                  "state":{"block":"minecraft:black_wool","properties":{}},
+                  "placement_state_ref":"psr_0123456789abcdef0123456789abcdef"}]
+                """);
+        assertThat(CatalogSchemaValidator.matches(schema, value)).isTrue();
+        value.getAsJsonArray().get(0).getAsJsonObject().getAsJsonObject("state")
+                .getAsJsonObject("properties").addProperty("axis", "y");
+        assertThat(CatalogSchemaValidator.matches(schema, value)).isFalse();
+        var refresh = dev.aod.mcmcp.agent.dsl.ActionDslOperationManifest.referenceDescriptorPayload().stream()
+                .filter(entry -> "placement_state_ref".equals(entry.get("kind"))).findFirst().orElseThrow();
+        assertThat(refresh.get("alternative_sources")).isEqualTo(List.of(Map.of(
+                "tool", "agent_get_state", "source_path", "/placement_materials/*/placement_state_ref")));
+    }
+
+    @Test
     void copperContainerAllowlistIsSharedByEveryPublishedActionAndRoutingLabelSchema() {
         var catalog = new McpToolCatalog();
         var schema = catalog.inputSchema("agent_start_action");
@@ -213,6 +233,25 @@ class McpToolCatalogTest {
         assertThat(commands).extracting(Object::getClass).containsExactly(
                 McpRuntimePort.GetObservation.class,
                 McpRuntimePort.AbandonObservationDelivery.class);
+    }
+
+    @Test
+    void ownInventoryStateUsesTheSameConfirmedAndAbandonedDeliveryTransport() throws Exception {
+        var commands = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        var receipt = new McpRuntimePort.ObservationDeliveryReceipt(UUID.randomUUID());
+        var registry = new McmcpToolRegistry((command, context) -> {
+            commands.add(command);
+            return CompletableFuture.completedFuture(command instanceof McpRuntimePort.GetState
+                    ? McpRuntimePort.RuntimeReply.success(toolResult(command), receipt)
+                    : McpRuntimePort.RuntimeReply.success(toolResult(command)));
+        }, Duration.ofSeconds(1));
+        var delivered = registry.prepareCall("agent_get_state", new com.google.gson.JsonObject());
+        assertThat(commands).hasSize(1);
+        registry.confirmDelivery(delivered);
+        assertThat(commands.getLast()).isEqualTo(new McpRuntimePort.ConfirmObservationDelivery(receipt.receiptId()));
+        var lost = registry.prepareCall("agent_get_state", new com.google.gson.JsonObject());
+        registry.abandonDelivery(lost);
+        assertThat(commands.getLast()).isEqualTo(new McpRuntimePort.AbandonObservationDelivery(receipt.receiptId()));
     }
 
     @Test

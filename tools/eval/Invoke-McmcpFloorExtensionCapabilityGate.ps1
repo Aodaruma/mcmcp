@@ -5,6 +5,7 @@ param([Parameter(Mandatory)][string]$ArtifactDirectory, [string]$TokenPath,
 . (Join-Path $PSScriptRoot 'McmcpConstructionMaterialObservation.ps1')
 
 function Invoke-McmcpFloorExtensionCapabilityGate {
+    param([switch]$InventorySources)
     [void][IO.Directory]::CreateDirectory($ArtifactDirectory)
     $resultPath=Join-Path $ArtifactDirectory 'floor-result.json'
     if(Test-Path -LiteralPath $resultPath){throw 'Refusing to overwrite a prior floor result'}
@@ -17,8 +18,15 @@ function Invoke-McmcpFloorExtensionCapabilityGate {
                 expected_block='minecraft:chest';item=$item;stack_policy='default_components_only';minimum_inventory_count=1}
             [void](Invoke-ActionRequest -Request (New-PrimitiveRequest -Name 'floor_take' -Capabilities @('camera','inventory_transfer') -Node $node -Interactions 3) -WallTimeoutSeconds 90)
         }
-        $snow=Get-MaterialSurface 'minecraft:snow_block' -7 61 5 $null
-        $black=Get-MaterialSurface 'minecraft:black_wool' -7 61 6 $null
+        if($InventorySources) {
+            $materials=@(Get-ObjectProperty (Get-FreshState) 'placement_materials')
+            $snow=$materials | Where-Object item -CEQ 'minecraft:snow_block' | Select-Object -First 1
+            $black=$materials | Where-Object item -CEQ 'minecraft:black_wool' | Select-Object -First 1
+            if($null -eq $snow -or $null -eq $black){throw 'Owned placement material sources missing'}
+        } else {
+            $snow=Get-MaterialSurface 'minecraft:snow_block' -7 61 5 $null
+            $black=Get-MaterialSurface 'minecraft:black_wool' -7 61 6 $null
+        }
         $steps=@(
             @{support=@(-5,60,6);block='minecraft:smooth_stone';direction='east';target=@(-4,60,6);source=$snow;item='minecraft:snow_block'},
             @{support=@(-4,60,6);block='minecraft:snow_block';direction='east';target=@(-3,60,6);source=$black;item='minecraft:black_wool'},

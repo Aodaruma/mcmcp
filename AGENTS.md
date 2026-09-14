@@ -43,6 +43,7 @@
 - block mutationの成功判定は、作物の`age`やfarmlandの`moisture`等の正当な時間発展を許す意味的postconditionにする。破壊・収穫はblock消失だけで成功とせず、安全経路での物理pickupと対象inventoryの絶対個数増加を確認する。
 - 多区画作業は公開DSLでbatch化できるようにし、植付け、代表成熟待機、batch収穫、drop回収、再植付けの順を基本とする。container、pickup、camera等の具体的な期限・予算はcatalog、runtime、testで一元管理する。
 - 建築材料はVanillaの通常建材familyを共通policyで判定し、観測と設置で一致させる。ID namespaceや継承だけで独自挙動を許可せず、完全state、通常の無改変item、支持面、設置予測とserver確認を維持する。床置きtorchとwall_torchを区別し、階段shape・pane接続のplan内閉包と最終照合を材料familyの拡張時にも適用する。
+- 状態が一意な通常full-cubeの所持建材は、実所持stack・default components・正常個数・既存建築policyを検証した`agent_get_state.placement_materials`から材料identityを配送できる。配送成功前や別sessionのrefを認可せず、所持品からworld座標・方向state・支持証拠を生成しない。
 - 既存の安全境界、入力検証、fail-closedなエラー処理、fixture isolationを簡略化しない。
 - 水平の端設置は`extend_known_floor`の単独有限Actionへ閉じる。配送済みfull-cube支持と中心姿勢を認可し、crouch中の身体が元の支持と重なる範囲だけ端へ移動する。実可視側面への通常設置とblock・inventoryのserver確認後だけ新床へ進む。支持変更、補正、damage、障害、期限では停止し、取消時もconstruction effectを回収して入力を解放する。通常navigationの未知空間への移動許可へ転用しない。
 - 外部施工runnerのcheckpointは進捗と未確認intentの台帳に限定し、公開MCPやActionの上限を増やさない。world sessionの変更を検出し、座標・支持・経路は再観測する。不変なplacement-state identityだけを同じsession内で保持できる。confirmed/observed/unknownと材料収支を区別し、受付前拒否と応答不明を混同しない。未知Actionのblind replay、failed/cancelled後の未検証継続、進捗の二重計上をしない。

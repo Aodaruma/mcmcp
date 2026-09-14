@@ -64,7 +64,11 @@ try {
     if(-not (Test-BuildingCentered @{x=-3.39;y=61;z=6.5} $cell.position) -or
         (Test-BuildingCentered @{x=-3.3;y=61;z=6.5} $cell.position) -or
         (Test-BuildingCentered @{x=-3.5;y=60.9;z=6.5} $cell.position)){throw 'arrival_support_bound_changed'}
-    'MCMCP building recovery tests passed (durable intent, lost receipt, exact nonce, no replay, world change).'
+    function Get-BuildingState {return @{placement_materials=@(@{item='minecraft:snow_block';count=64;state=@{block='minecraft:snow_block';properties=@{}};placement_state_ref='psr_0123456789abcdef0123456789abcdef'})}}
+    function Get-RecordsFromState {throw 'owned_material_must_not_require_world_sample'}
+    $owned=Get-BuildingSource @{item='minecraft:snow_block';state=@{block='minecraft:snow_block';properties=@{}};source=$null}
+    if($owned.placement_state_ref -cne 'psr_0123456789abcdef0123456789abcdef'){throw 'owned_source_not_adopted'}
+    'MCMCP building recovery tests passed (durable intent, lost receipt, exact nonce, no replay, world change, owned material).'
 } finally {
     $resolved=[IO.Path]::GetFullPath($temp)
     if($resolved.StartsWith([IO.Path]::GetFullPath([IO.Path]::GetTempPath()),[StringComparison]::OrdinalIgnoreCase) -and

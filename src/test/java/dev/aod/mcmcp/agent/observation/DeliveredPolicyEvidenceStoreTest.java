@@ -13,6 +13,33 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class DeliveredPolicyEvidenceStoreTest {
     @Test
+    void inventoryIdentitySharesDeliveryLimitsWithoutGrantingAnySurfaceLease() {
+        var clock = new AtomicLong();
+        var store = new DeliveredPolicyEvidenceStore(clock::get);
+        var material = new PlacementStateResolver.PlacementState(
+                new ObservationRecord.BlockStateView(new ObservationValues.ResourceId("minecraft:black_wool"), Map.of()),
+                new ObservationValues.ResourceId("minecraft:black_wool"));
+        var receipt = store.preparePlacementDelivery(List.of(material));
+        var ref = store.preparedPlacementStateRef(receipt, material).orElseThrow();
+        assertThat(store.resolvePlacementState(ref)).isEmpty();
+        assertThat(store.abandonDelivery(receipt)).isTrue();
+        assertThat(store.confirmDelivery(receipt)).isFalse();
+        assertThat(store.resolvePlacementState(ref)).isEmpty();
+        receipt = store.preparePlacementDelivery(List.of(material));
+        ref = store.preparedPlacementStateRef(receipt, material).orElseThrow();
+        assertThat(store.confirmDelivery(receipt)).isTrue();
+        clock.set(Duration.ofSeconds(61).toNanos());
+        assertThat(store.resolvePlacementState(ref)).contains(material);
+        assertThat(store.retainedSurfaceCount()).isZero();
+        assertThat(store.retainedPlacementStateCount()).isEqualTo(1);
+        var refreshed = store.preparePlacementDelivery(List.of(material));
+        assertThat(store.preparedPlacementStateRef(refreshed, material)).contains(ref);
+        store.clear();
+        assertThat(store.confirmDelivery(refreshed)).isFalse();
+        assertThat(store.resolvePlacementState(ref)).isEmpty();
+    }
+
+    @Test
     void capturedSurfaceLeaseExpiresEvenWhenTheSameFaceIsRedeliveredDuringRecovery() {
         var clock = new AtomicLong();
         var store = new DeliveredPolicyEvidenceStore(clock::get);

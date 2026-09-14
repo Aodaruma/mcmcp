@@ -280,6 +280,7 @@ final class ActionWireMapper {
         result.put("world", world);
         result.put("inventory", List.copyOf(inventory));
         result.put("standard_potions", List.copyOf(standardPotions));
+        result.put("placement_materials", List.of());
         result.put(
                 "entity_attack_consent",
                 entityAttackConsentPayload(ScopedEntityAttackConsentStore.Snapshot.none()));
