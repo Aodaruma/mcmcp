@@ -23,9 +23,10 @@ class FixtureScriptLoaderTest {
             assertThat(fixture.commands().stream().mapToLong(RestrictedCommandPolicy.ValidatedCommand::changedBlocks).sum())
                     .isEqualTo(364);
             assertThat(fixture.commands().stream().map(RestrictedCommandPolicy.ValidatedCommand::source))
-                    .contains("item replace block -7 61 6 container.0 with minecraft:black_wool 47",
+                    .contains("item replace block -7 61 6 container.0 with minecraft:black_wool "
+                                    + (mode.equals("normal") ? 47 : 64),
                             "item replace block -6 61 6 container.0 with minecraft:black_wool "
-                                    + (mode.equals("normal") ? 27 : 64));
+                                    + (mode.equals("normal") ? 27 : 47));
         }
     }
 
