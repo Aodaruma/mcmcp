@@ -14,6 +14,23 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FixtureScriptLoaderTest {
     @Test
+    void releaseContainersKeepNormalAndPartialCasesWithinTheSameEnvelope() throws Exception {
+        for (String mode : new String[] {"normal", "partial"}) {
+            var fixture = new FixtureScriptLoader(Path.of("tools/eval/fixtures"))
+                    .load("release-container-" + mode);
+            assertThat(fixture.manifest().containers()).hasSize(4);
+            assertThat(fixture.commands()).hasSize(25);
+            assertThat(fixture.commands().stream().mapToLong(RestrictedCommandPolicy.ValidatedCommand::changedBlocks).sum())
+                    .isEqualTo(364);
+            assertThat(fixture.commands().stream().map(RestrictedCommandPolicy.ValidatedCommand::source))
+                    .contains("item replace block -7 61 6 container.0 with minecraft:black_wool "
+                                    + (mode.equals("normal") ? 47 : 64),
+                            "item replace block -6 61 6 container.0 with minecraft:black_wool "
+                                    + (mode.equals("normal") ? 27 : 47));
+        }
+    }
+
+    @Test
     void stagingFixtureFillsNineHotbarStacksBeforeTheTorch() throws Exception {
         var bootstrap = new FixtureScriptLoader(Path.of("tools/eval/fixtures")).load("construction-staging-bootstrap");
         assertThat(bootstrap.commands()).hasSize(1);

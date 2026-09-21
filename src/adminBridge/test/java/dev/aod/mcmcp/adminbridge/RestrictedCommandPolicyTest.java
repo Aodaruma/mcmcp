@@ -30,6 +30,18 @@ class RestrictedCommandPolicyTest {
     }
 
     @Test
+    void acceptsOnlyTheAuditedReleaseContainerFixtures() throws Exception {
+        assertThat(policy.validate(manifest(64), List.of(
+                "setblock 1 64 1 minecraft:waxed_copper_chest[facing=north,type=left]",
+                "setblock 2 64 1 minecraft:waxed_copper_chest[facing=north,type=right]",
+                "setblock 3 64 1 minecraft:barrel"))).hasSize(3);
+        assertCode("block_id_invalid", "setblock 1 64 1 minecraft:ender_chest");
+        assertCode("block_id_invalid", "setblock 1 64 1 minecraft:trapped_chest");
+        assertCode("block_id_invalid", "setblock 1 64 1 minecraft:shulker_box");
+        assertCode("coordinate_outside_effect_inset", "setblock 11 64 1 minecraft:barrel");
+    }
+
+    @Test
     void rejectsMetaCommandsAndArbitrarySelectors() {
         for (String command : List.of(
                 "execute as @s run setblock 1 64 1 minecraft:dirt",
