@@ -228,6 +228,8 @@ final class ActionBudgets {
         long operationTicks = switch (primitive) {
             case ActionDsl.InspectKnownContainer ignored ->
                     AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND;
+            case ActionDsl.CraftKnownRecipe ignored ->
+                    AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND;
             case ActionDsl.TakeKnownContainerStack take ->
                     ActionDslCompiler.knownContainerTransferOperationTicks(take.maxStacks());
             case ActionDsl.StoreKnownContainerStack store ->

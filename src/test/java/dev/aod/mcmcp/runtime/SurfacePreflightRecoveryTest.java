@@ -40,6 +40,15 @@ class SurfacePreflightRecoveryTest {
     private static final ActionDsl.InspectKnownContainer NODE = new ActionDsl.InspectKnownContainer(
             "inspect", new ActionDsl.Position(DIM.value(), 1, 64, 0), "minecraft:chest");
     private static final ActionDsl.Budget BUDGET = new ActionDsl.Budget(1_000, 20, 0, 360, 3, 0, 0);
+    private static final VisibleSurface TABLE = new VisibleSurface(
+            CHEST.position(), ObservationRecord.Face.UP,
+            new ResourceId("minecraft:crafting_table"), ObservationRecord.ShapeClass.OPAQUE, null,
+            new WorldPosition(DIM, 1.5, 65, 0.5), CHEST.eyeOrigin(), 10, 10);
+    private static final ActionDsl.CraftKnownRecipe CRAFT = new ActionDsl.CraftKnownRecipe(
+            "craft", "abcdefghijklmnopqrstuvwx", "sha256:" + "a".repeat(64),
+            "minecraft:oak_planks", "default_components_only", 2,
+            "crafting_table", NODE.target(),
+            new ActionDsl.BlockStateSpec("minecraft:crafting_table", Map.of()), 2);
     private static final ResourceId SNOW_BLOCK = new ResourceId("minecraft:snow_block");
     private static final VisibleSurface SNOW = new VisibleSurface(
             new BlockPosition(DIM, -590, 79, 64), ObservationRecord.Face.UP, SNOW_BLOCK,
@@ -355,6 +364,68 @@ class SurfacePreflightRecoveryTest {
         assertThat(recovery.executionStartNanos(1_000_000_000L)).isZero();
     }
 
+    @Test
+    void craftingWaitsForItsOriginalTableAtEveryStageBeforeTheFirstInteraction() {
+        var fixture = new Fixture(CRAFT, TABLE);
+        int tick = 10;
+        for (var stage : List.of(RendererRecoveryStage.CAPTURE, RendererRecoveryStage.COMMIT,
+                RendererRecoveryStage.DISPATCH, RendererRecoveryStage.JIT, RendererRecoveryStage.INITIAL_OPEN)) {
+            var pending = fixture.submit(stage, stage == RendererRecoveryStage.INITIAL_OPEN);
+            fixture.drain(tick++, false);
+            assertThat(pending).as("missing fog at %s", stage).isNotDone();
+            assertThat(fixture.interactions).hasValue(0);
+            fixture.drain(tick++, true);
+            assertThat(pending.join()).isEqualTo("ready");
+        }
+        assertThat(fixture.rays).hasValue(5);
+        assertThat(fixture.interactions).hasValue(1);
+        assertThat(fixture.recovery.summary().missingStages()).isEqualTo(1 | 2 | 4 | 8 | 16);
+        assertThat(fixture.recovery.summary().revalidatedStages()).isEqualTo(1 | 2 | 4 | 8 | 16);
+        assertThat(fixture.store.augment(Optional.of(fixture.raw)).orElseThrow().records()).containsExactly(TABLE);
+        assertThat(fixture.recovery.evaluate(fixture.store, 30, 1_500_000_000L, true))
+                .isEqualTo(RENDERER_EVIDENCE_TIMEOUT);
+    }
+
+    @Test
+    void craftingCannotOpenAChangedOccludedOrFogHiddenTableAfterWaiting() {
+        for (int obstruction = 0; obstruction < 3; obstruction++) {
+            var fixture = new Fixture(CRAFT, TABLE);
+            var capture = fixture.submit(RendererRecoveryStage.CAPTURE, false);
+            fixture.drain(10, true);
+            assertThat(capture.join()).isEqualTo("ready");
+            var opening = fixture.submit(RendererRecoveryStage.INITIAL_OPEN, true);
+            fixture.drain(11, false);
+            assertThat(opening).isNotDone();
+            if (obstruction == 0) fixture.block = new ResourceId("minecraft:stone");
+            if (obstruction == 1) fixture.block = null;
+            if (obstruction == 2) fixture.fogDistance = 1;
+            fixture.drain(12, true);
+            assertThatThrownBy(opening::join).hasCauseInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+            assertThat(fixture.interactions).hasValue(0);
+            assertThat(fixture.recovery.summary().revalidatedStages()).isZero();
+        }
+    }
+
+    @Test
+    void craftingRendererWaitUsesOnlyTheReservationHeadroomAndPreservesMenuTime() {
+        var planned = new ActionDslCompiler.Cost(30_000, 600, 0, 38, 9, 0, 0);
+        var budget = new ActionDsl.Budget(30_000, 600, 0, 360, 9, 0, 0);
+        for (int waitedTicks : List.of(1, 200, 201)) {
+            var used = new AgentActionStore.Progress(AgentActionStore.Phase.EXECUTING,
+                    "craft", 0, 1, 0, 0, 0, 0, 0, waitedTicks, false);
+            long elapsed = waitedTicks * 50_000_000L;
+            var remaining = ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
+                    used, true, CRAFT, planned, elapsed);
+            assertThat(remaining.ticks()).isEqualTo(Math.max(400, 600 - waitedTicks));
+            assertThat(remaining.durationMillis()).isEqualTo(Math.max(20_000, 30_000 - 50L * waitedTicks));
+            assertThat(remaining.interactions()).isEqualTo(9);
+            assertThat(ActionBudgets.fitsRemainingBudget(used, budget, remaining, elapsed))
+                    .isEqualTo(waitedTicks <= 200);
+            assertThat(ActionBudgets.firstRecoveredSurfacePrimitiveRemainingCost(
+                    used, false, CRAFT, planned, elapsed)).isEqualTo(planned);
+        }
+    }
+
     private static final class Fixture {
         private final AtomicLong now = new AtomicLong();
         private final AtomicLong tick = new AtomicLong(10);
@@ -408,6 +479,8 @@ class SurfacePreflightRecoveryTest {
                                 plan.entries().getFirst().support().expectedState().orElseThrow().block())
                         : primitive instanceof ActionDsl.ExtendKnownFloor floor
                                 ? new SurfacePreflightRecovery.Target(floor.support(), floor.expectedSupport().block())
+                                : primitive instanceof ActionDsl.CraftKnownRecipe craft
+                                        ? new SurfacePreflightRecovery.Target(craft.target(), craft.expectedState().block())
                                 : new SurfacePreflightRecovery.Target(NODE.target(), NODE.expectedBlock());
                 AgentPrimitivePlanner.requireKnownSurface(map.snapshot().orElseThrow(), planning,
                         target.position(), target.block(), 65);
