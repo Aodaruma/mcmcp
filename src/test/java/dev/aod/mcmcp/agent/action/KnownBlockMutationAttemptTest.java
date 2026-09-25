@@ -26,6 +26,110 @@ class KnownBlockMutationAttemptTest {
             new BlockStateFingerprint("minecraft:dirt", Map.of());
     private static final BlockStateFingerprint FARMLAND =
             new BlockStateFingerprint("minecraft:farmland", Map.of("moisture", "0"));
+    private static final BlockStateFingerprint LEVER_OFF = new BlockStateFingerprint(
+            "minecraft:lever", Map.of("face", "wall", "facing", "north", "powered", "false"));
+    private static final BlockStateFingerprint LEVER_ON = new BlockStateFingerprint(
+            "minecraft:lever", Map.of("face", "wall", "facing", "north", "powered", "true"));
+
+    private static KnownBlockMutationAttempt lever(FakePort port, boolean powered) {
+        var target = new BlockTarget("minecraft:overworld", 1, 64, 1);
+        port.preparedLive = LEVER_OFF;
+        port.confirmedLive = LEVER_ON;
+        return new KnownBlockMutationAttempt(port, new dev.aod.mcmcp.routine.InteractBlockRequest(
+                target, LEVER_OFF, powered ? LEVER_ON : LEVER_OFF,
+                new ActionBounds(target.dimension(), target, target, 0, 5, false)), 1, 101);
+    }
+
+    @Test
+    void leverConfirmsOnlyAfterAckAndDrainsTheActualBeforeAndAfterOnce() {
+        var port = new FakePort();
+        var attempt = lever(port, true);
+        attempt.tick(1);
+        port.tick = 2;
+        attempt.tick(2);
+        assertThat(attempt.hasPotentialLeverDispatch()).isTrue();
+        assertThat(attempt.drainLeverInteractions()).isOne();
+        assertThat(attempt.drainLeverInteractions()).isZero();
+        assertThat(attempt.drainLeverEffect()).isEmpty();
+        port.acknowledged = false;
+        port.tick = 3;
+        assertThat(attempt.tick(3).status()).isEqualTo(KnownBlockMutationAttempt.Status.RUNNING);
+        assertThat(attempt.drainLeverEffect()).isEmpty();
+        port.acknowledged = true;
+        port.tick = 4;
+        assertThat(attempt.tick(4).status()).isEqualTo(KnownBlockMutationAttempt.Status.SUCCEEDED);
+        var effect = attempt.drainLeverEffect().orElseThrow();
+        assertThat(effect.verification()).isEqualTo(AgentActionStore.Verification.CONFIRMED);
+        assertThat(effect.observedBefore()).containsEntry("properties", LEVER_OFF.properties());
+        assertThat(effect.observedAfter()).containsEntry("properties", LEVER_ON.properties());
+        attempt.close();
+        assertThat(attempt.drainLeverEffect()).isEmpty();
+        assertThat(port.dispatchCalls).isOne();
+    }
+
+    @Test
+    void satisfiedLeverHasNoInteractionOrEffectButStillRequiresSafety() {
+        var port = new FakePort();
+        port.unpreparedLive = Optional.of(LEVER_OFF);
+        var attempt = lever(port, false);
+        assertThat(attempt.tick(1).status()).isEqualTo(KnownBlockMutationAttempt.Status.SUCCEEDED);
+        assertThat(port.dispatchCalls).isZero();
+        assertThat(attempt.drainLeverInteractions()).isZero();
+        assertThat(attempt.drainLeverEffect()).isEmpty();
+        var unsafe = new FakePort();
+        unsafe.unpreparedLive = Optional.of(LEVER_OFF);
+        unsafe.controlContextClear = false;
+        assertThat(lever(unsafe, false).tick(1).status()).isEqualTo(KnownBlockMutationAttempt.Status.FAILED);
+    }
+
+    @Test
+    void leverTimeoutOrCancellationRetainsUnknownDispatchWithoutInventingAfterState() {
+        for (boolean timeout : new boolean[] {false, true}) {
+            var port = new FakePort();
+            var attempt = lever(port, true);
+            attempt.tick(1);
+            port.tick = 2;
+            attempt.tick(2);
+            port.acknowledged = false;
+            if (timeout) assertThat(attempt.tick(101).status()).isEqualTo(KnownBlockMutationAttempt.Status.FAILED);
+            else attempt.close();
+            var effect = attempt.drainLeverEffect().orElseThrow();
+            assertThat(effect.verification()).isEqualTo(AgentActionStore.Verification.UNKNOWN);
+            assertThat(effect.observedAfter()).isEmpty();
+            assertThat(attempt.drainLeverInteractions()).isOne();
+            attempt.close();
+            assertThat(attempt.drainLeverEffect()).isEmpty();
+            assertThat(port.dispatchCalls).isOne();
+        }
+    }
+
+    @Test
+    void leverDispatchExceptionStillRetainsAnUnknownEffectThroughCleanup() {
+        var port = new FakePort();
+        port.dispatchThrows = true;
+        var attempt = lever(port, true);
+        attempt.tick(1);
+        port.tick = 2;
+        assertThatThrownBy(() -> attempt.tick(2)).isInstanceOf(IllegalStateException.class);
+        attempt.close();
+        assertThat(attempt.drainLeverEffect().orElseThrow().verification())
+                .isEqualTo(AgentActionStore.Verification.UNKNOWN);
+        assertThat(attempt.drainLeverInteractions()).isOne();
+        assertThat(port.dispatchCalls).isOne();
+    }
+
+    @Test
+    void changedLeverMountingFailsBeforeDispatch() {
+        var port = new FakePort();
+        var attempt = lever(port, true);
+        attempt.tick(1);
+        port.preparedLive = new BlockStateFingerprint("minecraft:lever",
+                Map.of("face", "floor", "facing", "north", "powered", "false"));
+        port.tick = 2;
+        assertThat(attempt.tick(2).status()).isEqualTo(KnownBlockMutationAttempt.Status.FAILED);
+        assertThat(port.dispatchCalls).isZero();
+        assertThat(attempt.drainLeverEffect()).isEmpty();
+    }
 
     @Test
     void succeedsOnlyAfterPreparedDispatchAndAuthoritativeAck() {
@@ -197,6 +301,9 @@ class KnownBlockMutationAttemptTest {
         private SemanticActionPreparationAttempt preparation;
         private SemanticActionAttempt action;
         private boolean dispatched;
+        private int dispatchCalls;
+        private boolean dispatchThrows;
+        private boolean acknowledged = true;
         private boolean stopped;
         private boolean retired;
         private boolean prepared = true;
@@ -248,6 +355,8 @@ class KnownBlockMutationAttemptTest {
                 SemanticActionPreparationAttempt preparation,
                 long deadline) {
             dispatched = true;
+            dispatchCalls++;
+            if (dispatchThrows) throw new IllegalStateException("ambiguous dispatch");
             action = new SemanticActionAttempt(
                     UUID.randomUUID(), request.kind(), tick, tick, deadline, 0, Map.of());
             return action;
@@ -264,7 +373,7 @@ class KnownBlockMutationAttemptTest {
         @Override
         public SemanticActionEvidence evidence(SemanticActionAttempt attempt) {
             return new SemanticActionEvidence(
-                    action.attemptId(), tick, tick, true, Optional.of(confirmedLive),
+                    action.attemptId(), tick, tick, acknowledged, Optional.of(confirmedLive),
                     false, true, 0, null, false, Map.of());
         }
 

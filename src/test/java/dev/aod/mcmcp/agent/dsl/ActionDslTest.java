@@ -24,6 +24,44 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ActionDslTest {
     @Test
+    void leverRequiresCompleteClosedStateCapabilitiesAndAnInteractionBudget() {
+        JsonObject lever = baseNode("lever", "set_known_lever");
+        lever.add("target", position());
+        lever.add("expected_state", JsonParser.parseString("""
+                {"block":"minecraft:lever","properties":{"face":"wall","facing":"north","powered":"false"}}
+                """));
+        lever.addProperty("powered", true);
+        var request = ActionDslParser.parse(request(
+                capabilities("camera", "block_interact"), lever,
+                budget(15_000, 300, 0, 360, 1, 0, 0)));
+        assertThat(request.program().body().getFirst()).isInstanceOf(ActionDsl.SetKnownLever.class);
+        assertThat(ActionDslValidator.validate(request).requiredCapabilities())
+                .containsExactlyInAnyOrder(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_INTERACT);
+        var cost = new ActionDslCompiler.Cost(15_000, 300, 0, 360, 1, 0, 0);
+        assertThat(ActionDslCompiler.compile(request, ignored -> Optional.of(cost),
+                request.program().capabilities()).worstCaseCost().interactions()).isOne();
+        assertThatThrownBy(() -> ActionDslCompiler.compile(request,
+                ignored -> Optional.of(new ActionDslCompiler.Cost(15_000, 300, 0, 360, 0, 0, 0)),
+                request.program().capabilities())).isInstanceOf(ActionDslException.class);
+        assertThatThrownBy(() -> ActionDslCompiler.compile(request, ignored -> Optional.of(cost),
+                Set.of(ActionDsl.Capability.CAMERA))).isInstanceOf(ActionDslException.class);
+        for (String invalidState : List.of(
+                "{\"block\":\"minecraft:lever\",\"properties\":{}}",
+                "{\"block\":\"mod:lever\",\"properties\":{\"face\":\"wall\",\"facing\":\"north\",\"powered\":\"false\"}}",
+                "{\"block\":\"minecraft:lever\",\"properties\":{\"face\":\"wall\",\"facing\":\"up\",\"powered\":\"false\"}}",
+                "{\"block\":\"minecraft:lever\",\"properties\":{\"face\":\"wall\",\"facing\":\"north\",\"powered\":\"false\",\"hidden\":\"x\"}}")) {
+            JsonObject bad = lever.deepCopy();
+            bad.add("expected_state", JsonParser.parseString(invalidState));
+            assertThatThrownBy(() -> ActionDslValidator.validate(ActionDslParser.parse(request(
+                    capabilities("camera", "block_interact"), bad,
+                    budget(15_000, 300, 0, 360, 1, 0, 0))))).isInstanceOf(ActionDslException.class);
+        }
+        lever.addProperty("powered", "true");
+        assertCode(request(capabilities("camera", "block_interact"), lever,
+                budget(15_000, 300, 0, 360, 1, 0, 0)), ActionDslException.Code.INVALID_ARGUMENT);
+    }
+
+    @Test
     void cobblestoneGeneratorIsFiniteTopLevelOnlyAndUsesItsStructuralBound() {
         JsonObject json = JsonParser.parseString("""
                 {"schema_version":1,"program":{"dsl_version":1,

@@ -785,6 +785,7 @@ Action DSL v1の制御構造:
 | apply_known_redstone_spec | camera, block_interact, block_place | 固定lever→lamp 1出力、2出力fan-out、または1 dustの直線identityを設置し、live visualでOFF / ON / OFFを試験する。wire版はlamp / dust / leverの可視glass supportとdustの直線shape・power 0 / 15 / 0も完全一致させる |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
+| set_known_lever | camera, block_interact | 配送済みの完全な可視stateを持つVanilla lever 1個を希望するpoweredへ設定。既に希望状態なら操作せず、送信時は通常use 1回とserver ACKで確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内の明示allowlist対象Vanilla chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemを移送。既定は最大14 whole stacks・896個、transfer_count指定は今回の正確な追加数量。各server ACKと最後1回のfull readbackで確認 |
 | store_known_container_stack | camera, inventory_transfer | playerの指定itemを同じcontainerへ最大14 whole stacks・896個まで移し、各server ACKと最後1回のfull readbackでcontainerの絶対個数を確認 |

@@ -30,6 +30,7 @@ final class BlockMutationExecution {
     private final ActionAdmission actionAdmission;
     private final ClientReconciliationSignals reconciliationSignals;
     private KnownBlockMutationAttempt blockMutationAttempt;
+    private boolean leverOccurrence;
     private int mutationAimFailures;
     private AgentPrimitivePlanner.MutationBatchPlan mutationBatchPlan;
     private int mutationBatchIndex;
@@ -76,12 +77,15 @@ final class BlockMutationExecution {
     boolean close() {
         boolean closed = true;
         if (blockMutationAttempt != null) {
+            var attempt = blockMutationAttempt;
             try {
-                blockMutationAttempt.close();
+                attempt.close();
                 blockMutationAttempt = null;
             } catch (RuntimeException | LinkageError failure) {
                 closed = false;
                 McmcpMod.LOGGER.error("MCMCP known-block mutation release failed", failure);
+            } finally {
+                recordLeverUsage(attempt);
             }
         }
         return closed;
@@ -177,6 +181,7 @@ final class BlockMutationExecution {
             ActionDsl.Node primitive, Map<String, AgentPrimitivePlanner.MutationAim> mutationAims) {
         ActionDsl.Node mutation = ActionBudgets.isMutationBatch(primitive) ? mutationBatchTarget : primitive;
         if (blockMutationAttempt == null) {
+            leverOccurrence = mutation instanceof ActionDsl.SetKnownLever;
             SemanticActionRequest request = ConstructionRequests.blockMutationRequest(
                     mutation,
                     ActionBudgets.isMutationBatch(primitive)
@@ -187,8 +192,12 @@ final class BlockMutationExecution {
             blockMutationAttempt = new KnownBlockMutationAttempt(
                     semanticActionPort, request, session.clientTick(), deadline);
         }
-        KnownBlockMutationAttempt.TickResult result =
-                blockMutationAttempt.tick(session.clientTick());
+        KnownBlockMutationAttempt.TickResult result;
+        try {
+            result = blockMutationAttempt.tick(session.clientTick());
+        } finally {
+            recordLeverUsage(blockMutationAttempt);
+        }
         if (result.dispatchedThisTick()) {
             armBatchTillSettlingAllowance(minecraft, primitive, mutation);
         }
@@ -202,7 +211,8 @@ final class BlockMutationExecution {
                                 false) != BatchTargetDisposition.STOP) {
                     throw new IllegalStateException("Failed batch target must stop dispatch");
                 }
-                if (ActionBudgets.retryableMutationAimFailure(result.evidence())) {
+                if (!blockMutationAttempt.hasPotentialLeverDispatch()
+                        && ActionBudgets.retryableMutationAimFailure(result.evidence())) {
                     if (!ActionBudgets.mutationAimRetriesAllowed(primitive)) {
                         return PrimitiveOutcome.failed(
                                 AgentActionStore.FailureCode.PATH_BLOCKED,
@@ -220,7 +230,7 @@ final class BlockMutationExecution {
             }
             case SUCCEEDED -> {
                 blockMutationAttempt = null;
-                if (result.performed()) {
+                if (result.performed() && !leverOccurrence) {
                     if (mutation instanceof ActionDsl.TillKnownBlock
                             || mutation instanceof ActionDsl.OpenKnownFenceGate
                             || mutation instanceof ActionDsl.OpenKnownPassage) {
@@ -251,6 +261,17 @@ final class BlockMutationExecution {
             }
         }
         return PrimitiveOutcome.running();
+    }
+
+    private void recordLeverUsage(KnownBlockMutationAttempt attempt) {
+        if (!leverOccurrence) return;
+        for (int count = attempt.drainLeverInteractions(); count > 0; count--) {
+            agentActions.recordInteraction(actionId);
+        }
+        attempt.drainLeverEffect().ifPresent(effect ->
+                agentActions.recordEffect(actionId, "block_interact", "minecraft:lever",
+                        effect.observedBefore(), effect.observedAfter(), effect.verification(),
+                        effect.clientTick(), effect.worldRevision()));
     }
 
     private void armBatchTillSettlingAllowance(Minecraft minecraft, ActionDsl.Node primitive, ActionDsl.Node mutation) {

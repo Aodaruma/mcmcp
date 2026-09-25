@@ -2184,7 +2184,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheat
                 || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheatBatch
                 || agentExecution.primitive instanceof ActionDsl.OpenKnownFenceGate
-                || agentExecution.primitive instanceof ActionDsl.OpenKnownPassage) {
+                || agentExecution.primitive instanceof ActionDsl.OpenKnownPassage
+                || agentExecution.primitive instanceof ActionDsl.SetKnownLever) {
             tickAgentBlockMutation(minecraft, session, action, actionTick);
             return true;
         }

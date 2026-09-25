@@ -13,6 +13,8 @@ import dev.aod.mcmcp.routine.UseItemOnBlockRequest;
 
 import java.util.Objects;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
 
 /** One bounded known-block mutation, confirmed by prediction ACK and authoritative state. */
 public final class KnownBlockMutationAttempt implements AutoCloseable {
@@ -24,6 +26,12 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
     private SemanticActionPreparationAttempt preparation;
     private SemanticActionAttempt action;
     private boolean closed;
+    private BlockStateFingerprint leverBefore;
+    private long leverTick;
+    private long leverRevision;
+    private LeverEffect leverEffect;
+    private boolean leverEffectTaken;
+    private int leverInteractions;
 
     public KnownBlockMutationAttempt(
             SemanticActionPort port,
@@ -54,6 +62,9 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
 
     private TickResult precheck(long clientTick) {
         var frame = Objects.requireNonNull(port.observe(request), "adapter returned no frame");
+        if (isLever() && !frame.universalSafetyClear()) {
+            return fail("mutation_safety_changed");
+        }
         if (frame.liveBlockState()
                 .filter(live -> SemanticMutationPostcondition.matches(request, live))
                 .isPresent()) {
@@ -98,6 +109,13 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
             return TickResult.succeeded(false);
         }
         if (!expectedBefore.matches(live)) return fail("mutation_precondition_changed");
+        if (isLever()) {
+            // A dispatch exception may follow a sent packet. Retain uncertainty before calling it.
+            leverBefore = live;
+            leverTick = evidence.clientTick();
+            leverRevision = evidence.observationRevision();
+            leverInteractions = 1;
+        }
         action = Objects.requireNonNull(
                 port.dispatchPrepared(request, preparation, deadlineTick),
                 "adapter returned no mutation action");
@@ -123,6 +141,12 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
                 && evidence.serverBlockState()
                         .filter(live -> SemanticMutationPostcondition.matches(request, live))
                         .isPresent()) {
+            if (leverBefore != null) {
+                leverEffect = new LeverEffect(stateMap(leverBefore),
+                        stateMap(evidence.serverBlockState().orElseThrow()),
+                        AgentActionStore.Verification.CONFIRMED,
+                        evidence.clientTick(), evidence.observationRevision());
+            }
             port.stopInput(action);
             close();
             return TickResult.succeeded(true);
@@ -139,6 +163,10 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
     @Override
     public void close() {
         if (closed) return;
+        if (leverBefore != null && leverEffect == null) {
+            leverEffect = new LeverEffect(stateMap(leverBefore), Map.of(),
+                    AgentActionStore.Verification.UNKNOWN, leverTick, leverRevision);
+        }
         try {
             if (action != null) port.release(action);
         } finally {
@@ -154,6 +182,41 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
 
     private void requireOpen() {
         if (closed) throw new IllegalStateException("mutation attempt is closed");
+    }
+
+    private boolean isLever() {
+        return request instanceof InteractBlockRequest
+                && "minecraft:lever".equals(expectedBefore.blockId());
+    }
+
+    /** Counts a possibly sent lever interaction once, including an ambiguous dispatch exception. */
+    public int drainLeverInteractions() {
+        int result = leverInteractions;
+        leverInteractions = 0;
+        return result;
+    }
+
+    public boolean hasPotentialLeverDispatch() {
+        return leverBefore != null;
+    }
+
+    /** The confirmed result or unknown dispatch is retained across cleanup failures. */
+    public Optional<LeverEffect> drainLeverEffect() {
+        if (leverEffect == null || leverEffectTaken) return Optional.empty();
+        leverEffectTaken = true;
+        return Optional.of(leverEffect);
+    }
+
+    private static Map<String, Object> stateMap(BlockStateFingerprint state) {
+        return Map.of("block", state.blockId(), "properties", state.properties());
+    }
+
+    public record LeverEffect(Map<String, Object> observedBefore, Map<String, Object> observedAfter,
+            AgentActionStore.Verification verification, long clientTick, long worldRevision) {
+        public LeverEffect {
+            observedBefore = Map.copyOf(observedBefore);
+            observedAfter = Map.copyOf(observedAfter);
+        }
     }
 
     private static BlockStateFingerprint expectedBefore(SemanticActionRequest request) {

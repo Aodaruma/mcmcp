@@ -142,6 +142,7 @@ public final class ActionDslParser {
             case "apply_known_redstone_spec" -> applyKnownRedstoneSpec(object, path);
             case "open_known_fence_gate" -> openKnownFenceGate(object, path);
             case "open_known_passage" -> openKnownPassage(object, path);
+            case "set_known_lever" -> setKnownLever(object, path);
             case "inspect_known_container" -> inspectKnownContainer(object, path);
             case "take_known_container_stack" -> takeKnownContainerStack(object, path);
             case "remove_visible_frame_item" -> removeVisibleFrameItem(object, path);
@@ -643,6 +644,16 @@ public final class ActionDslParser {
                 string(source.get("id"), path + ".id"),
                 position(source.get("target"), path + ".target"),
                 string(source.get("expected_block"), path + ".expected_block"));
+    }
+
+    private static ActionDsl.SetKnownLever setKnownLever(JsonObject source, String path) {
+        var fields = Set.of("id", "op", "target", "expected_state", "powered");
+        exactKeys(source, path, fields, fields);
+        return new ActionDsl.SetKnownLever(
+                string(source.get("id"), path + ".id"),
+                position(source.get("target"), path + ".target"),
+                blockStateSpec(source.get("expected_state"), path + ".expected_state"),
+                bool(source.get("powered"), path + ".powered"));
     }
 
     private static ActionDsl.InspectKnownContainer inspectKnownContainer(

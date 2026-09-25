@@ -703,6 +703,21 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_INTERACT);
             return 1;
         }
+        if (node instanceof ActionDsl.SetKnownLever lever) {
+            validatePosition(lever.target(), path + ".target");
+            var state = lever.expectedState();
+            var properties = state.properties();
+            if (!"minecraft:lever".equals(state.block())
+                    || !properties.keySet().equals(Set.of("face", "facing", "powered"))
+                    || !Set.of("floor", "wall", "ceiling").contains(properties.get("face"))
+                    || !Set.of("north", "south", "east", "west").contains(properties.get("facing"))
+                    || !Set.of("true", "false").contains(properties.get("powered"))) {
+                throw invalid(path + ".expected_state must be a complete vanilla lever state");
+            }
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_INTERACT);
+            return 1;
+        }
         if (node instanceof ActionDsl.InspectKnownContainer inspect) {
             validatePosition(inspect.target(), path + ".target");
             if (!KnownContainerPolicy.allows(inspect.expectedBlock())) {
@@ -983,6 +998,7 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.ApplyKnownRedstoneSpec
                     || node instanceof ActionDsl.OpenKnownFenceGate
                     || node instanceof ActionDsl.OpenKnownPassage
+                    || node instanceof ActionDsl.SetKnownLever
                     || node instanceof ActionDsl.InspectKnownContainer
                     || node instanceof ActionDsl.TakeKnownContainerStack
                     || node instanceof ActionDsl.StoreKnownContainerStack
