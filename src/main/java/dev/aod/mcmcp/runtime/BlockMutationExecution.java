@@ -178,7 +178,8 @@ final class BlockMutationExecution {
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             AgentActionStore.Active action,
-            ActionDsl.Node primitive, Map<String, AgentPrimitivePlanner.MutationAim> mutationAims) {
+            ActionDsl.Node primitive, Map<String, AgentPrimitivePlanner.MutationAim> mutationAims,
+            java.util.function.Supplier<java.util.Optional<String>> leverWitness) {
         ActionDsl.Node mutation = ActionBudgets.isMutationBatch(primitive) ? mutationBatchTarget : primitive;
         if (blockMutationAttempt == null) {
             leverOccurrence = mutation instanceof ActionDsl.SetKnownLever;
@@ -190,7 +191,7 @@ final class BlockMutationExecution {
             long deadline = Math.addExact(
                     session.clientTick(), AgentPrimitivePlanner.BLOCK_MUTATION_TICK_UPPER_BOUND);
             blockMutationAttempt = new KnownBlockMutationAttempt(
-                    semanticActionPort, request, session.clientTick(), deadline);
+                    semanticActionPort, request, session.clientTick(), deadline, leverWitness);
         }
         KnownBlockMutationAttempt.TickResult result;
         try {

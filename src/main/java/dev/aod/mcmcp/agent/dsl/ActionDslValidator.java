@@ -135,6 +135,8 @@ public final class ActionDslValidator {
         }
         validateTerminalOwnedMenuPlacement(program.body());
         validateTerminalClearPlacement(program.body());
+        validateExclusiveNode(program.body(), node -> node instanceof ActionDsl.SetKnownLever,
+                "set_known_lever must be the only top-level Action node");
         validateExclusiveNode(program.body(), node -> node instanceof ActionDsl.RemoveVisibleFrameItem
                         || node instanceof ActionDsl.InsertVisibleFrameItem,
                 "frame item operation must be the only top-level Action node");

@@ -37,6 +37,17 @@ class ActionDslTest {
         assertThat(request.program().body().getFirst()).isInstanceOf(ActionDsl.SetKnownLever.class);
         assertThat(ActionDslValidator.validate(request).requiredCapabilities())
                 .containsExactlyInAnyOrder(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_INTERACT);
+        JsonObject combined = request(capabilities("camera", "block_interact"), lever.deepCopy(),
+                budget(15_000, 300, 0, 360, 1, 0, 0));
+        combined.getAsJsonObject("program").getAsJsonArray("body").add(waitNode("later", 1));
+        assertCode(combined, ActionDslException.Code.INVALID_ARGUMENT);
+        JsonObject repeated = baseNode("repeat_lever", "repeat");
+        repeated.addProperty("count", 1);
+        var repeatedBody = new JsonArray();
+        repeatedBody.add(lever.deepCopy());
+        repeated.add("body", repeatedBody);
+        assertCode(request(capabilities("camera", "block_interact"), repeated,
+                budget(15_000, 300, 0, 360, 1, 0, 0)), ActionDslException.Code.INVALID_ARGUMENT);
         var cost = new ActionDslCompiler.Cost(15_000, 300, 0, 360, 1, 0, 0);
         assertThat(ActionDslCompiler.compile(request, ignored -> Optional.of(cost),
                 request.program().capabilities()).worstCaseCost().interactions()).isOne();

@@ -22,6 +22,7 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
     private final SemanticActionRequest request;
     private final BlockStateFingerprint expectedBefore;
     private final long deadlineTick;
+    private final java.util.function.Supplier<Optional<String>> preDispatchWitness;
     private Phase phase = Phase.PRECHECK;
     private SemanticActionPreparationAttempt preparation;
     private SemanticActionAttempt action;
@@ -38,6 +39,16 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
             SemanticActionRequest request,
             long admittedClientTick,
             long deadlineTick) {
+        // Existing closed construction routines own their dependency proof. The standalone
+        // set_known_lever path supplies its original-delivery witness through the overload.
+        this(port, request, admittedClientTick, deadlineTick, Optional::empty);
+    }
+
+    /** The lever witness is rechecked before every unsent tick, including no-op success. */
+    public KnownBlockMutationAttempt(
+            SemanticActionPort port, SemanticActionRequest request,
+            long admittedClientTick, long deadlineTick,
+            java.util.function.Supplier<Optional<String>> preDispatchWitness) {
         this.port = Objects.requireNonNull(port, "port");
         this.request = Objects.requireNonNull(request, "request");
         request.validateAdmissionTick(admittedClientTick);
@@ -45,6 +56,7 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
             throw new IllegalArgumentException("deadline must follow admission");
         }
         this.deadlineTick = deadlineTick;
+        this.preDispatchWitness = Objects.requireNonNull(preDispatchWitness, "preDispatchWitness");
         expectedBefore = expectedBefore(request);
     }
 
@@ -52,6 +64,13 @@ public final class KnownBlockMutationAttempt implements AutoCloseable {
         requireOpen();
         if (clientTick < 0L) throw new IllegalArgumentException("clientTick must be non-negative");
         if (clientTick >= deadlineTick) return fail("mutation_deadline");
+        if (isLever() && phase != Phase.CONFIRMING) {
+            var rejection = Objects.requireNonNull(preDispatchWitness.get(), "missing visibility decision");
+            if (rejection.isPresent()) {
+                return "renderer_evidence_missing".equals(rejection.orElseThrow())
+                        ? TickResult.running() : fail(rejection.orElseThrow());
+            }
+        }
 
         return switch (phase) {
             case PRECHECK -> precheck(clientTick);
