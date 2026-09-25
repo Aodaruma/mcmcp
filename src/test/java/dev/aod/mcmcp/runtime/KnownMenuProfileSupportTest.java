@@ -3,6 +3,9 @@ package dev.aod.mcmcp.runtime;
 import net.minecraft.core.component.DataComponentMap;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -13,11 +16,71 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class KnownMenuProfileSupportTest {
+    @Test
+    void inventoryMenuAfterStorageDoesNotBreakStateObservation() {
+        var session = UUID.randomUUID();
+        var ledger = synchronizedLedger(session, 7, "minecraft:generic_9x3");
+
+        assertThat(KnownMenuProfileSupport.synchronizedMenuMatches(
+                ledger, session, menu(null, 0))).isFalse();
+    }
+
+    @Test
+    void untypedMenuCannotBecomeKnownEvenWithMatchingContainerId() {
+        var session = UUID.randomUUID();
+        var ledger = synchronizedLedger(session, 7, "minecraft:generic_9x3");
+
+        assertThat(KnownMenuProfileSupport.synchronizedMenuMatches(
+                ledger, session, menu(null, 7))).isFalse();
+    }
+
+    @Test
+    void typedMenuStillRequiresMatchingServerEvidence() {
+        var session = UUID.randomUUID();
+        var ledger = synchronizedLedger(session, 7, "minecraft:generic_9x3");
+        var menu = menu(MenuType.GENERIC_9x3, 7);
+
+        assertThat(KnownMenuProfileSupport.synchronizedMenuMatches(ledger, session, menu)).isTrue();
+        assertThat(KnownMenuProfileSupport.synchronizedMenuMatches(
+                ledger, UUID.randomUUID(), menu)).isFalse();
+        assertThat(KnownMenuProfileSupport.synchronizedMenuMatches(
+                ledger, session, menu(MenuType.GENERIC_9x3, 8))).isFalse();
+        assertThat(KnownMenuProfileSupport.synchronizedMenuMatches(
+                ledger, session, menu(MenuType.GENERIC_9x6, 7))).isFalse();
+        menu.incrementStateId();
+        assertThat(KnownMenuProfileSupport.synchronizedMenuMatches(ledger, session, menu)).isFalse();
+    }
+
+    private static ContainerSyncSignals.Snapshot synchronizedLedger(
+            UUID session, int containerId, String menuType) {
+        return new ContainerSyncSignals.Snapshot(session, 2,
+                new ContainerSyncSignals.OpenScreenEvidence(session, containerId, menuType, 1, 1),
+                new ContainerSyncSignals.ContainerSnapshot(session, containerId, menuType, 0,
+                        List.of(), ContainerSyncSignals.StackFingerprint.EMPTY, 2, 2),
+                Map.of(), null);
+    }
+
+    private static AbstractContainerMenu menu(MenuType<?> type, int containerId) {
+        return new AbstractContainerMenu(type, containerId) {
+            @Override
+            public ItemStack quickMoveStack(Player player, int slot) {
+                return ItemStack.EMPTY;
+            }
+
+            @Override
+            public boolean stillValid(Player player) {
+                return true;
+            }
+        };
+    }
+
     @Test
     void genericPureStorageProfilesAreVersionedContentAddressedAndBounded() {
         var profiles = KnownMenuProfileSupport.profiles();
