@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$ArtifactDirectory,
     [string]$TokenPath,
     [string]$Endpoint='http://127.0.0.1:8765/mcp',
-    [ValidateSet('normal','partial')][string]$Scenario='normal',
+    [ValidateSet('normal','partial','exact')][string]$Scenario='normal',
     [switch]$LibraryOnly
 )
 . (Join-Path $PSScriptRoot 'McmcpCapabilityGateSupport.ps1')
@@ -12,7 +12,7 @@ param(
 function Invoke-ReleaseContainerStep {
     param([string]$Name, [ValidateSet('inspect','take','store')][string]$Operation,
         [string]$Block, [int]$X, [int]$Z, [string]$Item, [int]$Goal,
-        [int]$Limit=896, [int]$ExpectedTransfer=0, [switch]$ExpectedPartial)
+        [int]$Limit=896, [int]$ExpectedTransfer=0, [int]$TransferCount=0, [switch]$ExpectedPartial)
     $before=Get-InventoryCount -State (Get-FreshState) -Item $Item
     $surface=Get-MaterialSurface $Block $X 61 $Z @('up')
     $node=[ordered]@{id=$Name;op='inspect_known_container';target=$surface.position;expected_block=$Block}
@@ -21,6 +21,7 @@ function Invoke-ReleaseContainerStep {
         $node.op=if($Operation -eq 'take'){'take_known_container_stack'}else{'store_known_container_stack'}
         $node.item=$Item;$node.stack_policy='default_components_only'
         $node.max_stacks=14;$node.max_transfer_count=$Limit
+        if($TransferCount -gt 0){$node.transfer_count=$TransferCount}
         if($Operation -eq 'take'){$node.minimum_inventory_count=$Goal}else{$node.minimum_container_count=$Goal}
         $interactions=16
     }
@@ -90,6 +91,19 @@ function Invoke-McmcpReleaseContainerGate {
             Invoke-ReleaseContainerStep inspect_empty_copper inspect minecraft:waxed_copper_chest -7 6 minecraft:black_wool 0
             Invoke-ReleaseContainerStep store_copper store minecraft:waxed_copper_chest -7 6 minecraft:black_wool 74 -Limit 74 -ExpectedTransfer 74
             Invoke-ReleaseContainerStep inspect_restored_copper inspect minecraft:waxed_copper_chest -7 6 minecraft:black_wool 74
+        }elseif($Scenario -eq 'exact'){
+            Invoke-ReleaseContainerStep exact_before inspect minecraft:chest -4 6 minecraft:snow_block 896
+            Invoke-ReleaseContainerStep exact_take_two take minecraft:chest -4 6 minecraft:snow_block 2 -TransferCount 2 -ExpectedTransfer 2
+            Invoke-ReleaseContainerStep exact_take_goal_met take minecraft:chest -4 6 minecraft:snow_block 2 -TransferCount 2 -ExpectedTransfer 2
+            Invoke-ReleaseContainerStep exact_store_goal_met store minecraft:chest -4 6 minecraft:snow_block 892 -TransferCount 2 -ExpectedTransfer 2
+            Invoke-ReleaseContainerStep exact_restore_two store minecraft:chest -4 6 minecraft:snow_block 896 -TransferCount 2 -ExpectedTransfer 2
+            Invoke-ReleaseContainerStep exact_take_seven take minecraft:chest -4 6 minecraft:snow_block 7 -TransferCount 7 -ExpectedTransfer 7
+            Invoke-ReleaseContainerStep exact_barrel_two store minecraft:barrel -3 7 minecraft:snow_block 2 -TransferCount 2 -ExpectedTransfer 2
+            Invoke-ReleaseContainerStep exact_barrel_five store minecraft:barrel -3 7 minecraft:snow_block 7 -TransferCount 5 -ExpectedTransfer 5
+            Invoke-ReleaseContainerStep exact_barrel_take take minecraft:barrel -3 7 minecraft:snow_block 7 -TransferCount 7 -ExpectedTransfer 7
+            Invoke-ReleaseContainerStep exact_restore_seven store minecraft:chest -4 6 minecraft:snow_block 896 -TransferCount 7 -ExpectedTransfer 7
+            Invoke-ReleaseContainerStep exact_restored inspect minecraft:chest -4 6 minecraft:snow_block 896
+            Invoke-ReleaseContainerStep exact_barrel_empty inspect minecraft:barrel -3 7 minecraft:snow_block 0
         }else{
             Invoke-ReleaseContainerStep inspect_partial_source inspect minecraft:waxed_copper_chest -7 6 minecraft:black_wool 111
             Invoke-ReleaseContainerStep partial_take take minecraft:waxed_copper_chest -7 6 minecraft:black_wool 74 -Limit 74 -ExpectedTransfer 47 -ExpectedPartial
