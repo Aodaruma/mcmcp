@@ -22,7 +22,16 @@ public record ObservationRecord(
         LoadedState loaded,
         Drop drop,
         boolean neutralizeAgentHorizontal,
-        Locomotion locomotion) {
+        Locomotion locomotion,
+        boolean supportedDiagonal) {
+    public ObservationRecord(long observedTick, long worldRevision, int transitionDepth,
+            Point from, Point requestedTo, Point to, Support support, Clearance clearance,
+            Transition transition, Fluid fluid, boolean suffocation, Hazard hazard,
+            LoadedState loaded, Drop drop, boolean neutralizeAgentHorizontal, Locomotion locomotion) {
+        this(observedTick, worldRevision, transitionDepth, from, requestedTo, to, support,
+                clearance, transition, fluid, suffocation, hazard, loaded, drop,
+                neutralizeAgentHorizontal, locomotion, false);
+    }
     public ObservationRecord(
             long observedTick,
             long worldRevision,
@@ -66,6 +75,13 @@ public record ObservationRecord(
         Objects.requireNonNull(loaded, "loaded");
         Objects.requireNonNull(drop, "drop");
         Objects.requireNonNull(locomotion, "locomotion");
+        if (supportedDiagonal && (locomotion != Locomotion.GROUND || transitionDepth == 0
+                || loaded != LoadedState.LOADED || support != Support.PRESENT
+                || clearance != Clearance.CLEAR || fluid != Fluid.NONE || hazard != Hazard.NONE
+                || suffocation || drop != Drop.SUPPORTED || neutralizeAgentHorizontal
+                || transition != Transition.PROBE_ALLOWED && transition != Transition.CONTACT)) {
+            throw new IllegalArgumentException("supported diagonal requires complete ground evidence");
+        }
         if (transitionDepth == 0 && transition != Transition.STATIONARY) {
             throw new IllegalArgumentException("depth zero is reserved for the current AABB");
         }

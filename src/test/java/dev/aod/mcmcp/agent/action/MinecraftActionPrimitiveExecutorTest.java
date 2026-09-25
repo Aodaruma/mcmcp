@@ -131,6 +131,31 @@ class MinecraftActionPrimitiveExecutorTest {
     }
 
     @Test
+    void directDiagonalProofIsSharedByPlanningDependenciesAndExecution() {
+        UUID session = UUID.randomUUID();
+        var map = new KnownTraversabilityMap();
+        map.startSession(session, DIMENSION, 4);
+        var from = cell(0, 64, 0);
+        var to = cell(1, 64, 1);
+        var legacy = edge(session, from, to, TraversabilityEdge.Status.PROBE_ALLOWED, 1);
+        var proven = new TraversabilityEdge(session, legacy.key(), legacy.status(),
+                legacy.targetSupport(), legacy.clearance(), legacy.transition(), legacy.fluid(),
+                legacy.hazard(), legacy.provenance(), legacy.observerPosition(), 1, 4,
+                legacy.locomotion(), true);
+        map.observe(proven);
+        var snapshot = map.snapshot().orElseThrow();
+        var route = new DeterministicAStar().findRoute(snapshot, from, to).route().orElseThrow();
+        var dependencies = new java.util.LinkedHashMap<TraversabilityEdge.Key, TraversabilityEdge>();
+        AgentNavigationPlanner.addRouteDependencies(snapshot, route, dependencies);
+        assertThat(dependencies.values()).containsExactly(proven);
+        assertThat(MinecraftActionPrimitiveExecutor.edgeDecision(route, 0, snapshot))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.EdgeDecision.PROBE);
+        map.advanceWorldRevision(5, java.util.List.of(cell(1, 64, 0)), java.util.List.of());
+        assertThat(MinecraftActionPrimitiveExecutor.edgeDecision(route, 0, map.snapshot().orElseThrow()))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.EdgeDecision.REPLAN);
+    }
+
+    @Test
     void permitsOnlyProbeThatWasIncludedInCompiledRoute() {
         UUID session = UUID.randomUUID();
         NavCell start = cell(0, 64, 0);
