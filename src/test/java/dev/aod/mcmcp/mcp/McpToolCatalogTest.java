@@ -32,6 +32,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McpToolCatalogTest {
     @Test
+    void exactContainerQuantityIsOptionalBoundedAndDiscoverable() {
+        var definitions = new McpToolCatalog().inputSchema("agent_start_action").getAsJsonObject("$defs");
+        for (String name : List.of("takeContainerStackNode", "storeContainerStackNode")) {
+            var node = definitions.getAsJsonObject(name);
+            var quantity = node.getAsJsonObject("properties").getAsJsonObject("transfer_count");
+            assertThat(CatalogSchemaValidator.matches(quantity, JsonParser.parseString("2"))).isTrue();
+            for (String invalid : List.of("0", "-1", "897", "1.5", "null", "\"2\"")) {
+                assertThat(CatalogSchemaValidator.matches(quantity, JsonParser.parseString(invalid))).isFalse();
+            }
+            assertThat(node.getAsJsonArray("required").asList()).doesNotContain(JsonParser.parseString("\"transfer_count\""));
+            assertThat(node.get("description").getAsString())
+                    .contains("14 clicks", "empty cursor", "69000 ms", "16 interactions", "rescue clicks");
+        }
+    }
+
+    @Test
     void ownInventoryPlacementSourcesHaveClosedSchemaAndADiscoverableRefreshPath() {
         var catalog = new McpToolCatalog();
         var schema = catalog.outputSchema("agent_get_state").getAsJsonObject("properties")

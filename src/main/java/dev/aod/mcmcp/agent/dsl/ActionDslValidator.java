@@ -727,6 +727,7 @@ public final class ActionDslValidator {
             requireRange(take.maxStacks(), 1, MAX_CONTAINER_STACKS, path + ".max_stacks");
             requireRange(take.maxTransferCount(), 1, MAX_CONTAINER_TRANSFER_COUNT,
                     path + ".max_transfer_count");
+            requireRange(take.transferCount(), 0, take.maxTransferCount(), path + ".transfer_count");
             validateRoutingLabel(take.routingLabel(), path);
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
@@ -746,6 +747,7 @@ public final class ActionDslValidator {
             requireRange(store.maxStacks(), 1, MAX_CONTAINER_STACKS, path + ".max_stacks");
             requireRange(store.maxTransferCount(), 1, MAX_CONTAINER_TRANSFER_COUNT,
                     path + ".max_transfer_count");
+            requireRange(store.transferCount(), 0, store.maxTransferCount(), path + ".transfer_count");
             validateRoutingLabel(store.routingLabel(), path);
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);

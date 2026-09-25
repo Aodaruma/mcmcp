@@ -240,9 +240,9 @@ public final class ActionDslCompiler {
             } else if (node instanceof ActionDsl.InspectKnownContainer) {
                 requireMutationCost(cost, 1, 0, 0, "inspect_known_container");
             } else if (node instanceof ActionDsl.TakeKnownContainerStack take) {
-                requireContainerTransferCost(cost, take.maxStacks(), "take_known_container_stack");
+                requireContainerTransferCost(cost, take.maxClicks(), "take_known_container_stack");
             } else if (node instanceof ActionDsl.StoreKnownContainerStack store) {
-                requireContainerTransferCost(cost, store.maxStacks(), "store_known_container_stack");
+                requireContainerTransferCost(cost, store.maxClicks(), "store_known_container_stack");
             } else if (node instanceof ActionDsl.RemoveVisibleFrameItem
                     || node instanceof ActionDsl.InsertVisibleFrameItem) {
                 requireMutationCost(cost, 1, 0, 0, "visible_frame_item");

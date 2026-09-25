@@ -50,6 +50,7 @@ class MinecraftKnownMenuPortTest {
                 .noneMatch(call -> call.endsWith("#handleContainerInput"));
         var inputFields = new ArrayList<String>();
         for (var method : shared.methods) {
+            if (!method.name.equals("dispatchServerConfirmedQuickMove")) continue;
             for (var instruction : method.instructions) {
                 if (instruction instanceof FieldInsnNode field
                         && field.owner.equals("net/minecraft/world/inventory/ContainerInput")) {
@@ -58,6 +59,14 @@ class MinecraftKnownMenuPortTest {
             }
         }
         assertThat(inputFields).containsExactly("QUICK_MOVE");
+        assertThat(invocations(shared, "dispatchServerConfirmedPickup"))
+                .contains("net/minecraft/network/protocol/game/ServerboundContainerClickPacket#<init>")
+                .noneMatch(call -> call.endsWith("#handleContainerInput"));
+        assertThat(invocations(classNode(MinecraftPhaseFiveInventoryPort.class), "acceptExactTransfer"))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort#prepareOwnedDispatch",
+                        "dev/aod/mcmcp/runtime/ScreenOwnershipSignals#invalidateServerCursorProof",
+                        "dev/aod/mcmcp/routine/KnownMenuTransfers#dispatchServerConfirmedPickup");
         assertThat(invocations(classNode(MinecraftKnownMenuPort.class),
                 "dispatchServerConfirmedQuickMove"))
                 .containsSubsequence(

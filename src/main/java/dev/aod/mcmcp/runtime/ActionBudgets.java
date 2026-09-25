@@ -231,9 +231,9 @@ final class ActionBudgets {
             case ActionDsl.CraftKnownRecipe ignored ->
                     AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND;
             case ActionDsl.TakeKnownContainerStack take ->
-                    ActionDslCompiler.knownContainerTransferOperationTicks(take.maxStacks());
+                    ActionDslCompiler.knownContainerTransferOperationTicks(take.maxClicks());
             case ActionDsl.StoreKnownContainerStack store ->
-                    ActionDslCompiler.knownContainerTransferOperationTicks(store.maxStacks());
+                    ActionDslCompiler.knownContainerTransferOperationTicks(store.maxClicks());
             // The standalone floor's 400 ticks are one total envelope, including render waits.
             // Runtime still enforces the original Action deadline before every operation tick.
             case ActionDsl.ExtendKnownFloor ignored -> 0L;
