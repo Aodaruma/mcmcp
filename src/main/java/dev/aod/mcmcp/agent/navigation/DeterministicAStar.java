@@ -116,7 +116,7 @@ public final class DeterministicAStar {
             }
 
             for (TraversabilityEdge edge : snapshot.outgoing(current.cell())) {
-                if (!edge.traversable() || !cornerClear(snapshot, edge)) continue;
+                if (!edge.traversable() || !DiagonalTraversal.clear(snapshot, edge)) continue;
                 NavCell next = edge.key().to();
                 if (closed.contains(next)) continue;
                 double candidateDistance = current.distance()
@@ -141,25 +141,6 @@ public final class DeterministicAStar {
     private static boolean better(double distance, int probes, Score known) {
         if (distance < known.distance() - EPSILON) return true;
         return Math.abs(distance - known.distance()) <= EPSILON && probes < known.probeEdges();
-    }
-
-    private static boolean cornerClear(
-            KnownTraversabilitySnapshot snapshot, TraversabilityEdge edge) {
-        NavCell from = edge.key().from();
-        NavCell to = edge.key().to();
-        if (!from.horizontallyDiagonalTo(to)) return true;
-
-        NavCell xSide = new NavCell(from.dimension(), to.x(), from.y(), from.z());
-        NavCell zSide = new NavCell(from.dimension(), from.x(), from.y(), to.z());
-        return confirmed(snapshot, new TraversabilityEdge.Key(from, xSide))
-                && confirmed(snapshot, new TraversabilityEdge.Key(from, zSide));
-    }
-
-    private static boolean confirmed(
-            KnownTraversabilitySnapshot snapshot, TraversabilityEdge.Key key) {
-        return snapshot.edge(key)
-                .map(edge -> edge.status() == TraversabilityEdge.Status.CONFIRMED)
-                .orElse(false);
     }
 
     private static RoutePlan reconstruct(

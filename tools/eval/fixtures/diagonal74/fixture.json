@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "diagonal74",
+  "dimension": "minecraft:overworld",
+  "mutation_bounds": {
+    "min": {
+      "x": -10,
+      "y": 54,
+      "z": 2
+    },
+    "max": {
+      "x": 1,
+      "y": 65,
+      "z": 10
+    }
+  },
+  "player_bounds": {
+    "min": {
+      "x": -9,
+      "y": 55,
+      "z": 3
+    },
+    "max": {
+      "x": 0,
+      "y": 64,
+      "z": 9
+    }
+  },
+  "max_changed_blocks": 1000,
+  "containers": []
+}

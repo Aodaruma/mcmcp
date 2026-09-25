@@ -115,7 +115,7 @@ public final class LocalObservationProjector {
                 navCell(dimension.value(), observer, centerToFeet),
                 source.observedTick(),
                 worldRevision,
-                source.locomotion());
+                source.locomotion(), source.supportedDiagonal());
         edges.add(edge);
         if (source.locomotion() != Locomotion.GROUND && !edge.destination()) {
             return;
