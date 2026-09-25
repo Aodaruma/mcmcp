@@ -1004,6 +1004,7 @@ templateは`agent_start_action.inputSchema.examples`に掲載し、実装reposit
 - [`break_known_oak_column.json`](action-templates/break_known_oak_column.json): 地上から届く、現在可視な3段oak幹を下から順に破壊する
 - [`wheat_cycle.json`](action-templates/wheat_cycle.json): 2区画をmutation batchで耕し、植え、有限成熟待機後に収穫する
 - [`open_known_passage.json`](action-templates/open_known_passage.json): 可視な木製通路を開く
+- [`set_known_lever.json`](action-templates/set_known_lever.json): 完全な可視stateから既設レバーを指定ON/OFFにする
 - [`inspect_known_container.json`](action-templates/inspect_known_container.json): 明示allowlist対象のVanilla chest / barrelのserver同期済み内容を確認する
 - [`take_wheat_seeds_stack.json`](action-templates/take_wheat_seeds_stack.json): wheat seedsをwhole stack 1回だけ取得する
 - [`copy_known_oak_beam.json`](action-templates/copy_known_oak_beam.json): 完全なoak log stateを90度回転し、現在supportと先行entry dependencyで2 blockの水平梁を設置する
