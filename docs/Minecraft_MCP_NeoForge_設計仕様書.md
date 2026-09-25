@@ -1334,7 +1334,7 @@ Vanilla inventory文法だけでは、独自widget、ghost slot、fluid / energy
 
 現在の`operate_known_menu`は`{id,op,operation_ref}`へ閉じ、Action内でtop-level最終nodeとして1回だけ受ける。refの内部recordはruntimeだけが保持し、LLMへraw slot、座標、component / NBT、callback class、packet payloadを返さない。操作直前にrefを再解決し、session、同一Screen identity、container ID、menu type、state ID、slot数、profile hash、packet revision、全source snapshotのいずれかが変われば配送せずreplanする。dispatch後はfresh server packetを待ち、source empty、他storage slotとMOD profileの全protected slot不変、player slotの完全multisetとcomponent-exact個数を確認し、cursor emptyのまま画面を閉じてから成功にする。複数operationのtransactionは、実タスクで必要になるまで追加しない。
 
-Menu profileは、対象MOD名、version、active jar SHA-256、menu / Screen class、slot shape、許可操作、入力保存則、成功条件を記述する小さな組込み宣言dataとする。最初のMOD profileは外部loaderを作らず、Sophisticated Backpacks 1 buildだけを組込み、NeoForgeが実際にロードした両jarを起動時に検証する。Menu classの公開getterでstorage / inaccessible / open-upgrade / extra-slotを分類し、playerの36 slot以外は全てprotectedとして扱う。未知version / hash / class / methodではprofileを無効化し、production中の自動推測やpixel操作へfallbackしない。
+現在のMenu profileは、対象MOD名、version、active jar SHA-256、menu / Screen class、slot shape、許可操作、入力保存則、成功条件を記述する組込み定義である。最初のMOD profileはSophisticated Backpacks 1 buildを対象とし、NeoForgeが実際にロードした両jarを起動時に検証する。Menu classの公開getterでstorage / inaccessible / open-upgrade / extra-slotを分類し、storageとplayerの36 slot以外はprotectedとして扱う。未知version / hash / class / methodではprofileを無効化し、production中の自動推測やpixel操作へfallbackしない。後続の収納対応は9.7.1の共通契約へ移行し、この1 build専用構成を拡張の前提にしない。
 
 recipeとitem IDは`minecraft:`へ限定せず、clientへ通常同期され、registryに存在するMOD namespaceも受理できる。ただしrecipe manager、server内部state、JEI等の別MOD内部cacheをhidden-state経路として読まない。同一item IDでもData Componentが異なる道具、enchanted book、template、upgrade済みMOD item等は、現在のstorage sliceでは`operation_ref`内部に完全な`ItemStack`を保持し、公開component / NBTや新しい`stack_ref`を追加せずcomponent-exactに照合する。custom ingredient、crafting remainder、container item、tool damage、経験値消費は、対応profileが全入出力の保存則と事後条件を定義したrecipeだけを受理する。
 
@@ -1355,6 +1355,24 @@ MOD menuは次の2種類に分ける。
 未知menu、profileと異なるslot数・class・menu type・widget shape、結果をclientのserver同期から検証できないoperationはread-only観測に限定し、最初のAgent mutationより前に`UNSUPPORTED_MENU_PROFILE`相当で拒否して閉じる。対象24 MODの更新でmanifestが変わった場合はprofileを流用せず、別紙baselineを更新して同じGameTest / clone smokeを再実行する。MOD用のserver companion、MCMCP独自payload、handshakeは要求しない。
 
 すべてのadapterは、通常use / menu openの因果ACK、exact menu ownership、cursorを変化させるclick直前のcursor証明失効とfresh server cursor証明、cursor-invariantなQUICK_MOVEでは直前のserver-confirmed empty cursor維持、絶対inventory差分、有限budget、Esc / UI OFF / world境界、terminal前のScreen・cursor・camera・slot解放を9.6と共通の必須条件とする。途中まで消費・生成されたitemをrollbackしたふりはせず、最初のterminal intentとauthoritative inventoryを保持する。cleanupが証明できない場合は成功・失敗を公開せず、入力隔離を維持してfail closedにする。
+
+#### 9.7.1 共通収納操作への拡張方針（計画・未実装）
+
+利用者の方針変更を受け、[Issue #70](https://github.com/Aodaruma/mcmcp/issues/70)ではMODを限定しない収納操作を実装する。既存の共通Menu基盤を拡張し、バックパック専用Toolや独立した転送エンジンは作らない。Sophisticated Backpacksは最初の検証対象とする。ここに記載するMCPからのバッグ開閉、MOD収納の指定個数移送、拡張stack対応は、現時点で利用可能な機能ではない。
+
+| 境界 | 担当する処理 |
+| --- | --- |
+| 対象の発見・開閉 | world上・所持品内・装備中の収納を区別し、配送済みの短寿命参照で選ぶ。必要なMOD連携は本来の通常開閉処理を呼び、開いたmenuが選択対象と一致する証拠を確認する |
+| 収納の契約 | storage / player / protectedの役割、取り出し・格納可否、item/components、slot容量、通常／拡張stackのclick規則、同期・readback方法を表す。slot順序やplayer slotの位置を操作本体の前提にしない |
+| 共通の実行 | 参照の再検証、個数計画、通常click、fresh server slot/cursor確認、保存則、confirmed/unknown台帳、有限予算、取消・解放を共有する。MOD名・class名・JAR hashの分岐をここへ置かない |
+
+利用者向けには「収納を選ぶ→開く→内容を確認する→指定数を取り出す／格納する→閉じる」を同じ流れで扱う。手動で開いた対応画面にも同じ移送処理を使えるが、手動開封だけでは本対応の完了条件を満たさない。同種のバッグが複数ある場合も、選択後の移動・持ち替え・交換で別の個体を操作しないよう、対象参照を再検証する。
+
+標準の収納契約で扱える画面は共通処理へ載せ、固有の開き方やstack更新規則だけを小さな連携部分で補う。slot数や表示名から未知の画面を純storageと推測せず、加工結果、購入、upgrade、ghost等の操作は収納から分離する。既存profileのversion/hash確認は互換性を検証して移行するまで維持する。新しいMODへ対応するときに数量移送処理を複製する必要をなくすことが目的であり、未検証のすべてのMODへの自動対応を保証するものではない。
+
+Vanillaの`transfer_count`で使う`ExactInventoryTransfer`は共通数量計画・照合の再利用元とする。ただし現在は通常stackと最大14clickのモデルであり、拡張stackには専用のclick規則・上限と同期証拠の検証が必要になる。読み取り、全量移送、指定数移送、拡張stack対応の能力を区別し、未対応操作を実行可能と表示しない。取消時の無条件なcursor救済や未知clickの再送を共通化に含めない。正常終了では空cursorと画面解放を確認し、途中停止では確認済みの移送と不明な結果を保存し、安全な解放を証明できなければ既存の停止方針を維持する。
+
+受入試験はVanillaとMOD収納の異なる実装・slot配置、装備中と所持品内、同種バッグ2個、両方向の指定数移送、拡張stack、容量不足、成分違い、自動補充、対象移動、同期遅延・欠落、各中断境界を含む。単体・結合試験と、利用者が許可したリモートDocker検証環境での軽い実機試験を分けて記録する。コード・候補JARの共有、実機合格、Release公開も別の完了状態とする。
 
 ### 9.8 RedstoneSpec — Phase 5
 

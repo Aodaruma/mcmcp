@@ -112,8 +112,11 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 | InventorySlotPlanning | server snapshotからのslot選択・個数集計・craft/transfer readback判定。InventorySlotPlanningTest |
 | InventoryOpenHandPolicy | 既知Vanilla containerをMAIN_HANDで開くhotbar選択、NeoForgeの先行hook検証。MinecraftPhaseFiveInventoryPortTestの開封・手持ち安全契約 |
 | InventoryTransferBatch | 最初のsource集合、1 clickのserver baseline、確認済みprefix。InventoryTransferBatchTest |
+| ExactInventoryTransfer | 通常stackの指定数移送を最大14clickで計画し、各clickの全slot・cursor照合と確認済みprefixを保持。ExactInventoryTransferTest |
 
 Batchは確認済み状態だけを更新し、click自体はportが発行します。ACK前に次のsourceを選び直したり、未知結果のclickを再送したりしません。公開結果へのeffect回収、readback後の成功判定、cleanup完了までの画面所有はportの責務です。policyクラスへMinecraft操作やattempt状態を追加しないでください。
+
+現在開いている対応収納は `runtime/KnownMenuProfileSupport` が画面・slot構成とserver同期の一致を確認し、`KnownMenuOperationRefs` が操作参照を発行します。`routine/MinecraftKnownMenuPort` は参照を再検証して通常QUICK_MOVEと結果・解放確認を行います。MODを限定しない開閉・両方向の数量移送へ拡張する際は、この共通基盤を再利用し、MOD固有の開閉・収納契約と転送本体を分けます。計画と未実装の範囲は[設計仕様書](Minecraft_MCP_NeoForge_設計仕様書.md)の9.7.1を参照してください。
 
 `MinecraftPhaseFiveInventoryPortTest`はportと各方針の接続・順序を検査し、独立したslot/batch試験は対応する小さなテストファイルで実行します。`./gradlew test --tests '*Inventory*Test'`でまとめて確認できます。照準の共通解析を変える場合は、呼出元のBrewing/Furnaceの契約試験も実行してください。
 
