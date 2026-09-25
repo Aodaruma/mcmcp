@@ -680,7 +680,7 @@ public final class ActionDslParser {
         exactKeys(source, path,
                 Set.of("id", "op", "target", "expected_block", "item",
                         "stack_policy", "minimum_inventory_count", "routing_label",
-                        "max_stacks", "max_transfer_count"),
+                        "max_stacks", "max_transfer_count", "transfer_count"),
                 Set.of("id", "op", "target", "expected_block", "item",
                         "stack_policy", "minimum_inventory_count"));
         int maxStacks = containerMaxStacks(source, path);
@@ -695,7 +695,7 @@ public final class ActionDslParser {
                 routingLabel(source, path), maxStacks,
                 source.has("max_transfer_count")
                         ? integer(source.get("max_transfer_count"), path + ".max_transfer_count")
-                        : 64 * maxStacks);
+                        : 64 * maxStacks, containerTransferCount(source, path));
     }
 
     private static ActionDsl.StoreKnownContainerStack storeKnownContainerStack(
@@ -703,7 +703,7 @@ public final class ActionDslParser {
         exactKeys(source, path,
                 Set.of("id", "op", "target", "expected_block", "item",
                         "stack_policy", "minimum_container_count", "routing_label",
-                        "max_stacks", "max_transfer_count"),
+                        "max_stacks", "max_transfer_count", "transfer_count"),
                 Set.of("id", "op", "target", "expected_block", "item",
                         "stack_policy", "minimum_container_count"));
         int maxStacks = containerMaxStacks(source, path);
@@ -718,7 +718,16 @@ public final class ActionDslParser {
                 routingLabel(source, path), maxStacks,
                 source.has("max_transfer_count")
                         ? integer(source.get("max_transfer_count"), path + ".max_transfer_count")
-                        : 64 * maxStacks);
+                        : 64 * maxStacks, containerTransferCount(source, path));
+    }
+
+    private static int containerTransferCount(JsonObject source, String path) {
+        if (!source.has("transfer_count")) return 0;
+        int count = integer(source.get("transfer_count"), path + ".transfer_count");
+        if (count < 1 || count > ActionDslValidator.MAX_CONTAINER_TRANSFER_COUNT) {
+            throw invalid(path + ".transfer_count is outside the bounded range");
+        }
+        return count;
     }
 
     private static int containerMaxStacks(JsonObject source, String path) {

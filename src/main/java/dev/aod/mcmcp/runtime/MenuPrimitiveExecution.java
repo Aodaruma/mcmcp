@@ -215,9 +215,9 @@ final class MenuPrimitiveExecution {
                             : knownMenu
                                     ? ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS
                             : primitive instanceof ActionDsl.TakeKnownContainerStack take
-                                    ? ActionDslCompiler.knownContainerTransferOperationTicks(take.maxStacks())
+                                    ? ActionDslCompiler.knownContainerTransferOperationTicks(take.maxClicks())
                             : primitive instanceof ActionDsl.StoreKnownContainerStack store
-                                    ? ActionDslCompiler.knownContainerTransferOperationTicks(store.maxStacks())
+                                    ? ActionDslCompiler.knownContainerTransferOperationTicks(store.maxClicks())
                             : AgentPrimitivePlanner.CONTAINER_OPERATION_TICK_UPPER_BOUND);
             PhaseFivePort port = smelting ? knownFurnacePort
                     : knownMenu ? knownMenuPort : phaseFiveInventoryPort;

@@ -786,7 +786,7 @@ Action DSL v1の制御構造:
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内の明示allowlist対象Vanilla chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
-| take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemを最大14 whole stacks・896個まで移し、各server ACKと最後1回のfull readbackでplayerの絶対個数を確認 |
+| take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemを移送。既定は最大14 whole stacks・896個、transfer_count指定は今回の正確な追加数量。各server ACKと最後1回のfull readbackで確認 |
 | store_known_container_stack | camera, inventory_transfer | playerの指定itemを同じcontainerへ最大14 whole stacks・896個まで移し、各server ACKと最後1回のfull readbackでcontainerの絶対個数を確認 |
 | remove_visible_frame_item | camera, entity_attack | 配送済みの正面額縁と表示itemをJIT再確認し、空手の通常攻撃1回で表示除去をserver確認。drop回収は別Action |
 | insert_visible_frame_item | camera, item_use | 配送済みの正面空額縁へhotbar itemを1個挿入し、server表示ACKと選択slot1個減少を確認 |
@@ -2050,3 +2050,11 @@ NeoForge 26.2の画面切替は新画面のOpeningの後に旧画面のClosing�
 agent_get_state.world.session_id は現在の読込みsessionを識別するopaque UUIDであり、saveの恒久IDではない。物理的に同じワールドの再読込みでも変わり得る。永続クライアントは欠測を許可せず、変更を明示確認なく再開へ使わない。出力schemaでは旧クライアント用fixtureとの互換のため追加fieldとして扱い、現runtimeはworldがあるとき必ず出力する。
 
 tools/building は最大128×128の床と指定した床置きtorchを外部checkpointで管理する。Action開始前のintent、受付後のID、confirmed effectを原子的に保存する。world session内で有効な不変のplacement_state_refと、現在の可視支持・traversabilityを区別する。Unknownの再観測をserverの材料消費ACKと同一視せず、収支不明を完了表示に残す。補充や予算停止を跨ぐ移動は現在の確認済み床から再計画する。詳細は tools/building/README.md を参照する。
+
+### コンテナの正確な数量指定（Issue #67）
+
+`take_known_container_stack` / `store_known_container_stack` に任意の `transfer_count`（1..896）を指定すると、今回その個数だけ追加移送する。たとえば染料を2個取り出す場合は `transfer_count: 2`、`minimum_inventory_count: 2` とする。既に2個以上所持していても、追加で2個移す。既存のminimumは移送後の絶対下限であり、指定した追加数量で満たせなければ移送前に拒否する。`max_transfer_count`以下かつ初回の`max_stacks`個以内のsourceから計画できる必要がある。指定省略時のwhole-stack挙動は変更しない。
+
+対象は対応済みVanilla chest/barrelの正確なmenu/通常slotと、defaultの最大stack数を持つ通常stackである。MOD menu、バックパック、拡張stackはこの機能の対象外。ItemのoverrideStackedOnOther/overrideOtherStackedOnMeが既定実装であることを要求し、bundle等の独自PICKUP挙動は拒否する。NeoForgeのglobal ItemStackedOnOtherEventによる変更は互換性境界とし、server差分不一致時に成功や再送へ進まない。初回server snapshotから同一item/componentsのsource/destination間の左/右PICKUP手順を固定し、途中でstackを分割・再結合して正確な個数にする。最大14clickと開封2回、合計16interactionを維持する。予算は1380ticks / 69000ms / camera 360度、移動・破壊・設置0を予約する。内部attemptは1180ticks。容量不足、個数不足、source上限、または14click以内の固定手順が作れない場合は最初の移送click前に失敗する。成功可能な全組合せを探索する保証はせず、source/destinationは固定順で選ぶ。
+
+各操作は予測slot変更を付けない通常PICKUPで1回だけ送信する。送信前に所有権と全slot/cursorを照合し、cursor証拠を失効させ、次の操作には送信後の新鮮なserver slot差分とcursor packetの両方を要求する。局所予測・古い空cursor・一部だけのslot差分を成功証拠にしない。空cursorまで完了した移送だけをconfirmed prefixとして保持し、中断した分割はUNKNOWNにする。取消後に追加の救済clickやblind retryを行わない。cursorが残る、またはその解放が未証明の場合は既存のcleanup lockが継続し、利用者によるcursor解放が必要になる。最終成功には再開封full readbackで数量保存・指定移送数・絶対goal・空cursorを確認する。

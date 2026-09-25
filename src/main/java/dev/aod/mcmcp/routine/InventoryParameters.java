@@ -85,7 +85,9 @@ final class InventoryParameters {
                         : LEGACY_MAX_TURN_PER_TICK,
                 target(map(container.get("target"), "container.target")),
                 state(map(container.get("expected_state"), "container.expected_state")),
-                routingLabel(parameters));
+                routingLabel(parameters),
+                parameters.containsKey("transfer_count")
+                        ? integer(parameters.get("transfer_count"), "transfer_count") : 0);
     }
 
     static Optional<RoutingLabelParameters> routingLabel(
@@ -249,7 +251,8 @@ final class InventoryParameters {
             double cameraDegreesPerTick,
             BlockTarget target,
             BlockStateFingerprint expectedState,
-            Optional<RoutingLabelParameters> routingLabel) implements ParsedParameters {
+            Optional<RoutingLabelParameters> routingLabel,
+            int transferCount) implements ParsedParameters {
         TransferParameters {
             Objects.requireNonNull(item, "item");
             Objects.requireNonNull(stackPolicy, "stackPolicy");
@@ -264,10 +267,20 @@ final class InventoryParameters {
                     || minimumDestinationCount > (playerToContainer ? 3_456 : 2_304)
                     || maxTransferCount < 1 || maxTransferCount > 896
                     || maxStackMoves < 1 || maxStackMoves > 14
+                    || transferCount < 0 || transferCount > maxTransferCount
                     || !Double.isFinite(cameraDegreesPerTick)
                     || cameraDegreesPerTick < 0.1D || cameraDegreesPerTick > 18.0D) {
                 throw new IllegalArgumentException("transfer limits are outside the v1 contract");
             }
+        }
+
+        TransferParameters(boolean playerToContainer, String item, String stackPolicy,
+                int minimumDestinationCount, int maxTransferCount, int maxStackMoves,
+                boolean retainViewOnRelease, double cameraDegreesPerTick, BlockTarget target,
+                BlockStateFingerprint expectedState, Optional<RoutingLabelParameters> routingLabel) {
+            this(playerToContainer, item, stackPolicy, minimumDestinationCount, maxTransferCount,
+                    maxStackMoves, retainViewOnRelease, cameraDegreesPerTick, target,
+                    expectedState, routingLabel, 0);
         }
 
         TransferParameters(
