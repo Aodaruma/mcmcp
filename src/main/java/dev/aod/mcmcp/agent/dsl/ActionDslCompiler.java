@@ -192,6 +192,7 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.HarvestKnownWheatBatch
                 || node instanceof ActionDsl.OpenKnownFenceGate
                 || node instanceof ActionDsl.OpenKnownPassage
+                || node instanceof ActionDsl.SetKnownLever
                 || node instanceof ActionDsl.InspectKnownContainer
                 || node instanceof ActionDsl.TakeKnownContainerStack
                 || node instanceof ActionDsl.StoreKnownContainerStack
@@ -237,6 +238,8 @@ public final class ActionDslCompiler {
                 requireMutationCost(cost, 1, 0, 0, "open_known_fence_gate");
             } else if (node instanceof ActionDsl.OpenKnownPassage) {
                 requireMutationCost(cost, 1, 0, 0, "open_known_passage");
+            } else if (node instanceof ActionDsl.SetKnownLever) {
+                requireMutationCost(cost, 1, 0, 0, "set_known_lever");
             } else if (node instanceof ActionDsl.InspectKnownContainer) {
                 requireMutationCost(cost, 1, 0, 0, "inspect_known_container");
             } else if (node instanceof ActionDsl.TakeKnownContainerStack take) {

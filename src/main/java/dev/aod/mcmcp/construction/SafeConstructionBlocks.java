@@ -121,6 +121,10 @@ public final class SafeConstructionBlocks {
      * support, or owned-menu target contracts. Other visible blocks retain only visual identity.
      */
     public static boolean allowsVisibleState(String blockId) {
+        if ("minecraft:lever".equals(blockId)) {
+            Block lever = vanillaBlock(blockId);
+            return lever != null && lever.getClass() == net.minecraft.world.level.block.LeverBlock.class;
+        }
         return allows(blockId) || NON_COPY_VISIBLE_STATE_IDS.contains(blockId);
     }
 

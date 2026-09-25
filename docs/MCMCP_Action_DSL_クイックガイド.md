@@ -192,6 +192,16 @@ entry IDと変換後targetはplan内で一意、処理順は`entries`の入力�
 
 このnodeはtop-level bodyの最後に1回だけ置き、30秒、600 ticks、1 interactionを確保します。raw slot / GUI座標を推測せず、refが期限切れ、別画面、別revision、source変更なら新しいstateを取得します。Sophisticated Backpacksではopen upgrade tab、extra slot、inaccessible / oversized stackを受理しません。player 2x2、専用workstation、backpack内craft/smelt、widget / canvas操作はまだこのsliceに含みません。
 
+## 既設レバーのON/OFF
+
+`set_known_lever`はActionの唯一のtop-level nodeとし、移動や待機を同じActionへ含めません。元の配送leaseを受付から通常use直前まで維持します。描画情報の欠測時は元の期限・予算内だけ待機し、復帰後に元の面・state・現在のfog/LOSを再検証します。配送期限切れや不一致は操作せず失敗します。この検証は操作不要の成功にも適用し、送信済みのACK待機・cleanupには逆適用しません。
+
+`set_known_lever:{id,op,target,expected_state,powered}`は可視のVanilla lever 1個を指定状態にします。`target`と完全な`expected_state`（`face`、`facing`、文字列の`powered`）は最新の`visible_surface`からコピーし、希望値の`powered`だけbooleanで指定します。位置・完全state・現在のfog/LOS/reachを受付・JIT・通常use直前に検証し、既存の安全な空MAIN_HAND準備と通常useを1回だけ使います。すでに希望状態ならクリックしません。leverの可視state公開は建築材料の許可には転用しません。
+
+予算は15,000 ms、300 ticks、360 camera degrees、1 interactionを確保し、移動・破壊・設置は0にします。サーバーACKと完全な希望stateを確認してから成功とし、`block_interact` effectへ直前の可視stateとserver確認後のstateを残します。送信後の取消・期限切れ・例外はafterを捏造せず`unknown`を1回だけ残します。未知結果を再送せず、必ず再観測してください。
+
+接続された装置全体の安全性・出力は保証しません。Action終了や取消は自動OFFを意味しないため、装置から離れる前に最新stateを再取得して別のOFF Actionを実行し、停止を確認してください。長時間の機械運転は停止手段・回収容量・帰還経路を別に確認してから行います。
+
 ## レッドストーンの最小slice
 
 `apply_known_redstone_spec`は、lever 1入力からlampへ同じ値を出す3種の固定identityだけを扱います。直接1出力は`anchor`のlampとrotation方向`+1`のleverを使う`2x1x1`、2出力fan-outは`+2`に`output_2` lampを加える`3x1x1`です。直線wire版は`anchor`のlamp、`+1`の`wire/wire/minecraft:redstone_wire`、`+2`のleverを使う`3x1x1`で、3 blockすべてに可視なglass UP supportが必要です。runtimeはOFF→ON→OFFを同一tickのlive集合で確認し、wire版では直線shapeと`power=0→15→0`も完全一致させます。可変長・曲がり・wire付きfan-out・repeater・NOT・任意回路の合成は未対応です。

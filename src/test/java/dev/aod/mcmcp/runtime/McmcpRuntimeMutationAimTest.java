@@ -12,6 +12,24 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class McmcpRuntimeMutationAimTest {
     @Test
+    void leverChangesOnlyPoweredAndPreservesCompleteMountingStateAndWitness() {
+        var target = new ActionDsl.Position("minecraft:overworld", 3, 64, 0);
+        var point = MinecraftActionPrimitiveExecutor.blockFaceAimPoint(target, ActionDsl.BlockFace.WEST);
+        for (boolean powered : new boolean[] {false, true}) {
+            var before = new ActionDsl.BlockStateSpec("minecraft:lever",
+                    java.util.Map.of("face", "ceiling", "facing", "west", "powered", "true"));
+            var request = (InteractBlockRequest) ConstructionRequests.blockMutationRequest(
+                    new ActionDsl.SetKnownLever("lever", target, before, powered),
+                    new AgentPrimitivePlanner.MutationAim(target, ActionDsl.BlockFace.WEST, point));
+            assertThat(request.expectedBefore().properties()).isEqualTo(before.properties());
+            assertThat(request.expectedAfter().properties()).containsExactlyInAnyOrderEntriesOf(
+                    java.util.Map.of("face", "ceiling", "facing", "west", "powered", Boolean.toString(powered)));
+            assertThat(request.plannedAim()).isPresent();
+            assertThat(request.bounds().allowBreak()).isFalse();
+        }
+    }
+
+    @Test
     void menuAimSerializesOnlyThePlannerWitnessInsideTheExactTarget() {
         var target = new ActionDsl.Position("minecraft:overworld", -11, 56, 3);
         var point = new net.minecraft.world.phys.Vec3(-10.5D, 57.0D, 3.5D);

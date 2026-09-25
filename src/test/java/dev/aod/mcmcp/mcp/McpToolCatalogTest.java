@@ -32,6 +32,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McpToolCatalogTest {
     @Test
+    void leverSchemaIsClosedAndDocumentsIdempotencyAndMachineStopResponsibility() {
+        var catalog = new McpToolCatalog();
+        var definitions = catalog.inputSchema("agent_start_action").getAsJsonObject("$defs");
+        var node = definitions.getAsJsonObject("setKnownLeverNode");
+        var state = node.getAsJsonObject("properties").getAsJsonObject("expected_state");
+        var valid = JsonParser.parseString("""
+                {"block":"minecraft:lever","properties":{"face":"wall","facing":"north","powered":"false"}}
+                """).getAsJsonObject();
+        assertThat(CatalogSchemaValidator.matches(state, valid)).isTrue();
+        valid.getAsJsonObject("properties").remove("face");
+        assertThat(CatalogSchemaValidator.matches(state, valid)).isFalse();
+        assertThat(node.get("description").getAsString())
+                .contains("Already satisfied", "15000 ms", "server ACK", "No automatic OFF", "Unknown");
+        assertThat(node.getAsJsonObject("properties").getAsJsonObject("powered").get("type").getAsString())
+                .isEqualTo("boolean");
+    }
+
+    @Test
     void exactContainerQuantityIsOptionalBoundedAndDiscoverable() {
         var definitions = new McpToolCatalog().inputSchema("agent_start_action").getAsJsonObject("$defs");
         for (String name : List.of("takeContainerStackNode", "storeContainerStackNode")) {

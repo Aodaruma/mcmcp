@@ -38,6 +38,7 @@ class ActionDslOperationManifestTest {
                         "apply_known_redstone_spec",
                         "open_known_fence_gate",
                         "open_known_passage",
+                        "set_known_lever",
                         "inspect_known_container",
                         "take_known_container_stack",
                         "store_known_container_stack",
