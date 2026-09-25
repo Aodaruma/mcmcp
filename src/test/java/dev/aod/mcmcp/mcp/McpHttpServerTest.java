@@ -1,8 +1,11 @@
 package dev.aod.mcmcp.mcp;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -315,6 +318,8 @@ class McpHttpServerTest {
         meta.addProperty("callId", "private-call-marker");
         meta.addProperty("itemId", "private-item-marker");
         meta.addProperty("threadId", "private-thread-marker");
+        meta.addProperty("sessionId", "private-session-id-marker");
+        meta.addProperty("windowId", "private-window-id-marker");
         JsonObject turn = new JsonObject();
         turn.addProperty("session_id", "private-session-marker");
         turn.addProperty("sandbox_mode", "danger-full-access");
@@ -331,7 +336,8 @@ class McpHttpServerTest {
         assertThat(json(response).getAsJsonObject("result").get("isError").getAsBoolean()).isFalse();
         assertThat(response.body()).doesNotContain("private-", "danger-full-access", "auto_review_enabled");
 
-        for (String field : List.of("callId", "itemId", "threadId", "x-codex-turn-metadata")) {
+        for (String field : List.of("callId", "itemId", "threadId", "sessionId", "windowId",
+                "x-codex-turn-metadata")) {
             JsonObject malformed = params.deepCopy();
             malformed.getAsJsonObject("_meta").addProperty(field, true);
             HttpResponse<String> rejected = send(codexLegacyPost(requestBody("tools/call", malformed),
@@ -345,6 +351,33 @@ class McpHttpServerTest {
                 McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null));
         assertThat(rejected.statusCode()).isEqualTo(400);
         assertThat(rejected.body()).doesNotContain("private-");
+    }
+
+    @Test
+    void codexLegacySessionAndWindowIdsRemainBoundedOptionalCorrelationData() throws Exception {
+        start(defaultRuntime(), config("codex-window-correlation").rateLimit(100, 100).build());
+        for (String field : List.of("sessionId", "windowId")) {
+            JsonObject params = new JsonObject();
+            params.addProperty("name", "agent_get_state");
+            JsonObject meta = new JsonObject();
+            meta.addProperty(field, "x".repeat(128));
+            params.add("_meta", meta);
+            HttpResponse<String> accepted = send(codexLegacyPost(requestBody("tools/call", params),
+                    McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null));
+            assertThat(accepted.statusCode()).isEqualTo(200);
+            assertThat(json(accepted).getAsJsonObject("result").get("isError").getAsBoolean()).isFalse();
+            assertThat(accepted.body()).doesNotContain(field, "x".repeat(128));
+
+            for (JsonElement invalid : List.of(JsonNull.INSTANCE, new JsonObject(), new JsonArray(),
+                    new JsonPrimitive(1), new JsonPrimitive(""), new JsonPrimitive(" \t"),
+                    new JsonPrimitive("private-" + "x".repeat(121)))) {
+                meta.add(field, invalid);
+                HttpResponse<String> rejected = send(codexLegacyPost(requestBody("tools/call", params),
+                        McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null));
+                assertThat(rejected.statusCode()).isEqualTo(400);
+                assertThat(rejected.body()).contains("InvalidToolCall").doesNotContain(field, "private-");
+            }
+        }
     }
 
     @Test
