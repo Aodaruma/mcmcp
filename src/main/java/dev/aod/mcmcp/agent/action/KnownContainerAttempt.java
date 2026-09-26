@@ -12,6 +12,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.Set;
 
 /** Drives one bounded container operation without admitting a second public routine. */
 public final class KnownContainerAttempt implements AutoCloseable {
@@ -324,7 +325,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
 
     private void captureTransferEvidence(
             long clientTick, long worldRevision, Map<String, Object> basis) {
-        if (!"transfer_items".equals(request.kind())) return;
+        if (!isTransferRequest()) return;
         int clicks = nonNegativeInt(basis.get("container_clicks"));
         if (clicks > 0) potentialTransferDispatched = true;
         latestSourceBefore = optionalNonNegativeInt(basis.get("source_before"), latestSourceBefore);
@@ -366,7 +367,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
 
     private void recordConfirmedTransfer(
             long clientTick, long worldRevision, Map<String, Object> basis) {
-        if (!"transfer_items".equals(request.kind()) || transferConfirmed) return;
+        if (!isTransferRequest() || transferConfirmed) return;
         if (!basis.containsKey("transferred") && !potentialTransferDispatched) {
             transferConfirmed = true;
             return;
@@ -409,7 +410,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
     }
 
     private void recordUnknownTransfer() {
-        if (!"transfer_items".equals(request.kind())
+        if (!isTransferRequest()
                 || !potentialTransferDispatched || unknownTransferRecorded
                 || (batchEvidence ? !transferInFlight : transferConfirmed)) {
             return;
@@ -436,6 +437,12 @@ public final class KnownContainerAttempt implements AutoCloseable {
     private static int optionalNonNegativeInt(Object value, int fallback) {
         if (value == null) return fallback;
         return nonNegativeInt(value);
+    }
+
+    private boolean isTransferRequest() {
+        return "transfer_items".equals(request.kind())
+                || ("operate_known_menu".equals(request.kind())
+                    && Set.of("take", "store").contains(request.parameters().getOrDefault("operation", "")));
     }
 
     private static int requiredNonNegativeInt(Map<String, Object> basis, String key) {

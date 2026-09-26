@@ -213,7 +213,7 @@ final class MenuPrimitiveExecution {
                                     ((ActionDsl.SmeltKnownRecipe) primitive)
                                             .maxSmelts())
                             : knownMenu
-                                    ? ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS
+                                    ? ActionDslCompiler.knownMenuTicks((ActionDsl.OperateKnownMenu) primitive)
                             : primitive instanceof ActionDsl.TakeKnownContainerStack take
                                     ? ActionDslCompiler.knownContainerTransferOperationTicks(take.maxClicks())
                             : primitive instanceof ActionDsl.StoreKnownContainerStack store
@@ -405,12 +405,18 @@ final class MenuPrimitiveExecution {
             kind = "container_store";
             target = store.target();
             item = store.item();
+        } else if (primitive instanceof ActionDsl.OperateKnownMenu menu && menu.opensStorage()) {
+            kind = "storage_" + menu.operation();
+            target = null;
+            item = menu.item();
         } else {
             throw new IllegalStateException(
                     "container transfer effect has no transfer primitive");
         }
-        String subject = "container:" + target.dimension() + ":"
-                + target.x() + "," + target.y() + "," + target.z() + "/" + item;
+        String subject = target == null
+                ? "storage:" + ((ActionDsl.OperateKnownMenu) primitive).operationRef() + "/" + item
+                : "container:" + target.dimension() + ":"
+                    + target.x() + "," + target.y() + "," + target.z() + "/" + item;
         for (var effect : effects) {
             agentActions.recordEffect(
                     actionId,

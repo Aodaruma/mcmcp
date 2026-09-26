@@ -120,6 +120,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final ClientRecipeCatalog recipeCatalog = new ClientRecipeCatalog();
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
     private final KnownMenuOperationRefs knownMenuOperationRefs = new KnownMenuOperationRefs();
+    private final KnownStorageRefs knownStorageRefs = new KnownStorageRefs();
     private final FishingSessionRefs fishingSessionRefs = new FishingSessionRefs();
     private final ScopedEntityAttackConsentStore entityAttackConsent =
             new ScopedEntityAttackConsentStore();
@@ -222,7 +223,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 Minecraft::getInstance,
                 sessions::snapshot,
                 ContainerSyncSignals.global(),
-                knownMenuOperationRefs);
+                knownMenuOperationRefs, knownStorageRefs);
         phaseFiveInventoryPort = new MinecraftPhaseFiveInventoryPort(
                 Minecraft::getInstance,
                 sessions::snapshot,
@@ -849,6 +850,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         clearAutomationPortSession("known_furnace", knownFurnacePort::clearSession);
         clearAutomationPortSession("known_menu", knownMenuPort::clearSession);
         clearAutomationPortSession("known_menu_refs", knownMenuOperationRefs::clear);
+        clearAutomationPortSession("known_storage_refs", knownStorageRefs::clear);
         clearAutomationPortSession("phase_five_inventory", phaseFiveInventoryPort::clearSession);
         clearAutomationPortSession("phase_five_world", phaseFiveWorldPort::clearSession);
         clearAutomationPortSession("phase_five_router", phaseFivePort::clearSession);
@@ -1775,6 +1777,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (knownMenu != null) {
             result.put("known_menu", knownMenu);
+        }
+        if (session.worldReady() && lock.mode() == LocalArmingState.Mode.READY) {
+            result.put("known_storages", knownStorageRefs.payload(minecraft, session));
+            result.put("storage_inspection", knownStorageRefs.inspection(session.worldSessionId()));
         }
         result.put("observation", agentObservations.frames().announceLatestSummary()
                 .map(ObservationWireMapper::summary)

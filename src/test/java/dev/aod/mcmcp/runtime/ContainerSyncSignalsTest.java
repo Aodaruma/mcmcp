@@ -9,6 +9,22 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ContainerSyncSignalsTest {
+    @Test
+    void slotPacketsCannotRefreshCursorProofAndNewMenusCannotInheritIt() {
+        var channel = new ContainerSyncSignals.SessionChannel();
+        channel.bindAndSnapshot(UUID.randomUUID());
+        channel.openScreen(4, "test:storage", 1);
+        channel.fullContent(4, "test:storage", 2, List.of(STONE), ContainerSyncSignals.StackFingerprint.EMPTY, 2);
+        long proof = channel.cursorProofRevision();
+        channel.slot(4, "test:storage", 3, 0, DIRT, 3);
+        assertThat(channel.cursorProofRevision()).isEqualTo(proof);
+        channel.carried(5, "test:storage", STONE, 4);
+        assertThat(channel.cursorProofRevision()).isEqualTo(proof);
+        channel.carried(4, "test:storage", STONE, 5);
+        assertThat(channel.cursorProofRevision()).isGreaterThan(proof);
+        channel.openScreen(4, "test:storage", 6);
+        assertThat(channel.cursorProofRevision()).isEqualTo(-1);
+    }
     private static final ContainerSyncSignals.StackFingerprint STONE =
             new ContainerSyncSignals.StackFingerprint("minecraft:stone", 32, 1234);
     private static final ContainerSyncSignals.StackFingerprint DIRT =
