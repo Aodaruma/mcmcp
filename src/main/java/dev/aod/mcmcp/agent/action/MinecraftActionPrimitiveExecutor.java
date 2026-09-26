@@ -10,6 +10,7 @@ import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
 import dev.aod.mcmcp.agent.safety.Locomotion;
 import dev.aod.mcmcp.agent.safety.ObservationRecord;
 import dev.aod.mcmcp.client.AgentInputState;
+import dev.aod.mcmcp.client.LadderHoldState;
 import dev.aod.mcmcp.routine.MovementInputLease;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -147,6 +148,11 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         return navigation != null || face != null || movement != null;
     }
 
+    public void retainLadderHold(LocalPlayer player) {
+        if (navigation != null && LocalObservationVolume.canHoldLadder(player))
+            LadderHoldState.global().acquire(player, player.level());
+    }
+
     private TickResult tickNavigation(
             Minecraft minecraft,
             LocalPlayer player,
@@ -160,6 +166,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 || !state.route.dimension().equals(snapshot.dimension())) {
             return finish(Status.FAILED, Reason.WORLD_BOUNDARY_CHANGED);
         }
+        retainLadderHold(player);
         if (player.isPassenger() || player.isInLava()
                 || player.isFallFlying() || player.getAbilities().flying) {
             return finish(Status.REPLAN_REQUIRED, Reason.UNSUPPORTED_LOCOMOTION);
@@ -303,6 +310,12 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 player.getX() + brakingTicks * player.getDeltaMovement().x,
                 player.getZ() + brakingTicks * player.getDeltaMovement().z,
                 player.getYRot(), waypoint, waypointTolerance);
+        // A raised ladder landing is approached vertically before crossing its solid lip.
+        if (locomotion == Locomotion.LADDER && verticalDelta > 0
+                && waypoint.y() > player.getY() + STEP_EPSILON
+                && (Mth.floor(player.getX()) != waypoint.x() || Mth.floor(player.getZ()) != waypoint.z())) {
+            desired = Set.of();
+        }
         desired = withVerticalInput(
                 desired,
                 verticalDelta,
@@ -410,6 +423,13 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         SettlementSafetyDecision safety = settlementSafetyDecision(
                 snapshot.worldRevision(),
                 movementSafety.latestFor(player));
+        boolean ladderRest = ladderDestination(state.route, snapshot)
+                && LocalObservationVolume.canHoldLadder(player);
+        if (ladderRest && movementSafety.latestFor(player)
+                .filter(s -> s.worldRevision() == snapshot.worldRevision()).isPresent()) {
+            safety = SettlementSafetyDecision.CLEAR;
+            LadderHoldState.global().acquire(player, player.level());
+        }
         NavCell destination = state.route.cells().getLast();
         SettlementDriftDecision drift = settlementDriftDecision(
                 state.route,
@@ -504,16 +524,33 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
         }
         outputNanos = System.nanoTime();
-        movement.setDesired(ownerId, Set.of());
+        movement.setDesired(ownerId, ladderRest ? Set.of(MovementInputLease.MovementKey.CROUCH) : Set.of());
         if (!outputAllowed.getAsBoolean()) {
             return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
         }
         outputNanos = System.nanoTime();
         TickResult leaseFailure = heartbeatMovement(outputNanos, true);
         if (leaseFailure != null) return leaseFailure;
-        AgentInputState.global().requireGoalMovementSafety(
-                player, player.level(), snapshot.worldRevision(), remainingDistance);
+        if (ladderRest) {
+            // Crouch is the only resting output; remove our earlier movement contribution.
+            AgentInputState.global().neutralizeTrackedAgentVelocity(player);
+        } else {
+            AgentInputState.global().requireGoalMovementSafety(
+                    player, player.level(), snapshot.worldRevision(), remainingDistance);
+        }
         return TickResult.running(Reason.NONE);
+    }
+
+    static boolean ladderDestination(RoutePlan route, KnownTraversabilitySnapshot snapshot) {
+        NavCell target = route.cells().getLast();
+        if (!route.edges().isEmpty()) {
+            var edge = route.edges().getLast();
+            return edge.locomotion() == Locomotion.LADDER
+                    && edge.targetSupport() == TraversabilityEdge.TargetSupport.ABSENT;
+        }
+        return snapshot.edges().values().stream().anyMatch(edge -> edge.destination()
+                && edge.key().to().equals(target) && edge.locomotion() == Locomotion.LADDER
+                && edge.targetSupport() == TraversabilityEdge.TargetSupport.ABSENT);
     }
 
     static SettlementSafetyDecision settlementSafetyDecision(

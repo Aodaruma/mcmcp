@@ -14,7 +14,7 @@ class LocalObservationProjectorTest {
     private static final String OVERWORLD = "minecraft:overworld";
 
     @Test
-    void keepsClimbableTransitInternalAndPublishesOnlyFloorBackedLandings() {
+    void publishesObservedLadderRungsAndKeepsScaffoldingTransitInternal() {
         for (var locomotion : List.of(Locomotion.LADDER, Locomotion.SCAFFOLDING)) {
             var center = new ObservationRecord.Point(0.5D, 64.9D, 0.5D);
             var upperRung = new ObservationRecord.Point(0.5D, 65.9D, 0.5D);
@@ -36,14 +36,29 @@ class LocalObservationProjectorTest {
             assertThat(projection.edges()).hasSize(2);
             assertThat(projection.edges().getFirst()).satisfies(edge -> {
                 assertThat(edge.locomotion()).isEqualTo(locomotion);
-                assertThat(edge.destination()).isFalse();
+                assertThat(edge.destination()).isEqualTo(locomotion == Locomotion.LADDER);
                 assertThat(edge.status()).isEqualTo(TraversabilityEdge.Status.PROBE_ALLOWED);
             });
             assertThat(projection.edges().getLast().destination()).isTrue();
-            assertThat(projection.records()).singleElement().satisfies(record ->
+            assertThat(projection.records()).hasSize(locomotion == Locomotion.LADDER ? 2 : 1).allSatisfy(record ->
                     assertThat(record).isInstanceOf(
                             dev.aod.mcmcp.agent.observation.ObservationRecord.Traversability.class));
         }
+    }
+
+    @Test
+    void contactLeavingALadderDoesNotInventAnUnsupportedRestingDestination() {
+        var center = new ObservationRecord.Point(0.5D, 64.9D, 0.5D);
+        var to = new ObservationRecord.Point(0.5D, 65.9D, 0.5D);
+        var current = record(10, 3, 0, center, center, center, ObservationRecord.Transition.STATIONARY,
+                ObservationRecord.Clearance.CLEAR, ObservationRecord.Hazard.NONE);
+        var contact = new ObservationRecord(10, 3, 1, center, to, to,
+                ObservationRecord.Support.ABSENT, ObservationRecord.Clearance.CLEAR,
+                ObservationRecord.Transition.CONTACT, ObservationRecord.Fluid.NONE, false,
+                ObservationRecord.Hazard.NONE, ObservationRecord.LoadedState.LOADED,
+                ObservationRecord.Drop.AIRBORNE_OR_SWIMMING, false, Locomotion.LADDER);
+        var snapshot = new LocalObservationVolume.Snapshot(10, 3, center, current, List.of(contact));
+        assertThat(LocalObservationProjector.project(snapshot, UUID.randomUUID(), OVERWORLD, 3, 64).edges()).isEmpty();
     }
 
     @Test
