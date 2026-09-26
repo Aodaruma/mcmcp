@@ -149,7 +149,13 @@ public final class McmcpMod {
         }
         var movementInput = AgentMovementInput.install(
                 player, Minecraft.getInstance().options, event.getInput());
-        movementInput.apply(agentInput.movementSnapshot(player));
+        var movement = agentInput.movementSnapshot(player);
+        var hold = dev.aod.mcmcp.client.LadderHoldState.global();
+        var physical = movementInput.keyPresses;
+        // Deliberate physical movement hands control back to the user while resting.
+        hold.physicalInput(physical, movement.owned());
+        runtime.validateLadderHold(Minecraft.getInstance());
+        movementInput.apply(movement, hold.active(player, player.level()));
     }
 
     private void onLevelSoundAtPosition(PlayLevelSoundEvent.AtPosition event) {

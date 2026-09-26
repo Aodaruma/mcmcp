@@ -547,6 +547,11 @@ public final class LocalObservationVolume {
             boolean targetLanding = !exactClimbableAtFeet(
                     level, targetBox, intent.locomotion())
                     && stableLanding(player, level, startPoint, targetBox);
+            if (intent.locomotion() == Locomotion.LADDER && targetLanding) {
+                // Only the one-block top lip of a proven ladder may bridge its final contact.
+                sourceClimbable |= ladderTopArcCell(player, level, startPoint, start, targetBox);
+                resolvedClimbable |= ladderTopArcCell(player, level, startPoint, evaluated.endBox(), targetBox);
+            }
             boolean resolvedBouncy = bouncySupport(level, player, evaluated.endBox());
             boolean targetBouncy = bouncySupport(level, player, targetBox);
             boolean safe = !resolvedBouncy
@@ -661,7 +666,7 @@ public final class LocalObservationVolume {
                 && resolvedClimbable
                 && !targetClimbable
                 && targetLanding
-                && cardinalSameLevelTarget(start, target)
+                && cardinalLadderLandingTarget(start, target)
                 && path.clearance() == Clearance.BLOCKED
                 && path.transition() == Transition.BLOCKED
                 && (path.hazard() == Hazard.COLLISION || path.hazard() == Hazard.FALL)
@@ -669,6 +674,12 @@ public final class LocalObservationVolume {
                 && resolved.y <= MAX_LADDER_ASCENT_PER_TICK + MOVEMENT_EPSILON
                 && intendedTowardNavigationTarget(start, intended, intent)
                 && horizontalTargetProgress;
+        boolean ladderLandingBootstrap = intent.locomotion() == Locomotion.LADDER
+                && intent.verticalDelta() > 0 && sourceClimbable && resolvedClimbable
+                && !targetClimbable && targetLanding && cardinalLadderLandingTarget(start, target)
+                && ordinaryPath && horizontalNonDivergence
+                && resolved.y >= -MAX_LADDER_DESCENT_PER_TICK - MOVEMENT_EPSILON
+                && resolved.y <= MOVEMENT_EPSILON;
         if (intent.locomotion() == Locomotion.GROUND
                 || !targetClimbable && !targetLanding
                 || path.loaded() != LoadedState.LOADED
@@ -686,6 +697,7 @@ public final class LocalObservationVolume {
             return false;
         }
         return ladderAscentBootstrap
+                || ladderLandingBootstrap
                 || plannedLadderLandingLip
                 || movesTowardNavigationTarget(start, end, intent);
     }
@@ -694,6 +706,14 @@ public final class LocalObservationVolume {
         int dx = Math.abs(Mth.floor(start.x()) - Mth.floor(target.x()));
         int dz = Math.abs(Mth.floor(start.z()) - Mth.floor(target.z()));
         return dx + dz == 1 && Mth.floor(start.y()) == Mth.floor(target.y());
+    }
+
+    private static boolean cardinalLadderLandingTarget(Point start, Point target) {
+        int dx = Math.abs(Mth.floor(start.x()) - Mth.floor(target.x()));
+        int dz = Math.abs(Mth.floor(start.z()) - Mth.floor(target.z()));
+        return cardinalSameLevelTarget(start, target)
+                || dx + dz == 1 && target.y() >= start.y() - MOVEMENT_EPSILON
+                    && target.y() - start.y() <= 1.0D + MAX_LADDER_DESCENT_PER_TICK;
     }
 
     private static boolean intendedTowardNavigationTarget(
@@ -1299,7 +1319,10 @@ public final class LocalObservationVolume {
         var entryBox = boxAtFeetCell(entryNode.box(), entry);
         rungs.put(entry.getY(), entryBox);
         for (int direction : List.of(-1, 1)) {
-            for (int delta = 1; delta <= MAX_CLIMBABLE_RUNG_DELTA; delta++) {
+            // Ladder height is bounded by the actual local evidence, not an overall rung limit.
+            int observedLimit = locomotion == Locomotion.LADDER
+                    ? (int) Math.ceil(RADIUS_BLOCKS * 2) : MAX_CLIMBABLE_RUNG_DELTA;
+            for (int delta = 1; delta <= observedLimit; delta++) {
                 int y = entry.getY() + direction * delta;
                 var rungBox = boxAtFeetCell(
                         entryNode.box(), new BlockPos(entry.getX(), y, entry.getZ()));
@@ -1351,13 +1374,15 @@ public final class LocalObservationVolume {
         for (var rung : rungEntries) {
             int y = rung.getKey();
             for (var direction : CARDINAL_DIRECTIONS) {
+              for (int rise = 0; rise <= (locomotion == Locomotion.LADDER ? 1 : 0); rise++) {
                 var landingPos = new BlockPos(
-                        entry.getX() + direction.x(), y, entry.getZ() + direction.z());
+                        entry.getX() + direction.x(), y + rise, entry.getZ() + direction.z());
                 var landingBox = boxAtFeetCell(entryNode.box(), landingPos);
                 if (exactClimbableAtFeet(level, landingBox)
                         || !stableLanding(player, level, origin, landingBox)
-                        || !climbablePathSafe(
-                                player, level, origin, rung.getValue(), landingBox, locomotion)) {
+                        || !(rise == 1
+                            ? ladderLandingPathSafe(player, level, origin, rung.getValue(), landingBox)
+                            : climbablePathSafe(player, level, origin, rung.getValue(), landingBox, locomotion))) {
                     continue;
                 }
                 addClimbableRecord(
@@ -1382,6 +1407,7 @@ public final class LocalObservationVolume {
                         worldRevision,
                         records,
                         locomotion);
+              }
             }
         }
     }
@@ -1431,6 +1457,14 @@ public final class LocalObservationVolume {
                 locomotion));
     }
 
+    /** Current-body local safety proof; never observes a remote destination. */
+    public static boolean canHoldLadder(LocalPlayer player) {
+        return player != null && player.isAlive() && !player.isPassenger()
+                && !player.getAbilities().flying && !player.isFallFlying()
+                && player.level() instanceof ClientLevel level
+                && safeLadderCell(player, level, point(player.getBoundingBox().getCenter()), player.getBoundingBox());
+    }
+
     private static boolean safeLadderCell(
             LocalPlayer player, ClientLevel level, Point origin, AABB box) {
         if (!exactSurvivingLadderAtFeet(level, origin, box)
@@ -1473,6 +1507,27 @@ public final class LocalObservationVolume {
     private static boolean stableLanding(
             LocalPlayer player, ClientLevel level, Point origin, AABB box) {
         return stableEndpoint(endpointSafety(player, level, origin, box));
+    }
+
+    /** Climb vertically at the rung, then step horizontally over the observed solid lip. */
+    private static boolean ladderLandingPathSafe(LocalPlayer player, ClientLevel level,
+            Point origin, AABB rung, AABB landing) {
+        AABB raised = rung.move(0.0D, landing.minY - rung.minY, 0.0D);
+        return safeLadderCell(player, level, origin, rung)
+                && stableLanding(player, level, origin, landing)
+                && ladderPathSafe(player, level, origin, rung, raised)
+                && ladderPathSafe(player, level, origin, raised, landing);
+    }
+
+    private static boolean ladderTopArcCell(LocalPlayer player, ClientLevel level,
+            Point origin, AABB body, AABB landing) {
+        BlockPos feet = feetBlock(body);
+        BlockPos destination = feetBlock(landing);
+        if (Math.abs(feet.getX() - destination.getX()) + Math.abs(feet.getZ() - destination.getZ()) != 1
+                || feet.getY() != destination.getY() || body.minY - landing.minY > 0.5D) return false;
+        AABB rung = body.move(0.0D, -1.0D, 0.0D);
+        return ladderLandingPathSafe(player, level, origin, rung, landing)
+                && ladderPathSafe(player, level, origin, body, landing);
     }
 
     private static boolean ladderPathSafe(

@@ -416,6 +416,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     public void onPreTick(Minecraft minecraft) {
         assertClientThread(minecraft);
+        validateLadderHold(minecraft);
         clientThread = Thread.currentThread();
         if (shutdown) {
             return;
@@ -716,6 +717,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     /** Uses the same priority lane as Esc so a UI stop releases every owned input inline. */
     public void disableAutomationFromUi(Minecraft minecraft) {
         assertClientThread(minecraft);
+        dev.aod.mcmcp.client.LadderHoldState.global().clear();
         transientMultiplayerConsentAddress = null;
         entityAttackConsent.clear();
         if (anyActive()) {
@@ -727,6 +729,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     () -> inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot()));
         }
         arming.lock("local_ui_disabled");
+        dev.aod.mcmcp.client.LadderHoldState.global().clear();
         routineLifecycle.clearContinuation();
         overlay(minecraft, "MCMCP: MCP自動操作を無効にしました");
     }
@@ -855,6 +858,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void clearAgentSessionState() {
+        dev.aod.mcmcp.client.LadderHoldState.global().clear();
         FrameDisplaySyncSignals.global().clear();
         entityAttackConsent.clear();
         recoveryDescent.reset();
@@ -1763,6 +1767,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         minecraft.isMultiplayerServer() && multiplayerPolicyAllows(minecraft),
                         McmcpClientConfig.visualRadiusBlocks(),
                         McmcpClientConfig.raysPerTick()));
+        validateLadderHold(minecraft);
+        result.put("ladder_hold", dev.aod.mcmcp.client.LadderHoldState.global()
+                .active(minecraft.player, minecraft.level));
         result.put(
                 "entity_attack_consent",
                 ActionWireMapper.entityAttackConsentPayload(entityAttackConsentSnapshot(session, lock)));
@@ -3657,6 +3664,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private boolean releaseAgentControl(Minecraft minecraft) {
+        if (agentExecution != null && !arming.snapshot(sessions.snapshot().worldSessionId()).locked())
+            agentExecution.movement.retainLadderHold(minecraft.player);
         closePendingKillZoneEffectForTerminal("control_release");
         // Stateful menu/view cleanup advances at most once per client tick. Do not mistake that
         // bounded asynchronous progress for a failed same-tick input-release command.
@@ -3774,6 +3783,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return released && inputOwnerNone;
     }
 
+    /** Revalidate the resting owner independently of Action leases, including while READY. */
+    public void validateLadderHold(Minecraft minecraft) {
+        var hold = dev.aod.mcmcp.client.LadderHoldState.global();
+        if (!hold.active(minecraft.player, minecraft.level)) { hold.clear(); return; }
+        var session = sessions.snapshot();
+        hold.validate(minecraft.player, minecraft.level,
+                !shutdown && session.worldReady() && !arming.snapshot(session.worldSessionId()).locked(),
+                dev.aod.mcmcp.agent.safety.LocalObservationVolume.canHoldLadder(minecraft.player));
+    }
+
     private void rememberPendingAgentTerminal(PendingAgentTerminal terminal) {
         Objects.requireNonNull(terminal, "terminal");
         PendingAgentTerminal retained = firstTerminalIntent(pendingAgentTerminal, terminal);
@@ -3854,6 +3873,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         entityAttackConsent.clear();
         boolean inputsReleased = releaseAgentControl(minecraft);
         arming.lock(lockReason);
+        dev.aod.mcmcp.client.LadderHoldState.global().clear();
         return inputsReleased;
     }
 

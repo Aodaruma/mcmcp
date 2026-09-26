@@ -4,7 +4,7 @@ import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.client.AgentMovementInput;
 import net.minecraft.client.Minecraft;
 
-/** Idempotent neutralization of every Agent-owned input path. */
+/** Releases Action input paths. An explicit resting ladder hold has a separate lifecycle. */
 public final class InputReleaseController {
     public boolean releaseAll(Minecraft minecraft) {
         if (!minecraft.isSameThread()) {
@@ -27,7 +27,8 @@ public final class InputReleaseController {
         var gameMode = minecraft.gameMode;
         if (player != null && player.input instanceof AgentMovementInput movementInput) {
             try {
-                movementInput.apply(agentInput.movementSnapshot());
+                movementInput.apply(agentInput.movementSnapshot(),
+                        dev.aod.mcmcp.client.LadderHoldState.global().active(player, player.level()));
             } catch (RuntimeException | LinkageError failure) {
                 released = false;
             }
@@ -56,7 +57,7 @@ public final class InputReleaseController {
         return released;
     }
 
-    /** Verifies that no Agent channel or tracked Agent velocity still has an owner. */
+    /** Verifies Action channels and tracked velocity; resting ladder hold is reported separately. */
     public boolean inputOwnerNone(Minecraft minecraft) {
         if (!minecraft.isSameThread()) {
             throw new IllegalStateException("input ownership must be checked on the Minecraft client thread");

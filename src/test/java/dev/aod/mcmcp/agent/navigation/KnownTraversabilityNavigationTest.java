@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class KnownTraversabilityNavigationTest {
 
     @Test
-    void climbableRoutesUseUnsupportedCellsOnlyAsInternalTransitNodes() {
+    void ladderRungsAreRestingDestinationsButScaffoldingRungsRemainTransitOnly() {
         for (var locomotion : List.of(Locomotion.LADDER, Locomotion.SCAFFOLDING)) {
             UUID session = UUID.randomUUID();
             NavCell bottom = cell(0, 64, 0);
@@ -28,9 +28,14 @@ class KnownTraversabilityNavigationTest {
             var pathfinder = new DeterministicAStar();
 
             assertThat(snapshot.containsCell(rung)).isTrue();
-            assertThat(snapshot.containsDestination(rung)).isFalse();
-            assertThat(pathfinder.findRoute(snapshot, bottom, rung).failure())
-                    .contains(DeterministicAStar.FailureReason.TARGET_UNKNOWN);
+            assertThat(snapshot.containsDestination(rung)).isEqualTo(locomotion == Locomotion.LADDER);
+            if (locomotion == Locomotion.LADDER) {
+                assertThat(pathfinder.findRoute(snapshot, bottom, rung).route().orElseThrow().cells())
+                        .containsExactly(bottom, rung);
+            } else {
+                assertThat(pathfinder.findRoute(snapshot, bottom, rung).failure())
+                        .contains(DeterministicAStar.FailureReason.TARGET_UNKNOWN);
+            }
             assertThat(pathfinder.findRoute(snapshot, bottom, topLanding)
                     .route().orElseThrow().cells())
                     .containsExactly(bottom, rung, topLanding);
@@ -38,6 +43,46 @@ class KnownTraversabilityNavigationTest {
                     .route().orElseThrow().cells())
                     .containsExactly(topLanding, rung, bottom);
         }
+    }
+
+    @Test
+    void ladderCanResumeAcrossManyObservationSegmentsWithoutAuthorizingTheUnseenTop() {
+        UUID session = UUID.randomUUID();
+        var pathfinder = new DeterministicAStar();
+        for (int bottom = 64; bottom < 224; bottom += 4) {
+            var map = boundMap(session);
+            for (int y = bottom; y < bottom + 4; y++) {
+                map.observe(climbableEdge(session, cell(0, y, 0), cell(0, y + 1, 0), false, Locomotion.LADDER));
+                map.observe(climbableEdge(session, cell(0, y + 1, 0), cell(0, y, 0), false, Locomotion.LADDER));
+            }
+            var snapshot = map.snapshot().orElseThrow();
+            assertThat(pathfinder.findRoute(snapshot, cell(0, bottom, 0), cell(0, bottom + 4, 0))
+                    .route().orElseThrow().cells()).hasSize(5);
+            assertThat(pathfinder.findRoute(snapshot, cell(0, bottom + 4, 0), cell(0, bottom, 0))
+                    .route().orElseThrow().cells()).hasSize(5);
+            assertThat(pathfinder.findRoute(snapshot, cell(0, bottom, 0), cell(0, bottom + 5, 0)).failure())
+                    .contains(DeterministicAStar.FailureReason.TARGET_UNKNOWN);
+        }
+    }
+
+    @Test
+    void ladderLandingsAllowEachAdjacentSideAndOneBlockTopLipButNoGapJump() {
+        UUID session = UUID.randomUUID();
+        NavCell rung = cell(-3, 87, -3);
+        for (int[] side : List.of(new int[]{1, 0}, new int[]{-1, 0}, new int[]{0, 1}, new int[]{0, -1})) {
+            for (int rise : List.of(0, 1)) {
+                NavCell floor = cell(rung.x() + side[0], rung.y() + rise, rung.z() + side[1]);
+                var map = boundMap(session);
+                map.observe(climbableEdge(session, rung, floor, true, Locomotion.LADDER));
+                map.observe(climbableEdge(session, floor, rung, false, Locomotion.LADDER));
+                assertThat(new DeterministicAStar().findRoute(map.snapshot().orElseThrow(), rung, floor)
+                        .route().orElseThrow().cells()).containsExactly(rung, floor);
+            }
+        }
+        assertThatThrownBy(() -> climbableEdge(session, rung, cell(-1, 87, -3), true, Locomotion.LADDER))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> climbableEdge(session, rung, cell(-2, 88, -2), true, Locomotion.LADDER))
+                .isInstanceOf(IllegalArgumentException.class);
     }
     @Test
     void mapIsHardCappedAndRejectsDelayedOldRevisionEvidence() {
