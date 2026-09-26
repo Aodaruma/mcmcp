@@ -116,7 +116,7 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 
 Batchは確認済み状態だけを更新し、click自体はportが発行します。ACK前に次のsourceを選び直したり、未知結果のclickを再送したりしません。公開結果へのeffect回収、readback後の成功判定、cleanup完了までの画面所有はportの責務です。policyクラスへMinecraft操作やattempt状態を追加しないでください。
 
-現在開いている対応収納は `runtime/KnownMenuProfileSupport` が画面・slot構成とserver同期の一致を確認し、`KnownMenuOperationRefs` が操作参照を発行します。`routine/MinecraftKnownMenuPort` は参照を再検証して通常QUICK_MOVEと結果・解放確認を行います。MODを限定しない開閉・両方向の数量移送へ拡張する際は、この共通基盤を再利用し、MOD固有の開閉・収納契約と転送本体を分けます。計画と未実装の範囲は[設計仕様書](Minecraft_MCP_NeoForge_設計仕様書.md)の9.7.1を参照してください。
+対応収納は `runtime/KnownMenuProfileSupport` が画面・slot役割・容量とserver同期の一致を確認します。手動で開いたmenuの全stack取出しは `KnownMenuOperationRefs`、所持収納の個体参照と検査履歴は `KnownStorageRefs` が管理します。`StorageAccess` は発見・通常開封・個体照合だけを担当し、検証済みSophisticated Backpacksとの差分を `SophisticatedStorageAccess` に閉じます。`routine/MinecraftKnownMenuPort` が共通の開閉・移送・解放を実行し、数量指定は既存の `ExactInventoryTransfer` を再利用します。追加MOD用の移送エンジンは作りません。`KnownStorageRefsTest`、`ExactInventoryTransferTest`、`ContainerSyncSignalsTest`、`McmcpRuntimeKnownMenuTest` が主要な回帰試験です。対応範囲と未検証事項は[設計仕様書](Minecraft_MCP_NeoForge_設計仕様書.md)9.7.1と[検証記録](experiments/20260926_shared_storage_candidate.md)を参照してください。
 
 `MinecraftPhaseFiveInventoryPortTest`はportと各方針の接続・順序を検査し、独立したslot/batch試験は対応する小さなテストファイルで実行します。`./gradlew test --tests '*Inventory*Test'`でまとめて確認できます。照準の共通解析を変える場合は、呼出元のBrewing/Furnaceの契約試験も実行してください。
 

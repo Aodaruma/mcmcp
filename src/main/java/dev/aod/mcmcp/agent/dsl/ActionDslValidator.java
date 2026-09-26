@@ -806,6 +806,18 @@ public final class ActionDslValidator {
         }
         if (node instanceof ActionDsl.OperateKnownMenu menu) {
             requirePattern(menu.operationRef(), OPAQUE_REFERENCE, path + ".operation_ref");
+            if (menu.opensStorage()) {
+                if (!Set.of("inspect", "take", "store").contains(menu.operation())) throw invalid(path + ".operation is unsupported");
+                if ("inspect".equals(menu.operation())) {
+                    if (menu.item() != null || menu.transferCount() != null) throw invalid(path + " inspect has no transfer");
+                } else {
+                    if (menu.item() == null || !menu.item().matches("[a-z0-9_.-]+:[a-z0-9_./-]+")
+                            || menu.transferCount() == null || menu.transferCount() < 1 || menu.transferCount() > 896)
+                        throw invalid(path + " requires an item and bounded transfer_count");
+                }
+            } else if (menu.item() != null || menu.transferCount() != null) {
+                throw invalid(path + " transfer requires an operation");
+            }
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
             return 1;
         }

@@ -212,12 +212,22 @@ final class InventoryRequests {
             ActionDsl.OperateKnownMenu operation, BlockTarget position) {
         Objects.requireNonNull(operation, "operation");
         Objects.requireNonNull(position, "position");
+        var parameters = new LinkedHashMap<String, Object>();
+        parameters.put("operation_ref", operation.operationRef());
+        if (operation.opensStorage()) {
+            parameters.put("operation", operation.operation());
+            if (operation.item() != null) {
+                parameters.put("item", operation.item());
+                parameters.put("transfer_count", operation.transferCount());
+            }
+        }
         return new PhaseFiveRequest(
                 MinecraftKnownMenuPort.KIND,
-                Map.of("operation_ref", operation.operationRef()),
+                parameters,
                 new PhaseFiveBounds(
-                        position.dimension(), position, position, 0, 30, false),
-                1,
+                        position.dimension(), position, position, 0,
+                        (int) (dev.aod.mcmcp.agent.dsl.ActionDslCompiler.knownMenuTicks(operation) / 20), false),
+                operation.transferCount() == null ? 1 : operation.transferCount(),
                 "items");
     }
 

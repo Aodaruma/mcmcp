@@ -1356,9 +1356,17 @@ MOD menuは次の2種類に分ける。
 
 すべてのadapterは、通常use / menu openの因果ACK、exact menu ownership、cursorを変化させるclick直前のcursor証明失効とfresh server cursor証明、cursor-invariantなQUICK_MOVEでは直前のserver-confirmed empty cursor維持、絶対inventory差分、有限budget、Esc / UI OFF / world境界、terminal前のScreen・cursor・camera・slot解放を9.6と共通の必須条件とする。途中まで消費・生成されたitemをrollbackしたふりはせず、最初のterminal intentとauthoritative inventoryを保持する。cleanupが証明できない場合は成功・失敗を公開せず、入力隔離を維持してfail closedにする。
 
-#### 9.7.1 共通収納操作への拡張方針（計画・未実装）
+#### 9.7.1 共通収納操作（#70候補・実機未検証）
 
-利用者の方針変更を受け、[Issue #70](https://github.com/Aodaruma/mcmcp/issues/70)ではMODを限定しない収納操作を実装する。既存の共通Menu基盤を拡張し、バックパック専用Toolや独立した転送エンジンは作らない。Sophisticated Backpacksは最初の検証対象とする。ここに記載するMCPからのバッグ開閉、MOD収納の指定個数移送、拡張stack対応は、現時点で利用可能な機能ではない。
+利用者の方針変更を受け、[Issue #70](https://github.com/Aodaruma/mcmcp/issues/70)で既存の共通Menu基盤を拡張した。公開Toolは5本のまま、既存`operate_known_menu`へ汎用の`inspect` / `take` / `store`を追加する。MODごとの移送エンジンは作らず、Vanillaの`ExactInventoryTransfer`を両方向の数量計画・照合に再利用する。本節は候補実装の仕様であり、mainの配布版および実機合格とは区別する。
+
+`agent_get_state.known_storages`は現在の所持・装備にある対応収納を最大16件返す。`storage_id`は同一session内で同じ個体を識別するopaque ID、`operation_ref`は現在の位置とstack・player・sessionへ結び付いた1回限りの操作参照である。内容確認後は同じ`storage_id`の新しい`operation_ref`を取得する。参照期限は1,200tick、対象移動・交換・成分変更では期限内でも拒否する。内部のbag UUIDや任意NBTは公開しない。
+
+`operation:"inspect"`では開封→server full-content→空cursorと閉画面を確認し、直近1件の内容を`storage_inspection`へ保持する。結果はstorage ID、消費した参照、実観測tick、packet revision、slotごとのitem/countを持つ履歴であり、再操作の認可ではない。`operation:"take"|"store"`では`item`と`transfer_count`（1..896）を必須とし、同一componentsの固定計画が14click以内で証明できる場合だけ進める。別componentsを合算して数量を満たさない。移送後は同一個体を再開封して全slotの保存則を照合し、閉じる。取り出し・格納は80秒/1,600tick/16interaction、inspectは30秒/600tick/1interaction、移動・camera・破壊・設置は0である。
+
+初期providerは既存のversion/hash固定Sophisticated Backpacks + Coreである。Vanillaの36所持slot、胸装備、offhandを発見し、MOD本来の対象指定開封を呼ぶ。UUID未初期化のバッグ、入れ子・linked storage、独自装備API、worldに設置されたMOD収納の自動開封は今回のproviderの対象外。通常のVanilla chest/barrelと手動で開いた既知menuの従来操作は維持する。通常menu参照に`operation`を付けて数量移送する拡張は未対応であり、数量操作では`known_storages`の参照を使う。
+
+NeoForgeの追加データ付きopenとproviderのfull/slot同期を共通packet ledgerへ接続する。providerが`menu.slots`の外へ持つupgrade slotも全体snapshotへ含め、protectedとして変更を拒否する。storageは最大512slot、全同期slotは最大1,024。open upgrade / extra slots、取り出せないslot、overflow消費hookがある構成は移送を拒否する。未知のversion・class・同期規則は有効化しない。
 
 | 境界 | 担当する処理 |
 | --- | --- |
@@ -1366,11 +1374,11 @@ MOD menuは次の2種類に分ける。
 | 収納の契約 | storage / player / protectedの役割、取り出し・格納可否、item/components、slot容量、通常／拡張stackのclick規則、同期・readback方法を表す。slot順序やplayer slotの位置を操作本体の前提にしない |
 | 共通の実行 | 参照の再検証、個数計画、通常click、fresh server slot/cursor確認、保存則、confirmed/unknown台帳、有限予算、取消・解放を共有する。MOD名・class名・JAR hashの分岐をここへ置かない |
 
-利用者向けには「収納を選ぶ→開く→内容を確認する→指定数を取り出す／格納する→閉じる」を同じ流れで扱う。手動で開いた対応画面にも同じ移送処理を使えるが、手動開封だけでは本対応の完了条件を満たさない。同種のバッグが複数ある場合も、選択後の移動・持ち替え・交換で別の個体を操作しないよう、対象参照を再検証する。
+利用者向けには「収納を選ぶ→内容を確認する→指定数を取り出す／格納する」を同じ流れで扱い、開閉は各Actionに含める。将来のproviderと手動開封・world収納の数量操作もこの共通実行へ接続する。同種のバッグが複数ある場合も、選択後の移動・持ち替え・交換で別の個体を操作しないよう、対象参照を再検証する。
 
 標準の収納契約で扱える画面は共通処理へ載せ、固有の開き方やstack更新規則だけを小さな連携部分で補う。slot数や表示名から未知の画面を純storageと推測せず、加工結果、購入、upgrade、ghost等の操作は収納から分離する。既存profileのversion/hash確認は互換性を検証して移行するまで維持する。新しいMODへ対応するときに数量移送処理を複製する必要をなくすことが目的であり、未検証のすべてのMODへの自動対応を保証するものではない。
 
-Vanillaの`transfer_count`で使う`ExactInventoryTransfer`は共通数量計画・照合の再利用元とする。ただし現在は通常stackと最大14clickのモデルであり、拡張stackには専用のclick規則・上限と同期証拠の検証が必要になる。読み取り、全量移送、指定数移送、拡張stack対応の能力を区別し、未対応操作を実行可能と表示しない。取消時の無条件なcursor救済や未知clickの再送を共通化に含めない。正常終了では空cursorと画面解放を確認し、途中停止では確認済みの移送と不明な結果を保存し、安全な解放を証明できなければ既存の停止方針を維持する。
+`ExactInventoryTransfer`はslot容量と通常cursor上限を別に受け取り、どちらか一方が通常player slotである組合せだけを有限探索する。slot役割の順序に依存せず、protected slotも毎clickの照合に含める。各clickの前に全slot/cursor、後にfreshなslotと独立したcursor packetを要求する。途中停止では確認済みprefixと結果不明のclickを既存effect台帳へ別々に一度だけ記録する。取消時の無条件なcursor救済や未知clickの再送はしない。開封応答待ちの取消は遅れて来る画面の後片付けまで保持し、空cursor・閉画面を証明できなければOFF lockを維持する。
 
 受入試験はVanillaとMOD収納の異なる実装・slot配置、装備中と所持品内、同種バッグ2個、両方向の指定数移送、拡張stack、容量不足、成分違い、自動補充、対象移動、同期遅延・欠落、各中断境界を含む。単体・結合試験と、利用者が許可したリモートDocker検証環境での軽い実機試験を分けて記録する。コード・候補JARの共有、実機合格、Release公開も別の完了状態とする。
 

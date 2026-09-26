@@ -15,6 +15,54 @@ class ExactInventoryTransferTest {
     private static final UUID SESSION = UUID.randomUUID();
 
     @Test
+    void expandedStorageUsesNormalCursorAndExactQuantitiesInBothDirections() {
+        for (int quantity : new int[]{1, 2, 9, 24, 32, 63, 64}) {
+            var take = ExactInventoryTransfer.plan(List.of(stack(2560), EMPTY), List.of(0), List.of(1),
+                    ITEM, 77, true, quantity, 1, 64, List.of(4096, 64)).orElseThrow();
+            assertThat(take.clicks().getLast().slots()).containsExactly(stack(2560 - quantity), stack(quantity));
+            assertThat(take.clicks()).allSatisfy(click -> assertThat(click.cursor().count()).isLessThanOrEqualTo(64));
+            var store = ExactInventoryTransfer.plan(List.of(stack(64), stack(2560)), List.of(0), List.of(1),
+                    ITEM, 77, true, quantity, 1, 64, List.of(64, 4096)).orElseThrow();
+            assertThat(store.clicks().getLast().slots()).containsExactly(
+                    quantity == 64 ? EMPTY : stack(64 - quantity), stack(2560 + quantity));
+        }
+    }
+
+    @Test
+    void expandedTransferRejectsProtectedSlotsAndUnboundedSearch() {
+        assertThat(ExactInventoryTransfer.plan(List.of(stack(2560), EMPTY), List.of(0), List.of(1),
+                ITEM, 77, true, 24, 1, 64, List.of(4096, 0))).isEmpty();
+        assertThat(ExactInventoryTransfer.plan(List.of(stack(2560), stack(2048)), List.of(0), List.of(1),
+                ITEM, 77, true, 24, 1, 64, List.of(4096, 4096))).isEmpty();
+        assertThat(ExactInventoryTransfer.plan(List.of(stack(2560), EMPTY), List.of(2), List.of(1),
+                ITEM, 77, true, 24, 1, 64, List.of(4096, 64))).isEmpty();
+    }
+
+    @Test
+    void expandedTransferUsesExplicitRolesAndWaitsForFreshCursorAtEveryStep() {
+        var protectedStack = new StackFingerprint("test:upgrade", 1, 98);
+        var initial = List.of(protectedStack, EMPTY, stack(2560), protectedStack);
+        var plan = ExactInventoryTransfer.plan(initial, List.of(2), List.of(1),
+                ITEM, 77, true, 24, 1, 64, List.of(0, 64, 4096, 0)).orElseThrow();
+        var current = snapshot(initial, EMPTY, 1);
+        long tick = 10;
+        while (!plan.exhausted()) {
+            assertThat(plan.beginClick(current, tick++)).isTrue();
+            var click = plan.next();
+            var next = snapshot(click.slots(), click.cursor(), current.packetLedgerRevision() + 1);
+            assertThat(plan.confirm(next, current.packetLedgerRevision())).isFalse();
+            assertThat(plan.confirm(next, next.packetLedgerRevision())).isTrue();
+            assertThat(next.slots().get(0)).isEqualTo(protectedStack);
+            assertThat(next.slots().get(3)).isEqualTo(protectedStack);
+            current = next;
+        }
+        assertThat(plan.confirmedCount()).isEqualTo(24);
+        assertThat(plan.pending()).isFalse();
+        assertThat(plan.reconcileReadback(current)).isTrue();
+        assertThat(plan.reconcileReadback(snapshot(List.of(protectedStack, stack(24), stack(2560), protectedStack), EMPTY, 100))).isFalse();
+    }
+
+    @Test
     void ordinaryDyesCanSplitButBundlePickupOverridesCannotBePlanned() {
         assertThat(KnownMenuTransfers.ordinaryPickupItem(net.minecraft.world.item.DyeItem.class)).isTrue();
         assertThat(KnownMenuTransfers.ordinaryPickupItem(net.minecraft.world.item.BundleItem.class)).isFalse();

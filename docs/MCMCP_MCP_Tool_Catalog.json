@@ -12,7 +12,7 @@
     {
       "name": "agent_get_state",
       "title": "Get MCMCP State",
-      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. control.granted_capabilities reports the current local lease; entity_attack_consent reports none/pending/granted local consent and exposes its short-lived ref only after a physical primary click on the dedicated local confirmation screen. It does not itself register consent or add a Tool. policy.action_dsl exposes all available opcode descriptors, opaque-reference refresh contracts, and machine-readable MISSING_CAPABILITY guidance without adding another Tool. Pass no arguments for state only. To search client-known recipe displays, use {\"query\":{\"kind\":\"result_item\",\"item\":\"minecraft:stick\"},\"max_results\":16} or {\"query\":{\"kind\":\"result_tag\",\"tag\":\"minecraft:planks\"},\"max_results\":16}; the bounded result appears in recipe_query. placement_materials provides successfully delivered session-local placement_state_ref identities for actually held ordinary Vanilla property-free full-cube building blocks, including black wool, without requiring a world sample; obtain fresh own-inventory refs here after a world/session change. It does not authorize target coordinates or replace JIT/server checks. inventory keeps item-ID totals; standard_potions separately validates component-exact unmodified Vanilla singleton potion stacks and groups them by item+potion across inventory slots, so brewing inputs and outputs are distinguishable without exposing custom components or impossible overstacks. merchant_offers is present only while the exact current merchant screen has a fresh same-session/container/open-revision server packet; it exposes typed item/count facts and registered stored-enchantment IDs+levels, never raw slots, components, NBT, lore, or display text. known_menu is present only for an exact current server-synchronized accepted Menu profile: Vanilla generic_9x1..9x6, or the version/hash/class-fixed Sophisticated Backpacks 3.25.90 normal backpack storage profile. Copy one single-use operation_ref into operate_known_menu and never infer raw slots or GUI coordinates; valid_through_client_tick is only the outer deadline and any exact-menu context change invalidates it earlier. Open upgrade/extra slots, inaccessible or oversized stacks, and insufficient full-stack capacity are omitted. With continuous visual invalidations, a bounded full-direction catch-up completes a fresh frame within twice the normal scan period (16 active ticks at the default setting), without camera input or stale-ray reuse. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. Recipe data comes only from displays synchronized into the current client recipe book. It never scans hidden world data.",
+      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. control.granted_capabilities reports the current local lease; entity_attack_consent reports none/pending/granted local consent and exposes its short-lived ref only after a physical primary click on the dedicated local confirmation screen. It does not itself register consent or add a Tool. policy.action_dsl exposes all available opcode descriptors, opaque-reference refresh contracts, and machine-readable MISSING_CAPABILITY guidance without adding another Tool. Pass no arguments for state only. To search client-known recipe displays, use {\"query\":{\"kind\":\"result_item\",\"item\":\"minecraft:stick\"},\"max_results\":16} or {\"query\":{\"kind\":\"result_tag\",\"tag\":\"minecraft:planks\"},\"max_results\":16}; the bounded result appears in recipe_query. placement_materials provides successfully delivered session-local placement_state_ref identities for actually held ordinary Vanilla property-free full-cube building blocks, including black wool, without requiring a world sample; obtain fresh own-inventory refs here after a world/session change. It does not authorize target coordinates or replace JIT/server checks. inventory keeps item-ID totals; standard_potions separately validates component-exact unmodified Vanilla singleton potion stacks and groups them by item+potion across inventory slots, so brewing inputs and outputs are distinguishable without exposing custom components or impossible overstacks. merchant_offers is present only while the exact current merchant screen has a fresh same-session/container/open-revision server packet; it exposes typed item/count facts and registered stored-enchantment IDs+levels, never raw slots, components, NBT, lore, or display text. known_menu is present only for an exact current server-synchronized accepted Menu profile: Vanilla generic_9x1..9x6, or the version/hash/class-fixed Sophisticated Backpacks 3.25.90 normal backpack storage profile. Copy one single-use operation_ref into operate_known_menu and never infer raw slots or GUI coordinates; valid_through_client_tick is only the outer deadline and any exact-menu context change invalidates it earlier. Open upgrade/extra slots, inaccessible or oversized stacks, and insufficient full-stack capacity are omitted. With continuous visual invalidations, a bounded full-direction catch-up completes a fresh frame within twice the normal scan period (16 active ticks at the default setting), without camera input or stale-ray reuse. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. Recipe data comes only from displays synchronized into the current client recipe book. It never scans hidden world data. known_storages lists opaque one-use references for verified carried/equipped storage items; use operate_known_menu with operation inspect/take/store. Closed storage contents are not observed. storage_inspection is the most recent completed open/readback, with its consumed reference and observation time; get a fresh reference before another action. Storage access is provider-based and unknown mod versions remain unsupported.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -604,6 +604,116 @@
             "required": ["world_session_id", "container_id", "signal_revision", "open_packet_revision", "received_tick", "offers"]
           },
           "known_menu": {"$ref": "#/$defs/known_menu"},
+          "known_storages": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "storage_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"},
+                "operation_ref": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{24}$"
+                },
+                "profile_hash": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "item": {
+                  "type": "string"
+                },
+                "location": {
+                  "enum": [
+                    "inventory",
+                    "chest",
+                    "off_hand"
+                  ]
+                },
+                "operations": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "inspect",
+                      "take",
+                      "store"
+                    ]
+                  }
+                },
+                "valid_through_client_tick": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "operation_ref",
+                "storage_id",
+                "profile_hash",
+                "item",
+                "location",
+                "operations",
+                "valid_through_client_tick"
+              ]
+            }
+          },
+          "storage_inspection": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "storage_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"},
+                  "operation_ref": {
+                    "type": "string"
+                  },
+                  "observed_client_tick": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "packet_revision": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "contents": {
+                    "type": "array",
+                    "maxItems": 512,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "slot": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "item": {
+                          "type": "string"
+                        },
+                        "count": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "required": [
+                        "slot",
+                        "item",
+                        "count"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "operation_ref",
+                  "storage_id",
+                  "observed_client_tick",
+                  "packet_revision",
+                  "contents"
+                ]
+              }
+            ]
+          },
           "recipe_query": {
             "oneOf": [
               {"type": "null"},
@@ -2309,14 +2419,128 @@
           },
           "operateKnownMenuNode": {
             "type": "object",
-            "description": "Execute exactly one current opaque operation_ref issued for the currently owned known menu. The runtime revalidates the session, Screen instance, container, state, profile, and operation immediately before dispatch. Raw slots, GUI coordinates, callbacks, and packet payloads are never accepted. This node must be the final top-level Action node and never appears inside if/repeat. Reserve at least 30000 ms, 600 ticks, and 1 interaction; distance, camera, breaks, and placements are zero.",
+            "description": "Execute exactly one current opaque operation_ref issued for the currently owned known menu. The runtime revalidates the session, Screen instance, container, state, profile, and operation immediately before dispatch. Raw slots, GUI coordinates, callbacks, and packet payloads are never accepted. This node must be the final top-level Action node and never appears inside if/repeat. Reserve at least 30000 ms, 600 ticks, and 1 interaction; distance, camera, breaks, and placements are zero. For a carried/equipped storage reference from agent_get_state.known_storages, set operation to inspect, take, or store. Inspect takes no item/count and reserves 30000 ms, 600 ticks, 1 interaction. Take/store require item and transfer_count (1..896) and reserve 80000 ms, 1600 ticks, 16 interactions. The adapter opens the exact item using its normal open action; common server-synchronized Menu planning fixes at most 14 left/right clicks, then reopens the same storage for full readback and closes it. Expanded storage capacity is separate from the normal cursor stack limit. Unknown profiles, destructive overflow hooks, stale/moved targets, insufficient capacity, and plans outside the click limit fail closed. Completed inspection/readback contents appear in agent_get_state.storage_inspection, associated with the consumed operation_ref and observation tick; this historical result is not a fresh operation authority. Cancellation never retries an unknown click or rescues a cursor automatically.",
             "additionalProperties": false,
             "properties": {
-              "id": {"$ref": "#/$defs/nodeId"},
-              "op": {"const": "operate_known_menu"},
-              "operation_ref": {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"}
+              "id": {
+                "$ref": "#/$defs/nodeId"
+              },
+              "op": {
+                "const": "operate_known_menu"
+              },
+              "operation_ref": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{24}$"
+              },
+              "operation": {
+                "enum": [
+                  "inspect",
+                  "take",
+                  "store"
+                ]
+              },
+              "item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+              },
+              "transfer_count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 896
+              }
             },
-            "required": ["id", "op", "operation_ref"]
+            "required": [
+              "id",
+              "op",
+              "operation_ref"
+            ],
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/nodeId"
+                  },
+                  "op": {
+                    "const": "operate_known_menu"
+                  },
+                  "operation_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{24}$"
+                  }
+                },
+                "required": [
+                  "id",
+                  "op",
+                  "operation_ref"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/nodeId"
+                  },
+                  "op": {
+                    "const": "operate_known_menu"
+                  },
+                  "operation_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{24}$"
+                  },
+                  "operation": {
+                    "const": "inspect"
+                  }
+                },
+                "required": [
+                  "id",
+                  "op",
+                  "operation_ref",
+                  "operation"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/nodeId"
+                  },
+                  "op": {
+                    "const": "operate_known_menu"
+                  },
+                  "operation_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{24}$"
+                  },
+                  "operation": {
+                    "enum": [
+                      "take",
+                      "store"
+                    ]
+                  },
+                  "item": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                  },
+                  "transfer_count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 896
+                  }
+                },
+                "required": [
+                  "id",
+                  "op",
+                  "operation_ref",
+                  "operation",
+                  "item",
+                  "transfer_count"
+                ]
+              }
+            ]
           },
           "standardPotionItem": {
             "enum": ["minecraft:potion", "minecraft:splash_potion", "minecraft:lingering_potion"]

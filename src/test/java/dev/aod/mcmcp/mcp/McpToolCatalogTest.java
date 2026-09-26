@@ -601,7 +601,7 @@ class McpToolCatalogTest {
         var node = schema.getAsJsonObject("$defs").getAsJsonObject("operateKnownMenuNode");
 
         assertThat(node.getAsJsonObject("properties").keySet())
-                .containsExactlyInAnyOrder("id", "op", "operation_ref");
+                .containsExactlyInAnyOrder("id", "op", "operation_ref", "operation", "item", "transfer_count");
         assertThat(node.getAsJsonArray("required").toString())
                 .isEqualTo("[\"id\",\"op\",\"operation_ref\"]");
         assertThat(node.getAsJsonObject("properties").getAsJsonObject("operation_ref")
@@ -641,6 +641,26 @@ class McpToolCatalogTest {
         extraField.getAsJsonObject("program").getAsJsonArray("body").get(0)
                 .getAsJsonObject().addProperty("menu_ref", "abcdefghijklmnopqrstuvwx");
         assertThat(CatalogSchemaValidator.matches(schema, extraField)).isFalse();
+
+        var storage = example.deepCopy();
+        var storageNode = storage.getAsJsonObject("program").getAsJsonArray("body").get(0).getAsJsonObject();
+        storageNode.addProperty("operation", "inspect");
+        assertThat(CatalogSchemaValidator.matches(schema, storage)).isTrue();
+        storageNode.addProperty("transfer_count", 24);
+        assertThat(CatalogSchemaValidator.matches(schema, storage)).isFalse();
+        storageNode.addProperty("operation", "take");
+        assertThat(CatalogSchemaValidator.matches(schema, storage)).isFalse();
+        storageNode.addProperty("item", "minecraft:red_dye");
+        assertThat(CatalogSchemaValidator.matches(schema, storage)).isTrue();
+        storageNode.addProperty("operation", "store");
+        assertThat(CatalogSchemaValidator.matches(schema, storage)).isTrue();
+        storageNode.addProperty("transfer_count", 0);
+        assertThat(CatalogSchemaValidator.matches(schema, storage)).isFalse();
+        storageNode.addProperty("transfer_count", 897);
+        assertThat(CatalogSchemaValidator.matches(schema, storage)).isFalse();
+        storageNode.addProperty("transfer_count", 24);
+        storageNode.addProperty("operation", "sort");
+        assertThat(CatalogSchemaValidator.matches(schema, storage)).isFalse();
     }
 
     @Test
