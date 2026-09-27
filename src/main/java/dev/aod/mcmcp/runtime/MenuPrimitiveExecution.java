@@ -30,6 +30,7 @@ import dev.aod.mcmcp.routine.MinecraftSemanticActionPort;
 import dev.aod.mcmcp.routine.PhaseFivePort;
 import dev.aod.mcmcp.routine.PhaseFiveRequest;
 import java.util.ArrayList;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -414,7 +415,7 @@ final class MenuPrimitiveExecution {
                     "container transfer effect has no transfer primitive");
         }
         String subject = target == null
-                ? "storage:" + ((ActionDsl.OperateKnownMenu) primitive).operationRef() + "/" + item
+                ? storageEffectSubject(((ActionDsl.OperateKnownMenu) primitive).operationRef(), item)
                 : "container:" + target.dimension() + ":"
                     + target.x() + "," + target.y() + "," + target.z() + "/" + item;
         for (var effect : effects) {
@@ -428,6 +429,14 @@ final class MenuPrimitiveExecution {
                     effect.clientTick(),
                     worldRevision);
         }
+    }
+
+    static String storageEffectSubject(String operationReference, String item) {
+        // The one-use reference is mixed-case and may contain '_'; effects only expose a
+        // bounded, non-reversible lowercase identity, not the live operation credential.
+        String id = UUID.nameUUIDFromBytes(
+                operationReference.getBytes(StandardCharsets.UTF_8)).toString();
+        return "storage:" + id + "/" + item;
     }
 
     PrimitiveOutcome tickAgentFloorExtension(Minecraft minecraft, WorldSessionTracker.Snapshot session,

@@ -3763,7 +3763,7 @@
               "properties": {
                 "seq": {"type": "integer", "minimum": 1, "maximum": 2050},
                 "node_id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"},
-                "kind": {"enum": ["block_place", "block_break", "inventory_swap", "container_take", "container_store", "frame_item_remove", "frame_item_insert", "fishing_cast", "fishing_reel", "entity_attack", "kill_zone_summary", "safety_interrupted"]},
+                "kind": {"enum": ["block_place", "block_break", "inventory_swap", "container_take", "container_store", "storage_take", "storage_store", "frame_item_remove", "frame_item_insert", "fishing_cast", "fishing_reel", "entity_attack", "kill_zone_summary", "safety_interrupted"]},
                 "subject": {"type": "string", "pattern": "^[a-z0-9_.:/,+-]{1,192}$"},
                 "observed_before": {"$ref": "#/$defs/effectObservation"},
                 "observed_after": {"$ref": "#/$defs/effectObservation"},

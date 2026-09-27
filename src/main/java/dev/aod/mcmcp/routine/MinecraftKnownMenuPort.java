@@ -412,11 +412,21 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
         }
         if (request.parameters().containsKey("operation")) {
             if (!AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
-                    || !minecraft.player.onGround()
-                    || minecraft.player.getDeltaMovement().lengthSqr() > 0.0001D
                     || minecraft.player.containerMenu != minecraft.player.inventoryMenu
-                    || !minecraft.player.containerMenu.getCarried().isEmpty()
-                    || storages.resolve(reference, minecraft, session, consume).isEmpty()) {
+                    || !minecraft.player.containerMenu.getCarried().isEmpty()) {
+                return failure("STORAGE_SCREEN_UNAVAILABLE", RoutineFailure.Category.PRECONDITION,
+                        RoutineFailure.Recovery.REPLAN);
+            }
+            if (!minecraft.player.onGround()) {
+                return failure("STORAGE_PLAYER_AIRBORNE", RoutineFailure.Category.PRECONDITION,
+                        RoutineFailure.Recovery.REPLAN);
+            }
+            // Grounded Vanilla players can retain a small gravity Y component at rest.
+            if (minecraft.player.getDeltaMovement().horizontalDistanceSqr() > 0.0001D) {
+                return failure("STORAGE_PLAYER_MOVING", RoutineFailure.Category.PRECONDITION,
+                        RoutineFailure.Recovery.REPLAN);
+            }
+            if (storages.resolve(reference, minecraft, session, consume).isEmpty()) {
                 return failure("STORAGE_TARGET_UNAVAILABLE", RoutineFailure.Category.PRECONDITION,
                         RoutineFailure.Recovery.REPLAN);
             }

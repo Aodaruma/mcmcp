@@ -1315,6 +1315,16 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void ownedStorageEffectsArePublishedInActionResults() {
+        var kinds = new McpToolCatalog().outputSchema("agent_get_action")
+                .getAsJsonObject("properties").getAsJsonObject("effects")
+                .getAsJsonObject("items").getAsJsonObject("properties")
+                .getAsJsonObject("kind").getAsJsonArray("enum");
+        assertThat(kinds.asList().stream().map(JsonElement::getAsString))
+                .contains("storage_take", "storage_store");
+    }
+
+    @Test
     void knownBlockBreakEffectsMatchThePublishedSchema() {
         var observationSchema = new McpToolCatalog().outputSchema("agent_get_action")
                 .getAsJsonObject("$defs").getAsJsonObject("effectObservation");
