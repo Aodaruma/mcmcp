@@ -27,7 +27,7 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 | ツール | 主な指定 | MODが行うこと |
 |---|---|---|
 | `agent_move` | 座標、方向＋距離、または「対象に届く」「範囲内へ」などの到達条件。必要なら経路中の破壊・設置を許可する条件 | 段階的な探索・移動、障害の局所観測、許可された範囲内で必要な破壊・設置、到達確認 |
-| `agent_break_block` | 単一座標／範囲／方向と長さ、任意のblock条件・除外条件・最大個数 | 近づく、見えるようになったblockを確認する、適切な道具を探して選択する、通常操作で破壊する、結果を確認する |
+| `agent_break_block` | 単一座標／直方体範囲、任意のblock条件・除外条件・最大個数 | 近づく、見えるようになったblockを確認する、適切な道具を探して選択する、通常操作で破壊する、結果を確認する |
 | `agent_place_block` | 単一座標／範囲、block/item、任意の望むstate・配置条件 | 手持ち確保、支持面・方向・接続の検討、移動・設置・照合。state未指定なら既定の設置状態を受け入れる |
 | `agent_interact` | block／entity／itemと目的。座標／範囲や種類の条件は任意 | 対象を見つける、接近、通常使用、画面やstateの変化を確認する |
 | `agent_inventory` | `inspect`／`transfer`／`drop`、item条件、数量、移動元・先 | hotbar／inventory／対応menuの同期、移送・投棄、数量の確認 |
@@ -43,15 +43,12 @@ move＋breakを利用側で毎ブロック交互に呼ぶ必要はない。`agen
 
 ## 制限付きスクリプト
 
-公開言語はJavaScript風の小さな同期言語。turtle／p5.jsのように`move(...)`、`breakBlocks(...)`、`place(...)`、`interact(...)`、`input(...)`を順に書ける。変数、数値・文字列・真偽値・配列・オブジェクト、`if`、回数上限付き`for`／`repeat`、利用者定義の小関数、比較を当面の対象とする。`async/await`、Promise、Node.js、module読込み、Javaへのアクセス、ネットワーク、ファイルI/Oは言語仕様に入れない。完全なECMAScriptを走らせる必要はない。
+公開言語はJavaScript風の小さな同期言語。turtle／p5.jsのように`move(...)`、`breakBlocks(...)`、`place(...)`、`interact(...)`、`input(...)`を順に書ける。行動関数はオブジェクト引数ではなく`move(x=100, y=64, z=120)`のような名前付き引数を受ける。変数、数値・文字列・真偽値・配列・オブジェクト、`if`、回数上限付き`for`／`repeat`、利用者定義の小関数、比較を当面の対象とする。`async/await`、Promise、Node.js、module読込み、Javaへのアクセス、ネットワーク、ファイルI/Oは言語仕様に入れない。完全なECMAScriptを走らせる必要はない。
 
 例（構文は実装時に固定する）:
 
 ```js
-for (let i = 0; i < 16; i++) {
-  breakBlocks({ direction: "forward", width: 1, height: 2, length: 1 });
-  move({ direction: "forward", blocks: 1 });
-}
+move(x=116, y=64, z=120, clearPath=true, maxBreaks=32);
 ```
 
 各行動関数は、完了または明示的な失敗まで内部で待ってから次の文へ進む。ゲームthreadを塞がず、script実行器は別の作業threadで動き、ゲーム操作を既存の入力所有・安全停止へ渡す。source長、実行時間、演算数、メモリ、ゲーム操作回数、観測量、反復回数を有界にする。停止後の入力解放と途中結果の回収は一つのjobとして保証する。言語処理系を自作する場合は閉じた文法のparser/runnerを比較する。GraalJSを使う場合も公開構文を厳格に限定できるか、依存サイズと停止特性を確認する。
