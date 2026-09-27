@@ -32,7 +32,7 @@ class McpClientAutoConfiguratorTest {
                 .contains("http://127.0.0.1:8765/mcp")
                 .doesNotContain(token());
         assertThat(config.resolveSibling("config.toml.mcmcp.bak")).exists();
-        assertThat(McpClientAutoConfigurator.anyClientConfigured(home, 8765)).isTrue();
+        assertThat(McpClientAutoConfigurator.anyClientConfigured(game, home, 8765)).isTrue();
 
         Path helper = game.resolve("config/mcmcp").resolve(
                 System.getProperty("os.name", "").toLowerCase().contains("win")
@@ -91,8 +91,173 @@ class McpClientAutoConfiguratorTest {
         assertThat(Files.readString(config)).contains("https://example.invalid");
     }
 
+    @Test
+    void samePortProfilesNeverOverwriteEachOtherOrSuppressTheSetupNotice() throws Exception {
+        for (var target : new McpClientAutoConfigurator.Target[] {
+                McpClientAutoConfigurator.Target.CODEX, McpClientAutoConfigurator.Target.CLAUDE_CODE}) {
+            Path game = gameWithToken("normal");
+            Path validation = gameWithToken("validation");
+            Path home = temporary.resolve(target.name());
+            assertThat(McpClientAutoConfigurator.configure(target, game, home, 8765).success()).isTrue();
+            Path file = McpClientAutoConfigurator.configPath(target, game, home);
+            byte[] before = Files.readAllBytes(file);
+            assertThat(McpClientAutoConfigurator.diagnose(target, validation, home, 8765))
+                    .isEqualTo("another_profile");
+            assertThat(McpClientAutoConfigurator.anyClientConfigured(validation, home, 8765)).isFalse();
+            assertThat(McpClientAutoConfigurator.configure(target, validation, home, 8765).code())
+                    .isEqualTo("another_profile");
+            assertThat(Files.readAllBytes(file)).isEqualTo(before);
+            assertThat(helper(validation)).doesNotExist();
+            assertThat(file.resolveSibling(file.getFileName() + ".mcmcp.bak")).doesNotExist();
+        }
+    }
+
+    @Test
+    void isolatedSetupPreservesTheGlobalRegistrationAndDoesNotImplyClientSelection() throws Exception {
+        Path game = gameWithToken();
+        Path validation = gameWithToken("validation");
+        Path home = temporary.resolve("home");
+        var global = McpClientAutoConfigurator.configure(McpClientAutoConfigurator.Target.CODEX, game, home, 8765);
+        byte[] before = Files.readAllBytes(global.configPath());
+        var isolated = McpClientAutoConfigurator.configure(
+                McpClientAutoConfigurator.Target.CODEX_ISOLATED, validation, home, 8765);
+        assertThat(isolated.success()).isTrue();
+        assertThat(isolated.configPath()).isEqualTo(validation.resolve("config/mcmcp/codex-home/config.toml"));
+        assertThat(Files.readAllBytes(global.configPath())).isEqualTo(before);
+        assertThat(McpClientAutoConfigurator.diagnose(
+                McpClientAutoConfigurator.Target.CODEX_ISOLATED, validation, home, 8765)).isEqualTo("configured");
+        assertThat(McpClientAutoConfigurator.anyClientConfigured(validation, home, 8765)).isFalse();
+    }
+
+    @Test
+    void staleAndMissingHelpersAreDistinctAndRepairableOnlyForTheSameProfile() throws Exception {
+        Path game = gameWithToken();
+        Path home = temporary.resolve("home");
+        var target = McpClientAutoConfigurator.Target.CODEX;
+        McpClientAutoConfigurator.configure(target, game, home, 8765);
+        Files.writeString(helper(game), "throw 'FAKE_PRIVATE_HELPER_CONTENT'");
+        assertThat(McpClientAutoConfigurator.diagnose(target, game, home, 8765)).isEqualTo("stale_helper");
+        assertThat(McpClientAutoConfigurator.anyClientConfigured(game, home, 8765)).isFalse();
+        Files.delete(helper(game));
+        assertThat(McpClientAutoConfigurator.diagnose(target, game, home, 8765)).isEqualTo("helper_missing");
+        assertThat(McpClientAutoConfigurator.configure(target, game, home, 8765).success()).isTrue();
+        assertThat(McpClientAutoConfigurator.diagnose(target, game, home, 8765)).isEqualTo("configured");
+        assertThat(McpClientAutoConfigurator.diagnose(target, game, home, 8766)).isEqualTo("endpoint_mismatch");
+    }
+
+    @Test
+    void unconfiguredAndManualSameUrlAreDistinctAndManualEntriesRemainUntouched() throws Exception {
+        Path game = gameWithToken();
+        Path home = temporary.resolve("home");
+        for (var target : new McpClientAutoConfigurator.Target[] {
+                McpClientAutoConfigurator.Target.CODEX, McpClientAutoConfigurator.Target.CLAUDE_CODE}) {
+            assertThat(McpClientAutoConfigurator.diagnose(target, game, home, 8765)).isEqualTo("unconfigured");
+            Path config = McpClientAutoConfigurator.configPath(target, game, home);
+            Files.createDirectories(config.getParent());
+            String manual = target == McpClientAutoConfigurator.Target.CODEX
+                    ? "[mcp_servers.mcmcp]\nurl = \"http://127.0.0.1:8765/mcp\"\nbearer_token_env_var = \"FAKE_SECRET_ENV\"\n"
+                    : "{\"mcpServers\":{\"mcmcp\":{\"type\":\"http\",\"url\":\"http://127.0.0.1:8765/mcp\",\"headers\":{\"Authorization\":\"FAKE_SECRET\"}}}}";
+            Files.writeString(config, manual);
+            assertThat(McpClientAutoConfigurator.diagnose(target, game, home, 8765)).isEqualTo("unmanaged_unknown");
+            assertThat(McpClientAutoConfigurator.configure(target, game, home, 8765).code())
+                    .isEqualTo("existing_unmanaged_entry");
+            assertThat(Files.readString(config)).isEqualTo(manual);
+        }
+        assertThat(McpClientAutoConfigurator.anyClientConfigured(game, home, 8765)).isFalse();
+        assertThat(helper(game)).doesNotExist();
+    }
+
+    @Test
+    void virtualizedPrivateCopyIsNotAnAliasEvenWithIdenticalFakeTokens() throws Exception {
+        Path game = gameWithToken("Prism/instances/通常 profile/minecraft");
+        Path copied = gameWithToken("Packages/FakeApp/LocalCache/Prism/instances/通常 profile/minecraft");
+        Path visibleHome = temporary.resolve("Packages/FakeApp/LocalCache/userHome");
+        var target = McpClientAutoConfigurator.Target.CODEX;
+        var result = McpClientAutoConfigurator.configure(target, copied, visibleHome, 8765);
+        assertThat(McpClientAutoConfigurator.diagnoseConfig(target, game, result.configPath(), 8765))
+                .isEqualTo("another_profile");
+        assertThat(McpClientAutoConfigurator.configure(target, game, visibleHome, 8765).code())
+                .isEqualTo("another_profile");
+    }
+
+    @Test
+    void windowsCanonicalPathViewAndOrdinaryPathReferToTheSameProfile() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(System.getProperty("os.name").startsWith("Windows"));
+        Path game = gameWithToken("Prism/instances/日本語 profile/minecraft");
+        Path home = temporary.resolve("home");
+        var target = McpClientAutoConfigurator.Target.CODEX;
+        assertThat(McpClientAutoConfigurator.configure(target, game, home, 8765).success()).isTrue();
+        Path canonicalView = Path.of("\\\\?\\" + game.toAbsolutePath());
+        assertThat(McpClientAutoConfigurator.diagnose(target, canonicalView, home, 8765)).isEqualTo("configured");
+        assertThat(McpClientAutoConfigurator.configure(target, canonicalView, home, 8765).success()).isTrue();
+        assertThat(McpClientAutoConfigurator.diagnose(target, game, home, 8765)).isEqualTo("configured");
+    }
+
+    @Test
+    void ambiguousManagedBlocksAndExtraAuthenticationNeverGetReplaced() throws Exception {
+        Path game = gameWithToken();
+        Path home = temporary.resolve("home");
+        var target = McpClientAutoConfigurator.Target.CODEX;
+        Path config = McpClientAutoConfigurator.configure(target, game, home, 8765).configPath();
+        String generated = Files.readString(config);
+        for (String changed : new String[] { generated + generated,
+                generated.replace("startup_timeout_sec = 30", "bearer_token_env_var = \"FAKE_SECRET_ENV\""),
+                generated + "bearer_token_env_var = \"FAKE_SECRET_ENV\"\n",
+                generated + "\n[mcp_servers.\"mcmcp\"]\nurl = \"http://127.0.0.1:8765/mcp\"\n",
+                "message = \"\"\"\n" + generated + "\"\"\"\n" }) {
+            Files.writeString(config, changed);
+            assertThat(McpClientAutoConfigurator.configure(target, game, home, 8765).code())
+                    .isEqualTo("existing_unmanaged_entry");
+            assertThat(Files.readString(config)).isEqualTo(changed);
+        }
+    }
+
+    @Test
+    void quotedInlineAndEscapedManualTablesArePreservedWithoutReadingCredentials() throws Exception {
+        Path game = gameWithToken();
+        Path home = temporary.resolve("home");
+        var target = McpClientAutoConfigurator.Target.CODEX;
+        Path config = McpClientAutoConfigurator.configPath(target, game, home);
+        Files.createDirectories(config.getParent());
+        for (String manual : new String[] {
+                "[mcp_servers.\"mcmcp\"]\nurl = \"http://127.0.0.1:8765/mcp\"\n",
+                "[mcp_servers.\"\\u006dcmcp\"]\nurl = \"http://127.0.0.1:8765/mcp\"\n",
+                "mcp_servers = {mcmcp = {url = \"http://127.0.0.1:8765/mcp\"}}\n"}) {
+            Files.writeString(config, manual);
+            assertThat(McpClientAutoConfigurator.diagnose(target, game, home, 8765)).isEqualTo("unmanaged_unknown");
+            assertThat(McpClientAutoConfigurator.configure(target, game, home, 8765).code())
+                    .isEqualTo("existing_unmanaged_entry");
+            assertThat(Files.readString(config)).isEqualTo(manual);
+        }
+        assertThat(helper(game)).doesNotExist();
+    }
+
+    @Test
+    void urlInUnrelatedConfigIsNotARegistrationAndReadOnlyDiagnosisWritesNothing() throws Exception {
+        Path game = gameWithToken();
+        Path home = temporary.resolve("home");
+        var target = McpClientAutoConfigurator.Target.CODEX;
+        Path config = McpClientAutoConfigurator.configPath(target, game, home);
+        Files.createDirectories(config.getParent());
+        String unrelated = "# http://127.0.0.1:8765/mcp\n[mcp_servers.other]\nurl = \"http://127.0.0.1:8765/mcp\"\n";
+        Files.writeString(config, unrelated);
+        assertThat(McpClientAutoConfigurator.diagnose(target, game, home, 8765)).isEqualTo("unconfigured");
+        assertThat(Files.readString(config)).isEqualTo(unrelated);
+        assertThat(helper(game)).doesNotExist();
+        assertThat(config.resolveSibling("config.toml.mcmcp.bak")).doesNotExist();
+    }
+
+    private static Path helper(Path game) {
+        return game.resolve("config/mcmcp").resolve(System.getProperty("os.name").startsWith("Windows")
+                ? "mcmcp-auth-headers.ps1" : "mcmcp-auth-headers.sh");
+    }
+
     private Path gameWithToken() throws Exception {
-        Path game = temporary.resolve("game");
+        return gameWithToken("game");
+    }
+
+    private Path gameWithToken(String name) throws Exception {
+        Path game = temporary.resolve(name);
         Path directory = game.resolve("config/mcmcp");
         Files.createDirectories(directory);
         Files.writeString(directory.resolve("mcp-token"), token() + "\n");
