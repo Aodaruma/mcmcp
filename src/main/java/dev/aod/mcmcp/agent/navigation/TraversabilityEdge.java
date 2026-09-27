@@ -19,7 +19,15 @@ public record TraversabilityEdge(
         NavCell observerPosition,
         long observedTick,
         long worldRevision,
-        Locomotion locomotion) {
+        Locomotion locomotion,
+        boolean supportedDiagonal) {
+    public TraversabilityEdge(UUID worldSessionId, Key key, Status status,
+            TargetSupport targetSupport, Clearance clearance, Transition transition,
+            Fluid fluid, Hazard hazard, Provenance provenance, NavCell observerPosition,
+            long observedTick, long worldRevision, Locomotion locomotion) {
+        this(worldSessionId, key, status, targetSupport, clearance, transition, fluid,
+                hazard, provenance, observerPosition, observedTick, worldRevision, locomotion, false);
+    }
     public TraversabilityEdge(
             UUID worldSessionId,
             Key key,
@@ -58,6 +66,13 @@ public record TraversabilityEdge(
             throw new IllegalArgumentException("edge tick and revision must be non-negative");
         }
         validateStatus(status, targetSupport, clearance, transition, fluid, hazard, locomotion);
+        if (supportedDiagonal && (locomotion != Locomotion.GROUND
+                || !key.from().horizontallyDiagonalTo(key.to()) || key.from().y() != key.to().y()
+                || targetSupport != TargetSupport.CONFIRMED || clearance != Clearance.CONFIRMED
+                || fluid != Fluid.NONE || hazard != Hazard.NONE
+                || status == Status.BLOCKED)) {
+            throw new IllegalArgumentException("supported diagonal requires a safe level ground edge");
+        }
         if (locomotion != Locomotion.GROUND && locomotion != Locomotion.WATER
                 && !key.climbableAdjacent()) {
             throw new IllegalArgumentException(
@@ -85,7 +100,7 @@ public record TraversabilityEdge(
         return new TraversabilityEdge(
                 worldSessionId, key, Status.STALE, targetSupport, clearance, transition,
                 fluid, hazard, provenance, observerPosition, observedTick, worldRevision,
-                locomotion);
+                locomotion, supportedDiagonal);
     }
 
     private static void validateStatus(
