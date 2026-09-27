@@ -30,4 +30,4 @@
 
 Java 25で対象テスト（ClientRecipeCatalogTest、ClientSyncedRecipesTest、McmcpClientConfigTest、McpToolCatalogTest）を実行。既定・名称、欠測／部分取得／0件、未解放・特殊displayの参照専用性、情報源例外、上限、再受信・設定切替・接続隔離を確認した。
 
-全Gradleの初回は、disconnect時のlease停止より前に追加情報源を破棄した順序について既存contract testが失敗した。破棄を停止後へ移し、テストの安全assertionを維持したまま再実行した `test harnessTest adminBridgeTest verifyHarnessIsolation build` は成功した。`tools/check-source.ps1` も成功（Java全体1,338件、harness 13件、admin bridge 27件、Python 14件、building／capability mock）。追加schemaテスト後の対象59件も成功。公開catalogのfile hash／Tool surface hashを評価runnerと監査scriptへ同期した。評価監査SelfTestの最終結果はIssueの対象commit記録へ追記する。
+全Gradleの初回は、disconnect時のlease停止より前に追加情報源を破棄した順序について既存contract testが失敗した。破棄を停止後へ移し、テストの安全assertionを維持したまま再実行した `test harnessTest adminBridgeTest verifyHarnessIsolation build` は成功した。`tools/check-source.ps1` も成功（Java全体1,338件、harness 13件、admin bridge 27件、Python 14件、building／capability mock）。追加schemaテスト後の対象59件も成功。公開catalogのfile hash／Tool surface hashを評価runnerと監査scriptへ同期した。評価監査SelfTestは66/66成功。追加情報源の結果を `deterministic=false` とする最終修正後、全Gradle検証を再実行し、本体1,339件・harness 13件・admin bridge 27件が成功した。

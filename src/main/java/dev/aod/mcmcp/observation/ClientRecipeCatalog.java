@@ -343,7 +343,12 @@ public final class ClientRecipeCatalog {
         if (result.alternatives().size() != 1 || !result.deterministic()) {
             unsupportedReason = unsupportedReason == null ? "non_deterministic_result" : unsupportedReason;
         }
-        if (entry.id().index() < 0) unsupportedReason = "client_synced_lookup_only";
+        if (entry.id().index() < 0) {
+            unsupportedReason = "client_synced_lookup_only";
+            // A display can be static while assemble inherits components from its input.
+            // Its item/count is a lookup hint, never proof of the actual crafted stack.
+            result = new Result(false, result.alternatives());
+        }
         boolean supported = unsupportedReason == null;
 
         var resultTags = new HashSet<String>();

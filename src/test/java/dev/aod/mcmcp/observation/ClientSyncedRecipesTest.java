@@ -38,6 +38,7 @@ class ClientSyncedRecipesTest {
         var view = catalog.query(session, new ClientRecipeCatalog.Query(
                 ClientRecipeCatalog.QueryKind.RESULT_ITEM, "minecraft:stick"), 1).recipes().getFirst();
         assertThat(view.supported()).isFalse();
+        assertThat(view.result().deterministic()).isFalse();
         assertThat(catalog.resolve(session, view.recipeRef(), view.fingerprint())).isEmpty();
         source.clear();
         assertThat(source.forConnection(connection).available()).isFalse();
