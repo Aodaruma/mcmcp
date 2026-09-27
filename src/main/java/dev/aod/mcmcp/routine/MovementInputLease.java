@@ -90,6 +90,17 @@ public final class MovementInputLease implements AutoCloseable {
         }
     }
 
+    /** Checks the current deadline without renewing it or reasserting any inputs. */
+    public boolean validate(UUID owner, long nowNanos) {
+        requireOwner(owner);
+        if (!active) return false;
+        if (deadlineReached(deadlineNanos, control.watchdogTime(nowNanos))) {
+            close(owner);
+            return false;
+        }
+        return true;
+    }
+
     /** Reasserts current keys without extending the watchdog. */
     public boolean maintain(UUID owner, long nowNanos) {
         requireOwner(owner);

@@ -18,17 +18,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # Reuse only the fixed-five MCP transport, lifecycle, observation, and cleanup primitives.
-$brewArtifactDirectory = $ArtifactDirectory
-$brewTokenPath = $TokenPath
-$brewEndpoint = $Endpoint
-$brewLibraryOnly = [bool]$LibraryOnly
-$commonRunner = Join-Path $PSScriptRoot 'Invoke-McmcpConstructionCapabilityGate.ps1'
-. $commonRunner -Gate navigation -ArtifactDirectory $brewArtifactDirectory `
-    -TokenPath $brewTokenPath -Endpoint $brewEndpoint -LibraryOnly
-$ArtifactDirectory = $brewArtifactDirectory
-$TokenPath = $brewTokenPath
-$Endpoint = $brewEndpoint
-$LibraryOnly = $brewLibraryOnly
+. (Join-Path $PSScriptRoot 'McmcpCapabilityGateSupport.ps1')
 
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null

@@ -33,11 +33,21 @@ git switch -c issue/123-short-description upstream/main
 
 ## 3. 変更して検証する / Make and verify the change
 
+最初に[コード案内](docs/CODE_MAP.md)で変更する責務と対応テストを探してください。ファイル分割の経緯・検証記録は[分割ノート](docs/REFACTORING_NOTES.md)にあります。
+
 対象は **Minecraft 26.2 / NeoForge 26.2.0.59 / Java 25** です。`JAVA_HOME`をJava 25へ設定し、コード変更では次を実行します。<br>
 The target is **Minecraft 26.2 / NeoForge 26.2.0.59 / Java 25**. Set `JAVA_HOME` to Java 25 and run these checks for code changes:
 
 ```powershell
 .\gradlew.bat test harnessTest adminBridgeTest verifyHarnessIsolation build
+```
+
+PowerShell 7.4以上では、Javaに加えてMCP transportとcapability gateのmock試験をまとめて実行できます。Python 3も必要です。Minecraftやfixtureは起動しません。
+
+```powershell
+pwsh -File .\tools\check-source.ps1
+# Javaに関係しないtoolsだけの修正
+pwsh -File .\tools\check-source.ps1 -SkipJava -PythonExecutable python
 ```
 
 Linux/macOSでは`bash gradlew`を使います。文書だけの変更はリンク・表記・表示を確認し、配布PDFや生成処理を変えた場合は[配布ツールの手順](tools/release/README.md)で生成と見た目を確認してください。PRではCIの`build`成功が必要です。<br>

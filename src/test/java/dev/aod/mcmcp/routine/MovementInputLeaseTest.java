@@ -123,9 +123,12 @@ class MovementInputLeaseTest {
         private Set<MovementInputLease.MovementKey> lastApplied = Set.of();
         private int releases;
         private boolean failApply;
+        private boolean failReleaseOnce;
+        private int applies;
 
         @Override
         public void apply(Set<MovementInputLease.MovementKey> keys) {
+            applies++;
             if (failApply) {
                 throw new IllegalStateException("apply failed");
             }
@@ -135,7 +138,63 @@ class MovementInputLeaseTest {
         @Override
         public void release() {
             releases++;
+            if (failReleaseOnce) {
+                failReleaseOnce = false;
+                throw new IllegalStateException("release pending");
+            }
             lastApplied = Set.of();
         }
+    }
+
+    @Test
+    void validationNeverRenewsOrPublishesAndClosesAtTheOriginalDeadline() {
+        var control = new FakeControl();
+        var owner = UUID.randomUUID();
+        var lease = MovementInputLease.acquire(control, owner, 100, Duration.ofNanos(50));
+        lease.setDesired(owner, Set.of(MovementInputLease.MovementKey.CROUCH));
+        assertThat(lease.heartbeat(owner, 100, Duration.ofNanos(50))).isTrue();
+        assertThat(lease.validate(owner, 149)).isTrue();
+        assertThat(lease.deadlineNanos()).isEqualTo(150);
+        assertThat(control.applies).isEqualTo(2);
+        assertThat(control.lastApplied).containsExactly(MovementInputLease.MovementKey.CROUCH);
+        assertThat(lease.validate(owner, 150)).isFalse();
+        assertThat(control.applies).isEqualTo(2);
+        assertThat(control.lastApplied).isEmpty();
+        assertThat(lease.active()).isFalse();
+        assertThat(lease.validate(owner, 151)).isFalse();
+        lease.close();
+        assertThat(control.releases).isOne();
+    }
+
+    @Test
+    void validationUsesThePauseAdjustedClockAndEnforcesOwnership() {
+        var state = new AgentInputState();
+        var control = new FakeControl() {
+            @Override public long watchdogTime(long now) { return state.watchdogTime(now); }
+        };
+        var owner = UUID.randomUUID();
+        var lease = MovementInputLease.acquire(control, owner, 100, Duration.ofNanos(50));
+        assertThatThrownBy(() -> lease.validate(UUID.randomUUID(), 200)).isInstanceOf(SecurityException.class);
+        state.setPaused(true, 120);
+        assertThat(lease.validate(owner, 10_000)).isTrue();
+        state.setPaused(false, 10_100);
+        assertThat(lease.validate(owner, 10_129)).isTrue();
+        assertThat(lease.validate(owner, 10_130)).isFalse();
+    }
+
+    @Test
+    void validationHandlesNanoTimeWrapAndAllowsFailedReleaseCleanupRetry() {
+        var control = new FakeControl();
+        var owner = UUID.randomUUID();
+        long start = Long.MAX_VALUE - 20;
+        var lease = MovementInputLease.acquire(control, owner, start, Duration.ofNanos(50));
+        assertThat(lease.validate(owner, start + 49)).isTrue();
+        control.failReleaseOnce = true;
+        assertThatThrownBy(() -> lease.validate(owner, start + 50)).isInstanceOf(IllegalStateException.class);
+        assertThat(lease.active()).isFalse();
+        assertThat(control.applies).isOne();
+        lease.close();
+        assertThat(control.releases).isEqualTo(2);
+        assertThat(control.lastApplied).isEmpty();
     }
 }

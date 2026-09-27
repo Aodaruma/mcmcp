@@ -28,8 +28,8 @@ class FishingSoundWaitTest {
                         8, 63, 8),
                 450L, 450L, 0, 1, null, 12L);
 
-        assertThat(McmcpRuntime.soundClueMatches(condition, 450L, List.of(clue))).isTrue();
-        assertThat(McmcpRuntime.soundClueMatches(
+        assertThat(ActionEvidence.soundClueMatches(condition, 450L, List.of(clue))).isTrue();
+        assertThat(ActionEvidence.soundClueMatches(
                 condition, 451L + dev.aod.mcmcp.agent.observation.SoundClueStore.TTL_TICKS,
                 List.of(clue))).isFalse();
     }

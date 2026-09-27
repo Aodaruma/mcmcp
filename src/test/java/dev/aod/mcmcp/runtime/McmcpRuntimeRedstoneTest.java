@@ -33,7 +33,7 @@ class McmcpRuntimeRedstoneTest {
                     anchor.y() - 1,
                     anchor.z() + offset.get(1));
 
-            var request = McmcpRuntime.redstoneIdentityRequest(
+            var request = ConstructionRequests.redstoneIdentityRequest(
                     node,
                     UUID.randomUUID(),
                     aim(lampSupport),
@@ -74,7 +74,7 @@ class McmcpRuntimeRedstoneTest {
                     anchor.y() - 1,
                     anchor.z() + offset.get(1));
 
-            var request = McmcpRuntime.redstoneIdentityRequest(
+            var request = ConstructionRequests.redstoneIdentityRequest(
                     node,
                     UUID.randomUUID(),
                     List.of(aim(firstSupport), aim(secondSupport)),
@@ -112,7 +112,7 @@ class McmcpRuntimeRedstoneTest {
                     anchor.y() - 1,
                     anchor.z() + 2 * offset.get(1));
 
-            var request = McmcpRuntime.redstoneIdentityRequest(
+            var request = ConstructionRequests.redstoneIdentityRequest(
                     node,
                     UUID.randomUUID(),
                     List.of(aim(lampSupport)),

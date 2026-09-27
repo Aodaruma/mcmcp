@@ -4,7 +4,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.gui.screens.inventory.ContainerScreen;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ChestMenu;
@@ -120,7 +119,7 @@ public final class KnownMenuProfileSupport {
                 : backpackContext(minecraft.player, screen, menu, snapshot, runtime);
     }
 
-    private static boolean synchronizedMenuMatches(
+    static boolean synchronizedMenuMatches(
             ContainerSyncSignals.Snapshot ledger,
             UUID worldSessionId,
             AbstractContainerMenu menu) {
@@ -132,14 +131,15 @@ public final class KnownMenuProfileSupport {
         }
         ContainerSyncSignals.OpenScreenEvidence open = ledger.lastOpenScreen();
         ContainerSyncSignals.ContainerSnapshot snapshot = ledger.container();
-        var liveMenuType = BuiltInRegistries.MENU.getKey(menu.getType());
+        // Player inventory menus have no registered type; they are not known storage menus.
+        var liveMenuType = ScreenOwnershipSignals.registeredMenuTypeId(menu).orElse(null);
         if (!worldSessionId.equals(open.worldSessionId())
                 || !worldSessionId.equals(snapshot.worldSessionId())
                 || open.containerId() != menu.containerId
                 || snapshot.containerId() != menu.containerId
                 || !open.menuTypeId().equals(snapshot.menuTypeId())
                 || liveMenuType == null
-                || !open.menuTypeId().equals(liveMenuType.toString())
+                || !open.menuTypeId().equals(liveMenuType)
                 || menu.slots.size() != snapshot.slots().size()
                 || snapshot.packetLedgerRevision() <= open.packetLedgerRevision()
                 || snapshot.receivedTick() < open.receivedTick()

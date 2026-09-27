@@ -1,5 +1,7 @@
 # Repository guardrails
 
+コードの入口・責務・対応テストは[コード案内](docs/CODE_MAP.md)を参照する。以下の安全契約と規範文書が優先する。
+
 ## Product and public contract
 
 - 文書、UI、実験記録、ユーザーへの報告は日本語を基本とする。対象はMinecraft 26.2、NeoForge 26.2.0.59、Java 25とし、互換性を確認せず更新しない。Fabric等へ置き換えない。
@@ -34,6 +36,7 @@
 - NeoForgeのglobal `RightClickBlock` / `UseItemOnBlockEvent` handlerによる独自副作用は上記のItem hook証明外の互換性境界とし、変更されたinteraction経路を安全と仮定しない。通常のprediction・screen ownership・server同期・readback検証は維持する。
 - container openのprediction bridgeは、同じClientLevel内のplayer cloneではactive attemptだけを閉じてbridgeを保持し、level unload / logout / disconnect / shutdownでlevel channelを閉じる。開封前の利用不能は固定診断`prediction_bridge=unregistered|disabled|lifecycle_closed|attempt_limit`のいずれかだけを公開し、内部例外文を反射しない。
 - containerまとめ移送は初回server snapshotのsource slot・item/componentsで計画を固定し、最大14 whole stacks / 896個に制限する。各通常QUICK_MOVEのfresh server slot差分を待ち、次tick以降に全slot・成分・全量容量・残予算・所有権を再検証して次へ進む。最終readback openはbatch全体で1回とし、途中停止時は確認済みprefixと未確認の末尾clickを別effectにする。whole stackを分割しないため、確認済みprefixの後に残予算へ収まるstackがなく、絶対goal未達でActionが失敗する場合がある。failed / cancelled terminalでもCONFIRMED effectはrollbackされず、一度だけ台帳へ反映する。`failure.recoverable=true`を元Actionのblind replay許可と解釈せず、`partial.resume_requires_reobservation=true`ならfreshなstate / observationから新しいActionを計画する。補充stackの再選択、未知結果の再送、cleanup retryでのeffect重複をしない。絶対goalと今回移送量を混同せず、take goalは2,304、store goalは3,456と実menu容量で制限する。
+- containerの`transfer_count`指定は今回の正確な追加移送数とし、既存の絶対goal・max_transfer_count・max_stacksを併用する。省略時はwhole-stack契約を維持する。exactなVanilla storage menu/slot・通常stackに限定し、初回snapshotから左/右PICKUPの全手順を最大14clickで固定する。各click前の全slot・cursor一致、送信前のcursor証拠失効、送信後のfresh server slot/cursor一致を必須とし、数量・容量・手順上限が証明できなければ移送前に拒否する。途中の同一品目stackの分割・再結合を許すが、完了した空cursorの移送だけをconfirmed prefixへ算入し、未完了splitはUNKNOWNのまま保持する。取消・期限切れでcursor救済clickを生成せず、既存の所有権解放・OFF lockを維持する。最終成功は同一containerのfull readback、正確な数量保存、絶対goal、空cursorで確認する。
 - 額縁表示品のremove/insertは単独Actionの各1回操作に限定する。正面fog/LOSを通ったframe_displayを配送ACKで認可し、ref/type/位置/AABB/item/rotation/aim点が一致する最新観測でだけ使用する。静的表面の再観測で動的entityのTTLを延長しない。通常reach/crosshair、空手remove・空表示insert、同一frame本体・回転不変、packet由来の表示ACK（insertは選択slotの1個消費ACKも）を確認する。表示除去とdrop回収を混同せず、回収は再観測後に別Actionで行う。未知結果や再計画でattack/useを再送しない。
 - 配送済み額縁のvisual revisionが古い場合、その単独Actionの対象だけを現在のfog/LOSで実再観測できる。type/ref/位置/AABB/item/rotation/aim点の完全一致と元の配送100tick・60秒期限を維持し、内部planning recordだけを更新する。公開frame・container_label・配送期限を更新せず、未配送entityの認可や通常Actionの全額縁再走査へ広げない。
 - 額縁のcurrent-render fog欠測は実不可視と区別し、元の総400tick・dispatch後ACK60tick期限を延長せず待機する。欠測中にitem/rotationを可視証拠として読まず、pendingの既定値をeffect afterへ出さない。復帰後も実LOS・正面・半径・表示一致を再検証し、未知操作は再送しない。
@@ -41,7 +44,14 @@
 - 物理入力隔離中はVanillaの`KeyMapping`をreleaseし、隔離のfalling edgeでは現在の物理keyboard状態を同一client tick内に1回再同期する。Agent ownerなしだけを物理入力handoff完了の代用にせず、同tick内のlease取得・解除もruntime処理前後の遷移確認で閉じる。
 - block mutationの成功判定は、作物の`age`やfarmlandの`moisture`等の正当な時間発展を許す意味的postconditionにする。破壊・収穫はblock消失だけで成功とせず、安全経路での物理pickupと対象inventoryの絶対個数増加を確認する。
 - 多区画作業は公開DSLでbatch化できるようにし、植付け、代表成熟待機、batch収穫、drop回収、再植付けの順を基本とする。container、pickup、camera等の具体的な期限・予算はcatalog、runtime、testで一元管理する。
+- 建築材料はVanillaの通常建材familyを共通policyで判定し、観測と設置で一致させる。ID namespaceや継承だけで独自挙動を許可せず、完全state、通常の無改変item、支持面、設置予測とserver確認を維持する。床置きtorchとwall_torchを区別し、階段shape・pane接続のplan内閉包と最終照合を材料familyの拡張時にも適用する。
+- 状態が一意な通常full-cubeの所持建材は、実所持stack・default components・正常個数・既存建築policyを検証した`agent_get_state.placement_materials`から材料identityを配送できる。配送成功前や別sessionのrefを認可せず、所持品からworld座標・方向state・支持証拠を生成しない。
+- 角だけで接する水平full-cube足場の斜め候補は設計仕様書7.4の追加支持・立位corridor証拠へ限定する。証拠を現在revisionへ束縛し、crouch予算を予約する。各tickのVanilla最終安全gateや、証拠のない斜め候補の従来条件を省略しない。
 - 既存の安全境界、入力検証、fail-closedなエラー処理、fixture isolationを簡略化しない。
+- MOD収納の拡張は既存の共通Menu基盤へ接続し、MOD別の数量移送エンジンや専用Toolを増やさない。対象の発見・通常開閉とslot役割・容量・同期の契約を共通の計画・実行・確認から分け、個別連携は必要な差分に限定する。現在の対応範囲と拡張計画は設計仕様書9.7.1で区別し、未知の画面を見た目だけで認可しない。
+- 水平の端設置は`extend_known_floor`の単独有限Actionへ閉じる。配送済みfull-cube支持と中心姿勢を認可し、crouch中の身体が元の支持と重なる範囲だけ端へ移動する。実可視側面への通常設置とblock・inventoryのserver確認後だけ新床へ進む。支持変更、補正、damage、障害、期限では停止し、取消時もconstruction effectを回収して入力を解放する。通常navigationの未知空間への移動許可へ転用しない。
+- 単一entryで既知の完全state支持を指定する`apply_known_block_plan`は、受付・予約・実行開始・未dispatch JITの描画欠測を既存の元支持lease内で有限待機できる。元HTTP締切・配送TTL・総Action予算を共有し、最初の300tick枠へ待機を算入する。復帰時の元支持面・state/item/shape・fog/LOS・姿勢・安全の再検証を省略せず、複数entryやplan内依存支持へ拡張しない。送信済み設置の確認・cleanupへ逆適用しない。
+- 外部施工runnerのcheckpointは進捗と未確認intentの台帳に限定し、公開MCPやActionの上限を増やさない。world sessionの変更を検出し、座標・支持・経路は再観測する。不変なplacement-state identityだけを同じsession内で保持できる。confirmed/observed/unknownと材料収支を区別し、受付前拒否と応答不明を混同しない。未知Actionのblind replay、failed/cancelled後の未検証継続、進捗の二重計上をしない。
 
 ## Fixture and environments
 

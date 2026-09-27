@@ -14,6 +14,26 @@ class LocalObservationProjectorTest {
     private static final String OVERWORLD = "minecraft:overworld";
 
     @Test
+    void carriesDirectDiagonalEvidenceWithoutTurningAProbeIntoConfirmedContact() {
+        var from = new ObservationRecord.Point(0.5, 64.9, 0.5);
+        var to = new ObservationRecord.Point(1.5, 64.9, 1.5);
+        var current = record(10, 3, 0, from, from, from,
+                ObservationRecord.Transition.STATIONARY, ObservationRecord.Clearance.CLEAR,
+                ObservationRecord.Hazard.NONE);
+        var diagonal = new ObservationRecord(10, 3, 1, from, to, to,
+                ObservationRecord.Support.PRESENT, ObservationRecord.Clearance.CLEAR,
+                ObservationRecord.Transition.PROBE_ALLOWED, ObservationRecord.Fluid.NONE, false,
+                ObservationRecord.Hazard.NONE, ObservationRecord.LoadedState.LOADED,
+                ObservationRecord.Drop.SUPPORTED, false, Locomotion.GROUND, true);
+        var projection = LocalObservationProjector.project(new LocalObservationVolume.Snapshot(
+                10, 3, from, current, List.of(diagonal)), UUID.randomUUID(), OVERWORLD, 3, 64);
+        assertThat(projection.edges()).singleElement().satisfies(edge -> {
+            assertThat(edge.supportedDiagonal()).isTrue();
+            assertThat(edge.status()).isEqualTo(TraversabilityEdge.Status.PROBE_ALLOWED);
+        });
+    }
+
+    @Test
     void keepsClimbableTransitInternalAndPublishesOnlyFloorBackedLandings() {
         for (var locomotion : List.of(Locomotion.LADDER, Locomotion.SCAFFOLDING)) {
             var center = new ObservationRecord.Point(0.5D, 64.9D, 0.5D);

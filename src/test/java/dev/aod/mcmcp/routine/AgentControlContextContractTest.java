@@ -43,8 +43,8 @@ class AgentControlContextContractTest {
             assertThat(invocations(classNode(resource))).as(resource)
                     .contains("dev/aod/mcmcp/client/AgentScreenPolicy#allowsWorldInput");
         }
-        var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
-        var boundedSafety = runtime.methods.stream()
+        var bounded = classNode("/dev/aod/mcmcp/runtime/BoundedInputExecution.class");
+        var boundedSafety = bounded.methods.stream()
                 .filter(method -> method.name.equals("boundedInputUnsafeReason"))
                 .findFirst().orElseThrow();
         assertThat(java.util.Arrays.stream(boundedSafety.instructions.toArray())

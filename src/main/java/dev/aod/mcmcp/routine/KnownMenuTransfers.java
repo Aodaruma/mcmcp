@@ -19,6 +19,20 @@ final class KnownMenuTransfers {
 
     private KnownMenuTransfers() { }
 
+    static boolean ordinaryPickupItem(Class<?> itemType) {
+        try {
+            return itemType.getMethod("overrideStackedOnOther", ItemStack.class, Slot.class,
+                            net.minecraft.world.inventory.ClickAction.class, net.minecraft.world.entity.player.Player.class)
+                            .getDeclaringClass() == net.minecraft.world.item.Item.class
+                    && itemType.getMethod("overrideOtherStackedOnMe", ItemStack.class, ItemStack.class,
+                            Slot.class, net.minecraft.world.inventory.ClickAction.class,
+                            net.minecraft.world.entity.player.Player.class, net.minecraft.world.entity.SlotAccess.class)
+                            .getDeclaringClass() == net.minecraft.world.item.Item.class;
+        } catch (ReflectiveOperationException | SecurityException | LinkageError failure) {
+            return false;
+        }
+    }
+
     static int maximumDestinationCount(ItemStack item, List<Slot> slots) {
         return slots.stream().mapToInt(slot ->
                 Math.min(item.getMaxStackSize(), slot.getMaxStackSize(item))).sum();
@@ -36,6 +50,20 @@ final class KnownMenuTransfers {
         connection.send(new ServerboundContainerClickPacket(
                 menu.containerId, menu.getStateId(), (short) sourceSlot, (byte) 0,
                 ContainerInput.QUICK_MOVE, new Int2ObjectOpenHashMap<>(),
+                HashedStack.create(menu.getCarried(), connection.decoratedHashOpsGenenerator())));
+    }
+
+    /** Only the fixed exact-transfer plan may select this internal ordinary left/right click. */
+    static void dispatchServerConfirmedPickup(
+            Minecraft minecraft, AbstractContainerMenu menu, int slot, int button) {
+        var connection = Objects.requireNonNull(minecraft.getConnection(), "connection");
+        if (minecraft.player == null || minecraft.player.containerMenu != menu
+                || slot < 0 || slot >= menu.slots.size() || button < 0 || button > 1) {
+            throw new IllegalStateException("exact transfer click authority changed");
+        }
+        connection.send(new ServerboundContainerClickPacket(
+                menu.containerId, menu.getStateId(), (short) slot, (byte) button,
+                ContainerInput.PICKUP, new Int2ObjectOpenHashMap<>(),
                 HashedStack.create(menu.getCarried(), connection.decoratedHashOpsGenenerator())));
     }
 

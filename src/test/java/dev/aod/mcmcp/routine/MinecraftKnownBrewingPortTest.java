@@ -464,7 +464,7 @@ class MinecraftKnownBrewingPortTest {
         ClassNode node = classNode();
 
         assertThat(invocations(node, "aimPoint"))
-                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                .contains("dev/aod/mcmcp/routine/InventoryParameters"
                         + "#inventoryAimPoint");
         assertThat(invocations(node, "initialPreflight"))
                 .contains("dev/aod/mcmcp/routine/MinecraftKnownBrewingPort#aimPoint");

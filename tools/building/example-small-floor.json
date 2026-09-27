@@ -1,0 +1,14 @@
+{
+  "version":1,
+  "anchor":{"dimension":"minecraft:overworld","x":-4,"y":60,"z":6},
+  "rotation":0,
+  "rows":["AB","BA"],
+  "palette":{
+    "A":{"item":"minecraft:snow_block","state":{"block":"minecraft:snow_block","properties":{}},"source":{"dimension":"minecraft:overworld","x":-7,"y":61,"z":5}},
+    "B":{"item":"minecraft:black_wool","state":{"block":"minecraft:black_wool","properties":{}},"source":{"dimension":"minecraft:overworld","x":-7,"y":61,"z":6}}
+  },
+  "start_support_state":{"block":"minecraft:smooth_stone","properties":{}},
+  "supply":{"position":{"dimension":"minecraft:overworld","x":-7,"y":61,"z":7},"block":"minecraft:chest"},
+  "torches":[{"u":0,"v":0}],
+  "torch_source":{"dimension":"minecraft:overworld","x":-7,"y":62,"z":5}
+}

@@ -24,12 +24,17 @@ public final class RestrictedCommandPolicy {
                     + "z=(-?[0-9]{1,9}),dx=([0-9]{1,6}),dy=([0-9]{1,6}),dz=([0-9]{1,6})]");
     private static final Set<String> ALLOWED_BLOCKS = Set.of(
             "minecraft:air", "minecraft:dirt", "minecraft:farmland", "minecraft:wheat",
-            "minecraft:chest", "minecraft:oak_fence", "minecraft:oak_fence_gate",
-            "minecraft:stone", "minecraft:smooth_stone", "minecraft:sandstone");
+            "minecraft:chest", "minecraft:barrel", "minecraft:waxed_copper_chest",
+            "minecraft:oak_fence", "minecraft:oak_fence_gate",
+            "minecraft:stone", "minecraft:smooth_stone", "minecraft:sandstone",
+            "minecraft:snow_block", "minecraft:black_wool", "minecraft:torch",
+            "minecraft:red_concrete", "minecraft:water");
     private static final Set<String> ALLOWED_ITEMS = Set.of(
             "minecraft:air", "minecraft:iron_hoe", "minecraft:netherite_hoe",
             "minecraft:wheat_seeds",
-            "minecraft:iron_axe", "minecraft:oak_sapling", "minecraft:bread");
+            "minecraft:iron_axe", "minecraft:oak_sapling", "minecraft:bread",
+            "minecraft:snow_block", "minecraft:black_wool", "minecraft:torch",
+            "minecraft:red_concrete");
 
     private static final int MAX_COMMANDS = 256;
     private static final int MAX_LINE_CHARS = 512;

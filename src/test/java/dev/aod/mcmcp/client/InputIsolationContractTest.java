@@ -237,11 +237,11 @@ class InputIsolationContractTest {
             throws Exception {
         var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
 
-        assertThat(invocations(method(runtime, "tickAgentAction")))
+        assertThat(invocations(method(runtime, "tickAgentProgram")))
                 .containsSubsequence(
                         "dev/aod/mcmcp/runtime/McmcpRuntime#activeElapsedNanos",
                         "dev/aod/mcmcp/agent/dsl/ActionDsl$Budget#maxTicks",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#pickupInventoryIncreased",
+                        "dev/aod/mcmcp/runtime/PlayerInventoryEvidence#pickupInventoryIncreased",
                         "dev/aod/mcmcp/agent/action/AgentActionStore#recordTick",
                         "dev/aod/mcmcp/agent/action/AgentPrimitivePlanner#visibleItemPickupCellCurrent");
     }
@@ -249,14 +249,17 @@ class InputIsolationContractTest {
     @Test
     void movingPickupEvidenceUsesTheBoundedInputReleasingReplanPath() throws Exception {
         var runtime = classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class");
-        var tickCalls = invocations(method(runtime, "tickAgentAction"));
+        var tickCalls = invocations(method(runtime, "tickAgentProgram"));
         String replan = "dev/aod/mcmcp/runtime/McmcpRuntime#requestAgentReplan";
 
         assertThat(tickCalls).containsSubsequence(
                 "dev/aod/mcmcp/agent/action/AgentPrimitivePlanner#visibleItemPickupCellCurrent",
                 replan,
+                "dev/aod/mcmcp/runtime/McmcpRuntime#tickAgentMovement");
+        var movementCalls = invocations(method(runtime, "tickAgentMovement"));
+        assertThat(movementCalls).containsSubsequence(
                 "dev/aod/mcmcp/agent/action/AgentPrimitivePlanner#visibleItemAabb",
-                "dev/aod/mcmcp/runtime/McmcpRuntime#playerPickupAreaIntersects",
+                "dev/aod/mcmcp/runtime/PlayerInventoryEvidence#playerPickupAreaIntersects",
                 replan);
 
         var request = method(runtime, "requestAgentReplan");
@@ -265,7 +268,7 @@ class InputIsolationContractTest {
                 "dev/aod/mcmcp/runtime/McmcpRuntime#releaseAgentInputsForHold",
                 "dev/aod/mcmcp/runtime/McmcpRuntime#isCollectPrimitive",
                 "dev/aod/mcmcp/agent/action/AgentActionStore#setPhase",
-                "dev/aod/mcmcp/runtime/McmcpRuntime#agentReplanDeadlineTick");
+                "dev/aod/mcmcp/runtime/RecoveryPlanning#agentReplanDeadlineTick");
         assertThat(fieldWrites(request)).containsSubsequence(
                 "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#pickupArrivalTick",
                 "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#pickupCell",
@@ -279,10 +282,10 @@ class InputIsolationContractTest {
                 "dev/aod/mcmcp/runtime/McmcpRuntime$AgentExecution#replanDeadlineTick");
         assertThat(invocations(request).stream()
                 .filter(call -> call.equals(
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#agentReplanDeadlineTick")))
+                        "dev/aod/mcmcp/runtime/RecoveryPlanning#agentReplanDeadlineTick")))
                 .hasSize(1);
         assertThat(tickCalls).containsSubsequence(
-                "dev/aod/mcmcp/runtime/McmcpRuntime#replanDeadlineReached",
+                "dev/aod/mcmcp/runtime/ActionBudgets#replanDeadlineReached",
                 "dev/aod/mcmcp/runtime/McmcpRuntime#failAgentAction");
     }
 
@@ -337,7 +340,8 @@ class InputIsolationContractTest {
                 "dev/aod/mcmcp/runtime/McmcpRuntime#releaseAgentInputsForHold";
 
         assertThat(invocations(method(runtime, "onPauseChanged"))).contains(checkedRelease);
-        assertThat(invocations(method(runtime, "tickAgentAction"))).contains(checkedRelease);
+        assertThat(invocations(method(runtime, "agentControlCurrent"))).contains(checkedRelease);
+        assertThat(invocations(method(runtime, "tickAgentBlockMutation"))).contains(checkedRelease);
         assertThat(invocations(method(runtime, "bindAgentPrimitive"))).contains(checkedRelease);
         assertThat(invocations(method(runtime, "retryAgentMutationAim"))).contains(checkedRelease);
         assertThat(invocations(method(runtime, "requestAgentReplan"))).contains(checkedRelease);

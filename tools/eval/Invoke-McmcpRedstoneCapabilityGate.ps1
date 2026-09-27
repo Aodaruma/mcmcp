@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][string]$ArtifactDirectory,
-    [Parameter(Mandatory)][string]$TokenPath,
+    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$ArtifactDirectory,
+    [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$TokenPath,
     [string]$Endpoint = 'http://127.0.0.1:8765/mcp',
     [switch]$LibraryOnly
 )
@@ -9,11 +9,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$saved = @($ArtifactDirectory, $TokenPath, $Endpoint, [bool]$LibraryOnly)
-. (Join-Path $PSScriptRoot 'Invoke-McmcpConstructionCapabilityGate.ps1') `
-    -Gate navigation -ArtifactDirectory $ArtifactDirectory -TokenPath $TokenPath `
-    -Endpoint $Endpoint -LibraryOnly
-$ArtifactDirectory, $TokenPath, $Endpoint, $LibraryOnly = $saved
+. (Join-Path $PSScriptRoot 'McmcpCapabilityGateSupport.ps1')
 
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null

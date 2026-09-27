@@ -26,26 +26,30 @@ class McmcpRuntimeEvaluationTurnContractTest {
         assertThat(runtime.interfaces)
                 .contains("dev/aod/mcmcp/mcp/EvaluationTurnControl");
         assertThat(invocations(method(runtime, "acquire")))
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController#acquire");
+        assertThat(invocations(method(runtime, "await")))
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController#await");
+        assertThat(invocations(method(controllerNode(), "acquire")))
                 .containsSubsequence(
                         "java/lang/ProcessHandle#of",
                         "java/lang/ProcessHandle#info",
                         "dev/aod/mcmcp/runtime/ClientCommandInbox#submitControl");
-        assertThat(invocations(method(runtime, "await")))
+        assertThat(invocations(method(controllerNode(), "await")))
                 .contains("dev/aod/mcmcp/safety/EvaluationTurnGuard#awaitTerminal");
     }
 
     @Test
     void acquisitionReleasesInputsBeforeTheExactGuardLeaseAndMonitorsProcessExit()
             throws Exception {
-        var runtime = classNode();
-        var dispatch = invocations(method(runtime, "acquireEvaluationTurnOnClient"));
-        var acquisition = invocations(method(runtime, "acquireEvaluationTurnWithGateHeld"));
+        var runtime = controllerNode();
+        var dispatch = invocations(method(controllerNode(), "acquireEvaluationTurnOnClient"));
+        var acquisition = invocations(method(controllerNode(), "acquireEvaluationTurnWithGateHeld"));
 
         assertThat(dispatch)
-                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#withEvaluationTurnGate");
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController#withEvaluationTurnGate");
         assertThat(acquisition)
                 .containsSubsequence(
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#automationActivityPending",
+                        "java/util/function/BooleanSupplier#getAsBoolean",
                         "dev/aod/mcmcp/runtime/McmcpRuntime#boundedActionInputRelease",
                         "dev/aod/mcmcp/safety/EvaluationTurnGuard#tryAcquire",
                         "java/lang/ProcessHandle#onExit");
@@ -53,7 +57,7 @@ class McmcpRuntimeEvaluationTurnContractTest {
                 .filter(method -> method.name.startsWith(
                         "lambda$acquireEvaluationTurnWithGateHeld"))
                 .flatMap(method -> invocations(method).stream()))
-                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#releaseAllAndConfirmNoInputOwner");
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController#releaseAllAndConfirmNoInputOwner");
         assertThat(runtime.methods.stream()
                 .filter(method -> method.name.startsWith("lambda$acquire$"))
                 .flatMap(method -> fieldAccesses(method).stream()))
@@ -61,14 +65,13 @@ class McmcpRuntimeEvaluationTurnContractTest {
         assertThat(runtime.methods.stream()
                 .filter(method -> method.name.startsWith("lambda$acquire$"))
                 .flatMap(method -> invocations(method).stream()))
-                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#requestEvaluationReleaseFromAnyThread");
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController#requestEvaluationReleaseFromAnyThread");
     }
 
     @Test
     void everyEvaluationTerminalRunsPriorityStopBeforeGuardPublication()
             throws Exception {
-        var terminal = invocations(method(classNode(),
-                "terminateEvaluationLeaseOnClient"));
+        var terminal = invocations(method(controllerNode(), "terminateEvaluationLeaseOnClient"));
 
         assertThat(terminal)
                 .contains(
@@ -86,7 +89,7 @@ class McmcpRuntimeEvaluationTurnContractTest {
                 "dev/aod/mcmcp/safety/EvaluationTurnGuard#revoke"));
         assertThat(terminal)
                 .containsSubsequence(
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#evaluationTerminalReasonIfSafe",
+                        "dev/aod/mcmcp/runtime/EvaluationLeaseController#evaluationTerminalReasonIfSafe",
                         "dev/aod/mcmcp/safety/EvaluationTurnGuard#release");
     }
 
@@ -94,13 +97,13 @@ class McmcpRuntimeEvaluationTurnContractTest {
     void unconfirmedCleanupCannotPublishAndLaterSuccessKeepsTheFirstReason() {
         var first = EvaluationTurnControl.ReleaseReason.LOCAL_ESCAPE;
 
-        assertThat(McmcpRuntime.evaluationTerminalReasonIfSafe(first, false, false, false))
+        assertThat(EvaluationLeaseController.evaluationTerminalReasonIfSafe(first, false, false, false))
                 .isEmpty();
-        assertThat(McmcpRuntime.evaluationTerminalReasonIfSafe(first, true, false, true))
+        assertThat(EvaluationLeaseController.evaluationTerminalReasonIfSafe(first, true, false, true))
                 .isEmpty();
-        assertThat(McmcpRuntime.evaluationTerminalReasonIfSafe(first, true, true, false))
+        assertThat(EvaluationLeaseController.evaluationTerminalReasonIfSafe(first, true, true, false))
                 .isEmpty();
-        assertThat(McmcpRuntime.evaluationTerminalReasonIfSafe(first, true, true, true))
+        assertThat(EvaluationLeaseController.evaluationTerminalReasonIfSafe(first, true, true, true))
                 .contains(first);
     }
 
@@ -108,13 +111,13 @@ class McmcpRuntimeEvaluationTurnContractTest {
     void terminalReceiptRequiresAMeasuredOwnerNoneAfterEmergencyCleanup()
             throws Exception {
         var runtime = classNode();
-        assertThat(invocations(method(runtime, "terminateEvaluationLeaseOnClient")))
+        assertThat(invocations(method(controllerNode(), "terminateEvaluationLeaseOnClient")))
                 .containsSubsequence(
                         "dev/aod/mcmcp/runtime/ClientCommandInbox$StopReceipt#inputsReleased",
                         "dev/aod/mcmcp/runtime/ClientCommandInbox$StopReceipt#inputOwnerNone",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#evaluationActionsTerminal",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#evaluationTerminalReasonIfSafe");
-        assertThat(invocations(method(runtime, "releaseAllAndConfirmNoInputOwner")))
+                        "java/util/function/BooleanSupplier#getAsBoolean",
+                        "dev/aod/mcmcp/runtime/EvaluationLeaseController#evaluationTerminalReasonIfSafe");
+        assertThat(invocations(method(controllerNode(), "releaseAllAndConfirmNoInputOwner")))
                 .containsSubsequence(
                         "dev/aod/mcmcp/safety/InputReleaseController#releaseAll",
                         "dev/aod/mcmcp/safety/InputReleaseController#inputOwnerNone");
@@ -124,23 +127,23 @@ class McmcpRuntimeEvaluationTurnContractTest {
     void evaluationTerminalRetainsTheStopFutureWithoutBlockingTheClientThread()
             throws Exception {
         var runtime = classNode();
-        var terminal = invocations(method(runtime, "terminateEvaluationLeaseOnClient"));
+        var terminal = invocations(method(controllerNode(), "terminateEvaluationLeaseOnClient"));
         var pending = classNode(
-                "/dev/aod/mcmcp/runtime/McmcpRuntime$PendingEvaluationTerminal.class");
+                "/dev/aod/mcmcp/runtime/EvaluationLeaseController$PendingEvaluationTerminal.class");
 
         assertThat(terminal)
                 .containsSubsequence(
-                        "dev/aod/mcmcp/runtime/McmcpRuntime$PendingEvaluationTerminal#stopCompletion",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime$PendingEvaluationTerminal#retainStopCompletion",
+                        "dev/aod/mcmcp/runtime/EvaluationLeaseController$PendingEvaluationTerminal#stopCompletion",
+                        "dev/aod/mcmcp/runtime/EvaluationLeaseController$PendingEvaluationTerminal#retainStopCompletion",
                         "dev/aod/mcmcp/runtime/ClientCommandInbox#drainEmergencyStopPreTick",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime$PendingEvaluationTerminal#stopOutcome")
+                        "dev/aod/mcmcp/runtime/EvaluationLeaseController$PendingEvaluationTerminal#stopOutcome")
                 .doesNotContain(
                         "java/util/concurrent/CompletableFuture#join",
                         "java/util/concurrent/Future#get");
         assertThat(fieldAccesses(pending.methods.stream()
                 .filter(candidate -> candidate.name.equals("retainStopCompletion"))
                 .findFirst().orElseThrow()))
-                .contains("dev/aod/mcmcp/runtime/McmcpRuntime$PendingEvaluationTerminal#stopCompletion");
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController$PendingEvaluationTerminal#stopCompletion");
         assertThat(invocations(pending.methods.stream()
                 .filter(candidate -> candidate.name.equals("retainStopCompletion"))
                 .findFirst().orElseThrow()))
@@ -173,7 +176,7 @@ class McmcpRuntimeEvaluationTurnContractTest {
     void localAndLifecycleStopsRevokeTheEvaluationGuardInline() throws Exception {
         var runtime = classNode();
         String terminate =
-                "dev/aod/mcmcp/runtime/McmcpRuntime#terminateActiveEvaluationOnClient";
+                "dev/aod/mcmcp/runtime/EvaluationLeaseController#terminateActiveEvaluationOnClient";
 
         assertThat(invocations(method(runtime, "emergencyStopFromLocalKey")))
                 .contains(terminate);
@@ -193,15 +196,15 @@ class McmcpRuntimeEvaluationTurnContractTest {
         var preTick = invocations(method(classNode(), "onPreTick"));
         assertThat(preTick)
                 .containsSubsequence(
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#finishPendingEvaluationTerminalOnClient",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#terminateInvalidEvaluationLeaseOnClient",
+                        "dev/aod/mcmcp/runtime/EvaluationLeaseController#finishPendingEvaluationTerminalOnClient",
+                        "dev/aod/mcmcp/runtime/EvaluationLeaseController#terminateInvalidEvaluationLeaseOnClient",
                         "dev/aod/mcmcp/runtime/McmcpRuntime#retryPendingAgentInputRelease",
                         "dev/aod/mcmcp/runtime/McmcpRuntime#tickActiveRoutine",
                         "dev/aod/mcmcp/runtime/McmcpRuntime#tickAgentAction");
         assertThat(preTick)
                 .containsSubsequence(
                         "dev/aod/mcmcp/runtime/McmcpRuntime#localControlAvailable",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#terminateActiveEvaluationOnClient");
+                        "dev/aod/mcmcp/runtime/EvaluationLeaseController#terminateActiveEvaluationOnClient");
     }
 
     @Test
@@ -223,11 +226,28 @@ class McmcpRuntimeEvaluationTurnContractTest {
         assertThat(callsBeforePendingReturn).doesNotContain(
                 "dev/aod/mcmcp/runtime/McmcpRuntime#tickActiveRoutine",
                 "dev/aod/mcmcp/runtime/McmcpRuntime#tickAgentAction");
-        for (String admission : List.of("captureAgentAdmission", "commitAgentAction")) {
+        for (String admission : List.of("commitAgentAction")) {
             assertThat(fieldAccesses(method(classNode(), admission))).contains(
                     "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentInputRelease",
                     "dev/aod/mcmcp/runtime/McmcpRuntime#agentExecution");
         }
+        var admission = classNode("/dev/aod/mcmcp/runtime/ActionAdmission.class");
+        assertThat(invocations(method(admission, "captureAgentAdmission")))
+                .contains("java/util/function/BooleanSupplier#getAsBoolean");
+        assertThat(fieldAccesses(method(admission, "captureAgentAdmission")))
+                .contains("dev/aod/mcmcp/runtime/ActionAdmission#busy");
+        var busyChecks = classNode().methods.stream()
+                .filter(candidate -> candidate.name.startsWith("lambda$new$"))
+                .filter(candidate -> fieldAccesses(candidate).contains(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentInputRelease"))
+                .toList();
+        assertThat(busyChecks).hasSize(1);
+        assertThat(fieldAccesses(busyChecks.getFirst())).contains(
+                "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentInputRelease",
+                "dev/aod/mcmcp/runtime/McmcpRuntime#agentExecution");
+        assertThat(invocations(busyChecks.getFirst())).contains(
+                "dev/aod/mcmcp/agent/action/AgentActionStore#active",
+                "dev/aod/mcmcp/routine/RoutineManager#activeRoutineId");
     }
 
     @Test
@@ -237,9 +257,9 @@ class McmcpRuntimeEvaluationTurnContractTest {
 
         assertThat(invocations(method(runtime, "onPreTick")))
                 .containsSubsequence(
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#finishPendingEvaluationTerminalOnClient",
+                        "dev/aod/mcmcp/runtime/EvaluationLeaseController#finishPendingEvaluationTerminalOnClient",
                         "dev/aod/mcmcp/runtime/ClientCommandInbox#drainControlsPreTick");
-        assertThat(runtime.methods.stream()
+        assertThat(controllerNode().methods.stream()
                 .filter(method -> method.name.startsWith("lambda$release"))
                 .flatMap(method -> invocations(method).stream()))
                 .doesNotContain("java/util/concurrent/CompletableFuture#completeExceptionally");
@@ -250,23 +270,23 @@ class McmcpRuntimeEvaluationTurnContractTest {
             throws Exception {
         var runtime = classNode();
         var pending = classNode(
-                "/dev/aod/mcmcp/runtime/McmcpRuntime$PendingEvaluationTerminal.class");
+                "/dev/aod/mcmcp/runtime/EvaluationLeaseController$PendingEvaluationTerminal.class");
         var reason = pending.fields.stream()
                 .filter(field -> field.name.equals("reason"))
                 .findFirst()
                 .orElseThrow();
 
         assertThat(reason.access & Opcodes.ACC_FINAL).isNotZero();
-        assertThat(invocations(method(runtime, "release")))
-                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#claimEvaluationTerminal");
-        assertThat(invocations(method(runtime, "terminateActiveEvaluationOnClient")))
+        assertThat(invocations(method(controllerNode(), "release")))
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController#claimEvaluationTerminal");
+        assertThat(invocations(method(controllerNode(), "terminateActiveEvaluationOnClient")))
                 .containsSubsequence(
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#claimEvaluationTerminal",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#terminateEvaluationLeaseOnClient");
+                        "dev/aod/mcmcp/runtime/EvaluationLeaseController#claimEvaluationTerminal",
+                        "dev/aod/mcmcp/runtime/EvaluationLeaseController#terminateEvaluationLeaseOnClient");
         assertThat(invocations(method(runtime, "emergencyStopFromLocalKey")))
-                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#terminateActiveEvaluationOnClient");
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController#terminateActiveEvaluationOnClient");
         assertThat(invocations(method(runtime, "disableAutomationFromUi")))
-                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#terminateActiveEvaluationOnClient");
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController#terminateActiveEvaluationOnClient");
     }
 
     @Test
@@ -280,11 +300,11 @@ class McmcpRuntimeEvaluationTurnContractTest {
         assertThat(invocations(method(classNode(), "reportEndpointFault")))
                 .containsSubsequence(
                         "dev/aod/mcmcp/runtime/ClientCommandInbox#requestEmergencyStop",
-                        "dev/aod/mcmcp/safety/EvaluationTurnGuard#snapshot");
+                        "dev/aod/mcmcp/runtime/EvaluationLeaseController#snapshot");
         assertThat(classNode().methods.stream()
                 .filter(method -> method.name.startsWith("lambda$reportEndpointFault"))
                 .flatMap(method -> invocations(method).stream()))
-                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#requestEvaluationReleaseFromAnyThread");
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController#requestEvaluationReleaseFromAnyThread");
     }
 
     @Test
@@ -292,7 +312,7 @@ class McmcpRuntimeEvaluationTurnContractTest {
         var runtime = classNode();
         assertThat(invocations(method(runtime, "automationUiSnapshot")))
                 .containsSubsequence(
-                        "dev/aod/mcmcp/safety/EvaluationTurnGuard#snapshot",
+                        "dev/aod/mcmcp/runtime/EvaluationLeaseController#snapshot",
                         "dev/aod/mcmcp/runtime/AutomationUiSnapshot#resolve");
         assertThat(runtime.methods).noneMatch(method ->
                 method.name.equals("inputIsolationActive"));
@@ -318,7 +338,9 @@ class McmcpRuntimeEvaluationTurnContractTest {
         assertThat(invocations(method(runtime, "requireLiveCall")))
                 .contains("dev/aod/mcmcp/mcp/RuntimeCallContext#evaluationLeaseCurrent");
         assertThat(invocations(method(runtime, "withEvaluationLeaseFence")))
-                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#withEvaluationTurnGate");
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController#withFence");
+        assertThat(invocations(method(controllerNode(), "withFence")))
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController#withEvaluationTurnGate");
     }
 
     @Test
@@ -331,7 +353,7 @@ class McmcpRuntimeEvaluationTurnContractTest {
         var admissionAttempting = new java.util.concurrent.CountDownLatch(1);
 
         try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
-            var absentCommit = executor.submit(() -> McmcpRuntime.withEvaluationTurnGate(
+            var absentCommit = executor.submit(() -> EvaluationLeaseController.withEvaluationTurnGate(
                     gate,
                     () -> {
                         absentCommitEntered.countDown();
@@ -350,7 +372,7 @@ class McmcpRuntimeEvaluationTurnContractTest {
 
             var admission = executor.submit(() -> {
                 admissionAttempting.countDown();
-                return McmcpRuntime.withEvaluationTurnGate(
+                return EvaluationLeaseController.withEvaluationTurnGate(
                         gate, () -> !automationPending.get());
             });
             assertThat(admissionAttempting.await(1, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
@@ -369,6 +391,45 @@ class McmcpRuntimeEvaluationTurnContractTest {
                 .containsSubsequence(
                         "dev/aod/mcmcp/agent/action/AgentActionStore#awaitTerminal",
                         "dev/aod/mcmcp/runtime/McmcpRuntime#withEvaluationLeaseFence");
+    }
+
+    @Test
+    void controllerSuppliersUseRuntimeAdmissionAndTerminalEvidence() throws Exception {
+        var runtime = classNode();
+        var readyChecks = runtime.methods.stream()
+                .filter(candidate -> candidate.name.startsWith("lambda$new$"))
+                .filter(candidate -> fieldAccesses(candidate).contains(
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#endpointFaultCode"))
+                .toList();
+        assertThat(readyChecks).hasSize(1);
+        assertThat(fieldAccesses(readyChecks.getFirst())).contains(
+                "dev/aod/mcmcp/runtime/McmcpRuntime#paused",
+                "dev/aod/mcmcp/runtime/McmcpRuntime#endpointFaultCode");
+        assertThat(invocations(readyChecks.getFirst())).contains(
+                "net/minecraft/client/Minecraft#isPaused");
+        var targets = new ArrayList<String>();
+        for (var instruction : method(runtime, "<init>").instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.InvokeDynamicInsnNode dynamic) {
+                for (Object argument : dynamic.bsmArgs) {
+                    if (argument instanceof org.objectweb.asm.Handle handle) {
+                        targets.add(handle.getOwner() + "#" + handle.getName());
+                    }
+                }
+            }
+        }
+        assertThat(targets).contains(
+                "dev/aod/mcmcp/runtime/McmcpRuntime#automationActivityPending",
+                "dev/aod/mcmcp/runtime/McmcpRuntime#evaluationActionsTerminal");
+        assertThat(fieldAccesses(method(controllerNode(), "acquireEvaluationTurnWithGateHeld")))
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController#automationActivityPending");
+        assertThat(fieldAccesses(method(controllerNode(), "terminateEvaluationLeaseOnClient")))
+                .contains("dev/aod/mcmcp/runtime/EvaluationLeaseController#actionsTerminal");
+        assertThat(invocations(method(controllerNode(), "snapshot")))
+                .contains("dev/aod/mcmcp/safety/EvaluationTurnGuard#snapshot");
+    }
+
+    private static ClassNode controllerNode() throws Exception {
+        return classNode("/dev/aod/mcmcp/runtime/EvaluationLeaseController.class");
     }
 
     private static ClassNode classNode() throws Exception {

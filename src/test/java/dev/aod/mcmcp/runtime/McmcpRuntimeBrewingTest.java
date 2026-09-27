@@ -18,7 +18,7 @@ class McmcpRuntimeBrewingTest {
                 "minecraft:brewing_stand",
                 "minecraft:nether_wart",
                 "minecraft:blaze_powder");
-        var request = McmcpRuntime.brewingRequest(brew, aim(brew), 1.25F);
+        var request = InventoryRequests.brewingRequest(brew, aim(brew), 1.25F);
 
         assertThat(request.target().dimension()).isEqualTo("minecraft:overworld");
         assertThat(request.operation().kind()).isEqualTo("brew_known_potion_batch");
@@ -33,7 +33,7 @@ class McmcpRuntimeBrewingTest {
                 .containsEntry("x", 2.5D)
                 .containsEntry("y", 65.0D)
                 .containsEntry("z", 3.5D);
-        assertThat(McmcpRuntime.structuralPrimitiveCost(
+        assertThat(ActionPlanning.structuralPrimitiveCost(
                 brew("minecraft:brewing_stand", "minecraft:nether_wart",
                         "minecraft:blaze_powder")).orElseThrow().interactions())
                 .isEqualTo(16);
@@ -43,23 +43,23 @@ class McmcpRuntimeBrewingTest {
     void rejectsWrongStationFuelAndUnknownTransitionAtTheInternalBoundary() {
         ActionDsl.BrewKnownPotionBatch wrongStation = brew(
                 "minecraft:barrel", "minecraft:nether_wart", "minecraft:blaze_powder");
-        assertThatThrownBy(() -> McmcpRuntime.brewingRequest(
+        assertThatThrownBy(() -> InventoryRequests.brewingRequest(
                 wrongStation, aim(wrongStation), 1.25F))
                 .isInstanceOf(IllegalArgumentException.class);
         ActionDsl.BrewKnownPotionBatch wrongFuel = brew(
                 "minecraft:brewing_stand", "minecraft:nether_wart", "minecraft:coal");
-        assertThatThrownBy(() -> McmcpRuntime.brewingRequest(
+        assertThatThrownBy(() -> InventoryRequests.brewingRequest(
                 wrongFuel, aim(wrongFuel), 1.25F))
                 .isInstanceOf(IllegalArgumentException.class);
         ActionDsl.BrewKnownPotionBatch wrongTransition = brew(
                 "minecraft:brewing_stand", "minecraft:diamond", "minecraft:blaze_powder");
-        assertThatThrownBy(() -> McmcpRuntime.brewingRequest(
+        assertThatThrownBy(() -> InventoryRequests.brewingRequest(
                 wrongTransition, aim(wrongTransition), 1.25F))
                 .isInstanceOf(IllegalArgumentException.class);
         ActionDsl.BrewKnownPotionBatch invalidCamera = brew(
                 "minecraft:brewing_stand", "minecraft:nether_wart",
                 "minecraft:blaze_powder");
-        assertThatThrownBy(() -> McmcpRuntime.brewingRequest(
+        assertThatThrownBy(() -> InventoryRequests.brewingRequest(
                 invalidCamera, aim(invalidCamera), 0.5F))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -69,9 +69,9 @@ class McmcpRuntimeBrewingTest {
         ActionDsl.BrewKnownPotionBatch brew = brew(
                 "minecraft:brewing_stand", "minecraft:nether_wart",
                 "minecraft:blaze_powder");
-        assertThatThrownBy(() -> McmcpRuntime.brewingRequest(brew, null, 1.25F))
+        assertThatThrownBy(() -> InventoryRequests.brewingRequest(brew, null, 1.25F))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> McmcpRuntime.brewingRequest(
+        assertThatThrownBy(() -> InventoryRequests.brewingRequest(
                 brew,
                 new dev.aod.mcmcp.agent.action.AgentPrimitivePlanner.MutationAim(
                         new ActionDsl.Position("minecraft:overworld", 3, 64, 3),

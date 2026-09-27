@@ -13,6 +13,12 @@ final class McpTestFixtures {
     }
 
     static Map<String, Object> state() {
+        var result = new LinkedHashMap<>(baseState());
+        result.put("placement_materials", List.of());
+        return Map.copyOf(result);
+    }
+
+    private static Map<String, Object> baseState() {
         return Map.of(
                 "schema_version", 1,
                 "control", Map.of(

@@ -1,0 +1,21 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "type":"object","additionalProperties":false,
+  "required":["version","anchor","rotation","rows","palette","start_support_state","supply","torches","torch_source"],
+  "properties":{
+    "version":{"const":1},
+    "anchor":{"$ref":"#/$defs/position"},
+    "rotation":{"enum":[0,90,180,270]},
+    "rows":{"type":"array","minItems":1,"maxItems":128,"items":{"type":"string","pattern":"^[A-Za-z0-9]{1,128}$"}},
+    "palette":{"type":"object","minProperties":1,"maxProperties":32,"propertyNames":{"pattern":"^[A-Za-z0-9]$"},"additionalProperties":{"$ref":"#/$defs/material"}},
+    "start_support_state":{"$ref":"#/$defs/state"},
+    "supply":{"oneOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["position","block"],"properties":{"position":{"$ref":"#/$defs/position"},"block":{"enum":["minecraft:chest","minecraft:barrel"]}}}]},
+    "torches":{"type":"array","maxItems":16384,"items":{"type":"object","additionalProperties":false,"required":["u","v"],"properties":{"u":{"type":"integer","minimum":0,"maximum":127},"v":{"type":"integer","minimum":0,"maximum":127}}}},
+    "torch_source":{"oneOf":[{"type":"null"},{"$ref":"#/$defs/position"}]}
+  },
+  "$defs":{
+    "position":{"type":"object","additionalProperties":false,"required":["dimension","x","y","z"],"properties":{"dimension":{"const":"minecraft:overworld"},"x":{"type":"integer","minimum":-29999800,"maximum":29999800},"y":{"type":"integer","minimum":-64,"maximum":318},"z":{"type":"integer","minimum":-29999800,"maximum":29999800}}},
+    "state":{"type":"object","additionalProperties":false,"required":["block","properties"],"properties":{"block":{"type":"string","pattern":"^minecraft:[a-z0-9_]{1,100}$"},"properties":{"type":"object","maxProperties":32,"propertyNames":{"pattern":"^[a-z][a-z0-9_]{0,63}$"},"additionalProperties":{"type":"string","maxLength":64}}}},
+    "material":{"type":"object","additionalProperties":false,"required":["item","state","source"],"properties":{"item":{"type":"string","pattern":"^minecraft:[a-z0-9_]{1,100}$"},"state":{"$ref":"#/$defs/state"},"source":{"oneOf":[{"type":"null"},{"$ref":"#/$defs/position"}]}}}
+  }
+}

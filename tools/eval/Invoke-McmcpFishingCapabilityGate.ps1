@@ -9,17 +9,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$fishingArtifactDirectory = $ArtifactDirectory
-$fishingTokenPath = $TokenPath
-$fishingEndpoint = $Endpoint
-$fishingLibraryOnly = [bool]$LibraryOnly
-$commonRunner = Join-Path $PSScriptRoot 'Invoke-McmcpConstructionCapabilityGate.ps1'
-. $commonRunner -Gate navigation -ArtifactDirectory $fishingArtifactDirectory `
-    -TokenPath $fishingTokenPath -Endpoint $fishingEndpoint -LibraryOnly
-$ArtifactDirectory = $fishingArtifactDirectory
-$TokenPath = $fishingTokenPath
-$Endpoint = $fishingEndpoint
-$LibraryOnly = $fishingLibraryOnly
+. (Join-Path $PSScriptRoot 'McmcpCapabilityGateSupport.ps1')
 
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null

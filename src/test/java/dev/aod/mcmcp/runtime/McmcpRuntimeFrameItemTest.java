@@ -18,7 +18,7 @@ class McmcpRuntimeFrameItemTest {
         for (ActionDsl.Node node : new ActionDsl.Node[] {
                 new ActionDsl.RemoveVisibleFrameItem("remove", REF, "minecraft:stone"),
                 new ActionDsl.InsertVisibleFrameItem("insert", REF, "minecraft:torch")}) {
-            var cost = McmcpRuntime.structuralPrimitiveCost(node).orElseThrow();
+            var cost = ActionPlanning.structuralPrimitiveCost(node).orElseThrow();
             assertThat(cost.durationMillis()).isEqualTo(20_000L);
             assertThat(cost.ticks()).isEqualTo(400L);
             assertThat(cost.cameraDegrees()).isEqualTo(360.0D);
@@ -31,33 +31,33 @@ class McmcpRuntimeFrameItemTest {
 
     @Test
     void freshFrameRaysAreRequestedOnlyForTheExactFramePrimitive() {
-        assertThat(McmcpRuntime.frameItemTargetRef(
+        assertThat(ActionPlanning.frameItemTargetRef(
                 new ActionDsl.RemoveVisibleFrameItem("remove", REF, "minecraft:stone"))).isEqualTo(REF);
-        assertThat(McmcpRuntime.frameItemTargetRef(
+        assertThat(ActionPlanning.frameItemTargetRef(
                 new ActionDsl.InsertVisibleFrameItem("insert", REF, "minecraft:torch"))).isEqualTo(REF);
-        assertThat(McmcpRuntime.frameItemTargetRef(null)).isNull();
-        assertThat(McmcpRuntime.frameItemTargetRef(new ActionDsl.WaitTicks("wait", 1))).isNull();
+        assertThat(ActionPlanning.frameItemTargetRef(null)).isNull();
+        assertThat(ActionPlanning.frameItemTargetRef(new ActionDsl.WaitTicks("wait", 1))).isNull();
     }
 
     @Test
     void refreshedDeliveryCanAdvanceClocksWithoutChangingTheAuthorizedOperation() {
         var original = aim(REF, "minecraft:item_frame", "minecraft:stone", null, 3, AIM, 10, 4);
-        assertThat(McmcpRuntime.sameFrameItemAuthorization(original, original)).isTrue();
-        assertThat(McmcpRuntime.sameFrameItemAuthorization(original,
+        assertThat(ActionEvidence.sameFrameItemAuthorization(original, original)).isTrue();
+        assertThat(ActionEvidence.sameFrameItemAuthorization(original,
                 aim(REF, "minecraft:item_frame", "minecraft:stone", null, 3, AIM, 11, 5))).isTrue();
-        assertThat(McmcpRuntime.sameFrameItemAuthorization(original,
+        assertThat(ActionEvidence.sameFrameItemAuthorization(original,
                 aim(REF, "minecraft:item_frame", "minecraft:stone", null, 3, AIM, 9, 4))).isFalse();
-        assertThat(McmcpRuntime.sameFrameItemAuthorization(original,
+        assertThat(ActionEvidence.sameFrameItemAuthorization(original,
                 aim(REF, "minecraft:item_frame", "minecraft:stone", null, 3, AIM, 11, 3))).isFalse();
     }
 
     @Test
     void actualClientTickBoundsRawEntityAgeIndependentlyOfCompositeFrameRefresh() {
         var observed = aim(REF, "minecraft:item_frame", "minecraft:stone", null, 3, AIM, 10, 4);
-        assertThat(McmcpRuntime.frameItemEvidenceFresh(observed, 9)).isFalse();
-        assertThat(McmcpRuntime.frameItemEvidenceFresh(observed, 10)).isTrue();
-        assertThat(McmcpRuntime.frameItemEvidenceFresh(observed, 110)).isTrue();
-        assertThat(McmcpRuntime.frameItemEvidenceFresh(observed, 111)).isFalse();
+        assertThat(ActionEvidence.frameItemEvidenceFresh(observed, 9)).isFalse();
+        assertThat(ActionEvidence.frameItemEvidenceFresh(observed, 10)).isTrue();
+        assertThat(ActionEvidence.frameItemEvidenceFresh(observed, 110)).isTrue();
+        assertThat(ActionEvidence.frameItemEvidenceFresh(observed, 111)).isFalse();
     }
 
     @Test
@@ -72,10 +72,10 @@ class McmcpRuntimeFrameItemTest {
                 aim(REF, "minecraft:item_frame", null, "minecraft:stone", 3, AIM, 10, 4)
         };
         for (var candidate : changed) {
-            assertThat(McmcpRuntime.sameFrameItemAuthorization(original, candidate)).isFalse();
+            assertThat(ActionEvidence.sameFrameItemAuthorization(original, candidate)).isFalse();
         }
-        assertThat(McmcpRuntime.sameFrameItemAuthorization(original, null)).isFalse();
-        assertThat(McmcpRuntime.sameFrameItemAuthorization(null, original)).isFalse();
+        assertThat(ActionEvidence.sameFrameItemAuthorization(original, null)).isFalse();
+        assertThat(ActionEvidence.sameFrameItemAuthorization(null, original)).isFalse();
     }
 
     private static AgentPrimitivePlanner.FrameItemAim aim(

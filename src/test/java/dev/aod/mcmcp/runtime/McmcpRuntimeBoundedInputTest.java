@@ -21,7 +21,7 @@ class McmcpRuntimeBoundedInputTest {
                                 "instrument", "harp", "note", "0", "powered", "false")))),
                 Optional.of("minecraft:fishing_rod"));
 
-        assertThat(McmcpRuntime.structuralPrimitiveCost(hold).orElseThrow())
+        assertThat(ActionPlanning.structuralPrimitiveCost(hold).orElseThrow())
                 .isEqualTo(new dev.aod.mcmcp.agent.dsl.ActionDslCompiler.Cost(
                         86_400_000L, 1_728_000L, 0.0D, 0.0D, 1L, 0L, 0L));
     }

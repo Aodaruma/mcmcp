@@ -85,8 +85,8 @@ A tag push publishes a non-draft Release. **Do not promote a hotfix to a release
 3. [配布手順](../tools/release/README.md)に従ってバージョンタグを公開する。接尾辞付きはPre-releaseとし、既存tagとRelease assetは書き換えない。<br>
    Follow the release guide to publish a version tag. Mark suffixed versions as Pre-releases; never rewrite existing tags or release assets.
 
-**2026-09-06時点の保留:** `ba327f8`のoffhand修正は実機不合格で、配布へ昇格できません。[開封手の実験記録](experiments/20260906_container_transfer_stable_open_hand.md)と後続Issueを参照し、修正版の実機合格を記録してから判断してください。<br>
-**Hold as of 2026-09-06:** The offhand fix in `ba327f8` failed game verification and must not be promoted. Consult the linked experiment and follow-up issue; require recorded acceptance of the corrected build before promotion.
+**2026-09-22の再検証:** `ba327f8`のoffhand修正自体は引き続き実機不合格です。後続のMAIN_HAND/prediction修正版は、rc.3の版付きJARで単独inspect、14スタックtake後の再inspectとstoreに成功しました。[rc.3検証記録](experiments/20260922_release_rc3.md)に対象hash、部分成功からの再開、残る検証範囲を記録しています。<br>
+**Revalidated on 2026-09-22:** The failed `ba327f8` build remains rejected. The subsequent MAIN_HAND/prediction fix passed standalone inspection and reopening/store after a 14-stack take in the versioned rc.3 build. See the linked record for hashes, partial-transfer recovery and verification limits.
 
 配布物は[MPL-2.0](../LICENSE)・[NOTICE](../NOTICE.md)・対応ソース情報を含めます。別途CLAは追加しません。ログや実験添付も、トークン・個人情報・非公開サーバー情報を公開前にredactします。<br>
 Include MPL-2.0, NOTICE, and corresponding source information in distributions. Do not add a separate CLA. Redact tokens, personal data, and private server information from logs and experiment attachments before publication.

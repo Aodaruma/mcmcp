@@ -35,6 +35,14 @@ final class SurfacePreflightRecovery {
             case ActionDsl.InspectKnownContainer node -> new Target(node.target(), node.expectedBlock());
             case ActionDsl.TakeKnownContainerStack node -> new Target(node.target(), node.expectedBlock());
             case ActionDsl.StoreKnownContainerStack node -> new Target(node.target(), node.expectedBlock());
+            case ActionDsl.CraftKnownRecipe node -> new Target(node.target(), node.expectedState().block());
+            case ActionDsl.ExtendKnownFloor node -> new Target(node.support(), node.expectedSupport().block());
+            case ActionDsl.ApplyKnownBlockPlan node -> {
+                if (node.entries().size() != 1) yield null;
+                var support = node.entries().getFirst().support();
+                yield support.expectedState()
+                        .map(state -> new Target(support.position(), state.block())).orElse(null);
+            }
             case null, default -> null;
         };
     }

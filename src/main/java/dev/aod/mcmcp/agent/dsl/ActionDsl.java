@@ -42,7 +42,7 @@ public final class ActionDsl {
             HoldBoundedInputs,
             TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
             HarvestKnownWheat, HarvestKnownWheatBatch, ApplyKnownBlockPlan,
-            ClearKnownBlockPlan, PillarUpKnown,
+            ClearKnownBlockPlan, PillarUpKnown, ExtendKnownFloor,
             ApplyKnownRedstoneSpec,
             OpenKnownFenceGate,
             OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
@@ -434,6 +434,24 @@ public final class ActionDsl {
         }
     }
 
+    /** One cardinal, crouched edge extension, followed by settlement on the confirmed floor. */
+    public record ExtendKnownFloor(String id, Position support, BlockStateSpec expectedSupport,
+            BlockFace direction, String placementStateRef) implements Node {
+        public ExtendKnownFloor {
+            Objects.requireNonNull(id); Objects.requireNonNull(support);
+            Objects.requireNonNull(expectedSupport); Objects.requireNonNull(direction);
+            Objects.requireNonNull(placementStateRef);
+            if (direction == BlockFace.UP || direction == BlockFace.DOWN)
+                throw new IllegalArgumentException("floor direction must be horizontal");
+        }
+
+        /** Reuses the full-block source and centered support admission contract; never dispatched. */
+        public PillarUpKnown sourceWitness() {
+            return new PillarUpKnown(id, support, expectedSupport,
+                    Optional.empty(), Optional.empty(), Optional.of(placementStateRef));
+        }
+    }
+
     /** Exactly one of expectedState and dependencyEntryId is present. */
     public record PlacementSupport(
             Position position,
@@ -573,7 +591,8 @@ public final class ActionDsl {
             int minimumInventoryCount,
             Optional<RoutingLabel> routingLabel,
             int maxStacks,
-            int maxTransferCount) implements Node {
+            int maxTransferCount,
+            int transferCount) implements Node {
         public TakeKnownContainerStack {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
@@ -581,6 +600,18 @@ public final class ActionDsl {
             Objects.requireNonNull(item, "item");
             Objects.requireNonNull(stackPolicy, "stackPolicy");
             Objects.requireNonNull(routingLabel, "routingLabel");
+        }
+
+        public TakeKnownContainerStack(String id, Position target, String expectedBlock,
+                String item, String stackPolicy, int minimumInventoryCount,
+                Optional<RoutingLabel> routingLabel, int maxStacks, int maxTransferCount) {
+            this(id, target, expectedBlock, item, stackPolicy, minimumInventoryCount,
+                    routingLabel, maxStacks, maxTransferCount, 0);
+        }
+
+        /** Exact splitting reserves the existing fourteen-click container envelope. */
+        public int maxClicks() {
+            return transferCount > 0 ? 14 : maxStacks;
         }
 
         public TakeKnownContainerStack(String id, Position target, String expectedBlock,
@@ -630,7 +661,8 @@ public final class ActionDsl {
             int minimumContainerCount,
             Optional<RoutingLabel> routingLabel,
             int maxStacks,
-            int maxTransferCount) implements Node {
+            int maxTransferCount,
+            int transferCount) implements Node {
         public StoreKnownContainerStack {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
@@ -638,6 +670,18 @@ public final class ActionDsl {
             Objects.requireNonNull(item, "item");
             Objects.requireNonNull(stackPolicy, "stackPolicy");
             Objects.requireNonNull(routingLabel, "routingLabel");
+        }
+
+        public StoreKnownContainerStack(String id, Position target, String expectedBlock,
+                String item, String stackPolicy, int minimumContainerCount,
+                Optional<RoutingLabel> routingLabel, int maxStacks, int maxTransferCount) {
+            this(id, target, expectedBlock, item, stackPolicy, minimumContainerCount,
+                    routingLabel, maxStacks, maxTransferCount, 0);
+        }
+
+        /** Exact splitting reserves the existing fourteen-click container envelope. */
+        public int maxClicks() {
+            return transferCount > 0 ? 14 : maxStacks;
         }
 
         public StoreKnownContainerStack(String id, Position target, String expectedBlock,

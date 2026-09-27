@@ -13,6 +13,33 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ContainerTransferDslTest {
     @Test
+    void exactQuantityIsDistinctFromTheAbsoluteGoalAndReservesTheExistingClickEnvelope() {
+        for (String op : List.of("take", "store")) {
+            var source = request(op);
+            var node = source.getAsJsonObject("program").getAsJsonArray("body").get(0).getAsJsonObject();
+            node.addProperty("transfer_count", 2);
+            var parsed = ActionDslParser.parse(source);
+            var bound = new ActionDslCompiler.Cost(69_000, 1_380, 0, 360, 16, 0, 0);
+            assertThat(ActionDslCompiler.compile(parsed, ignored -> Optional.of(bound),
+                    parsed.program().capabilities()).worstCaseCost()).isEqualTo(bound);
+            assertThat(ActionDslSource.capture(source).canonicalJson()).contains("\"transfer_count\":2");
+            if (parsed.program().body().getFirst() instanceof ActionDsl.TakeKnownContainerStack take) {
+                assertThat(take.transferCount()).isEqualTo(2);
+                assertThat(take.minimumInventoryCount()).isEqualTo(64);
+                assertThat(take.maxStacks()).isEqualTo(1);
+            } else {
+                var store = (ActionDsl.StoreKnownContainerStack) parsed.program().body().getFirst();
+                assertThat(store.transferCount()).isEqualTo(2);
+                assertThat(store.minimumContainerCount()).isEqualTo(64);
+                assertThat(store.maxStacks()).isEqualTo(1);
+            }
+            node.addProperty("max_transfer_count", 1);
+            assertThatThrownBy(() -> ActionDslValidator.validate(ActionDslParser.parse(source)))
+                    .isInstanceOf(ActionDslException.class);
+        }
+    }
+
+    @Test
     void allCopperChestIdsAreAcceptedForEachContainerOpcodeAndOtherContainersStayClosed() {
         var base = ActionDslParser.parse(request("take"));
         var target = new ActionDsl.Position("minecraft:overworld", 1, 64, 2);
@@ -84,7 +111,7 @@ class ContainerTransferDslTest {
     @Test
     void malformedOptionalBoundsCannotBecomeDefaultsOrOverflowTheDependentDefault() {
         for (String op : List.of("take", "store")) {
-            for (String field : List.of("max_stacks", "max_transfer_count")) {
+            for (String field : List.of("max_stacks", "max_transfer_count", "transfer_count")) {
                 for (String value : List.of("null", "0", "-1", "1.5", "2147483647",
                         field.equals("max_stacks") ? "15" : "897")) {
                     var source = request(op);

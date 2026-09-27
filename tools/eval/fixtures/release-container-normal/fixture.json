@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "containers": [
+    {
+      "y": 61,
+      "z": 6,
+      "x": -4
+    },
+    {
+      "y": 61,
+      "z": 6,
+      "x": -7
+    },
+    {
+      "y": 61,
+      "z": 6,
+      "x": -6
+    },
+    {
+      "y": 61,
+      "z": 7,
+      "x": -3
+    }
+  ],
+  "player_bounds": {
+    "min": {
+      "y": 60,
+      "z": 3,
+      "x": -9
+    },
+    "max": {
+      "y": 64,
+      "z": 10,
+      "x": -1
+    }
+  },
+  "mutation_bounds": {
+    "min": {
+      "y": 59,
+      "z": 2,
+      "x": -10
+    },
+    "max": {
+      "y": 65,
+      "z": 11,
+      "x": 0
+    }
+  },
+  "dimension": "minecraft:overworld",
+  "id": "release-container-normal",
+  "max_changed_blocks": 1000
+}

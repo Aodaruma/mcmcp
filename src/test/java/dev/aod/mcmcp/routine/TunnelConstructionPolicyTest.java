@@ -9,13 +9,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TunnelConstructionPolicyTest {
-    @Test void tunnelBreakSafetyAdmitsOreWithoutExpandingOrdinaryConstruction() {
+    @Test void tunnelBreakSafetyAdmitsOreWhileRetainingItsNarrowHazardPolicy() {
         assertThat(MinecraftApplyBlockPlanPort.tunnelBlockAllowed(
                 Blocks.DIAMOND_ORE.defaultBlockState(), false)).isTrue();
         assertThat(MinecraftApplyBlockPlanPort.tunnelBlockAllowed(
                 Blocks.DEEPSLATE.defaultBlockState(), false)).isTrue();
         assertThat(SafeConstructionBlockPolicy.allowsLiveState(
-                Blocks.DIAMOND_ORE.defaultBlockState(), false)).isFalse();
+                Blocks.DIAMOND_ORE.defaultBlockState(), false)).isTrue();
         for (var block : List.of(Blocks.GRAVEL, Blocks.SAND, Blocks.WATER, Blocks.LAVA,
                 Blocks.CHEST, Blocks.REDSTONE_ORE, Blocks.INFESTED_STONE)) {
             assertThat(MinecraftApplyBlockPlanPort.tunnelBlockAllowed(block.defaultBlockState(), false)).isFalse();
@@ -33,9 +33,9 @@ class TunnelConstructionPolicyTest {
         var tunnel = new KnownConstructionRequest(new ApplyBlockPlanRequest("tunnel", 1, 1,
                 List.of(step), bounds, ApplyBlockPlanRequest.BreakSafety.SAFE_TUNNEL_BLOCK));
         assertThat(tunnel.breakOnly()).isTrue();
-        assertThatThrownBy(() -> new KnownConstructionRequest(new ApplyBlockPlanRequest("normal", 1, 1,
-                List.of(step), bounds, ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK)))
-                .isInstanceOf(SafeConstructionBlockPolicy.UnsafeConstructionBlockException.class);
+        assertThat(new KnownConstructionRequest(new ApplyBlockPlanRequest("normal", 1, 1,
+                List.of(step), bounds, ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK))
+                .breakOnly()).isTrue();
         var other = new BlockTarget(target.dimension(), 2, 64, 0);
         var second = new ApplyBlockPlanStep("other", step.operation(), other,
                 step.expectedBefore(), step.expectedAfter(), Optional.empty(), Optional.empty());

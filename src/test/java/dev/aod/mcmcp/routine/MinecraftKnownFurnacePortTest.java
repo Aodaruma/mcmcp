@@ -263,7 +263,7 @@ class MinecraftKnownFurnacePortTest {
         ClassNode node = classNode();
 
         assertThat(invocations(node, "parseRequest"))
-                .contains("dev/aod/mcmcp/routine/MinecraftPhaseFiveInventoryPort"
+                .contains("dev/aod/mcmcp/routine/InventoryParameters"
                         + "#inventoryAimPoint");
         assertThat(invocations(node, "initialPreflight"))
                 .contains("dev/aod/mcmcp/routine/MinecraftKnownFurnacePort$FurnaceRequest"

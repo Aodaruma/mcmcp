@@ -53,9 +53,9 @@ class RoutineWireMapperTest {
     void runtimeBuildsSeparateInputAndVoiceCleanupEvidence() {
         var cancelled = snapshot(RoutineState.CANCELLED, false, null, false, null);
 
-        assertThat(McmcpRuntime.finalizationFailure(cancelled, true, true, null)).isNull();
+        assertThat(RoutineLifecycle.finalizationFailure(cancelled, true, true, null)).isNull();
 
-        var inputFailure = McmcpRuntime.finalizationFailure(
+        var inputFailure = RoutineLifecycle.finalizationFailure(
                 cancelled, false, true, null);
         assertThat(inputFailure.code()).isEqualTo("INPUT_RELEASE_FAILED");
         assertThat(inputFailure.scope()).isEqualTo(RoutineFailure.Scope.FINALIZATION);
@@ -63,7 +63,7 @@ class RoutineWireMapperTest {
                 "inputs_released", false,
                 "voicechat_restored", true));
 
-        var voiceFailure = McmcpRuntime.finalizationFailure(
+        var voiceFailure = RoutineLifecycle.finalizationFailure(
                 cancelled, true, false, "voicechat_restore_readback_mismatch");
         assertThat(voiceFailure.code()).isEqualTo("VOICECHAT_RESTORE_FAILED");
         assertThat(voiceFailure.observed()).containsExactlyInAnyOrderEntriesOf(Map.of(
@@ -78,16 +78,16 @@ class RoutineWireMapperTest {
     @Test
     void cancelReplayKeepsInputReleaseSeparateFromVoiceRestore() {
         var unfinished = snapshot(RoutineState.CANCELLED, false, null, false, null);
-        var voiceFailure = McmcpRuntime.finalizationFailure(
+        var voiceFailure = RoutineLifecycle.finalizationFailure(
                 unfinished, true, false, "voicechat_restore_readback_mismatch");
-        var inputFailure = McmcpRuntime.finalizationFailure(
+        var inputFailure = RoutineLifecycle.finalizationFailure(
                 unfinished, false, true, null);
 
-        assertThat(McmcpRuntime.finalizationReleasedInputs(snapshot(
+        assertThat(RoutineLifecycle.finalizationReleasedInputs(snapshot(
                 RoutineState.CANCELLED, false, null, true, voiceFailure))).isTrue();
-        assertThat(McmcpRuntime.finalizationReleasedInputs(snapshot(
+        assertThat(RoutineLifecycle.finalizationReleasedInputs(snapshot(
                 RoutineState.CANCELLED, false, null, true, inputFailure))).isFalse();
-        assertThat(McmcpRuntime.finalizationReleasedInputs(unfinished)).isFalse();
+        assertThat(RoutineLifecycle.finalizationReleasedInputs(unfinished)).isFalse();
     }
 
     @Test

@@ -11,17 +11,7 @@ $ErrorActionPreference = 'Stop'
 
 # Transport, fixed-five enforcement, long-poll Action waiting, and cleanup are shared only
 # with the ordinary acceptance runner. This file owns the generator admission and oracle.
-$cobbleArtifactDirectory = $ArtifactDirectory
-$cobbleTokenPath = $TokenPath
-$cobbleEndpoint = $Endpoint
-$cobbleLibraryOnly = [bool]$LibraryOnly
-$commonRunner = Join-Path $PSScriptRoot 'Invoke-McmcpConstructionCapabilityGate.ps1'
-. $commonRunner -Gate navigation -ArtifactDirectory $cobbleArtifactDirectory `
-    -TokenPath $cobbleTokenPath -Endpoint $cobbleEndpoint -LibraryOnly
-$ArtifactDirectory = $cobbleArtifactDirectory
-$TokenPath = $cobbleTokenPath
-$Endpoint = $cobbleEndpoint
-$LibraryOnly = $cobbleLibraryOnly
+. (Join-Path $PSScriptRoot 'McmcpCapabilityGateSupport.ps1')
 
 $script:GateEvents = [Collections.Generic.List[object]]::new()
 $script:ActiveActionId = $null
