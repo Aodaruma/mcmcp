@@ -16,6 +16,7 @@ public final class KnownTraversabilityMap {
     private static final Comparator<TraversabilityEdge> EVIDENCE_ORDER = Comparator
             .comparingLong(TraversabilityEdge::worldRevision)
             .thenComparingLong(TraversabilityEdge::observedTick)
+            .thenComparing(edge -> !edge.supportedDiagonal())
             .thenComparingInt(edge -> provenanceRank(edge.provenance()))
             .thenComparingInt(edge -> statusRank(edge.status()))
             .thenComparingInt(edge -> edge.targetSupport().ordinal())
@@ -85,7 +86,8 @@ public final class KnownTraversabilityMap {
                 && previous.status() == TraversabilityEdge.Status.CONFIRMED
                 && previous.provenance() == TraversabilityEdge.Provenance.CONTACT
                 && accepted.status() == TraversabilityEdge.Status.PROBE_ALLOWED
-                && accepted.provenance() == TraversabilityEdge.Provenance.LOCAL_VOLUME) {
+                && accepted.provenance() == TraversabilityEdge.Provenance.LOCAL_VOLUME
+                && previous.supportedDiagonal() == accepted.supportedDiagonal()) {
             return false;
         }
         if (previous != null
