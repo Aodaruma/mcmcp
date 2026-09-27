@@ -717,6 +717,8 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 
 `cursor=null`の初回pageが続きpageを必要とする場合だけ、そのframeを別のpagination leaseへpinする。未完了leaseは同時最大2件で、上限中の3件目は`SERVER_BUSY`を返す。`next_cursor=null`の最終pageを生成したleaseは即座に未完了枠を解放するが、同じcursorの再送へ同じpageを返すため、完了leaseを最終access順のLRU最大2件だけ保持する。3件目の完了時は最終accessが最も古い完了leaseと全cursorを破棄し、以後の再送は`INVALID_CURSOR`とする。未完了・完了とも最終accessから60秒、初回accessから最大5分で失効し、時間は`System.nanoTime`で測る。これにより保持量を固定上限へ抑えながら、frame生成速度とLLMの推論待ちを分離し、読み切ったqueryが次のpaginationを不必要に阻害しない。announced handle、rolling frame、pagination leaseのいずれにも保持されないIDは`FRAME_EXPIRED`を返す。world unload、respawn、dimension変更で全frame、announced handle、lease、cursorを破棄する。
 
+未完了pageを読み捨てる場合は、同じ`agent_get_observation`へpage query fieldを付けず`schema_version=1`と`release_cursor`だけを渡し、そのcursorが属する未完了leaseと同leaseの全cursorを明示解放できる。成功は`release_status=released`を返し、観測pageとして扱わず配送receiptを作らない。既に最終pageまで完了したcursorは`release_status=completed`を副作用なしで返し、完了replay leaseのLRU順・idle/absolute期限を更新しない。不明・期限切れ・LRU破棄済み・別world sessionのcursorは区別せず`INVALID_CURSOR`とする。解放は指定cursorのleaseだけを破棄し、他queryのlease、announced frame、rolling frame、配送済みsurface認可、未確認配送、配送ACK、cursor期限、座標証拠TTLを更新しない。`release_cursor`と`frame_id`、`kinds`、`filter`、`cursor`、`limit`の混在はschema違反とする。
+
 `agent_get_observation`入力:
 
 - `frame_id`: `agent_get_state`が返したID
@@ -725,6 +727,8 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 - `position_bounds`: `{dimension,min_x,min_y,min_z,max_x,max_y,max_z}`の単一inclusive整数block-coordinate box。各軸で`min <= max`を要求し、任意center/radiusや複数領域は受け付けない。anchorは`visible_surface.position`、`visible_entity / hazard / unknown_boundary / sound_clue`の`floor(position)`、`traversability.navigation_target`とする
 - `cursor`: 初回null、続きは直前の`next_cursor`
 - `limit`: 1〜256件
+
+または明示解放専用形として`schema_version=1`と、放棄するleaseが返したopaqueな`release_cursor`だけを渡す。
 
 返却recordは第7章の許可条件に従い、responseには`frame_completed_tick`を含める。1回のroot queryは1目的を原則とし、作物・container・gate・建築copy sourceは`visible_surface`、落下物は`visible_entity`、移動は`traversability`を要求する。作物収穫は`block_ids=[minecraft:wheat], crop_mature=true`、小麦drop回収は`entity_types=[minecraft:item], displayed_items=[minecraft:wheat,minecraft:wheat_seeds]`のprojectionを利用できる。`visible_surface`はblock positionごとに1件へ圧縮する。植付けsupportとなるfarmlandはUPを優先し、それ以外は実ray hitが近い面を代表にする。surfaceの返却順は`crop_mature=true`、`crop_mature=false`、非作物の3群とし、各群では観測距離が近いものを先にする。複数kindを同時要求した場合は、`visible_entity / traversability / hazard / visible_surface / sound_clue / unknown_boundary`の固定順で各kindから1件ずつround-robinし、1種類がpageを占有しないよう公平にinterleaveする。
 

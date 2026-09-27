@@ -233,6 +233,72 @@ class ObservationFrameStoreTest {
     }
 
     @Test
+    void releaseAbandonedLeaseAllowsANewQueryWithoutTouchingOtherLeases() throws Exception {
+        var clock = new FakeClock();
+        var store = store(clock);
+        store.publish(frame(1, 5));
+
+        String abandoned = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1).nextCursor();
+        String retained = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1).nextCursor();
+        assertThat(store.activePaginationLeases()).isEqualTo(2);
+
+        clock.advance(Duration.ofSeconds(59));
+        assertThat(store.releaseCursor(abandoned))
+                .isEqualTo(ObservationFrameStore.CursorReleaseStatus.RELEASED);
+        assertThat(store.activePaginationLeases()).isOne();
+
+        String replacement = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1).nextCursor();
+        assertThat(replacement).isNotNull();
+        assertThat(store.activePaginationLeases()).isEqualTo(2);
+        assertFailure(
+                () -> store.page(
+                        id(1), Set.of(ObservationKind.VISIBLE_SURFACE), abandoned, 1),
+                ObservationStoreException.Code.INVALID_CURSOR);
+
+        // Releasing the first lease must not refresh the other lease's idle deadline.
+        clock.advance(Duration.ofSeconds(2));
+        assertFailure(
+                () -> store.page(
+                        id(1), Set.of(ObservationKind.VISIBLE_SURFACE), retained, 1),
+                ObservationStoreException.Code.INVALID_CURSOR);
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), replacement, 1).records())
+                .hasSize(1);
+    }
+
+    @Test
+    void releaseCompletedCursorIsSideEffectFreeAndUnknownOrClearedCursorIsInvalid()
+            throws Exception {
+        var clock = new FakeClock();
+        var store = store(clock);
+        store.publish(frame(1, 3));
+        String cursor = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1).nextCursor();
+        ObservationPage completed = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), cursor, 256);
+
+        clock.advance(Duration.ofSeconds(59));
+        assertThat(store.releaseCursor(cursor))
+                .isEqualTo(ObservationFrameStore.CursorReleaseStatus.COMPLETED);
+        clock.advance(Duration.ofSeconds(2));
+        assertFailure(() -> store.releaseCursor(cursor),
+                ObservationStoreException.Code.INVALID_CURSOR);
+        assertFailure(() -> store.releaseCursor("not-a-real-cursor"),
+                ObservationStoreException.Code.INVALID_CURSOR);
+
+        store.publish(frame(2, 3));
+        String previousSession = store.page(
+                id(2), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1).nextCursor();
+        store.clear();
+        assertFailure(() -> store.releaseCursor(previousSession),
+                ObservationStoreException.Code.INVALID_CURSOR);
+        assertThat(completed.nextCursor()).isNull();
+    }
+
+    @Test
     void completedLeaseReplayCacheEvictsTheLeastRecentlyUsedLease() throws Exception {
         var clock = new FakeClock();
         var store = store(clock);

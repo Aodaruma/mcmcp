@@ -47,6 +47,8 @@ side-effect profileをitem IDだけから推測せず、trusted Runtimeが実sta
 
 `agent_get_observation.filter`は、既にpolicy-visibleな同一frameから不要なrecordを削るdelivery-only filterです。record kindに適用可能な複数条件はANDで適用され、観測範囲やAction認可を拡張しません。
 
+`next_cursor`があるqueryを途中で打ち切るときは、`agent_get_observation`へ`{"schema_version":1,"release_cursor":"<next_cursor>"}`だけを渡します。`release_status=released`なら未完了leaseを解放済み、`completed`なら既に最終pageまで完了しており変更なしです。不明・期限切れ・別world sessionのcursorはすべて`INVALID_CURSOR`になります。解放呼出しは観測配送としてACKされず、以前に配送済みの認可やTTLも更新しません。
+
 - 作物: `block_ids=["minecraft:wheat"]`と`crop_mature=true|false`
 - 面: `faces=["up","north"]`（`down/up/north/south/west/east`。同一blockの代表面を選ぶ前に適用）
 - 落下物: `entity_types=["minecraft:item"]`と`displayed_items`
