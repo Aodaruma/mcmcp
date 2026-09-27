@@ -139,6 +139,8 @@ public final class ActionDslValidator {
         validateExclusiveNode(program.body(), node -> node instanceof ActionDsl.RemoveVisibleFrameItem
                         || node instanceof ActionDsl.InsertVisibleFrameItem,
                 "frame item operation must be the only top-level Action node");
+        validateExclusiveNode(program.body(), node -> node instanceof ActionDsl.ExtendKnownFloor,
+                "extend_known_floor must be the only top-level Action node");
         validateExclusiveNode(program.body(), node -> node instanceof ActionDsl.PillarUpKnown,
                 "pillar_up_known must be the only top-level Action node");
         validateExclusiveNode(program.body(),
@@ -661,6 +663,15 @@ public final class ActionDslValidator {
             walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_BREAK);
             return 1;
         }
+        if (node instanceof ActionDsl.ExtendKnownFloor floor) {
+            validatePosition(floor.support(), path + ".support");
+            validateBlockState(floor.expectedSupport(), path + ".expected_support");
+            requirePattern(floor.placementStateRef(), PLACEMENT_STATE_REF, path + ".placement_state_ref");
+            walk.requiredCapabilities.add(ActionDsl.Capability.MOVEMENT);
+            walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
+            walk.requiredCapabilities.add(ActionDsl.Capability.BLOCK_PLACE);
+            return 1;
+        }
         if (node instanceof ActionDsl.PillarUpKnown pillar) {
             validatePosition(pillar.support(), path + ".support");
             validateBlockState(pillar.expectedSupport(), path + ".expected_support");
@@ -735,6 +746,7 @@ public final class ActionDslValidator {
             requireRange(take.maxStacks(), 1, MAX_CONTAINER_STACKS, path + ".max_stacks");
             requireRange(take.maxTransferCount(), 1, MAX_CONTAINER_TRANSFER_COUNT,
                     path + ".max_transfer_count");
+            requireRange(take.transferCount(), 0, take.maxTransferCount(), path + ".transfer_count");
             validateRoutingLabel(take.routingLabel(), path);
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
@@ -754,6 +766,7 @@ public final class ActionDslValidator {
             requireRange(store.maxStacks(), 1, MAX_CONTAINER_STACKS, path + ".max_stacks");
             requireRange(store.maxTransferCount(), 1, MAX_CONTAINER_TRANSFER_COUNT,
                     path + ".max_transfer_count");
+            requireRange(store.transferCount(), 0, store.maxTransferCount(), path + ".transfer_count");
             validateRoutingLabel(store.routingLabel(), path);
             walk.requiredCapabilities.add(ActionDsl.Capability.CAMERA);
             walk.requiredCapabilities.add(ActionDsl.Capability.INVENTORY_TRANSFER);
@@ -984,6 +997,7 @@ public final class ActionDslValidator {
                     || node instanceof ActionDsl.HarvestKnownWheatBatch
                     || node instanceof ActionDsl.ApplyKnownBlockPlan
                     || node instanceof ActionDsl.ClearKnownBlockPlan
+                    || node instanceof ActionDsl.ExtendKnownFloor
                     || node instanceof ActionDsl.PillarUpKnown
                     || node instanceof ActionDsl.ApplyKnownRedstoneSpec
                     || node instanceof ActionDsl.OpenKnownFenceGate

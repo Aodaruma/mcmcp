@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.agent.action;
 
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
+import dev.aod.mcmcp.agent.navigation.DiagonalTraversal;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.agent.navigation.NavigationDistanceBudget;
@@ -18,6 +19,7 @@ import net.minecraft.world.phys.Vec3;
 
 import java.time.Duration;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -50,6 +52,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
     private FaceState face;
     private MovementInputLease movement;
     private long lastClientTick = -1;
+    private long tickStartedNanos;
+    private long lastMovementHeartbeatTick = -1;
 
     /** @param maxCameraDegreesPerTick configured degrees/second divided by 20 client ticks */
     public MinecraftActionPrimitiveExecutor(float maxCameraDegreesPerTick) {
@@ -109,6 +113,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             throw new IllegalStateException("No Action DSL primitive is active");
         }
         lastClientTick = clientTick;
+        tickStartedNanos = System.nanoTime();
         LocalPlayer player = minecraft.player;
         if (player == null) {
             return finish(Status.FAILED, Reason.WORLD_UNAVAILABLE);
@@ -156,12 +161,19 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 || !state.route.dimension().equals(snapshot.dimension())) {
             return finish(Status.FAILED, Reason.WORLD_BOUNDARY_CHANGED);
         }
-        if (player.isPassenger() || player.isInWater() || player.isInLava()
+        if (player.isPassenger() || player.isInLava()
                 || player.isFallFlying() || player.getAbilities().flying) {
             return finish(Status.REPLAN_REQUIRED, Reason.UNSUPPORTED_LOCOMOTION);
         }
 
         NavCell finalCell = state.route.cells().getLast();
+        boolean waterRoute = state.route.edges().stream().anyMatch(e -> e.locomotion() == Locomotion.WATER)
+                || state.route.edges().isEmpty() && snapshot.edges().values().stream().anyMatch(e ->
+                        e.destination() && e.locomotion() == Locomotion.WATER
+                                && e.fluid() == TraversabilityEdge.Fluid.WATER && e.key().to().equals(finalCell));
+        if (player.isInWater() && !waterRoute) {
+            return finish(Status.REPLAN_REQUIRED, Reason.UNSUPPORTED_LOCOMOTION);
+        }
         if (state.settling) {
             return tickNavigationSettlement(
                     minecraft, player, snapshot, movementSafety,
@@ -171,6 +183,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
         }
         if (state.route.edges().isEmpty()) {
+            if (waterRoute) return tickWaterDestination(minecraft, player, snapshot, movementSafety,
+                    remainingDistance, clientTick, outputAllowed, finalCell);
             switch (sameCellDecision(
                     player.getX(), player.getY(), player.getZ(), finalCell, state.tolerance)) {
                 case OFF_ROUTE -> {
@@ -212,7 +226,17 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         NavCell waypoint = planned.key().to();
         double waypointTolerance = state.edgeIndex == state.route.edges().size() - 1
                 ? state.tolerance : INTERMEDIATE_WAYPOINT_TOLERANCE;
-        if (atWaypoint(player, waypoint, waypointTolerance)) {
+        if (planned.locomotion() == Locomotion.WATER && planned.fluid() == TraversabilityEdge.Fluid.WATER
+                && state.edgeIndex == state.route.edges().size() - 1) {
+            if (edgeDecision(state.route, state.edgeIndex, snapshot) == EdgeDecision.REPLAN) {
+                return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
+            }
+            return tickWaterDestination(minecraft, player, snapshot, movementSafety,
+                    remainingDistance, clientTick, outputAllowed, waypoint);
+        }
+        if (planned.locomotion() == Locomotion.WATER
+                ? waterWaypointReached(player.getX(), player.getY(), player.getZ(), waypoint, waypointTolerance)
+                : atWaypoint(player, waypoint, waypointTolerance)) {
             state.edgeIndex++;
             state.resetProgress();
             if (state.edgeIndex == state.route.edges().size()) {
@@ -275,16 +299,29 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         }
         // navigate_to_known owns movement only. Relative steering preserves the player's view;
         // a caller that wants camera motion must declare and execute face_known_position.
+        double brakingTicks = locomotion == Locomotion.WATER && player.isInWater() ? 3.0D : 0.0D;
         Set<MovementInputLease.MovementKey> desired = steering(
-                player.getX(), player.getZ(), player.getYRot(), waypoint, waypointTolerance);
+                player.getX() + brakingTicks * player.getDeltaMovement().x,
+                player.getZ() + brakingTicks * player.getDeltaMovement().z,
+                player.getYRot(), waypoint, waypointTolerance);
         desired = withVerticalInput(
                 desired,
                 verticalDelta,
                 waypoint.y() - player.getY(),
                 player.maxUpStep(),
-                locomotion);
+                locomotion,
+                player.isInWater(),
+                player.getDeltaMovement().y);
+        // Direct diagonal support is traversed slowly; actual per-tick collision/support guards remain active.
+        if (!state.route.edges().isEmpty() && state.edgeIndex < state.route.edges().size()
+                && state.route.edges().get(state.edgeIndex).supportedDiagonal()) {
+            var crouched = desired.isEmpty() ? EnumSet.noneOf(MovementInputLease.MovementKey.class)
+                    : EnumSet.copyOf(desired);
+            crouched.add(MovementInputLease.MovementKey.CROUCH);
+            desired = Set.copyOf(crouched);
+        }
         Vec3 command = commandDirection(player.getYRot(), desired);
-        if (command.horizontalDistanceSqr() > 0.0D) {
+        if (locomotion != Locomotion.WATER && command.horizontalDistanceSqr() > 0.0D) {
             double previewLength = Math.min(1.0D, horizontalDistance(player, waypoint));
             Vec3 preview = command.scale(previewLength);
             if (!movementSafety.canPreviewGoalMovement(
@@ -303,6 +340,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         if (movement == null) {
             movement = MovementInputLease.acquire(
                     minecraft, ownerId, outputNanos, LEASE_HORIZON);
+            lastMovementHeartbeatTick = clientTick;
         }
         if (!outputAllowed.getAsBoolean()) {
             return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
@@ -313,10 +351,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
         }
         outputNanos = System.nanoTime();
-        if (!movement.heartbeat(ownerId, outputNanos, LEASE_HORIZON)) {
-            movement = null;
-            return finish(Status.FAILED, Reason.MOVEMENT_LEASE_EXPIRED);
-        }
+        TickResult leaseFailure = heartbeatMovement(outputNanos, false);
+        if (leaseFailure != null) return leaseFailure;
         if (!requiresNavigationMovementSafety(locomotion, verticalDelta)) {
             AgentInputState.global().requireGoalMovementSafety(
                     player, player.level(), snapshot.worldRevision(), remainingDistance);
@@ -336,6 +372,28 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                             waypointTolerance));
         }
         return runningNavigationResult(edge, !desired.isEmpty());
+    }
+
+    private TickResult tickWaterDestination(Minecraft minecraft, LocalPlayer player,
+            KnownTraversabilitySnapshot snapshot, LocalObservationVolume safety, double remaining,
+            long tick, BooleanSupplier allowed, NavCell target) {
+        boolean current = safety.latestFor(player).filter(s -> s.worldRevision() == snapshot.worldRevision()
+                && s.current().loaded() == ObservationRecord.LoadedState.LOADED
+                && s.current().clearance() == ObservationRecord.Clearance.CLEAR
+                && s.current().fluid() == ObservationRecord.Fluid.WATER
+                && s.current().hazard() == ObservationRecord.Hazard.NONE
+                && !s.current().suffocation()).isPresent();
+        navigation.safeTicks = current && waterWaypointReached(player.getX(), player.getY(), player.getZ(),
+                target, navigation.tolerance) ? navigation.safeTicks + 1 : 0;
+        if (navigation.safeTicks >= SETTLE_SAFETY_TICKS) return finish(Status.SUCCEEDED, Reason.NONE);
+        return driveNavigationWaypoint(minecraft, player, snapshot, safety, remaining, tick, allowed,
+                target, navigation.tolerance, Integer.compare(target.y(), Mth.floor(player.getY())),
+                Locomotion.WATER, EdgeDecision.PROBE);
+    }
+
+    static boolean waterWaypointReached(double x, double y, double z, NavCell target, double tolerance) {
+        return Math.hypot(target.x() + 0.5D - x, target.z() + 0.5D - z) <= tolerance
+                && Math.abs(target.y() - y) <= 0.20D;
     }
 
     /**
@@ -449,6 +507,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         if (movement == null) {
             movement = MovementInputLease.acquire(
                     minecraft, ownerId, outputNanos, LEASE_HORIZON);
+            lastMovementHeartbeatTick = clientTick;
         }
         if (!outputAllowed.getAsBoolean()) {
             return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
@@ -459,10 +518,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
         }
         outputNanos = System.nanoTime();
-        if (!movement.heartbeat(ownerId, outputNanos, LEASE_HORIZON)) {
-            movement = null;
-            return finish(Status.FAILED, Reason.MOVEMENT_LEASE_EXPIRED);
-        }
+        TickResult leaseFailure = heartbeatMovement(outputNanos, true);
+        if (leaseFailure != null) return leaseFailure;
         AgentInputState.global().requireGoalMovementSafety(
                 player, player.level(), snapshot.worldRevision(), remainingDistance);
         return TickResult.running(Reason.NONE);
@@ -587,11 +644,36 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 : TickResult.running(Reason.NONE);
     }
 
+    /** Reports timing only after the original watchdog has closed the expired lease. */
+    private TickResult heartbeatMovement(long outputNanos, boolean settling) {
+        long previousDeadline = movement.deadlineNanos();
+        if (movement.heartbeat(ownerId, outputNanos, LEASE_HORIZON)) {
+            lastMovementHeartbeatTick = lastClientTick;
+            return null;
+        }
+        movement = null;
+        long overdueMillis = elapsedMillis(
+                previousDeadline, AgentInputState.global().watchdogTime(outputNanos));
+        return finish(Status.FAILED, Reason.MOVEMENT_LEASE_EXPIRED, List.of(
+                "movement_lease_phase=" + (settling ? "settling" : "driving"),
+                "movement_lease_overdue_ms=" + overdueMillis,
+                "movement_lease_tick_gap=" + Math.max(0L, lastClientTick - lastMovementHeartbeatTick),
+                "movement_executor_ms=" + elapsedMillis(tickStartedNanos, outputNanos)));
+    }
+
+    private static long elapsedMillis(long startNanos, long endNanos) {
+        return Math.max(0L, endNanos - startNanos) / 1_000_000L;
+    }
+
     private TickResult finish(Status status, Reason reason) {
+        return finish(status, reason, List.of());
+    }
+
+    private TickResult finish(Status status, Reason reason, List<String> diagnostics) {
         releaseMovement();
         navigation = null;
         face = null;
-        return new TickResult(status, reason);
+        return new TickResult(status, reason, diagnostics);
     }
 
     @Override
@@ -666,7 +748,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         if (current == null || !route.worldSessionId().equals(current.worldSessionId())
                 || !current.traversable()
                 || current.locomotion() != planned.locomotion()
-                || !diagonalProofCurrent(current, snapshot)) {
+                || !DiagonalTraversal.clear(snapshot, current)
+                || current.supportedDiagonal() && !planned.supportedDiagonal()) {
             return EdgeDecision.REPLAN;
         }
         if (current.requiresProbe()) {
@@ -705,26 +788,6 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         Objects.requireNonNull(edge, "edge");
         return TickResult.running(edge == EdgeDecision.PROBE && movementIssued
                 ? Reason.PROBE_MICRO_STEP : Reason.NONE);
-    }
-
-    private static boolean diagonalProofCurrent(
-            TraversabilityEdge edge,
-            KnownTraversabilitySnapshot snapshot) {
-        NavCell from = edge.key().from();
-        NavCell to = edge.key().to();
-        if (!from.horizontallyDiagonalTo(to)) return true;
-        NavCell xSide = new NavCell(from.dimension(), to.x(), from.y(), from.z());
-        NavCell zSide = new NavCell(from.dimension(), from.x(), from.y(), to.z());
-        return confirmed(snapshot, new TraversabilityEdge.Key(from, xSide))
-                && confirmed(snapshot, new TraversabilityEdge.Key(from, zSide));
-    }
-
-    private static boolean confirmed(
-            KnownTraversabilitySnapshot snapshot,
-            TraversabilityEdge.Key key) {
-        return snapshot.edge(key)
-                .map(edge -> edge.status() == TraversabilityEdge.Status.CONFIRMED)
-                .orElse(false);
     }
 
     static float boundedYawDelta(float currentYaw, float desiredYaw, float limit) {
@@ -823,13 +886,21 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             int verticalDelta,
             double remainingHeight,
             double maxUpStep,
-            Locomotion locomotion) {
+            Locomotion locomotion,
+            boolean immersed,
+            double verticalVelocity) {
         Objects.requireNonNull(horizontal, "horizontal");
         Objects.requireNonNull(locomotion, "locomotion");
         var result = horizontal.isEmpty()
                 ? EnumSet.noneOf(MovementInputLease.MovementKey.class)
                 : EnumSet.copyOf(horizontal);
-        if (locomotion == Locomotion.SCAFFOLDING && verticalDelta < 0) {
+        if (locomotion == Locomotion.WATER) {
+            // Brake the current water velocity before crossing the requested depth.
+            double depthError = remainingHeight - (immersed ? 3.0D * verticalVelocity : 0.0D);
+            if (depthError > 0.03D) result.add(MovementInputLease.MovementKey.JUMP);
+            // Crouching on the dry bank would prevent the deliberate, verified entry into water.
+            else if (immersed && depthError < -0.12D) result.add(MovementInputLease.MovementKey.CROUCH);
+        } else if (locomotion == Locomotion.SCAFFOLDING && verticalDelta < 0) {
             result.add(MovementInputLease.MovementKey.CROUCH);
         } else if (locomotion != Locomotion.GROUND && verticalDelta > 0) {
             result.add(MovementInputLease.MovementKey.JUMP);
@@ -1056,10 +1127,20 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         };
     }
 
-    public record TickResult(Status status, Reason reason) {
+    public record TickResult(Status status, Reason reason, List<String> diagnostics) {
+        public TickResult(Status status, Reason reason) {
+            this(status, reason, List.of());
+        }
+
         public TickResult {
             Objects.requireNonNull(status, "status");
             Objects.requireNonNull(reason, "reason");
+            diagnostics = List.copyOf(diagnostics);
+            if (diagnostics.size() > 4 || diagnostics.stream().anyMatch(value -> value.length() > 128)
+                    || !diagnostics.isEmpty()
+                        && (status != Status.FAILED || reason != Reason.MOVEMENT_LEASE_EXPIRED)) {
+                throw new IllegalArgumentException("invalid movement lease diagnostics");
+            }
             if (status == Status.RUNNING && reason != Reason.NONE
                     && reason != Reason.PROBE_MICRO_STEP) {
                 throw new IllegalArgumentException("running result has a terminal reason");

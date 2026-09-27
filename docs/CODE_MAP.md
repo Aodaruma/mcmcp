@@ -65,7 +65,7 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 | EvaluationLeaseController | 評価lease、同期fence、最初のterminal要求、control laneの非同期停止待機 |
 | AgentObservations | 観測frame、配送証拠、音、局所地図とrevision。world境界でclearする |
 | RoutineAdmission / RoutineLifecycle | 内部routineの受付、実行期限、音声owner、終了retryとcontinuation |
-| MenuPrimitiveExecution | 1 Actionのcontainer・brewing・construction・pillar・redstone attempt。cleanupで未回収effectと使用量を回収 |
+| MenuPrimitiveExecution | 1 Actionのcontainer・brewing・construction・pillar・水平床延長・redstone attempt。cleanupで未回収effectと使用量を回収 |
 | FishingPrimitiveExecution | 1 Actionの釣りdispatch・bobber ACK・cleanup。未確認操作を再送しない |
 | KillZoneExecution | 消費済み同意scope、攻撃ACK待機、再送禁止entity集合 |
 | KnownBreakExecution / CobblestoneExecution | 通常破壊のattempt・effectと、丸石生成のcheckpoint・未確認dispatchを別々に所有 |
@@ -113,8 +113,11 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 | InventorySlotPlanning | server snapshotからのslot選択・個数集計・craft/transfer readback判定。InventorySlotPlanningTest |
 | InventoryOpenHandPolicy | 既知Vanilla containerをMAIN_HANDで開くhotbar選択、NeoForgeの先行hook検証。MinecraftPhaseFiveInventoryPortTestの開封・手持ち安全契約 |
 | InventoryTransferBatch | 最初のsource集合、1 clickのserver baseline、確認済みprefix。InventoryTransferBatchTest |
+| ExactInventoryTransfer | 通常stackの指定数移送を最大14clickで計画し、各clickの全slot・cursor照合と確認済みprefixを保持。ExactInventoryTransferTest |
 
 Batchは確認済み状態だけを更新し、click自体はportが発行します。ACK前に次のsourceを選び直したり、未知結果のclickを再送したりしません。公開結果へのeffect回収、readback後の成功判定、cleanup完了までの画面所有はportの責務です。policyクラスへMinecraft操作やattempt状態を追加しないでください。
+
+現在開いている対応収納は `runtime/KnownMenuProfileSupport` が画面・slot構成とserver同期の一致を確認し、`KnownMenuOperationRefs` が操作参照を発行します。`routine/MinecraftKnownMenuPort` は参照を再検証して通常QUICK_MOVEと結果・解放確認を行います。MODを限定しない開閉・両方向の数量移送へ拡張する際は、この共通基盤を再利用し、MOD固有の開閉・収納契約と転送本体を分けます。計画と未実装の範囲は[設計仕様書](Minecraft_MCP_NeoForge_設計仕様書.md)の9.7.1を参照してください。
 
 `MinecraftPhaseFiveInventoryPortTest`はportと各方針の接続・順序を検査し、独立したslot/batch試験は対応する小さなテストファイルで実行します。`./gradlew test --tests '*Inventory*Test'`でまとめて確認できます。照準の共通解析を変える場合は、呼出元のBrewing/Furnaceの契約試験も実行してください。
 
@@ -142,3 +145,13 @@ capability gateの入口は `Invoke-Mcmcp*CapabilityGate.ps1` です。共通支
 5. 大きなファイルへ責務を追加したときは、この案内と[分割ノート](REFACTORING_NOTES.md)を更新します。行数は目安にし、状態所有・依存方向・1メソッドの判断の数もレビューします。
 
 実機でのACK・fog・入力解放の確認はソース試験とは別です。配布前には評価protocolに沿った実機合格記録が必要です。
+
+`MinecraftFloorExtensionAttempt` は水平1セルのcrouch移動と、既存`KnownConstructionAttempt`への設置委譲を所有する。stand例外は内部の`ApplyBlockPlanRequest.StandPolicy.RETAINED_EDGE_SUPPORT`だけで、`MinecraftApplyBlockPlanPort`も元支持の保持量をuse直前に検査する。cleanupはMenuPrimitiveExecutionでeffectを回収した後に共通入力解放へ進む。
+
+建築準備の持ち替えは`InventorySwapSignals`が同一level内の1回のSWAPを追跡する。`ClientPacketListenerMixin`でplayer inventory indexへ変換した両側の受信payloadを照合し、`MinecraftApplyBlockPlanPort`が所有権・材料総数を再確認する。`ApplyBlockPlanPort.StagingEvidence`から`KnownConstructionAttempt`へ渡すreceiptは、成功と取消・期限切れの両方で一度だけeffectへ回収する。`InventorySwapSignalsTest`、`KnownConstructionAttemptTest`、`ConstructionStagingEffectTest`と`ContainerEffectSchemaTest`を一緒に確認する。
+
+水中の局所経路証拠は`LocalObservationVolume`のwater系関数、公開可能な到達点は`LocalObservationProjector`と`TraversabilityEdge`、通常入力による深度制御は`MinecraftActionPrimitiveExecutor`が所有する。`RoutePlan`がwater edgeのtick予約を加え、`MinecraftRecoveryGovernor`が酸素危険域の優先順位を保つ。`WaterNavigationTest`、既存のmovement/recovery試験、および`Invoke-McmcpWaterNavigationGate.ps1`を対応付ける。 速度の追跡はLivingEntityAgentMovementMixinとLocalPlayerMovementTickMixin、水中での受付時の変位はActionAdmissionとAgentPlannerCostsが担当し、WaterAdmissionTestとLocalObservationMixinContractTestも確認する。
+
+## 平面施工の保存・再開
+
+外部runnerは tools/building/Invoke-McmcpBuilding.ps1、行列と原子的checkpointは McmcpBuildingLedger.ps1。固定5 Toolと tools/mcp/McmcpClient.ps1 のschema検証を再利用する。対応試験は Test-McmcpBuilding.ps1 と Test-McmcpBuildingRecovery.ps1。ゲーム内の入力・設置・server確認は既存primitiveが所有する。

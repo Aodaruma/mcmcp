@@ -5,6 +5,21 @@ package dev.aod.mcmcp.routine;
  * Preparation may own bounded aim and hotbar selection, but must never move the player.
  */
 public interface ApplyBlockPlanPort {
+    /** Read-only receipt for the one preparation SWAP; absent means no send was attempted. */
+    default java.util.Optional<StagingEvidence> stagingEvidence(ApplyBlockPlanPreparationAttempt attempt) {
+        return java.util.Optional.empty();
+    }
+
+    record StagingEvidence(java.util.Map<String, Object> before, java.util.Map<String, Object> after,
+            boolean confirmed, long clientTick, long worldRevision) {
+        public StagingEvidence {
+            before = java.util.Map.copyOf(before);
+            after = java.util.Map.copyOf(after);
+            if (!confirmed && !after.isEmpty()) throw new IllegalArgumentException("unknown swap has no after state");
+            if (clientTick < 0 || worldRevision < 0) throw new IllegalArgumentException("invalid staging clocks");
+        }
+    }
+
     ApplyBlockPlanFrame observe(ApplyBlockPlanRequest request);
 
     ApplyBlockPlanPreparationAttempt beginPreparation(

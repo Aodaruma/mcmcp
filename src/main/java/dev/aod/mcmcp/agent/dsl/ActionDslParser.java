@@ -138,6 +138,7 @@ public final class ActionDslParser {
             case "apply_known_block_plan" -> applyKnownBlockPlan(object, path);
             case "clear_known_block_plan" -> clearKnownBlockPlan(object, path);
             case "pillar_up_known" -> pillarUpKnown(object, path);
+            case "extend_known_floor" -> extendKnownFloor(object, path);
             case "apply_known_redstone_spec" -> applyKnownRedstoneSpec(object, path);
             case "open_known_fence_gate" -> openKnownFenceGate(object, path);
             case "open_known_passage" -> openKnownPassage(object, path);
@@ -429,6 +430,16 @@ public final class ActionDslParser {
                 entries);
     }
 
+    private static ActionDsl.ExtendKnownFloor extendKnownFloor(JsonObject source, String path) {
+        Set<String> fields = Set.of("id", "op", "support", "expected_support", "direction", "placement_state_ref");
+        exactKeys(source, path, fields, fields);
+        return new ActionDsl.ExtendKnownFloor(string(source.get("id"), path + ".id"),
+                position(source.get("support"), path + ".support"),
+                blockStateSpec(source.get("expected_support"), path + ".expected_support"),
+                blockFace(string(source.get("direction"), path + ".direction"), path + ".direction"),
+                string(source.get("placement_state_ref"), path + ".placement_state_ref"));
+    }
+
     private static ActionDsl.PillarUpKnown pillarUpKnown(JsonObject source, String path) {
         exactKeys(source, path,
                 Set.of("id", "op", "support", "expected_support",
@@ -679,7 +690,7 @@ public final class ActionDslParser {
         exactKeys(source, path,
                 Set.of("id", "op", "target", "expected_block", "item",
                         "stack_policy", "minimum_inventory_count", "routing_label",
-                        "max_stacks", "max_transfer_count"),
+                        "max_stacks", "max_transfer_count", "transfer_count"),
                 Set.of("id", "op", "target", "expected_block", "item",
                         "stack_policy", "minimum_inventory_count"));
         int maxStacks = containerMaxStacks(source, path);
@@ -694,7 +705,7 @@ public final class ActionDslParser {
                 routingLabel(source, path), maxStacks,
                 source.has("max_transfer_count")
                         ? integer(source.get("max_transfer_count"), path + ".max_transfer_count")
-                        : 64 * maxStacks);
+                        : 64 * maxStacks, containerTransferCount(source, path));
     }
 
     private static ActionDsl.StoreKnownContainerStack storeKnownContainerStack(
@@ -702,7 +713,7 @@ public final class ActionDslParser {
         exactKeys(source, path,
                 Set.of("id", "op", "target", "expected_block", "item",
                         "stack_policy", "minimum_container_count", "routing_label",
-                        "max_stacks", "max_transfer_count"),
+                        "max_stacks", "max_transfer_count", "transfer_count"),
                 Set.of("id", "op", "target", "expected_block", "item",
                         "stack_policy", "minimum_container_count"));
         int maxStacks = containerMaxStacks(source, path);
@@ -717,7 +728,16 @@ public final class ActionDslParser {
                 routingLabel(source, path), maxStacks,
                 source.has("max_transfer_count")
                         ? integer(source.get("max_transfer_count"), path + ".max_transfer_count")
-                        : 64 * maxStacks);
+                        : 64 * maxStacks, containerTransferCount(source, path));
+    }
+
+    private static int containerTransferCount(JsonObject source, String path) {
+        if (!source.has("transfer_count")) return 0;
+        int count = integer(source.get("transfer_count"), path + ".transfer_count");
+        if (count < 1 || count > ActionDslValidator.MAX_CONTAINER_TRANSFER_COUNT) {
+            throw invalid(path + ".transfer_count is outside the bounded range");
+        }
+        return count;
     }
 
     private static int containerMaxStacks(JsonObject source, String path) {

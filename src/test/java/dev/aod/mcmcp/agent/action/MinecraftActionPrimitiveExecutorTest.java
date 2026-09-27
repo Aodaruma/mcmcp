@@ -32,6 +32,28 @@ class MinecraftActionPrimitiveExecutorTest {
     private static final String DIMENSION = "minecraft:overworld";
 
     @Test
+    void waterSteeringControlsDepthAndArrivalWithoutSprintOrCamera() {
+        var forward = java.util.Set.of(MovementInputLease.MovementKey.FORWARD);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, -1, -0.2, 0.6, Locomotion.WATER, true, -0.2))
+                .containsExactlyInAnyOrder(MovementInputLease.MovementKey.FORWARD, MovementInputLease.MovementKey.JUMP);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 1, 0.1, 0.6, Locomotion.WATER, true, 0.12))
+                .containsExactlyInAnyOrder(MovementInputLease.MovementKey.FORWARD, MovementInputLease.MovementKey.CROUCH);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, -1, -1.0, 0.6, Locomotion.WATER, false, 0.0D))
+                .containsExactly(MovementInputLease.MovementKey.FORWARD);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 0, 0.4, 0.6, Locomotion.WATER, true, 0.0D))
+                .containsExactlyInAnyOrder(MovementInputLease.MovementKey.FORWARD, MovementInputLease.MovementKey.JUMP);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 0, -0.4, 0.6, Locomotion.WATER, true, 0.0D))
+                .containsExactlyInAnyOrder(MovementInputLease.MovementKey.FORWARD, MovementInputLease.MovementKey.CROUCH);
+        assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, 1, 0, 0.6, Locomotion.WATER, true, 0.0D))
+                .containsExactly(MovementInputLease.MovementKey.FORWARD);
+        var target = new NavCell(DIMENSION, -2, 64, -3);
+        assertThat(MinecraftActionPrimitiveExecutor.waterWaypointReached(-1.5, 63.9, -2.5, target, 0.2)).isTrue();
+        assertThat(MinecraftActionPrimitiveExecutor.waterWaypointReached(-1.5, 64.5, -2.5, target, 0.2)).isFalse();
+        assertThat(MinecraftActionPrimitiveExecutor.waterWaypointReached(-0.9, 64, -2.5, target, 0.2)).isFalse();
+        assertThat(MinecraftActionPrimitiveExecutor.requiresNavigationMovementSafety(Locomotion.WATER, 0)).isTrue();
+    }
+
+    @Test
     void closeRetainsTheExactMovementLeaseUntilARetryConfirmsRelease() throws Exception {
         var releases = new java.util.concurrent.atomic.AtomicInteger();
         var failFirstRelease = new java.util.concurrent.atomic.AtomicBoolean(true);
@@ -105,6 +127,31 @@ class MinecraftActionPrimitiveExecutorTest {
         map.observe(edge(session, start, xSide, TraversabilityEdge.Status.BLOCKED, 2));
         assertThat(MinecraftActionPrimitiveExecutor.edgeDecision(
                 route, 0, map.snapshot().orElseThrow()))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.EdgeDecision.REPLAN);
+    }
+
+    @Test
+    void directDiagonalProofIsSharedByPlanningDependenciesAndExecution() {
+        UUID session = UUID.randomUUID();
+        var map = new KnownTraversabilityMap();
+        map.startSession(session, DIMENSION, 4);
+        var from = cell(0, 64, 0);
+        var to = cell(1, 64, 1);
+        var legacy = edge(session, from, to, TraversabilityEdge.Status.PROBE_ALLOWED, 1);
+        var proven = new TraversabilityEdge(session, legacy.key(), legacy.status(),
+                legacy.targetSupport(), legacy.clearance(), legacy.transition(), legacy.fluid(),
+                legacy.hazard(), legacy.provenance(), legacy.observerPosition(), 1, 4,
+                legacy.locomotion(), true);
+        map.observe(proven);
+        var snapshot = map.snapshot().orElseThrow();
+        var route = new DeterministicAStar().findRoute(snapshot, from, to).route().orElseThrow();
+        var dependencies = new java.util.LinkedHashMap<TraversabilityEdge.Key, TraversabilityEdge>();
+        AgentNavigationPlanner.addRouteDependencies(snapshot, route, dependencies);
+        assertThat(dependencies.values()).containsExactly(proven);
+        assertThat(MinecraftActionPrimitiveExecutor.edgeDecision(route, 0, snapshot))
+                .isEqualTo(MinecraftActionPrimitiveExecutor.EdgeDecision.PROBE);
+        map.advanceWorldRevision(5, java.util.List.of(cell(1, 64, 0)), java.util.List.of());
+        assertThat(MinecraftActionPrimitiveExecutor.edgeDecision(route, 0, map.snapshot().orElseThrow()))
                 .isEqualTo(MinecraftActionPrimitiveExecutor.EdgeDecision.REPLAN);
     }
 
@@ -323,16 +370,16 @@ class MinecraftActionPrimitiveExecutorTest {
     @Test
     void scaffoldingUsesJumpUpAndCrouchDownWhileTrackingVerticalProgress() {
         assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(
-                java.util.Set.of(), 1, 1.0D, 0.6D, Locomotion.SCAFFOLDING))
+                java.util.Set.of(), 1, 1.0D, 0.6D, Locomotion.SCAFFOLDING, false, 0.0D))
                 .containsExactly(MovementInputLease.MovementKey.JUMP);
         assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(
-                java.util.Set.of(), 1, 0.2D, 0.6D, Locomotion.SCAFFOLDING))
+                java.util.Set.of(), 1, 0.2D, 0.6D, Locomotion.SCAFFOLDING, false, 0.0D))
                 .containsExactly(MovementInputLease.MovementKey.JUMP);
         assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(
-                java.util.Set.of(), -1, -1.0D, 0.6D, Locomotion.SCAFFOLDING))
+                java.util.Set.of(), -1, -1.0D, 0.6D, Locomotion.SCAFFOLDING, false, 0.0D))
                 .containsExactly(MovementInputLease.MovementKey.CROUCH);
         assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(
-                java.util.Set.of(), -1, -1.0D, 0.6D, Locomotion.LADDER)).isEmpty();
+                java.util.Set.of(), -1, -1.0D, 0.6D, Locomotion.LADDER, false, 0.0D)).isEmpty();
         var target = cell(0, 65, 0);
         assertThat(MinecraftActionPrimitiveExecutor.navigationDistance(
                 0.5D, 64.0D, 0.5D, target, Locomotion.SCAFFOLDING)).isEqualTo(1.0D);

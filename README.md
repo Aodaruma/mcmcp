@@ -41,10 +41,12 @@ The illustrated guide is currently in Japanese. See [Releases](https://github.co
 | ✅ アイテム出し入れ<br>Item transfers | ✅ 回路組み立て（定型）<br>Preset redstone circuits | ☐ 追加MOD互換性<br>More mod compatibility |
 | ☐ 未探索エリア・段差移動<br>Exploration & full-block steps | ✅ ポーション醸造<br>Standard potion brewing | ☐ 低FPS時の安定性<br>Low-FPS stability |
 | ☐ 額縁付きチェストの安定性<br>Item-frame chest reliability | ✅ 釣り<br>Fishing | ✅ Pre-release公開<br>Pre-release publication |
-| ✅ 額縁の表示変更<br>Item-frame displays | ☐ 大規模建築<br>Large building jobs | |
+| ✅ 額縁の表示変更<br>Item-frame displays | ✅ 平面建築の進捗保存・再開<br>Resumable floor building | |
 | | ☐ 連続釣り<br>Multi-cycle fishing | |
 
 対応する対象・操作範囲は[機能詳細](docs/MCMCP_Action_DSL_クイックガイド.md)を参照してください。<br>See the [feature guide (Japanese)](docs/MCMCP_Action_DSL_クイックガイド.md) for supported targets and limits.
+
+平面建築の設計図・かがみ端設置・補充・checkpointの使い方は[施工runner](tools/building/README.md)を参照してください。最大128×128の台帳を扱えます。実機確認は小平面で行っており、全サイズの施工検証とは区別しています。
 
 ## 質問・不具合 / Questions and issues
 

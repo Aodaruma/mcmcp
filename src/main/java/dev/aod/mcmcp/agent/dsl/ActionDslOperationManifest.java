@@ -42,6 +42,8 @@ public final class ActionDslOperationManifest {
                     caps("block_place", "camera"),
                     ref("/entries/*/placement_state_ref", "placement_state_ref", "one_of_inline_source")),
             fixed(ActionDsl.ClearKnownBlockPlan.class, "clear_known_block_plan", caps("block_break", "camera")),
+            fixed(ActionDsl.ExtendKnownFloor.class, "extend_known_floor", caps("block_place", "camera", "movement"),
+                    ref("/placement_state_ref", "placement_state_ref", "required")),
             fixed(
                     ActionDsl.PillarUpKnown.class,
                     "pillar_up_known",
@@ -178,7 +180,7 @@ public final class ActionDslOperationManifest {
                         "placement_state_ref",
                         "agent_get_observation",
                         "/records/*/placement_state_ref",
-                        List.of("approach_known_placement", "apply_known_block_plan", "pillar_up_known"),
+                        List.of("approach_known_placement", "apply_known_block_plan", "pillar_up_known", "extend_known_floor"),
                         "world_session_bounded_identity_ref_subject_to_512_entry_eviction"),
                 referenceDescriptor(
                         "recipe_ref",
@@ -255,10 +257,18 @@ public final class ActionDslOperationManifest {
         result.put("kind", kind);
         result.put("issued_by", issuedBy);
         result.put("source_path", sourcePath);
+        if ("placement_state_ref".equals(kind)) {
+            result.put("alternative_sources", placementMaterialSources());
+        }
         result.put("consumer_operations", consumerOperations);
         result.put("validity", validity);
         result.put("replay_policy", "always_refresh_before_clone");
         return Map.copyOf(result);
+    }
+
+    static List<Map<String, Object>> placementMaterialSources() {
+        return List.of(Map.of("tool", "agent_get_state",
+                "source_path", "/placement_materials/*/placement_state_ref"));
     }
 
     public record OperationDescriptor(

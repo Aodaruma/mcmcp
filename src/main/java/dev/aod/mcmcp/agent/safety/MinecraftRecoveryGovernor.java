@@ -124,6 +124,11 @@ public final class MinecraftRecoveryGovernor implements AutoCloseable {
             StopSignal stopSignal,
             Runnable preemptAndDiscardGoal,
             long nowNanos) {
+        return tick(evidence, candidates, stopSignal, preemptAndDiscardGoal, nowNanos, false);
+    }
+
+    public TickResult tick(Evidence evidence, List<Candidate> candidates, StopSignal stopSignal,
+            Runnable preemptAndDiscardGoal, long nowNanos, boolean deliberateWaterNavigation) {
         Objects.requireNonNull(evidence, "evidence");
         candidates = List.copyOf(Objects.requireNonNull(candidates, "candidates"));
         Objects.requireNonNull(stopSignal, "stopSignal");
@@ -145,7 +150,7 @@ public final class MinecraftRecoveryGovernor implements AutoCloseable {
         }
 
         DamageProgress damage = observe(evidence);
-        Assessment assessment = assess(evidence, candidates, damage);
+        Assessment assessment = assess(evidence, candidates, damage, deliberateWaterNavigation);
         if (assessment.decision() == Decision.RECOVER) {
             latchCriticalDangers(assessment);
         }
@@ -294,7 +299,7 @@ public final class MinecraftRecoveryGovernor implements AutoCloseable {
     private Assessment assess(
             Evidence evidence,
             List<Candidate> candidates,
-            DamageProgress damage) {
+            DamageProgress damage, boolean deliberateWaterNavigation) {
         var dangers = EnumSet.noneOf(Danger.class);
         int breathingEscapeTicks = candidates.stream()
                 .filter(candidate -> candidate.currentFor(evidence)
@@ -369,7 +374,7 @@ public final class MinecraftRecoveryGovernor implements AutoCloseable {
                 || damage.freshDamage()
                 || evidence.onFire()
                 || evidence.inLava()
-                || evidence.underwater() && airFalling);
+                || evidence.underwater() && airFalling && !deliberateWaterNavigation);
         return new Assessment(
                 recover ? Decision.RECOVER : replan ? Decision.REPLAN : Decision.CONTINUE,
                 dangers);

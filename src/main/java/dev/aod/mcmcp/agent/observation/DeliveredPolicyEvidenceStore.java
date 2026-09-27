@@ -66,6 +66,22 @@ public final class DeliveredPolicyEvidenceStore {
     /** Stages one runtime-produced page until the HTTP response write succeeds. */
     public synchronized UUID prepareDelivery(ObservationPage page) {
         Objects.requireNonNull(page, "page");
+        return prepareDelivery(page.records(), page.records().stream()
+                .filter(ObservationRecord.VisibleSurface.class::isInstance)
+                .map(ObservationRecord.VisibleSurface.class::cast)
+                .map(PlacementStateKey::of).filter(Objects::nonNull).toList());
+    }
+
+    /** Stages only runtime-validated own-inventory identities; grants no coordinate evidence. */
+    public synchronized UUID preparePlacementDelivery(
+            List<PlacementStateResolver.PlacementState> materials) {
+        if (materials.size() > 64) throw new IllegalArgumentException("too many placement materials");
+        return prepareDelivery(List.of(), materials.stream()
+                .map(material -> new PlacementStateKey(material.state(), material.placementItem()))
+                .toList());
+    }
+
+    private UUID prepareDelivery(List<ObservationRecord> records, List<PlacementStateKey> materials) {
         long now = nanoTime.getAsLong();
         purgeExpired(now);
         UUID receipt;
@@ -73,17 +89,13 @@ public final class DeliveredPolicyEvidenceStore {
             receipt = Objects.requireNonNull(receiptIds.get(), "receiptId");
         } while (pending.containsKey(receipt));
         var stagedPlacementRefs = new LinkedHashMap<PlacementStateKey, String>();
-        for (ObservationRecord record : page.records()) {
-            if (!(record instanceof ObservationRecord.VisibleSurface surface)) {
-                continue;
-            }
-            PlacementStateKey key = PlacementStateKey.of(surface);
-            if (key == null || stagedPlacementRefs.containsKey(key)) {
+        for (PlacementStateKey key : materials) {
+            if (stagedPlacementRefs.containsKey(key)) {
                 continue;
             }
             stagedPlacementRefs.put(key, existingOrNewPlacementRef(key));
         }
-        pending.put(receipt, new PendingDelivery(page, now, stagedPlacementRefs));
+        pending.put(receipt, new PendingDelivery(records, now, stagedPlacementRefs));
         while (pending.size() > MAX_PENDING_DELIVERIES) {
             Iterator<UUID> oldest = pending.keySet().iterator();
             oldest.next();
@@ -101,7 +113,7 @@ public final class DeliveredPolicyEvidenceStore {
         if (delivery == null) {
             return false;
         }
-        recordDelivered(delivery.page(), now);
+        recordDelivered(delivery.records(), now);
         for (var staged : delivery.placementRefs().entrySet()) {
             activatePlacementState(staged.getKey(), staged.getValue());
         }
@@ -120,7 +132,7 @@ public final class DeliveredPolicyEvidenceStore {
         Objects.requireNonNull(page, "page");
         long now = nanoTime.getAsLong();
         purgeExpired(now);
-        recordDelivered(page, now);
+        recordDelivered(page.records(), now);
         for (ObservationRecord record : page.records()) {
             if (record instanceof ObservationRecord.VisibleSurface surface) {
                 PlacementStateKey key = PlacementStateKey.of(surface);
@@ -144,6 +156,14 @@ public final class DeliveredPolicyEvidenceStore {
                 : Optional.ofNullable(delivery.placementRefs().get(key));
     }
 
+    public synchronized Optional<String> preparedPlacementStateRef(
+            UUID receipt, PlacementStateResolver.PlacementState material) {
+        purgeExpired(nanoTime.getAsLong());
+        PendingDelivery delivery = pending.get(Objects.requireNonNull(receipt));
+        return delivery == null ? Optional.empty() : Optional.ofNullable(delivery.placementRefs()
+                .get(new PlacementStateKey(material.state(), material.placementItem())));
+    }
+
     /** Resolves only refs promoted by a successfully confirmed response write. */
     public synchronized Optional<PlacementStateResolver.PlacementState> resolvePlacementState(
             String placementStateRef) {
@@ -151,8 +171,8 @@ public final class DeliveredPolicyEvidenceStore {
         return Optional.ofNullable(placementStates.get(placementStateRef));
     }
 
-    private void recordDelivered(ObservationPage page, long now) {
-        for (ObservationRecord record : page.records()) {
+    private void recordDelivered(List<ObservationRecord> records, long now) {
+        for (ObservationRecord record : records) {
             if (record instanceof ObservationRecord.VisibleEntity entity
                     && entity.frameDisplay() != null) {
                 FrameAuthorization previous = frameDisplays.get(entity.entityRef());
@@ -536,11 +556,11 @@ public final class DeliveredPolicyEvidenceStore {
     }
 
     private record PendingDelivery(
-            ObservationPage page,
+            List<ObservationRecord> records,
             long preparedNanos,
             Map<PlacementStateKey, String> placementRefs) {
         private PendingDelivery {
-            Objects.requireNonNull(page, "page");
+            records = List.copyOf(Objects.requireNonNull(records, "records"));
             placementRefs = Map.copyOf(Objects.requireNonNull(placementRefs, "placementRefs"));
         }
     }

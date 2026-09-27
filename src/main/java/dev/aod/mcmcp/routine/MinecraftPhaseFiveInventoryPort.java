@@ -413,7 +413,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         }
         closeOpenPrediction(state);
         var player = minecraft.player;
-        if (player == null || !session.serverSnapshot().carried().empty()) {
+        if (player == null || (!session.serverSnapshot().carried().empty()
+                && !(state.stage == Stage.TRANSFER_READY && state.exactTransfer != null
+                        && state.exactTransfer.matchesConfirmed(session.serverSnapshot())))) {
             fail(state, "OWNED_SCREEN_CURSOR_NOT_EMPTY", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.USER, Map.of("cursor", "empty"), Map.of());
             return;
@@ -597,7 +599,9 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         if (state.stage == Stage.OPENING_READBACK) {
             state.recordTransferReadback(source, destination);
             InventoryTransferBatch batch = state.transferBatch;
-            boolean exactSlots = batch != null && batch.reconcileReadback(snapshot);
+            boolean exactSlots = state.exactTransfer != null
+                    ? state.exactTransfer.reconcileReadback(snapshot)
+                    : batch != null && batch.reconcileReadback(snapshot);
             state.updateTransferPrefix();
             var readback = InventorySlotPlanning.verifyTransferReadback(
                     state.beforeSourceCount,
@@ -614,7 +618,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 state.stage = Stage.TERMINAL;
                 return;
             }
-            if (readback.goalVerified()) {
+            if (readback.goalVerified() && (transfer.transferCount() == 0
+                    || state.completedUnits == transfer.transferCount())) {
                 succeed(state, destination, Map.of(
                         "source_count_before", state.beforeSourceCount,
                         "source_count_after", source,
@@ -630,7 +635,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                     Map.of("destination_count", destination,
                             "transferred", state.completedUnits));
             return;
-        } else if (state.transferBatch == null && destination >= transfer.minimumDestinationCount()) {
+        } else if (transfer.transferCount() == 0
+                && state.transferBatch == null && destination >= transfer.minimumDestinationCount()) {
             var evidence = new LinkedHashMap<String, Object>();
             evidence.put("source_count_before", source);
             evidence.put("source_count_after", source);
@@ -648,6 +654,12 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 evidence.put("contents_packet_revision", snapshot.packetLedgerRevision());
             }
             succeed(state, destination, evidence);
+            return;
+        }
+
+        if (transfer.transferCount() > 0) {
+            acceptExactTransfer(attempt, state, transfer, player, menu, snapshot,
+                    sourceSlots, destinationSlots, source, destination, hash);
             return;
         }
 
@@ -713,6 +725,106 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return;
         }
         dispatchTransferClick(attempt, state, menu, snapshot);
+    }
+
+    private void acceptExactTransfer(
+            PhaseFiveAttempt attempt, AttemptState state, TransferParameters transfer,
+            LocalPlayer player, AbstractContainerMenu menu, ContainerSyncSignals.ContainerSnapshot snapshot,
+            List<Integer> sourceSlots, List<Integer> destinationSlots,
+            int source, int destination, int defaultHash) {
+        if (state.exactTransfer == null) {
+            ItemStack prototype = defaultStack(transfer.item());
+            int limit = prototype.getMaxStackSize();
+            if (source < transfer.transferCount()
+                    || destination + transfer.transferCount() < transfer.minimumDestinationCount()
+                    || !exactTransferSlotsSupported(menu, player, prototype, sourceSlots, destinationSlots)
+                    || !InventoryOpenHandPolicy.inboundTransferKeepsOpenHandSafe(transfer.playerToContainer(),
+                            player.getMainHandItem().isEmpty(), prototype.getItem().getClass())) {
+                fail(state, "EXACT_TRANSFER_PRECONDITION_FAILED", RoutineFailure.Category.PRECONDITION,
+                        RoutineFailure.Recovery.REPLAN, Map.of("transfer_count", transfer.transferCount()), Map.of());
+                return;
+            }
+            var plan = ExactInventoryTransfer.plan(snapshot.slots(), sourceSlots, destinationSlots,
+                    transfer.item(), defaultHash, transfer.defaultComponentsOnly(),
+                    transfer.transferCount(), transfer.maxStackMoves(), limit);
+            if (plan.isEmpty()) {
+                fail(state, "EXACT_TRANSFER_PLAN_UNAVAILABLE", RoutineFailure.Category.PRECONDITION,
+                        RoutineFailure.Recovery.REPLAN,
+                        Map.of("transfer_count", transfer.transferCount(), "maximum_clicks", 14), Map.of());
+                return;
+            }
+            state.beginExactTransfer(plan.orElseThrow(), source, destination);
+        }
+        var plan = state.exactTransfer;
+        if (plan.exhausted()) {
+            closeForReadback(attempt, state);
+            return;
+        }
+        if (!plan.matchesConfirmed(snapshot) || !exactLiveMenuMatches(menu, snapshot)
+                || !exactTransferSlotsSupported(menu, player, defaultStack(transfer.item()),
+                        sourceSlots, destinationSlots)) {
+            fail(state, "EXACT_TRANSFER_SLOTS_CHANGED", RoutineFailure.Category.SAFETY,
+                    RoutineFailure.Recovery.REPLAN, Map.of(), Map.of());
+            return;
+        }
+        if (prepareOwnedDispatch(attempt, state, menu) < 0
+                || freshServerCursorSnapshot(attempt, state).isEmpty()
+                || !plan.beginClick(snapshot, currentTick())) return;
+        if (!screens.invalidateServerCursorProof(attempt.attemptId(), snapshot.packetLedgerRevision())) {
+            fail(state, "OWNED_SCREEN_CLICK_AUTHORITY_LOST", RoutineFailure.Category.SAFETY,
+                    RoutineFailure.Recovery.REPLAN, Map.of(), Map.of());
+            return;
+        }
+        state.transferReadbackObserved = false;
+        state.dispatchedStackCount = plan.next().quantity();
+        state.dispatchedContainerClicks++;
+        state.stage = Stage.AWAITING_CLICK_ACK;
+        KnownMenuTransfers.dispatchServerConfirmedPickup(
+                requireMinecraft(), menu, plan.next().slot(), plan.next().button());
+    }
+
+    static boolean exactTransferSlotsSupported(
+            AbstractContainerMenu menu, LocalPlayer player, ItemStack prototype,
+            List<Integer> sources, List<Integer> destinations) {
+        int limit = prototype.getMaxStackSize();
+        if (menu.getClass() != ChestMenu.class || limit < 1 || limit > 64
+                || !KnownMenuTransfers.ordinaryPickupItem(prototype.getItem().getClass())) return false;
+        for (int index : java.util.stream.Stream.concat(sources.stream(), destinations.stream()).toList()) {
+            var slot = menu.slots.get(index);
+            var stack = slot.getItem();
+            if (slot.getClass() != net.minecraft.world.inventory.Slot.class
+                    || !slot.mayPickup(player) || !slot.mayPlace(prototype)
+                    || slot.getMaxStackSize(prototype) < limit
+                    || (!stack.isEmpty() && stack.is(prototype.getItem())
+                            && (stack.getMaxStackSize() != limit || stack.getCount() > limit))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean exactLiveMenuMatches(
+            AbstractContainerMenu menu, ContainerSyncSignals.ContainerSnapshot snapshot) {
+        return InventorySlotPlanning.liveMenuMatchesSnapshot(menu, snapshot)
+                && menu.containerId == snapshot.containerId() && menu.getStateId() == snapshot.stateId()
+                && ContainerSyncSignals.StackFingerprint.fromServerPacket(menu.getCarried()).equals(snapshot.carried());
+    }
+
+    private void maintainExactTransferAck(PhaseFiveAttempt attempt, AttemptState state) {
+        var proof = freshServerCursorSnapshot(attempt, state);
+        var minecraft = requireMinecraft();
+        if (proof.isPresent() && minecraft.player != null
+                && exactLiveMenuMatches(minecraft.player.containerMenu, proof.orElseThrow())
+                && state.exactTransfer.confirm(proof.orElseThrow(), screens.snapshot().lastServerCursorProofRevision())) {
+            state.updateTransferPrefix();
+            if (state.exactTransfer.exhausted()) closeForReadback(attempt, state);
+            else state.stage = Stage.TRANSFER_READY;
+        } else if (state.exactTransfer.ackTimedOut(currentTick())) {
+            // Never repeat or synthesize a cursor rescue click after an uncertain operation.
+            state.inconclusive = new InconclusiveState(PhaseFiveEvidence.Certainty.UNKNOWN,
+                    "exact_transfer_click_not_server_confirmed");
+            state.stage = Stage.TERMINAL;
+        }
     }
 
     private void dispatchTransferClick(
@@ -792,13 +904,17 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             return -1L;
         }
         long before = packetRevision();
-        // Every click in this adapter is QUICK_MOVE, so the server-proven empty cursor remains
-        // invariant while slot packets provide the authoritative mutation/readback barrier.
+        // QUICK_MOVE preserves empty cursor. Exact PICKUP additionally invalidates and proves
+        // its planned cursor transition before authorizing the next click.
         state.screenOwnedObserved = true;
         return before;
     }
 
     private void maintainClickAck(PhaseFiveAttempt attempt, AttemptState state) {
+        if (state.exactTransfer != null) {
+            maintainExactTransferAck(attempt, state);
+            return;
+        }
         var proof = freshServerCursorSnapshot(attempt, state);
         if (proof.isEmpty() || !proof.orElseThrow().carried().empty()) {
             return;
@@ -1617,6 +1733,7 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         private int afterDestinationCount;
         private int dispatchedStackCount;
         private InventoryTransferBatch transferBatch;
+        private ExactInventoryTransfer exactTransfer;
         private int expectedCraftOutputCount;
         private long lastPacketRevision;
         private long closeDeadlineClientTick;
@@ -1653,6 +1770,11 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
             prepareTransfer(source, destination, 0);
         }
 
+        void beginExactTransfer(ExactInventoryTransfer plan, int source, int destination) {
+            exactTransfer = Objects.requireNonNull(plan, "plan");
+            prepareTransfer(source, destination, 0);
+        }
+
         void recordTransferReadback(int source, int destination) {
             afterSourceCount = source;
             afterDestinationCount = destination;
@@ -1660,6 +1782,11 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
         }
 
         void updateTransferPrefix() {
+            if (exactTransfer != null) {
+                completedUnits = exactTransfer.confirmedCount();
+                completedActions = exactTransfer.confirmedGroups();
+                return;
+            }
             if (transferBatch == null) return;
             completedUnits = transferBatch.confirmedCount();
             completedActions = transferBatch.confirmedMoves();
@@ -1698,7 +1825,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 basis.put("transfer_readback_observed", transferReadbackObserved);
                 basis.put("confirmed_transfer_count", completedUnits);
                 basis.put("confirmed_stack_moves", completedActions);
-                boolean inFlight = transferBatch != null && transferBatch.inFlight();
+                boolean inFlight = exactTransfer != null ? exactTransfer.pending()
+                        : transferBatch != null && transferBatch.inFlight();
                 basis.put("transfer_in_flight", inFlight);
                 if (completedActions > 0) {
                     basis.put("confirmed_source_count", beforeSourceCount - completedUnits);
@@ -1707,7 +1835,8 @@ public final class MinecraftPhaseFiveInventoryPort implements PhaseFivePort {
                 if (inFlight) {
                     basis.put("pending_source_before", beforeSourceCount - completedUnits);
                     basis.put("pending_destination_before", beforeDestinationCount + completedUnits);
-                    basis.put("pending_stack_count", transferBatch.next().stack().count());
+                    basis.put("pending_stack_count", exactTransfer != null
+                            ? exactTransfer.pendingCount() : transferBatch.next().stack().count());
                 }
                 if (transferReadbackObserved) {
                     basis.put("source_after", afterSourceCount);

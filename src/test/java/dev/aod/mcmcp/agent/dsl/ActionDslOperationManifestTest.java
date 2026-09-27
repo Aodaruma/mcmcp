@@ -33,6 +33,7 @@ class ActionDslOperationManifestTest {
                         "harvest_known_wheat_batch",
                         "apply_known_block_plan",
                         "clear_known_block_plan",
+                        "extend_known_floor",
                         "pillar_up_known",
                         "apply_known_redstone_spec",
                         "open_known_fence_gate",

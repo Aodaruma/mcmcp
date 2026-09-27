@@ -492,7 +492,16 @@ class OmnidirectionalObserverTest {
                 Blocks.GLASS_PANE.defaultBlockState()).value())
                 .isEqualTo("minecraft:glass_pane");
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
-                Blocks.DIRT.defaultBlockState())).isNull();
+                Blocks.DIRT.defaultBlockState()).value()).isEqualTo("minecraft:dirt");
+        for (var name : List.of("snow_block", "black_wool", "white_wool", "torch",
+                "black_concrete", "birch_stairs", "stone_slab", "black_stained_glass_pane")) {
+            var block = BuiltInRegistries.BLOCK.get(Identifier.parse("minecraft:" + name))
+                    .orElseThrow().value();
+            assertThat(OmnidirectionalObserver.policyVisibleBlockState(block.defaultBlockState()))
+                    .as(block.toString()).isNotNull();
+            assertThat(OmnidirectionalObserver.safeDirectPlacementItem(block.defaultBlockState())
+                    .value()).isEqualTo(BuiltInRegistries.BLOCK.getKey(block).toString());
+        }
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(
                 Blocks.REDSTONE_BLOCK.defaultBlockState())).isNull();
         assertThat(OmnidirectionalObserver.safeDirectPlacementItem(

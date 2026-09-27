@@ -80,6 +80,7 @@ final class InventoryRequests {
         int minimumDestinationCount;
         int maxStacks = 1;
         int maxTransferCount = 64;
+        int transferCount = 0;
         if (primitive instanceof ActionDsl.InspectKnownContainer inspect) {
             position = inspect.target();
             expectedBlock = inspect.expectedBlock();
@@ -94,6 +95,7 @@ final class InventoryRequests {
             minimumDestinationCount = take.minimumInventoryCount();
             maxStacks = take.maxStacks();
             maxTransferCount = take.maxTransferCount();
+            transferCount = take.transferCount();
         } else if (primitive instanceof ActionDsl.StoreKnownContainerStack store) {
             position = store.target();
             expectedBlock = store.expectedBlock();
@@ -102,6 +104,7 @@ final class InventoryRequests {
             minimumDestinationCount = store.minimumContainerCount();
             maxStacks = store.maxStacks();
             maxTransferCount = store.maxTransferCount();
+            transferCount = store.transferCount();
         } else {
             throw new IllegalArgumentException("node is not a known container operation");
         }
@@ -133,6 +136,7 @@ final class InventoryRequests {
                 "minimum_destination_count", minimumDestinationCount));
         parameters.put("max_transfer_count", maxTransferCount);
         parameters.put("max_stack_moves", maxStacks);
+        if (transferCount > 0) parameters.put("transfer_count", transferCount);
         parameters.put("retain_view_on_release", true);
         parameters.put("max_camera_degrees_per_tick",
                 McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0D);

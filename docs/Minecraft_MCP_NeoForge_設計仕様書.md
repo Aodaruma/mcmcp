@@ -434,6 +434,8 @@ global `world_revision`とは別に、部分的な全周scanを破棄する`visu
 
 ### 7.3 Omnidirectional Visual Observation
 
+`craft_known_recipe`もcontainer操作と同じ元配送leaseを使い、受付snapshot・commit・dispatch・未dispatch JIT・最初の作業台open直前でrenderer fog欠測からの回復を有限に待つ。復帰時は同じ作業台の配送済み表面を通常の可視policyで再観測し、対象変更・遮蔽・fog範囲外・配送期限切れは拒否する。待機は元のHTTP締切・配送TTL・総Action予算へ算入し、最初のprimitiveでは600 ticks / 30000 msの予約余白を使うが、menu操作の400 ticks / 20000 msは残す。後続の同一作業台へのnodeでも元leaseを延長せず、送信後のACK待機・読み戻し・cleanupへ最初のopen用gateを逆適用しない。
+
 rendererのfog値はlevel・camera entity・entity tickの完全一致を要求する。低FPS等で現在tickのsampleがない場合、距離1ブロックの霧として扱わず、visual scanと配送済み表面の内部再観測だけを待機する。局所安全観測と音は継続し、旧frame/recordのtick・revision・配送期限は延長しない。欠測を跨いだclient tick数もcatch-up期限へ加算するため、期限後の最初の新鮮sampleでは部分scanを破棄し、最大2,048 rayで再観測する。描画が完全停止している間は新しいvisual情報を取得できない。実際にrendererが返した短いfog距離は引き続き適用する。
 
 chest/barrelの同じ可視面では、最初のrayと各隅方向に最も近い実rayを内部で最大5件保持し、frame完成時の可視entity boundsを避ける実rayを優先して1件だけ配送する。候補の位置・eye・tick・revisionは元の観測値のままとし、幾何学的な新しい点を観測として生成しない。全候補がinteractionに遮られていてもblockの実visual情報は残す。container/craftingのplannerは配送済みray候補の中から可視entity boundsに遮られない一点を選び、その一点で既存camera上限と後続姿勢を計算する。候補がなければTARGET_UNKNOWNとして新しい観測や再配置を要求し、liveの通常crosshairと全安全gateの検証を省略しない。照準到達後40 client ticksでexact target hitを確認できなければCONTAINER_AIM_OCCLUDEDで有限終了する。
@@ -477,6 +479,8 @@ ray結果は`HIT / MISS / UNKNOWN`の三値とする。`MISS`が証明するの�
 collision解決の規範値はVanilla 26.2のresolverが返す`resolvedDelta`とする。実装は`Entity#move`内の`collide(Vec3)`呼出を、bot制御中のlocal playerかつ対象版のplayer movement用`MoverType`だけ狭いMixinExtras `@WrapOperation`で包み、`intendedDelta`と`resolvedDelta`を同じgame threadで記録する。`resolvedDelta`は衝突解決済み候補であり、許可後の実移動証拠にはtick前後のplayer位置差分を使う。独自のpoint ray、単純な対角直線、固定substepをsolid collisionの真値にしない。これにより斜めのaxis解決、corner slide、world border、entity collision、step-up、slab、stairs、fence等をVanilla結果へ一致させる。MixinExtrasはNeoForge同梱分を使い、新しいruntime dependencyを追加しない。
 
 hypothetical transitionは同じVoxelShapeとVanillaのaxis順で保守的に評価し、実移動または接触で確認するまで`PROBE_ALLOWED`を越えて昇格させない。axis順は`intendedDelta`について`|x| < |z|`ならY→Z→X、それ以外はY→X→Zとし、`|x| = |z|`はXを先にして決定的にする。各axis segmentの長さには`resolvedDelta`の対応成分を使い、そのsegment開始AABBを`expandTowards(axisDelta)`した領域だけを実通過領域へ加える。最後に全segmentを1個の包絡箱へ潰さない。
+
+同じ高さのfull-cube支持が角だけで接する場合、直交する両隣cellへのCONFIRMED edgeがなくても、追加の局所観測証拠で斜め候補を作れる。両端支持のfull collision shape、端点間で身体の足裏が少なくとも一方の支持と余裕付きで重なること、実端点と両cell中心を覆う立位高さのcorridorに衝突・fluid・危険物・未load領域がないことを確認する。この追加証拠は内部edgeへ保持し、同一sessionと現在world revisionへ束縛する。PROBE_ALLOWEDは実通過確認までCONFIRMEDへ昇格させない。追加証拠の失効・撤回時は再計画し、実行中だけ新しい低速移動へ切り替えて未予約予算を使わない。この候補ではcrouchを維持し、edgeごとに40tickを追加予約する。通常の足下判定と各tickのVanilla最終gateは維持する。保守的なcorridorが通らない場合は従来の直交edge確認に戻り、そのcorridorだけを実際のfluid接触や衝突の証拠にはしない。上下段差・非full-cube支持・跳躍へこの追加規則を適用しない。
 
 斜めpathのfluidは各axis segmentのswept player AABBと`FluidState#getAABB`相当の実高さ・形状との交差で接触を判定し、接触した`FluidState#getFluidType()`で危険度を分類する。包絡矩形の未通過cornerにあるfluidは接触扱いせず、途中segmentで触れたfluidはendpointが乾いていても記録する。未知のmodded FluidTypeは`UNKNOWN → REPLAN`とし、一律STOPにしない。非流体blockのinside判定は別にblock側のinside collision shapeとVanilla通過結果を使う。
 
@@ -647,7 +651,7 @@ Codex CLI 0.146.1互換経路は、実wire captureと同じ次の並びに限定
 3. `tools/list`: IDあり、`MCP-Protocol-Version: 2025-06-18`、custom MCP headerなし。固定5 Toolの標準resultを返す。`params._meta.progressToken`は許可するが、任意のpaginationやTool追加には使わない。
 4. `tools/call`: IDあり、同protocol header、custom MCP headerなし。`params.name`は固定5 Toolのいずれかとする。`params.arguments`は省略時に空objectとして扱い、存在する場合はobjectかつ別紙schema適合を必須とする。
 
-互換経路の`params._meta`では`progressToken`に加え、Codexが送る`callId` / `itemId` / `threadId`（空白だけでない128文字以下のstring）と`x-codex-turn-metadata`（object）を許可する。これらは通信の付加情報として破棄し、runtimeへ渡さず、responseやlogへ反射しない。内部のsandbox / approval等の申告は操作権限として扱わない。未知の直下fieldと型違反は引き続き拒否し、既存のbody / JSON上限も適用する。
+互換経路の`params._meta`では`progressToken`に加え、Codexが送る`callId` / `itemId` / `threadId` / `sessionId` / `windowId`（空白だけでない128文字以下のstring）と`x-codex-turn-metadata`（object）を許可する。`sessionId` / `windowId`はアプリ同梱Codex CLI 0.155.0-alpha.16.4の模擬MCP向け送信で確認した相関情報であり、MCP protocol sessionを作成・選択しない。この追加は評価hostのversion pinや新版CLI全体の合格判定を変更しない。これらは通信の付加情報として破棄し、runtimeへ渡さず、responseやlogへ反射しない。内部のsandbox / approval等の申告は操作権限として扱わない。未知の直下fieldと型違反は引き続き拒否し、既存のbody / JSON上限も適用する。
 
 `initialize`に2026 headerを付ける、`server/discover`に2025 versionを付ける、compatibility methodへ`Mcp-Method` / `Mcp-Name`を混ぜる、notificationにIDを付けるなどの経路混同はfail closedにする。互換経路でもBearer、Origin、Host、body、rate-limitに例外を作らず、`Mcp-Session-Id`は発行・受理しない。
 
@@ -784,7 +788,7 @@ Action DSL v1の制御構造:
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内の明示allowlist対象Vanilla chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
-| take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemを最大14 whole stacks・896個まで移し、各server ACKと最後1回のfull readbackでplayerの絶対個数を確認 |
+| take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemを移送。既定は最大14 whole stacks・896個、transfer_count指定は今回の正確な追加数量。各server ACKと最後1回のfull readbackで確認 |
 | store_known_container_stack | camera, inventory_transfer | playerの指定itemを同じcontainerへ最大14 whole stacks・896個まで移し、各server ACKと最後1回のfull readbackでcontainerの絶対個数を確認 |
 | remove_visible_frame_item | camera, entity_attack | 配送済みの正面額縁と表示itemをJIT再確認し、空手の通常攻撃1回で表示除去をserver確認。drop回収は別Action |
 | insert_visible_frame_item | camera, item_use | 配送済みの正面空額縁へhotbar itemを1個挿入し、server表示ACKと選択slot1個減少を確認 |
@@ -838,13 +842,21 @@ form elicitation対応clientではMCP clientだけが確認UIを所有し、Mine
 
 `approach_known_placement`は、後続するstationaryな階段planに必要な作業姿勢をLLMの座標推測なしで得るmovement-only primitiveである。後続planと同じ`anchor` / `transform` / 1〜8件の`entries`を受けるが、初回sliceはsession-local `placement_state_ref`、現在完全stateのUP support、`dependency_entry_id=null`、乾いたbottom halfのoak / cobblestone stairだけを許可する。runtimeは同じmirror / rotation後の`facing`を解決し、全entryについてKnown Traversability Mapの経路、通常reach、support ray、停止時settlement誤差、配置時の水平向きを同時に満たす共通stand cellを、最短距離、worst reach、NavCellの順で決定論的に選ぶ。照準、設置、support evidence延長は行わず、単独top-level Actionとしてterminal後に再観測を要求する。budgetは通常navigationと同じ最大30,000 ms、600 ticks、32 distance blocksで、camera / interaction / break / placeは0とする。
 
+建築材料は、少数の固定IDだけでなく、Vanilla登録の通常建材familyへ広げる。通常立方体は実装classが正確にBlock / RotatedPillarBlock / DropExperienceBlock / TransparentBlock / StainedGlassBlockであるもの、階段・ハーフは正確にStairBlock / SlabBlock、paneは正確にIronBarsBlock / StainedGlassPaneBlockを扱う。これに雪ブロック、全色羊毛・コンクリート・テラコッタ、通常鉱石・石材・金属・木材、色付きガラス等が含まれる。継承だけで独自挙動のsubclassを認可せず、従来の限定対象も維持する。床置きtorchは壁置きwall_torchと区別した通常stateとして扱い、同じVanilla StandingAndWallBlockItemから公開refを発行する。完全state、無改変stack、air対象、支持、通常ray・設置予測、server状態とinventory消費、終了時の再観測は省略しない。wet state・double slab・落下物・fluid・container・redstone/動的block・MOD実装を一括解禁しない。隣接依存の階段shape・pane接続は既存の完結したplan内だけで確定し、最後に全stateを照合する。
+
 `apply_known_block_plan`はPhase 3の初回vertical sliceであり、wire shapeを`{id,op,anchor,transform:{rotation,mirror},entries:[{id,offset,placement_state_ref,support:{position,face,expected_state,dependency_entry_id}}]}`へ閉じる。移行互換として各entryは`placement_state_ref`または旧`source_state`+`item`のexact one-ofを受ける。entryは1〜8件、offset各軸は-8〜8、entry IDと変換後targetはnode内で一意とする。`anchor`とsupportはdimension-qualified block座標で、変換後targetは`anchor + transform(offset)`だけから決定する。`mirror=none|x|z`を先に適用し、`x`はMinecraft `FRONT_BACK`と同じeast/west反転、`z`は`LEFT_RIGHT`と同じnorth/south反転とする。その後`rotation=0|90|180|270`のY軸時計回り回転を適用する。offsetとrefが解決した完全stateは同じtransformを通し、方向propertyをLLMへ変換させない。
+
+単一entryで`support.expected_state`を明示する設置planは、受付snapshot・commit・dispatch・未dispatch JITで現在tickのrenderer fogが欠けた場合、最初に固定した配送済み支持leaseと元のHTTP締切・配送TTL・総Action予算の範囲で回復を待つ。最初の設置nodeの15秒/300tick枠に待機を含め、待機後に300tickを追加予約しない。再開には元の支持面・完全state・item・shape、現在のfog/LOS・姿勢・安全・補正の再検証が必要で、実変更・遮蔽・期限切れを欠測として再試行しない。複数entryとplan内依存支持はこの待機対象外とし、送信済み設置のserver確認・cleanupへ逆適用しない。
 
 唯一のmulti-cell例外は、閉じた未通電の`minecraft:oak_door` lower halfである。1 entryの通常useが生成するupper halfもAction boundsと事前air観測へ含め、同一prediction sequenceに対するlower / upper別々のserver-verified stateが完全一致した場合だけ成功する。upper halfは別entryにせず、door entryは`max_blocks_placed`を2消費する。doorはsupport、pillar、clearには使わない。
 
+`extend_known_floor`は水平1セルの床延長に限定した単独Actionである。配送済みfull-cubeのUP支持面、その完全state、cardinal `direction`、`placement_state_ref`を指定し、支持の真上0.15 block以内に接地・静止して開始する。20000 ms / 400 ticks / 2 distance / 720 camera degrees / 1 placement / 0 interactions・breaksを確保し、if/repeatや後続nodeは禁止する。元支持を毎tick照合し、crouchと通常の後退入力で端へ寄り、実side ray hitを得てから既存constructionへ委譲する。設置に限る内部`RETAINED_EDGE_SUPPORT`は元支持とのAABB重なり0.07 block以上、有限corridor、接地・crouch、配置先AABB非交差をframeとuse直前に確認する。通常planとbreak/replaceの足元保護は維持する。block・inventoryのserver確認後だけ新床へ進み、全入力を解放して終わる。支持変更・補正・damage・threat・障害・期限では停止し、確認済み／未知effectを失わずに回収する。端での制動は通常床摩擦と未強化の移動・sneak速度に限定し、氷や速度強化を開始前から拒否する。失敗後のblind replayはせず、再観測して現在の床と姿勢から再計画する。受付・予約・実行開始・未dispatchのJIT時に現在tickの描画fogが欠けた場合、最初に配送済み支持面のleaseを固定し、元のHTTP締切・配送期限・総20秒/400tick以内で描画回復を待つ。待機時間は同じ総予算へ算入し、再予約で400tickを追加しない。復帰時は元の面・完全state・item・shapeと現在のfog/LOS・支持・姿勢・安全・補正を再検証し、不一致は拒否する。移動・設置を開始した後にこの受付待ちを逆適用せず、既存の毎tick安全検査と設置確認を維持する。
+
 `clear_known_block_plan`は同じ`anchor` / `transform`と1〜8件の`{id,offset,expected_before}`だけを受け取る。targetの返却済み完全stateとconstruction policyをplanner・packet直前・heartbeatで再検証し、既存`BREAK_TO_AIR`経路で入力順に撤去する。成功条件は全targetのfreshなair再観測であり、置換はそのterminal後に再観測を挟んだ別Actionの`apply_known_block_plan`とする。
 
-`placement_state_ref`は、MCP responseの成功書き込みが確認された`placement_item != null`の可視surfaceだけからstate+item identityへ発行する推測困難なopaque値である。成功書き込み後のconfirmation処理は完了を待ってからHTTP exchangeを閉じ、直後のAction受付とref有効化が競合しないようにする。最大512 identityを決定的にbounded保持し、座標surfaceの60秒TTLでは失効せず、world-session遷移で全消去する。refは見本座標の再訪を不要にするだけで、target、既存support、ray、player pose、hazardは短期証拠とpacket直前の再検証を維持する。移行用inline形式では完全`visible_surface.state`を`source_state`へ、同recordの`placement_item`を`item`へ無変換コピーする。runtimeはどちらもregistered BlockState定義に対してpropertyの欠落・余分・不正値を入力前に拒否し、MinecraftのBlockState mirror / rotation実装で完全stateを一意に変換する。`apply_known_block_plan`受付時のcompilerは有効なrefを解決してordinary=1 / oak-door=2のplacement footprintを確定し、未解決refには安全側の2 cell上限を使って過小評価を防ぎ、budget不足またはplannerの`TARGET_UNKNOWN`で拒否する。`pillar_up_known`も同じrefをplanner受付時とruntime request生成直前に二重解決するが、1 placementの通常full collision blockだけを受け付け、oak doorを含むmulti-cellとslab / stairs / attachment等のpartial shapeは拒否する。BlockEntity / NBT、fluid、gravity block、container、portal、command block、通常BlockItem設置で完全stateを再現できないblockは`placement_item=null`とし、refも発行しない。
+`placement_state_ref`は、MCP responseの成功書き込みが確認された`placement_item != null`の可視surface、または`agent_get_state.placement_materials`の実所持建材からstate+item identityへ発行する推測困難なopaque値である。成功書き込み後のconfirmation処理は完了を待ってからHTTP exchangeを閉じ、直後のAction受付とref有効化が競合しないようにする。最大512 identityを決定的にbounded保持し、座標surfaceの60秒TTLでは失効せず、world-session遷移で全消去する。refは見本座標の再訪を不要にするだけで、target、既存support、ray、player pose、hazardは短期証拠とpacket直前の再検証を維持する。移行用inline形式では完全`visible_surface.state`を`source_state`へ、同recordの`placement_item`を`item`へ無変換コピーする。runtimeはどちらもregistered BlockState定義に対してpropertyの欠落・余分・不正値を入力前に拒否し、MinecraftのBlockState mirror / rotation実装で完全stateを一意に変換する。`apply_known_block_plan`受付時のcompilerは有効なrefを解決してordinary=1 / oak-door=2のplacement footprintを確定し、未解決refには安全側の2 cell上限を使って過小評価を防ぎ、budget不足またはplannerの`TARGET_UNKNOWN`で拒否する。`pillar_up_known`も同じrefをplanner受付時とruntime request生成直前に二重解決するが、1 placementの通常full collision blockだけを受け付け、oak doorを含むmulti-cellとslab / stairs / attachment等のpartial shapeは拒否する。BlockEntity / NBT、fluid、gravity block、container、portal、command block、通常BlockItem設置で完全stateを再現できないblockは`placement_item=null`とし、refも発行しない。
+
+`agent_get_state.placement_materials`は自分の所持品だけを入力にし、通常のBlockItem実装・default components・正常stack数・既存建築policyを満たす、propertyなしの状態一意なVanilla full-cubeだけをitem/count/state/placement_state_refへ射影する。黒羊毛・雪ブロック等はワールド内の見本なしで初設置できる。方向・接続を推定せず、未所持品、非標準components、partial/dynamic/MOD建材を列挙しない。既存の可視surfaceと同じ最大512 identity・配送confirmation/abandon・session消去へ接続し、所持品から座標証拠を作らない。公開refresh契約のalternative_sourcesはこの追加取得経路を示す。通常の可視見本取得も保持し、材料がなくなった場合の実設置時の在庫照合とserver確認を省略しない。
 
 `support.expected_state`と`support.dependency_entry_id`は両方をfieldとして必須にし、exactly-oneだけ非nullとする。現在blockをsupportにするentryは、`state != null`である最新policy-visible surfaceの完全stateを`expected_state`へコピーし、dependencyをnullにする。先行設置をsupportにするentryはexpected stateをnullにし、入力順で先行するentry IDだけをdependencyへ指定する。この場合`support.position`はその先行entryの変換後targetと完全一致しなければならない。どちらも`support.position`から`face`方向へ1 block隣が当該entry targetであることを静的検証する。未開始・後続・外部ID、暗黙の近傍探索、未観測supportは認めない。
 
@@ -1213,6 +1225,10 @@ camera costは解析的なyaw/pitch誤差に加え、Vanillaの`player.turn`が0
 
 ladderは上昇時だけJUMP入力を使い、下降時はSHIFTを使わない。scaffoldingは上昇時にJUMP、下降時だけSHIFTを使う。中間段はA*の内部transitに限り、床付きlandingだけを`navigation_target`として公開する。各micro-stepでblock種、ladder取付、scaffoldingの`distance < 7`・`canSurvive`・非waterlogged、clearance、窒息、fluidを再検証し、欠損または低天井等では入力をneutralにしてfail closedとする。
 
+水中navigationは、Local Observation Volumeが身体と移動経路を読み込み済みの空気またはVanillaの水源blockとして確認した場合に限る。水流、bubble column、水草、水没したblock、未知のFluidTypeは対象外。水平・上下1セルの候補と支持のある岸への出入りを`WATER` edgeとして内部で区別し、水中の足位置も`navigation_target`へ公開する。岸への移動では上昇後の水平移動、入水では岸を越えてからの下降を検証し、実行時もVanillaが解決した軸順の身体経路を再検証する。水面直上の一時的な空中姿勢は、水源が足元0.5 block以内にあり、同じ既知の水中到達点または支持付き着地点へ向かう場合だけ許可する。上陸時のVanillaの跳び上がりは、確認済みの非反発支持付き着地点の上1.25 blockまでを上限とし、現在の身体経路と残りの着地経路が読み込み済みの無害な空間であることを毎tick検証する。通常navigationへの未知の空中移動の許可に転用しない。
+
+入力は通常の水平移動と、目標高度に応じたJUMP／CROUCHだけで、sprintやcamera回転は使わない。water edgeには40 tickの追加予約を行う。Agent由来の速度はVanillaの水抵抗・重力調整・潜水入力・岸への加速に追従させ、終了時に入力分を引くことで逆方向の速度を作らない。水中到達は位置と継続した安全観測で判定し、岸では既存の地上着地確認を使う。意図的なnavigation中の通常のair減少だけではreplanせず、危険な酸素量・damage等の既存Recovery判定は引き続き優先する。終了時は入力を解放するため、その後の自然な沈下を止め続ける機能ではない。ActionがないREADY中に自動遊泳・自動救助を開始しない。単独のnavigate_to_knownで、開始セルからWATER edgeを使い、現在も水中にいる場合だけ、受付中の5 tick以内・同一feetセル内・0.25 block以内の位置変化を許可する。向き・eye height・session・control epoch・server補正・現在の経路と安全性の照合は維持し、最初の距離予約に開始セル全体の誤差を含める。
+
 経路が変化した場合は影響edgeだけをSTALEにし、現在AABBが安全なら再検証と局所再計画を行う。未知supportへは出ず、既知graphとPROBE_ALLOWEDだけで代替経路がない場合に`PATH_BLOCKED`とする。現在AABBが危険なら第10章のRECOVERINGへ昇格する。
 
 full-block高低差edgeを能動生成する処理は未実装であり、上記ladderの閉じたedge生成とは区別する。必要edgeを推測・合成せず、target自体が未知なら`TARGET_UNKNOWN`、targetは既知でも接続edgeがなければ`NO_KNOWN_PATH`として入力前にfail-closedとする。
@@ -1330,7 +1346,7 @@ Vanilla inventory文法だけでは、独自widget、ghost slot、fluid / energy
 
 現在の`operate_known_menu`は`{id,op,operation_ref}`へ閉じ、Action内でtop-level最終nodeとして1回だけ受ける。refの内部recordはruntimeだけが保持し、LLMへraw slot、座標、component / NBT、callback class、packet payloadを返さない。操作直前にrefを再解決し、session、同一Screen identity、container ID、menu type、state ID、slot数、profile hash、packet revision、全source snapshotのいずれかが変われば配送せずreplanする。dispatch後はfresh server packetを待ち、source empty、他storage slotとMOD profileの全protected slot不変、player slotの完全multisetとcomponent-exact個数を確認し、cursor emptyのまま画面を閉じてから成功にする。複数operationのtransactionは、実タスクで必要になるまで追加しない。
 
-Menu profileは、対象MOD名、version、active jar SHA-256、menu / Screen class、slot shape、許可操作、入力保存則、成功条件を記述する小さな組込み宣言dataとする。最初のMOD profileは外部loaderを作らず、Sophisticated Backpacks 1 buildだけを組込み、NeoForgeが実際にロードした両jarを起動時に検証する。Menu classの公開getterでstorage / inaccessible / open-upgrade / extra-slotを分類し、playerの36 slot以外は全てprotectedとして扱う。未知version / hash / class / methodではprofileを無効化し、production中の自動推測やpixel操作へfallbackしない。
+現在のMenu profileは、対象MOD名、version、active jar SHA-256、menu / Screen class、slot shape、許可操作、入力保存則、成功条件を記述する組込み定義である。最初のMOD profileはSophisticated Backpacks 1 buildを対象とし、NeoForgeが実際にロードした両jarを起動時に検証する。Menu classの公開getterでstorage / inaccessible / open-upgrade / extra-slotを分類し、storageとplayerの36 slot以外はprotectedとして扱う。未知version / hash / class / methodではprofileを無効化し、production中の自動推測やpixel操作へfallbackしない。後続の収納対応は9.7.1の共通契約へ移行し、この1 build専用構成を拡張の前提にしない。
 
 recipeとitem IDは`minecraft:`へ限定せず、clientへ通常同期され、registryに存在するMOD namespaceも受理できる。ただしrecipe manager、server内部state、JEI等の別MOD内部cacheをhidden-state経路として読まない。同一item IDでもData Componentが異なる道具、enchanted book、template、upgrade済みMOD item等は、現在のstorage sliceでは`operation_ref`内部に完全な`ItemStack`を保持し、公開component / NBTや新しい`stack_ref`を追加せずcomponent-exactに照合する。custom ingredient、crafting remainder、container item、tool damage、経験値消費は、対応profileが全入出力の保存則と事後条件を定義したrecipeだけを受理する。
 
@@ -1351,6 +1367,24 @@ MOD menuは次の2種類に分ける。
 未知menu、profileと異なるslot数・class・menu type・widget shape、結果をclientのserver同期から検証できないoperationはread-only観測に限定し、最初のAgent mutationより前に`UNSUPPORTED_MENU_PROFILE`相当で拒否して閉じる。対象24 MODの更新でmanifestが変わった場合はprofileを流用せず、別紙baselineを更新して同じGameTest / clone smokeを再実行する。MOD用のserver companion、MCMCP独自payload、handshakeは要求しない。
 
 すべてのadapterは、通常use / menu openの因果ACK、exact menu ownership、cursorを変化させるclick直前のcursor証明失効とfresh server cursor証明、cursor-invariantなQUICK_MOVEでは直前のserver-confirmed empty cursor維持、絶対inventory差分、有限budget、Esc / UI OFF / world境界、terminal前のScreen・cursor・camera・slot解放を9.6と共通の必須条件とする。途中まで消費・生成されたitemをrollbackしたふりはせず、最初のterminal intentとauthoritative inventoryを保持する。cleanupが証明できない場合は成功・失敗を公開せず、入力隔離を維持してfail closedにする。
+
+#### 9.7.1 共通収納操作への拡張方針（計画・未実装）
+
+利用者の方針変更を受け、[Issue #70](https://github.com/Aodaruma/mcmcp/issues/70)ではMODを限定しない収納操作を実装する。既存の共通Menu基盤を拡張し、バックパック専用Toolや独立した転送エンジンは作らない。Sophisticated Backpacksは最初の検証対象とする。ここに記載するMCPからのバッグ開閉、MOD収納の指定個数移送、拡張stack対応は、現時点で利用可能な機能ではない。
+
+| 境界 | 担当する処理 |
+| --- | --- |
+| 対象の発見・開閉 | world上・所持品内・装備中の収納を区別し、配送済みの短寿命参照で選ぶ。必要なMOD連携は本来の通常開閉処理を呼び、開いたmenuが選択対象と一致する証拠を確認する |
+| 収納の契約 | storage / player / protectedの役割、取り出し・格納可否、item/components、slot容量、通常／拡張stackのclick規則、同期・readback方法を表す。slot順序やplayer slotの位置を操作本体の前提にしない |
+| 共通の実行 | 参照の再検証、個数計画、通常click、fresh server slot/cursor確認、保存則、confirmed/unknown台帳、有限予算、取消・解放を共有する。MOD名・class名・JAR hashの分岐をここへ置かない |
+
+利用者向けには「収納を選ぶ→開く→内容を確認する→指定数を取り出す／格納する→閉じる」を同じ流れで扱う。手動で開いた対応画面にも同じ移送処理を使えるが、手動開封だけでは本対応の完了条件を満たさない。同種のバッグが複数ある場合も、選択後の移動・持ち替え・交換で別の個体を操作しないよう、対象参照を再検証する。
+
+標準の収納契約で扱える画面は共通処理へ載せ、固有の開き方やstack更新規則だけを小さな連携部分で補う。slot数や表示名から未知の画面を純storageと推測せず、加工結果、購入、upgrade、ghost等の操作は収納から分離する。既存profileのversion/hash確認は互換性を検証して移行するまで維持する。新しいMODへ対応するときに数量移送処理を複製する必要をなくすことが目的であり、未検証のすべてのMODへの自動対応を保証するものではない。
+
+Vanillaの`transfer_count`で使う`ExactInventoryTransfer`は共通数量計画・照合の再利用元とする。ただし現在は通常stackと最大14clickのモデルであり、拡張stackには専用のclick規則・上限と同期証拠の検証が必要になる。読み取り、全量移送、指定数移送、拡張stack対応の能力を区別し、未対応操作を実行可能と表示しない。取消時の無条件なcursor救済や未知clickの再送を共通化に含めない。正常終了では空cursorと画面解放を確認し、途中停止では確認済みの移送と不明な結果を保存し、安全な解放を証明できなければ既存の停止方針を維持する。
+
+受入試験はVanillaとMOD収納の異なる実装・slot配置、装備中と所持品内、同種バッグ2個、両方向の指定数移送、拡張stack、容量不足、成分違い、自動補充、対象移動、同期遅延・欠落、各中断境界を含む。単体・結合試験と、利用者が許可したリモートDocker検証環境での軽い実機試験を分けて記録する。コード・候補JARの共有、実機合格、Release公開も別の完了状態とする。
 
 ### 9.8 RedstoneSpec — Phase 5
 
@@ -2071,3 +2105,17 @@ NeoForge 26.2の画面切替は新画面のOpeningの後に旧画面のClosing�
 この例のbudgetは `max_duration_ms:3000`、`max_ticks:60`、`max_interactions:60`、`max_blocks_broken:60`、その他の枠は0です。待機も元の時間・tick予算へ数え、対象復帰で期限を延長しません。実際のsimulation pauseは既存規則通り入力を中立化してactive timeを凍結し、再開時に検証します。
 
 位置・手持ち変更、reach外、health低下、Screen・overlay、安全中断、Esc、OFF、cancel、期限、world/session変更では既存の入力解放経路へ進みます。 対象照合の固定診断は `bounded_input_target_not_focused`、`target_position_changed`、`target_face_changed`、`target_block_changed`、`target_state_changed`、`target_unloaded`、`target_outside_world_border`、`target_out_of_reach`（後続も同じ `bounded_input_` 接頭辞）に分け、面不一致を距離外等と混同しません。入力開始直前にも再検証し、例外や安全違反は解除までラッチします。開始回数は保守的な試行数であり、破壊成功数・回収数・server確認済みeffectではありません。道具交換・耐久保護・収集量保証はありません。
+
+## 外部平面施工runnerとworld session
+
+agent_get_state.world.session_id は現在の読込みsessionを識別するopaque UUIDであり、saveの恒久IDではない。物理的に同じワールドの再読込みでも変わり得る。永続クライアントは欠測を許可せず、変更を明示確認なく再開へ使わない。出力schemaでは旧クライアント用fixtureとの互換のため追加fieldとして扱い、現runtimeはworldがあるとき必ず出力する。
+
+tools/building は最大128×128の床と指定した床置きtorchを外部checkpointで管理する。Action開始前のintent、受付後のID、confirmed effectを原子的に保存する。world session内で有効な不変のplacement_state_refと、現在の可視支持・traversabilityを区別する。Unknownの再観測をserverの材料消費ACKと同一視せず、収支不明を完了表示に残す。補充や予算停止を跨ぐ移動は現在の確認済み床から再計画する。詳細は tools/building/README.md を参照する。
+
+### コンテナの正確な数量指定（Issue #67）
+
+`take_known_container_stack` / `store_known_container_stack` に任意の `transfer_count`（1..896）を指定すると、今回その個数だけ追加移送する。たとえば染料を2個取り出す場合は `transfer_count: 2`、`minimum_inventory_count: 2` とする。既に2個以上所持していても、追加で2個移す。既存のminimumは移送後の絶対下限であり、指定した追加数量で満たせなければ移送前に拒否する。`max_transfer_count`以下かつ初回の`max_stacks`個以内のsourceから計画できる必要がある。指定省略時のwhole-stack挙動は変更しない。
+
+対象は対応済みVanilla chest/barrelの正確なmenu/通常slotと、defaultの最大stack数を持つ通常stackである。MOD menu、バックパック、拡張stackはこの機能の対象外。ItemのoverrideStackedOnOther/overrideOtherStackedOnMeが既定実装であることを要求し、bundle等の独自PICKUP挙動は拒否する。NeoForgeのglobal ItemStackedOnOtherEventによる変更は互換性境界とし、server差分不一致時に成功や再送へ進まない。初回server snapshotから同一item/componentsのsource/destination間の左/右PICKUP手順を固定し、途中でstackを分割・再結合して正確な個数にする。最大14clickと開封2回、合計16interactionを維持する。予算は1380ticks / 69000ms / camera 360度、移動・破壊・設置0を予約する。内部attemptは1180ticks。容量不足、個数不足、source上限、または14click以内の固定手順が作れない場合は最初の移送click前に失敗する。成功可能な全組合せを探索する保証はせず、source/destinationは固定順で選ぶ。
+
+各操作は予測slot変更を付けない通常PICKUPで1回だけ送信する。送信前に所有権と全slot/cursorを照合し、cursor証拠を失効させ、次の操作には送信後の新鮮なserver slot差分とcursor packetの両方を要求する。局所予測・古い空cursor・一部だけのslot差分を成功証拠にしない。空cursorまで完了した移送だけをconfirmed prefixとして保持し、中断した分割はUNKNOWNにする。取消後に追加の救済clickやblind retryを行わない。cursorが残る、またはその解放が未証明の場合は既存のcleanup lockが継続し、利用者によるcursor解放が必要になる。最終成功には再開封full readbackで数量保存・指定移送数・絶対goal・空cursorを確認する。

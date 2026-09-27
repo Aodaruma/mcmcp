@@ -89,6 +89,23 @@ class MinecraftRecoveryGovernorTest {
     }
 
     @Test
+    void deliberateWaterNavigationAllowsNormalAirUseButStillPreemptsForDrowning() {
+        var f = fixture(defaultLimits());
+        f.governor.tick(sample(1, 20, 300, true, false, 0, false, false,
+                false, 0, 0, Landing.UNKNOWN, -1, DamageKind.NONE),
+                List.of(), StopSignal.NONE, () -> { }, 1, true);
+        var normal = f.governor.tick(sample(2, 20, 299, true, false, 0, false, false,
+                false, 0, 0, Landing.UNKNOWN, -1, DamageKind.NONE),
+                List.of(), StopSignal.NONE, () -> { }, 2, true);
+        assertThat(normal.assessment().decision()).isEqualTo(Decision.CONTINUE);
+        var low = f.governor.tick(sample(3, 20, 99, true, false, 0, false, false,
+                false, 0, 0, Landing.UNKNOWN, -1, DamageKind.NONE),
+                List.of(), StopSignal.NONE, () -> { }, 3, true);
+        assertThat(low.assessment().dangers()).contains(Danger.DROWNING);
+        assertThat(low.assessment().decision()).isEqualTo(Decision.RECOVER);
+    }
+
+    @Test
     void classifiesLavaDrowningBurningFallAndRepeatedAttackFromFreshEvidence() {
         assertRecoveryDanger(
                 sample(1, 20, 300, false, false, 0, true, false,

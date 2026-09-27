@@ -127,9 +127,9 @@ final class ActionPlanning {
         long durationMillis = node instanceof ActionDsl.CraftKnownRecipe
                 ? ActionDslCompiler.KNOWN_CRAFTING_DURATION_MILLIS
                 : node instanceof ActionDsl.TakeKnownContainerStack take
-                        ? ActionDslCompiler.knownContainerTransferTicks(take.maxStacks()) * 50L
+                        ? ActionDslCompiler.knownContainerTransferTicks(take.maxClicks()) * 50L
                 : node instanceof ActionDsl.StoreKnownContainerStack store
-                        ? ActionDslCompiler.knownContainerTransferTicks(store.maxStacks()) * 50L
+                        ? ActionDslCompiler.knownContainerTransferTicks(store.maxClicks()) * 50L
                 : node instanceof ActionDsl.SmeltKnownRecipe smelt
                         ? ActionDslCompiler.knownSmeltingDurationMillis(smelt.maxSmelts())
                 : node instanceof ActionDsl.OperateKnownMenu
@@ -141,9 +141,9 @@ final class ActionPlanning {
         long ticks = node instanceof ActionDsl.CraftKnownRecipe
                 ? ActionDslCompiler.KNOWN_CRAFTING_TICKS
                 : node instanceof ActionDsl.TakeKnownContainerStack take
-                        ? ActionDslCompiler.knownContainerTransferTicks(take.maxStacks())
+                        ? ActionDslCompiler.knownContainerTransferTicks(take.maxClicks())
                 : node instanceof ActionDsl.StoreKnownContainerStack store
-                        ? ActionDslCompiler.knownContainerTransferTicks(store.maxStacks())
+                        ? ActionDslCompiler.knownContainerTransferTicks(store.maxClicks())
                 : node instanceof ActionDsl.SmeltKnownRecipe smelt
                         ? ActionDslCompiler.knownSmeltingTicks(smelt.maxSmelts())
                 : node instanceof ActionDsl.OperateKnownMenu
@@ -160,9 +160,9 @@ final class ActionPlanning {
                 : node instanceof ActionDsl.TillKnownBatch batch
                         ? batch.targets().size()
                 : node instanceof ActionDsl.TakeKnownContainerStack take
-                        ? ActionDslCompiler.knownContainerTransferInteractions(take.maxStacks())
+                        ? ActionDslCompiler.knownContainerTransferInteractions(take.maxClicks())
                 : node instanceof ActionDsl.StoreKnownContainerStack store
-                        ? ActionDslCompiler.knownContainerTransferInteractions(store.maxStacks())
+                        ? ActionDslCompiler.knownContainerTransferInteractions(store.maxClicks())
                 : node instanceof ActionDsl.CraftKnownRecipe craft
                         ? ActionDslCompiler.knownCraftInteractions(craft.maxCrafts())
                 : node instanceof ActionDsl.SmeltKnownRecipe

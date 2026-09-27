@@ -64,6 +64,7 @@ final class McpTestFixtures {
                 "observation", nullValue(),
                 "action", nullValue()));
         result.put("held_items", nullValue());
+        result.put("placement_materials", List.of());
         return result;
     }
 

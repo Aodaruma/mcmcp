@@ -19,6 +19,30 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ContainerEffectSchemaTest {
     @Test
+    void actualConstructionSwapReceiptPassesThePublishedEffectSchema() throws Exception {
+        var method = dev.aod.mcmcp.routine.MinecraftApplyBlockPlanPort.class.getDeclaredMethod(
+                "stagingObservation", dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint.class,
+                dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint.class);
+        method.setAccessible(true);
+        var source = new dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint("minecraft:torch", 16, 1);
+        var destination = new dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint("minecraft:snow_block", 64, 2);
+        var before = method.invoke(null, source, destination);
+        var after = method.invoke(null, destination, source);
+        var output = new McpToolCatalog().outputSchema("agent_get_action");
+        var schema = output.getAsJsonObject("properties").getAsJsonObject("effects")
+                .getAsJsonObject("items").deepCopy();
+        schema.add("$defs", output.getAsJsonObject("$defs"));
+        for (boolean confirmed : new boolean[]{false, true}) {
+            var payload = new Gson().toJsonTree(Map.of(
+                    "seq", 1, "node_id", "light", "kind", "inventory_swap",
+                    "subject", "inventory:construction_hotbar", "observed_before", before,
+                    "observed_after", confirmed ? after : Map.of(),
+                    "verification", confirmed ? "confirmed" : "unknown", "client_tick", 3, "world_revision", 8));
+            assertThat(CatalogSchemaValidator.matches(schema, payload)).as(payload.toString()).isTrue();
+        }
+    }
+
+    @Test
     void effectCountsAndGoalsRespectDirectionAndBoundedBatchCapacity() {
         var catalog = new McpToolCatalog();
         var observation = catalog.outputSchema("agent_get_action")

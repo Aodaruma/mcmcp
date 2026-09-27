@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "construction-staging",
+  "dimension": "minecraft:overworld",
+  "mutation_bounds": {"min":{"x":-706,"y":75,"z":59},"max":{"x":-695,"y":84,"z":67}},
+  "player_bounds": {"min":{"x":-705,"y":77,"z":60},"max":{"x":-696,"y":83,"z":66}},
+  "max_changed_blocks": 1000,
+  "containers": [{"x":-700,"y":80,"z":62}]
+}

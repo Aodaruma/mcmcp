@@ -512,6 +512,12 @@ final class AgentProgramPlanner {
                     plan, input, map, latestFrame,
                     surfaceRevisionBarrier, costs, knownSurfaces, work);
         }
+        if (node instanceof ActionDsl.ExtendKnownFloor floor) {
+            AgentConstructionPlanner.analyzePillar(floor.sourceWitness(), input, map, latestFrame,
+                    surfaceRevisionBarrier, costs, knownSurfaces, placementStates, work);
+            costs.put(floor.id(), ActionDslCompiler.intrinsicFloorExtensionCost());
+            return input; // Exclusive node: no later primitive may consume this initial pose.
+        }
         if (node instanceof ActionDsl.PillarUpKnown pillar) {
             return AgentConstructionPlanner.analyzePillar(
                     pillar, input, map, latestFrame,
@@ -570,8 +576,8 @@ final class AgentProgramPlanner {
                     "Container target requires a current matching visible surface");
             return AgentMutationPlanner.analyzeOwnedMenu(
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims,
-                    work, surface, ActionDslCompiler.knownContainerTransferInteractions(take.maxStacks()),
-                    ActionDslCompiler.knownContainerTransferTicks(take.maxStacks()),
+                    work, surface, ActionDslCompiler.knownContainerTransferInteractions(take.maxClicks()),
+                    ActionDslCompiler.knownContainerTransferTicks(take.maxClicks()),
                     "container", false, Double.POSITIVE_INFINITY);
         }
         if (node instanceof ActionDsl.StoreKnownContainerStack store) {
@@ -586,8 +592,8 @@ final class AgentProgramPlanner {
                     "Container target requires a current matching visible surface");
             return AgentMutationPlanner.analyzeOwnedMenu(
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims,
-                    work, surface, ActionDslCompiler.knownContainerTransferInteractions(store.maxStacks()),
-                    ActionDslCompiler.knownContainerTransferTicks(store.maxStacks()),
+                    work, surface, ActionDslCompiler.knownContainerTransferInteractions(store.maxClicks()),
+                    ActionDslCompiler.knownContainerTransferTicks(store.maxClicks()),
                     "container", false, Double.POSITIVE_INFINITY);
         }
         if (node instanceof ActionDsl.CraftKnownRecipe craft) {

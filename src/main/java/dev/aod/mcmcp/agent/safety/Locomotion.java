@@ -4,5 +4,6 @@ package dev.aod.mcmcp.agent.safety;
 public enum Locomotion {
     GROUND,
     LADDER,
-    SCAFFOLDING
+    SCAFFOLDING,
+    WATER
 }
