@@ -3505,11 +3505,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     || edge.orElseThrow().worldRevision() < minRevision)
                 return MoveInspection.waiting(StopReason.UNSAFE_MOVEMENT);
             var proof = edge.orElseThrow();
-            if (proof.status() != dev.aod.mcmcp.agent.navigation.TraversabilityEdge.Status.CONFIRMED
+            if (!proof.traversable()
                     || proof.locomotion() != dev.aod.mcmcp.agent.safety.Locomotion.GROUND)
                 return MoveInspection.stopped(StopReason.UNSAFE_FLOOR);
-            pendingRoute = new RoutePlan(map.worldSessionId(), map.dimension(), map.worldRevision(),
-                    List.of(start, end), List.of(proof), 1.0D, 0, 36L, 1800L);
+            pendingRoute = tunnelStepRoute(map.worldSessionId(), map.dimension(), map.worldRevision(),
+                    start, end, proof);
             return MoveInspection.ready(proof.observedTick(), proof.worldRevision());
         }
 
@@ -3560,6 +3560,17 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             pending.clear();
             return effects;
         }
+    }
+
+    static RoutePlan tunnelStepRoute(UUID worldSessionId, String dimension, long worldRevision,
+            NavCell from, NavCell to,
+            dev.aod.mcmcp.agent.navigation.TraversabilityEdge edge) {
+        int probes = edge.requiresProbe() ? 1 : 0;
+        long ticks = RoutePlan.BASE_SETTLE_TICKS + RoutePlan.TICKS_PER_TRANSITION
+                + (long) probes * RoutePlan.EXTRA_TICKS_PER_PROBE;
+        return new RoutePlan(worldSessionId, dimension, worldRevision,
+                List.of(from, to), List.of(edge), edge.key().length(), probes,
+                ticks, Math.multiplyExact(ticks, 50L));
     }
 
     private final class TunnelConstructionPort implements dev.aod.mcmcp.routine.ApplyBlockPlanPort {
