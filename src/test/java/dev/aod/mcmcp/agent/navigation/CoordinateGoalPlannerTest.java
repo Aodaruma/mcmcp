@@ -51,7 +51,7 @@ class CoordinateGoalPlannerTest {
         assertThat(result.status()).isEqualTo(PARTIAL_WAYPOINT);
         assertThat(result.route().orElseThrow().cells())
                 .containsExactly(cell(0, 0), cell(0, 1), cell(1, 1), cell(2, 1));
-        assertThat(result.candidates()).isEqualTo(3);
+        assertThat(result.candidates()).isEqualTo(1);
     }
 
     @Test
@@ -139,31 +139,28 @@ class CoordinateGoalPlannerTest {
     }
 
     @Test
-    void candidateAttemptsAndExpansionsAreSharedAcrossSearches() {
-        var map = map(edge(cell(0, 0), cell(1, 0)), edge(cell(8, 0), cell(9, 0)));
-        var result = new CoordinateGoalPlanner(SESSION, cell(100, 0)).plan(
+    void disconnectedVisibleTerrainDoesNotExhaustCandidateBudget() {
+        var map = map(edge(cell(0, 0), cell(1, 0)));
+        for (int x = 80; x < 170; x++) {
+            map.observe(edge(cell(x, 2), cell(x + 1, 2)));
+        }
+        var result = new CoordinateGoalPlanner(SESSION, cell(200, 0)).plan(
                 map.snapshot().orElseThrow(), cell(0, 0), SESSION, 0,
                 new CoordinateGoalPlanner.Budget(4096, 1, 2048), () -> false);
-        assertThat(result.status()).isEqualTo(LIMIT);
+        assertThat(result.status()).isEqualTo(PARTIAL_WAYPOINT);
+        assertThat(result.route().orElseThrow().cells()).containsExactly(cell(0, 0), cell(1, 0));
         assertThat(result.candidates()).isEqualTo(1);
-        assertThat(result.expansions()).isEqualTo(2);
-        var total = new CoordinateGoalPlanner(SESSION, cell(100, 0)).plan(
-                map.snapshot().orElseThrow(), cell(0, 0), SESSION, 0,
-                new CoordinateGoalPlanner.Budget(4096, 64, 3), () -> false);
-        assertThat(total.status()).isEqualTo(LIMIT);
-        assertThat(total.expansions()).isEqualTo(3);
-        assertThat(total.route()).isEmpty();
     }
 
     @Test
-    void cancellationDuringSearchAndInterruptionDoNotConsumeProgress() {
+    void cancellationDuringPlanningAndInterruptionDoNotConsumeProgress() {
         var map = map(edge(cell(0, 0), cell(1, 0)), edge(cell(1, 0), cell(2, 0)));
         var planner = new CoordinateGoalPlanner(SESSION, cell(100, 0));
         var polls = new AtomicInteger();
         var result = planner.plan(map.snapshot().orElseThrow(), cell(0, 0), SESSION, 0,
                 DEFAULT, () -> polls.incrementAndGet() >= 7);
         assertThat(result.status()).isEqualTo(CANCELLED);
-        assertThat(result.expansions()).isEqualTo(1);
+        assertThat(result.expansions()).isZero();
         assertThat(result.route()).isEmpty();
         Thread.currentThread().interrupt();
         try {

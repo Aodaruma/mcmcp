@@ -96,6 +96,8 @@ loop・関数呼出しを事前展開せず、ASTを直接評価する。関数�
 
 snapshotの既知の安全な停止候補を目標への直線距離、同距離なら`NavCell`順に評価し、既存`DeterministicAStar`で到達できる最初の候補を返す。unknownやSTALE/BLOCKEDのedgeは通らず、斜めの角・現在revisionの直接証拠、距離・実行時間の予約は既存A*／`RoutePlan`に従う。既存の`PROBE_ALLOWED`は支持・clearance等が確認された有限probeとして維持し、未観測cellへ踏み出す許可にはしない。影響を受けず保持された古いedgeは既存mapの無効化契約に従って利用する。
 
+候補をA*に渡す前に、現在地から確認済みedgeでつながるcellだけへ絞る。観測済みでも分断された地形が64件の候補枠を使い切り、近くの進める道を見落とすことを防ぐ。この事前判定は経路の承認ではなく、A*が距離・斜めの証拠・予算を改めて検査する。
+
 - `REACHED_KNOWN_GOAL`: 入力の現在地が既知の目標と一致（移動edgeなし）。`KNOWN_GOAL_ROUTE`: 既知目標までの計画で、実移動の成功ではない。`PARTIAL_WAYPOINT`: 既知中間点までの計画で、到達後に新しい観測が必要。
 - `BLOCKED / LIMIT / CANCELLED / STALE_MAP / WORLD_MISMATCH`: 経路なし。現在session/revisionとの不一致・受理済みrevisionからの巻戻り・異world/future edgeを拒否する。実行直前・各tickの再検証は呼出側に必要。
 - 1回のplanの固定上限はsnapshot edge 4,096件、候補A*呼出し64回、A*全呼出し合計2,048展開。各予算は0まで縮小可能。edge上限超過は切り捨てずLIMIT。取消・thread interruptionは列挙・探索・結果確定前で確認する。

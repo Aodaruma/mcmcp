@@ -2,6 +2,7 @@ package dev.aod.mcmcp.agent.navigation;
 
 import dev.aod.mcmcp.agent.safety.Locomotion;
 
+import java.util.ArrayDeque;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -78,12 +79,28 @@ final class CoordinateGoalPlanner {
         if (lastIssuedEvidence != null && lastIssuedEvidence.equals(map.edges())) {
             return empty(Status.BLOCKED, 0, 0);
         }
+        // Visible but disconnected terrain must not consume the small A* candidate budget.
+        // This is only a graph prefilter: A* still enforces route distance and proof budgets.
+        var connected = new HashSet<NavCell>();
+        var pending = new ArrayDeque<NavCell>();
+        connected.add(start);
+        pending.add(start);
+        while (!pending.isEmpty()) {
+            if (stopped(cancelled)) return empty(Status.CANCELLED, 0, 0);
+            for (TraversabilityEdge edge : map.outgoing(pending.removeFirst())) {
+                if (edge.traversable() && DiagonalTraversal.clear(map, edge)
+                        && connected.add(edge.key().to())) {
+                    pending.addLast(edge.key().to());
+                }
+            }
+        }
         int attempts = 0;
         int expanded = 0;
         var search = new DeterministicAStar();
         for (NavCell candidate : candidates) {
             if (stopped(cancelled)) return empty(Status.CANCELLED, attempts, expanded);
-            if (candidate.equals(start) || issuedCells.contains(candidate)) continue;
+            if (candidate.equals(start) || issuedCells.contains(candidate)
+                    || !connected.contains(candidate)) continue;
             if (attempts >= budget.candidates() || expanded >= budget.expansions()) {
                 return empty(Status.LIMIT, attempts, expanded);
             }
